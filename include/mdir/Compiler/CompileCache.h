@@ -95,7 +95,8 @@ struct ClearedCache {
 
 /// Removes the entries of this format of the cache at `directory`: the
 /// files of the entries' names whose magic tag is this build's, and the
-/// temporary files left by processes that died, as evictCache does. Entries
+/// temporary files left by processes that died, as evictCache does, and
+/// takes their bytes off the total that noteCacheStores keeps. Entries
 /// of another format, files of other names, and the temporary files of
 /// writers under way are left; so is the directory. Another process may
 /// write or read entries meanwhile: a writer renames a complete entry into
@@ -115,15 +116,33 @@ readCacheEntry(llvm::StringRef path, llvm::StringRef key, double &seconds,
                bool &rejected,
                llvm::function_ref<bool(llvm::StringRef)> isValid = nullptr);
 /// Writes the entry atomically: a unique temporary file in the same
-/// directory, then a rename.
+/// directory, then a rename. `written`, if given, takes the bytes of the
+/// entry's file, for noteCacheStores.
 llvm::Error writeCacheEntry(llvm::StringRef path, llvm::StringRef key,
-                            llvm::StringRef data, double seconds);
+                            llvm::StringRef data, double seconds,
+                            uint64_t *written = nullptr);
 /// The file name of the entry of `key`: a hash of the key and `extension`.
 std::string getCacheEntryName(llvm::StringRef key, llvm::StringRef extension);
-/// Removes the entries used least recently, of every kind (`host/*.o`,
-/// `gpu/*.ptx`, `gpu/*.cubin`), until the cache at `directory` holds at
-/// most `maxBytes`, and temporary files left by processes that died.
+/// Lists the cache at `directory` and removes the entries used least
+/// recently, of every kind (`host/*.o`, `gpu/*.ptx`, `gpu/*.cubin`), until
+/// it holds at most `maxBytes`, and temporary files left by processes that
+/// died. The listing reads the status of every entry, so stores do not
+/// call this; they call noteCacheStores.
 void evictCache(llvm::StringRef directory, uint64_t maxBytes);
+/// Tells the cache at `directory` that this process stored entries of
+/// `bytes` in all, and keeps it within `maxBytes`
+/// (D[compile-cache-size-file]). The total of the entries is kept in the
+/// file `<directory>/size`, which processes update under a lock, so a
+/// store costs a fixed number of file operations whatever the directory
+/// holds. The directory is listed, and entries evicted as evictCache does,
+/// only when the total with these bytes exceeds the bound, when the file
+/// holds no total, or when the last listing is a day old; without a usable
+/// file (no locks on the file system) every call lists.
+void noteCacheStores(llvm::StringRef directory, uint64_t bytes,
+                     uint64_t maxBytes);
+/// How many times this process listed a cache directory for eviction; for
+/// tests.
+uint64_t getCacheListingCount();
 /// Marks the entry at `path` as used, for the eviction.
 void touchCacheEntry(llvm::StringRef path);
 
@@ -146,8 +165,9 @@ std::string describeMachine(const llvm::TargetMachine &machine,
 /// and the time its generation took; an entry whose key, length, or hash
 /// differs is a miss and is replaced. Entries are written to a temporary
 /// file and renamed, so concurrent processes may share a directory. The
-/// directory is bounded: after a store, the entries used least recently
-/// are removed until it is below its bound.
+/// directory is bounded: when a store takes its total over the bound, the
+/// entries used least recently are removed until it is within it
+/// (noteCacheStores).
 ///
 /// Without a directory the cache only measures the time code generation
 /// takes. A hit returns a copy of the object; the engine links it into
@@ -181,7 +201,8 @@ public:
             bool &rejected);
   /// Writes the entry atomically.
   static llvm::Error writeEntry(llvm::StringRef path, llvm::StringRef key,
-                                llvm::MemoryBufferRef object, double seconds);
+                                llvm::MemoryBufferRef object, double seconds,
+                                uint64_t *written = nullptr);
 
 private:
   struct Pending {

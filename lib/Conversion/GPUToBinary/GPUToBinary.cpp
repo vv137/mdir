@@ -302,6 +302,8 @@ bool isCubin(StringRef data) { return data.starts_with("\x7f" "ELF"); }
 struct Counters {
   std::atomic<unsigned> ptxCompiled{0}, ptxHits{0}, cubinCompiled{0},
       cubinHits{0}, rejected{0}, stored{0}, unstored{0};
+  /// The bytes of the entries stored.
+  std::atomic<uint64_t> storedBytes{0};
   std::mutex mutex;
   double compileSeconds = 0.0, savedSeconds = 0.0, lookupSeconds = 0.0;
   void addTimes(double compile, double saved, double lookup) {
@@ -348,18 +350,25 @@ public:
     std::call_once(made, [&] {
       writable = !llvm::sys::fs::create_directories(directory);
     });
-    if (writable && !mdir::compiler::writeCacheEntry(
-                         getPath(key, extension), key, data, seconds)) {
+    uint64_t written = 0;
+    if (writable &&
+        !mdir::compiler::writeCacheEntry(getPath(key, extension), key, data,
+                                         seconds, &written)) {
       ++counters.stored;
+      counters.storedBytes += written;
       return;
     }
     // writeCacheEntry's error, if any, is dropped with the entry.
     ++counters.unstored;
   }
 
-  void evict() {
+  /// Adds what one run of the pass stored to the cache's total, once for
+  /// all its modules; the directory is listed only when the bound may be
+  /// exceeded (D[compile-cache-size-file]).
+  void noteStores(uint64_t bytes) {
     if (config)
-      mdir::compiler::evictCache(config->directory, config->maxBytes);
+      mdir::compiler::noteCacheStores(config->directory, bytes,
+                                      config->maxBytes);
   }
 
 private:
@@ -619,7 +628,7 @@ void GpuModuleToBinary::runOnOperation() {
     module->erase();
   }
   if (counters.stored)
-    cache.evict();
+    cache.noteStores(counters.storedBytes);
 
   std::lock_guard<std::mutex> lock(getStatsMutex());
   CompileStats &stats = getStatsTable()[&getContext()];

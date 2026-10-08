@@ -21,8 +21,11 @@
 #include "llvm/Support/raw_ostream.h"
 #include "llvm/Target/TargetMachine.h"
 #include <algorithm>
+#include <atomic>
 #include <chrono>
 #include <cstring>
+#include <mutex>
+#include <unistd.h>
 #include <vector>
 
 using namespace llvm;
@@ -35,6 +38,15 @@ constexpr char kMagic[8] = {'M', 'D', 'I', 'R', 'O', 'B', 'J', '1'};
 constexpr StringLiteral kFormat = "mdir-object-cache 1";
 // A temporary file older than this is left by a process that died.
 constexpr auto kStaleTemporary = std::chrono::hours(1);
+// The file of the cache's total, `<directory>/size`: this tag, then the
+// bytes of the entries and the time of the last listing, in seconds since
+// the epoch.
+constexpr StringLiteral kSizeTag = "mdir-cache-size 1";
+// The total is taken from a listing again once the last one is this old,
+// which removes what processes that died left: bytes they stored and did
+// not add to the total, and their temporary files.
+constexpr auto kListingPeriod = std::chrono::hours(24);
+std::atomic<uint64_t> listings{0};
 
 double now() {
   return std::chrono::duration<double>(
@@ -219,12 +231,14 @@ HostObjectCache::readEntry(StringRef path, StringRef key, double &seconds,
 }
 
 Error HostObjectCache::writeEntry(StringRef path, StringRef key,
-                              MemoryBufferRef object, double seconds) {
-  return writeCacheEntry(path, key, object.getBuffer(), seconds);
+                                  MemoryBufferRef object, double seconds,
+                                  uint64_t *written) {
+  return writeCacheEntry(path, key, object.getBuffer(), seconds, written);
 }
 
 Error mdir::compiler::writeCacheEntry(StringRef path, StringRef key,
-                                      StringRef object, double seconds) {
+                                      StringRef object, double seconds,
+                                      uint64_t *written) {
   std::string data(kMagic, sizeof(kMagic));
   append<uint64_t>(data, key.size());
   data += key;
@@ -255,6 +269,8 @@ Error mdir::compiler::writeCacheEntry(StringRef path, StringRef key,
     sys::fs::remove(temporary);
     return errorCodeToError(error);
   }
+  if (written)
+    *written = data.size();
   return Error::success();
 }
 
@@ -268,7 +284,12 @@ void mdir::compiler::touchCacheEntry(StringRef path) {
                                             std::chrono::system_clock::now());
 }
 
-void mdir::compiler::evictCache(StringRef directory, uint64_t maxBytes) {
+namespace {
+/// Lists the entries of every kind, removes the temporary files left by
+/// processes that died and, least recently used first, entries until at
+/// most `maxBytes` are left. Returns the bytes left.
+uint64_t listAndEvict(StringRef directory, uint64_t maxBytes) {
+  ++listings;
   struct Entry {
     std::string path;
     uint64_t size;
@@ -304,7 +325,7 @@ void mdir::compiler::evictCache(StringRef directory, uint64_t maxBytes) {
     }
   }
   if (total <= maxBytes)
-    return;
+    return total;
   std::sort(entries.begin(), entries.end(),
             [](const Entry &a, const Entry &b) { return a.used < b.used; });
   for (const Entry &entry : entries) {
@@ -314,7 +335,115 @@ void mdir::compiler::evictCache(StringRef directory, uint64_t maxBytes) {
     sys::fs::remove(entry.path);
     total -= entry.size;
   }
+  return total;
 }
+
+/// The file of the total of the cache at `directory`, open and locked
+/// against other processes and other threads until it is destroyed. A
+/// process holds it only while it adds to the total or lists the directory.
+class SizeFile {
+public:
+  SizeFile(StringRef directory, bool create) : lock(getMutex()) {
+    SmallString<256> path(directory);
+    sys::path::append(path, "size");
+    auto opened = sys::fs::openNativeFileForReadWrite(
+        path, create ? sys::fs::CD_OpenAlways : sys::fs::CD_OpenExisting,
+        sys::fs::OF_None);
+    if (!opened) {
+      consumeError(opened.takeError());
+      return;
+    }
+    fd = *opened;
+    // A lock of the file between processes (fcntl), which a network file
+    // system carries; a file system without locks leaves the file unused.
+    if (sys::fs::lockFile(fd)) {
+      ::close(fd);
+      fd = -1;
+    }
+  }
+  ~SizeFile() {
+    // Closing the file gives the lock back.
+    if (fd >= 0)
+      ::close(fd);
+  }
+  bool usable() const { return fd >= 0; }
+
+  /// The total and the time of the last listing, if the file holds them.
+  bool read(uint64_t &total, int64_t &listed) const {
+    char buffer[128];
+    ssize_t size = ::pread(fd, buffer, sizeof(buffer), 0);
+    if (size <= 0)
+      return false;
+    StringRef text(buffer, size);
+    if (!text.consume_front(kSizeTag) || !text.consume_front("\n"))
+      return false;
+    auto [first, second] = text.split('\n').first.split(' ');
+    return !first.getAsInteger(10, total) && !second.getAsInteger(10, listed);
+  }
+  void write(uint64_t total, int64_t listed) const {
+    std::string text =
+        (kSizeTag + "\n" + Twine(total) + " " + Twine(listed) + "\n").str();
+    if (::pwrite(fd, text.data(), text.size(), 0) !=
+            static_cast<ssize_t>(text.size()) ||
+        ::ftruncate(fd, text.size()) != 0)
+      // A total that cannot be written is taken from a listing next time.
+      (void)!::ftruncate(fd, 0);
+  }
+
+private:
+  // A lock by fcntl belongs to the process, and closing any descriptor of
+  // the file gives it back: one thread at a time opens the file.
+  static std::mutex &getMutex() {
+    static std::mutex mutex;
+    return mutex;
+  }
+  std::lock_guard<std::mutex> lock;
+  int fd = -1;
+};
+
+int64_t secondsSinceEpoch() {
+  return std::chrono::duration_cast<std::chrono::seconds>(
+             std::chrono::system_clock::now().time_since_epoch())
+      .count();
+}
+} // namespace
+
+void mdir::compiler::evictCache(StringRef directory, uint64_t maxBytes) {
+  SizeFile file(directory, /*create=*/false);
+  uint64_t total = listAndEvict(directory, maxBytes);
+  if (file.usable())
+    file.write(total, secondsSinceEpoch());
+}
+
+void mdir::compiler::noteCacheStores(StringRef directory, uint64_t bytes,
+                                     uint64_t maxBytes) {
+  SizeFile file(directory, /*create=*/true);
+  if (!file.usable()) {
+    // No total to rely on: the directory is listed, as after every store
+    // before the total was kept.
+    listAndEvict(directory, maxBytes);
+    return;
+  }
+  uint64_t total = 0;
+  int64_t listed = 0, current = secondsSinceEpoch();
+  int64_t period = std::chrono::seconds(kListingPeriod).count();
+  // The total is exact after a listing and never too small afterwards,
+  // but for the bytes of a process that died between its stores and this
+  // call: an entry that replaces another, or that another process removed,
+  // is still counted. The directory is listed when the total may exceed
+  // the bound, when no total is known, and once in a period (the clocks of
+  // two nodes may differ, so a time ahead by less than a period is taken).
+  bool known = file.read(total, listed) && current - listed < period &&
+               listed - current < period;
+  total += bytes;
+  if (known && total <= maxBytes) {
+    file.write(total, listed);
+    return;
+  }
+  file.write(listAndEvict(directory, maxBytes), current);
+}
+
+uint64_t mdir::compiler::getCacheListingCount() { return listings; }
 
 ClearedCache mdir::compiler::clearCache(StringRef directory) {
   ClearedCache cleared;
@@ -353,6 +482,15 @@ ClearedCache mdir::compiler::clearCache(StringRef directory) {
       ++(kind == "host" ? cleared.hostEntries : cleared.gpuEntries);
       cleared.bytes += status.getSize();
     }
+  }
+  // The total loses what was removed. An entry that its writer had not yet
+  // added leaves the total too large, which the next listing corrects.
+  if (cleared.bytes) {
+    SizeFile file(directory, /*create=*/false);
+    uint64_t total = 0;
+    int64_t listed = 0;
+    if (file.usable() && file.read(total, listed))
+      file.write(total - std::min(total, cleared.bytes), listed);
   }
   return cleared;
 }
@@ -403,6 +541,7 @@ void HostObjectCache::notifyObjectCompiled(const Module *module,
   }
   double seconds = now() - request.start;
   bool stored = false;
+  uint64_t written = 0;
   if (config) {
     std::string directory = getObjectDirectory(config->directory);
     SmallString<256> path(directory);
@@ -410,11 +549,12 @@ void HostObjectCache::notifyObjectCompiled(const Module *module,
     // A cache that cannot be written is no cache; the run goes on.
     if (sys::fs::create_directories(directory)) {
       stored = false;
-    } else if (auto error = writeEntry(path, request.key, object, seconds)) {
+    } else if (auto error =
+                   writeEntry(path, request.key, object, seconds, &written)) {
       consumeError(std::move(error));
     } else {
       stored = true;
-      evictCache(config->directory, config->maxBytes);
+      noteCacheStores(config->directory, written, config->maxBytes);
     }
   }
   std::lock_guard<std::mutex> lock(mutex);
