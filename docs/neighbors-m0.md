@@ -268,7 +268,8 @@ $$\max_i \lVert \mathbf x_i - \mathbf m \odot \mathbf x^\text{ref}_i \rVert \le 
 
 which is $s/2$ in the cell of the build. Only the three edges of the
 diagonal enter, also for a triclinic cell. With `rebuild_interval` the
-structure is built every $n$ refreshes and not tested in between (D88).
+structure is built every $n$ refreshes of the steps and not tested in
+between (D88).
 
 The potential of an output (`[output] observables`, the free-energy file, a
 pull file) has the reach of the forces and shares the structure of the

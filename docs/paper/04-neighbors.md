@@ -77,6 +77,21 @@ condition holds whatever moves the particles: the dynamics, the
 constraints, or the barostat moving rigid groups with their centers of
 mass.
 
+The theorem takes $\mathbf L$ to be the cell that the positions are in. The
+potential of an output (the observed terms, the energies of the other
+states of a free-energy calculation) has the reach of the forces and shares
+the structure of the steps; it is evaluated at the state of the step, where
+its refresh would repeat that of the step, and the compiler removes that
+refresh, so the output reads the structure and neither tests nor builds it
+(D[output-independence]). A refresh given the positions of one cell and
+another cell breaks the premise: its displacements are off by
+$\lvert\mu - 1\rvert\,\lVert\mathbf x_i\rVert$ for a scaling $\mu$, and
+it builds the structure where the steps would not have. That happened to
+the outputs at a step that scales the cell before they were given the cell
+after the scaling: a run then depended on its outputs through the steps of
+its builds and the order of its sums in single precision, with no pair
+within the cutoff missing in 20,000 steps of a test.
+
 The theorem is stated for an orthorhombic cell and holds unchanged for a
 triclinic one (D126). The barostat scales the cell $H$ only as
 $H\,\mathrm{diag}(\boldsymbol\mu)$, each tilt with its column (Section

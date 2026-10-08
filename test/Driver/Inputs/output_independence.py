@@ -31,8 +31,9 @@ of two waters across the cell, the same in every run:
              advance; and the rows of the log at the end only against every
              10 steps (D204), without the term over centers (#240)
   Python     a simulation whose parts are read between them (`state()`,
-             `view()`), and one with an energy, a trajectory, and a callback
-             reporter, against one that runs the steps in parts of the same
+             `view()`), and one with reporters of energies, frames, and
+             observables and a callback, against one that runs the steps in
+             parts of the same
              lengths and reads nothing, under NPT with the scaling of
              Trotter type (where that ensemble is among those asked for)
 """
@@ -285,6 +286,7 @@ def run_python(precision):
     calls = []
     reported.reporters.append(mdir.EnergyReporter(str(work / f"{precision}.dat"), period=10))
     reported.reporters.append(mdir.TrajectoryReporter(str(work / f"{precision}.dcd"), period=20))
+    reported.reporters.append(mdir.ObservablesReporter(str(work / f"{precision}.obs"), 10))
     reported.reporters.append(mdir.CallbackReporter(
         lambda simulation, state: calls.append(dict(state.observables)), period=10))
     for steps in parts:
@@ -294,7 +296,7 @@ def run_python(precision):
     gaps = differences(reference, final(reported))
     assert not gaps, ("reporters", gaps)
     print(f"{target_name} {precision} Python: state() and view() between the parts and the "
-          f"reporters of energies, frames, and a callback leave the final state as it is "
+          f"reporters of energies, frames, observables, and a callback leave the final state as it is "
           f"without them")
 
 
