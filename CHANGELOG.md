@@ -28,6 +28,13 @@ format, or the outputs; every such change is listed under **Changed** or
   the input are unchanged. In the IR, `derivative(n)` of `md.evaluate`
   takes an argument that is a field of the particles and gives a field.
   See [docs/python-gradient.md](docs/python-gradient.md).
+- The derivative of the energy in the charges with particle mesh Ewald
+  (D[tunable-gradient-pme], #203): a program compiled with
+  `System.tunable_gradient` and tunable charges under PME is no longer
+  refused. `md.reciprocal` takes an optional fourth result, the potential
+  of the grid at the particles, and `md_exec.reciprocal` the flag
+  `potential`; programs without the derivative are unchanged. The suite
+  has the feature `torchpme` for its check against torch-pme.
 - `Execution.neighbor_capacity` in Python, the `[execution]
   neighbor_capacity` of the control file (D227,
   #162): 0, the default, estimates it, and

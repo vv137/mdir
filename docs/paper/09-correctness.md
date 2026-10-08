@@ -399,6 +399,26 @@ through an evaluation of the derivative equal those of a program compiled
 without it to the bit, and a simulation continued from a checkpoint gives
 the derivative of the one that wrote it to the bit.
 
+With particle mesh Ewald the derivative in the charges
+(D[tunable-gradient-pme]) is checked against an independent
+differentiable PME, torch-pme 0.5.0
+[[Loche2025]](references.md#loche2025), on the dipeptide in water with
+every one of its 1,168 charges an entry: the same positions, cell,
+charges, $\beta$ = 3.5/nm, cutoff of 0.8 nm, and 64 points along each
+edge, the derivative of torch-pme's Ewald sum from torch autograd, with
+the shift of the direct sum, the excluded pairs, and the pairs three bonds
+apart added in torch. torch-pme interpolates with Lagrange polynomials
+and MDIR with B-splines, so the two agree as their grids are refined:
+$3.4\times10^{-5}$ of the largest derivative (410 kJ/mol/e) at 64 points,
+where 128 points change MDIR's by $1.3\times10^{-5}$ and torch-pme's by
+$2.9\times10^{-5}$, and $1.3\times10^{-6}$ at 128 points
+($2.3\times10^{-6}$ in mixed precision); the change of the energy for
+charges perturbed by 5%, 117.66 kJ/mol, agrees to $8.6\times10^{-4}$.
+Central differences of the energy agree to $4.5\times10^{-10}$ in double
+precision and $8.5\times10^{-6}$ in mixed with a net charge of 0.5 e, and
+to $1.0\times10^{-9}$ and $9.7\times10^{-6}$ in a triclinic cell, on the
+CPU and a GPU.
+
 The read-only DLPack views of a simulation (D220,
 Section 3.6) are checked by consumers that use none of MDIR's code: NumPy
 on the CPU, a reader of the capsule in ctypes with the CUDA driver API,

@@ -1,9 +1,10 @@
 # The derivative of the energy in the tunable parameters (D230)
 
 Issue #203, the first implementation step of M2b (#138,
-[roadmap](roadmap.md), Section 6.1). Status: implemented. The charges with
-particle mesh Ewald are a decision of their own, in a pull request of
-their own on #203 (maintainer's decision on PR #205); see [Stages](#stages).
+[roadmap](roadmap.md), Section 6.1). Status: implemented, in two decisions:
+`D230` for everything but the charges with particle mesh
+Ewald, which are `D[tunable-gradient-pme]`
+([below](#the-charges-with-particle-mesh-ewald)); see [Stages](#stages).
 
 A fit of the parameters of a potential by reweighting
 [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) needs
@@ -117,12 +118,13 @@ value that is not finite at the evaluation is an error of `gradient()`
 - `gradient()` while a view or a writable borrow of the simulation is
   alive (D220, D229): `SimulationError`, as for `run(0, energy=True)`.
 - `System.tunable_gradient` without tunables, at compile.
-- The charges with particle mesh Ewald or an implicit solvent, at compile,
-  naming the tunable: not implemented yet (see [Stages](#stages)).
-- The charges when a pair term that reads `q1` or `q2` has its tail in the
-  correction for the dispersion; $\sigma$ or $\epsilon$ when a pair term
-  reads `sigma` or `epsilon` (the pair terms of the Python model do not);
-  a parameter of a term over centers of groups: not implemented yet.
+- The charges with an implicit solvent, the reaction field, or a pair
+  term that reads `q1` or `q2` and has its tail in the correction for the
+  dispersion; $\sigma$ or $\epsilon$ when a pair term reads `sigma` or
+  `epsilon`; a parameter of a term over centers of groups: not implemented
+  yet, an error of compile that names the tunable. The Python model
+  reaches none of the first four today (it has no implicit solvent and no
+  reaction field, and its pair terms read `r` and their constants).
 - A per-type $\sigma$ (geometric) or $\epsilon$ that is 0 for a type whose
   map takes it, while another type's is not: $\sqrt{xy}$ has no derivative
   in $x$ at 0. The message says to give the type $-1$ in the map. It is an
@@ -186,7 +188,7 @@ the site derivatives that the particle $i$ collects.
 
 | Tunable | In `@tunable` | Field that leaves | Host |
 |---|---|---|---|
-| charge | the field of the charges itself; the 1-4 pairs form $fs_Cq_iq_j$ from the charges of their members (a tuple field holds $fs_C$) instead of reading the product | $\partial U/\partial q_i$ | adds over the particles of each entry |
+| charge | the field of the charges itself; the 1-4 pairs form $fs_Cq_iq_j$ from the charges of their members (a tuple field holds $fs_C$) instead of reading the product; the reciprocal sum of PME yields the potential of the grid at the particles | $\partial U/\partial q_i$ | adds the self term and the background of PME, then adds over the particles of each entry |
 | per-type $\sigma$, $\epsilon$ | $\sigma_{ij} = \sigma_{ab} + d_iw_{ab} + d_jw_{ba}$, with $a$, $b$ the types and $w_{ab} = \partial\sigma_{ab}/\partial\sigma_a$ a table that the host computes | $\sum_j \partial u_{ij}/\partial\sigma_{ab}\,w_{ab}$ | adds over the particles of each type: $\partial U/\partial\sigma_a$ |
 | $\sigma$, $\epsilon$ by pairs | the same with $w_{ab} = 1$ for one pair of types in each row $a$, as many seeds as pairs share a type | $\sum_{j\in b}\partial u_{ij}/\partial\sigma_{ab}$ for the pair of the row | adds over the particles of the type of the row, times 1/2 for a pair of one type |
 | a constant of a pair term | a number, argument of `@tunable` | a number | adds the tail |
@@ -221,7 +223,53 @@ contribution in f32, as they compute the energy.
 | The tail of a pair term and the estimate of its shift (D209, D210), in a constant of the term | the Richardson-extrapolated central differences of the quadrature that computes them (`getPairTailDerivative`), exactly 0 for a constant that the expression does not read; proportional to $1/V$ |
 | The correction for the dispersion, $E_\text{disp} = K\sum_{ab}n_{ab}\,4\epsilon_{ab}\sigma_{ab}^6$ over the ordered pairs of types, and the estimate of its shift, $E_\text{disp}(1 - V/(N\tfrac{4\pi}{3}r_c^3))$ | closed form: $G_{ab} = K'n_{ab}\,24\epsilon_{ab}\sigma_{ab}^5$ in $\sigma_{ab}$ and $K'n_{ab}\,4\sigma_{ab}^6$ in $\epsilon_{ab}$, and the row $a$ of a seed takes $\sum_b(G_{ab}+G_{ba})w_{ab}$, the same weights as in the kernel |
 
-Under a Coulomb cutoff nothing that the host adds follows the charges.
+Under a Coulomb cutoff nothing that the host adds follows the charges;
+with PME the self term and the background do
+([below](#the-charges-with-particle-mesh-ewald)).
+
+### The charges with particle mesh Ewald
+
+`D[tunable-gradient-pme]` (maintainer's decision on PR #205, Q4). With
+$E_\text{rec} = \tfrac12\mathbf q^{\mathsf T}\mathsf A\mathbf q$ the
+reciprocal sum, a quadratic form of the charges whose matrix the spreading,
+the influence function, and the gathering make,
+
+$$
+\frac{\partial E_\text{rec}}{\partial q_i} = (\mathsf A\mathbf q)_i
+= \sum_{\mathbf k}\theta_i(\mathbf k)\,\phi(\mathbf k),
+$$
+
+the grid $\phi$ after the product with the influence function, gathered at
+the particle with the weights $\theta_i$ of its B-splines: the sum that
+gives the force, $-q_i\sum_{\mathbf k}\phi(\mathbf k)\nabla_i\theta_i(\mathbf
+k)$, with the weights in place of their gradient and without the charge.
+
+- `md.reciprocal` has an optional fourth result, a field of the type of
+  the charges, the potential of the grid at the particles. Only the
+  differentiation in the field of its charges asks for it: the op with
+  three results becomes one with four, which yields the same energy,
+  forces, and virial. `@energy` and the steps keep the op with three.
+- `md_exec.reciprocal` with `potential` yields that field in place of the
+  forces. It is stored in f64 in every precision mode, and the grid of that
+  sum is computed in f64 as well, on a device too, where the grid of the
+  forces is f32 in mixed precision.
+- The templates gain `@mdrt.pme_potential` (and `_triclinic`) in
+  `PME.mlir` and `@mdrt_gpu_pme_potential` in `PMEGPU.mlir` and
+  `PMEGPUTriclinic.mlir`: the gather with the weights. A module takes
+  these functions only if one of its sums asks for the potential, so a
+  program without the derivative in the charges lowers to what it did.
+- The host adds the derivatives of the constants of PME,
+  $\partial E_\text{self}/\partial q_i = -2f\beta q_i/\sqrt\pi$ and
+  $\partial E_\text{bg}/\partial q_i = -f\pi Q/(V\beta^2)$, the second
+  proportional to $1/V$.
+- The direct sum (shifted to 0 at the cutoff, D210), the excluded pairs
+  $-fq_iq_j\operatorname{erf}(\beta r)/r$, and the 1-4 pairs are sums that
+  gather the charges, with the rules above.
+
+D161 took the derivative of the reciprocal sum in a scalar from two more
+reciprocal sums, by the identity of its quadratic form, so as not to
+change the templates; that gives one number for each direction of
+$\mathbf q$, and the derivative in $N$ charges needs the gather.
 
 **At $K$ frames (next step of #138).** The fields are linear in a seed
 $g_k$ of the frame: the evaluator will call the same entry at each stored
@@ -235,7 +283,7 @@ U_k/\partial d$ in f64, and apply the chain rule once.
 | Constants of pair terms; parameters of tuple terms | done |
 | Per-type $\sigma$ and $\epsilon$, and the table by pairs of types | done |
 | Charges with a Coulomb cutoff | done; the Python model has no reaction field |
-| Charges with PME | not in this decision: refused at compile. It follows as a decision of its own on #203 (PR #205, Q4): a fourth result of `md.reciprocal`, the potential of the grid at the particles, in the three templates of PME, only in a program compiled with the derivative; the self term and the background by closed forms on the host |
+| Charges with PME | done, `D[tunable-gradient-pme]`: the fourth result of `md.reciprocal` in the three templates of PME, the self term and the background on the host |
 | Tails of pair terms and the correction for the dispersion (host) | done for constants of pair terms and for $\sigma$, $\epsilon$; the tail of a pair term that reads the charges is refused |
 
 ## `observe` and tunables
@@ -286,7 +334,41 @@ give the derivative and its energy of the simulation that wrote the
 checkpoint to the bit, in the four configurations
 (`python-tunable-gradient-checkpoint*.test`).
 
-The charges with PME, against torch-pme, belong to that decision.
+### The charges with particle mesh Ewald
+
+`python-tunable-gradient-pme.test`, `-gpu.test`;
+`python-tunable-gradient-torchpme.test`, `-gpu.test` (the feature
+`torchpme`: an interpreter with torch and torch-pme given to lit with
+`-Dtorch_python`); `differentiate-fields.mlir` and
+`Conversion/MDToMDExec/reciprocal-potential.mlir` for the passes.
+
+| Quantity | Reference | CPU double | GPU double | CPU mixed | GPU mixed | Tolerance (double, mixed) |
+|---|---|---|---|---|---|---|
+| Charges, 25 tied entries for 1,168 particles, a net charge of 0.5 e, dipeptide in water, PME | FD | 4.5e-10 | 4.5e-10 | 8.5e-6 | 8.5e-6 | 1e-7, 5e-4 |
+| Charges, 11 entries for 1,209 particles, 403 waters in a rhombic dodecahedron (the triclinic templates) | FD | 1.0e-9 | 1.0e-9 | 9.7e-6 | 9.0e-6 | 1e-7, 5e-4 |
+| $\partial U/\partial q_i$ of each of the 1,168 particles, $\beta$ = 3.5/nm, $r_c$ = 0.8 nm, 64 points along each edge, relative to the largest (410.1 kJ/mol/e) | torch-pme 0.5.0 [[Loche2025]](references.md#loche2025), 64 points, 5 nodes, torch autograd | 3.4e-5 | 3.4e-5 | 3.4e-5 | 3.4e-5 | 1.3e-4: three times what the two change by with 128 points (MDIR 1.3e-5, torch-pme 2.9e-5) |
+| The same with 128 points in both | torch-pme | 1.3e-6 | 1.3e-6 | 2.3e-6 | 2.3e-6 | the same |
+| The change of the energy for charges perturbed by 5%, 117.66 kJ/mol | torch-pme: 117.6598 | 8.6e-4 | 8.6e-4 | 3.0e-3 | 1.0e-3 | 7e-3, 3e-2 kJ/mol (the same refinement, times the change) |
+
+The reference energy is torch-pme's Ewald sum (the direct sum over the
+pairs within the cutoff that the topology does not exclude, the sum of the
+mesh, the self term, the background) with three sums written in torch
+around it: less the shift of the direct sum to 0 at the cutoff, less
+$fq_iq_j\operatorname{erf}(\beta r)/r$ of the excluded pairs, plus the 1-4
+pairs. torch-pme interpolates with Lagrange polynomials and an influence
+function of its own, MDIR with B-splines of order 4 and the factors of
+smooth PME, so the two agree as their grids are refined, not to rounding:
+$3.4\times10^{-5}$ at 64 points, $1.3\times10^{-6}$ at 128.
+
+Performance (GPU 0, mixed precision). `mdir run` on JAC, main (5bf4cb0)
+against the branch, alternated three times, ns/day: NVE 854.7, 853.6,
+852.6 against 852.5, 855.8, 852.2; NPT 788.0, 785.6, 786.1 against 786.0,
+785.9, 786.1. The module and the lowered IR of the five programs of the
+table above without `tunable_gradient` equal main's. A Python simulation
+of JAC with every charge tunable (23,558 entries): 0.2569 and 0.2578 ms
+per step without the derivative, 0.2571 and 0.2582 with it; compile and
+the first 200 steps 12.2 s against 13.3 s; `gradient()` 10.0 ms,
+`run(0, energy=True)` 9.1 ms.
 
 ## Performance
 

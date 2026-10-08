@@ -809,11 +809,44 @@ tail $I_{ij}$ of a pair term and the estimate of its shift are integrals
 that a quadrature computes, and their derivative in a constant of the term
 is the Richardson-extrapolated central difference of that quadrature
 (Section 5.4), exactly 0 where the expression does not read the constant.
-The derivative in the charges through the reciprocal sum of particle mesh
-Ewald, the potential of the grid at the particles $\partial
-E_\text{rec}/\partial q_i$, with $-2f\beta q_i/\sqrt\pi$ of the self term
-and $-f\pi Q/(V\beta^2)$ of the background, is not implemented: such a
-program is refused when it is compiled.
+
+*The reciprocal sum in the charges.* The reciprocal sum of particle mesh
+Ewald (Section 5) is a quadratic form of the charges, $E_\text{rec} =
+\tfrac12\mathbf q^{\mathsf T}\mathsf A\mathbf q$ with $\mathsf A$ symmetric:
+the charges are spread to the grid with the weights $\theta_i(\mathbf k)$
+of their B-splines, the grid is multiplied by the influence function in
+reciprocal space, and the result $\phi$ is read back with the same
+weights. Its derivative is therefore linear in the charges,
+
+$$
+\frac{\partial E_\text{rec}}{\partial q_i} = (\mathsf A\mathbf q)_i
+= \sum_{\mathbf k}\theta_i(\mathbf k)\,\phi(\mathbf k),
+\qquad E_\text{rec} = \frac12\sum_iq_i\frac{\partial E_\text{rec}}{\partial q_i},
+$$
+
+the potential of the grid at the particle: the sum of the force,
+$\mathbf F_i = -q_i\sum_{\mathbf k}\phi(\mathbf k)\nabla_i\theta_i(\mathbf
+k)$, with the weights in place of their gradient and without the charge
+(D[tunable-gradient-pme]). The op of the reciprocal sum yields it as a
+fourth result where the differentiation in the field of its charges asks,
+gathered by a kernel of its own, in f64 in every precision mode; a program
+that does not ask has neither the result nor the kernel. For a scalar that
+the charges depend on, $\partial E_\text{rec}/\partial\lambda =
+\boldsymbol\delta^{\mathsf T}\mathsf A\mathbf q$ with $\boldsymbol\delta =
+\partial\mathbf q/\partial\lambda$ is one number, which two more reciprocal
+sums give (Section 6.8); $N$ charges need the gather. The host adds what
+it adds to the energy: from $E_\text{self}$ and $E_\text{bg}$ above,
+
+$$
+\frac{\partial E_\text{self}}{\partial q_i} = -\frac{2f\beta}{\sqrt\pi}q_i,
+\qquad
+\frac{\partial E_\text{bg}}{\partial q_i} = -\frac{f\pi Q}{V\beta^2},
+$$
+
+the second proportional to $1/V$. The direct sum, shifted to 0 at the
+cutoff, the excluded pairs $-fq_iq_j\operatorname{erf}(\beta r)/r$, and the
+pairs three bonds apart are sums that gather the charges, differentiated
+as fields.
 
 ## 3.7 The objects of MDIR, for developers
 
