@@ -26,7 +26,9 @@ D207 (#109) adds reporters: `mdir run`'s energy file and
 trajectory written inside the parts of a run, and Python callbacks
 ([python-reporters.md](python-reporters.md)).
 D213 (#130) declares tunable parameters, whose values a
-simulation takes without compiling ([python-tunable.md](python-tunable.md)).
+simulation takes without compiling ([python-tunable.md](python-tunable.md)),
+and the derivative of the energy in them at a state
+([python-gradient.md](python-gradient.md)).
 D220 (#131) exposes the buffers of a
 simulation, the particle IDs, and the values of tunables as read-only DLPack
 views with leases and stream handoff ([python-dlpack.md](python-dlpack.md)).

@@ -229,7 +229,13 @@ the host adds to the log and the reports (the dispersion correction, the
 PME constants) come from the rebuilt values. Nothing changes for a program
 without tunables.
 
-**Not differentiated here.** The sampler is not differentiated (Section 6.1
+**Not differentiated here.** *Amended by D[tunable-gradient]
+([python-gradient.md](python-gradient.md)):* the derivative of the energy
+in the tunables is `sim.tunables.gradient()` of a program compiled with
+`System.tunable_gradient`; the program gives the derivative in each of its
+buffers and the host applies the chain rule through `applyTunables`
+(maintainer's decision on PR #205), not the IR prologue that the rest of
+this paragraph proposed. The sampler is not differentiated (Section 6.1
 of the roadmap). The issue proposes an IR prologue so that `Differentiate`
 covers the derived quantities. The first consumer of those derivatives is
 the M2b frame evaluator, a potential of its own; this item computes them on
@@ -333,7 +339,7 @@ OpenMM quantities for charges, $\sigma$, and $\epsilon$ (D200). Host values
 are float64. The device copies follow the precision of other parameters:
 fields in the type of parameters (f32 in mixed precision), tables and tuple
 fields as the program takes them today. The derivatives that M2b needs are
-accumulated in f64 by its evaluator.
+accumulated in f64 ([python-gradient.md](python-gradient.md)).
 
 ## Refused combinations
 

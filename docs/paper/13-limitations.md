@@ -149,7 +149,13 @@ fitted to ensemble averages by reweighting stored frames
 evaluates the energy at the frames with its derivative in the parameters;
 the reweighting and the loss stay in the framework, through adapters for
 PyTorch first and JAX second. DLPack shares storage, not gradient graphs,
-so each adapter needs explicit derivative rules. Not begun.
+so each adapter needs explicit derivative rules. Begun
+(D[tunable-gradient], Section 3.6): the derivative of the energy in the
+tunables at the state of a simulation, for constants of pair terms,
+parameters of tuple terms, $\sigma$ and $\epsilon$ per type and by pairs
+of types, and the charges under a Coulomb cutoff. Remaining: the charges
+with particle mesh Ewald, which need the potential of the grid at the
+particles; the evaluation at stored frames; and the adapters.
 
 *M3 and M4.* Learned potentials behind a versioned interface, one model on
 one GPU first. The distributed work begins with a graph of the

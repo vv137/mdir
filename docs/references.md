@@ -207,6 +207,16 @@ parallel tempering simulations," *J. Chem. Theory Comput.* **3**(1),
 
 Used for: the statistical inefficiency by which `scripts/free-energy.py` spaces its samples (D161).
 
+### CurtisPowellReid1974
+
+A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse
+Jacobian matrices," *IMA J. Appl. Math.* **13**, 117–119 (1974).
+[doi:10.1093/imamat/13.1.117](https://doi.org/10.1093/imamat/13.1.117)
+
+Used for: the seeds of the derivatives in the tables of the Lennard-Jones,
+groups of pairs of types that share no row, one field of the particles for
+each group (D[tunable-gradient]).
+
 ### Darden1993
 
 T. Darden, D. York, L. Pedersen, "Particle mesh Ewald: An N⋅log(N)

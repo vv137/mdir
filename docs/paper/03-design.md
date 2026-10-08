@@ -684,6 +684,137 @@ the same $\mathbf x$ before the next step (a call of the entry with no
 steps). Leapfrog's velocities of the half step before are momenta of the
 trajectory already taken and stay; its next kick takes the new forces.
 
+### The derivative in the tunable parameters
+
+Reweighting needs more than $U_{\boldsymbol\theta}$ at the frames: the
+gradient of a loss on $\langle O\rangle_{\boldsymbol\theta}$ is, from the
+weights above,
+
+$$
+\frac{\partial\langle O\rangle_{\boldsymbol\theta}}{\partial\theta_m}
+= \Big\langle\frac{\partial O}{\partial\theta_m}\Big\rangle_{\boldsymbol\theta}
+- \frac1{k_BT}\Big(\Big\langle O\frac{\partial U}{\partial\theta_m}\Big\rangle_{\boldsymbol\theta}
+- \langle O\rangle_{\boldsymbol\theta}\Big\langle\frac{\partial U}{\partial\theta_m}\Big\rangle_{\boldsymbol\theta}\Big),
+$$
+
+the derivative of $w_n\propto e^{-\Delta U(S_n)/k_BT}$ normalized, so the
+one quantity that MDIR must add is $\partial U/\partial\boldsymbol\theta$ at
+a configuration (D[tunable-gradient], `docs/python-gradient.md`). A
+program compiled for it evaluates it at the state of a simulation when a
+script asks, and its steps are those of a program without it.
+
+*Which $U$.* The weights are ratios of the densities that the frames were
+sampled from and are reweighted to. A run that cuts a pair term at $r_c$
+samples $e^{-U_\text{shift}/k_BT}$, not the cut energy that its log reports
+(Section 6.8, D210): its forces are $-\nabla U_\text{shift}$, and the
+impulse at $r_c$ that the cut energy implies is never applied. So the
+derivative is that of $U_\text{shift}$ with the estimate $E_\text{sh}$ of
+the shift, as $\partial F/\partial\xi = \langle\partial U_\text{shift}/
+\partial\xi\rangle$ is for an observed constant; the two differ by
+$\sum_{r<r_c}\partial u(r_c)/\partial\theta$, which fluctuates with
+$N_\text{in}$.
+
+*The chain rule.* The program does not read $\boldsymbol\theta$. It reads
+values $b_s$ that the host computes from it (the charges, the table
+$\sigma_{ab}$, $\epsilon_{ab}$, the parameters of tuples), and the host
+adds constants $c(\boldsymbol\theta)$ to the energy. Hence
+
+$$
+\frac{\partial U}{\partial\theta_m}
+= \sum_s\frac{\partial U}{\partial b_s}\frac{\partial b_s}{\partial\theta_m}
++ \frac{\partial c}{\partial\theta_m},
+$$
+
+and the two factors are computed where the two maps are: $\partial
+U/\partial b_s$ by the differentiation of the program, the Jacobian
+$\partial b_s/\partial\theta_m$ and $\partial c/\partial\theta_m$ on the
+host, beside the code that computes $\mathbf b$ and $c$. The site
+derivatives are linear in a weight of the frame, so that a sum over frames
+$\sum_ng_n\,\partial U(S_n)/\partial\mathbf b$ can be accumulated before the
+chain rule is applied once.
+
+*A field of the particles.* Differentiation (Section 3.3) gains the
+derivative of a potential in an argument that is a field $a$ of the
+particles, the field $g_i = \partial U/\partial a_i$. A sum over the
+unordered pairs of a relation, $S = \sum_{\{i,j\}}k(i,j)$ with $k$
+symmetric under exchange, has
+
+$$
+\frac{\partial S}{\partial a_i} = \sum_{j:(i,j)\in D(R)}\partial_1k(i,j),
+$$
+
+a gather over the directed expansion whose kernel is the derivative of $k$
+in the value of its first particle: the derivative in the value of the
+second is, by the symmetry, the same kernel with the particles swapped,
+which the directed expansion visits at $j$. The kernel is not symmetric
+itself ($\partial_1(q_iq_j/r) = q_j/r$), so the gather carries no exchange
+contract and each particle of a pair takes its own value. A sum over
+tuples gives a gather over them that yields $\partial k/\partial a_{t[s]}$
+to the member at each place $s$; a sum over particles a map. Through the
+energy, each takes the weight $\partial U/\partial S$ of its sum. The
+three outcomes of a parameter (Section 6.8) hold: a field that no sum of
+the energy takes has the derivative zero, a sum has its rule, and any
+other use is an error that names the op.
+
+*Seeds.* The loops over pairs and tuples accumulate per particle, as they
+do for the forces; a derivative in an entry $\sigma_{ab}$ of a table or in
+the parameter of a tuple is a sum by pairs of types or by tuples, which no
+loop accumulates. Such a derivative is made to leave as a field of the
+particles. The potential that is differentiated takes a *seed*, a field
+$d$ of zeros, and reads
+
+$$
+\sigma_{ij} = \sigma_{ab} + d_i\,J_{ab} + d_j\,J_{ba}
+$$
+
+for particles $i$, $j$ of the types $a$, $b$, with weights $J$ by
+ordered pairs of types. Its value is that of the potential, since $d = 0$,
+and
+
+$$
+\frac{\partial U}{\partial d_i} = \sum_j\frac{\partial u_{ij}}{\partial\sigma_{ab}}\,J_{ab},
+\qquad
+\sum_{i\in a}\frac{\partial U}{\partial d_i}
+= \sum_bJ_{ab}\,(1+\delta_{ab})\frac{\partial U}{\partial\sigma_{ab}},
+$$
+
+a pair of two particles of one type adding at both. With the Jacobian of
+the combining rule in its first argument as weights, $J_{ab} =
+\partial\sigma_{ab}/\partial\sigma_a$ ($\tfrac12$ for Lorentz,
+$\tfrac12\sqrt{\sigma_b/\sigma_a}$ for the geometric mean,
+$\tfrac12\sqrt{\epsilon_b/\epsilon_a}$ for Berthelot, 0 for a pair that the
+rule does not give), the sum over the particles of the type $a$ is
+$\partial U/\partial\sigma_a$: the entry $(a,b)$ follows $\sigma_a$ through
+its first argument and $(b,a)$ through its second, and for $a = b$ the
+two halves add to $\partial\sigma_{aa}/\partial\sigma_a = 1$. For a
+tunable of the table by pairs, $J_{ab} = 1$ for one pair in the row
+$a$ gives $(1+\delta_{ab})\,\partial U/\partial\sigma_{ab}$ of that pair;
+pairs that share a type take different seeds, so that the columns of the
+Jacobian that one seed holds share no row
+[[CurtisPowellReid1974]](references.md#curtispowellreid1974). The
+parameter $p_t$ of a tuple is read as $p_t + d_{t[s]}$ at one member, and
+$\partial U/\partial d_i$ at that member is $\partial u_t/\partial p_t$,
+tuples that share the member taking different seeds. The charges need
+none: they are a field already, once the pairs three bonds apart form
+$fs_Cq_iq_j$ from the charges of their members and not from a product that
+the host made.
+
+*What the host adds.* The correction for the dispersion and the estimate of
+its shift are $K\sum_{ab}n_{ab}\,4\epsilon_{ab}\sigma_{ab}^6$ over the
+ordered pairs of types (Section 5.4), with the derivatives
+$G_{ab} = Kn_{ab}\,24\epsilon_{ab}\sigma_{ab}^5$ and $Kn_{ab}\,4\sigma_{ab}^6$
+in the entries; the row $a$ of a seed takes $\sum_b(G_{ab} +
+G_{ba})\,J_{ab}$, the chain rule with the weights of the kernel. The
+tail $I_{ij}$ of a pair term and the estimate of its shift are integrals
+that a quadrature computes, and their derivative in a constant of the term
+is the Richardson-extrapolated central difference of that quadrature
+(Section 5.4), exactly 0 where the expression does not read the constant.
+The derivative in the charges through the reciprocal sum of particle mesh
+Ewald, the potential of the grid at the particles $\partial
+E_\text{rec}/\partial q_i$, with $-2f\beta q_i/\sqrt\pi$ of the self term
+and $-f\pi Q/(V\beta^2)$ of the background, is not implemented: such a
+program is refused when it is compiled.
+
 ## 3.7 The objects of MDIR, for developers
 
 A developer meets the same few objects at every level; Table 3.4 lists

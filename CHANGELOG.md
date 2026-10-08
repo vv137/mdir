@@ -12,6 +12,22 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The derivative of the energy in the tunable parameters of a Python
+  model (D[tunable-gradient], #203): with `System.tunable_gradient = True`
+  a compiled program can evaluate it, and
+  `Simulation.tunables.gradient()` returns, without taking a step, a
+  read-only mapping of the names of the tunables to arrays of the shape of
+  their values, in kJ/mol per unit of each, with `.energy`, `.version`,
+  `.step`, and `.zero`. It is the derivative of the potential that the
+  forces sample, shifted at the cutoff where the run cuts it (D210). It
+  covers constants of pair terms, parameters of tuple terms, per-type
+  sigma and epsilon, the table by pairs of types, and the charges under a
+  Coulomb cutoff; the charges with particle mesh Ewald are refused at
+  compile until that part lands. `Program.plan["tunables"][k]["gradient"]`
+  says `"rule"` or `"zero"` for each tunable. Programs compiled without
+  the input are unchanged. In the IR, `derivative(n)` of `md.evaluate`
+  takes an argument that is a field of the particles and gives a field.
+  See [docs/python-gradient.md](docs/python-gradient.md).
 - `Execution.neighbor_capacity` in Python, the `[execution]
   neighbor_capacity` of the control file (D227,
   #162): 0, the default, estimates it, and
