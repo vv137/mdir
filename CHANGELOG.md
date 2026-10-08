@@ -490,6 +490,15 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- The estimate of the shift of the correction for the dispersion (D210)
+  under a barostat (#224). It is `c1/V - c2`, and the whole of it was scaled
+  with the volume as the tail is, which left `c2 (1 - V0/V)` in the energy
+  of the log and the conserved energy under `POTENTIAL_SHIFT`, in the
+  columns of `observe` of a pair term, in the free-energy file, and in
+  `Simulation.tunables.gradient()` and its energy, once the cell had left
+  the volume of the start: 1.2e-3 of what the correction adds at a volume
+  6% smaller. Only the part `c1/V` follows the volume now. Nothing changes
+  at constant volume, and nothing in the forces or the pressure.
 - `scripts/paper/check-appendix.sh` without the `mdir` to ask, or with one
   that cannot be run, prints its usage and exits with 2; it ran an empty
   command and reported the whole example of Appendix A as a difference,

@@ -221,7 +221,7 @@ contribution in f32, as they compute the energy.
 | Constant of the energy | Its derivative |
 |---|---|
 | The tail of a pair term and the estimate of its shift (D209, D210), in a constant of the term | the Richardson-extrapolated central differences of the quadrature that computes them (`getPairTailDerivative`), exactly 0 for a constant that the expression does not read; proportional to $1/V$ |
-| The correction for the dispersion, $E_\text{disp} = K\sum_{ab}n_{ab}\,4\epsilon_{ab}\sigma_{ab}^6$ over the ordered pairs of types, and the estimate of its shift, $E_\text{disp}(1 - V/(N\tfrac{4\pi}{3}r_c^3))$ | closed form: $G_{ab} = K'n_{ab}\,24\epsilon_{ab}\sigma_{ab}^5$ in $\sigma_{ab}$ and $K'n_{ab}\,4\sigma_{ab}^6$ in $\epsilon_{ab}$, and the row $a$ of a seed takes $\sum_b(G_{ab}+G_{ba})w_{ab}$, the same weights as in the kernel |
+| The correction for the dispersion, $E_\text{disp} = K\sum_{ab}n_{ab}\,4\epsilon_{ab}\sigma_{ab}^6$ over the ordered pairs of types, and the estimate of its shift, $E_\text{disp}(1 - V/(N\tfrac{4\pi}{3}r_c^3))$, of which $E_\text{disp}$ follows the volume of the state and the rest does not (#224) | closed form: $G_{ab} = K'n_{ab}\,24\epsilon_{ab}\sigma_{ab}^5$ in $\sigma_{ab}$ and $K'n_{ab}\,4\sigma_{ab}^6$ in $\epsilon_{ab}$, and the row $a$ of a seed takes $\sum_b(G_{ab}+G_{ba})w_{ab}$, the same weights as in the kernel |
 
 Under a Coulomb cutoff nothing that the host adds follows the charges;
 with PME the self term and the background do

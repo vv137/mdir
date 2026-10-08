@@ -213,7 +213,7 @@ state:
 | `%tilt_bx`, `%tilt_cx`, `%tilt_cy`: the tilts of a triclinic cell | the cell at the start | arguments of the entry |
 | `%bstate0` to `%bstate8`: the pressure state of a barostat that scales every step (D92) | the checkpoint that `mdir run` continues | arguments of the entry |
 | The edges `%lx`, `%ly`, `%lz` | the cell at the start | arguments of the entry already |
-| The correction for the dispersion, the PME self term and background, the shift estimate (D210), the tails of pair terms (D209), the constants of `[free_energy]` that scale as $1/V$ | the volume at the start | values of the host (`Output`), never in the text |
+| The correction for the dispersion, the PME self term and background, the shift estimate (D210), the tails of pair terms (D209), the constants of `[free_energy]` that scale as $1/V$, and the part of the shift estimate that does not depend on the volume (#224) | the volume at the start | values of the host (`Output`), never in the text |
 | The factors of the influence function of PME and LJPME | the grid | entry buffers already |
 | The PME and LJPME grid, an attribute of `md.reciprocal` | a Python stage: the cell of its start; `mdir run`: the cell of the coordinate file | **structural**: stays in the text |
 | The neighbor capacity, `width` of `convert-md-to-md-exec` | the positions and the cell at the start | **structural**: a pipeline option, in the lowered module; its estimate is rounded more coarsely, and `Execution.neighbor_capacity` fixes it |

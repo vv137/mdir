@@ -470,21 +470,33 @@ private:
     /// what a shift to 0 at the cutoff takes from the pairs within it
     /// (D210), in kJ/mol at the volume of the file.
     double energy = 0.0, virial = 0.0, shift = 0.0;
+    /// The estimate is X (1 - V / (N (4π/3) r_c³)): `shift` is X,
+    /// proportional to 1 / V as the tail, and `shiftFixed` the rest, which
+    /// does not depend on the volume (#224).
+    double shiftFixed = 0.0;
   };
   llvm::Expected<PairTail>
   getPairTail(unsigned index, const llvm::StringMap<double> &changes) const;
   /// 1 − V / (N (4π/3) r_c³), which takes the particle itself out of the
   /// neighbors within r_c in the estimate of the shift.
   double getShiftFactor() const;
+  /// Its part that does not depend on the volume once it multiplies a
+  /// quantity proportional to 1 / V: −V / (N (4π/3) r_c³) (#224).
+  double getShiftFixedFactor() const { return getShiftFactor() - 1.0; }
   /// The sum over the pair terms, at the values `changes`, of the tail and
   /// the estimate of the shift: what the correction adds to the quantities
   /// of the shifted potential (D210).
-  double getPairTails(const llvm::StringMap<double> &changes) const;
+  /// With `fixed`, the part of the estimates that does not depend on the
+  /// volume instead (#224).
+  double getPairTails(const llvm::StringMap<double> &changes,
+                      bool fixed = false) const;
   /// The derivative of the tail of the pair term `index` in the value
   /// `name`, with that of the estimate of the shift if `shift`: exactly 0
   /// if its expression does not read it.
+  /// With `fixed`, that of the part of the estimate that does not depend
+  /// on the volume instead (#224).
   double getPairTailDerivative(unsigned index, StringRef name, double value,
-                               bool shift = true) const;
+                               bool shift = true, bool fixed = false) const;
   /// The values of the components of λ at the state `k`.
   llvm::StringMap<double> getLambdaValues(size_t k) const {
     llvm::StringMap<double> values;
@@ -1954,17 +1966,21 @@ llvm::Error Builder::collectTopology() {
     // times 1 − λ: the tail of their soft-core Lennard-Jones is that of
     // the plain one times 1 − λ (D161).
     double energy = getTopologyDispersion(false);
-    double shift = getTopologyShift(false);
     if (decouples()) {
       double lambda = getLambda("vdw");
       energy = (1.0 - lambda) * energy + lambda * getTopologyDispersion(true);
-      shift = (1.0 - lambda) * shift + lambda * getTopologyShift(true);
     }
+    // The estimate of the shift is the tail times 1 − V / (N (4π/3) r_c³):
+    // the tail again, which follows the volume, and a part that does not
+    // (#224).
+    double shift = energy;
+    double shiftFixed = energy * getShiftFixedFactor();
     // Under "POTENTIAL_SHIFT" the energy that the run reports is shifted,
     // and the correction adds the estimate of the shift, which changes no
     // force and so no virial (D210).
     bool shifted = control.truncation == Truncation::Shift;
     program.dispersionEnergy = energy + (shifted ? shift : 0.0);
+    program.dispersionFixedEnergy = shifted ? shiftFixed : 0.0;
     program.dispersionVirial = 6.0 * energy;
     // The tails of the pair terms (D209).
     if (llvm::Error error = collectPairTails())
@@ -1973,6 +1989,7 @@ llvm::Error Builder::collectTopology() {
          ++index) {
       PairTail tail = llvm::cantFail(getPairTail(index, {}));
       program.dispersionEnergy += tail.energy + (shifted ? tail.shift : 0.0);
+      program.dispersionFixedEnergy += shifted ? tail.shiftFixed : 0.0;
       program.dispersionVirial += tail.virial;
     }
     collectObservedTails();
@@ -2189,11 +2206,13 @@ Builder::getPairTail(unsigned index,
   PairTail tail;
   tail.energy = factor * energy;
   tail.virial = factor * virial;
-  tail.shift = factor * shift * getShiftFactor();
+  tail.shift = factor * shift;
+  tail.shiftFixed = factor * shift * getShiftFixedFactor();
   return tail;
 }
 
-double Builder::getPairTails(const llvm::StringMap<double> &changes) const {
+double Builder::getPairTails(const llvm::StringMap<double> &changes,
+                             bool fixed) const {
   // A tail that a state makes diverge is NaN in the output, not 0.
   double sum = 0.0;
   for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index) {
@@ -2202,13 +2221,14 @@ double Builder::getPairTails(const llvm::StringMap<double> &changes) const {
       llvm::consumeError(tail.takeError());
       return std::nan("");
     }
-    sum += tail->energy + tail->shift;
+    sum += fixed ? tail->shiftFixed : tail->energy + tail->shift;
   }
   return sum;
 }
 
 double Builder::getPairTailDerivative(unsigned index, StringRef name,
-                                      double value, bool shift) const {
+                                      double value, bool shift,
+                                      bool fixed) const {
   if (!llvm::is_contained(tailExpressions[index].getNames(), name))
     return 0.0;
   // Central differences extrapolated to h → 0 (Richardson); where a side
@@ -2222,6 +2242,8 @@ double Builder::getPairTailDerivative(unsigned index, StringRef name,
       llvm::consumeError(tail.takeError());
       return std::nan("");
     }
+    if (fixed)
+      return tail->shiftFixed;
     return tail->energy + (shift ? tail->shift : 0.0);
   };
   double h = 1.0e-3 * std::max(std::fabs(value), 1.0);
@@ -2244,8 +2266,10 @@ double Builder::getPairTailDerivative(unsigned index, StringRef name,
 void Builder::collectObservedTails() {
   // The columns of `observe` of a pair term take its tail and the estimate
   // of its shift: its energy and its derivatives in the observed constants,
-  // proportional to 1 / V (D210).
+  // proportional to 1 / V but the part of the estimate that does not depend
+  // on the volume (D210, #224).
   program.observableVolumeConstants.assign(control.observables.size(), 0.0);
+  program.observableFixedConstants.assign(control.observables.size(), 0.0);
   for (auto [column, observable] : llvm::enumerate(control.observables))
     for (auto [index, term] : llvm::enumerate(control.pairs)) {
       if (term.name != observable.term || index >= system.pairTails.size())
@@ -2253,6 +2277,7 @@ void Builder::collectObservedTails() {
       if (observable.constant.empty()) {
         PairTail tail = llvm::cantFail(getPairTail(index, {}));
         program.observableVolumeConstants[column] = tail.energy + tail.shift;
+        program.observableFixedConstants[column] = tail.shiftFixed;
         continue;
       }
       double value = 0.0;
@@ -2261,6 +2286,8 @@ void Builder::collectObservedTails() {
           value = v;
       program.observableVolumeConstants[column] =
           getPairTailDerivative(index, observable.constant, value);
+      program.observableFixedConstants[column] = getPairTailDerivative(
+          index, observable.constant, value, /*shift=*/true, /*fixed=*/true);
     }
 }
 
@@ -2296,14 +2323,20 @@ void Builder::collectFreeEnergyConstants() {
   // These quantities are of the shifted potential, so the correction adds
   // the estimate of the shift to the tail (D210).
   bool dispersion = control.topologyDispersion != DispersionCorrection::None;
+  // The estimate is the tail times 1 − V / (N (4π/3) r_c³): the tail
+  // again, proportional to 1 / V, and a part that does not depend on the
+  // volume (#224).
   double coupled = 0.0, decoupled = 0.0;
   if (dispersion && decouples()) {
-    coupled = getTopologyDispersion(false) + getTopologyShift(false);
-    decoupled = getTopologyDispersion(true) + getTopologyShift(true);
+    coupled = getTopologyDispersion(false);
+    decoupled = getTopologyDispersion(true);
   } else if (dispersion) {
-    coupled = decoupled =
-        getTopologyDispersion(false) + getTopologyShift(false);
+    coupled = decoupled = getTopologyDispersion(false);
   }
+  double coupledFixed = coupled * getShiftFixedFactor();
+  double decoupledFixed = decoupled * getShiftFixedFactor();
+  coupled *= 2.0;
+  decoupled *= 2.0;
   for (size_t k = 0; k != states; ++k) {
     double fixed = 0.0, scaled = 0.0;
     if (program.pme && decouples()) {
@@ -2313,8 +2346,11 @@ void Builder::collectFreeEnergyConstants() {
     }
     double lambda = decouples() ? energy.get("vdw", k) : 0.0;
     scaled += (1.0 - lambda) * coupled + lambda * decoupled;
-    if (dispersion)
+    fixed += (1.0 - lambda) * coupledFixed + lambda * decoupledFixed;
+    if (dispersion) {
       scaled += getPairTails(getLambdaValues(k));
+      fixed += getPairTails(getLambdaValues(k), /*fixed=*/true);
+    }
     program.stateFixedEnergies.push_back(fixed);
     program.stateVolumeEnergies.push_back(scaled);
   }
@@ -2335,10 +2371,16 @@ void Builder::collectFreeEnergyConstants() {
       fixed = slope(self0, selfh, self1);
       scaled = slope(background0, backgroundh, background1);
     }
-    if (decouples() && name == "vdw")
+    if (decouples() && name == "vdw") {
       scaled = decoupled - coupled;
-    for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index)
+      fixed += decoupledFixed - coupledFixed;
+    }
+    for (unsigned index = 0, e = system.pairTails.size(); index != e;
+         ++index) {
       scaled += getPairTailDerivative(index, "lambda_" + name, getLambda(name));
+      fixed += getPairTailDerivative(index, "lambda_" + name, getLambda(name),
+                                     /*shift=*/true, /*fixed=*/true);
+    }
     program.lambdaFixedDerivatives.push_back(fixed);
     program.lambdaVolumeDerivatives.push_back(scaled);
   }
@@ -3140,10 +3182,15 @@ llvm::Error Builder::collectTunableGradient() {
   // The estimate of what the shift takes within the cutoff, which the
   // energy of the run holds only under the shift (D210).
   if (dispersion && control.truncation != Truncation::Shift) {
-    program.gradientShiftEnergy = getTopologyShift(false);
-    for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index)
-      program.gradientShiftEnergy +=
-          llvm::cantFail(getPairTail(index, {})).shift;
+    double tail = getTopologyDispersion(false);
+    program.gradientShiftEnergy = tail;
+    program.gradientShiftFixedEnergy = tail * getShiftFixedFactor();
+    for (unsigned index = 0, e = system.pairTails.size(); index != e;
+         ++index) {
+      PairTail pair = llvm::cantFail(getPairTail(index, {}));
+      program.gradientShiftEnergy += pair.shift;
+      program.gradientShiftFixedEnergy += pair.shiftFixed;
+    }
   }
   for (auto [k, declaration] : llvm::enumerate(control.tunableDeclarations)) {
     Program::GradientOutcome outcome = Program::GradientOutcome::Zero;
@@ -3174,7 +3221,13 @@ llvm::Error Builder::collectTunableGradient() {
           index < system.pairTails.size())
         slot.volumeConstant =
             getPairTailDerivative(index, declaration.parameter, value);
-      if (!std::isfinite(slot.volumeConstant))
+      if (dispersion && index < tailExpressions.size() &&
+          index < system.pairTails.size())
+        slot.fixedConstant =
+            getPairTailDerivative(index, declaration.parameter, value,
+                                  /*shift=*/true, /*fixed=*/true);
+      if (!std::isfinite(slot.volumeConstant) ||
+          !std::isfinite(slot.fixedConstant))
         return makeError("the derivative of the tail of the pair term '" +
                          term.name + "' in its constant '" +
                          declaration.parameter +
@@ -3301,8 +3354,11 @@ llvm::Error Builder::collectTunableGradient() {
     double volume = system.box[0] * system.box[1] * system.box[2];
     double factor = ordered > 0.0
                         ? -2.0 * M_PI / (3.0 * volume) * n * n /
-                              (ordered * rc * rc * rc) * (1.0 + getShiftFactor())
+                              (ordered * rc * rc * rc)
                         : 0.0;
+    // The tail and the part of the estimate of the shift that follows the
+    // volume, twice the tail, and the part that does not (#224).
+    double scaledPart = 2.0, fixedPart = getShiftFixedFactor();
     for (auto [c, seed] : llvm::enumerate(control.tunableTableSeeds)) {
       const std::vector<double> &weights = system.tunableSeedWeights[c];
       auto slope = [&](unsigned a, unsigned b) {
@@ -3317,7 +3373,8 @@ llvm::Error Builder::collectTunableGradient() {
         for (unsigned b = 0; b != numTypes; ++b)
           if (weights[a * numTypes + b] != 0.0)
             sum += (slope(a, b) + slope(b, a)) * weights[a * numTypes + b];
-        program.gradientFields[c].rows[a].volumeConstant = sum;
+        program.gradientFields[c].rows[a].volumeConstant = sum * scaledPart;
+        program.gradientFields[c].rows[a].fixedConstant = sum * fixedPart;
       }
     }
   }

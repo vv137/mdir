@@ -408,6 +408,8 @@ void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values) {
     double value = v->data[k * v->strides[0]];
     if (static_cast<size_t>(k) < output.observableVolumeConstants.size())
       value += output.observableVolumeConstants[k] * scale;
+    if (static_cast<size_t>(k) < output.observableFixedConstants.size())
+      value += output.observableFixedConstants[k];
     taken.push_back(value);
     row.push_back(value / units::energy);
   }

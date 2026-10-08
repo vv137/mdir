@@ -922,6 +922,8 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   out.dispersionEnergy = p.dispersionEnergy;
   out.dispersionVirial = p.dispersionVirial;
   out.observableVolumeConstants = p.observableVolumeConstants;
+  out.observableFixedConstants = p.observableFixedConstants;
+  out.dispersionFixedEnergy = p.dispersionFixedEnergy;
   out.pme = p.pme;
   out.reactionField = p.reactionField;
   out.coulombConstantEnergy = p.coulombConstantEnergy;
@@ -2024,7 +2026,7 @@ Simulation::evaluateTunableGradient() {
   double scale = compiled->volume / output->tunableGradientVolume;
   result.energy = output->lastEnergies.potential +
                   output->tunableGradient[p.gradientSlots.size()] +
-                  p.gradientShiftEnergy * scale;
+                  p.gradientShiftEnergy * scale + p.gradientShiftFixedEnergy;
   result.version = tunablesVersion;
   result.step = step;
   for (auto [k, entry] : llvm::enumerate(set.tunables)) {
@@ -2035,14 +2037,17 @@ Simulation::evaluateTunableGradient() {
   }
   // The chain rule from the sites to the entries: each site adds its
   // derivative to the entry that its map names. What the host adds to the
-  // energy (the tails of pair terms) is proportional to 1 / V.
+  // energy (the tails of pair terms) is proportional to 1 / V, but the part
+  // of the estimate of the shift that does not depend on the volume
+  // (#224).
   for (auto [i, slot] : llvm::enumerate(p.gradientSlots)) {
     const model::TunableSet::Entry &entry = set.tunables[slot.tunable];
     int64_t at = entry.map[slot.site];
     if (at < 0)
       continue;
     result.values[slot.tunable][at] +=
-        output->tunableGradient[i] + slot.volumeConstant * scale;
+        output->tunableGradient[i] + slot.volumeConstant * scale +
+        slot.fixedConstant;
   }
   for (auto [c, field] : llvm::enumerate(p.gradientFields)) {
     const model::TunableSet::Entry &entry = set.tunables[field.tunable];
@@ -2072,7 +2077,8 @@ Simulation::evaluateTunableGradient() {
       int64_t at = row.site < 0 ? -1 : entry.map[row.site];
       if (at >= 0)
         result.values[field.tunable][at] +=
-            row.scale * (sums[type] + row.volumeConstant * scale);
+            row.scale *
+            (sums[type] + row.volumeConstant * scale + row.fixedConstant);
     }
   }
   for (auto [k, values] : llvm::enumerate(result.values))

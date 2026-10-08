@@ -1005,6 +1005,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.dispersionEnergy = program->dispersionEnergy;
   output.dispersionVirial = program->dispersionVirial;
   output.observableVolumeConstants = program->observableVolumeConstants;
+  output.observableFixedConstants = program->observableFixedConstants;
+  output.dispersionFixedEnergy = program->dispersionFixedEnergy;
   output.pme = program->pme;
   output.periodic = control->periodic;
   output.listReach = control->pairlistDistance * units::length;

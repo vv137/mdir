@@ -134,6 +134,8 @@ struct Output {
   /// `observe`, in kJ/mol at the volume `firstVolume`, proportional to 1 / V
   /// (D209); empty if nothing.
   std::vector<double> observableVolumeConstants;
+  /// And what it adds that does not depend on the volume (#224).
+  std::vector<double> observableFixedConstants;
   /// The derivatives of the energy in the sites of the tunables that the
   /// entry handed over at its last evaluation of them
   /// (mdrtWriteTunableGradient, D230), in kJ/mol per unit
@@ -206,6 +208,9 @@ struct Output {
   /// it adds to the potential energy and to the trace of the virial.
   double dispersionEnergy = 0.0;
   double dispersionVirial = 0.0;
+  /// The part of the estimate of the shift that does not depend on the
+  /// volume (Program::dispersionFixedEnergy, #224).
+  double dispersionFixedEnergy = 0.0;
   /// Particle mesh Ewald: the self term and the background of a net
   /// charge, which the program does not compute.
   bool pme = false;
@@ -225,7 +230,7 @@ struct Output {
 
   /// The constants at the volume `volume`.
   double getDispersionEnergy() const {
-    return dispersionEnergy * firstVolume / volume;
+    return dispersionEnergy * firstVolume / volume + dispersionFixedEnergy;
   }
   double getDispersionVirial() const {
     return dispersionVirial * firstVolume / volume;
