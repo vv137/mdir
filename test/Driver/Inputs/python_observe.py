@@ -360,7 +360,18 @@ def run_refusals():
     assert sim.state().observables is None and sim.state().energies is None
     sim.run(2, energy=True)
     assert list(sim.state().observables) == ["lower.energy"]
-    program = dipeptide("Double", False, minimize=True)
+    # A minimization refuses `observe`, as `mdir run` refuses `observables`
+    # under [minimize]; without it the same system minimizes.
+    expect(mdir.InputError, lambda: dipeptide("Double", False, minimize=True),
+           "the term 'soft' gives 'observe', which is evaluated at the energies of a run of "
+           "dynamics; a minimization does not take it")
+
+    def unobserved(system):
+        pairs, tuples, externals = system.pair_terms, system.tuple_terms, system.external_terms
+        for term in pairs + tuples + externals:
+            term.observe = None
+        system.pair_terms, system.tuple_terms, system.external_terms = pairs, tuples, externals
+    program = dipeptide("Double", False, unobserved, minimize=True)
     assert program.plan["observables"] == []
     sim = mdir.Simulation(program)
     sim.minimize(3)
@@ -379,8 +390,8 @@ def run_refusals():
     system.pair_terms = terms
     assert program.stale
     print("refusals: an unknown constant, a name twice, a parameter of each tuple, a value "
-          "that is not a list of names, a reporter without columns, two reporters; "
-          "a minimization does not observe")
+          "that is not a list of names, a reporter without columns, two reporters, "
+          "a minimization")
 
 
 def run_external():
@@ -446,6 +457,326 @@ def run_external():
     print(f"external terms: refusals; {len(waters)} particles by index equal to the mask ':WAT'")
 
 
+def run_external_parity():
+    # The terms of the positions by themselves (D[python-external]): the
+    # energy and the forces of two walls against NumPy at the start, and a
+    # run of 10 steps with them against `mdir run` with the same
+    # [[energy.external]] terms: the energy file byte for byte, and the
+    # positions, velocities, and forces of its checkpoint to the bit.
+    def walls(system):
+        system.pair_terms, system.tuple_terms = [], []
+        terms = system.external_terms
+        for term in terms:
+            term.observe = []
+        system.external_terms = terms
+
+    def none(system):
+        system.pair_terms, system.tuple_terms, system.external_terms = [], [], []
+    for precision in ("Double", "Mixed"):
+        program = dipeptide(precision, False, walls)
+        sim, bare = mdir.Simulation(program), mdir.Simulation(dipeptide(precision, False, none))
+        sim.run(0, energy=True)
+        bare.run(0, energy=True)
+        state, without = sim.state(), bare.state()
+        topology = program.topology
+        waters = np.array([topology.residue_names[r] == "WAT" for r in topology.residue_indices])
+        z = state.positions[:, 2]
+        k, low, high = 4184.0, 0.6, 2.0
+        below, above = np.maximum(0, low - z) * waters, np.maximum(0, z - high) * waters
+        energy = {"lower.energy": 0.5 * k * np.sum(below ** 2),
+                  "upper.energy": 0.5 * k * np.sum(above ** 2)}
+        force = np.zeros_like(state.positions)
+        force[:, 2] = k * below - k * above
+        mine = state.forces - without.forces
+        tolerance = 1e-12 if precision == "Double" else 2e-6
+        e = max(abs(state.observables[key] / value - 1) for key, value in energy.items())
+        f = np.abs(mine - force).max() / np.abs(force).max()
+        assert e < tolerance and f < tolerance, (e, f)
+        total = abs((state.energies["potential"] - without.energies["potential"])
+                    / sum(energy.values()) - 1)
+        assert total < (1e-9 if precision == "Double" else 1e-4), total
+        line = (f"{target_name} {precision} external terms: {int(waters.sum())} particles, the "
+                f"walls' energies {energy['lower.energy'] / KJ:.6f} and "
+                f"{energy['upper.energy'] / KJ:.6f} kcal/mol within {e:.1e} of NumPy, their "
+                f"forces within {f:.1e} of the largest")
+        if not HDF5:
+            print(line)
+            continue
+        name = f"walls-{precision}".lower()
+        text = dipeptide_control(name, precision, False, 10, 5).read_text()
+        head, rest = text.split("[[energy.pair]]")
+        external = rest[rest.index("[[energy.external]]"):]
+        external = "\n".join(l for l in external.splitlines() if not l.startswith("observe"))
+        head = head.replace(f'observables = "{name}.obs"\n',
+                            f'checkpoint = "{name}.h5"\ncheckpoint_interval = 10\n')
+        (work / f"{name}.toml").write_text(head + external + "\n")
+        run_cli(work / f"{name}.toml")
+        sim = mdir.Simulation(dipeptide(precision, False, walls))
+        sim.reporters.append(mdir.EnergyReporter(str(work / f"py-{name}.dat"), 5))
+        sim.run(10)
+        sim.close_reporters()
+        assert (work / f"py-{name}.dat").read_bytes() == (work / f"{name}.dat").read_bytes()
+        theirs, ours = mdir.read_checkpoint(str(work / f"{name}.h5")), sim.state()
+        assert theirs.step == 10
+        for field in ("positions", "velocities", "forces"):
+            assert np.array_equal(getattr(theirs, field), getattr(ours, field)), field
+        print(line + "; 10 steps: the energy file byte for byte and the positions, velocities, "
+              "and forces of the checkpoint of mdir run to the bit")
+
+
+# The mixture of pair-dispersion.test: an NBFIX written as a pair term
+# between A and B, the difference of two Lennard-Jones (kJ/mol, nm).
+NBFIX = "4*eps*((sig/r)^12 - (sig/r)^6) - 4*eps0*((sig0/r)^12 - (sig0/r)^6)"
+NBFIX_CONSTANTS = [("sig", 0.37), ("eps", 0.5 * KJ), ("sig0", 0.34), ("eps0", 0.24 * KJ)]
+
+
+def mixture_control(name, precision, shift, kind, steps, interval):
+    coupling = ('[thermostat]\nmethod = "V-RESCALE"\ninterval = 10\n'
+                '[barostat]\nmethod = "C-RESCALE"\n' if kind == "NPT" else "")
+    com = "center_of_mass_interval = 10" if kind == "NPT" else ""
+    constants = "\n".join(f"{key} = {value!r}" for key, value in NBFIX_CONSTANTS)
+    path = work / f"{name}.toml"
+    path.write_text(f"""[input]
+topology = "{mixture}/plain.top"
+coordinates = "{mixture}/system.gro"
+[output]
+energy_interval = {interval}
+energy = "{name}.dat"
+observables = "{name}.obs"
+[energy]
+cutoff = 12.0
+pairlist_distance = 13.0
+electrostatics = "CUTOFF"
+lennard_jones_modifier = "{'POTENTIAL_SHIFT' if shift else 'NONE'}"
+[[energy.pair]]
+name = "nbfix"
+groups = [":A", ":B"]
+expression = "{converted(NBFIX, 'r')}"
+observe = ["sig", "eps"]
+{constants}
+[dynamics]
+time_step = 0.001
+steps = {steps}
+seed = {SEED}
+{com}
+[ensemble]
+ensemble = "{kind}"
+temperature = 100.0
+{coupling}[boundary]
+type = "PERIODIC"
+[execution]
+target = "{target_name}"
+precision = "{precision.upper()}"
+deterministic = true
+""")
+    return path
+
+
+def mixture_program(precision, shift, kind="NVE", dispersion=None):
+    loaded = mdir.load_gromacs(str(mixture / "plain.top"), str(mixture / "system.gro"))
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance = 1.2, 1.3
+    system.truncation = mdir.Truncation.Shift if shift else mdir.Truncation.None_
+    if dispersion is not None:
+        system.dispersion = dispersion
+    term = mdir.PairTerm()
+    term.name, term.groups, term.expression = "nbfix", [":A", ":B"], NBFIX
+    term.constants = NBFIX_CONSTANTS
+    term.observe = ["sig", "eps"]
+    system.pair_terms = [term]
+    state = state.draw_velocities(system, 100.0, SEED)
+    integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    integrator.timestep, ensemble.temperature, ensemble.seed = 0.001, 100.0, SEED
+    ensemble.kind = getattr(mdir.EnsembleKind, kind)
+    if kind != "NVE":
+        ensemble.com_period = ensemble.coupling_period = 10
+    execution.target, execution.precision = target, getattr(mdir.Precision, precision)
+    execution.deterministic = True
+    return mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule())
+
+
+def mixture_tails():
+    """What the correction adds to the columns of the NBFIX term, in closed
+    form (D209, D210), kJ/mol and nm: nu (4 pi / V) N_A N_B (I + f r_c^3
+    u(r_c) / 3), with I the integral of r^2 u beyond r_c, f = 1 - V / (N 4
+    pi r_c^3 / 3), and nu = N / (N - 1) (no pair is excluded); and its
+    derivatives in sigma and epsilon of the first Lennard-Jones."""
+    import math
+    gro = (mixture / "system.gro").read_text().splitlines()
+    count = int(gro[1])
+    kinds = [line[5:10].strip() for line in gro[2:2 + count]]
+    volume = float(gro[2 + count].split()[0]) ** 3
+    na, nb, rc = kinds.count("A"), kinds.count("B"), 1.2
+    n = na + nb
+    f = 1 - volume / (n * 4 * math.pi / 3 * rc ** 3)
+    factor = 4 * math.pi / volume * n / (n - 1) * na * nb
+    c = dict(NBFIX_CONSTANTS)
+
+    def part(sig, eps):
+        i = 4 * eps * (sig ** 12 / (9 * rc ** 9) - sig ** 6 / (3 * rc ** 3))
+        u = 4 * eps * ((sig / rc) ** 12 - (sig / rc) ** 6)
+        di = 4 * eps * (12 * sig ** 11 / (9 * rc ** 9) - 6 * sig ** 5 / (3 * rc ** 3))
+        du = 4 * eps * (12 * sig ** 11 / rc ** 12 - 6 * sig ** 5 / rc ** 6)
+        return (factor * (i + f * rc ** 3 * u / 3), factor * (di + f * rc ** 3 * du / 3))
+    energy, d_sig = part(c["sig"], c["eps"])
+    energy0, _ = part(c["sig0"], c["eps0"])
+    return {"nbfix.energy": energy - energy0, "nbfix.d_sig": d_sig,
+            "nbfix.d_eps": energy / c["eps"]}
+
+
+def run_mixture():
+    # A pair term whose tail is in the correction for the dispersion: its
+    # columns hold the tail and, under either modifier, the estimate of the
+    # shift (D209, D210), in the energy and in both derivatives.
+    for precision in ("Double", "Mixed"):
+        for shift in (False, True):
+            name = f"mix-{precision}-{'shift' if shift else 'cutoff'}".lower()
+            run_cli(mixture_control(name, precision, shift, "NVE", 20, 5))
+            sim = mdir.Simulation(mixture_program(precision, shift))
+            sim.reporters.append(mdir.ObservablesReporter(str(work / f"py-{name}.obs"), 5))
+            sim.run(20)
+            sim.close_reporters()
+            assert (work / f"py-{name}.obs").read_bytes() == (work / f"{name}.obs").read_bytes(), name
+            # What the correction adds to the columns: with it off, they
+            # are those of the pairs within the cutoff alone.
+            sim.run(0, energy=True)
+            on = sim.state().observables
+            bare = mdir.Simulation(mixture_program(precision, shift, dispersion=
+                                                   mdir.DispersionCorrection.None_))
+            bare.run(20, energy=True)
+            off = bare.state().observables
+            tails = {key: (on[key] - off[key]) / KJ for key in on}
+            closed = mixture_tails()
+            for key, value in closed.items():
+                assert abs(tails[key] * KJ / value - 1) < 1e-8, (key, tails[key] * KJ, value)
+            print(f"{target_name} {precision} {'shift' if shift else 'cutoff'}: the mixture's "
+                  f"rows equal to mdir run's file byte for byte; the correction adds, as its closed "
+                  f"forms, "
+                  + ", ".join(f"{key} {value:.6f}" for key, value in tails.items()))
+    # At constant pressure the tails follow the volume of each row.
+    for precision in ("Double", "Mixed"):
+        name = f"mix-npt-{precision}".lower()
+        run_cli(mixture_control(name, precision, False, "NPT", 40, 10))
+        sim = mdir.Simulation(mixture_program(precision, False, "NPT"))
+        sim.reporters.append(mdir.ObservablesReporter(str(work / f"py-{name}.obs"), 10))
+        sim.reporters.append(mdir.EnergyReporter(str(work / f"py-{name}.dat"), 10))
+        sim.run(40)
+        sim.close_reporters()
+        mine, theirs = rows(work / f"py-{name}.obs"), rows(work / f"{name}.obs")
+        if mine == theirs:
+            print(f"{target_name} {precision} NPT: {len(mine)} rows equal to mdir run's file "
+                  f"byte for byte")
+            continue
+        assert precision == "Mixed" and len(mine) == len(theirs)
+        worst = 0.0
+        for a, b in zip(mine, theirs):
+            a, b = (np.array([float(x) for x in r.split()]) for r in (a, b))
+            worst = max(worst, float(np.max(np.abs(a - b) / np.maximum(np.abs(b), 1.0))))
+        assert worst < 1e-3, worst
+        print(f"{target_name} {precision} NPT: {len(mine)} rows within {worst:.1e} of mdir "
+              f"run's (the two programs round differently in single precision, #105)")
+
+
+def run_tunables(precision):
+    # Tunables and `observe` in one program: the columns follow an update,
+    # and the row says of which values it is.
+    def tuned(system):
+        terms = system.pair_terms
+        terms[0].observe = ["l"]
+        system.pair_terms = terms
+        system.external_terms, system.tuple_terms = [], []
+        system.tunables = [mdir.Tunable("soft_a", "a", term="soft")]
+        system.truncation = mdir.Truncation.None_
+    sim = mdir.Simulation(dipeptide(precision, False, tuned))
+    sim.reporters.append(mdir.ObservablesReporter(str(work / "tuned.obs"), 5))
+    sim.run(5, energy=True)
+    before = sim.state().observables
+    sim.tunables["soft_a"] = np.array([3.0])
+    sim.run(0, energy=True)
+    after = sim.state().observables
+    tolerance = 1e-12 if precision == "Double" else 1e-5
+    for key in ("soft.energy", "soft.d_l"):
+        assert abs(after[key] / before[key] / 1.5 - 1) < tolerance, (key, after[key], before[key])
+    sim.run(5)
+    sim.close_reporters()
+    text = (work / "tuned.obs").read_text().splitlines()
+    assert text[0] == "# step time soft.energy soft.d_l tunables_version", text[0]
+    assert text[1] == "# - ps kcal/mol kcal/mol/l -", text[1]
+    assert [(r.split()[0], r.split()[-1]) for r in text[2:]] == [("0", "0"), ("5", "0"), ("10", "1")]
+
+    # An observed constant may be a tunable with one entry that every site
+    # takes: dU/dl of `observe` equals that of gradient() (D230), of the
+    # same shifted potential with the same tail, follows an update without
+    # compiling, and equals central differences of the term's observed
+    # energy by updates (D213).
+    def both(system):
+        tuned(system)
+        system.tunables = [mdir.Tunable("soft_l", "l", term="soft")]
+        system.tunable_gradient = True
+    program = dipeptide(precision, False, both)
+    assert program.plan["observables"] == ["soft.energy", "soft.d_l"]
+    sim = mdir.Simulation(program)
+    tight, loose = (1e-12, 1e-7) if precision == "Double" else (1e-5, 1e-3)
+    worst = 0.0
+    for l in (0.05, 0.06):
+        sim.tunables["soft_l"] = np.array([l])
+        gradient = sim.tunables.gradient()["soft_l"][0]
+        sim.run(0, energy=True)
+        d_l = sim.state().observables["soft.d_l"]
+
+        def fresh(system, l=l):
+            tuned(system)
+            system.tunables = []
+            terms = system.pair_terms
+            terms[0].constants = [("a", 2.0), ("l", l)]
+            system.pair_terms = terms
+        compiled = mdir.Simulation(dipeptide(precision, False, fresh))
+        compiled.run(0, energy=True)
+        other = compiled.state().observables["soft.d_l"]
+        worst = max(worst, abs(gradient / d_l - 1), abs(other / d_l - 1))
+        assert worst < tight, (l, d_l, gradient, other)
+    h, energies = 1e-5, []
+    for value in (0.06 + h, 0.06 - h):
+        sim.tunables["soft_l"] = np.array([value])
+        sim.run(0, energy=True)
+        energies.append(sim.state().observables["soft.energy"])
+    differences = abs((energies[0] - energies[1]) / (2 * h) / d_l - 1)
+    assert differences < loose, differences
+    # The same in the run: the row after an update is of the new value.
+    sim.tunables["soft_l"] = np.array([0.05])
+    sim.reporters.append(mdir.ObservablesReporter(str(work / "fit.obs"), 5))
+    sim.run(5)
+    sim.tunables["soft_l"] = np.array([0.06])
+    sim.run(5)
+    sim.close_reporters()
+    fit = [r.split() for r in rows(work / "fit.obs")]
+    assert [(r[0], r[-1]) for r in fit] == [("5", "5"), ("10", "6")], fit
+
+    # A parameter of a tuple term: one entry for all tuples is observed,
+    # several entries are refused with the way to their derivatives.
+    def bonds(map_):
+        def change(system):
+            system.pair_terms, system.external_terms = [], []
+            system.tunables = [mdir.Tunable("rest", "r0", term="flat", map=np.array(map_))]
+            system.tunable_gradient = True
+        return change
+    expect(mdir.InputError, lambda: dipeptide(precision, False, bonds([0, 1])),
+           "the term 'flat' observes 'r0', which the tunable 'rest' takes with several entries")
+    expect(mdir.InputError, lambda: dipeptide(precision, False, bonds([0, -1])),
+           "Simulation.tunables.gradient()['rest']")
+    sim = mdir.Simulation(dipeptide(precision, False, bonds([0, 0])))
+    sim.tunables["rest"] = np.array([0.35])
+    gradient = sim.tunables.gradient()["rest"][0]
+    sim.run(0, energy=True)
+    d_r0 = sim.state().observables["flat.d_r0"]
+    assert d_r0 != 0.0 and abs(gradient / d_r0 - 1) < tight, (gradient, d_r0)
+    print(f"{target_name} {precision} tunables: the columns follow an update, with its version "
+          f"in the row; an observed tunable of one entry: soft.d_l {d_l:.6f} kJ/mol/nm against "
+          f"gradient() and a compile with the value within {worst:.1e}, central differences "
+          f"within {differences:.1e}; flat.d_r0 against gradient() within "
+          f"{abs(gradient / d_r0 - 1):.1e}; several entries refused")
+
+
 scenario = sys.argv[6] if len(sys.argv) > 6 else "all"
 try:
     mdir.read_checkpoint(str(work / "missing.h5"))
@@ -460,4 +791,8 @@ seen_at_20 = probe.state().observables
 run_parts()
 run_refusals()
 run_external()
+run_external_parity()
+run_mixture()
+for precision in ("Double", "Mixed"):
+    run_tunables(precision)
 print("python observe passed")

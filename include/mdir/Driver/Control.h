@@ -167,6 +167,17 @@ struct Control {
   /// `tunable_constants` that the program reads them from.
   bool tunables = false;
   std::vector<std::pair<unsigned, std::string>> tunableConstants;
+  /// The observed constants that a tunable takes, by the name of the term
+  /// and of the constant (D[python-observe]): the program takes their
+  /// values as values of its entry (Program::startValues), not as
+  /// constants of its text, so that an update does not change it.
+  std::vector<std::pair<std::string, std::string>> observedTunables;
+  bool isObservedTunable(llvm::StringRef term, llvm::StringRef constant) const {
+    for (const auto &[t, c] : observedTunables)
+      if (t == term && c == constant)
+        return true;
+    return false;
+  }
   /// Whether the program carries the derivative of the energy in the
   /// tunables (D230, docs/python-gradient.md), and the
   /// declarations that it differentiates, in the order of the tunables.

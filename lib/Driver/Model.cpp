@@ -410,6 +410,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       (s.restraintReference.size() != 3 * s.topology.getNumParticles() ||
        llvm::any_of(s.restraintReference, [](double x) { return !std::isfinite(x); })))
     return input("the restraint reference needs finite (N, 3) positions of every particle");
+  // As `mdir run`, which refuses `observables` under [minimize]: the
+  // columns are those of the energies of a run of dynamics (D189).
+  if (c.minimize && !c.observables.empty())
+    return input("the term '" + c.observables.front().term + "' gives 'observe', which is "
+                 "evaluated at the energies of a run of dynamics; a minimization does not "
+                 "take it: set its observe to None for the program that minimizes");
   if (!c.minimize)
     if (llvm::Error e = driver::resolveControlCoupling(c, "model")) return typed(std::move(e));
   if (llvm::Error e = driver::validateControl(c, "model")) return typed(std::move(e));
@@ -445,19 +451,23 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // (D213).
   auto tunables = resolveTunables(s, c, *prepared);
   if (!tunables) return tunables.takeError();
-  // An observed constant is a number of the program's text, which a
-  // tunable is not (D[python-observe]).
+  // An observed constant may be a tunable with one entry that every site
+  // takes: its value reaches the program as a value of its entry
+  // (D[python-observe]). The derivative in a tunable with several entries
+  // is that of D230.
   for (const TunableSet::Entry &entry : tunables->tunables)
     for (const driver::Control::Observable &observable : c.observables)
       if (!entry.term.empty() && entry.term == observable.term &&
-          entry.parameter == observable.constant)
-        return input("the term '" + entry.term + "' observes '" + entry.parameter +
-                     "', which the tunable '" + entry.name + "' takes; its derivative at a "
-                     "state is Simulation.tunables.gradient()['" + entry.name +
-                     "'] (System.tunable_gradient), of the same potential");
-  // A minimization does not observe: a System is shared by the stages of
-  // a pipeline.
-  if (c.minimize) c.observables.clear();
+          entry.parameter == observable.constant) {
+        if (entry.entries != 1 || llvm::any_of(entry.map, [](int64_t m) { return m != 0; }))
+          return input("the term '" + entry.term + "' observes '" + entry.parameter +
+                       "', which the tunable '" + entry.name + "' takes with several entries "
+                       "or leaves to some of its sites; an observed constant is one number for "
+                       "the whole term. The derivative in each entry at a state is "
+                       "Simulation.tunables.gradient()['" + entry.name +
+                       "'] (System.tunable_gradient), of the same potential");
+        c.observedTunables.push_back({entry.term, entry.parameter});
+      }
   return PreparedModel{execution, std::move(c), std::move(*prepared), std::move(*tunables)};
 }
 llvm::Expected<InitialState> mdir::model::drawVelocities(

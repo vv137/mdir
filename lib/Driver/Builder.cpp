@@ -3090,8 +3090,13 @@ void Builder::emitObservablesOutput(StringRef indent, StringRef x,
     // tuples, particles, or pairs alike.
     for (auto [c, constant] : llvm::enumerate(term.constants)) {
       std::string value = at + "_v" + std::to_string(c);
-      os << indent << value << " = arith.constant "
-         << formatReal(getObservedValue(term, constant)) << " : f64\n";
+      // That of a tunable is a value of the entry, which an update changes
+      // without changing the text (D[python-observe]).
+      if (control.isObservedTunable(term.name, constant))
+        value = "%obv_" + term.name + "_" + constant;
+      else
+        os << indent << value << " = arith.constant "
+           << formatReal(getObservedValue(term, constant)) << " : f64\n";
       arguments += ", " + value;
       types += ", f64";
     }
@@ -8808,6 +8813,12 @@ void Builder::collectStartValues() {
   if (isRestart() && scalesEveryStep() && system.barostatState.size() == 9)
     for (int k = 0; k != 9; ++k)
       add("bstate" + std::to_string(k), system.barostatState[k]);
+  // The observed constants that tunables take (D[python-observe]).
+  for (const ObservedTerm &term : getObservedTerms())
+    for (const std::string &constant : term.constants)
+      if (control.isObservedTunable(term.name, constant))
+        add("obv_" + term.name + "_" + constant,
+            getObservedValue(term, constant));
   // Whether the host asks for the derivative in the tunables, 0 unless a
   // simulation sets it for one evaluation, and the tunable constants of the
   // pair terms as the numbers that `@tunable` takes (D230).
