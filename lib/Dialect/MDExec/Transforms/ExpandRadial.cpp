@@ -396,8 +396,9 @@ private:
 };
 
 Tables &getTables() {
-  static Tables tables;
-  return tables;
+  // Never destroyed: a lowering may still search while the process exits.
+  static Tables *tables = new Tables;
+  return *tables;
 }
 
 /// The table of `function` up to `cutoff`: that of the fewest bits, from 4

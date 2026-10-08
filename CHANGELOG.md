@@ -396,10 +396,10 @@ format, or the outputs; every such change is listed under **Changed** or
   steps. On the dipeptide in water with PME (CPU, mixed precision)
   `md-exec-expand-radial` takes 0.025 s instead of 0.38 and
   `md-exec-simplify-distance` 0.013 s instead of 0.21, and
-  `pipeline_seconds` of a `Simulation` is 1.9 s instead of 3.1; a pair
-  term that no table holds (the Stillinger-Weber form, D159) lowers in
-  0.56 s instead of 10.9. The tables and the compiled programs are the
-  same to the bit (#236).
+  `pipeline_seconds` of a `Simulation` falls by about 40%; a pair term
+  that no table holds (the Stillinger-Weber form, D159) lowers in 0.56 s
+  instead of 10.9. The tables and the compiled programs are the same to
+  the bit (#236).
 
 ### Added
 
