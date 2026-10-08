@@ -6,7 +6,8 @@ the 14 states of Appendix C.9 with files that scripts/free-energy.py reads.
     openmm_ethanol.py point PRMTOP INPCRD [--electrostatics PME|RF]
         [--grid 32] [--platform Reference] [--states c0,v0 c1,v1 ...]
     openmm_ethanol.py run WORK [--ps 500] [--seed 1] [--precision mixed]
-        [--energy-interval 250] [--stage all|equilibration|<state>]
+        [--energy-interval 250] [--shifted]
+        [--stage all|equilibration|<state>]
 
 The Hamiltonian, as the test of D161 describes it (test/Driver/Inputs/
 check_free_energy.py):
@@ -45,7 +46,19 @@ MonteCarloBarostat every 25 steps, SHAKE and SETTLE, particle mesh Ewald
 with beta = 0.32 1/Angstrom on a grid of 32, a cutoff of 9 Angstrom. For
 each state it writes s<k>.dhdl, the rows of both conventions of the same
 trajectory, in WORK/shift and WORK/cut, each with a control file that only
-scripts/free-energy.py reads. --stage runs one stage, so that a GPU can be
+scripts/free-energy.py reads.
+
+Without --shifted the run is OpenMM's own: the forces are those of the
+shifted potential, as in every program that cuts, but the Monte Carlo
+barostat accepts volumes by the cut energies, whose step at the cutoff acts
+as a pressure, (2 pi/3) rho^2 r_c^3 g(r_c) u(r_c), about -130 atm for the
+water at 9 Angstrom, so that the density is higher than that of the
+potential of the forces at 1 atm. With --shifted every Lennard-Jones pair
+is shifted to 0 at the cutoff in the energy too (that of the rest in a
+second CustomNonbondedForce), and the barostat and the forces are of one
+potential, as in MDIR, whose barostat takes the virial of the forces.
+
+--stage runs one stage, so that a GPU can be
 released between them.
 """
 import argparse
@@ -66,8 +79,13 @@ BETA = 3.2    # 1/nm
 NB_GROUP, LJ_GROUP = 1, 2
 
 
-def build(prmtop, electrostatics='PME', grid=32, constraints=True):
-    """The system and the indices of the particles of the ethanol."""
+def build(prmtop, electrostatics='PME', grid=32, constraints=True,
+          shifted=False):
+    """The system and the indices of the particles of the ethanol. With
+    `shifted`, every Lennard-Jones pair is shifted to 0 at the cutoff: that
+    of the rest moves from the NonbondedForce, which cannot shift it, to a
+    CustomNonbondedForce, and `shift` is 1, so that the energy that the
+    Monte Carlo barostat takes is that of the potential of the forces."""
     if electrostatics == 'PME':
         method = app.PME
     else:
@@ -94,7 +112,7 @@ def build(prmtop, electrostatics='PME', grid=32, constraints=True):
         'x=alpha*lambda_vdw+(r/sig)^6; s6=(sig/rc)^6;'
         'sig=0.5*(sigma1+sigma2); eps=sqrt(epsilon1*epsilon2)')
     lj.addGlobalParameter('lambda_vdw', 0.0)
-    lj.addGlobalParameter('shift', 0.0)
+    lj.addGlobalParameter('shift', 1.0 if shifted else 0.0)
     lj.addGlobalParameter('alpha', ALPHA)
     lj.addGlobalParameter('rc', CUTOFF)
     lj.addPerParticleParameter('sigma')
@@ -136,6 +154,26 @@ def build(prmtop, electrostatics='PME', grid=32, constraints=True):
     rest = [i for i in range(system.getNumParticles()) if i not in inside]
     lj.addInteractionGroup(ligand, rest)
     system.addForce(lj)
+    if shifted:
+        other = mm.CustomNonbondedForce(
+            '4*eps*(s6r*s6r-s6r-(s6*s6-s6)); s6r=(sig/r)^6; s6=(sig/rc)^6;'
+            'sig=0.5*(sigma1+sigma2); eps=sqrt(epsilon1*epsilon2)')
+        other.addGlobalParameter('rc', CUTOFF)
+        other.addPerParticleParameter('sigma')
+        other.addPerParticleParameter('epsilon')
+        other.setNonbondedMethod(mm.CustomNonbondedForce.CutoffPeriodic)
+        other.setCutoffDistance(CUTOFF)
+        other.setUseLongRangeCorrection(False)
+        for i in range(system.getNumParticles()):
+            charge, sigma, epsilon = parameters[i]
+            other.addParticle([sigma, epsilon])
+            if i not in inside:
+                nb.setParticleParameters(i, charge, sigma, 0.0)
+        for k in range(nb.getNumExceptions()):
+            i, j, _, _, _ = nb.getExceptionParameters(k)
+            other.addExclusion(i, j)
+        other.addInteractionGroup(rest, rest)
+        system.addForce(other)
     return system, ligand
 
 
@@ -170,6 +208,7 @@ def energies(context, states, state):
         context.setParameter('lambda_coulomb', value)
         side.append(group(NB_GROUP))
     dcoulomb = (side[1] - side[0]) / (2.0 * h)
+    kept = context.getParameter('shift')
     result = []
     for shift in (0.0, 1.0):
         context.setParameter('shift', shift)
@@ -181,7 +220,7 @@ def energies(context, states, state):
         total = [coulomb[c] + vdw[v][0] for c, v in states]
         result.append(((dcoulomb, dvdw),
                        [energy - total[state] for energy in total]))
-    context.setParameter('shift', 0.0)
+    context.setParameter('shift', kept)
     context.setParameter('lambda_coulomb', states[state][0])
     context.setParameter('lambda_vdw', states[state][1])
     return result
@@ -270,7 +309,7 @@ def run(arguments):
         properties['Precision'] = arguments.precision
 
     def simulation(barostat, seed, restraint):
-        system, ligand = build(prmtop)
+        system, ligand = build(prmtop, shifted=arguments.shifted)
         if restraint:
             # The heavy atoms of the ethanol, as run.py restrains them, in
             # kcal/mol/Angstrom^2 of k (x - x0)^2.
@@ -378,6 +417,7 @@ def main():
     r.add_argument('--platform', default='CUDA')
     r.add_argument('--precision', default='mixed')
     r.add_argument('--energy-interval', type=int, default=250)
+    r.add_argument('--shifted', action='store_true')
     r.add_argument('--stage', default='all',
                    help="'equilibration', the number of a state, or 'all'")
     r.set_defaults(function=run)
