@@ -119,8 +119,10 @@ private:
   LogicalResult addTemplates(Type real);
   /// Adds the templates of particle mesh Ewald for the types of the
   /// positions, the charges, and the forces.
+  /// With `potential`, the functions of the potential at the particles
+  /// as well.
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
-                                int64_t order);
+                                int64_t order, bool potential);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
   /// The rows of the neighbor matrix `handle`, as they are where `builder`
@@ -389,10 +391,15 @@ LogicalResult Lowering::addTemplates(Type real) {
 }
 
 LogicalResult Lowering::addPMETemplates(Type position, Type charge,
-                                        Type force, int64_t order) {
+                                        Type force, int64_t order,
+                                        bool potential) {
   if (SymbolTable::lookupSymbolIn(
           module, getPMEInstanceName("mdrt.pme_spread", position, charge,
-                                     force, order)))
+                                     force, order)) &&
+      (!potential ||
+       SymbolTable::lookupSymbolIn(
+           module, getPMEInstanceName("mdrt.pme_potential", position, charge,
+                                      force, order))))
     return success();
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
@@ -401,7 +408,19 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald";
+  // The functions of the potential at the particles (the fourth result of
+  // md.reciprocal) only where a sum asks for them, so that a module
+  // without one is what it was; they may come after the others, for a sum
+  // of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
+    auto function = dyn_cast<func::FuncOp>(&op);
+    bool isPotential =
+        function && function.getSymName().contains("pme_potential");
+    if ((isPotential && !potential) ||
+        (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
+      op.erase();
+      continue;
+    }
     op.remove();
     module.push_back(&op);
   }
@@ -422,7 +441,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   };
   Type position = elementOf(positions), charge = elementOf(charges),
        force = elementOf(forces);
-  if (failed(addPMETemplates(position, charge, force, op.getOrder())))
+  if (failed(addPMETemplates(position, charge, force, op.getOrder(),
+                             op.getPotential())))
     return failure();
   // A triclinic cell takes the functions of its own (docs/triclinic-m2.md).
   bool tilted = isTriclinic(op.getCellMutable().get());
