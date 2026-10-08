@@ -225,6 +225,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- A build of the neighbor matrix on a device orders the particles of a
+  cell by rank, one thread per particle, in place of an insertion sort in
+  one thread per cell (D[matrix-sort-rank], #231). A system of about a
+  thousand particles has a few cells of more than a hundred particles
+  each, whose sort took most of a build: ethanol in 467 waters at constant
+  pressure runs at 0.118 ms a step where it ran at 0.291 (RTX 3090, mixed
+  precision). The order, and so every result, is unchanged.
 - A program no longer holds the values that depend on the state it starts
   from as constants of its text (D227, #162): the
   tilts of a triclinic cell, the cell of the restraints' reference
