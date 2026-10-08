@@ -490,6 +490,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- `scripts/paper/check-appendix.sh` without the `mdir` to ask, or with one
+  that cannot be run, prints its usage and exits with 2; it ran an empty
+  command and reported the whole example of Appendix A as a difference,
+  with the status 1 of an appendix that no longer agrees (#209).
 - The scripts that generate the GPU templates of particle mesh Ewald and of
   the groups of neighbors (`scripts/generate-pme-gpu-template.py`,
   `scripts/generate-groups-gpu-template.py`) emit the guards of #168 that
