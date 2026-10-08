@@ -1,0 +1,27 @@
+# scripts/paper/check-appendix.sh compares the example of Appendix A of the
+# paper with what `mdir template amber` prints. Without the `mdir` to ask, or
+# with one that cannot be run, it says how it is used and exits with 2,
+# before any comparison (#209): it ran an empty command and reported the
+# whole example as a difference, with the status 1 of an appendix that no
+# longer agrees.
+#
+# RUN: not bash %S/../../scripts/paper/check-appendix.sh > %t.none 2>&1
+# RUN: FileCheck %s --check-prefix=USAGE --input-file=%t.none
+# RUN: not bash %S/../../scripts/paper/check-appendix.sh %t.absent > %t.absent.out 2>&1
+# RUN: FileCheck %s --check-prefix=ABSENT --input-file=%t.absent.out
+# RUN: bash %S/../../scripts/paper/check-appendix.sh mdir | FileCheck %s --check-prefix=AGREES
+#
+# The status is 2, not the 1 of a difference.
+# RUN: bash -c 'bash "$0" > /dev/null 2>&1; test $? -eq 2' %S/../../scripts/paper/check-appendix.sh
+# RUN: bash -c 'bash "$0" "$1" > /dev/null 2>&1; test $? -eq 2' %S/../../scripts/paper/check-appendix.sh %t.absent
+#
+# USAGE-NOT: command not found
+# USAGE-NOT: [input]
+# USAGE: usage: {{.*}}check-appendix.sh MDIR
+# USAGE-NOT: [input]
+#
+# ABSENT: is not a program that can be run
+# ABSENT-NEXT: usage: {{.*}}check-appendix.sh MDIR
+# ABSENT-NOT: [input]
+#
+# AGREES: Appendix A agrees with mdir template amber
