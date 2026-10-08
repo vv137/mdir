@@ -3020,7 +3020,7 @@ std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
   // The terms in the order of their first column; Control has checked the
   // names and the constants.
   std::vector<ObservedTerm> terms;
-  if (control.observablesFile.empty() || !system.topology)
+  if (control.observables.empty() || !system.topology)
     return terms;
   for (auto [column, observable] : llvm::enumerate(control.observables)) {
     auto it = llvm::find_if(terms, [&](const ObservedTerm &term) {
@@ -7304,7 +7304,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         emitFreeEnergyOutput(inner, "%xl", cellName, fieldPrefix,
                              "%step" + here, time);
       }
-      if (!control.observablesFile.empty()) {
+      if (!control.observables.empty()) {
         // The observed terms at the positions after the step (D189).
         std::string time = "%ob_time" + here;
         if (control.usesTime)
@@ -9579,6 +9579,15 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
   emitTrace(os, "%trpl", "%wpl", "    ");
   os << "    func.call @mdrtWriteEnergies(%step_plain, %upl, %kpl, %gpl, "
         "%trpl) : (i64, f64, f64, f64, f64) -> ()\n";
+  if (!control.observables.empty()) {
+    // The observed terms at the positions after the step (D189), as at a
+    // row of the second nest.
+    if (control.usesTime)
+      os << "    %ob_time_pl_steps = arith.sitofp %step_plain : i64 to f64\n"
+         << "    %ob_time_pl = arith.mulf %ob_time_pl_steps, %dt : f64\n";
+    emitObservablesOutput("    ", "%xpl", cellName, fieldPrefix, "%step_plain",
+                          "%ob_time_pl");
+  }
   if (!control.periodic)
     os << "    mdrt.host_call @mdrtCheckSpread(%step_plain, %xpl, " << idName
        << ") : (i64, !vec, !ids)\n";
@@ -9718,10 +9727,9 @@ llvm::Error Builder::build() {
   if (control.tunables) {
     if (!system.topology)
       return makeError("tunable parameters are for a model with a topology");
-    if (control.hasFreeEnergy || !control.observables.empty() ||
-        control.ljpme || !getPullColumns().empty())
+    if (control.hasFreeEnergy || control.ljpme || !getPullColumns().empty())
       return makeError("tunable parameters do not take [free_energy], "
-                       "observe, LJPME, or pulls yet");
+                       "LJPME, or pulls yet");
     program.tunable = true;
     // The derivative in the tunables is a branch of the start of a program
     // that takes steps (D230).

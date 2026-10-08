@@ -396,18 +396,31 @@ void _mlir_ciface_mdrtWriteFreeEnergy(int64_t step, void *values) {
 
 void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values) {
   Output &output = *current;
-  if (!output.observables.isOpen())
+  if (!output.observables.isOpen() && !output.embedded)
     return;
   auto *v = static_cast<StridedMemRefType<double, 1> *>(values);
   std::vector<double> row = {output.getTime(step)};
   // The tails of the observed pair terms at the volume of the cell
   // (D209).
   double scale = output.firstVolume / output.volume;
+  std::vector<double> taken;
   for (int64_t k = 0; k != v->sizes[0]; ++k) {
     double value = v->data[k * v->strides[0]];
     if (static_cast<size_t>(k) < output.observableVolumeConstants.size())
       value += output.observableVolumeConstants[k] * scale;
+    taken.push_back(value);
     row.push_back(value / units::energy);
+  }
+  // A program that embeds the run takes the values of every step of
+  // energy, and its file the rows that are due (D[python-observe]); a
+  // step whose energies are evaluated anew has its row already (D213).
+  if (output.embedded) {
+    output.lastObservables = {step, std::move(taken)};
+    if (step == output.quietStep || output.observablesPeriod <= 0 ||
+        (step - output.firstStep) % output.observablesPeriod != 0)
+      return;
+    if (output.tunablesVersion >= 0)
+      row.push_back(static_cast<double>(output.tunablesVersion));
   }
   output.observables.write(step, row);
 }

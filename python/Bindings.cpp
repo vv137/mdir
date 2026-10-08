@@ -142,6 +142,32 @@ static py::array_t<double> vectors(const std::vector<double> &values) {
   return host::copy(values.data(), values.size(),
                     {static_cast<py::ssize_t>(values.size() / 3), 3});
 }
+/// `observe` of a term (D189, D[python-observe]): None, the term is not
+/// observed, or the names of the constants whose derivatives are, with its
+/// energy.
+template <class Term> static py::object observeOf(const Term &term) {
+  if (!term.observed) return py::none();
+  return py::cast(term.observe);
+}
+template <class Term>
+static void setObserve(Term &term, py::object value, const char *name) {
+  if (value.is_none()) {
+    term.observed = false;
+    term.observe.clear();
+    return;
+  }
+  std::string message = std::string(name) + ".observe takes None or a list of the names "
+                        "of constants of the term";
+  if (py::isinstance<py::str>(value) || !py::isinstance<py::sequence>(value))
+    throw py::type_error(message);
+  std::vector<std::string> names;
+  for (py::handle item : value) {
+    if (!py::isinstance<py::str>(item)) throw py::type_error(message);
+    names.push_back(item.cast<std::string>());
+  }
+  term.observed = true;
+  term.observe = std::move(names);
+}
 PYBIND11_MODULE(_core, m) {
   // Required at import as well as configuration, including installed modules.
   try {
@@ -226,6 +252,8 @@ PYBIND11_MODULE(_core, m) {
     .def_readwrite("expression", &driver::PairTerm::expression)
     .def_readwrite("constants", &driver::PairTerm::constants)
     .def_readwrite("groups", &driver::PairTerm::groups)
+    .def_property("observe", [](const driver::PairTerm &t) { return observeOf(t); },
+                  [](driver::PairTerm &t, py::object value) { setObserve(t, value, "PairTerm"); })
     // `dispersion_correction` of the term (D209, D222):
     // None (Python's) follows the system, DispersionCorrection.None_ leaves
     // the term out of the correction, EnergyPressure asks for its tail.
@@ -246,7 +274,50 @@ PYBIND11_MODULE(_core, m) {
     .def_property("particles", [](const driver::TupleTerm &t) { return host::particles(t); },
                   [](driver::TupleTerm &t, py::object value) { host::particles(t, value); })
     .def_property("parameters", [](const driver::TupleTerm &t) { return host::parameters(t); },
-                  [](driver::TupleTerm &t, py::sequence value) { host::parameters(t, value); });
+                  [](driver::TupleTerm &t, py::sequence value) { host::parameters(t, value); })
+    .def_property("observe", [](const driver::TupleTerm &t) { return observeOf(t); },
+                  [](driver::TupleTerm &t, py::object value) { setObserve(t, value, "TupleTerm"); });
+  // Terms of the absolute positions, `[[energy.external]]` (D148,
+  // D[python-external]): x, y, z in nm, the charge q, kJ/mol.
+  py::enum_<driver::ExternalTerm::Scaling>(m, "ExternalScaling")
+    .value("None_", driver::ExternalTerm::Scaling::None)
+    .value("Cell", driver::ExternalTerm::Scaling::Cell)
+    ;
+  py::class_<driver::ExternalTerm>(m, "ExternalTerm").def(py::init<>())
+    .def_readwrite("name", &driver::ExternalTerm::name)
+    .def_readwrite("expression", &driver::ExternalTerm::expression)
+    .def_readwrite("selection", &driver::ExternalTerm::selection)
+    .def_readwrite("constants", &driver::ExternalTerm::constants)
+    .def_property("particles", [](const driver::ExternalTerm &t) {
+      std::vector<int64_t> values(t.particles.begin(), t.particles.end());
+      return host::copy(values.data(), values.size(), {static_cast<py::ssize_t>(values.size())});
+    }, [](driver::ExternalTerm &t, py::object source) {
+      const std::string name = "ExternalTerm.particles";
+      auto values = py::array_t<int64_t, py::array::c_style | py::array::forcecast>::ensure(source);
+      if (!values || values.ndim() != 1)
+        throw InputError(name + ": expected a one-dimensional array of particle indices, from 0");
+      std::vector<unsigned> particles;
+      for (py::ssize_t k = 0; k != values.shape(0); ++k) {
+        int64_t value = values.at(k);
+        if (value < 0 || static_cast<uint64_t>(value) > std::numeric_limits<unsigned>::max())
+          throw InputError(name + ": a particle index is negative or exceeds the native range");
+        particles.push_back(static_cast<unsigned>(value));
+      }
+      t.particles = std::move(particles);
+    })
+    // How the term follows a barostat (D154): None (Python's) leaves it
+    // unset, which a model with a barostat refuses.
+    .def_property("scaling", [](const driver::ExternalTerm &t) -> py::object {
+      if (t.scaling == driver::ExternalTerm::Scaling::Unset) return py::none();
+      return py::cast(t.scaling);
+    }, [](driver::ExternalTerm &t, py::object value) {
+      if (!value.is_none() && !py::isinstance<driver::ExternalTerm::Scaling>(value))
+        throw py::type_error("ExternalTerm.scaling takes an ExternalScaling or None");
+      t.scaling = value.is_none() ? driver::ExternalTerm::Scaling::Unset
+                                  : value.cast<driver::ExternalTerm::Scaling>();
+    })
+    .def_property("observe", [](const driver::ExternalTerm &t) { return observeOf(t); },
+                  [](driver::ExternalTerm &t, py::object value) { setObserve(t, value, "ExternalTerm"); });
   // Tunable parameters (D213).
   tunables::bindTunable(m);
   // Read-only topology views (D221).
@@ -308,6 +379,7 @@ PYBIND11_MODULE(_core, m) {
   property(system, "water_residues", &model::System::waterResidues);
   property(system, "pair_terms", &model::System::pairTerms);
   property(system, "tuple_terms", &model::System::tupleTerms);
+  property(system, "external_terms", &model::System::externalTerms);
   property(system, "restraints", &model::System::restraints);
   property(system, "tunables", &model::System::tunables);
   // Whether the program carries the derivative of the energy in the
@@ -505,6 +577,11 @@ PYBIND11_MODULE(_core, m) {
         terms[py::str(control.pairs[k].name)] = on && k < tails.size() && !tails[k].empty();
       dispersion["pair_terms"] = terms;
       d["dispersion"] = dispersion;
+      // The columns that the terms observe, in their order
+      // (D[python-observe]).
+      std::vector<std::string> observed;
+      for (const auto &[name, unit] : control.getObservableColumns()) observed.push_back(name);
+      d["observables"] = observed;
       return d;
     });
   m.def("compile", [](std::shared_ptr<Input<model::System>> system,
@@ -599,6 +676,14 @@ PYBIND11_MODULE(_core, m) {
       d["virial"] = e.virial; d["pressure"] = e.pressure; d["volume"] = e.volume;
       return d;
     })
+    .def_property_readonly("observables", [](const compiler::SimulationState &s) -> py::object {
+      // The columns of `observe` at this step, where `energies` is set:
+      // kJ/mol and kJ/mol per unit of the constant (D[python-observe]).
+      if (!s.observables) return py::none();
+      py::dict d;
+      for (const auto &[name, value] : *s.observables) d[py::str(name)] = value;
+      return d;
+    })
     .def_property_readonly("minimization", [](const compiler::SimulationState &s) -> py::object {
       // The row of the log of `mdir run` at the last step of a minimization,
       // in kJ/mol and nm (D202).
@@ -691,6 +776,7 @@ PYBIND11_MODULE(_core, m) {
   struct EnergyReporter { std::string file; int64_t period; };
   struct TrajectoryReporter { std::string file; int64_t period; driver::TrajectoryFormat format; };
   struct CallbackReporter { py::object function; int64_t period; };
+  struct ObservablesReporter { std::string file; int64_t period; };
   auto positive = [](int64_t period) {
     if (period <= 0) throw InputError("a reporter's period must be a positive number of steps");
     return period;
@@ -701,6 +787,14 @@ PYBIND11_MODULE(_core, m) {
     }), py::arg("file"), py::arg("period"))
     .def_readonly("file", &EnergyReporter::file)
     .def_readonly("period", &EnergyReporter::period);
+  // The file of `[output] observables` (D189, D[python-observe]).
+  py::class_<ObservablesReporter>(m, "ObservablesReporter")
+    .def(py::init([positive](std::string file, int64_t period) {
+      if (file.empty()) throw InputError("ObservablesReporter takes the name of a file");
+      return ObservablesReporter{std::move(file), positive(period)};
+    }), py::arg("file"), py::arg("period"))
+    .def_readonly("file", &ObservablesReporter::file)
+    .def_readonly("period", &ObservablesReporter::period);
   py::class_<TrajectoryReporter>(m, "TrajectoryReporter")
     .def(py::init([positive](std::string file, int64_t period,
                              std::optional<driver::TrajectoryFormat> format) {
@@ -761,17 +855,23 @@ PYBIND11_MODULE(_core, m) {
           const auto &r = item.cast<const TrajectoryReporter &>();
           given.trajectoryPath = r.file; given.framePeriod = r.period;
           given.trajectoryFormat = r.format;
+        } else if (py::isinstance<ObservablesReporter>(item)) {
+          if (given.observablesPeriod) throw InputError("a simulation takes one ObservablesReporter");
+          const auto &r = item.cast<const ObservablesReporter &>();
+          given.observablesPath = r.file; given.observablesPeriod = r.period;
         } else if (py::isinstance<CallbackReporter>(item)) {
           callbacks.push_back(item.cast<CallbackReporter>());
         } else {
           throw InputError("Simulation.reporters holds EnergyReporter, TrajectoryReporter, "
-                           "CheckpointReporter, and CallbackReporter values");
+                           "ObservablesReporter, CheckpointReporter, and CallbackReporter values");
         }
       }
       const auto &now = simulation->getReports();
       if (given.energyPath != now.energyPath || given.energyPeriod != now.energyPeriod ||
           given.trajectoryPath != now.trajectoryPath || given.framePeriod != now.framePeriod ||
-          given.trajectoryFormat != now.trajectoryFormat)
+          given.trajectoryFormat != now.trajectoryFormat ||
+          given.observablesPath != now.observablesPath ||
+          given.observablesPeriod != now.observablesPeriod)
         if (llvm::Error error = simulation->setReports(given)) raise(std::move(error));
       return callbacks;
     }

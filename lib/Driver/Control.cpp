@@ -3096,16 +3096,21 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
                         const Control::Observable &b) {
                        return a.line < b.line;
                      });
-    if (control.observablesFile.empty())
-      return error("the term '" + control.observables.front().term +
-                   "' gives 'observe', but [output] has no 'observables', "
-                   "the file of its columns");
-    if (control.observables.empty())
-      return error("[output] names 'observables', but no term gives "
-                   "'observe'");
-    if (control.energyPeriod == 0 || control.minimize)
-      return error("'observables' is written at the energies of a run of "
-                   "dynamics, which needs 'energy_interval'");
+    // A model in memory names no file: its simulation writes the columns
+    // through a reporter and reads them from its state
+    // (D[python-observe]).
+    if (!control.inMemoryTopology) {
+      if (control.observablesFile.empty())
+        return error("the term '" + control.observables.front().term +
+                     "' gives 'observe', but [output] has no 'observables', "
+                     "the file of its columns");
+      if (control.observables.empty())
+        return error("[output] names 'observables', but no term gives "
+                     "'observe'");
+      if (control.energyPeriod == 0 || control.minimize)
+        return error("'observables' is written at the energies of a run of "
+                     "dynamics, which needs 'energy_interval'");
+    }
     if (!control.hasTopology())
       return error("'observe' takes the terms of a system from a topology");
     for (const Control::Observable &observable : control.observables) {

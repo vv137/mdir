@@ -87,6 +87,29 @@ std::string describeTupleTerm(const driver::TupleTerm &term) {
   return text + "}}";
 }
 
+std::string describeExternalTerm(const driver::ExternalTerm &term) {
+  std::string text = "{name=" + getFingerprintString(term.name) +
+                     ",expression=" + getFingerprintString(term.expression) +
+                     ",selection=" + getFingerprintString(term.selection) +
+                     ",particles=";
+  std::string particles;
+  for (unsigned particle : term.particles)
+    particles += std::to_string(particle) + ",";
+  text += driver::getFingerprintHash(particles) + ",constants={";
+  std::vector<std::pair<std::string, double>> constants(term.constants.begin(),
+                                                        term.constants.end());
+  std::sort(constants.begin(), constants.end());
+  for (size_t k = 0; k != constants.size(); ++k)
+    text += (k ? "," : "") + constants[k].first + "=" +
+            getFingerprintNumber(constants[k].second);
+  text += "},scaling=";
+  text += term.scaling == driver::ExternalTerm::Scaling::Cell
+              ? "CELL"
+              : term.scaling == driver::ExternalTerm::Scaling::None ? "NONE"
+                                                                     : "UNSET";
+  return text + "}";
+}
+
 } // namespace
 
 std::string mdir::model::describeTunables(const TunableSet &set) {
@@ -214,6 +237,13 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     for (const driver::TupleTerm &term : s.tupleTerms)
       text += describeTupleTerm(term);
     add("physics", "[python] tuple_terms", driver::getFingerprintHash(text));
+  }
+  if (!s.externalTerms.empty()) {
+    std::string text;
+    for (const driver::ExternalTerm &term : s.externalTerms)
+      text += describeExternalTerm(term);
+    add("physics", "[python] external_terms",
+        driver::getFingerprintHash(text));
   }
   if (!prepared.tunables.empty()) {
     // The declarations and the values the model begins with; a

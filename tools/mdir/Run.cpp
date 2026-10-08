@@ -1108,12 +1108,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (!control->observablesFile.empty()) {
     std::vector<ColumnFile::Column> columns = {{"step", "-", true},
                                                {"time", "ps"}};
-    for (const Control::Observable &observable : control->observables)
-      if (observable.constant.empty())
-        columns.push_back({observable.term + ".energy", "kcal/mol"});
-      else
-        columns.push_back({observable.term + ".d_" + observable.constant,
-                           "kcal/mol/" + observable.constant});
+    for (const auto &[name, unit] : control->getObservableColumns())
+      columns.push_back({name, unit});
     if (llvm::Error error = output.observables.open(
             getOutputPath(control->observablesFile), columns, keepThrough))
       return fail(std::move(error));

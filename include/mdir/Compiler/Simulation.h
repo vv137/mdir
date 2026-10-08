@@ -72,6 +72,11 @@ struct SimulationState {
   /// The version of the values of the tunable parameters that the forces
   /// and the energies are of (D213).
   int64_t tunablesVersion = 0;
+  /// The observed energies of terms and their derivatives at the step
+  /// `step` (D189, D[python-observe]), by the names of their columns, in
+  /// kJ/mol and kJ/mol per unit of the constant, where `energies` is set
+  /// and the program observes.
+  std::optional<std::vector<std::pair<std::string, double>>> observables;
 };
 
 /// The buffers of the state of a simulation where its program keeps them,
@@ -140,7 +145,13 @@ public:
     std::string trajectoryPath;
     driver::TrajectoryFormat trajectoryFormat = driver::TrajectoryFormat::DCD;
     int64_t framePeriod = 0;
+    /// The file of `[output] observables` (D189) every `observablesPeriod`
+    /// steps, of a program whose terms observe (D[python-observe]).
+    std::string observablesPath;
+    int64_t observablesPeriod = 0;
   };
+  /// The names of the columns that the program observes, in their order.
+  std::vector<std::string> getObservableNames() const;
   llvm::Error setReports(const Reports &reports);
   /// Flushes and closes the files of the reports.
   void closeReports();

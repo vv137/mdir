@@ -58,6 +58,11 @@ struct TupleTerm {
     std::string name;
   };
   std::vector<Coordinate> coordinates;
+  /// In the Python model, `observe` of the term (D189,
+  /// D[python-observe]): whether the term is observed, and the parameters,
+  /// equal for all tuples, whose derivatives are.
+  bool observed = false;
+  std::vector<std::string> observe;
 
   bool isCentroid() const { return !groups.empty(); }
   bool isCompound() const { return !coordinates.empty(); }
@@ -92,6 +97,10 @@ struct ExternalTerm {
   /// the input, its virial none; a run at constant pressure must say which.
   enum class Scaling { Unset, None, Cell };
   Scaling scaling = Scaling::Unset;
+  /// In the Python model, `observe` of the term (D189,
+  /// D[python-observe]).
+  bool observed = false;
+  std::vector<std::string> observe;
 };
 
 struct Topology {

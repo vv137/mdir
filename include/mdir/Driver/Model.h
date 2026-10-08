@@ -132,6 +132,12 @@ struct System {
   /// EnergyPressure asks for its tail (D209, D222).
   std::vector<driver::PairTerm> pairTerms;
   std::vector<driver::TupleTerm> tupleTerms;
+  /// Terms of the absolute positions, `[[energy.external]]` of the control
+  /// file (D148, D[python-external]): expressions in x, y, z (nm) and the
+  /// charge q, in kJ/mol, over the particles of a mask or given by their
+  /// indices, with constants only; under a barostat each says how it
+  /// follows the cell (D154).
+  std::vector<driver::ExternalTerm> externalTerms;
   /// One `[[restraints]]` table (D74, D124), with its constant in
   /// kJ/mol/nm^2 (D198).
   struct Restraint {
