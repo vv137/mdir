@@ -45,11 +45,17 @@ func.func @terms(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc, %v: !vec)
   return %v1 : !vec
 }
 
-// The loops come in the other order than the sum: they keep their
-// destinations.
+// The loops come in the other order than the sum: the loop that the sum
+// adds second moves down to follow the first and accumulates onto it, so
+// that the terms are added in the order of the sum wherever the loops
+// stand (#240).
 //
 // CHECK-LABEL: func.func @reversed(
-// CHECK:         md_exec.particle_for ins(%{{[0-9]+}}, %{{[0-9]+}} :
+// CHECK:         %[[Z:[0-9]+]] = md_exec.zeros
+// CHECK:         %[[F2:[0-9]+]] = md_exec.tuple_for {{.*}} outs(%[[Z]] :
+// CHECK-NOT:     md_exec.zeros
+// CHECK:         %[[F1:[0-9]+]] = md_exec.pair_for {{.*}} outs(%[[F2]] :
+// CHECK:         md_exec.particle_for ins(%[[F1]] : !md.field<@atoms, 3 x f64>)
 func.func @reversed(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc) -> !vec {
   %z1 = md_exec.zeros : !vec
   %f1 = md_exec.pair_for %nl, %x, %cell outs(%z1 : !vec) cutoff(1.5)
@@ -67,6 +73,84 @@ func.func @reversed(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc) -> !vec {
   %s = md_exec.particle_for ins(%f2, %f1 : !vec, !vec) outs(%e : !vec) {
   ^bb0(%a: vector<3xf64>, %b: vector<3xf64>):
     %t = arith.addf %a, %b : vector<3xf64>
+    md_exec.yield %t : vector<3xf64>
+  } -> !vec
+  return %s : !vec
+}
+
+// A step that computes energies: the loop of the second term of the sum
+// gives its energy too and stands where the energy is added, before the
+// loop of the first term, whose forces need a number computed in between
+// (a term over the centers of groups, D139). The loop moves down to follow
+// the loop of the first term, with the sum of the energies that reads it,
+// and accumulates onto it: the forces are summed as in the step without
+// energies, where the loops stand in the order of the sum (#240).
+//
+// CHECK-LABEL: func.func @energies(
+// CHECK:         %[[W:[0-9]+]] = arith.mulf %{{[a-z0-9]+}}, %{{[a-z0-9]+}} : f64
+// CHECK:         %[[Z:[0-9]+]] = md_exec.zeros
+// CHECK:         %[[F1:[0-9]+]] = md_exec.tuple_for {{.*}} outs(%[[Z]] :
+// CHECK-NOT:     md_exec.zeros
+// CHECK:         %[[F2:[0-9]+]]:2 = md_exec.pair_for {{.*}} outs(%[[F1]] : !md.field<@atoms, 3 x f64>) reduce(
+// CHECK:         %[[U:[0-9]+]] = arith.addf %[[F2]]#1, %{{[a-z0-9]+}} : f64
+// CHECK:         md_exec.particle_for ins(%[[F2]]#0 : !md.field<@atoms, 3 x f64>)
+// CHECK:         return %{{[0-9]+}}, %[[U]]
+func.func @energies(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc,
+    %a: f64) -> (!vec, f64) {
+  %zero = arith.constant 0.0 : f64
+  %z2 = md_exec.zeros : !vec
+  %f2, %u2 = md_exec.pair_for %nl, %x, %cell outs(%z2 : !vec)
+      reduce(%zero : f64) cutoff(1.5) policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %d, %r2 : vector<3xf64>, f64
+  } : !nl, !vec -> !vec, f64
+  %u = arith.addf %u2, %a : f64
+  %w = arith.mulf %a, %a : f64
+  %z1 = md_exec.zeros : !vec
+  %f1 = md_exec.tuple_for %bonds, %x, %cell coordinates(displacement(0, 1))
+      outs(%z1 : !vec) arity(2) {
+  ^bb0(%d: vector<3xf64>):
+    %b = vector.broadcast %w : f64 to vector<3xf64>
+    %g = arith.mulf %b, %d : vector<3xf64>
+    md_exec.yield %g, %g : vector<3xf64>, vector<3xf64>
+  } : !inc, !vec -> !vec
+  %e = md_exec.empty : !vec
+  %s = md_exec.particle_for ins(%f1, %f2 : !vec, !vec) outs(%e : !vec) {
+  ^bb0(%p: vector<3xf64>, %q: vector<3xf64>):
+    %t = arith.addf %p, %q : vector<3xf64>
+    md_exec.yield %t : vector<3xf64>
+  } -> !vec
+  return %s, %u : !vec, f64
+}
+
+// The loop of the first term of the sum reads a number computed from the
+// sum of the loop of the second, which stands before it: the second
+// cannot follow the first, and the loops keep their destinations.
+//
+// CHECK-LABEL: func.func @dependent(
+// CHECK:         md_exec.particle_for ins(%{{[0-9]+}}, %{{[0-9]+}}#0 :
+func.func @dependent(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc)
+    -> !vec {
+  %zero = arith.constant 0.0 : f64
+  %z2 = md_exec.zeros : !vec
+  %f2, %u2 = md_exec.pair_for %nl, %x, %cell outs(%z2 : !vec)
+      reduce(%zero : f64) cutoff(1.5) policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>):
+    md_exec.yield %d, %r2 : vector<3xf64>, f64
+  } : !nl, !vec -> !vec, f64
+  %w = arith.mulf %u2, %u2 : f64
+  %z1 = md_exec.zeros : !vec
+  %f1 = md_exec.tuple_for %bonds, %x, %cell coordinates(displacement(0, 1))
+      outs(%z1 : !vec) arity(2) {
+  ^bb0(%d: vector<3xf64>):
+    %b = vector.broadcast %w : f64 to vector<3xf64>
+    %g = arith.mulf %b, %d : vector<3xf64>
+    md_exec.yield %g, %g : vector<3xf64>, vector<3xf64>
+  } : !inc, !vec -> !vec
+  %e = md_exec.empty : !vec
+  %s = md_exec.particle_for ins(%f1, %f2 : !vec, !vec) outs(%e : !vec) {
+  ^bb0(%p: vector<3xf64>, %q: vector<3xf64>):
+    %t = arith.addf %p, %q : vector<3xf64>
     md_exec.yield %t : vector<3xf64>
   } -> !vec
   return %s : !vec

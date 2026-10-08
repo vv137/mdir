@@ -573,6 +573,20 @@ def AccumulateDestinations
     %v = md_exec.particle_for ins(%f2, ...) { ... }
     ```
 
+    A loop that stands before the loop of the term that the sum adds before
+    it moves down to follow that loop, with the pure ops between the two
+    that read its results (the sums of the energies and of the virials of
+    the terms), where the other loop reads none of them. A loop that gives
+    the energy of its term with its forces stands where the energy is added
+    (`md-exec-fuse-loops`), which is before the forces of a term whose
+    forces need a number computed from its own sums, as a term over the
+    centers of groups does (D139); in a step without energies the loops
+    stand in the order of the sum. Moved, the loop accumulates onto the
+    terms before it in both kinds of step, so that the forces are added in
+    one order and one type whatever else the step computes (#240): left
+    where it stood, it kept its own field, which the loop over particles
+    added in `f64` to the `f32` sum of the terms before it.
+
     A loop computes `a0 + Σ`, so the sums are those of the loop over
     particles, in the same order, in the type of the destination: to the
     bit where that is the type in which the loop over particles added
