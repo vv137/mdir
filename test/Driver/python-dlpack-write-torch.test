@@ -1,6 +1,6 @@
 # REQUIRES: python-api, torch
 # Tracked writable DLPack borrows of a simulation on the CPU
-# (D[python-dlpack-write]), Inputs/python_dlpack_write.py with PyTorch as
+# (D229), Inputs/python_dlpack_write.py with PyTorch as
 # the consumer that writes. The feature `torch` is set when the interpreter
 # of the tests imports torch, or when lit is given -Dtorch_python=<an
 # interpreter with torch>.

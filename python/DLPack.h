@@ -1,5 +1,5 @@
 // Read-only DLPack views of the buffers of a simulation (D220) and
-// writable borrows of them with a commit (D[python-dlpack-write],
+// writable borrows of them with a commit (D229,
 // docs/python-dlpack.md), included by Bindings.cpp.
 //
 // The structures follow the ABI of `dlpack.h` 1.x (dmlc/dlpack,
@@ -56,7 +56,7 @@ struct Lease {
 /// What a View and its Buffers share: the view's own lease, until release().
 /// A Borrow shares the same, with the buffers of the host that it owns:
 /// the edges of the cell and the values of the tunables, which a consumer
-/// writes and a commit takes (D[python-dlpack-write]). A managed tensor
+/// writes and a commit takes (D229). A managed tensor
 /// of one of them holds them as well, so that they outlive the Borrow.
 struct Staging {
   std::array<double, 3> cell{};
@@ -249,7 +249,7 @@ inline View take(std::shared_ptr<compiler::Simulation> simulation) {
   return view;
 }
 
-/// A writable borrow (D[python-dlpack-write]): the buffers of the positions
+/// A writable borrow (D229): the buffers of the positions
 /// and the velocities where the program keeps them, and buffers of its own
 /// with the edges of the cell and the values of the tunables.
 struct Borrow {

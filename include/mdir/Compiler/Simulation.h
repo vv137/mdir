@@ -221,7 +221,7 @@ public:
   /// stream to wait.
   void markExported() { exported = true; }
 
-  /// A writable borrow of the buffers of the state (D[python-dlpack-write],
+  /// A writable borrow of the buffers of the state (D229,
   /// docs/python-dlpack.md): the view of `takeView`, with a lease, for a
   /// consumer that writes the positions and the velocities. It excludes
   /// every other operation on the state, views included, until it is
@@ -399,7 +399,7 @@ private:
   llvm::Error checkLeases(const char *operation);
   /// Whether a writable borrow has not been committed or undone, the
   /// fields of the state that it gave out to write, the versions, and the
-  /// commits (D[python-dlpack-write]).
+  /// commits (D229).
   std::atomic<bool> borrowed{false};
   std::atomic<unsigned> borrowWritten{0};
   StateVersions stateVersions;

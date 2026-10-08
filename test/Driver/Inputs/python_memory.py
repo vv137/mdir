@@ -79,7 +79,7 @@ growth = measure() - ended
 print(f"{target_name}: {kind} memory from simulation 5 to simulation {CALLS} that "
       f"ended: {growth:+.1f} MiB (bound {BOUND} MiB)")
 assert growth <= BOUND, growth
-# Writable borrows (D[python-dlpack-write]): a commit ends the activation
+# Writable borrows (D229): a commit ends the activation
 # and begins another; an abandoned borrow keeps it.
 for call in range(1, CALLS + 1):
     assert simulation.run(5) == 5

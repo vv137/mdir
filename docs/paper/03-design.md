@@ -531,7 +531,7 @@ taken waits for all the work of the context, the consumer's included,
 before it writes the buffers.
 
 A consumer that writes takes a *borrow* instead
-(D[python-dlpack-write]): the same buffers of the positions and the
+(D229): the same buffers of the positions and the
 velocities without the read-only flag, and buffers of the host with the
 edges of the cell and the values of the tunables. A borrow excludes every
 other operation on the state, views included. Its commit is explicit: it

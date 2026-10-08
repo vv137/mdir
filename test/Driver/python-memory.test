@@ -2,7 +2,7 @@
 # The host memory of a persistent simulation on the CPU stays flat across
 # many calls of run (#110), across evaluations that end its activation, and
 # across simulations that end (D215), and across writable borrows that are
-# committed and abandoned (D[python-dlpack-write]).
+# committed and abandoned (D229).
 # RUN: %mdir_python %S/Inputs/python_memory.py %S/Inputs/dipeptide CPU | FileCheck %s
 # CHECK: CPU: host memory from call 5 to call 30:
 # CHECK: CPU: host memory after 30 evaluations between runs:

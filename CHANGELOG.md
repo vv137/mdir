@@ -71,7 +71,7 @@ format, or the outputs; every such change is listed under **Changed** or
   `Schedule.energy_period` steps; `state().minimization["converged"]`
   reports the result. Without a tolerance nothing changes.
 - Tracked writable DLPack borrows of a Python simulation with a commit
-  (D[python-dlpack-write], #136, `docs/python-dlpack.md`):
+  (D229, #136, `docs/python-dlpack.md`):
   `Simulation.borrow()` returns a `Borrow` whose `positions` and
   `velocities` are the program's buffers, writable through `__dlpack__`
   on the device or the host, in the order of the program (`ids` gives the

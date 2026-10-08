@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # Tracked writable DLPack borrows of a simulation on a GPU
-# (D[python-dlpack-write]), Inputs/python_dlpack_write.py with a reader of
+# (D229), Inputs/python_dlpack_write.py with a reader of
 # the capsule in ctypes that writes the buffers with the CUDA driver API on a
 # stream of its own.
 # RUN: %mdir_python %S/Inputs/python_dlpack_write.py %S/Inputs/dipeptide GPU driver | FileCheck %s

@@ -1,6 +1,6 @@
 # REQUIRES: python-api, torch, cuda
 # Tracked writable DLPack borrows of a simulation on a GPU
-# (D[python-dlpack-write]), Inputs/python_dlpack_write.py with PyTorch as
+# (D229), Inputs/python_dlpack_write.py with PyTorch as
 # the consumer that writes, on a stream of its own, with writes still under
 # way when the borrow is committed. The feature `torch` is set when the
 # interpreter of the tests imports torch, or when lit is given

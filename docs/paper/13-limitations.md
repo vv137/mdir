@@ -131,7 +131,7 @@ that a run in parts is the run in one part to the bit
 (D215); read-only DLPack views of those buffers, whose leases
 block runs while a consumer holds them (D220), and writable
 borrows of them with an explicit commit, which rebuilds what depends on
-the fields written (D[python-dlpack-write]); read-only views
+the fields written (D229); read-only views
 of the topology, with the constraints of a compiled program, and the masks
 of the control file evaluated from Python (D221); checkpoints
 shared with the CLI, which either front end continues

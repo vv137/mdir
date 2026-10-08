@@ -1,5 +1,5 @@
 """Tracked writable DLPack borrows of a simulation with a commit
-(D[python-dlpack-write], docs/python-dlpack.md), written by consumers that
+(D229, docs/python-dlpack.md), written by consumers that
 do not use MDIR's code.
 
 Usage: python_dlpack_write.py ROOT TARGET CONSUMER

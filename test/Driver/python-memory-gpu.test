@@ -2,7 +2,7 @@
 # The device memory of a persistent simulation on a GPU stays flat across
 # many calls of run (#110), across evaluations that end its activation, and
 # across simulations that end (D215), and across writable borrows that are
-# committed and abandoned (D[python-dlpack-write]).
+# committed and abandoned (D229).
 # RUN: %mdir_python %S/Inputs/python_memory.py %S/Inputs/dipeptide GPU | FileCheck %s
 # CHECK: GPU: device memory from call 5 to call 30:
 # CHECK: GPU: device memory after 30 evaluations between runs:

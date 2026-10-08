@@ -385,7 +385,7 @@ values of the view although the simulation runs 10 steps at once, which it
 does not when the wait for the context is removed
 (`python-dlpack*.test`).
 
-The writable borrows (D[python-dlpack-write], Section 3.6) are checked by
+The writable borrows (D229, Section 3.6) are checked by
 the same consumers, which write: a commit that moves one particle, scales
 the velocities, scales the cell with the positions, or changes the
 charges and a constant of a pair term, followed by 12 steps, equals to

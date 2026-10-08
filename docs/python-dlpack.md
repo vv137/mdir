@@ -1,10 +1,10 @@
-# DLPack views and writable borrows of a simulation (D220, D[python-dlpack-write])
+# DLPack views and writable borrows of a simulation (D220, D229)
 
 Issue #131, the first part of item 6 of the M2 sequence
 ([python-m2.md](python-m2.md), Sections 3 to 5): read-only views. Writable
 borrows with a commit, which advance the versions of the fields they
-change, are the second part (#136, D[python-dlpack-write],
-[below](#writable-borrows-dpython-dlpack-write)). Status of the views:
+change, are the second part (#136, D229,
+[below](#writable-borrows-d229)). Status of the views:
 implemented; the questions put to the maintainer on PR #177 were decided
 as recommended ([Maintainer rulings](#maintainer-rulings)).
 
@@ -126,7 +126,7 @@ Writing through a read-only view is not detected; its
 effect on the simulation is undefined (lost at the next part, or carried
 into it, or in the copy that a failed part returns to). The tracked way
 to write is a borrow
-([Writable borrows](#writable-borrows-dpython-dlpack-write)).
+([Writable borrows](#writable-borrows-d229)).
 
 The structures are those of `dlpack.h` (DLPack 1.1,
 [dmlc/dlpack](https://github.com/dmlc/dlpack)), declared in
@@ -225,7 +225,7 @@ undefined and not detected (#136 tracks writes); the CUDA context is
 synchronized before the first operation that writes or frees exported
 buffers.
 
-## Writable borrows (D[python-dlpack-write])
+## Writable borrows (D229)
 
 Issue #136, the second part of item 6 and the last open item of M2a.
 Status: implemented; the four questions put to the maintainer on PR #204

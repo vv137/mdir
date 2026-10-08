@@ -972,7 +972,7 @@ PYBIND11_MODULE(_core, m) {
     .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
     // Read-only DLPack views of the buffers (D220).
     .def("view", [](PySimulation &s) { return views::take(s.simulation); })
-    // Writable borrows with a commit (D[python-dlpack-write]).
+    // Writable borrows with a commit (D229).
     .def("borrow", [](PySimulation &s) { return views::borrow(s.simulation); })
     .def_property_readonly("versions", [](const PySimulation &s) {
       auto v = s.simulation->getStateVersions();

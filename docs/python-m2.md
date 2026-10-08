@@ -30,9 +30,9 @@ simulation takes without compiling ([python-tunable.md](python-tunable.md)).
 D220 (#131) exposes the buffers of a
 simulation, the particle IDs, and the values of tunables as read-only DLPack
 views with leases and stream handoff ([python-dlpack.md](python-dlpack.md)).
-D[python-dlpack-write] (#136) adds tracked writable borrows of the state
+D229 (#136) adds tracked writable borrows of the state
 and the tunables with an explicit commit, which completes item 6
-([python-dlpack.md](python-dlpack.md#writable-borrows-dpython-dlpack-write)).
+([python-dlpack.md](python-dlpack.md#writable-borrows-d229)).
 D221 (#120) adds read-only topology views and mask selection
 ([python-topology.md](python-topology.md)).
 D223 (#132) writes and continues the checkpoint of
@@ -168,7 +168,7 @@ without them. Writable borrowing needs an explicit completion/commit operation
 that advances changed field versions (P16) and invalidates dependent forces,
 neighbors and derived fields. Untracked external writes cannot be detected
 automatically. Choose a policy for consumers that ignore read-only intent.
-(Implemented by D[python-dlpack-write]: `Simulation.borrow()` and
+(Implemented by D229: `Simulation.borrow()` and
 `Borrow.commit()`; writes through a read-only view stay undefined, and the
 borrow is the tracked path.)
 
@@ -203,7 +203,7 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 | 3a | `D198` (#92): `InitialState.draw_velocities`, typed `System.restraints` | Velocities of `mdir run` bit for bit; restrained runs against `mdir run` on CPU/GPU, mixed/double; refusals |
 | 4 | `python-reporters` (future label): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |
 | 5 | `python-checkpoints` (future label): shared in-memory provenance and cross-front-end continuation | Both checkpoint directions, stage changes, corruption rejection, tunable restoration and output continuation |
-| 6 | `D220` (#131, [python-dlpack.md](python-dlpack.md)): read-only leases, IDs and stream handoff; `D[python-dlpack-write]` (#136): tracked writable borrows with a commit | Alias lifetime/completion, allocator reuse, dtype/order and version invalidation; read-only support alone does not close M2 |
+| 6 | `D220` (#131, [python-dlpack.md](python-dlpack.md)): read-only leases, IDs and stream handoff; `D229` (#136): tracked writable borrows with a commit | Alias lifetime/completion, allocator reuse, dtype/order and version invalidation; read-only support alone does not close M2 |
 | 7 | `D228` (#133): Python 3.10–3.13 manylinux_2_28 pip wheel, reference and four-stage tutorial | Import/run outside the source/build tree, runtime discovery, CPU-only operation, suite and performance report; conda is deferred |
 
 Use an optional pybind11 extension. The enabled Python interface requires
