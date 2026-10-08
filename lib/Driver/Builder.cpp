@@ -1563,6 +1563,23 @@ llvm::Error Builder::collectTopology() {
   unsigned numTypes = topology.getNumTypes();
   program.tables.push_back({"lj_sigma", numTypes, topology.sigma});
   program.tables.push_back({"lj_epsilon", numTypes, topology.epsilon});
+  // The weights of the seeds of the derivatives in those tables, a table
+  // of all ordered pairs of types each, and the field of the particles
+  // that each gives (D[tunable-gradient]).
+  if (program.tunableGradient)
+    for (auto [c, seed] : llvm::enumerate(control.tunableTableSeeds)) {
+      Program::Table table;
+      table.name = "tgw" + std::to_string(c);
+      table.count = numTypes;
+      table.columns = numTypes;
+      table.values = system.tunableSeedWeights[c];
+      program.tables.push_back(std::move(table));
+      Program::GradientField field;
+      field.tunable = seed.tunable;
+      for (unsigned a = 0; a != numTypes; ++a)
+        field.rows.push_back({seed.sites[a], seed.scales[a], 0.0});
+      program.gradientFields.push_back(std::move(field));
+    }
   // The tunable constants of the pair terms (D213), a row that
   // the kernels read in place of constants of their text.
   if (!control.tunableConstants.empty()) {
@@ -3152,6 +3169,27 @@ llvm::Error Builder::collectTunableGradient() {
         outcome = Program::GradientOutcome::Rule;
       break;
     }
+    case Control::TunableKind::Sigma:
+    case Control::TunableKind::Epsilon:
+    case Control::TunableKind::SigmaPair:
+    case Control::TunableKind::EpsilonPair:
+      // The Lennard-Jones of the topology reads the tables; so would a
+      // pair term that names sigma or epsilon, whose kernel and tail have
+      // no seeds yet.
+      for (const PairTerm &term : control.pairs) {
+        Expression expression = llvm::cantFail(
+            Expression::parse(term.expression, control.functions));
+        for (const char *name : {"sigma", "epsilon", "sigma1", "sigma2",
+                                 "epsilon1", "epsilon2"})
+          if (llvm::is_contained(expression.getNames(), name))
+            return makeError(
+                "System.tunable_gradient: the derivative of the energy in "
+                "the tunable '" + declaration.name + "' through the pair "
+                "term '" + term.name + "', which reads '" + name +
+                "', is not implemented yet");
+      }
+      outcome = Program::GradientOutcome::Rule;
+      break;
     default: {
       static const char *const kinds[] = {
           "charges",        "per-type sigma",    "per-type epsilon",
@@ -3161,11 +3199,60 @@ llvm::Error Builder::collectTunableGradient() {
           "System.tunable_gradient: the derivative of the energy in the "
           "tunable '" + declaration.name + "' (" +
           kinds[static_cast<int>(declaration.kind)] +
-          ") is not implemented yet; the derivative takes constants of "
-          "pair terms and parameters of terms over tuples");
+          ") is not implemented yet; the derivative takes sigma and "
+          "epsilon, per type and by pairs, constants of pair terms, and "
+          "parameters of terms over tuples");
     }
     }
     program.gradientOutcomes.push_back(outcome);
+  }
+  // What the correction for the dispersion and the estimate of its shift
+  // add to the rows of the seeds of the tables. The correction is
+  // K Σ_ab n_ab C6_ab over the ordered pairs of types, C6 = 4 ε σ⁶, with
+  // n_ab the ordered pairs of particles of the types less the excluded
+  // ones (getTopologyDispersion), and the estimate of the shift is the
+  // correction times a factor of the cell (D210). With G_ab its
+  // derivative in the entry (a, b) of a table, the row a of a seed of
+  // weights w takes Σ_b (G_ab + G_ba) w_ab: the entry (a, b) follows the
+  // value of the type a through its first place and (b, a) through its
+  // second.
+  if (dispersion && !control.tunableTableSeeds.empty()) {
+    const Topology &topology = *system.topology;
+    unsigned numTypes = topology.getNumTypes();
+    std::vector<double> numbers(numTypes, 0.0), pairs(numTypes * numTypes);
+    for (unsigned type : topology.types)
+      numbers[type] += 1.0;
+    for (unsigned a = 0; a != numTypes; ++a)
+      for (unsigned b = 0; b != numTypes; ++b)
+        pairs[a * numTypes + b] =
+            numbers[a] * (numbers[b] - (a == b ? 1.0 : 0.0));
+    for (auto [i, j] : topology.exclusions)
+      pairs[topology.types[i] * numTypes + topology.types[j]] -= 2.0;
+    double n = static_cast<double>(topology.getNumParticles());
+    double ordered = n * (n - 1.0) - 2.0 * topology.exclusions.size();
+    double rc = control.cutoffDistance * units::length;
+    double volume = system.box[0] * system.box[1] * system.box[2];
+    double factor = ordered > 0.0
+                        ? -2.0 * M_PI / (3.0 * volume) * n * n /
+                              (ordered * rc * rc * rc) * (1.0 + getShiftFactor())
+                        : 0.0;
+    for (auto [c, seed] : llvm::enumerate(control.tunableTableSeeds)) {
+      const std::vector<double> &weights = system.tunableSeedWeights[c];
+      auto slope = [&](unsigned a, unsigned b) {
+        double sigma = topology.sigma[a * numTypes + b];
+        double epsilon = topology.epsilon[a * numTypes + b];
+        double c6 = seed.sigma ? 24.0 * epsilon * std::pow(sigma, 5)
+                               : 4.0 * std::pow(sigma, 6);
+        return factor * pairs[a * numTypes + b] * c6;
+      };
+      for (unsigned a = 0; a != numTypes; ++a) {
+        double sum = 0.0;
+        for (unsigned b = 0; b != numTypes; ++b)
+          if (weights[a * numTypes + b] != 0.0)
+            sum += (slope(a, b) + slope(b, a)) * weights[a * numTypes + b];
+        program.gradientFields[c].rows[a].volumeConstant = sum;
+      }
+    }
   }
   return llvm::Error::success();
 }
@@ -3913,14 +4000,26 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     // selection stay.
     bool flags = (lj && scalesVdw) || (coulomb && scalesCoulomb) ||
                  (alchemicalOnly && decouples());
+    // In `@tunable`, σ and ε of a pair take the seeds of the derivatives
+    // in their tables (D[tunable-gradient], Control::TunableTableSeed).
+    size_t seeds =
+        gradientArguments && lj ? control.tunableTableSeeds.size() : 0;
+    std::string seedFields, seedTypes, seedArguments;
+    for (size_t c = 0; c != seeds; ++c) {
+      seedFields += ", %tg_d" + std::to_string(c);
+      seedTypes += ", !real";
+      seedArguments += ", %tgd" + std::to_string(c) + "_i: f64, %tgd" +
+                       std::to_string(c) + "_j: f64";
+    }
     os << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather(%p_type, "
           "%p_q"
-       << (flags ? ", %p_alch : !ids, !real, !real)\n"
-                 : " : !ids, !real)\n")
-       << "      exchange(symmetric) {\n"
+       << (flags ? ", %p_alch" : "") << seedFields << " : !ids, !real"
+       << (flags ? ", !real" : "") << seedTypes << ")\n"
+       << "      exchange(symmetric" << (seeds ? ", asserted" : "") << ") {\n"
        << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
           "%q_i: f64, %q_j: f64"
-       << (flags ? ", %al_i: f64, %al_j: f64" : "") << "):\n";
+       << (flags ? ", %al_i: f64, %al_j: f64" : "") << seedArguments
+       << "):\n";
     if (flags)
       os << "    %al_ij = arith.mulf %al_i, %al_j : f64\n"
          << "    %al_sum = arith.addf %al_i, %al_j : f64\n"
@@ -3929,10 +4028,44 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << "    %al_one = arith.constant 1.0 : f64\n";
     std::string value;
     if (lj) {
-      os << "    %sigma = md.lookup %t_lj_sigma[%type_i, %type_j] : !table, "
+      bool seedsSigma = false, seedsEpsilon = false;
+      for (size_t c = 0; c != seeds; ++c)
+        (control.tunableTableSeeds[c].sigma ? seedsSigma : seedsEpsilon) =
+            true;
+      os << "    %sigma" << (seedsSigma ? "_table" : "")
+         << " = md.lookup %t_lj_sigma[%type_i, %type_j] : !table, "
             "i32, i32 -> f64\n"
-         << "    %epsilon = md.lookup %t_lj_epsilon[%type_i, %type_j] : "
+         << "    %epsilon" << (seedsEpsilon ? "_table" : "")
+         << " = md.lookup %t_lj_epsilon[%type_i, %type_j] : "
             "!table, i32, i32 -> f64\n";
+      // The value of the table plus d_i w[a, b] + d_j w[b, a] for each
+      // seed: the value itself, d being zero.
+      for (bool sigma : {true, false}) {
+        std::string value = sigma ? "%sigma_table" : "%epsilon_table";
+        size_t left = 0;
+        for (size_t c = 0; c != seeds; ++c)
+          left += control.tunableTableSeeds[c].sigma == sigma;
+        for (size_t c = 0; c != seeds; ++c) {
+          if (control.tunableTableSeeds[c].sigma != sigma)
+            continue;
+          std::string n = std::to_string(c);
+          std::string next = --left ? "%tgs" + n
+                                    : std::string(sigma ? "%sigma" : "%epsilon");
+          os << "    %tgw" << n << "_ij = md.lookup %t_tgw" << n
+             << "[%type_i, %type_j] : !grid, i32, i32 -> f64\n"
+             << "    %tgw" << n << "_ji = md.lookup %t_tgw" << n
+             << "[%type_j, %type_i] : !grid, i32, i32 -> f64\n"
+             << "    %tgs" << n << "_i = arith.mulf %tgd" << n << "_i, %tgw"
+             << n << "_ij : f64\n"
+             << "    %tgs" << n << "_j = arith.mulf %tgd" << n << "_j, %tgw"
+             << n << "_ji : f64\n"
+             << "    %tgs" << n << "_ij = arith.addf %tgs" << n << "_i, %tgs"
+             << n << "_j : f64\n"
+             << "    " << next << " = arith.addf " << value << ", %tgs" << n
+             << "_ij : f64\n";
+          value = next;
+        }
+      }
       if (scalesVdw) {
         // The distance r_A of a decoupled pair, r of the others. A pair
         // without a σ, which has no Lennard-Jones, takes 0.3 nm in r_A,

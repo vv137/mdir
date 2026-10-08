@@ -14,8 +14,10 @@
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails CPU Double | FileCheck %s --check-prefix=TAILS -DMODE="CPU Double"
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails CPU Mixed | FileCheck %s --check-prefix=TAILS -DMODE="CPU Mixed"
 # REFUSED: refusals: the plan, the shapes, and a tunable that the energy does not read
-# REFUSED: refusals: 6 refusals
+# REFUSED: refusals: 4 refusals
 # REFUSED: refusals passed
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide lj CPU Double | FileCheck %s --check-prefix=LJ -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide lj CPU Mixed | FileCheck %s --check-prefix=LJ -DMODE="CPU Mixed"
 # TERMS: [[MODE]]: the term over tuples against NumPy
 # TERMS: [[MODE]]: against central differences of the energy
 # TERMS: [[MODE]]: the energy less the reported one
@@ -25,3 +27,7 @@
 # TAILS: [[MODE]]: against central differences of the energy
 # TAILS: [[MODE]]: without the correction
 # TAILS: tails passed
+# LJ: [[MODE]]: the dipeptide, per-type and pair sigma and epsilon against central differences of the energy
+# LJ: [[MODE]]: propane and water, per-type and pair sigma and epsilon with a pair set apart
+# LJ: [[MODE]]: propane and water against central differences of the energy
+# LJ: lj passed

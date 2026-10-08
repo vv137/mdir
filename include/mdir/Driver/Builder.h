@@ -169,9 +169,20 @@ struct Program {
   /// which the sites of one tunable enter their kernels: the derivative in
   /// the site `first` is the value of the field at the particle `second`
   /// (in the order of the input).
+  /// A field of a seed of a table (Control::tunableTableSeeds) gives, for
+  /// each type, the site `rows[type].site` (or none, -1) the sum of its
+  /// values over the particles of the type, times `scale`, plus what the
+  /// host adds, `volumeConstant`: the derivative of the correction for the
+  /// dispersion and of its shift estimate, in kJ/mol per unit of the
+  /// tunable at the volume of the build, proportional to 1 / V.
   struct GradientField {
     unsigned tunable = 0;
     std::vector<std::pair<uint32_t, uint32_t>> sites;
+    struct Row {
+      int64_t site = -1;
+      double scale = 1.0, volumeConstant = 0.0;
+    };
+    std::vector<Row> rows;
   };
   std::vector<GradientField> gradientFields;
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.

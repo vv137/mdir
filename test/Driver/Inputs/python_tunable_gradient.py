@@ -16,6 +16,13 @@ Scenarios:
             derivative of the shifted potential with the tail and the
             estimate of the shift (D209, D210) against NumPy and closed
             forms, and against central differences
+  lj        per-type sigma and epsilon and the table by pairs of types: on
+            the dipeptide against central differences; on propane and
+            water under a plain cutoff with the correction for the
+            dispersion, per-type (geometric) and pair tunables together
+            with a pair set apart from the rule, against a NumPy sum of the
+            shifted Lennard-Jones with the correction and its shift
+            estimate
 """
 import sys
 
@@ -157,14 +164,11 @@ def run_refusals():
     expect(mdir.InputError, sim.tunables.gradient, "declares no tunable")
     system, state = dipeptide([])
     expect(mdir.InputError, lambda: compile_(system, state), "the system declares none")
-    # Kinds whose derivative is not implemented yet are refused by name.
-    for tunable, kind in ((mdir.Tunable("q", "charge"), "charges"),
-                          (mdir.Tunable("s", "sigma"), "per-type sigma"),
-                          (mdir.Tunable("e", "epsilon_pair"), "epsilon by pairs")):
-        system, state = dipeptide([tunable])
-        text = expect(mdir.InputError, lambda: compile_(system, state), "is not implemented yet")
-        assert f"'{tunable.name}' ({kind})" in text, text
-    print("refusals: 6 refusals")
+    # A kind whose derivative is not implemented yet is refused by name.
+    system, state = dipeptide([mdir.Tunable("q", "charge")])
+    text = expect(mdir.InputError, lambda: compile_(system, state), "is not implemented yet")
+    assert "'q' (charges)" in text, text
+    print("refusals: 4 refusals")
 
 
 def run_terms(target, precision):
@@ -231,6 +235,173 @@ def run_terms(target, precision):
     print(f"{target} {precision}: 12 steps through the derivative equal those without it "
           f"to the bit: {same}")
     assert same
+
+
+def run_lj_dipeptide(target, precision):
+    double = precision == "Double"
+    loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+    system.electrostatics = mdir.Electrostatics.PME
+    system.dispersion = mdir.DispersionCorrection.None_
+    top = system.topology
+    types, pairs = len(top.type_names), top.type_pairs
+    # The hydrogen of the water has no Lennard-Jones: sqrt(x y) has no
+    # derivative at x = 0, which the compile says.
+    system.tunables = [mdir.Tunable("epsilon", "epsilon")]
+    system.tunable_gradient = True
+    text = expect(mdir.InputError, lambda: compile_(system, state), "has no derivative")
+    assert "give the type -1 in its map" in text, text
+    system.tunable_gradient = False
+    system.tunables = [mdir.Tunable("epsilon", "epsilon")]
+    epsilon = simulation(compile_(system, state)).tunables["epsilon"]
+    keep = np.where(epsilon > 0.0, np.cumsum(epsilon > 0.0) - 1, -1)
+    # Three pairs of the table, one of a type with itself.
+    taken = np.full(len(pairs), -1)
+    taken[0], taken[3], taken[types + 2] = 1, 0, 2
+    system.tunables = [mdir.Tunable("sigma", "sigma", map=keep),
+                       mdir.Tunable("epsilon", "epsilon", map=keep),
+                       mdir.Tunable("sigma_pair", "sigma_pair", map=taken),
+                       mdir.Tunable("epsilon_pair", "epsilon_pair", map=taken)]
+    system.tunable_gradient = True
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sim = simulation(compile_(system, state, target, precision))
+    sim.run(6)
+    g = sim.tunables.gradient()
+    assert g["sigma"].shape == (int(keep.max()) + 1,) and g["sigma_pair"].shape == (3,)
+    worst = differences(sim, g, 1e-3 if double else 2e-2)
+    tolerance = 1e-7 if double else 5e-4
+    print(f"{target} {precision}: the dipeptide, per-type and pair sigma and epsilon against "
+          f"central differences of the energy, {worst:.1e} (tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
+
+
+def run_lj_propane(target, precision):
+    double = precision == "Double"
+    rc = 0.8
+    gromacs = root + "/../gromacs"
+
+    def model(tunables, gradient=True):
+        loaded = mdir.load_gromacs(gromacs + "/system.top", gromacs + "/system.gro",
+                                   defines=["FLEXIBLE"])
+        system, state = loaded.make_system(), loaded.make_state()
+        system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.8
+        system.truncation = mdir.Truncation.None_
+        system.dispersion = mdir.DispersionCorrection.EnergyPressure
+        system.tunables = tunables(system)
+        system.tunable_gradient = gradient
+        return system, state
+
+    # The table of the model, by pairs of types.
+    system, state = model(lambda s: [mdir.Tunable("s", "sigma_pair"),
+                                     mdir.Tunable("e", "epsilon_pair")], gradient=False)
+    top = system.topology
+    names, pairs, types = list(top.type_names), top.type_pairs, top.particle_types
+    count = len(names)
+    sim = simulation(compile_(system, state))
+    sigma0, epsilon0 = sim.tunables["s"].copy(), sim.tunables["e"].copy()
+    site = {(a, b): k for k, (a, b) in enumerate(pairs)}
+    diagonal = np.array([site[a, a] for a in range(count)])
+    ct, ow, hc = names.index("CT"), names.index("OW"), names.index("HC")
+    nbfix = site[min(ct, ow), max(ct, ow)]
+    keep = np.where(epsilon0[diagonal] > 0.0, np.cumsum(epsilon0[diagonal] > 0.0) - 1, -1)
+    taken_sigma = np.full(len(pairs), -1)
+    taken_sigma[nbfix], taken_sigma[site[ow, ow]] = 0, 1
+    taken_epsilon = np.full(len(pairs), -1)
+    taken_epsilon[nbfix], taken_epsilon[site[min(ct, hc), max(ct, hc)]] = 0, 1
+
+    def tunables(system):
+        return [mdir.Tunable("sigma", "sigma", map=keep, mixing="geometric"),
+                mdir.Tunable("epsilon", "epsilon", map=keep),
+                mdir.Tunable("sigma_pair", "sigma_pair", map=taken_sigma),
+                mdir.Tunable("epsilon_pair", "epsilon_pair", map=taken_epsilon)]
+
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        system, state = model(tunables)
+        sim = simulation(compile_(system, state, target, precision))
+    sim.run(4)
+    g = sim.tunables.gradient()
+    at = sim.state()
+    x, box = at.positions, np.diag(at.cell.vectors)
+    n, volume = len(x), float(np.prod(np.diag(at.cell.vectors)))
+    excluded = propane_excluded(n)
+
+    # NumPy. The sums over the pairs of each pair of types that the
+    # Lennard-Jones of the table takes: r^-12 - rc^-12 and r^-6 - rc^-6 over
+    # the pairs not excluded within the cutoff (the 1-4 pairs, excluded,
+    # keep parameters of their own), and the number of ordered pairs not
+    # excluded for the correction.
+    s12, s6 = np.zeros(len(pairs)), np.zeros(len(pairs))
+    ordered = np.zeros(len(pairs))
+    numbers = np.bincount(types, minlength=count).astype(float)
+    for (a, b), k in site.items():
+        ordered[k] = numbers[a] * (numbers[b] - 1.0) if a == b else 2.0 * numbers[a] * numbers[b]
+    for i, j in excluded:
+        a, b = sorted((types[i], types[j]))
+        ordered[site[a, b]] -= 2.0
+    for i in range(n - 1):
+        d = x[i + 1:] - x[i]
+        d -= box * np.round(d / box)
+        r = np.sqrt((d * d).sum(axis=1))
+        for j in np.nonzero(r < rc)[0]:
+            if (i, i + 1 + j) in excluded:
+                continue
+            a, b = sorted((types[i], types[i + 1 + j]))
+            s12[site[a, b]] += r[j] ** -12 - rc ** -12
+            s6[site[a, b]] += r[j] ** -6 - rc ** -6
+    total = n * (n - 1.0) - 2.0 * len(excluded)
+
+    def energy(theta):
+        # The table: the rule from the values of the types, the pair set
+        # apart from it (CT-OW) keeping its values, then the pairs that the
+        # pair tunables take.
+        sigma_type, epsilon_type = sigma0[diagonal].copy(), epsilon0[diagonal].copy()
+        sigma_type[keep >= 0] = theta["sigma"][keep[keep >= 0]]
+        epsilon_type[keep >= 0] = theta["epsilon"][keep[keep >= 0]]
+        sigma, epsilon = sigma0.copy(), epsilon0.copy()
+        for (a, b), k in site.items():
+            if k != nbfix:
+                sigma[k] = np.sqrt(sigma_type[a] * sigma_type[b])
+                epsilon[k] = np.sqrt(epsilon_type[a] * epsilon_type[b])
+        sigma[taken_sigma >= 0] = theta["sigma_pair"][taken_sigma[taken_sigma >= 0]]
+        epsilon[taken_epsilon >= 0] = theta["epsilon_pair"][taken_epsilon[taken_epsilon >= 0]]
+        within = (4.0 * epsilon * (sigma ** 12 * s12 - sigma ** 6 * s6)).sum()
+        # -(2 pi / 3 V) N^2 <C6> / rc^3, and its shift estimate, the
+        # correction times 1 - V / (N (4 pi / 3) rc^3) (D210).
+        mean = (ordered * 4.0 * epsilon * sigma ** 6).sum() / total
+        correction = -2.0 * np.pi / (3.0 * volume) * n * n * mean / rc ** 3
+        return within + correction * (2.0 - volume / (n * 4.0 * np.pi / 3.0 * rc ** 3))
+
+    theta0 = {name: sim.tunables[name].copy() for name in g.keys()}
+    worst = 0.0
+    for name in g.keys():
+        scale = np.abs(g[name]).max()
+        for m in range(len(theta0[name])):
+            def central(h):
+                e = []
+                for sign in (1.0, -1.0):
+                    theta = {k: v.copy() for k, v in theta0.items()}
+                    theta[name][m] += sign * h
+                    e.append(energy(theta))
+                return (e[0] - e[1]) / (2.0 * h)
+            h = 1e-3 * theta0[name][m]
+            reference = (4.0 * central(0.5 * h) - central(h)) / 3.0
+            worst = max(worst, abs(g[name][m] - reference) / scale)
+    tolerance = 1e-8 if double else 2e-5
+    print(f"{target} {precision}: propane and water, per-type and pair sigma and epsilon "
+          f"with a pair set apart, the shifted Lennard-Jones with the correction and its "
+          f"shift estimate against NumPy, {worst:.1e} of the largest entry of each tunable "
+          f"(tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
+    worst = differences(sim, g, 1e-3 if double else 2e-2)
+    tolerance = 1e-7 if double else 5e-4
+    print(f"{target} {precision}: propane and water against central differences of the "
+          f"energy, {worst:.1e} (tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
 
 
 def propane(gradient=True, dispersion=True):
@@ -354,6 +525,9 @@ elif scenario == "terms":
     run_terms(sys.argv[3], sys.argv[4])
 elif scenario == "tails":
     run_tails(sys.argv[3], sys.argv[4])
+elif scenario == "lj":
+    run_lj_dipeptide(sys.argv[3], sys.argv[4])
+    run_lj_propane(sys.argv[3], sys.argv[4])
 else:
     raise SystemExit(f"unknown scenario {scenario}")
 print(f"{scenario} passed")

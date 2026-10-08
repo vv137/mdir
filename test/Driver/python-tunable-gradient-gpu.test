@@ -6,6 +6,8 @@
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide terms GPU Mixed | FileCheck %s --check-prefix=TERMS -DMODE="GPU Mixed"
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails GPU Double | FileCheck %s --check-prefix=TAILS -DMODE="GPU Double"
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide tails GPU Mixed | FileCheck %s --check-prefix=TAILS -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide lj GPU Double | FileCheck %s --check-prefix=LJ -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide lj GPU Mixed | FileCheck %s --check-prefix=LJ -DMODE="GPU Mixed"
 # TERMS: [[MODE]]: the term over tuples against NumPy
 # TERMS: [[MODE]]: against central differences of the energy
 # TERMS: [[MODE]]: the energy less the reported one
@@ -15,3 +17,7 @@
 # TAILS: [[MODE]]: against central differences of the energy
 # TAILS: [[MODE]]: without the correction
 # TAILS: tails passed
+# LJ: [[MODE]]: the dipeptide, per-type and pair sigma and epsilon against central differences of the energy
+# LJ: [[MODE]]: propane and water, per-type and pair sigma and epsilon with a pair set apart
+# LJ: [[MODE]]: propane and water against central differences of the energy
+# LJ: lj passed

@@ -2000,6 +2000,20 @@ Simulation::evaluateTunableGradient() {
       if (at >= 0)
         result.values[field.tunable][at] += values[particle];
     }
+    // A seed of a table: the sum over the particles of each type, and
+    // what the host adds.
+    if (field.rows.empty())
+      continue;
+    const std::vector<unsigned> &types = prepared.system.topology->types;
+    std::vector<double> sums(field.rows.size(), 0.0);
+    for (size_t i = 0; i != types.size(); ++i)
+      sums[types[i]] += values[i];
+    for (auto [type, row] : llvm::enumerate(field.rows)) {
+      int64_t at = row.site < 0 ? -1 : entry.map[row.site];
+      if (at >= 0)
+        result.values[field.tunable][at] +=
+            row.scale * (sums[type] + row.volumeConstant * scale);
+    }
   }
   for (auto [k, values] : llvm::enumerate(result.values))
     for (double value : values)

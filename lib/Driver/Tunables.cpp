@@ -268,6 +268,64 @@ mdir::model::resolveTunables(const System &model, driver::Control &control,
     set.pairTails.push_back(!tails.empty());
   control.tunables = true;
   control.tunableGradient = model.tunableGradient;
+  // The seeds of the derivatives in the tables of σ and ε
+  // (D[tunable-gradient]): one for a per-type tunable, and for a tunable
+  // of the table by pairs as many as its pairs share a type, each pair in
+  // the row of the member whose rows are less taken.
+  if (control.tunableGradient)
+    for (bool sigma : {true, false}) {
+      for (auto [k, entry] : llvm::enumerate(set.tunables)) {
+        if (entry.kind != (sigma ? TunableSet::Entry::Sigma
+                                 : TunableSet::Entry::Epsilon))
+          continue;
+        driver::Control::TunableTableSeed seed;
+        seed.sigma = sigma;
+        seed.tunable = static_cast<unsigned>(k);
+        for (size_t a = 0; a != types; ++a) {
+          seed.sites.push_back(entry.map[a] >= 0 ? static_cast<int64_t>(a) : -1);
+          seed.scales.push_back(1.0);
+        }
+        control.tunableTableSeeds.push_back(std::move(seed));
+      }
+      for (auto [k, entry] : llvm::enumerate(set.tunables)) {
+        if (entry.kind != (sigma ? TunableSet::Entry::SigmaPair
+                                 : TunableSet::Entry::EpsilonPair))
+          continue;
+        size_t first = control.tunableTableSeeds.size();
+        size_t pair = 0;
+        for (size_t a = 0; a != types; ++a)
+          for (size_t b = a; b != types; ++b, ++pair) {
+            if (entry.map[pair] < 0)
+              continue;
+            // The first seed with a free row among those of a and of b.
+            size_t seedIndex = first, row = a;
+            for (;; ++seedIndex) {
+              if (seedIndex == control.tunableTableSeeds.size()) {
+                driver::Control::TunableTableSeed seed;
+                seed.sigma = sigma;
+                seed.tunable = static_cast<unsigned>(k);
+                seed.sites.assign(types, -1);
+                seed.scales.assign(types, 1.0);
+                seed.columns.assign(types, -1);
+                control.tunableTableSeeds.push_back(std::move(seed));
+              }
+              const auto &seed = control.tunableTableSeeds[seedIndex];
+              if (seed.sites[a] < 0) {
+                row = a;
+                break;
+              }
+              if (seed.sites[b] < 0) {
+                row = b;
+                break;
+              }
+            }
+            auto &seed = control.tunableTableSeeds[seedIndex];
+            seed.sites[row] = static_cast<int64_t>(pair);
+            seed.scales[row] = a == b ? 0.5 : 1.0;
+            seed.columns[row] = static_cast<int64_t>(row == a ? b : a);
+          }
+      }
+    }
   if (llvm::Error error = applyTunables(set, set.values, control, system))
     return std::move(error);
   return set;
@@ -368,6 +426,61 @@ llvm::Error mdir::model::applyTunables(
       for (size_t b = a; b != types; ++b, ++site)
         if (entry.map[site] >= 0)
           table[a * types + b] = table[b * types + a] = theta[entry.map[site]];
+  }
+  // The weights of the seeds of the derivatives in the tables
+  // (D[tunable-gradient]), the Jacobian of the lines above: for a per-type
+  // tunable the derivative of the combining rule in the value of the type
+  // of the row, ∂σ_ab/∂σ_a = 1/2 (Lorentz) or (1/2)√(σ_b/σ_a), and
+  // ∂ε_ab/∂ε_a = (1/2)√(ε_b/ε_a), 0 for a pair that the rule does not give
+  // (set apart, or taken by a tunable of the table by pairs); for a
+  // tunable of the table by pairs, 1 at the pair of each row.
+  system.tunableSeedWeights.clear();
+  for (const driver::Control::TunableTableSeed &seed :
+       control.tunableTableSeeds) {
+    std::vector<double> weights(types * types, 0.0);
+    const TunableSet::Entry &entry = set.tunables[seed.tunable];
+    bool perType = entry.kind == TunableSet::Entry::Sigma ||
+                   entry.kind == TunableSet::Entry::Epsilon;
+    // The pairs that a tunable of the same table by pairs takes.
+    std::vector<bool> taken(types * types, false);
+    for (const TunableSet::Entry &other : set.tunables) {
+      if (other.kind != (seed.sigma ? TunableSet::Entry::SigmaPair
+                                    : TunableSet::Entry::EpsilonPair))
+        continue;
+      size_t pair = 0;
+      for (size_t a = 0; a != types; ++a)
+        for (size_t b = a; b != types; ++b, ++pair)
+          if (other.map[pair] >= 0)
+            taken[a * types + b] = taken[b * types + a] = true;
+    }
+    for (size_t a = 0; a != types; ++a) {
+      if (seed.sites[a] < 0)
+        continue;
+      if (!perType) {
+        weights[a * types + seed.columns[a]] = 1.0;
+        continue;
+      }
+      for (size_t b = 0; b != types; ++b) {
+        if (taken[a * types + b] ||
+            (!set.fixedPairs.empty() && set.fixedPairs[a * types + b]))
+          continue;
+        const std::vector<double> &values = seed.sigma ? sigma : epsilon;
+        double weight = 0.5;
+        if (!seed.sigma || entry.mixing == driver::Mixing::Geometric) {
+          // √(x y) is not differentiable in x at 0 unless y is 0 too.
+          if (values[a] == 0.0 && values[b] != 0.0)
+            return input("the tunable '" + entry.name + "' is 0 for the type " +
+                         topology->typeNames[a] + ", where the combining "
+                         "rule √(x y) has no derivative; give the type -1 "
+                         "in its map, or compile without "
+                         "System.tunable_gradient");
+          weight = values[a] == 0.0 ? 0.0
+                                    : 0.5 * std::sqrt(values[b] / values[a]);
+        }
+        weights[a * types + b] = weight;
+      }
+    }
+    system.tunableSeedWeights.push_back(std::move(weights));
   }
   system.topology = std::move(topology);
   // The tails of the pair terms (D209), whose classes of particles and
