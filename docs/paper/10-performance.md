@@ -102,7 +102,11 @@ precision it removes 1 to 6 s of host code generation per stage, of 12 to
 54 s of compilation, most of which is then the MLIR pipeline; the whole
 example at a hundredth of its steps, in the deterministic mode, took 137 s
 with a warm cache against 155 s with a cold one
-([compile-cache.md](../compile-cache.md)).
+([compile-cache.md](../compile-cache.md)). Within a process a `Program`
+keeps the LLVM module and the host object of its first simulation, and
+its later simulations link them without the pipeline (D[program-reuse]):
+for the dipeptide in water, 0.07 s on the CPU and 0.13 s on a GPU for
+each simulation after the first, instead of 5.4 s and 9.4 s.
 
 The GPU modules of a program, 400 for the production stage of the ala3
 example under `mdir run`, are serialized in parallel and loaded as

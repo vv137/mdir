@@ -249,6 +249,10 @@ programs on disk, keyed by their content; D217 (#163)
 clears it and bypasses it per compile from Python;
 D234 (#196) keeps its total in a file, so that a
 store does not list the directory;
+D[program-reuse] (#236,
+[reuse within a process](compile-cache.md#reuse-within-a-process-dprogram-reuse))
+keeps the code of a `Program`'s simulations in memory, so that only the
+first of them lowers and generates code;
 D227 (#162,
 [values of the start](compile-cache.md#values-of-the-start-d227))
 makes the values that depend on the starting cell arguments of the entry

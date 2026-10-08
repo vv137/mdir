@@ -17,12 +17,15 @@ return; `lowered_ir` is lowered on its first read, from the IR captured at
 compilation, and kept, so a later change of the inputs does not reach it.
 A `Simulation` lowers programs of its own
 ([python-segments.md](python-segments.md#compiles)), so a program that is
-only simulated is not lowered twice. No runtime libraries are loaded, no CUDA
+only simulated is not lowered twice. The `Program` keeps the code of
+its first simulation in memory, and its later simulations in the process
+take it instead of lowering and generating code again (D[program-reuse],
+[compile-cache.md](compile-cache.md#reuse-within-a-process-dprogram-reuse)). No runtime libraries are loaded, no CUDA
 execution context is initialized, and no report or reproducer is written.
 JIT ownership, runtime device selection and execution follow with segments.
 The logical device is recorded in the plan, not selected during lowering.
-The keyword `cache=False` lowers without the compile cache, and the
-program's simulations inherit it (D217,
+The keyword `cache=False` lowers without the compile cache and without
+the code kept in memory, and the program's simulations inherit it (D217,
 [compile-cache.md](compile-cache.md#controls-from-python)).
 
 Typed enums select target, precision, integrator, ensemble, electrostatics,

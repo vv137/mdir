@@ -377,11 +377,18 @@ compileEngine(const Control &control, const System &system,
   if (!cache)
     store = nullptr;
   if (store) {
+    // The CUDA toolkit, whose libdevice and ptxas the lowering of a GPU
+    // program takes, is not an option of the pipeline.
+    std::string machine = compiler::describeMachine(**targetMachine, codegen);
+    if (control.target == Target::GPU)
+      for (const char *name : {"CUDA_ROOT", "CUDA_HOME", "CUDA_PATH"}) {
+        const char *root = std::getenv(name);
+        machine += std::string(name) + "=" + (root ? root : "") + "\n";
+      }
     key = compiler::getCodeKey(
         engine->program.module,
         compiler::getPipeline(control, engine->program, *gpu),
-        engine->program.entry,
-        compiler::describeMachine(**targetMachine, codegen));
+        engine->program.entry, machine);
     kept = store->find(key);
   }
   if (!kept) {
