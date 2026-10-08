@@ -381,7 +381,7 @@ follow, in the order of the pipeline that `tools/mdir/Run.cpp` builds:
 | `md-exec-reuse-neighbors` | Carries a neighbor structure across the steps of a loop, and turns each build into a refresh that rebuilds only when its test asks; with a pruned distance, keeps a dual list (Section 4.5). A refresh that repeats the last one of its structure, as that of the potential of an output at the state of a step, is removed, so an output reads the structure of the steps and cannot change when it is built (D237) |
 | `md-exec-expose-validity` | Writes the test of validity (Section 4.1) as a loop over particles with an `i1` reduction |
 | `md-exec-fuse-loops` | Fuses loops over pairs over the same structure, positions, cutoff, and policy; fuses chains of loops over particles, such as a kick, the drift that follows, and the test; bitwise identical |
-| `md-exec-accumulate-destinations` | Lets the loops whose forces a loop over particles adds accumulate into one destination, in the order of the sum |
+| `md-exec-accumulate-destinations` | Lets the loops whose forces a loop over particles adds accumulate into one destination, in the order of the sum; a loop that stands before the loop of the term before it in the sum moves down to follow it, so that a step that computes energies adds the forces as a step that does not (Section 7.1) |
 | `md-exec-narrow-sums` | Sums only the elements of a vector sum that are used, such as the trace of the virial |
 | `md-exec-simplify-distance` | Writes pair kernels in powers of $r^2$, and outlines functions of the distance alone (Section 7.2) |
 | `md-exec-fold-tables` | Computes what a kernel derives from tables of types, such as $4\varepsilon\sigma^{12}$, once per entry, in f64, into packed tables |
