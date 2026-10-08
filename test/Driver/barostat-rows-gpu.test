@@ -1,0 +1,15 @@
+# REQUIRES: python-api, hdf5, cuda
+# A row of `[output] observables` and of the free-energy file on a GPU, at a step
+# where the barostat couples is of the state of that step (#218): with the
+# barostat of Trotter type the potentials of the outputs take the cell after
+# the scaling. `mdir run` against an evaluation of the state of its
+# checkpoint, and a Python simulation against run(0, energy=True), for a
+# pair term, a term over bonds, and a wall, in double and mixed precision.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/barostat_rows.py %S/Inputs/dipeptide GPU mdir %t | FileCheck %s
+# CHECK: GPU Double mdir run: the rows at steps 10 and 20 under NPT
+# CHECK-SAME: are those of an evaluation of their state
+# CHECK: GPU Double Python: the values of the state at steps 5, 10, and 20 are those of run(0, energy=True)
+# CHECK: GPU Mixed mdir run: the rows at steps 10 and 20 under NPT
+# CHECK: GPU Mixed Python: the values of the state at steps 5, 10, and 20 are those of run(0, energy=True)
+# CHECK: barostat rows passed

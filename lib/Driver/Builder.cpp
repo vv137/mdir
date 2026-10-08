@@ -7285,6 +7285,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here << ", "
          << energyName << ", %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
+      // The cell of the positions of the row: with the barostat of Trotter
+      // type the step has scaled them, and they are in the cell after the
+      // scaling, not in that of the start of the interval (#218). The
+      // potentials of the outputs take the minimum image and the frame of
+      // the cell from it.
+      std::string rowCell = scalesHere ? scaling.cell : cellName;
       if (!getPullColumns().empty()) {
         // The coordinates of the terms over centers at the positions after
         // the step, at its time (D145).
@@ -7294,7 +7300,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
              << " : i64 to f64\n"
              << inner << time << " = arith.mulf " << time << "_steps, %dt"
              << " : f64\n";
-        emitPullOutput(inner, "%xl", cellName, fieldPrefix, "%step" + here,
+        emitPullOutput(inner, "%xl", rowCell, fieldPrefix, "%step" + here,
                        time);
       }
       if (!control.freeEnergyFile.empty()) {
@@ -7306,7 +7312,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
              << " : i64 to f64\n"
              << inner << time << " = arith.mulf " << time << "_steps, %dt"
              << " : f64\n";
-        emitFreeEnergyOutput(inner, "%xl", cellName, fieldPrefix,
+        emitFreeEnergyOutput(inner, "%xl", rowCell, fieldPrefix,
                              "%step" + here, time);
       }
       if (!control.observables.empty()) {
@@ -7317,7 +7323,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
              << " : i64 to f64\n"
              << inner << time << " = arith.mulf " << time << "_steps, %dt"
              << " : f64\n";
-        emitObservablesOutput(inner, "%xl", cellName, fieldPrefix,
+        emitObservablesOutput(inner, "%xl", rowCell, fieldPrefix,
                               "%step" + here, time);
       }
       // Without a periodic cell (D142), whether the particles have spread
