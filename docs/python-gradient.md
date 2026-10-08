@@ -360,15 +360,16 @@ function of its own, MDIR with B-splines of order 4 and the factors of
 smooth PME, so the two agree as their grids are refined, not to rounding:
 $3.4\times10^{-5}$ at 64 points, $1.3\times10^{-6}$ at 128.
 
-Performance (GPU 0, mixed precision). `mdir run` on JAC, main (5bf4cb0)
-against the branch, alternated three times, ns/day: NVE 854.7, 853.6,
-852.6 against 852.5, 855.8, 852.2; NPT 788.0, 785.6, 786.1 against 786.0,
-785.9, 786.1. The module and the lowered IR of the five programs of the
-table above without `tunable_gradient` equal main's. A Python simulation
-of JAC with every charge tunable (23,558 entries): 0.2569 and 0.2578 ms
-per step without the derivative, 0.2571 and 0.2582 with it; compile and
-the first 200 steps 12.2 s against 13.3 s; `gradient()` 10.0 ms,
-`run(0, energy=True)` 9.1 ms.
+Performance (GPU 0, mixed precision). `mdir run` on JAC, main (a529e28)
+against the branch, alternated three times, ns/day: NVE 853.6, 851.4,
+851.2 against 851.7, 851.2, 853.0; NPT 784.3, 784.2, 784.3 against 783.4,
+784.8, 784.9. The module and the lowered IR of the five programs of the
+table above without `tunable_gradient` equal those of that main. A Python
+simulation of JAC with every charge tunable (23,558 entries, two runs
+each): 0.2578 and 0.2583 ms per step without the derivative, 0.2577 and
+0.2585 with it; compile and the first 200 steps 12.3 and 12.6 s against
+12.7 and 14.1 s; `gradient()` 10.1 and 10.0 ms, `run(0, energy=True)` 9.2
+and 9.0 ms.
 
 ## Performance
 
