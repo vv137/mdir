@@ -372,7 +372,8 @@ The directory is listed, under the same lock, only when
 - the total with the bytes just stored exceeds the bound;
 - the file holds no total: a new directory, one written by an earlier
   version, or a file that was removed or damaged;
-- the last listing is more than 24 hours old.
+- the last listing is more than 24 hours old. The 24 hours are a fixed
+  number of the implementation; no environment variable changes them.
 
 A listing evicts as described above, removes stale temporary files, and
 writes the exact total back. `mdir.clear_compile_cache` takes the bytes
@@ -389,6 +390,9 @@ What the total can get wrong, and what follows:
   program. The directory may exceed the bound by that much until the next
   listing, at most 24 hours later. Entries copied into the directory by
   hand are found the same way.
+- **Temporary files.** The temporary file of a process that died is
+  removed at a listing once it is an hour old, so within a day, and no
+  longer at the next store of any process.
 - **No locks.** On a file system that refuses the lock, or when the file
   cannot be opened, every compile that stores lists the directory, as
   before.
