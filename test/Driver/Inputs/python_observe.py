@@ -1,4 +1,4 @@
-"""`observe` in the Python model (D[python-observe], docs/python-observe.md):
+"""`observe` in the Python model (D232, docs/python-observe.md):
 the columns of `[output] observables` (D189) written by a reporter of a
 Python simulation and read from its state, against `mdir run` on the same
 model.
@@ -403,7 +403,7 @@ def run_refusals():
 
 
 def run_external():
-    # The terms of the positions (D[python-external]): what is refused.
+    # The terms of the positions (D233): what is refused.
     def changed(edit, **options):
         def change(system):
             terms = system.external_terms
@@ -466,7 +466,7 @@ def run_external():
 
 
 def run_external_parity():
-    # The terms of the positions by themselves (D[python-external]): the
+    # The terms of the positions by themselves (D233): the
     # energy and the forces of two walls against NumPy at the start, and a
     # run of 10 steps with them against `mdir run` with the same
     # [[energy.external]] terms: the energy file byte for byte, and the

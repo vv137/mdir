@@ -350,7 +350,7 @@ an identifier, or used twice; `mixing` for a parameter other than `sigma`.
 A tunable needs a model with a topology, and the builder refuses tunables
 with `[free_energy]`, LJPME, or pulls, which the Python model
 does not take yet. Tunables and `observe` share a program
-(D[python-observe], [python-observe.md](python-observe.md#tunables)): an
+(D232, [python-observe.md](python-observe.md#tunables)): an
 observed constant may be a tunable with one entry that every site takes, and
 a tunable with several entries on an observed parameter is refused with a
 pointer to `gradient()`. An update is refused (`InputError`, nothing changed)

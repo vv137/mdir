@@ -299,7 +299,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.fastMath = execution.fastMath;
   c.neighborWidth = execution.neighborCapacity;
   std::set<std::string> termNames;
-  // `observe` of a term (D189, D[python-observe]): the columns follow the
+  // `observe` of a term (D189, D232): the columns follow the
   // pair terms, the tuple terms, and the terms of the positions, each in
   // its order; the control checks the constants as it does those of the
   // control file.
@@ -366,7 +366,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     if (llvm::Error e = observe(term.name, term.observed, term.observe)) return std::move(e);
     c.tupleTerms.push_back(std::move(term));
   }
-  // The terms of the absolute positions (D148, D[python-external]), which
+  // The terms of the absolute positions (D148, D233), which
   // the system resolves as it does those of the control file.
   for (auto term : s.externalTerms) {
     if (!termNames.insert(term.name).second) return input("duplicate custom term name");
@@ -453,7 +453,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   if (!tunables) return tunables.takeError();
   // An observed constant may be a tunable with one entry that every site
   // takes: its value reaches the program as a value of its entry
-  // (D[python-observe]). The derivative in a tunable with several entries
+  // (D232). The derivative in a tunable with several entries
   // is that of D230.
   for (const TunableSet::Entry &entry : tunables->tunables)
     for (const driver::Control::Observable &observable : c.observables)

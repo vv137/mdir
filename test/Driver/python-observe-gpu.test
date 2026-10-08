@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5, cuda
-# `observe` in the Python model on a GPU (D[python-observe]): the file of
+# `observe` in the Python model on a GPU (D232): the file of
 # `[output] observables` (D189) written by ObservablesReporter and the values
 # of State.observables, against `mdir run` on the same model, byte for byte
 # in the deterministic mode: a pair term, a term over bonds, and the walls of
@@ -7,7 +7,7 @@
 # mixture of pair-dispersion.test, whose columns take its tail and shift
 # estimate (D209, D210; against their closed forms), also in NPT; runs in
 # parts, a period of its own, a continuation from a checkpoint; the
-# refusals; terms of the positions (D[python-external]); tunables in the
+# refusals; terms of the positions (D233); tunables in the
 # same program, with dU/dl against gradient() (D230) and central differences.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5

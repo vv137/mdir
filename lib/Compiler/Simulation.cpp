@@ -1400,7 +1400,7 @@ llvm::Error Simulation::setReports(const Reports &given) {
   }
   out.energyPeriod = given.energyPeriod;
   // The file of `[output] observables`, with the header of `mdir run`
-  // (D189, D[python-observe]).
+  // (D189, D232).
   if (given.observablesPath != reports.observablesPath) {
     out.observables.close();
     if (!given.observablesPath.empty()) {
@@ -1844,7 +1844,7 @@ llvm::Expected<SimulationState> Simulation::getState() const {
     state.energies = SimulationEnergies{row.potential, row.kinetic, row.total,
                                         row.conserved, row.temperature,
                                         row.virial, row.pressure, row.volume};
-  // The observed terms at that step (D[python-observe]).
+  // The observed terms at that step (D232).
   const auto &observed = output->lastObservables;
   if (state.energies && observed.step == step && !observed.values.empty()) {
     state.observables.emplace();

@@ -289,7 +289,7 @@ U_k/\partial d$ in f64, and apply the chain rule once.
 ## `observe` and tunables
 
 D230 left the builder's refusal of tunables together with `observe` (D189)
-as it was (Q6). D[python-observe] (#188,
+as it was (Q6). D232 (#188,
 [python-observe.md](python-observe.md#tunables)) lifts it: the two share a
 program, and an observed constant may be a tunable with one entry that every
 site takes. Its column `d_<c>` of `observe`, written at every row of a run,

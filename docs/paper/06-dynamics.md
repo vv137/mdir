@@ -1065,7 +1065,7 @@ bar over ten runs of 1 ns, against $181 \pm 9$ bar of the paper with the
 same Lorentz–Berthelot ions; `observe` gives the same derivative to the
 printed digits (`test/Driver/observables.test`).
 
-The Python model takes the same selection on its terms (D[python-observe]):
+The Python model takes the same selection on its terms (D232):
 a pair term, a term over tuples, or a term of the positions lists the
 constants $\xi$ to observe, the program evaluates the same potentials at its
 steps of energy, and a simulation writes the same file through a reporter

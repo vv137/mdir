@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- `observe` in the Python model (D[python-observe], #188): `PairTerm`,
+- `observe` in the Python model (D232, #188): `PairTerm`,
   `TupleTerm`, and `ExternalTerm` take `observe`, `None` or a list of
   constants of the term, as the control file's key (D189);
   `ObservablesReporter(file, period)` writes the file of `[output]
@@ -25,7 +25,7 @@ format, or the outputs; every such change is listed under **Changed** or
   and an observed constant may be a tunable with one entry, whose column
   equals `Simulation.tunables.gradient()` of it. A program that minimizes
   refuses `observe`. See [docs/python-observe.md](docs/python-observe.md).
-- Terms of the absolute positions in the Python model (D[python-external],
+- Terms of the absolute positions in the Python model (D233,
   #188): `mdir.ExternalTerm` and `System.external_terms`, the control
   file's `[[energy.external]]`, with `x`, `y`, `z` in nm and the energy in
   kJ/mol, over a mask or an array of particle indices, with constants, and

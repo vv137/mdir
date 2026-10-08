@@ -371,7 +371,7 @@ energy equals a NumPy sum over the table to $3.0\times10^{-12}$ kJ/mol of
 208.0, and the correction for the dispersion its formula to
 $7.4\times10^{-13}$ (`python-tunable-pairs*.test`).
 
-The observables of the Python model (Section 6.8, D[python-observe]) are
+The observables of the Python model (Section 6.8, D232) are
 checked against `mdir run` on the same model: the files are equal byte for
 byte for a pair term, a term over bonds, and two walls on the dipeptide in
 water, and for an NBFIX written as a pair term on a mixture of 60 + 60

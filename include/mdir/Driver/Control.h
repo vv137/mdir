@@ -59,7 +59,7 @@ struct PairTerm {
   /// [Eastman2017].
   std::vector<std::string> groups;
   /// In the Python model, `observe` of the term (D189,
-  /// D[python-observe]): whether the term is observed, and the constants
+  /// D232): whether the term is observed, and the constants
   /// whose derivatives are; the control file gives Control::observables.
   bool observed = false;
   std::vector<std::string> observe;
@@ -168,7 +168,7 @@ struct Control {
   bool tunables = false;
   std::vector<std::pair<unsigned, std::string>> tunableConstants;
   /// The observed constants that a tunable takes, by the name of the term
-  /// and of the constant (D[python-observe]): the program takes their
+  /// and of the constant (D232): the program takes their
   /// values as values of its entry (Program::startValues), not as
   /// constants of its text, so that an update does not change it.
   std::vector<std::pair<std::string, std::string>> observedTunables;

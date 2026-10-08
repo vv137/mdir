@@ -48,7 +48,7 @@ sim.close_reporters()          # or the simulation's end; files are complete the
   failure; the state returns to the step before the part, the files do not.
 - A minimization takes no reporters.
 
-`ObservablesReporter(file, period)` (D[python-observe],
+`ObservablesReporter(file, period)` (D232,
 [python-observe.md](python-observe.md)) writes the file of `[output]
 observables` (D189) for a program whose terms observe, with a period of its
 own: it is a built-in reporter like the two above (one per simulation, the

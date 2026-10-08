@@ -3091,7 +3091,7 @@ void Builder::emitObservablesOutput(StringRef indent, StringRef x,
     for (auto [c, constant] : llvm::enumerate(term.constants)) {
       std::string value = at + "_v" + std::to_string(c);
       // That of a tunable is a value of the entry, which an update changes
-      // without changing the text (D[python-observe]).
+      // without changing the text (D232).
       if (control.isObservedTunable(term.name, constant))
         value = "%obv_" + term.name + "_" + constant;
       else
@@ -8813,7 +8813,7 @@ void Builder::collectStartValues() {
   if (isRestart() && scalesEveryStep() && system.barostatState.size() == 9)
     for (int k = 0; k != 9; ++k)
       add("bstate" + std::to_string(k), system.barostatState[k]);
-  // The observed constants that tunables take (D[python-observe]).
+  // The observed constants that tunables take (D232).
   for (const ObservedTerm &term : getObservedTerms())
     for (const std::string &constant : term.constants)
       if (control.isObservedTunable(term.name, constant))

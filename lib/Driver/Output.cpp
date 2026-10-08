@@ -412,7 +412,7 @@ void _mlir_ciface_mdrtWriteObservables(int64_t step, void *values) {
     row.push_back(value / units::energy);
   }
   // A program that embeds the run takes the values of every step of
-  // energy, and its file the rows that are due (D[python-observe]); a
+  // energy, and its file the rows that are due (D232); a
   // step whose energies are evaluated anew has its row already (D213).
   if (output.embedded) {
     output.lastObservables = {step, std::move(taken)};

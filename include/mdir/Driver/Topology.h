@@ -59,7 +59,7 @@ struct TupleTerm {
   };
   std::vector<Coordinate> coordinates;
   /// In the Python model, `observe` of the term (D189,
-  /// D[python-observe]): whether the term is observed, and the parameters,
+  /// D232): whether the term is observed, and the parameters,
   /// equal for all tuples, whose derivatives are.
   bool observed = false;
   std::vector<std::string> observe;
@@ -98,7 +98,7 @@ struct ExternalTerm {
   enum class Scaling { Unset, None, Cell };
   Scaling scaling = Scaling::Unset;
   /// In the Python model, `observe` of the term (D189,
-  /// D[python-observe]).
+  /// D232).
   bool observed = false;
   std::vector<std::string> observe;
 };

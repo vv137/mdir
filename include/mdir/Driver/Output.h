@@ -118,7 +118,7 @@ struct Output {
   /// The energies of terms and their derivatives in constants of theirs
   /// (D189), or none.
   ColumnFile observables;
-  /// For a program that embeds the run (D[python-observe]): the steps
+  /// For a program that embeds the run (D232): the steps
   /// between the rows of `observables`, which the host writes where they
   /// are due, 0 for none; and the values of the last step of energy, in
   /// kJ/mol and per unit of each constant, with the tails at the volume of

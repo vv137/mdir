@@ -142,7 +142,7 @@ static py::array_t<double> vectors(const std::vector<double> &values) {
   return host::copy(values.data(), values.size(),
                     {static_cast<py::ssize_t>(values.size() / 3), 3});
 }
-/// `observe` of a term (D189, D[python-observe]): None, the term is not
+/// `observe` of a term (D189, D232): None, the term is not
 /// observed, or the names of the constants whose derivatives are, with its
 /// energy.
 template <class Term> static py::object observeOf(const Term &term) {
@@ -278,7 +278,7 @@ PYBIND11_MODULE(_core, m) {
     .def_property("observe", [](const driver::TupleTerm &t) { return observeOf(t); },
                   [](driver::TupleTerm &t, py::object value) { setObserve(t, value, "TupleTerm"); });
   // Terms of the absolute positions, `[[energy.external]]` (D148,
-  // D[python-external]): x, y, z in nm, the charge q, kJ/mol.
+  // D233): x, y, z in nm, the charge q, kJ/mol.
   py::enum_<driver::ExternalTerm::Scaling>(m, "ExternalScaling")
     .value("None_", driver::ExternalTerm::Scaling::None)
     .value("Cell", driver::ExternalTerm::Scaling::Cell)
@@ -578,7 +578,7 @@ PYBIND11_MODULE(_core, m) {
       dispersion["pair_terms"] = terms;
       d["dispersion"] = dispersion;
       // The columns that the terms observe, in their order
-      // (D[python-observe]).
+      // (D232).
       std::vector<std::string> observed;
       for (const auto &[name, unit] : control.getObservableColumns()) observed.push_back(name);
       d["observables"] = observed;
@@ -678,7 +678,7 @@ PYBIND11_MODULE(_core, m) {
     })
     .def_property_readonly("observables", [](const compiler::SimulationState &s) -> py::object {
       // The columns of `observe` at this step, where `energies` is set:
-      // kJ/mol and kJ/mol per unit of the constant (D[python-observe]).
+      // kJ/mol and kJ/mol per unit of the constant (D232).
       if (!s.observables) return py::none();
       py::dict d;
       for (const auto &[name, value] : *s.observables) d[py::str(name)] = value;
@@ -787,7 +787,7 @@ PYBIND11_MODULE(_core, m) {
     }), py::arg("file"), py::arg("period"))
     .def_readonly("file", &EnergyReporter::file)
     .def_readonly("period", &EnergyReporter::period);
-  // The file of `[output] observables` (D189, D[python-observe]).
+  // The file of `[output] observables` (D189, D232).
   py::class_<ObservablesReporter>(m, "ObservablesReporter")
     .def(py::init([positive](std::string file, int64_t period) {
       if (file.empty()) throw InputError("ObservablesReporter takes the name of a file");

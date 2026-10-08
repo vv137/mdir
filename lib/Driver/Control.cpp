@@ -3098,7 +3098,7 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
                      });
     // A model in memory names no file: its simulation writes the columns
     // through a reporter and reads them from its state
-    // (D[python-observe]).
+    // (D232).
     if (!control.inMemoryTopology) {
       if (control.observablesFile.empty())
         return error("the term '" + control.observables.front().term +

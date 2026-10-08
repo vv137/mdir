@@ -1,4 +1,4 @@
-# `observe` in the Python model (D[python-observe], D[python-external])
+# `observe` in the Python model (D232, D233)
 
 Issue #188, M2a item 8 of [python-m2.md](python-m2.md), the last. A term of
 the Python model given by an expression selects constants to observe, as
@@ -6,7 +6,7 @@ the Python model given by an expression selects constants to observe, as
 writes the columns of `[output] observables` through a reporter and gives the
 same values to a script at every step of energy, without reading a file.
 Terms of the absolute positions, which the walls of D189 are, enter the
-Python model with it (D[python-external]).
+Python model with it (D233).
 
 ## Interface
 
@@ -17,7 +17,7 @@ soft.constants = [("a", 2.0), ("l", 0.05)]
 soft.observe = ["l"]                 # the energy of the term and dU/dl
 system.pair_terms = [soft]
 
-wall = mdir.ExternalTerm()           # D[python-external]
+wall = mdir.ExternalTerm()           # D233
 wall.name, wall.expression = "lower", "0.5*k*max(0, z0 - z)^2"
 wall.selection = ":WAT"
 wall.constants = [("k", 4184.0), ("z0", 0.6)]
@@ -106,7 +106,7 @@ program of segments gains the call of D189 at its plain step of energy,
 beside those of its start and of the intervals of its reports, which
 `mdir run`'s programs have.
 
-## Terms of the positions (D[python-external])
+## Terms of the positions (D233)
 
 `mdir.ExternalTerm` is the control file's `[[energy.external]]` (D148), the
 custom external force of OpenMM [[Eastman2017]](references.md#eastman2017),
@@ -205,7 +205,7 @@ expression as the Python model hands it to the builder (`r` in nm as
 | Observed tunable `r0` of the bonds, one entry for both: `flat.d_r0` | `gradient()["rest"][0]` | equal to the bit | $10^{-12}$, $10^{-5}$ |
 | The refusals of the table above | | each with its message | |
 
-The terms of the positions by themselves (D[python-external]), two walls of
+The terms of the positions by themselves (D233), two walls of
 4184 kJ/mol/nm² on the 1146 atoms of the waters of the dipeptide:
 
 | Check | Reference | Result (CPU and GPU, double and mixed) | Tolerance |
