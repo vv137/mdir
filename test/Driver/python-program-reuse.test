@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# A Program keeps the code of its simulations (D[program-reuse]), on the
+# A Program keeps the code of its simulations (D236), on the
 # CPU: the first simulation lowers and generates code, a later one takes
 # what it left (no pipeline, no host code, no lookup on disk) and gives the
 # same positions and velocities bit for bit in the deterministic mode;

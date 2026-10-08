@@ -537,7 +537,7 @@ std::unique_ptr<MemoryBuffer> HostObjectCache::getObject(const Module *module) {
   if (module->getModuleIdentifier() != this->module)
     return nullptr;
   // The code that the program keeps: a copy of its object, which the
-  // engine links into memory of its own (D[program-reuse]).
+  // engine links into memory of its own (D236).
   if (kept)
     return MemoryBuffer::getMemBufferCopy(kept->object, this->module);
   // The key is the bitcode of the module before code generation, which

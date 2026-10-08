@@ -485,7 +485,7 @@ without it, and `mdir.clear_compile_cache()` empties it
 Within a process, the second and later simulations of one `Program` do
 not compile: the `Program` keeps the LLVM module and the host object of
 the program of segments that its first simulation compiled, and a later
-simulation links a copy of its own (D[program-reuse],
+simulation links a copy of its own (D236,
 [compile-cache.md](compile-cache.md#reuse-within-a-process)).
 On the dipeptide in water, `mdir.Simulation(program)` then takes 0.07 s on
 the CPU and 0.13 s on a GPU instead of 5.4 s and 9.4 s;

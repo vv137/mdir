@@ -41,7 +41,7 @@ def ReuseNeighbors : Pass<"md-exec-reuse-neighbors", "::mlir::ModuleOp"> {
     positions and cell, as values, and the same parameters) is removed,
     also where a loop carries the structure and only repeats that refresh:
     the potential of an output at the state of a step reads the structure
-    of the step and does not act on it (D[output-independence]).
+    of the step and does not act on it (D237).
 
     With `prune-skin` above zero, each refresh with the policy `check`
     keeps a dual list (D114): the inner list, which the loops over pairs

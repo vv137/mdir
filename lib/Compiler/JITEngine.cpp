@@ -36,7 +36,7 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
   std::string bitcode;
   if (kept) {
     // The module as an earlier engine was given it, wrapper and sections
-    // included (D[program-reuse]).
+    // included (D236).
     auto parsed = parseBitcodeFile(
         MemoryBufferRef(kept->bitcode, kept->identifier), *context);
     if (!parsed)

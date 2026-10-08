@@ -366,7 +366,7 @@ compileEngine(const Control &control, const System &system,
   // The code that an earlier simulation of the program left, under the key
   // of everything that the lowering and the code generation read: the
   // module, the pipeline with its options, the entry, and the machine
-  // (D[program-reuse]). `cache=False` generates everything anew.
+  // (D236). `cache=False` generates everything anew.
   auto targetMachine = compiler::createHostMachine();
   if (!targetMachine)
     return targetMachine.takeError();

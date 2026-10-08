@@ -19,7 +19,7 @@ A `Simulation` lowers programs of its own
 ([python-segments.md](python-segments.md#compiles)), so a program that is
 only simulated is not lowered twice. The `Program` keeps the code of
 its first simulation in memory, and its later simulations in the process
-take it instead of lowering and generating code again (D[program-reuse],
+take it instead of lowering and generating code again (D236,
 [compile-cache.md](compile-cache.md#reuse-within-a-process)). No runtime libraries are loaded, no CUDA
 execution context is initialized, and no report or reproducer is written.
 JIT ownership, runtime device selection and execution follow with segments.

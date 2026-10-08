@@ -73,7 +73,7 @@ struct CompileStats {
   unsigned bypassed = 0;
 
   /// The programs that took the code that an earlier simulation of their
-  /// `Program` left in memory (D[program-reuse]): nothing was lowered,
+  /// `Program` left in memory (D236): nothing was lowered,
   /// generated, or looked up for them. And the time of the pipeline and of
   /// the host object of the simulation that left the code.
   unsigned reused = 0;
@@ -83,7 +83,7 @@ struct CompileStats {
 };
 
 /// The code of a program of segments as a JIT engine takes it
-/// (D[program-reuse]): the bitcode of its LLVM module, which names its
+/// (D236): the bitcode of its LLVM module, which names its
 /// symbols and its constructors, and the relocatable host object that was
 /// generated from that module.
 struct KeptCode {
@@ -97,7 +97,7 @@ struct KeptCode {
 };
 
 /// The code that the simulations of one `Program` left, by key
-/// (D[program-reuse]). A key is a hash of what the lowering and the code
+/// (D236). A key is a hash of what the lowering and the code
 /// generation read (getCodeKey). The store belongs to the `Program` and is
 /// freed with it; its mutex is held for a lookup or an insertion only.
 class CodeStore {
@@ -232,7 +232,7 @@ public:
   ~HostObjectCache() override;
 
   /// The object of the module is that of `code`, and nothing is looked up
-  /// or generated for it (D[program-reuse]).
+  /// or generated for it (D236).
   void setKeptCode(std::shared_ptr<const KeptCode> code);
   /// Keeps a copy of the object of the module when it is generated or read
   /// from the directory, for takeObject.

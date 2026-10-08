@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D217, D227, D234, D[program-reuse])
+# The compile cache (D212, D214, D217, D227, D234, D236)
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -335,7 +335,7 @@ decision on PR #192:
 
 ## Reuse within a process
 
-D[program-reuse], issue #236. The cache on disk saves the host code generation and nothing
+D236, issue #236. The cache on disk saves the host code generation and nothing
 of the MLIR pipeline, whose output is its key; and without a directory
 nothing was saved at all. Every `mdir.Simulation(program)` therefore
 lowered its program again, also the second and later simulations of one

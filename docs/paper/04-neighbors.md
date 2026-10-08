@@ -83,7 +83,7 @@ states of a free-energy calculation) has the reach of the forces and shares
 the structure of the steps; it is evaluated at the state of the step, where
 its refresh would repeat that of the step, and the compiler removes that
 refresh, so the output reads the structure and neither tests nor builds it
-(D[output-independence]). A refresh given the positions of one cell and
+(D237). A refresh given the positions of one cell and
 another cell breaks the premise: its displacements are off by
 $\lvert\mu - 1\rvert\,\lVert\mathbf x_i\rVert$ for a scaling $\mu$, and
 it builds the structure where the steps would not have. That happened to

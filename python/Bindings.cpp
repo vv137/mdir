@@ -87,7 +87,7 @@ struct Program {
   /// What a simulation compiles its programs from (D196).
   std::shared_ptr<const model::PreparedModel> prepared;
   /// The code that its simulations left, which later ones take
-  /// (D[program-reuse]); freed with the program.
+  /// (D236); freed with the program.
   std::shared_ptr<compiler::CodeStore> code =
       std::make_shared<compiler::CodeStore>();
   /// Whether its compilations use the compile cache, the default of its
@@ -1189,7 +1189,7 @@ PYBIND11_MODULE(_core, m) {
       // Programs compiled with cache=False (D217).
       d["cache_bypassed"] = c.bypassed;
       // Programs that took the code kept with their Program
-      // (D[program-reuse]).
+      // (D236).
       d["program_reused"] = c.reused;
       d["reuse_saved_seconds"] = c.reuseSavedSeconds;
       return d;

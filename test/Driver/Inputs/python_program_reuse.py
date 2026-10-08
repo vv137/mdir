@@ -1,4 +1,4 @@
-"""The code that a Program keeps for its simulations (D[program-reuse]):
+"""The code that a Program keeps for its simulations (D236):
 the dipeptide in water with PME, SHAKE, and SETTLE, in the deterministic
 mode.
 

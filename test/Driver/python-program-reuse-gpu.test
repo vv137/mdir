@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# A Program keeps the code of its simulations (D[program-reuse]), on a
+# A Program keeps the code of its simulations (D236), on a
 # GPU: the kernels are constants of the kept host object and the kept LLVM
 # module has the constructors that load them, so a later simulation loads
 # and runs them without the pipeline, and gives the same positions and

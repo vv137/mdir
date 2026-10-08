@@ -20,7 +20,7 @@ public:
   /// module it was given and the object of that module for takeCode. With
   /// `kept`, the engine is made from that code instead of `module`, which
   /// is not read: nothing is translated, generated, or looked up
-  /// (D[program-reuse]).
+  /// (D236).
   static llvm::Expected<std::unique_ptr<JITEngine>>
   create(mlir::ModuleOp module, std::unique_ptr<llvm::TargetMachine> target,
          llvm::ArrayRef<std::string> libraries, llvm::StringRef entry,

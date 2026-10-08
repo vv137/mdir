@@ -12,7 +12,7 @@ their refresh of the structure tested the scaled positions against a
 reference of another cell and built the structure where the steps would not
 have, in that cell, and the steps then summed their forces in another order.
 At the state of the step the refresh of an output repeats that of the step
-and is removed (D[output-independence]), so that it does not count for
+and is removed (D237), so that it does not count for
 `rebuild_interval` either.
 
 On the dipeptide in water with PME, SHAKE, and SETTLE, from a start far from

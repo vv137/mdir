@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- A `Program` keeps the code of its simulations (D[program-reuse], #236):
+- A `Program` keeps the code of its simulations (D236, #236):
   the second and later `mdir.Simulation(program)` of one `Program` in a
   process take the LLVM module and the host object that the first left
   with the `Program`, and neither run the MLIR pipeline nor generate host
@@ -242,7 +242,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 - A build of the neighbor matrix on a device orders the particles of a
   cell by rank, one thread per particle, in place of an insertion sort in
-  one thread per cell (D[matrix-sort-rank], #231). A system of about a
+  one thread per cell (D235, #231). A system of about a
   thousand particles has a few cells of more than a hundred particles
   each, whose sort took most of a build: ethanol in 467 waters at constant
   pressure runs at 0.115 ms a step where it ran at 0.291 (RTX 3090, mixed
@@ -524,7 +524,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Fixed
 
 - An output no longer counts for `rebuild_interval`
-  (D[output-independence], #233). The potentials of `[output]
+  (D237, #233). The potentials of `[output]
   observables`, of the free-energy file, and of a pull file share the
   neighbor structure of the steps, and each of their evaluations was a
   refresh of it: with `rebuild_interval = 4` a run with the three files
