@@ -101,3 +101,64 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %y: !md.field<@atoms, 3 x f64>,
   %b = md_exec.rebuild_count %nl2 : !mdrt.neighbors<@atoms>
   return %a, %b : i64, i64
 }
+
+// -----
+
+md.particle_set @atoms
+
+// A loop that the pass refuses inside a loop that carries fields, whose body
+// uses a neighbor structure refreshed before it: the pass fails with its
+// diagnostic alone. The body that it had built for the outer loop, which
+// uses the storage of the structure, was left behind, and the process
+// aborted at the end ("operation destroyed but still has uses", #208).
+func.func @f(%x: !md.field<@atoms, 3 x f64>, %y: !md.field<@atoms, 3 x f64>,
+             %cell: !md.cell, %n: index) -> !md.field<@atoms, 3 x f64> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
+      : !mdrt.neighbors<@atoms>
+  %nl1 = md_exec.refresh_neighbors %nl0, %x, %cell
+      cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
+      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+  %ye = scf.for %step = %c0 to %n step %c1 iter_args(%ya = %y)
+      -> (!md.field<@atoms, 3 x f64>) {
+    %g0 = md_exec.zeros : !md.field<@atoms, 3 x f64>
+    // expected-error@+1 {{needs a buffer of its own: the loop writes to a field that it reads from other particles}}
+    %g = md_exec.pair_for %nl1, %x, %cell
+        ins(%g0 : !md.field<@atoms, 3 x f64>)
+        outs(%g0 : !md.field<@atoms, 3 x f64>) cutoff(1.5)
+        policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>, %g1: vector<3xf64>, %g2: vector<3xf64>):
+      %s = arith.addf %g1, %g2 : vector<3xf64>
+      md_exec.yield %s : vector<3xf64>
+    } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+        -> !md.field<@atoms, 3 x f64>
+    scf.yield %g : !md.field<@atoms, 3 x f64>
+  }
+  return %ye : !md.field<@atoms, 3 x f64>
+}
+
+// -----
+
+md.particle_set @atoms
+
+// The same for a refusal of the end of the body.
+func.func @f(%x: !md.field<@atoms, 3 x f64>, %y: !md.field<@atoms, 3 x f64>,
+             %z: !md.field<@atoms, 3 x f64>, %cell: !md.cell, %n: index)
+    -> !md.field<@atoms, 3 x f64> {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
+      : !mdrt.neighbors<@atoms>
+  %nl1 = md_exec.refresh_neighbors %nl0, %x, %cell
+      cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
+      : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+  %ye, %ze = scf.for %step = %c0 to %n step %c1 iter_args(%ya = %y, %za = %z)
+      -> (!md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>) {
+    %a = md_exec.rebuild_count %nl1 : !mdrt.neighbors<@atoms>
+    // expected-error@+1 {{needs a buffer of its own: the loop yields one field twice}}
+    scf.yield %ya, %ya
+        : !md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>
+  }
+  return %ye : !md.field<@atoms, 3 x f64>
+}

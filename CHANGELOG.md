@@ -471,6 +471,11 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A program that `md-exec-assign-storage` refuses inside a loop that carries
+  fields (the loop of the steps) fails with the diagnostic of the pass, a
+  `CompileError` in Python; the process aborted after it with "operation
+  destroyed but still has uses" when the body of the loop used a value of
+  the code before it, such as a neighbor structure (#208).
 - The scripts that generate the GPU templates of particle mesh Ewald and of
   the groups of neighbors (`scripts/generate-pme-gpu-template.py`,
   `scripts/generate-groups-gpu-template.py`) emit the guards of #168 that
