@@ -111,6 +111,17 @@ Drawn velocities and typed positional restraints extend this model
 `assignVelocities`, and `System::restraints` with `restraintReference`
 become the control's `[[restraints]]`.
 
+## Terms of the positions and `observe`
+
+`System.external_terms` holds `mdir.ExternalTerm` values, the control
+file's `[[energy.external]]` (D148, D[python-external]): an expression in
+`x`, `y`, `z` (nm) and the charge `q`, in kJ/mol, over the particles of a
+mask or of an array of indices, with constants, and `scaling` under a
+barostat (D154). Pair, tuple, and external terms take `observe`, the control
+file's key (D189, D[python-observe]): `None`, or a list of constants whose
+derivatives are observed with the term's energy. See
+[python-observe.md](python-observe.md).
+
 ## The correction for the dispersion
 
 D222 (#161) gives the Python model the two parts of the

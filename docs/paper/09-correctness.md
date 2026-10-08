@@ -371,6 +371,16 @@ energy equals a NumPy sum over the table to $3.0\times10^{-12}$ kJ/mol of
 208.0, and the correction for the dispersion its formula to
 $7.4\times10^{-13}$ (`python-tunable-pairs*.test`).
 
+The observables of the Python model (Section 6.8, D[python-observe]) are
+checked against `mdir run` on the same model: the files are equal byte for
+byte for a pair term, a term over bonds, and two walls on the dipeptide in
+water, and for an NBFIX written as a pair term on a mixture of 60 + 60
+particles, whose tail and shift estimate equal their closed forms to
+$10^{-8}$, at constant energy and at constant pressure; the column of an
+observed tunable equals the derivative of D230 to $1.1\times10^{-16}$ and
+central differences to $2.3\times10^{-8}$ in double precision
+(`python-observe*.test`).
+
 The derivative of the energy in the tunables (Section 3.6,
 D230) is checked on the CPU and a GPU, in double and mixed
 precision, against sums written in NumPy at the positions of the state and

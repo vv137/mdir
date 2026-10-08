@@ -138,10 +138,15 @@ shared with the CLI, which either front end continues
 (D223); the package `mdir` as a manylinux_2_28 pip wheel for Python
 3.10–3.13, which carries its runtime and libdevice, takes cuFFT from
 NVIDIA's wheel, and runs the four-stage tutorial from the installed
-package at the rate of `mdir run` (D228).
+package at the rate of `mdir run` (D228); `observe` on pair, tuple, and
+external terms of the Python model, with the observables file of `mdir run`
+written by a reporter and the values in the state (D[python-observe],
+Section 6.8), and terms of the absolute positions (D[python-external]).
 Remaining:
-`observe` on the terms of the Python model with the observables of a
-run (Section 6.8), the last item of M2a;
+in the Python model, the time and parameters of each particle in a term of
+the positions, terms over centers and compound terms, and the derivative
+in a tunable of several entries at every row of a run, which `observe`
+does not give (the frame evaluator of M2b);
 the tilts of a triclinic cell in a writable borrow, and
 NPT in a triclinic cell or with a coupling period of 1.
 
