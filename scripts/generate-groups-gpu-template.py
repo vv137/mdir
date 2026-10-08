@@ -11,6 +11,7 @@ writes them. Edit the script, not the template."""
 
 import os
 import re
+import sys
 
 # Whether the build being written is that of a triclinic cell
 # (docs/triclinic-m2.md); main writes it to a template of its own.
@@ -1976,8 +1977,15 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   %fcxf = math.floor %fcx : f64
   %fcyf = math.floor %fcy : f64
   %one_f = arith.constant 1.0 : f64
-  %ncxf = arith.maximumf %fcxf, %one_f : f64
-  %ncyf = arith.maximumf %fcyf, %one_f : f64
+  // At least one column and at most 256 along an edge, with maxnumf and
+  // minnumf, which take the other operand for one that is not a number: a
+  // cell that is not a number, or one that a run that has failed has blown
+  // up, gives counts that are defined and fit memory (#168).
+  %most_f = arith.constant 256.0 : f64
+  %ncxf0 = arith.maxnumf %fcxf, %one_f : f64
+  %ncyf0 = arith.maxnumf %fcyf, %one_f : f64
+  %ncxf = arith.minnumf %ncxf0, %most_f : f64
+  %ncyf = arith.minnumf %ncyf0, %most_f : f64
   %ncx64 = arith.fptosi %ncxf : f64 to i64
   %ncy64 = arith.fptosi %ncyf : f64 to i64
   %ncx = arith.index_cast %ncx64 : i64 to index
@@ -2000,9 +2008,14 @@ func.func private @mdrt_gpu_build_neighbors_groups(
   %gxf1 = math.floor %gxf0 : f64
   %gyf1 = math.floor %gyf0 : f64
   %gzf1 = math.floor %gzf0 : f64
-  %gxf = arith.maximumf %gxf1, %three_f : f64
-  %gyf = arith.maximumf %gyf1, %three_f : f64
-  %gzf = arith.maximumf %gzf1, %three_f : f64
+  // At most 256 a side, as the columns: wider cells only give more
+  // candidates, whose range is clamped to the whole grid.
+  %gxf2 = arith.maxnumf %gxf1, %three_f : f64
+  %gyf2 = arith.maxnumf %gyf1, %three_f : f64
+  %gzf2 = arith.maxnumf %gzf1, %three_f : f64
+  %gxf = arith.minnumf %gxf2, %most_f : f64
+  %gyf = arith.minnumf %gyf2, %most_f : f64
+  %gzf = arith.minnumf %gzf2, %most_f : f64
   %gx64 = arith.fptosi %gxf : f64 to i64
   %gy64 = arith.fptosi %gyf : f64 to i64
   %gz64 = arith.fptosi %gzf : f64 to i64
@@ -2724,9 +2737,13 @@ def tilt(text):
 
 
 def main():
+    # The templates of the repository, or with a directory as the argument
+    # the same files there, which generated-templates.test compares with
+    # them.
     here = os.path.dirname(os.path.abspath(__file__))
-    path = os.path.join(here, "..", "lib", "Runtime", "Templates",
-                        "NeighborsGroupsGPU.mlir")
+    templates = (sys.argv[1] if len(sys.argv) > 1 else
+                 os.path.join(here, "..", "lib", "Runtime", "Templates"))
+    path = os.path.join(templates, "NeighborsGroupsGPU.mlir")
     text = HEADER + HELPERS + build()
     # Launch sizes that the body names.
     launches = [
