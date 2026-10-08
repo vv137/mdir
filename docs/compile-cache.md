@@ -1,4 +1,4 @@
-# The compile cache (D212, D214, D217, D227)
+# The compile cache (D212, D214, D217, D227, D[compile-cache-size-file])
 
 Issue #142. A Python simulation compiles its program in three stages: the
 MLIR pipeline lowers it to an LLVM module (with the PTX of its kernels on a
@@ -21,6 +21,9 @@ D227 (#162) takes the values that depend on the
 starting cell out of the program's text, so that a stage that starts from
 an equilibrated cell hits the entry of another; see
 [Values of the start](#values-of-the-start-d227).
+D[compile-cache-size-file] (#196) keeps the total of the entries in a file, so
+that a store does not list the directory; see
+[The bound](#the-bound).
 
 ## Use
 
@@ -33,7 +36,7 @@ empties it and `cache=False` bypasses it for one compile
 |---|---|
 | `MDIR_COMPILE_CACHE_DIR=<dir>` | Enables the cache. Host objects go in `<dir>/host/` and the PTX and cubins of GPU modules in `<dir>/gpu/`, each made when its first entry is written. |
 | `MDIR_COMPILE_CACHE=off` | Disables the cache even when a directory is set. |
-| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory, host and GPU entries together, to $n$ MiB (2048 by default). After entries are written, the entries used least recently are removed until the directory is within the bound; 0 keeps none. |
+| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory, host and GPU entries together, to $n$ MiB (2048 by default). When entries written take the total over the bound, the entries used least recently are removed until the directory is within it; 0 keeps none ([The bound](#the-bound)). |
 
 A directory may be shared by processes that run at the same time, and by
 builds of MDIR (see the key below). Removing it, or any entry in it, is
@@ -76,7 +79,8 @@ cache in `directory`, else in `MDIR_COMPILE_CACHE_DIR`.
 - It removes the host objects (`host/*.o`) and the GPU entries
   (`gpu/*.ptx`, `gpu/*.cubin`) whose magic tag is this format's.
 - It leaves the entries of another format, files of other names, and the
-  directories themselves.
+  directories themselves. It takes the bytes it removed off the total in
+  the file `size` ([The bound](#the-bound)).
 - It leaves the temporary files of writers under way, so that their
   renames succeed. Temporary files older than an hour are removed, as
   eviction removes them.
@@ -132,9 +136,14 @@ Where the directory goes:
 Many ranks or jobs at once:
 
 - Each lookup reads an entry, each hit touches it, and each store renames
-  a file and then lists the whole directory for the eviction. Hundreds of
+  a file. A compile that stored entries then adds their bytes to the file
+  `size` under a lock; it lists the directory only when the bound may be
+  exceeded, and once a day (D[compile-cache-size-file]). Hundreds of
   ranks starting at once on one directory of a parallel file system
   therefore load its metadata server, mostly with misses.
+- The file system has to carry locks of files (`fcntl`), as NFS and the
+  parallel file systems do. Where it does not, every compile that stores
+  lists the directory, which is slow once it holds thousands of entries.
 - Prefer a directory local to each node. To share one directory across a
   large job, warm it first with one compile of the job's program, from a
   single process, so that the ranks only read.
@@ -331,8 +340,70 @@ never a part; processes that store the same key at once leave one entry.
 A read copies the file rather than mapping it, since another process may
 replace it. A hit touches the entry, which the eviction of the least
 recently used reads. Temporary files older than an hour, left by a process
-that died, are removed during eviction. A directory that cannot be written
+that died, are removed when the directory is listed for eviction. A
+directory that cannot be written
 leaves the run as it would be without a cache (`cache_unstored`).
+
+### The bound
+
+D[compile-cache-size-file], issue #196. To keep the directory within `MDIR_COMPILE_CACHE_MAX_MB`, a
+process has to know what the directory holds. Listing it and reading the
+status of every entry gives that, and it is how entries are evicted: the
+entries are sorted by the time of their last use and removed, the least
+recent first, until the total is within the bound. But a listing costs
+file operations in proportion to the entries of the directory, whoever
+stored them. Before D[compile-cache-size-file], every run of the GPU pass that
+stored an entry and every stored host object listed the directory. With
+the 10,000 entries that a suite leaves in a shared directory, each compiled
+program read 10,000 to 20,000 statuses, and on a network file system, with
+sixteen tests at once, the tests stalled for minutes.
+
+The cache therefore keeps its total in a file, `<dir>/size`: a tag, the
+bytes of the entries, and the time of the last listing in seconds since
+the epoch. A compile that stored entries (a host object; the PTX and
+cubins of all the modules of one run of the GPU pass, together) opens the
+file, locks it, adds the bytes it wrote, and writes it back. That is a
+fixed number of file operations, whatever the directory holds. The lock is
+a lock of the file between processes (`fcntl`), which a network file
+system carries, and a mutex between the threads of a process.
+
+The directory is listed, under the same lock, only when
+
+- the total with the bytes just stored exceeds the bound;
+- the file holds no total: a new directory, one written by an earlier
+  version, or a file that was removed or damaged;
+- the last listing is more than 24 hours old. The 24 hours are a fixed
+  number of the implementation; no environment variable changes them.
+
+A listing evicts as described above, removes stale temporary files, and
+writes the exact total back. `mdir.clear_compile_cache` takes the bytes
+it removed off the total.
+
+What the total can get wrong, and what follows:
+
+- **Too large.** An entry that replaces another of the same key is
+  counted twice, and an entry removed by hand or by another version of
+  MDIR is still counted. The bound is then reached early, and the listing
+  that follows corrects the total and evicts nothing it need not.
+- **Too small.** A process that dies between its stores and its update of
+  the file leaves bytes that are not counted, at most the entries of one
+  program. The directory may exceed the bound by that much until the next
+  listing, at most 24 hours later. Entries copied into the directory by
+  hand are found the same way.
+- **Temporary files.** The temporary file of a process that died is
+  removed at a listing once it is an hour old, so within a day, and no
+  longer at the next store of any process.
+- **No locks.** On a file system that refuses the lock, or when the file
+  cannot be opened, every compile that stores lists the directory, as
+  before.
+
+A bound of 0 is exceeded by every store, so each lists and keeps nothing.
+At the bound, each store that exceeds it lists and evicts down to the
+bound and no further; a cache that is meant to stay full of entries in use
+is better given a larger bound.
+
+The file belongs to the directory, not to a format of entries: removing it
+is safe, and the next store lists.
 
 The cache is the `llvm::ObjectCache` that ORC's `TMOwningSimpleCompiler`
 takes, as in LLVM's `LLJITWithObjectCache` example. Only the program's
@@ -388,6 +459,32 @@ directory:
 - **The bound.** The entry used least recently goes first; a bound of
   0 MiB keeps no entry; a stale temporary file is removed and a recent one
   kept.
+- **The total (D[compile-cache-size-file]).** `compile-cache.test` counts the
+  listings of the directory: of 300 stores below the bound only the first,
+  which finds no total, lists; stores up to the bound do not list, and the
+  store that exceeds it lists once and removes the entry used least
+  recently; a total that is too large, one listed more than a day ago, and
+  a file without a total are each replaced by one listing; a file that
+  cannot be used makes every store list, and the bound holds; four
+  processes that store 100 entries each at once leave the exact total and
+  list nothing; a bound of 0 lists at every store; a clear takes its bytes
+  off the total. The file operations of a compile, counted with
+  `strace -f` on a local disk (GPU, mixed precision; the four stages of
+  `examples/ala3/run.py`, 3,264 entries stored by 4 runs of the GPU pass
+  and 4 host objects):
+
+  | Cache before the run | | Listings of `host/` or `gpu/` | Status calls on entries by path | Opens of `size` |
+  |---|---|---|---|---|
+  | Empty | before | 16 | 13,268 | |
+  | | after | 2 | 304 | 8 |
+  | 10,000 entries, no total | before | 16 | 93,268 | |
+  | | after | 2 | 10,304 | 8 |
+  | 10,000 entries and their total | after | 0 | 0 | 8 |
+
+  A listing opens both subdirectories, so 16 are 8 evictions and 2 are
+  one: the first store, which finds no total. The wall time of the run
+  into an empty cache on a local disk does not change: 57.9 s and 58.0 s
+  before, 59.9 s and 58.4 s after.
 - **Concurrent processes.** Four processes started at once on an empty
   directory each generate or read the object, none is rejected, one entry
   remains, the states agree with no cache, and the next process hits.

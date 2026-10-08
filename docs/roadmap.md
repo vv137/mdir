@@ -247,6 +247,8 @@ threads from one pool of the process. D212 (#142,
 [compile cache](compile-cache.md)) keeps the host objects of compiled
 programs on disk, keyed by their content; D217 (#163)
 clears it and bypasses it per compile from Python;
+D[compile-cache-size-file] (#196) keeps its total in a file, so that a
+store does not list the directory;
 D227 (#162,
 [values of the start](compile-cache.md#values-of-the-start-d227))
 makes the values that depend on the starting cell arguments of the entry

@@ -1,7 +1,10 @@
 # The keys, entries, and bound of the compile cache of host objects
 # (D212) and of the entries of GPU modules (D214), and clearing
 # (D217), also while another process writes; the cache
-# across processes is in compile-cache-*.test.
+# across processes is in compile-cache-*.test. The total of the cache
+# (D[compile-cache-size-file], #196): of 300 stores below the bound, one
+# lists the directory.
 # RUN: rm -rf %t
 # RUN: mdir-compile-cache-test %t | FileCheck %s
+# CHECK: size file: 300 stores, listings 1
 # CHECK: compile cache checks passed

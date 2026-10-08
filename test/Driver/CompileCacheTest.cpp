@@ -3,7 +3,9 @@
 // rejected, and eviction removes the entries used least recently.
 // clearCache (D217) removes the entries of this format
 // and nothing else, and a process that clears while another writes leaves
-// only intact entries.
+// only intact entries. The total kept in the directory
+// (D[compile-cache-size-file]): stores list the directory only at the
+// bound, without a total, or once a day.
 #include "mdir/Compiler/CompileCache.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/IRBuilder.h"
@@ -313,6 +315,167 @@ int main(int argc, char **argv) {
   check(clears > 0 && removed > 0, "the clears removed entries meanwhile");
   check(intactEntries == remaining && temporaries == 0,
         "every entry that remains is intact, and no temporary file is left");
+
+  // The total of the cache (D[compile-cache-size-file], issue #196): a
+  // store adds its bytes to `<directory>/size` and lists the directory
+  // only when the bound may be exceeded, when no total is known, or when
+  // the last listing is a day old. A cache of its own, with entries of one
+  // size.
+  SmallString<256> sized(directory);
+  sys::path::append(sized, "sized");
+  SmallString<256> sizedGpu(sized), sizeFile(sized);
+  sys::path::append(sizedGpu, "gpu");
+  sys::path::append(sizeFile, "size");
+  cantFail(errorCodeToError(sys::fs::create_directories(sizedGpu)));
+  const uint64_t kUnbounded = uint64_t(1) << 40;
+  // Keys of one length, so that the entries have one size.
+  auto sizedKey = [](int i) {
+    return "sized key " + std::to_string(10000 + i);
+  };
+  auto sizedEntry = [&](int i) {
+    SmallString<256> path(sizedGpu);
+    sys::path::append(path, getCacheEntryName(
+                                sizedKey(i), ".ptx"));
+    return std::string(path);
+  };
+  // Stores entry `i` as a compile does, and returns its bytes.
+  auto store = [&](int i, uint64_t bound) {
+    uint64_t written = 0;
+    cantFail(writeCacheEntry(sizedEntry(i), sizedKey(i),
+                             object, 1.0, &written));
+    noteCacheStores(sized, written, bound);
+    return written;
+  };
+  auto recorded = [&] {
+    std::string content = read(sizeFile);
+    StringRef text(content);
+    uint64_t total = ~uint64_t(0);
+    text.split('\n').second.split(' ').first.getAsInteger(10, total);
+    return total;
+  };
+  auto onDisk = [&] {
+    uint64_t total = 0;
+    std::error_code error;
+    for (sys::fs::directory_iterator it(sizedGpu, error), end;
+         it != end && !error; it.increment(error)) {
+      uint64_t size = 0;
+      if (!sys::fs::file_size(it->path(), size))
+        total += size;
+    }
+    return total;
+  };
+  const int kStores = 300;
+  uint64_t before = getCacheListingCount(), entrySize = 0;
+  for (int i = 0; i < kStores; ++i)
+    entrySize = store(i, kUnbounded);
+  uint64_t listed = getCacheListingCount() - before;
+  outs() << "size file: " << kStores << " stores, listings " << listed
+         << "\n";
+  check(listed == 1, "of many stores below the bound only the first, which "
+                     "finds no total, lists the directory");
+  check(recorded() == kStores * entrySize && onDisk() == recorded(),
+        "the total kept is the bytes of the entries");
+
+  // At the bound: no listing while the total fits; the store that exceeds
+  // it lists and removes the entry used least recently, and the total kept
+  // is what the listing found.
+  uint64_t bound = (kStores + 2) * entrySize;
+  age(sizedEntry(7), std::chrono::seconds(60));
+  before = getCacheListingCount();
+  store(kStores, bound);
+  store(kStores + 1, bound);
+  check(getCacheListingCount() == before && recorded() == bound,
+        "stores up to the bound do not list");
+  store(kStores + 2, bound);
+  check(getCacheListingCount() == before + 1 &&
+            !sys::fs::exists(sizedEntry(7)) &&
+            sys::fs::exists(sizedEntry(kStores + 2)) && onDisk() == bound &&
+            recorded() == bound,
+        "the store that exceeds the bound lists once and evicts the entry "
+        "used least recently");
+
+  // An entry removed by hand leaves the total too large, never too small:
+  // the next store over the bound lists, finds room, and evicts nothing.
+  cantFail(errorCodeToError(sys::fs::remove(sizedEntry(8))));
+  before = getCacheListingCount();
+  store(kStores + 3, bound);
+  check(getCacheListingCount() == before + 1 && onDisk() == bound &&
+            recorded() == bound && sys::fs::exists(sizedEntry(9)),
+        "a total that is too large is corrected by a listing");
+
+  // A total whose listing is older than a day, one without a readable
+  // total, and a file that cannot be used each list.
+  auto setSizeFile = [&](StringRef text) {
+    cantFail(errorCodeToError(sys::fs::remove(sizeFile)));
+    write(sizeFile, text);
+  };
+  int64_t current = std::chrono::duration_cast<std::chrono::seconds>(
+                        std::chrono::system_clock::now().time_since_epoch())
+                        .count();
+  // The total here is too small on purpose: the listing replaces it.
+  setSizeFile("mdir-cache-size 1\n1 " + std::to_string(current - 2 * 86400) +
+              "\n");
+  before = getCacheListingCount();
+  store(kStores + 4, kUnbounded);
+  check(getCacheListingCount() == before + 1 && recorded() == onDisk(),
+        "a total listed more than a day ago is listed again");
+  store(kStores + 5, kUnbounded);
+  check(getCacheListingCount() == before + 1 && recorded() == onDisk(),
+        "and the store after it does not list");
+  setSizeFile("something else\n");
+  store(kStores + 6, kUnbounded);
+  check(getCacheListingCount() == before + 2 && recorded() == onDisk(),
+        "a file without a readable total is replaced by a listing");
+  cantFail(errorCodeToError(sys::fs::remove(sizeFile)));
+  cantFail(errorCodeToError(sys::fs::create_directory(sizeFile)));
+  before = getCacheListingCount();
+  uint64_t held = onDisk();
+  store(kStores + 7, kUnbounded);
+  store(kStores + 8, held);
+  check(getCacheListingCount() == before + 2 && onDisk() == held,
+        "without a usable file every store lists, and the bound holds");
+  cantFail(errorCodeToError(sys::fs::remove(sizeFile)));
+
+  // Processes that store at once add under the file's lock: the total is
+  // the bytes on disk, and none of them lists after the first.
+  store(kStores + 9, kUnbounded);
+  const int kProcesses = 4, kEach = 100;
+  pid_t children[kProcesses];
+  for (int p = 0; p < kProcesses; ++p) {
+    children[p] = fork();
+    if (children[p] == 0) {
+      uint64_t start = getCacheListingCount();
+      for (int i = 0; i < kEach; ++i)
+        store(1000 + p * kEach + i, kUnbounded);
+      _exit(getCacheListingCount() == start ? 0 : 1);
+    }
+  }
+  bool quiet = true;
+  for (pid_t child : children) {
+    int status = 0;
+    waitpid(child, &status, 0);
+    quiet &= WIFEXITED(status) && WEXITSTATUS(status) == 0;
+  }
+  check(quiet && recorded() == onDisk(),
+        "concurrent processes keep one exact total and do not list");
+
+  // A bound of zero lists at every store and keeps nothing; a clear takes
+  // what it removes off the total.
+  before = getCacheListingCount();
+  store(2000, 0);
+  store(2001, 0);
+  check(getCacheListingCount() == before + 2 && onDisk() == 0 &&
+            recorded() == 0,
+        "a bound of zero lists at every store and keeps no entry");
+  store(2002, kUnbounded);
+  store(2003, kUnbounded);
+  cleared = clearCache(sized);
+  before = getCacheListingCount();
+  check(cleared.gpuEntries == 2 && recorded() == 0,
+        "a clear takes the bytes it removes off the total");
+  store(2004, kUnbounded);
+  check(getCacheListingCount() == before && recorded() == entrySize,
+        "and the store after a clear does not list");
 
   outs() << (failures ? "compile cache checks FAILED\n"
                       : "compile cache checks passed\n");

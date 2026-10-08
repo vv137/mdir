@@ -538,6 +538,18 @@ format, or the outputs; every such change is listed under **Changed** or
   false and the arrays and tensors of a consumer pointed to freed memory,
   on a device to blocks returned to the runtime's pool. Release the view
   and delete the tensors before a checkpoint (#207).
+- The compile cache no longer lists its directory after stores. Every
+  compile that stored an entry listed `host/` and `gpu/` and read the
+  status of every entry, once per run of the GPU pass and once per host
+  object, so its cost grew with what the shared directory held, and GPU
+  tests stalled for minutes when the cache was on a network file system
+  (#196). The cache now keeps the total of its entries in the file
+  `<dir>/size`, updated under a lock, and lists the directory to evict
+  only when the total exceeds `MDIR_COMPILE_CACHE_MAX_MB`, when no total
+  is known, or once a day (D[compile-cache-size-file]). The bound and the
+  order of eviction are unchanged; the temporary files of processes that
+  died are removed within a day instead of at the next store. See
+  [docs/compile-cache.md](docs/compile-cache.md#the-bound).
 - The scripts that generate the GPU templates of particle mesh Ewald and of
   the groups of neighbors (`scripts/generate-pme-gpu-template.py`,
   `scripts/generate-groups-gpu-template.py`) emit the guards of #168 that
