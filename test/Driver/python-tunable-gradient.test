@@ -18,6 +18,8 @@
 # REFUSED: refusals passed
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide lj CPU Double | FileCheck %s --check-prefix=LJ -DMODE="CPU Double"
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide lj CPU Mixed | FileCheck %s --check-prefix=LJ -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide charges CPU Double | FileCheck %s --check-prefix=CHARGES -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide charges CPU Mixed | FileCheck %s --check-prefix=CHARGES -DMODE="CPU Mixed"
 # TERMS: [[MODE]]: the term over tuples against NumPy
 # TERMS: [[MODE]]: against central differences of the energy
 # TERMS: [[MODE]]: the energy less the reported one
@@ -31,3 +33,6 @@
 # LJ: [[MODE]]: propane and water, per-type and pair sigma and epsilon with a pair set apart
 # LJ: [[MODE]]: propane and water against central differences of the energy
 # LJ: lj passed
+# CHARGES: [[MODE]]: the charges under a Coulomb cutoff, 25 entries for 1168 particles, against NumPy
+# CHARGES: [[MODE]]: against central differences of the energy
+# CHARGES: charges passed

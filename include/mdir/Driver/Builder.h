@@ -185,6 +185,13 @@ struct Program {
     std::vector<Row> rows;
   };
   std::vector<GradientField> gradientFields;
+  /// What the host adds to the derivative in the charge of each particle,
+  /// in kJ/mol/e: the derivative of the self term of the reaction field or
+  /// of particle mesh Ewald, which does not depend on the cell, and that
+  /// of the background of a net charge, at the volume of the build,
+  /// proportional to 1 / V. Empty unless the charges are a tunable whose
+  /// derivative the program carries.
+  std::vector<double> gradientChargeFixed, gradientChargeVolume;
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;
   int64_t pmeGrid[3] = {0, 0, 0};

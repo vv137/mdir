@@ -2000,6 +2000,14 @@ Simulation::evaluateTunableGradient() {
       if (at >= 0)
         result.values[field.tunable][at] += values[particle];
     }
+    // The charges: what the host adds to the energy, the self term and
+    // the background of a net charge.
+    if (!p.gradientChargeFixed.empty() &&
+        entry.kind == model::TunableSet::Entry::Charge)
+      for (size_t i = 0; i != p.gradientChargeFixed.size(); ++i)
+        if (entry.map[i] >= 0)
+          result.values[field.tunable][entry.map[i]] +=
+              p.gradientChargeFixed[i] + p.gradientChargeVolume[i] * scale;
     // A seed of a table: the sum over the particles of each type, and
     // what the host adds.
     if (field.rows.empty())

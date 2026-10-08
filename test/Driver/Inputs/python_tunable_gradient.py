@@ -16,6 +16,11 @@ Scenarios:
             derivative of the shifted potential with the tail and the
             estimate of the shift (D209, D210) against NumPy and closed
             forms, and against central differences
+  charges   the charges under a Coulomb cutoff on the dipeptide in water,
+            tied by a map (one entry per atom name of the waters): the
+            derivative of the shifted Coulomb of the pairs within the cutoff
+            and of the 1-4 pairs against NumPy, and against central
+            differences
   lj        per-type sigma and epsilon and the table by pairs of types: on
             the dipeptide against central differences; on propane and
             water under a plain cutoff with the correction for the
@@ -235,6 +240,83 @@ def run_terms(target, precision):
     print(f"{target} {precision}: 12 steps through the derivative equal those without it "
           f"to the bit: {same}")
     assert same
+
+
+def run_charges(target, precision):
+    double = precision == "Double"
+    rc, f = 0.8, 138.935457644
+    loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance, system.switch_distance = rc, 0.9, 0.7
+    system.electrostatics = mdir.Electrostatics.Cutoff
+    system.dispersion = mdir.DispersionCorrection.None_
+    top = system.topology
+    names = top.atom_names
+    residues = [top.residue_names[r] for r in top.residue_indices]
+    entries, charge_map = {}, []
+    for i, (atom, residue) in enumerate(zip(names, residues)):
+        key = (residue, atom) if residue == "WAT" else (residue, i)
+        charge_map.append(entries.setdefault(key, len(entries)))
+    charge_map = np.array(charge_map, dtype=np.int64)
+    system.tunables = [mdir.Tunable("q", "charge", map=charge_map)]
+    system.tunable_gradient = True
+    sim = simulation(compile_(system, state, target, precision))
+    sim.run(6)
+    g = sim.tunables.gradient()
+    at = sim.state()
+    x, box = at.positions, np.diag(at.cell.vectors)
+    n = len(x)
+    q = sim.tunables["q"][charge_map]
+
+    # NumPy. The pairs up to two bonds apart are excluded; those three
+    # bonds apart are the 1-4 pairs, f q_i q_j / (1.2 r) in the force
+    # field of the file (ff14SB), and are excluded from the others, which
+    # take f q_i q_j (1 / r - 1 / rc) within the cutoff: the Coulomb that
+    # the forces sample (D210).
+    graph = {i: set() for i in range(n)}
+    for i, j in top.bonds:
+        graph[int(i)].add(int(j))
+        graph[int(j)].add(int(i))
+    excluded, scaled = set(), set()
+    for i in range(n):
+        seen, frontier = {i}, {i}
+        for depth in range(3):
+            frontier = {k for m in frontier for k in graph[m]} - seen
+            seen |= frontier
+            for j in frontier:
+                if j > i:
+                    (scaled if depth == 2 else excluded).add((i, j))
+    potential = np.zeros(n)
+    for i in range(n - 1):
+        d = x[i + 1:] - x[i]
+        d -= box * np.round(d / box)
+        r = np.sqrt((d * d).sum(axis=1))
+        for j in np.nonzero(r < rc)[0]:
+            pair = (i, i + 1 + int(j))
+            if pair in excluded or pair in scaled:
+                continue
+            k = f * (1.0 / r[j] - 1.0 / rc)
+            potential[i] += k * q[pair[1]]
+            potential[pair[1]] += k * q[i]
+    for i, j in scaled:
+        d = x[j] - x[i]
+        d -= box * np.round(d / box)
+        k = f / (1.2 * np.sqrt((d * d).sum()))
+        potential[i] += k * q[j]
+        potential[j] += k * q[i]
+    reference = np.zeros(len(g["q"]))
+    np.add.at(reference, charge_map, potential)
+    error = np.abs(g["q"] - reference).max() / np.abs(reference).max()
+    tolerance = 1e-9 if double else 5e-6
+    print(f"{target} {precision}: the charges under a Coulomb cutoff, {len(reference)} "
+          f"entries for {n} particles, against NumPy, {error:.1e} of the largest "
+          f"(tolerance {tolerance:.0e})")
+    assert error < tolerance, error
+    worst = differences(sim, g, 1e-3 if double else 5e-2)
+    tolerance = 1e-7 if double else 5e-4
+    print(f"{target} {precision}: against central differences of the energy, {worst:.1e} "
+          f"(tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
 
 
 def run_lj_dipeptide(target, precision):
@@ -525,6 +607,8 @@ elif scenario == "terms":
     run_terms(sys.argv[3], sys.argv[4])
 elif scenario == "tails":
     run_tails(sys.argv[3], sys.argv[4])
+elif scenario == "charges":
+    run_charges(sys.argv[3], sys.argv[4])
 elif scenario == "lj":
     run_lj_dipeptide(sys.argv[3], sys.argv[4])
     run_lj_propane(sys.argv[3], sys.argv[4])

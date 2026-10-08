@@ -346,9 +346,17 @@ private:
       return text;
     for (size_t k = 0; k != control.tunableConstants.size(); ++k)
       text += ", %tg_c" + std::to_string(k) + ": f64";
-    for (size_t c = 0; c != program.gradientFields.size(); ++c)
+    for (size_t c = 0; c != getNumGradientSeeds(); ++c)
       text += ", %tg_d" + std::to_string(c) + ": !real";
     return text;
+  }
+  /// Whether the program carries the derivative in the charges, the last of
+  /// Program::gradientFields then: the derivative of `@tunable` in its
+  /// field of the charges itself, where the others are those in fields of
+  /// zeros, `%tg_d<c>`.
+  bool gradientCharges = false;
+  size_t getNumGradientSeeds() const {
+    return program.gradientFields.size() - (gradientCharges ? 1 : 0);
   }
   /// The tunable parameters of the terms over tuples whose derivatives
   /// `@tunable` gives (D[tunable-gradient]). The derivative in the
@@ -1762,11 +1770,30 @@ llvm::Error Builder::collectTopology() {
     zero.values.assign(topology.getNumParticles(), 0.0);
     program.fields.push_back(std::move(zero));
   }
+  // The derivative in the charges is that of `@tunable` in its field of
+  // them, a site for each particle (D[tunable-gradient]).
+  if (program.tunableGradient)
+    for (auto [k, declaration] : llvm::enumerate(control.tunableDeclarations))
+      if (declaration.kind == Control::TunableKind::Charge) {
+        Program::GradientField field;
+        field.tunable = static_cast<unsigned>(k);
+        for (uint32_t i = 0, e = topology.getNumParticles(); i != e; ++i)
+          field.sites.push_back({i, i});
+        program.gradientFields.push_back(std::move(field));
+        gradientCharges = true;
+      }
   if (!topology.pairs.empty()) {
     // The factors enter the parameters: ε s_LJ, and f q_i q_j s_C.
     Program::TupleSet &set = addSet("pairs14", 2);
     size_t sigma = addField(set, "sigma"), epsilon = addField(set, "epsilon"),
            qq = addField(set, "qq");
+    // In `@tunable` the pairs take f s_C and the charges of their members,
+    // so that the derivative in the charges covers them.
+    if (gradientCharges) {
+      size_t scale = addField(set, "tgs");
+      for (const Topology::Pair &pair : topology.pairs)
+        set.fields[scale].values.push_back(coulombInternal * pair.scaleCoulomb);
+    }
     for (const Topology::Pair &pair : topology.pairs) {
       set.members.push_back(pair.i);
       set.members.push_back(pair.j);
@@ -3169,6 +3196,40 @@ llvm::Error Builder::collectTunableGradient() {
         outcome = Program::GradientOutcome::Rule;
       break;
     }
+    case Control::TunableKind::Charge: {
+      auto refuse = [&](const llvm::Twine &what) {
+        return makeError("System.tunable_gradient: the derivative of the "
+                         "energy in the tunable '" + declaration.name +
+                         "' (charges) " + what + " is not implemented yet");
+      };
+      if (program.pme)
+        return refuse("with particle mesh Ewald");
+      if (control.implicitSolvent != Control::ImplicitSolvent::None)
+        return refuse("with an implicit solvent");
+      // The tail of a pair term that reads the charges follows them through
+      // its classes of particles (D209).
+      for (auto [index, term] : llvm::enumerate(control.pairs)) {
+        Expression expression = llvm::cantFail(
+            Expression::parse(term.expression, control.functions));
+        bool reads = llvm::is_contained(expression.getNames(), "q1") ||
+                     llvm::is_contained(expression.getNames(), "q2");
+        if (reads && dispersion && index < system.pairTails.size() &&
+            !system.pairTails[index].empty())
+          return refuse("through the tail of the pair term '" + term.name +
+                        "', which reads the charges,");
+      }
+      // The Python model has no reaction field; its self term and its
+      // excluded pairs would follow the charges as well (D140).
+      if (control.reactionField)
+        return refuse("with the reaction field");
+      // Nothing that the host adds to the energy follows the charges under
+      // a Coulomb cutoff.
+      const std::vector<double> &charges = system.topology->charges;
+      program.gradientChargeFixed.assign(charges.size(), 0.0);
+      program.gradientChargeVolume.assign(charges.size(), 0.0);
+      outcome = Program::GradientOutcome::Rule;
+      break;
+    }
     case Control::TunableKind::Sigma:
     case Control::TunableKind::Epsilon:
     case Control::TunableKind::SigmaPair:
@@ -3190,19 +3251,6 @@ llvm::Error Builder::collectTunableGradient() {
       }
       outcome = Program::GradientOutcome::Rule;
       break;
-    default: {
-      static const char *const kinds[] = {
-          "charges",        "per-type sigma",    "per-type epsilon",
-          "sigma by pairs", "epsilon by pairs",  "a constant of a pair term",
-          "a parameter of a tuple term"};
-      return makeError(
-          "System.tunable_gradient: the derivative of the energy in the "
-          "tunable '" + declaration.name + "' (" +
-          kinds[static_cast<int>(declaration.kind)] +
-          ") is not implemented yet; the derivative takes sigma and "
-          "epsilon, per type and by pairs, constants of pair terms, and "
-          "parameters of terms over tuples");
-    }
     }
     program.gradientOutcomes.push_back(outcome);
   }
@@ -3287,10 +3335,22 @@ void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
     // The fields of zeros through which the derivatives in the parameters
     // of tuples leave as fields of the particles: one field of the program
     // serves all.
-    for (size_t c = 0; c != fields; ++c) {
+    size_t seeds = getNumGradientSeeds();
+    for (size_t c = 0; c != seeds; ++c) {
       arguments += (", " + prefix + "tg_zero").str();
       types += ", !real";
     }
+    // The argument of `@tunable` that each field is the derivative in: the
+    // fields of zeros, then the charges.
+    unsigned chargeArgument = 2;
+    for (const Program::Field &field : program.fields) {
+      if (field.name == "q")
+        break;
+      ++chargeArgument;
+    }
+    auto getArgument = [&](size_t c) {
+      return c < seeds ? base + constants + c : chargeArgument;
+    };
     types += ")";
     os << inner << "%tg_e";
     for (size_t i = 0; i != count; ++i)
@@ -3303,7 +3363,7 @@ void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
     for (size_t i = 0; i != count; ++i)
       os << ", derivative(" << base + gradientColumns[i] << ")";
     for (size_t c = 0; c != fields; ++c)
-      os << ", derivative(" << base + constants + c << ")";
+      os << ", derivative(" << getArgument(c) << ")";
     os << "]\n" << inner << "    : " << types << " -> (f64";
     for (size_t i = 0; i != count; ++i)
       os << ", f64";
@@ -4667,11 +4727,24 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   }
   bool lj14 = terms & LennardJones14, coulomb14 = terms & Coulomb14;
   if ((lj14 || coulomb14) && has("pairs14")) {
+    // In `@tunable` with the derivative in the charges, the product of
+    // the charges is formed here, f s_C q_i q_j, from the charges
+    // themselves (D[tunable-gradient]).
+    bool products = gradientArguments && gradientCharges && coulomb14;
     os << "  %u_pairs14 = md.sum_tuples %r_pairs14, %x, %cell coordinates("
           "distance(0, 1))\n"
-       << "      tuple(%f_pairs14_sigma, %f_pairs14_epsilon, %f_pairs14_qq : "
-          "!of_pairs14, !of_pairs14, !of_pairs14) {\n"
-       << "  ^bb0(%r: f64, %sigma: f64, %epsilon: f64, %qq: f64):\n";
+       << (products ? "      gather(%p_q : !real)\n" : "")
+       << "      tuple(%f_pairs14_sigma, %f_pairs14_epsilon, %f_pairs14_qq"
+       << (products ? ", %f_pairs14_tgs" : "")
+       << " : !of_pairs14, !of_pairs14, !of_pairs14"
+       << (products ? ", !of_pairs14" : "") << ") {\n"
+       << "  ^bb0(%r: f64"
+       << (products ? ", %q14_i: f64, %q14_j: f64" : "")
+       << ", %sigma: f64, %epsilon: f64, %qq" << (products ? "_held" : "")
+       << ": f64" << (products ? ", %tgs: f64" : "") << "):\n";
+    if (products)
+      os << "    %q14 = arith.mulf %q14_i, %q14_j : f64\n"
+         << "    %qq = arith.mulf %tgs, %q14 : f64\n";
     std::string value;
     if (lj14) {
       // The pairs three bonds apart as they are, except under the power
