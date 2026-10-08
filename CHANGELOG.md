@@ -519,6 +519,9 @@ format, or the outputs; every such change is listed under **Changed** or
   fails on a tree without them;
   [packaging/licenses/README.md](packaging/licenses/README.md) gives the
   clause for each component.
+- The test suite hands `CUDA_CACHE_PATH` to its tests, as it hands `HOME`:
+  set for a suite, it had no effect, so the kernel cache of the CUDA driver
+  of the tests stayed in the home directory (#223).
 - The scripts that generate the GPU templates of particle mesh Ewald and of
   the groups of neighbors (`scripts/generate-pme-gpu-template.py`,
   `scripts/generate-groups-gpu-template.py`) emit the guards of #168 that

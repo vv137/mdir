@@ -1,0 +1,8 @@
+# The suite hands the cache of the CUDA driver to its tests as lit was given
+# it (#223): a suite run with CUDA_CACHE_PATH set had no effect on its
+# tests, whose driver cache then stayed in the home directory. The
+# temporary files of a test are in a directory that lit makes for the run
+# under the TMPDIR that lit was given.
+# RUN: %python %S/Inputs/environment.py "%suite_cuda_cache_path" "%suite_tmpdir" | FileCheck %s
+# CHECK: the cache of the driver is that of the suite
+# CHECK-NEXT: temporary files are under the directory of the suite

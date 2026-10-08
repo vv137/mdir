@@ -14,10 +14,20 @@ config.excludes = ["CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py.in", "mdir_l
 # The options of the sanitizers reach the tests of a sanitized build
 # (scripts/build-sanitized.sh), and the choice of the device reaches the
 # tests that run on one: without it they took the first device whatever
-# the shell chose, and shared it with a benchmark there.
+# the shell chose, and shared it with a benchmark there. The cache of the
+# CUDA driver, which holds the kernels that it compiles from PTX, reaches
+# the tests as well, so that a suite can keep it off a home directory on a
+# network file system (#223). Temporary files need nothing here: lit gives
+# each run a directory of its own under the TMPDIR that lit was given, and
+# sets TMPDIR, TMP, and TEMP of the tests to it.
 llvm_config.with_system_environment(
     ["HOME", "TMP", "TEMP", "ASAN_OPTIONS", "UBSAN_OPTIONS",
-     "CUDA_VISIBLE_DEVICES"])
+     "CUDA_VISIBLE_DEVICES", "CUDA_CACHE_PATH"])
+# What lit itself was given, for the test that the tests receive it
+# (test/Lit/environment.test).
+for variable in ("CUDA_CACHE_PATH", "TMPDIR"):
+    config.substitutions.append(
+        ("%suite_" + variable.lower(), os.environ.get(variable, "")))
 # with_system_environment forwards only values that are not empty; an empty
 # choice of devices, which hides every GPU, is forwarded as well, so that
 # the tests run on no device rather than on the first.
