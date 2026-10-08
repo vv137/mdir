@@ -521,7 +521,7 @@ func.func private @mdrt.pme_gather(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_c
 
 // The potential of the grid at particle `i`, Σ_k φ(k) θ_i(k): the
 // derivative of the energy of the sum in the charge of the particle, the
-// fourth result of `md.reciprocal` (D[tunable-gradient-pme]). The places
+// fourth result of `md.reciprocal` (D231). The places
 // and the splines are those of @mdrt.pme_gather_one; the buffer holds
 // one number for each particle, in the type that the op stores it in.
 func.func private @mdrt.pme_potential_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
@@ -1075,7 +1075,7 @@ func.func private @mdrt.pme_gather_triclinic(%x: memref<?x3x!pme_pos>, %q: memre
 
 // The potential of the grid at particle `i` in a triclinic cell, Σ_k φ(k) θ_i(k): the
 // derivative of the energy of the sum in the charge of the particle, the
-// fourth result of `md.reciprocal` (D[tunable-gradient-pme]). The places
+// fourth result of `md.reciprocal` (D231). The places
 // and the splines are those of @mdrt.pme_gather_one_triclinic; the buffer holds
 // one number for each particle, in the type that the op stores it in.
 func.func private @mdrt.pme_potential_one_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,

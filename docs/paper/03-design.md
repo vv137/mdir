@@ -827,7 +827,7 @@ $$
 the potential of the grid at the particle: the sum of the force,
 $\mathbf F_i = -q_i\sum_{\mathbf k}\phi(\mathbf k)\nabla_i\theta_i(\mathbf
 k)$, with the weights in place of their gradient and without the charge
-(D[tunable-gradient-pme]). The op of the reciprocal sum yields it as a
+(D231). The op of the reciprocal sum yields it as a
 fourth result where the differentiation in the field of its charges asks,
 gathered by a kernel of its own, in f64 in every precision mode; a program
 that does not ask has neither the result nor the kernel. For a scalar that

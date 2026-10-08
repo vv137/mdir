@@ -7,7 +7,7 @@
 // it, a sum over tuples a gather over them, a sum over particles a map; a
 // field that no sum of the energy takes has the derivative zero; a
 // reciprocal sum of the charges yields it as a fourth result
-// (D[tunable-gradient-pme]). The errors are in
+// (D231). The errors are in
 // differentiate-fields-invalid.mlir.
 
 !vec = !md.field<@atoms, 3 x f64>

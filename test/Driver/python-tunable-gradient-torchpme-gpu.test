@@ -1,6 +1,6 @@
 # REQUIRES: python-api, torchpme, cuda
 # The derivative of the energy in the charges with particle mesh Ewald
-# (D[tunable-gradient-pme]) on the GPU against torch-pme, an independent
+# (D231) on the GPU against torch-pme, an independent
 # differentiable PME, at the same positions, cell, charges, splitting
 # parameter, cutoff, and grid: the derivative in the charge of each of the
 # 1,168 particles from torch autograd, and the change of the energy for

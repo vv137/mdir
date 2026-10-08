@@ -3458,7 +3458,7 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
 }
 
 // The potential of the grid at the particles, as @mdrt.pme_potential gives
-// it (the fourth result of md.reciprocal, D[tunable-gradient-pme]): the
+// it (the fourth result of md.reciprocal, D231): the
 // kernel of @mdrt_gpu_pme_gather_triclinic with the weights of the splines in place
 // of their slopes along x, whose sum the first thread of a particle stores
 // as one number. The sums along y and z of that kernel are computed and

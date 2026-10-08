@@ -1326,7 +1326,7 @@ memref.store %none, %grid[%item] : memref<?x!pme_real, 1>""")
 def gather(potential=False):
     """The forces; with `potential`, the potential of the grid at the
     particles in their place (the fourth result of md.reciprocal,
-    D[tunable-gradient-pme]): the sum along x takes the weights of the
+    D231): the sum along x takes the weights of the
     splines, not their slopes, and the first thread of a particle stores
     it as one number."""
     body = Body("      ")
@@ -1388,7 +1388,7 @@ def gather(potential=False):
     if potential:
         comment = f"""
 // The potential of the grid at the particles, as @mdrt.pme_potential gives
-// it (the fourth result of md.reciprocal, D[tunable-gradient-pme]): the
+// it (the fourth result of md.reciprocal, D231): the
 // kernel of @mdrt_gpu_pme_gather{'_triclinic' if TILTED else ''} with the weights of the splines in place
 // of their slopes along x, whose sum the first thread of a particle stores
 // as one number. The sums along y and z of that kernel are computed and

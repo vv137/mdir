@@ -98,7 +98,7 @@ if config.mdir_python:
         config.available_features.add("torch")
         config.substitutions.append(("%torch_python", torch_python))
         # torch-pme, the independent differentiable PME that the derivative
-        # in the charges is checked against (D[tunable-gradient-pme]).
+        # in the charges is checked against (D231).
         if subprocess.run([torch_python, "-c", "import torchpme"],
                           capture_output=True).returncode == 0:
             config.available_features.add("torchpme")

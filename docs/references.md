@@ -655,7 +655,7 @@ for atomistic machine learning," *J. Chem. Phys.* **162**, 142501 (2025).
 
 Used for: torch-pme, the independent differentiable particle mesh Ewald
 that the derivative of the energy in the charges is checked against
-(D[tunable-gradient-pme]).
+(D231).
 
 ### Lorentz1881
 

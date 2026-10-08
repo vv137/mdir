@@ -370,7 +370,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     B-splines of the particle and φ the grid after the product with the
     influence function: the energy is `½ Σ_i q_i ∂E/∂q_i`. The
     differentiation in the field of the charges asks for it
-    (D[tunable-gradient-pme]); no other op has it.
+    (D231); no other op has it.
 
     ```mlir
     %u, %f, %w, %p = md.reciprocal %x, %q, %cell, %moduli

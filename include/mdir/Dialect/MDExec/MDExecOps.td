@@ -188,7 +188,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     the derivative of the energy in the charge of each particle, one
     number for each, the potential of the grid gathered with the weights
     of the B-splines (the fourth result of `md.reciprocal`,
-    D[tunable-gradient-pme]); the grid is computed in the type that this
+    D231); the grid is computed in the type that this
     field is stored in.
 
     ```mlir

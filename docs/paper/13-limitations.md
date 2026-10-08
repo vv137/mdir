@@ -156,7 +156,7 @@ so each adapter needs explicit derivative rules. Begun
 tunables at the state of a simulation, for constants of pair terms,
 parameters of tuple terms, $\sigma$ and $\epsilon$ per type and by pairs
 of types, and the charges, under a Coulomb cutoff and with particle mesh
-Ewald (D[tunable-gradient-pme]). Remaining: the evaluation at stored
+Ewald (D231). Remaining: the evaluation at stored
 frames, and the adapters.
 
 *M3 and M4.* Learned potentials behind a versioned interface, one model on

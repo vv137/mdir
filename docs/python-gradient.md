@@ -3,7 +3,7 @@
 Issue #203, the first implementation step of M2b (#138,
 [roadmap](roadmap.md), Section 6.1). Status: implemented, in two decisions:
 `D230` for everything but the charges with particle mesh
-Ewald, which are `D[tunable-gradient-pme]`
+Ewald, which are `D231`
 ([below](#the-charges-with-particle-mesh-ewald)); see [Stages](#stages).
 
 A fit of the parameters of a potential by reweighting
@@ -229,7 +229,7 @@ with PME the self term and the background do
 
 ### The charges with particle mesh Ewald
 
-`D[tunable-gradient-pme]` (maintainer's decision on PR #205, Q4). With
+`D231` (maintainer's decision on PR #205, Q4). With
 $E_\text{rec} = \tfrac12\mathbf q^{\mathsf T}\mathsf A\mathbf q$ the
 reciprocal sum, a quadratic form of the charges whose matrix the spreading,
 the influence function, and the gathering make,
@@ -283,7 +283,7 @@ U_k/\partial d$ in f64, and apply the chain rule once.
 | Constants of pair terms; parameters of tuple terms | done |
 | Per-type $\sigma$ and $\epsilon$, and the table by pairs of types | done |
 | Charges with a Coulomb cutoff | done; the Python model has no reaction field |
-| Charges with PME | done, `D[tunable-gradient-pme]`: the fourth result of `md.reciprocal` in the three templates of PME, the self term and the background on the host |
+| Charges with PME | done, `D231`: the fourth result of `md.reciprocal` in the three templates of PME, the self term and the background on the host |
 | Tails of pair terms and the correction for the dispersion (host) | done for constants of pair terms and for $\sigma$, $\epsilon$; the tail of a pair term that reads the charges is refused |
 
 ## `observe` and tunables

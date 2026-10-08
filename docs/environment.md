@@ -52,6 +52,6 @@ The suite also takes lit parameters, given as `-D<name>=<value>` in
 - `gpu_workers` sets how many tests that need the GPU run at once (16 by default, D208);
 - `compile_threads` sets the `MDIR_COMPILE_THREADS` of each test;
 - `compile_cache=off` runs the suite without its compile cache.
-- `torch_python=<interpreter>` runs the tests that need PyTorch with it (the feature `torch`), and those that need torch-pme if it imports `torchpme` as well (the feature `torchpme`, D[tunable-gradient-pme]).
+- `torch_python=<interpreter>` runs the tests that need PyTorch with it (the feature `torch`), and those that need torch-pme if it imports `torchpme` as well (the feature `torchpme`, D231).
 
 A change that adds or reads an environment variable adds its row here.

@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --convert-md-to-md-exec="skin=0.25 width=48" | FileCheck %s
 
 // The fourth result of md.reciprocal, the potential of the grid at the
-// particles (D[tunable-gradient-pme]): a sum of md_exec that yields it in
+// particles (D231): a sum of md_exec that yields it in
 // place of the forces. Where the forces are not taken, that sum gives the
 // energy and the virial too; where they are, the sum of the forces gives
 // them and the two sums stand side by side.

@@ -3225,7 +3225,7 @@ llvm::Error Builder::collectTunableGradient() {
       // −f β Σ q² / √π, and the background of a net charge Q,
       // −f π Q² / (2 V β²), do (getPMEConstants): −2 f β q_i / √π, which
       // does not depend on the cell, and −f π Q / (V β²)
-      // (D[tunable-gradient-pme]).
+      // (D231).
       const std::vector<double> &charges = system.topology->charges;
       program.gradientChargeFixed.assign(charges.size(), 0.0);
       program.gradientChargeVolume.assign(charges.size(), 0.0);

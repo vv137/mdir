@@ -400,7 +400,7 @@ without it to the bit, and a simulation continued from a checkpoint gives
 the derivative of the one that wrote it to the bit.
 
 With particle mesh Ewald the derivative in the charges
-(D[tunable-gradient-pme]) is checked against an independent
+(D231) is checked against an independent
 differentiable PME, torch-pme 0.5.0
 [[Loche2025]](references.md#loche2025), on the dipeptide in water with
 every one of its 1,168 charges an entry: the same positions, cell,

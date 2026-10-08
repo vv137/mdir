@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # The derivative of the energy in the charges with particle mesh Ewald
-# (D[tunable-gradient-pme], docs/python-gradient.md) on the GPU, in double
+# (D231, docs/python-gradient.md) on the GPU, in double
 # and mixed precision: 25 entries tied by a map on the dipeptide in water
 # with a net charge, the direct sum, the potential of the grid at the
 # particles, the self term, the background, and the excluded and 1-4 pairs
