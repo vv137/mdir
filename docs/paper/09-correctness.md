@@ -392,8 +392,12 @@ entries for 1,168 particles, with the pairs three bonds apart:
 $7.7\times10^{-16}$ and $1.2\times10^{-7}$. Every entry against central
 differences: within $1.8\times10^{-9}$ in double precision and
 $1.2\times10^{-4}$ in mixed, where the energy is a sum of terms in f32.
-Twelve steps through an evaluation of the derivative equal those of a
-program compiled without it to the bit.
+After 200 steps of leapfrog under the barostat, $\sigma$ and $\epsilon$ by
+pairs of types agree with central differences at the volume that the run
+has reached within $3.6\times10^{-11}$ and $7.7\times10^{-6}$. Twelve steps
+through an evaluation of the derivative equal those of a program compiled
+without it to the bit, and a simulation continued from a checkpoint gives
+the derivative of the one that wrote it to the bit.
 
 The read-only DLPack views of a simulation (D220,
 Section 3.6) are checked by consumers that use none of MDIR's code: NumPy

@@ -10,6 +10,8 @@
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide lj GPU Mixed | FileCheck %s --check-prefix=LJ -DMODE="GPU Mixed"
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide charges GPU Double | FileCheck %s --check-prefix=CHARGES -DMODE="GPU Double"
 # RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide charges GPU Mixed | FileCheck %s --check-prefix=CHARGES -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide dynamics GPU Double | FileCheck %s --check-prefix=DYNAMICS -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_gradient.py %S/Inputs/dipeptide dynamics GPU Mixed | FileCheck %s --check-prefix=DYNAMICS -DMODE="GPU Mixed"
 # TERMS: [[MODE]]: the term over tuples against NumPy
 # TERMS: [[MODE]]: against central differences of the energy
 # TERMS: [[MODE]]: the energy less the reported one
@@ -26,3 +28,6 @@
 # CHARGES: [[MODE]]: the charges under a Coulomb cutoff, 25 entries for 1168 particles, against NumPy
 # CHARGES: [[MODE]]: against central differences of the energy
 # CHARGES: charges passed
+# DYNAMICS: [[MODE]]: leapfrog under a barostat, 200 steps
+# DYNAMICS-SAME: sigma and epsilon by pairs against central differences of the energy
+# DYNAMICS: dynamics passed

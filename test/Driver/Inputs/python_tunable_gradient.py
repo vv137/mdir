@@ -1,7 +1,7 @@
 """The derivative of the energy in the tunable parameters
 (D[tunable-gradient], docs/python-gradient.md).
 
-Usage: python_tunable_gradient.py ROOT SCENARIO [TARGET PRECISION]
+Usage: python_tunable_gradient.py ROOT SCENARIO [TARGET PRECISION [WORK]]
 
 Scenarios:
   refusals  what is refused and with which error, the plan, and a tunable
@@ -21,6 +21,14 @@ Scenarios:
             derivative of the shifted Coulomb of the pairs within the cutoff
             and of the 1-4 pairs against NumPy, and against central
             differences
+  dynamics  leapfrog under a barostat (NPT): after 200 steps on the dipeptide
+            with the Lennard-Jones cut without a shift, the correction for
+            the dispersion, and the table tunable by pairs of types, the
+            derivative against central differences of the energy at the
+            volume that the run has reached
+  checkpoint  a simulation continued from a checkpoint, and a new stage from
+            it, give the derivative of the simulation that wrote it, to the
+            bit (needs HDF5)
   lj        per-type sigma and epsilon and the table by pairs of types: on
             the dipeptide against central differences; on propane and
             water under a plain cutoff with the correction for the
@@ -109,18 +117,19 @@ def simulation(program):
     return sim
 
 
-def differences(sim, g, step):
+def differences(sim, g, step, entries=None):
     """The largest difference, relative to the largest entry of each
     tunable, between the derivative `g` and central differences of the
     energy that it is the derivative of, extrapolated from the steps `step`
-    and `step`/2 times each value (Richardson)."""
+    and `step`/2 times each value (Richardson); of the entries
+    `entries[name]` of each tunable, or of all."""
     worst = 0.0
     for name in g.keys():
         if name in g.zero:
             continue
         v0 = sim.tunables[name].copy()
         scale = max(np.abs(g[name]).max(), 1e-12)
-        for m in range(len(v0)):
+        for m in (entries[name] if entries else range(len(v0))):
             def central(h):
                 e = []
                 for sign in (1.0, -1.0):
@@ -153,6 +162,15 @@ def run_refusals():
     assert abs(g.energy - sim.state().energies["potential"]) < 0.5
     sim.tunables["soft_a"] = np.array([2.5])
     assert sim.tunables.gradient().version == 1
+    # A live writable borrow refuses it, as it refuses an evaluation (D229).
+    sim.run(2)
+    borrow = sim.borrow()
+    expect(mdir.SimulationError, sim.tunables.gradient, "writable borrow")
+    borrow.abandon()
+    del borrow
+    assert sim.tunables.gradient().step == 2
+    with sim.view():
+        expect(mdir.SimulationError, sim.tunables.gradient, "an evaluation")
     expect(KeyError, lambda: g["q"])
     print("refusals: the plan, the shapes, and a tunable that the energy does not read")
 
@@ -173,7 +191,7 @@ def run_refusals():
     system, state = dipeptide([mdir.Tunable("q", "charge")])
     text = expect(mdir.InputError, lambda: compile_(system, state), "is not implemented yet")
     assert "'q' (charges)" in text, text
-    print("refusals: 4 refusals")
+    print("refusals: 6 refusals")
 
 
 def run_terms(target, precision):
@@ -317,6 +335,84 @@ def run_charges(target, precision):
     print(f"{target} {precision}: against central differences of the energy, {worst:.1e} "
           f"(tolerance {tolerance:.0e})")
     assert worst < tolerance, worst
+
+
+def pair_model():
+    """The dipeptide in water with PME, the Lennard-Jones cut without a
+    shift with the correction for the dispersion, and the table tunable by
+    pairs of types."""
+    loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance = 0.8, 0.9
+    system.truncation = mdir.Truncation.None_
+    system.electrostatics = mdir.Electrostatics.PME
+    system.dispersion = mdir.DispersionCorrection.EnergyPressure
+    system.tunables = [mdir.Tunable("sigma", "sigma_pair"),
+                       mdir.Tunable("epsilon", "epsilon_pair")]
+    system.tunable_gradient = True
+    return system, state
+
+
+def run_dynamics(target, precision):
+    double = precision == "Double"
+    system, state = pair_model()
+    integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    integrator.timestep = 0.0005
+    integrator.method = mdir.IntegratorMethod.Leapfrog
+    ensemble.kind, ensemble.temperature, ensemble.coupling_period = mdir.EnsembleKind.NPT, 300.0, 10
+    execution.target, execution.precision = getattr(mdir.Target, target), getattr(mdir.Precision, precision)
+    execution.deterministic = True
+    sim = simulation(mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule()))
+    first = float(np.linalg.det(sim.state().cell.vectors))
+    sim.run(200)
+    volume = float(np.linalg.det(sim.state().cell.vectors))
+    assert volume != first
+    g = sim.tunables.gradient()
+    assert g.step == 200
+    # The four largest entries of each and the smallest that is not 0.
+    entries = {}
+    for name in g.keys():
+        order = np.argsort(-np.abs(g[name]))
+        nonzero = [int(m) for m in order if g[name][m] != 0.0]
+        entries[name] = nonzero[:4] + nonzero[-1:]
+    worst = differences(sim, g, 1e-3 if double else 2e-2, entries)
+    tolerance = 1e-7 if double else 5e-4
+    print(f"{target} {precision}: leapfrog under a barostat, 200 steps, the volume "
+          f"{volume / first:.4f} of the first, sigma and epsilon by pairs against central "
+          f"differences of the energy, {worst:.1e} (tolerance {tolerance:.0e})")
+    assert worst < tolerance, worst
+    again = sim.tunables.gradient()
+    assert all(np.array_equal(again[name], g[name]) for name in g.keys())
+    sim.run(10)
+
+
+def run_checkpoint(target, precision, work):
+    import pathlib
+    path = str(pathlib.Path(work) / "gradient.h5")
+    system, state = dipeptide(term_tunables())
+    sim = simulation(compile_(system, state, target, precision))
+    sim.run(6)
+    sim.tunables["soft_a"] = np.array([2.5])
+    sim.run(4)
+    g = sim.tunables.gradient()
+    sim.save_checkpoint(path)
+    for stage in (False, True):
+        system, state = dipeptide(term_tunables())
+        other = mdir.Simulation(compile_(system, state, target, precision), checkpoint=path,
+                                stage=stage)
+        other.part_seconds = 1e9
+        if stage:
+            # A stage takes the values of its own compile.
+            other.tunables["soft_a"] = np.array([2.5])
+        h = other.tunables.gradient()
+        same = h.step == g.step and h.energy == g.energy and all(
+            np.array_equal(h[name], g[name]) for name in g.keys())
+        print(f"{target} {precision}: {'a new stage from' if stage else 'continued from'} a "
+              f"checkpoint, the derivative and its energy equal those of the simulation that "
+              f"wrote it to the bit: {same}")
+        assert same, (dict(h.items()), dict(g.items()), h.energy, g.energy)
+        other.run(4)
+        assert other.tunables.gradient().step == g.step + 4
 
 
 def run_lj_dipeptide(target, precision):
@@ -607,6 +703,10 @@ elif scenario == "terms":
     run_terms(sys.argv[3], sys.argv[4])
 elif scenario == "tails":
     run_tails(sys.argv[3], sys.argv[4])
+elif scenario == "dynamics":
+    run_dynamics(sys.argv[3], sys.argv[4])
+elif scenario == "checkpoint":
+    run_checkpoint(sys.argv[3], sys.argv[4], sys.argv[5])
 elif scenario == "charges":
     run_charges(sys.argv[3], sys.argv[4])
 elif scenario == "lj":

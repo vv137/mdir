@@ -1,8 +1,9 @@
 # The derivative of the energy in the tunable parameters (D[tunable-gradient])
 
 Issue #203, the first implementation step of M2b (#138,
-[roadmap](roadmap.md), Section 6.1). Status: implemented but for the
-charges with particle mesh Ewald; see [Stages](#stages).
+[roadmap](roadmap.md), Section 6.1). Status: implemented. The charges with
+particle mesh Ewald are a decision of their own, in a pull request of
+their own on #203 (maintainer's decision on PR #205); see [Stages](#stages).
 
 A fit of the parameters of a potential by reweighting
 [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) needs
@@ -94,6 +95,13 @@ and listed in `Program.plan["tunables"][k]["gradient"]`:
 | `"zero"` | an array of zeros, and the name in `g.zero`: the builder proved that the energy does not read the tunable (a constant or a parameter that the expression of its term does not name) |
 | a failure | `mdir.compile` raises, naming the tunable and the op without a rule or the reason; no program is made |
 
+`g.zero` lists what is proved from the expressions, not every zero. An
+entry can be 0 without its tunable being listed: a pair of types that no
+pair of particles within the cutoff has, a site that the state gives no
+contribution, a charge or a table that no term of the model reads. Such a
+zero is the value of the derivative at that state, computed; a name in
+`g.zero` says that it is zero at every state.
+
 Within the program, `md-differentiate` keeps the three outcomes of D161
 for every value: independent of the parameter only by a proof, then
 exactly zero; dependent with a rule; or an error that names the op. A
@@ -106,6 +114,8 @@ value that is not finite at the evaluation is an error of `gradient()`
 
 - `gradient()` of a simulation whose program was compiled without
   `tunable_gradient`, or that declares no tunables, or that minimizes.
+- `gradient()` while a view or a writable borrow of the simulation is
+  alive (D220, D229): `SimulationError`, as for `run(0, energy=True)`.
 - `System.tunable_gradient` without tunables, at compile.
 - The charges with particle mesh Ewald or an implicit solvent, at compile,
   naming the tunable: not implemented yet (see [Stages](#stages)).
@@ -225,7 +235,7 @@ U_k/\partial d$ in f64, and apply the chain rule once.
 | Constants of pair terms; parameters of tuple terms | done |
 | Per-type $\sigma$ and $\epsilon$, and the table by pairs of types | done |
 | Charges with a Coulomb cutoff | done; the Python model has no reaction field |
-| Charges with PME | not done: refused at compile. Decided (PR #205, Q4): a fourth result of `md.reciprocal`, the potential of the grid at the particles, in the three templates of PME, only in a program compiled with the derivative; the self term and the background by closed forms on the host |
+| Charges with PME | not in this decision: refused at compile. It follows as a decision of its own on #203 (PR #205, Q4): a fourth result of `md.reciprocal`, the potential of the grid at the particles, in the three templates of PME, only in a program compiled with the derivative; the self term and the background by closed forms on the host |
 | Tails of pair terms and the correction for the dispersion (host) | done for constants of pair terms and for $\sigma$, $\epsilon$; the tail of a pair term that reads the charges is refused |
 
 ## `observe` and tunables
@@ -258,6 +268,7 @@ the energy is a sum of f32 terms.
 | The same | FD | 2.4e-10 | 2.4e-10 | 1.0e-4 | 4.4e-5 | 1e-7, 5e-4 |
 | Charges, 25 entries for 1,168 particles (one per atom name of the waters), Coulomb cutoff, dipeptide | NumPy: $\sum_j fq_j(1/r - 1/r_c)$ over the pairs not excluded within $r_c$ and $\sum fq_j/(1.2r)$ over the 1-4 pairs | 5.1e-16 | 7.7e-16 | 5.1e-8 | 1.2e-7 | 1e-9, 5e-6 |
 | The same | FD | 1.3e-11 | 8.7e-12 | 1.2e-4 | 3.4e-5 | 1e-7, 5e-4 |
+| $\sigma$ and $\epsilon$ by pairs of types after 200 steps of leapfrog under a barostat (the volume 0.9977 of the first), dipeptide, PME, plain cutoff, correction for the dispersion; the four largest entries of each and the smallest that is not 0 | FD | 3.5e-11 | 3.6e-11 | 7.4e-6 | 7.7e-6 | 1e-7, 5e-4 |
 
 In mixed precision the difference of $\partial U/\partial c$ from NumPy,
 $1.3\times10^{-5}$, is that of the kernel's table of $r^{-8}$ in f32
@@ -269,12 +280,13 @@ to the bit, those of a program compiled without the derivative through
 `run(0, energy=True)` (CPU and GPU, double and mixed); the plan, the
 shapes, the read-only arrays, a constant that its expression does not read
 (`"zero"`, zeros, in `g.zero`), the version after an update, and four
-refusals. With leapfrog (FD $5\times10^{-14}$) and under NPT after 200
-steps (FD $8\times10^{-10}$), by hand on the CPU in double precision; no
-test holds these two.
+refusals, among them a live view and a live writable borrow. A
+simulation continued from a checkpoint (D223), and a new stage from it,
+give the derivative and its energy of the simulation that wrote the
+checkpoint to the bit, in the four configurations
+(`python-tunable-gradient-checkpoint*.test`).
 
-The charges with PME, against torch-pme, belong to the stage that is not
-done.
+The charges with PME, against torch-pme, belong to that decision.
 
 ## Performance
 
