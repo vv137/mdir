@@ -26,10 +26,10 @@ mixed precision on a GPU. The state k takes the seed --seed + k, the
 stages before it --seed.
 
 --equilibrated DIR copies npt.h5 from DIR instead of running the three
-stages, so that two builds begin from one state; with --deterministic and
-the same seeds their trajectories are then the same, and compare.py takes
-the differences of their free-energy files. --write-only writes the
-control files and runs nothing.
+stages, so that two sets of runs begin from one state; with --deterministic
+a build repeats its runs bit for bit, and compare.py takes the differences
+of two sets. --write-only writes the control files and runs nothing. The
+runs take the GPU that CUDA_VISIBLE_DEVICES names.
 """
 import argparse
 import os
