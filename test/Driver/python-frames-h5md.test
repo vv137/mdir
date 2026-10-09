@@ -1,0 +1,78 @@
+# REQUIRES: python-api, hdf5
+# The frame evaluator with frames read from H5MD (D[frame-evaluator], D239,
+# docs/python-frames.md) on the CPU, in double and mixed precision,
+# Inputs/python_frames.py. 20 frames of a run of `mdir run` at constant
+# pressure in a rhombic dodecahedron, whose barostat scales the tilts with
+# the cell (D238), written in f64 and read with mdir.read_h5md: the energy,
+# its derivative in the tunables, the virial, and the volume of a frame
+# equal those of a simulation compiled from that frame. And the frames that
+# an H5MDReporter writes from a run of the dipeptide, read one at a time:
+# equal to the evaluation of the states to the bit in f64.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro %t/
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/npt.toml
+# RUN: cd %t && mdir run npt.toml > /dev/null
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide triclinic CPU Double %t/npt.h5md | FileCheck %s --check-prefix=TRICLINIC -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide triclinic CPU Mixed %t/npt.h5md | FileCheck %s --check-prefix=TRICLINIC -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide h5md CPU Double %t | FileCheck %s --check-prefix=H5MD -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide h5md CPU Mixed %t | FileCheck %s --check-prefix=H5MD -DMODE="CPU Mixed"
+# TRICLINIC: [[MODE]]: 20 frames of a run at constant pressure in a triclinic cell, read from H5MD {{.*}} equal to the bit: True
+# TRICLINIC: [[MODE]]: as arrays with tilts, as pairs with a cell, and as pairs with the cell vectors, equal to the bit: True
+# TRICLINIC: [[MODE]]: the product against central differences in theta of the sum of the energies
+# TRICLINIC: [[MODE]]: refused: a cell that is not reduced, a triclinic program without tilts, a diagonal below twice the cutoff; the evaluator stays usable
+# TRICLINIC: triclinic passed
+# H5MD: [[MODE]]: 5 frames of an H5MDReporter in f64, read one at a time, against the states of the same steps: {{.*}} equal to the bit: True
+# H5MD: [[MODE]]: the same from a file in f32: the energy within
+# H5MD: h5md passed
+
+#--- run.toml
+[input]
+topology    = "water.top"
+coordinates = "dodecahedron.gro"
+format      = "GROMACS"
+
+[output]
+energy_interval     = 100
+trajectory          = "npt.h5md"
+trajectory_interval = 20
+
+[energy]
+cutoff            = 8.0
+pairlist_distance = 9.0
+electrostatics    = "PME"
+
+[pme]
+tolerance = 1e-05
+order     = 4
+grid      = [28, 28, 28]
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 400
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 1.0
+
+[thermostat]
+method        = "V-RESCALE"
+time_constant = 0.5
+interval      = 10
+
+[barostat]
+method        = "C-RESCALE"
+time_constant = 1.0
+interval      = 10
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end

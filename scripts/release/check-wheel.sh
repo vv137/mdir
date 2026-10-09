@@ -85,7 +85,8 @@ for wheel in "$@"; do
     done
     printf '%-44s GLIBC %-6s GLIBCXX %-8s CXXABI %s\n' "${f#$tree/}" "${glibc:--}" "${glibcxx:--}" "${cxxabi:--}"
   done < <(find "$tree" -type f -name '*.so*' -print0)
-  for f in mdir/__init__.py mdir/lib/libmdrt.so mdir/lib/libmdrt_cuda.so mdir/lib/libomp.so \
+  for f in mdir/__init__.py mdir/_frames.py mdir/torch.py mdir/lib/libmdrt.so mdir/lib/libmdrt_cuda.so \
+           mdir/lib/libomp.so \
            mdir/cuda/nvvm/libdevice/libdevice.10.bc; do
     [[ -f "$tree/$f" ]] || complain "$name has no $f"
   done

@@ -409,6 +409,37 @@ through an evaluation of the derivative equal those of a program compiled
 without it to the bit, and a simulation continued from a checkpoint gives
 the derivative of the one that wrote it to the bit.
 
+The evaluation at stored frames (Section 3.6, D[frame-evaluator]) is
+checked on the CPU and a GPU, in double and mixed precision
+(`python-frames*.test`). Five frames of the dipeptide in water with tied
+charges and $\sigma$, $\epsilon$ of a pair of types tunable give the
+energy, the derivative, the virial, and the observed columns of the
+sampler's own evaluation at the step of each frame to the bit in the
+deterministic mode, in the order sampled, in another order, and one at a
+time. Four frames of leapfrog under the barostat, each with its cell, give
+the energy and the derivative of a simulation compiled from that frame, in
+which what follows the volume is computed at it instead of scaled: the
+energy to the bit and the derivative within $1.5\times10^{-18}$. Twenty
+frames of a run at constant pressure in a rhombic dodecahedron, whose
+barostat scales the tilts, read from an H5MD file in f64, give the energy,
+the derivative, the virial, and the volume of a simulation compiled from
+the frame to the bit; frames that a reporter wrote in f64 give those of
+the states to the bit, and in f32 within $2\times10^{-3}$ kJ/mol. The
+product over the frames agrees with central differences in
+$\boldsymbol\theta$ of $\sum_n g_nU(S_n)$ within $2.1\times10^{-10}$ in
+double precision and $1.6\times10^{-4}$ in mixed, also at values with a
+net charge, whose background follows the volume of each frame. For a
+mixture of 60 + 60 particles with the $\sigma'$ of its A-B pair term
+tunable, the derivative of a reweighted average over 150 frames agrees
+with central differences in $\sigma'$ of the reweighted average within
+$7\times10^{-7}$, at $\hat\sigma'$ and where the weights have left 118
+effective frames; the weights at $\hat\sigma'$ are $1/150$ to the bit.
+Through the PyTorch operation the same derivative equals the covariance
+formed from the evaluator's arrays within $2\times10^{-13}$,
+`torch.autograd.gradcheck` passes, and Newton steps on a synthetic target,
+the reweighted average at $\hat\sigma' + 0.0005$ nm, return to it within
+$4\times10^{-16}$ nm ($10^{-7}$ nm in mixed precision).
+
 With particle mesh Ewald the derivative in the charges
 (D231) is checked against an independent
 differentiable PME, torch-pme 0.5.0

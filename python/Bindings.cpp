@@ -1232,6 +1232,98 @@ PYBIND11_MODULE(_core, m) {
       }
       if (*error) raise(std::move(*error));
     }, py::arg("path"))
+    // The evaluation of stored frames (D[frame-evaluator],
+    // docs/python-frames.md), for `mdir.FrameEvaluator`: `positions` is
+    // (k, N, 3) float64 in nm in the order of the input, `cells` and
+    // `tilts` (k, 3) or None; `first` is the index of the first frame, for the messages.
+    // Returns the energies, the virials, the volumes (k,), the observed
+    // columns (k, columns), and with `gradient` the rows of the Jacobian
+    // (k, entries of all tunables in their order), else None.
+    .def("_evaluate_frames", [](py::object self,
+                                py::array_t<double, py::array::c_style> positions,
+                                py::object cellsGiven, py::object tiltsGiven, bool gradient,
+                                int64_t first) {
+      auto &s = self.cast<PySimulation &>();
+      compiler::Simulation &sim = *s.simulation;
+      const auto &set = sim.getTunables();
+      size_t count = sim.getParticleCount();
+      if (positions.ndim() != 3 || static_cast<size_t>(positions.shape(1)) != count ||
+          positions.shape(2) != 3)
+        throw InputError("frames: expected positions of shape (K, " + std::to_string(count) +
+                         ", 3)");
+      size_t frames = positions.shape(0);
+      std::optional<py::array_t<double, py::array::c_style>> cells;
+      if (!cellsGiven.is_none()) {
+        cells = cellsGiven.cast<py::array_t<double, py::array::c_style>>();
+        if (cells->ndim() != 2 || static_cast<size_t>(cells->shape(0)) != frames ||
+            cells->shape(1) != 3)
+          throw InputError("frames: expected cells of shape (K, 3)");
+      }
+      std::optional<py::array_t<double, py::array::c_style>> tilts;
+      if (!tiltsGiven.is_none()) {
+        tilts = tiltsGiven.cast<py::array_t<double, py::array::c_style>>();
+        if (tilts->ndim() != 2 || static_cast<size_t>(tilts->shape(0)) != frames ||
+            tilts->shape(1) != 3)
+          throw InputError("frames: expected tilts of shape (K, 3)");
+      }
+      const double *t = tilts ? tilts->data() : nullptr;
+      size_t columns = sim.getObservableNames().size(), entries = 0;
+      for (const auto &entry : set.tunables) entries += entry.entries;
+      std::vector<double> energy(frames), virial(frames), volume(frames),
+          observed(frames * columns), rows(gradient ? frames * entries : 0);
+      const double *x = positions.data();
+      const double *c = cells ? cells->data() : nullptr;
+      std::optional<llvm::Error> error;
+      size_t at = 0;
+      {
+        py::gil_scoped_release release;
+        for (; at != frames && !error; ++at) {
+          // The tilts of a frame that gives its edges alone are zero.
+          std::optional<std::array<double, 6>> cell;
+          if (c)
+            cell = {c[3 * at], c[3 * at + 1], c[3 * at + 2],
+                    t ? t[3 * at] : 0.0, t ? t[3 * at + 1] : 0.0, t ? t[3 * at + 2] : 0.0};
+          auto result = sim.evaluateFrame(x + 3 * count * at, cell, gradient);
+          if (!result) { error.emplace(result.takeError()); break; }
+          energy[at] = result->energy; virial[at] = result->virial; volume[at] = result->volume;
+          for (size_t k = 0; k != columns && k != result->observables.size(); ++k)
+            observed[at * columns + k] = result->observables[k];
+          size_t offset = 0;
+          for (const auto &values : result->gradient) {
+            std::copy(values.begin(), values.end(), rows.begin() + at * entries + offset);
+            offset += values.size();
+          }
+        }
+      }
+      if (error) {
+        // The class of the error, with the frame it is of.
+        std::string where = "frame " + std::to_string(first + static_cast<int64_t>(at)) + ": ";
+        try {
+          raise(std::move(*error));
+        } catch (const UnsupportedError &e) {
+          throw UnsupportedError(where + e.what());
+        } catch (const SimulationError &e) {
+          throw SimulationError(where + e.what());
+        } catch (const InputError &e) {
+          throw InputError(where + e.what());
+        }
+      }
+      auto shape1 = std::vector<py::ssize_t>{static_cast<py::ssize_t>(frames)};
+      py::object jacobian = py::none();
+      if (gradient)
+        jacobian = host::copy(rows.data(), rows.size(),
+                              {static_cast<py::ssize_t>(frames), static_cast<py::ssize_t>(entries)});
+      return py::make_tuple(
+          host::copy(energy.data(), frames, shape1), host::copy(virial.data(), frames, shape1),
+          host::copy(volume.data(), frames, shape1),
+          host::copy(observed.data(), observed.size(),
+                     {static_cast<py::ssize_t>(frames), static_cast<py::ssize_t>(columns)}),
+          jacobian);
+    }, py::arg("positions"), py::arg("cells"), py::arg("tilts"), py::arg("gradient"),
+       py::arg("first") = 0)
+    .def_property_readonly("_particle_count", [](PySimulation &s) {
+      return s.simulation->getParticleCount();
+    })
     .def("run", [](py::object self, int64_t steps, bool energy) {
       auto &s = self.cast<PySimulation &>();
       if (steps < 0) throw InputError("run takes a nonnegative number of steps");

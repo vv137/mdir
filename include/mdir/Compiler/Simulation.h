@@ -234,6 +234,34 @@ public:
   /// derivative in the tunables, which only a program compiled with it
   /// carries.
   llvm::Expected<TunableGradient> evaluateTunableGradient();
+  /// What the evaluation of a stored frame gives
+  /// (D[frame-evaluator], docs/python-frames.md): the potential energy that
+  /// the forces sample (D210) and its derivative in the tunables, as
+  /// `evaluateTunableGradient` gives them at the state; the virial and the
+  /// volume of the step of energy of that evaluation; and the observed
+  /// columns (D232), in the order of `getObservableNames`.
+  struct FrameEvaluation {
+    double energy = 0.0, virial = 0.0, volume = 0.0;
+    std::vector<double> observables;
+    /// One array per tunable; empty without `gradient`.
+    std::vector<std::vector<double>> gradient;
+  };
+  /// Evaluates the program at the positions `positions` (3 N numbers in nm,
+  /// in the order of the input) and, if given, the cell `cell`, its
+  /// diagonal a_x, b_y, c_z and its tilts b_x, c_x, c_y, of which a commit's
+  /// checks are asked (D238), in one start of an activation; nothing is carried
+  /// from the state of before, and the positions are taken as given. The
+  /// state of the simulation is then that frame, with the velocities of
+  /// before. Everything is checked before anything changes (InputError);
+  /// if the evaluation fails, the state of before is restored and the
+  /// simulation has not failed (SimulationError). Only a program compiled
+  /// with the derivative in the tunables takes it, since the energy of
+  /// D210 is that of `@tunable`.
+  llvm::Expected<FrameEvaluation>
+  evaluateFrame(const double *positions,
+                const std::optional<std::array<double, 6>> &cell,
+                bool gradient);
+  size_t getParticleCount() const { return system.getNumParticles(); }
   /// Writes the checkpoint of `mdir run` (H5MD format 1, D173) of the state
   /// after the last run, with `.prev` rotation and durable replacement, and
   /// the additional entries of a Python simulation
@@ -363,6 +391,9 @@ private:
   /// committed, which every program of segments takes with leapfrog too
   /// (its half kick back is a select on `%first_call`, D223).
   llvm::Error evaluatePart(bool committed = false);
+  /// The derivative that the last evaluation with `gradientAsked` handed
+  /// to the host, with the chain rule from the sites to the entries.
+  llvm::Expected<TunableGradient> collectTunableGradient();
   /// Begins an activation of the entry from the state of the host
   /// (`%first_call` as given) and runs it to the end of its start.
   llvm::Error startActivation(int64_t firstCall);

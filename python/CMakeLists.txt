@@ -25,6 +25,10 @@ target_compile_options(mdir_python PRIVATE -fexceptions)
 target_compile_definitions(mdir_python PRIVATE MDIR_VERSION="${PROJECT_VERSION}")
 target_link_libraries(mdir_python PRIVATE MDIRCompiler MDIRSimulation)
 configure_file(mdir/__init__.py ${MDIR_PYTHON_PACKAGE_DIR}/__init__.py COPYONLY)
+# The frame evaluator and its PyTorch adapter (docs/python-frames.md);
+# `mdir.torch` imports torch and is imported only by a script that asks.
+configure_file(mdir/_frames.py ${MDIR_PYTHON_PACKAGE_DIR}/_frames.py COPYONLY)
+configure_file(mdir/torch.py ${MDIR_PYTHON_PACKAGE_DIR}/torch.py COPYONLY)
 
 if(SKBUILD)
   # A wheel (pyproject.toml): the package is the root of the wheel's
@@ -39,8 +43,8 @@ else()
 endif()
 install(TARGETS mdir_python LIBRARY DESTINATION ${MDIR_PYTHON_INSTALL_DIR}
   COMPONENT python)
-install(FILES mdir/__init__.py DESTINATION ${MDIR_PYTHON_INSTALL_DIR}
-  COMPONENT python)
+install(FILES mdir/__init__.py mdir/_frames.py mdir/torch.py
+  DESTINATION ${MDIR_PYTHON_INSTALL_DIR} COMPONENT python)
 # What a wheel builds (pyproject.toml): the extension and the runtime.
 add_custom_target(mdir_wheel)
 add_dependencies(mdir_wheel mdir_python mdrt)

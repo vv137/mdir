@@ -43,6 +43,8 @@ if kind == "wheel":
     OPTIONAL = ("mdir/lib/libomp.so", "mdir.libs/libhdf5-0a1b2c3d.so.310.5.1")
     FILES = {
         "mdir/__init__.py": "",
+        "mdir/_frames.py": "",
+        "mdir/torch.py": "",
         "mdir/cuda/nvvm/libdevice/libdevice.10.bc": "BC",
         f"mdir-{version}.dist-info/licenses/LICENSE": root / "LICENSE",
         f"mdir-{version}.dist-info/METADATA":
