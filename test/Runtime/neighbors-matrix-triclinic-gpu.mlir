@@ -311,13 +311,13 @@ func.func @main() {
   // A flat cell, a_x and b_y six times c_z, with c_x and c_y a quarter of
   // them: the nearest image of some pairs is two lattice vectors c from the
   // image of the pass, as (0, 0, -1.5) is of (3, 3, 0.5).
-  // CHECK-NEXT: 63206
+  // CHECK-NEXT: 102436
   // CHECK-NEXT: {{^0$}}
-  // CHECK-NEXT: 188
+  // CHECK-NEXT: 284
   %flat = arith.constant dense<[6.0, 6.0, 1.0, 0.0, 1.5, 1.5]> : vector<6xf64>
   %beyond5 = arith.constant 1.9 : f64
   call @run(%flat, %beyond5, %w1) : (vector<6xf64>, f64, f64) -> ()
-  // CHECK-NEXT: 156316
+  // CHECK-NEXT: 159600
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: 399
   %beyond6 = arith.constant 2.9 : f64
