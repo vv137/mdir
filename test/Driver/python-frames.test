@@ -8,6 +8,10 @@
 # second pass against central differences in the tunables; the derivative
 # of a reweighted average of a Lennard-Jones mixture against central
 # differences of the reweighted average; and what is refused.
+# Also the evaluator of the terms that a tunable enters alone
+# (D[frame-evaluator-terms]) against that of the whole potential, and the
+# reweighting of a potential linear in its tunables from the sums that
+# `observe` records, without frames.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide frames CPU Double | FileCheck %s --check-prefix=FRAMES -DMODE="CPU Double"
@@ -17,6 +21,10 @@
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide refusals CPU Double | FileCheck %s --check-prefix=REFUSALS
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide mixture CPU Double %t | FileCheck %s --check-prefix=MIXTURE -DMODE="CPU Double"
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide mixture CPU Mixed %t | FileCheck %s --check-prefix=MIXTURE -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide dependent CPU Double %t | FileCheck %s --check-prefix=DEPENDENT -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide dependent CPU Mixed %t | FileCheck %s --check-prefix=DEPENDENT -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide linear CPU Double %t | FileCheck %s --check-prefix=LINEAR -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide linear CPU Mixed %t | FileCheck %s --check-prefix=LINEAR -DMODE="CPU Mixed"
 # FRAMES: [[MODE]]: 5 frames against the sampler's gradient() and state: {{.*}} equal to the bit: True
 # FRAMES: [[MODE]]: as an array, in another order, from a generator, and one frame alone, equal to the bit: True
 # FRAMES: [[MODE]]: positions in float32 change the energy by at most
@@ -35,3 +43,12 @@
 # MIXTURE: [[MODE]]: sigma' = 0.370 nm, N_eff = 150.0: the derivative of the reweighted average
 # MIXTURE: [[MODE]]: sigma' = 0.372 nm, N_eff =
 # MIXTURE: mixture passed
+# DEPENDENT: [[MODE]]: terms: ['pair:soft', 'tuple:spring'] kept, the energy {{.*}} the difference of the energies at two values against that of the whole potential
+# DEPENDENT: [[MODE]]: charges: ['coulomb'] kept
+# DEPENDENT: [[MODE]]: tables: ['lennard_jones', 'coulomb'] kept
+# DEPENDENT: [[MODE]]: both: ['coulomb', 'pair:soft'] kept
+# DEPENDENT: [[MODE]]: each mode refuses the names of the other; the columns of the terms left out are absent and listed
+# DEPENDENT: [[MODE]]: the mixture at sigma' + 0.002 nm, N_eff = {{.*}} the reweighted average from the dependent terms against that from the whole potential
+# DEPENDENT: dependent passed
+# LINEAR: [[MODE]]: 150 frames, sigma' moved by 0.002 nm, N_eff = {{.*}} from the two sums that `observe` recorded at each frame against the evaluator on the stored frames
+# LINEAR: linear passed
