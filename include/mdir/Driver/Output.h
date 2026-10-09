@@ -149,6 +149,10 @@ struct Output {
   bool tunableGradientWritten = false;
   std::unique_ptr<TrajectoryWriter> trajectory;
   bool hasTrajectory = false;
+  /// For a program that embeds the run: the steps between the frames of
+  /// the trajectory, which the host function of the frames checks; 0 for
+  /// every frame that the program hands over (`mdir run`).
+  int64_t framePeriod = 0;
 
   /// The types that the buffers of the state and of the forces hold.
   Element state = Element::F64;
@@ -336,6 +340,15 @@ extern volatile std::sig_atomic_t stopSignal;
 constexpr int StoppedStatus = 75;
 
 void writeLogHeader(Output &output);
+
+/// Writes a frame of the state to the trajectory of `output`, whose writer
+/// is exact (H5MDWriter): three numbers per particle in the order of the
+/// input, in nm, nm/ps, and kJ/mol/nm, with the potential energy of the
+/// step if the last row of energies is of it, and the version of the
+/// tunables. A failure of the write fails the run.
+void writeExactFrame(Output &output, const double *positions,
+                     const double *velocities, const double *forces,
+                     int64_t step, double time);
 
 /// The columns of the file of the energies: those of the rows of the log.
 std::vector<ColumnFile::Column> getEnergyColumns(const Output &output);

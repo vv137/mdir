@@ -284,6 +284,9 @@ struct Control {
   }
   /// The format of the trajectory, DCD or XTC (D141).
   TrajectoryFormat trajectoryFormat = TrajectoryFormat::DCD;
+  /// `trajectory_precision = "SINGLE"`: a trajectory in H5MD holds its
+  /// positions in f32 rather than f64 (D[h5md-reporter]).
+  bool trajectorySingle = false;
   std::string restartOutput;
 
   // [energy]

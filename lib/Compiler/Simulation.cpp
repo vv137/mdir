@@ -10,6 +10,7 @@
 #include "mdir/Driver/Builder.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Fingerprint.h"
+#include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/Output.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 #include "JITEngine.h"
@@ -1026,7 +1027,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   if (out.endStep > step && a.atBoundary) {
     a.next = {step,       part.outer, part.inner,      part.tail,
               part.plain, part.close, part.closeInner, part.closePeriods,
-              reports.framePeriod};
+              reports.getProgramFramePeriod()};
     resumeActivation();
   }
   out.fail = nullptr;
@@ -1179,7 +1180,7 @@ llvm::Expected<int64_t> Simulation::run(int64_t count,
   // greatest common divisor of their periods, if it holds whole periods of
   // coupling; otherwise each report ends a part.
   int64_t interval = 0;
-  for (int64_t p : {reports.energyPeriod, reports.framePeriod,
+  for (int64_t p : {reports.energyPeriod, reports.getProgramFramePeriod(),
                     reports.observablesPeriod})
     if (p > 0)
       interval = interval ? std::gcd(interval, p) : p;
@@ -1332,7 +1333,7 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
 
 int64_t Simulation::getNextReport(int64_t from) const {
   int64_t next = -1;
-  for (int64_t p : {reports.energyPeriod, reports.framePeriod,
+  for (int64_t p : {reports.energyPeriod, reports.getProgramFramePeriod(),
                     reports.observablesPeriod})
     if (p > 0) {
       int64_t due = (from / p + 1) * p;
@@ -1366,6 +1367,11 @@ llvm::Error Simulation::setReports(const Reports &given) {
       (given.framePeriod > 0) == given.trajectoryPath.empty() ||
       (given.observablesPeriod > 0) == given.observablesPath.empty())
     return inputError("a reporter needs both a file and a period");
+  if (given.framePeriod > 0 &&
+      given.trajectoryFormat == driver::TrajectoryFormat::H5MD &&
+      !hasCheckpointSupport())
+    return unsupported("this build of MDIR has no HDF5, which a trajectory "
+                       "in H5MD needs");
   if (given.observablesPeriod > 0 && prepared.control.observables.empty())
     return inputError("ObservablesReporter: no term of the program gives "
                       "'observe', so there is no column to write");
@@ -1461,6 +1467,9 @@ llvm::Error Simulation::setReports(const Reports &given) {
   out.observablesPeriod = given.observablesPeriod;
   if (given.trajectoryPath != reports.trajectoryPath ||
       given.trajectoryFormat != reports.trajectoryFormat ||
+      given.frameSingle != reports.frameSingle ||
+      given.frameVelocities != reports.frameVelocities ||
+      given.frameForces != reports.frameForces ||
       given.framePeriod != reports.framePeriod) {
     if (out.trajectory)
       out.trajectory->close();
@@ -1472,7 +1481,38 @@ llvm::Error Simulation::setReports(const Reports &given) {
         cell[k] = out.box[k] / units::length;
         tilts[k] = system.tilt[k] / units::length;
       }
-      auto writer = createTrajectoryWriter(given.trajectoryFormat);
+      std::unique_ptr<driver::TrajectoryWriter> writer;
+      if (given.trajectoryFormat == driver::TrajectoryFormat::H5MD) {
+        // The frames of the state without loss (D[h5md-reporter]). Every
+        // report of a simulation is a step of energy (D207), so every
+        // frame has its potential energy.
+        driver::H5MDOptions options;
+        options.single = given.frameSingle;
+        options.velocities = given.frameVelocities;
+        options.forces = given.frameForces;
+        options.energy = true;
+        options.tunables = !prepared.tunables.empty();
+        options.triclinic = system.tilt[0] != 0.0 || system.tilt[1] != 0.0 ||
+                            system.tilt[2] != 0.0;
+        // Leapfrog's velocities are half a step behind once it has run,
+        // and no frame is written before.
+        options.velocityOffset =
+            prepared.control.integrator == Integrator::Leapfrog ? -0.5 : 0.0;
+        options.masses = system.masses;
+        options.species.assign(system.types.begin(), system.types.end());
+        options.creatorVersion = given.creatorVersion;
+        options.frontEnd = "python";
+        options.precision =
+            prepared.control.precision == Precision::Single
+                ? "single"
+                : prepared.control.precision == Precision::Mixed ? "mixed"
+                                                                 : "double";
+        writer = std::make_unique<driver::H5MDWriter>(std::move(options));
+        writer->setExactEdges(out.box);
+        writer->setExactTilt(system.tilt);
+      } else {
+        writer = createTrajectoryWriter(given.trajectoryFormat);
+      }
       writer->setPeriodic(prepared.control.periodic);
       int64_t firstFrame = (step / given.framePeriod + 1) * given.framePeriod;
       if (appendsFrames) {
@@ -1491,7 +1531,39 @@ llvm::Error Simulation::setReports(const Reports &given) {
       out.hasTrajectory = true;
     }
   }
+  out.framePeriod = given.framePeriod;
   reports = given;
+  return llvm::Error::success();
+}
+
+llvm::Error Simulation::writeStateFrame() {
+  if (!reports.framesFromState() || !output->trajectory ||
+      !output->trajectory->isExact())
+    return simulationError("the simulation writes no frames of its state");
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  downloadState();
+  size_t count = system.getNumParticles();
+  auto &writer = static_cast<driver::H5MDWriter &>(*output->trajectory);
+  if (reports.frameForces && forces.size() != 3 * count)
+    return simulationError("the state has no forces for its frame; this is "
+                           "a defect of mdir");
+  writer.setExactEdges(output->box);
+  writer.setExactTilt(system.tilt);
+  driver::H5MDExtras extras;
+  if (output->lastEnergies.step == step)
+    extras.potential = output->lastEnergies.potential;
+  extras.tunablesVersion = tunablesVersion;
+  if (!writer.writeState(system.positions.data(), system.velocities.data(),
+                         forces.empty() ? nullptr : forces.data(), step,
+                         getTime(), extras))
+    return simulationError(writer.getFailure());
   return llvm::Error::success();
 }
 
@@ -1504,6 +1576,7 @@ void Simulation::closeReports() {
     output->trajectory->close();
   output->trajectory.reset();
   output->hasTrajectory = false;
+  output->framePeriod = 0;
   output->energyPeriod = 0;
   reports = Reports();
 }

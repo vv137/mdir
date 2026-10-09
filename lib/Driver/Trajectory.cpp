@@ -21,6 +21,18 @@ void TrajectoryWriter::close() {
   file = nullptr;
 }
 
+const char *mdir::driver::getTrajectoryFormatName(TrajectoryFormat format) {
+  switch (format) {
+  case TrajectoryFormat::DCD:
+    return "DCD";
+  case TrajectoryFormat::XTC:
+    return "XTC";
+  case TrajectoryFormat::H5MD:
+    return "H5MD";
+  }
+  return "DCD";
+}
+
 std::unique_ptr<TrajectoryWriter>
 mdir::driver::createTrajectoryWriter(TrajectoryFormat format) {
   if (format == TrajectoryFormat::XTC)

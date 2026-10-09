@@ -1624,7 +1624,7 @@ Error Reader::readOutput(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "output",
           {"log", "energy", "pull", "free_energy", "observables", "manifest",
-           "trajectory", "trajectory_format",
+           "trajectory", "trajectory_format", "trajectory_precision",
            "checkpoint", "energy_interval", "trajectory_interval",
            "checkpoint_interval"},
           {}))
@@ -1633,11 +1633,14 @@ Error Reader::readOutput(const toml::table &table) {
     return error;
   // The format: from the extension of the name (AUTO, the default), or as
   // the file says (D141).
-  enum class Format { Auto, DCD, XTC };
+  // H5MD holds the frames without loss (D[h5md-reporter]); only `.h5md`
+  // selects it by the extension, since `.h5` is that of the checkpoints.
+  enum class Format { Auto, DCD, XTC, H5MD };
   Format format = Format::Auto;
   if (Error error = readChoice<Format>(
           table, "trajectory_format", format,
-          {{"AUTO", Format::Auto}, {"DCD", Format::DCD}, {"XTC", Format::XTC}}))
+          {{"AUTO", Format::Auto}, {"DCD", Format::DCD}, {"XTC", Format::XTC},
+           {"H5MD", Format::H5MD}}))
     return error;
   if (format == Format::Auto && !control.trajectoryFile.empty()) {
     StringRef extension = llvm::sys::path::extension(control.trajectoryFile);
@@ -1645,14 +1648,31 @@ Error Reader::readOutput(const toml::table &table) {
       format = Format::DCD;
     else if (extension.equals_insensitive(".xtc"))
       format = Format::XTC;
+    else if (extension.equals_insensitive(".h5md"))
+      format = Format::H5MD;
     else
       return fail(*table.get("trajectory"),
                   "the format of the trajectory '" + control.trajectoryFile +
                       "' is not known from its extension; name a file that "
-                      "ends in '.dcd' or '.xtc', or give 'trajectory_format'");
+                      "ends in '.dcd', '.xtc', or '.h5md', or give "
+                      "'trajectory_format'");
   }
-  control.trajectoryFormat =
-      format == Format::XTC ? TrajectoryFormat::XTC : TrajectoryFormat::DCD;
+  control.trajectoryFormat = format == Format::XTC    ? TrajectoryFormat::XTC
+                             : format == Format::H5MD ? TrajectoryFormat::H5MD
+                                                      : TrajectoryFormat::DCD;
+  // The type of the positions of a trajectory in H5MD.
+  enum class Width { Double, Single };
+  Width width = Width::Double;
+  if (Error error = readChoice<Width>(
+          table, "trajectory_precision", width,
+          {{"DOUBLE", Width::Double}, {"SINGLE", Width::Single}}))
+    return error;
+  if (table.contains("trajectory_precision") &&
+      control.trajectoryFormat != TrajectoryFormat::H5MD)
+    return fail(*table.get("trajectory_precision"),
+                "'trajectory_precision' is of a trajectory in H5MD; DCD and "
+                "XTC have one precision each");
+  control.trajectorySingle = width == Width::Single;
   if (Error error = readPath(table, "checkpoint", control.restartOutput))
     return error;
   if (Error error = readPath(table, "manifest", control.manifestFile))
@@ -3303,7 +3323,7 @@ coordinates = "system.pdb"      # positions; the name of an atom is its type
 # manifest = "run.jsonl"        # execution provenance and continuation history
 # log               = "run.log" # the log as well as on the standard output
 # energy            = "run.energy"  # the rows of the log as columns
-trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
+trajectory          = "run.dcd" # positions, in DCD, XTC (.xtc), or H5MD (.h5md)
 # checkpoint        = "run.h5"  # the state, with checkpoint_interval;
 #                               # mdir run --continue goes on from it
 energy_interval     = 10        # steps between energies in the log; 0: none
@@ -3389,7 +3409,7 @@ coordinates = "system.inpcrd"   # and the box; the reference of restraints
 # manifest = "run.jsonl"        # execution provenance and continuation history
 log                 = "run.log" # the log as well as on the standard output
 energy              = "run.energy"  # the rows of the log as columns
-trajectory          = "run.dcd" # positions, in DCD or XTC (.xtc)
+trajectory          = "run.dcd" # positions, in DCD, XTC (.xtc), or H5MD (.h5md)
 checkpoint          = "run.h5"  # the state; mdir run --continue goes on
 #                               # from it, and the one before is run.h5.prev
 # pull              = "run.pull"    # terms over the centers of groups

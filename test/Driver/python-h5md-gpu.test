@@ -1,0 +1,24 @@
+# REQUIRES: python-api, hdf5, cuda
+# Frames without loss in H5MD on a GPU (D[h5md-reporter]): the frames of
+# `H5MDReporter` and of `[output] trajectory = "x.h5md"`, read back with
+# `read_h5md`, against the states of the run to the bit, in f64 and in f32,
+# with an orthorhombic and a triclinic cell, without and with a barostat;
+# velocities and forces; continuation; a killed run; backups and refusals.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_h5md.py %S/Inputs GPU mdir %t | FileCheck %s
+# CHECK: GPU Double NVE: 5 frames of positions and the cell equal to the states to the bit in f64, and to their f32 rounding in f32
+# CHECK: GPU Double NVE: velocities and forces equal to the states to the bit; the run is the same with them
+# CHECK: GPU Double NPT: 5 cells in 5 frames, each equal to its state to the bit
+# CHECK: GPU Double triclinic NVE: 3 frames with 1 cell equal to the states to the bit
+# CHECK: GPU Mixed NVE: 5 frames of positions and the cell equal to the states to the bit in f64, and to their f32 rounding in f32
+# CHECK: GPU Mixed NVE: velocities and forces equal to the states to the bit; the run is the same with them
+# CHECK: GPU Mixed NPT: 5 cells in 5 frames, each equal to its state to the bit
+# CHECK: GPU Mixed triclinic NVE: 3 frames with 1 cell equal to the states to the bit
+# CHECK: GPU leapfrog: velocities of the half step equal to the states to the bit
+# CHECK: GPU tunables: versions [0, 0, 1, 1] at steps 10 to 40
+# CHECK: GPU continuation: a checkpoint at step 20 of 60, the frame of step 30 removed, 6 frames equal to those of the run that did not stop
+# CHECK: GPU killed at step 35: the file opens and holds the 3 frames written, equal to the states to the bit
+# CHECK: GPU mdir run double: the last frame equal to the checkpoint to the bit (orthorhombic, triclinic, and triclinic with a barostat); f32 is the rounding of f64; the DCD is the f32 of the frames in Å
+# CHECK: GPU mdir run mixed: the last frame equal to the checkpoint to the bit
+# CHECK: GPU mdir run --continue: {{[0-9]+}} stops and a cut of 1 frame give the 5 frames of the run that did not stop
+# CHECK: formats, backups, and refusals passed
