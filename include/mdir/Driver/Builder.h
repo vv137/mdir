@@ -202,6 +202,11 @@ struct Program {
     std::vector<Row> rows;
   };
   std::vector<GradientField> gradientFields;
+  /// The arguments of the potential `@tunable` that the entry asks the
+  /// derivative in, each with the tunable (its place among the
+  /// declarations) whose derivative it gives, so that an error of the
+  /// differentiation names the tunable (#256).
+  std::vector<std::pair<unsigned, unsigned>> gradientArguments;
   /// What the host adds to the derivative in the charge of each particle,
   /// in kJ/mol/e: the derivative of the self term of the reaction field or
   /// of particle mesh Ewald, which does not depend on the cell, and that

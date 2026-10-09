@@ -3440,6 +3440,14 @@ void Builder::emitTunableGradientOutput(StringRef indent, StringRef x,
       os << ", derivative(" << base + gradientColumns[i] << ")";
     for (size_t c = 0; c != fields; ++c)
       os << ", derivative(" << getArgument(c) << ")";
+    program.gradientArguments.clear();
+    for (size_t i = 0; i != count; ++i)
+      program.gradientArguments.push_back(
+          {base + gradientColumns[i], program.gradientSlots[i].tunable});
+    for (size_t c = 0; c != fields; ++c)
+      program.gradientArguments.push_back(
+          {static_cast<unsigned>(getArgument(c)),
+           program.gradientFields[c].tunable});
     os << "]\n" << inner << "    : " << types << " -> (f64";
     for (size_t i = 0; i != count; ++i)
       os << ", f64";

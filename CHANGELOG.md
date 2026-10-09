@@ -667,6 +667,26 @@ format, or the outputs; every such change is listed under **Changed** or
   commits a cell take the committed cell (D238). They kept the
   cell of before: after a commit of the edges and the positions scaled by
   1.01, the next frame of a DCD had the edges of before, 0.03 nm short.
+- A Python system that declares a tunable of the charges and a tunable
+  constant of a pair term gives both derivatives with
+  `System.tunable_gradient` (#256, an amendment of D230). It compiled and
+  failed at its first `mdir.Simulation` ("'md.sum_relation' takes argument
+  2 of 'tunable', a field, within another op"), with PME and under a
+  Coulomb cutoff, with the charges free or tied: the entry asks for the
+  derivatives in the numbers and then in the fields in one evaluation, and
+  `md-differentiate` took the sums that the derivative in a number had
+  added, which gather the charges as every pair term does, for uses of the
+  charges by the energy. The derivative in a field now follows the ops of
+  the potential alone, after the forces and the virial as well. The
+  derivative in each tunable equals that of the program that declares it
+  alone to the bit (28 combinations of the charges with the other
+  tunables, CPU and GPU, double and mixed).
+- `mdir.compile` refuses a derivative without a rule, as D230 says: it
+  runs `md-check-exchange` and `md-differentiate` on the program and on the
+  program of the segments of a simulation, lowering nothing, and raises
+  `InputError` with the op and the name of the tunable. Such a program
+  compiled and failed at `mdir.Simulation` with `CompileError`, since
+  `compile` does not lower (D224).
 - The Python wheels and the container image carry the notices of the
   third parties whose code they distribute in binary form, as the release
   tarball does (#221). A wheel held pocketfft, toml++, LLVM, and the

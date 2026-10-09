@@ -439,6 +439,18 @@ formed from the evaluator's arrays within $2\times10^{-13}$,
 `torch.autograd.gradcheck` passes, and Newton steps on a synthetic target,
 the reweighted average at $\hat\sigma' + 0.0005$ nm, return to it within
 $4\times10^{-16}$ nm ($10^{-7}$ nm in mixed precision).
+The derivatives of one evaluation are independent (Section 3.6), which is
+checked directly: 28 programs declare the charges, free or tied in 25
+entries, with particle mesh Ewald or a Coulomb cutoff, together with
+constants of a pair term, the table by pairs of types, per-type $\sigma$
+and $\epsilon$, parameters of tuples, an external term that reads the
+charges, an observed constant, or all of these. In each, on the CPU and a
+GPU and in both precisions, the derivative in the charges equals that of
+the program that declares the charges alone, and the derivative in the
+other tunables that of the program that declares them alone, to the bit in
+the deterministic mode; and every derivative agrees with central
+differences within $6.2\times10^{-9}$ in double precision and
+$1.2\times10^{-4}$ in mixed (`python-tunable-gradient-mixed*.test`).
 
 With particle mesh Ewald the derivative in the charges
 (D231) is checked against an independent

@@ -276,11 +276,77 @@ planProgram(const driver::Control &control, driver::Program program,
   return compiler::CompiledProgram{std::move(program), execution,
                                    std::move(pipeline), {}, std::move(*gpu)};
 }
+driver::Control compiler::getSegmentsControl(driver::Control control) {
+  control.segments = true;
+  control.energyPeriod = 0;
+  control.framePeriod = 0;
+  control.checkpointPeriod = 0;
+  control.numSteps = std::max<int64_t>(1, control.getCouplingPeriod());
+  return control;
+}
+llvm::Error compiler::checkDerivatives(const driver::Control &control,
+                                       const driver::Program &program) {
+  mlir::MLIRContext context(getRegistry(),
+                            mlir::MLIRContext::Threading::DISABLED);
+  std::string diagnostics;
+  llvm::raw_string_ostream diagnosticStream(diagnostics);
+  mlir::ScopedDiagnosticHandler handler(&context, [&](mlir::Diagnostic &d) {
+    d.getLocation().print(diagnosticStream);
+    diagnosticStream << ": ";
+    d.print(diagnosticStream);
+    diagnosticStream << "\n";
+    return mlir::success();
+  });
+  // An error of the text or of the set-up is the lowering's to report.
+  auto module = mlir::parseSourceString<mlir::ModuleOp>(program.module, &context);
+  if (!module)
+    return llvm::Error::success();
+  mlir::PassManager manager(&context, mlir::ModuleOp::getOperationName(),
+                            mlir::PassManager::Nesting::Implicit);
+  if (mlir::failed(mlir::parsePassPipeline("md-check-exchange,md-differentiate",
+                                           manager, diagnosticStream)))
+    return llvm::Error::success();
+  if (mlir::succeeded(manager.run(*module)))
+    return llvm::Error::success();
+  // The arguments of `@tunable` by the names of their tunables.
+  std::string named;
+  for (auto [argument, tunable] : program.gradientArguments) {
+    std::string words =
+        "argument " + std::to_string(argument) + " of 'tunable'";
+    if (diagnostics.find(words) == std::string::npos ||
+        tunable >= control.tunableDeclarations.size())
+      continue;
+    named += (named.empty() ? "" : ", ") + words + " is the tunable '" +
+             control.tunableDeclarations[tunable].name + "'";
+  }
+  while (!diagnostics.empty() && diagnostics.back() == '\n')
+    diagnostics.pop_back();
+  return llvm::make_error<model::ModelError>(
+      model::ModelError::Input,
+      "the program asks for a derivative that has no rule" +
+          std::string(program.tunableGradient ? " (System.tunable_gradient)"
+                                              : "") +
+          ": " + diagnostics + (named.empty() ? "" : "; " + named));
+}
 llvm::Expected<compiler::CompiledProgram>
 compiler::plan(const model::PreparedModel &prepared, bool cache) {
   auto program = prepared.build();
   if (!program)
     return program.takeError();
+  // No program is made whose derivatives have no rule (D230): those of the
+  // program, which `lowered_ir` lowers, and those of the program of the
+  // segments, which a simulation lowers (#256). An error of the build of
+  // the second is the simulation's to report.
+  if (llvm::Error error = checkDerivatives(prepared.control, *program))
+    return std::move(error);
+  driver::Control segments = getSegmentsControl(prepared.control);
+  segments.neighborWidth = program->neighborWidth;
+  if (auto second = driver::buildProgram(segments, prepared.system)) {
+    if (llvm::Error error = checkDerivatives(segments, *second))
+      return std::move(error);
+  } else {
+    llvm::consumeError(second.takeError());
+  }
   return planProgram(prepared.control, std::move(*program),
                      prepared.execution, cache);
 }

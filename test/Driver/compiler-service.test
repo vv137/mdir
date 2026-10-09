@@ -2,3 +2,4 @@
 # RUN: cd %t && mdir-compile-test | FileCheck %s
 # RUN: test ! -e %t/mdir-reproducer.mlir
 # CHECK: typed located diagnostic and compiler recovery passed
+# CHECK: a derivative without a rule is an input error that names the op and the tunable
