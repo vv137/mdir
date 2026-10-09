@@ -639,6 +639,18 @@ format, or the outputs; every such change is listed under **Changed** or
   cutoff, as the runtime does; `pairlist_distance` is no longer limited to
   half of the least of the diagonal there, and is refused above 127 times
   `cutoff`.
+- The documents said that frames rounded to the precision of XTC cannot be
+  used for reweighting (D239, D240). They can, for tunables of soft
+  nonbonded terms and of the charges: the rise of the energy of a rounded
+  frame (about 50 kJ/mol for the dipeptide in flexible water) is of the
+  stiff terms and cancels in the difference of two energies evaluated at
+  the same rounded frame. It does not cancel for a tunable of a stiff term
+  or against reference energies recorded by the run.
+  `docs/python-frames.md` has the measured table for f64, f32, and
+  $10^{-3}$ nm (#264, `scripts/validation/frames/precision.py`); frames in
+  f64 stay the default because they serve any tunable chosen later. No
+  code changes.
+
 - In the deterministic mode on the CPU, a run depended on `energy_interval`
   at the last bits of the forces of the torsions (#243, D204): the code
   generator computed the sine of the force of a torsion by `sincos` of the
