@@ -150,7 +150,8 @@
               "enum": [
                 null,
                 "DCD",
-                "XTC"
+                "XTC",
+                "H5MD"
               ]
             },
             "neighbor_structure_requested": {

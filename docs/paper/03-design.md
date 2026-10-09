@@ -569,7 +569,8 @@ in order plus an optional second one, words of memory of the host mapped
 for the device for flags (D118), a caching allocator whose frees do not
 wait, plans of cuFFT, growable buffers for neighbor structures, and the
 records of what each activation of a Python simulation allocated). The
-driver registers callbacks for the log, the trajectory (DCD or XTC), and
+driver registers callbacks for the log, the trajectory (DCD, XTC, or
+H5MD without loss; below), and
 checkpoints (H5MD 1.1 [[deBuyl2014]](references.md#debuyl2014), all
 values in 64 bits, from which a run continues bitwise). A checkpoint
 records the step at which its run began, the frames written, and the

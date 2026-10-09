@@ -149,6 +149,41 @@ if mode == "kill":
     sim.run(50)
     raise SystemExit("the run was not killed")
 
+if mode == "reference":
+    # Files for readers that are not MDIR (h5md_independent.py), with the
+    # states of the run beside them.
+    data = {}
+
+    def keep(name, prog, steps=50, **options):
+        states = []
+        sim = mdir.Simulation(prog)
+        sim.reporters.append(mdir.H5MDReporter(str(work / f"{name}.h5md"), 10, **options))
+        sim.reporters.append(mdir.CallbackReporter(lambda s, state: states.append(state), 10))
+        sim.run(steps)
+        sim.close_reporters()
+        sim.save_checkpoint(str(work / f"{name}-state.h5"))
+        data[f"{name}/masses"] = mdir.read_checkpoint(str(work / f"{name}-state.h5")).masses
+        data[f"{name}/steps"] = np.array([s.step for s in states], dtype=np.int64)
+        data[f"{name}/times"] = np.array([s.time for s in states])
+        data[f"{name}/positions"] = np.array([s.positions for s in states])
+        data[f"{name}/velocity"] = np.array([s.velocities for s in states])
+        data[f"{name}/force"] = np.array([s.forces for s in states])
+        data[f"{name}/cells"] = np.array([s.cell.vectors for s in states])
+        data[f"{name}/potential"] = np.array([s.energies["potential"] for s in states])
+
+    nve = program("dipeptide", "NVE", "Double")
+    keep("ref-nve", nve)
+    keep("ref-nve-f32", nve, positions="f32")
+    keep("ref-nve-full", nve, velocities=True, forces=True)
+    keep("ref-npt", program("dipeptide", "NPT", "Double"))
+    keep("ref-tri", program("triclinic", "NVE", "Double"), steps=30, velocities=True)
+    np.savez(work / "reference.npz", **data)
+    killed = subprocess.run([sys.executable, __file__, str(root), target_name, cli, str(work), "kill"],
+                            capture_output=True)
+    assert killed.returncode == -signal.SIGKILL, (killed.returncode, killed.stderr.decode())
+    print(f"{target_name}: 5 files and the states of their runs for independent readers")
+    sys.exit(0)
+
 plain = {}
 for precision in ("Double", "Mixed"):
     tag = f"{target_name} {precision}"
