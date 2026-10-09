@@ -483,13 +483,30 @@ of the first, has the text of the first.
 The cell of the host is set in one place (`Simulation::setCell`): the state
 (`State.cell`), the start values of the next activation, the cell of a
 checkpoint, and the cell of the frames of an open `TrajectoryReporter`.
-Two things follow that are not of the tilts alone, both found by reading
-the code and held by the test: the frames of a reporter that is open take
-the committed cell (they heard of a change of the cell only from a
-barostat, so a commit of the edges of an orthorhombic cell left them with
-the edges of before), and a simulation that continues from a checkpoint
-runs with the tilts of the checkpoint (it took the diagonal of the
-checkpoint and the tilts of the build).
+Two defects of main (a80ecbd) end with it, each reproduced there and held
+by the test:
+
+- The frames of a reporter that is open take the committed cell. They
+  heard of a change of the cell only from a barostat: on the dipeptide in
+  water, after a commit of the edges and the positions scaled by 1.01, the
+  next frame of a DCD had the edges of before (2.7188, 2.9718, 2.5397 nm
+  for 2.7460, 3.0015, 2.5651 nm); now it differs from the committed cell
+  by $4\times10^{-16}$ nm.
+- A simulation that continues from a checkpoint runs with the tilts of the
+  checkpoint ([#257](https://github.com/vv137/mdir/issues/257)). It took
+  the diagonal of the checkpoint with the tilts of the build, and
+  `State.cell` reported the cell of the checkpoint. After 400 steps of
+  `mdir run` at constant pressure in the dodecahedron (the tilts moved
+  from 1.3 to 1.38126 nm), a Python stage compiled from the coordinate
+  file evaluated +18854.79 kJ/mol where a simulation compiled from the
+  checkpoint's state has −12437.51 kJ/mol, with forces up to
+  $9.96\times10^{5}$ kJ/mol/nm from those in the checkpoint, and failed
+  within 50 steps; now it gives −12437.51 kJ/mol, the forces of the
+  checkpoint to $1.4\times10^{-12}$ kJ/mol/nm, and after 50 steps
+  −12779.69 kJ/mol, the potential of `mdir run` continuing the same
+  checkpoint at that step. It needs a checkpoint whose tilts are not the
+  program's: a stage after NPT of `mdir run` whose program is compiled
+  from the coordinate file, or a checkpoint of another run.
 
 **Not in this change.** A Python simulation refuses a barostat in a
 triclinic cell ([python-segments.md](python-segments.md)); the frames of a
