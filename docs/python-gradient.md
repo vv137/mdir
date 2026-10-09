@@ -109,6 +109,28 @@ exactly zero; dependent with a rule; or an error that names the op. A
 value that is not finite at the evaluation is an error of `gradient()`
 (`SimulationError`), naming the tunable; it is never returned.
 
+**The failure is found by `mdir.compile`** (amended, #256). `compile` does
+not lower (D224); the builder refuses what it knows has no rule (the list
+[below](#refused)), and any other dependence without a rule is found by
+`md-differentiate`, which ran first when a simulation lowered its program:
+such a program compiled and failed at `mdir.Simulation`. `compile` now runs
+the first two passes of the lowering, `md-check-exchange` and
+`md-differentiate`, on the program and on the program of the segments that
+a simulation lowers, in a context of its own, and lowers nothing. A
+derivative without a rule is an `InputError` with the diagnostic of the
+pass, which names the op and the argument of the potential, and the name of
+the tunable that the argument is:
+
+```
+mdir.InputError: the program asks for a derivative that has no rule (System.tunable_gradient): loc("-":381:1): 'md.sum_relation' takes argument 2 of 'tunable', a field, within another op, and has no rule for the derivative in it; argument 2 of 'tunable' is the tunable 'q'
+```
+
+(the message of #256, which this check gives at `compile` when the fix of
+the pass is taken out). The check is not limited to `tunable_gradient`: the
+forces, the virial, and the derivatives of `observe` go through the same
+pass, and every Python program is checked alike. It costs a second build
+of the text and the two passes, measured [below](#tunables-together).
+
 ## Refused
 
 `InputError` in every case:
@@ -216,6 +238,39 @@ function that takes them declares buffers of f64, which states the type
 they are stored in. In mixed precision the kernels compute each
 contribution in f32, as they compute the energy.
 
+### Several tunables of one program
+
+The entry asks `@tunable` for the energy and every derivative in one
+evaluation, the numbers first and the fields after them:
+`request [energy, derivative(c), ..., derivative(d), ..., derivative(q)]`.
+They are first derivatives of one energy, each with the other arguments
+held fixed; none enters another, and nothing of second order is computed.
+`md-differentiate` therefore follows, for each argument, the ops of the
+potential alone, and not the ops that a derivative requested before it
+added to the function: the derivative in a number copies each sum whose
+kernel reads the number, with the fields that the sum gathers (the builder
+gathers the types and the charges in every pair term, read or not), and
+the forces gather them as well; such a copy is not a term of the energy.
+Before #256 the derivative in a field refused it as a use "within another
+op", so that the charges with a constant of a pair term compiled and
+failed at the first simulation. Only a use of the field inside the kernel
+of an op is refused now.
+
+Every tunable of D213 has a rule beside every other:
+
+| With the charges (free or tied by a map; PME or a Coulomb cutoff) | Rule |
+|---|---|
+| a constant of a pair term | yes: a number and a field of one evaluation |
+| $\sigma$, $\epsilon$ by pairs of types; per-type $\sigma$, $\epsilon$ | yes: fields of seeds and the field of the charges |
+| a parameter of a tuple term | yes |
+| an external term that reads `q` | yes for the charges: its sum over particles gives a map. A constant of an external term is not a tunable (D213): `InputError`, "no pair or tuple term is named" |
+| an observed term (D232), its observed constant a tunable with one entry | yes: the potentials of `observe` are apart from `@tunable` |
+| a pair term that reads `q1`, `q2` | not in the Python model, whose pair terms read `r` and their constants: `InputError`, "undeclared parameter 'q1'" |
+| the reaction field | not in the Python model (`Electrostatics.Cutoff`, `Electrostatics.PME`) |
+
+The derivative in one tunable does not depend on whether another is
+declared: see [Tunables together](#tunables-together).
+
 ### What the host adds
 
 | Constant of the energy | Its derivative |
@@ -285,6 +340,7 @@ U_k/\partial d$ in f64, and apply the chain rule once.
 | Charges with a Coulomb cutoff | done; the Python model has no reaction field |
 | Charges with PME | done, `D231`: the fourth result of `md.reciprocal` in the three templates of PME, the self term and the background on the host |
 | Tails of pair terms and the correction for the dispersion (host) | done for constants of pair terms and for $\sigma$, $\epsilon$; the tail of a pair term that reads the charges is refused |
+| The charges with the other tunables of one program; a derivative without a rule refused by `mdir.compile` | done (#256, an amendment of `D230`): [several tunables of one program](#several-tunables-of-one-program) |
 
 ## `observe` and tunables
 
@@ -375,6 +431,88 @@ each): 0.2578 and 0.2583 ms per step without the derivative, 0.2577 and
 0.2585 with it; compile and the first 200 steps 12.3 and 12.6 s against
 12.7 and 14.1 s; `gradient()` 10.1 and 10.0 ms, `run(0, energy=True)` 9.2
 and 9.0 ms.
+
+### Tunables together
+
+`python-tunable-gradient-mixed.test`, `-gpu.test`,
+`Inputs/python_tunable_mixed.py` (#256); `differentiate-fields.mlir` for
+the pass and `compiler-service.test` for the check of `mdir.compile`. The
+dipeptide in water (1,168 particles), a switched Lennard-Jones, at the
+state that the simulation begins at. Each program declares the charges and
+other tunables; 28 combinations, each on the CPU and a GPU, in double and
+mixed precision, all in the deterministic mode: the charges free (1,168
+entries) or tied by a map (25 entries), with PME or a Coulomb cutoff, with
+each of the seven sets of the table.
+
+"FD" as above, at the three entries of each tunable that are largest in
+magnitude: the step is $10^{-3}$ of the value in double precision
+(at most $8.3\times10^{-4}$ e for a charge), and in mixed $5\times10^{-2}$
+for a charge and $2\times10^{-2}$ for the others. Each cell gives the
+largest difference in the charges, then in the other tunables, over the
+four programs of its row (free and tied, PME and cutoff).
+
+| With the charges | CPU double | GPU double | CPU mixed | GPU mixed |
+|---|---|---|---|---|
+| Constants `a`, `l` of the pair term $a\,e^{-r/l}$ | 6.4e-10, 1.7e-10 | 5.7e-10, 7.1e-11 | 1.2e-4, 2.7e-6 | 3.2e-5, 5.6e-6 |
+| $\sigma$ and $\epsilon$ of three pairs of types | 6.5e-10, 6.2e-9 | 6.4e-10, 3.7e-9 | 1.2e-4, 4.5e-5 | 3.2e-5, 6.4e-5 |
+| Per-type $\sigma$ and $\epsilon$ (8 of 9 types) | 6.3e-10, 2.6e-11 | 5.7e-10, 2.6e-11 | 1.2e-4, 2.7e-5 | 3.2e-5, 4.4e-5 |
+| Parameters `k` (tied in 3 entries) and `r0` of springs over 6 pairs | 6.5e-10, 2.0e-9 | 5.6e-10, 2.0e-9 | 1.2e-4, 2.4e-6 | 3.2e-5, 2.6e-6 |
+| $\sigma$ of three pairs, with an external term $e_0qz$ over the waters, which reads the charges | 5.5e-10, 6.0e-11 | 5.6e-10, 7.8e-11 | 8.5e-5, 4.0e-6 | 2.2e-5, 3.1e-6 |
+| The constant `l`, observed (D232), with an observed external term | 6.3e-10, 2.6e-11 | 6.4e-10, 2.8e-11 | 1.2e-4, 2.7e-6 | 3.2e-5, 5.6e-6 |
+| All of these at once | 5.5e-10, 3.7e-9 | 5.7e-10, 5.1e-9 | 8.5e-5, 4.5e-5 | 2.2e-5, 6.4e-5 |
+| Tolerance | 1e-7 | 1e-7 | 5e-4 | 5e-4 |
+
+By the electrostatics and the map, over the seven sets: PME, free
+6.5e-10, 6.2e-9 (CPU double) and 5.1e-6, 2.3e-5 (CPU mixed); PME, tied
+4.5e-10, 6.2e-9 and 4.9e-6, 2.3e-5; cutoff, free 7.7e-11, 6.8e-10 and
+1.1e-4, 4.5e-5; cutoff, tied 1.3e-11, 6.8e-10 and 1.2e-4, 4.5e-5. The
+largest in mixed precision, $1.2\times10^{-4}$ for the charges under a
+cutoff, is that of the charges alone (D230, above).
+
+**The derivative in one tunable does not depend on the others.** For each
+of the 28 programs, the derivative in the charges equals that of a program
+that declares the charges alone, and the derivative in every other tunable
+that of a program that declares the others alone, to the bit, in the four
+configurations (112 comparisons each way). The energies of the three
+programs are equal to rounding: within $1.3\times10^{-15}$ of the energy
+in double precision and $1.2\times10^{-7}$ in mixed, where a program with
+tunable charges forms the 1-4 pairs from the charges of their members.
+The column `soft.d_l` of an observed tunable equals its derivative in the
+program with the charges.
+
+Refused, as before this change, with `InputError`: a tunable of a constant
+of an external term ("the tunable 'e0': no pair or tuple term is named
+'field'"), and a pair term that reads the charges ("term 'soft':
+undeclared parameter 'q1'"). The Python model has no reaction field.
+
+Performance (GPU 0, mixed precision; main at a80ecbd against the branch,
+alternated twice). A Python simulation of JAC (23,558 particles, NVT, 2 fs,
+constraints, PME) with the pair term $a\,e^{-r/l}$, every charge a
+tunable (23,558 entries), the constant `l` a tunable, or both:
+
+| Program | main | branch |
+|---|---|---|
+| `mdir.compile`, median of 5 without the cache, charges | 814, 813 ms | 873, 872 ms |
+| the same, constant | 825, 987 ms | 868, 879 ms |
+| the same, both | 815, 814 ms (and no simulation) | 885, 935 ms |
+| the same without `tunable_gradient`, charges; both | 911, 815; 816, 965 ms | 867, 934; 929, 873 ms |
+| a step, 5,000 after 200, charges | 0.3062, 0.3064 ms | 0.3063, 0.3060 ms |
+| a step, constant | 0.3006, 0.3003 ms | 0.2998, 0.3009 ms |
+| a step, both | - | 0.3007, 0.3002 ms |
+| `gradient()`, median of 21, charges | 8.9, 10.1 ms | 9.4, 9.2 ms |
+| `gradient()`, constant | 9.3, 9.0 ms | 9.1, 9.6 ms |
+| `gradient()`, both | - | 9.6, 9.7 ms |
+| `run(0, energy=True)` in the same simulations | 8.0 to 9.1 ms | 8.4 to 9.3 ms |
+
+`mdir.compile` takes about 60 ms more on JAC (0.81 s to 0.87 s where
+neither run has an outlier): the second build of the text, for the
+program of the segments, and the two passes on both. The steps are those
+of main, and the derivative in both tunables costs what either costs
+alone, most of it the activation of the entry. The default path does not
+change: `mdir run` and `mdir emit` do not go through this check, and the
+module and the lowered IR of JAC (NVE, GPU, mixed; 6.3 MB) from `mdir
+emit` are equal, byte for byte, between a build of main's sources and the
+branch's.
 
 ## Performance
 

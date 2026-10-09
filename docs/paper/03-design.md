@@ -766,6 +766,18 @@ three outcomes of a parameter (Section 6.8) hold: a field that no sum of
 the energy takes has the derivative zero, a sum has its rule, and any
 other use is an error that names the op.
 
+*Several arguments.* One evaluation asks the derivative in several
+arguments, numbers $c$ and fields $a$ alike. $\partial U/\partial c$ and
+$\partial U/\partial a_i$ are first derivatives of the one energy, each
+with the other arguments held fixed, and neither enters the other. The
+sum that the derivative in $c$ adds, $\sum_{\{i,j\}}\partial k/\partial
+c$, gathers $a$ wherever $k$ does, but it is not a term of $U$: its
+derivative in $a_i$ would be a part of $\partial^2U/\partial
+c\,\partial a_i$, which nothing asks for. The differentiation in each
+argument therefore follows the terms of the potential alone, and the
+derivative in one tunable is the same whether another is declared or not
+(D230; to the bit in the deterministic mode, Section 9).
+
 *Seeds.* The loops over pairs and tuples accumulate per particle, as they
 do for the forces; a derivative in an entry $\sigma_{ab}$ of a table or in
 the parameter of a tuple is a sum by pairs of types or by tuples, which no

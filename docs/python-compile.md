@@ -41,7 +41,10 @@ boundary.
 `InputError`, `UnsupportedError`, and `CompileError` preserve native error
 messages; lowering errors retain MLIR locations and diagnostics. Errors of
 the inputs, of the build, of a GPU target in a build without CUDA, and of
-the device's GPU options are raised by `compile`; an error that only the
+the device's GPU options are raised by `compile`, and so is a derivative
+without a rule (`InputError`): `compile` runs `md-check-exchange` and
+`md-differentiate` on the program and on the program of the segments of a
+simulation, and lowers nothing (D230, #256). Any other error that only the
 MLIR pipeline finds is raised by the `Simulation`, which lowers its own
 programs, or by the read of `lowered_ir`. Existing
 CLI control-file keys, formats and overwrite behavior are unchanged.
