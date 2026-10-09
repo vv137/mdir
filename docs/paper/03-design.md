@@ -713,7 +713,8 @@ differences enter an exponential. In $\Delta U$ both energies are of the
 same $\tilde S_n$ and the rise cancels where $\boldsymbol\theta$ leaves
 $\mathsf H$ alone, but not for the parameters of the stiff terms, and not
 against an energy that the run recorded at $S_n$. Positions in f32 have
-$q \approx 2^{-24}\lvert x\rvert$, $2.4\times10^{-7}$ nm in a cell of 4 nm:
+$q$ of $2^{-23}$ times the power of two below $\lvert x\rvert$,
+$2.4\times10^{-7}$ nm for a coordinate between 2 and 4 nm:
 the rise falls by $(q/10^{-3}\,\text{nm})^2$ to below $10^{-5}$ kJ/mol and
 the noise of the first term stays, at most $1.7\times10^{-3}$ kJ/mol on
 that system; f64 is the type of the positions of the state in the mixed
