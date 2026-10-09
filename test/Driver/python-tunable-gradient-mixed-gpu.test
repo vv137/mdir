@@ -1,0 +1,13 @@
+# REQUIRES: python-api, cuda
+# The derivative of the energy in the charges together with the other
+# tunables of one program (D230, #256, docs/python-gradient.md) on the GPU,
+# in double and mixed precision: the checks of
+# python-tunable-gradient-mixed.test.
+# RUN: %mdir_python %S/Inputs/python_tunable_mixed.py %S/Inputs/dipeptide test GPU Double | FileCheck %s -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_mixed.py %S/Inputs/dipeptide test GPU Mixed | FileCheck %s -DMODE="GPU Mixed"
+# CHECK: [[MODE]]: PME, charges free, constants a, l of the pair term a exp(-r/l): central differences q
+# CHECK: [[MODE]]: cutoff, charges tied (25 entries), constants a, l of the pair term a exp(-r/l): central differences q
+# CHECK: [[MODE]]: PME, charges free, all of these at once: central differences q
+# CHECK: [[MODE]]: cutoff, charges tied (25 entries), all of these at once: central differences q
+# CHECK: [[MODE]]: 4 combinations
+# CHECK: test passed

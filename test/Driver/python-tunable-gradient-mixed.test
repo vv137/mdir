@@ -1,0 +1,23 @@
+# REQUIRES: python-api
+# The derivative of the energy in the charges together with the other
+# tunables of one program (D230, #256, docs/python-gradient.md) on the CPU,
+# in double and mixed precision: the charges free with PME and tied by a
+# map under a Coulomb cutoff, with constants of a pair term and with every
+# other kind of tunable at once (the table by pairs and per type, the
+# parameters of a term over tuples, an external term that reads the
+# charges, an observed constant). Each derivative against central
+# differences of the energy that it is the derivative of, and against the
+# program that declares the charges alone or the others alone; and what the
+# Python model cannot declare beside the charges.
+# RUN: %mdir_python %S/Inputs/python_tunable_mixed.py %S/Inputs/dipeptide refusals | FileCheck %s --check-prefix=REFUSED
+# RUN: %mdir_python %S/Inputs/python_tunable_mixed.py %S/Inputs/dipeptide test CPU Double | FileCheck %s -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_tunable_mixed.py %S/Inputs/dipeptide test CPU Mixed | FileCheck %s -DMODE="CPU Mixed"
+# REFUSED: refusals: a constant of an external term: the tunable 'e0': no pair or tuple term is named 'field'
+# REFUSED: refusals: a pair term that reads the charges: term 'soft': undeclared parameter 'q1'
+# REFUSED: refusals passed
+# CHECK: [[MODE]]: PME, charges free, constants a, l of the pair term a exp(-r/l): central differences q
+# CHECK: [[MODE]]: cutoff, charges tied (25 entries), constants a, l of the pair term a exp(-r/l): central differences q
+# CHECK: [[MODE]]: PME, charges free, all of these at once: central differences q
+# CHECK: [[MODE]]: cutoff, charges tied (25 entries), all of these at once: central differences q
+# CHECK: [[MODE]]: 4 combinations
+# CHECK: test passed
