@@ -32,7 +32,8 @@ site-packages/
   mdir/_core.cpython-3XY-x86_64-linux-gnu.so
   mdir/lib/libmdrt.so, libmdrt_cuda.so, libomp.so
   mdir/cuda/nvvm/libdevice/libdevice.10.bc, mdir/cuda/EULA.txt, version.txt
-  mdir/licenses/LICENSE, HDF5-COPYING, pybind11-LICENSE
+  mdir/licenses/LICENSE, HDF5-COPYING, pybind11-LICENSE, pocketfft-LICENSE,
+    tomlplusplus-LICENSE, LLVM-LICENSE.TXT, OpenMP-LICENSE.TXT
   mdir.libs/libhdf5-<hash>.so.310.5.1  grafted and renamed by auditwheel
   nvidia/cu13/lib/libcufft.so.12       NVIDIA's wheels, with the extra cuda
   nvidia/cu13/bin/ptxas
@@ -144,8 +145,16 @@ minutes, most of it auditwheel's repair of the 270 MB extension.
 `check-wheel.sh` checks the tag and the version, that no ELF file needs
 GLIBC newer than 2.28, that the extension and the runtime need no system
 libstdc++, that every needed library is in the wheel or allowed (the
-manylinux_2_28 list, the driver's libcuda, cuFFT), and that libdevice, the
-EULA, and the notices of MDIR and HDF5 are there.
+manylinux_2_28 list, the driver's libcuda, cuFFT), that libdevice is
+there, and that the wheel carries the notice of each third party whose
+code it holds in binary form: in `mdir/licenses`, those of pybind11,
+toml++, and LLVM (in the extension), pocketfft (in `libmdrt.so`), the
+OpenMP runtime, and HDF5, beside MDIR's license, and the CUDA EULA beside
+libdevice. A library that auditwheel grafts other than libhdf5 fails the
+check, since no notice is known for it.
+[packaging/licenses/README.md](../packaging/licenses/README.md) gives the
+clause that asks for each. The metadata names MDIR's own license
+(`License-Expression: MIT`, `License-File: LICENSE`).
 
 A CLI-only build is unchanged: with `MDIR_ENABLE_PYTHON` off it needs
 neither Python nor NumPy.
