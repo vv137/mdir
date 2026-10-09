@@ -237,7 +237,7 @@ static Preflight inspect(const Control &control) {
        control.energyPeriod, !control.observablesFile.empty(), false, false,
        rows, "rows"},
       {"trajectory", control.trajectoryFile,
-       control.trajectoryFormat == TrajectoryFormat::XTC ? "XTC" : "DCD",
+       getTrajectoryFormatName(control.trajectoryFormat),
        control.framePeriod, control.framePeriod > 0, false, false,
        count(control.framePeriod, false), "frames"},
       {"checkpoint", control.restartOutput, "H5MD", control.checkpointPeriod,

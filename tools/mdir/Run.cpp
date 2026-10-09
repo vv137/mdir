@@ -16,6 +16,7 @@
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
+#include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/Builder.h"
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Driver/Checkpoint.h"
@@ -320,6 +321,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   bool isRestart = !control->restartInput.empty();
   if ((writesCheckpoints || isRestart) && !hasCheckpointSupport())
     return fail("this build of MDIR has no HDF5, which checkpoints need");
+  if (control->framePeriod > 0 &&
+      control->trajectoryFormat == TrajectoryFormat::H5MD &&
+      !hasCheckpointSupport())
+    return fail("this build of MDIR has no HDF5, which a trajectory in H5MD "
+                "needs");
 
   // What defines this run, which its checkpoints record and a checkpoint
   // that it takes is compared with (D172).
@@ -952,7 +958,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     llvm::json::Object effective{
         {"seed", std::to_string(control->seed)}, {"time_step_ps", control->timestep},
         {"trajectory_format", control->framePeriod == 0 ? llvm::json::Value(nullptr) :
-            llvm::json::Value(control->trajectoryFormat == TrajectoryFormat::XTC ? "XTC" : "DCD")},
+            llvm::json::Value(getTrajectoryFormatName(control->trajectoryFormat))},
         {"neighbor_structure_requested",
          control->neighborStructure == NeighborStructure::Groups ? "groups" : "matrix"},
         {"neighbor_structures", std::move(neighbors)},
@@ -1053,7 +1059,30 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                     "writes the frames that follow to a part of their own");
       }
     }
-    output.trajectory = createTrajectoryWriter(control->trajectoryFormat);
+    if (control->trajectoryFormat == TrajectoryFormat::H5MD) {
+      // The frames of the state without loss (D[h5md-reporter]): the
+      // potential energy of a frame is that of the row of its step, where
+      // every frame is a step of energy.
+      H5MDOptions options;
+      options.single = control->trajectorySingle;
+      options.variableStrings = control->trajectoryVariableStrings;
+      options.energy = !control->minimize && control->energyPeriod > 0 &&
+                       control->framePeriod % control->energyPeriod == 0;
+      options.triclinic = system->tilt[0] != 0.0 || system->tilt[1] != 0.0 ||
+                          system->tilt[2] != 0.0;
+      options.masses = system->masses;
+      options.species.assign(system->types.begin(), system->types.end());
+      options.creatorVersion = MDIR_VERSION;
+      options.precision =
+          control->precision == Precision::Single
+              ? "single"
+              : control->precision == Precision::Mixed ? "mixed" : "double";
+      output.trajectory = std::make_unique<H5MDWriter>(std::move(options));
+      output.trajectory->setExactEdges(system->box);
+      output.trajectory->setExactTilt(system->tilt);
+    } else {
+      output.trajectory = createTrajectoryWriter(control->trajectoryFormat);
+    }
     output.trajectory->setPeriodic(control->periodic);
     if (appends) {
       auto removed = output.trajectory->append(
@@ -1061,6 +1090,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           control->timestep, cell);
       if (!removed)
         return fail(removed.takeError());
+      if (auto last = output.trajectory->getLastStep();
+          last && *last > own->step)
+        return fail("'" + trajectory + "' holds a frame of step " +
+                    llvm::Twine(*last) + " among the " +
+                    llvm::Twine(own->frames) + " that the checkpoint counts, "
+                    "past its step, " + llvm::Twine(own->step) + ": it is not "
+                    "the trajectory of this run");
       if (*removed > 0)
         output.log.print("MDIR: removed %lld frames past the checkpoint "
                          "from '%s'\n",

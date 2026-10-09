@@ -1,6 +1,7 @@
 // Owned Python inputs; collections cross the boundary by value.
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Compiler/Simulation.h"
+#include "mdir/Driver/H5MD.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <memory>
@@ -770,6 +771,132 @@ PYBIND11_MODULE(_core, m) {
   m.def("read_checkpoint", [](const std::string &path) {
     return readCheckpointFile(path);
   }, py::arg("path"));
+  // The frames of a trajectory in H5MD, read one at a time
+  // (D[h5md-reporter], docs/python-h5md.md).
+  struct Frame { driver::H5MDFrame frame; size_t particles; };
+  static auto frameVectors = [](const Frame &f, const std::vector<char> &bytes) -> py::object {
+    if (bytes.empty() && f.particles > 0) return py::none();
+    std::vector<py::ssize_t> shape = {static_cast<py::ssize_t>(f.particles), 3};
+    py::array a = f.frame.width == 4
+        ? py::array(py::array_t<float>(shape, reinterpret_cast<const float *>(bytes.data())))
+        : py::array(py::array_t<double>(shape, reinterpret_cast<const double *>(bytes.data())));
+    a.attr("flags").attr("writeable") = false;
+    return a;
+  };
+  // The second item of the pair that a frame unpacks to: the edges of an
+  // orthorhombic cell, the cell vectors in rows of a triclinic one.
+  static auto frameEdges = [](const Frame &f) -> py::object {
+    const double *c = f.frame.cell;
+    if (!f.frame.hasCell) return py::none();
+    if (c[1] == 0.0 && c[2] == 0.0 && c[3] == 0.0 && c[5] == 0.0 && c[6] == 0.0 && c[7] == 0.0) {
+      double edges[3] = {c[0], c[4], c[8]};
+      return host::copy(edges, 3, {3});
+    }
+    return host::copy(c, 9, {3, 3});
+  };
+  py::class_<Frame>(m, "Frame")
+    .def_property_readonly("step", [](const Frame &f) { return f.frame.step; })
+    .def_property_readonly("time", [](const Frame &f) -> py::object {
+      if (std::isnan(f.frame.time)) return py::none();
+      return py::float_(f.frame.time);
+    })
+    .def_property_readonly("positions", [](const Frame &f) { return frameVectors(f, f.frame.positions); })
+    .def_property_readonly("velocities", [](const Frame &f) -> py::object {
+      if (f.frame.velocities.empty()) return py::none();
+      return frameVectors(f, f.frame.velocities);
+    })
+    .def_property_readonly("forces", [](const Frame &f) -> py::object {
+      if (f.frame.forces.empty()) return py::none();
+      return frameVectors(f, f.frame.forces);
+    })
+    .def_property_readonly("cell", [](const Frame &f) -> py::object {
+      // As State.cell: the edges and the tilts of the reduced cell.
+      const double *c = f.frame.cell;
+      if (!f.frame.hasCell) return py::none();
+      if (c[1] != 0.0 || c[2] != 0.0 || c[5] != 0.0)
+        throw InputError("Frame.cell: the cell vectors of the frame are not in the reduced form "
+                         "(a along x, b in the xy plane) that mdir.Cell holds; read Frame.cell_vectors");
+      driver::Cell cell;
+      cell.diagonal = {c[0], c[4], c[8]};
+      cell.tilt = {c[3], c[6], c[7]};
+      return py::cast(cell);
+    })
+    .def_property_readonly("cell_vectors", [](const Frame &f) -> py::object {
+      if (!f.frame.hasCell) return py::none();
+      return host::copy(f.frame.cell, 9, {3, 3});
+    })
+    .def_property_readonly("potential_energy", [](const Frame &f) -> py::object {
+      if (!f.frame.potential) return py::none();
+      return py::float_(*f.frame.potential);
+    })
+    .def_property_readonly("tunables_version", [](const Frame &f) -> py::object {
+      if (!f.frame.tunablesVersion) return py::none();
+      return py::int_(*f.frame.tunablesVersion);
+    })
+    .def("__len__", [](const Frame &) { return 2; })
+    .def("__iter__", [](const Frame &f) {
+      // The pair (positions, cell) of the input of the frame evaluator.
+      return py::iter(py::make_tuple(frameVectors(f, f.frame.positions), frameEdges(f)));
+    })
+    .def("__repr__", [](const Frame &f) {
+      return "Frame(step=" + std::to_string(f.frame.step) + ", particles=" +
+             std::to_string(f.particles) + ")";
+    });
+  struct H5MDTrajectory { std::shared_ptr<driver::H5MDReader> reader; std::string file; };
+  py::class_<H5MDTrajectory>(m, "H5MDTrajectory")
+    .def("__len__", [](const H5MDTrajectory &t) { return t.reader->getNumFrames(); })
+    .def("__getitem__", [](const H5MDTrajectory &t, py::ssize_t index) {
+      py::ssize_t count = static_cast<py::ssize_t>(t.reader->getNumFrames());
+      if (index < 0) index += count;
+      if (index < 0 || index >= count) throw py::index_error("frame index out of range");
+      std::optional<llvm::Expected<driver::H5MDFrame>> read;
+      {
+        py::gil_scoped_release release;
+        read.emplace(t.reader->read(static_cast<size_t>(index)));
+      }
+      return Frame{unwrap(std::move(*read)), t.reader->getNumParticles()};
+    })
+    .def_property_readonly("file", [](const H5MDTrajectory &t) { return t.file; })
+    .def_property_readonly("group", [](const H5MDTrajectory &t) { return t.reader->getGroup(); })
+    .def_property_readonly("particles", [](const H5MDTrajectory &t) { return t.reader->getNumParticles(); })
+    .def_property_readonly("steps", [](const H5MDTrajectory &t) {
+      const auto &v = t.reader->getSteps();
+      py::array_t<int64_t> a(static_cast<py::ssize_t>(v.size()), v.data());
+      a.attr("flags").attr("writeable") = false;
+      return a;
+    })
+    .def_property_readonly("times", [](const H5MDTrajectory &t) -> py::object {
+      const auto &v = t.reader->getTimes();
+      if (v.empty() && t.reader->getNumFrames() > 0) return py::none();
+      return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size())});
+    })
+    .def_property_readonly("dtype", [](const H5MDTrajectory &t) {
+      return t.reader->getWidth() == 4 ? py::dtype::of<float>() : py::dtype::of<double>();
+    })
+    .def_property_readonly("has_velocities", [](const H5MDTrajectory &t) { return t.reader->hasVelocities(); })
+    .def_property_readonly("has_forces", [](const H5MDTrajectory &t) { return t.reader->hasForces(); })
+    .def_property_readonly("has_potential_energy", [](const H5MDTrajectory &t) { return t.reader->hasPotential(); })
+    .def_property_readonly("has_tunables_version", [](const H5MDTrajectory &t) { return t.reader->hasTunablesVersion(); })
+    .def_property_readonly("units", [](const H5MDTrajectory &t) {
+      py::dict d;
+      for (const auto &[name, unit] : t.reader->getUnits()) d[py::str(name)] = unit;
+      return d;
+    })
+    .def_property_readonly("creator", [](const H5MDTrajectory &t) { return t.reader->getCreator(); })
+    .def("close", [](H5MDTrajectory &t) { t.reader->close(); })
+    .def("__enter__", [](py::object self) { return self; })
+    .def("__exit__", [](H5MDTrajectory &t, py::args) { t.reader->close(); })
+    .def("__repr__", [](const H5MDTrajectory &t) {
+      return "H5MDTrajectory('" + t.file + "', frames=" + std::to_string(t.reader->getNumFrames()) +
+             ", particles=" + std::to_string(t.reader->getNumParticles()) + ")";
+    });
+  m.def("read_h5md", [](const std::string &path, std::optional<std::string> group) {
+    if (!driver::hasCheckpointSupport())
+      throw UnsupportedError("this build of MDIR has no HDF5, which a trajectory in H5MD needs");
+    auto reader = driver::H5MDReader::open(path, group ? *group : std::string());
+    if (!reader) throw InputError(llvm::toString(reader.takeError()));
+    return H5MDTrajectory{std::shared_ptr<driver::H5MDReader>(std::move(*reader)), path};
+  }, py::arg("file"), py::arg("group") = py::none());
   // Reporters (D207, docs/python-reporters.md): the files
   // of `mdir run` written inside the parts of a run, and Python functions
   // called after the part that ends at their step.
@@ -806,6 +933,9 @@ PYBIND11_MODULE(_core, m) {
         llvm::StringRef name(file);
         if (name.ends_with_insensitive(".dcd")) format = driver::TrajectoryFormat::DCD;
         else if (name.ends_with_insensitive(".xtc")) format = driver::TrajectoryFormat::XTC;
+        else if (name.ends_with_insensitive(".h5md"))
+          throw InputError("TrajectoryReporter writes DCD and XTC; a trajectory in H5MD, '" + file +
+                           "', is written by H5MDReporter");
         else throw InputError("TrajectoryReporter: cannot tell the format of '" + file +
                               "'; name a .dcd or .xtc file, or give format=");
       }
@@ -814,6 +944,30 @@ PYBIND11_MODULE(_core, m) {
     .def_readonly("file", &TrajectoryReporter::file)
     .def_readonly("period", &TrajectoryReporter::period)
     .def_readonly("format", &TrajectoryReporter::format);
+  // Frames of the state without loss, in H5MD (D[h5md-reporter],
+  // docs/python-h5md.md): the trajectory of the simulation in a third
+  // format, with the velocities and the forces if asked.
+  struct H5MDReporter { std::string file; int64_t period; bool single, velocities, forces, variable; };
+  py::class_<H5MDReporter>(m, "H5MDReporter")
+    .def(py::init([positive](std::string file, int64_t period, const std::string &positions,
+                     bool velocities, bool forces, const std::string &strings) {
+      if (!driver::hasCheckpointSupport())
+        throw UnsupportedError("this build of MDIR has no HDF5, which a trajectory in H5MD needs");
+      if (file.empty()) throw InputError("H5MDReporter takes the name of a file");
+      if (positions != "f64" && positions != "f32")
+        throw InputError("H5MDReporter: positions is \"f64\" or \"f32\"; found \"" + positions + "\"");
+      if (strings != "fixed" && strings != "variable")
+        throw InputError("H5MDReporter: strings is \"fixed\" or \"variable\"; found \"" + strings + "\"");
+      return H5MDReporter{std::move(file), positive(period), positions == "f32", velocities, forces,
+                          strings == "variable"};
+    }), py::arg("file"), py::arg("period"), py::arg("positions") = "f64",
+        py::arg("velocities") = false, py::arg("forces") = false, py::arg("strings") = "fixed")
+    .def_readonly("file", &H5MDReporter::file)
+    .def_readonly("period", &H5MDReporter::period)
+    .def_property_readonly("positions", [](const H5MDReporter &r) { return r.single ? "f32" : "f64"; })
+    .def_readonly("velocities", &H5MDReporter::velocities)
+    .def_readonly("forces", &H5MDReporter::forces)
+    .def_property_readonly("strings", [](const H5MDReporter &r) { return r.variable ? "variable" : "fixed"; });
   // Checkpoints (D223, docs/python-checkpoints.md).
   struct CheckpointReporter { std::string file; int64_t period; };
   py::class_<CheckpointReporter>(m, "CheckpointReporter")
@@ -855,10 +1009,20 @@ PYBIND11_MODULE(_core, m) {
           const auto &r = item.cast<const EnergyReporter &>();
           given.energyPath = r.file; given.energyPeriod = r.period;
         } else if (py::isinstance<TrajectoryReporter>(item)) {
-          if (given.framePeriod) throw InputError("a simulation takes one TrajectoryReporter");
+          if (given.framePeriod)
+            throw InputError("a simulation takes one TrajectoryReporter or one H5MDReporter");
           const auto &r = item.cast<const TrajectoryReporter &>();
           given.trajectoryPath = r.file; given.framePeriod = r.period;
           given.trajectoryFormat = r.format;
+        } else if (py::isinstance<H5MDReporter>(item)) {
+          if (given.framePeriod)
+            throw InputError("a simulation takes one TrajectoryReporter or one H5MDReporter");
+          const auto &r = item.cast<const H5MDReporter &>();
+          given.trajectoryPath = r.file; given.framePeriod = r.period;
+          given.trajectoryFormat = driver::TrajectoryFormat::H5MD;
+          given.frameSingle = r.single; given.frameVelocities = r.velocities;
+          given.frameForces = r.forces; given.creatorVersion = MDIR_VERSION;
+          given.frameVariableStrings = r.variable;
         } else if (py::isinstance<ObservablesReporter>(item)) {
           if (given.observablesPeriod) throw InputError("a simulation takes one ObservablesReporter");
           const auto &r = item.cast<const ObservablesReporter &>();
@@ -867,13 +1031,17 @@ PYBIND11_MODULE(_core, m) {
           callbacks.push_back(item.cast<CallbackReporter>());
         } else {
           throw InputError("Simulation.reporters holds EnergyReporter, TrajectoryReporter, "
-                           "ObservablesReporter, CheckpointReporter, and CallbackReporter values");
+                           "H5MDReporter, ObservablesReporter, CheckpointReporter, and "
+                           "CallbackReporter values");
         }
       }
       const auto &now = simulation->getReports();
       if (given.energyPath != now.energyPath || given.energyPeriod != now.energyPeriod ||
           given.trajectoryPath != now.trajectoryPath || given.framePeriod != now.framePeriod ||
           given.trajectoryFormat != now.trajectoryFormat ||
+          given.frameSingle != now.frameSingle || given.frameVelocities != now.frameVelocities ||
+          given.frameForces != now.frameForces ||
+          given.frameVariableStrings != now.frameVariableStrings ||
           given.observablesPath != now.observablesPath ||
           given.observablesPeriod != now.observablesPeriod)
         if (llvm::Error error = simulation->setReports(given)) raise(std::move(error));
@@ -1088,14 +1256,27 @@ PYBIND11_MODULE(_core, m) {
         int64_t now = s.simulation->getStep(), next = end;
         for (const auto &c : callbacks) next = std::min(next, (now / c.period + 1) * c.period);
         if (saves) next = std::min(next, (now / saves->period + 1) * saves->period);
+        // A frame of the state with its velocities or forces ends a part
+        // at its step, with a step of energy (D[h5md-reporter]).
+        int64_t frame = s.simulation->getNextStateFrame();
+        if (frame >= 0) next = std::min(next, frame);
         bool atCallback = next < end || (!callbacks.empty() && llvm::any_of(callbacks,
-            [&](const CallbackReporter &c) { return end % c.period == 0; }));
+            [&](const CallbackReporter &c) { return end % c.period == 0; })) ||
+            next == frame;
         int64_t leg = withSignals([&](const std::function<bool()> &poll) {
           return s.simulation->run(next - now, poll, energy || atCallback);
         });
         taken += leg;
         if (leg < next - now) break;  // A stop.
         int64_t at = s.simulation->getStep();
+        if (at == frame) {
+          std::optional<llvm::Error> error;
+          {
+            py::gil_scoped_release release;
+            error.emplace(s.simulation->writeStateFrame());
+          }
+          if (*error) raise(std::move(*error));
+        }
         if (saves && at % saves->period == 0) {
           std::optional<llvm::Error> error;
           {

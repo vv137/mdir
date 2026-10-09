@@ -3,6 +3,8 @@
 
 #include "mdir/Driver/Output.h"
 
+#include "mdir/Driver/H5MD.h"
+
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 
 #include "llvm/ADT/SmallString.h"
@@ -626,8 +628,10 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
   output.volume = lx * ly * lz;
   double edges[3] = {lx / units::length, ly / units::length,
                      lz / units::length};
-  if (output.trajectory)
+  if (output.trajectory) {
     output.trajectory->setBox(edges);
+    output.trajectory->setExactEdges(output.box);
+  }
   output.checkpoint.box[0] = lx;
   output.checkpoint.box[1] = ly;
   output.checkpoint.box[2] = lz;
@@ -679,8 +683,11 @@ void _mlir_ciface_mdrtSetTilt(double bx, double cx, double cy) {
   Output &output = *current;
   double tilts[3] = {bx / units::length, cx / units::length,
                      cy / units::length};
-  if (output.trajectory)
+  if (output.trajectory) {
     output.trajectory->setTilt(tilts);
+    double exact[3] = {bx, cx, cy};
+    output.trajectory->setExactTilt(exact);
+  }
   output.checkpoint.tilt[0] = bx;
   output.checkpoint.tilt[1] = cx;
   output.checkpoint.tilt[2] = cy;
@@ -935,10 +942,32 @@ void _mlir_ciface_mdrtCheckSpread(int64_t step, void *positions, void *ids) {
   checkSpread(output, readVectors(positions, ids, output.state), step);
 }
 
+void mdir::driver::writeExactFrame(Output &output, const double *positions,
+                                   const double *velocities,
+                                   const double *forces, int64_t step,
+                                   double time) {
+  auto &writer = static_cast<H5MDWriter &>(*output.trajectory);
+  H5MDExtras extras;
+  if (output.lastEnergies.step == step)
+    extras.potential = output.lastEnergies.potential;
+  extras.tunablesVersion = std::max<int64_t>(output.tunablesVersion, 0);
+  if (!writer.writeState(positions, velocities, forces, step, time, extras))
+    stopOnFailure(output, writer.getFailure());
+}
+
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   Output &output = *current;
   if (!output.hasTrajectory)
     return;
+  if (output.trajectory->isExact()) {
+    // The state as the run has it, in nm (D[h5md-reporter]): a buffer of
+    // f32 (the single mode) widens to f64 without loss.
+    std::vector<double> exact = readVectors(positions, ids, output.state);
+    checkSpread(output, exact, step);
+    writeExactFrame(output, exact.data(), nullptr, nullptr, step,
+                    output.getTime(step));
+    return;
+  }
   std::vector<double> values =
       readVectors(positions, ids, output.state, 1.0 / units::length);
   checkSpread(output, readVectors(positions, ids, output.state), step);

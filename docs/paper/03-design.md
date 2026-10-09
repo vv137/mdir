@@ -574,7 +574,8 @@ in order plus an optional second one, words of memory of the host mapped
 for the device for flags (D118), a caching allocator whose frees do not
 wait, plans of cuFFT, growable buffers for neighbor structures, and the
 records of what each activation of a Python simulation allocated). The
-driver registers callbacks for the log, the trajectory (DCD or XTC), and
+driver registers callbacks for the log, the trajectory (DCD, XTC, or
+H5MD without loss; below), and
 checkpoints (H5MD 1.1 [[deBuyl2014]](references.md#debuyl2014), all
 values in 64 bits, from which a run continues bitwise). A checkpoint
 records the step at which its run began, the frames written, and the
@@ -686,6 +687,53 @@ them; when that number falls, sampling continues at $\boldsymbol\theta$,
 which is an update, not a compile. The version of the values that each
 energy and frame records says which $\hat{\boldsymbol\theta}$ it was sampled
 at.
+
+*Which frames.* The weights take $U$ at the configurations that the
+dynamics visited. A trajectory format that rounds every coordinate to a
+grid of spacing $q$ stores $\tilde S_n = S_n + \boldsymbol\delta$, the
+components of $\boldsymbol\delta$ close to independent and uniform on
+$[-q/2, q/2)$, with mean 0 and variance $q^2/12$. To second order in
+$\boldsymbol\delta$, with $\mathbf F = -\nabla U$ and $\mathsf H$ the matrix of
+the second derivatives of $U$ at $S_n$,
+
+$$
+U(\tilde S_n) - U(S_n) = -\mathbf F\cdot\boldsymbol\delta
++ \tfrac12\boldsymbol\delta^{\mathsf T}\mathsf H\boldsymbol\delta,\qquad
+\big\langle U(\tilde S_n) - U(S_n)\big\rangle_{\boldsymbol\delta}
+= \frac{q^2}{24}\operatorname{tr}\mathsf H
+= \frac{q^2}{24}\sum_i\nabla_i^2U .
+$$
+
+The first term has mean 0 and a standard deviation of
+$q\lvert\mathbf F\rvert/\sqrt{12}$, noise that differs from frame to frame;
+the second is a rise that every frame shares and that no average over
+frames removes, since the stiff terms make the trace positive: a bond
+$\tfrac k2(r - r_0)^2$ adds $2k[1 + 2(r - r_0)/r]$ to it, $2k$ at its
+length, so the rounding raises its energy by $kq^2/12$ in the mean. For
+the alanine dipeptide in 382 flexible waters, 1167 bonds with
+$\sum k = 5.37\times10^8$ kJ/mol/nm$^2$, the bonds alone give 44.8 kJ/mol
+at the $q = 10^{-3}$ nm of XTC; the rise measured for #251 is
+$48\pm6$ kJ/mol, of the order of $20\,k_BT$ at 300 K, in a quantity whose
+differences enter an exponential. In $\Delta U$ both energies are of the
+same $\tilde S_n$ and the rise cancels where $\boldsymbol\theta$ leaves
+$\mathsf H$ alone, but not for the parameters of the stiff terms, and not
+against an energy that the run recorded at $S_n$. Positions in f32 have
+$q$ of $2^{-23}$ times the power of two below $\lvert x\rvert$,
+$2.4\times10^{-7}$ nm for a coordinate between 2 and 4 nm:
+the rise falls by $(q/10^{-3}\,\text{nm})^2$ to below $10^{-5}$ kJ/mol and
+the noise of the first term stays, at most $1.7\times10^{-3}$ kJ/mol on
+that system; f64 is the type of the positions of the state in the mixed
+and the double mode, so nothing is rounded. DCD holds f32 in Å, the
+rounding of a product and not of the state in nm. MDIR therefore writes a
+third trajectory format, H5MD 1.1
+[[deBuyl2014]](references.md#debuyl2014), with the positions of the state
+in f64 or f32 in nm, the cell of every frame, and, from a Python
+simulation, the velocities, the forces, the potential energy of the step,
+and the version of $\hat{\boldsymbol\theta}$ (D[h5md-reporter],
+`docs/python-h5md.md`; Appendix A.6). The host function that takes the
+frames of DCD and XTC is handed the buffer of the state before their
+conversion, so such a frame costs a copy and a write and the compiled
+program is the one that writes a DCD.
 
 An update changes the Hamiltonian $H = K + U_{\boldsymbol\theta}$ between two
 steps. A step of velocity Verlet, $e^{\frac{\Delta t}{2}\mathcal L_U}

@@ -148,6 +148,25 @@ public:
     std::string trajectoryPath;
     driver::TrajectoryFormat trajectoryFormat = driver::TrajectoryFormat::DCD;
     int64_t framePeriod = 0;
+    /// A trajectory in H5MD (D[h5md-reporter]): its positions in f32
+    /// rather than f64, and whether its frames hold the velocities and the
+    /// forces of the state. With either, the program does not write the
+    /// frames: the front end ends a part at each (`getNextStateFrame`) and
+    /// calls `writeStateFrame`.
+    bool frameSingle = false, frameVelocities = false, frameForces = false;
+    /// Its `unit` attributes as variable-length strings.
+    bool frameVariableStrings = false;
+    /// The program that writes the files, for those that record it.
+    std::string creatorVersion;
+    bool framesFromState() const {
+      return framePeriod > 0 &&
+             trajectoryFormat == driver::TrajectoryFormat::H5MD &&
+             (frameVelocities || frameForces);
+    }
+    /// The period of the frames that the program writes inside its parts.
+    int64_t getProgramFramePeriod() const {
+      return framesFromState() ? 0 : framePeriod;
+    }
     /// The file of `[output] observables` (D189) every `observablesPeriod`
     /// steps, of a program whose terms observe (D232).
     std::string observablesPath;
@@ -159,6 +178,16 @@ public:
   /// Flushes and closes the files of the reports.
   void closeReports();
   const Reports &getReports() const { return reports; }
+  /// The next step after the step of the simulation at which a frame is
+  /// written from the state (Reports::framesFromState), or -1.
+  int64_t getNextStateFrame() const {
+    return reports.framesFromState()
+               ? (step / reports.framePeriod + 1) * reports.framePeriod
+               : -1;
+  }
+  /// Writes the state after the last part as a frame of the trajectory in
+  /// H5MD, with its velocities and forces as the file holds them.
+  llvm::Error writeStateFrame();
 
   /// Asks a run under way to stop after its part; from any thread.
   void requestStop() { stopRequested = true; }

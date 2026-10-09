@@ -1,0 +1,12 @@
+# REQUIRES: python-api
+# UNSUPPORTED: hdf5
+# Without HDF5 (D[h5md-reporter]), the reporter and the reader of a
+# trajectory in H5MD raise UnsupportedError, and `mdir run` refuses the
+# format, as they refuse checkpoints. Only a build without HDF5 runs it.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_h5md_no_hdf5.py %t | FileCheck %s
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' %S/mixture.toml > %t/run.toml
+# RUN: printf 'trajectory = "run.h5md"\ntrajectory_interval = 50\n' >> %t/run.toml
+# RUN: not mdir run %t/run.toml 2>&1 | FileCheck %s --check-prefix=RUN
+# CHECK: a trajectory in H5MD without HDF5 raises UnsupportedError
+# RUN: this build of MDIR has no HDF5, which a trajectory in H5MD needs

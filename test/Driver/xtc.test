@@ -37,7 +37,7 @@
 # CHECK-NEXT: cells: ok
 # CHECK-NEXT: positions within 0.0005 nm: ok
 
-# UNKNOWN: the format of the trajectory '{{.*}}run.trajectory' is not known from its extension; name a file that ends in '.dcd' or '.xtc', or give 'trajectory_format'
+# UNKNOWN: the format of the trajectory '{{.*}}run.trajectory' is not known from its extension; name a file that ends in '.dcd', '.xtc', or '.h5md', or give 'trajectory_format'
 
 # CUT: MDIR: removed 2 frames past the checkpoint from '{{.*}}part.xtc'
 

@@ -117,6 +117,19 @@ if config.mdir_python:
 if config.mdir_hdf5:
     config.available_features.add("hdf5")
 
+# h5py, an independent reader of the trajectories in H5MD
+# (D[h5md-reporter]), and MDAnalysis if it is there: the interpreter of the
+# tests if it imports h5py, or one that lit is given with
+# -Dh5md_python=<interpreter>, which need not import the module of this
+# build.
+if config.mdir_python:
+    import subprocess
+
+    h5md_python = lit_config.params.get("h5md_python", config.mdir_python_executable)
+    if subprocess.run([h5md_python, "-c", "import h5py"], capture_output=True).returncode == 0:
+        config.available_features.add("h5py")
+        config.substitutions.append(("%h5md_python", h5md_python))
+
 # Tests that run on a GPU need the runtime for NVIDIA GPUs and a device.
 # The kernels find the device math library through CUDA_ROOT.
 if config.mdir_cuda:

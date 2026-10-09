@@ -23,6 +23,9 @@ sim.close_reporters()          # or the simulation's end; files are complete the
 - `TrajectoryReporter(path, period, format=None)` writes DCD or XTC (from the
   extension unless `format` is given), the frames of `[output] trajectory`:
   positions in input order, the cell, the same headers.
+- `H5MDReporter(path, period, positions="f64", velocities=False, forces=False, strings="fixed")`
+  (D[h5md-reporter], [python-h5md.md](python-h5md.md)) writes the frames of
+  the state without loss in H5MD, in place of a `TrajectoryReporter`.
 - `CallbackReporter(function, period)` calls `function(simulation, state)`
   with the `state()` of the due step (read-only NumPy copies, D193), with
   the GIL held. An exception it raises ends `run(n)` there and propagates;
@@ -36,7 +39,8 @@ sim.close_reporters()          # or the simulation's end; files are complete the
   rows and frames are appended across `run` calls; `close_reporters()` (or
   the end of the simulation) closes the files and empties the list. No
   control-file key changes.
-- A simulation takes one `EnergyReporter` and one `TrajectoryReporter` (the
+- A simulation takes one `EnergyReporter` and one `TrajectoryReporter` or
+  `H5MDReporter` (the
   outputs of `mdir run` it has one of each); callbacks are any number.
 - The energy file of a reporter present at the simulation's first run holds
   the row of step 0, as the file of `mdir run` does; the callbacks follow

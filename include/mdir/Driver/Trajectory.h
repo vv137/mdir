@@ -1,5 +1,6 @@
 // Trajectories: the positions of the particles at intervals, in DCD or in
-// XTC (D141).
+// XTC (D141), or the frames of the state without loss in H5MD
+// (D[h5md-reporter], mdir/Driver/H5MD.h).
 
 #ifndef MDIR_DRIVER_TRAJECTORY_H
 #define MDIR_DRIVER_TRAJECTORY_H
@@ -9,13 +10,17 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
 namespace mdir {
 namespace driver {
 
-enum class TrajectoryFormat { DCD, XTC };
+enum class TrajectoryFormat { DCD, XTC, H5MD };
+
+/// The name of a format, as `trajectory_format` writes it.
+const char *getTrajectoryFormatName(TrajectoryFormat format);
 
 /// Writes the frames of a trajectory: positions in Å, with the cell.
 class TrajectoryWriter {
@@ -44,6 +49,9 @@ public:
 
   /// The number of frames that the file holds.
   int64_t getNumFrames() const { return numFrames; }
+  /// The step of the last frame of the file, where the format records the
+  /// steps and the writer knows it.
+  virtual std::optional<int64_t> getLastStep() const { return std::nullopt; }
 
   /// The edges of the cell of the frames that follow, in Å: of an
   /// orthorhombic cell, or the diagonal of a triclinic one, whose tilts
@@ -67,6 +75,21 @@ public:
   /// `open` or `append`.
   void setPeriodic(bool value) { periodic = value; }
 
+  /// Whether the writer takes the frames of the state as the run has them,
+  /// in nm and without rounding (H5MDWriter), rather than `writeFrame`'s
+  /// positions in Å and f32.
+  virtual bool isExact() const { return false; }
+  /// The cell of the frames that follow as the run has it, in nm: the
+  /// edges, and the tilts b_x, c_x, c_y. Only an exact writer reads them.
+  void setExactEdges(const double edges[3]) {
+    for (int i = 0; i != 3; ++i)
+      exactBox[i] = edges[i];
+  }
+  void setExactTilt(const double tilts[3]) {
+    for (int i = 0; i != 3; ++i)
+      exactTilt[i] = tilts[i];
+  }
+
 protected:
   std::FILE *file = nullptr;
   size_t numParticles = 0;
@@ -75,6 +98,8 @@ protected:
   double timestep = 0.0;
   double box[3] = {0.0, 0.0, 0.0};
   double tilt[3] = {0.0, 0.0, 0.0};
+  double exactBox[3] = {0.0, 0.0, 0.0};
+  double exactTilt[3] = {0.0, 0.0, 0.0};
   int32_t numFrames = 0;
   bool periodic = true;
 };
@@ -117,7 +142,8 @@ public:
                   double time) override;
 };
 
-/// The writer of the format `format`.
+/// The writer of the format `format`, DCD or XTC; that of H5MD is made with
+/// its options (mdir/Driver/H5MD.h).
 std::unique_ptr<TrajectoryWriter> createTrajectoryWriter(
     TrajectoryFormat format);
 
