@@ -5,11 +5,15 @@ the maintainer decided on the pull request is listed under
 [Decisions](#decisions).
 
 The frame evaluator of M2b (#249) evaluates the potential at stored
-frames. The frames have to be those the
-dynamics visited, to rounding: positions rounded to $10^{-3}$ nm, the
-precision of XTC, raise the energy of a frame of the dipeptide by
-$48 \pm 6$ kJ/mol, and DCD holds f32 in Å, which is not the f32 of the
-state in nm. MDIR gains a third trajectory format that holds a frame as the
+frames. Positions rounded to $10^{-3}$ nm, the precision of XTC, raise the
+energy of a frame of the dipeptide by about 50 kJ/mol through its stiff
+terms, and DCD holds f32 in Å, which is not the f32 of the state in nm.
+That rise cancels in the difference of two energies at the same rounded
+frame, which is what a reweighting takes, unless the tunable is of a stiff
+term or the reference energy is one that the run recorded
+([python-frames.md](python-frames.md#which-stored-precision-serves-which-reweighting),
+#264): frames in f64 are the ones that can be reused for any term and any
+tunable chosen later. MDIR gains a third trajectory format that holds a frame as the
 run has it: H5MD [[deBuyl2014]](references.md#debuyl2014), version 1.1 of
 the specification, the layout that the checkpoints already use (D173).
 

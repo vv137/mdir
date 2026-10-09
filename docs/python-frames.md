@@ -369,22 +369,107 @@ same evaluator at $\hat{\boldsymbol\theta}$ of the same stored frames**
 It costs one more pass per trajectory, the one that the first forward
 makes anyway.
 
-**Frames rounded to the precision of an XTC are not usable for
-reweighting** when the model has flexible bonds. Stored frames are not the
-states that the dynamics saw: a DCD holds f32 and an XTC rounds to
-$10^{-3}$ nm. Measured on the dipeptide in water with flexible bonds (GPU,
-double precision, 20 frames):
+### Which stored precision serves which reweighting
 
-| Positions | Change of $U$ | Change of the derivative in a pair $\sigma$, $\epsilon$ |
-|---|---|---|
-| float32 (a DCD) | at most $1.7\times10^{-3}$ kJ/mol | $2\times10^{-7}$ relative |
-| rounded to $10^{-3}$ nm (an XTC at its default precision) | $+48 \pm 6$ kJ/mol, the bonds | $1.6\times10^{-3}$ relative |
+Stored frames are not the states that the dynamics saw: a DCD holds f32
+and an XTC rounds to $10^{-3}$ nm. Rounding a frame raises its energy
+through the stiff terms, by $+50 \pm 12$ kJ/mol at $10^{-3}$ nm for the
+dipeptide in flexible water (the bonds; the paper, Section 3.6, derives
+$kq^2/12$ per bond for a grid of spacing $q$). **That rise is of the terms
+that the fit leaves fixed, and it cancels in the difference
+$U_{\boldsymbol\theta}(\tilde S_n) - U_{\hat{\boldsymbol\theta}}(\tilde
+S_n)$ when both energies are evaluated at the same rounded frame**, which
+is what the evaluator does. It does not cancel for a tunable of a stiff
+term itself, and not against a reference energy that the sampler recorded
+at the frame it visited. (An earlier version of this document said that
+frames rounded to the precision of XTC cannot be used for reweighting;
+that holds for those two cases only, #264.)
 
-The spread of 6 kJ/mol is 2.4 $k_BT$ at 300 K: such frames are a sample of
-another distribution. Frames for a fit come from `CallbackReporter`
-(float64 copies of the state, D207), from a DCD, or from the H5MD reporter
-of D239 (ruling Q7), whose reader gives them to the evaluator one at a
-time.
+Measured (`scripts/validation/frames/precision.py`, GPU, double precision,
+#264): 400 frames of one run, kept in f64, rounded to f32, and rounded to
+$10^{-3}$ nm; the same reweighting from each, to $\boldsymbol\theta =
+\hat{\boldsymbol\theta} + \tfrac12k_BT/\operatorname{std}(\partial
+U/\partial\theta)$, with both energies evaluated at the stored frame.
+"Error" is against the frames in f64; the derivative is that of a
+reweighted average, $-\mathrm{Cov}_w(O, \partial U/\partial\theta)/k_BT$,
+with its error also in units of its statistical error from 10 blocks;
+$\langle\partial U/\partial\theta\rangle_w$ is the reweighted mean of
+the derivative, which needs no observable.
+
+*The alanine dipeptide in 382 flexible waters (1,168 atoms, PME, 300 K),
+with a soft pair term $a\,e^{-r/l}$ and an added harmonic term over the 764
+O-H bonds of the water ($k$ = 50,000 kJ/mol/nm², $r_0$ = 0.09572 nm); $O$
+is the distance between the two methyl carbons.*
+
+| Tunable | Frames | Rise of $U$, kJ/mol | Largest error of $\Delta U$, kJ/mol | $N_\text{eff}$ of 400 | Largest change of a weight, in $1/K$ | Error of $\langle\partial U/\partial\theta\rangle_w$ | Error of the derivative, relative; in its statistical error |
+|---|---|---|---|---|---|---|---|
+| (a) $l$ of the soft pair term | f32 | $-7\times10^{-5} \pm 0.0017$ | 3.9e-6 | 312.33 | 6.1e-6 | 1.1e-10 | 1.4e-6; 3.1e-6 |
+| | $10^{-3}$ nm | $+49.8 \pm 12$ | 0.032 | 312.26 (f64: 312.33) | 0.045 | 3.0e-6 | 1.3e-3; 0.003 |
+| (b) the charge of the oxygens of the water, PME | f32 | the same | 1.9e-5 | 352.89 | 1.2e-5 | 7.8e-9 | 2.7e-6; 6.9e-6 |
+| | $10^{-3}$ nm | the same | 0.11 | 352.67 (352.89) | 0.098 | 1.4e-4 | 6.4e-3; 0.017 |
+| (c) $k$ of the O-H term, a stiff term | f32 | the same | 1.1e-4 | 356.33 | 9.5e-5 | 2.3e-9 | 2.6e-4; 2.5e-5 |
+| | $10^{-3}$ nm | the same | 1.6 | 353.68 (356.33) | 0.56 | 2.4e-2 | 2.7; 0.25 |
+| (c) $r_0$ of the O-H term | f32 | the same | 9.1e-5 | 353.69 | 6.1e-5 | 6.2e-8 | 1.6e-5; 2.1e-5 |
+| | $10^{-3}$ nm | the same | 0.69 | 352.18 (353.69) | 0.43 | 2.9e-3 | 0.18; 0.24 |
+
+*60 A + 60 B Lennard-Jones particles at 100 K, no stiff term, $\sigma'$ of
+the A-B pair term tunable; $O$ is the number of A below a plane.*
+
+| Frames | Rise of $U$, kJ/mol | Largest error of $\Delta U$, kJ/mol | $N_\text{eff}$ of 400 | Error of $\langle\partial U/\partial\theta\rangle_w$ | Error of the derivative, relative; in its statistical error |
+|---|---|---|---|---|---|
+| f32 | $-1\times10^{-6} \pm 4\times10^{-5}$ | 5.9e-6 | 355.10 | 8.5e-8 | 1.1e-6; 1.5e-6 |
+| $10^{-3}$ nm | $+0.03 \pm 0.22$ | 0.032 | 355.09 (355.10) | 7.1e-4 | 0.035; 0.047 |
+
+What the numbers say:
+
+- **f32** (a DCD, or H5MD with `positions="f32"`) serves every tunable
+  measured: the error of $\Delta U$ is at most $10^{-4}$ kJ/mol and that of
+  a derivative $3\times10^{-5}$ of its statistical error.
+- **$10^{-3}$ nm** (an XTC at its default precision) serves a tunable of a
+  soft nonbonded term and of the charges: the error of $\Delta U$ is 0.03
+  and 0.11 kJ/mol ($0.01$ and $0.04\,k_BT$), the number of effective
+  frames does not change, and a derivative moves by under 2% of its
+  statistical error at 400 frames. The error does not average out with more
+  frames, so a long fit meets it at about $10^{-3}$ to $10^{-2}$ relative.
+- **A tunable of a stiff term** is not served by $10^{-3}$ nm: the error of
+  $\Delta U$ reaches 1.6 kJ/mol ($0.64\,k_BT$) for the force constant, the
+  weights change by half of $1/K$, and $\langle\partial U/\partial
+  k\rangle_w$, a sum of $(r - r_0)^2$ that the rounding adds to directly,
+  is 2.4% off. The Python model has such tunables (a parameter of a tuple
+  term), so this is measured, not estimated.
+
+**The reference from the run.** The same reweighting with
+$U_{\hat{\boldsymbol\theta}}$ taken from the energy that the sampler
+reported at the frame it visited (less a constant), in place of an
+evaluation at the stored frame:
+
+| System, tunable | Frames | Spread of the recorded energy less the evaluator's, kJ/mol | $N_\text{eff}$ of 400 (evaluated reference) | Error of the derivative, in its statistical error |
+|---|---|---|---|---|
+| Dipeptide, (a) | f64 | 0.038 | 312.14 (312.33) | 1e-4 |
+| Dipeptide, (b) | f64 | 0.038 | 353.01 (352.89) | 0.010 |
+| Dipeptide, (c) $k$ | f64 | 0.038 | 356.18 (356.33) | 0.016 |
+| Dipeptide, (a), (b), (c) | $10^{-3}$ nm | the rise, $50 \pm 12$ | 9.6, 9.0, 8.1 | 7.0, 6.8, 3.4 |
+| Mixture, plain cutoff | f64 | 0.24 ($0.28\,k_BT$) | 335.70 (355.10) | 0.83 |
+| Mixture, plain cutoff | $10^{-3}$ nm | 0.24 | 324.16 (355.09) | 0.94 |
+
+With rounded frames the rise no longer cancels and the weights collapse
+to 9 effective frames of 400. Even with frames in f64 the recorded energy
+is not the reference: it is the energy that the run reports, which under a
+plain cutoff is not the sampled potential (D210) and differs from it by a
+term that fluctuates with the number of pairs within the cutoff, 0.24
+kJ/mol in the mixture, enough to move a derivative by 0.8 of its
+statistical error; in the dipeptide, where only the direct sum of PME is
+cut without a shift, the spread is 0.038 kJ/mol. Hence ruling Q6: the
+reference is evaluated.
+
+**f64 stays the default of stored frames** (`H5MDReporter`, D239;
+`CallbackReporter` gives float64 copies, D207), for the reason that the
+table gives and not because rounded frames fail in general: a trajectory in
+f64 can be reused for any term and any tunable chosen later, the stiff ones
+included, and it costs twice the bytes of f32. Frames in f32 are a sound
+economy for fits of nonbonded parameters; an XTC serves such fits to about
+$10^{-2}$ of a gradient and should not be used for bonded parameters or
+with recorded reference energies. A larger system was not measured.
 
 **The version of $\boldsymbol\theta$.** `out.version` is that of the
 evaluator's values. The sampler already records its own: the column
@@ -595,7 +680,7 @@ and the two answers below it).
 | Q4 | The op of the adapter | `torch.library.custom_op` with `register_autograd`, behind `mdir.torch.evaluate`; the roadmap's line is corrected |
 | Q5 | Outputs whose derivative in $\boldsymbol\theta$ is not implemented | returned, with a backward that raises unless detached; `depends` states the proofs |
 | Q6 | The reference energies | an evaluation by the evaluator at $\hat{\boldsymbol\theta}$ of the stored frames |
-| Q7 | A store of frames without loss | an H5MD reporter as its own item (#251); its reader gives the evaluator frames one at a time; this document warns about the precision of XTC with the measured number |
+| Q7 | A store of frames without loss | an H5MD reporter as its own item (#251); its reader gives the evaluator frames one at a time; this document warned about the precision of XTC; the warning is corrected by the measurements of #264 ([Which stored precision](#which-stored-precision-serves-which-reweighting)) |
 | Q8 | Utilities of reweighting | none in MDIR; the constant `mdir.KB` |
 | Q9 | Device and type of the adapter's outputs | float64 on the device of `theta`, copied from the host |
 | Q10 | Triclinic cells | superseded: #206 was done first (D238); the evaluator takes the tilts of each frame |

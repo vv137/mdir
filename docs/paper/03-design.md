@@ -959,11 +959,20 @@ $\boldsymbol\theta = \hat{\boldsymbol\theta}$ the two energies are then
 equal to the bit, $w_n = 1/N_S$ for $N_S$ frames, and the number of
 effective frames is $N_S$. A file that rounds the positions changes the
 sample, not the consistency of the weights; how much it may round is a
-question of the potential. Positions in f32 change $U$ of the dipeptide in
-water by $2\times10^{-3}$ kJ/mol; positions rounded to $10^{-3}$ nm
-stretch its flexible bonds by $48 \pm 6$ kJ/mol, a spread of 2.4 $k_BT$
-at 300 K, and such frames no longer sample $e^{-U_{\hat{\boldsymbol
-\theta}}/k_BT}$.
+question of the potential and of the parameter (*Which frames*, above).
+Positions in f32 change $U$ of the dipeptide in water by $2\times10^{-3}$
+kJ/mol and $\Delta U$ by at most $10^{-4}$ kJ/mol for every tunable
+measured. Positions rounded to $10^{-3}$ nm raise its energy by $50 \pm
+12$ kJ/mol, but the rise is of the bonds, which a fit of a soft pair term
+or of the charges leaves alone: with both energies at the same rounded
+frame, $\Delta U$ is in error by 0.03 and 0.11 kJ/mol, the number of
+effective frames is unchanged, and the derivative of a reweighted average
+moves by less than 2% of its statistical error over 400 frames. For the
+force constant of a harmonic term over the O-H bonds the error of
+$\Delta U$ is 1.6 kJ/mol, $0.64\,k_BT$, and against a reference energy
+recorded by the run the weights collapse to 9 effective frames of 400.
+Frames in f64 are the default because they serve any term chosen later,
+not because rounded frames fail in general.
 
 *What is not differentiated.* The first term of the gradient,
 $\langle\partial O/\partial\boldsymbol\theta\rangle$, is not zero for
