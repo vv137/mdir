@@ -1232,7 +1232,7 @@ PYBIND11_MODULE(_core, m) {
       }
       if (*error) raise(std::move(*error));
     }, py::arg("path"))
-    // The evaluation of stored frames (D[frame-evaluator],
+    // The evaluation of stored frames (D240,
     // docs/python-frames.md), for `mdir.FrameEvaluator`: `positions` is
     // (k, N, 3) float64 in nm in the order of the input, `cells` and
     // `tilts` (k, 3) or None; `first` is the index of the first frame, for the messages.

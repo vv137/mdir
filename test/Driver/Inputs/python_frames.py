@@ -1,4 +1,4 @@
-"""The frame evaluator (D[frame-evaluator], docs/python-frames.md).
+"""The frame evaluator (D240, docs/python-frames.md).
 
 Usage: python_frames.py ROOT SCENARIO TARGET PRECISION [MIXTURE | FILE | WORK]
 

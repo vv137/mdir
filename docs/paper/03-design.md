@@ -916,7 +916,7 @@ as fields.
 A fit evaluates $U_{\boldsymbol\theta}$ at the frames again for every
 $\boldsymbol\theta$ that it tries, while the frames stay those sampled at
 $\hat{\boldsymbol\theta}$. The frame evaluator
-(D[frame-evaluator], `docs/python-frames.md`) does this in a simulation of
+(D240, `docs/python-frames.md`) does this in a simulation of
 its own, apart from the one that samples: each frame, given in the order of
 the input with its cell, becomes the state of that simulation and is
 evaluated once, with its neighbor structures built anew, since a stored

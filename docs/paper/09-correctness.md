@@ -409,7 +409,7 @@ through an evaluation of the derivative equal those of a program compiled
 without it to the bit, and a simulation continued from a checkpoint gives
 the derivative of the one that wrote it to the bit.
 
-The evaluation at stored frames (Section 3.6, D[frame-evaluator]) is
+The evaluation at stored frames (Section 3.6, D240) is
 checked on the CPU and a GPU, in double and mixed precision
 (`python-frames*.test`). Five frames of the dipeptide in water with tied
 charges and $\sigma$, $\epsilon$ of a pair of types tunable give the

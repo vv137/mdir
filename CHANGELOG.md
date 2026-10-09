@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- The frame evaluator (D[frame-evaluator], #249): `mdir.FrameEvaluator(program)`
+- The frame evaluator (D240, #249): `mdir.FrameEvaluator(program)`
   evaluates a program compiled with tunables and `System.tunable_gradient`
   at stored frames, in a simulation of its own.
   `evaluate(positions, cells=None)` takes `(K, N, 3)` positions in the

@@ -163,7 +163,7 @@ parameters of tuple terms, $\sigma$ and $\epsilon$ per type and by pairs
 of types, and the charges, under a Coulomb cutoff and with particle mesh
 Ewald (D231); and the evaluation at stored frames with
 its vector-Jacobian product in the tunables, as an operation of PyTorch
-(D[frame-evaluator], Section 3.6), at one start of an activation per frame:
+(D240, Section 3.6), at one start of an activation per frame:
 1.05 ms on the dipeptide in water and 6.85 ms on JAC, 15 and 31 steps.
 Remaining: the frames inside one activation, at a few steps each; the
 gradients in the positions and the strain as outputs; the derivative of

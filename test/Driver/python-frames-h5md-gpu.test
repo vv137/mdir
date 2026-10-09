@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5, cuda
 # The frame evaluator with frames read from H5MD and the tilts of each
-# frame (D[frame-evaluator], D238, D239) on a GPU, in double and mixed
+# frame (D240, D238, D239) on a GPU, in double and mixed
 # precision: the checks of python-frames-h5md.test. The frames are those of
 # a run of `mdir run` on the CPU.
 # RUN: rm -rf %t && mkdir -p %t

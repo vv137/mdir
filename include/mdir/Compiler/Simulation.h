@@ -235,7 +235,7 @@ public:
   /// carries.
   llvm::Expected<TunableGradient> evaluateTunableGradient();
   /// What the evaluation of a stored frame gives
-  /// (D[frame-evaluator], docs/python-frames.md): the potential energy that
+  /// (D240, docs/python-frames.md): the potential energy that
   /// the forces sample (D210) and its derivative in the tunables, as
   /// `evaluateTunableGradient` gives them at the state; the virial and the
   /// volume of the step of energy of that evaluation; and the observed

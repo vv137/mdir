@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# The frame evaluator (D[frame-evaluator], docs/python-frames.md) on the
+# The frame evaluator (D240, docs/python-frames.md) on the
 # CPU, in double and mixed precision, Inputs/python_frames.py: the energy
 # that the forces sample, its derivative in the tunables, the virial, and
 # the observed columns at stored frames against the sampler's own

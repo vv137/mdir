@@ -1,6 +1,6 @@
 # REQUIRES: python-api, torch
 # The frame evaluator as an operation of PyTorch, mdir.torch.evaluate
-# (D[frame-evaluator], docs/python-frames.md), on the CPU,
+# (D240, docs/python-frames.md), on the CPU,
 # Inputs/python_frames.py: the gradient of a reweighted average of a
 # Lennard-Jones mixture from autograd against the covariance formed from
 # the evaluator's arrays; the backward by a second pass; gradcheck; a fit

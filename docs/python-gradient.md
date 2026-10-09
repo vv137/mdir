@@ -275,7 +275,7 @@ $\mathbf q$, and the derivative in $N$ charges needs the gather.
 $g_k$ of the frame: the evaluator will call the same entry at each stored
 frame (positions and cell given), accumulate $\sum_k g_k\,\partial
 U_k/\partial d$ in f64, and apply the chain rule once. The first slice
-([python-frames.md](python-frames.md), D[frame-evaluator]) evaluates each
+([python-frames.md](python-frames.md), D240) evaluates each
 frame in an activation of its own and applies the chain rule at each; the
 accumulation of the fields belongs to the frames inside one activation.
 

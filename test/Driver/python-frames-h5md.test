@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5
-# The frame evaluator with frames read from H5MD (D[frame-evaluator], D239,
+# The frame evaluator with frames read from H5MD (D240, D239,
 # docs/python-frames.md) on the CPU, in double and mixed precision,
 # Inputs/python_frames.py. 20 frames of a run of `mdir run` at constant
 # pressure in a rhombic dodecahedron, whose barostat scales the tilts with

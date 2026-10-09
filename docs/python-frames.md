@@ -1,4 +1,4 @@
-# The frame evaluator (D[frame-evaluator])
+# The frame evaluator (D240)
 
 Issue #249, a step of M2b (#138, [roadmap](roadmap.md), Section 6.1).
 Status: the first slice is implemented, as the maintainer ruled on PR #250
