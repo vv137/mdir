@@ -239,8 +239,8 @@ Status: implemented; the four questions put to the maintainer on PR #204
 were decided as recommended
 ([Maintainer rulings on writable borrows](#maintainer-rulings-on-writable-borrows)).
 The tilts of a triclinic cell (#206, D[borrow-tilts]) are
-[below](#tilts-of-a-triclinic-cell-dborrow-tilts); the questions on its
-PR #253 are open.
+[below](#tilts-of-a-triclinic-cell-dborrow-tilts), with the maintainer's
+rulings on PR #253.
 
 A view is for reading. A *borrow* hands a consumer the same buffers for
 writing, and the simulation takes what was written at an explicit commit.
@@ -272,7 +272,7 @@ evaluation first, no failure) and no live lease.
 | `positions` | `(N, 3)`, the state's type, on the device of the simulation, in the order of the program | the program's buffer | taken as the positions (nm) |
 | `velocities` | `(N, 3)`, the state's type, as above | the program's buffer | taken as the velocities (nm/ps, at `time + velocity_offset * timestep`) |
 | `cell` | `(3,)` float64 on the host: the diagonal $a_x, b_y, c_z$ of the cell (nm), `Cell.diagonal`, the edges of an orthorhombic cell | a buffer of the borrow, holding the diagonal | taken as the diagonal if the bits of the cell changed |
-| `tilt` | `(3,)` float64 on the host: the tilts $b_x, c_x, c_y$ of a triclinic cell (nm), `Cell.tilt` (D[borrow-tilts]) | a buffer of the borrow, holding the tilts | taken as the tilts if the bits of the cell changed |
+| `tilt` | `(3,)` float64 on the host: the tilts $b_x, c_x, c_y$ of a triclinic cell (nm), `Cell.tilt` (D[borrow-tilts]); for a program compiled for an orthorhombic cell, three zeros, read-only | a buffer of the borrow, holding the tilts | taken as the tilts if the bits of the cell changed |
 | `tunables` | a dict of names to `(M,)` float64 on the host | buffers of the borrow, holding the values | `Simulation.tunables.update` of the entries whose bits changed (D213) |
 | `ids` | `(N,)` int32, read-only | | |
 | `step`, `time`, `velocity_offset`, `device` | as in `View` | | |
@@ -313,9 +313,10 @@ and `InitialState.cell` hold: the cell is the lower-triangular matrix of
 rows $\mathbf a = (a_x, 0, 0)$, $\mathbf b = (b_x, b_y, 0)$,
 $\mathbf c = (c_x, c_y, c_z)$ ([triclinic-m2.md](triclinic-m2.md),
 Section 1). A program is compiled for an orthorhombic or for a triclinic
-cell (D123), so `Borrow.tilt` belongs to a simulation whose program was
-compiled from a triclinic cell; for an orthorhombic one it raises
-`UnsupportedError`, and without a periodic cell both do
+cell (D123), so the tilts are written through `Borrow.tilt` of a
+simulation whose program was compiled from a triclinic cell; for an
+orthorhombic one `Borrow.tilt` is three zeros that cannot be written, and
+without a periodic cell both raise `UnsupportedError`
 ([Tilts of a triclinic cell](#tilts-of-a-triclinic-cell-dborrow-tilts)).
 
 ### Exclusion
@@ -437,7 +438,7 @@ changes (`InputError`; nothing is committed and the borrow stays live):
 |---|---|
 | the six numbers are finite | |
 | $a_x, b_y, c_z \ge 2 r_c$ | I2 of [triclinic-m2.md](triclinic-m2.md): the minimum image holds every image within the cutoff; what the builder asks of every cell, and the runtime at every change of the cell by a barostat |
-| the tilts are not all zero | a cell without tilts is orthorhombic, for which the program has other arguments and other kernels (`isTriclinic` of the builder, D123): the change is structural, and the message says to compile from a state with that cell. A program compiled for an orthorhombic cell has no `Borrow.tilt` to write |
+| the tilts are not all zero; for a program compiled for an orthorhombic cell, the tilts are all zero | a cell without tilts is orthorhombic, for which the program has other arguments and other kernels (`isTriclinic` of the builder, D123): the change is structural either way, and the message says to compile from a state with that cell. `Borrow.tilt` of an orthorhombic program is read-only, so only a consumer that ignores the flag meets the second refusal |
 | $\lvert b_x\rvert \le a_x/2$, $\lvert c_x\rvert \le a_x/2$, $\lvert c_y\rvert \le b_y/2$, to the relative $10^{-6}$ of `reduceCell` | I1: the reduced form, which the minimum image in one pass and the search of the neighbor structures assume. A cell that is not reduced is refused and not reduced by the commit, as that of an `InitialState` is, and as nothing else that was written is adjusted; the message names the tilt and its bound |
 | `pairlist_distance` $\le \tfrac12 \min(a_x, b_y, c_z)$ | what the builder asks of a triclinic cell at a compile, repeated for the committed diagonal, so that a commit takes the cells that a compile takes |
 
@@ -561,10 +562,34 @@ the entry c_z written for the cell, 1.500000 nm, is not finite or is less than t
 the pairlist distance of the program, 0.900000 nm, exceeds half of the least of a_x, b_y, c_z of the cell written, 0.850000 nm; nothing is committed
 ```
 
-and `Borrow.tilt` of an orthorhombic program, `UnsupportedError`: "the
-program of the simulation was compiled for an orthorhombic cell, which has
-no tilts to write; a cell with tilts takes a program compiled from a state
-with a triclinic cell".
+and, for a program compiled for an orthorhombic cell whose tilts a
+consumer wrote in spite of the read-only flag: "the tilts written for the
+cell are not zero, and the program of the simulation was compiled for an
+orthorhombic cell: a cell with tilts changes the program, not only its
+values; compile it from a state with that cell; nothing is committed".
+
+**The tilts of an orthorhombic program** (the maintainer's ruling on
+question 2). `Borrow.tilt` of a program compiled for an orthorhombic cell
+is a `(3,)` float64 buffer of the host that holds three zeros, which is
+what the tilts of that cell are, so code that reads a cell (the frame
+evaluator) need not ask which kind of program it has. It is read-only as
+the views of D220 are: its `Buffer` exports with the read-only flag of
+DLPack 1.1, and NumPy makes the array one that cannot be written
+(`flags.writeable` is false, and an assignment raises NumPy's
+`ValueError`, "assignment destination is read-only"). Reading it writes
+nothing: `written` and `commit()` do not name the cell because of it, and
+a commit of an orthorhombic borrow is what it was under D229. A consumer
+that ignores the flag, or takes the legacy capsule, which cannot carry it,
+can still write the three numbers; a commit then refuses with the
+`InputError` above, since a cell that becomes triclinic is a structural
+change, and the borrow stays live. On the dipeptide in water
+(`python-dlpack-tilts*.test`, CPU and GPU): the zeros, the dtype, the
+flag, and NumPy's refusal; a borrow whose tilts were read, and one whose
+tilts were written through a legacy capsule and refused, each followed by
+4 steps, equal a simulation without the borrow to the bit, no version
+advanced; a commit of the edges and the positions scaled by 1.01 equals a
+simulation compiled from the committed state to the bit, and 12 steps
+later, with `State.cell.tilt` zero.
 
 A round trip that writes the positions back is a commit: the forces are
 evaluated anew, in the order and with the neighbor structures of another
@@ -713,3 +738,18 @@ is not supported yet, and the tilts are
 `Borrow.tilt`); the versions of the
 state are not recorded in checkpoints; leaving a `with` block without a
 commit abandons the borrow.
+
+### Maintainer rulings on the tilts
+
+The six questions put on PR #253 were decided
+([comment](https://github.com/vv137/mdir/pull/253#issuecomment-6075276065)): the shape as proposed, `Borrow.cell` `(3,)` with the
+diagonal and `Borrow.tilt` `(3,)` with the tilts, the convention of
+`mdir.Cell`; **changed from the proposal**, `Borrow.tilt` of a program
+compiled for an orthorhombic cell is a read-only array of three zeros, not
+an `UnsupportedError`, and a write of it is refused, while without a
+periodic cell both `cell` and `tilt` stay errors; the grid of PME is kept
+at a commit, as under a barostat; no rebuild and comparison of the
+program's text at a commit; a Python simulation at constant pressure in a
+triclinic cell is its own change (#254); a new row of the decisions with a
+note on D229. The check of the pairlist distance at a commit follows what
+[#258](https://github.com/vv137/mdir/issues/258) concludes for the build.

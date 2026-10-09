@@ -1711,11 +1711,11 @@ Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
   // Whether a cell has tilts decides the arguments of the entry and the
   // kernels of the program (D123): the change is structural.
   if (tilted && !triclinic)
-    return inputError("the tilts written for the cell would make the "
-                      "orthorhombic cell of the program triclinic, which "
-                      "changes the program, not only its values: compile "
-                      "it from a state with that cell; nothing is "
-                      "committed");
+    return inputError("the tilts written for the cell are not zero, and "
+                      "the program of the simulation was compiled for an "
+                      "orthorhombic cell: a cell with tilts changes the "
+                      "program, not only its values; compile it from a "
+                      "state with that cell; nothing is committed");
   if (!tilted && triclinic)
     return inputError("the tilts written for the cell are all zero, which "
                       "would make the triclinic cell of the program "

@@ -24,8 +24,11 @@ format, or the outputs; every such change is listed under **Changed** or
   above half of the least of the diagonal. The grid of PME and the
   neighbor capacity stay those of the program
   (`Program.plan`). `Borrow.tilt` of a program compiled for an
-  orthorhombic cell raises `UnsupportedError`; `Borrow.cell` of such a
-  program is unchanged. No control-file key and no file format changes.
+  orthorhombic cell is a read-only array of three zeros (the read-only
+  flag of DLPack; in NumPy an array that cannot be written), and tilts
+  written to it in spite of the flag are refused at the commit;
+  `Borrow.cell` of such a program is unchanged. No control-file key and
+  no file format changes.
 
 - A `Program` keeps the code of its simulations (D236, #236):
   the second and later `mdir.Simulation(program)` of one `Program` in a

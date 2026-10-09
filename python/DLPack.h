@@ -304,7 +304,9 @@ inline Borrow borrow(std::shared_ptr<compiler::Simulation> simulation) {
   result.triclinic = simulation->hasTriclinicCell();
   result.cell = make(staging.cell.data(), {3}, real, host, "cell", true, 0);
   result.cell.staging = state->staging;
-  result.tilt = make(staging.cell.data() + 3, {3}, real, host, "tilt", true, 0);
+  // The tilts of an orthorhombic program are three zeros that cannot be
+  // written: whether a cell has tilts is fixed when a program is compiled.
+  result.tilt = make(staging.cell.data() + 3, {3}, real, host, "tilt", result.triclinic, 0);
   result.tilt.staging = state->staging;
   result.periodic = simulation->isPeriodic();
   const auto &set = simulation->getTunables();
@@ -405,11 +407,6 @@ inline void bind(py::module_ &m) {
     .def_property_readonly("tilt", [](const Borrow &b) {
       if (!b.periodic)
         throw UnsupportedError("Borrow.tilt: the simulation has no periodic cell");
-      if (!b.triclinic)
-        throw UnsupportedError("Borrow.tilt: the program of the simulation was compiled for "
-                               "an orthorhombic cell, which has no tilts to write; a cell "
-                               "with tilts takes a program compiled from a state with a "
-                               "triclinic cell");
       return b.tilt;
     })
     .def_property_readonly("tunables", [](const Borrow &b) {

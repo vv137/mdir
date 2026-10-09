@@ -4,7 +4,7 @@ consumers that do not use MDIR's code: NumPy's from_dlpack on the CPU, and
 on a GPU a reader of the capsule in ctypes that writes with the CUDA driver
 API.
 
-Usage: python_dlpack_tilts.py ROOT TARGET commits WORK
+Usage: python_dlpack_tilts.py ROOT TARGET commits WORK DIPEPTIDE
        python_dlpack_tilts.py ROOT TARGET frames DCD
 
 `commits`, in the deterministic mode, in double and mixed precision, with
@@ -29,6 +29,7 @@ import numpy as np
 import mdir
 
 root, target_name, mode, last = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+dipeptide = sys.argv[5] if len(sys.argv) > 5 else None
 target = getattr(mdir.Target, target_name)
 FIELDS = ("positions", "velocities", "forces")
 CUTOFF, REACH = 0.8, 0.9
@@ -423,18 +424,79 @@ def thermostat(precision):
 
 
 def structure():
-    """An orthorhombic program has no tilts to write."""
-    loaded = mdir.load_gromacs(root + "/water.top", root + "/dodecahedron.gro",
-                               defines=["FLEXIBLE"])
-    start = loaded.make_state()
-    flat = cell_of(start.cell.diagonal, [0.0, 0.0, 0.0])
-    program = make("Double", False, state=initial(start.positions, np.zeros_like(start.positions), flat))
-    sim = mdir.Simulation(program)
-    sim.run(0, energy=True)
+    """A program compiled for an orthorhombic cell: its tilts are three
+    zeros that cannot be written, and its borrows are what they were."""
+    loaded = mdir.load_amber(dipeptide + "/dipeptide.prmtop", dipeptide + "/dipeptide.inpcrd")
+
+    def program(state=None):
+        system, start = loaded.make_system(), loaded.make_state()
+        system.cutoff, system.pairlist_distance, system.switch_distance = CUTOFF, REACH, 0.7
+        system.electrostatics = mdir.Electrostatics.Cutoff
+        if state is None:
+            state = start.draw_velocities(system, 300.0, 7)
+        integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+        integrator.method = mdir.IntegratorMethod.VelocityVerlet
+        integrator.timestep = 0.001
+        ensemble.kind = mdir.EnsembleKind.NVE
+        execution.target, execution.precision = target, mdir.Precision.Double
+        execution.deterministic = True
+        return mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule())
+
+    first = program()
+    sim, twin = mdir.Simulation(first), mdir.Simulation(first)
+    sim.run(4, energy=True)
+    twin.run(4, energy=True)
+    # Reading: zeros, with the read-only flag of DLPack, which NumPy takes
+    # as an array that cannot be written. Nothing counts as written.
     with sim.borrow() as borrow:
-        assert borrow.cell.shape == (3,)
-        message = expect(mdir.UnsupportedError, lambda: borrow.tilt, "orthorhombic")
-    print("an orthorhombic program: Borrow.tilt raises UnsupportedError")
+        assert borrow.tilt.shape == (3,) and borrow.cell.shape == (3,)
+        tilt = np.from_dlpack(borrow.tilt)
+        assert tilt.dtype == np.float64 and np.array_equal(tilt, np.zeros(3))
+        assert not tilt.flags.writeable
+        refusal = expect(ValueError, lambda: tilt.__setitem__(0, 0.1), "read-only")
+        assert np.from_dlpack(borrow.cell).flags.writeable
+        del tilt
+        gc.collect()
+        assert borrow.written == () and borrow.commit() == ()
+    assert sim.versions["cell"] == 0 and sim.commits == []
+    sim.run(4, energy=True)
+    twin.run(4, energy=True)
+    same(sim.state(), twin.state(), "an orthorhombic borrow whose tilts were read")
+    # A consumer that ignores the flag (a legacy capsule cannot carry it)
+    # and writes: the commit refuses, and nothing changes.
+    with sim.borrow() as borrow:
+        capsule = borrow.tilt.__dlpack__()
+        ctypes.pythonapi.PyCapsule_GetPointer.restype = ctypes.c_void_p
+        ctypes.pythonapi.PyCapsule_GetPointer.argtypes = [ctypes.py_object, ctypes.c_char_p]
+        legacy = ctypes.pythonapi.PyCapsule_GetPointer(capsule, b"dltensor")
+        data = ctypes.c_void_p.from_address(legacy).value
+        assert data == borrow.tilt.data_ptr
+        (ctypes.c_double * 3).from_address(data)[1] = 0.25
+        del capsule
+        gc.collect()
+        assert borrow.written == ("cell",)
+        message = expect(mdir.InputError, borrow.commit, "compiled for an orthorhombic cell")
+        assert borrow.live
+    assert sim.versions["cell"] == 0 and sim.commits == []
+    sim.run(4, energy=True)
+    twin.run(4, energy=True)
+    same(sim.state(), twin.state(), "after a refused write of the tilts")
+    # A commit of the edges with the positions is what it was (D229): the
+    # simulation compiled from the committed state, to the bit.
+    at = sim.state()
+    edges, x = at.cell.diagonal * 1.01, at.positions * 1.01
+    assert put(sim, positions=x, diagonal=edges) == ("positions", "cell")
+    after = sim.state()
+    assert np.array_equal(after.cell.tilt, np.zeros(3))
+    fresh = mdir.Simulation(program(initial(x, at.velocities, cell_of(edges, [0.0, 0.0, 0.0]))))
+    fresh.run(0, energy=True)
+    same(after, fresh.state(), "an orthorhombic commit of the edges")
+    sim.run(12, energy=True)
+    fresh.run(12, energy=True)
+    same(sim.state(), fresh.state(), "an orthorhombic commit of the edges, 12 steps later")
+    print("an orthorhombic program: Borrow.tilt is three zeros that cannot be written (" +
+          refusal + "); a commit of the edges equals a simulation compiled from the committed "
+          "state to the bit, and 12 steps later")
     return message
 
 
