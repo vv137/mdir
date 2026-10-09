@@ -555,6 +555,24 @@ PYBIND11_MODULE(_core, m) {
       return topology::of(*p.prepared->system.topology, true);
     })
     .def("check_current", &Program::checkCurrent)
+    // The program of the terms that a tunable enters, alone
+    // (D[frame-evaluator-terms], docs/python-frames.md), for a frame
+    // evaluator: built from the model of this one, with its inputs.
+    .def("_dependent", [](const Program &p) {
+      if (p.prepared->tunables.empty())
+        throw InputError("the program declares no tunable parameters (System.tunables)");
+      if (!p.prepared->control.tunableGradient)
+        throw InputError("the program was compiled without the derivative in the tunables: "
+                         "set System.tunable_gradient = True and compile again");
+      model::PreparedModel prepared = *p.prepared;
+      driver::keepDependentTerms(prepared.control, prepared.system);
+      Program result;
+      result.compiled = unwrap(compiler::plan(prepared, p.cache));
+      result.cache = p.cache;
+      result.prepared = std::make_shared<const model::PreparedModel>(std::move(prepared));
+      result.inputs = p.inputs;
+      return std::make_shared<Program>(std::move(result));
+    })
     .def_property_readonly("plan", [](const Program &p) {
       py::dict d;
       const auto &c = p.compiled;
@@ -569,6 +587,12 @@ PYBIND11_MODULE(_core, m) {
       d["pme"] = c.program.pme;
       d["pme_grid"] = std::array<int64_t, 3>{c.program.pmeGrid[0], c.program.pmeGrid[1], c.program.pmeGrid[2]};
       d["tunables"] = tunables::describe(p.prepared->tunables, c.program);
+      // The terms of the potential: all of the model, or those that a
+      // tunable enters (D[frame-evaluator-terms]).
+      if (p.prepared->control.dependentTerms)
+        d["terms"] = driver::getDependentTerms(p.prepared->control, p.prepared->system).names;
+      else
+        d["terms"] = std::vector<std::string>{"all"};
       // The correction for the dispersion (D209): whether it is on and was
       // given, and for each pair term whether its tail is in it
       // (D222).

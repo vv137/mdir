@@ -51,11 +51,18 @@ class Builder {
 public:
   Builder(const Control &control, const System &system, Program &program)
       : control(control), system(system), program(program),
-        os(program.module) {}
+        os(program.module) {
+    if (control.dependentTerms && system.topology)
+      dependent = getDependentTerms(control, system);
+  }
 
   llvm::Error build();
 
 private:
+  /// With Control::dependentTerms, the terms that the program keeps: every
+  /// potential has only these, and the host adds to the energy only what
+  /// belongs to them (D[frame-evaluator-terms]).
+  std::optional<DependentTerms> dependent;
   llvm::Error collectParameters();
   llvm::Error emitPotential();
   /// Emits the term over triplets `term` into the potential, and returns
@@ -2000,6 +2007,10 @@ llvm::Error Builder::collectTopology() {
 }
 
 double Builder::getTopologyDispersion(bool decoupled) const {
+  // The correction and the estimate of its shift go with the
+  // Lennard-Jones (D[frame-evaluator-terms]).
+  if (dependent && !dependent->lennardJones)
+    return 0.0;
   const Topology &topology = *system.topology;
   unsigned numTypes = topology.getNumTypes();
   std::vector<double> numbers(numTypes, 0.0);
@@ -2147,6 +2158,10 @@ llvm::Error Builder::collectPairTails() {
 llvm::Expected<Builder::PairTail>
 Builder::getPairTail(unsigned index,
                      const llvm::StringMap<double> &changes) const {
+  // The tail of a pair term goes with the term
+  // (D[frame-evaluator-terms]).
+  if (dependent && !dependent->hasPair(index))
+    return PairTail();
   // With a uniform density beyond the cutoff [AllenTildesley2017], each
   // unordered pair adds (4π / V) I, I = ∫_rc^∞ r² u(r) dr, to the energy
   // and (4π / V)(3 I + rc³ u(rc)) to the trace of the virial, which is
@@ -3804,6 +3819,21 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm, int pairTerm,
                                     int externalTerm) {
   double cutoff = control.cutoffDistance * units::length;
+  // A program of the dependent terms has no other
+  // (D[frame-evaluator-terms]).
+  if (dependent) {
+    unsigned kept = 0;
+    if (dependent->lennardJones)
+      kept |= LennardJones | LennardJonesExcluded | LennardJonesReciprocal;
+    if (dependent->coulomb)
+      kept |= Coulomb | Coulomb14 | CoulombExcluded | CoulombReciprocal |
+              CoulombWithin;
+    if (!dependent->pairs.empty())
+      kept |= PairTerms;
+    if (!dependent->tuples.empty())
+      kept |= TupleTerms;
+    terms &= kept | Alchemical;
+  }
   // The truncation of the pair terms, shifted in `@alchemical` and
   // `@observe<k>` (D210).
   Truncation truncation = getPairTruncation();
@@ -4012,6 +4042,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   // sigma1, epsilon1 those of the type of each particle with itself.
   for (auto [k, term] : llvm::enumerate(control.pairs)) {
     if (!pairTerms || (pairTerm >= 0 && static_cast<int>(k) != pairTerm))
+      continue;
+    if (dependent && !dependent->hasPair(static_cast<unsigned>(k)))
       continue;
     if (alchemicalOnly && !usesLambda(term.expression))
       continue;
@@ -4685,6 +4717,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   for (auto [index, term] : llvm::enumerate(system.topology->tupleTerms)) {
     if (!(terms & TupleTerms) ||
         (tupleTerm >= 0 && static_cast<int>(index) != tupleTerm))
+      continue;
+    if (dependent && !dependent->hasTuple(static_cast<unsigned>(index)))
       continue;
     if (alchemicalOnly && !usesLambda(term.expression))
       continue;
@@ -10071,6 +10105,89 @@ llvm::Error Builder::build() {
   emitPrograms();
   emitEntry();
   return llvm::Error::success();
+}
+
+DependentTerms mdir::driver::getDependentTerms(const Control &control,
+                                               const System &system) {
+  DependentTerms kept;
+  auto reads = [&](StringRef expression, std::initializer_list<StringRef> names) {
+    auto parsed = Expression::parse(expression, control.functions);
+    if (!parsed) {
+      llvm::consumeError(parsed.takeError());
+      return true;
+    }
+    for (StringRef name : names)
+      if (llvm::is_contained(parsed->getNames(), name.str()))
+        return true;
+    return false;
+  };
+  auto addPair = [&](unsigned index) {
+    if (!kept.hasPair(index))
+      kept.pairs.push_back(index);
+  };
+  for (const Control::TunableDeclaration &declaration :
+       control.tunableDeclarations)
+    switch (declaration.kind) {
+    case Control::TunableKind::Charge:
+      kept.coulomb = true;
+      for (auto [index, term] : llvm::enumerate(control.pairs))
+        if (reads(term.expression, {"q1", "q2"}))
+          addPair(static_cast<unsigned>(index));
+      break;
+    case Control::TunableKind::Sigma:
+    case Control::TunableKind::Epsilon:
+    case Control::TunableKind::SigmaPair:
+    case Control::TunableKind::EpsilonPair:
+      kept.lennardJones = true;
+      break;
+    case Control::TunableKind::PairConstant:
+      if (declaration.termIndex < control.pairs.size() &&
+          reads(control.pairs[declaration.termIndex].expression,
+                {declaration.parameter}))
+        addPair(declaration.termIndex);
+      break;
+    case Control::TunableKind::TupleParameter:
+      if (system.topology &&
+          declaration.termIndex < system.topology->tupleTerms.size() &&
+          reads(system.topology->tupleTerms[declaration.termIndex].expression,
+                {declaration.parameter}) &&
+          !kept.hasTuple(declaration.termIndex))
+        kept.tuples.push_back(declaration.termIndex);
+      break;
+    }
+  std::sort(kept.pairs.begin(), kept.pairs.end());
+  std::sort(kept.tuples.begin(), kept.tuples.end());
+  if (kept.lennardJones)
+    kept.names.push_back("lennard_jones");
+  if (kept.coulomb)
+    kept.names.push_back("coulomb");
+  for (unsigned index : kept.pairs)
+    kept.names.push_back("pair:" + control.pairs[index].name);
+  for (unsigned index : kept.tuples)
+    kept.names.push_back("tuple:" + system.topology->tupleTerms[index].name);
+  return kept;
+}
+
+void mdir::driver::keepDependentTerms(Control &control, const System &system) {
+  control.dependentTerms = true;
+  DependentTerms kept = getDependentTerms(control, system);
+  // Without tunable charges there are no electrostatics, so no mesh.
+  if (!kept.coulomb) {
+    control.pme = false;
+    control.reactionField = false;
+  }
+  // The observed columns of the terms that stay.
+  auto stays = [&](const Control::Observable &observable) {
+    for (unsigned index : kept.pairs)
+      if (control.pairs[index].name == observable.term)
+        return true;
+    for (unsigned index : kept.tuples)
+      if (system.topology->tupleTerms[index].name == observable.term)
+        return true;
+    return false;
+  };
+  llvm::erase_if(control.observables,
+                 [&](const Control::Observable &o) { return !stays(o); });
 }
 
 llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
