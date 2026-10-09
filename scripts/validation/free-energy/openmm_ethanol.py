@@ -24,16 +24,18 @@ check_free_energy.py):
   [Beutler1994], with the rule of Lorentz and Berthelot;
 - no switch and no correction for the dispersion.
 
-OpenMM cuts the energy of a pair at the cutoff, while its forces, as those
-of MDIR, are those of the potential shifted to 0 there. The global
-parameter `shift` (0 or 1) of the CustomNonbondedForce subtracts
+Two conventions of the energy of a pair within the cutoff are written:
+`cut`, the energy as it is, and `shift`, the energy less its value at the
+cutoff, the potential of MDIR's rows (D210). The global parameter `shift`
+(0 or 1) of the CustomNonbondedForce subtracts
 (1 - lambda_vdw) 4 eps ((sigma/r_c)^12 - (sigma/r_c)^6) from each pair of
 the ethanol within the cutoff, the shift of `POTENTIAL_SHIFT` of MDIR for
 a decoupled pair (D210); it changes no force. `point` and `run` give the
 energies of both conventions from the same positions. The direct sum of
-particle mesh Ewald is left cut: its shift, f q_i q_j erfc(beta r_c)/r_c
+particle mesh Ewald is cut in both: its shift, f q_i q_j erfc(beta r_c)/r_c
 for each pair of the ethanol within the cutoff, is summed by `point` from
-the coordinates (S, as the test does) and is below 1e-4 kcal/mol.
+the coordinates (S, as the test does); it is 6e-5 kcal/mol at the
+coordinates of the test.
 
 `point` prints, for each state, dH/dlambda of both components and the
 energy of every state less that of the state, in kcal/mol, as a row of the
@@ -48,18 +50,15 @@ each state it writes s<k>.dhdl, the rows of both conventions of the same
 trajectory, in WORK/shift and WORK/cut, each with a control file that only
 scripts/free-energy.py reads.
 
-Without --shifted the run is OpenMM's own: the forces are those of the
-shifted potential, as in every program that cuts, but the Monte Carlo
-barostat accepts volumes by the cut energies, whose step at the cutoff acts
-as a pressure, (2 pi/3) rho^2 r_c^3 g(r_c) u(r_c), about -130 atm for the
-water at 9 Angstrom, so that the density is higher than that of the
-potential of the forces at 1 atm. With --shifted every Lennard-Jones pair
-is shifted to 0 at the cutoff in the energy too (that of the rest in a
-second CustomNonbondedForce), and the barostat and the forces are of one
-potential, as in MDIR, whose barostat takes the virial of the forces.
+With --shifted the run has the same potential as MDIR's in its energy:
+every Lennard-Jones pair is shifted to 0 at the cutoff, that of the
+ethanol with `shift` = 1 and that of the rest in a second
+CustomNonbondedForce, and the Monte Carlo barostat takes that energy.
+Without it the Lennard-Jones of the rest is in the NonbondedForce with the
+cut energy and `shift` is 0 during the run. The comparison of Section 6.8
+of the paper is run with --shifted.
 
---stage runs one stage, so that a GPU can be
-released between them.
+--stage runs one stage, so that a GPU can be released between them.
 """
 import argparse
 import math
@@ -82,10 +81,9 @@ NB_GROUP, LJ_GROUP = 1, 2
 def build(prmtop, electrostatics='PME', grid=32, constraints=True,
           shifted=False):
     """The system and the indices of the particles of the ethanol. With
-    `shifted`, every Lennard-Jones pair is shifted to 0 at the cutoff: that
-    of the rest moves from the NonbondedForce, which cannot shift it, to a
-    CustomNonbondedForce, and `shift` is 1, so that the energy that the
-    Monte Carlo barostat takes is that of the potential of the forces."""
+    `shifted`, every Lennard-Jones pair is shifted to 0 at the cutoff, the
+    same potential as MDIR's: that of the rest is in a second
+    CustomNonbondedForce and `shift` is 1."""
     if electrostatics == 'PME':
         method = app.PME
     else:

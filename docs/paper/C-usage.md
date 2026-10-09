@@ -708,14 +708,16 @@ with their uncertainties:
 python3 scripts/free-energy.py s*.toml
 ```
 
-For 500 ps a state at 300 K and 1 atm it prints
-$\Delta G = 2.79 \pm 0.11$ kcal/mol by MBAR from the coupled to the
-decoupled state, a hydration free energy of $-2.79$ kcal/mol; OpenMM with
-the same Hamiltonian gives $2.78 \pm 0.11$ (Section 6.8, which also
-states what the fix of issue #218 and D210 changed in the rows since that
-run). `scripts/validation/free-energy/run.py` writes the control files of
-every stage and state and runs them, and `compare.py` beside it adds the
-legs of the Coulomb and of the Lennard-Jones.
+For 500 ps a state at 300 K and 1 atm, with a cutoff of 9 Å and no
+correction for the dispersion, the mean over 13 independent sets of these
+runs is $\Delta G = 2.50 \pm 0.04$ kcal/mol by MBAR from the coupled to
+the decoupled state, a hydration free energy of $-2.50$ kcal/mol; OpenMM
+with the same Hamiltonian and potential gives $2.48 \pm 0.04$ over 10
+sets (Section 6.8, with the conditions of both). The standard deviation
+of one set is 0.16 kcal/mol.
+`scripts/validation/free-energy/run.py` writes the control files of every
+stage and state and runs them, and `sets.py` beside it gives the mean over
+sets and its standard error.
 
 Any other component, `restraint = [...]` say, is the global parameter
 `lambda_restraint` of the expressions of C.7, with the value of the

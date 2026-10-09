@@ -13,7 +13,7 @@ out as Amber coordinates with seven decimals, so that both programs read
 the same numbers). For each, MDIR runs every state for one step and the
 row of its start is compared with OpenMM's energies:
 
-- `cut`: the energy of each pair cut at the cutoff, as OpenMM reports it;
+- `cut`: the energy of each pair within the cutoff as it is;
 - `shift`: the Lennard-Jones of the pairs of the ethanol shifted to 0 at
   the cutoff (the parameter `shift` of openmm_ethanol.py) and the direct
   sum of particle mesh Ewald shifted by S, summed from the coordinates:
