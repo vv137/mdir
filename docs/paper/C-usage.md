@@ -709,13 +709,14 @@ python3 scripts/free-energy.py s*.toml
 ```
 
 For 500 ps a state at 300 K and 1 atm, with a cutoff of 9 Å and no
-correction for the dispersion, the mean over 13 independent sets of these
-runs is $\Delta G = 2.50 \pm 0.04$ kcal/mol by MBAR from the coupled to
-the decoupled state, a hydration free energy of $-2.50$ kcal/mol; OpenMM
+correction for the dispersion, the mean over 25 independent sets of these
+runs is $\Delta G = 2.47 \pm 0.03$ kcal/mol by MBAR from the coupled to
+the decoupled state, a hydration free energy of $-2.47$ kcal/mol; OpenMM
 with the same Hamiltonian and potential gives $2.48 \pm 0.04$ over 10
-sets and GROMACS $2.49 \pm 0.02$ over 12 (Section 6.8, with the
-conditions of each). The standard deviation
-of one set is 0.16 kcal/mol.
+sets and GROMACS $2.50 \pm 0.02$ over 22 (Section 6.8, with the
+conditions of each). One set of these runs has a standard deviation of
+0.12 kcal/mol, and the script prints 0.11 for it: its uncertainty is that
+within the runs it is given.
 `scripts/validation/free-energy/run.py` writes the control files of every
 stage and state and runs them, and `sets.py` beside it gives the mean over
 sets and its standard error.

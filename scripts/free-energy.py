@@ -10,7 +10,9 @@ component and U(λ_k) − U(λ of the run) for every state k, in kcal/mol. The
 script prints ΔG from the first state to each other one by thermodynamic
 integration [Kirkwood1935], the trapezoidal rule over the states in order,
 and by MBAR [ShirtsChodera2008], with uncertainties from samples spaced by
-their statistical inefficiency [Chodera2007]. The keys are those of
+their statistical inefficiency [Chodera2007]. These uncertainties are
+those within the runs given; scripts/validation/free-energy/sets.py takes
+the scatter of independent sets of runs. The keys are those of
 docs/references.md. Needs NumPy, and Python 3.11 (tomllib) or tomli.
 """
 
@@ -186,6 +188,9 @@ def main():
 
     print(f'# T = {temperature} K, kT = {kt:.6f} kcal/mol; ΔG from state 0, '
           'in kcal/mol')
+    print('# +-: the uncertainty within the runs given, from their '
+          'statistical inefficiency; the standard deviation of n '
+          'independent sets is itself known to 1/sqrt(2(n-1)) of its value')
     print('# state ' + ' '.join(f'{c:>8}' for c in components) +
           '    TI      +-     MBAR     +-  overlap')
     for k in range(states):

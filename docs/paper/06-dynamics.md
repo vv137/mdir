@@ -1250,35 +1250,43 @@ own equilibration, and each number below is the mean over the sets with
 the standard error of the mean from their scatter. MDIR in mixed precision
 on an RTX 3090, with stochastic cell rescaling every 10 steps (a time
 constant of 2 ps) and B-splines of order 4, gives by MBAR
-$\Delta G = 2.50 \pm 0.04$ kcal/mol from the coupled to the decoupled
-state, $-2.50$ kcal/mol of hydration, and by TI over the states
-$2.75 \pm 0.04$, over 13 sets. OpenMM 8.6.1 in mixed precision on its CUDA
+$\Delta G = 2.47 \pm 0.03$ kcal/mol from the coupled to the decoupled
+state, $-2.47$ kcal/mol of hydration, and by TI over the states
+$2.73 \pm 0.02$, over 25 sets. OpenMM 8.6.1 in mixed precision on its CUDA
 platform, with the same Hamiltonian and the same shifted Lennard-Jones in
 its energies, a Monte Carlo barostat every 25 steps, and B-splines of
 order 5, gives $2.48 \pm 0.04$ by MBAR and $2.70 \pm 0.03$ by TI, over 10
-sets. The differences, OpenMM less MDIR, are $-0.02 \pm 0.06$ kcal/mol by
-MBAR and $-0.05 \pm 0.05$ by TI; those of the legs by MBAR are
-$-0.01 \pm 0.03$ (Coulomb) and $-0.01 \pm 0.06$ kcal/mol
+sets. The differences, OpenMM less MDIR, are $0.01 \pm 0.05$ kcal/mol by
+MBAR and $-0.03 \pm 0.04$ by TI; those of the legs by MBAR are
+$0.00 \pm 0.03$ (Coulomb) and $0.01 \pm 0.04$ kcal/mol
 (Lennard-Jones). GROMACS 2026.3 in mixed precision on its CUDA platform,
 from the same topology, with the potential shift of its cutoff for the
 Lennard-Jones and for the direct sum, its `sd` integrator with a friction
 of 1/ps, stochastic cell rescaling every 10 steps (a time constant of
 2 ps), B-splines of order 4, and its soft-core with `sc-r-power = 6` and
-`sc-power = 1`, gives $2.49 \pm 0.02$ by MBAR and $2.72 \pm 0.02$ by TI,
-over 12 sets. The differences, GROMACS less MDIR, are $-0.01 \pm 0.05$
-kcal/mol by MBAR and $-0.03 \pm 0.05$ by TI; those of the legs by MBAR
-are $-0.01 \pm 0.02$ (Coulomb) and $0.00 \pm 0.05$ kcal/mol
+`sc-power = 1`, gives $2.50 \pm 0.02$ by MBAR and $2.73 \pm 0.02$ by TI,
+over 22 sets. The differences, GROMACS less MDIR, are $0.03 \pm 0.03$
+kcal/mol by MBAR and $-0.01 \pm 0.03$ by TI; those of the legs by MBAR
+are $0.01 \pm 0.02$ (Coulomb) and $0.01 \pm 0.03$ kcal/mol
 (Lennard-Jones). GROMACS interpolates the reciprocal sum between the end
 states where MDIR scales the charges, so that the states with
 $0 < \lambda_\text{C} < 1$ differ between the two by
 $\lambda_\text{C}(1 - \lambda_\text{C})$ times 0.006 to 0.010 kcal/mol
-in four configurations; the end states of both legs are the same. The
-standard deviation of one set by MBAR is 0.16 kcal/mol in MDIR, 0.12 in
-OpenMM, and 0.07 in GROMACS; the uncertainty that the statistical
-inefficiency within one set gives is 0.11 in all three. TI is 0.25
-kcal/mol above MBAR in MDIR and 0.23 in OpenMM and in GROMACS: on this
-spacing of the Lennard-Jones TI is biased by its curvature, which MBAR is
-not. For one
+in four configurations; the end states of both legs are the same. Sets
+made anew from the runs of one program, the run of each state taken from
+a set drawn at random, have a standard deviation of 0.12 kcal/mol a set by
+MBAR in each of the three programs and of 0.10 (MDIR), 0.11 (OpenMM), and
+0.10 (GROMACS) by TI (150 such permutations of the 25, 10, and 22 sets);
+the statistical inefficiency within one set gives 0.11 by MBAR and 0.10 by
+TI; and the standard deviation of $n$ sets is itself known to
+$1/\sqrt{2(n-1)}$ of its value. In runs of 5 ns of states 0, 4,
+9, and 13, the distributions of the rows, the autocorrelation times of the
+volume, of the potential energy, and of $\partial U/\partial\lambda$, the
+compressibility from the fluctuation of the volume and from its response
+to 300 atm, and the variance of the kinetic energy were compared between
+the three programs (issue #259). TI is 0.26 kcal/mol above MBAR in MDIR
+and 0.23 in OpenMM and in GROMACS: on this spacing of the Lennard-Jones TI
+is biased by its curvature, which MBAR is not. For one
 set of MDIR, the rows of the cut potential on the same trajectories give
 0.43 kcal/mol more by MBAR than those of the shifted one,
 $N_\text{in}u(r_c)$ of the pairs of the ethanol. The scripts of the
