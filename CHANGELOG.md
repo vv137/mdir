@@ -523,6 +523,21 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- In the deterministic mode on the CPU, a run depended on `energy_interval`
+  at the last bits of the forces of the torsions (#243, D204): the code
+  generator computed the sine of the force of a torsion by `sincos` of the
+  C library in a step that writes energies, whose kernel has the cosine of
+  the energy as well, and by `sin` in a step that does not, and the two do
+  not always round alike (7 arguments in 10,000 with glibc 2.35). Seen in
+  double precision under NPT with `work = "TROTTER"` or
+  `"TROTTER_FIRST_ORDER"` (a velocity of the dipeptide in water by 8e-17
+  nm/ps after 400 steps, or 2e-16 after 40 with a term over centers), it
+  could occur in any ensemble in double precision; in mixed precision the
+  torsions are in f32, where the two functions of that glibc agree. In the
+  deterministic mode a sine and a cosine are now calls of `sin` and `cos`
+  each (`separate-sin-cos`). A deterministic run on the CPU may differ
+  from before in the last bits where a step of energy met such an
+  argument; the default mode and runs on a GPU are unchanged.
 - The Python wheels and the container image carry the notices of the
   third parties whose code they distribute in binary form, as the release
   tarball does (#221). A wheel held pocketfft, toml++, LLVM, and the
