@@ -278,6 +278,12 @@ struct Output {
   /// The shortest edge of the cell that the cutoff allows, twice it; a run
   /// whose barostat takes the cell below it stops.
   double leastEdge = 0.0;
+  /// The shortest edge of the cell that the reach of the groups allows, the
+  /// pairlist distance over 0.999 (0: no such bound, the neighbor matrix):
+  /// their lists hold every image within the reach only in a cell wider
+  /// than the reach (D[group-images]); a run whose barostat takes the cell
+  /// below it stops.
+  double leastReachEdge = 0.0;
 
   /// The energies at the first and at the last output, in kJ/mol. With
   /// coupling, those that are conserved.
