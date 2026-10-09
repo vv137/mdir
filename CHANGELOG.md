@@ -307,6 +307,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- With the groups, `pairlist_distance` may be up to 0.999 of the least
+  edge of the cell (the least of $a_x, b_y, c_z$ of a triclinic one),
+  where a triclinic cell was limited to half of it and an orthorhombic
+  cell was not limited (D[group-images], #263). The builder refuses a
+  longer one ("exceeds 0.999 of the least edge of the cell"), a commit of a
+  writable borrow does, and a run whose barostat takes the cell below
+  `pairlist_distance`/0.999 stops, as one does at twice the cutoff.
 - A build of the neighbor matrix on a device orders the particles of a
   cell by rank, one thread per particle, in place of an insertion sort in
   one thread per cell (D235, #231). A system of about a
@@ -590,6 +597,22 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- With the groups (`neighbor_structure = "GROUPS"`, with or without a dual
+  list) in an orthorhombic cell, a pairlist distance of more than about
+  the edge of the cell less the half-width of a group lost pairs (#263,
+  D[group-images], `docs/groups-m1.md`, Section 5.2): the lists took the
+  image of a candidate nearest to the center of a group and the one on the
+  other side of the boundary along each axis, which are not every image
+  within such a reach, and nothing refused the input. Measured on 216 argon
+  atoms: in a cube of 17.2 Å with a pairlist distance of 15 Å a pair was
+  missing at 126 of 2000 steps (force errors of 0.2 kJ/mol/nm), with 12 Å
+  none; in a cube that a barostat took from 22 to 19.4 Å with 17 Å, the
+  potential lacked pairs in 23 of 79 frames. It takes a skin of about half
+  the cell: the cells of ordinary runs, wider than twice the pairlist
+  distance, are not affected, and v0.1.0 has the defect only for such
+  inputs. The lists now take the 27 images a cell away or none along each
+  axis and hold every image within a reach below the least edge of the
+  cell, in an orthorhombic and in a triclinic cell.
 - In a triclinic cell the neighbor matrix (the default structure, on the
   CPU and on a device) lost pairs once its reach, `pairlist_distance`, was
   more than half of the least of $a_x, b_y, c_z$ (#258, D[matrix-images],

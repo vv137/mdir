@@ -236,12 +236,18 @@ the image of every pair of the entry within the reach only while the reach
 and the half-width of the box are no more than half the cell along each
 axis. A second kernel takes the groups whose box and the reach are more
 than half the cell wide along an axis, the only ones whose candidates can
-have an image on the other side of the boundary within the reach, and adds
-entries for those images to their lists, from the block where the list
-kernel left each (stored in the free column of the box); the sides go in
-bits 28 to 30 of the entry of the queue, and each image becomes an entry
-with its own mask and shift. With edges longer than twice the reach a pair
-has at most one image within it, so each pair is still in one list once.
+have another image within the reach, and adds entries for those images to
+their lists, from the block where the list kernel left each (stored in the
+free column of the box): the images a cell away or none along each axis,
+27 codes of which one is the nearest image, $9(o_z + 1) + 3(o_y + 1) +
+(o_x + 1)$ for the image $\mathbf r - \mathbf o \odot \mathbf L$; the
+code goes in bits 26 to 30 of the entry of the queue, and each image
+becomes an entry with its own mask and shift (Section 5.2). With edges
+longer than twice the reach a pair has at most one image within it, so
+each pair is in one list once; in a narrower cell a pair has an entry bit
+for each image within the reach, and the loop, which takes the cutoff of
+each, finds at most one within it, the edges being at least twice the
+cutoff.
 In a wide cell the second kernel is warps that return; in the list kernel,
 the same code took 128 registers instead of 64 and the build of Cellulose
 30% more time.
@@ -255,15 +261,68 @@ A triclinic cell (docs/triclinic-m2.md) takes the build of
 | Part | Orthorhombic | Triclinic |
 |---|---|---|
 | Wrapped positions | Into $[0, L)$ along each axis | Into the brick $[0,a_x)\times[0,b_y)\times[0,c_z)$, along c, then b, then a; the order, the columns, and the grid of the candidates are those of the brick |
-| Minimum image | Per axis | One pass along c, b, and a (`@mdrt_gpu_groups_image_triclinic`), which gives the lattice shift $\mathbf n$ with it; exact within half of the least of $a_x, b_y, c_z$, which bounds the reach |
+| Minimum image | Per axis | One pass along c, b, and a (`@mdrt_gpu_groups_image_triclinic`), which gives the lattice shift $\mathbf n$ with it: the image in the brick, the nearest one within half of the least of $a_x, b_y, c_z$; the images of D115 take the others (Section 5.2) |
 | Windows of the search | Per axis, wrapped per axis | A row of z $t_z$ cells beyond the grid is that of $t_z\mathbf c$ away: its window of y moves by $-t_z c_y$; a row of y $t_y$ beyond, by $t_y\mathbf b$: its window of x moves by $-t_z c_x - t_y b_x$, and by whole periods of a back into the grid, so that the run along x goes around the edge once at most. A range of z wider than the grid makes y and x whole, and one of y makes x whole: every cell once |
 | Shifts of the frames and of the entries | Cells per axis, times the edges | Lattice vectors, times $H$ (`kernels::emitLatticeShift`): five multiply-adds once per entry |
 | Shift of an entry in its mask | $(e + 4)$ in four bits an axis, bits 16 to 27 | $(e + 16)$ in five bits a vector, bits 16 to 30: the brick spans up to 3.5 periods of a in lattice coordinates |
-| Images of D115 | The other side along the axes of three bits | The 27 codes a lattice vector away: $\Delta n_c \in \{-1, 0, 1\}$, then y rounded again and $\Delta n_b$, then x and $\Delta n_a$; the queue holds the code in bits 26 to 30 and the place below |
+| Images of D115 | The 27 codes a cell away or none along each axis | The 27 codes a lattice vector away: $\Delta n_c \in \{-1, 0, 1\}$, then y rounded again and $\Delta n_b$, then x and $\Delta n_a$; the queue holds the code in bits 26 to 30 and the place below |
 
 `test/Runtime/neighbors-groups-triclinic-gpu.mlir` checks the lists of an
 octahedron, a dodecahedron, a hexagonal cell, and a cell of D115 against
-every pair in f64.
+every image of every pair in f64.
+
+## 5.2 How far the lists reach (D[group-images])
+
+**Claim.** The lists hold an entry bit for every image of every pair
+within the reach $R$ while $R < \min_a L_a$, the least edge of an
+orthorhombic cell or the least of $a_x, b_y, c_z$ of a triclinic one.
+
+**Proof.** Let $\mathbf c$ be the center of the box of a group and
+$\mathbf h$ its half-widths. (1) The particles of a group are taken in the
+minimum image of its first (per axis, or by the pass along $\mathbf c$,
+$\mathbf b$, $\mathbf a$, which leaves each component within half of
+$L_a$), so a box spans at most the cell along each axis: $h_a \le
+\tfrac12 L_a$. (2) An image of a candidate within $R$ of a particle of
+the group is within $R$ of the box, so its displacement from the center
+has $\lvert r_a\rvert \le h_a + R$ along each axis. (3) The list kernel
+takes the image nearest to the center, $\lvert r_a\rvert \le \tfrac12
+L_a$ (in a triclinic cell, the image of the pass), and the images kernel
+those with $o_a \in \{-1, 0, 1\}$ cells more along each axis (in a
+triclinic cell $\Delta n_c$, then $y$ rounded again and $\Delta n_b$,
+then $x$ rounded again and $\Delta n_a$): every image with $\lvert
+r_a\rvert \le \tfrac32 L_a$ along each axis, and no other image has
+that, the next being at least $\tfrac32 L_a$ away along some axis. (4)
+The images kernel runs for a group where $2(h_a + R) \ge L_a$ along some
+axis; elsewhere (2) leaves only the nearest image. So the lists are
+complete where $h_a + R < \tfrac32 L_a$ for every axis, which (1) gives
+for $R < \min_a L_a$. $\blacksquare$
+
+The bound is not sharp for a group whose box is small, but it is the one
+that holds for every group whatever the positions (a sparse column makes a
+box as wide as the cell), and a reach of the whole cell has no use. The
+builds widen the reach by $3\times10^{-6}$ of the sum of the edges for
+the rounding of f32, so the builder refuses `pairlist_distance` $> 0.999
+\min_a L_a$ with the groups, a commit of a writable borrow does, and under
+a barostat the runtime stops a run whose cell comes below
+`pairlist_distance`/0.999 (`leastReachEdge` of `mdrtSetBox`), as it does
+at twice the cutoff. The dual list is pruned from these lists with their
+shifts and adds no image of its own.
+
+Before D[group-images] the orthorhombic images kernel took, along each
+axis, the nearest image or the one on the other side of the boundary, 8
+combinations: the images with $\lvert r_a\rvert \le L_a$ on the side of
+$-\operatorname{sign}(r_a)$ only, complete while $h_a + R \le L_a$, which
+nothing asked (#263). The triclinic kernel had the 27 codes, with a bound
+of half of the least of $a_x, b_y, c_z$ on the reach, which the proof
+above replaces by the whole of it.
+
+`test/Runtime/neighbors-groups-gpu.mlir` and its triclinic twin count, for
+each pair, the bits in the lists against the images within the reach in
+f64 (up to two cells away), and compare the sum of the squared
+displacements in the frames of the groups with that of those images, at
+reaches up to 0.975 of the least edge; `group-reach-gpu.test` runs the
+groups and the dual list in a cube and in a tilted cell under a barostat
+with a reach of 0.77 to 0.89 of the edge against the sum over all images.
 
 ## 6. In the IR
 

@@ -512,7 +512,12 @@ pass (`neighbors-matrix-triclinic*.mlir`), and the potential of a run of
 half of the diagonal equals the sum over all images at each of 79 frames
 to $10^{-5}$ kcal/mol, on the CPU and on a device
 (`triclinic-reach*.test`); the build before lost up to 8 pairs in 9 of
-those frames. Twenty frames of a run
+those frames. The lists of the groups are checked the same way, each pair
+against its images within the reach in f64, at reaches up to 0.975 of the
+least edge of a cube and of the least of the diagonal of four tilted cells
+(`neighbors-groups*-gpu.mlir`), and in the same run under the barostat
+with a reach of 0.77 to 0.89 of the edge, with and without a dual list
+(`group-reach-gpu.test`, D[group-images]). Twenty frames of a run
 at constant pressure, whose barostat scales the tilts, put into one
 simulation give the energies and forces of a simulation compiled from each
 (`python-dlpack-tilts*.test`).

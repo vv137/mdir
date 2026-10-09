@@ -317,14 +317,36 @@ $-497.7298$ of the matrix, the virial $-1117.6307$ against $-1117.7782$.
 An image on the other side of the boundary can be within $R$ of the box
 only where $h_a + R \ge L_a/2$ along some axis. A second kernel takes
 just those groups, scans their candidates again, and adds to each list,
-from the block where the first kernel left it, an entry for each image
-on the other side whose distance from the box, $L_a - \lvert r_a\rvert -
-h_a$ along each such axis with $r_a$ that of the nearest image, is within
-$R$; it queues the candidate with the sides in bits 28 to 30, and each
-image becomes an entry with its own mask and shift. As the edges exceed
-$2R$, a pair has at most one image within the reach, so the masks of the
-entries of a candidate are disjoint and each pair within the reach is
-still in one list once. In the cells of the Amber suite no group needs
+from the block where the first kernel left it, an entry for each image a
+cell away or none along each axis, $\mathbf r - \mathbf o \odot \mathbf
+L$ with $o_a \in \{-1, 0, 1\}$ and $\mathbf r$ that of the nearest
+image, whose distance from the box is within $R$; it queues the candidate
+with the code of $\mathbf o$ in bits 26 to 30, and each image becomes an
+entry with its own mask and shift. Where the edges exceed $2R$, a pair
+has at most one image within the reach, so the masks of the entries of a
+candidate are disjoint and each pair within the reach is in one list
+once; in a narrower cell a pair has a bit for each of its images within
+the reach, of which the loop finds at most one within the cutoff, the
+edges being at least $2 r_c$.
+
+These 27 are every image with $\lvert r_a\rvert \le \tfrac32 L_a$ along
+each axis, the nearest having $\lvert r_a\rvert \le \tfrac12 L_a$. An
+image within $R$ of the box has $\lvert r_a\rvert \le h_a + R$, and $h_a
+\le \tfrac12 L_a$, since the particles of a group are taken in the
+minimum image of its first. The lists therefore hold every image of every
+pair within the reach for
+
+$$
+R < \min_a L_a ,
+$$
+
+whatever the positions, and the run asks it: the builder refuses a longer
+reach for the groups and the runtime stops a run whose barostat takes the
+cell below it (D[group-images]). Before, the kernel took the nearest image
+or the one on the other side of the boundary along each axis, which is
+every image only while $h_a + R \le L_a$, a condition nothing asked: with
+a reach of 0.77 to 0.89 of the edge of a cube under a barostat, 23 of 79
+frames lacked pairs. In the cells of the Amber suite no group needs
 it, and the second kernel is a launch of warps that return. A first
 version handled both cases in the list kernel, which then needed 128
 registers a thread instead of 64 and took 2259 µs a build on Cellulose
@@ -411,16 +433,17 @@ $t_z$ cells beyond a face of z holds the particles of $t_z\mathbf c$ away,
 x and y with them, and one $t_y$ beyond a face of y those of $t_y\mathbf
 b$, so the window of y moves by $-t_z c_y$ in each row of z and that of x
 by $-t_z c_x - t_y b_x$ in each row of y. The minimum image is taken in
-one pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, exact for a
-displacement whose nearest image is within half of the least of $a_x$,
-$b_y$, $c_z$, which bounds the reach; the shifts of the frames and of the
+one pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, which gives the
+image in the brick (the nearest one within half of the least of $a_x$,
+$b_y$, $c_z$, Section 4.3); the shifts of the frames and of the
 entries become lattice vectors $\mathbf n$, applied as $\mathbf n H$, five
 multiply-adds once per entry and nothing per pair. The images of D115 are
-those a lattice vector away: as every nonzero lattice vector of a reduced
-cell is at least as long as the least of $a_x, b_y, c_z$, an image within
-the reach of a box differs from the nearest by $-1$, $0$, or $1$ along
-each of $\mathbf c$, $\mathbf b$ (rounded again), and $\mathbf a$
-(rounded again), 27 in all.
+those a lattice vector away, $-1$, $0$, or $1$ along each of $\mathbf c$,
+$\mathbf b$ (rounded again), and $\mathbf a$ (rounded again), 27 in all:
+every image within three halves of $c_z$, $b_y$, and $a_x$ of the center
+of a box along $z$, $y$, and $x$, so that the argument above holds with
+$L_a$ the diagonal of $H$, and the lists are complete for a reach below
+$\min(a_x, b_y, c_z)$.
 
 ## 4.5 The dual list
 
