@@ -909,8 +909,583 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
   return %largest, %not_numbers : index, index
 }
 
-// As @mdrt.image_within_triclinic of the template for the host: whether
-// an image of the displacement d of a pair is within the reach,
+// The neighbor matrix of a triclinic cell, `box` = (a_x, b_y, c_z, b_x,
+// c_x, c_y), with the widths of the cell between its faces, `widths`, where
+// the reach is at most half of the least of a_x, b_y, c_z: the build of
+// the orthorhombic cell in the fractional coordinates, which the positions
+// are wrapped in, with the image of the one pass (docs/triclinic-m2.md),
+// which is then the nearest image of every pair within the reach.
+// @mdrt_gpu_build_neighbors_matrix_triclinic, below, calls it for such a
+// cell, and for a narrower one the build that tests every image within the
+// reach, which a script writes from this one.
+func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
+    %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
+    %reach: f64, %cell_width: f64, %excluded: memref<?x?xi32, 1>,
+    %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
+    %order: memref<?xi32, 1>) -> (index, index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %block = arith.constant 128 : index
+  %chunk = arith.constant 256 : index
+
+  %n = memref.dim %x, %c0 : memref<?x3xf64, 1>
+  %row_width = memref.dim %index, %c1 : memref<?x?xi32, 1>
+
+  // The cell: its diagonal a_x, b_y, c_z and its tilts b_x, c_x, c_y; the
+  // cells of the search are those of the fractional coordinates, and their
+  // numbers follow from the widths of the cell between its faces.
+  %lx = vector.extract %box[0] : f64 from vector<6xf64>
+  %ly = vector.extract %box[1] : f64 from vector<6xf64>
+  %lz = vector.extract %box[2] : f64 from vector<6xf64>
+  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
+  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
+  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
+  %width_x = vector.extract %widths[0] : f64 from vector<3xf64>
+  %width_y = vector.extract %widths[1] : f64 from vector<3xf64>
+  %width_z = vector.extract %widths[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %nx = call @mdrt_gpu_cell_count(%width_x, %cell_width) : (f64, f64) -> index
+  %ny = call @mdrt_gpu_cell_count(%width_y, %cell_width) : (f64, f64) -> index
+  %nz = call @mdrt_gpu_cell_count(%width_z, %cell_width) : (f64, f64) -> index
+  %nxy = arith.muli %nx, %ny : index
+  %cells = arith.muli %nxy, %nz : index
+  %cell_chunks = call @mdrt_gpu_grid(%cells, %chunk)
+      : (index, index) -> index
+
+  // What the search computes with, in f32.
+  %narrow_lx = arith.truncf %lx : f64 to f32
+  %narrow_ly = arith.truncf %ly : f64 to f32
+  %narrow_lz = arith.truncf %lz : f64 to f32
+  %narrow_unit = arith.constant 1.0 : f32
+  %narrow_ilx = arith.divf %narrow_unit, %narrow_lx : f32
+  %narrow_ily = arith.divf %narrow_unit, %narrow_ly : f32
+  %narrow_ilz = arith.divf %narrow_unit, %narrow_lz : f32
+  %narrow_bx = arith.truncf %tbx : f64 to f32
+  %narrow_cx = arith.truncf %tcx : f64 to f32
+  %narrow_cy = arith.truncf %tcy : f64 to f32
+  // The margin is more than the rounding of a distance between positions in
+  // the cell.
+  %abs_bx = math.absf %tbx : f64
+  %abs_cx = math.absf %tcx : f64
+  %abs_cy = math.absf %tcy : f64
+  %lxy0 = arith.addf %lx, %ly : f64
+  %lxy1 = arith.addf %lxy0, %abs_bx : f64
+  %lxy2 = arith.addf %lxy1, %abs_cx : f64
+  %lxy = arith.addf %lxy2, %abs_cy : f64
+  %lxyz = arith.addf %lxy, %lz : f64
+  %tiny = arith.constant 3.0e-6 : f64
+  %margin = arith.mulf %lxyz, %tiny : f64
+  %far = arith.addf %reach, %margin : f64
+  %far2 = arith.mulf %far, %far : f64
+  %limit2 = arith.truncf %far2 : f64 to f32
+
+  // The cells within reach.
+  %range_x = call @mdrt_gpu_cell_range(%width_x, %nx, %reach)
+      : (f64, index, f64) -> index
+  %range_y = call @mdrt_gpu_cell_range(%width_y, %ny, %reach)
+      : (f64, index, f64) -> index
+  %range_z = call @mdrt_gpu_cell_range(%width_z, %nz, %reach)
+      : (f64, index, f64) -> index
+  %twice_x = arith.addi %range_x, %range_x : index
+  %twice_y = arith.addi %range_y, %range_y : index
+  %twice_z = arith.addi %range_z, %range_z : index
+  %full_x = arith.addi %twice_x, %c1 : index
+  %full_y = arith.addi %twice_y, %c1 : index
+  %full_z = arith.addi %twice_z, %c1 : index
+  %span_x = arith.minsi %nx, %full_x : index
+  %span_y = arith.minsi %ny, %full_y : index
+  %span_z = arith.minsi %nz, %full_z : index
+  %all_x = arith.cmpi eq, %span_x, %full_x : index
+  %all_y = arith.cmpi eq, %span_y, %full_y : index
+  %all_z = arith.cmpi eq, %span_z, %full_z : index
+  %back_x = arith.subi %nx, %range_x : index
+  %back_y = arith.subi %ny, %range_y : index
+  %back_z = arith.subi %nz, %range_z : index
+  %first_x = arith.select %all_x, %back_x, %c0 : index
+  %first_y = arith.select %all_y, %back_y, %c0 : index
+  %first_z = arith.select %all_z, %back_z, %c0 : index
+
+  // The search has a warp of 32 threads for each particle.
+  %rows_within = arith.muli %span_y, %span_z : index
+  %warp_threads = arith.constant 32 : index
+  %threads = arith.muli %n, %warp_threads : index
+  %false = arith.constant false
+
+  %grid_n = call @mdrt_gpu_grid(%n, %block) : (index, index) -> index
+  %grid_cells = call @mdrt_gpu_grid(%cells, %block) : (index, index) -> index
+  %grid_cell_chunks = call @mdrt_gpu_grid(%cell_chunks, %block)
+      : (index, index) -> index
+  %grid_warps = call @mdrt_gpu_grid(%threads, %block)
+      : (index, index) -> index
+
+  %cells1 = arith.addi %cells, %c1 : index
+  %key = gpu.alloc (%n) : memref<?xi32, 1>
+  %wrapped = gpu.alloc (%n) : memref<?x3xf32, 1>
+  %sorted = gpu.alloc (%n) : memref<?x3xf32, 1>
+  %held = gpu.alloc (%cells) : memref<?xi32, 1>
+  %start = gpu.alloc (%cells1) : memref<?xi32, 1>
+  %cursor = gpu.alloc (%cells) : memref<?xi32, 1>
+  %cell_sums = gpu.alloc (%cell_chunks) : memref<?xi32, 1>
+  %result = gpu.alloc () : memref<2xi32, 1>
+  %host = memref.alloca() : memref<2xi32>
+
+  //===--------------------------------------------------------------------===//
+  // Counting sort of the particles by cell
+  //===--------------------------------------------------------------------===//
+
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cells, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %c = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %c, %cells : index
+    scf.if %inside {
+      %none = arith.constant 0 : i32
+      memref.store %none, %held[%c] : memref<?xi32, 1>
+      // The largest count, which the search raises.
+      %c0_first = arith.constant 0 : index
+      %first_cell = arith.cmpi eq, %c, %c0_first : index
+      scf.if %first_cell {
+        memref.store %none, %result[%c0_first] : memref<2xi32, 1>
+        %c1_second = arith.constant 1 : index
+        memref.store %none, %result[%c1_second] : memref<2xi32, 1>
+      }
+    }
+    gpu.terminator
+  }
+
+  // The position of each particle in the cell, its cell, and the number of
+  // particles that each cell holds.
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %i = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %i, %n : index
+    scf.if %inside {
+      %i0 = arith.constant 0 : index
+      %i1 = arith.constant 1 : index
+      %i2 = arith.constant 2 : index
+      %one = arith.constant 1 : i32
+      %xi = memref.load %x[%i, %i0] : memref<?x3xf64, 1>
+      %yi = memref.load %x[%i, %i1] : memref<?x3xf64, 1>
+      %zi = memref.load %x[%i, %i2] : memref<?x3xf64, 1>
+
+      // s = x H⁻¹, taken into [0, 1); its cell, of the fractional
+      // coordinates; and the position s H in the cell, which the search
+      // takes: see the template for the host. Rounding can place a
+      // particle at an edge one cell too far.
+      %frac_sz = arith.mulf %zi, %ilz : f64
+      %frac_sz_cy = arith.mulf %frac_sz, %tcy : f64
+      %y_rest = arith.subf %yi, %frac_sz_cy : f64
+      %frac_sy = arith.mulf %y_rest, %ily : f64
+      %frac_sy_bx = arith.mulf %frac_sy, %tbx : f64
+      %frac_sz_cx = arith.mulf %frac_sz, %tcx : f64
+      %x_rest0 = arith.subf %xi, %frac_sy_bx : f64
+      %x_rest = arith.subf %x_rest0, %frac_sz_cx : f64
+      %frac_sx = arith.mulf %x_rest, %ilx : f64
+      %frac_sx_floor = math.floor %frac_sx : f64
+      %fx = arith.subf %frac_sx, %frac_sx_floor : f64
+      %frac_sy_floor = math.floor %frac_sy : f64
+      %fy = arith.subf %frac_sy, %frac_sy_floor : f64
+      %frac_sz_floor = math.floor %frac_sz : f64
+      %fz = arith.subf %frac_sz, %frac_sz_floor : f64
+      %x4 = arith.index_cast %nx : index to i64
+      %x5 = arith.sitofp %x4 : i64 to f64
+      %x6 = arith.mulf %fx, %x5 : f64
+      %x7 = arith.fptosi %x6 : f64 to i64
+      %x8 = arith.index_cast %x7 : i64 to index
+      %xl = arith.subi %nx, %i1 : index
+      %xb = arith.minsi %x8, %xl : index
+      %cx = arith.maxsi %xb, %i0 : index
+      %y4 = arith.index_cast %ny : index to i64
+      %y5 = arith.sitofp %y4 : i64 to f64
+      %y6 = arith.mulf %fy, %y5 : f64
+      %y7 = arith.fptosi %y6 : f64 to i64
+      %y8 = arith.index_cast %y7 : i64 to index
+      %yl = arith.subi %ny, %i1 : index
+      %yb = arith.minsi %y8, %yl : index
+      %cy = arith.maxsi %yb, %i0 : index
+      %z4 = arith.index_cast %nz : index to i64
+      %z5 = arith.sitofp %z4 : i64 to f64
+      %z6 = arith.mulf %fz, %z5 : f64
+      %z7 = arith.fptosi %z6 : f64 to i64
+      %z8 = arith.index_cast %z7 : i64 to index
+      %zl = arith.subi %nz, %i1 : index
+      %zb = arith.minsi %z8, %zl : index
+      %cz = arith.maxsi %zb, %i0 : index
+      %wz = arith.mulf %fz, %lz : f64
+      %fy_by = arith.mulf %fy, %ly : f64
+      %fz_cy = arith.mulf %fz, %tcy : f64
+      %wy = arith.addf %fy_by, %fz_cy : f64
+      %fx_ax = arith.mulf %fx, %lx : f64
+      %fy_bx = arith.mulf %fy, %tbx : f64
+      %fz_cx = arith.mulf %fz, %tcx : f64
+      %wx0 = arith.addf %fx_ax, %fy_bx : f64
+      %wx = arith.addf %wx0, %fz_cx : f64
+
+      %narrow_x = arith.truncf %wx : f64 to f32
+      %narrow_y = arith.truncf %wy : f64 to f32
+      %narrow_z = arith.truncf %wz : f64 to f32
+      memref.store %narrow_x, %wrapped[%i, %i0] : memref<?x3xf32, 1>
+      memref.store %narrow_y, %wrapped[%i, %i1] : memref<?x3xf32, 1>
+      memref.store %narrow_z, %wrapped[%i, %i2] : memref<?x3xf32, 1>
+
+      %zy = arith.muli %cz, %ny : index
+      %row = arith.addi %zy, %cy : index
+      %rows = arith.muli %row, %nx : index
+      %k = arith.addi %rows, %cx : index
+      %k32 = arith.index_cast %k : index to i32
+      // No particle at any place yet: a place that stays empty, for want
+      // of a particle with a position, is skipped by the search.
+      %no_particle = arith.constant -1 : i32
+      memref.store %no_particle, %order[%i] : memref<?xi32, 1>
+      // A position that is not a number, or is beyond any cell, gets no
+      // cell, and is counted (D107).
+      // The largest coordinate, not their sum, which opposite coordinates
+      // could cancel; a NaN in any of them propagates through the maximum.
+      %abs_x = math.absf %xi : f64
+      %abs_y = math.absf %yi : f64
+      %abs_z = math.absf %zi : f64
+      %abs_xy = arith.maximumf %abs_x, %abs_y : f64
+      %magnitude = arith.maximumf %abs_xy, %abs_z : f64
+      %not_number = arith.cmpf uno, %magnitude, %magnitude : f64
+      %far_off = arith.constant 1.0e100 : f64
+      %huge = arith.cmpf ogt, %magnitude, %far_off : f64
+      %bad = arith.ori %not_number, %huge : i1
+      scf.if %bad {
+        memref.store %no_particle, %key[%i] : memref<?xi32, 1>
+        %nn_base = memref.extract_aligned_pointer_as_index %result : memref<2xi32, 1> -> index
+        %nn_bi = arith.index_cast %nn_base : index to i64
+        %nn_four = arith.constant 4 : i64
+        %nn_addr = arith.addi %nn_bi, %nn_four : i64
+        %nn_ptr = llvm.inttoptr %nn_addr : i64 to !llvm.ptr<1>
+        %nn_old = llvm.atomicrmw add %nn_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
+      } else {
+        memref.store %k32, %key[%i] : memref<?xi32, 1>
+        // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+        %rx1_base = memref.extract_aligned_pointer_as_index %held : memref<?xi32, 1> -> index
+        %rx1_bi = arith.index_cast %rx1_base : index to i64
+        %rx1_ki = arith.index_cast %k : index to i64
+        %rx1_four = arith.constant 4 : i64
+        %rx1_off = arith.muli %rx1_ki, %rx1_four : i64
+        %rx1_addr = arith.addi %rx1_bi, %rx1_off : i64
+        %rx1_ptr = llvm.inttoptr %rx1_addr : i64 to !llvm.ptr<1>
+        %old = llvm.atomicrmw add %rx1_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
+      }
+    }
+    gpu.terminator
+  }
+
+  // The offsets of the cells, the particles in the order of the cells, and
+  // their positions in that order.
+  call @mdrt_gpu_matrix_sort(%key, %wrapped, %sorted, %held, %start, %cursor,
+                             %cell_sums, %order, %n, %cells, %cell_chunks)
+      : (memref<?xi32, 1>, memref<?x3xf32, 1>, memref<?x3xf32, 1>,
+         memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+         memref<?xi32, 1>, memref<?xi32, 1>, index, index, index) -> ()
+
+  //===--------------------------------------------------------------------===//
+  // Neighbors
+  //===--------------------------------------------------------------------===//
+
+  // A warp for each particle. Its lanes test 32 particles of a run of
+  // cells at once, and a ballot gives each neighbor its place in the row,
+  // in the order in which one thread would find them. A neighbor that is
+  // an excluded pair of `excluded` is entered as the particle itself,
+  // which the loops over pairs skip. The count goes on beyond the width
+  // of the row, without writing.
+  //
+  // The kernel counts in i32, which holds every number of a particle, a
+  // cell, or an entry of a row: with 64-bit indices it needed more
+  // registers than a thread has and spilled.
+  %n32 = arith.index_cast %n : index to i32
+  %nx32 = arith.index_cast %nx : index to i32
+  %ny32 = arith.index_cast %ny : index to i32
+  %nz32 = arith.index_cast %nz : index to i32
+  %span_x32 = arith.index_cast %span_x : index to i32
+  %span_y32 = arith.index_cast %span_y : index to i32
+  %rows32 = arith.index_cast %rows_within : index to i32
+  %first_x32 = arith.index_cast %first_x : index to i32
+  %first_y32 = arith.index_cast %first_y : index to i32
+  %first_z32 = arith.index_cast %first_z : index to i32
+  %row_width32 = arith.index_cast %row_width : index to i32
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_warps, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %block : index
+    %t = arith.addi %base, %tx : index
+    %t32 = arith.index_cast %t : index to i32
+    %i0 = arith.constant 0 : index
+    %i1 = arith.constant 1 : index
+    %i2 = arith.constant 2 : index
+    %zero32 = arith.constant 0 : i32
+    %one32 = arith.constant 1 : i32
+    %two32 = arith.constant 2 : i32
+    %lanes32 = arith.constant 32 : i32
+    %none32 = arith.constant -1 : i32
+    %p32 = arith.divui %t32, %lanes32 : i32
+    %lane32 = arith.remui %t32, %lanes32 : i32
+    // The warps past the last particle stop together.
+    %inside = arith.cmpi ult, %p32, %n32 : i32
+    scf.if %inside {
+      %p = arith.index_cast %p32 : i32 to index
+      %i32 = memref.load %order[%p] : memref<?xi32, 1>
+      %i = arith.index_cast %i32 : i32 to index
+      %zero_placed = arith.constant 0 : i32
+      %placed = arith.cmpi sge, %i32, %zero_placed : i32
+      scf.if %placed {
+      %xi = memref.load %sorted[%p, %i0] : memref<?x3xf32, 1>
+      %yi = memref.load %sorted[%p, %i1] : memref<?x3xf32, 1>
+      %zi = memref.load %sorted[%p, %i2] : memref<?x3xf32, 1>
+
+      %k32 = memref.load %key[%i] : memref<?xi32, 1>
+      %cx = arith.remui %k32, %nx32 : i32
+      %rest = arith.divui %k32, %nx32 : i32
+      %cy = arith.remui %rest, %ny32 : i32
+      %cz = arith.divui %rest, %ny32 : i32
+
+      // The excluded pairs of the particle, if the structure has any.
+      %rows_excluded = memref.dim %excluded, %i0 : memref<?x?xi32, 1>
+      %has_excluded = arith.cmpi ult, %i, %rows_excluded : index
+      %num_excluded = scf.if %has_excluded -> (i32) {
+        %e32 = memref.load %excluded[%i, %i0] : memref<?x?xi32, 1>
+        scf.yield %e32 : i32
+      } else {
+        scf.yield %zero32 : i32
+      }
+
+      // The other member of each excluded pair of the particle: lane k
+      // holds that of the pair k, for the first 32; a neighbor is compared
+      // with them by shuffles, and with the rest, if any, in memory.
+      %lane_excluded = arith.cmpi ult, %lane32, %num_excluded : i32
+      %my_partner = scf.if %lane_excluded -> (i32) {
+        %lane = arith.index_cast %lane32 : i32 to index
+        %mine = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %lane)
+            : (memref<?x?xi32, 1>, index, index) -> i32
+        scf.yield %mine : i32
+      } else {
+        scf.yield %none32 : i32
+      }
+      %in_registers = arith.minui %num_excluded, %lanes32 : i32
+      // The least and the greatest number of a partner: a neighbor outside
+      // them is not excluded, and needs no comparison. With more than 32
+      // pairs every neighbor is compared.
+      %all_low = arith.constant 0 : i32
+      %all_high = arith.constant 2147483647 : i32
+      %low0, %high0 = scf.for %e = %zero32 to %in_registers step %one32
+          iter_args(%lo = %all_high, %hi = %all_low) -> (i32, i32) : i32 {
+        %partner, %valid = gpu.shuffle idx %my_partner, %e, %lanes32 : i32
+        %lo1 = arith.minsi %lo, %partner : i32
+        %hi1 = arith.maxsi %hi, %partner : i32
+        scf.yield %lo1, %hi1 : i32, i32
+      }
+      %overflow = arith.cmpi ugt, %num_excluded, %lanes32 : i32
+      %low = arith.select %overflow, %all_low, %low0 : i32
+      %high = arith.select %overflow, %all_high, %high0 : i32
+
+      %lane_bit = arith.shli %one32, %lane32 : i32
+      %below_mask = arith.subi %lane_bit, %one32 : i32
+
+      %found = scf.for %r = %zero32 to %rows32 step %one32
+          iter_args(%count_r = %zero32) -> (i32) : i32 {
+        %oz = arith.divui %r, %span_y32 : i32
+        %oy = arith.remui %r, %span_y32 : i32
+        %sz0 = arith.addi %cz, %first_z32 : i32
+        %sz1 = arith.addi %sz0, %oz : i32
+        %nz_cell = arith.remui %sz1, %nz32 : i32
+        %sy0 = arith.addi %cy, %first_y32 : i32
+        %sy1 = arith.addi %sy0, %oy : i32
+        %ny_cell = arith.remui %sy1, %ny32 : i32
+
+        // The cells of the row are next to one another in the order of
+        // the cells, so the warp reads them as one run, or as two where
+        // the row goes around the edge of the cell.
+        %zy = arith.muli %nz_cell, %ny32 : i32
+        %row = arith.addi %zy, %ny_cell : i32
+        %row_first = arith.muli %row, %nx32 : i32
+        %sx0 = arith.addi %cx, %first_x32 : i32
+        %x_begin = arith.remui %sx0, %nx32 : i32
+        %x_end = arith.addi %x_begin, %span_x32 : i32
+        %around = arith.cmpi ugt, %x_end, %nx32 : i32
+        %x_stop = arith.select %around, %nx32, %x_end : i32
+        %x_rest0 = arith.subi %x_end, %nx32 : i32
+        %x_rest = arith.select %around, %x_rest0, %zero32 : i32
+
+        %after_x = scf.for %part_x = %zero32 to %two32 step %one32
+            iter_args(%count_x = %count_r) -> (i32) : i32 {
+          %second = arith.cmpi ne, %part_x, %zero32 : i32
+          %from_x = arith.select %second, %zero32, %x_begin : i32
+          %to_x = arith.select %second, %x_rest, %x_stop : i32
+          %from_cell32 = arith.addi %row_first, %from_x : i32
+          %to_cell32 = arith.addi %row_first, %to_x : i32
+          %from_cell = arith.index_cast %from_cell32 : i32 to index
+          %to_cell = arith.index_cast %to_cell32 : i32 to index
+          %begin = memref.load %start[%from_cell] : memref<?xi32, 1>
+          %end = memref.load %start[%to_cell] : memref<?xi32, 1>
+          %last = arith.subi %end, %one32 : i32
+
+          %after_cell = scf.for %q0 = %begin to %end step %lanes32
+              iter_args(%count = %count_x) -> (i32) : i32 {
+            %q32 = arith.addi %q0, %lane32 : i32
+            %in_run = arith.cmpi slt, %q32, %end : i32
+            %qc32 = arith.minsi %q32, %last : i32
+            %qc = arith.index_cast %qc32 : i32 to index
+            %xj = memref.load %sorted[%qc, %i0] : memref<?x3xf32, 1>
+            %yj = memref.load %sorted[%qc, %i1] : memref<?x3xf32, 1>
+            %zj = memref.load %sorted[%qc, %i2] : memref<?x3xf32, 1>
+
+            // The minimum-image displacement of the triclinic cell, in one
+            // pass along c, b, and a: see the template for the host.
+            %dx0 = arith.subf %xi, %xj : f32
+            %dy0 = arith.subf %yi, %yj : f32
+            %dz0 = arith.subf %zi, %zj : f32
+            %image_z0 = arith.mulf %dz0, %narrow_ilz : f32
+            %image_z = math.roundeven %image_z0 : f32
+            %shift_zx = arith.mulf %image_z, %narrow_cx : f32
+            %shift_zy = arith.mulf %image_z, %narrow_cy : f32
+            %shift_zz = arith.mulf %image_z, %narrow_lz : f32
+            %dx1 = arith.subf %dx0, %shift_zx : f32
+            %dy1 = arith.subf %dy0, %shift_zy : f32
+            %dz = arith.subf %dz0, %shift_zz : f32
+            %image_y0 = arith.mulf %dy1, %narrow_ily : f32
+            %image_y = math.roundeven %image_y0 : f32
+            %shift_yx = arith.mulf %image_y, %narrow_bx : f32
+            %shift_yy = arith.mulf %image_y, %narrow_ly : f32
+            %dx2 = arith.subf %dx1, %shift_yx : f32
+            %dy = arith.subf %dy1, %shift_yy : f32
+            %image_x0 = arith.mulf %dx2, %narrow_ilx : f32
+            %image_x = math.roundeven %image_x0 : f32
+            %shift_xx = arith.mulf %image_x, %narrow_lx : f32
+            %dx = arith.subf %dx2, %shift_xx : f32
+
+            %dx_2 = arith.mulf %dx, %dx : f32
+            %dy_2 = arith.mulf %dy, %dy : f32
+            %dz_2 = arith.mulf %dz, %dz : f32
+            %dxy_2 = arith.addf %dx_2, %dy_2 : f32
+            %r2 = arith.addf %dxy_2, %dz_2 : f32
+
+            %near = arith.cmpf olt, %r2, %limit2 : f32
+            %other = arith.cmpi ne, %p32, %q32 : i32
+            %near_other = arith.andi %near, %other : i1
+            %neighbor = arith.andi %near_other, %in_run : i1
+
+            %ballot = gpu.ballot %neighbor : i32
+            %before_bits = arith.andi %ballot, %below_mask : i32
+            %before = math.ctpop %before_bits : i32
+            %slot = arith.addi %count, %before : i32
+            %fits = arith.cmpi ult, %slot, %row_width32 : i32
+            %keep = arith.andi %neighbor, %fits : i1
+
+            // Whether the neighbor of each lane is excluded: all lanes
+            // shuffle when any lane has found one within the numbers of the
+            // partners.
+            %j32 = scf.if %neighbor -> (i32) {
+              %q = arith.index_cast %q32 : i32 to index
+              %j_found = memref.load %order[%q] : memref<?xi32, 1>
+              scf.yield %j_found : i32
+            } else {
+              scf.yield %none32 : i32
+            }
+            %above = arith.cmpi sge, %j32, %low : i32
+            %under = arith.cmpi sle, %j32, %high : i32
+            %between = arith.andi %above, %under : i1
+            %maybe = arith.andi %neighbor, %between : i1
+            %maybe_bits = gpu.ballot %maybe : i32
+            %any = arith.cmpi ne, %maybe_bits, %zero32 : i32
+            %shuffled = scf.if %any -> (i1) {
+              %hit = scf.for %e = %zero32 to %in_registers step %one32
+                  iter_args(%found_e = %false) -> (i1) : i32 {
+                %partner, %valid = gpu.shuffle idx %my_partner, %e, %lanes32 : i32
+                %same = arith.cmpi eq, %partner, %j32 : i32
+                %or = arith.ori %found_e, %same : i1
+                scf.yield %or : i1
+              }
+              scf.yield %hit : i1
+            } else {
+              scf.yield %false : i1
+            }
+            scf.if %keep {
+              %is_excluded = scf.for %e = %in_registers to %num_excluded
+                  step %one32 iter_args(%found_e = %shuffled) -> (i1) : i32 {
+                %e_index = arith.index_cast %e : i32 to index
+                %partner = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %e_index)
+                    : (memref<?x?xi32, 1>, index, index) -> i32
+                %same = arith.cmpi eq, %partner, %j32 : i32
+                %any_e = arith.ori %found_e, %same : i1
+                scf.yield %any_e : i1
+              }
+              %entered = arith.select %is_excluded, %p32, %q32 : i32
+              %slot_index = arith.index_cast %slot : i32 to index
+              memref.store %entered, %index[%p, %slot_index] : memref<?x?xi32, 1>
+            }
+
+            %found_here = math.ctpop %ballot : i32
+            %next = arith.addi %count, %found_here : i32
+            scf.yield %next : i32
+          }
+          scf.yield %after_cell : i32
+        }
+        scf.yield %after_x : i32
+      }
+
+      // The count limited to the width of a row, and the largest count,
+      // which tells the caller that a row was too narrow. The largest of
+      // the counts does not depend on the order of the atomics.
+      %writer = arith.cmpi eq, %lane32, %zero32 : i32
+      scf.if %writer {
+        %limited = arith.minui %found, %row_width32 : i32
+        memref.store %limited, %counts[%p] : memref<?xi32, 1>
+        // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
+        %rm_base = memref.extract_aligned_pointer_as_index %result : memref<2xi32, 1> -> index
+        %rm_addr = arith.index_cast %rm_base : index to i64
+        %rm_ptr = llvm.inttoptr %rm_addr : i64 to !llvm.ptr<1>
+        %rm_old = llvm.atomicrmw umax %rm_ptr, %found syncscope("device") monotonic : !llvm.ptr<1>, i32
+      }
+      }
+    }
+    gpu.terminator
+  }
+
+  %t0 = gpu.wait async
+  %t1 = gpu.memcpy async [%t0] %host, %result : memref<2xi32>, memref<2xi32, 1>
+  gpu.wait [%t1]
+  %largest32 = memref.load %host[%c0] : memref<2xi32>
+  %largest = arith.index_cast %largest32 : i32 to index
+  %not_numbers32 = memref.load %host[%c1] : memref<2xi32>
+  %not_numbers = arith.index_cast %not_numbers32 : i32 to index
+
+  // The lowering of `gpu.dealloc` takes a buffer without a memory space.
+  %key0 = memref.memory_space_cast %key
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %key0 : memref<?xi32>
+  %wrapped0 = memref.memory_space_cast %wrapped
+      : memref<?x3xf32, 1> to memref<?x3xf32>
+  gpu.dealloc %wrapped0 : memref<?x3xf32>
+  %sorted0 = memref.memory_space_cast %sorted
+      : memref<?x3xf32, 1> to memref<?x3xf32>
+  gpu.dealloc %sorted0 : memref<?x3xf32>
+  %held0 = memref.memory_space_cast %held
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %held0 : memref<?xi32>
+  %start0 = memref.memory_space_cast %start
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %start0 : memref<?xi32>
+  %cursor0 = memref.memory_space_cast %cursor
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %cursor0 : memref<?xi32>
+  %cell_sums0 = memref.memory_space_cast %cell_sums
+      : memref<?xi32, 1> to memref<?xi32>
+  gpu.dealloc %cell_sums0 : memref<?xi32>
+  %result0 = memref.memory_space_cast %result
+      : memref<2xi32, 1> to memref<2xi32>
+  gpu.dealloc %result0 : memref<2xi32>
+  return %largest, %not_numbers : index, index
+}
+
+// BEGIN GENERATED by scripts/generate-matrix-images-template.py. Do not edit.
+
+// Whether an image of the displacement d of a pair is within the reach,
 // `far`, whose square is `limit2`, in a triclinic cell of the diagonal a_x,
 // b_y, c_z and the tilts b_x, c_x, c_y (docs/triclinic-m2.md, Section 2).
 // H is lower triangular, so z' = d_z - n_c c_z depends on n_c alone, y' on
@@ -1000,15 +1575,11 @@ func.func private @mdrt_gpu_matrix_image_within(
   return %found : i1
 }
 
-// The neighbor matrix of a triclinic cell, `box` = (a_x, b_y, c_z, b_x,
-// c_x, c_y), with the widths of the cell between its faces, `widths`: the
-// build of the orthorhombic cell in the fractional coordinates, which the
-// positions are wrapped in (docs/triclinic-m2.md). A row holds a particle
-// once if any of its images is within `reach`, as on the host: the image
-// of the one pass first, and where the reach is more than half of the
-// least of a_x, b_y, c_z the others within it
-// (@mdrt_gpu_matrix_image_within).
-func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
+// The neighbor matrix of a triclinic cell on a device where the reach may
+// be more than half of the least of a_x, b_y, c_z: the build of
+// @mdrt_gpu_build_neighbors_matrix_triclinic_pass with the test of a
+// candidate at every image within the reach, as on the host.
+func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
     %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
     %reach: f64, %cell_width: f64, %excluded: memref<?x?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
@@ -1071,15 +1642,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
   %far = arith.addf %reach, %margin : f64
   %far2 = arith.mulf %far, %far : f64
   %limit2 = arith.truncf %far2 : f64 to f32
-  // Whether an image other than that of the one pass can be within the
-  // reach: only where the reach is more than half of the least of a_x,
-  // b_y, c_z.
   %narrow_far = arith.truncf %far : f64 to f32
-  %least_xy = arith.minimumf %lx, %ly : f64
-  %least_xyz = arith.minimumf %least_xy, %lz : f64
-  %half_f = arith.constant 0.5 : f64
-  %half_least = arith.mulf %least_xyz, %half_f : f64
-  %wide_reach = arith.cmpf ogt, %far, %half_least : f64
   %most_images = arith.constant 64.0 : f32
 
   // The cells within reach.
@@ -1465,27 +2028,25 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
             %dxy_2 = arith.addf %dx_2, %dy_2 : f32
             %r2 = arith.addf %dxy_2, %dz_2 : f32
 
-            // Lanes whose image of the pass is beyond the reach try the
-            // others, each on its own; the ballot below is of all lanes.
+            // A lane whose image of the pass is beyond the reach tests the
+            // other images within the reach, on its own; the ballot below
+            // is of all lanes.
             %near_pass = arith.cmpf olt, %r2, %limit2 : f32
             %true_w = arith.constant true
             %far_pass = arith.xori %near_pass, %true_w : i1
-            %try0 = arith.andi %far_pass, %wide_reach : i1
-            %try = arith.andi %try0, %in_run : i1
-            %near_image = scf.if %try -> (i1) {
-              %any_image = func.call @mdrt_gpu_matrix_image_within(
+            %try = arith.andi %far_pass, %in_run : i1
+            %near = scf.if %try -> (i1) {
+              %near_image = func.call @mdrt_gpu_matrix_image_within(
                   %dx, %dy, %dz, %narrow_lx, %narrow_ly, %narrow_lz,
                   %narrow_bx, %narrow_cx, %narrow_cy, %narrow_ilx,
                   %narrow_ily, %narrow_ilz, %narrow_far, %limit2,
                   %most_images)
                   : (f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32,
                      f32, f32, f32, f32) -> i1
-              scf.yield %any_image : i1
+              scf.yield %near_image : i1
             } else {
-              %no_image = arith.constant false
-              scf.yield %no_image : i1
+              scf.yield %near_pass : i1
             }
-            %near = arith.ori %near_pass, %near_image : i1
             %other = arith.cmpi ne, %p32, %q32 : i32
             %near_other = arith.andi %near, %other : i1
             %neighbor = arith.andi %near_other, %in_run : i1
@@ -1602,6 +2163,47 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
   gpu.dealloc %result0 : memref<2xi32>
   return %largest, %not_numbers : index, index
 }
+
+// The neighbor matrix of a triclinic cell on a device (docs/triclinic-m2.md,
+// Section 2): a row holds a particle once if any of its images is within
+// `reach`, as @mdrt.build_neighbors_matrix_triclinic of the host has it.
+// Where the reach is at most 0.49 of the least of a_x, b_y, c_z the build
+// tests the image of the one pass alone, the kernels of before; in a
+// narrower cell, the others within the reach as well.
+func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
+    %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
+    %reach: f64, %cell_width: f64, %excluded: memref<?x?xi32, 1>,
+    %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
+    %order: memref<?xi32, 1>) -> (index, index) {
+  %lx = vector.extract %box[0] : f64 from vector<6xf64>
+  %ly = vector.extract %box[1] : f64 from vector<6xf64>
+  %lz = vector.extract %box[2] : f64 from vector<6xf64>
+  %least_xy = arith.minimumf %lx, %ly : f64
+  %least = arith.minimumf %least_xy, %lz : f64
+  %part = arith.constant 0.49 : f64
+  %bound = arith.mulf %least, %part : f64
+  %within = arith.cmpf ole, %reach, %bound : f64
+  %largest, %not_numbers = scf.if %within -> (index, index) {
+    %one, %one_not = func.call @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
+        %x, %box, %widths, %reach, %cell_width, %excluded, %counts, %index,
+        %order)
+        : (memref<?x3xf64, 1>, vector<6xf64>, vector<3xf64>, f64, f64,
+           memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
+           memref<?xi32, 1>) -> (index, index)
+    scf.yield %one, %one_not : index, index
+  } else {
+    %all, %all_not = func.call @mdrt_gpu_build_neighbors_matrix_triclinic_images(
+        %x, %box, %widths, %reach, %cell_width, %excluded, %counts, %index,
+        %order)
+        : (memref<?x3xf64, 1>, vector<6xf64>, vector<3xf64>, f64, f64,
+           memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
+           memref<?xi32, 1>) -> (index, index)
+    scf.yield %all, %all_not : index, index
+  }
+  return %largest, %not_numbers : index, index
+}
+
+// END GENERATED
 
 // The order of the particles by cell: `order[k]` is the particle that comes
 // to place `k`. See the template for the host.

@@ -4,7 +4,9 @@
 OpenMP or one NVIDIA GPU. Triclinic cells (truncated octahedra, rhombic
 dodecahedra, the hexagonal cells of CHARMM) run on the CPU and on the
 device, with the neighbor matrix or the groups, at constant volume and
-pressure (D123, D125 to D127). The barostat
+pressure (D123, D125 to D127). A cell must be at least twice the cutoff
+wide along its diagonal; the reach of the neighbor matrix is not bound by
+the cell (D[matrix-images]). The barostat
 rescales the cell isotropically, semi-isotropically, or along three
 independent axes (D163c), with no coupling of the shape of the cell. Topologies are read in the formats of Amber,
 GROMACS, and CHARMM; a CHARMM force field runs with its Urey–Bradley

@@ -459,9 +459,9 @@ func.func private @mdrt.build_neighbors_matrix(
   return %largest : index
 }
 
-// The image of a displacement in a triclinic cell that one pass along c,
-// b, and a gives (docs/triclinic-m2.md, Section 2): the nearest image
-// where that is within half of the least of a_x, b_y, c_z.
+// The minimum-image displacement in a triclinic cell, in one pass along c,
+// b, and a (docs/triclinic-m2.md, Section 2): exact for a displacement
+// whose nearest image is within half of the least of a_x, b_y, c_z.
 func.func private @mdrt.minimum_image_triclinic(
     %dx: f32, %dy: f32, %dz: f32, %ax: f32, %by: f32, %cz: f32, %bx: f32,
     %cx: f32, %cy: f32, %iax: f32, %iby: f32, %icz: f32) -> (f32, f32, f32) {
@@ -485,6 +485,323 @@ func.func private @mdrt.minimum_image_triclinic(
   %x3 = arith.subf %x2, %sx3 : f32
   return %x3, %y2, %z1 : f32, f32, f32
 }
+
+// The neighbor matrix of a triclinic cell, `box` = (a_x, b_y, c_z, b_x,
+// c_x, c_y), with the widths of the cell between its faces, `widths`, where
+// the reach is at most half of the least of a_x, b_y, c_z: the build of
+// the orthorhombic cell in the fractional coordinates, which the positions
+// are wrapped in, with the image of the one pass, which is then the nearest
+// image of every pair within the reach. @mdrt.build_neighbors_matrix_triclinic,
+// below, calls it for such a cell, and for a narrower one the build that
+// tests every image within the reach, which a script writes from this one.
+func.func private @mdrt.build_neighbors_matrix_triclinic_pass(
+    %x: memref<?x3xf64>, %box: vector<6xf64>, %widths: vector<3xf64>,
+    %reach: f64, %cell_width: f64,
+    %counts: memref<?xi32>, %index: memref<?x?xi32>) -> index {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+
+  %n = memref.dim %x, %c0 : memref<?x3xf64>
+  %row_width = memref.dim %index, %c1 : memref<?x?xi32>
+
+  // The cell: its diagonal a_x, b_y, c_z and its tilts b_x, c_x, c_y; the
+  // cells of the search are those of the fractional coordinates, and their
+  // numbers follow from the widths of the cell between its faces.
+  %lx = vector.extract %box[0] : f64 from vector<6xf64>
+  %ly = vector.extract %box[1] : f64 from vector<6xf64>
+  %lz = vector.extract %box[2] : f64 from vector<6xf64>
+  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
+  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
+  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
+  %width_x = vector.extract %widths[0] : f64 from vector<3xf64>
+  %width_y = vector.extract %widths[1] : f64 from vector<3xf64>
+  %width_z = vector.extract %widths[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %nx = call @mdrt.cell_count(%width_x, %cell_width) : (f64, f64) -> index
+  %ny = call @mdrt.cell_count(%width_y, %cell_width) : (f64, f64) -> index
+  %nz = call @mdrt.cell_count(%width_z, %cell_width) : (f64, f64) -> index
+  %nxy = arith.muli %nx, %ny : index
+  %cells = arith.muli %nxy, %nz : index
+  %cells1 = arith.addi %cells, %c1 : index
+
+  // What the search computes with, in f32. The margin is more than the
+  // rounding of a distance between positions in the cell.
+  %narrow_lx = arith.truncf %lx : f64 to f32
+  %narrow_ly = arith.truncf %ly : f64 to f32
+  %narrow_lz = arith.truncf %lz : f64 to f32
+  %narrow_unit = arith.constant 1.0 : f32
+  %narrow_ilx = arith.divf %narrow_unit, %narrow_lx : f32
+  %narrow_ily = arith.divf %narrow_unit, %narrow_ly : f32
+  %narrow_ilz = arith.divf %narrow_unit, %narrow_lz : f32
+  %narrow_bx = arith.truncf %tbx : f64 to f32
+  %narrow_cx = arith.truncf %tcx : f64 to f32
+  %narrow_cy = arith.truncf %tcy : f64 to f32
+  %abs_bx = math.absf %tbx : f64
+  %abs_cx = math.absf %tcx : f64
+  %abs_cy = math.absf %tcy : f64
+  %lxy0 = arith.addf %lx, %ly : f64
+  %lxy1 = arith.addf %lxy0, %abs_bx : f64
+  %lxy2 = arith.addf %lxy1, %abs_cx : f64
+  %lxy = arith.addf %lxy2, %abs_cy : f64
+  %lxyz = arith.addf %lxy, %lz : f64
+  %tiny = arith.constant 3.0e-6 : f64
+  %margin = arith.mulf %lxyz, %tiny : f64
+  %far = arith.addf %reach, %margin : f64
+  %far2 = arith.mulf %far, %far : f64
+  %limit2 = arith.truncf %far2 : f64 to f32
+
+  //===--------------------------------------------------------------------===//
+  // Counting sort of the particles by cell
+  //===--------------------------------------------------------------------===//
+
+  %key = memref.alloc(%n) : memref<?xindex>
+  %start = memref.alloc(%cells1) : memref<?xindex>
+  %cursor = memref.alloc(%cells) : memref<?xindex>
+  %order = memref.alloc(%n) : memref<?xindex>
+  %wrapped = memref.alloc(%n) : memref<?x3xf32>
+  %sorted = memref.alloc(%n) : memref<?x3xf32>
+
+  scf.for %c = %c0 to %cells1 step %c1 {
+    memref.store %c0, %start[%c] : memref<?xindex>
+  }
+
+  // The position of each particle in the cell, its cell, and the number of
+  // particles of each cell: start[k + 1] counts the particles of cell k.
+  scf.for %i = %c0 to %n step %c1 {
+    %xi = memref.load %x[%i, %c0] : memref<?x3xf64>
+    %yi = memref.load %x[%i, %c1] : memref<?x3xf64>
+    %zi = memref.load %x[%i, %c2] : memref<?x3xf64>
+    // s = x H⁻¹, taken into [0, 1), and the position x = s H in the cell.
+    %sz = arith.mulf %zi, %ilz : f64
+    %sz_cy = arith.mulf %sz, %tcy : f64
+    %y_rest = arith.subf %yi, %sz_cy : f64
+    %sy = arith.mulf %y_rest, %ily : f64
+    %sy_bx = arith.mulf %sy, %tbx : f64
+    %sz_cx = arith.mulf %sz, %tcx : f64
+    %x_rest0 = arith.subf %xi, %sy_bx : f64
+    %x_rest = arith.subf %x_rest0, %sz_cx : f64
+    %sx = arith.mulf %x_rest, %ilx : f64
+    %fx = func.call @mdrt.wrap(%sx, %unit, %unit) : (f64, f64, f64) -> f64
+    %fy = func.call @mdrt.wrap(%sy, %unit, %unit) : (f64, f64, f64) -> f64
+    %fz = func.call @mdrt.wrap(%sz, %unit, %unit) : (f64, f64, f64) -> f64
+    %wz = arith.mulf %fz, %lz : f64
+    %fy_by = arith.mulf %fy, %ly : f64
+    %fz_cy = arith.mulf %fz, %tcy : f64
+    %wy = arith.addf %fy_by, %fz_cy : f64
+    %fx_ax = arith.mulf %fx, %lx : f64
+    %fy_bx = arith.mulf %fy, %tbx : f64
+    %fz_cx = arith.mulf %fz, %tcx : f64
+    %wx0 = arith.addf %fx_ax, %fy_bx : f64
+    %wx = arith.addf %wx0, %fz_cx : f64
+    %narrow_x = arith.truncf %wx : f64 to f32
+    %narrow_y = arith.truncf %wy : f64 to f32
+    %narrow_z = arith.truncf %wz : f64 to f32
+    memref.store %narrow_x, %wrapped[%i, %c0] : memref<?x3xf32>
+    memref.store %narrow_y, %wrapped[%i, %c1] : memref<?x3xf32>
+    memref.store %narrow_z, %wrapped[%i, %c2] : memref<?x3xf32>
+
+    %cx = func.call @mdrt.cell_coordinate(%fx, %unit, %nx)
+        : (f64, f64, index) -> index
+    %cy = func.call @mdrt.cell_coordinate(%fy, %unit, %ny)
+        : (f64, f64, index) -> index
+    %cz = func.call @mdrt.cell_coordinate(%fz, %unit, %nz)
+        : (f64, f64, index) -> index
+    %zy = arith.muli %cz, %ny : index
+    %row = arith.addi %zy, %cy : index
+    %rows = arith.muli %row, %nx : index
+    %k = arith.addi %rows, %cx : index
+    memref.store %k, %key[%i] : memref<?xindex>
+
+    %next = arith.addi %k, %c1 : index
+    %old = memref.load %start[%next] : memref<?xindex>
+    %new = arith.addi %old, %c1 : index
+    memref.store %new, %start[%next] : memref<?xindex>
+  }
+
+  scf.for %c = %c0 to %cells step %c1 {
+    %next = arith.addi %c, %c1 : index
+    %before = memref.load %start[%c] : memref<?xindex>
+    %here = memref.load %start[%next] : memref<?xindex>
+    %sum = arith.addi %before, %here : index
+    memref.store %sum, %start[%next] : memref<?xindex>
+    memref.store %before, %cursor[%c] : memref<?xindex>
+  }
+
+  // The particles in the order of the cells, and their positions in that
+  // order. The particles of a cell are in the order of their indices.
+  scf.for %i = %c0 to %n step %c1 {
+    %k = memref.load %key[%i] : memref<?xindex>
+    %p = memref.load %cursor[%k] : memref<?xindex>
+    memref.store %i, %order[%p] : memref<?xindex>
+    %q = arith.addi %p, %c1 : index
+    memref.store %q, %cursor[%k] : memref<?xindex>
+    %wx = memref.load %wrapped[%i, %c0] : memref<?x3xf32>
+    %wy = memref.load %wrapped[%i, %c1] : memref<?x3xf32>
+    %wz = memref.load %wrapped[%i, %c2] : memref<?x3xf32>
+    memref.store %wx, %sorted[%p, %c0] : memref<?x3xf32>
+    memref.store %wy, %sorted[%p, %c1] : memref<?x3xf32>
+    memref.store %wz, %sorted[%p, %c2] : memref<?x3xf32>
+  }
+
+  //===--------------------------------------------------------------------===//
+  // Neighbors
+  //===--------------------------------------------------------------------===//
+
+  // The cells within reach: `range` on each side of the cell of the
+  // particle. Where these are more than the cells that there are, the cells
+  // on the two sides coincide; each cell is visited once.
+  %range_x = call @mdrt.cell_range(%width_x, %nx, %reach)
+      : (f64, index, f64) -> index
+  %range_y = call @mdrt.cell_range(%width_y, %ny, %reach)
+      : (f64, index, f64) -> index
+  %range_z = call @mdrt.cell_range(%width_z, %nz, %reach)
+      : (f64, index, f64) -> index
+  %twice_x = arith.addi %range_x, %range_x : index
+  %twice_y = arith.addi %range_y, %range_y : index
+  %twice_z = arith.addi %range_z, %range_z : index
+  %full_x = arith.addi %twice_x, %c1 : index
+  %full_y = arith.addi %twice_y, %c1 : index
+  %full_z = arith.addi %twice_z, %c1 : index
+  %span_x = arith.minsi %nx, %full_x : index
+  %span_y = arith.minsi %ny, %full_y : index
+  %span_z = arith.minsi %nz, %full_z : index
+
+  // The first cell is `range` cells before the cell of the particle, and
+  // that cell itself where every cell is visited. To stay in unsigned
+  // arithmetic, add the number of cells before taking the remainder.
+  %all_x = arith.cmpi eq, %span_x, %full_x : index
+  %all_y = arith.cmpi eq, %span_y, %full_y : index
+  %all_z = arith.cmpi eq, %span_z, %full_z : index
+  %back_x = arith.subi %nx, %range_x : index
+  %back_y = arith.subi %ny, %range_y : index
+  %back_z = arith.subi %nz, %range_z : index
+  %first_x = arith.select %all_x, %back_x, %c0 : index
+  %first_y = arith.select %all_y, %back_y, %c0 : index
+  %first_z = arith.select %all_z, %back_z, %c0 : index
+
+  scf.parallel (%p) = (%c0) to (%n) step (%c1) {
+    %i = memref.load %order[%p] : memref<?xindex>
+    %xi = memref.load %sorted[%p, %c0] : memref<?x3xf32>
+    %yi = memref.load %sorted[%p, %c1] : memref<?x3xf32>
+    %zi = memref.load %sorted[%p, %c2] : memref<?x3xf32>
+
+    %k = memref.load %key[%i] : memref<?xindex>
+    %cx = arith.remui %k, %nx : index
+    %rest = arith.divui %k, %nx : index
+    %cy = arith.remui %rest, %ny : index
+    %cz = arith.divui %rest, %ny : index
+
+    %found = scf.for %oz = %c0 to %span_z step %c1
+        iter_args(%count_z = %c0) -> (index) {
+      %sz0 = arith.addi %cz, %first_z : index
+      %sz1 = arith.addi %sz0, %oz : index
+      %nz_cell = arith.remui %sz1, %nz : index
+
+      %after_y = scf.for %oy = %c0 to %span_y step %c1
+          iter_args(%count_y = %count_z) -> (index) {
+        %sy0 = arith.addi %cy, %first_y : index
+        %sy1 = arith.addi %sy0, %oy : index
+        %ny_cell = arith.remui %sy1, %ny : index
+
+        // The cells of the row are next to one another in the order of
+        // the cells, so they are read as one run, or as two where the row
+        // goes around the edge of the cell.
+        %zy = arith.muli %nz_cell, %ny : index
+        %row = arith.addi %zy, %ny_cell : index
+        %row_first = arith.muli %row, %nx : index
+        %sx0 = arith.addi %cx, %first_x : index
+        %x_begin = arith.remui %sx0, %nx : index
+        %x_end = arith.addi %x_begin, %span_x : index
+        %around = arith.cmpi ugt, %x_end, %nx : index
+        %x_stop = arith.select %around, %nx, %x_end : index
+        %x_rest0 = arith.subi %x_end, %nx : index
+        %x_rest = arith.select %around, %x_rest0, %c0 : index
+
+        %after_x = scf.for %part_x = %c0 to %c2 step %c1
+            iter_args(%count_x = %count_y) -> (index) {
+          %second = arith.cmpi ne, %part_x, %c0 : index
+          %from_x = arith.select %second, %c0, %x_begin : index
+          %to_x = arith.select %second, %x_rest, %x_stop : index
+          %from_cell = arith.addi %row_first, %from_x : index
+          %to_cell = arith.addi %row_first, %to_x : index
+          %begin = memref.load %start[%from_cell] : memref<?xindex>
+          %end = memref.load %start[%to_cell] : memref<?xindex>
+
+          %after_cell = scf.for %q = %begin to %end step %c1
+              iter_args(%count = %count_x) -> (index) {
+            %xj = memref.load %sorted[%q, %c0] : memref<?x3xf32>
+            %yj = memref.load %sorted[%q, %c1] : memref<?x3xf32>
+            %zj = memref.load %sorted[%q, %c2] : memref<?x3xf32>
+            %dx0 = arith.subf %xi, %xj : f32
+            %dy0 = arith.subf %yi, %yj : f32
+            %dz0 = arith.subf %zi, %zj : f32
+            %dx, %dy, %dz = func.call @mdrt.minimum_image_triclinic(
+                %dx0, %dy0, %dz0, %narrow_lx, %narrow_ly, %narrow_lz,
+                %narrow_bx, %narrow_cx, %narrow_cy, %narrow_ilx, %narrow_ily,
+                %narrow_ilz)
+                : (f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32)
+                  -> (f32, f32, f32)
+            %dx2 = arith.mulf %dx, %dx : f32
+            %dy2 = arith.mulf %dy, %dy : f32
+            %dz2 = arith.mulf %dz, %dz : f32
+            %dxy2 = arith.addf %dx2, %dy2 : f32
+            %r2 = arith.addf %dxy2, %dz2 : f32
+
+            %near = arith.cmpf olt, %r2, %limit2 : f32
+            %other = arith.cmpi ne, %p, %q : index
+            %neighbor = arith.andi %near, %other : i1
+
+            %fits = arith.cmpi ult, %count, %row_width : index
+            %keep = arith.andi %neighbor, %fits : i1
+            scf.if %keep {
+              %j = memref.load %order[%q] : memref<?xindex>
+              %wide = arith.index_cast %j : index to i64
+              %narrow = arith.trunci %wide : i64 to i32
+              memref.store %narrow, %index[%i, %count] : memref<?x?xi32>
+            }
+
+            %more = arith.addi %count, %c1 : index
+            %next = arith.select %neighbor, %more, %count : index
+            scf.yield %next : index
+          }
+          scf.yield %after_cell : index
+        }
+        scf.yield %after_x : index
+      }
+      scf.yield %after_y : index
+    }
+
+    %wide = arith.index_cast %found : index to i64
+    %narrow = arith.trunci %wide : i64 to i32
+    memref.store %narrow, %counts[%i] : memref<?xi32>
+  }
+
+  memref.dealloc %key : memref<?xindex>
+  memref.dealloc %start : memref<?xindex>
+  memref.dealloc %cursor : memref<?xindex>
+  memref.dealloc %order : memref<?xindex>
+  memref.dealloc %wrapped : memref<?x3xf32>
+  memref.dealloc %sorted : memref<?x3xf32>
+
+  // The largest count, and the counts limited to the width of a row.
+  %narrow_width = arith.index_cast %row_width : index to i32
+  %largest = scf.for %i = %c0 to %n step %c1
+      iter_args(%max = %c0) -> (index) {
+    %count = memref.load %counts[%i] : memref<?xi32>
+    %limited = arith.minsi %count, %narrow_width : i32
+    memref.store %limited, %counts[%i] : memref<?xi32>
+    %wide = arith.index_cast %count : i32 to index
+    %larger = arith.maxsi %max, %wide : index
+    scf.yield %larger : index
+  }
+  return %largest : index
+}
+
+// BEGIN GENERATED by scripts/generate-matrix-images-template.py. Do not edit.
 
 // Whether an image of the displacement d of a pair is within the reach,
 // `far`, whose square is `limit2`, in a triclinic cell of the diagonal a_x,
@@ -576,17 +893,12 @@ func.func private @mdrt.image_within_triclinic(
   return %found : i1
 }
 
-// The neighbor matrix of a triclinic cell, `box` = (a_x, b_y, c_z, b_x,
-// c_x, c_y), with the widths of the cell between its faces, `widths`: the
-// build of the orthorhombic cell in the fractional coordinates, which the
-// positions are wrapped in. A row holds a particle once if any of its
-// images is within `reach`: the image of the one pass is tested first, and
-// where the reach is more than half of the least of a_x, b_y, c_z, beyond
-// which that image need not be the nearest, the others within the reach
-// (@mdrt.image_within_triclinic). The loops over pairs take the image of
-// the pass, the only one that can be within a cutoff of at most half of the
-// least of a_x, b_y, c_z.
-func.func private @mdrt.build_neighbors_matrix_triclinic(
+// The neighbor matrix of a triclinic cell where the reach may be more than
+// half of the least of a_x, b_y, c_z: the build of
+// @mdrt.build_neighbors_matrix_triclinic_pass with the test of a candidate
+// at every image within the reach. A row holds a particle once if any of
+// its images is within `reach`.
+func.func private @mdrt.build_neighbors_matrix_triclinic_images(
     %x: memref<?x3xf64>, %box: vector<6xf64>, %widths: vector<3xf64>,
     %reach: f64, %cell_width: f64,
     %counts: memref<?xi32>, %index: memref<?x?xi32>) -> index {
@@ -645,15 +957,7 @@ func.func private @mdrt.build_neighbors_matrix_triclinic(
   %far = arith.addf %reach, %margin : f64
   %far2 = arith.mulf %far, %far : f64
   %limit2 = arith.truncf %far2 : f64 to f32
-  // Whether an image other than that of the one pass can be within the
-  // reach: only where the reach is more than half of the least of a_x,
-  // b_y, c_z.
   %narrow_far = arith.truncf %far : f64 to f32
-  %least_xy = arith.minimumf %lx, %ly : f64
-  %least_xyz = arith.minimumf %least_xy, %lz : f64
-  %half_f = arith.constant 0.5 : f64
-  %half_least = arith.mulf %least_xyz, %half_f : f64
-  %wide_reach = arith.cmpf ogt, %far, %half_least : f64
   %most_images = arith.constant 64.0 : f32
 
   //===--------------------------------------------------------------------===//
@@ -853,24 +1157,21 @@ func.func private @mdrt.build_neighbors_matrix_triclinic(
             %dxy2 = arith.addf %dx2, %dy2 : f32
             %r2 = arith.addf %dxy2, %dz2 : f32
 
+            // A candidate whose image of the pass is beyond the reach is
+            // tested at its other images within the reach.
             %near_pass = arith.cmpf olt, %r2, %limit2 : f32
-            %true = arith.constant true
-            %far_pass = arith.xori %near_pass, %true : i1
-            %try = arith.andi %far_pass, %wide_reach : i1
-            %near_image = scf.if %try -> (i1) {
-              %any = func.call @mdrt.image_within_triclinic(
+            %near = scf.if %near_pass -> (i1) {
+              scf.yield %near_pass : i1
+            } else {
+              %near_image = func.call @mdrt.image_within_triclinic(
                   %dx, %dy, %dz, %narrow_lx, %narrow_ly, %narrow_lz,
                   %narrow_bx, %narrow_cx, %narrow_cy, %narrow_ilx,
                   %narrow_ily, %narrow_ilz, %narrow_far, %limit2,
                   %most_images)
                   : (f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32,
                      f32, f32, f32, f32) -> i1
-              scf.yield %any : i1
-            } else {
-              %none = arith.constant false
-              scf.yield %none : i1
+              scf.yield %near_image : i1
             }
-            %near = arith.ori %near_pass, %near_image : i1
             %other = arith.cmpi ne, %p, %q : index
             %neighbor = arith.andi %near, %other : i1
 
@@ -919,6 +1220,46 @@ func.func private @mdrt.build_neighbors_matrix_triclinic(
   }
   return %largest : index
 }
+
+// The neighbor matrix of a triclinic cell, `box` = (a_x, b_y, c_z, b_x,
+// c_x, c_y), with the widths of the cell between its faces, `widths`
+// (docs/triclinic-m2.md, Section 2). A row holds a particle once if any of
+// its images is within `reach`. Where the reach is at most half of the
+// least of a_x, b_y, c_z that is the image of the one pass along c, b, and
+// a, and the build tests it alone; in a narrower cell it tests the others
+// within the reach as well. The reach is compared with 0.49 of the least,
+// which leaves room for the margin of the search in f32. The loops over
+// pairs take the image of the pass, the only one that can be within a
+// cutoff of at most half of the least of a_x, b_y, c_z.
+func.func private @mdrt.build_neighbors_matrix_triclinic(
+    %x: memref<?x3xf64>, %box: vector<6xf64>, %widths: vector<3xf64>,
+    %reach: f64, %cell_width: f64,
+    %counts: memref<?xi32>, %index: memref<?x?xi32>) -> index {
+  %lx = vector.extract %box[0] : f64 from vector<6xf64>
+  %ly = vector.extract %box[1] : f64 from vector<6xf64>
+  %lz = vector.extract %box[2] : f64 from vector<6xf64>
+  %least_xy = arith.minimumf %lx, %ly : f64
+  %least = arith.minimumf %least_xy, %lz : f64
+  %part = arith.constant 0.49 : f64
+  %bound = arith.mulf %least, %part : f64
+  %within = arith.cmpf ole, %reach, %bound : f64
+  %largest = scf.if %within -> (index) {
+    %one = func.call @mdrt.build_neighbors_matrix_triclinic_pass(
+        %x, %box, %widths, %reach, %cell_width, %counts, %index)
+        : (memref<?x3xf64>, vector<6xf64>, vector<3xf64>, f64, f64,
+           memref<?xi32>, memref<?x?xi32>) -> index
+    scf.yield %one : index
+  } else {
+    %all = func.call @mdrt.build_neighbors_matrix_triclinic_images(
+        %x, %box, %widths, %reach, %cell_width, %counts, %index)
+        : (memref<?x3xf64>, vector<6xf64>, vector<3xf64>, f64, f64,
+           memref<?xi32>, memref<?x?xi32>) -> index
+    scf.yield %all : index
+  }
+  return %largest : index
+}
+
+// END GENERATED
 
 // The order of the particles by cell: `order[k]` is the particle that comes
 // to place `k`. The cells are `width` wide or a little wider and numbered

@@ -4,10 +4,18 @@
 # its templates to a directory of the test, and they are compared with those
 # of the repository.
 #
-# RUN: rm -rf %t && mkdir -p %t/pme %t/groups
+# RUN: rm -rf %t && mkdir -p %t/pme %t/groups %t/matrix
 # RUN: %python %S/../../scripts/generate-pme-gpu-template.py %t/pme
 # RUN: cmp %t/pme/PMEGPU.mlir %S/../../lib/Runtime/Templates/PMEGPU.mlir
 # RUN: cmp %t/pme/PMEGPUTriclinic.mlir %S/../../lib/Runtime/Templates/PMEGPUTriclinic.mlir
 # RUN: %python %S/../../scripts/generate-groups-gpu-template.py %t/groups
 # RUN: cmp %t/groups/NeighborsGroupsGPU.mlir %S/../../lib/Runtime/Templates/NeighborsGroupsGPU.mlir
 # RUN: cmp %t/groups/NeighborsGroupsGPUTriclinic.mlir %S/../../lib/Runtime/Templates/NeighborsGroupsGPUTriclinic.mlir
+#
+# The build of the neighbor matrix of a triclinic cell that tests every image
+# within the reach is written from the build of the one pass into the part
+# of the two templates between BEGIN GENERATED and END GENERATED
+# (D[matrix-images]).
+# RUN: %python %S/../../scripts/generate-matrix-images-template.py %t/matrix
+# RUN: cmp %t/matrix/NeighborsMatrix.mlir %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir
+# RUN: cmp %t/matrix/NeighborsMatrixGPU.mlir %S/../../lib/Runtime/Templates/NeighborsMatrixGPU.mlir

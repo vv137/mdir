@@ -191,11 +191,21 @@ not do: in the flat cell $(6, 6, 1;\ 0, 1.5, 1.5)$ the pass leaves the
 displacement $(3, 3, 0.5)$ as it is, 4.27 long, and its nearest image is
 $2\mathbf c$ away, $(0, 0, -1.5)$.
 
-**The build of the matrix** tests a candidate with the image of the pass.
-If that is beyond $R$, and $R > \tfrac12 \min(a_x, b_y, c_z)$ (a flag of
-the build), it runs the nested ranges (`@mdrt.image_within_triclinic`,
+**The build of the matrix** is one of two functions, chosen at each build
+by the cell of that build. Where $R \le 0.49 \min(a_x, b_y, c_z)$ (0.49
+for the margin of the search in f32) it is the build that tests the image
+of the pass alone, `..._triclinic_pass`, written by hand and unchanged.
+In a narrower cell it is `..._triclinic_images`: the same function with
+the test of a candidate replaced, which
+`scripts/generate-matrix-images-template.py` writes from the first into the
+same template. It tests a candidate with the image of the pass and, if that
+is beyond $R$, runs the nested ranges (`@mdrt.image_within_triclinic`,
 `@mdrt_gpu_matrix_image_within`) and takes the candidate if any image is
-within $R$. A row holds a particle once, whatever the number of its images
+within $R$. Two functions rather than a branch in the loops of one: a
+branch that is never taken in the search of the device, on the flag of the
+build or on the candidate, cost 6% of a build of 19,072 particles (0.03 ms
+of 0.48 on an RTX 3090, 1% of a step), and a cell wider than twice the
+reach, the common case, should build as before. A row holds a particle once, whatever the number of its images
 within the reach. That is enough: two images of a pair differ by a nonzero
 lattice vector, which is at least $\min(a_x, b_y, c_z) \ge 2 r_c$ long, so
 at most one is within $r_c$; it is within $\tfrac12 \min(a_x, b_y, c_z)$,

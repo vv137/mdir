@@ -212,10 +212,12 @@ nested ranges of integers that are exactly the images in the cube $[-R,
 R]^3$, and so hold every image within $R$. From the image of the pass the
 ranges are that image alone while $R \le \tfrac12 \min(a_x, b_y, c_z)$,
 and at most two a level, the image and the one on the other side, up to $R
-= \min(a_x, b_y, c_z)$. The build tests the image of the pass first and
-runs the ranges only for a candidate it finds beyond the reach in a cell
-narrower than twice the reach, so a cell of ordinary width builds as
-before. A row holds a particle once: two images of a pair are at least
+= \min(a_x, b_y, c_z)$. A build in a cell wider than twice the reach is
+the function that tests the image of the pass alone; in a narrower cell it
+is a second function, generated from the first, which runs the ranges for
+a candidate that the image of the pass leaves beyond the reach. The choice
+is made once a build, not in its loops, where a branch that is never taken
+cost 6% of a build on a device. A row holds a particle once: two images of a pair are at least
 $\min(a_x, b_y, c_z) \ge 2 r_c$ apart, so at most one is within the
 cutoff, and that one is the image of the pass. The test of validity of
 Section 4.1 is unchanged, since a pair that was left out had every image
