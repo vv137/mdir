@@ -300,6 +300,13 @@ sim.run(20)
 sim.close_reporters()
 assert list(mdir.read_h5md(str(work / "part.part0002.h5md")).steps) == [30, 40]
 assert len(mdir.read_h5md(str(work / "part.h5md"))) == 6
+# A file of the same name whose frames are not those of the checkpoint.
+(work / "other").mkdir()
+(work / "other" / "part.h5md").write_bytes((work / "part.part0002.h5md").read_bytes())
+sim = mdir.Simulation(nve, checkpoint=str(work / "part.h5"))
+sim.reporters.append(mdir.H5MDReporter(str(work / "other" / "part.h5md"), 10))
+expect(mdir.InputError, lambda: sim.run(10), "holds a frame of step 40 among the 2")
+del sim
 print(f"{target_name} continuation: a checkpoint at step 20 of 60, the frame of step 30 removed, "
       f"6 frames equal to those of the run that did not stop")
 

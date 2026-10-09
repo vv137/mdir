@@ -82,7 +82,7 @@ public:
   const std::string &getFailure() const { return failure; }
   const H5MDOptions &getOptions() const { return options; }
   /// The step of the last frame of the file, or none without frames.
-  std::optional<int64_t> getLastStep() const { return lastStep; }
+  std::optional<int64_t> getLastStep() const override { return lastStep; }
 
 private:
   struct File;

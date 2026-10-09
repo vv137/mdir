@@ -10,6 +10,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <memory>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -48,6 +49,9 @@ public:
 
   /// The number of frames that the file holds.
   int64_t getNumFrames() const { return numFrames; }
+  /// The step of the last frame of the file, where the format records the
+  /// steps and the writer knows it.
+  virtual std::optional<int64_t> getLastStep() const { return std::nullopt; }
 
   /// The edges of the cell of the frames that follow, in Å: of an
   /// orthorhombic cell, or the diagonal of a triclinic one, whose tilts

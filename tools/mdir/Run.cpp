@@ -1089,6 +1089,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           control->timestep, cell);
       if (!removed)
         return fail(removed.takeError());
+      if (auto last = output.trajectory->getLastStep();
+          last && *last > own->step)
+        return fail("'" + trajectory + "' holds a frame of step " +
+                    llvm::Twine(*last) + " among the " +
+                    llvm::Twine(own->frames) + " that the checkpoint counts, "
+                    "past its step, " + llvm::Twine(own->step) + ": it is not "
+                    "the trajectory of this run");
       if (*removed > 0)
         output.log.print("MDIR: removed %lld frames past the checkpoint "
                          "from '%s'\n",

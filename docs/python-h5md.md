@@ -1,11 +1,11 @@
 # Frames without loss: the H5MD trajectory (D[h5md-reporter])
 
-Issue #251. Status: **design; the implementation and its measurements
-follow in the same pull request.** What is decided here and what is put to
-the maintainer is listed under [Decisions and questions](#decisions-and-questions).
+Issue #251. Status: implemented. What was decided in the design and what
+is put to the maintainer is listed under
+[Decisions and questions](#decisions-and-questions).
 
-The frame evaluator of M2b (#249, [python-frames.md](python-frames.md))
-evaluates the potential at stored frames. The frames have to be those the
+The frame evaluator of M2b (#249) evaluates the potential at stored
+frames. The frames have to be those the
 dynamics visited, to rounding: positions rounded to $10^{-3}$ nm, the
 precision of XTC, raise the energy of a frame of the dipeptide by
 $48 \pm 6$ kJ/mol, and DCD holds f32 in Å, which is not the f32 of the
@@ -37,7 +37,7 @@ for positions, cell in frames:             # one frame at a time
 |---|---|
 | `file` | The name of the file; any extension. |
 | `period` | Steps between frames; the schedule of the other reporters (D207): a frame at every step that is a multiple of `period` after the step the reporter was added at. |
-| `positions` | `"f64"` (the default) or `"f32"`: the type of the positions in the file, and of the velocities and the forces if they are written. `"f64"` holds the state of either precision mode without loss; `"f32"` holds the state of the mixed mode without loss and rounds that of the double mode to the nearest f32. |
+| `positions` | `"f64"` (the default) or `"f32"`: the type of the positions in the file, and of the velocities and the forces if they are written. The positions of the state are f64 in the mixed and the double mode, so `"f64"` rounds nothing; `"f32"` holds the state rounded to the nearest f32, in half the space. |
 | `velocities`, `forces` | Whether the frames hold them: those of `state()` at the step of the frame. |
 
 - It is the trajectory of the simulation: a simulation takes one
@@ -76,7 +76,7 @@ A `Frame` has `step`, `time`, `positions` (`(N, 3)`, the type of the file),
 `cell` (`mdir.Cell`, as `State.cell`; `None` without a periodic cell),
 `velocities`, `forces`, `potential_energy`, and `tunables_version` (`None`
 where the file has none). It unpacks as the pair `(positions, edges)` of
-the input contract of the frame evaluator ([python-frames.md](python-frames.md)):
+the input contract of the frame evaluator (#249, its design document):
 the positions in the order of the input and the `(3,)` edges of the cell in
 nm, so `evaluator.evaluate(mdir.read_h5md(path))` reads one frame at a
 time. A triclinic frame unpacks with the `(3, 3)` matrix of the cell
@@ -185,9 +185,8 @@ trajectory_interval  = 1000
   datasets of one number per frame take chunks of 1,024.
 - No compression: the mantissas of positions in f64 do not compress, and
   the HDF5 of the reference build has no deflate filter. The gain of
-  gzip with and without the shuffle filter on JAC is measured below from a
-  file repacked with h5py; an option is a later item if the numbers ask
-  for it (question 4).
+  gzip with and without the shuffle filter on JAC is measured
+  [below](#size-and-cost) with h5py (question 4).
 - The writer extends and writes the values of a frame, then `step` and
   `time`, then flushes the library's buffers to the operating system
   (`H5Fflush`), once per frame. A run that is killed leaves a file that
@@ -218,22 +217,130 @@ As DCD and XTC (D130, D149):
   checkpoint. The space of removed frames is reused by those that follow.
 - `--no-append` and `append=False` write `<name>.partNNNN<ext>`.
 
-## Validation (to be filled by the implementation)
+## Validation
 
-- Frames read back with `read_h5md` against the `state()` of a
-  `CallbackReporter` at the same steps: equal bits of the positions, the
-  cell, the velocities and the forces in f64; in f32, the f32 rounding of
-  the state. CPU and GPU, double and mixed, orthorhombic and triclinic,
-  NVE and NPT. The same frames against the DCD of the same run within the
-  rounding of DCD.
-- An independent reader: h5py with the paths of the specification by hand,
-  and the H5MD reader of MDAnalysis with unit conversion on.
-- `--continue` and `Simulation(checkpoint=)`: the file of a run that
-  stopped and continued holds the datasets of the run that did not stop.
-  A run killed with SIGKILL between frames: the file opens and holds the
-  frames flushed.
-- Cost on JAC (23,558 atoms), GPU 0: bytes per frame and ms per frame
-  against DCD; ms per step without the reporter against `main`.
+`test/Driver/python-h5md.test` and `python-h5md-gpu.test`
+(`Inputs/python_h5md.py`) on the alanine dipeptide in water (1168
+particles) and on water in a rhombic dodecahedron (1209 particles), in the
+deterministic mode, on the CPU and on one RTX 3090, in double and in
+mixed precision. Every comparison is of bits: the number of differing
+values is 0 in each of the four combinations of target and precision.
+
+| Quantity | Reference | Result |
+|---|---|---|
+| Positions and cell of 5 frames, `H5MDReporter` in f64, NVE | `state()` of a `CallbackReporter` at the same steps | equal to the bit |
+| The same in f32 | the same states converted to f32 by NumPy | equal to the bit |
+| Positions, velocities, forces, and cell (frames from the state) | the same | equal to the bit; the positions and velocities also equal those of the run without them |
+| NPT (cell rescaling, PME): 5 frames with 5 cells, without and with velocities and forces | the same | equal to the bit |
+| Triclinic cell, NVE: cell vectors in rows | `state().cell.vectors` | equal to the bit |
+| Leapfrog: velocities of the half step and their times | `state()` | equal to the bit |
+| Potential energy of each frame | `state().energies["potential"]` | equal |
+| Version of the tunables after an update at step 20 | the simulation's history | `[0, 0, 1, 1]` at steps 10 to 40 |
+| `mdir run`: the last frame, orthorhombic, triclinic NVE, and triclinic with a barostat | the checkpoint of the same step (`read_checkpoint`) | positions and cell equal to the bit |
+| `mdir run` with `trajectory_precision = "SINGLE"` | the f64 file of the same run | its f32 rounding, to the bit |
+| `mdir run`: potential energy of each frame | the row of the energy file | equal to the six decimals of the file |
+| The DCD of the same `mdir run` | f32 of the H5MD positions times 10 | equal to the bit: the two writers are handed the same buffer |
+
+A Python simulation takes no barostat in a triclinic cell yet, so that
+case is covered by `mdir run` alone.
+
+Continuation and a killed run:
+
+| Case | Reference | Result |
+|---|---|---|
+| Python: a checkpoint at step 20, the run ends at 30, `Simulation(checkpoint=)` goes on to 60; positions alone, and with velocities and forces | the file of a run with the same checkpoints that did not stop | 6 frames equal to the bit; the frame of step 30 was removed and written again |
+| The same continuation with another type, other elements, or another period | | refused, naming what differs |
+| A file of the name that the checkpoint records whose first frames are of later steps | | refused: "holds a frame of step 40 among the 2 that the checkpoint counts, past its step, 20" |
+| `append=False` | | the frames that follow in `<name>.part0002.h5md` |
+| `mdir run --continue` stopped at every checkpoint (4 stops), then once more from the checkpoint before the last | the file of the run that did not stop | 5 frames equal to the bit; "removed 1 frames past the checkpoint" |
+| SIGKILL in a callback at step 35, frames every 10 | the states of an unbroken run | the file opens and holds 3 frames, equal to the bit, every dataset of the same length |
+
+A run that continues from a checkpoint begins a part anew at it (D223),
+which moves the last bits of later steps by about $10^{-16}$ nm relative
+to a run without that checkpoint; the reference runs therefore write the
+same checkpoints.
+
+Independent readers (`python-h5md-independent.test` and its `-gpu` twin,
+`Inputs/h5md_independent.py`, which does not import `mdir`; run with
+`-Dh5md_python=<interpreter>` since the Python of the tests has no h5py,
+and unsupported otherwise):
+
+| Reader | What it checks | Result |
+|---|---|---|
+| h5py 3.16.0 (HDF5 2.0.0), the paths of the specification written out by hand | `/h5md` version, author, creator, and the units module; fixed-length strings of the author and the creator; `box` dimension and boundary; shapes, types, and `unit` attributes of every element; `step` and `time` of `box/edges`, `velocity`, `force`, and the observables are the same objects as those of `position`; no `id`; superblock 0; positions, velocities, forces, cells, potential energies, steps, and times against the states that the run saved with NumPy | passes for 5 files (f64, f32, with velocities and forces, NPT, triclinic), CPU and GPU; the killed file opens with 3 whole frames |
+| MDAnalysis 2.10.0, `H5MDReader` | the file as written | **refused**: "time unit 'b'ps'' is not recognized by H5MDReader". It looks the `unit` strings up as Python strings, and h5py returns the fixed-length strings that H5MD prescribes as bytes; `convert_units=False` does not avoid the lookup |
+| MDAnalysis 2.10.0 on a copy whose `unit` attributes are written again as variable-length strings, nothing else changed | positions, velocities, forces (the f32 of the states, to the bit, with `convert_units=False`; within $10^{-6}$ after its conversion to Å), the cell as lengths and angles, the step, the time, and `potential_energy` in `ts.data` | passes for 3 files, CPU and GPU |
+
+So the layout is one that MDAnalysis reads, and the form of the unit
+strings that the specification asks for is one that it does not; see
+question 5. `h5dump` and `h5ls` are not in the HDF5 of the reference
+build, so the structure was listed with h5py.
+
+The test without HDF5 (`python-h5md-no-hdf5.test`) runs only in a build
+without it, which the standard build does not make; the branch of the
+writer and the reader without HDF5 was compiled by hand.
+
+### Size and cost
+
+JAC (23,558 atoms, PME 64³, SHAKE and SETTLE, NVE, mixed precision) on one
+RTX 3090 (GPU 0, alone). `mdir run`, 20,000 steps, ms per step over steps
+10,000 to 20,000, two runs each (they agree within 6 µs per step); the
+cost of a frame is the difference to no trajectory with a frame every 10
+steps, where 1 µs per step is 0.01 ms per frame:
+
+| Trajectory | ms/step, frames every 100 | ms/step, frames every 10 | ms per frame | Bytes per frame |
+|---|---|---|---|---|
+| None | 0.205 | 0.205 | | |
+| DCD | 0.210 | 0.266 to 0.269 | 0.62 | 282,776 |
+| H5MD, f64 | 0.212 | 0.280 to 0.286 | 0.78 | 565,642 |
+| H5MD, f32 | 0.210 | 0.262 | 0.57 | 282,946 |
+| XTC | 0.213 to 0.214 | | 0.85 (from every 100 steps, ±0.1) | 85,761 |
+
+A frame in f64 is $24N$ bytes of positions and 250 bytes of everything
+else (the step, the time, the cell, and the indices of the chunks); in
+f32 it is 170 bytes more than a frame of DCD. Its cost in f32 is that of
+DCD, and in f64 0.16 ms more for twice the bytes; at a frame every 1,000
+steps that is 0.4% of the run.
+
+A Python simulation of the same system, 10,000 steps after 2,000 with a
+frame every 100 steps, the better of two runs (they agree within 2 µs per
+step). Its frames are steps of energy (D207), which a frame of `mdir run`
+above is not:
+
+| Reporter | ms/step | ms per frame | Bytes per frame |
+|---|---|---|---|
+| None | 0.2690 | | |
+| `TrajectoryReporter`, DCD | 0.2766 | 0.76 | 282,778 |
+| `H5MDReporter`, f64 | 0.2778 | 0.88 | 569,066 |
+| `H5MDReporter`, f32 | 0.2765 | 0.75 | 286,370 |
+| `H5MDReporter`, f64, velocities and forces | 0.2872 | 1.82 | 1,700,064 |
+| `CallbackReporter` that does nothing | 0.2767 | 0.77 | |
+
+(The bytes per frame here are the file over 100 frames, with the fixed
+part of the file, the masses and the species among it.) A frame with
+velocities and forces ends a part and copies the whole state: 1.8 ms, 1 ms
+more than a frame inside a part, for three times the bytes.
+
+**Compression** (not implemented; measured with h5py on 50 frames of the
+positions above, one chunk per frame as in the file):
+
+| Positions | Filter | Stored | ms per frame |
+|---|---|---|---|
+| f64 | gzip 1 | 95.7% | 19.1 |
+| f64 | shuffle, gzip 1 | 86.0% | 15.6 |
+| f64 | shuffle, gzip 4 | 85.5% | 16.7 |
+| f32 | shuffle, gzip 1 | 79.6% | 6.8 |
+
+It would save 14% in f64 at twenty times the cost of the frame, so there
+is no option for it (question 4).
+
+**Runs without the reporter.** The compiled program is unchanged: the
+builder, the dialects, the conversions, and the runtime are not touched,
+and a frame in H5MD goes through the host call that a frame of DCD goes
+through. On the host, a run with a trajectory copies six more numbers
+when a barostat sets the cell, and the frame function tests the kind of
+its writer once per frame. JAC without a trajectory runs at 0.205 ms per
+step with this change.
 
 ## Decisions and questions
 
@@ -256,4 +363,5 @@ Put to the maintainer:
 | 1 | May a simulation write a DCD or XTC for viewing and an H5MD for reweighting at once? | (a) one trajectory, as `[output]` has one; (b) a second slot with its own period and its own count in the checkpoint (a new entry of the checkpoint format) | (a) |
 | 2 | Velocities and forces in the frames of `mdir run` | (a) Python only, at part boundaries; (b) control-file keys and a frame call of the compiled program that carries them, which changes the program of a run that asks for them | (a) |
 | 3 | The potential that the forces sample (D210) per frame | (a) the reported potential energy, free; (b) also D210's shifted energy, which is formed today only in the evaluation of the derivative in the tunables (a part boundary and an evaluation per frame, and a program compiled with `tunable_gradient`), opt-in | (a): the frame evaluator computes $U_{\hat\theta}(S_n)$ itself, and the stored value is a check |
-| 4 | Compression | (a) none; (b) an option for gzip with shuffle, where the library has it | (a), with the measured gain |
+| 4 | Compression | (a) none; (b) an option for gzip with shuffle, where the library has it | (a): 14% of an f64 frame for twenty times its cost (above) |
+| 5 | The `unit` attributes | (a) fixed-length ASCII strings, as the units module of H5MD prescribes and as the checkpoints have them; MDAnalysis 2.10.0 then refuses the file; (b) variable-length strings, which MDAnalysis reads (shown on a copy) and the specification does not allow; (c) an option of the reporter | (a) |

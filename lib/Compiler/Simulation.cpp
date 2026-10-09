@@ -1521,6 +1521,13 @@ llvm::Error Simulation::setReports(const Reports &given) {
                                       prepared.control.timestep, cell);
         if (!removed)
           return inputError(llvm::toString(removed.takeError()));
+        if (auto last = writer->getLastStep(); last && *last > step)
+          return inputError("'" + trajectoryFile + "' holds a frame of step " +
+                            llvm::Twine(*last) + " among the " +
+                            llvm::Twine(continuedFrames) + " that the "
+                            "checkpoint counts, past its step, " +
+                            llvm::Twine(step) + ": it is not the trajectory "
+                            "of this run");
       } else if (llvm::Error error = writer->open(
                      trajectoryFile, system.getNumParticles(), firstFrame,
                      given.framePeriod, prepared.control.timestep, cell)) {
@@ -1531,7 +1538,6 @@ llvm::Error Simulation::setReports(const Reports &given) {
       out.hasTrajectory = true;
     }
   }
-  out.framePeriod = given.framePeriod;
   reports = given;
   return llvm::Error::success();
 }
@@ -1576,7 +1582,6 @@ void Simulation::closeReports() {
     output->trajectory->close();
   output->trajectory.reset();
   output->hasTrajectory = false;
-  output->framePeriod = 0;
   output->energyPeriod = 0;
   reports = Reports();
 }

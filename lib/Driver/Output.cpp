@@ -959,13 +959,9 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   Output &output = *current;
   if (!output.hasTrajectory)
     return;
-  // A program that embeds the run asks for the frames of the least common
-  // period of its reports; the trajectory takes those of its own.
-  if (output.framePeriod > 0 && step % output.framePeriod != 0)
-    return;
   if (output.trajectory->isExact()) {
     // The state as the run has it, in nm (D[h5md-reporter]): a buffer of
-    // f32 widens to f64 without loss.
+    // f32 (the single mode) widens to f64 without loss.
     std::vector<double> exact = readVectors(positions, ids, output.state);
     checkSpread(output, exact, step);
     writeExactFrame(output, exact.data(), nullptr, nullptr, step,

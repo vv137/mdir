@@ -83,7 +83,7 @@ uses in the expression. This check does not change keys or file formats.
 | | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). With a barostat, `volume` (Å³) and `area_xy` (Å²), the xy face spanned by the first two cell vectors, follow the energy columns (D170); this is membrane area only when the membrane normal is along z, and is not area per lipid. |
 | | `trajectory` | Positions, in DCD (`.dcd`, Å in f32), in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), or without loss in H5MD (`.h5md`, the positions of the state in nm with the cell of every frame, D[h5md-reporter]), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, `XTC`, or `H5MD`. A trajectory in H5MD under another extension, such as `.h5`, needs the name of the format: `.h5` is not taken for it, being the extension of checkpoints. |
-| | `trajectory_precision` | Of a trajectory in H5MD: `DOUBLE` (the default), positions in f64, which hold the state of either precision mode without loss, or `SINGLE`, positions in f32, the state of the mixed mode without loss and the rounding of that of the double mode. An error with DCD and XTC. |
+| | `trajectory_precision` | Of a trajectory in H5MD: `DOUBLE` (the default), positions in f64, the type of the state in the mixed and the double mode, so nothing is rounded, or `SINGLE`, positions in f32, the state rounded to the nearest f32, in half the space. An error with DCD and XTC. |
 | | `pull` | A file of columns of the terms over the centers of groups at every energy of the log: the step, the time, and for each term its coordinates (`r`, `dx`, `dy`, `dz` in Å, or `theta`), its energy (kcal/mol), and its force, along the distance and on the second center, or $-\partial E/\partial\theta$; continued with the run (D145, D149). |
 | | `free_energy` | A file of columns of `[free_energy]` at every energy of the log: the step, the time, $\partial U/\partial\lambda_m$ of each component (`dHdl.<name>`), and $U(\boldsymbol\lambda^{(k)}) - U(\boldsymbol\lambda)$ for every state $k$ (`dU.<k>`), left out with one state, where they are identically 0 (D190), in kcal/mol, the input of thermodynamic integration and of MBAR (`scripts/free-energy.py`); continued with the run (D161). Its energies and derivatives are those of the potential that the forces sample: under a plain cutoff (`lennard_jones_modifier = "NONE"`, a Coulomb cutoff, the direct sum of PME without `coulomb_modifier`), each pair within the cutoff less its energy at the cutoff, as under `POTENTIAL_SHIFT`; with the correction for the dispersion, plus its tail and the estimate of the shift. The log and the energy file keep the energy as the modifiers define it (D210). Against an engine that differentiates the cut potential with its tail, as pmemd does, $\langle\partial U/\partial\lambda\rangle$ of a decoupled particle then differs by $(\langle N_\text{in}\rangle - N_\text{uniform})\,\partial_\lambda u(r_c)$, with $N_\text{in}$ its neighbors within $r_c$ and $N_\text{uniform} = \rho\tfrac{4\pi}{3}r_c^3 - 1$ (+0.0003 kcal/mol for one Lennard-Jones particle in 500 at 12 Å). |
 | | `observables` | A file of columns at every energy of a run of dynamics: the step, the time, and for each term that gives `observe`, in the order of the file, its energy (`<term>.energy`, kcal/mol) and its derivative in each constant it lists (`<term>.d_<constant>`, kcal/mol per unit of the constant); needs a term that observes, and a term that observes needs it (D189). Its energies and derivatives are those of the potential that the forces sample: under a plain cutoff (`lennard_jones_modifier = "NONE"`, a Coulomb cutoff, the direct sum of PME without `coulomb_modifier`), each pair within the cutoff less its energy at the cutoff, as under `POTENTIAL_SHIFT`; with the correction for the dispersion, plus its tail and the estimate of the shift. The log and the energy file keep the energy as the modifiers define it (D210). |
@@ -397,6 +397,29 @@ to `<checkpoint>.prev`. The file is flushed to stable storage before it
 takes its name, and its directory after. `mdir checkpoint
 --print=fingerprint` lists the fingerprint, and docs/driver-m0.md, Section
 2.6, says what a run that takes a checkpoint compares.
+
+A trajectory in H5MD (`trajectory = "run.h5md"`, D[h5md-reporter]) is a
+file of the same specification with the units module (version 1.0, `SI`),
+the numbers of the state in nm, ps, and kJ/mol, the rows of a value in the
+order of the input, and one row per frame:
+
+| Path | Holds |
+|---|---|
+| `/h5md` | As in a checkpoint, and `modules/units` |
+| `/particles/all/position` | `step` (i64), `time` (f64, ps), `value` (f64, or f32 with `trajectory_precision = "SINGLE"`) of shape (K, N, 3), nm |
+| `/particles/all/box` | `dimension`, `boundary`; `edges/value` of shape (K, 3), or (K, 3, 3) with the cell vectors of a triclinic cell in rows, its `step` and `time` hard links to those of `position`; no `edges` without a periodic cell |
+| `/particles/all/{velocity,force}` | From a Python simulation that asks for them: `value` (K, N, 3) in nm/ps and kJ/mol/nm; the time of leapfrog's velocities is their own |
+| `/particles/all/{mass,species}` | The masses (g/mol) and the types; no `id`, the rows being in the order of the input |
+| `/observables/potential_energy` | The potential energy of the row of the log at the step of each frame, kJ/mol, where every frame is a step of energy (`trajectory_interval` a multiple of `energy_interval`) |
+| `/observables/tunables_version` | From a Python simulation with tunable parameters, the version of their values at each frame |
+| `/parameters/mdir` | Attributes `trajectory_format` (1), `period`, `timestep`, `velocity_offset`, `precision`, `front_end` |
+
+A chunk holds whole frames (one, or as many as fill 64 KiB), nothing is
+compressed, and every frame is flushed to the operating system, so a run
+that is killed leaves a file that opens with the frames written; a
+continued run cuts the file to the frames that its checkpoint counts and
+appends, as it does a DCD (A.3). `docs/python-h5md.md` has the reader,
+`mdir.read_h5md`, and the measurements.
 
 The native object-model boundary (D191) is described in
 [the model contract](../python-model.md). It adds no control-file keys:

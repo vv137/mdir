@@ -149,10 +149,6 @@ struct Output {
   bool tunableGradientWritten = false;
   std::unique_ptr<TrajectoryWriter> trajectory;
   bool hasTrajectory = false;
-  /// For a program that embeds the run: the steps between the frames of
-  /// the trajectory, which the host function of the frames checks; 0 for
-  /// every frame that the program hands over (`mdir run`).
-  int64_t framePeriod = 0;
 
   /// The types that the buffers of the state and of the forces hold.
   Element state = Element::F64;
