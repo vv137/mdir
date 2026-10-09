@@ -1,8 +1,9 @@
 # Triclinic cells are read into the reduced lower-triangular form of
 # docs/triclinic-m2.md (Section 1). They run on the CPU (triclinic.test)
 # and on a device (triclinic-gpu.test), also at constant pressure
-# (triclinic-npt.test); a reach of the list beyond half of the least of a_x,
-# b_y, c_z is refused. Amber's truncated octahedron of side 30 Å (angles
+# (triclinic-npt.test). The neighbor matrix takes a reach beyond half of the
+# least of a_x, b_y, c_z (D[matrix-images], triclinic-reach.test), up to 127
+# times the cutoff. Amber's truncated octahedron of side 30 Å (angles
 # 109.4712190°, as tleap writes it) lies on a bound of the reduced form,
 # c_y = −b_y/2, and is kept as it is; GROMACS's octahedron of the same side
 # (70.53°, 109.47°, 70.53° in .gro's nine numbers) is the same shape in a
@@ -14,6 +15,8 @@
 # RUN: printf '[input]\ntopology = "dipeptide.prmtop"\ncoordinates = "dipeptide.inpcrd"\n[energy]\ncutoff = 9.0\npairlist_distance = 10.0\n[dynamics]\nintegrator = "VELOCITY_VERLET"\ntime_step = 0.001\nsteps = 10\n[ensemble]\nensemble = "NVE"\ntemperature = 0.0\n[boundary]\ntype = "PERIODIC"\n' > %t/amber.toml
 # RUN: mdir check %t/amber.toml | FileCheck %s --check-prefix=AMBER
 # RUN: sed -i -e 's/^pairlist_distance = 10.0/pairlist_distance = 12.5/' %t/amber.toml
+# RUN: mdir check %t/amber.toml | FileCheck %s --check-prefix=AMBER
+# RUN: sed -i -e 's/^pairlist_distance = 12.5/pairlist_distance = 1144.0/' %t/amber.toml
 # RUN: not mdir run %t/amber.toml 2>&1 | FileCheck %s --check-prefix=REACH
 #
 # RUN: cp %S/Inputs/gromacs/system.top %S/Inputs/gromacs/forcefield.itp %S/Inputs/gromacs/water.itp %t/
@@ -29,7 +32,7 @@
 
 # AMBER:   box:                30 30 30 Å, angles 109.471 109.471 109.471
 # AMBER:   cell vectors:       a (30, 0, 0), b (-10, 28.2843, 0), c (-10, -14.1421, 24.4949) Å
-# REACH:   'pairlist_distance', 12.5 Å, exceeds half of the least of a_x, b_y, c_z of the triclinic cell, 12.2474 Å
+# REACH:   'pairlist_distance', 1144 Å, exceeds 127 times 'cutoff', 9 Å, the most that the neighbor matrix of a triclinic cell takes
 # GROMACS: box:                30 30 30 Å, angles 70.5288 109.471 70.5288
 # GROMACS: cell vectors:       a (30, 0, 0), b (10, 28.2843, 0), c (-10, 14.1421, 24.4949) Å
 # FRAME:   a cell needs a along x and b in the x-y plane

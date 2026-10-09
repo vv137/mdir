@@ -1832,12 +1832,16 @@ Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
           std::to_string(0.5 * cell[bounds[k]]) +
           " nm; write the reduced cell of the lattice (|b_x| <= a_x/2, "
           "|c_x| <= a_x/2, |c_y| <= b_y/2); nothing is committed");
-  // The neighbor structures of a triclinic cell hold every pair within
-  // their reach while it is at most half of the least of a_x, b_y, c_z,
-  // as the builder asks.
+  // The neighbor matrix of a triclinic cell holds every pair with an image
+  // within its reach, whatever the cell (docs/triclinic-m2.md, Section 2),
+  // so I2 is all that a commit asks of it; the groups hold every pair
+  // while their reach is at most half of the least of a_x, b_y, c_z, as
+  // the builder asks.
   double reach = control.pairlistDistance * units::length;
   double half = 0.5 * std::min({cell[0], cell[1], cell[2]});
-  if (reach > half)
+  if (triclinic &&
+      control.neighborStructure == driver::NeighborStructure::Groups &&
+      reach > half)
     return inputError("the pairlist distance of the program, " +
                       std::to_string(reach) +
                       " nm, exceeds half of the least of a_x, b_y, c_z of "
