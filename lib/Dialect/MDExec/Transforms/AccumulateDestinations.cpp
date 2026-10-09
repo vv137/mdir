@@ -6,6 +6,7 @@
 
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "llvm/ADT/SetVector.h"
 #include "llvm/ADT/SmallVector.h"
 
 using namespace mlir;
@@ -250,6 +251,48 @@ static bool mergeOnce(ParticleForOp op) {
   return false;
 }
 
+/// Moves `loop` down to follow `after`, which comes later in its block,
+/// with the ops between the two that use a result of `loop`, directly or
+/// through one another, if those are pure ops without regions and `after`
+/// uses none of them (the sums of the energies and of the virials of the
+/// terms, which read the sums of `loop`). Returns true if it moved them.
+///
+/// A loop that gives the energy of a term with its forces stands where the
+/// energy is computed (md-exec-fuse-loops), before the forces of a term
+/// whose forces need a number computed from its sums (a term over the
+/// centers of groups, D139), though the sum of the forces adds it after
+/// that term; in a step without energies the loops stand in the order of
+/// the sum.
+static bool sinkAfter(Operation *loop, Operation *after) {
+  llvm::SetVector<Operation *> dependent;
+  dependent.insert(loop);
+  for (Operation *between = loop->getNextNode(); between != after;
+       between = between->getNextNode()) {
+    bool depends = false;
+    between->walk([&](Operation *nested) {
+      for (Value operand : nested->getOperands())
+        if (Operation *definition = operand.getDefiningOp())
+          depends |= dependent.contains(definition);
+    });
+    if (!depends)
+      continue;
+    if (!isPure(between) || between->getNumRegions() != 0)
+      return false;
+    dependent.insert(between);
+  }
+  bool used = false;
+  after->walk([&](Operation *nested) {
+    for (Value operand : nested->getOperands())
+      if (Operation *definition = operand.getDefiningOp())
+        used |= dependent.contains(definition);
+  });
+  if (used)
+    return false;
+  for (Operation *moved : llvm::reverse(dependent.getArrayRef()))
+    moved->moveAfter(after);
+  return true;
+}
+
 /// Rewrites the first chain of sums in the kernel of `op` that it can.
 /// Returns true if it did.
 static bool accumulateOnce(ParticleForOp op) {
@@ -258,14 +301,25 @@ static bool accumulateOnce(ParticleForOp op) {
     ArrayRef<unsigned> arguments = chain.arguments;
     ArrayRef<arith::AddFOp> sums = chain.sums;
     // The prefix whose fields are terms of loops in the order of the chain.
+    // A loop that stands before the loop of the term before it moves down
+    // to follow it where it can (sinkAfter), so that the terms are added
+    // in the order of the chain, each onto the last, wherever the loops
+    // stand: the sum of the forces is then the same, to the bit, in a step
+    // that computes energies and in one that does not (#240).
     SmallVector<Term> terms;
     for (unsigned index : arguments) {
       if (!kernel.getArgument(index).hasOneUse())
         break;
       std::optional<Term> term = getTerm(op.getIns()[index], op);
-      if (!term || (!terms.empty() &&
-                    !terms.back().loop->isBeforeInBlock(term->loop)))
+      if (!term)
         break;
+      if (!terms.empty() && !terms.back().loop->isBeforeInBlock(term->loop)) {
+        // Two destinations of one loop that did not merge stay apart.
+        bool same = llvm::any_of(
+            terms, [&](const Term &other) { return other.loop == term->loop; });
+        if (same || !sinkAfter(term->loop, terms.back().loop))
+          break;
+      }
       terms.push_back(*term);
     }
     if (terms.size() < 2)

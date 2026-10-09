@@ -88,6 +88,23 @@ at every step and with one at the end then give the same state bit for
 bit, at the speed of the deterministic mode before (JAC, 0.326 against
 0.325 ms per step).
 
+A fourth was the order of the loops. The forces of the terms are added by
+letting the loop of each term accumulate onto the field of the term before
+it, in f32 in mixed precision (`md-exec-accumulate-destinations`, Section
+3.4), which the pass did only while the loops stood in the order of the
+sum.
+A loop that gives the energy of its term with its forces stands where the
+energy is added, and the forces of a term over the centers of groups
+(Section 8.1) need the derivative of its energy at the sums over its groups,
+so that in a step of energy their loop came after the loop of the 1-4
+pairs, which the sum adds after it. The 1-4 pairs then kept a field of
+their own, added in f64 to the f32 sum of the terms before them, where a
+plain step accumulated them in f32: the forces on the atoms with 1-4 pairs
+were rounded otherwise, and the run depended on `energy_interval` (#240).
+The pass now moves such a loop down to follow the loop of the term before
+it, with the sums of energies that read it, so that the terms accumulate
+in the order of the sum in every kind of step.
+
 ## 7.2 What is approximated, and within what bound
 
 Under `fast_math` (the default of the suite) the f32 kernels of the terms

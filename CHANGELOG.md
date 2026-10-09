@@ -536,6 +536,19 @@ format, or the outputs; every such change is listed under **Changed** or
   its place; the energies, the forces, the virial, and the correction of
   the inputs that ran are unchanged, and the two orders give the same
   (`pair-term-order.test`, `python-pair-order.test`, and their GPU twins).
+- In the deterministic mode and mixed precision, a run with a term over
+  the centers of groups (`groups` of `[[energy.bond]]`, `[[energy.angle]]`,
+  or `[[energy.dihedral]]`) depended on `energy_interval` (#240, D204): a
+  step that writes energies added the forces of the 1-4 pairs to the sum
+  of the terms before them in f64, and a step that does not accumulated
+  them in f32, so the forces on the atoms with 1-4 pairs were rounded
+  otherwise (1e-7 nm in the positions of the dipeptide in water after 40
+  steps, on the CPU and on a GPU, at constant energy, at constant
+  temperature, and under NPT with `work = "TROTTER"` or
+  `"TROTTER_FIRST_ORDER"`). The terms are now added in one order and one
+  type in every kind of step. A run with such a term may differ from
+  before at the rounding of f32 in every mode; a run without one is
+  unchanged.
 - An output no longer counts for `rebuild_interval`
   (D237, #233). The potentials of `[output]
   observables`, of the free-energy file, and of a pull file share the
