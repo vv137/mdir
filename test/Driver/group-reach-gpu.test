@@ -1,5 +1,5 @@
 # The groups, and the dual list, with a reach of most of the cell
-# (#263, D[group-images], docs/groups-m1.md, Section 5.2), in a cube and in
+# (#263, D242, docs/groups-m1.md, Section 5.2), in a cube and in
 # a cell with every tilt on its bound that a barostat shrinks from 22 Å to
 # about 19.3 Å: at every frame the potential energy of `mdir run` is the sum
 # over every image of every pair within the cutoff

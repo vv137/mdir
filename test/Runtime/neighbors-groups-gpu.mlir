@@ -562,7 +562,7 @@ func.func @main() {
   %l3 = arith.constant 4.0 : f64
   %r3 = arith.constant 1.9 : f64
   call @run(%l3, %r3, %none, %no, %n2000) : (f64, f64, index, i1, index) -> ()
-  // Reaches of more than half the cell (#263, D[group-images]): a pair then
+  // Reaches of more than half the cell (#263, D242): a pair then
   // has several images within the reach, each with an entry bit of its own,
   // and a box and the reach span more than the cell, so that an image a
   // cell away on either side of the nearest can be within the reach. 0.55

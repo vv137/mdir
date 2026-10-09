@@ -15,7 +15,7 @@
 # The build of the neighbor matrix of a triclinic cell that tests every image
 # within the reach is written from the build of the one pass into the part
 # of the two templates between BEGIN GENERATED and END GENERATED
-# (D[matrix-images]).
+# (D241).
 # RUN: %python %S/../../scripts/generate-matrix-images-template.py %t/matrix
 # RUN: cmp %t/matrix/NeighborsMatrix.mlir %S/../../lib/Runtime/Templates/NeighborsMatrix.mlir
 # RUN: cmp %t/matrix/NeighborsMatrixGPU.mlir %S/../../lib/Runtime/Templates/NeighborsMatrixGPU.mlir

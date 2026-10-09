@@ -2,7 +2,7 @@
 # docs/triclinic-m2.md (Section 1). They run on the CPU (triclinic.test)
 # and on a device (triclinic-gpu.test), also at constant pressure
 # (triclinic-npt.test). The neighbor matrix takes a reach beyond half of the
-# least of a_x, b_y, c_z (D[matrix-images], triclinic-reach.test), up to 127
+# least of a_x, b_y, c_z (D241, triclinic-reach.test), up to 127
 # times the cutoff. Amber's truncated octahedron of side 30 Å (angles
 # 109.4712190°, as tleap writes it) lies on a bound of the reduced form,
 # c_y = −b_y/2, and is kept as it is; GROMACS's octahedron of the same side

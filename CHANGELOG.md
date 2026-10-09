@@ -310,7 +310,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - With the groups, `pairlist_distance` may be up to 0.999 of the least
   edge of the cell (the least of $a_x, b_y, c_z$ of a triclinic one),
   where a triclinic cell was limited to half of it and an orthorhombic
-  cell was not limited (D[group-images], #263). The builder refuses a
+  cell was not limited (D242, #263). The builder refuses a
   longer one ("exceeds 0.999 of the least edge of the cell"), a commit of a
   writable borrow does, and a run whose barostat takes the cell below
   `pairlist_distance`/0.999 stops, as one does at twice the cutoff.
@@ -600,7 +600,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - With the groups (`neighbor_structure = "GROUPS"`, with or without a dual
   list) in an orthorhombic cell, a pairlist distance of more than about
   the edge of the cell less the half-width of a group lost pairs (#263,
-  D[group-images], `docs/groups-m1.md`, Section 5.2): the lists took the
+  D242, `docs/groups-m1.md`, Section 5.2): the lists took the
   image of a candidate nearest to the center of a group and the one on the
   other side of the boundary along each axis, which are not every image
   within such a reach, and nothing refused the input. Measured on 216 argon
@@ -615,7 +615,7 @@ format, or the outputs; every such change is listed under **Changed** or
   cell, in an orthorhombic and in a triclinic cell.
 - In a triclinic cell the neighbor matrix (the default structure, on the
   CPU and on a device) lost pairs once its reach, `pairlist_distance`, was
-  more than half of the least of $a_x, b_y, c_z$ (#258, D[matrix-images],
+  more than half of the least of $a_x, b_y, c_z$ (#258, D241,
   `docs/triclinic-m2.md`, Section 2). The builder refused such an input,
   but a barostat could shrink an accepted cell past the bound, and the run
   went on: its build tested a candidate at the image of the one pass along

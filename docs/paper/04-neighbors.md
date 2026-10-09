@@ -167,7 +167,7 @@ row are the same from run to run. Rows that are too narrow make the
 runtime widen them by a quarter more than needed and build again; the run
 never truncates a row.
 
-**Triclinic cells** (D123, D125, D[matrix-images]). The particles are
+**Triclinic cells** (D123, D125, D241). The particles are
 binned by their fractional coordinates $\mathbf x H^{-1}$, in as many
 cells as the widths of the cell between its faces hold, and the search
 goes around the torus of those cells. A loop over the matrix takes the
@@ -342,7 +342,7 @@ $$
 
 whatever the positions, and the run asks it: the builder refuses a longer
 reach for the groups and the runtime stops a run whose barostat takes the
-cell below it (D[group-images]). Before, the kernel took the nearest image
+cell below it (D242). Before, the kernel took the nearest image
 or the one on the other side of the boundary along each axis, which is
 every image only while $h_a + R \le L_a$, a condition nothing asked: with
 a reach of 0.77 to 0.89 of the edge of a cube under a barostat, 23 of 79

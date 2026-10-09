@@ -1836,7 +1836,7 @@ Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
   // whatever the cell (docs/triclinic-m2.md, Section 2), so I2 is all that
   // a commit asks of it; the groups hold every image within their reach
   // while it is less than the least edge of the cell, the least of a_x,
-  // b_y, c_z of a triclinic one, as the builder asks (D[group-images]).
+  // b_y, c_z of a triclinic one, as the builder asks (D242).
   double reach = control.pairlistDistance * units::length;
   double most = 0.999 * std::min({cell[0], cell[1], cell[2]});
   if (control.neighborStructure == driver::NeighborStructure::Groups &&

@@ -271,7 +271,7 @@ A triclinic cell (docs/triclinic-m2.md) takes the build of
 octahedron, a dodecahedron, a hexagonal cell, and a cell of D115 against
 every image of every pair in f64.
 
-## 5.2 How far the lists reach (D[group-images])
+## 5.2 How far the lists reach (D242)
 
 **Claim.** The lists hold an entry bit for every image of every pair
 within the reach $R$ while $R < \min_a L_a$, the least edge of an
@@ -308,7 +308,7 @@ a barostat the runtime stops a run whose cell comes below
 at twice the cutoff. The dual list is pruned from these lists with their
 shifts and adds no image of its own.
 
-Before D[group-images] the orthorhombic images kernel took, along each
+Before D242 the orthorhombic images kernel took, along each
 axis, the nearest image or the one on the other side of the boundary, 8
 combinations: the images with $\lvert r_a\rvert \le L_a$ on the side of
 $-\operatorname{sign}(r_a)$ only, complete while $h_a + R \le L_a$, which

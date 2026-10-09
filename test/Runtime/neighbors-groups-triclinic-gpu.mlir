@@ -686,7 +686,7 @@ func.func @main() {
   %hexa = arith.constant dense<[12.0, 10.392304845413264, 9.0, -6.0, 0.0, 0.0]> : vector<6xf64>
   call @run(%hexa, %reach, %none, %no, %n2000) : (vector<6xf64>, f64, index, i1, index) -> ()
   // Reaches of more than half of the least of a_x, b_y, c_z (#258,
-  // D[group-images]): a pair then has several images within the reach, each
+  // D242): a pair then has several images within the reach, each
   // with an entry bit of its own. Narrow cells with 320 particles, whose
   // lists fit the buffers of the test: a dodecahedron, an octahedron, a
   // hexagonal cell, and a cell with every tilt on its bound, at 0.6, 0.85,

@@ -30,7 +30,7 @@
 // kernel adds entries for the images a cell away along each axis to the
 // lists of such groups, continuing each where the first left it (D115).
 // These are every image within the reach while the reach is less than the
-// least edge of the cell (D[group-images]). The candidates come from a grid of cells
+// least edge of the cell (D242). The candidates come from a grid of cells
 // of half the reach over the places, each cell in the order of its places,
 // visited in a fixed order, so the order of the entries of a group does not
 // depend on the threads either. The layout is that of [SalomonFerrer2013];
@@ -15163,7 +15163,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
               %none_q = arith.constant -1 : i32
               // The images of the candidate other than the one nearest to the
               // center of the box: a cell away or none along each axis, by
-              // their codes (D115, D[group-images]); a warp in a wide cell
+              // their codes (D115, D242); a warp in a wide cell
               // finds none within the reach.
               %im_far = arith.constant 3.0e+38 : f32
               %cand, %crx, %cry, %crz = scf.if %in_run -> (i32, f32, f32, f32) {
@@ -15255,7 +15255,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                 %bits = scf.if %valid -> (i32) {
                   // The place, and in the bits from 26 the code of the image
                   // of the candidate, 9 (o_z + 1) + 3 (o_y + 1) + (o_x + 1)
-                  // (D115, D[group-images]). Places are fewer than 2^26.
+                  // (D115, D242). Places are fewer than 2^26.
                   %im_mask = arith.constant 67108863 : i32
                   %q = arith.andi %qv, %im_mask : i32
                   %im_c26 = arith.constant 26 : i32
@@ -15613,7 +15613,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
         %bits = scf.if %valid -> (i32) {
                   // The place, and in the bits from 26 the code of the image
                   // of the candidate, 9 (o_z + 1) + 3 (o_y + 1) + (o_x + 1)
-                  // (D115, D[group-images]). Places are fewer than 2^26.
+                  // (D115, D242). Places are fewer than 2^26.
                   %im_mask = arith.constant 67108863 : i32
                   %q = arith.andi %qv, %im_mask : i32
                   %im_c26 = arith.constant 26 : i32

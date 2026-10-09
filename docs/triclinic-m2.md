@@ -112,7 +112,7 @@ with `ucell`, as above.
 | | Invariant | Where it is kept |
 |---|---|---|
 | I1 | $H$ is lower triangular and reduced | Reduced on input; the barostat keeps it (I3) |
-| I2 | $r_c \le \tfrac12 \min(a_x, b_y, c_z)$ | Checked at the start, at a commit of a writable borrow (D238), and at every change of the cell (`mdrtSetBox`), in place of the edge of twice the cutoff. With the neighbor matrix it is all that is asked of the cell (D[matrix-images]) |
+| I2 | $r_c \le \tfrac12 \min(a_x, b_y, c_z)$ | Checked at the start, at a commit of a writable borrow (D238), and at every change of the cell (`mdrtSetBox`), in place of the edge of twice the cutoff. With the neighbor matrix it is all that is asked of the cell (D241) |
 | I3 | The barostat scales $H' = H\,\mathrm{diag}(\boldsymbol\mu)$ and $\mathbf x' = \mathbf x\,\mathrm{diag}(\boldsymbol\mu)$ only: isotropic and semi-isotropic coupling | The barostat refuses any other coupling |
 | I4 | A neighbor structure that stores the image of an entry stores it as lattice indices $\mathbf n = (n_a, n_b, n_c)$, applied as $\mathbf n H$ | The builds of the groups and of the dual list (D115). The matrix stores no image: an entry is a particle, and its loops take the image of the pass below |
 
@@ -137,11 +137,11 @@ structure must not take the image of the pass for the nearest one beyond
 $\tfrac12 \min(a_x, b_y, c_z)$: the groups keep an entry for each image
 within their reach (D115, I4), which they hold completely for a reach
 below $\min(a_x, b_y, c_z)$ ([groups-m1.md](groups-m1.md), Section 5.2,
-D[group-images]), and the matrix tests every image within its reach, as
+D242), and the matrix tests every image within its reach, as
 follows. GROMACS's further bound $r_c \le b_y - |c_y|$ comes
 from its search, which tries one lattice vector at a time; MDIR's does not.
 
-**The images of a pair within a reach (D[matrix-images], #258).** The
+**The images of a pair within a reach (D241, #258).** The
 image of the pass lies in the brick, and it is the nearest image only if
 the nearest image lies in the brick too. A pair whose nearest image
 $\mathbf d$ has $\tfrac12 c_z < \lvert d_z\rvert$ and
@@ -150,7 +150,7 @@ $\mathbf d \mp \mathbf c$, whose $x$ and $y$ move by the tilts: in a
 rhombic dodecahedron with $c_z$ = 1.72 nm, a pair 0.91 nm apart along
 $z$ comes out 1.67 nm apart. A build that tests that image alone leaves the
 pair out of a list of $R$ = 1.0 nm, and the pair is then absent when it
-comes within the cutoff. Until D[matrix-images] the build of the matrix
+comes within the cutoff. Until D241 the build of the matrix
 did so, and the builder refused $R > \tfrac12 \min(a_x, b_y, c_z)$,
 which a barostat could still take the cell past.
 
@@ -249,8 +249,8 @@ From the survey of M1 (line counts are of today's tree):
 | IR | `md.orthorhombic_cell %lx, %ly, %lz`; the lowerings carry the cell as `vector<3xf64>` | `md.triclinic_cell` of six numbers; the lowerings carry the diagonal and the tilts $(b_x, c_x, c_y)$. `!md.cell` already speaks of lattice vectors |
 | Specialization | — | Whether a run is triclinic is fixed when it is compiled, as OpenMM fixes it when a context is made: an orthorhombic run compiles to the code of today, at no cost |
 | Minimum image | $\mathbf d - \mathbf L \odot \mathrm{roundeven}(\mathbf d / \mathbf L)$ in the kernels of pairs and tuples and in the templates | The pass of Section 2; 9 multiply-adds in a chain against 6 independent ones |
-| The matrix (CPU and GPU) | Cells along each axis over $[0, L)$ | Particles wrapped into $[0, 1)^3$ of the fractional coordinates; cells of the fractional coordinates, as many as the widths of the cell between its faces hold, searched around the torus (D123, D125); a candidate is taken if any of its images is within the reach (Section 2, D[matrix-images]) |
-| Groups (GPU) | Columns in $x$-$y$, sorted in $z$; an entry carries $e \in [-4, 4]$ per axis, applied as $\mathbf e \odot \mathbf L$ in the gather and the pruning; D115 adds images when $2(h_a + R) \ge L_a$ | Columns of the brick, as GROMACS and OpenMM keep them; $\mathbf e$ read as $\mathbf n$, in five bits a vector, and applied as $\mathbf n H$: five multiply-adds once per entry, nothing per pair; the image of a candidate chosen by the pass around the center of the group; D115's condition on $a_x$, $b_y$, $c_z$; complete for a reach below the least of them (D[group-images]) |
+| The matrix (CPU and GPU) | Cells along each axis over $[0, L)$ | Particles wrapped into $[0, 1)^3$ of the fractional coordinates; cells of the fractional coordinates, as many as the widths of the cell between its faces hold, searched around the torus (D123, D125); a candidate is taken if any of its images is within the reach (Section 2, D241) |
+| Groups (GPU) | Columns in $x$-$y$, sorted in $z$; an entry carries $e \in [-4, 4]$ per axis, applied as $\mathbf e \odot \mathbf L$ in the gather and the pruning; D115 adds images when $2(h_a + R) \ge L_a$ | Columns of the brick, as GROMACS and OpenMM keep them; $\mathbf e$ read as $\mathbf n$, in five bits a vector, and applied as $\mathbf n H$: five multiply-adds once per entry, nothing per pair; the image of a candidate chosen by the pass around the center of the group; D115's condition on $a_x$, $b_y$, $c_z$; complete for a reach below the least of them (D242) |
 | PME | Fractional coordinates $x/L$; $\mathbf k = \mathbf m / \mathbf L$; the Gaussian $\exp(-\pi^2 k^2/\beta^2)$ as a product of tables of each axis (D104) | $\mathbf s = \mathbf x H^{-1}$, three multiply-adds more, $H^{-1}$ triangular; $\mathbf k = \mathbf m H^{-\mathsf T}$; forces through $H^{-\mathsf T}$; the Gaussian computed directly, since $k^2$ is no longer a sum of one term per axis; the grid from $|\mathbf a|, |\mathbf b|, |\mathbf c|$; the virial keeps its form, $\delta - 2(1/k^2 + \pi^2/\beta^2)\,\mathbf k \otimes \mathbf k$ |
 | Barostat | Edges times $\boldsymbol\mu$; volume $L_xL_yL_z$ | $H\,\mathrm{diag}(\boldsymbol\mu)$ (I3); volume $a_xb_yc_z$; the tilts scale with their columns (D127) |
 | Restraints | Centers of the references times the edges over those of the file (D124) | The same with the diagonal of $H$ (I3) |

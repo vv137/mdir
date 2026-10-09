@@ -1,6 +1,6 @@
 # triclinic-reach.test on a device, with the neighbor matrix: a narrow
 # tilted cell that a barostat shrinks until the pairlist distance is well
-# beyond half of the least of a_x, b_y, c_z (#258, D[matrix-images]).
+# beyond half of the least of a_x, b_y, c_z (#258, D241).
 #
 # REQUIRES: python-api, hdf5, cuda
 #

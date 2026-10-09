@@ -514,7 +514,7 @@ twice the pairlist distance, an observed pair term equals a NumPy sum over
 every image within the cutoff to $4.7\times10^{-16}$: the bound that the
 build and a commit test of the cutoff, half of the least of $a_x$, $b_y$,
 $c_z$ for a reduced cell, is the one the minimum image needs. The reach of
-the neighbor matrix is not bound by it (D[matrix-images]): its rows are
+the neighbor matrix is not bound by it (D241): its rows are
 checked against every pair and 343 images in f64 at reaches from half of
 the least of the diagonal to more than the whole of it, in a dodecahedron,
 an octahedron, a hexagonal cell, cells with every tilt on its bound, and a
@@ -529,7 +529,7 @@ against its images within the reach in f64, at reaches up to 0.975 of the
 least edge of a cube and of the least of the diagonal of four tilted cells
 (`neighbors-groups*-gpu.mlir`), and in the same run under the barostat
 with a reach of 0.77 to 0.89 of the edge, with and without a dual list
-(`group-reach-gpu.test`, D[group-images]). Twenty frames of a run
+(`group-reach-gpu.test`, D242). Twenty frames of a run
 at constant pressure, whose barostat scales the tilts, put into one
 simulation give the energies and forces of a simulation compiled from each
 (`python-dlpack-tilts*.test`).

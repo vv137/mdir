@@ -350,7 +350,7 @@ It then checks everything before it changes anything:
   the cutoff; for a triclinic cell, the tilts are not all zero, the cell is
   reduced; for a program with the groups, in any cell, the pairlist
   distance is at most 0.999 of the least edge, the least of $a_x, b_y,
-  c_z$ (D[group-images]; the matrix takes any, D[matrix-images])
+  c_z$ (D242; the matrix takes any, D241)
   ([Tilts of a triclinic cell](#tilts-of-a-triclinic-cell-dborrow-tilts);
   `InputError`);
 - the values of the tunables pass the checks of an update of D213, and the
@@ -441,7 +441,7 @@ changes (`InputError`; nothing is committed and the borrow stays live):
 | $a_x, b_y, c_z \ge 2 r_c$ | I2 of [triclinic-m2.md](triclinic-m2.md): the minimum image holds every image within the cutoff; what the builder asks of every cell, and the runtime at every change of the cell by a barostat |
 | the tilts are not all zero; for a program compiled for an orthorhombic cell, the tilts are all zero | a cell without tilts is orthorhombic, for which the program has other arguments and other kernels (`isTriclinic` of the builder, D123): the change is structural either way, and the message says to compile from a state with that cell. `Borrow.tilt` of an orthorhombic program is read-only, so only a consumer that ignores the flag meets the second refusal |
 | $\lvert b_x\rvert \le a_x/2$, $\lvert c_x\rvert \le a_x/2$, $\lvert c_y\rvert \le b_y/2$, to the relative $10^{-6}$ of `reduceCell` | I1: the reduced form, which the minimum image in one pass and the search of the neighbor structures assume. A cell that is not reduced is refused and not reduced by the commit, as that of an `InitialState` is, and as nothing else that was written is adjusted; the message names the tilt and its bound |
-| `pairlist_distance` $\le 0.999 \min(a_x, b_y, c_z)$, for a program with the groups | what the builder asks of a cell with the groups at a compile (D[group-images]), repeated for the committed diagonal, so that a commit takes the cells that a compile takes. The matrix holds every pair with an image within its reach in any cell (D[matrix-images]), and a commit asks it for I2 alone |
+| `pairlist_distance` $\le 0.999 \min(a_x, b_y, c_z)$, for a program with the groups | what the builder asks of a cell with the groups at a compile (D242), repeated for the committed diagonal, so that a commit takes the cells that a compile takes. The matrix holds every pair with an image within its reach in any cell (D241), and a commit asks it for I2 alone |
 
 The test of the builder is on the diagonal, not on the widths of the cell
 between its faces, and that is the right bound for what it protects: a

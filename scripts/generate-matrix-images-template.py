@@ -2,7 +2,7 @@
 """Writes the generated part of lib/Runtime/Templates/NeighborsMatrix.mlir and
 NeighborsMatrixGPU.mlir: the build of the neighbor matrix of a triclinic cell
 that takes a pair if any of its images is within the reach
-(docs/triclinic-m2.md, Section 2, D[matrix-images]), and the function that
+(docs/triclinic-m2.md, Section 2, D241), and the function that
 chooses between it and the build that tests the image of the one pass alone.
 
 The build of the one pass, `..._triclinic_pass`, is written by hand in each
