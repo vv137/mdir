@@ -345,11 +345,11 @@ energy of `gradient()`: under a plain cutoff it is the shifted potential,
 not the energy that the run reports. #140 measured what the other choice
 costs: 18% in the gradient of the osmotic pressure.
 
-**Not together yet.** A tunable of the charges and a tunable constant of a
-pair term in one program compile and then fail to lower (#256, a defect of
-D230's differentiation, not of the evaluator); each alone works. The fix
-is PR #260; a test of the evaluator with both in one program follows its
-merge.
+**Charges with a constant of a pair term.** A tunable of the charges and a
+tunable constant of a pair term in one program did not lower when the
+evaluator was written (#256); since the fix of #260 they do, and the
+evaluator takes such a program in both modes (`python-frames.test`,
+scenario `dependent`).
 
 ## Reference energies and what is stored
 
@@ -655,13 +655,291 @@ part of a start. At most 5 steps per frame: 0.35 ms on the dipeptide
 (2,900 frames/s) and 1.1 ms on JAC (900 frames/s), and under a minute for
 a pass of #140.
 
+## The dependent terms alone (D[frame-evaluator-terms])
+
+Issue #264. Status: implemented, as the maintainer ruled on PR #266
+([Maintainer rulings (dependent terms)](#maintainer-rulings-dependent-terms)).
+**The mode saves time, 2 to 2.5 times a frame for a tunable of a pair term
+and 1.45 to 1.9 times for the charges; it does not change the accuracy of a
+difference in mixed precision** ([measured](#what-the-mode-saves)).
+
+A reweighting takes differences at one frame, $U_{\boldsymbol\theta}(S_n)
+- U_{\hat{\boldsymbol\theta}}(S_n)$, and the derivative in
+$\boldsymbol\theta$. With
+
+$$
+U = U_\text{fixed} + U_\text{dep}(\boldsymbol\theta),
+$$
+
+$U_\text{dep}$ the terms that a tunable enters, the fixed part cancels in
+both. An evaluator of $U_\text{dep}$ alone gives the same weights and the
+same product and evaluates less.
+
+### Interface
+
+```python
+evaluator = mdir.FrameEvaluator(program, terms="dependent")   # "all" is the default
+evaluator.terms                 # "dependent"
+evaluator.program.plan["terms"] # what is kept: ["pair:nbfix"], ["lennard_jones", "coulomb"], ...
+out = evaluator.evaluate(frames)
+out.dependent_energy            # (K,) float64: U_dep at each frame, with its tails at the volume of the frame
+out.energy                      # raises UnsupportedError: this evaluator has no potential energy
+out.jacobian, out.vjp(g)        # those of U_dep, which are those of U
+out.volume                      # as before
+out.observables                 # the columns of the terms that are kept; the others are absent
+out.unavailable                 # ("energy", "virial", "wall.energy", ...): what this mode does not give
+```
+
+- `energy` is not reused for $U_\text{dep}$: a number named `energy` would
+  be taken for the potential. With `terms="all"`, `dependent_energy` raises
+  in the same way (`out.unavailable` is then `("dependent_energy",)`), so a
+  script written for one mode fails loudly in the other, and energies of
+  the two modes cannot be subtracted by accident. `mdir.torch.evaluate`
+  returns the same names, and its backward is the same product.
+- The virial of $U_\text{dep}$ is not the virial, so `virial` raises too.
+  The columns of `observe` of the terms that are left out are not in
+  `observables`; `out.unavailable` lists them. `depends` holds what it
+  held for the outputs that remain, under `"dependent_energy"` for the
+  energy.
+- The reference energies of a reweighting are `dependent_energy` at
+  $\hat{\boldsymbol\theta}$ from the same evaluator.
+- `evaluator.program` is the program that is evaluated: with
+  `terms="dependent"` a second program, which the evaluator compiles from
+  the model of the program it is given (`Program.plan["terms"]` lists its
+  terms; that of any other program is `["all"]`). It is not a program to
+  sample with: its forces are those of the dependent terms alone.
+
+### Which terms are kept
+
+The proofs are those behind `zero` and `depends`: a term is kept if a
+tunable that is not `"zero"` enters it.
+
+| Tunable | Kept (`plan["terms"]`) | Why not less |
+|---|---|---|
+| A constant of a pair term | that pair term, over its groups, with its tail and the estimate of its shift at the volume of the frame (`"pair:<name>"`) | |
+| A parameter of a tuple term | that tuple term (`"tuple:<name>"`) | |
+| $\sigma$, $\epsilon$ per type, or by pairs of types | the Lennard-Jones of all pairs within the cutoff, the correction for the dispersion and the estimate of its shift (`"lennard_jones"`) | the kernel runs over the neighbor structure of all particles; the pairs of other types are computed and cancel. A restriction to the particles of the types concerned would be a relation of its own, a later step |
+| Charges | the direct sum, the excluded pairs, the 1-4 pairs, the reciprocal sum, the self term and the background; a pair term that reads `q1` or `q2` (`"coulomb"`) | the reciprocal sum is one quadratic form of all the charges, $\tfrac12\mathbf q^{\mathsf T}\mathsf A\mathbf q$: the part of the water with itself cannot be left out of a mesh, even where only the charges of a solute are tunable |
+
+Left out: the bonds, angles, dihedrals, impropers, Urey-Bradley terms, and
+CMAPs of the topology, the Lennard-Jones of the 1-4 pairs (which do not
+follow the tunable table, D213), the terms of the positions (no tunable
+enters one), every pair or tuple term without a tunable, the Lennard-Jones
+without a tunable $\sigma$ or $\epsilon$, and the electrostatics, PME and
+its mesh included, without tunable charges. What the host adds to the
+energy follows its term: a tail that depends on $\boldsymbol\theta$ and on
+the volume of the frame stays with its term, and one of a term that is
+left out goes with it.
+
+### A second program, not a branch
+
+A frame is the start of an activation, which builds the buffers of the
+whole model and evaluates the forces of the whole potential before
+`@tunable` is reached; `@tunable` itself is 6% to 11% of an evaluation. A
+branch in one program that evaluated a smaller `@tunable` would save a
+part of that tenth. The evaluator therefore compiles a program whose every
+potential has the dependent terms only (`Control::dependentTerms`, set by
+`Program._dependent()`; `getDependentTerms` of `lib/Driver/Builder.cpp`
+names them, and `Builder::emitTopologyPotential`, the correction for the
+dispersion, and the tails of the pair terms ask it): no forces of the other
+terms, no mesh without tunable charges, no observed potentials of terms
+left out. The steps of the sampler's program are untouched, and D236
+applies to the second program as to any. Making the evaluator costs one
+more compilation, of a smaller program: 1.4 s to 2.6 s on the dipeptide
+and 2.7 s to 4.1 s on JAC with its first frame, on a GPU.
+
+The tuples of the bonded terms are still built and copied at the start of
+an activation, though no term reads them; leaving them out is a further
+saving that was not taken here.
+
+### What the mode saves
+
+One RTX 3090 (GPU 0 under its lock, 300 W cap), PME, a cutoff of 0.8 nm,
+the deterministic mode; ms per frame of `evaluate`, one run each.
+
+| System | Mode | Tunable | Kept | $U_\text{dep}$ of $U$ | The whole potential | The dependent terms | Ratio |
+|---|---|---|---|---|---|---|---|
+| Dipeptide, 1,168 atoms, 300 frames | GPU, mixed | $l$ of a pair term $a\,e^{-r/l}$ | `pair:soft` | 85 of 14,715 kJ/mol | 1.044 | 0.514 | 2.0 |
+| | | the charges of the water | `coulomb` | 19,484 of 14,838 | 1.129 | 0.780 | 1.45 |
+| | | $\sigma$ of the pair OW-OW | `lennard_jones` | 3,081 of 14,838 | 1.074 | 0.583 | 1.8 |
+| JAC, 23,558 atoms, 150 frames | GPU, mixed | $l$ of the pair term | `pair:soft` | 1,855 of 307,486 | 7.436 | 2.971 | 2.5 |
+| | | the charges of the water | `coulomb` | 410,959 of 309,283 | 7.677 | 4.121 | 1.9 |
+| | | $\sigma$ of the pair OW-OW | `lennard_jones` | 56,008 of 309,283 | 7.272 | 3.230 | 2.25 |
+| Dipeptide, 200 frames | GPU, double | $l$ of the pair term | `pair:soft` | | 2.140 | 0.918 | 2.3 |
+| JAC, 60 frames | GPU, double | $l$ of the pair term | `pair:soft` | | 27.72 | 11.28 | 2.5 |
+
+A frame of the dependent terms is still the start of an activation: 7 to
+11 steps on the dipeptide and 11 to 16 on JAC.
+
+**The next slice, and its bound.** What a frame costs beyond its kernels
+is fixed by the start of an activation, in either mode. Under
+`MDRT_PROFILE` on JAC in mixed precision, with the constant of a pair term
+tunable, per frame over 300 frames:
+
+| | The whole potential | The dependent terms |
+|---|---|---|
+| A frame | 6.99 ms | 2.72 ms |
+| Copies between host and device | 50, 3.37 ms | 18, 1.13 ms |
+| Launches of kernels (the build of the neighbor structure and the evaluation) | 85, 0.38 ms | 46, 0.13 ms |
+| Waits | 51, 0.41 ms | 19, 0.21 ms |
+| The rest: host work of the start outside the counters of the device runtime | 2.8 ms | 1.25 ms |
+
+The kernels of a frame, the neighbor build included, are 0.79 ms of 6.99
+and 0.34 ms of 2.72; the other 6.2 ms and 2.4 ms are the copies and the
+host's part of a start, which are paid again at every frame and carry the
+same data each time but the positions and the cell. The frames inside one
+activation (the entry takes the positions and the cell of the next frame
+at a boundary, builds its neighbor structures, and evaluates) would leave
+the launches, the waits, and one copy of the positions: about 0.9 ms a
+frame for the whole potential and 0.4 ms for the dependent terms on JAC, 8
+and 7 times less than now, as a bound from these counters and not a
+measurement. Two smaller items inside that: the tuples of the bonded terms
+are among what a program of the dependent terms still builds and copies at
+a start, though no term reads them (what the 18 copies carry was not
+separated); and with Lennard-Jones tunables the kernel still runs over all
+pairs (T6). None of the three is implemented here.
+
+**Accuracy in mixed precision: unchanged.** The difference of two sums of
+the size of $U_\text{dep}$ is not more accurate than that of two sums of
+the size of $U$ in MDIR's mixed mode: the energy of each term is
+accumulated in f64 from
+contributions computed in f32, so the fixed terms give the same f64 number
+at both values of $\boldsymbol\theta$ and cancel exactly, and the error of
+a difference is that of the contributions of the dependent terms in either
+mode. Measured against the difference of the whole potential in double
+precision, at the same frames:
+
+| System, tunable | Size of $\Delta U$, kJ/mol | Error of $\Delta U$, the whole potential (max; rms) | Error of $\Delta U$, the dependent terms (max; rms) | The two modes against each other |
+|---|---|---|---|---|
+| Dipeptide, $l$ | 8.9 | 6.9e-6; 5.6e-6 | 6.9e-6; 5.6e-6 | 2.3e-11 |
+| Dipeptide, charges | 31 | 5.1e-3; 4.5e-3 | 5.2e-3; 4.5e-3 | 3.7e-4 |
+| Dipeptide, $\sigma$ | 210 | 3.3e-3; 2.7e-3 | 3.2e-3; 2.7e-3 | 4.1e-4 |
+| JAC, $l$ | 198 | 1.4e-4; 1.3e-4 | 1.4e-4; 1.4e-4 | 3.8e-10 |
+| JAC, charges | 709 | 8.6e-2; 8.3e-2 | 8.6e-2; 8.3e-2 | 1.8e-3 |
+| JAC, $\sigma$ | 4,155 | 5.8e-2; 5.5e-2 | 5.7e-2; 5.5e-2 | 1.3e-3 |
+
+The Jacobian of the two modes is equal to the bit in every case, and
+within $7\times10^{-7}$ of that of double precision. The error of a
+difference in mixed precision, up to 0.09 kJ/mol for the charges of 23,558
+particles, is a property of the f32 contributions; a fit that needs less
+evaluates in double precision.
+
+### Validation of the dependent terms
+
+`python-frames.test`, `python-frames-gpu.test` (scenario `dependent`), and
+the scenario `torch`; the deterministic mode. Programs of the
+dipeptide in water with PME, 4 frames each: a constant of a pair term with
+a parameter of a tuple term and an observed wall (`pair:soft`,
+`tuple:spring`; $U_\text{dep}$ is 1.3% of $U$); 25 tied charges
+(`coulomb`); $\sigma$ and $\epsilon$ of the 45 pairs of types with the
+charges, under a plain cutoff with the correction for the dispersion, over
+frames of a run under a barostat (`lennard_jones`, `coulomb`). $\Delta U$
+is the difference of the energies at $\boldsymbol\theta = 1.01\,
+\hat{\boldsymbol\theta}$ and at $\hat{\boldsymbol\theta}$.
+
+| Quantity | Reference | CPU double | GPU double | CPU mixed | GPU mixed | Tolerance (double, mixed) |
+|---|---|---|---|---|---|---|
+| $\Delta U$ of the dependent terms, kJ/mol: `pair:soft`, `tuple:spring` ($\Delta U$ = 4.3) | $\Delta U$ of the whole potential | 1.5e-11 | 3.7e-12 | | | 1e-9 |
+| The same: `coulomb` ($\Delta U$ = 309) | the same | 1.5e-11 | 0 | | | 1e-9 |
+| The same: `lennard_jones`, `coulomb`, frames under a barostat ($\Delta U$ = 220) | the same | 1.5e-11 | 1.5e-11 | | | 1e-9 |
+| In mixed precision, $\Delta U$ of the whole potential; of the dependent terms: `pair:soft`, `tuple:spring` | $\Delta U$ of the whole potential in double precision | | | 1.0e-5; 1.0e-5 | 2.4e-5; 2.4e-5 | the dependent terms at most 1.5 times the whole |
+| The same: `coulomb` | the same | | | 2.2e-3; 2.0e-3 | 2.3e-3; 2.3e-3 | the same |
+| The same: `lennard_jones`, `coulomb` | the same | | | 3.2e-3; 3.2e-3 | 3.2e-3; 3.2e-3 | the same |
+| Tunable charges with a tunable constant of a pair term in one program (#256, #260; `coulomb`, `pair:soft`; $\Delta U$ = 305): $\Delta U$ of the dependent terms in double precision; in mixed precision, of the whole potential; of the dependent terms | $\Delta U$ of the whole potential, in double precision | 4.4e-11 | within the tolerance | 2.9e-3; 2.7e-3 | within the tolerance | 1e-9; the dependent terms at most 1.5 times the whole |
+| The Jacobian of the dependent terms, and `vjp`, in the four programs | those of the whole potential | 0 | 0 | 0 | 0 | 1e-12, 1e-6 relative |
+| 60 A + 60 B, 150 frames, at $\hat\sigma' + 0.002$ nm: the reweighted average; its derivative | those from the whole potential | 1.2e-16; 2.3e-13 | 0; 1.1e-13 | 0; 0 | 0; 0 | 1e-10, 1e-3 relative |
+| The gradient of that average from `loss.backward()` through `mdir.torch.evaluate` with `terms="dependent"` | that with the whole potential | | 1.0e-13 | 0 | | 1e-10, 1e-3 relative |
+
+Also checked: `plan["terms"]` of each program; `energy` and `virial` of the
+dependent mode and `dependent_energy` of the whole raise
+`UnsupportedError` naming the other; `unavailable` and `depends`; the
+columns of the pair term that stays equal those of the whole potential,
+and those of the wall are absent; the volumes are equal; `terms` other
+than the two is refused.
+
+## Without frames: a potential linear in its tunables
+
+Where $U_\text{dep}$ is linear in the tunables,
+$U_\text{dep} = \sum_k\theta_kA_k(\mathbf x)$, the sums $A_k =
+\partial U/\partial\theta_k$ of a frame are all that a reweighting takes of
+it:
+
+$$
+U_{\boldsymbol\theta}(S_n) - U_{\hat{\boldsymbol\theta}}(S_n)
+= \sum_k(\theta_k - \hat\theta_k)\,A_k(S_n),
+$$
+
+and `observe` records them at sampling (D232), with the tail and the
+estimate of the shift of a pair term at the volume of the frame, which
+are linear in its constants as well. No coordinates are read again.
+
+```python
+nbfix = mdir.PairTerm()                      # the A-B pair in the coefficients of r^-12 and r^-6
+nbfix.name, nbfix.groups, nbfix.expression = "nbfix", [":K", ":CL"], "c12/r^12 - c6/r^6"
+nbfix.constants = [("c12", c12), ("c6", c6)]
+nbfix.observe = ["c12", "c6"]                # two numbers a frame: sum r^-12 and -sum r^-6
+system.pair_terms = [nbfix]
+...
+sim.reporters.append(mdir.ObservablesReporter("prod.obs", period=500))   # or State.observables
+sim.run(5_000_000)
+A = np.loadtxt("prod.obs")[:, [3, 4]] * 4.184       # nbfix.d_c12, nbfix.d_c6, kJ/mol per unit
+delta = A @ (theta - theta_hat)                      # U(theta) - U(theta-hat) of each frame
+w = np.exp(-(delta - delta.min()) / kT); w /= w.sum()
+gradient = -(w @ (O[:, None] * A) - (w @ O) * (w @ A)) / kT   # d<O>/d(c12, c6)
+```
+
+(The file holds six decimals of a kcal/mol per unit of the constant, so
+that the sum of $r^{-12}$ in nm, about $10^{9}$, is given to 16 digits and
+smaller sums to fewer; `State.observables`, in a `CallbackReporter`, has
+the values in full.)
+
+Which potentials are linear: a Lennard-Jones pair term written in $C_{12}$
+and $C_6$ (in $\sigma$ and $\epsilon$ it is linear in $\epsilon$ only); the
+prefactor of any pair or tuple term; a harmonic term in its force
+constant. A tabulated pair term is linear in the values of its table, but
+a table is not a tunable of the Python model today, so that case is not
+available. The charges are not linear ($U$ is quadratic in them).
+
+**This does not replace stored frames.** A run kept only as such sums can
+be reweighted in those tunables and no others: another term, another
+functional form (the same pair term in $\sigma$, which is not linear), a
+parameter that was not observed, or an observable that was not recorded
+needs the coordinates. It is a shortcut for the fit that is planned when
+the run is made, beside the trajectory, not in place of it.
+
+Checked (`python-frames.test`, scenario `linear`): 60 A + 60 B with the
+A-B correction as `c12/r^12 - c6/r^6` under a plain cutoff with the
+correction for the dispersion, 150 frames, $\sigma'$ moved by 0.002 nm
+($N_\text{eff}$ = 118):
+
+| From the two sums of `observe` | Reference | CPU double | CPU mixed | GPU mixed | Tolerance (double, mixed) |
+|---|---|---|---|---|---|
+| $U_{\boldsymbol\theta} - U_{\hat{\boldsymbol\theta}}$ of each frame, kJ/mol (1.78 in the mean) | the evaluator of the dependent terms on the stored frames | 1.8e-13 | 2.1e-5 | 2.0e-5 | 1e-9, 2e-3 |
+| The weights, in $1/K$ | the same | 4.5e-13 | 1.9e-5 | 2.0e-5 | |
+| The reweighted average, relative | the same | 8.3e-16 | 3.8e-7 | 4.1e-7 | 1e-9, 1e-3 |
+| Its derivative in $c_{12}$ and $c_6$, relative | the same, from the rows of the Jacobian | 1.6e-14 | 3.4e-6 | 3.7e-6 | 1e-9, 5e-3 |
+
+### Maintainer rulings (dependent terms)
+
+The six questions put on PR #266 were decided as recommended, and the mode
+is taken.
+
+| | Question | Ruling |
+|---|---|---|
+| T1 | Where the mode is chosen | `FrameEvaluator(program, terms="dependent")`; the evaluator compiles the second program |
+| T2 | The name of the energy | `dependent_energy`; `energy` raises in that mode, and the reverse |
+| T3 | The virial and the columns of terms left out | not given, and listed in `unavailable` |
+| T4 | A branch or a second program | a second program |
+| T5 | The record | a decision of its own, `D[frame-evaluator-terms]` |
+| T6 | Lennard-Jones tunables | all Lennard-Jones pairs within the cutoff, for now |
+
 ## Slices
 
 | Slice | Contents |
 |---|---|
 | 1 (done) | `FrameEvaluator`, `evaluate` over arrays and iterables with one evaluation per frame, `energy`, `virial`, `volume`, `observables`, `depends`, the Jacobian kept or the second pass, `mdir.torch.evaluate`, `mdir.KB` |
+| The dependent terms alone, and the example without frames (done, D[frame-evaluator-terms]) | `terms="dependent"`, `dependent_energy`, `plan["terms"]`; the sums of `observe` for a potential linear in its tunables |
 | 1, after D238 and D239 (done) | the tilts of each frame of a triclinic cell; the frames of `mdir.read_h5md` as input |
-| After #260 | a test with tunable charges and a tunable constant of a pair term in one program (#256) |
 | 2 | the frames inside one activation; frames read from a device tensor without a copy to the host |
 | 3 | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138); the metatomic shape of #138 |
 | Later | the derivative of the virial and of observed columns in $\boldsymbol\theta$ (M2b-3); the JAX adapter (M2b-2); learned terms (M3), whose parameters stay in the framework; frames over several nodes (M4) |
