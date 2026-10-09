@@ -1,0 +1,9 @@
+# REQUIRES: python-api, hdf5, cuda
+# The one mutex of the process around the HDF5 library (#262) with
+# simulations on a GPU: four threads write checkpoints of two simulations
+# and frames in H5MD, and read a checkpoint and a trajectory in H5MD, at
+# once.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_hdf5_threads.py %S/Inputs GPU %t | FileCheck %s
+# CHECK: GPU: 120 checkpoints of each of two simulations, 6 frames in H5MD, 120 reads of a checkpoint and 120 of a trajectory in four threads: every file holds what was written
+# CHECK: hdf5 threads passed

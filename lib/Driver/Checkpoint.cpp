@@ -29,6 +29,8 @@
 
 #include "mdir/Driver/Checkpoint.h"
 
+#include "mdir/Driver/HDF5.h"
+
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -456,12 +458,16 @@ bool synchronize(const std::string &path, bool directory) {
 
 llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
                                           const Checkpoint &checkpoint) {
-  // The library reports errors on its own. The driver reports them.
-  H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
-
   std::string partial = path + ".partial";
   bool failed;
   {
+    // One thread at a time is inside the library (#262): a simulation
+    // writes its checkpoint outside the mutex of the runs, while another
+    // may write a frame in H5MD or a checkpoint of its own. The lock is
+    // released after the file is closed, before it is synchronized.
+    std::lock_guard<std::mutex> lock(getHDF5Mutex());
+    // The library reports errors on its own. The driver reports them.
+    H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
     Handle file(
         H5Fcreate(partial.c_str(), H5F_ACC_TRUNC, H5P_DEFAULT, H5P_DEFAULT),
         H5Fclose);
@@ -670,6 +676,9 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
 
 llvm::Expected<Checkpoint>
 mdir::driver::readCheckpoint(const std::string &path) {
+  // One thread at a time is inside the library (#262), to the release of
+  // the last identifier at the end of the function.
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
   H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
 
   Handle file(H5Fopen(path.c_str(), H5F_ACC_RDONLY, H5P_DEFAULT), H5Fclose);

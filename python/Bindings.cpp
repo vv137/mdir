@@ -136,7 +136,14 @@ template <class Call> static int64_t withSignals(Call call) {
 static driver::Checkpoint readCheckpointFile(const std::string &path) {
   if (!driver::hasCheckpointSupport())
     throw UnsupportedError("this build of MDIR has no HDF5, which checkpoints need");
-  auto read = driver::readCheckpoint(path);
+  // Without the GIL: the read waits for the mutex of the library (#262),
+  // which a thread that writes holds without the GIL.
+  std::optional<llvm::Expected<driver::Checkpoint>> taken;
+  {
+    py::gil_scoped_release release;
+    taken.emplace(driver::readCheckpoint(path));
+  }
+  auto &read = *taken;
   if (!read)
     throw InputError(llvm::toString(read.takeError()) + "; '" +
                      driver::getPreviousCheckpointPath(path) +
@@ -893,7 +900,12 @@ PYBIND11_MODULE(_core, m) {
   m.def("read_h5md", [](const std::string &path, std::optional<std::string> group) {
     if (!driver::hasCheckpointSupport())
       throw UnsupportedError("this build of MDIR has no HDF5, which a trajectory in H5MD needs");
-    auto reader = driver::H5MDReader::open(path, group ? *group : std::string());
+    std::optional<llvm::Expected<std::unique_ptr<driver::H5MDReader>>> opened;
+    {
+      py::gil_scoped_release release;
+      opened.emplace(driver::H5MDReader::open(path, group ? *group : std::string()));
+    }
+    auto &reader = *opened;
     if (!reader) throw InputError(llvm::toString(reader.takeError()));
     return H5MDTrajectory{std::shared_ptr<driver::H5MDReader>(std::move(*reader)), path};
   }, py::arg("file"), py::arg("group") = py::none());

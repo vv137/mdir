@@ -23,6 +23,8 @@
 
 #include "mdir/Driver/H5MD.h"
 
+#include "mdir/Driver/HDF5.h"
+
 #include "llvm/ADT/Twine.h"
 
 #include <cstring>
@@ -84,13 +86,6 @@ void H5MDReader::close() {}
 #else
 
 namespace {
-
-/// The library is not thread-safe unless built so: a frame written by a run
-/// and a file read by another thread take their turns.
-std::mutex &getLibraryMutex() {
-  static std::mutex mutex;
-  return mutex;
-}
 
 /// An identifier of the library that is released when it goes out of scope.
 class Handle {
@@ -335,7 +330,7 @@ void H5MDWriter::close() {
   // refuses is destroyed inside it.
   if (!h5)
     return;
-  std::lock_guard<std::mutex> lock(getLibraryMutex());
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
   h5.reset();
 }
 
@@ -347,7 +342,7 @@ void H5MDWriter::writeFrame(const float *, int64_t, double) {
 llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                              int64_t firstStep, int64_t framePeriod,
                              double dt, const double[3]) {
-  std::lock_guard<std::mutex> lock(getLibraryMutex());
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
   // The library reports errors on its own. The driver reports them.
   H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
   numParticles = count;
@@ -563,7 +558,7 @@ llvm::Expected<int64_t> H5MDWriter::append(const std::string &path,
                                            size_t count, int64_t frames,
                                            int64_t framePeriod, double dt,
                                            const double[3]) {
-  std::lock_guard<std::mutex> lock(getLibraryMutex());
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
   H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
   numParticles = count;
   period = framePeriod;
@@ -725,7 +720,7 @@ bool H5MDWriter::writeState(const double *positions, const double *velocities,
                             const H5MDExtras &extras) {
   if (!failure.empty())
     return false;
-  std::lock_guard<std::mutex> lock(getLibraryMutex());
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
   if (!h5) {
     failure = "the trajectory in H5MD is not open";
     return false;
@@ -815,13 +810,13 @@ void H5MDReader::close() {
   // refuses is destroyed inside it.
   if (!h5)
     return;
-  std::lock_guard<std::mutex> lock(getLibraryMutex());
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
   h5.reset();
 }
 
 llvm::Expected<std::unique_ptr<H5MDReader>>
 H5MDReader::open(const std::string &path, const std::string &asked) {
-  std::lock_guard<std::mutex> lock(getLibraryMutex());
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
   H5Eset_auto2(H5E_DEFAULT, nullptr, nullptr);
   auto refuse = [&](const llvm::Twine &what) {
     return makeError("'" + path + "' " + what);
@@ -1037,7 +1032,7 @@ H5MDReader::open(const std::string &path, const std::string &asked) {
 }
 
 llvm::Expected<H5MDFrame> H5MDReader::read(size_t index) {
-  std::lock_guard<std::mutex> lock(getLibraryMutex());
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
   if (!h5)
     return makeError("'" + path + "' is closed");
   if (index >= steps.size())

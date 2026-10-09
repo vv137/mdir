@@ -232,12 +232,17 @@ reads have every other string of fixed length.
   that count. There is no `fsync` per frame: as for DCD, a crash of the
   machine may lose frames that the checkpoint counts, and `--continue`
   then refuses the file by name.
-- The library of the reference build is not thread-safe. The writer and
-  the reader of this format take one mutex of the process around every
-  call of it, so frames written by a run and files read in other threads
-  take their turns; asynchronous writers (#113) have to keep that. The
-  checkpoint code does not take that mutex: #262 lists what a script with
-  threads can and cannot overlap.
+- The HDF5 library is thread-safe only if it was built so, which MDIR
+  does not ask of a build: that of the reference build, 1.14.6, is not
+  (`H5is_library_threadsafe` gives false; "Threadsafety: OFF" in its
+  settings). Every use of the library in MDIR therefore holds one mutex of
+  the process (`getHDF5Mutex`, `include/mdir/Driver/HDF5.h`, #262): the
+  writer and the reader of this format, and the writer and the reader of
+  checkpoints ([python-checkpoints.md](python-checkpoints.md#threads)).
+  Frames written by a run, checkpoints, and files read in other threads
+  take their turns; asynchronous writers (#113) have to keep that. With a
+  library that is thread-safe the mutex is taken all the same; it then
+  costs a lock without contention per call.
 
 ### Continuation and overwriting
 

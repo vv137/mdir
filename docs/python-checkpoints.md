@@ -96,6 +96,53 @@ mdir.read_checkpoint("prod.h5")           # a read-only view of a checkpoint
 - `checkpoint=` with a program that minimizes, or `save_checkpoint` on a
   simulation that failed: `InputError` and `SimulationError` respectively.
 
+### Threads
+
+The HDF5 library is thread-safe only if it was built so, and MDIR does not
+ask that of a build: the library of the reference build (1.14.6) reports
+that it is not (`H5is_library_threadsafe`). `save_checkpoint` and a
+`CheckpointReporter` write after the mutex of the runs is released and
+without the GIL, so in a script with threads a checkpoint of one simulation
+could be written while another simulation writes a frame in H5MD or a
+checkpoint of its own, or while a thread reads a file (#262). Every use of
+the library in MDIR therefore holds one mutex of the process
+(`getHDF5Mutex`, `include/mdir/Driver/HDF5.h`):
+
+| Use of the library | Where it holds the mutex |
+|---|---|
+| `save_checkpoint`, `CheckpointReporter`, the checkpoints of `mdir run` (`writeCheckpoint`) | from the creation of the file to its close; the `fsync` and the renames that follow are outside it |
+| `mdir.read_checkpoint`, `Simulation(program, checkpoint=)`, `mdir run --continue` and the restart input, `mdir checkpoint` (`readCheckpoint`) | the whole read |
+| `H5MDReporter` and `[output] trajectory = "x.h5md"` (`H5MDWriter`: open, append, each frame, close) | each call ([python-h5md.md](python-h5md.md)) |
+| `mdir.read_h5md` and its frames (`H5MDReader`: open, each frame, close) | each call |
+
+These are all the calls of the library in MDIR. `read_checkpoint`,
+`Simulation(program, checkpoint=)`, and `read_h5md` release the GIL while
+they read, so a thread that waits for the mutex does not hold the other
+threads of Python. Code that holds the mutex takes neither the mutex of
+the runs nor the GIL (a frame is written inside a part, which holds the
+mutex of the runs first), so the order of the locks is one.
+
+What the mutex does not cover: h5py, PyTables, or another module that
+brings a copy of the library into the process is another library with a
+state of its own when it is another shared object, and the same library
+outside the mutex when it is the same one; do not read a file with such a
+module in one thread while MDIR writes in another, unless that library is
+thread-safe. Worker processes are not affected: each has its own library;
+open a file in the worker, not before the fork. Two simulations that write
+one path race for the names of the file system, whatever the library does.
+
+*Evidence.* `python-hdf5-threads.test` and its GPU twin: four threads at
+once write 120 checkpoints of each of two simulations (one of which also
+writes 6 frames in H5MD inside its runs), read a checkpoint 120 times, and
+read a trajectory of 4 frames 120 times; every file read holds what was
+written, and the files written hold the states to the bit (480 operations
+in about 3 s on the CPU). The test cannot prove that two threads are never
+inside the library; it exercises the paths. With the mutex taken out of
+the checkpoint code alone, 30 of 30 runs of it failed: 26 ended with a
+segmentation fault, and 4 with errors of the readers and of the writer
+("has no group 'particles'", "cannot write") on files that are sound. With
+it, 30 of 30 passed.
+
 ### Reporters across a continuation
 
 As `mdir run --continue` (D129, D130, D149): with `append=True` (the
