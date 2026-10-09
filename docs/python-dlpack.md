@@ -1,4 +1,4 @@
-# DLPack views and writable borrows of a simulation (D220, D229)
+# DLPack views and writable borrows of a simulation (D220, D229, D[borrow-tilts])
 
 Issue #131, the first part of item 6 of the M2 sequence
 ([python-m2.md](python-m2.md), Sections 3 to 5): read-only views. Writable
@@ -268,7 +268,8 @@ evaluation first, no failure) and no live lease.
 |---|---|---|---|
 | `positions` | `(N, 3)`, the state's type, on the device of the simulation, in the order of the program | the program's buffer | taken as the positions (nm) |
 | `velocities` | `(N, 3)`, the state's type, as above | the program's buffer | taken as the velocities (nm/ps, at `time + velocity_offset * timestep`) |
-| `cell` | `(3,)` float64 on the host: the edges of an orthorhombic cell (nm) | a buffer of the borrow, holding the edges | taken as the edges if their bits changed |
+| `cell` | `(3,)` float64 on the host: the diagonal $a_x, b_y, c_z$ of the cell (nm), `Cell.diagonal`, the edges of an orthorhombic cell | a buffer of the borrow, holding the diagonal | taken as the diagonal if the bits of the cell changed |
+| `tilt` | `(3,)` float64 on the host: the tilts $b_x, c_x, c_y$ of a triclinic cell (nm), `Cell.tilt` (D[borrow-tilts]) | a buffer of the borrow, holding the tilts | taken as the tilts if the bits of the cell changed |
 | `tunables` | a dict of names to `(M,)` float64 on the host | buffers of the borrow, holding the values | `Simulation.tunables.update` of the entries whose bits changed (D213) |
 | `ids` | `(N,)` int32, read-only | | |
 | `step`, `time`, `velocity_offset`, `device` | as in `View` | | |
@@ -303,11 +304,16 @@ handed out for writing cannot be told from one that was written. The cell
 and each tunable are written if their bits differ from the values of the
 simulation at the commit.
 
-**The cell.** The edges of an orthorhombic periodic cell. For a triclinic
-cell, or without a periodic cell, `Borrow.cell` raises `UnsupportedError`:
-the tilts are values that the program takes at its start (D227), and
-writing them is not supported yet
-([#206](https://github.com/vv137/mdir/issues/206)).
+**The cell.** `Borrow.cell` is the diagonal of the periodic cell and
+`Borrow.tilt` its tilts, the two arrays of `mdir.Cell` that `State.cell`
+and `InitialState.cell` hold: the cell is the lower-triangular matrix of
+rows $\mathbf a = (a_x, 0, 0)$, $\mathbf b = (b_x, b_y, 0)$,
+$\mathbf c = (c_x, c_y, c_z)$ ([triclinic-m2.md](triclinic-m2.md),
+Section 1). A program is compiled for an orthorhombic or for a triclinic
+cell (D123), so `Borrow.tilt` belongs to a simulation whose program was
+compiled from a triclinic cell; for an orthorhombic one it raises
+`UnsupportedError`, and without a periodic cell both do
+([Tilts of a triclinic cell](#tilts-of-a-triclinic-cell-dborrow-tilts)).
 
 ### Exclusion
 
@@ -336,8 +342,12 @@ consumer's writes on any stream.
 It then checks everything before it changes anything:
 
 - positions and velocities are finite (`InputError`);
-- the edges of the cell are finite and at least twice the cutoff
-  (`InputError`);
+- the entries of the cell are finite and its diagonal is at least twice
+  the cutoff; for a triclinic cell, the tilts are not all zero, the cell is
+  reduced, and the pairlist distance is at most half of the least of
+  $a_x, b_y, c_z$
+  ([Tilts of a triclinic cell](#tilts-of-a-triclinic-cell-dborrow-tilts);
+  `InputError`);
 - the values of the tunables pass the checks of an update of D213, and the
   program built from them is the compiled one, text for text: a structural
   change is refused (`InputError`).
@@ -386,6 +396,93 @@ the constraints and velocities keep their components along them, the
 positions are not scaled with a new cell, and the energy that the write
 adds or removes is not booked in the conserved quantity. A simulation
 compiled from the same state behaves the same.
+
+### Tilts of a triclinic cell (D[borrow-tilts])
+
+Issue [#206](https://github.com/vv137/mdir/issues/206), a follow-up of
+D229, under which a triclinic cell was refused; wanted before the frame
+evaluator (#138), so that frames of a triclinic cell can be put into a
+simulation.
+
+```python
+with sim.borrow() as borrow:                    # a program compiled for a triclinic cell
+    x = np.from_dlpack(borrow.positions)
+    ids = np.from_dlpack(borrow.ids)
+    x[...] = frame.positions[ids]
+    np.from_dlpack(borrow.cell)[...] = frame.cell.diagonal   # a_x, b_y, c_z
+    np.from_dlpack(borrow.tilt)[...] = frame.cell.tilt       # b_x, c_x, c_y
+    del x, ids
+    borrow.commit()                             # ("positions", "cell")
+```
+
+**The shape.** Two buffers of three numbers, in the convention that the
+API has already: `Cell.diagonal` and `Cell.tilt` of `State.cell`,
+`InitialState.cell`, and `Checkpoint.cell`. `Borrow.cell` keeps its shape
+and meaning for every program, and the tilts are a second buffer that only
+a triclinic program has. A `(3, 3)` buffer of the vectors, as the read-only
+`Cell.vectors` gives them, was not taken: three of its nine entries would
+have to be zero, a second convention would stand beside the first, and
+`Borrow.cell` would have one shape for an orthorhombic program and another
+for a triclinic one. The cell counts as written if the bits of any of the
+six numbers differ at the commit; it is one field, `"cell"`, in `written`,
+in the result of `commit()`, and in `Simulation.versions`.
+
+**What a commit checks** of a cell whose bits changed, before anything
+changes (`InputError`; nothing is committed and the borrow stays live):
+
+| Check | Why |
+|---|---|
+| the six numbers are finite | |
+| $a_x, b_y, c_z \ge 2 r_c$ | I2 of [triclinic-m2.md](triclinic-m2.md): the minimum image holds every image within the cutoff; what the builder asks of every cell, and the runtime at every change of the cell by a barostat |
+| the tilts are not all zero | a cell without tilts is orthorhombic, for which the program has other arguments and other kernels (`isTriclinic` of the builder, D123): the change is structural, and the message says to compile from a state with that cell. A program compiled for an orthorhombic cell has no `Borrow.tilt` to write |
+| $\lvert b_x\rvert \le a_x/2$, $\lvert c_x\rvert \le a_x/2$, $\lvert c_y\rvert \le b_y/2$, to the relative $10^{-6}$ of `reduceCell` | I1: the reduced form, which the minimum image in one pass and the search of the neighbor structures assume. A cell that is not reduced is refused and not reduced by the commit, as that of an `InitialState` is, and as nothing else that was written is adjusted; the message names the tilt and its bound |
+| `pairlist_distance` $\le \tfrac12 \min(a_x, b_y, c_z)$ | what the builder asks of a triclinic cell at a compile, repeated for the committed diagonal, so that a commit takes the cells that a compile takes |
+
+The test of the builder is on the diagonal, not on the widths of the cell
+between its faces, and that is the right bound for what it protects: a
+vector $n_a\mathbf a + n_b\mathbf b + n_c\mathbf c$ of a lower-triangular
+lattice has the $z$ component $n_c c_z$, with $n_c = 0$ the $y$ component
+$n_b b_y$, and with $n_b = n_c = 0$ the length $\lvert n_a\rvert a_x$, so
+every nonzero vector is at least $\min(a_x, b_y, c_z)$ long and no two
+images of a particle are both within half of it. That the pass along
+$\mathbf c$, $\mathbf b$, $\mathbf a$ finds that image needs the reduced
+form (I1), which is why a commit checks it. The widths between the faces
+($c_z$ for the faces of $\mathbf a$ and $\mathbf b$, less than $b_y$ and
+$a_x$ for the others) are what a search by cells of the lattice would have
+to respect; the neighbor structures of MDIR bin the Cartesian brick
+$[0, a_x) \times [0, b_y) \times [0, c_z)$, whose widths are the diagonal
+([triclinic-m2.md](triclinic-m2.md), Section 3).
+
+**What the program had from the tilts, and what a commit does with it.**
+The audit of the builder (`lib/Driver/Builder.cpp`) for every read of the
+tilts:
+
+| Derived from the tilts | Where | At a commit |
+|---|---|---|
+| `%tilt_bx`, `%tilt_cx`, `%tilt_cy`, the tilts of `md.triclinic_cell` | values of the start of the program, arguments of its entry (D227) | **taken**: an activation begins with the tilts of the state of the host, not with those of the build (`startActivation`) |
+| whether the cell is triclinic: the type of the cell, the arguments of the entry, the kernels | the text of the program | **refused** if it would change (the row of the table above) |
+| the grid of PME, from $\lvert\mathbf a\rvert, \lvert\mathbf b\rvert, \lvert\mathbf c\rvert$ and the spacing when `System.pme_grid` is not given | an attribute of `md.reciprocal`, structural (D227) | **kept**: the grid is the program's, as it is under a barostat and at a commit of the edges (D229); `Program.plan["pme_grid"]` gives it, and a simulation compiled from the committed state equals the commit when it is given that grid |
+| the reciprocal vectors of PME, $H^{-1}$, the widths of the cells of the neighbor structures, the lattice shifts of the lists, the minimum image | computed by the program from its cell at every build and step, as a barostat requires | nothing to do: the activation computes them from the committed cell |
+| the neighbor capacity | not from the tilts: the estimate counts the neighbors with the diagonal alone, and only sets the room at first (D227) | **kept**: `Program.plan["neighbor_capacity"]`; a build that finds more neighbors makes room |
+| the volume $a_x b_y c_z$ and what follows it: the tails, the correction for the dispersion, the background of PME, the barostat's constants | not from the tilts; the host scales them with the volume of the committed diagonal, as for an orthorhombic cell (D229) | as before |
+
+So nothing that depends on the tilts is a constant of the text, and a
+commit of tilts builds no program: it costs what a commit of positions
+costs. Rebuilding the program by the builder and comparing its text, as an
+update of tunables does (D213), was not taken: with the grid and the
+capacity kept, the only values that the builder derives from the tilts are
+the three arguments above, and the comparison would cost each commit a run
+of the builder (10 ms on JAC) to find the one structural change that the
+check of the zero tilts finds. `python-dlpack-tilts.test` holds the claim:
+a program compiled from the committed cell, with the grid and the capacity
+of the first, has the text of the first.
+
+The cell of the host is set in one place (`Simulation::setCell`): the state
+(`State.cell`), the start values of the next activation, the cell of a
+checkpoint, and the cell of the frames of an open `TrajectoryReporter`,
+which until now heard of a change of the cell only from a barostat, so
+that a commit of the edges of an orthorhombic cell left the frames with the
+edges of before.
 
 ### Abandon
 

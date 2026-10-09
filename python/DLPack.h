@@ -55,11 +55,13 @@ struct Lease {
 
 /// What a View and its Buffers share: the view's own lease, until release().
 /// A Borrow shares the same, with the buffers of the host that it owns:
-/// the edges of the cell and the values of the tunables, which a consumer
+/// the cell and the values of the tunables, which a consumer
 /// writes and a commit takes (D229). A managed tensor
 /// of one of them holds them as well, so that they outlive the Borrow.
 struct Staging {
-  std::array<double, 3> cell{};
+  /// The diagonal a_x, b_y, c_z, which `Borrow.cell` lends, and the tilts
+  /// b_x, c_x, c_y, which `Borrow.tilt` lends (D[borrow-tilts]).
+  std::array<double, 6> cell{};
   std::vector<std::vector<double>> tunables;
 };
 struct ViewState {
@@ -251,11 +253,12 @@ inline View take(std::shared_ptr<compiler::Simulation> simulation) {
 
 /// A writable borrow (D229): the buffers of the positions
 /// and the velocities where the program keeps them, and buffers of its own
-/// with the edges of the cell and the values of the tunables.
+/// with the diagonal of the cell, the tilts of a triclinic cell
+/// (D[borrow-tilts]), and the values of the tunables.
 struct Borrow {
   std::shared_ptr<ViewState> state;
-  Buffer positions, velocities, ids, cell;
-  bool hasCell = false, periodic = false;
+  Buffer positions, velocities, ids, cell, tilt;
+  bool triclinic = false, periodic = false;
   std::vector<std::pair<std::string, Buffer>> tunables;
 };
 
@@ -269,7 +272,7 @@ inline Borrow borrow(std::shared_ptr<compiler::Simulation> simulation) {
   state->view = v;
   state->lease = std::move(lease);
   state->staging = std::make_shared<Staging>();
-  state->staging->cell = simulation->getCellEdges();
+  state->staging->cell = simulation->getCell();
   state->staging->tunables = simulation->getTunableValues();
   Staging &staging = *state->staging;
   dlpack::Device device{v.onDevice ? dlpack::CUDA : dlpack::CPU, v.onDevice ? v.device : 0};
@@ -298,9 +301,11 @@ inline Borrow borrow(std::shared_ptr<compiler::Simulation> simulation) {
   result.velocities = make(v.velocities, {n, 3}, stateType, device, "velocities", true,
                            compiler::Simulation::WrittenVelocities);
   result.ids = make(v.ids, {n}, {dlpack::Int, 32, 1}, device, "ids", false, 0);
-  result.hasCell = simulation->hasOrthorhombicCell();
+  result.triclinic = simulation->hasTriclinicCell();
   result.cell = make(staging.cell.data(), {3}, real, host, "cell", true, 0);
   result.cell.staging = state->staging;
+  result.tilt = make(staging.cell.data() + 3, {3}, real, host, "tilt", true, 0);
+  result.tilt.staging = state->staging;
   result.periodic = simulation->isPeriodic();
   const auto &set = simulation->getTunables();
   for (size_t k = 0; k != set.tunables.size(); ++k) {
@@ -312,11 +317,11 @@ inline Borrow borrow(std::shared_ptr<compiler::Simulation> simulation) {
   return result;
 }
 
-/// The edges of the cell of a borrow, if their bits are not the
-/// simulation's, and the tunables whose bits are not.
-inline std::optional<std::array<double, 3>> writtenCell(const Borrow &b) {
-  if (!b.hasCell) return std::nullopt;
-  auto now = b.state->simulation->getCellEdges();
+/// The cell of a borrow, its diagonal and its tilts, if their bits are not
+/// the simulation's, and the tunables whose bits are not.
+inline std::optional<std::array<double, 6>> writtenCell(const Borrow &b) {
+  if (!b.periodic) return std::nullopt;
+  auto now = b.state->simulation->getCell();
   if (std::memcmp(now.data(), b.state->staging->cell.data(), sizeof now) == 0) return std::nullopt;
   return b.state->staging->cell;
 }
@@ -395,11 +400,17 @@ inline void bind(py::module_ &m) {
     .def_property_readonly("cell", [](const Borrow &b) {
       if (!b.periodic)
         throw UnsupportedError("Borrow.cell: the simulation has no periodic cell");
-      if (!b.hasCell)
-        throw UnsupportedError("Borrow.cell: a borrow takes the edges of an orthorhombic "
-                               "cell; a triclinic cell, with its tilts, is not supported "
-                               "yet (#206)");
       return b.cell;
+    })
+    .def_property_readonly("tilt", [](const Borrow &b) {
+      if (!b.periodic)
+        throw UnsupportedError("Borrow.tilt: the simulation has no periodic cell");
+      if (!b.triclinic)
+        throw UnsupportedError("Borrow.tilt: the program of the simulation was compiled for "
+                               "an orthorhombic cell, which has no tilts to write; a cell "
+                               "with tilts takes a program compiled from a state with a "
+                               "triclinic cell");
+      return b.tilt;
     })
     .def_property_readonly("tunables", [](const Borrow &b) {
       py::dict d;

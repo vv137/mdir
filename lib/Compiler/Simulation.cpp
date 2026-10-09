@@ -724,10 +724,19 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   a->start = step;
   a->firstCall = firstCall;
   a->firstSize = minimizationSize;
-  for (const Program::StartValue &value : p.startValues)
-    a->startValues.push_back(value.name == "tunable_gradient" && gradientAsked
-                                 ? 1.0
-                                 : value.value);
+  // The tilts are those of the state of the host, which a commit of a
+  // borrow may have changed since the program was built
+  // (D[borrow-tilts]); the other values are the program's.
+  static const char *const tiltNames[3] = {"tilt_bx", "tilt_cx", "tilt_cy"};
+  for (const Program::StartValue &value : p.startValues) {
+    double taken = value.value;
+    if (value.name == "tunable_gradient" && gradientAsked)
+      taken = 1.0;
+    for (int k = 0; k != 3; ++k)
+      if (value.name == tiltNames[k])
+        taken = system.tilt[k];
+    a->startValues.push_back(taken);
+  }
   for (double &edge : a->box)
     args.pointers.push_back(&edge);
   args.pointers.push_back(&a->timestep);
@@ -1655,17 +1664,110 @@ llvm::Expected<compiler::SimulationView> Simulation::takeBorrow() {
   return view;
 }
 
-std::array<double, 3> Simulation::getCellEdges() const {
-  return {output->box[0], output->box[1], output->box[2]};
+std::array<double, 6> Simulation::getCell() const {
+  return {output->box[0], output->box[1], output->box[2],
+          system.tilt[0], system.tilt[1], system.tilt[2]};
 }
 
-bool Simulation::hasOrthorhombicCell() const {
-  return prepared.control.periodic && system.tilt[0] == 0.0 &&
-         system.tilt[1] == 0.0 && system.tilt[2] == 0.0;
+bool Simulation::hasTriclinicCell() const {
+  // What the builder asks (`isTriclinic`): it decides the arguments of the
+  // entry and the kernels, so it is fixed when the program is compiled.
+  return prepared.control.periodic &&
+         (compiledSystem.tilt[0] != 0.0 || compiledSystem.tilt[1] != 0.0 ||
+          compiledSystem.tilt[2] != 0.0);
+}
+
+void Simulation::setCell(const std::array<double, 6> &cell) {
+  for (int k = 0; k != 3; ++k) {
+    system.box[k] = output->box[k] = output->checkpoint.box[k] = cell[k];
+    system.tilt[k] = output->checkpoint.tilt[k] = cell[3 + k];
+  }
+  output->volume = output->box[0] * output->box[1] * output->box[2];
+  // The frames of a reporter that is open take the cell from the program
+  // only when a barostat changes it.
+  if (output->trajectory) {
+    double edges[3], tilts[3];
+    for (int k = 0; k != 3; ++k) {
+      edges[k] = cell[k] / units::length;
+      tilts[k] = cell[3 + k] / units::length;
+    }
+    output->trajectory->setBox(edges);
+    output->trajectory->setTilt(tilts);
+  }
+}
+
+llvm::Error
+Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
+  static const char *const names[6] = {"a_x", "b_y", "c_z",
+                                       "b_x", "c_x", "c_y"};
+  const Control &control = compiled->control;
+  bool triclinic = hasTriclinicCell();
+  for (int k = 3; k != 6; ++k)
+    if (!std::isfinite(cell[k]))
+      return inputError("the tilt " + llvm::Twine(names[k]) +
+                        " written for the cell is not finite; nothing is "
+                        "committed");
+  bool tilted = cell[3] != 0.0 || cell[4] != 0.0 || cell[5] != 0.0;
+  // Whether a cell has tilts decides the arguments of the entry and the
+  // kernels of the program (D123): the change is structural.
+  if (tilted && !triclinic)
+    return inputError("the tilts written for the cell would make the "
+                      "orthorhombic cell of the program triclinic, which "
+                      "changes the program, not only its values: compile "
+                      "it from a state with that cell; nothing is "
+                      "committed");
+  if (!tilted && triclinic)
+    return inputError("the tilts written for the cell are all zero, which "
+                      "would make the triclinic cell of the program "
+                      "orthorhombic and changes the program, not only its "
+                      "values: compile it from a state with that cell; "
+                      "nothing is committed");
+  // A pair is taken once, in the minimum image, which holds every image
+  // within the cutoff only while the diagonal is at least twice the
+  // cutoff (I2 of docs/triclinic-m2.md), as the builder asks.
+  double least = 2.0 * control.cutoffDistance * units::length;
+  for (int k = 0; k != 3; ++k)
+    if (!std::isfinite(cell[k]) || cell[k] < least)
+      return inputError(
+          (triclinic ? "the entry " + llvm::Twine(names[k])
+                     : "the edge " + llvm::Twine(k)) +
+          " written for the cell, " + std::to_string(cell[k]) +
+          " nm, is not finite or is less than twice the cutoff, " +
+          std::to_string(least) + " nm; nothing is committed");
+  if (!triclinic)
+    return llvm::Error::success();
+  // The reduced form (I1), which the minimum image in one pass and the
+  // neighbor structures assume; the tolerance is that of `reduceCell`.
+  // What was written is not adjusted: a cell that is not reduced is
+  // refused, as that of an InitialState is.
+  const double tolerance = 1e-6;
+  const int bounds[3] = {0, 0, 1};
+  for (int k = 0; k != 3; ++k)
+    if (std::fabs(cell[3 + k]) >
+        0.5 * cell[bounds[k]] * (1.0 + tolerance))
+      return inputError(
+          "the cell written is not reduced: the tilt " +
+          llvm::Twine(names[3 + k]) + ", " + std::to_string(cell[3 + k]) +
+          " nm, exceeds half of " + names[bounds[k]] + ", " +
+          std::to_string(0.5 * cell[bounds[k]]) +
+          " nm; write the reduced cell of the lattice (|b_x| <= a_x/2, "
+          "|c_x| <= a_x/2, |c_y| <= b_y/2); nothing is committed");
+  // The neighbor structures of a triclinic cell hold every pair within
+  // their reach while it is at most half of the least of a_x, b_y, c_z,
+  // as the builder asks.
+  double reach = control.pairlistDistance * units::length;
+  double half = 0.5 * std::min({cell[0], cell[1], cell[2]});
+  if (reach > half)
+    return inputError("the pairlist distance of the program, " +
+                      std::to_string(reach) +
+                      " nm, exceeds half of the least of a_x, b_y, c_z of "
+                      "the cell written, " + std::to_string(half) +
+                      " nm; nothing is committed");
+  return llvm::Error::success();
 }
 
 llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
-    const std::optional<std::array<double, 3>> &cell,
+    const std::optional<std::array<double, 6>> &cell,
     const std::vector<std::pair<std::string, std::vector<double>>> &changes) {
   if (busy.exchange(true))
     return simulationError("another operation is under way on this "
@@ -1691,10 +1793,10 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
                            "mdir");
   unsigned written = borrowWritten;
   bool changesCell = false;
+  const std::array<double, 6> cellBefore = getCell();
   if (cell)
-    for (int k = 0; k != 3; ++k)
-      changesCell = changesCell || std::memcmp(&(*cell)[k], &output->box[k],
-                                               sizeof(double)) != 0;
+    changesCell = std::memcmp(cell->data(), cellBefore.data(),
+                              sizeof cellBefore) != 0;
   if (!written && !changesCell && changes.empty()) {
     borrowed = false;
     return std::vector<std::string>();
@@ -1732,21 +1834,9 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
   if (written & WrittenVelocities)
     if (llvm::Error error = finite(v, "velocities"))
       return std::move(error);
-  if (changesCell) {
-    if (!hasOrthorhombicCell())
-      return unsupported("a commit takes the edges of an orthorhombic "
-                         "cell; a triclinic cell, with its tilts, is not "
-                         "supported yet (#206)");
-    double least = 2.0 * compiled->control.cutoffDistance * units::length;
-    for (int k = 0; k != 3; ++k)
-      if (!std::isfinite((*cell)[k]) || (*cell)[k] < least)
-        return inputError("the edge " + llvm::Twine(k) +
-                          " written for the cell, " +
-                          std::to_string((*cell)[k]) +
-                          " nm, is not finite or is less than twice the "
-                          "cutoff, " + std::to_string(least) +
-                          " nm; nothing is committed");
-  }
+  if (changesCell)
+    if (llvm::Error error = checkCommittedCell(*cell))
+      return std::move(error);
   std::optional<Program> program;
   std::vector<std::vector<double>> values = tunableValues;
   if (!changes.empty()) {
@@ -1768,7 +1858,6 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
   // program takes it, with the new values, in an activation of its own
   // (D215), whose order, neighbor structures, and forces are those of that
   // state.
-  double boxBefore[3] = {output->box[0], output->box[1], output->box[2]};
   double systemBoxBefore[3] = {system.box[0], system.box[1], system.box[2]};
   system.positions = written & WrittenPositions ? std::move(x) : x0;
   system.velocities = written & WrittenVelocities ? std::move(v) : v0;
@@ -1778,11 +1867,8 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
     std::lock_guard<std::mutex> lock(getRunMutex());
     endActivation();
   }
-  if (changesCell) {
-    for (int k = 0; k != 3; ++k)
-      system.box[k] = output->box[k] = (*cell)[k];
-    output->volume = output->box[0] * output->box[1] * output->box[2];
-  }
+  if (changesCell)
+    setCell(*cell);
   std::vector<std::vector<double>> valuesBefore;
   if (program) {
     std::swap(compiled->program, *program);
@@ -1796,11 +1882,11 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
       std::swap(compiled->program, *program);
       tunableValues = std::move(valuesBefore);
     }
-    for (int k = 0; k != 3; ++k) {
-      output->box[k] = boxBefore[k];
-      system.box[k] = systemBoxBefore[k];
+    if (changesCell) {
+      setCell(cellBefore);
+      for (int k = 0; k != 3; ++k)
+        system.box[k] = systemBoxBefore[k];
     }
-    output->volume = output->box[0] * output->box[1] * output->box[2];
     system.positions = std::move(x0);
     system.velocities = std::move(v0);
     forces = std::move(f0);

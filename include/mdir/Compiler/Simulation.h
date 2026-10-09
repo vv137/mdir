@@ -267,8 +267,11 @@ public:
   unsigned getWritten() const { return borrowWritten; }
   bool isBorrowed() const { return borrowed; }
   /// Takes what was written through the borrow: the positions and the
-  /// velocities marked as written, from the buffers; the edges of the cell
-  /// `cell`, if given; and the values `tunables`, as `updateTunables`
+  /// velocities marked as written, from the buffers; the cell `cell`, if
+  /// given, as its diagonal a_x, b_y, c_z and its tilts b_x, c_x, c_y (the
+  /// tilts of an orthorhombic cell are zero, and those of a triclinic one
+  /// are not all zero: which of the two a program takes is fixed when it
+  /// is compiled); and the values `tunables`, as `updateTunables`
   /// takes them. Everything is checked before anything changes; a refusal
   /// (InputError) leaves the borrow live. Then the versions of the changed
   /// fields advance and an activation begins from the committed state,
@@ -276,12 +279,14 @@ public:
   /// and the borrow ends. Only the lease of the borrow itself may be alive.
   /// Returns the names of the fields changed.
   llvm::Expected<std::vector<std::string>> commitBorrow(
-      const std::optional<std::array<double, 3>> &cell,
+      const std::optional<std::array<double, 6>> &cell,
       const std::vector<std::pair<std::string, std::vector<double>>> &tunables);
-  /// The edges of the cell, in nm, and whether a borrow may write them: a
-  /// periodic cell without tilts.
-  std::array<double, 3> getCellEdges() const;
-  bool hasOrthorhombicCell() const;
+  /// The cell, in nm: its diagonal a_x, b_y, c_z, the edges of an
+  /// orthorhombic cell, and its tilts b_x, c_x, c_y.
+  std::array<double, 6> getCell() const;
+  /// Whether the program was compiled for a triclinic cell, whose tilts a
+  /// borrow may write (D[borrow-tilts]).
+  bool hasTriclinicCell() const;
   bool isPeriodic() const { return prepared.control.periodic; }
   /// The number of commits that changed the positions, the velocities, and
   /// the cell from the host (P16), and for each commit that changed
@@ -443,6 +448,12 @@ private:
   /// Copies the fields that an abandoned borrow gave out back from the
   /// snapshot, so that the activation continues as if it had not been.
   void undoBorrow();
+  /// Makes `cell` (the diagonal, then the tilts) the cell of the host: that
+  /// of the state, of the next activation, of the frames, and of a
+  /// checkpoint.
+  void setCell(const std::array<double, 6> &cell);
+  /// What a commit asks of a cell that it is given (D[borrow-tilts]).
+  llvm::Error checkCommittedCell(const std::array<double, 6> &cell) const;
   SimulationView describeView() const;
   /// Waits for the work of consumers of views before the buffers are
   /// written or freed.
