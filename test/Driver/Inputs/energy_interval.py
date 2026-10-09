@@ -3,14 +3,15 @@ as a step that does not (#97, #102).
 
   energy_interval.py TEMPLATE MDIR WORK TARGET PRECISION VARIANT...
 
-TEMPLATE is a control file of 20 steps with `energy_interval = 1` and the
-placeholders ELECTROSTATICS, CONSTRAINTS, TARGET, and PRECISION. Each
-VARIANT is ELECTROSTATICS:CONSTRAINTS (CUTOFF or PME, true or false). For
-each, the run with a row at every step and the run with one at the end are
-compared bit for bit in positions, velocities, and forces; this prints
-"same state" or the largest difference of each.
+TEMPLATE is a control file with an `energy_interval`, the outputs named
+`every`, and the placeholders ELECTROSTATICS, CONSTRAINTS, TARGET, and
+PRECISION. Each VARIANT is ELECTROSTATICS:CONSTRAINTS (CUTOFF or PME, true
+or false). For each, the run with the rows of the template and the run with
+one row at the end are compared bit for bit in positions, velocities, and
+forces; this prints "same state" or the largest difference of each.
 """
 import pathlib
+import re
 import subprocess
 import sys
 
@@ -23,8 +24,11 @@ for variant in sys.argv[6:]:
     every = (text.replace("ELECTROSTATICS", electrostatics)
              .replace("CONSTRAINTS", constraints).replace("TARGET", target)
              .replace("PRECISION", precision))
-    once = every.replace("energy_interval = 1\n", "energy_interval = 20\n") \
-                .replace("every", "once")
+    steps = re.search(r"^steps = (\d+)$", every, re.M).group(1)
+    once, replaced = re.subn(r"^energy_interval = \d+$",
+                             f"energy_interval = {steps}", every, flags=re.M)
+    assert replaced == 1
+    once = once.replace("every", "once")
     (folder / "every.toml").write_text(every)
     (folder / "once.toml").write_text(once)
     printed = {}
