@@ -627,7 +627,7 @@ llvm::Expected<int64_t> H5MDWriter::append(const std::string &path,
     if (has != element.asked)
       return refuse(llvm::Twine(has ? "holds " : "does not hold ") +
                     element.name + ", and the run " +
-                    (element.asked ? "writes them" : "does not write them"));
+                    (element.asked ? "does" : "does not"));
     if (has) {
       *element.dataset = H5Dopen2(h->file, element.path, H5P_DEFAULT);
       if (*element.dataset < 0)

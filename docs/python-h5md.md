@@ -216,6 +216,12 @@ As DCD and XTC (D130, D149):
   append. The step of the last frame kept must not be past the step of the
   checkpoint. The space of removed frames is reused by those that follow.
 - `--no-append` and `append=False` write `<name>.partNNNN<ext>`.
+- What a file holds is fixed when it is made. A Python simulation always
+  writes the potential energy, and `mdir run` writes it only where
+  `trajectory_interval` is a multiple of `energy_interval`: one front end
+  continues the file of the other only where both would write the same
+  elements, and is refused by name otherwise (`append=False` and
+  `--no-append` go on in a part of their own).
 
 ## Validation
 
