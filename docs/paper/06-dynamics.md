@@ -1259,15 +1259,30 @@ order 5, gives $2.48 \pm 0.04$ by MBAR and $2.70 \pm 0.03$ by TI, over 10
 sets. The differences, OpenMM less MDIR, are $-0.02 \pm 0.06$ kcal/mol by
 MBAR and $-0.05 \pm 0.05$ by TI; those of the legs by MBAR are
 $-0.01 \pm 0.03$ (Coulomb) and $-0.01 \pm 0.06$ kcal/mol
-(Lennard-Jones). The standard deviation of one set is 0.16 kcal/mol in
-MDIR and 0.12 in OpenMM by MBAR; the uncertainty that the statistical
-inefficiency within one set gives is 0.11 in both. TI is 0.25 kcal/mol
-above MBAR in MDIR and 0.23 in OpenMM: on this spacing of the
-Lennard-Jones TI is biased by its curvature, which MBAR is not. For one
+(Lennard-Jones). GROMACS 2026.3 in mixed precision on its CUDA platform,
+from the same topology, with the potential shift of its cutoff for the
+Lennard-Jones and for the direct sum, its `sd` integrator with a friction
+of 1/ps, stochastic cell rescaling every 10 steps (a time constant of
+2 ps), B-splines of order 4, and its soft-core with `sc-r-power = 6` and
+`sc-power = 1`, gives $2.49 \pm 0.02$ by MBAR and $2.72 \pm 0.02$ by TI,
+over 12 sets. The differences, GROMACS less MDIR, are $-0.01 \pm 0.05$
+kcal/mol by MBAR and $-0.03 \pm 0.05$ by TI; those of the legs by MBAR
+are $-0.01 \pm 0.02$ (Coulomb) and $0.00 \pm 0.05$ kcal/mol
+(Lennard-Jones). GROMACS interpolates the reciprocal sum between the end
+states where MDIR scales the charges, so that the states with
+$0 < \lambda_\text{C} < 1$ differ between the two by
+$\lambda_\text{C}(1 - \lambda_\text{C})$ times 0.006 to 0.010 kcal/mol
+in four configurations; the end states of both legs are the same. The
+standard deviation of one set by MBAR is 0.16 kcal/mol in MDIR, 0.12 in
+OpenMM, and 0.07 in GROMACS; the uncertainty that the statistical
+inefficiency within one set gives is 0.11 in all three. TI is 0.25
+kcal/mol above MBAR in MDIR and 0.23 in OpenMM and in GROMACS: on this
+spacing of the Lennard-Jones TI is biased by its curvature, which MBAR is
+not. For one
 set of MDIR, the rows of the cut potential on the same trajectories give
 0.43 kcal/mol more by MBAR than those of the shifted one,
-$N_\text{in}u(r_c)$ of the pairs of the ethanol. The scripts of both
-programs are in `scripts/validation/free-energy`.
+$N_\text{in}u(r_c)$ of the pairs of the ethanol. The scripts of the
+three programs are in `scripts/validation/free-energy`.
 
 **Cost.** On JAC (23,558 particles, one water decoupled, RTX 3090, mixed
 precision) a step takes 0.210 ms at a state with $\lambda_\text{C} =
