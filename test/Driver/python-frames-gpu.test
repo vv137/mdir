@@ -1,0 +1,26 @@
+# REQUIRES: python-api, cuda
+# The frame evaluator (D[frame-evaluator], docs/python-frames.md) on a GPU,
+# in double and mixed precision: the checks of python-frames.test.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide frames GPU Double | FileCheck %s --check-prefix=FRAMES -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide frames GPU Mixed | FileCheck %s --check-prefixes=FRAMES,DEFAULT -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide npt GPU Double | FileCheck %s --check-prefix=NPT -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide npt GPU Mixed | FileCheck %s --check-prefix=NPT -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide mixture GPU Double %t | FileCheck %s --check-prefix=MIXTURE -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide mixture GPU Mixed %t | FileCheck %s --check-prefix=MIXTURE -DMODE="GPU Mixed"
+# FRAMES: [[MODE]]: 5 frames against the sampler's gradient() and state: {{.*}} equal to the bit: True
+# FRAMES: [[MODE]]: as an array, in another order, from a generator, and one frame alone, equal to the bit: True
+# FRAMES: [[MODE]]: positions in float32 change the energy by at most
+# FRAMES: [[MODE]]: the product against the rows {{.*}}, by a second pass
+# FRAMES: [[MODE]]: the product against central differences in theta of the sum of the energies
+# DEFAULT: [[MODE]]: without the deterministic mode, the energy
+# FRAMES: frames passed
+# NPT: [[MODE]]: 4 frames of a run under a barostat, volumes {{.*}} equal to the bit: True
+# NPT: [[MODE]]: against a simulation compiled from the frame: the energy
+# NPT: [[MODE]]: with a net charge of 0.5 e and sigma scaled by 1.01, the product against central differences of the energies at the volume of each frame
+# NPT: npt passed
+# MIXTURE: [[MODE]]: at the values that sampled, the energies equal the reference to the bit and the weights are uniform: True; N_eff = 150.000000 of 150
+# MIXTURE: [[MODE]]: sigma' = 0.370 nm, N_eff = 150.0: the derivative of the reweighted average
+# MIXTURE: [[MODE]]: sigma' = 0.372 nm, N_eff =
+# MIXTURE: mixture passed

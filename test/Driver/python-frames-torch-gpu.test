@@ -1,0 +1,15 @@
+# REQUIRES: python-api, torch, cuda
+# The frame evaluator as an operation of PyTorch on a GPU, with the
+# tunables as tensors of the device (D[frame-evaluator],
+# docs/python-frames.md): the checks of python-frames-torch.test.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5
+# RUN: %torch_python %S/Inputs/python_frames.py %S/Inputs/dipeptide torch GPU Double %t | FileCheck %s --check-prefixes=CHECK,DOUBLE -DMODE="GPU Double"
+# RUN: %torch_python %S/Inputs/python_frames.py %S/Inputs/dipeptide torch GPU Mixed %t | FileCheck %s -DMODE="GPU Mixed"
+# CHECK: [[MODE]]: the gradient of the reweighted average from autograd against the covariance of the arrays
+# CHECK: [[MODE]]: with the Jacobian not kept, the backward by a second pass
+# DOUBLE: [[MODE]]: torch.autograd.gradcheck of the reweighted average: True
+# CHECK: [[MODE]]: a fit to the average at sigma* = 0.3705 nm from 0.3700: sigma' = 0.370{{[45]}}
+# CHECK: [[MODE]]: refused: a backward through the virial and through a column that the tunable enters, a second backward, positions that require a gradient
+# CHECK: [[MODE]]: under torch.compile (aot_eager), the same average and gradient: True
+# CHECK: torch passed
