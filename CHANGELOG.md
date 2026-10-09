@@ -18,15 +18,21 @@ format, or the outputs; every such change is listed under **Changed** or
   included, the step, and the time, for the reweighting of stored frames.
   `[output] trajectory = "run.h5md"` selects it by the extension `.h5md`
   (`.h5` stays that of checkpoints) or `trajectory_format = "H5MD"`;
-  `trajectory_precision = "DOUBLE"` (the default) or `"SINGLE"` is a new
-  key. In Python, `mdir.H5MDReporter(file, period, positions="f64",
-  velocities=False, forces=False)` takes the place of a
+  `trajectory_precision = "DOUBLE"` (the default) or `"SINGLE"` and
+  `trajectory_strings = "FIXED"` (the default) or `"VARIABLE"` are new
+  keys. In Python, `mdir.H5MDReporter(file, period, positions="f64",
+  velocities=False, forces=False, strings="fixed")` takes the place of a
   `TrajectoryReporter` and also writes the potential energy of each frame,
   the version of the tunables, and, if asked, the velocities and the
   forces; `mdir.read_h5md(file)` reads the frames one at a time, and a
   frame unpacks as the pair `(positions, cell)`. The file continues with
   the run, is backed up, and goes to parts as a DCD does, and a run that
-  is killed leaves a file that opens with the frames written. On JAC
+  is killed leaves a file that opens with the frames written. The `unit`
+  attributes are strings of fixed length, as the units module of H5MD
+  gives them, or of variable length with `strings = "variable"`;
+  MDAnalysis 2.10.0 with h5py 3.16.0 reads files written with
+  `strings = "variable"`, and with `"fixed"` it stops with the message
+  "time unit 'b'ps'' is not recognized by H5MDReader". On JAC
   (23,558 atoms) a frame takes 565,642 bytes in f64 and 282,946 in f32
   (DCD: 282,776) and 0.78 ms and 0.57 ms (DCD: 0.62 ms). The manifest's
   `trajectory_format` and the report of `mdir check` may now be `"H5MD"`.

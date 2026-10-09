@@ -136,6 +136,16 @@ bool writeText(hid_t object, const char *name, const std::string &text) {
   return writeAttribute(object, name, type, type, text.c_str());
 }
 
+/// Writes a string attribute of variable length, in ASCII.
+bool writeVariableText(hid_t object, const char *name,
+                       const std::string &text) {
+  Handle type(H5Tcopy(H5T_C_S1), H5Tclose);
+  H5Tset_size(type, H5T_VARIABLE);
+  H5Tset_cset(type, H5T_CSET_ASCII);
+  const char *value = text.c_str();
+  return writeAttribute(object, name, type, type, &value);
+}
+
 /// Reads a string attribute of fixed or variable length; empty if absent.
 std::string readText(hid_t object, const char *name) {
   if (H5Aexists(object, name) <= 0)
@@ -358,6 +368,13 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
   if (h->file < 0)
     return makeError("cannot write '" + path + "'");
   bool ok = true;
+  // The `unit` attributes, in the form asked for; every other string of
+  // the file is of fixed length.
+  bool variable = options.variableStrings;
+  auto writeUnit = [variable](hid_t object, const char *unit) {
+    return variable ? writeVariableText(object, "unit", unit)
+                    : writeText(object, "unit", unit);
+  };
   hid_t real = options.single ? H5T_IEEE_F32LE : H5T_IEEE_F64LE;
   size_t width = options.single ? 4 : 8;
   hsize_t rows = getFrameRows(3 * count * width);
@@ -406,8 +423,8 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
       h->time = createSeries(position, "time", H5T_IEEE_F64LE, {0}, 1024);
       h->position = createSeries(position, "value", real, {0, count, 3}, rows);
       ok &= h->step >= 0 && h->time >= 0 && h->position >= 0;
-      ok = ok && writeText(h->time, "unit", "ps") &&
-           writeText(h->position, "unit", "nm");
+      ok = ok && writeUnit(h->time, "ps") &&
+           writeUnit(h->position, "nm");
     }
     // Elements sampled with the positions share their steps and times.
     auto link = [&](hid_t group, bool withTime = true) {
@@ -442,7 +459,7 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                                       {0, 3, 3}, 1024)
                        : createSeries(edges, "value", H5T_IEEE_F64LE, {0, 3},
                                       1024);
-        ok = ok && h->edges >= 0 && writeText(h->edges, "unit", "nm");
+        ok = ok && h->edges >= 0 && writeUnit(h->edges, "nm");
       }
     }
     if (options.velocities) {
@@ -456,10 +473,10 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
         h->velocityTime =
             createSeries(velocity, "time", H5T_IEEE_F64LE, {0}, 1024);
         ok = ok && h->velocityTime >= 0 &&
-             writeText(h->velocityTime, "unit", "ps");
+             writeUnit(h->velocityTime, "ps");
       }
       h->velocity = createSeries(velocity, "value", real, {0, count, 3}, rows);
-      ok = ok && h->velocity >= 0 && writeText(h->velocity, "unit", "nm ps-1");
+      ok = ok && h->velocity >= 0 && writeUnit(h->velocity, "nm ps-1");
     }
     if (options.forces) {
       Handle force(H5Gcreate2(all, "force", H5P_DEFAULT, H5P_DEFAULT,
@@ -468,7 +485,7 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
       link(force);
       h->force = createSeries(force, "value", real, {0, count, 3}, rows);
       ok = ok && h->force >= 0 &&
-           writeText(h->force, "unit", "kJ mol-1 nm-1");
+           writeUnit(h->force, "kJ mol-1 nm-1");
     }
     auto fixed = [&](const char *name, hid_t fileType, hid_t memoryType,
                      const void *data, const char *unit) {
@@ -481,7 +498,7 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
            H5Dwrite(dataset, memoryType, H5S_ALL, H5S_ALL, H5P_DEFAULT,
                     data) >= 0;
       if (unit)
-        ok = ok && writeText(dataset, "unit", unit);
+        ok = ok && writeUnit(dataset, unit);
     };
     // The atomic mass unit is a gram per mole.
     if (!options.masses.empty() && count > 0)
@@ -501,7 +518,7 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                      H5Gclose);
         link(group);
         h->energy = createSeries(group, "value", H5T_IEEE_F64LE, {0}, 1024);
-        ok = ok && h->energy >= 0 && writeText(h->energy, "unit", "kJ mol-1");
+        ok = ok && h->energy >= 0 && writeUnit(h->energy, "kJ mol-1");
       }
       if (options.tunables) {
         Handle group(H5Gcreate2(observables, "tunables_version", H5P_DEFAULT,
@@ -529,6 +546,7 @@ llvm::Error H5MDWriter::open(const std::string &path, size_t count,
                          &timestep);
     ok &= writeAttribute(mdir, "velocity_offset", H5T_IEEE_F64LE,
                          H5T_NATIVE_DOUBLE, &options.velocityOffset);
+    ok &= writeText(mdir, "strings", variable ? "variable" : "fixed");
     if (!options.precision.empty())
       ok &= writeText(mdir, "precision", options.precision);
     if (!options.frontEnd.empty())
@@ -583,6 +601,15 @@ llvm::Expected<int64_t> H5MDWriter::append(const std::string &path,
       return refuse("has a frame every " + llvm::Twine(stored) +
                     " steps, and the run writes one every " +
                     llvm::Twine(framePeriod));
+    // The form of the `unit` attributes; a file without the record has
+    // fixed-length strings.
+    bool variable = readText(mdir, "strings") == "variable";
+    if (variable != options.variableStrings)
+      return refuse(llvm::Twine("has its unit attributes as ") +
+                    (variable ? "variable" : "fixed") +
+                    "-length strings, and the run writes " +
+                    (options.variableStrings ? "variable" : "fixed") +
+                    "-length ones");
   }
   auto openSeries = [&](const char *name) -> hid_t {
     return exists(h->file, name) ? H5Dopen2(h->file, name, H5P_DEFAULT) : -1;

@@ -15,6 +15,7 @@
 # CHECK: GPU Mixed NPT: 5 cells in 5 frames, each equal to its state to the bit
 # CHECK: GPU Mixed triclinic NVE: 3 frames with 1 cell equal to the states to the bit
 # CHECK: GPU leapfrog: velocities of the half step equal to the states to the bit
+# CHECK: GPU strings: with the unit attributes as variable-length strings, the frames equal to the states to the bit and to those of the fixed form
 # CHECK: GPU tunables: versions [0, 0, 1, 1] at steps 10 to 40
 # CHECK: GPU continuation: a checkpoint at step 20 of 60, the frame of step 30 removed, 6 frames equal to those of the run that did not stop
 # CHECK: GPU killed at step 35: the file opens and holds the 3 frames written, equal to the states to the bit

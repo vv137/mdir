@@ -3,16 +3,23 @@
 # MDIR: h5py with the paths of the specification written out by hand
 # (groups, attributes, types, units, hard links, the states of the run to
 # the bit, and a file that a killed run left), and the H5MD reader of
-# MDAnalysis where it is installed. The interpreter with h5py is that of the
+# MDAnalysis where it is installed: it opens the files with
+# `strings = "variable"` as written, and what it does with the fixed form
+# is printed, not required (either outcome passes). The interpreter with h5py is that of the
 # tests, or the one given with -Dh5md_python=<interpreter>.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_h5md.py %S/Inputs CPU mdir %t reference | FileCheck %s --check-prefix=WRITE
 # RUN: %h5md_python %S/Inputs/h5md_independent.py %t | FileCheck %s
-# WRITE: CPU: 5 files and the states of their runs for independent readers
+# WRITE: CPU: 8 files and the states of their runs for independent readers
 # CHECK: h5py ref-nve: 5 frames of 1168 particles; the paths, types, units, and hard links of H5MD 1.1, and the states to the bit
 # CHECK: h5py ref-nve-f32: 5 frames
 # CHECK: h5py ref-nve-full: 5 frames
 # CHECK: h5py ref-npt: 5 frames
 # CHECK: h5py ref-tri: 3 frames of 1209 particles
+# CHECK: h5py var-nve-full: 5 frames
+# CHECK: h5py var-npt: 5 frames
+# CHECK: h5py var-tri: 3 frames
+# CHECK: h5py: the files with fixed-length and with variable-length unit strings hold the same datasets
 # CHECK: h5py killed: 3 frames, every dataset of the same length
-# CHECK: {{MDAnalysis is not installed|MDAnalysis .* ref-tri: .* 3 frames: positions, velocities, the cell, the step, the time, and the potential energy, with and without its unit conversion}}
+# CHECK: {{MDAnalysis is not installed|MDAnalysis .*, variable strings, nve-full: 5 frames as written: positions, velocities, forces, the cell, the step, the time, and the potential energy, with and without its unit conversion}}
+# CHECK: {{MDAnalysis is not installed|MDAnalysis .*, fixed strings, tri: (reads the 3 frames|stops with the message: .*)}}

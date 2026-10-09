@@ -1468,6 +1468,7 @@ llvm::Error Simulation::setReports(const Reports &given) {
   if (given.trajectoryPath != reports.trajectoryPath ||
       given.trajectoryFormat != reports.trajectoryFormat ||
       given.frameSingle != reports.frameSingle ||
+      given.frameVariableStrings != reports.frameVariableStrings ||
       given.frameVelocities != reports.frameVelocities ||
       given.frameForces != reports.frameForces ||
       given.framePeriod != reports.framePeriod) {
@@ -1488,6 +1489,7 @@ llvm::Error Simulation::setReports(const Reports &given) {
         // frame has its potential energy.
         driver::H5MDOptions options;
         options.single = given.frameSingle;
+        options.variableStrings = given.frameVariableStrings;
         options.velocities = given.frameVelocities;
         options.forces = given.frameForces;
         options.energy = true;

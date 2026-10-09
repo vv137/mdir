@@ -1,8 +1,8 @@
 # Frames without loss: the H5MD trajectory (D[h5md-reporter])
 
 Issue #251. Status: implemented. What was decided in the design and what
-is put to the maintainer is listed under
-[Decisions and questions](#decisions-and-questions).
+the maintainer decided on the pull request is listed under
+[Decisions](#decisions).
 
 The frame evaluator of M2b (#249) evaluates the potential at stored
 frames. The frames have to be those the
@@ -31,7 +31,7 @@ for positions, cell in frames:             # one frame at a time
     ...
 ```
 
-`H5MDReporter(file, period, positions="f64", velocities=False, forces=False)`:
+`H5MDReporter(file, period, positions="f64", velocities=False, forces=False, strings="fixed")`:
 
 | Argument | Meaning |
 |---|---|
@@ -39,9 +39,10 @@ for positions, cell in frames:             # one frame at a time
 | `period` | Steps between frames; the schedule of the other reporters (D207): a frame at every step that is a multiple of `period` after the step the reporter was added at. |
 | `positions` | `"f64"` (the default) or `"f32"`: the type of the positions in the file, and of the velocities and the forces if they are written. The positions of the state are f64 in the mixed and the double mode, so `"f64"` rounds nothing; `"f32"` holds the state rounded to the nearest f32, in half the space. |
 | `velocities`, `forces` | Whether the frames hold them: those of `state()` at the step of the frame. |
+| `strings` | `"fixed"` (the default) or `"variable"`: the form of the `unit` attributes, strings of fixed length as the units module of H5MD prescribes, or of variable length ([Strings](#strings)). |
 
 - It is the trajectory of the simulation: a simulation takes one
-  `TrajectoryReporter` or one `H5MDReporter`, not both (see question 1).
+  `TrajectoryReporter` or one `H5MDReporter`, not both (decision 7).
   `TrajectoryReporter("x.h5md")` is refused with the name of this class.
 - Frames of positions alone are written inside the parts of a run, through
   the host function that writes the frames of DCD and XTC (D207): the cost
@@ -95,6 +96,7 @@ what the file holds, and frames for the evaluator are in nm.
 trajectory           = "run.h5md"   # H5MD by the extension .h5md
 trajectory_format    = "H5MD"       # or by name, for another extension
 trajectory_precision = "DOUBLE"     # DOUBLE (the default) or SINGLE; H5MD only
+trajectory_strings   = "FIXED"      # FIXED (the default) or VARIABLE; H5MD only
 trajectory_interval  = 1000
 ```
 
@@ -102,9 +104,10 @@ trajectory_interval  = 1000
   `trajectory_format = "AUTO"`, or by name. Only `.h5md` selects it by
   extension: `.h5` is the extension of checkpoints in the documents, and a
   trajectory named `x.h5` needs `trajectory_format = "H5MD"`.
-- `trajectory_precision` is refused with DCD and XTC.
+- `trajectory_precision` and `trajectory_strings` are refused with DCD and
+  XTC.
 - The control file writes positions and the cell; velocities and forces in
-  the frames of `mdir run` are left to a later item (question 2).
+  the frames of `mdir run` are left to a later item (decision 8).
 - `--continue`, `--no-append`, backups, the manifest, and `mdir check`
   treat the file as they treat a DCD (D130, D149).
 
@@ -146,8 +149,8 @@ trajectory_interval  = 1000
   inside MDIR and of the Python interface. The control file and DCD are in
   Å, but a conversion would round, so the file holds the numbers of the
   state and labels them with the `unit` attribute of the units module of
-  H5MD (version 1.0, system `SI`). The strings are those that the reader of
-  MDAnalysis knows.
+  H5MD (version 1.0, system `SI`): `nm`, `ps`, `nm ps-1`, `kJ mol-1 nm-1`,
+  `kJ mol-1`, `g mol-1`.
 - **Cell.** `box/edges` is time-dependent in every ensemble, one row per
   frame, so that a reader need not know the ensemble: `[K][3]` for an
   orthorhombic cell, `[K][3][3]` for a triclinic one with the cell vectors
@@ -174,9 +177,36 @@ trajectory_interval  = 1000
   and in `mdir run` when `trajectory_interval` is a multiple of
   `energy_interval`; otherwise the element is absent. It is the energy the
   run reports, not the potential the forces sample under a plain cutoff
-  (D210); see question 3.
+  (D210; decision 9).
 - **Types.** Little-endian IEEE f64 and f32, i64, i32; strings of fixed
-  length in ASCII, as the specification asks.
+  length in ASCII, as the specification asks, except the `unit` attributes
+  of a file written with `strings = "variable"`.
+
+### Strings
+
+The units module of H5MD gives the `unit` attribute as a string of fixed
+length in ASCII, and that is what a file holds by default. With
+`strings = "variable"` (`trajectory_strings = "VARIABLE"`) the `unit`
+attributes, and only they, are strings of variable length in ASCII, a form
+that the specification does not give. Everything else is the same in both
+forms: the other strings of the file (the author, the creator, `boundary`,
+the `system` of the units module, and those of `/parameters/mdir`) stay of
+fixed length, and the datasets are equal to the bit.
+`/parameters/mdir/strings` is `fixed` or `variable`; a file without it has
+fixed-length strings. A continued run that asks for the other form than
+the file has is refused, naming both; nothing is converted.
+`read_h5md` reads both forms.
+
+What was found, on the files of the test (`python-h5md-independent.test`):
+
+| Reader | `strings = "fixed"` | `strings = "variable"` |
+|---|---|---|
+| `mdir.read_h5md` | reads | reads |
+| h5py 3.16.0 (HDF5 2.0.0) | reads; `attrs["unit"]` is a `bytes` object | reads; `attrs["unit"]` is a `str` object |
+| MDAnalysis 2.10.0 with h5py 3.16.0, `H5MDReader` | stops with the message "time unit 'b'ps'' is not recognized by H5MDReader", with and without `convert_units=False` | reads the files as written: positions, velocities, forces, the cell, the step, the time, and `potential_energy`, with and without its unit conversion |
+
+Only the `unit` attributes decide this: the files that MDAnalysis 2.10.0
+reads have every other string of fixed length.
 
 ### Chunks, compression, and flushing
 
@@ -186,7 +216,7 @@ trajectory_interval  = 1000
 - No compression: the mantissas of positions in f64 do not compress, and
   the HDF5 of the reference build has no deflate filter. The gain of
   gzip with and without the shuffle filter on JAC is measured
-  [below](#size-and-cost) with h5py (question 4).
+  [below](#size-and-cost) with h5py (decision 10).
 - The writer extends and writes the values of a frame, then `step` and
   `time`, then flushes the library's buffers to the operating system
   (`H5Fflush`), once per frame. A run that is killed leaves a file that
@@ -197,9 +227,12 @@ trajectory_interval  = 1000
   that count. There is no `fsync` per frame: as for DCD, a crash of the
   machine may lose frames that the checkpoint counts, and `--continue`
   then refuses the file by name.
-- The library of the reference build is not thread-safe; frames and
-  checkpoints are written under the mutex of the run, one at a time.
-  Asynchronous writers (#113) have to keep that.
+- The library of the reference build is not thread-safe. The writer and
+  the reader of this format take one mutex of the process around every
+  call of it, so frames written by a run and files read in other threads
+  take their turns; asynchronous writers (#113) have to keep that. The
+  checkpoint code does not take that mutex: #262 lists what a script with
+  threads can and cannot overlap.
 
 ### Continuation and overwriting
 
@@ -273,13 +306,14 @@ and unsupported otherwise):
 
 | Reader | What it checks | Result |
 |---|---|---|
-| h5py 3.16.0 (HDF5 2.0.0), the paths of the specification written out by hand | `/h5md` version, author, creator, and the units module; fixed-length strings of the author and the creator; `box` dimension and boundary; shapes, types, and `unit` attributes of every element; `step` and `time` of `box/edges`, `velocity`, `force`, and the observables are the same objects as those of `position`; no `id`; superblock 0; positions, velocities, forces, cells, potential energies, steps, and times against the states that the run saved with NumPy | passes for 5 files (f64, f32, with velocities and forces, NPT, triclinic), CPU and GPU; the killed file opens with 3 whole frames |
-| MDAnalysis 2.10.0, `H5MDReader` | the file as written | **refused**: "time unit 'b'ps'' is not recognized by H5MDReader". It looks the `unit` strings up as Python strings, and h5py returns the fixed-length strings that H5MD prescribes as bytes; `convert_units=False` does not avoid the lookup |
-| MDAnalysis 2.10.0 on a copy whose `unit` attributes are written again as variable-length strings, nothing else changed | positions, velocities, forces (the f32 of the states, to the bit, with `convert_units=False`; within $10^{-6}$ after its conversion to Å), the cell as lengths and angles, the step, the time, and `potential_energy` in `ts.data` | passes for 3 files, CPU and GPU |
+| h5py 3.16.0 (HDF5 2.0.0), the paths of the specification written out by hand | `/h5md` version, author, creator, and the units module; fixed-length strings of the author and the creator; `box` dimension and boundary; shapes, types, and `unit` attributes of every element; `step` and `time` of `box/edges`, `velocity`, `force`, and the observables are the same objects as those of `position`; no `id`; superblock 0; positions, velocities, forces, cells, potential energies, steps, and times against the states that the run saved with NumPy | passes for 8 files (f64, f32, with velocities and forces, NPT, triclinic, and three with `strings = "variable"`), CPU and GPU; the killed file opens with 3 whole frames |
+| MDAnalysis 2.10.0 with h5py 3.16.0, `H5MDReader`, the files written with `strings = "variable"`, as written | positions, velocities, forces (the f32 of the states, to the bit, with `convert_units=False`; within $10^{-6}$ after its conversion to Å), the cell as lengths and angles, the step, the time, and `potential_energy` in `ts.data` | passes for 3 files (with velocities and forces, NPT, triclinic), CPU and GPU |
+| The same reader, the files written with `strings = "fixed"` | whether it opens them; the test prints the outcome and passes with either | stops with the message "time unit 'b'ps'' is not recognized by H5MDReader" |
 
-So the layout is one that MDAnalysis reads, and the form of the unit
-strings that the specification asks for is one that it does not; see
-question 5. `h5dump` and `h5ls` are not in the HDF5 of the reference
+The h5py script also checks the form of every string of the eight files
+(the `unit` attributes of the form asked for, every other string of fixed
+length, `/parameters/mdir/strings`) and that the files of the two forms
+hold the same datasets, to the bit. `h5dump` and `h5ls` are not in the HDF5 of the reference
 build, so the structure was listed with h5py.
 
 The test without HDF5 (`python-h5md-no-hdf5.test`) runs only in a build
@@ -338,7 +372,7 @@ positions above, one chunk per frame as in the file):
 | f32 | shuffle, gzip 1 | 79.6% | 6.8 |
 
 It would save 14% in f64 at twenty times the cost of the frame, so there
-is no option for it (question 4).
+is no option for it (decision 10).
 
 **Runs without the reporter.** The compiled program is unchanged: the
 builder, the dialects, the conversions, and the runtime are not touched,
@@ -348,9 +382,9 @@ when a barostat sets the cell, and the frame function tests the kind of
 its writer once per frame. JAC without a trajectory runs at 0.205 ms per
 step with this change.
 
-## Decisions and questions
+## Decisions
 
-Decided in this design (say so on the pull request to change one):
+Decided in the design:
 
 1. H5MD is a third trajectory format behind the writer interface of DCD and
    XTC, so that continuation, the frame count of the checkpoint, backups,
@@ -362,12 +396,21 @@ Decided in this design (say so on the pull request to change one):
    reporters use.
 6. One type for positions, velocities, and forces of a file.
 
-Put to the maintainer:
+Decided by the maintainer on the pull request:
 
-| | Question | Options | Taken until answered |
-|---|---|---|---|
-| 1 | May a simulation write a DCD or XTC for viewing and an H5MD for reweighting at once? | (a) one trajectory, as `[output]` has one; (b) a second slot with its own period and its own count in the checkpoint (a new entry of the checkpoint format) | (a) |
-| 2 | Velocities and forces in the frames of `mdir run` | (a) Python only, at part boundaries; (b) control-file keys and a frame call of the compiled program that carries them, which changes the program of a run that asks for them | (a) |
-| 3 | The potential that the forces sample (D210) per frame | (a) the reported potential energy, free; (b) also D210's shifted energy, which is formed today only in the evaluation of the derivative in the tunables (a part boundary and an evaluation per frame, and a program compiled with `tunable_gradient`), opt-in | (a): the frame evaluator computes $U_{\hat\theta}(S_n)$ itself, and the stored value is a check |
-| 4 | Compression | (a) none; (b) an option for gzip with shuffle, where the library has it | (a): 14% of an f64 frame for twenty times its cost (above) |
-| 5 | The `unit` attributes | (a) fixed-length ASCII strings, as the units module of H5MD prescribes and as the checkpoints have them; MDAnalysis 2.10.0 then refuses the file; (b) variable-length strings, which MDAnalysis reads (shown on a copy) and the specification does not allow; (c) an option of the reporter | (a) |
+7. A simulation writes one trajectory, as `[output]` has one: a DCD or XTC
+   and an H5MD at once would need a second slot with its own count in the
+   checkpoint.
+8. Velocities and forces are written from a Python simulation only, at
+   part boundaries. From `mdir run` they would need a frame call of the
+   compiled program that carries them.
+9. The potential energy of a frame is the one the run reports, which is
+   free at a step of energy. The shifted energy of D210 is formed only in
+   the evaluation of the derivative in the tunables (a part boundary and
+   an evaluation per frame); the frame evaluator computes
+   $U_{\hat\theta}(S_n)$ itself, and the stored value is a check.
+10. No compression: 14% of an f64 frame for twenty times its cost
+    ([Size and cost](#size-and-cost)).
+11. The `unit` attributes are strings of fixed length by default, as the
+    specification has them, and an option writes them as strings of
+    variable length ([Strings](#strings)).

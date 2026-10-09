@@ -22,6 +22,11 @@ struct H5MDOptions {
   /// The positions, velocities, and forces in f32 rather than f64.
   bool single = false;
   bool velocities = false, forces = false;
+  /// The `unit` attributes as variable-length strings rather than the
+  /// fixed-length strings that the units module of H5MD prescribes, for
+  /// readers that take only those. `/parameters/mdir/strings` records the
+  /// form, and a continued run must ask for that of the file.
+  bool variableStrings = false;
   /// `/observables/potential_energy`: every frame is a step of energy.
   bool energy = false;
   /// `/observables/tunables_version` (D213).

@@ -1065,6 +1065,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       // every frame is a step of energy.
       H5MDOptions options;
       options.single = control->trajectorySingle;
+      options.variableStrings = control->trajectoryVariableStrings;
       options.energy = !control->minimize && control->energyPeriod > 0 &&
                        control->framePeriod % control->energyPeriod == 0;
       options.triclinic = system->tilt[0] != 0.0 || system->tilt[1] != 0.0 ||

@@ -1625,6 +1625,7 @@ Error Reader::readOutput(const toml::table &table) {
           table, "output",
           {"log", "energy", "pull", "free_energy", "observables", "manifest",
            "trajectory", "trajectory_format", "trajectory_precision",
+           "trajectory_strings",
            "checkpoint", "energy_interval", "trajectory_interval",
            "checkpoint_interval"},
           {}))
@@ -1673,6 +1674,19 @@ Error Reader::readOutput(const toml::table &table) {
                 "'trajectory_precision' is of a trajectory in H5MD; DCD and "
                 "XTC have one precision each");
   control.trajectorySingle = width == Width::Single;
+  // The form of the `unit` attributes of a trajectory in H5MD.
+  enum class Strings { Fixed, Variable };
+  Strings strings = Strings::Fixed;
+  if (Error error = readChoice<Strings>(
+          table, "trajectory_strings", strings,
+          {{"FIXED", Strings::Fixed}, {"VARIABLE", Strings::Variable}}))
+    return error;
+  if (table.contains("trajectory_strings") &&
+      control.trajectoryFormat != TrajectoryFormat::H5MD)
+    return fail(*table.get("trajectory_strings"),
+                "'trajectory_strings' is of a trajectory in H5MD; DCD and "
+                "XTC hold no strings of units");
+  control.trajectoryVariableStrings = strings == Strings::Variable;
   if (Error error = readPath(table, "checkpoint", control.restartOutput))
     return error;
   if (Error error = readPath(table, "manifest", control.manifestFile))

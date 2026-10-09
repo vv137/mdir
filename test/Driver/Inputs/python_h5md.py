@@ -176,12 +176,17 @@ if mode == "reference":
     keep("ref-nve-f32", nve, positions="f32")
     keep("ref-nve-full", nve, velocities=True, forces=True)
     keep("ref-npt", program("dipeptide", "NPT", "Double"))
-    keep("ref-tri", program("triclinic", "NVE", "Double"), steps=30, velocities=True)
+    tri = program("triclinic", "NVE", "Double")
+    keep("ref-tri", tri, steps=30, velocities=True)
+    # The same with the unit attributes as variable-length strings.
+    keep("var-nve-full", nve, velocities=True, forces=True, strings="variable")
+    keep("var-npt", program("dipeptide", "NPT", "Double"), strings="variable")
+    keep("var-tri", tri, steps=30, velocities=True, strings="variable")
     np.savez(work / "reference.npz", **data)
     killed = subprocess.run([sys.executable, __file__, str(root), target_name, cli, str(work), "kill"],
                             capture_output=True)
     assert killed.returncode == -signal.SIGKILL, (killed.returncode, killed.stderr.decode())
-    print(f"{target_name}: 5 files and the states of their runs for independent readers")
+    print(f"{target_name}: 8 files and the states of their runs for independent readers")
     sys.exit(0)
 
 plain = {}
@@ -244,6 +249,20 @@ compare(work / "leap.h5md", states, velocities=True)
 assert states[0].velocity_offset == -0.5
 print(f"{target_name} leapfrog: velocities of the half step equal to the states to the bit")
 
+# The `unit` attributes as variable-length strings: the same frames, and
+# the reader reads both forms.
+nve = program("dipeptide", "NVE", "Double")
+states = run(nve, work / "variable.h5md", strings="variable", velocities=True, forces=True)
+compare(work / "variable.h5md", states, velocities=True, forces=True)
+states = run(nve, work / "variable-plain.h5md", strings="variable")
+compare(work / "variable-plain.h5md", states)
+assert same_files(work / "variable-plain.h5md", work / "nve-double.h5md") == 5
+with mdir.read_h5md(str(work / "variable.h5md")) as a, mdir.read_h5md(str(work / "nve-double-full.h5md")) as b:
+    assert a.units == b.units and a.units["force"] == "kJ mol-1 nm-1"
+assert mdir.H5MDReporter("x", 10).strings == "fixed"
+print(f"{target_name} strings: with the unit attributes as variable-length strings, the frames "
+      f"equal to the states to the bit and to those of the fixed form")
+
 # Tunables: every frame has the version of the values its forces were of.
 tuned = program("dipeptide", "NVE", "Double", tunables=True)
 sim = mdir.Simulation(tuned)
@@ -288,11 +307,30 @@ for options, name in (({"velocities": True, "forces": True}, "part-full.h5md"), 
 # trajectory: refused by name.
 for options, period, text in (({"positions": "f32"}, 10, "in f64, and the run writes f32"),
                               ({"velocities": True}, 10, "does not hold velocities"),
+                              ({"strings": "variable"}, 10,
+                               "as fixed-length strings, and the run writes variable-length ones"),
                               ({}, 20, "a frame every 10 steps")):
     sim = mdir.Simulation(nve, checkpoint=str(work / "part.h5"))
     sim.reporters.append(mdir.H5MDReporter(str(work / "part.h5md"), period, **options))
     expect(mdir.InputError, lambda: sim.run(10), text)
     del sim
+# The variable form continues as the fixed one does, and refuses the other.
+sim = mdir.Simulation(nve)
+sim.reporters.append(mdir.H5MDReporter(str(work / "part-variable.h5md"), 10, strings="variable"))
+sim.reporters.append(mdir.CheckpointReporter(str(work / "part-variable.h5"), 20))
+sim.run(30)
+del sim
+sim = mdir.Simulation(nve, checkpoint=str(work / "part-variable.h5"))
+sim.reporters.append(mdir.H5MDReporter(str(work / "part-variable.h5md"), 10))
+expect(mdir.InputError, lambda: sim.run(10),
+       "as variable-length strings, and the run writes fixed-length ones")
+del sim
+sim = mdir.Simulation(nve, checkpoint=str(work / "part-variable.h5"))
+sim.reporters.append(mdir.H5MDReporter(str(work / "part-variable.h5md"), 10, strings="variable"))
+sim.reporters.append(mdir.CheckpointReporter(str(work / "part-next.h5"), 20))
+assert sim.run(40) == 40
+sim.close_reporters()
+assert same_files(work / "whole.h5md", work / "part-variable.h5md") == 6
 # append=False: the frames that follow go to a part of their own.
 sim = mdir.Simulation(nve, checkpoint=str(work / "part.h5"), append=False)
 sim.reporters.append(mdir.H5MDReporter(str(work / "part.h5md"), 10))
@@ -460,6 +498,15 @@ assert result.returncode != 0 and "'.h5md'" in result.stderr, result.stderr
 result = mdir_run(control("bad", "bad.dcd", steps=20, extra='trajectory_precision = "SINGLE"'),
                   check=False)
 assert result.returncode != 0 and "trajectory_precision" in result.stderr, result.stderr
+result = mdir_run(control("bad", "bad.dcd", steps=20, extra='trajectory_strings = "VARIABLE"'),
+                  check=False)
+assert result.returncode != 0 and "trajectory_strings" in result.stderr, result.stderr
+# `trajectory_strings = "VARIABLE"`: the frames of the fixed form.
+mdir_run(control("cli-variable", "cli-variable.h5md", extra='trajectory_strings = "VARIABLE"'))
+assert same_files(work / "cli-double.h5md", work / "cli-variable.h5md") == 5
+result = mdir_run(control("go", "go.h5md", extra='trajectory_strings = "VARIABLE"'), "--continue",
+                  check=False)
+assert result.returncode != 0 and "as fixed-length strings" in result.stderr, result.stderr
 # A run that is not continued keeps the file of an earlier one (D149).
 mdir_run(control("named", "frames.h5", extra='trajectory_format = "H5MD"', steps=20))
 assert (work / "#frames.h5.1#").exists()
@@ -473,6 +520,8 @@ expect(mdir.InputError, lambda: sim.run(10), "one TrajectoryReporter or one H5MD
 expect(mdir.InputError, lambda: mdir.TrajectoryReporter(str(work / "a.h5md"), 10), "H5MDReporter")
 expect(mdir.InputError, lambda: mdir.H5MDReporter(str(work / "a.h5md"), 10, positions="f16"), '"f64" or "f32"')
 expect(mdir.InputError, lambda: mdir.H5MDReporter(str(work / "a.h5md"), 0), "positive")
+expect(mdir.InputError, lambda: mdir.H5MDReporter(str(work / "a.h5md"), 10, strings="utf8"),
+       '"fixed" or "variable"')
 expect(mdir.InputError, lambda: mdir.H5MDReporter("", 10), "name of a file")
 expect(mdir.InputError, lambda: mdir.read_h5md(str(work / "missing.h5md")), "cannot be read")
 expect(mdir.InputError, lambda: mdir.read_h5md(__file__), "cannot be read as an HDF5 file")

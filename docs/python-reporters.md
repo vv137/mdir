@@ -23,7 +23,7 @@ sim.close_reporters()          # or the simulation's end; files are complete the
 - `TrajectoryReporter(path, period, format=None)` writes DCD or XTC (from the
   extension unless `format` is given), the frames of `[output] trajectory`:
   positions in input order, the cell, the same headers.
-- `H5MDReporter(path, period, positions="f64", velocities=False, forces=False)`
+- `H5MDReporter(path, period, positions="f64", velocities=False, forces=False, strings="fixed")`
   (D[h5md-reporter], [python-h5md.md](python-h5md.md)) writes the frames of
   the state without loss in H5MD, in place of a `TrajectoryReporter`.
 - `CallbackReporter(function, period)` calls `function(simulation, state)`

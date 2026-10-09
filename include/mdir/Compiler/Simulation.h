@@ -154,6 +154,8 @@ public:
     /// frames: the front end ends a part at each (`getNextStateFrame`) and
     /// calls `writeStateFrame`.
     bool frameSingle = false, frameVelocities = false, frameForces = false;
+    /// Its `unit` attributes as variable-length strings.
+    bool frameVariableStrings = false;
     /// The program that writes the files, for those that record it.
     std::string creatorVersion;
     bool framesFromState() const {

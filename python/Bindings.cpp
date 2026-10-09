@@ -947,23 +947,27 @@ PYBIND11_MODULE(_core, m) {
   // Frames of the state without loss, in H5MD (D[h5md-reporter],
   // docs/python-h5md.md): the trajectory of the simulation in a third
   // format, with the velocities and the forces if asked.
-  struct H5MDReporter { std::string file; int64_t period; bool single, velocities, forces; };
+  struct H5MDReporter { std::string file; int64_t period; bool single, velocities, forces, variable; };
   py::class_<H5MDReporter>(m, "H5MDReporter")
     .def(py::init([positive](std::string file, int64_t period, const std::string &positions,
-                     bool velocities, bool forces) {
+                     bool velocities, bool forces, const std::string &strings) {
       if (!driver::hasCheckpointSupport())
         throw UnsupportedError("this build of MDIR has no HDF5, which a trajectory in H5MD needs");
       if (file.empty()) throw InputError("H5MDReporter takes the name of a file");
       if (positions != "f64" && positions != "f32")
         throw InputError("H5MDReporter: positions is \"f64\" or \"f32\"; found \"" + positions + "\"");
-      return H5MDReporter{std::move(file), positive(period), positions == "f32", velocities, forces};
+      if (strings != "fixed" && strings != "variable")
+        throw InputError("H5MDReporter: strings is \"fixed\" or \"variable\"; found \"" + strings + "\"");
+      return H5MDReporter{std::move(file), positive(period), positions == "f32", velocities, forces,
+                          strings == "variable"};
     }), py::arg("file"), py::arg("period"), py::arg("positions") = "f64",
-        py::arg("velocities") = false, py::arg("forces") = false)
+        py::arg("velocities") = false, py::arg("forces") = false, py::arg("strings") = "fixed")
     .def_readonly("file", &H5MDReporter::file)
     .def_readonly("period", &H5MDReporter::period)
     .def_property_readonly("positions", [](const H5MDReporter &r) { return r.single ? "f32" : "f64"; })
     .def_readonly("velocities", &H5MDReporter::velocities)
-    .def_readonly("forces", &H5MDReporter::forces);
+    .def_readonly("forces", &H5MDReporter::forces)
+    .def_property_readonly("strings", [](const H5MDReporter &r) { return r.variable ? "variable" : "fixed"; });
   // Checkpoints (D223, docs/python-checkpoints.md).
   struct CheckpointReporter { std::string file; int64_t period; };
   py::class_<CheckpointReporter>(m, "CheckpointReporter")
@@ -1018,6 +1022,7 @@ PYBIND11_MODULE(_core, m) {
           given.trajectoryFormat = driver::TrajectoryFormat::H5MD;
           given.frameSingle = r.single; given.frameVelocities = r.velocities;
           given.frameForces = r.forces; given.creatorVersion = MDIR_VERSION;
+          given.frameVariableStrings = r.variable;
         } else if (py::isinstance<ObservablesReporter>(item)) {
           if (given.observablesPeriod) throw InputError("a simulation takes one ObservablesReporter");
           const auto &r = item.cast<const ObservablesReporter &>();
@@ -1036,6 +1041,7 @@ PYBIND11_MODULE(_core, m) {
           given.trajectoryFormat != now.trajectoryFormat ||
           given.frameSingle != now.frameSingle || given.frameVelocities != now.frameVelocities ||
           given.frameForces != now.frameForces ||
+          given.frameVariableStrings != now.frameVariableStrings ||
           given.observablesPath != now.observablesPath ||
           given.observablesPeriod != now.observablesPeriod)
         if (llvm::Error error = simulation->setReports(given)) raise(std::move(error));
