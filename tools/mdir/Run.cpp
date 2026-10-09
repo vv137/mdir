@@ -1002,6 +1002,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.minimizeTolerance =
       control->minimizeTolerance * units::energy / units::length;
   output.leastEdge = 2.0 * control->cutoffDistance * units::length;
+  output.leastReachEdge =
+      control->neighborStructure == driver::NeighborStructure::Groups
+          ? control->pairlistDistance * units::length / 0.999
+          : 0.0;
   output.degreesOfFreedom = system->getDegreesOfFreedom();
   output.solventFreedom = system->getSolventDegreesOfFreedom();
   output.volume = system->box[0] * system->box[1] * system->box[2];

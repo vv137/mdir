@@ -9789,18 +9789,28 @@ llvm::Error Builder::build() {
         "'pairlist_distance', %g Å, exceeds 127 times 'cutoff', %g Å, the "
         "most that the neighbor matrix of a triclinic cell takes",
         control.pairlistDistance, control.cutoffDistance);
-  // The groups of a triclinic cell hold every pair within their reach
-  // while the reach is at most half of the least of a_x, b_y, c_z.
-  if (isTriclinic() &&
+  // The groups hold an entry for every image of a pair within their reach
+  // while the reach is less than the least edge of the cell, the least of
+  // a_x, b_y, c_z of a triclinic one: their lists take the image of a
+  // candidate nearest to the center of the box of a group and those a
+  // lattice vector away along each axis, which are the images within three
+  // halves of the cell of that center, and a box and the reach span at
+  // most half the cell and the reach (docs/groups-m1.md, Section 5.2). The
+  // runtime asks the same of a cell that a barostat scales
+  // (`leastReachEdge`). The 0.999 is for the margin by which the builds
+  // widen the reach, 3e-6 of the sum of the edges.
+  if (control.periodic &&
       control.neighborStructure == NeighborStructure::Groups) {
     double least = std::min({system.box[0], system.box[1], system.box[2]});
     double reach = control.pairlistDistance * units::length;
-    if (reach > 0.5 * least)
+    if (reach > 0.999 * least)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "'pairlist_distance', %g Å, exceeds half of the least of a_x, b_y, "
-          "c_z of the triclinic cell, %g Å",
-          control.pairlistDistance, 0.5 * least / units::length);
+          "'pairlist_distance', %g Å, exceeds 0.999 of the least %s of the "
+          "cell, %g Å, the most that the groups take",
+          control.pairlistDistance,
+          isTriclinic() ? "of a_x, b_y, c_z" : "edge",
+          0.999 * least / units::length);
   }
   // A pair is taken once, in the minimum image, which holds every image
   // within the cutoff only while the cell is wider than twice the cutoff:

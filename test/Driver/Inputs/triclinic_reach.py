@@ -3,7 +3,7 @@ neighbor structure is well beyond half of the least of a_x, b_y, c_z
 (#258): the potential energy of every frame of `mdir run` against a sum in
 NumPy over every image of every pair within the cutoff.
 
-    triclinic_reach.py DIRECTORY MDIR TARGET STRUCTURE [PRUNED]
+    triclinic_reach.py DIRECTORY MDIR TARGET STRUCTURE [SHAPE [REACH [PRUNED]]]
 
 216 Lennard-Jones particles (argon, a plain cutoff of 9.2 Å, no correction
 for the dispersion) at 300 K in a reduced cell with every tilt on its
@@ -21,6 +21,13 @@ frame that lacks one differs from the sum by 240 times the tolerance, 1e-5
 kcal/mol, which is ten times the last digit of the energy file. A build
 of the matrix that tests the image of the one pass alone gives 9 such
 frames of the 79 on the CPU.
+
+SHAPE is `tilted` (the default) or `cube`, the same diagonal with no tilt;
+REACH is the pairlist distance in nm, 1.1 by default, and PRUNED the reach
+of the inner list of a dual list. The groups keep an entry for each image
+within their reach; in the cube with a reach of 1.7 nm, 0.77 to 0.89 of
+the edge, lists that took the nearest image and the one on the other side
+of the boundary along each axis alone lost pairs (#263).
 """
 import itertools
 import pathlib
@@ -32,14 +39,18 @@ import mdir
 
 work = pathlib.Path(sys.argv[1])
 cli, target, structure = sys.argv[2:5]
-pruned = float(sys.argv[5]) if len(sys.argv) > 5 else 0.0
+shape = sys.argv[5] if len(sys.argv) > 5 else "tilted"
+pruned = float(sys.argv[7]) if len(sys.argv) > 7 else 0.0
 
 SIGMA, EPSILON, MASS = 0.34, 0.996, 39.948  # nm, kJ/mol, amu
-CUTOFF, REACH, EDGE, SIDE = 0.92, 1.1, 2.2, 6
+CUTOFF, EDGE, SIDE = 0.92, 2.2, 6
+REACH = float(sys.argv[6]) if len(sys.argv) > 6 else 1.1
 KCAL = 4.184
 STEPS, PERIOD = 400, 5
 
 H0 = EDGE * np.array([[1.0, 0.0, 0.0], [0.5, 1.0, 0.0], [-0.5, 0.5, 1.0]])
+if shape == "cube":
+    H0 = EDGE * np.eye(3)
 rng = np.random.default_rng(7)
 grid = np.stack(np.meshgrid(*[np.arange(SIDE)] * 3, indexing="ij"), -1)
 fractional = (grid.reshape(-1, 3) + 0.5 + rng.uniform(-0.03, 0.03, (SIDE ** 3, 3))) / SIDE
@@ -63,8 +74,11 @@ with open(work / "argon.gro", "w") as gro:
     gro.write(f"argon\n{count}\n")
     for i, r in enumerate(start):
         gro.write("%5d%-5s%5s%5d%14.9f%14.9f%14.9f\n" % (i + 1, "AR", "AR", i + 1, *r))
-    gro.write("%.9f %.9f %.9f 0 0 %.9f 0 %.9f %.9f\n"
-              % (H0[0, 0], H0[1, 1], H0[2, 2], H0[1, 0], H0[2, 0], H0[2, 1]))
+    if shape == "cube":
+        gro.write("%.9f %.9f %.9f\n" % (H0[0, 0], H0[1, 1], H0[2, 2]))
+    else:
+        gro.write("%.9f %.9f %.9f 0 0 %.9f 0 %.9f %.9f\n"
+                  % (H0[0, 0], H0[1, 1], H0[2, 2], H0[1, 0], H0[2, 0], H0[2, 1]))
 extra = f"pruned_distance = {10 * pruned}\n" if pruned else ""
 (work / "run.toml").write_text(f"""[input]
 topology    = "argon.top"

@@ -610,6 +610,10 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   output->bathKinetic = 0.5 * system.getDegreesOfFreedom() *
                         units::boltzmann * control.temperature;
   output->leastEdge = 2.0 * control.cutoffDistance * units::length;
+  output->leastReachEdge =
+      control.neighborStructure == driver::NeighborStructure::Groups
+          ? control.pairlistDistance * units::length / 0.999
+          : 0.0;
   output->degreesOfFreedom = system.getDegreesOfFreedom();
   output->solventFreedom = system.getSolventDegreesOfFreedom();
   output->periodic = control.periodic;
@@ -1832,21 +1836,22 @@ Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
           std::to_string(0.5 * cell[bounds[k]]) +
           " nm; write the reduced cell of the lattice (|b_x| <= a_x/2, "
           "|c_x| <= a_x/2, |c_y| <= b_y/2); nothing is committed");
-  // The neighbor matrix of a triclinic cell holds every pair with an image
-  // within its reach, whatever the cell (docs/triclinic-m2.md, Section 2),
-  // so I2 is all that a commit asks of it; the groups hold every pair
-  // while their reach is at most half of the least of a_x, b_y, c_z, as
-  // the builder asks.
+  // The neighbor matrix holds every pair with an image within its reach,
+  // whatever the cell (docs/triclinic-m2.md, Section 2), so I2 is all that
+  // a commit asks of it; the groups hold every image within their reach
+  // while it is less than the least edge of the cell, the least of a_x,
+  // b_y, c_z of a triclinic one, as the builder asks (D[group-images]).
   double reach = control.pairlistDistance * units::length;
-  double half = 0.5 * std::min({cell[0], cell[1], cell[2]});
-  if (triclinic &&
-      control.neighborStructure == driver::NeighborStructure::Groups &&
-      reach > half)
+  double most = 0.999 * std::min({cell[0], cell[1], cell[2]});
+  if (control.neighborStructure == driver::NeighborStructure::Groups &&
+      reach > most)
     return inputError("the pairlist distance of the program, " +
-                      std::to_string(reach) +
-                      " nm, exceeds half of the least of a_x, b_y, c_z of "
-                      "the cell written, " + std::to_string(half) +
-                      " nm; nothing is committed");
+                      std::to_string(reach) + " nm, exceeds 0.999 of the "
+                      "least " +
+                      (triclinic ? "of a_x, b_y, c_z" : "edge") +
+                      " of the cell written, " + std::to_string(most) +
+                      " nm, the most that the groups take; nothing is "
+                      "committed");
   return llvm::Error::success();
 }
 

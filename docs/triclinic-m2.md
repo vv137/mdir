@@ -135,8 +135,10 @@ at each evaluation (tuples, the loops over the matrix). It is not a bound
 on the reach $R$ of a neighbor structure, but then the *build* of a
 structure must not take the image of the pass for the nearest one beyond
 $\tfrac12 \min(a_x, b_y, c_z)$: the groups keep an entry for each image
-within their reach (D115, I4), and the matrix tests every image within its
-reach, as follows. GROMACS's further bound $r_c \le b_y - |c_y|$ comes
+within their reach (D115, I4), which they hold completely for a reach
+below $\min(a_x, b_y, c_z)$ ([groups-m1.md](groups-m1.md), Section 5.2,
+D[group-images]), and the matrix tests every image within its reach, as
+follows. GROMACS's further bound $r_c \le b_y - |c_y|$ comes
 from its search, which tries one lattice vector at a time; MDIR's does not.
 
 **The images of a pair within a reach (D[matrix-images], #258).** The
@@ -248,7 +250,7 @@ From the survey of M1 (line counts are of today's tree):
 | Specialization | — | Whether a run is triclinic is fixed when it is compiled, as OpenMM fixes it when a context is made: an orthorhombic run compiles to the code of today, at no cost |
 | Minimum image | $\mathbf d - \mathbf L \odot \mathrm{roundeven}(\mathbf d / \mathbf L)$ in the kernels of pairs and tuples and in the templates | The pass of Section 2; 9 multiply-adds in a chain against 6 independent ones |
 | The matrix (CPU and GPU) | Cells along each axis over $[0, L)$ | Particles wrapped into $[0, 1)^3$ of the fractional coordinates; cells of the fractional coordinates, as many as the widths of the cell between its faces hold, searched around the torus (D123, D125); a candidate is taken if any of its images is within the reach (Section 2, D[matrix-images]) |
-| Groups (GPU) | Columns in $x$-$y$, sorted in $z$; an entry carries $e \in [-4, 4]$ per axis, applied as $\mathbf e \odot \mathbf L$ in the gather and the pruning; D115 adds images when $2(h_a + R) \ge L_a$ | Columns of the brick, as GROMACS and OpenMM keep them; $\mathbf e$ read as $\mathbf n$, in five bits a vector, and applied as $\mathbf n H$: five multiply-adds once per entry, nothing per pair; the image of a candidate chosen by the pass around the center of the group; D115's condition on $a_x$, $b_y$, $c_z$ |
+| Groups (GPU) | Columns in $x$-$y$, sorted in $z$; an entry carries $e \in [-4, 4]$ per axis, applied as $\mathbf e \odot \mathbf L$ in the gather and the pruning; D115 adds images when $2(h_a + R) \ge L_a$ | Columns of the brick, as GROMACS and OpenMM keep them; $\mathbf e$ read as $\mathbf n$, in five bits a vector, and applied as $\mathbf n H$: five multiply-adds once per entry, nothing per pair; the image of a candidate chosen by the pass around the center of the group; D115's condition on $a_x$, $b_y$, $c_z$; complete for a reach below the least of them (D[group-images]) |
 | PME | Fractional coordinates $x/L$; $\mathbf k = \mathbf m / \mathbf L$; the Gaussian $\exp(-\pi^2 k^2/\beta^2)$ as a product of tables of each axis (D104) | $\mathbf s = \mathbf x H^{-1}$, three multiply-adds more, $H^{-1}$ triangular; $\mathbf k = \mathbf m H^{-\mathsf T}$; forces through $H^{-\mathsf T}$; the Gaussian computed directly, since $k^2$ is no longer a sum of one term per axis; the grid from $|\mathbf a|, |\mathbf b|, |\mathbf c|$; the virial keeps its form, $\delta - 2(1/k^2 + \pi^2/\beta^2)\,\mathbf k \otimes \mathbf k$ |
 | Barostat | Edges times $\boldsymbol\mu$; volume $L_xL_yL_z$ | $H\,\mathrm{diag}(\boldsymbol\mu)$ (I3); volume $a_xb_yc_z$; the tilts scale with their columns (D127) |
 | Restraints | Centers of the references times the edges over those of the file (D124) | The same with the diagonal of $H$ (I3) |

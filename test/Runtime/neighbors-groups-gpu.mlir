@@ -12,19 +12,23 @@
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt_cuda \
 // RUN: | FileCheck %s
 
-// Each case places 2000 particles in a periodic cube from a linear
+// Each case places 2000 particles, or as many as it says, in a periodic cube from a linear
 // congruential generator (the positions of neighbors-matrix-gpu.mlir),
 // each moved by -3 to 3 edges of the cube along each axis as unwrapped
 // positions are, and prints:
 //
 //   - the number of pairs that the lists hold (bits of the masks);
-//   - the number of pairs within the reach (tested in f64 on the host)
-//     that are not in the lists exactly once, or excluded pairs that are;
-//   - the number of pairs in the lists farther apart than the reach, with a
-//     margin for the rounding of f32, or whose displacement in the frames
-//     of the groups (the place shifts and the shift of the entry) is not
-//     that of the minimum image;
+//   - the number of pairs whose bits in the lists are not as many as their
+//     images within the reach (in f64 on the host, of the images up to two
+//     edges away along each axis), or whose displacements in the frames of
+//     the groups (the place shifts and the shift of the entry) are not
+//     those of these images, by the sum of their squares; and of excluded
+//     pairs that are in the lists;
+//   - the number of bits of the lists whose image, in the frames of the
+//     groups, is farther than the reach, with a margin for the rounding of
+//     f32;
 //   - whether a group lies across two places that are not of one chunk (0).
+//   - the number of pairs with several images within the reach.
 //
 // The build widens the reach by 3e-6 of the sum of the edges of the cell,
 // more than the rounding of the positions in f32 can move a distance, as
@@ -72,14 +76,13 @@ func.func @fill(%x: memref<?x3xf64>, %length: f64) {
   return
 }
 
-// The squared distance of i and j in the minimum image.
-// Whether the displacement of the pair (i at place p, j at place q) in the
-// frames of the groups, x_i + s_p L − (x_j + s_q L + e L), with the place
-// shifts s of `shift` and the shift e of the entry in bits 16 to 27 of its
-// mask `m`, differs from that of the minimum image.
-func.func @frame_mismatch(%x: memref<?x3xf64>, %shift: memref<?xi32>,
+// The square of the displacement of the pair (i at place p, j at place q) in
+// the frames of the groups, with the place shifts of `shift` and the shift
+// of the entry in its mask `m`: the square of the distance of the image
+// that the entry takes.
+func.func @framed2(%x: memref<?x3xf64>, %shift: memref<?xi32>,
                           %m: i32, %p: index, %q: index, %i: index,
-                          %j: index, %length: f64) -> i1 {
+                          %j: index, %length: f64) -> f64 {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
@@ -92,9 +95,8 @@ func.func @frame_mismatch(%x: memref<?x3xf64>, %shift: memref<?xi32>,
   %mask4 = arith.constant 15 : i32
   %off = arith.constant 512 : i32
   %offset4 = arith.constant 4 : i32
-  %tol = arith.constant 1.0e-6 : f64
-  %no = arith.constant false
-  %bad = scf.for %k = %c0 to %c3 step %c1 iter_args(%b = %no) -> (i1) {
+  %none = arith.constant 0.0 : f64
+  %sum = scf.for %k = %c0 to %c3 step %c1 iter_args(%b = %none) -> (f64) {
     %k32 = arith.index_cast %k : index to i32
     %bits10 = arith.muli %k32, %ten : i32
     %bits4a = arith.muli %k32, %width4 : i32
@@ -119,39 +121,74 @@ func.func @frame_mismatch(%x: memref<?x3xf64>, %shift: memref<?xi32>,
     %aj0 = arith.mulf %qe, %length : f64
     %aj = arith.addf %xj, %aj0 : f64
     %df = arith.subf %ai, %aj : f64
-    %d = arith.subf %xi, %xj : f64
-    %dq = arith.divf %d, %length : f64
-    %dr = math.roundeven %dq : f64
-    %drl = arith.mulf %dr, %length : f64
-    %dm = arith.subf %d, %drl : f64
-    %diff = arith.subf %df, %dm : f64
-    %adiff = math.absf %diff : f64
-    %off_k = arith.cmpf ogt, %adiff, %tol : f64
-    %nb = arith.ori %b, %off_k : i1
-    scf.yield %nb : i1
+    %df2 = arith.mulf %df, %df : f64
+    %nb = arith.addf %b, %df2 : f64
+    scf.yield %nb : f64
   }
-  return %bad : i1
+  return %sum : f64
 }
 
-func.func @distance2(%x: memref<?x3xf64>, %i: index, %j: index,
-                     %length: f64) -> f64 {
+// The number of the images of the pair (i, j) within sqrt(limit2), of those
+// up to two edges of the cube along each axis from the nearest, and the sum
+// of the squares of their lengths.
+func.func @images(%x: memref<?x3xf64>, %i: index, %j: index, %length: f64, %limit2: f64) -> (i64, f64) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
   %c3 = arith.constant 3 : index
-  %zero = arith.constant 0.0 : f64
-  %s = scf.for %k = %c0 to %c3 step %c1 iter_args(%a = %zero) -> (f64) {
+  %c5 = arith.constant 5 : index
+  %r = memref.alloca() : memref<3xf64>
+  scf.for %k = %c0 to %c3 step %c1 {
     %xi = memref.load %x[%i, %k] : memref<?x3xf64>
     %xj = memref.load %x[%j, %k] : memref<?x3xf64>
     %d = arith.subf %xi, %xj : f64
     %q = arith.divf %d, %length : f64
-    %r = math.roundeven %q : f64
-    %rl = arith.mulf %r, %length : f64
-    %e = arith.subf %d, %rl : f64
-    %e2 = arith.mulf %e, %e : f64
-    %t = arith.addf %a, %e2 : f64
-    scf.yield %t : f64
+    %n = math.roundeven %q : f64
+    %nl = arith.mulf %n, %length : f64
+    %e = arith.subf %d, %nl : f64
+    memref.store %e, %r[%k] : memref<3xf64>
   }
-  return %s : f64
+  %rx = memref.load %r[%c0] : memref<3xf64>
+  %ry = memref.load %r[%c1] : memref<3xf64>
+  %rz = memref.load %r[%c2] : memref<3xf64>
+  %two = arith.constant 2.0 : f64
+  %zero = arith.constant 0 : i64
+  %zf = arith.constant 0.0 : f64
+  %n, %s = scf.for %ic = %c0 to %c5 step %c1 iter_args(%n0 = %zero, %s0 = %zf) -> (i64, f64) {
+    %ic_i = arith.index_cast %ic : index to i64
+    %ic_f = arith.sitofp %ic_i : i64 to f64
+    %kc = arith.subf %ic_f, %two : f64
+    %sz = arith.mulf %kc, %length : f64
+    %ez = arith.subf %rz, %sz : f64
+    %ez2 = arith.mulf %ez, %ez : f64
+    %n1, %s1 = scf.for %ib = %c0 to %c5 step %c1 iter_args(%n2 = %n0, %s2 = %s0) -> (i64, f64) {
+      %ib_i = arith.index_cast %ib : index to i64
+      %ib_f = arith.sitofp %ib_i : i64 to f64
+      %kb = arith.subf %ib_f, %two : f64
+      %sy = arith.mulf %kb, %length : f64
+      %ey = arith.subf %ry, %sy : f64
+      %ey2 = arith.mulf %ey, %ey : f64
+      %ezy = arith.addf %ez2, %ey2 : f64
+      %n3, %s3 = scf.for %ia = %c0 to %c5 step %c1 iter_args(%n4 = %n2, %s4 = %s2) -> (i64, f64) {
+        %ia_i = arith.index_cast %ia : index to i64
+        %ia_f = arith.sitofp %ia_i : i64 to f64
+        %ka = arith.subf %ia_f, %two : f64
+        %sx = arith.mulf %ka, %length : f64
+        %ex = arith.subf %rx, %sx : f64
+        %ex2 = arith.mulf %ex, %ex : f64
+        %e2 = arith.addf %ezy, %ex2 : f64
+        %in = arith.cmpf ole, %e2, %limit2 : f64
+        %inc = arith.extui %in : i1 to i64
+        %add = arith.select %in, %e2, %zf : f64
+        %n5 = arith.addi %n4, %inc : i64
+        %s5 = arith.addf %s4, %add : f64
+        scf.yield %n5, %s5 : i64, f64
+      }
+      scf.yield %n3, %s3 : i64, f64
+    }
+    scf.yield %n1, %s1 : i64, f64
+  }
+  return %n, %s : i64, f64
 }
 
 // Excluded pairs (i, i + d), d = 1 .. k, around the ring of the particles,
@@ -216,7 +253,8 @@ func.func @exclusions(%n: index, %k: index) -> memref<?x?xi32> {
   return %e : memref<?x?xi32>
 }
 
-func.func @run(%length: f64, %reach: f64, %degree: index, %poison: i1) {
+func.func @run(%length: f64, %reach: f64, %degree: index, %poison: i1,
+               %count: index) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %exclude = arith.cmpi ne, %degree, %c0 : index
@@ -225,7 +263,6 @@ func.func @run(%length: f64, %reach: f64, %degree: index, %poison: i1) {
   %c4 = arith.constant 4 : index
   %c16 = arith.constant 16 : index
   %c64 = arith.constant 64 : index
-  %count = arith.constant 2000 : index
   %x = memref.alloc(%count) : memref<?x3xf64>
   call @fill(%x, %length) : (memref<?x3xf64>, f64) -> ()
   // Poisoned, particle 7 has no position: the build leaves it out (D107).
@@ -296,11 +333,14 @@ func.func @run(%length: f64, %reach: f64, %degree: index, %poison: i1) {
 
   // How often each pair is in the lists, and the pairs too far apart.
   %seen = memref.alloc(%count, %count) : memref<?x?xi8>
+  %sums = memref.alloc(%count, %count) : memref<?x?xf64>
+  %zsum = arith.constant 0.0 : f64
   %z8 = arith.constant 0 : i8
   %one8 = arith.constant 1 : i8
   scf.for %i = %c0 to %count step %c1 {
     scf.for %j = %c0 to %count step %c1 {
       memref.store %z8, %seen[%i, %j] : memref<?x?xi8>
+      memref.store %zsum, %sums[%i, %j] : memref<?x?xf64>
     }
   }
   %zero = arith.constant 0 : i64
@@ -353,10 +393,11 @@ func.func @run(%length: f64, %reach: f64, %degree: index, %poison: i1) {
           %old = memref.load %seen[%lo, %hi] : memref<?x?xi8>
           %new = arith.addi %old, %one8 : i8
           memref.store %new, %seen[%lo, %hi] : memref<?x?xi8>
-          %d2 = func.call @distance2(%x, %i, %j, %length) : (memref<?x3xf64>, index, index, f64) -> f64
-          %out0 = arith.cmpf ogt, %d2, %far2 : f64
-          %framed = func.call @frame_mismatch(%x, %shift, %m, %p, %q, %i, %j, %length) : (memref<?x3xf64>, memref<?xi32>, i32, index, index, index, index, f64) -> i1
-          %out = arith.ori %out0, %framed : i1
+          %d2 = func.call @framed2(%x, %shift, %m, %p, %q, %i, %j, %length) : (memref<?x3xf64>, memref<?xi32>, i32, index, index, index, index, f64) -> f64
+          %out = arith.cmpf ogt, %d2, %far2 : f64
+          %olds = memref.load %sums[%lo, %hi] : memref<?x?xf64>
+          %news = arith.addf %olds, %d2 : f64
+          memref.store %news, %sums[%lo, %hi] : memref<?x?xf64>
           %o = arith.extui %out : i1 to i64
           %nb = arith.addi %bbb, %one64 : i64
           %nf = arith.addi %fff, %o : i64
@@ -371,39 +412,50 @@ func.func @run(%length: f64, %reach: f64, %degree: index, %poison: i1) {
     scf.yield %b1, %f1 : i64, i64
   }
 
-  // Every pair within the reach once, but excluded pairs.
+  // Every image of every pair within the reach once, but excluded pairs:
+  // the number of the bits of a pair in the lists is that of its images
+  // within the reach (a few more may be there within the rounding of the
+  // reach), and, where the two numbers of images agree, the sum of the
+  // squares of the displacements in the frames is that of those images.
   %reach2 = arith.mulf %reach, %reach : f64
-  %wrong = scf.for %i = %c0 to %count step %c1 iter_args(%w = %zero) -> (i64) {
+  %tol = arith.constant 1.0e-5 : f64
+  %wrong, %several = scf.for %i = %c0 to %count step %c1 iter_args(%w = %zero, %sv = %zero) -> (i64, i64) {
     %i1 = arith.addi %i, %c1 : index
-    %wi = scf.for %j = %i1 to %count step %c1 iter_args(%ww = %w) -> (i64) {
-      %d2 = func.call @distance2(%x, %i, %j, %length) : (memref<?x3xf64>, index, index, f64) -> f64
-      %within = arith.cmpf ole, %d2, %reach2 : f64
+    %wi, %svi = scf.for %j = %i1 to %count step %c1 iter_args(%ww = %w, %svv = %sv) -> (i64, i64) {
+      %within, %within_sum = func.call @images(%x, %i, %j, %length, %reach2) : (memref<?x3xf64>, index, index, f64, f64) -> (i64, f64)
+      %near, %near_sum = func.call @images(%x, %i, %j, %length, %far2) : (memref<?x3xf64>, index, index, f64, f64) -> (i64, f64)
       // Excluded: within `degree` of each other around the ring.
       %dij = arith.subi %j, %i : index
       %dji = arith.subi %count, %dij : index
       %dring = arith.minui %dij, %dji : index
       %pair = arith.cmpi ule, %dring, %degree : index
       %is_excluded = arith.andi %pair, %exclude : i1
+      %want = arith.select %is_excluded, %zero, %within : i64
+      %most = arith.select %is_excluded, %zero, %near : i64
+      %got8 = memref.load %seen[%i, %j] : memref<?x?xi8>
+      %got = arith.extui %got8 : i8 to i64
+      %got_sum = memref.load %sums[%i, %j] : memref<?x?xf64>
+      %few = arith.cmpi slt, %got, %want : i64
+      %many = arith.cmpi sgt, %got, %most : i64
+      %sharp0 = arith.cmpi eq, %within, %near : i64
       %true = arith.constant true
       %kept = arith.xori %is_excluded, %true : i1
-      %want = arith.andi %within, %kept : i1
-      %want8 = arith.extui %want : i1 to i8
-      %got = memref.load %seen[%i, %j] : memref<?x?xi8>
-      // A pair beyond the reach but within its rounding may be there.
-      %near_edge0 = arith.cmpf ole, %d2, %far2 : f64
-      %edge = arith.xori %within, %near_edge0 : i1
-      %allowed_extra = arith.andi %edge, %kept : i1
-      %differs = arith.cmpi ne, %got, %want8 : i8
-      %extra_ok = arith.cmpi eq, %got, %one8 : i8
-      %excused = arith.andi %allowed_extra, %extra_ok : i1
-      %true2 = arith.constant true
-      %not_excused = arith.xori %excused, %true2 : i1
-      %bad = arith.andi %differs, %not_excused : i1
+      %sharp = arith.andi %sharp0, %kept : i1
+      %ds = arith.subf %got_sum, %within_sum : f64
+      %ads = math.absf %ds : f64
+      %off = arith.cmpf ogt, %ads, %tol : f64
+      %other = arith.andi %sharp, %off : i1
+      %bad0 = arith.ori %few, %many : i1
+      %bad = arith.ori %bad0, %other : i1
       %b = arith.extui %bad : i1 to i64
       %next = arith.addi %ww, %b : i64
-      scf.yield %next : i64
+      %two64 = arith.constant 2 : i64
+      %is_several = arith.cmpi sge, %want, %two64 : i64
+      %sn0 = arith.extui %is_several : i1 to i64
+      %sn = arith.addi %svv, %sn0 : i64
+      scf.yield %next, %sn : i64, i64
     }
-    scf.yield %wi : i64
+    scf.yield %wi, %svi : i64, i64
   }
 
   // The places of a group are in one chunk of 64.
@@ -427,10 +479,13 @@ func.func @run(%length: f64, %reach: f64, %degree: index, %poison: i1) {
   call @printNewline() : () -> ()
   call @printI64(%spans) : (i64) -> ()
   call @printNewline() : () -> ()
+  call @printI64(%several) : (i64) -> ()
+  call @printNewline() : () -> ()
   return
 }
 
 func.func @main() {
+  %n2000 = arith.constant 2000 : index
   %reach = arith.constant 1.5 : f64
   %none = arith.constant 0 : index
   %one = arith.constant 1 : index
@@ -443,15 +498,17 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
   %l0 = arith.constant 12.0 : f64
-  call @run(%l0, %reach, %none, %no) : (f64, f64, index, i1) -> ()
+  call @run(%l0, %reach, %none, %no, %n2000) : (f64, f64, index, i1, index) -> ()
 
   // With the excluded pairs (i, i + 1): 15 of them are within the reach.
   // CHECK-NEXT: 16337
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
-  call @run(%l0, %reach, %one, %no) : (f64, f64, index, i1) -> ()
+  // CHECK-NEXT: {{^0$}}
+  call @run(%l0, %reach, %one, %no, %n2000) : (f64, f64, index, i1, index) -> ()
 
   // Nine excluded pairs a particle each way: 288 partners a group, more
   // than the memory of a warp holds, so the lists take the excluded pairs
@@ -460,7 +517,8 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
-  call @run(%l0, %reach, %nine, %no) : (f64, f64, index, i1) -> ()
+  // CHECK-NEXT: {{^0$}}
+  call @run(%l0, %reach, %nine, %no, %n2000) : (f64, f64, index, i1, index) -> ()
 
   // A position that is not a number: its particle is left out of the
   // lists and the build completes (D107); the 15 pairs of particle 7
@@ -469,25 +527,28 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
-  call @run(%l0, %reach, %none, %yes) : (f64, f64, index, i1) -> ()
+  // CHECK-NEXT: {{^0$}}
+  call @run(%l0, %reach, %none, %yes, %n2000) : (f64, f64, index, i1, index) -> ()
 
   // A denser cube: the grid of the candidates is 14 cells a side.
   // CHECK-NEXT: 24389
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
   %l1 = arith.constant 7.0 : f64
   %r1 = arith.constant 1.0 : f64
-  call @run(%l1, %r1, %none, %no) : (f64, f64, index, i1) -> ()
+  call @run(%l1, %r1, %none, %no, %n2000) : (f64, f64, index, i1, index) -> ()
 
   // A smaller reach in a smaller cube.
   // CHECK-NEXT: 21979
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
   %l2 = arith.constant 5.8 : f64
   %r2 = arith.constant 0.8 : f64
-  call @run(%l2, %r2, %none, %no) : (f64, f64, index, i1) -> ()
+  call @run(%l2, %r2, %none, %no, %n2000) : (f64, f64, index, i1, index) -> ()
 
   // A cell narrower than twice the reach and the extent of a group: the
   // reach 1.9 and a group about 0.8 wide are more than half the cell of
@@ -497,8 +558,52 @@ func.func @main() {
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
   %l3 = arith.constant 4.0 : f64
   %r3 = arith.constant 1.9 : f64
-  call @run(%l3, %r3, %none, %no) : (f64, f64, index, i1) -> ()
+  call @run(%l3, %r3, %none, %no, %n2000) : (f64, f64, index, i1, index) -> ()
+  // Reaches of more than half the cell (#263, D[group-images]): a pair then
+  // has several images within the reach, each with an entry bit of its own,
+  // and a box and the reach span more than the cell, so that an image a
+  // cell away on either side of the nearest can be within the reach. 0.55
+  // of the edge with 2000 particles; then 320 particles, whose lists fit
+  // the buffers of the test, at 0.6, 0.75, 0.9, and 0.975 of the edge.
+  // CHECK-NEXT: 1392935
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 50582
+  %l4 = arith.constant 5.8 : f64
+  %r4 = arith.constant 3.19 : f64
+  call @run(%l4, %r4, %none, %no, %n2000) : (f64, f64, index, i1, index) -> ()
+  %n320 = arith.constant 320 : index
+  // CHECK-NEXT: 46145
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 5503
+  %r5 = arith.constant 2.4 : f64
+  call @run(%l3, %r5, %none, %no, %n320) : (f64, f64, index, i1, index) -> ()
+  // CHECK-NEXT: 90433
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 37377
+  %r6 = arith.constant 3.0 : f64
+  call @run(%l3, %r6, %none, %no, %n320) : (f64, f64, index, i1, index) -> ()
+  // CHECK-NEXT: 154718
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 50266
+  %r7 = arith.constant 3.6 : f64
+  call @run(%l3, %r7, %one, %no, %n320) : (f64, f64, index, i1, index) -> ()
+  // CHECK-NEXT: 198183
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 51035
+  %r8 = arith.constant 3.9 : f64
+  call @run(%l3, %r8, %none, %no, %n320) : (f64, f64, index, i1, index) -> ()
   return
 }

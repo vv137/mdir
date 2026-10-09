@@ -1,0 +1,29 @@
+# The groups, and the dual list, with a reach of most of the cell
+# (#263, D[group-images], docs/groups-m1.md, Section 5.2), in a cube and in
+# a cell with every tilt on its bound that a barostat shrinks from 22 Å to
+# about 19.3 Å: at every frame the potential energy of `mdir run` is the sum
+# over every image of every pair within the cutoff
+# (Inputs/triclinic_reach.py). With a pairlist distance of 17 Å, 0.77 to
+# 0.89 of the edge, the lists of the cube that took the nearest image of a
+# candidate and the one on the other side of the boundary alone lost pairs
+# in 23 of the 79 frames. A reach of more than 0.999 of the least edge is
+# refused by the builder, and by the runtime when the barostat takes the
+# cell there.
+#
+# REQUIRES: python-api, hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t/cube %t/dual %t/tilted %t/tilted-dual %t/stop %t/refused
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/cube mdir GPU GROUPS cube 1.7 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/dual mdir GPU GROUPS cube 1.7 1.2 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/tilted mdir GPU GROUPS tilted 1.7 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/tilted-dual mdir GPU GROUPS tilted 1.7 1.2 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/stop mdir GPU GROUPS cube 2.0 | FileCheck %s --check-prefix=STOP
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/refused mdir GPU GROUPS tilted 2.3 | FileCheck %s --check-prefix=REFUSED
+
+# CHECK:      79 frames, 79 with the reach beyond half of the least of the diagonal
+# CHECK-NEXT: half of the least of the diagonal well below the reach
+# CHECK-NEXT: frames whose potential is not the sum over all images: 0
+
+# STOP:    mdir run failed: mdir: the barostat has made the cell {{[0-9.]+}} Å along x, less than the pairlist distance over 0.999, 20.0200 Å, below which the groups do not hold every pair
+
+# REFUSED: mdir run failed: mdir: 'pairlist_distance', 23 Å, exceeds 0.999 of the least of a_x, b_y, c_z of the cell, 21.978 Å, the most that the groups take

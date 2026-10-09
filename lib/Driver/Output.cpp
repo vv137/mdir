@@ -677,6 +677,19 @@ void _mlir_ciface_mdrtSetBox(double lx, double ly, double lz) {
       stopOnFailure(output, message);
       return;
     }
+  for (int k = 0; k != 3; ++k)
+    if (output.box[k] < output.leastReachEdge) {
+      char message[320];
+      std::snprintf(message, sizeof message,
+                    "the barostat has made the cell %.4f Å along %c, less "
+                    "than the pairlist distance over 0.999, %.4f Å, below "
+                    "which the groups do not hold every pair; the run needs "
+                    "a larger cell or a shorter 'pairlist_distance'",
+                    output.box[k] / units::length, axes[k],
+                    output.leastReachEdge / units::length);
+      stopOnFailure(output, message);
+      return;
+    }
 }
 
 void _mlir_ciface_mdrtSetTilt(double bx, double cx, double cy) {
