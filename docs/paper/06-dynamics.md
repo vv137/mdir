@@ -1238,18 +1238,36 @@ and a term of the positions take.
 
 **The hydration free energy of ethanol.** The same system through the 14
 states of C.9 (four of the Coulomb, nine of the softened Lennard-Jones),
-each 500 ps at 300 K and 1 atm from one equilibration at state 0
+each 500 ps at 300 K and 1 atm from an equilibration at state 0
 (minimization, 50 ps at constant volume, 200 ps at constant pressure),
 Langevin dynamics with a friction of 1/ps, SETTLE and SHAKE, 2 fs, PME
-with $\beta = 0.32$ Å$^{-1}$ on a grid of 32, no correction for the
-dispersion, the first tenth of each run left out. MDIR in mixed precision
-on an RTX 3090 gives by MBAR $\Delta G = 2.793 \pm 0.109$ kcal/mol from the
-coupled to the decoupled state, $-2.79$ kcal/mol of hydration (TI over
-the states $3.14 \pm 0.10$); OpenMM 8.6.1 on its CUDA platform, the same
-Hamiltonian and protocol, $2.783 \pm 0.112$ (TI $2.97 \pm 0.11$): the two
-agree to $0.010 \pm 0.156$ kcal/mol. The legs differ by $0.10 \pm 0.08$
-(Coulomb) and $-0.11 \pm 0.12$ kcal/mol (Lennard-Jones). TI on this
-spacing of the Lennard-Jones is biased by its curvature, which MBAR is not.
+with $\beta = 0.32$ Å$^{-1}$ on a grid of 32, a cutoff of 9 Å, no
+correction for the dispersion, the first tenth of each run left out. The
+energies that are reweighted are those of the potential that the forces
+sample, the Lennard-Jones shifted to 0 at the cutoff (D210, above). The
+protocol is repeated as independent sets, each with its own seeds and its
+own equilibration, and each number below is the mean over the sets with
+the standard error of the mean from their scatter. MDIR in mixed precision
+on an RTX 3090, with stochastic cell rescaling every 10 steps (a time
+constant of 2 ps) and B-splines of order 4, gives by MBAR
+$\Delta G = 2.50 \pm 0.04$ kcal/mol from the coupled to the decoupled
+state, $-2.50$ kcal/mol of hydration, and by TI over the states
+$2.75 \pm 0.04$, over 13 sets. OpenMM 8.6.1 in mixed precision on its CUDA
+platform, with the same Hamiltonian and the same shifted Lennard-Jones in
+its energies, a Monte Carlo barostat every 25 steps, and B-splines of
+order 5, gives $2.48 \pm 0.04$ by MBAR and $2.70 \pm 0.03$ by TI, over 10
+sets. The differences, OpenMM less MDIR, are $-0.02 \pm 0.06$ kcal/mol by
+MBAR and $-0.05 \pm 0.05$ by TI; those of the legs by MBAR are
+$-0.01 \pm 0.03$ (Coulomb) and $-0.01 \pm 0.06$ kcal/mol
+(Lennard-Jones). The standard deviation of one set is 0.16 kcal/mol in
+MDIR and 0.12 in OpenMM by MBAR; the uncertainty that the statistical
+inefficiency within one set gives is 0.11 in both. TI is 0.25 kcal/mol
+above MBAR in MDIR and 0.23 in OpenMM: on this spacing of the
+Lennard-Jones TI is biased by its curvature, which MBAR is not. For one
+set of MDIR, the rows of the cut potential on the same trajectories give
+0.43 kcal/mol more by MBAR than those of the shifted one,
+$N_\text{in}u(r_c)$ of the pairs of the ethanol. The scripts of both
+programs are in `scripts/validation/free-energy`.
 
 **Cost.** On JAC (23,558 particles, one water decoupled, RTX 3090, mixed
 precision) a step takes 0.210 ms at a state with $\lambda_\text{C} =
