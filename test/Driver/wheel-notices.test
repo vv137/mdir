@@ -1,0 +1,25 @@
+# The notices that a wheel carries for the third parties whose code it
+# distributes in binary form (issue #221, packaging/licenses/README.md):
+# scripts/release/check-wheel.sh accepts a wheel that holds them, complains
+# about each one that is missing, empty, or another text, asks for HDF5's
+# and the OpenMP runtime's only beside their libraries, and refuses a
+# library that auditwheel grafted and no notice is known for, and a
+# License-File of the metadata that the wheel does not hold. The wheels are
+# stand-ins (Inputs/wheel_image_notices.py); the wheels themselves are
+# checked when a release is built.
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/wheel_image_notices.py wheel %S/../.. %t | FileCheck %s
+# CHECK: complete: 0 complaints about notices
+# CHECK-NEXT: without mdir/licenses/LICENSE: exit 1, 1: mdir/licenses/LICENSE is missing: MDIR's license
+# CHECK-NEXT: without mdir/licenses/pybind11-LICENSE: exit 1, 1: mdir/licenses/pybind11-LICENSE is missing: pybind11 is compiled into the extension
+# CHECK-NEXT: without mdir/licenses/pocketfft-LICENSE: exit 1, 1: mdir/licenses/pocketfft-LICENSE is missing: pocketfft is compiled into libmdrt.so
+# CHECK-NEXT: without mdir/licenses/tomlplusplus-LICENSE: exit 1, 1: mdir/licenses/tomlplusplus-LICENSE is missing: toml++ is compiled into the extension
+# CHECK-NEXT: without mdir/licenses/LLVM-LICENSE.TXT: exit 1, 1: mdir/licenses/LLVM-LICENSE.TXT is missing: LLVM is linked into the extension
+# CHECK-NEXT: without mdir/licenses/OpenMP-LICENSE.TXT: exit 1, 1: mdir/licenses/OpenMP-LICENSE.TXT is missing: mdir/lib/libomp.so is bundled
+# CHECK-NEXT: without mdir/licenses/HDF5-COPYING: exit 1, 1: mdir/licenses/HDF5-COPYING is missing: libhdf5 is bundled
+# CHECK-NEXT: without mdir/cuda/EULA.txt: exit 1, 1: mdir/cuda/EULA.txt is missing: libdevice is bundled
+# CHECK-NEXT: empty HDF5-COPYING: exit 1, 1: mdir/licenses/HDF5-COPYING is missing: libhdf5 is bundled
+# CHECK-NEXT: another text as LLVM-LICENSE.TXT: exit 1, 1: mdir/licenses/LLVM-LICENSE.TXT does not hold 'LLVM Exceptions to the Apache 2.0 License'
+# CHECK-NEXT: no libhdf5 and no libomp, without their notices: exit 1, 0
+# CHECK-NEXT: libaec grafted: exit 1, 1: mdir.libs/libaec-1f2e3d4c.so.0.1.3 is grafted, and no notice is known for it
+# CHECK-NEXT: License-File not in .dist-info: exit 1, 1: METADATA names License-File: LICENSE, which .dist-info/licenses does not hold

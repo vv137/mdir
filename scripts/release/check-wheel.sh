@@ -16,8 +16,15 @@
 #    `cuda`);
 #  - the extra `cuda` of its metadata requires nvidia-cufft and
 #    nvidia-cuda-nvcc (ptxas), and nothing else;
-#  - mdir/cuda holds libdevice and the CUDA EULA, and mdir/licenses the
-#    notices of MDIR, HDF5, and pybind11;
+#  - mdir/cuda holds libdevice;
+#  - it carries the notices that the licenses of what it distributes in
+#    binary form ask for (packaging/licenses/README.md): in mdir/licenses,
+#    MDIR's license, pybind11's, toml++'s, and LLVM's (all in the
+#    extension), pocketfft's (in libmdrt), the OpenMP runtime's beside
+#    mdir/lib/libomp.so, and HDF5's beside a libhdf5 in mdir.libs; and the
+#    CUDA EULA beside libdevice. A library in mdir.libs other than libhdf5
+#    is a failure: auditwheel grafted it, and no notice is known for it;
+#  - every License-File of its metadata is in .dist-info/licenses;
 #  - the version of its metadata is that of project() in CMakeLists.txt.
 # Exit status 1 on any failure, with each one listed.
 set -euo pipefail
@@ -30,6 +37,16 @@ complain() { echo "check-wheel: $*" >&2; fail=1; }
 allowed='^(libc|libm|libdl|libpthread|librt|libgcc_s|libstdc\+\+|libz|libcuda|libcufft)\.so\.[0-9]+$|^ld-linux-x86-64\.so\.2$|^linux-vdso\.so\.1$'
 max_version() { { grep -o "$1_[0-9.]*" || true; } | sed "s/$1_//" | sort -V | tail -1; }
 newer() { [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" != "$2" ]]; }
+exists() { compgen -G "$1" > /dev/null; }
+# A notice: a file of the wheel that is not empty and holds a line of its
+# text.
+notice() {
+  if [[ ! -s "$tree/$1" ]]; then
+    complain "$name: $1 is missing: $3"
+  elif ! grep -q -- "$2" "$tree/$1"; then
+    complain "$name: $1 does not hold '$2'"
+  fi
+}
 
 for wheel in "$@"; do
   name=$(basename "$wheel")
@@ -69,11 +86,32 @@ for wheel in "$@"; do
     printf '%-44s GLIBC %-6s GLIBCXX %-8s CXXABI %s\n' "${f#$tree/}" "${glibc:--}" "${glibcxx:--}" "${cxxabi:--}"
   done < <(find "$tree" -type f -name '*.so*' -print0)
   for f in mdir/__init__.py mdir/lib/libmdrt.so mdir/lib/libmdrt_cuda.so mdir/lib/libomp.so \
-           mdir/cuda/nvvm/libdevice/libdevice.10.bc mdir/cuda/EULA.txt \
-           mdir/licenses/LICENSE mdir/licenses/HDF5-COPYING \
-           mdir/licenses/pybind11-LICENSE; do
+           mdir/cuda/nvvm/libdevice/libdevice.10.bc; do
     [[ -f "$tree/$f" ]] || complain "$name has no $f"
   done
+  notice mdir/licenses/LICENSE 'MIT License' "MDIR's license"
+  notice mdir/licenses/pybind11-LICENSE 'Wenzel Jakob' "pybind11 is compiled into the extension"
+  notice mdir/licenses/tomlplusplus-LICENSE 'Mark Gillard' "toml++ is compiled into the extension"
+  notice mdir/licenses/LLVM-LICENSE.TXT 'LLVM Exceptions to the Apache 2.0 License' "LLVM is linked into the extension"
+  notice mdir/licenses/pocketfft-LICENSE 'Max-Planck-Society' "pocketfft is compiled into libmdrt.so"
+  if [[ -e "$tree/mdir/lib/libomp.so" ]]; then
+    notice mdir/licenses/OpenMP-LICENSE.TXT 'Intel Corporation' "mdir/lib/libomp.so is bundled"
+  fi
+  if exists "$tree/mdir.libs/libhdf5*.so*" || exists "$tree/mdir/lib/libhdf5*.so*"; then
+    notice mdir/licenses/HDF5-COPYING 'The HDF Group' "libhdf5 is bundled"
+  fi
+  if [[ -d "$tree/mdir/cuda" ]]; then
+    notice mdir/cuda/EULA.txt 'NVIDIA' "libdevice is bundled"
+  fi
+  for f in "$tree"/mdir.libs/*; do
+    [[ -e "$f" ]] || continue
+    [[ "$(basename "$f")" == libhdf5* ]] \
+      || complain "$name: mdir.libs/$(basename "$f") is grafted, and no notice is known for it"
+  done
+  while IFS= read -r f; do
+    [[ -s "$(echo "$tree"/mdir-*.dist-info)/licenses/$f" ]] \
+      || complain "$name: METADATA names License-File: $f, which .dist-info/licenses does not hold"
+  done < <(sed -n 's/^License-File: //p' "$tree"/mdir-*.dist-info/METADATA)
   rm -rf "$tree"
   trap - EXIT
 done

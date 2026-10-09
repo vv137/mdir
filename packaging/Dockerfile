@@ -84,12 +84,25 @@ RUN --mount=type=cache,target=/build/mdir,id=mdir-build \
 # functions of libdevice, from CUDA_ROOT, which only the devel image has.
 # The libraries and libdevice come before the installed tree, which changes
 # with every build.
+#
+# The image distributes in binary form what it copies here, so each copy
+# comes with the notice its license asks for (packaging/licenses/README.md;
+# scripts/release/check-image.sh checks them): HDF5's COPYING and MDIR's
+# license in /opt/mdir/share/mdir, beside the notices of pocketfft, toml++,
+# LLVM, and the OpenMP runtime that the install of MDIR puts in
+# /opt/mdir/share/mdir/licenses; and the CUDA EULA, whose Attachment A lists
+# libdevice as distributable, as /usr/local/cuda/EULA.txt. The Debian
+# package of libdevice (libnvvm-13-0, of the devel image) carries the EULA
+# as its copyright file: change its name with the CUDA of DEVEL.
 FROM ${RUNTIME}
 COPY --from=hdf5 /opt/hdf5/1.14.6/lib /opt/hdf5/1.14.6/lib
+COPY --from=hdf5 /opt/hdf5/1.14.6/share/COPYING /opt/mdir/share/mdir/licenses/HDF5-COPYING
 COPY --from=base /usr/local/cuda/nvvm/libdevice /usr/local/cuda/nvvm/libdevice
+COPY --from=base /usr/share/doc/libnvvm-13-0/copyright /usr/local/cuda/EULA.txt
 ENV PATH=/opt/mdir/bin:${PATH} \
     CUDA_ROOT=/usr/local/cuda
 COPY examples /opt/mdir/share/mdir/examples
+COPY LICENSE /opt/mdir/share/mdir/LICENSE
 COPY --from=build /opt/mdir /opt/mdir
 WORKDIR /work
 ENTRYPOINT ["mdir"]

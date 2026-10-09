@@ -52,15 +52,36 @@ if(EXISTS "${LLVM_LIBRARY_DIR}/libomp.so")
   install(FILES "${LLVM_LIBRARY_DIR}/libomp.so" DESTINATION lib COMPONENT mdir)
 endif()
 
+# An installed tree holds code of third parties in binary form: pocketfft
+# (compiled into libmdrt), toml++ and LLVM with MLIR (in mdir, and in the
+# extension of the Python package), and the OpenMP runtime of LLVM beside
+# them. When the tree is distributed (the container image, the release
+# tarball, a wheel), their licenses ask for their notices, so every install
+# carries them (packaging/licenses/README.md says which clause asks).
+function(mdir_install_notices destination component)
+  install(FILES ${PROJECT_SOURCE_DIR}/third_party/pocketfft/LICENSE.md
+    DESTINATION "${destination}" RENAME pocketfft-LICENSE
+    COMPONENT ${component})
+  install(FILES ${PROJECT_SOURCE_DIR}/third_party/tomlplusplus/LICENSE
+    DESTINATION "${destination}" RENAME tomlplusplus-LICENSE
+    COMPONENT ${component})
+  install(FILES ${PROJECT_SOURCE_DIR}/packaging/licenses/LLVM-LICENSE.TXT
+    DESTINATION "${destination}" COMPONENT ${component})
+  if(EXISTS "${LLVM_LIBRARY_DIR}/libomp.so")
+    install(FILES ${PROJECT_SOURCE_DIR}/packaging/licenses/OpenMP-LICENSE.TXT
+      DESTINATION "${destination}" COMPONENT ${component})
+  endif()
+endfunction()
+mdir_install_notices(share/mdir/licenses mdir)
+
 # A relocatable release (D177): the shared libraries that the
 # installed tree needs beyond the base system go into <prefix>/lib under
 # their sonames, and libdevice of the toolkit into share/mdir/cuda, where
 # the driver finds it when CUDA_ROOT is not set. cuFFT and libdevice are
 # redistributable under Attachment A of the CUDA EULA, installed with it.
 #
-# The tree is then a distribution in binary form of what it bundles and of
-# what its binaries hold, so the notices that their licenses ask for go into
-# share/mdir/licenses (packaging/licenses/README.md says which and why).
+# The tree then also distributes HDF5 in binary form, so HDF5's notice
+# joins the others in share/mdir/licenses.
 option(MDIR_BUNDLE_LIBRARIES
   "Install HDF5, cuFFT, and libdevice with mdir, for a relocatable release" OFF)
 # HDF5's notice, in the root or in share/ of its install tree.
@@ -94,17 +115,7 @@ if(MDIR_BUNDLE_LIBRARIES)
   if(MDIR_HDF5_LIBRARY)
     mdir_install_soname("${MDIR_HDF5_LIBRARY}")
   endif()
-  # HDF5 (bundled), pocketfft (in libmdrt), toml++ (in mdir), and LLVM with
-  # its OpenMP runtime (in mdir, and lib/libomp.so).
   mdir_install_hdf5_notice(share/mdir/licenses mdir)
-  install(FILES ${PROJECT_SOURCE_DIR}/third_party/pocketfft/LICENSE.md
-    DESTINATION share/mdir/licenses RENAME pocketfft-LICENSE COMPONENT mdir)
-  install(FILES ${PROJECT_SOURCE_DIR}/third_party/tomlplusplus/LICENSE
-    DESTINATION share/mdir/licenses RENAME tomlplusplus-LICENSE
-    COMPONENT mdir)
-  install(FILES ${PROJECT_SOURCE_DIR}/packaging/licenses/LLVM-LICENSE.TXT
-    ${PROJECT_SOURCE_DIR}/packaging/licenses/OpenMP-LICENSE.TXT
-    DESTINATION share/mdir/licenses COMPONENT mdir)
   if(MDIR_CUDA_FOUND)
     set_target_properties(mdrt_cuda PROPERTIES INSTALL_RPATH "$ORIGIN")
     get_target_property(cufft CUDA::cufft IMPORTED_LOCATION)
@@ -157,8 +168,12 @@ if(SKBUILD)
     DESTINATION mdir/licenses COMPONENT python)
   install(FILES ${PROJECT_SOURCE_DIR}/LICENSE DESTINATION mdir/licenses
     COMPONENT python)
-  # HDF5's notice, which a binary distribution reproduces.
+  # HDF5's notice, which a binary distribution reproduces (auditwheel
+  # grafts libhdf5 into mdir.libs), and those of pocketfft (in libmdrt),
+  # toml++ and LLVM with MLIR (in the extension), and the OpenMP runtime
+  # (mdir/lib/libomp.so).
   mdir_install_hdf5_notice(mdir/licenses python)
+  mdir_install_notices(mdir/licenses python)
 endif()
 
 set(MDIR_CUDA_FOUND ${MDIR_CUDA_FOUND} PARENT_SCOPE)
