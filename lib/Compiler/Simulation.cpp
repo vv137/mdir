@@ -552,10 +552,6 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
     return unsupported("a simulation with a barostat that scales the cell "
                        "every step (coupling period 1) is not supported yet");
   const System &start = prepared.system;
-  if (given.barostat &&
-      (start.tilt[0] != 0.0 || start.tilt[1] != 0.0 || start.tilt[2] != 0.0))
-    return unsupported("a simulation with a barostat in a triclinic cell is "
-                       "not supported yet");
   std::unique_ptr<Simulation> simulation(new Simulation());
   struct UnlockBeforeCleanup {
     std::unique_lock<std::mutex> &lock;
@@ -614,8 +610,14 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   output->solventFreedom = system.getSolventDegreesOfFreedom();
   output->periodic = control.periodic;
   output->listReach = control.pairlistDistance * units::length;
-  for (int k = 0; k != 3; ++k)
+  for (int k = 0; k != 3; ++k) {
     output->box[k] = system.box[k];
+    // A barostat reports the cell it has scaled to the checkpoint of the
+    // output (`mdrtSetBox`, `mdrtSetTilt`); until its first scaling the
+    // cell is that of the start.
+    output->checkpoint.box[k] = system.box[k];
+    output->checkpoint.tilt[k] = system.tilt[k];
+  }
   output->volume = system.box[0] * system.box[1] * system.box[2];
   output->endStep = 0;
   output->tunablesVersion = prepared.tunables.empty() ? -1 : 0;
@@ -992,7 +994,8 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
                 part.tail + part.plain + part.close * interval;
 
   // What a failed part leaves besides the state (D196).
-  double boxBefore[3] = {out.box[0], out.box[1], out.box[2]};
+  std::array<double, 6> cellBefore = getCell();
+  double systemBoxBefore[3] = {system.box[0], system.box[1], system.box[2]};
   double bathBefore = out.bath;
   Output::MinimizationRow rowBefore = out.lastMinimization;
 
@@ -1071,9 +1074,11 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
     if (!begins)
       restoreSnapshot();
     endActivation(Ended::Failure);
+    // The cell with its tilts, as a commit that is undone restores it
+    // (D238).
+    setCell(cellBefore);
     for (int k = 0; k != 3; ++k)
-      out.box[k] = boxBefore[k];
-    out.volume = out.box[0] * out.box[1] * out.box[2];
+      system.box[k] = systemBoxBefore[k];
     out.bath = bathBefore;
     out.lastMinimization = rowBefore;
     failed = true;
@@ -1082,6 +1087,14 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
                            "; it keeps the state of step " + llvm::Twine(step));
   }
   takeSnapshot();
+  // A barostat scales the tilts of a triclinic cell with its columns
+  // (D127) and reports them at each scaling (`mdrtSetTilt`): they become
+  // those of the state of the host, which the next activation begins with
+  // (D238), a checkpoint and a frame carry, and a borrow lends
+  // (D[python-triclinic-npt]).
+  if (engine.control.barostat && hasTriclinicCell())
+    for (int k = 0; k != 3; ++k)
+      system.tilt[k] = out.checkpoint.tilt[k];
   startRefresh = false;
   if (!x.empty()) {
     system.positions = std::move(x);
@@ -2670,8 +2683,9 @@ Simulation::continueFrom(const Checkpoint &checkpoint, bool stage,
                         "program");
   auto takeCell = [&] {
     for (int k = 0; k != 3; ++k) {
-      system.box[k] = output->box[k] = checkpoint.box[k];
-      system.tilt[k] = checkpoint.tilt[k];
+      system.box[k] = output->box[k] = output->checkpoint.box[k] =
+          checkpoint.box[k];
+      system.tilt[k] = output->checkpoint.tilt[k] = checkpoint.tilt[k];
     }
     output->volume = output->box[0] * output->box[1] * output->box[2];
   };

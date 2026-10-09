@@ -6,6 +6,7 @@ API.
 
 Usage: python_dlpack_tilts.py ROOT TARGET commits WORK DIPEPTIDE
        python_dlpack_tilts.py ROOT TARGET frames DCD
+       python_dlpack_tilts.py ROOT TARGET npt WORK
 
 `commits`, in the deterministic mode, in double and mixed precision, with
 PME and with a cutoff: a commit of tilts with positions against a simulation
@@ -19,6 +20,13 @@ over the images; the cell of the frames of an open reporter.
 barostat scales the tilts with the cell, put one by one into a second
 simulation, each energy against the evaluation of a simulation compiled
 from that frame.
+
+`npt` (D[python-triclinic-npt]): a Python run at constant pressure in the
+triclinic cell, whose tilts the barostat scales: the tilts of the state,
+a run in parts and one continued from a checkpoint against one run, a
+commit of tilts followed by steps under the barostat against a simulation
+compiled from the committed state, and 20 frames of the run put into a
+second simulation.
 """
 import ctypes
 import gc
@@ -170,6 +178,8 @@ def make(precision, pme=True, kind="NVE", state=None, capacity=0, soft=False, gr
     ensemble.kind = getattr(mdir.EnsembleKind, kind)
     if kind != "NVE":
         ensemble.temperature = 300.0
+    if kind == "NPT":
+        ensemble.pressure = 1.0
     execution.target, execution.precision = target, getattr(mdir.Precision, precision)
     execution.deterministic = True
     execution.neighbor_capacity = capacity
@@ -672,8 +682,106 @@ def frames(path):
     print(f"dlpack tilts frames {target_name} passed")
 
 
+def npt(work):
+    for precision in ("Double", "Mixed"):
+        program = make(precision, True, "NPT")
+        whole, parts = mdir.Simulation(program), mdir.Simulation(program)
+        start = whole.state().cell
+        whole.run(60, energy=True)
+        end = whole.state()
+        # The barostat scales the tilts with their columns: the state has
+        # them, and the shape of the dodecahedron stays.
+        change = float(np.abs(end.cell.tilt - start.tilt).max())
+        assert change > 1e-6, change
+        shape = max(abs(end.cell.tilt[1] / end.cell.diagonal[0] - 0.5),
+                    abs(end.cell.tilt[2] / end.cell.diagonal[1] - 0.5),
+                    abs(end.cell.tilt[0]))
+        assert shape < 1e-14, shape
+        with whole.borrow() as borrow:
+            assert np.array_equal(consumer.read(borrow.tilt), end.cell.tilt)
+            assert np.array_equal(consumer.read(borrow.cell), end.cell.diagonal)
+        # In parts, to the bit.
+        for _ in range(3):
+            parts.run(20, energy=True)
+        same(parts.state(), end, precision + " NPT in parts")
+        # A checkpoint ends the activation: the simulation that wrote it
+        # and one that continues from it both begin an activation with the
+        # tilts that the barostat left, and agree to the bit; the run that
+        # did not stop kept its neighbor structures, and differs from them
+        # by rounding.
+        stopped = mdir.Simulation(program)
+        stopped.run(40, energy=True)
+        path = pathlib.Path(work) / f"npt-{target_name}-{precision}.h5"
+        rounding = None
+        try:
+            stopped.save_checkpoint(str(path))
+            assert np.array_equal(mdir.read_checkpoint(str(path)).cell.tilt,
+                                  stopped.state().cell.tilt)
+            continued = mdir.Simulation(program, checkpoint=str(path))
+            continued.run(20, energy=True)
+            stopped.run(20, energy=True)
+            same(continued.state(), stopped.state(), precision + " NPT from a checkpoint")
+            rounding = float(np.abs(continued.state().positions - end.positions).max())
+            assert rounding < (1e-12 if precision == "Double" else 1e-6), rounding
+            assert np.allclose(continued.state().cell.tilt, end.cell.tilt, rtol=0,
+                               atol=1e-12 if precision == "Double" else 1e-6)
+        except mdir.UnsupportedError:
+            pass
+        print(f"{precision}: at constant pressure the tilts follow the barostat (by {change:.1e} "
+              f"nm in 60 steps, the shape kept within {shape:.0e}); a run in parts equals one "
+              f"run to the bit, and one continued from a checkpoint the run that wrote it, "
+              f"within " + ("no HDF5" if rounding is None else f"{rounding:.1e} nm") +
+              " of the run that did not stop")
+
+        # A commit of tilts, then a barostat that changes the cell.
+        sim = mdir.Simulation(program)
+        sim.run(0, energy=True)
+        at = sim.state()
+        cell = cell_of(at.cell.diagonal, [0.03, -1.28, -1.29])
+        x = strained(at.positions, at.cell, cell)
+        assert put(sim, positions=x, tilt=cell.tilt) == ("positions", "cell")
+        against_compiled(sim, program, precision, True, "NPT", x, cell, 40, precision + " NPT")
+        moved = float(np.abs(sim.state().cell.tilt - cell.tilt).max())
+        assert moved > 1e-6, moved
+        print(f"{precision}: a commit of tilts before the first step and 40 steps under the "
+              f"barostat, which moves the tilts by {moved:.1e} nm, equal a simulation compiled "
+              f"from the committed state to the bit")
+
+        # The frames of the run, put into a second simulation.
+        source = mdir.Simulation(program)
+        taken = []
+        for _ in range(20):
+            source.run(10)
+            taken.append(source.state())
+        nve = make(precision, True)
+        second = mdir.Simulation(nve)
+        second.run(0, energy=True)
+        tilts = np.array([f.cell.tilt for f in taken])
+        for frame in taken:
+            fields = put(second, positions=frame.positions, diagonal=frame.cell.diagonal,
+                         tilt=frame.cell.tilt)
+            assert fields == ("positions", "cell"), fields
+            at = second.state()
+            fresh_program = make(precision, True,
+                                 state=initial(frame.positions, at.velocities, frame.cell),
+                                 capacity=nve.plan["neighbor_capacity"])
+            assert fresh_program.ir == nve.ir
+            fresh = mdir.Simulation(fresh_program)
+            fresh.run(0, energy=True)
+            other = fresh.state()
+            assert np.array_equal(at.forces, other.forces), precision
+            assert at.energies == other.energies, precision
+        print(f"{precision}: 20 frames of a Python run at constant pressure (c_x from "
+              f"{tilts[:, 1].min():.5f} to {tilts[:, 1].max():.5f} nm) put into one simulation: "
+              f"the energies and the forces of each equal those of a simulation compiled from "
+              f"the frame")
+    print(f"triclinic npt {target_name} passed")
+
+
 if mode == "frames":
     frames(last)
+elif mode == "npt":
+    npt(last)
 else:
     refusals = None
     for precision in ("Double", "Mixed"):
