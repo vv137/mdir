@@ -14,7 +14,7 @@
 #     (git archive), the installed tree for manylinux_2_28 x86-64 with CUDA
 #     (packaging/Dockerfile.manylinux; checked by check-binary.sh and run
 #     on the CPU and on GPU 1 without CUDA_ROOT), the PDF, the release notes, and SHA256SUMS; --container also builds the Docker
-#     image mdir:VERSION (not uploaded);
+#     image mdir:VERSION (checked by check-image.sh; not uploaded);
 #  5. makes the annotated tag vVERSION on that commit.
 # Without --publish it stops there and prints the two publishing commands;
 # with --publish it pushes the tag and creates the GitHub Release with the
@@ -87,6 +87,7 @@ cp "docs/release-notes/$tag.md" "$out/"
 python3 scripts/release/changelog.py notes "$version" > "$out/notes.md"
 if (( container )); then
   docker build -f packaging/Dockerfile -t "mdir:$version" --build-arg MDIR_GIT_COMMIT="$commit" . > "$log-docker.log" 2>&1
+  scripts/release/check-image.sh "mdir:$version"
 fi
 (cd "$out" && sha256sum mdir-* "$tag.md" > SHA256SUMS)
 ls -la "$out"

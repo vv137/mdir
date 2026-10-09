@@ -1,0 +1,22 @@
+# The notices that the container image carries for the third parties whose
+# code it distributes in binary form (issue #221,
+# packaging/licenses/README.md): scripts/release/check-image.sh accepts a
+# root file system that holds them, complains about each one that is
+# missing, empty, or another text, and asks for HDF5's and the OpenMP
+# runtime's only beside their libraries. The roots are stand-ins
+# (Inputs/wheel_image_notices.py); the image itself is checked when it is
+# built for a release.
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/wheel_image_notices.py image %S/../.. %t | FileCheck %s
+# CHECK: complete: 0 complaints about notices
+# CHECK-NEXT: without opt/mdir/share/mdir/LICENSE: exit 1, 1: /opt/mdir/share/mdir/LICENSE is missing: MDIR's license
+# CHECK-NEXT: without opt/mdir/share/mdir/licenses/pocketfft-LICENSE: exit 1, 1: /opt/mdir/share/mdir/licenses/pocketfft-LICENSE is missing: pocketfft is compiled into libmdrt.so
+# CHECK-NEXT: without opt/mdir/share/mdir/licenses/tomlplusplus-LICENSE: exit 1, 1: /opt/mdir/share/mdir/licenses/tomlplusplus-LICENSE is missing: toml++ is compiled into mdir
+# CHECK-NEXT: without opt/mdir/share/mdir/licenses/LLVM-LICENSE.TXT: exit 1, 1: /opt/mdir/share/mdir/licenses/LLVM-LICENSE.TXT is missing: LLVM is linked into mdir
+# CHECK-NEXT: without opt/mdir/share/mdir/licenses/OpenMP-LICENSE.TXT: exit 1, 1: /opt/mdir/share/mdir/licenses/OpenMP-LICENSE.TXT is missing: /opt/mdir/lib/libomp.so is in the image
+# CHECK-NEXT: without opt/mdir/share/mdir/licenses/HDF5-COPYING: exit 1, 1: /opt/mdir/share/mdir/licenses/HDF5-COPYING is missing: libhdf5 is in the image
+# CHECK-NEXT: without usr/local/cuda/EULA.txt: exit 1, 1: /usr/local/cuda/EULA.txt is missing: libdevice is copied into the image
+# CHECK-NEXT: without NGC-DL-CONTAINER-LICENSE: exit 1, 1: /NGC-DL-CONTAINER-LICENSE is missing: the image is derived from NVIDIA's CUDA image
+# CHECK-NEXT: empty HDF5-COPYING: exit 1, 1: /opt/mdir/share/mdir/licenses/HDF5-COPYING is missing: libhdf5 is in the image
+# CHECK-NEXT: another text as LLVM-LICENSE.TXT: exit 1, 1: /opt/mdir/share/mdir/licenses/LLVM-LICENSE.TXT does not hold 'LLVM Exceptions to the Apache 2.0 License'
+# CHECK-NEXT: no libhdf5 and no libomp, without their notices: exit 0, 0

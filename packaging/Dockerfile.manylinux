@@ -100,10 +100,11 @@ COPY --from=build /mdir-*-manylinux_2_28_x86_64.tar.gz /
 # --- 7. Wheels of the Python package (D228) ---------------------
 # One wheel per CPython of the image (PYTHONS), built by pyproject.toml with
 # the toolchain above, libstdc++ and libgcc linked statically as for the
-# tarball, and repaired by auditwheel to manylinux_2_28: HDF5 and zlib are
-# grafted into mdir.libs under unique names; the driver's libcuda and cuFFT,
-# which comes from NVIDIA's wheel (the extra `cuda`), are left to the
-# system. From the root of the repository:
+# tarball, and repaired by auditwheel to manylinux_2_28: HDF5 is grafted
+# into mdir.libs under a unique name; the driver's libcuda and cuFFT, which
+# comes from NVIDIA's wheel (the extra `cuda`), are left to the system. A
+# wheel carries in mdir/licenses the notices of what it holds in binary
+# form (packaging/licenses/README.md). From the root of the repository:
 #
 #   DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
 #     --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) \

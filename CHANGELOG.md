@@ -523,6 +523,19 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- The Python wheels and the container image carry the notices of the
+  third parties whose code they distribute in binary form, as the release
+  tarball does (#221). A wheel held pocketfft, toml++, LLVM, and the
+  OpenMP runtime without their notices; it now has `pocketfft-LICENSE`,
+  `tomlplusplus-LICENSE`, `LLVM-LICENSE.TXT`, and `OpenMP-LICENSE.TXT` in
+  `mdir/licenses`, beside those of MDIR, HDF5, and pybind11. The image
+  held no notice of its own: it now has MDIR's license and the same files
+  with `HDF5-COPYING` in `/opt/mdir/share/mdir`, and the CUDA EULA for
+  libdevice as `/usr/local/cuda/EULA.txt`. Every install of MDIR now puts
+  the notices of what its binaries hold into `share/mdir/licenses`.
+  `scripts/release/check-wheel.sh` checks each notice of a wheel and
+  fails on a grafted library it knows no notice for, and the new
+  `scripts/release/check-image.sh` checks the image.
 - A pair term that the correction for the dispersion leaves out no longer
   aborts the build of the program when another pair term follows it (#238).
   A term whose tail diverges or that reads `t` is left out with the warning

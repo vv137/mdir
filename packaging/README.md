@@ -77,11 +77,23 @@ CUDA_VISIBLE_DEVICES=1 apptainer run --nv mdir-0.1.0.sif run md.toml
 
 - `/opt/mdir/bin/mdir`, and in `/opt/mdir/lib` the runtime, the GPU
   runtime, and the OpenMP runtime;
+- `/opt/mdir/share/mdir/LICENSE`, MDIR's license, and in
+  `/opt/mdir/share/mdir/licenses` the notices of the third parties whose
+  code the image holds in binary form beyond its base: `HDF5-COPYING`,
+  `pocketfft-LICENSE`, `tomlplusplus-LICENSE`, `LLVM-LICENSE.TXT`,
+  `OpenMP-LICENSE.TXT`;
 - HDF5's libraries in `/opt/hdf5/1.14.6/lib`, found through the RPATH;
 - from CUDA: the runtime libraries of the base image (cuFFT among them),
   and `nvvm/libdevice` copied from the devel image, with
   `CUDA_ROOT=/usr/local/cuda`. The kernels are compiled at the start of a
-  run and take their math functions from libdevice.
+  run and take their math functions from libdevice. The CUDA EULA, which
+  lists libdevice as distributable, is `/usr/local/cuda/EULA.txt`; the
+  license of NVIDIA's base image is `/NGC-DL-CONTAINER-LICENSE`.
+
+`scripts/release/check-image.sh mdir:0.1.0` checks that the image carries
+these notices; [licenses/README.md](licenses/README.md) gives the clause
+that asks for each, and the terms of the base image for an image that is
+distributed.
 
 ## The release tarball (manylinux_2_28)
 
@@ -124,7 +136,8 @@ allows from the system. It also checks the notices.
 **Notices.** The tarball bundles HDF5 and the OpenMP runtime, and its
 binaries hold pocketfft (`libmdrt.so`), toml++, and LLVM (`mdir`). Their
 licenses ask that a distribution in binary form carry their notices, which
-`MDIR_BUNDLE_LIBRARIES` installs into `share/mdir/licenses`.
+the install puts into `share/mdir/licenses` (HDF5's with
+`MDIR_BUNDLE_LIBRARIES`, which bundles it).
 libstdc++ and libgcc, linked statically, need none under the GCC Runtime
 Library Exception. [licenses/README.md](licenses/README.md) gives the
 component, the clause, and the conclusion for each.
@@ -148,3 +161,14 @@ A wheel holds the extension, the runtime, libdevice with the CUDA EULA,
 and HDF5 (in `mdir.libs`); cuFFT and ptxas come from NVIDIA's wheels
 `nvidia-cufft` and `nvidia-cuda-nvcc` through the extra `mdir[cuda]`, and
 the driver's `libcuda` from the system. The `mdir` command is not in the wheels.
+
+**Notices.** A wheel holds pybind11, toml++, and LLVM in the extension,
+pocketfft in `libmdrt.so`, the OpenMP runtime, and HDF5, which auditwheel
+grafts. Their notices are in `mdir/licenses`, under the names they have in
+the tarball, beside MDIR's `LICENSE` and `pybind11-LICENSE`:
+`HDF5-COPYING`, `pocketfft-LICENSE`, `tomlplusplus-LICENSE`,
+`LLVM-LICENSE.TXT`, `OpenMP-LICENSE.TXT`; the CUDA EULA is beside
+libdevice, `mdir/cuda/EULA.txt`. `check-wheel.sh` fails without any of
+them, and on a library in `mdir.libs` other than libhdf5. The metadata
+names MDIR's own license (`License-Expression: MIT`, `License-File:
+LICENSE`); [licenses/README.md](licenses/README.md) says why.
