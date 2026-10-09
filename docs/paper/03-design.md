@@ -543,7 +543,8 @@ before it writes the buffers.
 A consumer that writes takes a *borrow* instead
 (D229): the same buffers of the positions and the
 velocities without the read-only flag, and buffers of the host with the
-edges of the cell and the values of the tunables. A borrow excludes every
+diagonal of the cell, the tilts of a triclinic cell (D[borrow-tilts]), and
+the values of the tunables. A borrow excludes every
 other operation on the state, views included. Its commit is explicit: it
 checks what was written, refuses a change of the tunables that would
 change the program as an update does, advances the version counters of
@@ -552,7 +553,11 @@ the committed state, so that the order of the particles, the neighbor
 structures, and the forces are those of that state and nothing computed
 from the old one is carried; a run after it is, to the bit in the
 deterministic mode, that of a simulation compiled from the committed
-state. A borrow that ends without a commit is undone from the copy of the
+state. A committed cell is checked as a compile checks it, and for a
+triclinic cell it must be reduced and stay triclinic; its tilts are
+values that the entry takes when an activation begins (D227), so a commit
+of them builds no program. A borrow that ends without a commit is undone
+from the copy of the
 state that the simulation holds since the last part. A commit costs an
 evaluation, so a borrow serves changes between runs, not at every step.
 

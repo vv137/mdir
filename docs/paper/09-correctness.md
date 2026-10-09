@@ -459,6 +459,21 @@ values, and the versions of a simulation without the borrow, to the bit.
 A consumer kernel still writing when its tensor is deleted and the borrow
 committed is waited for; without the wait the committed velocities differ
 by 2.87 nm/ps (`python-dlpack-write*.test`).
+For a triclinic cell (D[borrow-tilts]), commits of the tilts of 403 waters
+in a rhombic dodecahedron, by 0.01 nm, by 2.5 nm with a strain of 8%, to
+another reduced basis of the same lattice, and scaled with the diagonal as
+a barostat scales them, equal a simulation compiled from the committed
+state to the bit, with PME and with a cutoff; the change of basis, which
+moves no particle, leaves the potential within $8.2\times10^{-12}$ kJ/mol
+with a cutoff in double precision. In a cell 1.54 nm wide between two of
+its faces, less than twice the cutoff of 0.8 nm, whose diagonal is at least
+twice the pairlist distance, an observed pair term equals a NumPy sum over
+every image within the cutoff to $4.7\times10^{-16}$: the bound that the
+build and a commit test, half of the least of $a_x$, $b_y$, $c_z$ for a
+reduced cell, is the one the minimum image needs. Twenty frames of a run
+at constant pressure, whose barostat scales the tilts, put into one
+simulation give the energies and forces of a simulation compiled from each
+(`python-dlpack-tilts*.test`).
 
 ## 9.7 Neighbor structures
 

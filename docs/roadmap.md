@@ -296,7 +296,9 @@ and the values of the tunables, and `Borrow.commit()` takes what was
 written, advances the versions of the changed fields, and begins an
 activation from the committed state, whose order, neighbor structures, and
 forces are built anew; a borrow excludes runs, views, and other borrows,
-and one that ends without a commit is undone.
+and one that ends without a commit is undone. D[borrow-tilts] (#206) adds
+`Borrow.tilt`, the tilts of a triclinic cell, which a commit checks and
+gives to the activation it begins.
 D221 (#120, [topology views](python-topology.md)) gives
 loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)

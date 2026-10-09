@@ -131,7 +131,8 @@ that a run in parts is the run in one part to the bit
 (D215); read-only DLPack views of those buffers, whose leases
 block runs while a consumer holds them (D220), and writable
 borrows of them with an explicit commit, which rebuilds what depends on
-the fields written (D229); read-only views
+the fields written (D229), the tilts of a triclinic cell among them
+(D[borrow-tilts]); read-only views
 of the topology, with the constraints of a compiled program, and the masks
 of the control file evaluated from Python (D221); checkpoints
 shared with the CLI, which either front end continues
@@ -147,7 +148,6 @@ in the Python model, the time and parameters of each particle in a term of
 the positions, terms over centers and compound terms, and the derivative
 in a tunable of several entries at every row of a run, which `observe`
 does not give (the frame evaluator of M2b);
-the tilts of a triclinic cell in a writable borrow, and
 NPT in a triclinic cell or with a coupling period of 1.
 
 *M2b, differentiable simulation* (D195). The parameters of a potential
