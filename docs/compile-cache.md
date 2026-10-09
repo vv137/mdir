@@ -228,7 +228,7 @@ state:
 |---|---|---|
 | `%baro_constant`, `%baro_energy_constant`: the virial and the energy of the correction for the dispersion and the PME background, times $V$ | the volume at the start, through rounding only ($V$ cancels) | arguments of the entry |
 | `%rest_edge0` to `%rest_edge2`: the cell that the reference positions of the restraints belong to, with a barostat | a Python stage: the cell of its start; `mdir run`: the cell of the coordinate file | arguments of the entry |
-| `%tilt_bx`, `%tilt_cx`, `%tilt_cy`: the tilts of a triclinic cell | the cell at the start | arguments of the entry |
+| `%tilt_bx`, `%tilt_cx`, `%tilt_cy`: the tilts of a triclinic cell | the cell at the start | arguments of the entry; a Python simulation gives each activation the tilts of its state, which a commit of a borrow may have written (D[borrow-tilts]) |
 | `%bstate0` to `%bstate8`: the pressure state of a barostat that scales every step (D92) | the checkpoint that `mdir run` continues | arguments of the entry |
 | The edges `%lx`, `%ly`, `%lz` | the cell at the start | arguments of the entry already |
 | The correction for the dispersion, the PME self term and background, the shift estimate (D210), the tails of pair terms (D209), the constants of `[free_energy]` that scale as $1/V$, and the part of the shift estimate that does not depend on the volume (#224) | the volume at the start | values of the host (`Output`), never in the text |

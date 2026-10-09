@@ -238,6 +238,9 @@ Issue #136, the second part of item 6 and the last open item of M2a.
 Status: implemented; the four questions put to the maintainer on PR #204
 were decided as recommended
 ([Maintainer rulings on writable borrows](#maintainer-rulings-on-writable-borrows)).
+The tilts of a triclinic cell (#206, D[borrow-tilts]) are
+[below](#tilts-of-a-triclinic-cell-dborrow-tilts); the questions on its
+PR #253 are open.
 
 A view is for reading. A *borrow* hands a consumer the same buffers for
 writing, and the simulation takes what was written at an explicit commit.
@@ -479,10 +482,84 @@ of the first, has the text of the first.
 
 The cell of the host is set in one place (`Simulation::setCell`): the state
 (`State.cell`), the start values of the next activation, the cell of a
-checkpoint, and the cell of the frames of an open `TrajectoryReporter`,
-which until now heard of a change of the cell only from a barostat, so
-that a commit of the edges of an orthorhombic cell left the frames with the
-edges of before.
+checkpoint, and the cell of the frames of an open `TrajectoryReporter`.
+Two things follow that are not of the tilts alone, both found by reading
+the code and held by the test: the frames of a reporter that is open take
+the committed cell (they heard of a change of the cell only from a
+barostat, so a commit of the edges of an orthorhombic cell left them with
+the edges of before), and a simulation that continues from a checkpoint
+runs with the tilts of the checkpoint (it took the diagonal of the
+checkpoint and the tilts of the build).
+
+**Not in this change.** A Python simulation refuses a barostat in a
+triclinic cell ([python-segments.md](python-segments.md)); the frames of a
+run at constant pressure below are those of `mdir run`. Lifting the refusal
+is its own decision: what it needs beyond this change is that the tilts
+which the barostat reports become the host's after each part.
+
+**Validation of the tilts.** `test/Driver/Inputs/python_dlpack_tilts.py`
+(`python-dlpack-tilts*.test`, `python-dlpack-tilts-frames*.test`), on 403
+flexible TIP3P waters in a rhombic dodecahedron ($a_x = b_y = 2.6$ nm,
+$c_z = 1.838$ nm, $c_x = c_y = 1.3$ nm, on the bound of the reduced form),
+cutoff 0.8 nm and pairlist distance 0.9 nm, with PME on a grid of $28^3$
+and with a plain cutoff, velocity Verlet at 0.5 fs, in the deterministic
+mode. The consumers use none of MDIR's code: NumPy 2.5 on the CPU, a reader
+of the capsule in ctypes that writes with the CUDA driver API on a stream of
+its own on an RTX 3090. Every row holds on the CPU and on the GPU, in double
+and in mixed precision. "Compiled" is a simulation compiled from an
+`InitialState` with the committed positions, velocities, and cell, given
+the grid and the neighbor capacity of the first program, evaluated with
+`run(0, energy=True)`; the difference is the largest absolute difference of
+the positions, velocities, forces, and cell, with every energy of
+`State.energies` (the potential, the virial, the pressure, the volume)
+equal.
+
+| Quantity | Reference | Difference | Tolerance |
+|---|---|---|---|
+| Forces and energies after a commit at step 20 of the tilts changed by (0.012, −0.009, −0.007) nm with each water moved with the lattice, and the state 12 steps later; PME and cutoff | Compiled | 0 | 0 |
+| The same for the lattice in another reduced basis, $\mathbf c - \mathbf a$ ($c_x$ from $a_x/2$ to $-a_x/2$, a change of 2.6 nm) with the positions as they are: other images, other bins, other vectors of the reciprocal lattice | Compiled | 0 | 0 |
+| The potential of that state, which is physically the state of before | The potential before the commit | cutoff: $2.7\times10^{-12}$ kJ/mol (CPU) and $8.2\times10^{-12}$ (GPU) in double, $3.7\times10^{-3}$ and $2.7\times10^{-3}$ in mixed precision; PME: 0.13 kJ/mol of $-9670$, the splines of the mesh following the vectors of the cell | $10^{-9}$ kJ/mol in double, $2\times10^{-2}$ in mixed; PME $10^{-4}$ of the potential |
+| A commit of the tilts (0.2, 1.2, −1.25) nm, a change of 2.5 nm in $c_x$ and of 2.55 nm in $c_y$ and a strain of up to 8%, and 12 steps later | Compiled | 0 | 0 |
+| A commit of the diagonal and the tilts scaled as a barostat scales them, $H\,\mathrm{diag}(1.02, 0.99, 1.01)$, with the positions, and 12 steps later | Compiled | 0 | 0 |
+| With a thermostat (NVT): a commit of the tilts (0.03, −1.28, −1.29) nm before the first step, and 40 steps (four couplings) | Compiled | 0 | 0 |
+| The text of the program compiled from each committed cell | The text of the first program | equal | equal |
+| A round trip, a view and then a borrow whose cell is written with its own values: `commit()` returns `()`, no version advances, and 6 steps later | A second simulation without the borrow | 0 | 0 |
+| A round trip that also hands the positions out and writes them back: a commit of `("positions",)`, which begins an activation | Compiled, and 12 steps later | 0 | 0 |
+| The same | A second simulation without the borrow | positions and velocities 0; the forces, evaluated anew in another order, $3.6\times10^{-12}$ kJ/mol/nm in double and $2.0\times10^{-3}$ in mixed precision; the positions 12 steps later $4.4\times10^{-16}$ nm and $7.1\times10^{-8}$ nm | $10^{-9}$ kJ/mol/nm and $10^{-13}$ nm in double; $5\times10^{-2}$ and $10^{-6}$ in mixed |
+| State and versions after seven refused commits (below), 6 steps later | A second simulation without a borrow | 0, and no version advanced | 0 |
+| A pair term $a\,e^{-r/l}$ (`observe`) after a commit of $a_x = 1.9$ nm with the tilts (0.6, −0.95, 1.3) nm: the faces of $\mathbf b$ and $\mathbf c$ are 1.54 nm apart, less than twice the cutoff, and the diagonal passes | A NumPy sum over every image within the cutoff, $5^3$ lattice vectors, shifted at the cutoff (D210) | $4.7\times10^{-16}$ relative in double, $8.8\times10^{-8}$ in mixed | $10^{-12}$, $10^{-6}$ |
+| The cells of the two frames of a `TrajectoryReporter` (DCD) open across a commit of the diagonal and the tilts | The cell before and the committed cell | below $10^{-12}$ nm | $10^{-12}$ nm |
+| 10 steps of a simulation of the first program that continues from a checkpoint written after a commit of tilts | The committed simulation | 0 | 0 |
+| The use of the frame evaluator: 20 frames of 400 steps of `mdir run` at constant pressure (C-rescale, rigid water, on the CPU; $c_x$ from 1.3139 to 1.3813 nm, potentials from −12490 to −11339 kJ/mol) put one by one into one simulation, positions, diagonal, and tilts: the potential, the virial, the volume, and the forces of each | Compiled from that frame | 0 | 0 |
+
+The refusals, each `InputError` with nothing changed:
+
+```
+the tilts written for the cell are all zero, which would make the triclinic cell of the program orthorhombic and changes the program, not only its values: compile it from a state with that cell; nothing is committed
+the cell written is not reduced: the tilt b_x, 1.326000 nm, exceeds half of a_x, 1.300000 nm; write the reduced cell of the lattice (|b_x| <= a_x/2, |c_x| <= a_x/2, |c_y| <= b_y/2); nothing is committed
+the cell written is not reduced: the tilt c_y, -1.560000 nm, exceeds half of b_y, 1.300000 nm; ...
+the cell written is not reduced: the tilt c_x, 1.300000 nm, exceeds half of a_x, 1.235000 nm; ...      (a_x written smaller, the tilts kept)
+the tilt c_x written for the cell is not finite; nothing is committed
+the entry c_z written for the cell, 1.500000 nm, is not finite or is less than twice the cutoff, 1.600000 nm; nothing is committed
+the pairlist distance of the program, 0.900000 nm, exceeds half of the least of a_x, b_y, c_z of the cell written, 0.850000 nm; nothing is committed
+```
+
+and `Borrow.tilt` of an orthorhombic program, `UnsupportedError`: "the
+program of the simulation was compiled for an orthorhombic cell, which has
+no tilts to write; a cell with tilts takes a program compiled from a state
+with a triclinic cell".
+
+A round trip that writes the positions back is a commit: the forces are
+evaluated anew, in the order and with the neighbor structures of another
+activation, and equal those that the run carried within rounding, not to
+the bit; D229 holds a commit equal to a simulation compiled from the
+committed state, which the row above it shows. A borrow whose buffers of
+the state were not handed out, and whose cell and tunables have their
+bits, changes nothing.
+
+No kernel, runtime function, pass, or program text changes, and nothing on
+the path of a step: the compute-sanitizer suite was not run, and no timing
+was taken (a commit of tilts runs the code of a commit of positions).
 
 ### Abandon
 
@@ -615,6 +692,7 @@ writes through a read-only view stay undefined and not detected, and
 `borrow()` is the tracked path; the cell of a borrow is the edges of an
 orthorhombic cell, a triclinic cell is refused with a message that says it
 is not supported yet, and the tilts are
-[#206](https://github.com/vv137/mdir/issues/206); the versions of the
+[#206](https://github.com/vv137/mdir/issues/206) (since D[borrow-tilts],
+`Borrow.tilt`); the versions of the
 state are not recorded in checkpoints; leaving a `with` block without a
 commit abandons the borrow.

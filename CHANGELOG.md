@@ -12,6 +12,21 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The tilts of a triclinic cell in a writable borrow (D[borrow-tilts],
+  #206, `docs/python-dlpack.md`): for a simulation whose program was
+  compiled from a triclinic cell, `Borrow.cell` is the diagonal
+  $a_x, b_y, c_z$ (it raised `UnsupportedError`) and the new `Borrow.tilt`
+  is the tilts $b_x, c_x, c_y$, both `(3,)` float64 buffers of the host,
+  the arrays of `mdir.Cell`. A commit takes them with the positions and
+  begins an activation with the committed cell; it refuses
+  (`InputError`, nothing changed) tilts that are all zero, a cell that is
+  not reduced, a diagonal below twice the cutoff, and a pairlist distance
+  above half of the least of the diagonal. The grid of PME and the
+  neighbor capacity stay those of the program
+  (`Program.plan`). `Borrow.tilt` of a program compiled for an
+  orthorhombic cell raises `UnsupportedError`; `Borrow.cell` of such a
+  program is unchanged. No control-file key and no file format changes.
+
 - A `Program` keeps the code of its simulations (D236, #236):
   the second and later `mdir.Simulation(program)` of one `Program` in a
   process take the LLVM module and the host object that the first left
@@ -145,8 +160,8 @@ format, or the outputs; every such change is listed under **Changed** or
   `borrow()`, `state()`, and `save_checkpoint` raise `SimulationError`. A
   borrow that ends without a commit (`abandon()`, the end of a `with`
   block) is undone to the bit. Writes through a read-only `view()` stay
-  undefined. A triclinic cell is not taken yet (#206). No control-file
-  key and no file format changes.
+  undefined. A triclinic cell is not taken yet (#206; taken since
+  D[borrow-tilts], above). No control-file key and no file format changes.
 - Read-only DLPack views of a Python simulation (D220, #131,
   `docs/python-dlpack.md`): `Simulation.view()` returns a `View` of the
   positions, velocities, and forces where the program keeps them, on the
@@ -538,6 +553,11 @@ format, or the outputs; every such change is listed under **Changed** or
   each (`separate-sin-cos`). A deterministic run on the CPU may differ
   from before in the last bits where a step of energy met such an
   argument; the default mode and runs on a GPU are unchanged.
+- The frames of a `TrajectoryReporter` that is open when a writable borrow
+  commits a cell take the committed cell; they kept the cell of before
+  (D[borrow-tilts]). A Python simulation that continues from a checkpoint
+  of a triclinic cell runs with the tilts of the checkpoint; it took the
+  tilts that its program was compiled from.
 - The Python wheels and the container image carry the notices of the
   third parties whose code they distribute in binary form, as the release
   tarball does (#221). A wheel held pocketfft, toml++, LLVM, and the
