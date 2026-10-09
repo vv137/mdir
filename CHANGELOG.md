@@ -12,6 +12,29 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The frame evaluator (D[frame-evaluator], #249): `mdir.FrameEvaluator(program)`
+  evaluates a program compiled with tunables and `System.tunable_gradient`
+  at stored frames, in a simulation of its own.
+  `evaluate(positions, cells=None)` takes `(K, N, 3)` positions in the
+  order of the input (an array, a `numpy.memmap`, or an iterable of states
+  or of pairs `(positions, cell)`, read in turn) and returns, per frame,
+  the potential energy that the forces sample (D210), the virial, the
+  volume, and the columns of `observe`, with `vjp(cotangent)`, the product
+  with the derivative in the tunables (the Jacobian is kept up to
+  `jacobian_bytes`, 256 MiB, and the frames are evaluated again above it),
+  and `depends`, the tunables that each output may read. A frame takes one
+  evaluation: 1.05 ms on the dipeptide in water and 6.85 ms on JAC on an
+  RTX 3090 in mixed precision, against 2.55 ms and 16.8 ms through a
+  borrow, a commit, and `gradient()`. `mdir.torch.evaluate(evaluator,
+  theta, positions, cells)` is the same as an operation of PyTorch whose
+  backward is that product, for fits by reweighting; an output whose
+  derivative in the tunables is not implemented (the virial) raises in a
+  backward unless it is detached. `mdir.KB` is Boltzmann's constant in
+  kJ/(mol K). Each frame has its cell, the tilts of a triclinic cell
+  included (D238), and `evaluator.evaluate(mdir.read_h5md(file))` evaluates
+  the frames of an H5MD trajectory (D239) one at a time, to the bit of the
+  states for a file in f64. See [docs/python-frames.md](docs/python-frames.md).
+
 - The tilts of a triclinic cell in a writable borrow (D238,
   #206, `docs/python-dlpack.md`): for a simulation whose program was
   compiled from a triclinic cell, `Borrow.cell` is the diagonal

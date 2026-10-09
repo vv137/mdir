@@ -81,8 +81,9 @@ the input contract of the frame evaluator (#249, its design document):
 the positions in the order of the input and the `(3,)` edges of the cell in
 nm, so `evaluator.evaluate(mdir.read_h5md(path))` reads one frame at a
 time. A triclinic frame unpacks with the `(3, 3)` matrix of the cell
-vectors in rows; the evaluator takes such frames once it takes the tilts
-(#206, question Q10 of #250).
+vectors in rows; the evaluator takes a `Frame` with the tilts of its
+`cell`, and such a pair as well
+([python-frames.md](python-frames.md), `python-frames-h5md.test`).
 
 The reader reads the files of this writer and any H5MD file with
 `particles/<group>/position` and a `box` (explicit or fixed step storage,

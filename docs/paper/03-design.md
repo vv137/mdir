@@ -911,6 +911,71 @@ cutoff, the excluded pairs $-fq_iq_j\operatorname{erf}(\beta r)/r$, and the
 pairs three bonds apart are sums that gather the charges, differentiated
 as fields.
 
+### The energies of stored frames and their product
+
+A fit evaluates $U_{\boldsymbol\theta}$ at the frames again for every
+$\boldsymbol\theta$ that it tries, while the frames stay those sampled at
+$\hat{\boldsymbol\theta}$. The frame evaluator
+(D[frame-evaluator], `docs/python-frames.md`) does this in a simulation of
+its own, apart from the one that samples: each frame, given in the order of
+the input with its cell, becomes the state of that simulation and is
+evaluated once, with its neighbor structures built anew, since a stored
+frame is not near the one before it. What the host adds to the energy
+follows the volume of each frame (the tails and $E_\text{disp}$,
+$E_\text{bg}$, all $\propto 1/V$; Section 5.4), so frames of a run at
+constant pressure are evaluated each at its own volume.
+
+*The product.* A framework differentiates a loss $L$ of the reweighted
+averages backwards: it first needs every $U_{\boldsymbol\theta}(S_n)$,
+forms the weights, and only then holds the cotangent of each energy. From
+$\partial w_m/\partial U(S_n) = -w_n(\delta_{mn} - w_m)/k_BT$,
+
+$$
+g_n = \frac{\partial L}{\partial U(S_n)}
+= -\frac{1}{k_BT}\,\frac{\partial L}{\partial\langle O\rangle_{\boldsymbol\theta}}\,
+w_n\big(O(S_n) - \langle O\rangle_{\boldsymbol\theta}\big),
+\qquad
+\frac{\partial L}{\partial\theta_m}
+= \sum_n g_n\,\frac{\partial U(S_n)}{\partial\theta_m},
+$$
+
+which is the covariance of the gradient above times $\partial L/\partial
+\langle O\rangle$, for an $O$ that does not read $\boldsymbol\theta$. So
+the evaluator owes the framework a vector-Jacobian product, $\mathbf
+g\mapsto\sum_n g_n\,\partial U(S_n)/\partial\boldsymbol\theta$, for a
+$\mathbf g$ that does not exist during the pass that computes the
+energies. It keeps the rows $\partial U(S_n)/\partial\boldsymbol\theta$
+of that pass, 8 bytes for each frame and entry, while they fit a bound, and
+the product is then a product of matrices on the host; above the bound it
+evaluates the frames a second time with $\mathbf g$ in hand. The
+derivative adds a tenth to an evaluation, so keeping the rows is nearly
+free, and a fit of a few entries, the common case, never pays the second
+pass.
+
+*The reference.* The weights are ratios of two densities at the same
+stored configuration, so $U_{\hat{\boldsymbol\theta}}(S_n)$ is evaluated
+by the same evaluator at the same stored frame, not taken from the run. At
+$\boldsymbol\theta = \hat{\boldsymbol\theta}$ the two energies are then
+equal to the bit, $w_n = 1/N_S$ for $N_S$ frames, and the number of
+effective frames is $N_S$. A file that rounds the positions changes the
+sample, not the consistency of the weights; how much it may round is a
+question of the potential. Positions in f32 change $U$ of the dipeptide in
+water by $2\times10^{-3}$ kJ/mol; positions rounded to $10^{-3}$ nm
+stretch its flexible bonds by $48 \pm 6$ kJ/mol, a spread of 2.4 $k_BT$
+at 300 K, and such frames no longer sample $e^{-U_{\hat{\boldsymbol
+\theta}}/k_BT}$.
+
+*What is not differentiated.* The first term of the gradient,
+$\langle\partial O/\partial\boldsymbol\theta\rangle$, is not zero for
+an observable that reads the parameters at fixed positions: the virial,
+or the force of a wall whose stiffness is fitted, for which it cancels the
+covariance exactly in an ideal gas (#140). The evaluator returns such
+outputs but does not yet differentiate them, and the three outcomes of
+Section 6.8 extend to them: for each output it states which tunables it
+may read; one that reads none is a constant by proof, and a backward
+through one that may read a tunable is an error, never a zero. A second
+derivative is an error likewise.
+
 ## 3.7 The objects of MDIR, for developers
 
 A developer meets the same few objects at every level; Table 3.4 lists

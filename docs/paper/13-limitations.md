@@ -161,8 +161,14 @@ so each adapter needs explicit derivative rules. Begun
 tunables at the state of a simulation, for constants of pair terms,
 parameters of tuple terms, $\sigma$ and $\epsilon$ per type and by pairs
 of types, and the charges, under a Coulomb cutoff and with particle mesh
-Ewald (D231). Remaining: the evaluation at stored
-frames, and the adapters.
+Ewald (D231); and the evaluation at stored frames with
+its vector-Jacobian product in the tunables, as an operation of PyTorch
+(D[frame-evaluator], Section 3.6), at one start of an activation per frame:
+1.05 ms on the dipeptide in water and 6.85 ms on JAC, 15 and 31 steps.
+Remaining: the frames inside one activation, at a few steps each; the
+gradients in the positions and the strain as outputs; the derivative of
+the virial and of observed terms in the parameters, which a fit to the
+pressure needs; and the JAX adapter.
 
 *M3 and M4.* Learned potentials behind a versioned interface, one model on
 one GPU first. The distributed work begins with a graph of the
