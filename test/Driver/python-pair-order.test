@@ -1,0 +1,15 @@
+# REQUIRES: python-api
+# The order of the pair terms of the Python model on the CPU when the
+# correction for the dispersion leaves one out (#238): a term whose tail
+# diverges before and after one whose tail is integrated, and a tunable of
+# the term after it.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5
+# RUN: %mdir_python %S/Inputs/python_pair_order.py %t CPU | FileCheck %s
+# CHECK: CPU Double: far, r8 and r8, far give the same potential, virial, pressure and forces
+# CHECK: CPU Double: the tail of r8 after far -0.033382762 against its closed form -0.033382762
+# CHECK: CPU Double: a tunable c8 of r8 after far gives the program compiled with its value
+# CHECK: CPU Mixed: far, r8 and r8, far give the same potential, virial, pressure and forces
+# CHECK: CPU Mixed: the tail of r8 after far
+# CHECK: CPU Mixed: a tunable c8 of r8 after far gives the program compiled with its value
+# CHECK: python pair order passed
