@@ -772,7 +772,7 @@ PYBIND11_MODULE(_core, m) {
     return readCheckpointFile(path);
   }, py::arg("path"));
   // The frames of a trajectory in H5MD, read one at a time
-  // (D[h5md-reporter], docs/python-h5md.md).
+  // (D239, docs/python-h5md.md).
   struct Frame { driver::H5MDFrame frame; size_t particles; };
   static auto frameVectors = [](const Frame &f, const std::vector<char> &bytes) -> py::object {
     if (bytes.empty() && f.particles > 0) return py::none();
@@ -944,7 +944,7 @@ PYBIND11_MODULE(_core, m) {
     .def_readonly("file", &TrajectoryReporter::file)
     .def_readonly("period", &TrajectoryReporter::period)
     .def_readonly("format", &TrajectoryReporter::format);
-  // Frames of the state without loss, in H5MD (D[h5md-reporter],
+  // Frames of the state without loss, in H5MD (D239,
   // docs/python-h5md.md): the trajectory of the simulation in a third
   // format, with the velocities and the forces if asked.
   struct H5MDReporter { std::string file; int64_t period; bool single, velocities, forces, variable; };
@@ -1257,7 +1257,7 @@ PYBIND11_MODULE(_core, m) {
         for (const auto &c : callbacks) next = std::min(next, (now / c.period + 1) * c.period);
         if (saves) next = std::min(next, (now / saves->period + 1) * saves->period);
         // A frame of the state with its velocities or forces ends a part
-        // at its step, with a step of energy (D[h5md-reporter]).
+        // at its step, with a step of energy (D239).
         int64_t frame = s.simulation->getNextStateFrame();
         if (frame >= 0) next = std::min(next, frame);
         bool atCallback = next < end || (!callbacks.empty() && llvm::any_of(callbacks,

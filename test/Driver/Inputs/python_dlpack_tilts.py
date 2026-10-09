@@ -1,4 +1,4 @@
-"""The tilts of a triclinic cell in a writable borrow (D[borrow-tilts],
+"""The tilts of a triclinic cell in a writable borrow (D238,
 docs/python-dlpack.md), on 403 waters in a rhombic dodecahedron, written by
 consumers that do not use MDIR's code: NumPy's from_dlpack on the CPU, and
 on a GPU a reader of the capsule in ctypes that writes with the CUDA driver

@@ -960,7 +960,7 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   if (!output.hasTrajectory)
     return;
   if (output.trajectory->isExact()) {
-    // The state as the run has it, in nm (D[h5md-reporter]): a buffer of
+    // The state as the run has it, in nm (D239): a buffer of
     // f32 (the single mode) widens to f64 without loss.
     std::vector<double> exact = readVectors(positions, ids, output.state);
     checkSpread(output, exact, step);

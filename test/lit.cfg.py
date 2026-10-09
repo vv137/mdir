@@ -118,7 +118,7 @@ if config.mdir_hdf5:
     config.available_features.add("hdf5")
 
 # h5py, an independent reader of the trajectories in H5MD
-# (D[h5md-reporter]), and MDAnalysis if it is there: the interpreter of the
+# (D239), and MDAnalysis if it is there: the interpreter of the
 # tests if it imports h5py, or one that lit is given with
 # -Dh5md_python=<interpreter>, which need not import the module of this
 # build.

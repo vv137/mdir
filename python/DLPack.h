@@ -60,7 +60,7 @@ struct Lease {
 /// of one of them holds them as well, so that they outlive the Borrow.
 struct Staging {
   /// The diagonal a_x, b_y, c_z, which `Borrow.cell` lends, and the tilts
-  /// b_x, c_x, c_y, which `Borrow.tilt` lends (D[borrow-tilts]).
+  /// b_x, c_x, c_y, which `Borrow.tilt` lends (D238).
   std::array<double, 6> cell{};
   std::vector<std::vector<double>> tunables;
 };
@@ -254,7 +254,7 @@ inline View take(std::shared_ptr<compiler::Simulation> simulation) {
 /// A writable borrow (D229): the buffers of the positions
 /// and the velocities where the program keeps them, and buffers of its own
 /// with the diagonal of the cell, the tilts of a triclinic cell
-/// (D[borrow-tilts]), and the values of the tunables.
+/// (D238), and the values of the tunables.
 struct Borrow {
   std::shared_ptr<ViewState> state;
   Buffer positions, velocities, ids, cell, tilt;

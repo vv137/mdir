@@ -132,7 +132,7 @@ that a run in parts is the run in one part to the bit
 block runs while a consumer holds them (D220), and writable
 borrows of them with an explicit commit, which rebuilds what depends on
 the fields written (D229), the tilts of a triclinic cell among them
-(D[borrow-tilts]); read-only views
+(D238); read-only views
 of the topology, with the constraints of a compiled program, and the masks
 of the control file evaluated from Python (D221); checkpoints
 shared with the CLI, which either front end continues

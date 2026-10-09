@@ -727,7 +727,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   a->firstSize = minimizationSize;
   // The tilts are those of the state of the host, which a commit of a
   // borrow may have changed since the program was built
-  // (D[borrow-tilts]); the other values are the program's.
+  // (D238); the other values are the program's.
   static const char *const tiltNames[3] = {"tilt_bx", "tilt_cx", "tilt_cy"};
   for (const Program::StartValue &value : p.startValues) {
     double taken = value.value;
@@ -1493,7 +1493,7 @@ llvm::Error Simulation::setReports(const Reports &given) {
       }
       std::unique_ptr<driver::TrajectoryWriter> writer;
       if (given.trajectoryFormat == driver::TrajectoryFormat::H5MD) {
-        // The frames of the state without loss (D[h5md-reporter]). Every
+        // The frames of the state without loss (D239). Every
         // report of a simulation is a step of energy (D207), so every
         // frame has its potential energy.
         driver::H5MDOptions options;

@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- The tilts of a triclinic cell in a writable borrow (D[borrow-tilts],
+- The tilts of a triclinic cell in a writable borrow (D238,
   #206, `docs/python-dlpack.md`): for a simulation whose program was
   compiled from a triclinic cell, `Borrow.cell` is the diagonal
   $a_x, b_y, c_z$ (it raised `UnsupportedError`) and the new `Borrow.tilt`
@@ -29,7 +29,7 @@ format, or the outputs; every such change is listed under **Changed** or
   written to it in spite of the flag are refused at the commit;
   `Borrow.cell` of such a program is unchanged. No control-file key and
   no file format changes.
-- Frames without loss, in H5MD (D[h5md-reporter], #251): a third
+- Frames without loss, in H5MD (D239, #251): a third
   trajectory format that holds the positions of the state as the run has
   them, in nm, in f64 (or f32), with the cell of every frame, triclinic
   included, the step, and the time, for the reweighting of stored frames.
@@ -189,7 +189,7 @@ format, or the outputs; every such change is listed under **Changed** or
   borrow that ends without a commit (`abandon()`, the end of a `with`
   block) is undone to the bit. Writes through a read-only `view()` stay
   undefined. A triclinic cell is not taken yet (#206; taken since
-  D[borrow-tilts], above). No control-file key and no file format changes.
+  D238, above). No control-file key and no file format changes.
 - Read-only DLPack views of a Python simulation (D220, #131,
   `docs/python-dlpack.md`): `Simulation.view()` returns a `View` of the
   positions, velocities, and forces where the program keeps them, on the
@@ -582,7 +582,7 @@ format, or the outputs; every such change is listed under **Changed** or
   from before in the last bits where a step of energy met such an
   argument; the default mode and runs on a GPU are unchanged.
 - A Python simulation that continues from a checkpoint of a triclinic cell
-  runs with the tilts of the checkpoint (#257, D[borrow-tilts]). It ran
+  runs with the tilts of the checkpoint (#257, D238). It ran
   with the diagonal of the checkpoint and the tilts that its program was
   compiled from, while `State.cell` reported the cell of the checkpoint:
   after an NPT run of `mdir run` in a rhombic dodecahedron, whose tilts
@@ -591,7 +591,7 @@ format, or the outputs; every such change is listed under **Changed** or
   kJ/mol, and failed within 50 steps. A program compiled from the state of
   the checkpoint, and an orthorhombic cell, were not affected.
 - The frames of a `TrajectoryReporter` that is open when a writable borrow
-  commits a cell take the committed cell (D[borrow-tilts]). They kept the
+  commits a cell take the committed cell (D238). They kept the
   cell of before: after a commit of the edges and the positions scaled by
   1.01, the next frame of a DCD had the edges of before, 0.03 nm short.
 - The Python wheels and the container image carry the notices of the

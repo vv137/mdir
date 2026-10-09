@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # UNSUPPORTED: hdf5
-# Without HDF5 (D[h5md-reporter]), the reporter and the reader of a
+# Without HDF5 (D239), the reporter and the reader of a
 # trajectory in H5MD raise UnsupportedError, and `mdir run` refuses the
 # format, as they refuse checkpoints. Only a build without HDF5 runs it.
 # RUN: rm -rf %t && mkdir -p %t

@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5
-# Frames without loss in H5MD (D[h5md-reporter]): the frames of
+# Frames without loss in H5MD (D239): the frames of
 # `H5MDReporter` and of `[output] trajectory = "x.h5md"`, read back with
 # `read_h5md`, against the states of the run to the bit, in f64 and in f32,
 # with an orthorhombic and a triclinic cell, without and with a barostat;

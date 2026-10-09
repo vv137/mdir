@@ -1,4 +1,4 @@
-# Frames without loss: the H5MD trajectory (D[h5md-reporter])
+# Frames without loss: the H5MD trajectory (D239)
 
 Issue #251. Status: implemented. What was decided in the design and what
 the maintainer decided on the pull request is listed under

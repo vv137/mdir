@@ -1,6 +1,6 @@
 // Trajectories: the positions of the particles at intervals, in DCD or in
 // XTC (D141), or the frames of the state without loss in H5MD
-// (D[h5md-reporter], mdir/Driver/H5MD.h).
+// (D239, mdir/Driver/H5MD.h).
 
 #ifndef MDIR_DRIVER_TRAJECTORY_H
 #define MDIR_DRIVER_TRAJECTORY_H

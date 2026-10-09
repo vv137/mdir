@@ -2,7 +2,7 @@
 // Phys. Commun. 185, 1546 (2014), and the units module, version 1.0, of
 // the same specification.
 //
-// The layout of a file (D[h5md-reporter], docs/python-h5md.md):
+// The layout of a file (D239, docs/python-h5md.md):
 //
 //   /h5md                            version, author, creator, modules/units
 //   /particles/all/box               dimension, boundary

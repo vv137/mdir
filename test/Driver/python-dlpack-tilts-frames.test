@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The use of the frame evaluator (#138) with a triclinic cell, on the CPU
-# (D[borrow-tilts], docs/python-dlpack.md): 20 frames of a run of
+# (D238, docs/python-dlpack.md): 20 frames of a run of
 # `mdir run` at constant pressure in a rhombic dodecahedron, whose barostat
 # scales the tilts with the cell, are put one by one into a second
 # simulation through a writable borrow; the potential, the virial, the

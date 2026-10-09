@@ -1,7 +1,7 @@
 // Trajectories in the H5MD format, version 1.1: de Buyl et al., Comput.
 // Phys. Commun. 185, 1546 (2014). The frames of the state as the run has
 // them: positions in f64 or f32 in nm, the cell, the step and the time,
-// and optionally the velocities and the forces (D[h5md-reporter],
+// and optionally the velocities and the forces (D239,
 // docs/python-h5md.md).
 
 #ifndef MDIR_DRIVER_H5MD_H

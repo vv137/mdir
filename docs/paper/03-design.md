@@ -543,7 +543,7 @@ before it writes the buffers.
 A consumer that writes takes a *borrow* instead
 (D229): the same buffers of the positions and the
 velocities without the read-only flag, and buffers of the host with the
-diagonal of the cell, the tilts of a triclinic cell (D[borrow-tilts]), and
+diagonal of the cell, the tilts of a triclinic cell (D238), and
 the values of the tunables. A borrow excludes every
 other operation on the state, views included. Its commit is explicit: it
 checks what was written, refuses a change of the tunables that would
@@ -729,7 +729,7 @@ third trajectory format, H5MD 1.1
 [[deBuyl2014]](references.md#debuyl2014), with the positions of the state
 in f64 or f32 in nm, the cell of every frame, and, from a Python
 simulation, the velocities, the forces, the potential energy of the step,
-and the version of $\hat{\boldsymbol\theta}$ (D[h5md-reporter],
+and the version of $\hat{\boldsymbol\theta}$ (D239,
 `docs/python-h5md.md`; Appendix A.6). The host function that takes the
 frames of DCD and XTC is handed the buffer of the state before their
 conversion, so such a frame costs a copy and a write and the compiled

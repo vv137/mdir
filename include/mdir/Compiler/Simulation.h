@@ -148,7 +148,7 @@ public:
     std::string trajectoryPath;
     driver::TrajectoryFormat trajectoryFormat = driver::TrajectoryFormat::DCD;
     int64_t framePeriod = 0;
-    /// A trajectory in H5MD (D[h5md-reporter]): its positions in f32
+    /// A trajectory in H5MD (D239): its positions in f32
     /// rather than f64, and whether its frames hold the velocities and the
     /// forces of the state. With either, the program does not write the
     /// frames: the front end ends a part at each (`getNextStateFrame`) and
@@ -314,7 +314,7 @@ public:
   /// orthorhombic cell, and its tilts b_x, c_x, c_y.
   std::array<double, 6> getCell() const;
   /// Whether the program was compiled for a triclinic cell, whose tilts a
-  /// borrow may write (D[borrow-tilts]).
+  /// borrow may write (D238).
   bool hasTriclinicCell() const;
   bool isPeriodic() const { return prepared.control.periodic; }
   /// The number of commits that changed the positions, the velocities, and
@@ -481,7 +481,7 @@ private:
   /// of the state, of the next activation, of the frames, and of a
   /// checkpoint.
   void setCell(const std::array<double, 6> &cell);
-  /// What a commit asks of a cell that it is given (D[borrow-tilts]).
+  /// What a commit asks of a cell that it is given (D238).
   llvm::Error checkCommittedCell(const std::array<double, 6> &cell) const;
   SimulationView describeView() const;
   /// Waits for the work of consumers of views before the buffers are

@@ -1,4 +1,4 @@
-"""The H5MD files of MDIR (D[h5md-reporter]) read by programs that are not
+"""The H5MD files of MDIR (D239) read by programs that are not
 MDIR: h5py with the paths of the specification written out by hand, and
 the H5MD reader of MDAnalysis if it is installed, which opens the files
 with `strings = "variable"` as they are written. The states to compare

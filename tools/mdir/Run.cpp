@@ -1060,7 +1060,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       }
     }
     if (control->trajectoryFormat == TrajectoryFormat::H5MD) {
-      // The frames of the state without loss (D[h5md-reporter]): the
+      // The frames of the state without loss (D239): the
       // potential energy of a frame is that of the row of its step, where
       // every frame is a step of energy.
       H5MDOptions options;

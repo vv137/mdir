@@ -1,4 +1,4 @@
-# DLPack views and writable borrows of a simulation (D220, D229, D[borrow-tilts])
+# DLPack views and writable borrows of a simulation (D220, D229, D238)
 
 Issue #131, the first part of item 6 of the M2 sequence
 ([python-m2.md](python-m2.md), Sections 3 to 5): read-only views. Writable
@@ -238,7 +238,7 @@ Issue #136, the second part of item 6 and the last open item of M2a.
 Status: implemented; the four questions put to the maintainer on PR #204
 were decided as recommended
 ([Maintainer rulings on writable borrows](#maintainer-rulings-on-writable-borrows)).
-The tilts of a triclinic cell (#206, D[borrow-tilts]) are
+The tilts of a triclinic cell (#206, D238) are
 [below](#tilts-of-a-triclinic-cell-dborrow-tilts), with the maintainer's
 rulings on PR #253.
 
@@ -272,7 +272,7 @@ evaluation first, no failure) and no live lease.
 | `positions` | `(N, 3)`, the state's type, on the device of the simulation, in the order of the program | the program's buffer | taken as the positions (nm) |
 | `velocities` | `(N, 3)`, the state's type, as above | the program's buffer | taken as the velocities (nm/ps, at `time + velocity_offset * timestep`) |
 | `cell` | `(3,)` float64 on the host: the diagonal $a_x, b_y, c_z$ of the cell (nm), `Cell.diagonal`, the edges of an orthorhombic cell | a buffer of the borrow, holding the diagonal | taken as the diagonal if the bits of the cell changed |
-| `tilt` | `(3,)` float64 on the host: the tilts $b_x, c_x, c_y$ of a triclinic cell (nm), `Cell.tilt` (D[borrow-tilts]); for a program compiled for an orthorhombic cell, three zeros, read-only | a buffer of the borrow, holding the tilts | taken as the tilts if the bits of the cell changed |
+| `tilt` | `(3,)` float64 on the host: the tilts $b_x, c_x, c_y$ of a triclinic cell (nm), `Cell.tilt` (D238); for a program compiled for an orthorhombic cell, three zeros, read-only | a buffer of the borrow, holding the tilts | taken as the tilts if the bits of the cell changed |
 | `tunables` | a dict of names to `(M,)` float64 on the host | buffers of the borrow, holding the values | `Simulation.tunables.update` of the entries whose bits changed (D213) |
 | `ids` | `(N,)` int32, read-only | | |
 | `step`, `time`, `velocity_offset`, `device` | as in `View` | | |
@@ -401,7 +401,7 @@ positions are not scaled with a new cell, and the energy that the write
 adds or removes is not booked in the conserved quantity. A simulation
 compiled from the same state behaves the same.
 
-### Tilts of a triclinic cell (D[borrow-tilts])
+### Tilts of a triclinic cell (D238)
 
 Issue [#206](https://github.com/vv137/mdir/issues/206), a follow-up of
 D229, under which a triclinic cell was refused; wanted before the frame
@@ -734,7 +734,7 @@ writes through a read-only view stay undefined and not detected, and
 `borrow()` is the tracked path; the cell of a borrow is the edges of an
 orthorhombic cell, a triclinic cell is refused with a message that says it
 is not supported yet, and the tilts are
-[#206](https://github.com/vv137/mdir/issues/206) (since D[borrow-tilts],
+[#206](https://github.com/vv137/mdir/issues/206) (since D238,
 `Borrow.tilt`); the versions of the
 state are not recorded in checkpoints; leaving a `with` block without a
 commit abandons the borrow.

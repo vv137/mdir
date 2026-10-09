@@ -1,4 +1,4 @@
-"""Without HDF5 (D[h5md-reporter]): UnsupportedError from the reporter and
+"""Without HDF5 (D239): UnsupportedError from the reporter and
 the reader of a trajectory in H5MD."""
 import sys
 

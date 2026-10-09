@@ -459,7 +459,7 @@ values, and the versions of a simulation without the borrow, to the bit.
 A consumer kernel still writing when its tensor is deleted and the borrow
 committed is waited for; without the wait the committed velocities differ
 by 2.87 nm/ps (`python-dlpack-write*.test`).
-For a triclinic cell (D[borrow-tilts]), commits of the tilts of 403 waters
+For a triclinic cell (D238), commits of the tilts of 403 waters
 in a rhombic dodecahedron, by 0.01 nm, by 2.5 nm with a strain of 8%, to
 another reduced basis of the same lattice, and scaled with the diagonal as
 a barostat scales them, equal a simulation compiled from the committed

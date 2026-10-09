@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # The tilts of a triclinic cell in a writable borrow on a GPU
-# (D[borrow-tilts], docs/python-dlpack.md), Inputs/python_dlpack_tilts.py
+# (D238, docs/python-dlpack.md), Inputs/python_dlpack_tilts.py
 # with a reader of the capsule in ctypes that writes with the CUDA driver
 # API on a stream of its own: 403 waters in a
 # rhombic dodecahedron, in the deterministic mode.

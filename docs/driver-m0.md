@@ -89,7 +89,7 @@ regard to case.
 | `[output]` | `log` | The log in a file as well as on the standard output: every line that the run prints there, from its start; a continued run appends to it (D149). |
 | | `manifest` | Optional execution history in version-1 JSON Lines (D168): build and input hashes, resolved settings, device, warnings, and start/end events. Disabled if omitted; fresh runs back up an existing file, continuations append history, and `--no-append` uses the part filename. |
 | | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). With a barostat, `volume` (Å³) and `area_xy` (Å²), the xy face spanned by the first two cell vectors, follow the energy columns (D170). |
-| | `trajectory` | Positions, in DCD (`.dcd`, Å in f32), in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), or without loss in H5MD (`.h5md`, the positions of the state in nm with the cell of every frame, D[h5md-reporter]), by the extension of the name (D141). |
+| | `trajectory` | Positions, in DCD (`.dcd`, Å in f32), in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), or without loss in H5MD (`.h5md`, the positions of the state in nm with the cell of every frame, D239), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, `XTC`, or `H5MD`. A trajectory in H5MD under another extension, such as `.h5`, needs the name of the format: `.h5` is not taken for it, being the extension of checkpoints. |
 | | `trajectory_precision` | Of a trajectory in H5MD: `DOUBLE` (the default), positions in f64, the type of the state in the mixed and the double mode, so nothing is rounded, or `SINGLE`, positions in f32, the state rounded to the nearest f32, in half the space. An error with DCD and XTC. |
 | | `trajectory_strings` | Of a trajectory in H5MD: `FIXED` (the default), the `unit` attributes as strings of fixed length, the form of the units module of H5MD, or `VARIABLE`, as strings of variable length; the datasets are the same. `/parameters/mdir/strings` records the form, and a continued run that asks for the other is refused. [python-h5md.md](python-h5md.md#strings) lists which readers were found to read which form. An error with DCD and XTC. |
@@ -709,7 +709,7 @@ there is no restart file besides it.
 | The energies | `energy` | every `energy_interval` steps: the rows of the log | columns |
 | The terms over centers | `pull` | every `energy_interval` steps (D145) | columns |
 | dH/dλ and the energies of the states | `free_energy` | every `energy_interval` steps (D161) | columns |
-| The trajectory | `trajectory`, `trajectory_format`, `trajectory_precision`, `trajectory_strings` | every `trajectory_interval` steps | DCD or XTC (D141), or H5MD without loss (D[h5md-reporter], [python-h5md.md](python-h5md.md)) |
+| The trajectory | `trajectory`, `trajectory_format`, `trajectory_precision`, `trajectory_strings` | every `trajectory_interval` steps | DCD or XTC (D141), or H5MD without loss (D239, [python-h5md.md](python-h5md.md)) |
 | The manifest | `manifest` | at execution start and end | JSON Lines (D168) |
 | The checkpoint | `checkpoint` | every `checkpoint_interval` steps, and at the end of a minimization; the one before as `<checkpoint>.prev` (D132) | H5MD (Section 2.6) |
 
@@ -839,7 +839,7 @@ mdir: note: trajectory output 'md.xtc' exists; mdir run keeps it as '#md.xtc.1#'
 |---|---|---|
 | 1 | The tables and keywords of the control file | As in Section 1 (D35) |
 | 2 | The units of the control file | Å, kcal/mol, ps (D36) |
-| 3 | The trajectory format | DCD first (D37); XTC as well (D141); H5MD for frames without loss (D[h5md-reporter]) |
+| 3 | The trajectory format | DCD first (D37); XTC as well (D141); H5MD for frames without loss (D239) |
 | 4 | The checkpoint | H5MD (D26, D40), with HDF5 1.14.6, which `scripts/build-hdf5.sh` installs |
 | 5 | The TOML library | toml++, in the repository (D38) |
 | 6 | The schedule | Compiled (D39) |
@@ -861,7 +861,7 @@ mdir: note: trajectory output 'md.xtc' exists; mdir run keeps it as '#md.xtc.1#'
 | The particles in the order of their positions, `spatial_order` | Implemented |
 | `nbupdate_period` | Not implemented; the keyword is an error |
 | Trajectory in the XTC format | Not implemented |
-| Velocities in the trajectory, `dcdvelfile` | Not in the trajectory of `mdir run`; `H5MDReporter(velocities=True)` of a Python simulation writes them (D[h5md-reporter]) |
+| Velocities in the trajectory, `dcdvelfile` | Not in the trajectory of `mdir run`; `H5MDReporter(velocities=True)` of a Python simulation writes them (D239) |
 
 ### Expression parameter names (D188)
 

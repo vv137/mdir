@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The tilts of a triclinic cell in a writable borrow on the CPU
-# (D[borrow-tilts], docs/python-dlpack.md), Inputs/python_dlpack_tilts.py
+# (D238, docs/python-dlpack.md), Inputs/python_dlpack_tilts.py
 # with NumPy's from_dlpack as the consumer that writes: 403 waters in a
 # rhombic dodecahedron, in the deterministic mode.
 # RUN: rm -rf %t && mkdir -p %t

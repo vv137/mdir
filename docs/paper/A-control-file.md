@@ -81,7 +81,7 @@ uses in the expression. This check does not change keys or file formats.
 | `[output]` | `log` | The log in a file as well as on the standard output: every line that the run prints there, from its start; a continued run appends to it (D149). |
 | | `manifest` | Optional execution history in version-1 JSON Lines (D168): build and input hashes, resolved settings, device, warnings, and start/end events. Disabled if omitted; fresh runs back up an existing file, continuations append history, and `--no-append` uses the part filename. |
 | | `energy` | The rows of the log as a file of columns: a line of names, a line of units, and a row for each output (D149). With a barostat, `volume` (Å³) and `area_xy` (Å²), the xy face spanned by the first two cell vectors, follow the energy columns (D170); this is membrane area only when the membrane normal is along z, and is not area per lipid. |
-| | `trajectory` | Positions, in DCD (`.dcd`, Å in f32), in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), or without loss in H5MD (`.h5md`, the positions of the state in nm with the cell of every frame, D[h5md-reporter]), by the extension of the name (D141). |
+| | `trajectory` | Positions, in DCD (`.dcd`, Å in f32), in the compressed XTC of GROMACS (`.xtc`, nm to a thousandth), or without loss in H5MD (`.h5md`, the positions of the state in nm with the cell of every frame, D239), by the extension of the name (D141). |
 | | `trajectory_format` | `AUTO` (the default, from the extension), `DCD`, `XTC`, or `H5MD`. A trajectory in H5MD under another extension, such as `.h5`, needs the name of the format: `.h5` is not taken for it, being the extension of checkpoints. |
 | | `trajectory_precision` | Of a trajectory in H5MD: `DOUBLE` (the default), positions in f64, the type of the state in the mixed and the double mode, so nothing is rounded, or `SINGLE`, positions in f32, the state rounded to the nearest f32, in half the space. An error with DCD and XTC. |
 | | `trajectory_strings` | Of a trajectory in H5MD: `FIXED` (the default), the `unit` attributes as strings of fixed length, the form of the units module of H5MD, or `VARIABLE`, as strings of variable length; the datasets are the same. `/parameters/mdir/strings` records the form, and a continued run that asks for the other is refused. [python-h5md.md](../python-h5md.md#strings) lists which readers were found to read which form. An error with DCD and XTC. |
@@ -399,7 +399,7 @@ takes its name, and its directory after. `mdir checkpoint
 --print=fingerprint` lists the fingerprint, and docs/driver-m0.md, Section
 2.6, says what a run that takes a checkpoint compares.
 
-A trajectory in H5MD (`trajectory = "run.h5md"`, D[h5md-reporter]) is a
+A trajectory in H5MD (`trajectory = "run.h5md"`, D239) is a
 file of the same specification with the units module (version 1.0, `SI`),
 the numbers of the state in nm, ps, and kJ/mol, the rows of a value in the
 order of the input, and one row per frame:

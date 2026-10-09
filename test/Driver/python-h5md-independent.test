@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5, h5py
-# The trajectories in H5MD (D[h5md-reporter]) read by programs that are not
+# The trajectories in H5MD (D239) read by programs that are not
 # MDIR: h5py with the paths of the specification written out by hand
 # (groups, attributes, types, units, hard links, the states of the run to
 # the bit, and a file that a killed run left), and the H5MD reader of

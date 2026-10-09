@@ -1634,7 +1634,7 @@ Error Reader::readOutput(const toml::table &table) {
     return error;
   // The format: from the extension of the name (AUTO, the default), or as
   // the file says (D141).
-  // H5MD holds the frames without loss (D[h5md-reporter]); only `.h5md`
+  // H5MD holds the frames without loss (D239); only `.h5md`
   // selects it by the extension, since `.h5` is that of the checkpoints.
   enum class Format { Auto, DCD, XTC, H5MD };
   Format format = Format::Auto;

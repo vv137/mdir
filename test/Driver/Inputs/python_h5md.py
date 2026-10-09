@@ -1,4 +1,4 @@
-"""Frames without loss in H5MD (D[h5md-reporter]): the frames that
+"""Frames without loss in H5MD (D239): the frames that
 `H5MDReporter` and `[output] trajectory = "x.h5md"` write, read back with
 `read_h5md`, against the states of the run, bit for bit; continuation, a
 killed run, backups, and refusals."""
