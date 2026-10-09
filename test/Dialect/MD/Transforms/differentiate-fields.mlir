@@ -197,3 +197,76 @@ md.function @fifth(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
       : (!vec, !md.cell, !real, !grid) -> (f64, !real)
   md.return %e, %g : f64, !real
 }
+
+// -----
+
+!vec = !md.field<@atoms, 3 x f64>
+!real = !md.field<@atoms, f64>
+!pairs = !md.relation<@atoms, 2, unordered>
+md.particle_set @atoms
+
+// The derivative in a number and the derivative in a field, of one energy
+// (#256): two first derivatives, neither of which enters the other. The
+// derivative in the number %a copies each sum that reads it with the fields
+// that the sum gathers, among them %q, which the kernel of the first does
+// not read; the derivative in %q, requested after it, follows the sums of
+// the potential and not those copies. The term a / r gives nothing in %q,
+// and a q_i q_j / r gives a q_j / r.
+//
+// CHECK-LABEL: md.function @mixed.energy_derivative3_derivative2(
+// CHECK-SAME: %[[A:[^:]*]]: f64)
+// CHECK: %[[DA1:.*]] = md.sum_relation %{{.*}}, %{{.*}}, %{{.*}} gather(%{{.*}} : !md.field<@atoms, f64>) exchange(symmetric, derived)
+// CHECK: %[[DA2:.*]] = md.sum_relation %{{.*}}, %{{.*}}, %{{.*}} gather(%{{.*}} : !md.field<@atoms, f64>) exchange(symmetric, derived)
+// CHECK: %[[DA:.*]] = arith.addf %[[DA1]], %[[DA2]] : f64
+// CHECK: %[[G:.*]] = md.gather_relation %{{.*}}, %{{.*}}, %{{.*}} gather(%{{.*}} : !md.field<@atoms, f64>)
+// CHECK-SAME: exchange(none, derived)
+// CHECK: ^bb0(%[[R:[^:]*]]: f64, %{{[^:]*}}: vector<3xf64>, %{{[^:]*}}: f64, %[[QJ:[^:]*]]: f64):
+// CHECK: %[[AQ:.*]] = arith.mulf %[[A]], %[[QJ]] : f64
+// CHECK: %[[K:.*]] = arith.divf %[[AQ]], %[[R]] : f64
+// CHECK: md.yield %[[K]] : f64
+// CHECK-NOT: md.gather_relation
+// CHECK: md.return %{{.*}}, %[[DA]], %[[G]] : f64, f64, !md.field<@atoms, f64>
+//
+// The same field with the requests in the other order.
+// CHECK-LABEL: md.function @mixed.derivative2_derivative3(
+// CHECK: %[[G2:.*]] = md.gather_relation
+// CHECK-NOT: md.gather_relation
+// CHECK: md.return %[[G2]], %{{.*}} : !md.field<@atoms, f64>, f64
+//
+// After the forces, whose gathers take the field as well.
+// CHECK-LABEL: md.function @mixed.forces_derivative2(
+// CHECK: %[[F:.*]] = md.gather_relation {{.*}} exchange(antisymmetric, derived)
+// CHECK: %[[G3:.*]] = md.gather_relation {{.*}} exchange(none, derived)
+// CHECK: md.return %{{.*}}, %[[G3]] : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>
+md.potential @mixed(%x: !vec, %cell: !md.cell, %q: !real, %a: f64) -> f64 {
+  %n = md.neighborhood %x, %cell cutoff(1.0) : !vec -> !pairs
+  %s = md.sum_relation %n, %x, %cell gather(%q : !real) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>, %q_i: f64, %q_j: f64):
+    %k = arith.divf %a, %r : f64
+    md.yield %k : f64
+  } : !pairs, !vec -> f64
+  %c = md.sum_relation %n, %x, %cell gather(%q : !real) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>, %q_i: f64, %q_j: f64):
+    %qq = arith.mulf %q_i, %q_j : f64
+    %aqq = arith.mulf %a, %qq : f64
+    %k = arith.divf %aqq, %r : f64
+    md.yield %k : f64
+  } : !pairs, !vec -> f64
+  %u = arith.addf %s, %c : f64
+  md.return %u : f64
+}
+
+md.function @sixth(%x: !vec, %cell: !md.cell, %q: !real, %a: f64)
+    -> (f64, f64, !real, !real, f64, !vec, !real) {
+  %e, %da, %g = md.evaluate @mixed(%x, %cell, %q, %a)
+      request [energy, derivative(3), derivative(2)]
+      : (!vec, !md.cell, !real, f64) -> (f64, f64, !real)
+  %g2, %da2 = md.evaluate @mixed(%x, %cell, %q, %a)
+      request [derivative(2), derivative(3)]
+      : (!vec, !md.cell, !real, f64) -> (!real, f64)
+  %f, %g3 = md.evaluate @mixed(%x, %cell, %q, %a)
+      request [forces, derivative(2)]
+      : (!vec, !md.cell, !real, f64) -> (!vec, !real)
+  md.return %e, %da, %g, %g2, %da2, %f, %g3
+      : f64, f64, !real, !real, f64, !vec, !real
+}

@@ -119,11 +119,12 @@ private:
   /// Reciprocal sums, which yield their own forces and virial.
   SmallVector<ReciprocalOp> reciprocals;
   /// The ops of the body of the potential, in order, before any derivative
-  /// added its own, and the ops that the derivatives in fields added: a
+  /// added its own. Every other op of the body was added by a derivative
+  /// (the forces, the virial, the derivative in a number or in a field): a
   /// derivative in a field follows the uses of the field by the potential,
-  /// not those by the derivatives requested before it.
+  /// not those by the derivatives requested before it, which are first
+  /// derivatives of the same energy and enter none of its values.
   SmallVector<Operation *> potentialOps;
-  llvm::SmallPtrSet<Operation *, 16> generatedOps;
 };
 
 } // namespace
@@ -1322,9 +1323,14 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
   for (Operation *op : potentialOps)
     if (llvm::is_contained(op->getOperands(), parameter))
       users.push_back(op);
+  // Every op of the potential that takes the field as an operand is among
+  // `users`. Another op of the body that takes it was added by a derivative
+  // requested before this one: the copy of a sum whose kernel yields its
+  // derivative in a number takes the fields that the sum gathers, and so
+  // does the gather of the forces of a sum. Those are not uses by the
+  // energy. A use within the kernel of an op is one that no rule follows.
   for (OpOperand &use : parameter.getUses())
-    if (generatedOps.count(use.getOwner()) == 0 &&
-        !llvm::is_contained(users, use.getOwner()))
+    if (use.getOwner()->getBlock() != body)
       return use.getOwner()->emitError()
              << "'" << use.getOwner()->getName() << "' takes " << describe()
              << ", a field, within another op, and has no rule for the "
@@ -1391,7 +1397,6 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
       ScalarEmitter emit(kernel, loc);
       YieldOp::create(kernel, loc,
                       ValueRange{emit.mul(weight, block->getArgument(0))});
-      generatedOps.insert(map);
       terms.push_back(map->getResult(0));
       continue;
     }
@@ -1447,7 +1452,6 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
         continue;
       }
       setYield(block, emit.mul(weight, total));
-      generatedOps.insert(gather);
       terms.push_back(gather->getResult(0));
       continue;
     }
@@ -1484,7 +1488,6 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
       }
       block.getTerminator()->setOperands(members);
       eraseDeadOps(block);
-      generatedOps.insert(gather);
       terms.push_back(gather->getResult(0));
       continue;
     }
@@ -1519,7 +1522,6 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
     }
     YieldOp::create(kernel, loc, ValueRange{emit.mul(weight, total)});
     eraseDeadOps(*block);
-    generatedOps.insert(map);
     terms.push_back(map->getResult(0));
   }
 
@@ -1544,7 +1546,6 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
   ScalarEmitter emit(kernel, loc);
   YieldOp::create(kernel, loc,
                   ValueRange{emit.constant(0.0, kernel.getF64Type())});
-  generatedOps.insert(map);
   result = map->getResult(0);
   return success();
 }
