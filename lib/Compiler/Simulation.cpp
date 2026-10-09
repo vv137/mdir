@@ -2222,6 +2222,123 @@ Simulation::evaluateTunableGradient() {
   gradientAsked = false;
   if (error)
     return std::move(error);
+  return collectTunableGradient();
+}
+
+llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
+    const double *positions, const std::optional<std::array<double, 6>> &cell,
+    bool gradient) {
+  if (busy.exchange(true))
+    return simulationError("another operation is under way on this "
+                           "simulation");
+  struct Release {
+    std::atomic<bool> &flag;
+    ~Release() { flag = false; }
+  } release{busy};
+  if (llvm::Error error = checkLeases("an evaluation of a frame"))
+    return std::move(error);
+  if (failed)
+    return simulationError("the simulation failed earlier; it keeps the "
+                           "state of step " + llvm::Twine(step) +
+                           " and runs no further");
+  if (prepared.tunables.empty())
+    return inputError("the program declares no tunable parameters "
+                      "(System.tunables)");
+  if (!prepared.control.tunableGradient)
+    return inputError("the program was compiled without the derivative in "
+                      "the tunables, whose potential gives the energy of a "
+                      "frame: set System.tunable_gradient = True and compile "
+                      "again");
+  if (prepared.control.minimize)
+    return inputError("this program minimizes: frames are evaluated by a "
+                      "program that takes steps");
+  // Everything is checked before anything changes.
+  size_t count = system.getNumParticles();
+  for (size_t i = 0; i != 3 * count; ++i)
+    if (!std::isfinite(positions[i]))
+      return inputError("the position of particle " + llvm::Twine(i / 3) +
+                        " of the input is not finite");
+  const std::array<double, 6> cellBefore = getCell();
+  bool changesCell = false;
+  if (cell) {
+    if (!prepared.control.periodic)
+      return inputError("the program has no periodic cell, and the frame "
+                        "gives one");
+    changesCell = std::memcmp(cell->data(), cellBefore.data(),
+                              sizeof cellBefore) != 0;
+    // What a commit asks of a cell (D238): tilts of a triclinic program
+    // and none of an orthorhombic one, a diagonal of twice the cutoff, the
+    // reduced form, the reach of the neighbor structures. The words are
+    // those of a frame.
+    if (changesCell)
+      if (llvm::Error error = checkCommittedCell(*cell)) {
+        std::string message = llvm::toString(std::move(error));
+        for (auto [from, to] :
+             {std::pair<const char *, const char *>{"; nothing is committed", ""},
+              {" written for the cell", " of the cell"},
+              {"the cell written", "the cell"},
+              {"; write the reduced cell", "; give the reduced cell"}})
+          for (size_t at = message.find(from); at != std::string::npos;
+               at = message.find(from))
+            message.replace(at, std::strlen(from), to);
+        return inputError(message);
+      }
+  }
+  // The state of the host becomes the frame: its velocities and forces
+  // are those that the host has, which the evaluation does not read (the
+  // forces are evaluated anew). The state of the activation is not copied
+  // back once the host has arrays of the right sizes: a frame is not a
+  // continuation of the last one.
+  {
+    std::lock_guard<std::mutex> lock(getRunMutex());
+    if (forces.size() != 3 * count || system.velocities.size() != 3 * count)
+      downloadState();
+    endActivation();
+  }
+  std::vector<double> before = std::move(system.positions);
+  double systemBoxBefore[3] = {system.box[0], system.box[1], system.box[2]};
+  system.positions.assign(positions, positions + 3 * count);
+  hostCurrent = true;
+  if (changesCell)
+    setCell(*cell);
+  output->tunableGradientWritten = false;
+  output->tunableGradientFields.clear();
+  gradientAsked = true;
+  llvm::Error error = evaluatePart(/*committed=*/true);
+  gradientAsked = false;
+  llvm::Expected<TunableGradient> derivative =
+      error ? llvm::Expected<TunableGradient>(std::move(error))
+            : collectTunableGradient();
+  if (!derivative) {
+    if (changesCell) {
+      setCell(cellBefore);
+      for (int k = 0; k != 3; ++k)
+        system.box[k] = systemBoxBefore[k];
+    }
+    {
+      std::lock_guard<std::mutex> lock(getRunMutex());
+      endActivation();
+    }
+    system.positions = std::move(before);
+    hostCurrent = true;
+    failed = false;
+    output->lastEnergies.step = -1;
+    return simulationError(llvm::toString(derivative.takeError()) +
+                           "; the evaluator keeps the state of before");
+  }
+  FrameEvaluation result;
+  result.energy = derivative->energy;
+  result.virial = output->lastEnergies.virial;
+  result.volume = output->lastEnergies.volume;
+  result.observables = output->lastObservables.values;
+  if (gradient)
+    result.gradient = std::move(derivative->values);
+  return result;
+}
+
+llvm::Expected<Simulation::TunableGradient>
+Simulation::collectTunableGradient() {
+  const model::TunableSet &set = prepared.tunables;
   const Program &p = compiled->program;
   if (!output->tunableGradientWritten ||
       output->tunableGradient.size() < p.gradientSlots.size() + 1 ||

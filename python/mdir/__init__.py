@@ -10,6 +10,10 @@ from ._core import *  # noqa: F401,F403
 
 __version__ = _core.__version__
 
+#: Boltzmann's constant in kJ/(mol K), the value of the compiled programs
+#: (CODATA 2018), for the weights of a reweighting (docs/python-frames.md).
+KB = 0.0083144626181532
+
 
 def _publish():
     """Name the extension's classes, enumerations, and exceptions `mdir.X`.
@@ -28,3 +32,5 @@ def _publish():
 
 _publish()
 del _publish
+
+from ._frames import FrameEnergies, FrameEvaluator, FrameGradient  # noqa: E402,F401
