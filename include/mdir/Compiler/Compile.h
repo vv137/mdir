@@ -62,10 +62,26 @@ llvm::Expected<CompiledProgram> compile(const model::PreparedModel &,
 /// `loweredIR` stays empty (D224): what `mdir.compile` does, for
 /// a simulation lowers programs of its own. The errors of the build, of a
 /// GPU program in a build without CUDA, and of the GPU options are those of
-/// compile. Without `cache`, the lowering of the result reads and writes no
-/// entry of the compile cache (D217).
+/// compile, and so is a derivative without a rule (checkDerivatives).
+/// Without `cache`, the lowering of the result reads and writes no entry of
+/// the compile cache (D217).
 llvm::Expected<CompiledProgram> plan(const model::PreparedModel &,
                                      bool cache = true);
+/// The control of the program that a simulation of a model with the control
+/// `control` builds and lowers: the program of its segments (D196), which
+/// takes no outputs of its own and whose loops run one coupling period.
+driver::Control getSegmentsControl(driver::Control control);
+/// Takes every derivative that `program` asks of its potentials
+/// (`md-check-exchange` and `md-differentiate`, the first passes of the
+/// lowering) in a context of its own, and lowers nothing: tens of
+/// milliseconds. A derivative without a rule is an error of the input
+/// (ModelError), with the diagnostics of the pass, which name the op and
+/// the argument of the potential, and with the name of the tunable where
+/// the argument is one of `@tunable` (D230, #256). plan runs it on the
+/// program and on the program of the segments of a simulation, so that
+/// `mdir.compile` makes no program whose first simulation fails for a
+/// derivative.
+llvm::Error checkDerivatives(const driver::Control &, const driver::Program &);
 /// The text of the lowering of `compiled`, a result of plan, in a context of
 /// its own. Errors are CompileError with diagnostics.
 llvm::Expected<std::string> lowerToText(const driver::Control &,

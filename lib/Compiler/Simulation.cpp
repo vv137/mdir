@@ -569,11 +569,7 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   // A tolerance is checked every energy period of the program, at the
   // steps where `mdir run` writes its rows (D219).
   simulation->minimizationCheckPeriod = control.energyPeriod;
-  control.segments = true;
-  control.energyPeriod = 0;
-  control.framePeriod = 0;
-  control.checkpointPeriod = 0;
-  control.numSteps = std::max<int64_t>(1, control.getCouplingPeriod());
+  control = compiler::getSegmentsControl(control);
   System &system = simulation->system;
   system = start;
   size_t count = system.getNumParticles();
