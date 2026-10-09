@@ -51,18 +51,19 @@ def expect(error, call, text=""):
         call()
     except error as exc:
         assert text in str(exc), str(exc)
-        return
+        return str(exc)
     raise AssertionError(f"expected {error.__name__} ({text})")
 
 
 def make(precision="Double", deterministic=True, method="VelocityVerlet", kind="NVT",
-         minimize=False, pressure=1.0, cutoff=0.8):
+         minimize=False, pressure=1.0, cutoff=0.8, tunables=True):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
     system.cutoff, system.pairlist_distance = cutoff, cutoff + (0.1 if cutoff < 1 else 0.005)
     system.switch_distance = cutoff - (0.1 if cutoff < 1 else 0.04)
     system.electrostatics = mdir.Electrostatics.PME
-    system.tunables = [mdir.Tunable("q", "charge")]
+    if tunables:
+        system.tunables = [mdir.Tunable("q", "charge")]
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
     integrator.method = getattr(mdir.IntegratorMethod, method)
     integrator.timestep = 0.001
@@ -119,6 +120,109 @@ def save(sim, name):
         return None
     assert os.path.exists(path), path
     return path
+
+
+def no_activation():
+    """The states of a simulation without an activation of its program
+    (#220): view() and borrow() name the cause, and the remedy that the
+    message gives is accepted."""
+    host = "its state is on the host only, which state() copies"
+    again = "a run, or an evaluation with run(0, energy=True), brings it back"
+    # A minimization that has not run: an evaluation is not its remedy.
+    sim = mdir.Simulation(make(minimize=True))
+    text = expect(mdir.SimulationError, sim.view, "before its first run; call minimize(steps) first")
+    assert "run(0" not in text, text
+    sim.minimize(1)
+    sim.view().release()
+    # An update of its tunables evaluates nothing.
+    sim.tunables["q"] = sim.tunables["q"] * 1.01
+    expect(mdir.SimulationError, sim.view,
+           "after an update of the tunables, at which a simulation that minimizes evaluates "
+           "nothing; " + host + "; minimize(steps) brings it back")
+    sim.minimize(1)
+    sim.view().release()
+    sim = mdir.Simulation(make())
+    sim.run(2)
+    path = save(sim, "ended.h5")
+    if path is None:
+        print("no HDF5: the states after a checkpoint are not checked", file=sys.stderr)
+        return
+    # After save_checkpoint, with velocity Verlet: a read does not evaluate.
+    cause = ("after a checkpoint, which ended the activation of the program "
+             "(save_checkpoint or a CheckpointReporter at step 2); " + host + "; " + again)
+    for call in (sim.view, sim.borrow):
+        text = expect(mdir.SimulationError, call, cause)
+        assert "first run" not in text, text
+    assert sim.leases == 0 and not sim.failed and sim.step == 2
+    before = sim.state()
+    sim.run(0, energy=True)
+    with sim.view() as view:
+        assert view.step == 2
+        if target_name == "CPU":
+            ids = np.from_dlpack(view.ids)
+            x = in_input_order(np.from_dlpack(view.positions), ids)
+            assert np.array_equal(x, before.positions)
+            del x, ids
+    save(sim, "ended.h5")
+    expect(mdir.SimulationError, sim.view, cause)
+    sim.run(1)
+    with sim.borrow() as borrow:
+        assert borrow.step == 3
+
+    # A CheckpointReporter and a CallbackReporter at one step: the checkpoint
+    # is written first, and the callback is told why it has no view.
+    seen = {}
+
+    def look(simulation, state):
+        try:
+            with simulation.view() as view:
+                seen[state.step] = view.step
+        except mdir.SimulationError as exc:
+            seen[state.step] = str(exc)
+    sim.reporters = [mdir.CheckpointReporter(os.path.join(scratch.name, "due.h5"), 2),
+                     mdir.CallbackReporter(look, 1)]
+    sim.run(4)
+    sim.close_reporters()
+    assert seen[5] == 5 and seen[7] == 7, seen
+    for step in (4, 6):
+        assert f"a CheckpointReporter at step {step}); " + host + "; " + again in seen[step], seen
+    assert sim.leases == 0
+    sim.view().release()
+
+    # Leapfrog without tunables takes no evaluation without a step after its
+    # first run: the message names the run alone.
+    sim = mdir.Simulation(make(method="Leapfrog"))
+    sim.run(2)
+    save(sim, "leapfrog.h5")
+    expect(mdir.SimulationError, sim.view, "at step 2); " + host + "; " + again)
+    sim.run(0, energy=True)  # with tunables, leapfrog takes the evaluation
+    sim.view().release()
+    sim = mdir.Simulation(make(method="Leapfrog", tunables=False))
+    sim.run(2)
+    save(sim, "leapfrog.h5")
+    text = expect(mdir.SimulationError, sim.view,
+                  "at step 2); " + host + "; a run brings it back (leapfrog takes no "
+                  "evaluation without a step after its first run: run(0, energy=True) is refused)")
+    assert "or an evaluation" not in text, text
+    expect(mdir.UnsupportedError, lambda: sim.run(0, energy=True), "leapfrog")
+    expect(mdir.SimulationError, sim.view, "after a checkpoint")
+    sim.run(1)
+    sim.view().release()
+
+    # A simulation that continues a checkpoint and has not run since.
+    import warnings
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        sim = mdir.Simulation(make(), checkpoint=path)
+    for call in (sim.view, sim.borrow):
+        expect(mdir.SimulationError, call,
+               "before its first run from the checkpoint that it continues; " + host +
+               "; run it, or evaluate it with run(0, energy=True), first")
+    sim.run(0, energy=True)
+    with sim.view() as view:
+        assert view.step == 2
+    print("no view after a checkpoint or before the first run of a continuation: the cause "
+          "and a remedy that is accepted; no evaluation by a read")
 
 
 # --- NumPy on the CPU --------------------------------------------------------
@@ -253,6 +357,7 @@ def numpy_scenario():
     assert sim.failed
     expect(mdir.SimulationError, sim.view, "failed")
     print("a minimization refused under a lease; no view after a failure")
+    no_activation()
 
 
 # --- ctypes and the CUDA driver on a GPU -------------------------------------
@@ -434,6 +539,7 @@ def ctypes_scenario():
     gc.collect()
     other.run(5)
     print("a capsule not taken releases once; a tensor outlives its simulation while another runs")
+    no_activation()
 
 
 # --- PyTorch ----------------------------------------------------------------

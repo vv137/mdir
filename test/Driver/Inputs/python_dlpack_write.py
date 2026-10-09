@@ -668,6 +668,15 @@ def failed_evaluation():
     after, reference = sim.state(), plain.state()
     for field in FIELDS:
         assert np.array_equal(getattr(after, field), getattr(reference, field)), field
+    # The undone commit ended the activation (#220): a view names it, and
+    # the evaluation that the message gives brings the state back.
+    for call in (sim.view, sim.borrow):
+        expect(mdir.SimulationError, call,
+               "after a commit of a borrow that failed and was undone; its state is on the "
+               "host only, which state() copies; a run, or an evaluation with "
+               "run(0, energy=True), brings it back")
+    sim.run(0, energy=True)
+    sim.view().release()
     sim.run(4)
     print("a commit whose evaluation fails is undone: the state and values of before the borrow")
 

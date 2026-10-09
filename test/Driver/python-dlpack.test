@@ -9,4 +9,5 @@
 # CHECK: capsules released once, taken or not, legacy or versioned; refusals; an array outlives its simulation
 # CHECK: a run with a CheckpointReporter refused by run under a lease
 # CHECK: a minimization refused under a lease; no view after a failure
+# CHECK: no view after a checkpoint or before the first run of a continuation: the cause and a remedy that is accepted; no evaluation by a read
 # CHECK: dlpack numpy passed

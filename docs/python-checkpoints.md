@@ -49,8 +49,16 @@ mdir.read_checkpoint("prod.h5")           # a read-only view of a checkpoint
   `SimulationError` while a view of the simulation or a tensor taken from
   one is alive (a lease, [python-dlpack.md](python-dlpack.md#leases)), as a
   run does: release the view and delete the tensors first.
+  After a checkpoint, until the next run or evaluation, the state is on
+  the host only: `state()` copies it, and `view()` and `borrow()` raise
+  `SimulationError` saying that a checkpoint ended the activation and what
+  brings the buffers back (a run, or `run(0, energy=True)` where the
+  simulation takes it); a read does not evaluate (#220).
 - `CheckpointReporter(file, period)` calls `save_checkpoint(file)` at every
   step that is a multiple of `period`; like a callback, its step ends a part.
+  The checkpoint of a step is written before the callbacks of that step
+  are called, so a `CallbackReporter` due at the same step takes no view
+  there.
   A simulation takes one.
 - `Simulation(program, checkpoint=path)` continues the same run, as
   `mdir run --continue` does. It refuses a checkpoint whose physics or

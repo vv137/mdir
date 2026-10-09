@@ -328,7 +328,7 @@ Simulation::~Simulation() {
   }
   // The activation runs the code of the engine, and is ended first
   // (D199).
-  endActivation();
+  endActivation(Ended::NotBegun);
   freeSnapshot();
   compiled.reset();
 }
@@ -805,9 +805,10 @@ void Simulation::resumeActivation() {
       leave();
 }
 
-void Simulation::endActivation() {
+void Simulation::endActivation(Ended reason) {
   if (!activation)
     return;
+  ended = reason;
   Activation &a = *activation;
   waitForConsumers();
   ++generation;
@@ -1069,7 +1070,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   if (!failure.empty()) {
     if (!begins)
       restoreSnapshot();
-    endActivation();
+    endActivation(Ended::Failure);
     for (int k = 0; k != 3; ++k)
       out.box[k] = boxBefore[k];
     out.volume = out.box[0] * out.box[1] * out.box[2];
@@ -1658,6 +1659,71 @@ void Simulation::waitForConsumers() {
     wait();
 }
 
+llvm::Error Simulation::describeNoActivation() const {
+  const char *host = "its state is on the host only, which state() copies";
+  if (activation)
+    return simulationError("the program of the simulation is inside a part; "
+                           "this is a defect of mdir");
+  // A failure is final (the simulation runs no further), whatever was undone
+  // after it.
+  if (failed || ended == Ended::Failure)
+    return simulationError(llvm::Twine("the simulation failed; ") + host);
+  // What brings the state back where the program keeps it: a part, or an
+  // evaluation where the simulation takes one (`evaluate`, `evaluatePart`).
+  const Control &control = prepared.control;
+  bool first = ended == Ended::NotRun || ended == Ended::Continued;
+  std::string remedy;
+  if (control.minimize)
+    remedy = first ? "call minimize(steps) first"
+                   : "minimize(steps) brings it back";
+  else if (hasRun && control.integrator == Integrator::Leapfrog &&
+           !compiled->program.tunable)
+    remedy = first ? "run it first (leapfrog takes no evaluation without a "
+                     "step here: run(0, energy=True) is refused)"
+                   : "a run brings it back (leapfrog takes no evaluation "
+                     "without a step after its first run: run(0, "
+                     "energy=True) is refused)";
+  else
+    remedy = first ? "run it, or evaluate it with run(0, energy=True), first"
+                   : "a run, or an evaluation with run(0, energy=True), "
+                     "brings it back";
+  const char *lost = "the simulation has no state where its program keeps it";
+  switch (ended) {
+  case Ended::NotRun:
+    return simulationError(llvm::Twine(lost) + " before its first run; " +
+                           remedy);
+  case Ended::Continued:
+    return simulationError(llvm::Twine(lost) + " before its first run from "
+                           "the checkpoint that it continues; " + host +
+                           "; " + remedy);
+  case Ended::Checkpoint:
+    return simulationError(llvm::Twine(lost) + " after a checkpoint, which "
+                           "ended the activation of the program "
+                           "(save_checkpoint or a CheckpointReporter at step " +
+                           llvm::Twine(step) + "); " + host + "; " + remedy);
+  case Ended::UndoneCommit:
+    return simulationError(llvm::Twine(lost) + " after a commit of a borrow "
+                           "that failed and was undone; " + host + "; " +
+                           remedy);
+  case Ended::UndoneUpdate:
+    return simulationError(llvm::Twine(lost) + " after an update of the "
+                           "tunables that failed and was undone; " + host +
+                           "; " + remedy);
+  case Ended::UndoneFrame:
+    return simulationError(llvm::Twine(lost) + " after an evaluation of a "
+                           "frame that failed; " + host + "; " + remedy);
+  case Ended::Update:
+    return simulationError(llvm::Twine(lost) + " after an update of the "
+                           "tunables, at which a simulation that minimizes "
+                           "evaluates nothing; " + host + "; " + remedy);
+  case Ended::NotBegun:
+  case Ended::Failure:
+    break;
+  }
+  return simulationError(llvm::Twine(lost) + " after a run or an evaluation "
+                         "that could not begin; " + host + "; " + remedy);
+}
+
 llvm::Expected<compiler::SimulationView> Simulation::takeView() {
   if (busy.exchange(true))
     return simulationError("another operation is under way on this "
@@ -1670,12 +1736,7 @@ llvm::Expected<compiler::SimulationView> Simulation::takeView() {
     if (llvm::Error error = checkLeases("a view"))
       return std::move(error);
   if (!activation || !activation->atBoundary)
-    return simulationError(
-        failed ? llvm::Twine("the simulation failed; its state is on the "
-                             "host only, which state() copies")
-               : llvm::Twine("the simulation has no state where its program "
-                             "keeps it before its first run; run it, or "
-                             "evaluate it with run(0, energy=True), first"));
+    return describeNoActivation();
   compiler::SimulationView view = describeView();
   ++leases;
   return view;
@@ -1731,12 +1792,7 @@ llvm::Expected<compiler::SimulationView> Simulation::takeBorrow() {
     return unsupported("a simulation that minimizes takes no writable "
                        "borrow");
   if (!activation || !activation->atBoundary)
-    return simulationError(
-        failed ? llvm::Twine("the simulation failed; its state is on the "
-                             "host only, which state() copies")
-               : llvm::Twine("the simulation has no state where its program "
-                             "keeps it before its first run; run it, or "
-                             "evaluate it with run(0, energy=True), first"));
+    return describeNoActivation();
   compiler::SimulationView view = describeView();
   borrowWritten = 0;
   borrowed = true;
@@ -1950,7 +2006,7 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
   hostCurrent = true;
   {
     std::lock_guard<std::mutex> lock(getRunMutex());
-    endActivation();
+    endActivation(Ended::NotBegun);
   }
   if (changesCell)
     setCell(*cell);
@@ -1977,6 +2033,7 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
     forces = std::move(f0);
     hostCurrent = true;
     failed = false;
+    ended = Ended::UndoneCommit;
     output->lastEnergies.step = -1;
     return simulationError("the committed state: " +
                            llvm::toString(std::move(error)) +
@@ -2103,7 +2160,7 @@ llvm::Error Simulation::updateTunables(
   {
     std::lock_guard<std::mutex> lock(getRunMutex());
     downloadState();
-    endActivation();
+    endActivation(Ended::Update);
   }
   std::swap(compiled->program, *program);
   std::vector<std::vector<double>> before = std::move(tunableValues);
@@ -2115,6 +2172,7 @@ llvm::Error Simulation::updateTunables(
       std::swap(compiled->program, *program);
       tunableValues = std::move(before);
       failed = false;
+      ended = Ended::UndoneUpdate;
       output->lastEnergies.step = -1;
       return simulationError("the new values of the tunables: " +
                              llvm::toString(std::move(error)) +
@@ -2177,7 +2235,7 @@ llvm::Error Simulation::evaluatePart(bool committed) {
   {
     std::lock_guard<std::mutex> lock(getRunMutex());
     downloadState();
-    endActivation();
+    endActivation(Ended::NotBegun);
   }
   refreshing = refresh;
   llvm::Error error = runPart(*compiled, Part());
@@ -2298,7 +2356,7 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
     std::lock_guard<std::mutex> lock(getRunMutex());
     if (forces.size() != 3 * count || system.velocities.size() != 3 * count)
       downloadState();
-    endActivation();
+    endActivation(Ended::NotBegun);
   }
   std::vector<double> before = std::move(system.positions);
   double systemBoxBefore[3] = {system.box[0], system.box[1], system.box[2]};
@@ -2322,11 +2380,12 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
     }
     {
       std::lock_guard<std::mutex> lock(getRunMutex());
-      endActivation();
+      endActivation(Ended::UndoneFrame);
     }
     system.positions = std::move(before);
     hostCurrent = true;
     failed = false;
+    ended = Ended::UndoneFrame;
     output->lastEnergies.step = -1;
     return simulationError(llvm::toString(derivative.takeError()) +
                            "; the evaluator keeps the state of before");
@@ -2513,7 +2572,7 @@ llvm::Error Simulation::saveCheckpoint(const std::string &path,
   {
     std::lock_guard<std::mutex> lock(getRunMutex());
     downloadState();
-    endActivation();
+    endActivation(Ended::Checkpoint);
   }
   Checkpoint checkpoint;
   checkpoint.step = step;
@@ -2718,6 +2777,7 @@ Simulation::continueFrom(const Checkpoint &checkpoint, bool stage,
     forces.assign(3 * count, 0.0);
   startRefresh = !takesForces;
   hasRun = true;
+  ended = Ended::Continued;
   hostCurrent = true;
   step = checkpoint.step;
   // The time continues from that of the checkpoint, whose run may have

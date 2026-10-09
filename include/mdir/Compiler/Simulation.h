@@ -400,9 +400,38 @@ private:
   /// Runs the activation to the end of the next part, whose step and counts
   /// it is given.
   void resumeActivation();
+  /// Why a simulation has no activation of its entry, and so no state where
+  /// its program keeps it (#220): what a view or a writable borrow that is
+  /// refused then says.
+  enum class Ended {
+    /// It has not run, and has not been evaluated.
+    NotRun,
+    /// It continues a checkpoint, or begins a stage from one, and has not
+    /// run since.
+    Continued,
+    /// A checkpoint was written (D223).
+    Checkpoint,
+    /// A part failed.
+    Failure,
+    /// A commit of a borrow failed and was undone (D229).
+    UndoneCommit,
+    /// An update of the tunables failed and was undone (D213).
+    UndoneUpdate,
+    /// An evaluation of a frame failed (D240).
+    UndoneFrame,
+    /// An update of the tunables of a simulation that minimizes, which
+    /// evaluates nothing at an update.
+    Update,
+    /// A run or an evaluation ended it to begin another, which did not
+    /// begin.
+    NotBegun,
+  };
   /// Ends the activation: what it allocated is freed (#110), and its state,
-  /// if not copied, is lost.
-  void endActivation();
+  /// if not copied, is lost. `reason` is recorded if there was one to end.
+  void endActivation(Ended reason);
+  /// The error of a view or a borrow of a simulation without an activation
+  /// at a boundary: the cause, and what brings the state back.
+  llvm::Error describeNoActivation() const;
   /// Makes the state of the host that of the activation, if it is not.
   void downloadState() const;
   /// Copies the state of the activation, where it is, as that which a part
@@ -459,6 +488,8 @@ private:
   int64_t minimizationCheckedStep = -1;
   bool hasRun = false;
   bool failed = false;
+  /// Why there is no activation, while there is none.
+  Ended ended = Ended::NotRun;
   /// The run that a checkpoint continues or a stage begins from
   /// (D223): the step it began at, its part, the part of
   /// its outputs (0 for the names given), and for the same run whose
