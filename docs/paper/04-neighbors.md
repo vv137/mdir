@@ -167,6 +167,62 @@ row are the same from run to run. Rows that are too narrow make the
 runtime widen them by a quarter more than needed and build again; the run
 never truncates a row.
 
+**Triclinic cells** (D123, D125, D[matrix-images]). The particles are
+binned by their fractional coordinates $\mathbf x H^{-1}$, in as many
+cells as the widths of the cell between its faces hold, and the search
+goes around the torus of those cells. A loop over the matrix takes the
+displacement of a pair in one pass along $\mathbf c$, $\mathbf b$, and
+$\mathbf a$,
+
+$$
+\mathbf d \mathrel{-}= \mathbf c\,\mathrm{round}(d_z/c_z), \qquad
+\mathbf d \mathrel{-}= \mathbf b\,\mathrm{round}(d_y/b_y), \qquad
+d_x \mathrel{-}= a_x\,\mathrm{round}(d_x/a_x),
+$$
+
+which leaves it in the brick $\lvert d_x\rvert \le \tfrac12 a_x$,
+$\lvert d_y\rvert \le \tfrac12 b_y$, $\lvert d_z\rvert \le \tfrac12
+c_z$. Every nonzero vector of the lattice of a reduced cell is at least
+$\min(a_x, b_y, c_z)$ long, so an image shorter than half of that is the
+nearest one and lies in the brick: the pass is exact for every pair within
+the cutoff when
+
+$$
+r_c \le \tfrac12 \min(a_x, b_y, c_z),
+$$
+
+which the run keeps (it is tested at the start and at every change of the
+cell). The reach $R = r_c + s$ of the matrix may be longer than that, and
+a barostat may shrink the cell until it is. The build must then not take
+the image of the pass for the nearest one: a pair whose nearest image is
+between $\tfrac12 c_z$ and $R$ along $z$ is moved by $\mathbf c$, tilts
+and all, to an image beyond $R$, left out, and missing when it comes within
+the cutoff. The build therefore asks whether *any* image of the pair is
+within $R$. Because $H$ is lower triangular, the image $\mathbf d -
+\mathbf n H$ has
+
+$$
+z' = d_z - n_c c_z, \qquad y' = d_y - n_c c_y - n_b b_y, \qquad
+x' = d_x - n_c c_x - n_b b_x - n_a a_x ,
+$$
+
+and $\lvert z'\rvert, \lvert y'\rvert, \lvert x'\rvert < R$ bound
+$n_c$ by $d_z$ alone, then $n_b$ given $n_c$, then $n_a$ given both: three
+nested ranges of integers that are exactly the images in the cube $[-R,
+R]^3$, and so hold every image within $R$. From the image of the pass the
+ranges are that image alone while $R \le \tfrac12 \min(a_x, b_y, c_z)$,
+and at most two a level, the image and the one on the other side, up to $R
+= \min(a_x, b_y, c_z)$. The build tests the image of the pass first and
+runs the ranges only for a candidate it finds beyond the reach in a cell
+narrower than twice the reach, so a cell of ordinary width builds as
+before. A row holds a particle once: two images of a pair are at least
+$\min(a_x, b_y, c_z) \ge 2 r_c$ apart, so at most one is within the
+cutoff, and that one is the image of the pass. The test of validity of
+Section 4.1 is unchanged, since a pair that was left out had every image
+beyond $R$. A build that tested the image of the pass alone lost pairs in
+9 of 79 frames of a run of 216 argon atoms whose cell a barostat took 13%
+below twice the reach (Section 9).
+
 ## 4.4 Groups of 16 particles
 
 On a device, a loop over pairs whose kernel has an exchange contract runs

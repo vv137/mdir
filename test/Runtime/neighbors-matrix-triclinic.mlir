@@ -15,18 +15,19 @@
 // along each of a, b, and c as unwrapped positions are, and prints:
 //
 //   - the number of ordered pairs (i, j) whose nearest image, the least in
-//     f64 of the images up to two lattice vectors along each of a, b, and c
-//     from the one of the pass of Section 2, is within the reach;
+//     f64 of the images up to three lattice vectors along each of a, b, and
+//     c from the one of the pass of Section 2, is within the reach;
 //   - the number of those that row i does not hold;
 //   - the number of pairs that a row holds more than once;
 //   - the number of pairs that a row holds whose nearest image is farther
 //     than the reach and a thousandth of it (the search takes a margin for
 //     the rounding of f32).
 //
-// The cells are narrow, with the reach at half of the least of a_x, b_y,
-// c_z or a little under it, the bound within which the matrix holds every
-// pair: there the nearest image of a pair near the reach is across a face
-// of the cell in most directions.
+// The cells are narrow. In the first cases the reach is at half of the
+// least of a_x, b_y, c_z or a little under it, where the image of the one
+// pass along c, b, and a is the nearest one; in the others it is beyond,
+// up to more than the least of the diagonal, where the build tests the
+// other images within the reach (#258, docs/triclinic-m2.md, Section 2).
 
 func.func private @printI64(i64)
 func.func private @printNewline()
@@ -92,8 +93,8 @@ func.func @fill(%x: memref<?x3xf64>, %h: vector<6xf64>) {
 }
 
 // The square of the length of the nearest image of the displacement d: the
-// image of the pass along c, b, and a, then the least of the 125 up to two
-// lattice vectors along each of a, b, and c from it.
+// image of the pass along c, b, and a, then the least of the 343 up to
+// three lattice vectors along each of a, b, and c from it.
 func.func @nearest2(%dx: f64, %dy: f64, %dz: f64, %h: vector<6xf64>) -> f64 {
   %ax = vector.extract %h[0] : f64 from vector<6xf64>
   %by = vector.extract %h[1] : f64 from vector<6xf64>
@@ -122,21 +123,21 @@ func.func @nearest2(%dx: f64, %dy: f64, %dz: f64, %h: vector<6xf64>) -> f64 {
 
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  %c5 = arith.constant 7 : index
-  %two = arith.constant 3.0 : f64
+  %c7 = arith.constant 7 : index
+  %three = arith.constant 3.0 : f64
   %far = arith.constant 1.0e30 : f64
-  %least = scf.for %ic = %c0 to %c5 step %c1 iter_args(%mc = %far) -> (f64) {
+  %least = scf.for %ic = %c0 to %c7 step %c1 iter_args(%mc = %far) -> (f64) {
     %ic_i = arith.index_cast %ic : index to i64
     %ic_f = arith.sitofp %ic_i : i64 to f64
-    %kc = arith.subf %ic_f, %two : f64
-    %after_b = scf.for %ib = %c0 to %c5 step %c1 iter_args(%mb = %mc) -> (f64) {
+    %kc = arith.subf %ic_f, %three : f64
+    %after_b = scf.for %ib = %c0 to %c7 step %c1 iter_args(%mb = %mc) -> (f64) {
       %ib_i = arith.index_cast %ib : index to i64
       %ib_f = arith.sitofp %ib_i : i64 to f64
-      %kb = arith.subf %ib_f, %two : f64
-      %after_a = scf.for %ia = %c0 to %c5 step %c1 iter_args(%ma = %mb) -> (f64) {
+      %kb = arith.subf %ib_f, %three : f64
+      %after_a = scf.for %ia = %c0 to %c7 step %c1 iter_args(%ma = %mb) -> (f64) {
         %ia_i = arith.index_cast %ia : index to i64
         %ia_f = arith.sitofp %ia_i : i64 to f64
-        %ka = arith.subf %ia_f, %two : f64
+        %ka = arith.subf %ia_f, %three : f64
         // d - k H.
         %sxa = arith.mulf %ka, %ax : f64
         %sxb = arith.mulf %kb, %bx : f64
@@ -414,17 +415,17 @@ func.func @main() {
   %beyond4 = arith.constant 3.5 : f64
   call @run(%small, %beyond4, %w1) : (vector<6xf64>, f64, f64) -> ()
 
-  // A flat cell, a_x and b_y three times c_z with c_x and c_y on their
-  // bounds: the nearest image of some pairs is two lattice vectors c from
-  // the image of the pass.
-  // CHECK-NEXT: 63200
+  // A flat cell, a_x and b_y six times c_z, with c_x and c_y a quarter of
+  // them: the nearest image of some pairs is two lattice vectors c from the
+  // image of the pass, as (0, 0, -1.5) is of (3, 3, 0.5).
+  // CHECK-NEXT: 102430
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
-  %flat = arith.constant dense<[6.0, 6.0, 2.0, 0.0, 3.0, 3.0]> : vector<6xf64>
+  %flat = arith.constant dense<[6.0, 6.0, 1.0, 0.0, 1.5, 1.5]> : vector<6xf64>
   %beyond5 = arith.constant 1.9 : f64
   call @run(%flat, %beyond5, %w1) : (vector<6xf64>, f64, f64) -> ()
-  // CHECK-NEXT: 156316
+  // CHECK-NEXT: 159600
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: {{^0$}}

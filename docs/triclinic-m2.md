@@ -112,9 +112,9 @@ with `ucell`, as above.
 | | Invariant | Where it is kept |
 |---|---|---|
 | I1 | $H$ is lower triangular and reduced | Reduced on input; the barostat keeps it (I3) |
-| I2 | $r_c \le \tfrac12 \min(a_x, b_y, c_z)$ | Checked at the start and at every change of the cell (`mdrtSetBox`), in place of the edge of twice the cutoff |
+| I2 | $r_c \le \tfrac12 \min(a_x, b_y, c_z)$ | Checked at the start, at a commit of a writable borrow (D238), and at every change of the cell (`mdrtSetBox`), in place of the edge of twice the cutoff. With the neighbor matrix it is all that is asked of the cell (D[matrix-images]) |
 | I3 | The barostat scales $H' = H\,\mathrm{diag}(\boldsymbol\mu)$ and $\mathbf x' = \mathbf x\,\mathrm{diag}(\boldsymbol\mu)$ only: isotropic and semi-isotropic coupling | The barostat refuses any other coupling |
-| I4 | A neighbor structure stores the image of an entry as lattice indices $\mathbf n = (n_a, n_b, n_c)$, applied as $\mathbf n H$ | The builds of the groups and of the dual list (D115) |
+| I4 | A neighbor structure that stores the image of an entry stores it as lattice indices $\mathbf n = (n_a, n_b, n_c)$, applied as $\mathbf n H$ | The builds of the groups and of the dual list (D115). The matrix stores no image: an entry is a particle, and its loops take the image of the pass below |
 
 **I2 and the minimum image.** Every nonzero vector of a reduced lattice is
 at least $\min(a_x, b_y, c_z)$ long, and the brick
@@ -130,11 +130,90 @@ $$
 
 exact for every pair whose nearest image is within
 $\tfrac12 \min(a_x, b_y, c_z)$, so for every pair within the cutoff under
-I2. The bound is on $r_c$, the reach of the kernels that take an image per
-pair (tuples, the matrix), not on the reach of a list: a list that reaches
-past it keeps an entry for each image within its reach (D115), and I4 makes
-that exact. GROMACS's further bound $r_c \le b_y - |c_y|$ comes from its
-search, which tries one lattice vector at a time; MDIR's does not.
+I2. The bound is on $r_c$, the reach of the kernels that take that image
+at each evaluation (tuples, the loops over the matrix). It is not a bound
+on the reach $R$ of a neighbor structure, but then the *build* of a
+structure must not take the image of the pass for the nearest one beyond
+$\tfrac12 \min(a_x, b_y, c_z)$: the groups keep an entry for each image
+within their reach (D115, I4), and the matrix tests every image within its
+reach, as follows. GROMACS's further bound $r_c \le b_y - |c_y|$ comes
+from its search, which tries one lattice vector at a time; MDIR's does not.
+
+**The images of a pair within a reach (D[matrix-images], #258).** The
+image of the pass lies in the brick, and it is the nearest image only if
+the nearest image lies in the brick too. A pair whose nearest image
+$\mathbf d$ has $\tfrac12 c_z < \lvert d_z\rvert$ and
+$\lVert\mathbf d\rVert < R$ is taken by the pass to
+$\mathbf d \mp \mathbf c$, whose $x$ and $y$ move by the tilts: in a
+rhombic dodecahedron with $c_z$ = 1.72 nm, a pair 0.91 nm apart along
+$z$ comes out 1.67 nm apart. A build that tests that image alone leaves the
+pair out of a list of $R$ = 1.0 nm, and the pair is then absent when it
+comes within the cutoff. Until D[matrix-images] the build of the matrix
+did so, and the builder refused $R > \tfrac12 \min(a_x, b_y, c_z)$,
+which a barostat could still take the cell past.
+
+Because $H$ is lower triangular, the components of an image
+$\mathbf r' = \mathbf r - \mathbf n H$ are
+
+$$
+z' = r_z - n_c c_z, \qquad y' = r_y - n_c c_y - n_b b_y, \qquad
+x' = r_x - n_c c_x - n_b b_x - n_a a_x :
+$$
+
+$z'$ depends on $n_c$ alone, $y'$ on $n_c$ and $n_b$, and $x'$ on all
+three. An image within $R$ has $\lvert z'\rvert$, $\lvert y'\rvert$,
+and $\lvert x'\rvert$ below $R$. So $n_c$ is an integer between
+$(r_z - R)/c_z$ and $(r_z + R)/c_z$; for each, with
+$y_1 = r_y - n_c c_y$, $n_b$ is an integer between $(y_1 - R)/b_y$ and
+$(y_1 + R)/b_y$; and for each, with $x_1 = r_x - n_c c_x - n_b b_x$, $n_a$
+is an integer between $(x_1 - R)/a_x$ and $(x_1 + R)/a_x$. These nested
+ranges are exactly the images in the cube $[-R, R]^3$. None within $R$ is
+outside them, since each condition is necessary; and none of them can be
+dropped by a test of one component, since each is in the cube. (The
+sphere would trim the corners of the cube, at a square root a level; the
+test of the distance does that.) The argument uses the triangular form
+alone: it holds for any reach, and for a cell that is not reduced.
+
+Counted from the image of the pass, where $\lvert r_z\rvert \le
+\tfrac12 c_z$ and $y_1$ and $x_1$ are within half of $b_y$ and $a_x$
+after their rounding, a range along the axis $a$ of length $L_a$ is
+
+| Reach | The integers of the range |
+|---|---|
+| $R \le \tfrac12 L_a$ | 0 alone: the image of the pass |
+| $\tfrac12 L_a < R \le L_a$ | 0, and $\operatorname{sign}(r_a)$ where $L_a - \lvert r_a\rvert < R$: the image on the other side |
+| $R > L_a$ | one more a side for each further $L_a$ |
+
+With $R \le \tfrac12 \min(a_x, b_y, c_z)$ the image of the pass is the
+only one, which is the statement above. Up to $R = \min(a_x, b_y, c_z)$
+there are at most 8, each of which occurs. Beyond it a fixed set would
+not do: in the flat cell $(6, 6, 1;\ 0, 1.5, 1.5)$ the pass leaves the
+displacement $(3, 3, 0.5)$ as it is, 4.27 long, and its nearest image is
+$2\mathbf c$ away, $(0, 0, -1.5)$.
+
+**The build of the matrix** tests a candidate with the image of the pass.
+If that is beyond $R$, and $R > \tfrac12 \min(a_x, b_y, c_z)$ (a flag of
+the build), it runs the nested ranges (`@mdrt.image_within_triclinic`,
+`@mdrt_gpu_matrix_image_within`) and takes the candidate if any image is
+within $R$. A row holds a particle once, whatever the number of its images
+within the reach. That is enough: two images of a pair differ by a nonzero
+lattice vector, which is at least $\min(a_x, b_y, c_z) \ge 2 r_c$ long, so
+at most one is within $r_c$; it is within $\tfrac12 \min(a_x, b_y, c_z)$,
+so it is the image that the pass of the loop over pairs finds. A pair with
+two images within $R$ and one within $r_c$ is evaluated once, at that one.
+The cells of the search need no change: a pair with an image within $R$ has
+its cells of the fractional coordinates within the range of the search
+around the torus, whichever image it is. Nor does the test of validity
+(D80): a pair that the build left out had every image beyond $R$, and the
+argument of D80 holds for each image.
+
+The ranges count at most 64 images a side, so that a cell that a failed
+run has blown up gives loops that end (as #168 has it for the cells). They
+hold every image while $R \le 63.5 \min(a_x, b_y, c_z)$, which under I2
+is so for `pairlist_distance` $\le 127\,\times$ `cutoff`: the builder
+refuses a longer one for the matrix of a triclinic cell, a test that does
+not depend on the cell. The build, a commit (D238), and the runtime under
+a barostat therefore ask the same of a cell with the matrix: I2.
 
 **I3 and what stays as it is.** $H\,\mathrm{diag}(\boldsymbol\mu)$ scales
 the columns of $H$: it stays lower triangular, and each bound of I1
@@ -158,7 +237,7 @@ From the survey of M1 (line counts are of today's tree):
 | IR | `md.orthorhombic_cell %lx, %ly, %lz`; the lowerings carry the cell as `vector<3xf64>` | `md.triclinic_cell` of six numbers; the lowerings carry the diagonal and the tilts $(b_x, c_x, c_y)$. `!md.cell` already speaks of lattice vectors |
 | Specialization | — | Whether a run is triclinic is fixed when it is compiled, as OpenMM fixes it when a context is made: an orthorhombic run compiles to the code of today, at no cost |
 | Minimum image | $\mathbf d - \mathbf L \odot \mathrm{roundeven}(\mathbf d / \mathbf L)$ in the kernels of pairs and tuples and in the templates | The pass of Section 2; 9 multiply-adds in a chain against 6 independent ones |
-| The matrix (CPU and GPU) | Cells along each axis over $[0, L)$ | Particles wrapped into the Cartesian brick $[0,a_x) \times [0,b_y) \times [0,c_z)$ by the same pass; cells of the brick; the search reaches across the faces of $z$ and $y$ with the shifts $\mathbf c$ and $\mathbf b$, whose $x$ and $y$ parts move the window of cells |
+| The matrix (CPU and GPU) | Cells along each axis over $[0, L)$ | Particles wrapped into $[0, 1)^3$ of the fractional coordinates; cells of the fractional coordinates, as many as the widths of the cell between its faces hold, searched around the torus (D123, D125); a candidate is taken if any of its images is within the reach (Section 2, D[matrix-images]) |
 | Groups (GPU) | Columns in $x$-$y$, sorted in $z$; an entry carries $e \in [-4, 4]$ per axis, applied as $\mathbf e \odot \mathbf L$ in the gather and the pruning; D115 adds images when $2(h_a + R) \ge L_a$ | Columns of the brick, as GROMACS and OpenMM keep them; $\mathbf e$ read as $\mathbf n$, in five bits a vector, and applied as $\mathbf n H$: five multiply-adds once per entry, nothing per pair; the image of a candidate chosen by the pass around the center of the group; D115's condition on $a_x$, $b_y$, $c_z$ |
 | PME | Fractional coordinates $x/L$; $\mathbf k = \mathbf m / \mathbf L$; the Gaussian $\exp(-\pi^2 k^2/\beta^2)$ as a product of tables of each axis (D104) | $\mathbf s = \mathbf x H^{-1}$, three multiply-adds more, $H^{-1}$ triangular; $\mathbf k = \mathbf m H^{-\mathsf T}$; forces through $H^{-\mathsf T}$; the Gaussian computed directly, since $k^2$ is no longer a sum of one term per axis; the grid from $|\mathbf a|, |\mathbf b|, |\mathbf c|$; the virial keeps its form, $\delta - 2(1/k^2 + \pi^2/\beta^2)\,\mathbf k \otimes \mathbf k$ |
 | Barostat | Edges times $\boldsymbol\mu$; volume $L_xL_yL_z$ | $H\,\mathrm{diag}(\boldsymbol\mu)$ (I3); volume $a_xb_yc_z$; the tilts scale with their columns (D127) |

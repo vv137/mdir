@@ -14,8 +14,8 @@
 
 // Each case places 400 particles in a triclinic cell H, of the diagonal
 // a_x, b_y, c_z and the tilts b_x, c_x, c_y, as neighbors-matrix-triclinic.mlir
-// does, with the reach at half of the least of a_x, b_y, c_z or a little
-// under it, and prints three numbers:
+// does, with the reaches of that test, up to half of the least of a_x,
+// b_y, c_z and beyond it, and prints three numbers:
 //
 //   - the number of entries in the matrix of the device;
 //   - the number of counts and entries in which the two matrices differ;
@@ -308,13 +308,13 @@ func.func @main() {
   %beyond4 = arith.constant 3.5 : f64
   call @run(%small, %beyond4, %w1) : (vector<6xf64>, f64, f64) -> ()
 
-  // A flat cell, a_x and b_y three times c_z with c_x and c_y on their
-  // bounds: the nearest image of some pairs is two lattice vectors c from
-  // the image of the pass.
+  // A flat cell, a_x and b_y six times c_z, with c_x and c_y a quarter of
+  // them: the nearest image of some pairs is two lattice vectors c from the
+  // image of the pass, as (0, 0, -1.5) is of (3, 3, 0.5).
   // CHECK-NEXT: 63206
   // CHECK-NEXT: {{^0$}}
   // CHECK-NEXT: 188
-  %flat = arith.constant dense<[6.0, 6.0, 2.0, 0.0, 3.0, 3.0]> : vector<6xf64>
+  %flat = arith.constant dense<[6.0, 6.0, 1.0, 0.0, 1.5, 1.5]> : vector<6xf64>
   %beyond5 = arith.constant 1.9 : f64
   call @run(%flat, %beyond5, %w1) : (vector<6xf64>, f64, f64) -> ()
   // CHECK-NEXT: 156316
