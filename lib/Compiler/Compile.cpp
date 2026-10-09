@@ -153,6 +153,13 @@ std::string mdir::compiler::getPipeline(const Control &control,
   bool threaded = control.threads > 1;
   if (threaded)
     os << "convert-scf-to-openmp,hoist-static-allocas,canonicalize,";
+  // In the deterministic mode a sine does not depend on what else its
+  // kernel computes: LLVM's code generator turns a sine and a cosine of one
+  // argument into one call of `sincos`, which does not round as `sin` and
+  // `cos` do, and the torsions have the cosine only where a step writes
+  // energies (#243).
+  if (control.deterministic)
+    os << "separate-sin-cos,";
   os << "convert-scf-to-cf,convert-math-to-llvm,convert-math-to-libm,"
      << "convert-vector-to-llvm,expand-strided-metadata,"
      << "finalize-memref-to-llvm,convert-arith-to-llvm,"

@@ -18,6 +18,7 @@ add_mlir_conversion_library(MDIRMDExecToLoops
   FixedOrderReductions.cpp
   HoistAllocas.cpp
   MDExecToLoops.cpp
+  SeparateSinCos.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/Templates.cpp
 
   ADDITIONAL_HEADER_DIRS

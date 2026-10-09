@@ -8,6 +8,17 @@
 # host calls the loop of steps reaches (in mixed precision they were f32
 # where every step writes energies and f64 otherwise), and the buffers of
 # forces are f64 in mixed precision (#102).
+#
+# The forces of the torsions as well (#243): the energy of a torsion has a
+# cosine and its force a sine of one argument, which the code generator
+# computes by one call of `sincos` where a kernel has both, and `sincos` of
+# the C library does not always round as `sin` does. In the deterministic
+# mode each is a call of its own (`separate-sin-cos`). 40 steps under NPT
+# with the scaling of Trotter type and a term over the centers of two
+# waters, in double precision, with the rows of the log every 10 steps and
+# at the end only: at step 30 the force of a torsion on the N of the last
+# residue differed in its last bit, and the velocities of that N and its H
+# at the end. The default mode keeps `sincos`.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/template.toml
 # RUN: %python %S/Inputs/energy_interval.py %t/template.toml mdir %t CPU MIXED CUTOFF:true PME:false PME:true | FileCheck %s
@@ -16,6 +27,17 @@
 # CHECK: CPU MIXED PME constraints=false: same state, 1168 particles
 # CHECK: CPU MIXED PME constraints=true: same state, 1168 particles
 # DOUBLE: CPU DOUBLE PME constraints=true: same state, 1168 particles
+# RUN: sed -n '/^#--- trotter.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/trotter.toml
+# RUN: %python %S/Inputs/energy_interval.py %t/trotter.toml mdir %t/trotter CPU DOUBLE PME:true | FileCheck %s --check-prefix=DOUBLE
+# RUN: mdir emit %t/trotter/CPU-DOUBLE-PME-true/every.toml --stage=lowered | FileCheck %s --check-prefix=CALLS
+# RUN: sed 's/^deterministic = true/deterministic = false/' %t/trotter/CPU-DOUBLE-PME-true/every.toml > %t/default.toml
+# RUN: mdir emit %t/default.toml --stage=pipeline | FileCheck %s --check-prefix=DEFAULT
+# CALLS-DAG: llvm.call @sin(
+# CALLS-DAG: llvm.call @cos(
+# CALLS-NOT: llvm.intr.sin
+# CALLS-NOT: llvm.intr.cos
+# DEFAULT-NOT: separate-sin-cos
+# DEFAULT: convert-math-to-llvm
 
 #--- run.toml
 [input]
@@ -40,6 +62,50 @@ checkpoint_interval = 20
 [ensemble]
 ensemble = "NVE"
 temperature = 300.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "TARGET"
+precision = "PRECISION"
+deterministic = true
+#--- end
+
+#--- trotter.toml
+[input]
+topology = "INPUTS/dipeptide.prmtop"
+coordinates = "INPUTS/dipeptide.inpcrd"
+[energy]
+cutoff = 8.0
+pairlist_distance = 9.0
+electrostatics = "ELECTROSTATICS"
+[[energy.bond]]
+name = "pull"
+expression = "k*(r - r0)^2"
+groups = [":231", ":73"]
+k = 0.01
+r0 = 3.0
+[constraints]
+hydrogen_bonds = CONSTRAINTS
+rigid_water = CONSTRAINTS
+[dynamics]
+time_step = 0.002
+steps = 40
+seed = 7
+center_of_mass_interval = 10
+[output]
+energy_interval = 10
+checkpoint = "every.h5"
+checkpoint_interval = 40
+[ensemble]
+ensemble = "NPT"
+temperature = 300.0
+[thermostat]
+method = "V-RESCALE"
+interval = 10
+[barostat]
+method = "C-RESCALE"
+time_constant = 0.5
+work = "TROTTER"
 [boundary]
 type = "PERIODIC"
 [execution]

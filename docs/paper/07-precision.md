@@ -105,6 +105,20 @@ The pass now moves such a loop down to follow the loop of the term before
 it, with the sums of energies that read it, so that the terms accumulate
 in the order of the sum in every kind of step.
 
+A fifth was a function of the C library, on the CPU. The energy of a
+torsion has the cosine of $n\phi - \delta$ and its force the sine. The
+code generator of LLVM computes a sine and a cosine of one argument by one
+call of `sincos`, and a sine alone by `sin`, and the two functions of
+glibc differ in the last bit for about 7 arguments in 10,000 in f64 (in
+f32 they agreed for each of $10^8$). A step of
+energy, whose kernel has both, and a plain step, whose kernel has the sine
+alone, then gave forces of a torsion that differed in that bit (#243). In
+the deterministic mode every sine and cosine is now a call of its own
+(`separate-sin-cos`), which the code generator does not merge; the default
+mode keeps `sincos`. The rule is that of the fused multiply-adds: how a
+value is rounded follows from its formula, not from what else is computed
+beside it.
+
 ## 7.2 What is approximated, and within what bound
 
 Under `fast_math` (the default of the suite) the f32 kernels of the terms
