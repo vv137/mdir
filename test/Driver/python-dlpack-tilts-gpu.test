@@ -20,6 +20,7 @@
 # CHECK: Mixed: a cell 1.54 nm between two faces, less than twice the cutoff, with a diagonal that passes: the pair term equals the sum over the images
 # CHECK: an orthorhombic program: Borrow.tilt raises UnsupportedError
 # CHECK: the frames of an open reporter take the committed cell
+# CHECK: a checkpoint after a commit continues with the committed tilts
 # CHECK: refused: the tilts written for the cell are all zero, which would make the triclinic cell of the program orthorhombic
 # CHECK: refused: the cell written is not reduced: the tilt b_x, 1.326000 nm, exceeds half of a_x, 1.300000 nm
 # CHECK: refused: the cell written is not reduced: the tilt c_y, -1.560000 nm, exceeds half of b_y, 1.300000 nm

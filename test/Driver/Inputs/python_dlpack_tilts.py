@@ -534,6 +534,31 @@ def reporter(work):
     print("the frames of an open reporter take the committed cell")
 
 
+def continued(work):
+    """A checkpoint written after a commit holds the committed tilts, and a
+    simulation of the program, which was built with other tilts, continues
+    from it with them."""
+    program = make("Double", False)
+    sim = mdir.Simulation(program)
+    sim.run(4, energy=True)
+    at = sim.state()
+    cell = cell_of(at.cell.diagonal, [0.02, -1.3, 1.29])
+    put(sim, positions=strained(at.positions, at.cell, cell), tilt=cell.tilt)
+    path = pathlib.Path(work) / f"tilts-{target_name}.h5"
+    try:
+        sim.save_checkpoint(str(path))
+    except mdir.UnsupportedError:
+        print("a checkpoint after a commit continues with the committed tilts (not checked: "
+              "no HDF5)")
+        return
+    assert np.array_equal(mdir.read_checkpoint(str(path)).cell.tilt, cell.tilt)
+    other = mdir.Simulation(program, checkpoint=str(path))
+    sim.run(10, energy=True)
+    other.run(10, energy=True)
+    same(sim.state(), other.state(), "continued from a checkpoint")
+    print("a checkpoint after a commit continues with the committed tilts")
+
+
 # --- Frames --------------------------------------------------------------------
 
 def dcd_frames(path):
@@ -603,6 +628,7 @@ else:
         narrow(precision)
     refusals.append(structure())
     reporter(last)
+    continued(last)
     for message in refusals:
         print("refused:", message)
     print(f"dlpack tilts {target_name} passed")
