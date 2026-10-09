@@ -459,9 +459,9 @@ func.func private @mdrt.build_neighbors_matrix(
   return %largest : index
 }
 
-// The minimum-image displacement in a triclinic cell, in one pass along c,
-// b, and a (docs/triclinic-m2.md, Section 2): exact for a displacement
-// whose nearest image is within half of the least of a_x, b_y, c_z.
+// The image of a displacement in a triclinic cell that one pass along c,
+// b, and a gives (docs/triclinic-m2.md, Section 2): the nearest image
+// where that is within half of the least of a_x, b_y, c_z.
 func.func private @mdrt.minimum_image_triclinic(
     %dx: f32, %dy: f32, %dz: f32, %ax: f32, %by: f32, %cz: f32, %bx: f32,
     %cx: f32, %cy: f32, %iax: f32, %iby: f32, %icz: f32) -> (f32, f32, f32) {
@@ -486,11 +486,105 @@ func.func private @mdrt.minimum_image_triclinic(
   return %x3, %y2, %z1 : f32, f32, f32
 }
 
+// Whether an image of the displacement d of a pair is within the reach,
+// `far`, whose square is `limit2`, in a triclinic cell of the diagonal a_x,
+// b_y, c_z and the tilts b_x, c_x, c_y (docs/triclinic-m2.md, Section 2).
+// H is lower triangular, so z' = d_z - n_c c_z depends on n_c alone, y' on
+// n_c and n_b, and x' on all three: the images with |z'|, |y'|, |x'| within
+// the reach, which hold every image within it, are the n_c of
+// [(d_z - far) / c_z, (d_z + far) / c_z], for each the n_b of the same range
+// of y' over b_y, and for each the n_a of that of x' over a_x. From the
+// image of the one pass and with a reach of at most the least of a_x, b_y,
+// c_z these are that image and, where L - |d| along an axis is less than
+// the reach, the one on the other side: 8 at most. The numbers a side are
+// at most `most`: a cell that a failed run has blown up gives loops that
+// end, as it gives a count of cells that is defined (#168).
+func.func private @mdrt.image_within_triclinic(
+    %dx: f32, %dy: f32, %dz: f32, %ax: f32, %by: f32, %cz: f32, %bx: f32,
+    %cx: f32, %cy: f32, %iax: f32, %iby: f32, %icz: f32, %far: f32,
+    %limit2: f32, %most: f32) -> i1 {
+  %one = arith.constant 1 : i32
+  %false = arith.constant false
+  %least = arith.negf %most : f32
+  %zl0 = arith.subf %dz, %far : f32
+  %zh0 = arith.addf %dz, %far : f32
+  %zl1 = arith.mulf %zl0, %icz : f32
+  %zh1 = arith.mulf %zh0, %icz : f32
+  %zl2 = math.ceil %zl1 : f32
+  %zh2 = math.floor %zh1 : f32
+  %zl3 = arith.maxnumf %zl2, %least : f32
+  %zh3 = arith.minnumf %zh2, %most : f32
+  %zl = arith.fptosi %zl3 : f32 to i32
+  %zh4 = arith.fptosi %zh3 : f32 to i32
+  %zh = arith.addi %zh4, %one : i32
+  %found = scf.for %nc = %zl to %zh step %one
+      iter_args(%found_c = %false) -> (i1) : i32 {
+    %fc = arith.sitofp %nc : i32 to f32
+    %sz = arith.mulf %fc, %cz : f32
+    %sy = arith.mulf %fc, %cy : f32
+    %sx = arith.mulf %fc, %cx : f32
+    %z = arith.subf %dz, %sz : f32
+    %y1 = arith.subf %dy, %sy : f32
+    %x1 = arith.subf %dx, %sx : f32
+    %z2 = arith.mulf %z, %z : f32
+    %yl0 = arith.subf %y1, %far : f32
+    %yh0 = arith.addf %y1, %far : f32
+    %yl1 = arith.mulf %yl0, %iby : f32
+    %yh1 = arith.mulf %yh0, %iby : f32
+    %yl2 = math.ceil %yl1 : f32
+    %yh2 = math.floor %yh1 : f32
+    %yl3 = arith.maxnumf %yl2, %least : f32
+    %yh3 = arith.minnumf %yh2, %most : f32
+    %yl = arith.fptosi %yl3 : f32 to i32
+    %yh4 = arith.fptosi %yh3 : f32 to i32
+    %yh = arith.addi %yh4, %one : i32
+    %after_b = scf.for %nb = %yl to %yh step %one
+        iter_args(%found_b = %found_c) -> (i1) : i32 {
+      %fb = arith.sitofp %nb : i32 to f32
+      %ty = arith.mulf %fb, %by : f32
+      %tx = arith.mulf %fb, %bx : f32
+      %y = arith.subf %y1, %ty : f32
+      %x2 = arith.subf %x1, %tx : f32
+      %y2 = arith.mulf %y, %y : f32
+      %zy2 = arith.addf %z2, %y2 : f32
+      %xl0 = arith.subf %x2, %far : f32
+      %xh0 = arith.addf %x2, %far : f32
+      %xl1 = arith.mulf %xl0, %iax : f32
+      %xh1 = arith.mulf %xh0, %iax : f32
+      %xl2 = math.ceil %xl1 : f32
+      %xh2 = math.floor %xh1 : f32
+      %xl3 = arith.maxnumf %xl2, %least : f32
+      %xh3 = arith.minnumf %xh2, %most : f32
+      %xl = arith.fptosi %xl3 : f32 to i32
+      %xh4 = arith.fptosi %xh3 : f32 to i32
+      %xh = arith.addi %xh4, %one : i32
+      %after_a = scf.for %na = %xl to %xh step %one
+          iter_args(%found_a = %found_b) -> (i1) : i32 {
+        %fa = arith.sitofp %na : i32 to f32
+        %ux = arith.mulf %fa, %ax : f32
+        %x = arith.subf %x2, %ux : f32
+        %xx = arith.mulf %x, %x : f32
+        %r2 = arith.addf %zy2, %xx : f32
+        %near = arith.cmpf olt, %r2, %limit2 : f32
+        %next = arith.ori %found_a, %near : i1
+        scf.yield %next : i1
+      }
+      scf.yield %after_a : i1
+    }
+    scf.yield %after_b : i1
+  }
+  return %found : i1
+}
+
 // The neighbor matrix of a triclinic cell, `box` = (a_x, b_y, c_z, b_x,
 // c_x, c_y), with the widths of the cell between its faces, `widths`: the
 // build of the orthorhombic cell in the fractional coordinates, which the
-// positions are wrapped in, with the minimum image of the triclinic cell.
-// It holds every pair within `reach` when `reach` is at most half of the
+// positions are wrapped in. A row holds a particle once if any of its
+// images is within `reach`: the image of the one pass is tested first, and
+// where the reach is more than half of the least of a_x, b_y, c_z, beyond
+// which that image need not be the nearest, the others within the reach
+// (@mdrt.image_within_triclinic). The loops over pairs take the image of
+// the pass, the only one that can be within a cutoff of at most half of the
 // least of a_x, b_y, c_z.
 func.func private @mdrt.build_neighbors_matrix_triclinic(
     %x: memref<?x3xf64>, %box: vector<6xf64>, %widths: vector<3xf64>,
@@ -551,6 +645,16 @@ func.func private @mdrt.build_neighbors_matrix_triclinic(
   %far = arith.addf %reach, %margin : f64
   %far2 = arith.mulf %far, %far : f64
   %limit2 = arith.truncf %far2 : f64 to f32
+  // Whether an image other than that of the one pass can be within the
+  // reach: only where the reach is more than half of the least of a_x,
+  // b_y, c_z.
+  %narrow_far = arith.truncf %far : f64 to f32
+  %least_xy = arith.minimumf %lx, %ly : f64
+  %least_xyz = arith.minimumf %least_xy, %lz : f64
+  %half_f = arith.constant 0.5 : f64
+  %half_least = arith.mulf %least_xyz, %half_f : f64
+  %wide_reach = arith.cmpf ogt, %far, %half_least : f64
+  %most_images = arith.constant 64.0 : f32
 
   //===--------------------------------------------------------------------===//
   // Counting sort of the particles by cell
@@ -749,7 +853,24 @@ func.func private @mdrt.build_neighbors_matrix_triclinic(
             %dxy2 = arith.addf %dx2, %dy2 : f32
             %r2 = arith.addf %dxy2, %dz2 : f32
 
-            %near = arith.cmpf olt, %r2, %limit2 : f32
+            %near_pass = arith.cmpf olt, %r2, %limit2 : f32
+            %true = arith.constant true
+            %far_pass = arith.xori %near_pass, %true : i1
+            %try = arith.andi %far_pass, %wide_reach : i1
+            %near_image = scf.if %try -> (i1) {
+              %any = func.call @mdrt.image_within_triclinic(
+                  %dx, %dy, %dz, %narrow_lx, %narrow_ly, %narrow_lz,
+                  %narrow_bx, %narrow_cx, %narrow_cy, %narrow_ilx,
+                  %narrow_ily, %narrow_ilz, %narrow_far, %limit2,
+                  %most_images)
+                  : (f32, f32, f32, f32, f32, f32, f32, f32, f32, f32, f32,
+                     f32, f32, f32, f32) -> i1
+              scf.yield %any : i1
+            } else {
+              %none = arith.constant false
+              scf.yield %none : i1
+            }
+            %near = arith.ori %near_pass, %near_image : i1
             %other = arith.cmpi ne, %p, %q : index
             %neighbor = arith.andi %near, %other : i1
 

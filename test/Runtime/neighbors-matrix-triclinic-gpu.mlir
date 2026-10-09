@@ -256,5 +256,71 @@ func.func @main() {
   %r1 = arith.constant 1.9 : f64
   %w1 = arith.constant 0.95 : f64
   call @run(%small, %r1, %w1) : (vector<6xf64>, f64, f64) -> ()
+
+  // Reaches beyond half of the least of a_x, b_y, c_z, where the image of
+  // the one pass need not be the nearest (#258): a little beyond in the
+  // dodecahedron, where the build that took that image alone left out 42
+  // pairs; then 1.4 times the bound, just under c_z, and beyond c_z, where
+  // a pair has several images within the reach and a row holds it once.
+  // CHECK-NEXT: 43794
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 129
+  %beyond0 = arith.constant 1.53 : f64
+  call @run(%dodec, %beyond0, %half) : (vector<6xf64>, f64, f64) -> ()
+  // CHECK-NEXT: 114520
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 306
+  %beyond1 = arith.constant 2.1 : f64
+  %w2 = arith.constant 1.05 : f64
+  call @run(%dodec, %beyond1, %w2) : (vector<6xf64>, f64, f64) -> ()
+  // CHECK-NEXT: 159598
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 399
+  %beyond2 = arith.constant 2.95 : f64
+  call @run(%dodec, %beyond2, %w2) : (vector<6xf64>, f64, f64) -> ()
+  // CHECK-NEXT: 159600
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 399
+  %beyond3 = arith.constant 3.6 : f64
+  call @run(%dodec, %beyond3, %reach) : (vector<6xf64>, f64, f64) -> ()
+
+  // The same in the octahedron, in the hexagonal cell, with every tilt on
+  // its bound, and with tilts of both signs.
+  // CHECK-NEXT: 147368
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 383
+  call @run(%oct, %beyond1, %w2) : (vector<6xf64>, f64, f64) -> ()
+  // CHECK-NEXT: 147638
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 383
+  call @run(%hexa, %beyond1, %w2) : (vector<6xf64>, f64, f64) -> ()
+  // CHECK-NEXT: 158578
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 399
+  call @run(%bounds, %beyond1, %w2) : (vector<6xf64>, f64, f64) -> ()
+  // CHECK-NEXT: 159600
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 399
+  call @run(%bounds, %beyond2, %w2) : (vector<6xf64>, f64, f64) -> ()
+  // CHECK-NEXT: 159600
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 399
+  %beyond4 = arith.constant 3.5 : f64
+  call @run(%small, %beyond4, %w1) : (vector<6xf64>, f64, f64) -> ()
+
+  // A flat cell, a_x and b_y three times c_z with c_x and c_y on their
+  // bounds: the nearest image of some pairs is two lattice vectors c from
+  // the image of the pass.
+  // CHECK-NEXT: 63206
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 188
+  %flat = arith.constant dense<[6.0, 6.0, 2.0, 0.0, 3.0, 3.0]> : vector<6xf64>
+  %beyond5 = arith.constant 1.9 : f64
+  call @run(%flat, %beyond5, %w1) : (vector<6xf64>, f64, f64) -> ()
+  // CHECK-NEXT: 156316
+  // CHECK-NEXT: {{^0$}}
+  // CHECK-NEXT: 399
+  %beyond6 = arith.constant 2.9 : f64
+  call @run(%flat, %beyond6, %w1) : (vector<6xf64>, f64, f64) -> ()
   return
 }
