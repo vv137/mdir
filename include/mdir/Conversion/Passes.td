@@ -130,6 +130,32 @@ def HoistStaticAllocas : Pass<"hoist-static-allocas", "::mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
 }
 
+def SeparateSinCos : Pass<"separate-sin-cos", "::mlir::ModuleOp"> {
+  let summary = "Makes every sine and cosine a call of its own to the C "
+                "library";
+  let description = [{
+    The code generator of LLVM computes a sine and a cosine of one argument
+    in one basic block by one call of `sincos` of the C library, and a sine
+    without such a cosine by `sin`. The two functions of glibc do not round
+    alike: in 2.35, 7 sines in 10,000 of arguments between -8 and 8 differ
+    in their last bit. The torsion of a dihedral has a cosine in its energy
+    and a sine in its force, so the forces of a step that writes energies
+    were not those of a step that does not (#243).
+
+    The pass replaces every `math.sin` and `math.cos` of f32 or f64, or of
+    a vector of them of a fixed length, element by element, with a call of
+    `sin`, `cos`, `sinf`, or `cosf`, which it declares. The code generator
+    leaves the call of a function that is declared without attributes as
+    it is, so the rounding of a sine does not depend on what else its
+    kernel computes; a declaration that said that the function reads no
+    memory (`memory(none)`) would make the calls the nodes that it merges.
+    The CPU pipeline runs the pass in the deterministic mode, before
+    `convert-math-to-llvm`; the default mode keeps `sincos`.
+  }];
+  let dependentDialects = ["::mlir::func::FuncDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 def ConvertMDExecToGPU
     : Pass<"convert-md-exec-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Converts md_exec loops in the storage form to GPU kernels";
