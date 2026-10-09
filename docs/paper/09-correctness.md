@@ -500,8 +500,19 @@ with a cutoff in double precision. In a cell 1.54 nm wide between two of
 its faces, less than twice the cutoff of 0.8 nm, whose diagonal is at least
 twice the pairlist distance, an observed pair term equals a NumPy sum over
 every image within the cutoff to $4.7\times10^{-16}$: the bound that the
-build and a commit test, half of the least of $a_x$, $b_y$, $c_z$ for a
-reduced cell, is the one the minimum image needs. Twenty frames of a run
+build and a commit test of the cutoff, half of the least of $a_x$, $b_y$,
+$c_z$ for a reduced cell, is the one the minimum image needs. The reach of
+the neighbor matrix is not bound by it (D[matrix-images]): its rows are
+checked against every pair and 343 images in f64 at reaches from half of
+the least of the diagonal to more than the whole of it, in a dodecahedron,
+an octahedron, a hexagonal cell, cells with every tilt on its bound, and a
+flat cell where the nearest image is two lattice vectors from that of the
+pass (`neighbors-matrix-triclinic*.mlir`), and the potential of a run of
+216 argon atoms that a barostat compresses until the reach is 15% past
+half of the diagonal equals the sum over all images at each of 79 frames
+to $10^{-5}$ kcal/mol, on the CPU and on a device
+(`triclinic-reach*.test`); the build before lost up to 8 pairs in 9 of
+those frames. Twenty frames of a run
 at constant pressure, whose barostat scales the tilts, put into one
 simulation give the energies and forces of a simulation compiled from each
 (`python-dlpack-tilts*.test`).

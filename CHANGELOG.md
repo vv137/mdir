@@ -43,8 +43,9 @@ format, or the outputs; every such change is listed under **Changed** or
   the arrays of `mdir.Cell`. A commit takes them with the positions and
   begins an activation with the committed cell; it refuses
   (`InputError`, nothing changed) tilts that are all zero, a cell that is
-  not reduced, a diagonal below twice the cutoff, and a pairlist distance
-  above half of the least of the diagonal. The grid of PME and the
+  not reduced, a diagonal below twice the cutoff, and, for a program with
+  the groups, a pairlist distance above half of the least of the diagonal.
+  The grid of PME and the
   neighbor capacity stay those of the program
   (`Program.plan`). `Borrow.tilt` of a program compiled for an
   orthorhombic cell is a read-only array of three zeros (the read-only
@@ -589,6 +590,32 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- In a triclinic cell the neighbor matrix (the default structure, on the
+  CPU and on a device) lost pairs once its reach, `pairlist_distance`, was
+  more than half of the least of $a_x, b_y, c_z$ (#258, D[matrix-images],
+  `docs/triclinic-m2.md`, Section 2). The builder refused such an input,
+  but a barostat could shrink an accepted cell past the bound, and the run
+  went on: its build tested a candidate at the image of the one pass along
+  $\mathbf c$, $\mathbf b$, $\mathbf a$, which is not the nearest image
+  beyond that distance, left the pair out, and the pair was absent when it
+  came within the cutoff. Measured on 216 argon atoms in a cell with every
+  tilt on its bound (cutoff 9.2 Å, pairlist distance 11 Å, half of the
+  diagonal at the start; 20,000 bar): the potential lacked up to 8 pairs
+  (0.019 kcal/mol) in 9 of 79 frames. At constant energy with the reach
+  16% past the bound, a pair was missing at 24% to 43% of the steps, with
+  force errors up to 0.3 kJ/mol/nm of forces of several hundred. The
+  errors are those of pairs at the cutoff, and no pair was counted twice.
+  v0.1.0 has the defect: a run at constant pressure in a triclinic cell
+  with the matrix whose cell came below twice the pairlist distance, and a
+  run continued from its checkpoint (refused), are affected; runs whose
+  least of $a_x, b_y, c_z$ stayed at least twice the pairlist distance,
+  orthorhombic cells, and the groups are not. The build now takes a pair
+  if any of its images is within the reach, so the matrix is right for
+  every reach, and the builder and a commit of a writable borrow ask a
+  triclinic cell with the matrix only for a diagonal of at least twice the
+  cutoff, as the runtime does; `pairlist_distance` is no longer limited to
+  half of the least of the diagonal there, and is refused above 127 times
+  `cutoff`.
 - In the deterministic mode on the CPU, a run depended on `energy_interval`
   at the last bits of the forces of the torsions (#243, D204): the code
   generator computed the sine of the force of a torsion by `sincos` of the

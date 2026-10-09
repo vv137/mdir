@@ -9771,10 +9771,28 @@ void Builder::setSchedule() {
 }
 
 llvm::Error Builder::build() {
-  // The neighbor structures of a triclinic cell hold every pair within
-  // their reach while the reach is at most half of the least of a_x, b_y,
-  // c_z, the bound of the minimum image in one pass (docs/triclinic-m2.md).
-  if (isTriclinic()) {
+  // The neighbor matrix of a triclinic cell holds every pair that has an
+  // image within its reach, whatever the reach: its build tests the images
+  // beyond that of the one pass where the reach is more than half of the
+  // least of a_x, b_y, c_z (docs/triclinic-m2.md, Section 2). It counts at
+  // most 64 images a side along a lattice vector, which holds every image
+  // within the reach while the reach is at most 63.5 times the least of
+  // a_x, b_y, c_z, and so, the diagonal being at least twice the cutoff
+  // (I2), while the pairlist distance is at most 127 times the cutoff:
+  // a bound that does not depend on the cell, so that a cell that a
+  // barostat scales needs no other test than I2.
+  if (isTriclinic() &&
+      control.neighborStructure == NeighborStructure::Matrix &&
+      control.pairlistDistance > 127.0 * control.cutoffDistance)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "'pairlist_distance', %g Å, exceeds 127 times 'cutoff', %g Å, the "
+        "most that the neighbor matrix of a triclinic cell takes",
+        control.pairlistDistance, control.cutoffDistance);
+  // The groups of a triclinic cell hold every pair within their reach
+  // while the reach is at most half of the least of a_x, b_y, c_z.
+  if (isTriclinic() &&
+      control.neighborStructure == NeighborStructure::Groups) {
     double least = std::min({system.box[0], system.box[1], system.box[2]});
     double reach = control.pairlistDistance * units::length;
     if (reach > 0.5 * least)

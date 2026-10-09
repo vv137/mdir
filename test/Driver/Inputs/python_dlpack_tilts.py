@@ -294,8 +294,6 @@ def commits(precision, pme):
         refused("the tilt c_x written for the cell is not finite",
                 tilt=[0.0, np.nan, first.tilt[2]]),
         refused("less than twice the cutoff", diagonal=[d[0], d[1], 1.5]),
-        # c_z between twice the cutoff and twice the pairlist distance.
-        refused("the pairlist distance of the program", diagonal=[d[0], d[1], 1.7]),
     ]
     assert sim.versions["cell"] == 0 and sim.commits == []
     sim.run(6, energy=True)
