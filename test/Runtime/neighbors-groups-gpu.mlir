@@ -76,67 +76,6 @@ func.func @fill(%x: memref<?x3xf64>, %length: f64) {
   return
 }
 
-// The squared distance of i and j in the minimum image.
-// Whether the displacement of the pair (i at place p, j at place q) in the
-// frames of the groups, x_i + s_p L − (x_j + s_q L + e L), with the place
-// shifts s of `shift` and the shift e of the entry in bits 16 to 27 of its
-// mask `m`, differs from that of the minimum image.
-func.func @frame_mismatch(%x: memref<?x3xf64>, %shift: memref<?xi32>,
-                          %m: i32, %p: index, %q: index, %i: index,
-                          %j: index, %length: f64) -> i1 {
-  %c0 = arith.constant 0 : index
-  %c1 = arith.constant 1 : index
-  %c3 = arith.constant 3 : index
-  %sp = memref.load %shift[%p] : memref<?xi32>
-  %sq = memref.load %shift[%q] : memref<?xi32>
-  %ten = arith.constant 10 : i32
-  %width4 = arith.constant 4 : i32
-  %sixteen = arith.constant 16 : i32
-  %mask10 = arith.constant 1023 : i32
-  %mask4 = arith.constant 15 : i32
-  %off = arith.constant 512 : i32
-  %offset4 = arith.constant 4 : i32
-  %tol = arith.constant 1.0e-6 : f64
-  %no = arith.constant false
-  %bad = scf.for %k = %c0 to %c3 step %c1 iter_args(%b = %no) -> (i1) {
-    %k32 = arith.index_cast %k : index to i32
-    %bits10 = arith.muli %k32, %ten : i32
-    %bits4a = arith.muli %k32, %width4 : i32
-    %bits4 = arith.addi %bits4a, %sixteen : i32
-    %pp0 = arith.shrui %sp, %bits10 : i32
-    %pp1 = arith.andi %pp0, %mask10 : i32
-    %pp = arith.subi %pp1, %off : i32
-    %qq0 = arith.shrui %sq, %bits10 : i32
-    %qq1 = arith.andi %qq0, %mask10 : i32
-    %qq = arith.subi %qq1, %off : i32
-    %ee0 = arith.shrui %m, %bits4 : i32
-    %ee1 = arith.andi %ee0, %mask4 : i32
-    %ee = arith.subi %ee1, %offset4 : i32
-    %ppf = arith.sitofp %pp : i32 to f64
-    %qqf = arith.sitofp %qq : i32 to f64
-    %eef = arith.sitofp %ee : i32 to f64
-    %xi = memref.load %x[%i, %k] : memref<?x3xf64>
-    %xj = memref.load %x[%j, %k] : memref<?x3xf64>
-    %ai0 = arith.mulf %ppf, %length : f64
-    %ai = arith.addf %xi, %ai0 : f64
-    %qe = arith.addf %qqf, %eef : f64
-    %aj0 = arith.mulf %qe, %length : f64
-    %aj = arith.addf %xj, %aj0 : f64
-    %df = arith.subf %ai, %aj : f64
-    %d = arith.subf %xi, %xj : f64
-    %dq = arith.divf %d, %length : f64
-    %dr = math.roundeven %dq : f64
-    %drl = arith.mulf %dr, %length : f64
-    %dm = arith.subf %d, %drl : f64
-    %diff = arith.subf %df, %dm : f64
-    %adiff = math.absf %diff : f64
-    %off_k = arith.cmpf ogt, %adiff, %tol : f64
-    %nb = arith.ori %b, %off_k : i1
-    scf.yield %nb : i1
-  }
-  return %bad : i1
-}
-
 // The square of the displacement of the pair (i at place p, j at place q) in
 // the frames of the groups, with the place shifts of `shift` and the shift
 // of the entry in its mask `m`: the square of the distance of the image
@@ -250,27 +189,6 @@ func.func @images(%x: memref<?x3xf64>, %i: index, %j: index, %length: f64, %limi
     scf.yield %n1, %s1 : i64, f64
   }
   return %n, %s : i64, f64
-}
-
-func.func @distance2(%x: memref<?x3xf64>, %i: index, %j: index,
-                     %length: f64) -> f64 {
-  %c0 = arith.constant 0 : index
-  %c1 = arith.constant 1 : index
-  %c3 = arith.constant 3 : index
-  %zero = arith.constant 0.0 : f64
-  %s = scf.for %k = %c0 to %c3 step %c1 iter_args(%a = %zero) -> (f64) {
-    %xi = memref.load %x[%i, %k] : memref<?x3xf64>
-    %xj = memref.load %x[%j, %k] : memref<?x3xf64>
-    %d = arith.subf %xi, %xj : f64
-    %q = arith.divf %d, %length : f64
-    %r = math.roundeven %q : f64
-    %rl = arith.mulf %r, %length : f64
-    %e = arith.subf %d, %rl : f64
-    %e2 = arith.mulf %e, %e : f64
-    %t = arith.addf %a, %e2 : f64
-    scf.yield %t : f64
-  }
-  return %s : f64
 }
 
 // Excluded pairs (i, i + d), d = 1 .. k, around the ring of the particles,
