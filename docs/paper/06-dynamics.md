@@ -1279,12 +1279,12 @@ MBAR in each of the three programs and of 0.10 (MDIR), 0.11 (OpenMM), and
 0.10 (GROMACS) by TI (150 such permutations of the 25, 10, and 22 sets);
 the statistical inefficiency within one set gives 0.11 by MBAR and 0.10 by
 TI; and the standard deviation of $n$ sets is itself known to
-$1/\sqrt{2(n-1)}$ of its value. In runs of 5 ns of states 0, 4,
-9, and 13, the distributions of the rows, the autocorrelation times of the
-volume, of the potential energy, and of $\partial U/\partial\lambda$, the
-compressibility from the fluctuation of the volume and from its response
-to 300 atm, and the variance of the kinetic energy were compared between
-the three programs (issue #259). TI is 0.26 kcal/mol above MBAR in MDIR
+$1/\sqrt{2(n-1)}$ of its value. The distributions of the rows of the
+sets and, in runs of 5 ns of states 0, 4, 9, and 13, the autocorrelation
+times of the volume, of the potential energy, and of
+$\partial U/\partial\lambda$, the compressibility from the fluctuation of
+the volume and from its response to 300 atm, and the variance of the
+kinetic energy were compared between the three programs (issue #259). TI is 0.26 kcal/mol above MBAR in MDIR
 and 0.23 in OpenMM and in GROMACS: on this spacing of the Lennard-Jones TI
 is biased by its curvature, which MBAR is not. For one
 set of MDIR, the rows of the cut potential on the same trajectories give
