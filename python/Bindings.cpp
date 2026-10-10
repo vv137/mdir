@@ -223,6 +223,16 @@ PYBIND11_MODULE(_core, m) {
   py::enum_<model::PMEInfluence>(m, "PMEInfluence")
     .value("SPME", model::PMEInfluence::SPME)
     .value("Optimal", model::PMEInfluence::Optimal);
+  // `[barostat] coupling` and `work` (D[python-barostat]).
+  py::enum_<model::BarostatCoupling>(m, "BarostatCoupling")
+    .value("Isotropic", model::BarostatCoupling::Isotropic)
+    .value("SemiIsotropic", model::BarostatCoupling::SemiIsotropic)
+    .value("Anisotropic", model::BarostatCoupling::Anisotropic);
+  py::enum_<driver::BarostatWork>(m, "BarostatWork")
+    .value("Trotter", driver::BarostatWork::Trotter)
+    .value("TrotterFirstOrder", driver::BarostatWork::TrotterFirstOrder)
+    .value("Exact", driver::BarostatWork::Exact)
+    .value("FirstOrder", driver::BarostatWork::FirstOrder);
   py::enum_<model::Electrostatics>(m, "Electrostatics")
     .value("Cutoff", model::Electrostatics::Cutoff)
     .value("PME", model::Electrostatics::PME)
@@ -499,6 +509,8 @@ PYBIND11_MODULE(_core, m) {
   property(ensemble, "pressure", &model::Ensemble::pressure, units::bar);
   property(ensemble, "tau_p", &model::Ensemble::tauP, units::ps);
   property(ensemble, "compressibility", &model::Ensemble::compressibility, units::inverseBar);
+  property(ensemble, "coupling", &model::Ensemble::coupling);
+  property(ensemble, "work", &model::Ensemble::work);
   property(ensemble, "coupling_period", &model::Ensemble::couplingPeriod);
   property(ensemble, "com_period", &model::Ensemble::comPeriod);
   property(ensemble, "seed", &model::Ensemble::seed);
@@ -607,6 +619,21 @@ PYBIND11_MODULE(_core, m) {
           p.prepared->control.neighborStructure == driver::NeighborStructure::Groups ? "groups" : "matrix";
       d["pruned_distance"] = p.prepared->control.prunedDistance * driver::units::length;
       d["entry"] = c.program.entry;
+      // The barostat of the program: its coupling and its work, or None
+      // without one (D[python-barostat]).
+      {
+        const auto &control = p.prepared->control;
+        if (control.barostat) {
+          py::dict barostat;
+          barostat["coupling"] = control.semiIsotropic ? model::BarostatCoupling::SemiIsotropic
+                                 : control.anisotropic ? model::BarostatCoupling::Anisotropic
+                                                       : model::BarostatCoupling::Isotropic;
+          barostat["work"] = control.barostatWork;
+          d["barostat"] = barostat;
+        } else {
+          d["barostat"] = py::none();
+        }
+      }
       d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";
       d["pme"] = c.program.pme;

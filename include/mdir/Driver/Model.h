@@ -32,6 +32,10 @@ enum class EnsembleKind { NVE, NVT, NPT };
 /// smooth PME, or the one that is optimal for the splines of the grid
 /// (D134).
 enum class PMEInfluence { SPME, Optimal };
+/// The `[barostat] coupling` of the control file: one strain for the three
+/// axes; x and y together and z by its own (D119); or each axis by its own
+/// (D163c).
+enum class BarostatCoupling { Isotropic, SemiIsotropic, Anisotropic };
 
 /// A tunable parameter (D213, docs/python-tunable.md): a
 /// vector θ of M entries and a map from the sites of `parameter` to them.
@@ -207,6 +211,11 @@ struct Ensemble {
   EnsembleKind kind = EnsembleKind::NVE;
   double temperature = 298.15, tauT = 1.0;
   double pressure = 1.01325, tauP = 5.0, compressibility = 4.5e-5;
+  /// `[barostat] coupling` and `work` of the control file, with its
+  /// defaults (D77, D92, D119, D163c; D[python-barostat]). The
+  /// compressibility is that of every axis.
+  BarostatCoupling coupling = BarostatCoupling::Isotropic;
+  driver::BarostatWork work = driver::BarostatWork::Trotter;
   int64_t couplingPeriod = 10, comPeriod = 0;
   uint64_t seed = 314159;
 };

@@ -183,6 +183,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     return unsupported("the initial object subset supports velocity Verlet and leapfrog");
   if (ensemble.kind != EnsembleKind::NVE && ensemble.kind != EnsembleKind::NVT && ensemble.kind != EnsembleKind::NPT)
     return unsupported("unsupported ensemble");
+  if (ensemble.coupling != BarostatCoupling::Isotropic && ensemble.coupling != BarostatCoupling::SemiIsotropic &&
+      ensemble.coupling != BarostatCoupling::Anisotropic)
+    return unsupported("unsupported coupling of the barostat");
+  if (ensemble.work != driver::BarostatWork::Trotter && ensemble.work != driver::BarostatWork::TrotterFirstOrder &&
+      ensemble.work != driver::BarostatWork::Exact && ensemble.work != driver::BarostatWork::FirstOrder)
+    return unsupported("unsupported work of the barostat");
   if (s.electrostatics != Electrostatics::Cutoff && s.electrostatics != Electrostatics::PME)
     return unsupported("unsupported electrostatics");
   // As the control file: the modifier is of the real-space term of PME.
@@ -303,6 +309,24 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pressure = ensemble.pressure / 1.01325;
   c.tauP = ensemble.tauP;
   c.compressibility = ensemble.compressibility * 1.01325;
+  // The coupling and the work of the barostat, as Reader::readBarostat
+  // takes them (D[python-barostat]): one compressibility, that of every
+  // axis and of z, no surface tension. They are of a barostat: without
+  // one they are not read, as `tau_p` is not.
+  if (c.barostat) {
+    c.barostatWork = ensemble.work;
+    c.semiIsotropic = ensemble.coupling == BarostatCoupling::SemiIsotropic;
+    c.anisotropic = ensemble.coupling == BarostatCoupling::Anisotropic;
+    for (double &value : c.compressibilities) value = c.compressibility;
+    c.compressibilityZ = c.compressibility;
+    if ((c.semiIsotropic || c.anisotropic) && c.barostatWork == driver::BarostatWork::FirstOrder)
+      return input("model: 'work = \"FIRST_ORDER\"' counts the work from the trace of "
+                   "the virial of the step with twice the internal kinetic "
+                   "energy, which holds for the trace only; with "
+                   "'coupling = \"SEMI_ISOTROPIC\"' or \"ANISOTROPIC\" use "
+                   "\"TROTTER\", "
+                   "\"TROTTER_FIRST_ORDER\", or \"EXACT\"");
+  }
   c.thermostatPeriod = c.thermostat ? ensemble.couplingPeriod : 0;
   c.barostatPeriod = c.barostat ? ensemble.couplingPeriod : 0;
   c.comPeriod = ensemble.comPeriod;
