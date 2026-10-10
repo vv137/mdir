@@ -158,8 +158,9 @@ which takes part of the potential below the cutoff that the correction
 would leave out, the control file refuses the correction even by default.
 The Python model refuses it when it is set and, by default, turns it off
 with the warning `dispersion_switched`, so that the default `System`, whose
-truncation is `Switch`, still compiles (the maintainer's choice on PR
-#187). Before, it kept the correction under a switch.
+truncation was `Switch` then, still compiled (the maintainer's choice on PR
+#187; since D[python-defaults] the default is a plain cutoff, with the
+correction on). Before, it kept the correction under a switch.
 
 Validation (`python-dispersion.test`, `-gpu.test`, `Inputs/python_dispersion.py`),
 on the 60 A + 60 B mixture of `pair-dispersion.test` with the term
@@ -364,6 +365,74 @@ analytic bonds, the orders 6 and 8, and the suite's two settings together.
 | Positions, velocities, and forces after 20 steps | the checkpoint of `mdir run` | equal to the bit, each case | 0 |
 | The fingerprint of the checkpoint | that of `mdir run` | equal | equal |
 | The potential at step 0 or the positions after 20 steps | the run without the setting | differ, each case: the field acts | more than 0 |
+## The defaults are those of the control file
+
+D[python-defaults] (#281; the maintainer's decision on the inventory of
+#270). Where the Python model and the control file had different defaults
+for one setting, the Python model takes the control file's: a system given
+to both front ends with nothing beyond its inputs is one model. Before, it
+was two.
+
+| Setting | Before | Now, as the control file without the key | To get the old model |
+|---|---|---|---|
+| `System.truncation` | `Truncation.Switch` | `Truncation.None_`, a plain cutoff | `system.truncation = mdir.Truncation.Switch` |
+| `System.switch_distance` | 1.0 nm | the cutoff (no switch); it follows `System.cutoff` until it is set | `system.switch_distance = 1.0` |
+| The correction for the dispersion, in effect | off, with the warning `dispersion_switched` (the default switch turned it off) | on (`EnergyPressure`), without a warning | follows from the switch; or `system.dispersion = mdir.DispersionCorrection.None_` |
+| `System.pairlist_distance` | 1.35 nm | 0.15 nm beyond the cutoff; it follows `System.cutoff` until it is set (equal at the default cutoff) | `system.pairlist_distance = 1.35` |
+| `Ensemble.com_period` | 0: the motion of the center of mass is never removed | `None`: with a thermostat every `coupling_period`, without one never | `ensemble.com_period = 0` |
+| A state without velocities | begins at rest | takes the velocities that `mdir run` draws: at `Ensemble.temperature`, with `Ensemble.seed` | `state.velocities = numpy.zeros((N, 3))` |
+
+- *The truncation.* The control file without `lennard_jones_modifier` and
+  `switch_distance` has a plain cutoff. The old default, the generic
+  switch from 1.0 nm, was a model that `mdir run` cannot state with a
+  topology (it refuses the generic switch there). `Truncation.Switch`
+  stays available when set, a model of Python alone.
+- *`switch_distance` and `pairlist_distance`.* Not set, they follow
+  `System.cutoff` as absent keys do; reading gives the value in effect and
+  `None` restores the default. The pairlist distance is computed as the
+  control file computes it, in Å, so that both front ends hold the same
+  double. With `ForceSwitch` and the other switches `switch_distance` must
+  be set below the cutoff, as in the control file.
+- *The correction for the dispersion* was on by default and turned off by
+  the default switch ([above](#the-correction-for-the-dispersion)); with a
+  plain cutoff it is on, as under `mdir run`, and the default model
+  compiles without a warning.
+- *`com_period`.* `None` hands the control the absent key, which it
+  resolves: under a thermostat the motion is removed when the thermostat
+  acts, without one never. `0` says never; a number under a thermostat
+  must equal `coupling_period`, as `center_of_mass_interval` must equal
+  `interval`.
+- *Velocities.* `mdir run` draws velocities when its coordinates give none
+  (not for a minimization, which begins at rest): from the
+  Maxwell-Boltzmann distribution at `[ensemble] temperature` with
+  `[dynamics] seed`, which is the seed of the coupling too. `mdir.compile`
+  does the same for an `InitialState` without velocities, with
+  `Ensemble.temperature` and `Ensemble.seed`: the numbers of `mdir run`,
+  and of `state.draw_velocities(system, ensemble.temperature,
+  ensemble.seed)`. Velocities that are given are kept, zeros among them:
+  `state.velocities = numpy.zeros((N, 3))` begins at rest.
+  `InitialState.from_state(state, velocities=False)` gives a state
+  without velocities, which is then drawn.
+
+The fingerprint of a checkpoint writes an entry for a setting that was
+given, as the control file writes a key
+([python-checkpoints.md](python-checkpoints.md)). The fingerprint took the
+default cutoff, 1.2 nm, for different from the 12 Å of an absent key (two
+doubles compared in nm) and recorded `[energy] cutoff` for every default
+model; it compares in Å now.
+
+**Validation** (`python-defaults*.test`, `Inputs/python_defaults.py`): the
+dipeptide in 382 waters given to both front ends with nothing beyond the
+files, the ensemble, the periodic boundary, and the deterministic mode: no
+cutoff, no reach, no truncation, no velocities, no periods.
+
+| Check | Reference | Result | Tolerance |
+|---|---|---|---|
+| Potential, kinetic, and total energy at step 0, NVE, NVT, and NPT | the row of the energy file of `mdir run` (6 decimals of kcal/mol) | within 4.7e-7 kcal/mol | 1e-6 |
+| Positions, velocities, forces, and the cell after 20 steps, the three ensembles, CPU and GPU, double and mixed | the checkpoint of `mdir run` | equal to the bit | 0 |
+| The fingerprint of the checkpoint | that of `mdir run` | equal | equal |
+| The fields: the defaults, that the two distances follow the cutoff until set, `None` | | as stated above | |
+| The model of before, stated with the last column of the table | | compiles with the one warning `dispersion_switched`, begins at rest, and its potential differs from the default model's by 61.6 kJ/mol | |
 
 ## Python host array boundary
 

@@ -368,6 +368,22 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The defaults of the Python model are those of the control file**
+  (D[python-defaults], #281). A script that relied on a default below gets
+  another model than before; the last column gets the old one back.
+
+| Setting | Before | Now, as the control file without the key | To get the old model |
+|---|---|---|---|
+| `System.truncation` | `Truncation.Switch` | `Truncation.None_`, a plain cutoff | `system.truncation = mdir.Truncation.Switch` |
+| `System.switch_distance` | 1.0 nm | the cutoff (no switch); it follows `System.cutoff` until it is set | `system.switch_distance = 1.0` |
+| The correction for the dispersion, in effect | off, with the warning `dispersion_switched` (the default switch turned it off) | on (`EnergyPressure`), without a warning | follows from the switch; or `system.dispersion = mdir.DispersionCorrection.None_` |
+| `System.pairlist_distance` | 1.35 nm | 0.15 nm beyond the cutoff; it follows `System.cutoff` until it is set (equal at the default cutoff) | `system.pairlist_distance = 1.35` |
+| `Ensemble.com_period` | 0: the motion of the center of mass is never removed | `None`: with a thermostat every `coupling_period`, without one never | `ensemble.com_period = 0` |
+| A state without velocities | begins at rest | takes the velocities that `mdir run` draws: at `Ensemble.temperature`, with `Ensemble.seed` | `state.velocities = numpy.zeros((N, 3))` |
+
+  A system given to both front ends with nothing beyond its inputs now
+  runs to the same bits in the deterministic mode. `mdir run` and the
+  control file are unchanged.
 - With the groups, `pairlist_distance` may be up to 0.999 of the least
   edge of the cell (the least of $a_x, b_y, c_z$ of a triclinic one),
   where a triclinic cell was limited to half of it and an orthorhombic

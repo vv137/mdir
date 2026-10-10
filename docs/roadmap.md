@@ -317,6 +317,12 @@ D[python-barostat] (#275) gives `mdir.Ensemble` the `coupling` and the
 and the four works, each to the bit of `mdir run` in an orthorhombic and
 in a triclinic cell, and with the exact and the first-order work a
 coupling at every step.
+D[python-defaults] (#281) makes the defaults of the Python model those of
+the control file (a plain cutoff with the correction for the dispersion,
+the switch and the pairlist distance from the cutoff, the center of mass
+with the thermostat, drawn velocities for a state without them): a system
+given to both front ends with nothing beyond its inputs runs to the same
+bits. A breaking change of the Python API, listed in the changelog.
 D221 (#120, [topology views](python-topology.md)) gives
 loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)
