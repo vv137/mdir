@@ -22,6 +22,12 @@ format, or the outputs; every such change is listed under **Changed** or
   structure a Python simulation runs at the rate of `mdir run`: JAC at
   constant energy in mixed precision, 0.206 ms a step with the dual list
   against 0.259 with the matrix. The matrix stays the default.
+- `System.pme_influence` (`mdir.PMEInfluence.SPME`, the default, or
+  `Optimal`) and `System.analytic_bonds` in the Python model, the
+  `[pme] influence` and `[constraints] analytic_bonds` of the control file,
+  and `System.pme_order` of 6 and 8 (D[python-pme-fields], #279): the
+  settings of the Amber suite's script that a Python run could not state.
+  Each runs to the bit of `mdir run` in the deterministic mode.
 - The frame evaluator over the terms that depend on the tunables alone
   (D243, #264): `mdir.FrameEvaluator(program,
   terms="dependent")` compiles a second program with only the terms that a
