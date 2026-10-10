@@ -12,6 +12,16 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The groups of 16 and the dual list in the Python model
+  (D[python-groups], #270): `Execution.neighbor_structure`
+  (`mdir.NeighborStructure.Matrix`, the default, or `Groups`) and
+  `System.pruned_distance` (nm; 0 keeps one list), the
+  `[execution] neighbor_structure` and `[energy] pruned_distance` of the
+  control file, refused as they are with the same words;
+  `Program.plan["neighbor_structure"]` and `["pruned_distance"]`. With one
+  structure a Python simulation runs at the rate of `mdir run`: JAC at
+  constant energy in mixed precision, 0.206 ms a step with the dual list
+  against 0.259 with the matrix. The matrix stays the default.
 - The frame evaluator over the terms that depend on the tunables alone
   (D243, #264): `mdir.FrameEvaluator(program,
   terms="dependent")` compiles a second program with only the terms that a
@@ -628,6 +638,16 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A writable borrow of a simulation with the groups refuses an orthorhombic
+  cell whose least edge is below the pairlist distance over 0.999, as it
+  refused a triclinic one (D242, D[python-groups]); the check was skipped
+  for orthorhombic cells, which no Python program with the groups could
+  reach before.
+- A program with a dual list that also keeps a neighbor matrix (the loops
+  of the derivative in the tunables, `System.tunable_gradient`) lowers:
+  `md-exec-choose-neighbors` takes the reach and the test of the inner
+  list from the refreshes of the structures that stay matrices
+  (D[python-groups]). Before, the lowering refused it.
 - `Simulation.view()` and `borrow()` of a simulation without an activation
   of its program say why it has none (#220, `docs/python-dlpack.md`). After
   `save_checkpoint` or a `CheckpointReporter` the message was that of a

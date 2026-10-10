@@ -316,6 +316,17 @@ Fingerprint mdir::model::getFingerprint(const System &s,
       std::fabs(s.pairlistDistance - (s.cutoff + 1.5 * length)) > 1e-12)
     add("execution", "[energy] pairlist_distance",
         number(s.pairlistDistance / length));
+  // A dual list, where there is one, as the key of the control file; none
+  // (0) has no key there (D[python-groups]).
+  if (s.prunedDistance != 0.0)
+    add("execution", "[energy] pruned_distance",
+        number(s.prunedDistance / length));
+  if (has(given.execution, "neighbor_structure"))
+    add("execution", "[execution] neighbor_structure",
+        getFingerprintString(execution.neighborStructure ==
+                                     driver::NeighborStructure::Groups
+                                 ? "GROUPS"
+                                 : "MATRIX"));
   if (has(given.execution, "target"))
     add("execution", "[execution] target",
         getFingerprintString(execution.target == driver::Target::GPU ? "GPU"

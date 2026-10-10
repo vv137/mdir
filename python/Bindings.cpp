@@ -205,6 +205,10 @@ PYBIND11_MODULE(_core, m) {
     .value("Mixed", driver::Precision::Mixed)
     .value("Double", driver::Precision::Double)
     ;
+  // `[execution] neighbor_structure` (D89, D[python-groups]).
+  py::enum_<driver::NeighborStructure>(m, "NeighborStructure")
+    .value("Matrix", driver::NeighborStructure::Matrix)
+    .value("Groups", driver::NeighborStructure::Groups);
   py::enum_<driver::Integrator>(m, "IntegratorMethod")
     .value("VelocityVerlet", driver::Integrator::VelocityVerlet)
     .value("Leapfrog", driver::Integrator::Leapfrog)
@@ -361,6 +365,7 @@ PYBIND11_MODULE(_core, m) {
   property(system, "cutoff", &model::System::cutoff, units::nm);
   property(system, "pairlist_distance", &model::System::pairlistDistance, units::nm);
   property(system, "switch_distance", &model::System::switchDistance, units::nm);
+  property(system, "pruned_distance", &model::System::prunedDistance, units::nm);
   property(system, "truncation", &model::System::truncation);
   property(system, "electrostatics", &model::System::electrostatics);
   property(system, "coulomb_modifier", &model::System::coulombModifier);
@@ -500,6 +505,7 @@ PYBIND11_MODULE(_core, m) {
   property(execution, "reorder", &model::Execution::reorder);
   property(execution, "fast_math", &model::Execution::fastMath);
   property(execution, "neighbor_capacity", &model::Execution::neighborCapacity);
+  property(execution, "neighbor_structure", &model::Execution::neighborStructure);
   auto schedule = input<model::Schedule>(m, "Schedule");
   property(schedule, "steps", &model::Schedule::steps);
   property(schedule, "energy_period", &model::Schedule::energyPeriod);
@@ -588,6 +594,12 @@ PYBIND11_MODULE(_core, m) {
       d["deterministic"] = c.execution.deterministic;
       d["reorders"] = c.program.reorders;
       d["neighbor_capacity"] = c.program.neighborWidth;
+      // What was asked, as `neighbor_structure_requested` of a manifest,
+      // and the reach of the inner list of a dual list in nm, 0 without
+      // one (D[python-groups]).
+      d["neighbor_structure"] =
+          p.prepared->control.neighborStructure == driver::NeighborStructure::Groups ? "groups" : "matrix";
+      d["pruned_distance"] = p.prepared->control.prunedDistance * driver::units::length;
       d["entry"] = c.program.entry;
       d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";

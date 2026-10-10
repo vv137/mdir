@@ -571,12 +571,15 @@ isotropic coupling alone: `mdir.Ensemble` has no key for the
 `coupling = "SEMI_ISOTROPIC"` and `"ANISOTROPIC"` of `[barostat]`, which
 `mdir run` takes in a triclinic cell as well, so there is no such program
 to refuse or to compare; nor has it one for `work`, whose default,
-`TROTTER`, is the work of every Python simulation. A Python simulation has the neighbor matrix
-([#270](https://github.com/vv137/mdir/issues/270)), which holds every
-image within its reach whatever the barostat does to the cell (D241); the
-stop of a run whose barostat takes the cell below the reach of the groups
-(D242) is therefore not one that a Python simulation reaches. The stop of
-a cell below twice the cutoff is the runtime's, for both front ends.
+`TROTTER`, is the work of every Python simulation. With the neighbor
+matrix, the default, every image within the reach is held whatever the
+barostat does to the cell (D241). With the groups
+(`Execution.neighbor_structure`, D[python-groups],
+[python-model.md](python-model.md#the-groups-and-the-dual-list)) the
+runtime fails the part in which the barostat takes the cell below the
+pairlist distance over 0.999 (D242), as it stops `mdir run`
+(`python-groups-reach-gpu.test`). The stop of a cell below twice the
+cutoff is the runtime's, for both front ends.
 
 **Validation against `mdir run`.** `python-triclinic-npt-cli-double.test`,
 `-mixed`, and their `-gpu` twins (`Inputs/python_triclinic_npt.py`): the

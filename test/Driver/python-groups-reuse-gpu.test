@@ -1,0 +1,8 @@
+# REQUIRES: python-api, cuda
+# The code that a Program keeps for its simulations (D236) with the dual
+# list (D[python-groups], #270): the second simulation takes the code of
+# the first, and a program of another structure takes none of it.
+# Inputs/python_groups.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_groups.py %S/Inputs/dipeptide mdir %t reuse Double | FileCheck %s
+# CHECK: reuse Double passed

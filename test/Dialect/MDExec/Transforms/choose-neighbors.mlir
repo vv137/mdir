@@ -3,6 +3,8 @@
 // RUN: | FileCheck %s --check-prefix=MATRIX
 // RUN: not mdir-opt %s --md-exec-choose-neighbors=kind=tiles 2>&1 \
 // RUN: | FileCheck %s --check-prefix=KIND
+// RUN: mdir-opt %s --md-exec-expose-validity --md-exec-choose-neighbors \
+// RUN: | FileCheck %s --check-prefix=DUAL
 
 !vec = !md.field<@atoms, 3 x f64>
 !nl  = !mdrt.neighbors<@atoms>
@@ -70,5 +72,55 @@ func.func @matrix(%x: !vec, %cell: !md.cell) -> (f64, f64) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
     md_exec.yield %r2 : f64
   } : !nl, !vec -> f64
+  return %a, %b : f64, f64
+}
+
+// Under a dual list (D114) every refresh of a run has the reach and the
+// test of an inner list. A structure that becomes groups keeps them; one
+// that stays a matrix, here for a sum without a contract, keeps one list:
+// its refresh loses them, and what the test read of the pruning reads the
+// build (D[python-groups]).
+//
+// DUAL-LABEL: func.func @dual(
+// DUAL-DAG:     %[[G0:[a-z0-9]+]] = md_exec.empty_neighbors kind(groups)
+// DUAL-DAG:     %[[M0:[a-z0-9]+]] = md_exec.empty_neighbors kind(matrix)
+// DUAL:         scf.for {{.*}} iter_args(%[[G:[a-z0-9]+]] = %[[G0]], %[[M:[a-z0-9]+]] = %[[M0]]
+// DUAL:           md_exec.reference_positions %[[G]] pruned
+// DUAL:           md_exec.reference_cell %[[G]] pruned
+// DUAL:           md_exec.refresh_neighbors %[[G]], {{.*}} stale({{.*}}) cutoff({{.*}} prune_skin(1.000000e-01)
+// DUAL-NOT:       pruned
+// DUAL:           md_exec.refresh_neighbors %[[M]], {{.*}} moved(%{{[0-9]+}}) cutoff(
+// DUAL-NOT:       prune_skin
+// DUAL:           md_exec.pair_for {{.*}} policy(unique, atomic)
+// DUAL:           md_exec.pair_for {{.*}} policy(directed, owner_only)
+func.func @dual(%x: !vec, %cell: !md.cell, %n: index) -> (f64, f64) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %u0 = arith.constant 0.0 : f64
+  %g0 = md_exec.empty_neighbors kind(matrix) width(96) : !nl
+  %m0 = md_exec.empty_neighbors kind(matrix) width(96) : !nl
+  %g, %m, %a, %b = scf.for %i = %c0 to %n step %c1
+      iter_args(%s = %g0, %t = %m0, %p = %u0, %q = %u0)
+      -> (!nl, !nl, f64, f64) {
+    %s1 = md_exec.refresh_neighbors %s, %x, %cell
+        cutoff(2.5) skin(0.3) prune_skin(0.1) cell_width(2.8) policy(check)
+        : !nl, !vec
+    %t1 = md_exec.refresh_neighbors %t, %x, %cell
+        cutoff(2.5) skin(0.3) prune_skin(0.1) cell_width(2.8) policy(check)
+        : !nl, !vec
+    %u = md_exec.pair_for %s1, %x, %cell reduce(%u0 : f64) cutoff(2.5)
+        weights [0.5] exchange [symmetric] policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %r2 : f64
+    } : !nl, !vec -> f64
+    %w = md_exec.pair_for %t1, %x, %cell reduce(%u0 : f64) cutoff(2.5)
+        weights [0.5] policy(directed, owner_only) {
+    ^bb0(%r2: f64, %d: vector<3xf64>):
+      md_exec.yield %r2 : f64
+    } : !nl, !vec -> f64
+    %p1 = arith.addf %p, %u : f64
+    %q1 = arith.addf %q, %w : f64
+    scf.yield %s1, %t1, %p1, %q1 : !nl, !nl, f64, f64
+  }
   return %a, %b : f64, f64
 }

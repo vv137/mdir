@@ -187,6 +187,12 @@ front ends continues without a warning; a capacity in one of them only is
 a change of the execution, with the warning of one. The estimate, 0 or
 the key absent, has no entry.
 
+`Execution.neighbor_structure` and `System.pruned_distance`
+(D[python-groups]) are the entries `[execution] neighbor_structure` and
+`[energy] pruned_distance` of the group `execution`, the first when the
+field was set and the second when there is a dual list: a continuation
+with another structure is the same run with other execution, with a note.
+
 Settings without a control-file key (custom terms in Python's units,
 tunables) have entries of their own: a CLI run never has them, so a
 checkpoint with them is a new stage for `mdir run`, never `--continue`.

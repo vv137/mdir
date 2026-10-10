@@ -302,6 +302,13 @@ gives to the activation it begins. D244 (#254) lets a
 Python simulation run at constant pressure in a triclinic cell: the tilts
 that the barostat scales are those of its state, of its checkpoints and
 frames, and of a borrow, and the run is that of `mdir run` to the bit.
+D[python-groups] (#270) gives the Python model the groups of 16 and the
+dual list (`Execution.neighbor_structure`, `System.pruned_distance`), with
+the refusals of the control file: with one structure the two front ends
+run at one rate (JAC at constant energy, 0.206 ms a step from Python
+against 0.205 from `mdir run` with the dual list, and 0.259 against 0.258
+with the matrix). The matrix stays the default; the choice by the size of
+the system is G3.
 D221 (#120, [topology views](python-topology.md)) gives
 loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)

@@ -30,10 +30,12 @@ the edge, lists that took the nearest image and the one on the other side
 of the boundary along each axis alone lost pairs (#263).
 
 With `python` for MDIR the run is a Python simulation of the same model
-(D244), whose reporters write the two files: the neighbor
-matrix, which is the structure of every Python simulation (#270), under the
-barostat of a simulation. The Python model has no key for the work of the
-barostat, so its run has the default, `work = "TROTTER"`, where the control
+(D244), whose reporters write the two files, under the barostat of a
+simulation: with the neighbor matrix, or with the groups and the dual list
+(`Execution.neighbor_structure`, `System.pruned_distance`;
+D[python-groups]), whose refusal by the builder and whose stop by the
+runtime are then those of `mdir run`. The Python model has no key for the
+work of the barostat, so its run has the default, `work = "TROTTER"`, where the control
 file here has `"FIRST_ORDER"`; the rows of the two are of other
 configurations (see below).
 """
@@ -142,7 +144,6 @@ neighbor_structure = "{structure}"
 def run_python():
     """The model of `run.toml` in a Python simulation; the pressure of the
     control file is in atm."""
-    assert structure == "MATRIX" and not pruned
     loaded = mdir.load_gromacs(str(work / "argon.top"), str(work / "argon.gro"))
     system, state = loaded.make_system(), loaded.make_state()
     system.cutoff, system.switch_distance, system.pairlist_distance = CUTOFF, CUTOFF, REACH
@@ -160,6 +161,10 @@ def run_python():
     ensemble.coupling_period = PERIOD
     execution.target = getattr(mdir.Target, target)
     execution.precision = mdir.Precision.Double
+    if structure == "GROUPS":
+        execution.neighbor_structure = mdir.NeighborStructure.Groups
+    if pruned:
+        system.pruned_distance = pruned
     simulation = mdir.Simulation(mdir.compile(system, state, integrator, ensemble, execution,
                                               mdir.Schedule()))
     for reporter in (mdir.EnergyReporter(str(work / "run.energy"), PERIOD),
@@ -171,7 +176,11 @@ def run_python():
 
 TROTTER = cli == "python"
 if TROTTER:
-    run_python()
+    try:
+        run_python()
+    except (mdir.InputError, mdir.SimulationError) as error:
+        print("Python failed:", str(error).strip().splitlines()[-1])
+        sys.exit(0)
 else:
     ran = subprocess.run([cli, "run", "run.toml"], cwd=work, capture_output=True, text=True)
     if ran.returncode:

@@ -1,0 +1,27 @@
+# group-reach-gpu.test with a Python simulation (D[python-groups], #270,
+# D242): the groups, and the dual list, with a reach of most of the cell,
+# in a cube and in a cell with every tilt on its bound that the barostat
+# of a simulation shrinks. At every frame the potential energy of the run
+# is the sum over every image of every pair within the cutoff
+# (Inputs/triclinic_reach.py). A reach of more than 0.999 of the least
+# edge is refused by the builder at `mdir.compile`, and the runtime fails
+# the part in which the barostat takes the cell there, as it stops
+# `mdir run`.
+#
+# REQUIRES: python-api, hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t/cube %t/dual %t/tilted %t/tilted-dual %t/stop %t/refused
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/cube python GPU GROUPS cube 1.7 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/dual python GPU GROUPS cube 1.7 1.2 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/tilted python GPU GROUPS tilted 1.7 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/tilted-dual python GPU GROUPS tilted 1.7 1.2 | FileCheck %s
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/stop python GPU GROUPS cube 2.0 | FileCheck %s --check-prefix=STOP
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t/refused python GPU GROUPS tilted 2.3 | FileCheck %s --check-prefix=REFUSED
+
+# CHECK:      79 frames, 79 with the reach beyond half of the least of the diagonal
+# CHECK-NEXT: half of the least of the diagonal well below the reach
+# CHECK-NEXT: frames whose potential is not the sum over all images: 0
+
+# STOP:    Python failed: {{.*}}the barostat has made the cell {{[0-9.]+}} Å along x, less than the pairlist distance over 0.999, 20.0200 Å, below which the groups do not hold every pair
+
+# REFUSED: Python failed: 'pairlist_distance', 23 Å, exceeds 0.999 of the least of a_x, b_y, c_z of the cell, 21.978 Å, the most that the groups take
