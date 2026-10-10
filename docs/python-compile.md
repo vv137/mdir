@@ -83,7 +83,7 @@ snake case; defaults and the supported physics subset are those of
 
 | Object | Properties |
 |---|---|
-| System | `periodic`, `cutoff`, `pairlist_distance`, `pruned_distance` (D245), `switch_distance`, `truncation`, `electrostatics`, `coulomb_modifier`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`, `restraints`, `restraint_reference`, `tunables` (D213); read-only `dispersion_given` (D222), `particle_count`, `topology` (D221, [python-topology.md](python-topology.md)) |
+| System | `periodic`, `cutoff`, `pairlist_distance`, `pruned_distance` (D245), `switch_distance`, `truncation`, `electrostatics`, `coulomb_modifier`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `pme_influence`, `analytic_bonds` (D[python-pme-fields]), `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`, `restraints`, `restraint_reference`, `tunables` (D213); read-only `dispersion_given` (D222), `particle_count`, `topology` (D221, [python-topology.md](python-topology.md)) |
 | InitialState | `positions`, `velocities`, `cell` |
 | Integrator | `method`, `timestep`, `minimize`, `minimize_step` |
 | Ensemble | `kind`, `temperature`, `tau_t`, `pressure`, `tau_p`, `compressibility`, `coupling_period`, `com_period`, `seed` |

@@ -196,6 +196,11 @@ Fingerprint mdir::model::getFingerprint(const System &s,
             getFingerprintNumber(s.pmeGrid[2]) + "]");
   if (has(given.system, "pme_order"))
     add("physics", "[pme] order", getFingerprintNumber(s.pmeOrder));
+  if (has(given.system, "pme_influence"))
+    add("physics", "[pme] influence",
+        getFingerprintString(s.pmeInfluence == PMEInfluence::Optimal ? "OPTIMAL" : "SPME"));
+  if (has(given.system, "analytic_bonds"))
+    add("physics", "[constraints] analytic_bonds", flag(s.analyticBonds));
   if (has(given.system, "rigid_hydrogen_bonds"))
     add("physics", "[constraints] hydrogen_bonds",
         flag(s.rigidHydrogenBonds));

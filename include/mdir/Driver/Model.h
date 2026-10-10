@@ -28,6 +28,10 @@ enum class Electrostatics { Cutoff, PME };
 /// (Control::pmeShift; D205).
 enum class CoulombModifier { None, PotentialShift };
 enum class EnsembleKind { NVE, NVT, NPT };
+/// The `[pme] influence` of the control file: the influence function of
+/// smooth PME, or the one that is optimal for the splines of the grid
+/// (D134).
+enum class PMEInfluence { SPME, Optimal };
 
 /// A tunable parameter (D213, docs/python-tunable.md): a
 /// vector θ of M entries and a map from the sites of `parameter` to them.
@@ -126,7 +130,13 @@ struct System {
   bool dispersionGiven = false;
   double pmeAlpha = 0, pmeTolerance = 1.e-5, pmeSpacing = 0.12;
   std::array<int64_t, 3> pmeGrid = {0,0,0};
+  /// The order of the B-splines: 4, 6, or 8, as `[pme] order`.
   int64_t pmeOrder = 4;
+  /// `[pme] influence` (D134; D[python-pme-fields]).
+  PMEInfluence pmeInfluence = PMEInfluence::SPME;
+  /// `[constraints] analytic_bonds`: a group of SHAKE of one bond is
+  /// projected in closed form (D[python-pme-fields]).
+  bool analyticBonds = false;
   bool rigidHydrogenBonds = false, rigidWater = false;
   /// Explicitly permit flexible water when importing GROMACS SETTLE.
   bool flexibleWater = false;
