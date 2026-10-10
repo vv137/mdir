@@ -1883,15 +1883,14 @@ Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
           " written for the cell, " + std::to_string(cell[k]) +
           " nm, is not finite or is less than twice the cutoff, " +
           std::to_string(least) + " nm; nothing is committed");
-  if (!triclinic)
-    return llvm::Error::success();
   // The reduced form (I1), which the minimum image in one pass and the
   // neighbor structures assume; the tolerance is that of `reduceCell`.
   // What was written is not adjusted: a cell that is not reduced is
-  // refused, as that of an InitialState is.
+  // refused, as that of an InitialState is. An orthorhombic cell has no
+  // tilts.
   const double tolerance = 1e-6;
   const int bounds[3] = {0, 0, 1};
-  for (int k = 0; k != 3; ++k)
+  for (int k = 0; triclinic && k != 3; ++k)
     if (std::fabs(cell[3 + k]) >
         0.5 * cell[bounds[k]] * (1.0 + tolerance))
       return inputError(
@@ -1905,7 +1904,9 @@ Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
   // whatever the cell (docs/triclinic-m2.md, Section 2), so I2 is all that
   // a commit asks of it; the groups hold every image within their reach
   // while it is less than the least edge of the cell, the least of a_x,
-  // b_y, c_z of a triclinic one, as the builder asks (D242).
+  // b_y, c_z of a triclinic one, as the builder asks (D242). The check
+  // is of either kind of cell: an orthorhombic one returned before it
+  // until a Python simulation could have the groups (D[python-groups]).
   double reach = control.pairlistDistance * units::length;
   double most = 0.999 * std::min({cell[0], cell[1], cell[2]});
   if (control.neighborStructure == driver::NeighborStructure::Groups &&
