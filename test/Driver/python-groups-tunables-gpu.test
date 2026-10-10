@@ -1,5 +1,5 @@
 # REQUIRES: python-api, cuda
-# Tunables with the groups and the dual list (D[python-groups], #270): an
+# Tunables with the groups and the dual list (D245, #270): an
 # update and `gradient()` against the neighbor matrix, and the frame
 # evaluator over frames far from each other and in another cell, each of
 # which begins an activation whose lists are built for it.

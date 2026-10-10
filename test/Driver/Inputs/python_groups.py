@@ -1,5 +1,5 @@
 """The groups of 16 and the dual list in a Python simulation
-(D[python-groups], #270, docs/python-model.md): the dipeptide in water with
+(D245, #270, docs/python-model.md): the dipeptide in water with
 PME, SHAKE, and SETTLE.
 
 Usage: python_groups.py ROOT MDIR WORK SCENARIO [PRECISION]

@@ -79,7 +79,7 @@ func.func @matrix(%x: !vec, %cell: !md.cell) -> (f64, f64) {
 // test of an inner list. A structure that becomes groups keeps them; one
 // that stays a matrix, here for a sum without a contract, keeps one list:
 // its refresh loses them, and what the test read of the pruning reads the
-// build (D[python-groups]).
+// build (D245).
 //
 // DUAL-LABEL: func.func @dual(
 // DUAL-DAG:     %[[G0:[a-z0-9]+]] = md_exec.empty_neighbors kind(groups)

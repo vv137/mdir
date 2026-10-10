@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The groups and the dual list as fields of the Python model
-# (D[python-groups], #270): `Execution.neighbor_structure` and
+# (D245, #270): `Execution.neighbor_structure` and
 # `System.pruned_distance` are refused as `[execution] neighbor_structure`
 # and `[energy] pruned_distance` are, with the words of the control file;
 # Inputs/python_groups.py, scenario refusals, which needs no device.

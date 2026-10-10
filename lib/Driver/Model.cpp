@@ -254,7 +254,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pairlistDistance = s.pairlistDistance / driver::units::length;
   c.switchDistance = s.switchDistance / driver::units::length;
   // A dual list, with the refusals and the words of the control file
-  // (Reader::readEnergy; D114, D[python-groups]).
+  // (Reader::readEnergy; D114, D245).
   if (!std::isfinite(s.prunedDistance) || s.prunedDistance < 0)
     return input("System.pruned_distance must be positive, or 0 for one list");
   c.prunedDistance = s.prunedDistance / driver::units::length;
@@ -308,7 +308,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.fastMath = execution.fastMath;
   c.neighborWidth = execution.neighborCapacity;
   // The groups, with the refusal and the words of the control file
-  // (Reader::readExecution; D89, D[python-groups]).
+  // (Reader::readExecution; D89, D245).
   if (execution.neighborStructure != driver::NeighborStructure::Matrix &&
       execution.neighborStructure != driver::NeighborStructure::Groups)
     return unsupported("unsupported neighbor structure");
@@ -501,7 +501,7 @@ llvm::Expected<InitialState> mdir::model::drawVelocities(
   ensemble.seed = seed;
   // The draw does not read the neighbor structures: the system is prepared
   // for the default execution, which has the matrix, so without the dual
-  // list, which is of the groups (D[python-groups]). A value that
+  // list, which is of the groups (D245). A value that
   // `compile` would refuse is refused there. The copy of the system is
   // the price of preparing it as `prepare` does.
   System physics = s;

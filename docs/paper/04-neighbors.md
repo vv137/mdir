@@ -497,7 +497,7 @@ beside them, for the loops without an exchange contract (Section 4.4):
 the loops of the derivative in the tunables of a Python model are such
 loops. That matrix has no inner list, and its refresh takes the first
 condition alone, which is the theorem of Section 4.1 for it
-(D[python-groups]). Both front ends select the structures: the control
+(D245). Both front ends select the structures: the control
 file with `neighbor_structure` and `pruned_distance`, the Python model
 with `Execution.neighbor_structure` and `System.pruned_distance`, and
 with one structure they run at one rate (JAC, 23,558 atoms, at constant

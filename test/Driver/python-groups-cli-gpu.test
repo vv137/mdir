@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5, cuda
 # A Python simulation with the groups, and with the dual list, against
-# `mdir run` of the same control (D[python-groups], #270). The groups are
+# `mdir run` of the same control (D245, #270). The groups are
 # not for the deterministic mode, so the two are not equal to the bit: the
 # rows of the energy file over 100 steps and the positions at the end agree
 # within what two runs of `mdir run` differ by. Inputs/python_groups.py.

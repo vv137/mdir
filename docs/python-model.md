@@ -182,7 +182,7 @@ evaluate the same pairs within the cutoff.
 
 ## The groups and the dual list
 
-D[python-groups] (#270) gives the Python model the two keys of the control
+D245 (#270) gives the Python model the two keys of the control
 file that select the neighbor structure of the loops over pairs: the
 groups of 16 particles that share a list (D89,
 [groups-m1.md](groups-m1.md)) and the dual list (D114). Until then a

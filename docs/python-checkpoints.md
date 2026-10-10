@@ -188,7 +188,7 @@ a change of the execution, with the warning of one. The estimate, 0 or
 the key absent, has no entry.
 
 `Execution.neighbor_structure` and `System.pruned_distance`
-(D[python-groups]) are the entries `[execution] neighbor_structure` and
+(D245) are the entries `[execution] neighbor_structure` and
 `[energy] pruned_distance` of the group `execution`, the first when the
 field was set and the second when there is a dual list: a continuation
 with another structure is the same run with other execution, with a note.

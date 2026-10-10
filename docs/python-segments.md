@@ -574,7 +574,7 @@ to refuse or to compare; nor has it one for `work`, whose default,
 `TROTTER`, is the work of every Python simulation. With the neighbor
 matrix, the default, every image within the reach is held whatever the
 barostat does to the cell (D241). With the groups
-(`Execution.neighbor_structure`, D[python-groups],
+(`Execution.neighbor_structure`, D245,
 [python-model.md](python-model.md#the-groups-and-the-dual-list)) the
 runtime fails the part in which the barostat takes the cell below the
 pairlist distance over 0.999 (D242), as it stops `mdir run`

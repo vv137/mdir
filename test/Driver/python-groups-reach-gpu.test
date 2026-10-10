@@ -1,4 +1,4 @@
-# group-reach-gpu.test with a Python simulation (D[python-groups], #270,
+# group-reach-gpu.test with a Python simulation (D245, #270,
 # D242): the groups, and the dual list, with a reach of most of the cell,
 # in a cube and in a cell with every tilt on its bound that the barostat
 # of a simulation shrinks. At every frame the potential energy of the run

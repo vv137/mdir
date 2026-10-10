@@ -148,7 +148,7 @@ external terms of the Python model, with the observables file of `mdir run`
 written by a reporter and the values in the state (D232,
 Section 6.8), and terms of the absolute positions (D233); the groups of 16
 and the dual list of Section 4 from the Python model, at the rate of
-`mdir run` (D[python-groups]).
+`mdir run` (D245).
 Remaining:
 in the Python model, the time and parameters of each particle in a term of
 the positions, terms over centers and compound terms, and the derivative

@@ -1906,7 +1906,7 @@ Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
   // while it is less than the least edge of the cell, the least of a_x,
   // b_y, c_z of a triclinic one, as the builder asks (D242). The check
   // is of either kind of cell: an orthorhombic one returned before it
-  // until a Python simulation could have the groups (D[python-groups]).
+  // until a Python simulation could have the groups (D245).
   double reach = control.pairlistDistance * units::length;
   double most = 0.999 * std::min({cell[0], cell[1], cell[2]});
   if (control.neighborStructure == driver::NeighborStructure::Groups &&

@@ -163,7 +163,7 @@ mode (NVT, cutoff, no constraints), backups, and refusals.
 JAC (23,558 atoms, PME 64³, SHAKE and SETTLE, NVE, mixed precision) on
 one RTX 3090 (GPU 0, alone), ms per step over 5,000 steps after 5,000.
 When this was measured the Python model had no pruned lists and no
-groups of neighbors (it has since D[python-groups],
+groups of neighbors (it has since D245,
 [python-model.md](python-model.md#the-groups-and-the-dual-list), with
 which the two front ends run at one rate), so its rate without reporters
 differs from that of `mdir run`'s control file; the overheads are the

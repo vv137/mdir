@@ -33,7 +33,7 @@ With `python` for MDIR the run is a Python simulation of the same model
 (D244), whose reporters write the two files, under the barostat of a
 simulation: with the neighbor matrix, or with the groups and the dual list
 (`Execution.neighbor_structure`, `System.pruned_distance`;
-D[python-groups]), whose refusal by the builder and whose stop by the
+D245), whose refusal by the builder and whose stop by the
 runtime are then those of `mdir run`. The Python model has no key for the
 work of the barostat, so its run has the default, `work = "TROTTER"`, where the control
 file here has `"FIRST_ORDER"`; the rows of the two are of other

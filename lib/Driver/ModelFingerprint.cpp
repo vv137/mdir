@@ -317,7 +317,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     add("execution", "[energy] pairlist_distance",
         number(s.pairlistDistance / length));
   // A dual list, where there is one, as the key of the control file; none
-  // (0) has no key there (D[python-groups]).
+  // (0) has no key there (D245).
   if (s.prunedDistance != 0.0)
     add("execution", "[energy] pruned_distance",
         number(s.prunedDistance / length));

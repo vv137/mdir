@@ -205,7 +205,7 @@ PYBIND11_MODULE(_core, m) {
     .value("Mixed", driver::Precision::Mixed)
     .value("Double", driver::Precision::Double)
     ;
-  // `[execution] neighbor_structure` (D89, D[python-groups]).
+  // `[execution] neighbor_structure` (D89, D245).
   py::enum_<driver::NeighborStructure>(m, "NeighborStructure")
     .value("Matrix", driver::NeighborStructure::Matrix)
     .value("Groups", driver::NeighborStructure::Groups);
@@ -596,7 +596,7 @@ PYBIND11_MODULE(_core, m) {
       d["neighbor_capacity"] = c.program.neighborWidth;
       // What was asked, as `neighbor_structure_requested` of a manifest,
       // and the reach of the inner list of a dual list in nm, 0 without
-      // one (D[python-groups]).
+      // one (D245).
       d["neighbor_structure"] =
           p.prepared->control.neighborStructure == driver::NeighborStructure::Groups ? "groups" : "matrix";
       d["pruned_distance"] = p.prepared->control.prunedDistance * driver::units::length;

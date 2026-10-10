@@ -370,7 +370,7 @@ loops over pairs take. [tiles-m1.md](tiles-m1.md), Section 6, gives the
 validity and its proof; they do not depend on the layout of the list.
 A structure that `md-exec-choose-neighbors` leaves as a matrix, beside the
 groups of other loops, keeps one list: the pass takes the reach and the
-test of the inner list from its refreshes (D[python-groups]; the loops of
+test of the inner list from its refreshes (D245; the loops of
 the derivative in the tunables of a Python model are such loops).
 
 | Item | Rule |

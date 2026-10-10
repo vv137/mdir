@@ -110,7 +110,7 @@ struct System {
   /// (D114), in nm, between the cutoff and the pairlist distance; 0, the
   /// default, keeps one list. It needs the groups
   /// (Execution::neighborStructure), as in the control file
-  /// (D[python-groups]).
+  /// (D245).
   double prunedDistance = 0.0;
   driver::Truncation truncation = driver::Truncation::Switch;
   Electrostatics electrostatics = Electrostatics::Cutoff;
@@ -214,7 +214,7 @@ struct Execution {
   /// `[execution] neighbor_structure`: the neighbor matrix, or groups of 16
   /// that share a list, each pair once, for the loops that allow them
   /// (D89); on a device, and not in the deterministic mode
-  /// (D[python-groups]).
+  /// (D245).
   driver::NeighborStructure neighborStructure = driver::NeighborStructure::Matrix;
 };
 /// A temporary fixed schedule for shared-builder parity. No runtime ownership,

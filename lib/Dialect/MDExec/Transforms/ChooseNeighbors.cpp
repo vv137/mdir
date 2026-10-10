@@ -153,7 +153,7 @@ public:
   /// `md-exec-expose-validity` gave every refresh of the run, and what the
   /// test read of the pruning reads the build instead, so that a test
   /// which a fused loop still computes is of the one list
-  /// (D[python-groups]: the loops of the derivative in the tunables keep
+  /// (D245: the loops of the derivative in the tunables keep
   /// the matrix beside the groups of the forces).
   void keepOneList(llvm::function_ref<bool(Value)> staysMatrix) {
     getOperation()->walk([&](Operation *op) {

@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda, torch
 # A writable borrow of a Python simulation with the groups
-# (D[python-groups], #270): a commit of the cell and the positions against
+# (D245, #270): a commit of the cell and the positions against
 # a simulation compiled there, and the refusal of a cell whose least edge
 # is below the pairlist distance over 0.999 (D242), which an orthorhombic
 # cell did not reach before; the matrix takes that cell.
