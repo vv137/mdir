@@ -710,6 +710,7 @@ every 10 steps at 2000 atm, each with a checkpoint at step 20.
 | The fingerprint of the checkpoint | That of `mdir run` | equal | equal |
 | `mdir run` to step 20, a Python simulation from its checkpoint to step 40: the state, the cell, and the files | `mdir run` of 40 steps | 0 | 0 |
 | A Python simulation to step 20, `mdir run --continue` from its checkpoint: the same | The same | 0 | 0 |
+| The checkpoint of step 20 of the isotropic coupling with `TROTTER`, continued with the anisotropic coupling, and with `EXACT` | | refused by `mdir.Simulation` (`InputError`) and by `mdir run --continue`, each naming `[barostat] coupling` or `[barostat] work` | |
 | The cell of the last frame of the DCD trajectory | `State.cell` | below $10^{-12}$ nm | $10^{-12}$ nm |
 | The strains $\ln(L_k/L_k^0)$ of the three axes: isotropic | each other | below $10^{-12}$ | $10^{-12}$ |
 | The same, semi-isotropic | x and y equal, z another: in the orthorhombic cell $-9.2\times10^{-4}$, $-9.2\times10^{-4}$, $4.9\times10^{-4}$ | x and y within $10^{-12}$ | $10^{-12}$; z apart by more than $10^{-7}$ |

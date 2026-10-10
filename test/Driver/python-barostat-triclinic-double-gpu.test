@@ -13,6 +13,7 @@
 # Inputs/python_barostat.py.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_barostat.py %S/Inputs GPU Double mdir %t triclinic | FileCheck %s
+# CHECK: GPU Double triclinic ISOTROPIC TROTTER: a continuation with another coupling or work is refused by both front ends
 # CHECK: GPU Double triclinic ISOTROPIC TROTTER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
 # CHECK: GPU Double triclinic ISOTROPIC TROTTER_FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
 # CHECK: GPU Double triclinic ISOTROPIC EXACT: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions

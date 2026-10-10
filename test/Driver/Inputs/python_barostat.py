@@ -311,6 +311,23 @@ def one_case(coupling, work_key):
     assert taken.step == STEPS // 2 and taken.front_end == "python"
     assert np.array_equal(taken.cell.diagonal, middle.cell.diagonal)
     assert np.array_equal(taken.cell.tilt, middle.cell.tilt)
+    # Another coupling or work is other coupling: neither front end
+    # continues the run with it (D172, D223), and each names the key.
+    if (coupling, work_key) == ("ISOTROPIC", "TROTTER"):
+        shutil.copy(part / "run.h5", part / "other.h5")
+        for other, other_work, key in (("ANISOTROPIC", "TROTTER", "[barostat] coupling"),
+                                       ("ISOTROPIC", "EXACT", "[barostat] work")):
+            expect(mdir.InputError,
+                   lambda: mdir.Simulation(model(other, other_work),
+                                           checkpoint=str(part / "run.h5")),
+                   "other physics or coupling", key)
+            refused = subprocess.run(
+                [cli, "run", "--continue", str(control(part / "other.toml", other, other_work))],
+                cwd=part, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            assert refused.returncode != 0 and "other physics or coupling" in refused.stdout \
+                and key in refused.stdout, refused.stdout
+        print(f"{case}: a continuation with another coupling or work is refused by both "
+              f"front ends", flush=True)
     log = run_cli(path, "--continue")
     assert "other physics" not in log, log
     compare(case + ", Python -> mdir run", mdir.read_checkpoint(str(part / "run.h5")),
