@@ -133,6 +133,12 @@ def ChooseNeighbors
     %f, %e = md_exec.pair_for %nl1, ... exchange [antisymmetric, symmetric]
                policy(unique, atomic) { ... }
     ```
+
+    Only a structure of groups keeps a dual list (D114). The refreshes of a
+    structure that stays a matrix lose `prune_skin` and `stale`, and the
+    `md_exec.reference_positions` and `md_exec.reference_cell` of such a
+    structure lose `pruned`: a test of the inner list that a fused loop
+    still computes reads the build, and its result is not used.
   }];
   let options = [
     Option<"kind", "kind", "std::string", /*default=*/"\"groups\"",

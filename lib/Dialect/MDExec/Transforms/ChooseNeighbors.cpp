@@ -106,7 +106,7 @@ public:
     // A loop over a structure whose beginnings are unknown may be over any
     // of them: all stay matrices.
     if (unknown)
-      return;
+      return keepOneList([](Value) { return true; });
     for (auto &[loop, beginnings] : found)
       for (Operation *beginning : beginnings) {
         loops[beginning].push_back(loop);
@@ -137,6 +137,39 @@ public:
         loop.setConflict(Conflict::Atomic);
       }
     }
+    keepOneList([&](Value structure) {
+      llvm::SetVector<Operation *> beginnings;
+      llvm::DenseSet<Value> visited;
+      return !findBeginnings(structure, beginnings, visited) ||
+             llvm::any_of(beginnings, [&](Operation *op) {
+               return keep.contains(op) || !loops.count(op);
+             });
+    });
+  }
+
+  /// A structure that stays a matrix keeps one list: only the groups have
+  /// an inner list to prune (D114). Its refreshes lose the reach and the
+  /// test of the inner list that `md-exec-reuse-neighbors` and
+  /// `md-exec-expose-validity` gave every refresh of the run, and what the
+  /// test read of the pruning reads the build instead, so that a test
+  /// which a fused loop still computes is of the one list
+  /// (D[python-groups]: the loops of the derivative in the tunables keep
+  /// the matrix beside the groups of the forces).
+  void keepOneList(llvm::function_ref<bool(Value)> staysMatrix) {
+    getOperation()->walk([&](Operation *op) {
+      if (auto refresh = dyn_cast<RefreshNeighborsOp>(op)) {
+        if (!refresh.getPruneSkin() || !staysMatrix(refresh.getNeighbors()))
+          return;
+        refresh.getStaleMutable().clear();
+        refresh.removePruneSkinAttr();
+      } else if (auto positions = dyn_cast<ReferencePositionsOp>(op)) {
+        if (positions.getPruned() && staysMatrix(positions.getNeighbors()))
+          positions.setPruned(false);
+      } else if (auto cell = dyn_cast<ReferenceCellOp>(op)) {
+        if (cell.getPruned() && staysMatrix(cell.getNeighbors()))
+          cell.setPruned(false);
+      }
+    });
   }
 };
 } // namespace
