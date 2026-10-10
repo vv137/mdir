@@ -298,7 +298,7 @@ simulation ends, fails, or begins another activation: what it allocated,
 which the records of the runtimes (`mdrtActivationOpen`, `Enter`, `Leave`,
 `Close`, and `mdrtDeviceActivation...`) and of the memory of the host that
 its code takes list, is freed, and its stack is unmapped
-([JIT ownership](jit-invariants.md#activations-that-outlive-a-call-dresident-buffers)).
+([JIT ownership](jit-invariants.md#activations-that-outlive-a-call-d215)).
 `mdrtBeginCall` and `mdrtDeviceEndCall`, which freed what one call made
 when another simulation could not run between two calls, are gone.
 
@@ -665,16 +665,21 @@ alone.
 |---|---|---|
 | `Ensemble.coupling` | `[barostat] coupling` | `mdir.BarostatCoupling.Isotropic` (the default), `SemiIsotropic` (x and y together, z by its own; D119), `Anisotropic` (each axis by its own; D163c) |
 | `Ensemble.work` | `[barostat] work` | `mdir.BarostatWork.Trotter` (the default; D92), `TrotterFirstOrder`, `Exact`, `FirstOrder` (D77) |
+| `Ensemble.compressibility` | `[barostat] compressibility` | one number in 1/bar (or a unit quantity), as before; or, with the anisotropic coupling, three, those of x, y, and z, of which 0 keeps its axis |
+| `Ensemble.compressibility_z` | `[barostat] compressibility_z` | with the semi-isotropic coupling: the compressibility of z in 1/bar, 0 to keep the height; `None`, the default, follows `compressibility` |
+| `Ensemble.surface_tension` | `[barostat] surface_tension` | with the semi-isotropic coupling: the tension of each surface normal to z, in bar nm (the control file has dyn/cm; 1 dyn/cm is 10 bar nm); 0 by default |
+| `Ensemble.surfaces` | `[barostat] surfaces` | the number of such surfaces, 2 by default |
 
-`Ensemble.compressibility` is one number, that of every axis and of z,
-and there is no surface tension: what a control file with one
-`compressibility` and none of `compressibility_z`, `surface_tension`, and
-`surfaces` runs. Without a barostat (`EnsembleKind.NVE`, `NVT`) the two
-fields are not read, as `tau_p` is not. `Program.plan["barostat"]` is
+The units are those of the Python model (D191): bar, and with it bar nm
+for a tension, where the control file has atm and dyn/cm. Reading
+`Ensemble.compressibility` gives a number, or a tuple of three where three
+were set. Without a barostat (`EnsembleKind.NVE`, `NVT`) these fields are
+not read, as `tau_p` is not. `Program.plan["barostat"]` is
 `{"coupling": ..., "work": ...}` with the two values, or `None` without a
 barostat. The fingerprint of a checkpoint (D223) has `[barostat] coupling`
 and `[barostat] work`, in the group `coupling`, when the field was set or
-is not the default of an absent key: `mdir run --continue` takes the
+is not the default of an absent key, and the other keys in the units and
+the forms of the control file (three compressibilities as its array): `mdir run --continue` takes the
 checkpoint of a Python simulation with the same keys, and refuses another
 coupling or work as it does between two control files.
 
@@ -682,6 +687,11 @@ coupling or work as it does between two control files.
 |---|---|---|
 | `FirstOrder` with `SemiIsotropic` or `Anisotropic` | `mdir.compile`, `InputError` | that of `mdir check`, with `model` for the path: `model: 'work = "FIRST_ORDER"' counts the work from the trace of the virial of the step with twice the internal kinetic energy, which holds for the trace only; with 'coupling = "SEMI_ISOTROPIC"' or "ANISOTROPIC" use "TROTTER", "TROTTER_FIRST_ORDER", or "EXACT"` |
 | a value that is not of the enumeration | the assignment, `TypeError` | |
+| three compressibilities without the anisotropic coupling | `mdir.compile`, `InputError` | `model: a 'compressibility' of each axis needs 'coupling = "ANISOTROPIC"'; give one number` |
+| three compressibilities that are all 0 | the same | `model: a barostat whose compressibilities are all 0 keeps the cell; give one that is not 0` |
+| a negative one of the three; a sequence that is not of three | `mdir.compile`; the assignment; `InputError` | `Ensemble.compressibility: expected one number, or three that are not negative, those of x, y, and z, in 1/bar` |
+| `compressibility_z`, a `surface_tension` that is not 0, or `surfaces` that is not 2, without the semi-isotropic coupling | `mdir.compile`, `InputError` | `model: 'compressibility_z' needs 'coupling = "SEMI_ISOTROPIC"'`, and so for the other two |
+| a negative `compressibility_z`; `surfaces` below 1 | the same | `model: expected 0 or a positive number for 'compressibility_z'`; `Ensemble.surfaces must be at least 1` |
 | `Trotter` or `TrotterFirstOrder` with `coupling_period = 1` | `mdir.Simulation`, `UnsupportedError`, as before | `a simulation with a barostat that scales the cell every step (coupling period 1) is not supported yet` |
 
 The program, its kernels, and the path of a step are those of `mdir run`:
@@ -715,6 +725,7 @@ every 10 steps at 2000 atm, each with a checkpoint at step 20.
 | The strains $\ln(L_k/L_k^0)$ of the three axes: isotropic | each other | below $10^{-12}$ | $10^{-12}$ |
 | The same, semi-isotropic | x and y equal, z another: in the orthorhombic cell $-9.2\times10^{-4}$, $-9.2\times10^{-4}$, $4.9\times10^{-4}$ | x and y within $10^{-12}$ | $10^{-12}$; z apart by more than $10^{-7}$ |
 | The same, anisotropic | all apart: in the orthorhombic cell $-1.09\times10^{-3}$, $3.7\times10^{-4}$, $-2.0\times10^{-4}$ | | apart by more than $10^{-7}$ |
+| The other keys, orthorhombic, CPU double and GPU mixed, 40 steps with a checkpoint at step 20: compressibilities (9e-5, 0, 3e-5) /atm with `EXACT` and (2e-5, 6e-5, 1e-4) /atm with `TROTTER`, anisotropic; `compressibility_z` 0 with a tension of 30 dyn/cm on 1 surface (`TROTTER`), and compressibilities 6e-5 and 2e-5 /atm with 25 dyn/cm on 2 (`EXACT`), semi-isotropic: the state, the cell, the files, the fingerprint, and `mdir run --continue` from the Python checkpoint | `mdir run` with the keys | 0; the axis of a compressibility of 0 has a strain of exactly 0 | 0 |
 | A coupling period of 1 with `EXACT` (the three couplings) and `FIRST_ORDER` (isotropic), 40 steps in parts of 13 and 27, orthorhombic, CPU double and GPU mixed: the state and the cell | `mdir run` | 0 | 0 |
 
 The oracle is `mdir run`, whose couplings and works are validated against

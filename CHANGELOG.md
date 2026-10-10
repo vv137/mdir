@@ -35,7 +35,10 @@ format, or the outputs; every such change is listed under **Changed** or
   default, `TrotterFirstOrder`, `Exact`, `FirstOrder`), the `coupling` and
   `work` of `[barostat]`, with its refusal of the first-order work under
   the semi-isotropic and the anisotropic coupling;
-  `Program.plan["barostat"]`. Each runs to the bit of `mdir run` in the
+  `Program.plan["barostat"]`. With them, `Ensemble.compressibility` takes
+  three numbers for the anisotropic coupling, and
+  `Ensemble.compressibility_z`, `surface_tension` (bar nm), and `surfaces`
+  are the keys of the semi-isotropic one. Each runs to the bit of `mdir run` in the
   deterministic mode, in an orthorhombic and in a triclinic cell, and a
   checkpoint continues in either front end. With the exact and the
   first-order work a Python simulation takes `coupling_period = 1`.

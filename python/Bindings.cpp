@@ -508,7 +508,39 @@ PYBIND11_MODULE(_core, m) {
   property(ensemble, "tau_t", &model::Ensemble::tauT, units::ps);
   property(ensemble, "pressure", &model::Ensemble::pressure, units::bar);
   property(ensemble, "tau_p", &model::Ensemble::tauP, units::ps);
-  property(ensemble, "compressibility", &model::Ensemble::compressibility, units::inverseBar);
+  // One number, or one of each axis for the anisotropic coupling, as
+  // `[barostat] compressibility` (D[python-barostat]).
+  ensemble.def_property("compressibility", [](const Input<model::Ensemble> &o) -> py::object {
+    if (o.value.compressibilities.empty()) return py::float_(o.value.compressibility);
+    return py::tuple(py::cast(o.value.compressibilities));
+  }, [](Input<model::Ensemble> &o, py::object value) {
+    const std::string name = "Ensemble.compressibility";
+    py::object plain = units::isQuantity(value) ? units::strip(value, name, units::inverseBar) : value;
+    if (py::isinstance<py::sequence>(plain) && !py::isinstance<py::str>(plain)) {
+      std::vector<double> axes;
+      for (py::handle item : plain) axes.push_back(units::scalar(item, name, units::none));
+      if (axes.size() != 3)
+        throw InputError(name + ": expected one number, or three that are not negative, "
+                         "those of x, y, and z, in 1/bar");
+      o.value.compressibilities = std::move(axes);
+    } else {
+      o.value.compressibility = units::scalar(value, name, units::inverseBar);
+      o.value.compressibilities.clear();
+    }
+    ++o.version; o.given.insert("compressibility");
+  });
+  // The keys of the semi-isotropic coupling (D119, D[python-barostat]);
+  // None for the compressibility of z follows `compressibility`.
+  ensemble.def_property("compressibility_z", [](const Input<model::Ensemble> &o) -> py::object {
+    if (!o.value.compressibilityZ) return py::none();
+    return py::float_(*o.value.compressibilityZ);
+  }, [](Input<model::Ensemble> &o, py::object value) {
+    if (value.is_none()) o.value.compressibilityZ.reset();
+    else o.value.compressibilityZ = units::scalar(value, "Ensemble.compressibility_z", units::inverseBar);
+    ++o.version; o.given.insert("compressibility_z");
+  });
+  property(ensemble, "surface_tension", &model::Ensemble::surfaceTension, units::barNm);
+  property(ensemble, "surfaces", &model::Ensemble::surfaces);
   property(ensemble, "coupling", &model::Ensemble::coupling);
   property(ensemble, "work", &model::Ensemble::work);
   property(ensemble, "coupling_period", &model::Ensemble::couplingPeriod);

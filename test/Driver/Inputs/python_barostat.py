@@ -11,6 +11,14 @@ Usage: python_barostat.py INPUTS TARGET PRECISION MDIR WORK SCENARIO [COUPLING..
                 particles, PME on 32^3, SHAKE and SETTLE).
   triclinic     403 rigid waters in the rhombic dodecahedron of
                 `Inputs/triclinic` (PME on 28^3, SETTLE).
+  keys          the dipeptide with the other keys of the couplings: a
+                compressibility of each axis under the anisotropic
+                coupling, one of them 0, which keeps its axis; and the
+                compressibility of z, 0 and not, with a surface tension on
+                one and on two surfaces under the semi-isotropic coupling.
+                40 steps in parts against `mdir run` with a checkpoint at
+                step 20, the state and the cell to the bit, the files byte
+                for byte, the fingerprint, and `mdir run --continue`.
   every-step    the dipeptide with a coupling period of 1: the exact and
                 the first-order work, which close a period with one step,
                 scale the cell at every step (the work of Trotter type
@@ -67,7 +75,7 @@ def works_of(coupling):
     return [w for w in WORKS if w != "FIRST_ORDER" or coupling == "ISOTROPIC"]
 
 
-def control(path, coupling, work_key, period=PERIOD, steps=STEPS, given=True):
+def control(path, coupling, work_key, period=PERIOD, steps=STEPS, given=True, extra=""):
     """The control file of what `model` gives, with a checkpoint at half of
     its steps. With `given` false the two keys are left out."""
     name = path.stem
@@ -111,7 +119,7 @@ method = "V-RESCALE"
 interval = {period}
 [barostat]
 method = "C-RESCALE"
-{keys}[boundary]
+{keys}{extra}[boundary]
 type = "PERIODIC"
 [execution]
 target = "{target_name}"
@@ -121,7 +129,7 @@ deterministic = true
     return path
 
 
-def parts_of_model(coupling=None, work_key=None, period=PERIOD, kind="NPT"):
+def parts_of_model(coupling=None, work_key=None, period=PERIOD, kind="NPT", settings=None):
     if TRICLINIC:
         loaded = mdir.load_gromacs(inputs + "/triclinic/water.top",
                                    inputs + "/triclinic/dodecahedron.gro")
@@ -150,6 +158,8 @@ def parts_of_model(coupling=None, work_key=None, period=PERIOD, kind="NPT"):
         ensemble.coupling = getattr(mdir.BarostatCoupling, COUPLINGS[coupling])
     if work_key:
         ensemble.work = getattr(mdir.BarostatWork, WORKS[work_key])
+    for name, value in (settings or {}).items():
+        setattr(ensemble, name, value)
     execution.target = getattr(mdir.Target, target_name)
     execution.precision = getattr(mdir.Precision, precision)
     execution.deterministic = True
@@ -367,6 +377,39 @@ def refusals():
              "\"TROTTER_FIRST_ORDER\", or \"EXACT\"")
     for coupling in ("SEMI_ISOTROPIC", "ANISOTROPIC"):
         expect(mdir.InputError, lambda: model(coupling, "FIRST_ORDER"), words)
+    # The other keys of the couplings: their defaults, their types, and
+    # the refusals of the control file.
+    assert ensemble.compressibility == 4.5e-5 and ensemble.compressibility_z is None
+    assert ensemble.surface_tension == 0.0 and ensemble.surfaces == 2
+    ensemble.compressibility = (1e-5, 0.0, 2e-5)
+    assert ensemble.compressibility == (1e-5, 0.0, 2e-5)
+    ensemble.compressibility = 3e-5
+    assert ensemble.compressibility == 3e-5
+    expect(mdir.InputError, lambda: setattr(ensemble, "compressibility", (1e-5, 2e-5)),
+           "expected one number, or three")
+    expect(TypeError, lambda: setattr(ensemble, "compressibility", "4.5e-5"))
+    axes = {"compressibility": (1e-5, 0.0, 2e-5)}
+    for coupling in ("ISOTROPIC", "SEMI_ISOTROPIC"):
+        expect(mdir.InputError, lambda: model(coupling, "TROTTER", settings=axes),
+               "model: a 'compressibility' of each axis needs 'coupling = \"ANISOTROPIC\"'; "
+               "give one number")
+    expect(mdir.InputError,
+           lambda: model("ANISOTROPIC", "TROTTER", settings={"compressibility": (0.0, 0.0, 0.0)}),
+           "model: a barostat whose compressibilities are all 0 keeps the cell; give one "
+           "that is not 0")
+    expect(mdir.InputError,
+           lambda: model("ANISOTROPIC", "TROTTER", settings={"compressibility": (1e-5, -1e-5, 0.0)}),
+           "Ensemble.compressibility: expected one number, or three that are not negative")
+    for name, value in (("compressibility_z", 0.0), ("surface_tension", 100.0), ("surfaces", 1)):
+        for coupling in ("ISOTROPIC", "ANISOTROPIC"):
+            expect(mdir.InputError, lambda: model(coupling, "TROTTER", settings={name: value}),
+                   f"model: '{name}' needs 'coupling = \"SEMI_ISOTROPIC\"'")
+    expect(mdir.InputError,
+           lambda: model("SEMI_ISOTROPIC", "TROTTER", settings={"compressibility_z": -1e-5}),
+           "model: expected 0 or a positive number for 'compressibility_z'")
+    expect(mdir.InputError,
+           lambda: model("SEMI_ISOTROPIC", "TROTTER", settings={"surfaces": 0}),
+           "Ensemble.surfaces must be at least 1")
     # Without a barostat the two are not read, as `tau_p` is not.
     program = model("ANISOTROPIC", "FIRST_ORDER", kind="NVT")
     assert program.plan["barostat"] is None
@@ -381,6 +424,73 @@ def refusals():
                "a simulation with a barostat that scales the cell every step "
                "(coupling period 1) is not supported yet")
     print("barostat refusals passed")
+
+
+ATM = 1.01325  # bar
+# The keys of the control file (1/atm, dyn/cm) and the fields of the model
+# (1/bar, bar nm) that give the same doubles; the last entry is the axis
+# that does not move, or None.
+KEYS = (
+    ("ANISOTROPIC", "EXACT", "compressibility = [9.0e-5, 0.0, 3.0e-5]\n",
+     {"compressibility": (9.0e-5 / ATM, 0.0, 3.0e-5 / ATM)}, 1),
+    ("ANISOTROPIC", "TROTTER", "compressibility = [2.0e-5, 6.0e-5, 1.0e-4]\n",
+     {"compressibility": (2.0e-5 / ATM, 6.0e-5 / ATM, 1.0e-4 / ATM)}, None),
+    ("SEMI_ISOTROPIC", "TROTTER",
+     "compressibility_z = 0.0\nsurface_tension = 30.0\nsurfaces = 1\n",
+     {"compressibility_z": 0.0, "surface_tension": 300.0, "surfaces": 1}, 2),
+    ("SEMI_ISOTROPIC", "EXACT",
+     "compressibility = 6.0e-5\ncompressibility_z = 2.0e-5\nsurface_tension = 25.0\n",
+     {"compressibility": 6.0e-5 / ATM, "compressibility_z": 2.0e-5 / ATM,
+      "surface_tension": 250.0}, None),
+)
+
+
+def keys():
+    for number, (coupling, work_key, extra, settings, still) in enumerate(KEYS):
+        case = f"{label} keys {coupling} {work_key} {' '.join(settings)}"
+        whole = work / f"case-{number}" / "whole"
+        whole.mkdir(parents=True)
+        run_cli(control(whole / "run.toml", coupling, work_key, extra=extra))
+        reference = mdir.read_checkpoint(str(whole / "run.h5"))
+        middle = mdir.read_checkpoint(str(whole / "run.h5.prev"))
+        program = model(coupling, work_key, settings=settings)
+        here = work / f"case-{number}" / "python"
+        here.mkdir()
+        simulation = mdir.Simulation(program)
+        with_reporters(simulation, here)
+        for part in (10, 30):
+            simulation.run(part)
+        state = simulation.state()
+        simulation.close_reporters()
+        compare(case, state, reference)
+        same_files(here, whole)
+        written = mdir.read_checkpoint(str(here / "run.h5"))
+        assert written.fingerprint == reference.fingerprint, (
+            set(written.fingerprint) ^ set(reference.fingerprint))
+        start = parts_of_model()[1].cell
+        strain = np.log(np.asarray(state.cell.diagonal) / np.asarray(start.diagonal))
+        assert np.abs(strain).max() > 1e-5, strain
+        if still is not None:
+            assert strain[still] == 0.0, strain
+        # Python -> `mdir run --continue` at step 20.
+        part = work / f"case-{number}" / "python-to-cli"
+        part.mkdir()
+        path = control(part / "run.toml", coupling, work_key, extra=extra)
+        first = mdir.Simulation(program)
+        with_reporters(first, part)
+        first.run(STEPS // 2)
+        first.close_reporters()
+        taken = mdir.read_checkpoint(str(part / "run.h5"))
+        assert np.array_equal(taken.cell.diagonal, middle.cell.diagonal)
+        log = run_cli(path, "--continue")
+        assert "other physics" not in log, log
+        compare(case + ", Python -> mdir run", mdir.read_checkpoint(str(part / "run.h5")),
+                reference)
+        same_files(part, whole)
+        print(f"{case}: the state, the cell, and the files of mdir run", flush=True)
+        print(f"{case}: strains of the axes {strain[0]:.3e} {strain[1]:.3e} {strain[2]:.3e}",
+              file=sys.stderr, flush=True)
+    print(f"barostat keys {label}: {len(KEYS)} cases passed")
 
 
 def every_step():
@@ -406,5 +516,7 @@ if scenario == "refusals":
     refusals()
 elif scenario == "every-step":
     every_step()
+elif scenario == "keys":
+    keys()
 else:
     cases()

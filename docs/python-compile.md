@@ -87,7 +87,7 @@ snake case; defaults and the supported physics subset are those of
 | InitialState | `positions`, `velocities`, `cell` |
 | Integrator | `method`, `timestep`, `minimize`, `minimize_step` |
 | Execution | `target`, `precision`, `device`, `threads`, `deterministic`, `reorder`, `fast_math`, `neighbor_capacity` (D227), `neighbor_structure` (D245) |
-| Ensemble | `kind`, `temperature`, `tau_t`, `pressure`, `tau_p`, `compressibility`, `coupling`, `work` (D[python-barostat]), `coupling_period`, `com_period`, `seed` |
+| Ensemble | `kind`, `temperature`, `tau_t`, `pressure`, `tau_p`, `compressibility`, `coupling`, `work`, `compressibility_z`, `surface_tension`, `surfaces` (D[python-barostat]), `coupling_period`, `com_period`, `seed` |
 | Schedule | `steps`, `energy_period` |
 
 `Execution.neighbor_capacity` is `[execution] neighbor_capacity` of the

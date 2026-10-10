@@ -156,9 +156,8 @@ in a tunable of several entries at every row of a run, which `observe`
 does not give (the frame evaluator of M2b);
 NPT with a coupling period of 1 under the work of Trotter type (the
 exact and the first-order work take it; the Python model has the
-couplings and the works of the barostat since D[python-barostat]), and the
-compressibility of each axis, that of z, and the surface tension of the
-semi-isotropic coupling, which the Python model has no key for.
+couplings and the works of the barostat, with the compressibility of each
+axis, that of z, and the surface tension, since D[python-barostat]).
 
 *M2b, differentiable simulation* (D195). The parameters of a potential
 fitted to ensemble averages by reweighting stored frames

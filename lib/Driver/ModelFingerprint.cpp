@@ -310,9 +310,27 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     add("coupling", "[barostat] method", getFingerprintString("C-RESCALE"));
     if (has(given.ensemble, "tau_p"))
       add("coupling", "[barostat] time_constant", number(ensemble.tauP));
-    if (has(given.ensemble, "compressibility"))
+    if (!ensemble.compressibilities.empty()) {
+      // The three numbers of an anisotropic coupling, as the array of the
+      // control file (D[python-barostat]).
+      std::string axes = "[";
+      for (size_t k = 0; k != ensemble.compressibilities.size(); ++k)
+        axes += (k ? "," : "") + number(ensemble.compressibilities[k] * atm);
+      add("coupling", "[barostat] compressibility", axes + "]");
+    } else if (has(given.ensemble, "compressibility")) {
       add("coupling", "[barostat] compressibility",
           number(ensemble.compressibility * atm));
+    }
+    // The keys of the semi-isotropic coupling, where they were given.
+    if (ensemble.compressibilityZ)
+      add("coupling", "[barostat] compressibility_z",
+          number(*ensemble.compressibilityZ * atm));
+    if (has(given.ensemble, "surface_tension") || ensemble.surfaceTension != 0.0)
+      add("coupling", "[barostat] surface_tension",
+          number(ensemble.surfaceTension / driver::units::dynePerCmToBarNm));
+    if (has(given.ensemble, "surfaces") || ensemble.surfaces != 2)
+      add("coupling", "[barostat] surfaces",
+          getFingerprintNumber(static_cast<double>(ensemble.surfaces)));
     // The coupling and the work, as the keys of the control file write
     // them: when given, or when not the default that an absent key takes
     // (D[python-barostat]).
