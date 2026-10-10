@@ -4,6 +4,7 @@
 #include "mdir/Driver/Builder.h"
 #include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Checkpoint.h"
+#include <optional>
 #include <set>
 namespace mdir {
 namespace model {
@@ -28,6 +29,14 @@ enum class Electrostatics { Cutoff, PME };
 /// (Control::pmeShift; D205).
 enum class CoulombModifier { None, PotentialShift };
 enum class EnsembleKind { NVE, NVT, NPT };
+/// The `[pme] influence` of the control file: the influence function of
+/// smooth PME, or the one that is optimal for the splines of the grid
+/// (D134).
+enum class PMEInfluence { SPME, Optimal };
+/// The `[barostat] coupling` of the control file: one strain for the three
+/// axes; x and y together and z by its own (D119); or each axis by its own
+/// (D163c).
+enum class BarostatCoupling { Isotropic, SemiIsotropic, Anisotropic };
 
 /// A tunable parameter (D213, docs/python-tunable.md): a
 /// vector θ of M entries and a map from the sites of `parameter` to them.
@@ -105,14 +114,24 @@ struct System {
   driver::Topology topology;
   Format format = Format::Amber;
   bool periodic = true;
-  double cutoff = 1.2, pairlistDistance = 1.35, switchDistance = 1.0;
+  double cutoff = 1.2;
+  /// The reach of the neighbor structures and where a switch begins, nm.
+  /// Not given, they are what the control file takes without their keys
+  /// (D[python-defaults]): 0.15 nm beyond the cutoff, and the cutoff.
+  std::optional<double> pairlistDistance, switchDistance;
+  double getPairlistDistance() const {
+    return pairlistDistance.value_or((cutoff / driver::units::length + 1.5) * driver::units::length);
+  }
+  double getSwitchDistance() const { return switchDistance.value_or(cutoff); }
   /// The reach of the inner list of a dual list, `[energy] pruned_distance`
   /// (D114), in nm, between the cutoff and the pairlist distance; 0, the
   /// default, keeps one list. It needs the groups
   /// (Execution::neighborStructure), as in the control file
   /// (D245).
   double prunedDistance = 0.0;
-  driver::Truncation truncation = driver::Truncation::Switch;
+  /// A plain cutoff, as the control file without `lennard_jones_modifier`
+  /// (D[python-defaults]).
+  driver::Truncation truncation = driver::Truncation::None;
   Electrostatics electrostatics = Electrostatics::Cutoff;
   /// For PME only; as the control file, none by default.
   CoulombModifier coulombModifier = CoulombModifier::None;
@@ -126,7 +145,13 @@ struct System {
   bool dispersionGiven = false;
   double pmeAlpha = 0, pmeTolerance = 1.e-5, pmeSpacing = 0.12;
   std::array<int64_t, 3> pmeGrid = {0,0,0};
+  /// The order of the B-splines: 4, 6, or 8, as `[pme] order`.
   int64_t pmeOrder = 4;
+  /// `[pme] influence` (D134; D[python-pme-fields]).
+  PMEInfluence pmeInfluence = PMEInfluence::SPME;
+  /// `[constraints] analytic_bonds`: a group of SHAKE of one bond is
+  /// projected in closed form (D[python-pme-fields]).
+  bool analyticBonds = false;
   bool rigidHydrogenBonds = false, rigidWater = false;
   /// Explicitly permit flexible water when importing GROMACS SETTLE.
   bool flexibleWater = false;
@@ -197,7 +222,27 @@ struct Ensemble {
   EnsembleKind kind = EnsembleKind::NVE;
   double temperature = 298.15, tauT = 1.0;
   double pressure = 1.01325, tauP = 5.0, compressibility = 4.5e-5;
-  int64_t couplingPeriod = 10, comPeriod = 0;
+  /// `[barostat] coupling` and `work` of the control file, with its
+  /// defaults (D77, D92, D119, D163c; D[python-barostat]).
+  BarostatCoupling barostatCoupling = BarostatCoupling::Isotropic;
+  driver::BarostatWork barostatWork = driver::BarostatWork::Trotter;
+  /// The compressibility of each axis, 1/bar, for the anisotropic coupling
+  /// (0 keeps the axis); empty: `compressibility` for every axis. The
+  /// three numbers of `[barostat] compressibility`.
+  std::vector<double> compressibilities;
+  /// The keys of the semi-isotropic coupling (D119): the compressibility
+  /// of z in 1/bar (0 keeps the height; not given: `compressibility`),
+  /// the tension of each surface normal to z in bar nm, and the number of
+  /// such surfaces.
+  std::optional<double> compressibilityZ;
+  double surfaceTension = 0.0;
+  int64_t surfaces = 2;
+  int64_t couplingPeriod = 10;
+  /// The steps between removals of the motion of the center of mass. Not
+  /// given, it is what the control file takes without
+  /// `center_of_mass_interval` (D[python-defaults]): with a thermostat its
+  /// interval, without one never.
+  std::optional<int64_t> comPeriod;
   uint64_t seed = 314159;
 };
 struct Execution {

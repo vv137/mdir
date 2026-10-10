@@ -298,7 +298,7 @@ simulation ends, fails, or begins another activation: what it allocated,
 which the records of the runtimes (`mdrtActivationOpen`, `Enter`, `Leave`,
 `Close`, and `mdrtDeviceActivation...`) and of the memory of the host that
 its code takes list, is freed, and its stack is unmapped
-([JIT ownership](jit-invariants.md#activations-that-outlive-a-call-dresident-buffers)).
+([JIT ownership](jit-invariants.md#activations-that-outlive-a-call-d215)).
 `mdrtBeginCall` and `mdrtDeviceEndCall`, which freed what one call made
 when another simulation could not run between two calls, are gone.
 
@@ -566,12 +566,12 @@ follow the barostat. The program, its kernels, and the path of a step are
 those of before: the barostat of a triclinic cell is that of `mdir run`,
 validated by D127.
 
-**What a Python simulation does not take.** The Python model has the
-isotropic coupling alone: `mdir.Ensemble` has no key for the
-`coupling = "SEMI_ISOTROPIC"` and `"ANISOTROPIC"` of `[barostat]`, which
-`mdir run` takes in a triclinic cell as well, so there is no such program
-to refuse or to compare; nor has it one for `work`, whose default,
-`TROTTER`, is the work of every Python simulation. With the neighbor
+**The couplings and the works.** When this was written the Python model
+had the isotropic coupling and the default work alone. It has the
+semi-isotropic and the anisotropic coupling and the four works since
+D[python-barostat] ([below](#the-coupling-and-the-work-of-the-barostat-dpython-barostat)),
+in a triclinic cell as in an orthorhombic one, each to the bit of
+`mdir run`. With the neighbor
 matrix, the default, every image within the reach is held whatever the
 barostat does to the cell (D241). With the groups
 (`Execution.neighbor_structure`, D245,
@@ -643,15 +643,95 @@ from it. The tests of D238 and D240 took these frames from `mdir run`.
 
 **A cell that the barostat shrinks.** `python-triclinic-reach.test` and its
 `-gpu` twin: the system of `triclinic-reach.test` (D241) in a Python
-simulation, whose barostat has the default work (`TROTTER`; the Python
-model has no key for it, and the control file of that test has
-`FIRST_ORDER`), 216 argon atoms in a cell with every tilt on its bound that
+simulation, whose barostat has the `FIRST_ORDER` work of the control file
+of that test since D[python-barostat] (before, the default `TROTTER`, the
+Python model having no key for it), 216 argon atoms in a cell with every tilt on its bound that
 stochastic cell rescaling at 20,000 atm takes from 2.2 to 1.92 nm, with a
 pairlist distance of 1.1 nm, beyond half of the least of the diagonal at
 each of the 79 frames. The potential of each row, which with that work is
-of the configuration and the cell of the frame of its step, equals the sum in NumPy
+of the configuration of the frame of its step taken back to the cell of
+the frame before, as under `mdir run`, equals the sum in NumPy
 over every image of every pair within the cutoff to $10^{-5}$ kcal/mol (0
 frames of 79 differ), on the CPU and on the device.
+
+## The coupling and the work of the barostat (D[python-barostat])
+
+Issue [#275](https://github.com/vv137/mdir/issues/275). `mdir.Ensemble`
+had `pressure`, `tau_p`, `compressibility`, and `coupling_period`, and
+nothing for the `coupling` and the `work` of `[barostat]`: a Python
+simulation ran isotropic stochastic cell rescaling with the default work
+alone.
+
+| Python | Control file | Values |
+|---|---|---|
+| `Ensemble.barostat_coupling` | `[barostat] coupling` | `mdir.BarostatCoupling.Isotropic` (the default), `SemiIsotropic` (x and y together, z by its own; D119), `Anisotropic` (each axis by its own; D163c) |
+| `Ensemble.barostat_work` | `[barostat] work` | `mdir.BarostatWork.Trotter` (the default; D92), `TrotterFirstOrder`, `Exact`, `FirstOrder` (D77) |
+| `Ensemble.compressibility` | `[barostat] compressibility` | one number in 1/bar (or a unit quantity), as before; or, with the anisotropic coupling, three, those of x, y, and z, of which 0 keeps its axis |
+| `Ensemble.compressibility_z` | `[barostat] compressibility_z` | with the semi-isotropic coupling: the compressibility of z in 1/bar, 0 to keep the height; `None`, the default, follows `compressibility` |
+| `Ensemble.surface_tension` | `[barostat] surface_tension` | with the semi-isotropic coupling: the tension of each surface normal to z, in bar nm (the control file has dyn/cm; 1 dyn/cm is 10 bar nm); 0 by default |
+| `Ensemble.surfaces` | `[barostat] surfaces` | the number of such surfaces, 2 by default |
+
+The units are those of the Python model (D191): bar, and with it bar nm
+for a tension, where the control file has atm and dyn/cm. Reading
+`Ensemble.compressibility` gives a number, or a tuple of three where three
+were set. Without a barostat (`EnsembleKind.NVE`, `NVT`) these fields are
+not read, as `tau_p` is not. `Program.plan["barostat"]` is
+`{"coupling": ..., "work": ...}` with the two values, or `None` without a
+barostat. The fingerprint of a checkpoint (D223) has `[barostat] coupling`
+and `[barostat] work`, in the group `coupling`, when the field was set or
+is not the default of an absent key, and the other keys in the units and
+the forms of the control file (three compressibilities as its array): `mdir run --continue` takes the
+checkpoint of a Python simulation with the same keys, and refuses another
+coupling or work as it does between two control files.
+
+| Case | Where | Message |
+|---|---|---|
+| `FirstOrder` with `SemiIsotropic` or `Anisotropic` | `mdir.compile`, `InputError` | that of `mdir check`, with `model` for the path: `model: 'work = "FIRST_ORDER"' counts the work from the trace of the virial of the step with twice the internal kinetic energy, which holds for the trace only; with 'coupling = "SEMI_ISOTROPIC"' or "ANISOTROPIC" use "TROTTER", "TROTTER_FIRST_ORDER", or "EXACT"` |
+| a value that is not of the enumeration | the assignment, `TypeError` | |
+| three compressibilities without the anisotropic coupling | `mdir.compile`, `InputError` | `model: a 'compressibility' of each axis needs 'coupling = "ANISOTROPIC"'; give one number` |
+| three compressibilities that are all 0 | the same | `model: a barostat whose compressibilities are all 0 keeps the cell; give one that is not 0` |
+| a negative one of the three; a sequence that is not of three | `mdir.compile`; the assignment; `InputError` | `Ensemble.compressibility: expected one number, or three that are not negative, those of x, y, and z, in 1/bar` |
+| `compressibility_z`, a `surface_tension` that is not 0, or `surfaces` that is not 2, without the semi-isotropic coupling | `mdir.compile`, `InputError` | `model: 'compressibility_z' needs 'coupling = "SEMI_ISOTROPIC"'`, and so for the other two |
+| a negative `compressibility_z`; `surfaces` below 1 | the same | `model: expected 0 or a positive number for 'compressibility_z'`; `Ensemble.surfaces must be at least 1` |
+| `Trotter` or `TrotterFirstOrder` with `coupling_period = 1` | `mdir.Simulation`, `UnsupportedError`, as before | `a simulation with a barostat that scales the cell every step (coupling period 1) is not supported yet` |
+
+The program, its kernels, and the path of a step are those of `mdir run`:
+the model hands the builder the control structure of the control file. A
+part may not end between the two steps that close a period of a work of
+Trotter type ([Segments and the phase of the
+coupling](#segments-and-the-phase-of-the-coupling)), which holds for
+`TrotterFirstOrder` as for `Trotter`; `Exact` and `FirstOrder` close a
+period with one step, and with them a Python simulation takes
+`coupling_period = 1`, a scaling at every step.
+
+**Validation against `mdir run`** (`python-barostat*.test`,
+`Inputs/python_barostat.py`), in the deterministic mode: for each coupling
+and each work that it takes, 10 cases (the three couplings with `TROTTER`,
+`TROTTER_FIRST_ORDER`, and `EXACT`, and the isotropic one with
+`FIRST_ORDER`), in an orthorhombic cell (the dipeptide in 382 waters, PME
+on $32^3$, SHAKE and SETTLE) and in a triclinic one (403 rigid waters in
+the rhombic dodecahedron, PME on $28^3$), on the CPU and on a GPU, in
+double and in mixed precision: 80 runs of 40 steps at 2 fs with a coupling
+every 10 steps at 2000 atm, each with a checkpoint at step 20.
+
+| Quantity | Reference | Difference | Tolerance |
+|---|---|---|---|
+| Positions, velocities, forces, $a_x, b_y, c_z$, and $b_x, c_x, c_y$ after 40 steps in parts of 10 and 30 | The checkpoint of `mdir run` of the same control | 0 in each of the 80 | 0 |
+| The energy file (5 rows) and the DCD trajectory (4 frames, each with its cell) | The files of `mdir run` | 0 bytes | 0 |
+| The fingerprint of the checkpoint | That of `mdir run` | equal | equal |
+| `mdir run` to step 20, a Python simulation from its checkpoint to step 40: the state, the cell, and the files | `mdir run` of 40 steps | 0 | 0 |
+| A Python simulation to step 20, `mdir run --continue` from its checkpoint: the same | The same | 0 | 0 |
+| The checkpoint of step 20 of the isotropic coupling with `TROTTER`, continued with the anisotropic coupling, and with `EXACT` | | refused by `mdir.Simulation` (`InputError`) and by `mdir run --continue`, each naming `[barostat] coupling` or `[barostat] work` | |
+| The cell of the last frame of the DCD trajectory | `State.cell` | below $10^{-12}$ nm | $10^{-12}$ nm |
+| The strains $\ln(L_k/L_k^0)$ of the three axes: isotropic | each other | below $10^{-12}$ | $10^{-12}$ |
+| The same, semi-isotropic | x and y equal, z another: in the orthorhombic cell $-9.2\times10^{-4}$, $-9.2\times10^{-4}$, $4.9\times10^{-4}$ | x and y within $10^{-12}$ | $10^{-12}$; z apart by more than $10^{-7}$ |
+| The same, anisotropic | all apart: in the orthorhombic cell $-1.09\times10^{-3}$, $3.7\times10^{-4}$, $-2.0\times10^{-4}$ | | apart by more than $10^{-7}$ |
+| The other keys, orthorhombic, CPU double and GPU mixed, 40 steps with a checkpoint at step 20: compressibilities (9e-5, 0, 3e-5) /atm with `EXACT` and (2e-5, 6e-5, 1e-4) /atm with `TROTTER`, anisotropic; `compressibility_z` 0 with a tension of 30 dyn/cm on 1 surface (`TROTTER`), and compressibilities 6e-5 and 2e-5 /atm with 25 dyn/cm on 2 (`EXACT`), semi-isotropic: the state, the cell, the files, the fingerprint, and `mdir run --continue` from the Python checkpoint | `mdir run` with the keys | 0; the axis of a compressibility of 0 has a strain of exactly 0 | 0 |
+| A coupling period of 1 with `EXACT` (the three couplings) and `FIRST_ORDER` (isotropic), 40 steps in parts of 13 and 27, orthorhombic, CPU double and GPU mixed: the state and the cell | `mdir run` | 0 | 0 |
+
+The oracle is `mdir run`, whose couplings and works are validated against
+their own references (D77, D92, D119, D127, D163c): this item adds the way
+to them from Python, not physics.
 
 ## Not in this item
 
@@ -661,8 +741,9 @@ four-stage example (#82) needs, followed in a small model PR after this one
 temperature, seed)`, and a typed `System.restraints` list mapped to
 `[[restraints]]` (D74, D124), in
 [python-velocities-restraints.md](python-velocities-restraints.md)
-(D198). A state without velocities still starts
-at rest; drawing them is explicit.
+(D198). A state without velocities started
+at rest then; since D[python-defaults] it takes the velocities that
+`mdir run` draws.
 
 A program that minimizes is a simulation of its own, which takes
 `minimize(steps)` in parts as `run(n)` takes steps (D202,

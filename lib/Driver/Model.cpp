@@ -183,6 +183,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     return unsupported("the initial object subset supports velocity Verlet and leapfrog");
   if (ensemble.kind != EnsembleKind::NVE && ensemble.kind != EnsembleKind::NVT && ensemble.kind != EnsembleKind::NPT)
     return unsupported("unsupported ensemble");
+  if (ensemble.barostatCoupling != BarostatCoupling::Isotropic && ensemble.barostatCoupling != BarostatCoupling::SemiIsotropic &&
+      ensemble.barostatCoupling != BarostatCoupling::Anisotropic)
+    return unsupported("unsupported coupling of the barostat");
+  if (ensemble.barostatWork != driver::BarostatWork::Trotter && ensemble.barostatWork != driver::BarostatWork::TrotterFirstOrder &&
+      ensemble.barostatWork != driver::BarostatWork::Exact && ensemble.barostatWork != driver::BarostatWork::FirstOrder)
+    return unsupported("unsupported work of the barostat");
   if (s.electrostatics != Electrostatics::Cutoff && s.electrostatics != Electrostatics::PME)
     return unsupported("unsupported electrostatics");
   // As the control file: the modifier is of the real-space term of PME.
@@ -197,9 +203,10 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   if (s.dispersion != driver::DispersionCorrection::None && s.dispersion != driver::DispersionCorrection::EnergyPressure)
     return unsupported("unsupported dispersion correction");
   auto positive = [](double v) { return std::isfinite(v) && v > 0; };
-  if (!positive(s.cutoff) || !positive(s.pairlistDistance) || s.pairlistDistance <= s.cutoff ||
-      !std::isfinite(s.switchDistance) || s.switchDistance < 0 ||
-      (s.truncation != driver::Truncation::None && s.truncation != driver::Truncation::Shift && s.switchDistance >= s.cutoff))
+  const double pairlistDistance = s.getPairlistDistance(), switchDistance = s.getSwitchDistance();
+  if (!positive(s.cutoff) || !positive(pairlistDistance) || pairlistDistance <= s.cutoff ||
+      !std::isfinite(switchDistance) || switchDistance < 0 ||
+      (s.truncation != driver::Truncation::None && s.truncation != driver::Truncation::Shift && switchDistance >= s.cutoff))
     return input("cutoff/list/switch distances are inconsistent or nonfinite");
   if (!positive(integrator.timestep) || !positive(integrator.minimizeStep) ||
       (!std::isfinite(ensemble.temperature) || ensemble.temperature < 0 ||
@@ -207,7 +214,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       !positive(ensemble.compressibility) || !std::isfinite(ensemble.pressure))
     return input("integrator and bath parameters must be finite, with positive time scales and temperature");
   if (schedule.steps < 0 || schedule.energyPeriod < 0 || execution.threads < 1 ||
-      ensemble.couplingPeriod < 1 || ensemble.comPeriod < 0)
+      ensemble.couplingPeriod < 1 || ensemble.comPeriod.value_or(0) < 0)
     return input("invalid step, thread or coupling count");
   if (execution.neighborCapacity < 0)
     return input("Execution.neighbor_capacity must be positive, or 0 for the estimate");
@@ -242,17 +249,26 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   if (!s.periodic && (s.electrostatics == Electrostatics::PME || ensemble.kind == EnsembleKind::NPT ||
                      dispersion != driver::DispersionCorrection::None))
     return input("PME, pressure coupling and dispersion correction require periodic boundaries");
-  if (s.pmeOrder != 4 || !positive(s.pmeSpacing) || !std::isfinite(s.pmeAlpha) || s.pmeAlpha < 0 ||
+  // The orders of the control file, with its words.
+  if (s.pmeOrder != 4 && s.pmeOrder != 6 && s.pmeOrder != 8)
+    return input("model: expected 4, 6, or 8 for 'order'");
+  if (s.pmeInfluence != PMEInfluence::SPME && s.pmeInfluence != PMEInfluence::Optimal)
+    return unsupported("unsupported influence function of PME");
+  if (!positive(s.pmeSpacing) || !std::isfinite(s.pmeAlpha) || s.pmeAlpha < 0 ||
       !positive(s.pmeTolerance) || s.pmeTolerance >= 1)
-    return input("invalid PME settings (the initial subset uses order 4)");
+    return input("invalid PME settings");
   bool anyGrid = false, allGrid = true;
   for (auto n : s.pmeGrid) { anyGrid |= n != 0; allGrid &= n >= 8; }
   if (anyGrid && !allGrid) return input("PME grid must be automatic or have three positive dimensions at least the spline order");
 
   c.periodic = s.periodic;
   c.cutoffDistance = s.cutoff / driver::units::length;
-  c.pairlistDistance = s.pairlistDistance / driver::units::length;
-  c.switchDistance = s.switchDistance / driver::units::length;
+  // Not given, the two are the control file's to the bit: 1.5 Å beyond its
+  // cutoff, and its cutoff (D[python-defaults]).
+  c.pairlistDistance = s.pairlistDistance ? *s.pairlistDistance / driver::units::length
+                                          : c.cutoffDistance + 1.5;
+  c.switchDistance = s.switchDistance ? *s.switchDistance / driver::units::length
+                                      : c.cutoffDistance;
   // A dual list, with the refusals and the words of the control file
   // (Reader::readEnergy; D114, D245).
   if (!std::isfinite(s.prunedDistance) || s.prunedDistance < 0)
@@ -278,6 +294,8 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pmeAlphaTolerance = s.pmeTolerance;
   c.pmeMaxSpacing = s.pmeSpacing / driver::units::length;
   c.pmeOrder = s.pmeOrder;
+  c.pmeOptimal = s.pmeInfluence == PMEInfluence::Optimal;
+  c.analyticBonds = s.analyticBonds;
   for (int k = 0; k != 3; ++k) c.pmeGrid[k] = s.pmeGrid[k];
   c.rigidBonds = s.rigidHydrogenBonds;
   c.fastWater = s.rigidWater;
@@ -296,9 +314,70 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pressure = ensemble.pressure / 1.01325;
   c.tauP = ensemble.tauP;
   c.compressibility = ensemble.compressibility * 1.01325;
+  // The coupling and the work of the barostat, as Reader::readBarostat
+  // takes them (D[python-barostat]): one compressibility, that of every
+  // axis and of z, no surface tension. They are of a barostat: without
+  // one they are not read, as `tau_p` is not.
+  if (c.barostat) {
+    c.barostatWork = ensemble.barostatWork;
+    c.semiIsotropic = ensemble.barostatCoupling == BarostatCoupling::SemiIsotropic;
+    c.anisotropic = ensemble.barostatCoupling == BarostatCoupling::Anisotropic;
+    for (double &value : c.compressibilities) value = c.compressibility;
+    c.compressibilityZ = c.compressibility;
+    // A compressibility of each axis, with the words of the control file.
+    if (!ensemble.compressibilities.empty()) {
+      if (!c.anisotropic)
+        return input("model: a 'compressibility' of each axis needs 'coupling = "
+                     "\"ANISOTROPIC\"'; give one number");
+      bool any = false;
+      if (ensemble.compressibilities.size() != 3)
+        return input("Ensemble.compressibility: expected one number, or three that are not "
+                     "negative, those of x, y, and z, in 1/bar");
+      for (size_t k = 0; k != 3; ++k) {
+        double value = ensemble.compressibilities[k];
+        if (!std::isfinite(value) || value < 0.0)
+          return input("Ensemble.compressibility: expected one number, or three that are not "
+                       "negative, those of x, y, and z, in 1/bar");
+        c.compressibilities[k] = value * 1.01325;
+        any |= value > 0.0;
+      }
+      if (!any)
+        return input("model: a barostat whose compressibilities are all 0 keeps the "
+                     "cell; give one that is not 0");
+    }
+    // The keys of semi-isotropic coupling (D119).
+    if (!c.semiIsotropic) {
+      const char *key = ensemble.compressibilityZ ? "compressibility_z"
+                        : ensemble.surfaceTension != 0.0 ? "surface_tension"
+                        : ensemble.surfaces != 2 ? "surfaces" : nullptr;
+      if (key)
+        return input("model: '" + std::string(key) + "' needs 'coupling = \"SEMI_ISOTROPIC\"'");
+    }
+    if (ensemble.compressibilityZ) {
+      if (!std::isfinite(*ensemble.compressibilityZ) || *ensemble.compressibilityZ < 0.0)
+        return input("model: expected 0 or a positive number for 'compressibility_z'");
+      c.compressibilityZ = *ensemble.compressibilityZ * 1.01325;
+    }
+    if (!std::isfinite(ensemble.surfaceTension))
+      return input("Ensemble.surface_tension must be finite");
+    if (ensemble.surfaces < 1)
+      return input("Ensemble.surfaces must be at least 1");
+    c.surfaceTension = ensemble.surfaceTension / driver::units::dynePerCmToBarNm;
+    c.surfaces = ensemble.surfaces;
+    if ((c.semiIsotropic || c.anisotropic) && c.barostatWork == driver::BarostatWork::FirstOrder)
+      return input("model: 'work = \"FIRST_ORDER\"' counts the work from the trace of "
+                   "the virial of the step with twice the internal kinetic "
+                   "energy, which holds for the trace only; with "
+                   "'coupling = \"SEMI_ISOTROPIC\"' or \"ANISOTROPIC\" use "
+                   "\"TROTTER\", "
+                   "\"TROTTER_FIRST_ORDER\", or \"EXACT\"");
+  }
   c.thermostatPeriod = c.thermostat ? ensemble.couplingPeriod : 0;
   c.barostatPeriod = c.barostat ? ensemble.couplingPeriod : 0;
-  c.comPeriod = ensemble.comPeriod;
+  // Not given: as the control file without `center_of_mass_interval`,
+  // which `resolveControlCoupling` settles, with the thermostat or never
+  // (D[python-defaults]); a minimization removes nothing.
+  c.comPeriod = ensemble.comPeriod ? *ensemble.comPeriod : integrator.minimize ? 0 : -1;
   c.seed = ensemble.seed;
   c.target = execution.target;
   c.precision = execution.precision;
@@ -466,6 +545,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
          "System.dispersion to DispersionCorrection.None_ to say so"});
   prepared->referencePositions =
       s.restraintReference.empty() ? prepared->positions : s.restraintReference;
+  // A state without velocities takes those that `mdir run` draws when its
+  // coordinates give none: at the temperature of the ensemble, with its
+  // seed (D[python-defaults]). A minimization begins at rest, as there.
+  // Velocities that are given, zeros among them, are kept.
+  if (state.velocities.empty() && !c.minimize)
+    driver::assignVelocities(c, *prepared);
   // The tunable parameters, whose initial values the prepared model takes
   // (D213).
   auto tunables = resolveTunables(s, c, *prepared);

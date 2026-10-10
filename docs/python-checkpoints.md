@@ -193,19 +193,26 @@ the key absent, has no entry.
 field was set and the second when there is a dual list: a continuation
 with another structure is the same run with other execution, with a note.
 
+`Ensemble.barostat_coupling` and `Ensemble.barostat_work` (D[python-barostat]) are the
+entries `[barostat] coupling` and `[barostat] work` of the group
+`coupling`, when the field was set or is not the default of an absent key.
+
 Settings without a control-file key (custom terms in Python's units,
 tunables) have entries of their own: a CLI run never has them, so a
 checkpoint with them is a new stage for `mdir run`, never `--continue`.
 
 **Decided (option 1, maintainer on PR #186).** Some Python defaults
-differ from what the control file takes when its key is absent:
+differed from what the control file takes when its key is absent. Since
+D[python-defaults] (#281) the first three are the control file's, and a
+model that leaves them out writes no entry for them, as a control file
+without the keys writes none; the rule below still writes the methods:
 
-| Setting | Python default | Control file without the key |
+| Setting | Python default until D[python-defaults] | Control file without the key, and Python now |
 |---|---|---|
 | `switch_distance` | 1.0 nm (switch on) | equal to `cutoff` (no switch) |
 | `pairlist_distance` (execution group) | 1.35 nm | `cutoff` + 1.5 Å |
 | `center_of_mass_interval` under NVT/NPT | 0 (no removal) | the thermostat interval |
-| thermostat and barostat methods | implied by `Ensemble.kind` | must be written |
+| thermostat and barostat methods | implied by `Ensemble.kind` | must be written (Python: still implied) |
 
 Recording only given settings would let a Python model and a control file
 that both leave out `switch_distance` look identical with different

@@ -219,6 +219,20 @@ PYBIND11_MODULE(_core, m) {
     .value("NVT", model::EnsembleKind::NVT)
     .value("NPT", model::EnsembleKind::NPT)
     ;
+  // `[pme] influence` (D134, D[python-pme-fields]).
+  py::enum_<model::PMEInfluence>(m, "PMEInfluence")
+    .value("SPME", model::PMEInfluence::SPME)
+    .value("Optimal", model::PMEInfluence::Optimal);
+  // `[barostat] coupling` and `work` (D[python-barostat]).
+  py::enum_<model::BarostatCoupling>(m, "BarostatCoupling")
+    .value("Isotropic", model::BarostatCoupling::Isotropic)
+    .value("SemiIsotropic", model::BarostatCoupling::SemiIsotropic)
+    .value("Anisotropic", model::BarostatCoupling::Anisotropic);
+  py::enum_<driver::BarostatWork>(m, "BarostatWork")
+    .value("Trotter", driver::BarostatWork::Trotter)
+    .value("TrotterFirstOrder", driver::BarostatWork::TrotterFirstOrder)
+    .value("Exact", driver::BarostatWork::Exact)
+    .value("FirstOrder", driver::BarostatWork::FirstOrder);
   py::enum_<model::Electrostatics>(m, "Electrostatics")
     .value("Cutoff", model::Electrostatics::Cutoff)
     .value("PME", model::Electrostatics::PME)
@@ -363,8 +377,27 @@ PYBIND11_MODULE(_core, m) {
   auto system = input<model::System>(m, "System");
   property(system, "periodic", &model::System::periodic);
   property(system, "cutoff", &model::System::cutoff, units::nm);
-  property(system, "pairlist_distance", &model::System::pairlistDistance, units::nm);
-  property(system, "switch_distance", &model::System::switchDistance, units::nm);
+  // Not set (or set to None), the two follow the cutoff as the control
+  // file without their keys: 0.15 nm beyond it, and the cutoff itself
+  // (D[python-defaults]). Reading gives the value in effect.
+  auto followsCutoff = [&system](const char *name, std::optional<double> model::System::*member,
+                                 double (model::System::*effective)() const) {
+    std::string qualified = std::string("System.") + name;
+    system.def_property(name, [effective](const Input<model::System> &o) {
+      return (o.value.*effective)();
+    }, [member, qualified, name](Input<model::System> &o, py::object value) {
+      if (value.is_none()) {
+        (o.value.*member).reset(); o.given.erase(name);
+      } else {
+        o.value.*member = units::scalar(value, qualified, units::nm); o.given.insert(name);
+      }
+      ++o.version;
+    });
+  };
+  followsCutoff("pairlist_distance", &model::System::pairlistDistance,
+                &model::System::getPairlistDistance);
+  followsCutoff("switch_distance", &model::System::switchDistance,
+                &model::System::getSwitchDistance);
   property(system, "pruned_distance", &model::System::prunedDistance, units::nm);
   property(system, "truncation", &model::System::truncation);
   property(system, "electrostatics", &model::System::electrostatics);
@@ -390,6 +423,8 @@ PYBIND11_MODULE(_core, m) {
   property(system, "pme_spacing", &model::System::pmeSpacing, units::nm);
   property(system, "pme_grid", &model::System::pmeGrid);
   property(system, "pme_order", &model::System::pmeOrder);
+  property(system, "pme_influence", &model::System::pmeInfluence);
+  property(system, "analytic_bonds", &model::System::analyticBonds);
   property(system, "rigid_hydrogen_bonds", &model::System::rigidHydrogenBonds);
   property(system, "rigid_water", &model::System::rigidWater);
   property(system, "flexible_water", &model::System::flexibleWater);
@@ -492,9 +527,56 @@ PYBIND11_MODULE(_core, m) {
   property(ensemble, "tau_t", &model::Ensemble::tauT, units::ps);
   property(ensemble, "pressure", &model::Ensemble::pressure, units::bar);
   property(ensemble, "tau_p", &model::Ensemble::tauP, units::ps);
-  property(ensemble, "compressibility", &model::Ensemble::compressibility, units::inverseBar);
+  // One number, or one of each axis for the anisotropic coupling, as
+  // `[barostat] compressibility` (D[python-barostat]).
+  ensemble.def_property("compressibility", [](const Input<model::Ensemble> &o) -> py::object {
+    if (o.value.compressibilities.empty()) return py::float_(o.value.compressibility);
+    return py::tuple(py::cast(o.value.compressibilities));
+  }, [](Input<model::Ensemble> &o, py::object value) {
+    const std::string name = "Ensemble.compressibility";
+    py::object plain = units::isQuantity(value) ? units::strip(value, name, units::inverseBar) : value;
+    if (py::isinstance<py::sequence>(plain) && !py::isinstance<py::str>(plain)) {
+      std::vector<double> axes;
+      for (py::handle item : plain) axes.push_back(units::scalar(item, name, units::none));
+      if (axes.size() != 3)
+        throw InputError(name + ": expected one number, or three that are not negative, "
+                         "those of x, y, and z, in 1/bar");
+      o.value.compressibilities = std::move(axes);
+    } else {
+      o.value.compressibility = units::scalar(value, name, units::inverseBar);
+      o.value.compressibilities.clear();
+    }
+    ++o.version; o.given.insert("compressibility");
+  });
+  // The keys of the semi-isotropic coupling (D119, D[python-barostat]);
+  // None for the compressibility of z follows `compressibility`.
+  ensemble.def_property("compressibility_z", [](const Input<model::Ensemble> &o) -> py::object {
+    if (!o.value.compressibilityZ) return py::none();
+    return py::float_(*o.value.compressibilityZ);
+  }, [](Input<model::Ensemble> &o, py::object value) {
+    if (value.is_none()) o.value.compressibilityZ.reset();
+    else o.value.compressibilityZ = units::scalar(value, "Ensemble.compressibility_z", units::inverseBar);
+    ++o.version; o.given.insert("compressibility_z");
+  });
+  property(ensemble, "surface_tension", &model::Ensemble::surfaceTension, units::barNm);
+  property(ensemble, "surfaces", &model::Ensemble::surfaces);
+  property(ensemble, "barostat_coupling", &model::Ensemble::barostatCoupling);
+  property(ensemble, "barostat_work", &model::Ensemble::barostatWork);
   property(ensemble, "coupling_period", &model::Ensemble::couplingPeriod);
-  property(ensemble, "com_period", &model::Ensemble::comPeriod);
+  // None, the default: as the control file without
+  // `center_of_mass_interval`, with the thermostat or never
+  // (D[python-defaults]).
+  ensemble.def_property("com_period", [](const Input<model::Ensemble> &o) -> py::object {
+    if (!o.value.comPeriod) return py::none();
+    return py::int_(*o.value.comPeriod);
+  }, [](Input<model::Ensemble> &o, py::object value) {
+    if (value.is_none()) {
+      o.value.comPeriod.reset(); o.given.erase("com_period");
+    } else {
+      o.value.comPeriod = value.cast<int64_t>(); o.given.insert("com_period");
+    }
+    ++o.version;
+  });
   property(ensemble, "seed", &model::Ensemble::seed);
   auto execution = input<model::Execution>(m, "Execution");
   property(execution, "target", &model::Execution::target);
@@ -605,6 +687,21 @@ PYBIND11_MODULE(_core, m) {
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";
       d["pme"] = c.program.pme;
       d["pme_grid"] = std::array<int64_t, 3>{c.program.pmeGrid[0], c.program.pmeGrid[1], c.program.pmeGrid[2]};
+      // The barostat of the program: its coupling and its work, or None
+      // without one (D[python-barostat]).
+      {
+        const auto &control = p.prepared->control;
+        if (control.barostat) {
+          py::dict barostat;
+          barostat["coupling"] = control.semiIsotropic ? model::BarostatCoupling::SemiIsotropic
+                                 : control.anisotropic ? model::BarostatCoupling::Anisotropic
+                                                       : model::BarostatCoupling::Isotropic;
+          barostat["work"] = control.barostatWork;
+          d["barostat"] = barostat;
+        } else {
+          d["barostat"] = py::none();
+        }
+      }
       d["tunables"] = tunables::describe(p.prepared->tunables, c.program);
       // The terms of the potential: all of the model, or those that a
       // tunable enters (D243).

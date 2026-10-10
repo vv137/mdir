@@ -66,6 +66,8 @@ def spring_term():
 def model(tunables=None, pme=True, terms=True):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
+    # The defaults of before D[python-defaults], with which this was written.
+    system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     if pme:
         system.electrostatics = mdir.Electrostatics.PME
@@ -101,6 +103,7 @@ def declarations(system, values=None):
 def compile_(system, state, target="CPU", precision="Double", leapfrog=False, npt=False,
              deterministic=True):
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     integrator.timestep = 0.0005
     if leapfrog:
         integrator.method = mdir.IntegratorMethod.Leapfrog
@@ -150,6 +153,9 @@ def gromacs_model(tunables):
     system.truncation = mdir.Truncation.None_
     system.dispersion = mdir.DispersionCorrection.None_
     system.tunables = tunables
+    # A state without velocities began at rest before D[python-defaults];
+    # the update of sigma and epsilon of this test is taken from rest.
+    state.velocities = np.zeros((system.particle_count, 3))
     return system, state
 
 

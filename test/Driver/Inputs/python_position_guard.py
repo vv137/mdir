@@ -25,6 +25,8 @@ def compile_program(precision, kind="NVE", pressure=1.0, cutoff=0.8, restraint=N
                     overlap=False, deterministic=True):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
+    # The defaults of before D[python-defaults], with which this was written.
+    system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance = cutoff, cutoff + 0.1
     system.switch_distance = cutoff - 0.1
     system.electrostatics = mdir.Electrostatics.PME
@@ -35,6 +37,7 @@ def compile_program(precision, kind="NVE", pressure=1.0, cutoff=0.8, restraint=N
         positions[1000] = positions[0]
         state.positions = positions
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     ensemble.kind = getattr(mdir.EnsembleKind, kind)
     ensemble.temperature, ensemble.coupling_period = 300, 10
     ensemble.pressure, ensemble.tau_p = pressure, 0.1

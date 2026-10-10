@@ -14,9 +14,12 @@ root = sys.argv[1]
 def compile_program(minimize):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
+    # The defaults of before D[python-defaults], with which this was written.
+    system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.PME
     integrator, ensemble = mdir.Integrator(), mdir.Ensemble()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     integrator.timestep = 0.001
     integrator.minimize = minimize
     if not minimize:

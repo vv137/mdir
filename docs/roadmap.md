@@ -309,6 +309,20 @@ run at one rate (JAC at constant energy, 0.206 ms a step from Python
 against 0.205 from `mdir run` with the dual list, and 0.259 against 0.258
 with the matrix). The matrix stays the default; the choice by the size of
 the system is G3.
+D[python-pme-fields] (#279) gives the Python model `[pme] influence`,
+`[constraints] analytic_bonds`, and the PME orders 6 and 8, the settings of
+the Amber suite's script that it lacked.
+D[python-barostat] (#275) gives `mdir.Ensemble` the `coupling` and the
+`work` of `[barostat]`: the semi-isotropic and the anisotropic coupling
+and the four works, each to the bit of `mdir run` in an orthorhombic and
+in a triclinic cell, and with the exact and the first-order work a
+coupling at every step.
+D[python-defaults] (#281) makes the defaults of the Python model those of
+the control file (a plain cutoff with the correction for the dispersion,
+the switch and the pairlist distance from the cutoff, the center of mass
+with the thermostat, drawn velocities for a state without them): a system
+given to both front ends with nothing beyond its inputs runs to the same
+bits. A breaking change of the Python API, listed in the changelog.
 D221 (#120, [topology views](python-topology.md)) gives
 loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)

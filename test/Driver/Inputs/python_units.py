@@ -37,6 +37,8 @@ def ulps(a, b):
 
 loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
 reference_system, reference_state = loaded.make_system(), loaded.make_state()
+# The defaults of before D[python-defaults], with which this was written.
+reference_system.truncation = mdir.Truncation.Switch
 count = reference_system.particle_count
 
 # Scalars: (class, setter, quantity, plain value in the public unit).
@@ -81,6 +83,7 @@ print(f"scalar setters: {len(SCALARS)} within {worst} ulp of the plain values")
 # Versions advance on the quantity path, and errors leave them.
 system = loaded.make_system()
 ensemble = mdir.Ensemble()
+ensemble.com_period = 0  # the default of before D[python-defaults]
 expect(mdir.InputError, lambda: setattr(system, "cutoff", 2 * u.femtosecond), "System.cutoff: expected a quantity in nm", "femtosecond")
 expect(mdir.InputError, lambda: setattr(ensemble, "pressure", 1 * u.kilojoule), "Ensemble.pressure: expected a quantity in bar")
 expect(mdir.InputError, lambda: setattr(system, "pme_tolerance", 1e-5 * u.nanometer), "System.pme_tolerance: takes plain values only")
@@ -126,7 +129,10 @@ print("array refusals passed")
 # the same IR (values chosen to convert exactly: 8 A, 9 A, 5 A, 1 fs, 1 atm).
 def build(quantities, pressure=1.01325, precision=mdir.Precision.Mixed):
     system, state = loaded.make_system(), loaded.make_state()
+    # The defaults of before D[python-defaults], with which this was written.
+    system.truncation = mdir.Truncation.Switch
     integrator, ensemble = mdir.Integrator(), mdir.Ensemble()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     ensemble.kind = mdir.EnsembleKind.NPT
     q = (lambda value, unit: value * unit) if quantities else (lambda value, unit: value)
     system.cutoff = q(8.0, u.angstrom) if quantities else 0.8

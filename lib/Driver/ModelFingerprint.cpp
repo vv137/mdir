@@ -153,14 +153,16 @@ Fingerprint mdir::model::getFingerprint(const System &s,
 
   // Physics: [energy], [pme], [constraints], [restraints], [boundary].
   // Lengths in Å.
-  if (has(given.system, "cutoff") || s.cutoff != 12.0 * length)
+  // (The default, 1.2 nm, is the 12 Å of an absent key; a comparison of
+  // the two in nm took them for different, D[python-defaults].)
+  if (has(given.system, "cutoff") || std::fabs(s.cutoff / length - 12.0) > 1e-9)
     add("physics", "[energy] cutoff", number(s.cutoff / length));
   // The control file switches from the cutoff, which is no switch, unless
   // it gives 'switch_distance'.
   if (switches(s.truncation) &&
-      (has(given.system, "switch_distance") || s.switchDistance != s.cutoff))
+      (has(given.system, "switch_distance") || s.getSwitchDistance() != s.cutoff))
     add("physics", "[energy] switch_distance",
-        number(s.switchDistance / length));
+        number(s.getSwitchDistance() / length));
   if (const char *modifier = truncationModifier(s.truncation))
     add("physics", "[energy] lennard_jones_modifier",
         getFingerprintString(modifier));
@@ -196,6 +198,11 @@ Fingerprint mdir::model::getFingerprint(const System &s,
             getFingerprintNumber(s.pmeGrid[2]) + "]");
   if (has(given.system, "pme_order"))
     add("physics", "[pme] order", getFingerprintNumber(s.pmeOrder));
+  if (has(given.system, "pme_influence"))
+    add("physics", "[pme] influence",
+        getFingerprintString(s.pmeInfluence == PMEInfluence::Optimal ? "OPTIMAL" : "SPME"));
+  if (has(given.system, "analytic_bonds"))
+    add("physics", "[constraints] analytic_bonds", flag(s.analyticBonds));
   if (has(given.system, "rigid_hydrogen_bonds"))
     add("physics", "[constraints] hydrogen_bonds",
         flag(s.rigidHydrogenBonds));
@@ -277,12 +284,11 @@ Fingerprint mdir::model::getFingerprint(const System &s,
         getFingerprintNumber(static_cast<double>(ensemble.seed)));
   bool thermostat = ensemble.kind != EnsembleKind::NVE;
   bool barostat = ensemble.kind == EnsembleKind::NPT;
-  // With a thermostat the control file removes the motion of the center of
-  // mass at its interval unless it says otherwise.
-  int64_t comAbsent = thermostat ? ensemble.couplingPeriod : 0;
-  if (has(given.ensemble, "com_period") || ensemble.comPeriod != comAbsent)
+  // Given, the key of the control file; not given, the model takes what
+  // an absent key takes (D[python-defaults]).
+  if (ensemble.comPeriod)
     add("coupling", "[dynamics] center_of_mass_interval",
-        getFingerprintNumber(static_cast<double>(ensemble.comPeriod)));
+        getFingerprintNumber(static_cast<double>(*ensemble.comPeriod)));
   if (has(given.ensemble, "kind") || thermostat)
     add("coupling", "[ensemble] ensemble",
         getFingerprintString(barostat     ? "NPT"
@@ -305,17 +311,59 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     add("coupling", "[barostat] method", getFingerprintString("C-RESCALE"));
     if (has(given.ensemble, "tau_p"))
       add("coupling", "[barostat] time_constant", number(ensemble.tauP));
-    if (has(given.ensemble, "compressibility"))
+    if (!ensemble.compressibilities.empty()) {
+      // The three numbers of an anisotropic coupling, as the array of the
+      // control file (D[python-barostat]).
+      std::string axes = "[";
+      for (size_t k = 0; k != ensemble.compressibilities.size(); ++k)
+        axes += (k ? "," : "") + number(ensemble.compressibilities[k] * atm);
+      add("coupling", "[barostat] compressibility", axes + "]");
+    } else if (has(given.ensemble, "compressibility")) {
       add("coupling", "[barostat] compressibility",
           number(ensemble.compressibility * atm));
+    }
+    // The keys of the semi-isotropic coupling, where they were given.
+    if (ensemble.compressibilityZ)
+      add("coupling", "[barostat] compressibility_z",
+          number(*ensemble.compressibilityZ * atm));
+    if (has(given.ensemble, "surface_tension") || ensemble.surfaceTension != 0.0)
+      add("coupling", "[barostat] surface_tension",
+          number(ensemble.surfaceTension / driver::units::dynePerCmToBarNm));
+    if (has(given.ensemble, "surfaces") || ensemble.surfaces != 2)
+      add("coupling", "[barostat] surfaces",
+          getFingerprintNumber(static_cast<double>(ensemble.surfaces)));
+    // The coupling and the work, as the keys of the control file write
+    // them: when given, or when not the default that an absent key takes
+    // (D[python-barostat]).
+    if (has(given.ensemble, "barostat_coupling") ||
+        ensemble.barostatCoupling != BarostatCoupling::Isotropic)
+      add("coupling", "[barostat] coupling",
+          getFingerprintString(
+              ensemble.barostatCoupling == BarostatCoupling::SemiIsotropic
+                  ? "SEMI_ISOTROPIC"
+                  : ensemble.barostatCoupling == BarostatCoupling::Anisotropic
+                        ? "ANISOTROPIC"
+                        : "ISOTROPIC"));
+    if (has(given.ensemble, "barostat_work") ||
+        ensemble.barostatWork != driver::BarostatWork::Trotter)
+      add("coupling", "[barostat] work",
+          getFingerprintString(
+              ensemble.barostatWork == driver::BarostatWork::TrotterFirstOrder
+                  ? "TROTTER_FIRST_ORDER"
+                  : ensemble.barostatWork == driver::BarostatWork::Exact
+                        ? "EXACT"
+                        : ensemble.barostatWork == driver::BarostatWork::FirstOrder
+                              ? "FIRST_ORDER"
+                              : "TROTTER"));
   }
 
   // Execution: [execution], and the reach of the neighbor structures.
   // The control file takes 'pairlist_distance' 1.5 Å beyond the cutoff.
-  if (has(given.system, "pairlist_distance") ||
-      std::fabs(s.pairlistDistance - (s.cutoff + 1.5 * length)) > 1e-12)
+  // Given, the key of the control file; not given, the model takes the
+  // 1.5 Å beyond the cutoff of an absent key (D[python-defaults]).
+  if (s.pairlistDistance)
     add("execution", "[energy] pairlist_distance",
-        number(s.pairlistDistance / length));
+        number(*s.pairlistDistance / length));
   // A dual list, where there is one, as the key of the control file; none
   // (0) has no key there (D245).
   if (s.prunedDistance != 0.0)
