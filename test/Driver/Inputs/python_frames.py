@@ -10,8 +10,8 @@ in.
 Scenarios:
   frames   the dipeptide in water with PME, an observed pair term and an
            observed wall; tied charges and sigma and epsilon of a pair of
-           types tunable (a tunable constant of a pair term is in `mixture`:
-           with tunable charges it does not lower, #256). The energy, the derivative, the virial, and the observed
+           types tunable (tunable charges with a tunable constant of a pair
+           term are in `dependent`, in both modes). The energy, the derivative, the virial, and the observed
            columns of each frame against the sampler's own gradient() and
            state at that step; frames as states, arrays, float32, in
            another order, from a generator; the product with the Jacobian
@@ -39,6 +39,21 @@ Scenarios:
   h5md     frames that an H5MDReporter wrote from a run of the dipeptide,
            read with mdir.read_h5md and evaluated one at a time: in f64
            against the states of the same steps, to the bit, and in f32
+  dependent  the evaluator of the terms that a tunable enters alone
+           (terms="dependent", D[frame-evaluator-terms]): for a constant of
+           a pair term with a parameter of a tuple term, for the charges
+           with PME, for sigma and epsilon by pairs of types with the
+           charges over frames of a run under a barostat, and for the
+           charges with a constant of a pair term (#256), the difference of
+           its energies at two values of the tunables against that of the
+           whole potential, both against double precision in mixed; the
+           Jacobian; what the mode does not give; and the reweighted
+           average of the mixture and its derivative from the two modes
+  linear   without frames: for a pair term linear in its tunables, c12 /
+           r^12 - c6 / r^6, the sums that `observe` records at each frame
+           of the run give the differences of the energy, the weights, and
+           the derivative of a reweighted average that the evaluator gives
+           on the stored frames
   torch    the same average differentiated by PyTorch through
            mdir.torch.evaluate; gradcheck; a fit of sigma' to a synthetic
            target; refusals of the adapter; torch.compile
@@ -599,6 +614,261 @@ def run_h5md():
     print("h5md passed")
 
 
+# The terms that a tunable enters, alone.
+def dependent_program(kind, precision_=None, state=None):
+    loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+    system, first = loaded.make_system(), loaded.make_state()
+    system.electrostatics = mdir.Electrostatics.PME
+    integrator, ensemble = mdir.Integrator(), mdir.Ensemble()
+    integrator.timestep = 0.0005
+    if kind == "terms":
+        # A constant of a pair term and a parameter of a tuple term; an
+        # observed wall that no tunable enters.
+        system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+        system.dispersion = mdir.DispersionCorrection.None_
+        soft = mdir.PairTerm()
+        soft.name, soft.expression = "soft", "a*exp(-r/l)"
+        soft.constants = [("a", 2.0), ("l", 0.05)]
+        soft.observe = ["l"]
+        wall = mdir.ExternalTerm()
+        wall.name, wall.expression, wall.selection = "wall", "0.5*k*max(0, z - z0)^2", ":WAT"
+        wall.constants = [("k", 100.0), ("z0", 1.5)]
+        wall.observe = ["z0"]
+        spring = mdir.TupleTerm()
+        spring.name, spring.expression, spring.arity = "spring", "0.5*k*(r - r0)^2", 2
+        spring.particles = np.array([[1, 4], [4, 6], [6, 8], [1, 6], [1, 8], [4, 8]], dtype=np.int64)
+        spring.parameters = [("k", np.array([500.0, 600.0, 600.0, 300.0, 200.0, 100.0])),
+                             ("r0", np.array([0.25, 0.26, 0.27, 0.3, 0.35, 0.4]))]
+        system.pair_terms, system.external_terms, system.tuple_terms = [soft], [wall], [spring]
+        system.tunables = [mdir.Tunable("l", "l", term="soft"),
+                           mdir.Tunable("r0", "r0", term="spring")]
+    elif kind == "charges":
+        system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+        system.dispersion = mdir.DispersionCorrection.None_
+        system.tunables = [mdir.Tunable("q", "charge", map=tied_charges(system))]
+    elif kind == "both":
+        # Tunable charges with a tunable constant of a pair term in one
+        # program, which lowers since #256 was fixed (#260).
+        system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+        system.dispersion = mdir.DispersionCorrection.None_
+        soft = mdir.PairTerm()
+        soft.name, soft.expression = "soft", "a*exp(-r/l)"
+        soft.constants = [("a", 2.0), ("l", 0.05)]
+        system.pair_terms = [soft]
+        system.tunables = [mdir.Tunable("q", "charge", map=tied_charges(system)),
+                           mdir.Tunable("l", "l", term="soft")]
+    else:
+        # The table by pairs of types with the charges, a plain cutoff and
+        # the correction for the dispersion, under a barostat.
+        system.cutoff, system.pairlist_distance = 0.8, 0.9
+        system.truncation = mdir.Truncation.None_
+        system.dispersion = mdir.DispersionCorrection.EnergyPressure
+        system.tunables = [mdir.Tunable("sigma", "sigma_pair"),
+                           mdir.Tunable("epsilon", "epsilon_pair"),
+                           mdir.Tunable("q", "charge", map=tied_charges(system))]
+        integrator.method = mdir.IntegratorMethod.Leapfrog
+        ensemble.kind, ensemble.temperature = mdir.EnsembleKind.NPT, 300.0
+        ensemble.coupling_period = 10
+    system.tunable_gradient = True
+    execution = execution_()
+    if precision_ is not None:
+        execution.precision = getattr(mdir.Precision, precision_)
+    return mdir.compile(system, first if state is None else state, integrator, ensemble,
+                        execution, mdir.Schedule())
+
+
+def moved_values(evaluator, scale=1.01):
+    return {name: evaluator.tunables[name] * scale for name in evaluator._slices}
+
+
+def two_values(evaluator, frames, hat, theta, name):
+    evaluator.tunables.update(hat)
+    a = evaluator.evaluate(frames)
+    evaluator.tunables.update(theta)
+    b = evaluator.evaluate(frames)
+    return getattr(b, name) - getattr(a, name), b
+
+
+def run_dependent():
+    kept = {"terms": ["pair:soft", "tuple:spring"], "charges": ["coulomb"],
+            "tables": ["lennard_jones", "coulomb"], "both": ["coulomb", "pair:soft"]}
+    for kind in ("terms", "charges", "tables", "both"):
+        program = dependent_program(kind)
+        sim = simulation(program)
+        states = []
+        for _ in range(4):
+            sim.run(50 if kind == "tables" else 5)
+            states.append(sim.state())
+        whole = mdir.FrameEvaluator(program)
+        dependent = mdir.FrameEvaluator(program, terms="dependent")
+        assert dependent.terms == "dependent" and whole.terms == "all"
+        assert dependent.program.plan["terms"] == kept[kind], dependent.program.plan["terms"]
+        assert program.plan["terms"] == ["all"]
+        hat = {name: whole.tunables[name].copy() for name in whole._slices}
+        theta = moved_values(whole)
+        d_all, out_all = two_values(whole, states, hat, theta, "energy")
+        d_dep, out_dep = two_values(dependent, states, hat, theta, "dependent_energy")
+        names = list(out_all.jacobian)
+        rows = max(relative(out_dep.jacobian[name], out_all.jacobian[name]) for name in names)
+        size = float(np.abs(out_dep.dependent_energy).mean() / np.abs(out_all.energy).mean())
+        if double:
+            error = float(np.abs(d_dep - d_all).max())
+            print(f"{mode}: {kind}: {kept[kind]} kept, the energy {size:.3g} of the potential; "
+                  f"the difference of the energies at two values against that of the whole "
+                  f"potential, {error:.1e} kJ/mol (tolerance 1e-9) of {np.abs(d_all).mean():.3g}; "
+                  f"the Jacobian {rows:.1e} relative (tolerance 1e-12)")
+            assert error < 1e-9 and rows < 1e-12, (error, rows)
+        else:
+            exact = mdir.FrameEvaluator(dependent_program(kind, "Double", None))
+            d, _ = two_values(exact, states, hat, theta, "energy")
+            e_all, e_dep = float(np.abs(d_all - d).max()), float(np.abs(d_dep - d).max())
+            print(f"{mode}: {kind}: {kept[kind]} kept, the energy {size:.3g} of the potential; "
+                  f"the difference of the energies at two values against that of the whole "
+                  f"potential in double precision: the whole potential {e_all:.1e} kJ/mol, the "
+                  f"dependent terms {e_dep:.1e} of {np.abs(d).mean():.3g}; the Jacobian against "
+                  f"that of the whole potential {rows:.1e} relative (tolerance 1e-6)")
+            assert e_dep <= max(1.5 * e_all, 1e-6) and rows < 1e-6, (e_all, e_dep, rows)
+        cotangent = np.random.default_rng(3).normal(size=len(states))
+        product = max(relative(out_dep.vjp(cotangent)[name], out_all.vjp(cotangent)[name])
+                      for name in names)
+        assert product < (1e-12 if double else 1e-6), product
+        assert np.array_equal(out_dep.volume, out_all.volume)
+        # What each mode gives, and what it refuses by name.
+        expect(mdir.UnsupportedError, lambda: out_dep.energy, "'dependent_energy'")
+        expect(mdir.UnsupportedError, lambda: out_dep.virial, "terms='dependent'")
+        expect(mdir.UnsupportedError, lambda: out_all.dependent_energy, "terms='all'")
+        assert out_all.unavailable == ("dependent_energy",)
+        if kind == "terms":
+            assert list(out_dep.observables) == ["soft.energy", "soft.d_l"], list(out_dep.observables)
+            assert out_dep.unavailable == ("energy", "virial", "wall.energy", "wall.d_z0")
+            same = all(np.array_equal(out_dep.observables[c], out_all.observables[c]) or not double
+                       for c in out_dep.observables)
+            assert same
+            assert out_dep.depends == {"dependent_energy": frozenset({"l", "r0"}),
+                                       "volume": frozenset(),
+                                       "soft.energy": frozenset({"l"}),
+                                       "soft.d_l": frozenset({"l"})}, out_dep.depends
+        else:
+            assert out_dep.unavailable == ("energy", "virial")
+    expect(mdir.InputError, lambda: mdir.FrameEvaluator(program, terms="some"), "'all' or")
+    print(f"{mode}: each mode refuses the names of the other; the columns of the terms left "
+          "out are absent and listed")
+
+    # The reweighted average of the mixture and its derivative.
+    kT = mdir.KB * TEMPERATURE
+    program = mixture_program()
+    frames = mixture_frames(program, 150)
+    results = {}
+    for terms, name in (("all", "energy"), ("dependent", "dependent_energy")):
+        evaluator = mdir.FrameEvaluator(program, terms=terms)
+        reference = getattr(evaluator.evaluate(frames), name)
+        evaluator.tunables["sig"] = np.array([SIGMA + 0.002])
+        out = evaluator.evaluate(frames)
+        log = -(getattr(out, name) - reference) / kT
+        w = np.exp(log - log.max())
+        w /= w.sum()
+        observable = out.observables["slab.d_c"] if terms == "all" else None
+        results[terms] = (w, out.jacobian["sig"][:, 0], observable, out)
+    assert results["dependent"][3].unavailable == ("energy", "virial", "slab.energy", "slab.d_c")
+    observable = results["all"][2]
+    values = {}
+    for terms, (w, g, _, _) in results.items():
+        values[terms] = (float(w @ observable),
+                         float(-(w @ (observable * g) - (w @ observable) * (w @ g)) / kT),
+                         float(np.exp(-(w * np.log(w)).sum())))
+    average = abs(values["dependent"][0] - values["all"][0]) / abs(values["all"][0])
+    slope = abs(values["dependent"][1] - values["all"][1]) / abs(values["all"][1])
+    tolerance = 1e-10 if double else 1e-3
+    print(f"{mode}: the mixture at sigma' + 0.002 nm, N_eff = {values['all'][2]:.1f}: the "
+          f"reweighted average from the dependent terms against that from the whole potential "
+          f"{average:.1e} relative, its derivative {slope:.1e} (tolerance {tolerance:.0e})")
+    assert average < tolerance and slope < tolerance, (average, slope)
+    print("dependent passed")
+
+
+# Without frames: a pair term linear in its tunables.
+def linear_program():
+    loaded = mdir.load_gromacs(mixture + "/plain.top", mixture + "/system.gro")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.pairlist_distance = 1.2, 1.3
+    system.truncation = mdir.Truncation.None_
+    system.dispersion = mdir.DispersionCorrection.EnergyPressure
+    # The A-B correction of the NBFIX in the coefficients of r^-12 and
+    # r^-6: 4 eps sig^12 - 4 eps0 sig0^12 and 4 eps sig^6 - 4 eps0 sig0^6.
+    eps, eps0, sig0 = 0.5 * 4.184, 0.24 * 4.184, 0.34
+    term = mdir.PairTerm()
+    term.name, term.groups, term.expression = "nbfix", [":A", ":B"], "c12/r^12 - c6/r^6"
+    term.constants = [("c12", 4 * eps * SIGMA ** 12 - 4 * eps0 * sig0 ** 12),
+                      ("c6", 4 * eps * SIGMA ** 6 - 4 * eps0 * sig0 ** 6)]
+    term.observe = ["c12", "c6"]
+    system.pair_terms = [term]
+    system.tunables = [mdir.Tunable("c12", "c12", term="nbfix"),
+                       mdir.Tunable("c6", "c6", term="nbfix")]
+    system.tunable_gradient = True
+    state = state.draw_velocities(system, TEMPERATURE, 271828)
+    integrator, ensemble = mdir.Integrator(), mdir.Ensemble()
+    integrator.timestep, ensemble.temperature, ensemble.seed = 0.002, TEMPERATURE, 271828
+    ensemble.kind = mdir.EnsembleKind.NVT
+    ensemble.com_period = ensemble.coupling_period = 10
+    return mdir.compile(system, state, integrator, ensemble, execution_(), mdir.Schedule())
+
+
+def run_linear():
+    kT = mdir.KB * TEMPERATURE
+    program = linear_program()
+    sim = simulation(program)
+    sim.run(500)
+    # What a run records: two sums a frame, and here the frames as well,
+    # to compare.
+    sums, frames = [], []
+
+    def record(simulation_, state):
+        sums.append((state.observables["nbfix.d_c12"], state.observables["nbfix.d_c6"]))
+        frames.append((state.positions, state.cell))
+    sim.reporters.append(mdir.CallbackReporter(record, 20))
+    sim.run(3000)
+    sim.close_reporters()
+    sums = np.array(sums)
+    count = len(sums)
+    hat = np.array([sim.tunables["c12"][0], sim.tunables["c6"][0]])
+    # sigma' moved by 0.002 nm at the same epsilon'.
+    eps, eps0, sig0 = 0.5 * 4.184, 0.24 * 4.184, 0.34
+    sigma = SIGMA + 0.002
+    theta = np.array([4 * eps * sigma ** 12 - 4 * eps0 * sig0 ** 12,
+                      4 * eps * sigma ** 6 - 4 * eps0 * sig0 ** 6])
+    # From the sums: U(theta) - U(theta-hat) = sum_k (theta_k - theta-hat_k) S_k.
+    delta = sums @ (theta - hat)
+    w = np.exp(-(delta - delta.min()) / kT)
+    w /= w.sum()
+    observable = np.array([float(((x[:60, 2] % np.array(c.diagonal)[2]) < 1.6).sum())
+                           for x, c in frames])
+    derivative = -(w @ (observable[:, None] * sums) - (w @ observable) * (w @ sums)) / kT
+
+    evaluator = mdir.FrameEvaluator(program, terms="dependent")
+    reference = evaluator.evaluate(frames)
+    evaluator.tunables.update({"c12": theta[:1], "c6": theta[1:]})
+    out = evaluator.evaluate(frames)
+    stored = out.dependent_energy - reference.dependent_energy
+    wf = np.exp(-(stored - stored.min()) / kT)
+    wf /= wf.sum()
+    rows = np.stack([out.jacobian["c12"][:, 0], out.jacobian["c6"][:, 0]], axis=1)
+    from_frames = -(wf @ (observable[:, None] * rows) - (wf @ observable) * (wf @ rows)) / kT
+    energy = float(np.abs(delta - stored).max())
+    weight = float(np.abs(w - wf).max() * count)
+    average = abs(w @ observable - wf @ observable) / abs(wf @ observable)
+    slope = float(np.abs(derivative - from_frames).max() / np.abs(from_frames).max())
+    n_eff = float(np.exp(-(w * np.log(w)).sum()))
+    limits = (1e-9, 1e-9, 1e-9) if double else (2e-3, 1e-3, 5e-3)
+    print(f"{mode}: {count} frames, sigma' moved by 0.002 nm, N_eff = {n_eff:.1f}: from the two "
+          f"sums that `observe` recorded at each frame against the evaluator on the stored "
+          f"frames: the difference of the energy {energy:.1e} kJ/mol (tolerance {limits[0]:.0e}) "
+          f"of {np.abs(stored).mean():.3g}, the weights {weight:.1e} of 1/K, the reweighted "
+          f"average {average:.1e} relative (tolerance {limits[1]:.0e}), its derivative in c12 and "
+          f"c6 {slope:.1e} (tolerance {limits[2]:.0e})")
+    assert energy < limits[0] and average < limits[1] and slope < limits[2], (energy, average, slope)
+    print("linear passed")
+
+
 # 60 A + 60 B, the A-B pair as a pair term with sigma' tunable.
 NBFIX = "4*eps*((sig/r)^12 - (sig/r)^6) - 4*eps0*((sig0/r)^12 - (sig0/r)^6)"
 SIGMA, TEMPERATURE = 0.37, 100.0
@@ -820,6 +1090,26 @@ def run_torch():
     print(f"{mode}: refused: a backward through the virial and through a column that the tunable "
           "enters, a second backward, positions that require a gradient")
 
+    # The terms that a tunable enters, alone: the same gradient under the
+    # name of that energy.
+    reduced = mdir.FrameEvaluator(program, terms="dependent")
+    with torch.no_grad():
+        reduced_reference = mdir.torch.evaluate(reduced, hat, frames).dependent_energy
+    sig = torch.tensor([SIGMA + 0.002], dtype=torch.float64, device=device, requires_grad=True)
+    out = mdir.torch.evaluate(reduced, {"sig": sig}, frames)
+    expect(mdir.UnsupportedError, lambda: out.energy, "'dependent_energy'")
+    expect(mdir.UnsupportedError, lambda: out.virial, "terms='dependent'")
+    w = torch.softmax(-(out.dependent_energy - reduced_reference) / kT, dim=0)
+    with torch.no_grad():
+        observable = mdir.torch.evaluate(evaluator, hat, frames).observables["slab.d_c"]
+    (w * observable).sum().backward()
+    whole = torch.tensor([SIGMA + 0.002], dtype=torch.float64, device=device, requires_grad=True)
+    average(whole)[0].backward()
+    both = abs(float(sig.grad[0]) - float(whole.grad[0])) / abs(float(whole.grad[0]))
+    print(f"{mode}: with the dependent terms alone, the gradient of the reweighted average "
+          f"against that of the whole potential, {both:.1e} relative")
+    assert both < (1e-10 if double else 1e-3), both
+
     # Inside torch.compile.
     def compiled_loss(sig):
         return average(sig)[0]
@@ -836,4 +1126,5 @@ def run_torch():
 
 
 {"frames": run_frames, "npt": run_npt, "refusals": run_refusals, "mixture": run_mixture,
- "torch": run_torch, "triclinic": run_triclinic, "h5md": run_h5md}[scenario]()
+ "torch": run_torch, "triclinic": run_triclinic, "h5md": run_h5md, "dependent": run_dependent,
+ "linear": run_linear}[scenario]()

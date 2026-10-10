@@ -17,5 +17,6 @@
 # DOUBLE: [[MODE]]: torch.autograd.gradcheck of the reweighted average: True
 # CHECK: [[MODE]]: a fit to the average at sigma* = 0.3705 nm from 0.3700: sigma' = 0.370{{[45]}}
 # CHECK: [[MODE]]: refused: a backward through the virial and through a column that the tunable enters, a second backward, positions that require a gradient
+# CHECK: [[MODE]]: with the dependent terms alone, the gradient of the reweighted average against that of the whole potential
 # CHECK: [[MODE]]: under torch.compile (aot_eager), the same average and gradient: True
 # CHECK: torch passed

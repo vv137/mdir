@@ -35,7 +35,7 @@ class _Record:
 
     def __init__(self, evaluator):
         self.evaluator = weakref.ref(evaluator)
-        self.others = ["virial"] + list(evaluator._columns)
+        self.others = (["virial"] if evaluator.terms == "all" else []) + list(evaluator._columns)
         self.depends = dict(evaluator._depends)
         self.names, self.frames, self.count, self.serial = [], None, None, 0
         self.out = None
@@ -65,8 +65,10 @@ def _frame_energies(call: int, gradient: bool,
         if gradient:
             record.source, record.version = out._source, out.version
     device = theta[0].device
-    others = np.stack([out.virial] + [out.observables[c] for c in evaluator._columns], axis=1)
-    return (torch.from_numpy(out.energy.copy()).to(device), torch.from_numpy(others).to(device),
+    columns = ([out._virial] if evaluator.terms == "all" else []) + [
+        out.observables[c] for c in evaluator._columns]
+    others = np.stack(columns, axis=1) if columns else np.zeros((out.count, 0))
+    return (torch.from_numpy(out._energy.copy()).to(device), torch.from_numpy(others).to(device),
             torch.from_numpy(rows).to(device), torch.tensor(record.serial, dtype=torch.int64))
 
 
@@ -144,10 +146,23 @@ class FrameOutputs:
     raises `UnsupportedError` from a backward that reaches it."""
 
     def __init__(self, out, energy, virial, volume, observables):
-        self.energy, self.virial, self.volume, self.observables = (
-            energy, virial, volume, observables)
+        self._out, self._energy, self._virial = out, energy, virial
+        self.volume, self.observables = volume, observables
         self.depends, self.version, self.count, self.zero = (
             out.depends, out.version, out.count, out.zero)
+        self.terms, self.unavailable = out.terms, out.unavailable
+
+    @property
+    def energy(self):
+        return self._out._only("energy", "all", self._energy)
+
+    @property
+    def virial(self):
+        return self._out._only("virial", "all", self._virial)
+
+    @property
+    def dependent_energy(self):
+        return self._out._only("dependent_energy", "dependent", self._energy)
 
     def __repr__(self):
         return f"FrameOutputs(count={self.count}, version={self.version})"
@@ -207,9 +222,11 @@ def _finish(number, names, energy, others):
     def output(name, column):
         return others[:, column] if out.depends[name] & named else constant[:, column]
 
-    observables = {name: output(name, k + 1) for k, name in enumerate(record.others[1:])}
+    observables = {name: output(name, k) for k, name in enumerate(record.others)
+                   if name != "virial"}
     volume = torch.from_numpy(out.volume.copy()).to(energy.device)
-    return FrameOutputs(out, energy, output("virial", 0), volume, observables)
+    virial = output("virial", 0) if out.terms == "all" else None
+    return FrameOutputs(out, energy, virial, volume, observables)
 
 
 def evaluate(evaluator, theta, positions, cells=None, tilts=None):

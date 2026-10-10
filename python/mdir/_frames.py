@@ -212,11 +212,18 @@ def _frozen(array):
 
 
 class FrameEnergies:
-    """What `FrameEvaluator.evaluate` returns; see docs/python-frames.md."""
+    """What `FrameEvaluator.evaluate` returns; see docs/python-frames.md.
+
+    With `terms="all"` it has `energy`, the potential energy, and `virial`;
+    with `terms="dependent"` it has `dependent_energy`, the energy of the
+    terms that a tunable enters, which is not the potential energy: each
+    name raises in the other mode, and `unavailable` lists what the mode
+    does not give."""
 
     def __init__(self, evaluator, source, energy, virial, volume, observed, rows, gradient):
         self._evaluator, self._source, self._gradient = evaluator, source, gradient
-        self.energy, self.virial, self.volume = _frozen(energy), _frozen(virial), _frozen(volume)
+        self._energy, self._virial, self.volume = _frozen(energy), _frozen(virial), _frozen(volume)
+        self.terms, self.unavailable = evaluator.terms, evaluator.unavailable
         self.count = len(energy)
         self.observables = {name: _frozen(np.ascontiguousarray(observed[:, k]))
                             for k, name in enumerate(evaluator._columns)}
@@ -227,9 +234,35 @@ class FrameEnergies:
         self.jacobian = None if rows is None else {
             name: self._rows[:, begin:end] for name, (begin, end) in evaluator._slices.items()}
 
+    def _only(self, name, mode, value):
+        if self.terms != mode:
+            raise _core.UnsupportedError(
+                f"'{name}' is not given by a frame evaluator with terms='{self.terms}': " +
+                ("it evaluates the terms that a tunable enters alone, whose energy is "
+                 "'dependent_energy' and is not the potential energy"
+                 if self.terms == "dependent" else
+                 "its energy is 'energy', that of the whole potential"))
+        return value
+
+    @property
+    def energy(self):
+        """The potential energy that the forces sample (D210), kJ/mol."""
+        return self._only("energy", "all", self._energy)
+
+    @property
+    def virial(self):
+        return self._only("virial", "all", self._virial)
+
+    @property
+    def dependent_energy(self):
+        """The energy of the terms that a tunable enters, kJ/mol: its
+        differences in the tunables and its derivative are those of the
+        potential energy."""
+        return self._only("dependent_energy", "dependent", self._energy)
+
     def vjp(self, cotangent):
         """sum_n cotangent[n] dU_n/dtheta, for a cotangent (K,) float64 on
-        `energy`: a product with the Jacobian if it was kept, a second pass
+        the energy: a product with the Jacobian if it was kept, a second pass
         over the frames otherwise."""
         evaluator = self._evaluator
         if not self._gradient:
@@ -262,7 +295,16 @@ class FrameEvaluator:
     8 K M bytes, is kept up to `jacobian_bytes`; above it `vjp` evaluates
     the frames again."""
 
-    def __init__(self, program, jacobian_bytes=1 << 28):
+    def __init__(self, program, jacobian_bytes=1 << 28, terms="all"):
+        if terms not in ("all", "dependent"):
+            raise _core.InputError("FrameEvaluator: terms is 'all' or 'dependent'")
+        given = list(program.plan.get("observables", []))
+        if terms == "dependent":
+            # A program of its own with the terms that a tunable enters,
+            # built from the model of the one given; its simulations take
+            # its code as those of any program do (D236).
+            program = program._dependent()
+        self.terms = terms
         plan = program.plan
         declared = plan.get("tunables", [])
         if not declared:
@@ -300,7 +342,13 @@ class FrameEvaluator:
         # Lennard-Jones parameters of the types enter no observed term
         # (D230 refuses a pair term that reads them). The volume: none.
         reads = frozenset(d["name"] for d in declared) - self._zero
-        self._depends = {"energy": reads, "virial": reads, "volume": frozenset()}
+        if terms == "all":
+            self._depends = {"energy": reads, "virial": reads, "volume": frozenset()}
+            self.unavailable = ("dependent_energy",)
+        else:
+            self._depends = {"dependent_energy": reads, "volume": frozenset()}
+            self.unavailable = ("energy", "virial") + tuple(
+                c for c in given if c not in self._columns)
         for column in self._columns:
             term = column.rsplit(".", 1)[0]
             self._depends[column] = frozenset(
@@ -378,4 +426,5 @@ class FrameEvaluator:
         return FrameEnergies(self, source, *columns, rows, bool(gradient))
 
     def __repr__(self):
-        return f"FrameEvaluator(tunables={list(self._slices)}, observables={self._columns})"
+        return (f"FrameEvaluator(terms='{self.terms}', tunables={list(self._slices)}, "
+                f"observables={self._columns})")

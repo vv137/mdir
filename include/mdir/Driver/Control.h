@@ -182,6 +182,11 @@ struct Control {
   /// tunables (D230, docs/python-gradient.md), and the
   /// declarations that it differentiates, in the order of the tunables.
   bool tunableGradient = false;
+  /// Whether the program has only the terms that a tunable enters
+  /// (D[frame-evaluator-terms], docs/python-frames.md): the program of a
+  /// frame evaluator of the dependent terms, which takes no steps of a
+  /// trajectory. No key of the control file sets it.
+  bool dependentTerms = false;
   enum class TunableKind {
     Charge,
     Sigma,

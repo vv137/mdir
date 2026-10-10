@@ -284,6 +284,32 @@ struct Program {
   std::vector<StartValue> startValues;
 };
 
+/// The terms of a model that a tunable enters
+/// (D[frame-evaluator-terms], docs/python-frames.md): the Lennard-Jones of
+/// the pairs within the cutoff with its correction for the dispersion, if
+/// sigma or epsilon is tunable; the electrostatics, whole, if the charges
+/// are; the pair terms of which a tunable constant is read by the
+/// expression, or which read the charges when these are tunable; and the
+/// tuple terms of which a tunable parameter is read.
+struct DependentTerms {
+  bool lennardJones = false, coulomb = false;
+  std::vector<unsigned> pairs, tuples;
+  bool hasPair(unsigned index) const {
+    return std::find(pairs.begin(), pairs.end(), index) != pairs.end();
+  }
+  bool hasTuple(unsigned index) const {
+    return std::find(tuples.begin(), tuples.end(), index) != tuples.end();
+  }
+  /// Their names, for the plan of a program: "lennard_jones", "coulomb",
+  /// "pair:<name>", "tuple:<name>".
+  std::vector<std::string> names;
+};
+DependentTerms getDependentTerms(const Control &control, const System &system);
+/// Makes `control` that of a program of the dependent terms alone: sets
+/// Control::dependentTerms, leaves the electrostatics out if no tunable
+/// enters them, and keeps the observed columns of the terms that stay.
+void keepDependentTerms(Control &control, const System &system);
+
 llvm::Expected<Program> buildProgram(const Control &control,
                                      const System &system);
 

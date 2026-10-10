@@ -997,6 +997,30 @@ may read; one that reads none is a constant by proof, and a backward
 through one that may read a tunable is an error, never a zero. A second
 derivative is an error likewise.
 
+*The terms that depend on the parameters.* Write $U = U_\text{fixed} +
+U_\text{dep}(\boldsymbol\theta)$, with $U_\text{dep}$ the terms that a
+tunable enters. The weights take $\Delta U = U_{\boldsymbol\theta} -
+U_{\hat{\boldsymbol\theta}}$ at one configuration and the gradient takes
+$\partial U/\partial\boldsymbol\theta$, and $U_\text{fixed}$ is in
+neither: $\Delta U = \Delta U_\text{dep}$ and $\partial U/\partial
+\boldsymbol\theta = \partial U_\text{dep}/\partial\boldsymbol\theta$. An
+evaluator may therefore be given a program that has only $U_\text{dep}$
+(D[frame-evaluator-terms]): the pair term of a tunable constant with its
+tail, the Lennard-Jones for a tunable $\sigma$ or $\epsilon$, and for
+tunable charges the electrostatics whole, since $E_\text{rec} =
+\tfrac12\mathbf q^{\mathsf T}\mathsf A\mathbf q$ couples every charge to
+every other through the mesh. A frame then costs 1.5 to 2.5 times less
+(`docs/python-frames.md`). It saves time and leaves the accuracy in mixed precision
+as it was: each term is accumulated in f64
+from contributions in f32, the fixed terms give the same number at both
+values of $\boldsymbol\theta$ and cancel exactly, and the error of
+$\Delta U$ is that of the contributions of $U_\text{dep}$ either way. Where
+$U_\text{dep} = \sum_k\theta_kA_k(\mathbf x)$ is linear, $\Delta U =
+\sum_k(\theta_k - \hat\theta_k)A_k$ and the sums $A_k = \partial
+U/\partial\theta_k$, which the run can record at each frame (Section
+6.8), reweight it without the coordinates, in those parameters and no
+others.
+
 ## 3.7 The objects of MDIR, for developers
 
 A developer meets the same few objects at every level; Table 3.4 lists

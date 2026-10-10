@@ -12,6 +12,26 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The frame evaluator over the terms that depend on the tunables alone
+  (D[frame-evaluator-terms], #264): `mdir.FrameEvaluator(program,
+  terms="dependent")` compiles a second program with only the terms that a
+  tunable enters (a tunable constant's pair term; a tunable parameter's
+  tuple term; the Lennard-Jones for a tunable $\sigma$ or $\epsilon$; the
+  electrostatics, whole, for tunable charges) and evaluates that. Its
+  energy is `out.dependent_energy`, whose differences in the tunables and
+  whose derivative are those of the potential energy; `out.energy` and
+  `out.virial` raise `UnsupportedError` in that mode, the observed columns
+  of the terms left out are absent, and `out.unavailable` lists what is not
+  given. A frame costs 1.5 to 2.5 times less: on JAC in mixed precision
+  2.97 ms against 7.44 ms for a constant of a pair term and 4.12 ms
+  against 7.68 ms for the charges. The mode saves time; the accuracy of
+  a difference in mixed precision is that of the whole potential. `terms="all"`,
+  the default, is the evaluator of before, which now has
+  `out.unavailable == ("dependent_energy",)`; `Program.plan["terms"]` is
+  new. `docs/python-frames.md` also shows the reweighting of a potential
+  that is linear in its tunables from the sums that `observe` records,
+  without stored frames.
+
 - The frame evaluator (D240, #249): `mdir.FrameEvaluator(program)`
   evaluates a program compiled with tunables and `System.tunable_gradient`
   at stored frames, in a simulation of its own.
