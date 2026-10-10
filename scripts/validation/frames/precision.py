@@ -65,6 +65,8 @@ def dipeptide(tunable):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
+    # The default of before D[python-defaults], with which this was written.
+    system.truncation = mdir.Truncation.Switch
     system.electrostatics = mdir.Electrostatics.PME
     system.dispersion = mdir.DispersionCorrection.None_
     top = system.topology
