@@ -55,6 +55,17 @@ format, or the outputs; every such change is listed under **Changed** or
   the frames of an H5MD trajectory (D239) one at a time, to the bit of the
   states for a file in f64. See [docs/python-frames.md](docs/python-frames.md).
 
+- A Python simulation runs at constant pressure in a triclinic cell
+  (D[python-triclinic-npt], #254, `docs/python-segments.md`);
+  `mdir.Simulation(program)` raised `UnsupportedError` for a barostat in
+  such a cell. The tilts of `State.cell`, of a checkpoint, of the frames
+  of the reporters, and of `Borrow.tilt` follow the barostat, which scales
+  them with the cell as in `mdir run` (D127). In the deterministic mode
+  the run is that of `mdir run` with the same settings and checkpoints at
+  the same steps, bit for bit, and a checkpoint of either front end is
+  continued by the other. The coupling is the isotropic one, the only one
+  of the Python model. No control-file key and no file format changes.
+
 - The tilts of a triclinic cell in a writable borrow (D238,
   #206, `docs/python-dlpack.md`): for a simulation whose program was
   compiled from a triclinic cell, `Borrow.cell` is the diagonal

@@ -653,7 +653,13 @@ and against the paths of the orthorhombic cell:
   densities $0.9850 \pm 0.0007$ and $0.9848 \pm 0.0008$ g/cm³ over the
   last 300 ps; the shape of the cell stays to the printed digits, and a
   run continued from a checkpoint gives the log of one that does not stop
-  (`triclinic-npt.test`).
+  (`triclinic-npt.test`). A Python simulation of 403 rigid waters in a
+  rhombic dodecahedron under the isotropic barostat gives the state, the
+  cell with its tilts, the energy file, and the trajectory of `mdir run`
+  with the same settings, bit for bit in the deterministic mode, in one
+  part and in parts, and across a checkpoint written by either front end
+  and continued by the other, on the CPU and on the device, in double and
+  in mixed precision (`python-triclinic-npt-cli-*.test`).
 
 ## 9.10 Numerical derivative checking (D184)
 

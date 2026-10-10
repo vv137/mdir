@@ -28,6 +28,14 @@ of the inner list of a dual list. The groups keep an entry for each image
 within their reach; in the cube with a reach of 1.7 nm, 0.77 to 0.89 of
 the edge, lists that took the nearest image and the one on the other side
 of the boundary along each axis alone lost pairs (#263).
+
+With `python` for MDIR the run is a Python simulation of the same model
+(D[python-triclinic-npt]), whose reporters write the two files: the neighbor
+matrix, which is the structure of every Python simulation (#270), under the
+barostat of a simulation. The Python model has no key for the work of the
+barostat, so its run has the default, `work = "TROTTER"`, where the control
+file here has `"FIRST_ORDER"`; the rows of the two are of other
+configurations (see below).
 """
 import itertools
 import pathlib
@@ -129,10 +137,46 @@ target             = "{target}"
 precision          = "DOUBLE"
 neighbor_structure = "{structure}"
 """)
-ran = subprocess.run([cli, "run", "run.toml"], cwd=work, capture_output=True, text=True)
-if ran.returncode:
-    print("mdir run failed:", (ran.stderr or ran.stdout).strip().splitlines()[-1])
-    sys.exit(0)
+
+
+def run_python():
+    """The model of `run.toml` in a Python simulation; the pressure of the
+    control file is in atm."""
+    assert structure == "MATRIX" and not pruned
+    loaded = mdir.load_gromacs(str(work / "argon.top"), str(work / "argon.gro"))
+    system, state = loaded.make_system(), loaded.make_state()
+    system.cutoff, system.switch_distance, system.pairlist_distance = CUTOFF, CUTOFF, REACH
+    system.truncation = mdir.Truncation.None_
+    system.dispersion = mdir.DispersionCorrection.None_
+    system.electrostatics = mdir.Electrostatics.Cutoff
+    system.periodic = True
+    state = state.draw_velocities(system, 300.0, 11)
+    integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    integrator.method = mdir.IntegratorMethod.VelocityVerlet
+    integrator.timestep = 0.004
+    ensemble.kind, ensemble.seed = mdir.EnsembleKind.NPT, 11
+    ensemble.temperature, ensemble.tau_t = 300.0, 0.5
+    ensemble.pressure, ensemble.tau_p = 20000.0 * 1.01325, 1.0
+    ensemble.coupling_period = PERIOD
+    execution.target = getattr(mdir.Target, target)
+    execution.precision = mdir.Precision.Double
+    simulation = mdir.Simulation(mdir.compile(system, state, integrator, ensemble, execution,
+                                              mdir.Schedule()))
+    for reporter in (mdir.EnergyReporter(str(work / "run.energy"), PERIOD),
+                     mdir.H5MDReporter(str(work / "run.h5md"), PERIOD)):
+        simulation.reporters.append(reporter)
+    simulation.run(STEPS)
+    simulation.close_reporters()
+
+
+TROTTER = cli == "python"
+if TROTTER:
+    run_python()
+else:
+    ran = subprocess.run([cli, "run", "run.toml"], cwd=work, capture_output=True, text=True)
+    if ran.returncode:
+        print("mdir run failed:", (ran.stderr or ran.stdout).strip().splitlines()[-1])
+        sys.exit(0)
 
 lines = (work / "run.energy").read_text().splitlines()
 names = lines[0].split()[1:]
@@ -163,7 +207,11 @@ def cell_of(frame):
 # potential of the step before the barostat scales, and the frame the
 # positions and the cell of after it, x diag(mu) and H diag(mu): the
 # configuration of the row is the frame taken back to the cell of the
-# frame before, which no scaling has changed since.
+# frame before, which no scaling has changed since. That is the row of
+# `work = "FIRST_ORDER"`. With `"TROTTER"`, the work of a Python
+# simulation, the scaling is within the drift of the step and the row has
+# the potential of the frame itself, in the cell of the frame (`mdir run`
+# without the key gives the same rows).
 frames = mdir.read_h5md(str(work / "run.h5md"))
 compared = wrong = beyond = 0
 worst, least = 0.0, np.inf
@@ -171,7 +219,7 @@ before = None
 for frame in frames:
     step, after = int(frame.step), cell_of(frame)
     if before is not None and step in rows:
-        H = before
+        H = after if TROTTER else before
         x = np.asarray(frame.positions) * (np.diag(H) / np.diag(after))
         half = 0.5 * min(H[0, 0], H[1, 1], H[2, 2])
         assert half >= CUTOFF, (step, half)

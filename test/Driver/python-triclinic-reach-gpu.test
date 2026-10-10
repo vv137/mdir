@@ -1,0 +1,17 @@
+# triclinic-reach.test with a Python simulation on a GPU
+# (D[python-triclinic-npt], D241, #258): a narrow tilted cell that the
+# barostat of a simulation shrinks until the pairlist distance is well
+# beyond half of the least of a_x, b_y, c_z. At every frame the potential
+# energy of the run is the sum over every image of every pair within the
+# cutoff (Inputs/triclinic_reach.py). A Python simulation has the neighbor
+# matrix (#270), so the stop of the groups below their reach (D242) is not
+# one of a Python simulation.
+#
+# REQUIRES: python-api, hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/triclinic_reach.py %t python GPU MATRIX | FileCheck %s
+
+# CHECK:      79 frames, 79 with the reach beyond half of the least of the diagonal
+# CHECK-NEXT: half of the least of the diagonal well below the reach
+# CHECK-NEXT: frames whose potential is not the sum over all images: 0

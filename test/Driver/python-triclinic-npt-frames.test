@@ -1,0 +1,25 @@
+# REQUIRES: python-api, hdf5
+# The frames of a Python simulation at constant pressure in a triclinic
+# cell on the CPU (D[python-triclinic-npt], Inputs/python_triclinic_npt.py):
+# 20 frames of 400 steps of 403 rigid waters in a rhombic dodecahedron,
+# written by an H5MDReporter in f64 and by a TrajectoryReporter in DCD. The
+# frame evaluator (D240, Inputs/python_frames.py) reads those in H5MD: the
+# energy, its derivative in the tunables, the virial, and the volume of a
+# frame equal those of a simulation compiled from that frame. Those in DCD
+# are put one by one into a second simulation through a writable borrow
+# (D238, Inputs/python_dlpack_tilts.py), against a simulation compiled
+# from each. python-frames-h5md.test and python-dlpack-tilts-frames.test do
+# the same with the frames of `mdir run`.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_triclinic_npt.py %S/Inputs/triclinic CPU Double mdir %t frames | FileCheck %s --check-prefix=WRITTEN
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide triclinic CPU Double %t/npt.h5md | FileCheck %s --check-prefix=TRICLINIC -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide triclinic CPU Mixed %t/npt.h5md | FileCheck %s --check-prefix=TRICLINIC -DMODE="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_dlpack_tilts.py %S/Inputs/triclinic CPU frames %t/npt.dcd | FileCheck %s
+# WRITTEN: CPU Double: 20 frames of a Python run at constant pressure written
+# TRICLINIC: [[MODE]]: 20 frames of a run at constant pressure in a triclinic cell, read from H5MD {{.*}} equal to the bit: True
+# TRICLINIC: [[MODE]]: as arrays with tilts, as pairs with a cell, and as pairs with the cell vectors, equal to the bit: True
+# TRICLINIC: [[MODE]]: the product against central differences in theta of the sum of the energies
+# TRICLINIC: triclinic passed
+# CHECK: Double: 20 frames of a run at constant pressure (c_x from {{[0-9.]+}} to {{[0-9.]+}} nm) put into one simulation: the potential, the virial, the volume, and the forces of each equal those of a simulation compiled from the frame, difference 0.0
+# CHECK: Mixed: 20 frames of a run at constant pressure (c_x from {{[0-9.]+}} to {{[0-9.]+}} nm) put into one simulation: the potential, the virial, the volume, and the forces of each equal those of a simulation compiled from the frame, difference 0.0
+# CHECK: dlpack tilts frames CPU passed

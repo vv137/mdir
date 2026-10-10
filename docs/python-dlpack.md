@@ -534,11 +534,15 @@ by the test:
   program's: a stage after NPT of `mdir run` whose program is compiled
   from the coordinate file, or a checkpoint of another run.
 
-**Not in this change.** A Python simulation refuses a barostat in a
-triclinic cell ([python-segments.md](python-segments.md)); the frames of a
-run at constant pressure below are those of `mdir run`. Lifting the refusal
-is its own decision: what it needs beyond this change is that the tilts
-which the barostat reports become the host's after each part.
+**A barostat.** A Python simulation refused a barostat in a triclinic
+cell when this was decided, and the frames of a run at constant pressure
+below are those of `mdir run`. D[python-triclinic-npt]
+([python-segments.md](python-segments.md#npt-in-a-triclinic-cell-dpython-triclinic-npt))
+lifts the refusal: the tilts which the barostat reports become the host's
+after each part, `Borrow.tilt` lends them, and a commit of tilts followed
+by steps under the barostat, a frame of a run committed into the
+simulation that ran it, and the frames of a Python run are among its
+validation.
 
 **Validation of the tilts.** `test/Driver/Inputs/python_dlpack_tilts.py`
 (`python-dlpack-tilts*.test`, `python-dlpack-tilts-frames*.test`), on 403
