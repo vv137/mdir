@@ -1,0 +1,32 @@
+# REQUIRES: python-api, hdf5, cuda
+# A Python simulation at constant pressure in a triclinic cell against
+# `mdir run` of the same system and settings on a GPU, in double
+# precision in the deterministic mode (D[python-triclinic-npt],
+# docs/python-segments.md), Inputs/python_triclinic_npt.py: 403 rigid
+# waters in a rhombic dodecahedron, PME, stochastic velocity rescaling and
+# isotropic stochastic cell rescaling every 10 steps. 200 steps in one
+# part and in parts give the state and the cell with its tilts of
+# `mdir run`, to the bit, and its energy file and DCD trajectory, byte for
+# byte. A checkpoint at step 100 carries the tilts that the barostat left
+# from `mdir run` to Python, from Python to `mdir run`, and from Python to
+# Python: each continuation ends in the state of the `mdir run` that wrote
+# a checkpoint at the same step. The frames in DCD, XTC, and H5MD have the
+# cell of the state at their steps.
+# RUN: rm -rf %t && mkdir -p %t/run %t/checkpoints %t/reporters
+# RUN: %mdir_python %S/Inputs/python_triclinic_npt.py %S/Inputs/triclinic GPU Double mdir %t/run run | FileCheck %s --check-prefix=WHOLE
+# RUN: %mdir_python %S/Inputs/python_triclinic_npt.py %S/Inputs/triclinic GPU Double mdir %t/checkpoints checkpoints | FileCheck %s --check-prefix=CHECKPOINTS
+# RUN: %mdir_python %S/Inputs/python_triclinic_npt.py %S/Inputs/triclinic GPU Double mdir %t/reporters reporters | FileCheck %s --check-prefix=REPORTERS
+# WHOLE: GPU Double: 200 steps in one part against mdir run: positions, velocities, forces, and the cell with its tilts equal
+# WHOLE: GPU Double: 200 steps in parts of 10 against mdir run: positions, velocities, forces, and the cell with its tilts equal
+# WHOLE: GPU Double: 200 steps in parts of 30, 70, and 100 against mdir run: positions, velocities, forces, and the cell with its tilts equal
+# WHOLE: GPU Double: the energy file and the DCD trajectory equal those of mdir run byte for byte; the cell of the 20 frames follows the barostat
+# WHOLE: GPU Double: the barostat moves the tilts by {{[0-9.e-]+}} nm and keeps the shape of the dodecahedron within 0e+00
+# WHOLE: triclinic npt run GPU Double passed
+# CHECKPOINTS: GPU Double: mdir run -> Python at step 100: positions, velocities, forces, and the cell with its tilts equal
+# CHECKPOINTS: GPU Double: Python -> Python at step 100: positions, velocities, forces, and the cell with its tilts equal
+# CHECKPOINTS: GPU Double: the simulation that wrote the checkpoint, 100 steps on: positions, velocities, forces, and the cell with its tilts equal
+# CHECKPOINTS: GPU Double: Python -> mdir run at step 100: positions, velocities, forces, and the cell with its tilts equal
+# CHECKPOINTS: GPU Double: the energy files and the trajectories of the continued runs equal those of mdir run byte for byte
+# CHECKPOINTS: triclinic npt checkpoints GPU Double passed
+# REPORTERS: GPU Double: the cell of each of 20 frames against the state of its step: DCD within {{[0-9.e-]+}} nm, XTC within {{[0-9.e-]+}} nm, H5MD (box/edges, (3, 3) per frame) and its positions equal to the bit
+# REPORTERS: triclinic npt reporters GPU Double passed

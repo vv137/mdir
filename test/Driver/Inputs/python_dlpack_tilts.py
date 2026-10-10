@@ -747,6 +747,44 @@ def npt(work):
               f"barostat, which moves the tilts by {moved:.1e} nm, equal a simulation compiled "
               f"from the committed state to the bit")
 
+        # A frame of the run committed into the simulation that ran it, 20
+        # steps later: the borrow lends the tilts that the barostat left,
+        # the evaluation is that of a simulation compiled from the frame,
+        # and the barostat goes on from the cell of the frame.
+        run = mdir.Simulation(program)
+        run.run(20, energy=True)
+        frame = run.state()
+        run.run(20, energy=True)
+        later = run.state().cell
+        assert not np.array_equal(later.tilt, frame.cell.tilt)
+        with run.borrow() as borrow:
+            assert np.array_equal(consumer.read(borrow.tilt), later.tilt)
+        fields = put(run, positions=frame.positions, diagonal=frame.cell.diagonal,
+                     tilt=frame.cell.tilt)
+        assert fields == ("positions", "cell"), fields
+        with run.borrow() as borrow:
+            assert np.array_equal(consumer.read(borrow.tilt), frame.cell.tilt)
+        at = run.state()
+        fresh = mdir.Simulation(make(precision, True, "NPT",
+                                     initial(frame.positions, at.velocities, frame.cell),
+                                     capacity=program.plan["neighbor_capacity"]))
+        fresh.run(0, energy=True)
+        other = fresh.state()
+        assert np.array_equal(at.forces, other.forces), precision
+        assert np.array_equal(at.cell.tilt, other.cell.tilt), precision
+        # The conserved quantity of the run has the energy of its baths.
+        for name in ("potential", "kinetic", "virial", "pressure", "volume"):
+            assert at.energies[name] == other.energies[name], (precision, name)
+        run.run(20, energy=True)
+        after = run.state().cell
+        assert not np.array_equal(after.tilt, frame.cell.tilt)
+        kept = max(abs(after.tilt[1] / after.diagonal[0] - 0.5),
+                   abs(after.tilt[2] / after.diagonal[1] - 0.5), abs(after.tilt[0]))
+        assert kept < 1e-14, kept
+        print(f"{precision}: a frame of the run committed into the simulation that ran it, "
+              f"20 steps later: the evaluation equals that of a simulation compiled from the "
+              f"frame to the bit, and the barostat goes on from its cell")
+
         # The frames of the run, put into a second simulation.
         source = mdir.Simulation(program)
         taken = []
