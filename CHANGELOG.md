@@ -597,6 +597,20 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- `Simulation.view()` and `borrow()` of a simulation without an activation
+  of its program say why it has none (#220, `docs/python-dlpack.md`). After
+  `save_checkpoint` or a `CheckpointReporter` the message was that of a
+  simulation that has not run ("before its first run"); it now says that a
+  checkpoint ended the activation, at which step, that `state()` copies the
+  state of the host, and what brings the buffers back. The other states
+  have messages of their own: a simulation created with `checkpoint=` that
+  has not run since, a commit of a borrow or an update of tunables that
+  failed and was undone, an update of the tunables of a minimization, and a
+  failure. The remedy named is one that the simulation accepts: a run, or
+  `run(0, energy=True)`; a run alone for leapfrog without tunables after
+  its first run, where the evaluation is refused; `minimize(steps)` for a
+  minimization, whose message named `run(0, energy=True)` before. A read
+  still does not evaluate: `view()` starts no activation.
 - With the groups (`neighbor_structure = "GROUPS"`, with or without a dual
   list) in an orthorhombic cell, a pairlist distance of more than about
   the edge of the cell less the half-width of a group lost pairs (#263,

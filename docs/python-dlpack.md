@@ -76,6 +76,30 @@ buffers; so it is refused as a run is (#207). A `CheckpointReporter`
 writes inside `run`, after a part that the lease check of `run` has let
 through.
 
+**A simulation without an activation.** A view shows the buffers of the
+activation of the program, and a simulation has none in the states below.
+`view()` and `borrow()` then raise `SimulationError`, whose message names
+the state; `state()` gives the copies of the host in each of them. A read
+does not evaluate: `view()` starts no activation by itself (#220).
+
+| State | What the message names | What brings the buffers back |
+|---|---|---|
+| Not run, not evaluated | "before its first run" | a run, or `run(0, energy=True)`; `minimize(steps)` for a minimization |
+| Created with `checkpoint=`, not run since | "before its first run from the checkpoint that it continues" | the same |
+| After `save_checkpoint` or a `CheckpointReporter`, which end the activation ([python-checkpoints.md](python-checkpoints.md)) | "after a checkpoint, which ended the activation of the program (... at step $s$)" | a run, or `run(0, energy=True)` |
+| After a commit of a borrow whose evaluation failed and was undone | "after a commit of a borrow that failed and was undone" | the same |
+| After an update of tunables whose evaluation failed and was undone | "after an update of the tunables that failed and was undone" | the same |
+| After an update of tunables of a minimization, which evaluates nothing | "after an update of the tunables, at which a simulation that minimizes evaluates nothing" | `minimize(steps)` |
+| After a part that failed | "the simulation failed" | nothing: the simulation runs no further |
+
+The message gives the remedy that the simulation accepts: leapfrog
+without tunables takes no evaluation without a step after its first run
+(D213), so there the message names a run alone and says that
+`run(0, energy=True)` is refused. A `CheckpointReporter` writes before the
+callbacks of its step are called, so a `CallbackReporter` due at a step of
+the checkpoints takes no view there (its `state` argument is the state of
+the step); whether the callbacks should come first is open on #220.
+
 **Logical validity, storage lifetime, consumer work.** Three things are
 kept apart:
 
@@ -142,7 +166,7 @@ The structures are those of `dlpack.h` (DLPack 1.1,
 
 | Exception | When |
 |---|---|
-| `SimulationError` | `view()` before the first run or evaluation, or after a failure: the state is then on the host only, in the order of the input; another operation under way; a run, a minimization, an evaluation, an update of tunables, or a checkpoint while leases are alive |
+| `SimulationError` | `view()` or `borrow()` of a simulation without an activation, each state with its own message ([above](#leases)): before the first run or evaluation, before the first run of a simulation created with `checkpoint=`, after a checkpoint, after a commit or an update of tunables that was undone, after a failure; the state is then on the host only, in the order of the input; another operation under way; a run, a minimization, an evaluation, an update of tunables, or a checkpoint while leases are alive |
 | `BufferError` | `__dlpack__` of a released view; a `stream` the device does not take; `dl_device` of another device; `copy=True` |
 | `ValueError` | `stream=0` on a device, which the specification forbids |
 
@@ -175,7 +199,7 @@ consumers use none of MDIR's code.
 
 | Test | Consumer | What is checked |
 |---|---|---|
-| `python-dlpack.test` | NumPy 2.5 `from_dlpack`, CPU | the array's address is the buffer's; arrays are read-only (the versioned flag); dtypes; rows put in the input's order by `ids` equal `state()` to the bit; tunable values; 6 leases block `run`, `run(0, energy=True)`, an update, and `save_checkpoint` (no file written, the view valid and the arrays unchanged after it; written once the leases are released) and allow `state()`; a run with a `CheckpointReporter` refused by `run` under a lease, at the start and at the part after a callback kept an array; release by view and by array, slices of arrays; capsules not taken, legacy and versioned (`max_version` None, (1, 0), (1, 3)), each releasing once; refusals; an array that outlives its simulation while another runs; `minimize` refused under a lease; `view()` refused after a failed part |
+| `python-dlpack.test` | NumPy 2.5 `from_dlpack`, CPU | the array's address is the buffer's; arrays are read-only (the versioned flag); dtypes; rows put in the input's order by `ids` equal `state()` to the bit; tunable values; 6 leases block `run`, `run(0, energy=True)`, an update, and `save_checkpoint` (no file written, the view valid and the arrays unchanged after it; written once the leases are released) and allow `state()`; a run with a `CheckpointReporter` refused by `run` under a lease, at the start and at the part after a callback kept an array; release by view and by array, slices of arrays; capsules not taken, legacy and versioned (`max_version` None, (1, 0), (1, 3)), each releasing once; refusals; an array that outlives its simulation while another runs; `minimize` refused under a lease; `view()` refused after a failed part; without an activation (#220), `view()` and `borrow()` name the state and a remedy that is then accepted: after `save_checkpoint` (velocity Verlet; leapfrog with tunables; leapfrog without, where the message names a run alone and `run(0, energy=True)` is refused), in a callback at a step of a `CheckpointReporter` (and a view at the steps between), before the first run of a simulation created with `checkpoint=`, of a minimization, and after an update of the tunables of a minimization |
 | `python-dlpack-gpu.test` | ctypes reader of the capsule and the CUDA driver API | version 1.1, the read-only flag, shape, strides, dtype, device; `cuPointerGetAttribute` gives the view's device ordinal; values copied by `cuMemcpyDtoHAsync` on the consumer's own non-blocking stream, handed off by `__dlpack__(stream=...)`, equal `state()` to the bit; the deleter called through ctypes without the GIL releases once and the renamed capsule nothing more; legacy capsules with the streams `None`, 1, 2, -1; `stream=0`; a tensor read after its simulation was deleted and another ran 20 steps |
 | `python-dlpack-torch.test`, `python-dlpack-torch-gpu.test` (`REQUIRES: torch`) | PyTorch 2.11 (CUDA 12.8 build) | `data_ptr()` is the buffer's; dtypes; values against `state()`; tensors taken on a `torch.cuda.Stream` of their own; slices keep leases; outstanding consumer work (below); a tensor that outlives its simulation, whose blocks the next simulation does not take while it lives |
 | `Sanitizer/python-dlpack-gpu.test` | ctypes and the driver, under compute-sanitizer memcheck and initcheck | views of two parts handed to a consumer stream, a tensor read after its simulation ended |

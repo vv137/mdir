@@ -7,4 +7,5 @@
 # CHECK: Mixed: positions float64, forces float64 on device 0, read by the driver on a stream of its own, released once without the GIL
 # CHECK: Mixed, not deterministic: positions float64, forces float32 on device 0, read by the driver on a stream of its own, released once without the GIL
 # CHECK: a capsule not taken releases once; a tensor outlives its simulation while another runs
+# CHECK: no view after a checkpoint or before the first run of a continuation: the cause and a remedy that is accepted; no evaluation by a read
 # CHECK: dlpack ctypes passed
