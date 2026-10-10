@@ -1,0 +1,11 @@
+# REQUIRES: python-api
+# The coupling and the work of the barostat as fields of the Python model
+# (D[python-barostat], #275): `Ensemble.coupling` and `Ensemble.work` with
+# their defaults and types, the refusal of the first-order work under the
+# semi-isotropic and the anisotropic coupling with the words of the control
+# file, `Program.plan["barostat"]`, and the refusal of a work of Trotter
+# type at every step; Inputs/python_barostat.py, scenario refusals, which
+# needs no device.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_barostat.py %S/Inputs CPU Double mdir %t refusals | FileCheck %s
+# CHECK: barostat refusals passed
