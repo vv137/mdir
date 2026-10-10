@@ -196,6 +196,11 @@ Fingerprint mdir::model::getFingerprint(const System &s,
             getFingerprintNumber(s.pmeGrid[2]) + "]");
   if (has(given.system, "pme_order"))
     add("physics", "[pme] order", getFingerprintNumber(s.pmeOrder));
+  if (has(given.system, "pme_influence"))
+    add("physics", "[pme] influence",
+        getFingerprintString(s.pmeInfluence == PMEInfluence::Optimal ? "OPTIMAL" : "SPME"));
+  if (has(given.system, "analytic_bonds"))
+    add("physics", "[constraints] analytic_bonds", flag(s.analyticBonds));
   if (has(given.system, "rigid_hydrogen_bonds"))
     add("physics", "[constraints] hydrogen_bonds",
         flag(s.rigidHydrogenBonds));
@@ -305,9 +310,50 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     add("coupling", "[barostat] method", getFingerprintString("C-RESCALE"));
     if (has(given.ensemble, "tau_p"))
       add("coupling", "[barostat] time_constant", number(ensemble.tauP));
-    if (has(given.ensemble, "compressibility"))
+    if (!ensemble.compressibilities.empty()) {
+      // The three numbers of an anisotropic coupling, as the array of the
+      // control file (D[python-barostat]).
+      std::string axes = "[";
+      for (size_t k = 0; k != ensemble.compressibilities.size(); ++k)
+        axes += (k ? "," : "") + number(ensemble.compressibilities[k] * atm);
+      add("coupling", "[barostat] compressibility", axes + "]");
+    } else if (has(given.ensemble, "compressibility")) {
       add("coupling", "[barostat] compressibility",
           number(ensemble.compressibility * atm));
+    }
+    // The keys of the semi-isotropic coupling, where they were given.
+    if (ensemble.compressibilityZ)
+      add("coupling", "[barostat] compressibility_z",
+          number(*ensemble.compressibilityZ * atm));
+    if (has(given.ensemble, "surface_tension") || ensemble.surfaceTension != 0.0)
+      add("coupling", "[barostat] surface_tension",
+          number(ensemble.surfaceTension / driver::units::dynePerCmToBarNm));
+    if (has(given.ensemble, "surfaces") || ensemble.surfaces != 2)
+      add("coupling", "[barostat] surfaces",
+          getFingerprintNumber(static_cast<double>(ensemble.surfaces)));
+    // The coupling and the work, as the keys of the control file write
+    // them: when given, or when not the default that an absent key takes
+    // (D[python-barostat]).
+    if (has(given.ensemble, "barostat_coupling") ||
+        ensemble.barostatCoupling != BarostatCoupling::Isotropic)
+      add("coupling", "[barostat] coupling",
+          getFingerprintString(
+              ensemble.barostatCoupling == BarostatCoupling::SemiIsotropic
+                  ? "SEMI_ISOTROPIC"
+                  : ensemble.barostatCoupling == BarostatCoupling::Anisotropic
+                        ? "ANISOTROPIC"
+                        : "ISOTROPIC"));
+    if (has(given.ensemble, "barostat_work") ||
+        ensemble.barostatWork != driver::BarostatWork::Trotter)
+      add("coupling", "[barostat] work",
+          getFingerprintString(
+              ensemble.barostatWork == driver::BarostatWork::TrotterFirstOrder
+                  ? "TROTTER_FIRST_ORDER"
+                  : ensemble.barostatWork == driver::BarostatWork::Exact
+                        ? "EXACT"
+                        : ensemble.barostatWork == driver::BarostatWork::FirstOrder
+                              ? "FIRST_ORDER"
+                              : "TROTTER"));
   }
 
   // Execution: [execution], and the reach of the neighbor structures.

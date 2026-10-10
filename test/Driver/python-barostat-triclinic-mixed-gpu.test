@@ -1,0 +1,27 @@
+# REQUIRES: python-api, hdf5, cuda
+# Each coupling and each work of the barostat in a Python simulation
+# (D[python-barostat], #275) against `mdir run` of the same control
+# on a GPU, in mixed precision in the deterministic mode:
+# 403 rigid waters (PME, SETTLE) in the rhombic dodecahedron, 40 steps with stochastic cell
+# rescaling every 10 at 2000 atm. For the isotropic, the semi-isotropic,
+# and the anisotropic coupling with the work of Trotter type, its
+# first-order form, and the exact work, and for the isotropic coupling with
+# the first-order work: the positions, the velocities, the forces, and the
+# cell to the bit, the energy file and the DCD trajectory byte for byte,
+# in parts, from a checkpoint of `mdir run`, and into `mdir run
+# --continue`; the axes move as the coupling says.
+# Inputs/python_barostat.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_barostat.py %S/Inputs GPU Mixed mdir %t triclinic | FileCheck %s
+# CHECK: GPU Mixed triclinic ISOTROPIC TROTTER: a continuation with another coupling or work is refused by both front ends
+# CHECK: GPU Mixed triclinic ISOTROPIC TROTTER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Mixed triclinic ISOTROPIC TROTTER_FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Mixed triclinic ISOTROPIC EXACT: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Mixed triclinic ISOTROPIC FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Mixed triclinic SEMI_ISOTROPIC TROTTER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Mixed triclinic SEMI_ISOTROPIC TROTTER_FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Mixed triclinic SEMI_ISOTROPIC EXACT: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Mixed triclinic ANISOTROPIC TROTTER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Mixed triclinic ANISOTROPIC TROTTER_FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Mixed triclinic ANISOTROPIC EXACT: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: barostat triclinic GPU Mixed: 10 cases passed

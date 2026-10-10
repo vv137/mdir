@@ -1,0 +1,22 @@
+# REQUIRES: python-api, hdf5
+# The influence function and the order of PME and the analytic bonds in
+# the Python model (D[python-pme-fields], #279) on the CPU:
+# `System.pme_influence`, `System.analytic_bonds`, and `System.pme_order`
+# of 6 and 8, each against `mdir run` with `[pme] influence`,
+# `[constraints] analytic_bonds`, and `[pme] order`, and the two settings
+# of the Amber suite's script together: the potential of step 0 against
+# the row of `mdir run`, 20 steps to the bits of its checkpoint, and its
+# fingerprint, in double and in mixed precision in the deterministic mode;
+# the defaults, the types, and the refusal of another order.
+# Inputs/python_pme_fields.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_pme_fields.py %S/Inputs/dipeptide CPU Double mdir %t/refusals refusals | FileCheck %s --check-prefix=REFUSALS
+# RUN: %mdir_python %S/Inputs/python_pme_fields.py %S/Inputs/dipeptide CPU Double mdir %t/Double run | FileCheck %s -DL="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_pme_fields.py %S/Inputs/dipeptide CPU Mixed mdir %t/Mixed run | FileCheck %s -DL="CPU Mixed"
+# REFUSALS: pme fields refusals passed
+# CHECK: [[L]] influence OPTIMAL: the potential of step 0 within {{[0-9.e-]+}} kcal/mol of the row of mdir run, and 20 steps to its bits, with its fingerprint
+# CHECK: [[L]] analytic_bonds: the potential of step 0 within
+# CHECK: [[L]] order 6: the potential of step 0 within
+# CHECK: [[L]] order 8: the potential of step 0 within
+# CHECK: [[L]] the suite's settings: the potential of step 0 within
+# CHECK: pme fields run [[L]]: 5 cases passed

@@ -22,6 +22,26 @@ format, or the outputs; every such change is listed under **Changed** or
   structure a Python simulation runs at the rate of `mdir run`: JAC at
   constant energy in mixed precision, 0.206 ms a step with the dual list
   against 0.259 with the matrix. The matrix stays the default.
+- `System.pme_influence` (`mdir.PMEInfluence.SPME`, the default, or
+  `Optimal`) and `System.analytic_bonds` in the Python model, the
+  `[pme] influence` and `[constraints] analytic_bonds` of the control file,
+  and `System.pme_order` of 6 and 8 (D[python-pme-fields], #279): the
+  settings of the Amber suite's script that a Python run could not state.
+  Each runs to the bit of `mdir run` in the deterministic mode.
+- The coupling and the work of the barostat in the Python model
+  (D[python-barostat], #275): `Ensemble.barostat_coupling`
+  (`mdir.BarostatCoupling.Isotropic`, the default, `SemiIsotropic`,
+  `Anisotropic`) and `Ensemble.barostat_work` (`mdir.BarostatWork.Trotter`, the
+  default, `TrotterFirstOrder`, `Exact`, `FirstOrder`), the `coupling` and
+  `work` of `[barostat]`, with its refusal of the first-order work under
+  the semi-isotropic and the anisotropic coupling;
+  `Program.plan["barostat"]`. With them, `Ensemble.compressibility` takes
+  three numbers for the anisotropic coupling, and
+  `Ensemble.compressibility_z`, `surface_tension` (bar nm), and `surfaces`
+  are the keys of the semi-isotropic one. Each runs to the bit of `mdir run` in the
+  deterministic mode, in an orthorhombic and in a triclinic cell, and a
+  checkpoint continues in either front end. With the exact and the
+  first-order work a Python simulation takes `coupling_period = 1`.
 - The frame evaluator over the terms that depend on the tunables alone
   (D243, #264): `mdir.FrameEvaluator(program,
   terms="dependent")` compiles a second program with only the terms that a
