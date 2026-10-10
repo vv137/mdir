@@ -4,8 +4,8 @@ the same control, to the bit in the deterministic mode.
 
 Usage: python_barostat.py INPUTS TARGET PRECISION MDIR WORK SCENARIO [COUPLING...]
 
-  refusals      the refusals and the types of `Ensemble.coupling` and
-                `Ensemble.work`, `Program.plan`, and the fingerprint; needs
+  refusals      the refusals and the types of `Ensemble.barostat_coupling` and
+                `Ensemble.barostat_work`, `Program.plan`, and the fingerprint; needs
                 no device.
   orthorhombic  the dipeptide in water of `Inputs/dipeptide` (1,168
                 particles, PME on 32^3, SHAKE and SETTLE).
@@ -155,9 +155,9 @@ def parts_of_model(coupling=None, work_key=None, period=PERIOD, kind="NPT", sett
     ensemble.pressure = PRESSURE_ATM * 1.01325  # bar
     ensemble.com_period = ensemble.coupling_period = period
     if coupling:
-        ensemble.coupling = getattr(mdir.BarostatCoupling, COUPLINGS[coupling])
+        ensemble.barostat_coupling = getattr(mdir.BarostatCoupling, COUPLINGS[coupling])
     if work_key:
-        ensemble.work = getattr(mdir.BarostatWork, WORKS[work_key])
+        ensemble.barostat_work = getattr(mdir.BarostatWork, WORKS[work_key])
     for name, value in (settings or {}).items():
         setattr(ensemble, name, value)
     execution.target = getattr(mdir.Target, target_name)
@@ -360,11 +360,13 @@ def cases():
 
 def refusals():
     ensemble = mdir.Ensemble()
-    assert ensemble.coupling == mdir.BarostatCoupling.Isotropic
-    assert ensemble.work == mdir.BarostatWork.Trotter
-    for name, wrong in (("coupling", "SEMI_ISOTROPIC"), ("coupling", 1), ("coupling", None),
-                        ("coupling", mdir.BarostatWork.Exact), ("work", "EXACT"),
-                        ("work", 2), ("work", mdir.BarostatCoupling.Anisotropic)):
+    assert ensemble.barostat_coupling == mdir.BarostatCoupling.Isotropic
+    assert ensemble.barostat_work == mdir.BarostatWork.Trotter
+    for name, wrong in (("barostat_coupling", "SEMI_ISOTROPIC"), ("barostat_coupling", 1),
+                        ("barostat_coupling", None),
+                        ("barostat_coupling", mdir.BarostatWork.Exact), ("barostat_work", "EXACT"),
+                        ("barostat_work", 2),
+                        ("barostat_work", mdir.BarostatCoupling.Anisotropic)):
         try:
             setattr(ensemble, name, wrong)
         except TypeError:

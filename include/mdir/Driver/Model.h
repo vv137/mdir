@@ -214,8 +214,8 @@ struct Ensemble {
   double pressure = 1.01325, tauP = 5.0, compressibility = 4.5e-5;
   /// `[barostat] coupling` and `work` of the control file, with its
   /// defaults (D77, D92, D119, D163c; D[python-barostat]).
-  BarostatCoupling coupling = BarostatCoupling::Isotropic;
-  driver::BarostatWork work = driver::BarostatWork::Trotter;
+  BarostatCoupling barostatCoupling = BarostatCoupling::Isotropic;
+  driver::BarostatWork barostatWork = driver::BarostatWork::Trotter;
   /// The compressibility of each axis, 1/bar, for the anisotropic coupling
   /// (0 keeps the axis); empty: `compressibility` for every axis. The
   /// three numbers of `[barostat] compressibility`.

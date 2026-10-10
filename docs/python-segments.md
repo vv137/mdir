@@ -643,13 +643,14 @@ from it. The tests of D238 and D240 took these frames from `mdir run`.
 
 **A cell that the barostat shrinks.** `python-triclinic-reach.test` and its
 `-gpu` twin: the system of `triclinic-reach.test` (D241) in a Python
-simulation, whose barostat has the default work (`TROTTER`; the Python
-model has no key for it, and the control file of that test has
-`FIRST_ORDER`), 216 argon atoms in a cell with every tilt on its bound that
+simulation, whose barostat has the `FIRST_ORDER` work of the control file
+of that test since D[python-barostat] (before, the default `TROTTER`, the
+Python model having no key for it), 216 argon atoms in a cell with every tilt on its bound that
 stochastic cell rescaling at 20,000 atm takes from 2.2 to 1.92 nm, with a
 pairlist distance of 1.1 nm, beyond half of the least of the diagonal at
 each of the 79 frames. The potential of each row, which with that work is
-of the configuration and the cell of the frame of its step, equals the sum in NumPy
+of the configuration of the frame of its step taken back to the cell of
+the frame before, as under `mdir run`, equals the sum in NumPy
 over every image of every pair within the cutoff to $10^{-5}$ kcal/mol (0
 frames of 79 differ), on the CPU and on the device.
 
@@ -663,8 +664,8 @@ alone.
 
 | Python | Control file | Values |
 |---|---|---|
-| `Ensemble.coupling` | `[barostat] coupling` | `mdir.BarostatCoupling.Isotropic` (the default), `SemiIsotropic` (x and y together, z by its own; D119), `Anisotropic` (each axis by its own; D163c) |
-| `Ensemble.work` | `[barostat] work` | `mdir.BarostatWork.Trotter` (the default; D92), `TrotterFirstOrder`, `Exact`, `FirstOrder` (D77) |
+| `Ensemble.barostat_coupling` | `[barostat] coupling` | `mdir.BarostatCoupling.Isotropic` (the default), `SemiIsotropic` (x and y together, z by its own; D119), `Anisotropic` (each axis by its own; D163c) |
+| `Ensemble.barostat_work` | `[barostat] work` | `mdir.BarostatWork.Trotter` (the default; D92), `TrotterFirstOrder`, `Exact`, `FirstOrder` (D77) |
 | `Ensemble.compressibility` | `[barostat] compressibility` | one number in 1/bar (or a unit quantity), as before; or, with the anisotropic coupling, three, those of x, y, and z, of which 0 keeps its axis |
 | `Ensemble.compressibility_z` | `[barostat] compressibility_z` | with the semi-isotropic coupling: the compressibility of z in 1/bar, 0 to keep the height; `None`, the default, follows `compressibility` |
 | `Ensemble.surface_tension` | `[barostat] surface_tension` | with the semi-isotropic coupling: the tension of each surface normal to z, in bar nm (the control file has dyn/cm; 1 dyn/cm is 10 bar nm); 0 by default |

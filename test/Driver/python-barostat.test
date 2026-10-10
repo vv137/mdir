@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The coupling and the work of the barostat as fields of the Python model
-# (D[python-barostat], #275): `Ensemble.coupling` and `Ensemble.work` with
+# (D[python-barostat], #275): `Ensemble.barostat_coupling` and `Ensemble.barostat_work` with
 # their defaults and types, the refusal of the first-order work under the
 # semi-isotropic and the anisotropic coupling with the words of the control
 # file, the compressibility of each axis and the keys of the semi-isotropic

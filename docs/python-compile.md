@@ -86,8 +86,8 @@ snake case; defaults and the supported physics subset are those of
 | System | `periodic`, `cutoff`, `pairlist_distance`, `pruned_distance` (D245), `switch_distance`, `truncation`, `electrostatics`, `coulomb_modifier`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `pme_influence`, `analytic_bonds` (D[python-pme-fields]), `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`, `restraints`, `restraint_reference`, `tunables` (D213); read-only `dispersion_given` (D222), `particle_count`, `topology` (D221, [python-topology.md](python-topology.md)) |
 | InitialState | `positions`, `velocities`, `cell` |
 | Integrator | `method`, `timestep`, `minimize`, `minimize_step` |
+| Ensemble | `kind`, `temperature`, `tau_t`, `pressure`, `tau_p`, `compressibility`, `barostat_coupling`, `barostat_work`, `compressibility_z`, `surface_tension`, `surfaces` (D[python-barostat]), `coupling_period`, `com_period`, `seed` |
 | Execution | `target`, `precision`, `device`, `threads`, `deterministic`, `reorder`, `fast_math`, `neighbor_capacity` (D227), `neighbor_structure` (D245) |
-| Ensemble | `kind`, `temperature`, `tau_t`, `pressure`, `tau_p`, `compressibility`, `coupling`, `work`, `compressibility_z`, `surface_tension`, `surfaces` (D[python-barostat]), `coupling_period`, `com_period`, `seed` |
 | Schedule | `steps`, `energy_period` |
 
 `Execution.neighbor_capacity` is `[execution] neighbor_capacity` of the

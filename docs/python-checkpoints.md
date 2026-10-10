@@ -193,7 +193,7 @@ the key absent, has no entry.
 field was set and the second when there is a dual list: a continuation
 with another structure is the same run with other execution, with a note.
 
-`Ensemble.coupling` and `Ensemble.work` (D[python-barostat]) are the
+`Ensemble.barostat_coupling` and `Ensemble.barostat_work` (D[python-barostat]) are the
 entries `[barostat] coupling` and `[barostat] work` of the group
 `coupling`, when the field was set or is not the default of an absent key.
 

@@ -334,24 +334,24 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     // The coupling and the work, as the keys of the control file write
     // them: when given, or when not the default that an absent key takes
     // (D[python-barostat]).
-    if (has(given.ensemble, "coupling") ||
-        ensemble.coupling != BarostatCoupling::Isotropic)
+    if (has(given.ensemble, "barostat_coupling") ||
+        ensemble.barostatCoupling != BarostatCoupling::Isotropic)
       add("coupling", "[barostat] coupling",
           getFingerprintString(
-              ensemble.coupling == BarostatCoupling::SemiIsotropic
+              ensemble.barostatCoupling == BarostatCoupling::SemiIsotropic
                   ? "SEMI_ISOTROPIC"
-                  : ensemble.coupling == BarostatCoupling::Anisotropic
+                  : ensemble.barostatCoupling == BarostatCoupling::Anisotropic
                         ? "ANISOTROPIC"
                         : "ISOTROPIC"));
-    if (has(given.ensemble, "work") ||
-        ensemble.work != driver::BarostatWork::Trotter)
+    if (has(given.ensemble, "barostat_work") ||
+        ensemble.barostatWork != driver::BarostatWork::Trotter)
       add("coupling", "[barostat] work",
           getFingerprintString(
-              ensemble.work == driver::BarostatWork::TrotterFirstOrder
+              ensemble.barostatWork == driver::BarostatWork::TrotterFirstOrder
                   ? "TROTTER_FIRST_ORDER"
-                  : ensemble.work == driver::BarostatWork::Exact
+                  : ensemble.barostatWork == driver::BarostatWork::Exact
                         ? "EXACT"
-                        : ensemble.work == driver::BarostatWork::FirstOrder
+                        : ensemble.barostatWork == driver::BarostatWork::FirstOrder
                               ? "FIRST_ORDER"
                               : "TROTTER"));
   }

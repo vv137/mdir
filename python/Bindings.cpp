@@ -541,8 +541,8 @@ PYBIND11_MODULE(_core, m) {
   });
   property(ensemble, "surface_tension", &model::Ensemble::surfaceTension, units::barNm);
   property(ensemble, "surfaces", &model::Ensemble::surfaces);
-  property(ensemble, "coupling", &model::Ensemble::coupling);
-  property(ensemble, "work", &model::Ensemble::work);
+  property(ensemble, "barostat_coupling", &model::Ensemble::barostatCoupling);
+  property(ensemble, "barostat_work", &model::Ensemble::barostatWork);
   property(ensemble, "coupling_period", &model::Ensemble::couplingPeriod);
   property(ensemble, "com_period", &model::Ensemble::comPeriod);
   property(ensemble, "seed", &model::Ensemble::seed);

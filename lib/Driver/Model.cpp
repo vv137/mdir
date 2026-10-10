@@ -183,11 +183,11 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     return unsupported("the initial object subset supports velocity Verlet and leapfrog");
   if (ensemble.kind != EnsembleKind::NVE && ensemble.kind != EnsembleKind::NVT && ensemble.kind != EnsembleKind::NPT)
     return unsupported("unsupported ensemble");
-  if (ensemble.coupling != BarostatCoupling::Isotropic && ensemble.coupling != BarostatCoupling::SemiIsotropic &&
-      ensemble.coupling != BarostatCoupling::Anisotropic)
+  if (ensemble.barostatCoupling != BarostatCoupling::Isotropic && ensemble.barostatCoupling != BarostatCoupling::SemiIsotropic &&
+      ensemble.barostatCoupling != BarostatCoupling::Anisotropic)
     return unsupported("unsupported coupling of the barostat");
-  if (ensemble.work != driver::BarostatWork::Trotter && ensemble.work != driver::BarostatWork::TrotterFirstOrder &&
-      ensemble.work != driver::BarostatWork::Exact && ensemble.work != driver::BarostatWork::FirstOrder)
+  if (ensemble.barostatWork != driver::BarostatWork::Trotter && ensemble.barostatWork != driver::BarostatWork::TrotterFirstOrder &&
+      ensemble.barostatWork != driver::BarostatWork::Exact && ensemble.barostatWork != driver::BarostatWork::FirstOrder)
     return unsupported("unsupported work of the barostat");
   if (s.electrostatics != Electrostatics::Cutoff && s.electrostatics != Electrostatics::PME)
     return unsupported("unsupported electrostatics");
@@ -314,9 +314,9 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // axis and of z, no surface tension. They are of a barostat: without
   // one they are not read, as `tau_p` is not.
   if (c.barostat) {
-    c.barostatWork = ensemble.work;
-    c.semiIsotropic = ensemble.coupling == BarostatCoupling::SemiIsotropic;
-    c.anisotropic = ensemble.coupling == BarostatCoupling::Anisotropic;
+    c.barostatWork = ensemble.barostatWork;
+    c.semiIsotropic = ensemble.barostatCoupling == BarostatCoupling::SemiIsotropic;
+    c.anisotropic = ensemble.barostatCoupling == BarostatCoupling::Anisotropic;
     for (double &value : c.compressibilities) value = c.compressibility;
     c.compressibilityZ = c.compressibility;
     // A compressibility of each axis, with the words of the control file.

@@ -29,9 +29,9 @@ format, or the outputs; every such change is listed under **Changed** or
   settings of the Amber suite's script that a Python run could not state.
   Each runs to the bit of `mdir run` in the deterministic mode.
 - The coupling and the work of the barostat in the Python model
-  (D[python-barostat], #275): `Ensemble.coupling`
+  (D[python-barostat], #275): `Ensemble.barostat_coupling`
   (`mdir.BarostatCoupling.Isotropic`, the default, `SemiIsotropic`,
-  `Anisotropic`) and `Ensemble.work` (`mdir.BarostatWork.Trotter`, the
+  `Anisotropic`) and `Ensemble.barostat_work` (`mdir.BarostatWork.Trotter`, the
   default, `TrotterFirstOrder`, `Exact`, `FirstOrder`), the `coupling` and
   `work` of `[barostat]`, with its refusal of the first-order work under
   the semi-isotropic and the anisotropic coupling;
