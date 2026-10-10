@@ -193,6 +193,10 @@ the key absent, has no entry.
 field was set and the second when there is a dual list: a continuation
 with another structure is the same run with other execution, with a note.
 
+`Ensemble.coupling` and `Ensemble.work` (D[python-barostat]) are the
+entries `[barostat] coupling` and `[barostat] work` of the group
+`coupling`, when the field was set or is not the default of an absent key.
+
 Settings without a control-file key (custom terms in Python's units,
 tunables) have entries of their own: a CLI run never has them, so a
 checkpoint with them is a new stage for `mdir run`, never `--continue`.

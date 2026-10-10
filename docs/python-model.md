@@ -26,7 +26,9 @@ cutoff Coulomb and PME, harmonic bonds/angles, periodic dihedrals, harmonic
 impropers, Urey-Bradley, CMAP, special 1-4 pairs, exclusions, SHAKE/SETTLE,
 and the two supported three-parent virtual-site kinds). Velocity Verlet,
 leapfrog, minimization, NVE, stochastic velocity rescaling NVT, and isotropic
-stochastic cell rescaling NPT are included, on CPU/GPU, mixed/double.
+stochastic cell rescaling NPT are included, on CPU/GPU, mixed/double (the
+semi-isotropic and the anisotropic coupling and the works of the barostat
+since D[python-barostat], [python-segments.md](python-segments.md)).
 Basic custom pair and tuple expressions are included with MD-unit coordinate
 and energy adaptation at the boundary. Other expression families, implicit
 solvent, free energy, LJPME, alternate baths/barostats, and single precision
