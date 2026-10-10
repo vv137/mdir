@@ -267,14 +267,18 @@ apart.
   additions have no fixed order. Nothing with the groups is equal to the
   bit, in either front end.
 
-**The order of the particles.** A Python simulation does not sort its
-particles (D196, #125). The measurement of #270 finds no rate in it:
-`mdir run` with `spatial_order = false` is as fast as with it, within
-0.004 ms a step, with the matrix, the groups, and the dual list on the
-three systems below, because every build sorts the particles into its own
-order of places (D86). Sorting in a Python simulation outside the
-deterministic mode is therefore not added; #125 stays a question of the
-deterministic mode.
+**The order of the particles.** A Python simulation puts its particles
+in the order of their positions where an activation begins
+(`Execution.reorder`, [python-segments.md](python-segments.md)) and not
+again; `mdir run` does so at its start and at each of its checkpoints
+(#125). The measurement of #270 finds no rate in the order: `mdir run`
+with `spatial_order = false`, which keeps the order of the input
+throughout, is as fast as with it, within 0.004 ms a step, with the
+matrix, the groups, and the dual list on the three systems below, because
+every build sorts the particles into its own order of places (D86), which
+is what the loops over pairs read. Sorting again in the course of a
+Python simulation, outside the deterministic mode, is therefore not
+added; #125 stays a question of the deterministic mode.
 
 **Validation** (`python-groups*.test`, `Inputs/python_groups.py`; the
 dipeptide in 382 waters, 1,168 particles, PME on $32^3$, SHAKE and SETTLE,

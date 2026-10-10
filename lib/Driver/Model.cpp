@@ -502,7 +502,8 @@ llvm::Expected<InitialState> mdir::model::drawVelocities(
   // The draw does not read the neighbor structures: the system is prepared
   // for the default execution, which has the matrix, so without the dual
   // list, which is of the groups (D[python-groups]). A value that
-  // `compile` would refuse is refused there.
+  // `compile` would refuse is refused there. The copy of the system is
+  // the price of preparing it as `prepare` does.
   System physics = s;
   physics.prunedDistance = 0.0;
   auto prepared = prepare(physics, state, Integrator{}, ensemble, Execution{}, Schedule{});
