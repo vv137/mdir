@@ -1,0 +1,13 @@
+# REQUIRES: python-api, cuda
+# A Python simulation with the groups of 16 and with the dual list
+# (D[python-groups], #270) against one with the neighbor matrix, as
+# groups-gpu.test does for `mdir run`: the energies and the forces at the
+# start and the energies of 100 steps, also when the lists begin with no
+# room; `Program.plan` and the pipeline. Inputs/python_groups.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_groups.py %S/Inputs/dipeptide mdir %t energies Double | FileCheck %s -DP=Double
+# RUN: %mdir_python %S/Inputs/python_groups.py %S/Inputs/dipeptide mdir %t energies Mixed | FileCheck %s -DP=Mixed
+# CHECK: [[P]] groups: energies and forces of the matrix
+# CHECK: [[P]] groups, capacity 1: energies and forces of the matrix
+# CHECK: [[P]] dual: energies and forces of the matrix
+# CHECK: energies [[P]] passed

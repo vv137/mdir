@@ -1,0 +1,14 @@
+# REQUIRES: python-api, hdf5, cuda
+# Checkpoints of a Python simulation with the dual list at constant
+# pressure (D[python-groups], #270): Python -> `mdir run --continue` and
+# `mdir run` -> Python without a note, and Python with the dual list ->
+# Python with one list and with the matrix, a change of execution that a
+# note names. The state at the end is that of the run that did not stop
+# within what two runs differ by. Inputs/python_groups.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_groups.py %S/Inputs/dipeptide mdir %t checkpoints Double | FileCheck %s -DP=Double
+# RUN: %mdir_python %S/Inputs/python_groups.py %S/Inputs/dipeptide mdir %t checkpoints Mixed | FileCheck %s -DP=Mixed
+# CHECK: Python -> mdir run --continue with the dual list
+# CHECK: mdir run -> Python with the dual list, without a note
+# CHECK: Python with the dual list -> Python with one list, and with the matrix: a note
+# CHECK: checkpoints [[P]] passed
