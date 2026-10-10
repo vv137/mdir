@@ -594,6 +594,12 @@ PYBIND11_MODULE(_core, m) {
       d["deterministic"] = c.execution.deterministic;
       d["reorders"] = c.program.reorders;
       d["neighbor_capacity"] = c.program.neighborWidth;
+      // What was asked, as `neighbor_structure_requested` of a manifest,
+      // and the reach of the inner list of a dual list in nm, 0 without
+      // one (D[python-groups]).
+      d["neighbor_structure"] =
+          p.prepared->control.neighborStructure == driver::NeighborStructure::Groups ? "groups" : "matrix";
+      d["pruned_distance"] = p.prepared->control.prunedDistance * driver::units::length;
       d["entry"] = c.program.entry;
       d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";

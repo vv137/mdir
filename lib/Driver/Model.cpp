@@ -499,7 +499,13 @@ llvm::Expected<InitialState> mdir::model::drawVelocities(
   ensemble.kind = EnsembleKind::NVE;
   ensemble.temperature = temperature;
   ensemble.seed = seed;
-  auto prepared = prepare(s, state, Integrator{}, ensemble, Execution{}, Schedule{});
+  // The draw does not read the neighbor structures: the system is prepared
+  // for the default execution, which has the matrix, so without the dual
+  // list, which is of the groups (D[python-groups]). A value that
+  // `compile` would refuse is refused there.
+  System physics = s;
+  physics.prunedDistance = 0.0;
+  auto prepared = prepare(physics, state, Integrator{}, ensemble, Execution{}, Schedule{});
   if (!prepared) return prepared.takeError();
   // The draw of `mdir run` when its coordinates give no velocities.
   driver::assignVelocities(prepared->control, prepared->system);
