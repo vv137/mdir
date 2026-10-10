@@ -106,6 +106,12 @@ struct System {
   Format format = Format::Amber;
   bool periodic = true;
   double cutoff = 1.2, pairlistDistance = 1.35, switchDistance = 1.0;
+  /// The reach of the inner list of a dual list, `[energy] pruned_distance`
+  /// (D114), in nm, between the cutoff and the pairlist distance; 0, the
+  /// default, keeps one list. It needs the groups
+  /// (Execution::neighborStructure), as in the control file
+  /// (D[python-groups]).
+  double prunedDistance = 0.0;
   driver::Truncation truncation = driver::Truncation::Switch;
   Electrostatics electrostatics = Electrostatics::Cutoff;
   /// For PME only; as the control file, none by default.
@@ -205,6 +211,11 @@ struct Execution {
   /// `[execution] neighbor_capacity`; 0 estimates it from the start
   /// (D227).
   int64_t neighborCapacity = 0;
+  /// `[execution] neighbor_structure`: the neighbor matrix, or groups of 16
+  /// that share a list, each pair once, for the loops that allow them
+  /// (D89); on a device, and not in the deterministic mode
+  /// (D[python-groups]).
+  driver::NeighborStructure neighborStructure = driver::NeighborStructure::Matrix;
 };
 /// A temporary fixed schedule for shared-builder parity. No runtime ownership,
 /// JIT, output writers or public Python simulation is implemented here.

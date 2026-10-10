@@ -253,6 +253,15 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.cutoffDistance = s.cutoff / driver::units::length;
   c.pairlistDistance = s.pairlistDistance / driver::units::length;
   c.switchDistance = s.switchDistance / driver::units::length;
+  // A dual list, with the refusals and the words of the control file
+  // (Reader::readEnergy; D114, D[python-groups]).
+  if (!std::isfinite(s.prunedDistance) || s.prunedDistance < 0)
+    return input("System.pruned_distance must be positive, or 0 for one list");
+  c.prunedDistance = s.prunedDistance / driver::units::length;
+  if (c.prunedDistance != 0.0 &&
+      !(c.prunedDistance > c.cutoffDistance && c.prunedDistance < c.pairlistDistance))
+    return input("model: 'pruned_distance' is not between 'cutoff' and "
+                 "'pairlist_distance'");
   c.truncation = s.truncation;
   c.topologyDispersion = dispersion;
   c.topologyDispersionGiven = s.dispersionGiven;
@@ -298,6 +307,16 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.reorder = execution.reorder;
   c.fastMath = execution.fastMath;
   c.neighborWidth = execution.neighborCapacity;
+  // The groups, with the refusal and the words of the control file
+  // (Reader::readExecution; D89, D[python-groups]).
+  if (execution.neighborStructure != driver::NeighborStructure::Matrix &&
+      execution.neighborStructure != driver::NeighborStructure::Groups)
+    return unsupported("unsupported neighbor structure");
+  c.neighborStructure = execution.neighborStructure;
+  if (c.neighborStructure == driver::NeighborStructure::Groups &&
+      (c.target != driver::Target::GPU || c.deterministic))
+    return input("model: 'neighbor_structure = \"GROUPS\"' needs 'target = "
+                 "\"GPU\"' and not 'deterministic'");
   std::set<std::string> termNames;
   // `observe` of a term (D189, D232): the columns follow the
   // pair terms, the tuple terms, and the terms of the positions, each in
