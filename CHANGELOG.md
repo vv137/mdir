@@ -613,6 +613,21 @@ format, or the outputs; every such change is listed under **Changed** or
   inputs. The lists now take the 27 images a cell away or none along each
   axis and hold every image within a reach below the least edge of the
   cell, in an orthorhombic and in a triclinic cell.
+- Every use of the HDF5 library holds one mutex of the process (#262,
+  `docs/python-checkpoints.md`, Threads). The library is thread-safe only
+  if built so (that of the reference build is not), and the writer and the
+  reader of checkpoints took no lock, while those of H5MD (D239) took one
+  of their own: in a script with threads, `save_checkpoint` or a
+  `CheckpointReporter` of one simulation, which write outside the mutex of
+  the runs and without the GIL, could be inside the library together with a
+  frame in H5MD or a checkpoint of another simulation, or with
+  `read_checkpoint`, `Simulation(program, checkpoint=)`, or `read_h5md` in
+  another thread. A test of four such threads crashed or misread sound
+  files in 30 of 30 runs without the lock in the checkpoint code, and
+  passes with it. `read_checkpoint`, `Simulation(program, checkpoint=)`,
+  and `read_h5md` now release the GIL while they read. One simulation, or
+  one `mdir run`, was not affected. A module that brings its own HDF5 into
+  the process (h5py) is outside the mutex.
 - In a triclinic cell the neighbor matrix (the default structure, on the
   CPU and on a device) lost pairs once its reach, `pairlist_distance`, was
   more than half of the least of $a_x, b_y, c_z$ (#258, D241,
