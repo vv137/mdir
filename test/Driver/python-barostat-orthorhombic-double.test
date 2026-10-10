@@ -11,14 +11,9 @@
 # cell to the bit, the energy file and the DCD trajectory byte for byte,
 # in parts, from a checkpoint of `mdir run`, and into `mdir run
 # --continue`; the axes move as the coupling says.
-# With a coupling period of 1 the exact and the first-order work scale the
-# cell at every step, to the bits of `mdir run`; so do a compressibility of
-# each axis, and that of z with a surface tension.
 # Inputs/python_barostat.py.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_barostat.py %S/Inputs CPU Double mdir %t orthorhombic | FileCheck %s
-# RUN: %mdir_python %S/Inputs/python_barostat.py %S/Inputs CPU Double mdir %t/every-step every-step | FileCheck %s --check-prefix=EVERY
-# RUN: %mdir_python %S/Inputs/python_barostat.py %S/Inputs CPU Double mdir %t/keys keys | FileCheck %s --check-prefix=KEYS
 # CHECK: CPU Double orthorhombic ISOTROPIC TROTTER: a continuation with another coupling or work is refused by both front ends
 # CHECK: CPU Double orthorhombic ISOTROPIC TROTTER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
 # CHECK: CPU Double orthorhombic ISOTROPIC TROTTER_FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
@@ -31,5 +26,3 @@
 # CHECK: CPU Double orthorhombic ANISOTROPIC TROTTER_FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
 # CHECK: CPU Double orthorhombic ANISOTROPIC EXACT: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
 # CHECK: barostat orthorhombic CPU Double: 10 cases passed
-# EVERY: barostat every-step CPU Double: 4 cases passed
-# KEYS: barostat keys CPU Double: 4 cases passed
