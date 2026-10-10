@@ -149,7 +149,7 @@ coupling at other steps would show.
 |---|---|
 | `StaleProgramError` | The program's inputs changed after compilation |
 | `InputError` | `n < 0`, or a run that ends between the two closing steps of a Trotter period |
-| `UnsupportedError` | NPT with a coupling period of 1 (scaling every step); NPT in a triclinic cell; a second GPU device in one process |
+| `UnsupportedError` | NPT with a coupling period of 1 (scaling every step); a second GPU device in one process |
 | `SimulationError` | A failure during a run: positions that are not numbers or are far outside the cell at a build of the neighbor structures on a device, a state that is not numbers at the end of a part, a barostat that takes the cell below twice the cutoff, makes it not finite, or scales an edge by a factor outside [1/2, 2] at one coupling (D225); or another operation under way on the same simulation |
 
 After a `SimulationError` raised by a failure, the simulation keeps the
@@ -541,6 +541,109 @@ leapfrog state are half a step behind its positions (`velocity_offset =
 positions. `from_state` therefore refuses them and asks for
 `velocities=False`. A stage from the state is bit for bit one from the same
 state built field by field (`python-initial-state.test`).
+
+## NPT in a triclinic cell (D[python-triclinic-npt])
+
+Issue [#254](https://github.com/vv137/mdir/issues/254). A Python simulation
+refused a barostat in a triclinic cell, which `mdir run` runs (D127). The
+tilts are values that the entry takes when an activation begins (D227), and
+a simulation kept those of the build as the tilts of its state: after a
+part in which the barostat had scaled them, `State.cell.tilt`, a
+checkpoint, and the next activation would have had the tilts of before.
+
+Since D238 an activation begins with the tilts of the state of the host,
+and the cell of the host is set in one place
+([python-dlpack.md](python-dlpack.md#tilts-of-a-triclinic-cell-d238)).
+What this adds: the tilts that the barostat reports at each scaling
+(`mdrtSetTilt`, D127) become the tilts of the host's state at the end of a
+part; a part that fails restores the cell of before with its tilts through
+that one place, as a commit that is undone does; and the cell that the
+runtime writes into a checkpoint is that of the host from the start, so
+that a checkpoint written before the first scaling has the tilts. The
+refusal is lifted: `State.cell`, `save_checkpoint` and a
+`CheckpointReporter`, the frames of the reporters, and `Borrow.tilt`
+follow the barostat. The program, its kernels, and the path of a step are
+those of before: the barostat of a triclinic cell is that of `mdir run`,
+validated by D127.
+
+**What a Python simulation does not take.** The Python model has the
+isotropic coupling alone: `mdir.Ensemble` has no key for the
+`coupling = "SEMI_ISOTROPIC"` and `"ANISOTROPIC"` of `[barostat]`, which
+`mdir run` takes in a triclinic cell as well, so there is no such program
+to refuse or to compare. A Python simulation has the neighbor matrix
+([#270](https://github.com/vv137/mdir/issues/270)), which holds every
+image within its reach whatever the barostat does to the cell (D241); the
+stop of a run whose barostat takes the cell below the reach of the groups
+(D242) is therefore not one that a Python simulation reaches. The stop of
+a cell below twice the cutoff is the runtime's, for both front ends.
+
+**Validation against `mdir run`.** `python-triclinic-npt-cli-double.test`,
+`-mixed`, and their `-gpu` twins (`Inputs/python_triclinic_npt.py`): the
+rhombic dodecahedron of `test/Driver/Inputs/triclinic` with 403 rigid
+waters (SETTLE), PME on $28^3$, velocity Verlet at 2 fs, stochastic
+velocity rescaling and isotropic stochastic cell rescaling every 10 steps
+at 300 K and 1 atm, the velocities drawn by both front ends from one seed,
+in the deterministic mode. The input is not equilibrated (its pressure is
+$5.5\times10^4$ atm at the start), so the barostat moves the tilts by
+$2.0\times10^{-2}$ nm in 200 steps; the comparison is one of the two
+front ends, not of the liquid. The two front ends give the same run bit
+for bit when their checkpoints are at the same steps: a checkpoint ends a
+segment of `mdir run` as it ends the activation of a simulation (D215,
+D218), the neighbor structures are built anew after it, and a run with a
+checkpoint at step 100 differs from one without by the rounding of the
+sums of the forces ($5\times10^{-11}$ nm in the positions at step 200 in
+double precision). That is the condition of an orthorhombic cell as well
+(`python-deterministic-run-*.test`, `python-checkpoints-*.test`). Each row
+below holds on the CPU and on an RTX 3090, in double and in mixed
+precision; the differences that are not 0 are those of the CPU in double
+precision.
+
+| Quantity | Reference | Difference | Tolerance |
+|---|---|---|---|
+| Positions, velocities, forces, $a_x, b_y, c_z$, and $b_x, c_x, c_y$ after 200 steps in one part, in 20 parts of 10, and in parts of 30, 70, and 100 | The checkpoint of `mdir run` of 200 steps | 0 | 0 |
+| The energy file (21 rows) and the DCD trajectory (20 frames, each with its cell) of those runs | The files of `mdir run` | 0 bytes | 0 |
+| The fingerprint of the checkpoint | That of `mdir run` | equal | equal |
+| The shape of the cell at step 200: $\lvert b_x\rvert$, $\lvert c_x/a_x - 1/2\rvert$, $\lvert c_y/b_y - 1/2\rvert$ | The rhombic dodecahedron | 0 | $10^{-14}$ |
+| `mdir run` to step 100, a Python simulation from its checkpoint to step 200: the state, the cell, the energy file, and the trajectory | `mdir run` of 200 steps with a checkpoint at step 100 | 0 | 0 |
+| A Python simulation to step 100 with a `CheckpointReporter`: the cell and the tilts of its checkpoint | The checkpoint of `mdir run` at step 100 | 0 | 0 |
+| That checkpoint continued by a second Python simulation, by the one that wrote it, and by `mdir run --continue`: the state, the cell, and the files at step 200 | `mdir run` of 200 steps with a checkpoint at step 100 | 0 | 0 |
+| The cell of each of 20 frames in DCD (lengths and cosines in f64) | `State.cell` at the step of the frame | $7\times10^{-16}$ nm | $10^{-12}$ nm |
+| The same in XTC (vectors in f32) | The same | $1\times10^{-7}$ nm | $5\times10^{-7}$ nm |
+| The same in H5MD (`box/edges`, $(3, 3)$ for each frame, D239), and the positions | The same | 0 | 0 |
+
+**Validation of the state of the host.** `python-triclinic-npt.test` and
+its `-gpu` twin (`Inputs/python_dlpack_tilts.py npt`): the same cell with
+403 flexible waters at 0.5 fs, in double and in mixed precision.
+
+| Quantity | Reference | Difference | Tolerance |
+|---|---|---|---|
+| The tilts of `State.cell` after 60 steps, and of `Borrow.tilt` | The start: they move by $3.1\times10^{-3}$ nm; $c_x/a_x$, $c_y/b_y$ stay 1/2 and $b_x$ 0 | shape 0 | $10^{-14}$ |
+| The state after three parts of 20 steps | One run of 60 steps | 0 | 0 |
+| 20 steps continued from a checkpoint written at step 40, by another simulation of the program | The simulation that wrote it, 20 steps on | 0 | 0 |
+| The same | The run that did not stop, which kept its neighbor structures | $8.9\times10^{-16}$ nm in double, $5.6\times10^{-8}$ nm in mixed precision (CPU) | $10^{-12}$, $10^{-6}$ nm |
+| A commit of the tilts (0.03, −1.28, −1.29) nm through a writable borrow before the first step, then 40 steps under the barostat, which moves the tilts by $1.8\times10^{-3}$ nm | A simulation compiled from the committed state | 0 | 0 |
+| A frame of step 20 committed into the simulation that ran it, at step 40: `Borrow.tilt` before and after the commit; the forces, the potential, the virial, the pressure, and the volume of the evaluation | The tilts of the state and of the frame; a simulation compiled from the frame | 0 | 0 |
+| 20 frames of 200 steps of a Python run at constant pressure ($c_x$ from 1.30091 to 1.30780 nm) put into a second simulation: energies and forces of each | A simulation compiled from the frame | 0 | 0 |
+
+**The frames of a Python run.** `python-triclinic-npt-frames.test` and its
+`-gpu` twin: 20 frames of 400 steps of the run of rigid water ($c_x$ from
+1.3020 to 1.3303 nm, volumes 12.49 to 13.32 nm³), written by an
+`H5MDReporter` and read by the frame evaluator (D240): the energy, its
+derivative in the tunables, the virial, and the volume of frames 0, 6, 13,
+and 19 equal those of a simulation compiled from the frame to the bit, in
+double and in mixed precision; and the same frames in DCD committed one by
+one into a second simulation (D238), the potential, the virial, the
+volume, and the forces of each equal to those of a simulation compiled
+from it. The tests of D238 and D240 took these frames from `mdir run`.
+
+**A cell that the barostat shrinks.** `python-triclinic-reach.test` and its
+`-gpu` twin: the run of `triclinic-reach.test` (D241) as a Python
+simulation, 216 argon atoms in a cell with every tilt on its bound that
+stochastic cell rescaling at 20,000 atm takes from 2.2 to 1.92 nm, with a
+pairlist distance of 1.1 nm, beyond half of the least of the diagonal at
+each of the 79 frames. The potential of each row equals the sum in NumPy
+over every image of every pair within the cutoff to $10^{-5}$ kcal/mol (0
+frames of 79 differ), on the CPU and on the device.
 
 ## Not in this item
 

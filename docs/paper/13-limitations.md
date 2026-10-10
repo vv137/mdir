@@ -152,7 +152,8 @@ in the Python model, the time and parameters of each particle in a term of
 the positions, terms over centers and compound terms, and the derivative
 in a tunable of several entries at every row of a run, which `observe`
 does not give (the frame evaluator of M2b);
-NPT in a triclinic cell or with a coupling period of 1.
+NPT with a coupling period of 1, and the semi-isotropic and anisotropic
+couplings of the barostat, which the Python model has no key for.
 
 *M2b, differentiable simulation* (D195). The parameters of a potential
 fitted to ensemble averages by reweighting stored frames

@@ -569,8 +569,11 @@ dodecahedron of 403 waters (C-rescale, rigid water; $c_x$ from 1.3139 to
 1.3813 nm, volumes 12.83 to 14.91 nm³), written in H5MD in f64 and read
 with `mdir.read_h5md`; the evaluator's program has flexible water, PME on
 the grid of the first cell, 11 tied charges and $\sigma$ of OW-OW
-tunable. (A Python simulation refuses a barostat in a triclinic cell,
-#255, so the frames are those of `mdir run`.)
+tunable. The frames of a Python simulation at constant pressure in that
+cell, which D[python-triclinic-npt] allows
+([python-segments.md](python-segments.md#npt-in-a-triclinic-cell-dpython-triclinic-npt)),
+give the same zeros in the first two rows of the table
+(`python-triclinic-npt-frames*.test`).
 
 | Quantity | Reference | CPU double | GPU double | CPU mixed | GPU mixed | Tolerance (double, mixed) |
 |---|---|---|---|---|---|---|
