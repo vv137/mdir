@@ -56,7 +56,7 @@ format, or the outputs; every such change is listed under **Changed** or
   states for a file in f64. See [docs/python-frames.md](docs/python-frames.md).
 
 - A Python simulation runs at constant pressure in a triclinic cell
-  (D[python-triclinic-npt], #254, `docs/python-segments.md`);
+  (D244, #254, `docs/python-segments.md`);
   `mdir.Simulation(program)` raised `UnsupportedError` for a barostat in
   such a cell. The tilts of `State.cell`, of a checkpoint, of the frames
   of the reporters, and of `Borrow.tilt` follow the barostat, which scales

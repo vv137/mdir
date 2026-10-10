@@ -570,8 +570,8 @@ dodecahedron of 403 waters (C-rescale, rigid water; $c_x$ from 1.3139 to
 with `mdir.read_h5md`; the evaluator's program has flexible water, PME on
 the grid of the first cell, 11 tied charges and $\sigma$ of OW-OW
 tunable. The frames of a Python simulation at constant pressure in that
-cell, which D[python-triclinic-npt] allows
-([python-segments.md](python-segments.md#npt-in-a-triclinic-cell-dpython-triclinic-npt)),
+cell, which D244 allows
+([python-segments.md](python-segments.md#npt-in-a-triclinic-cell-d244)),
 give the same zeros in the first two rows of the table
 (`python-triclinic-npt-frames*.test`).
 

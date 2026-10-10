@@ -298,7 +298,7 @@ activation from the committed state, whose order, neighbor structures, and
 forces are built anew; a borrow excludes runs, views, and other borrows,
 and one that ends without a commit is undone. D238 (#206) adds
 `Borrow.tilt`, the tilts of a triclinic cell, which a commit checks and
-gives to the activation it begins. D[python-triclinic-npt] (#254) lets a
+gives to the activation it begins. D244 (#254) lets a
 Python simulation run at constant pressure in a triclinic cell: the tilts
 that the barostat scales are those of its state, of its checkpoints and
 frames, and of a borrow, and the run is that of `mdir run` to the bit.

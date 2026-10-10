@@ -542,7 +542,7 @@ positions. `from_state` therefore refuses them and asks for
 `velocities=False`. A stage from the state is bit for bit one from the same
 state built field by field (`python-initial-state.test`).
 
-## NPT in a triclinic cell (D[python-triclinic-npt])
+## NPT in a triclinic cell (D244)
 
 Issue [#254](https://github.com/vv137/mdir/issues/254). A Python simulation
 refused a barostat in a triclinic cell, which `mdir run` runs (D127). The

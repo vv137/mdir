@@ -21,7 +21,7 @@ barostat scales the tilts with the cell, put one by one into a second
 simulation, each energy against the evaluation of a simulation compiled
 from that frame.
 
-`npt` (D[python-triclinic-npt]): a Python run at constant pressure in the
+`npt` (D244): a Python run at constant pressure in the
 triclinic cell, whose tilts the barostat scales: the tilts of the state,
 a run in parts and one continued from a checkpoint against one run, a
 commit of tilts followed by steps under the barostat against a simulation

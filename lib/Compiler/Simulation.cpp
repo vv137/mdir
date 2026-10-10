@@ -1091,7 +1091,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   // (D127) and reports them at each scaling (`mdrtSetTilt`): they become
   // those of the state of the host, which the next activation begins with
   // (D238), a checkpoint and a frame carry, and a borrow lends
-  // (D[python-triclinic-npt]).
+  // (D244).
   if (engine.control.barostat && hasTriclinicCell())
     for (int k = 0; k != 3; ++k)
       system.tilt[k] = out.checkpoint.tilt[k];

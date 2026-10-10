@@ -1,7 +1,7 @@
 # REQUIRES: python-api, hdf5
 # A Python simulation at constant pressure in a triclinic cell against
 # `mdir run` of the same system and settings on the CPU, in double
-# precision in the deterministic mode (D[python-triclinic-npt],
+# precision in the deterministic mode (D244,
 # docs/python-segments.md), Inputs/python_triclinic_npt.py: 403 rigid
 # waters in a rhombic dodecahedron, PME, stochastic velocity rescaling and
 # isotropic stochastic cell rescaling every 10 steps. 200 steps in one

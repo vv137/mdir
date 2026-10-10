@@ -291,8 +291,8 @@ values is 0 in each of the four combinations of target and precision.
 | The DCD of the same `mdir run` | f32 of the H5MD positions times 10 | equal to the bit: the two writers are handed the same buffer |
 
 A Python simulation at constant pressure in a triclinic cell
-(D[python-triclinic-npt],
-[python-segments.md](python-segments.md#npt-in-a-triclinic-cell-dpython-triclinic-npt))
+(D244,
+[python-segments.md](python-segments.md#npt-in-a-triclinic-cell-d244))
 writes the cell of each frame as well: `box/edges` and the positions of 20
 frames equal the state of their steps to the bit
 (`python-triclinic-npt-cli-*.test`).

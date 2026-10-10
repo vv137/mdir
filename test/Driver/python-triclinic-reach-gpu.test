@@ -1,5 +1,5 @@
 # triclinic-reach.test with a Python simulation on a GPU
-# (D[python-triclinic-npt], D241, #258): a narrow tilted cell that the
+# (D244, D241, #258): a narrow tilted cell that the
 # barostat of a simulation shrinks until the pairlist distance is well
 # beyond half of the least of a_x, b_y, c_z. At every frame the potential
 # energy of the run is the sum over every image of every pair within the

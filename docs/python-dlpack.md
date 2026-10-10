@@ -263,7 +263,7 @@ Status: implemented; the four questions put to the maintainer on PR #204
 were decided as recommended
 ([Maintainer rulings on writable borrows](#maintainer-rulings-on-writable-borrows)).
 The tilts of a triclinic cell (#206, D238) are
-[below](#tilts-of-a-triclinic-cell-dborrow-tilts), with the maintainer's
+[below](#tilts-of-a-triclinic-cell-d238), with the maintainer's
 rulings on PR #253.
 
 A view is for reading. A *borrow* hands a consumer the same buffers for
@@ -341,7 +341,7 @@ cell (D123), so the tilts are written through `Borrow.tilt` of a
 simulation whose program was compiled from a triclinic cell; for an
 orthorhombic one `Borrow.tilt` is three zeros that cannot be written, and
 without a periodic cell both raise `UnsupportedError`
-([Tilts of a triclinic cell](#tilts-of-a-triclinic-cell-dborrow-tilts)).
+([Tilts of a triclinic cell](#tilts-of-a-triclinic-cell-d238)).
 
 ### Exclusion
 
@@ -375,7 +375,7 @@ It then checks everything before it changes anything:
   reduced; for a program with the groups, in any cell, the pairlist
   distance is at most 0.999 of the least edge, the least of $a_x, b_y,
   c_z$ (D242; the matrix takes any, D241)
-  ([Tilts of a triclinic cell](#tilts-of-a-triclinic-cell-dborrow-tilts);
+  ([Tilts of a triclinic cell](#tilts-of-a-triclinic-cell-d238);
   `InputError`);
 - the values of the tunables pass the checks of an update of D213, and the
   program built from them is the compiled one, text for text: a structural
@@ -536,8 +536,8 @@ by the test:
 
 **A barostat.** A Python simulation refused a barostat in a triclinic
 cell when this was decided, and the frames of a run at constant pressure
-below are those of `mdir run`. D[python-triclinic-npt]
-([python-segments.md](python-segments.md#npt-in-a-triclinic-cell-dpython-triclinic-npt))
+below are those of `mdir run`. D244
+([python-segments.md](python-segments.md#npt-in-a-triclinic-cell-d244))
 lifts the refusal: the tilts which the barostat reports become the host's
 after each part, `Borrow.tilt` lends them, and a commit of tilts followed
 by steps under the barostat, a frame of a run committed into the

@@ -1,5 +1,5 @@
 """A Python simulation at constant pressure in a triclinic cell against
-`mdir run` of the same system and settings (D[python-triclinic-npt],
+`mdir run` of the same system and settings (D244,
 docs/python-segments.md): 403 rigid waters in the rhombic dodecahedron of
 `Inputs/triclinic`, PME on 28^3, velocity Verlet at 2 fs, stochastic
 velocity rescaling and isotropic stochastic cell rescaling every 10 steps,

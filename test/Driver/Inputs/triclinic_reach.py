@@ -30,7 +30,7 @@ the edge, lists that took the nearest image and the one on the other side
 of the boundary along each axis alone lost pairs (#263).
 
 With `python` for MDIR the run is a Python simulation of the same model
-(D[python-triclinic-npt]), whose reporters write the two files: the neighbor
+(D244), whose reporters write the two files: the neighbor
 matrix, which is the structure of every Python simulation (#270), under the
 barostat of a simulation. The Python model has no key for the work of the
 barostat, so its run has the default, `work = "TROTTER"`, where the control

@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5
 # The frames of a Python simulation at constant pressure in a triclinic
-# cell on the CPU (D[python-triclinic-npt], Inputs/python_triclinic_npt.py):
+# cell on the CPU (D244, Inputs/python_triclinic_npt.py):
 # 20 frames of 400 steps of 403 rigid waters in a rhombic dodecahedron,
 # written by an H5MDReporter in f64 and by a TrajectoryReporter in DCD. The
 # frame evaluator (D240, Inputs/python_frames.py) reads those in H5MD: the
