@@ -174,6 +174,7 @@ def make(precision, pme=True, kind="NVE", state=None, capacity=0, soft=False, gr
     if state is None:
         state = start.draw_velocities(system, 300.0, 7)
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     integrator.method = mdir.IntegratorMethod.VelocityVerlet
     integrator.timestep = 0.0005
     ensemble.kind = getattr(mdir.EnsembleKind, kind)
@@ -441,11 +442,14 @@ def structure():
 
     def program(state=None):
         system, start = loaded.make_system(), loaded.make_state()
+        # The defaults of before D[python-defaults], with which this was written.
+        system.truncation = mdir.Truncation.Switch
         system.cutoff, system.pairlist_distance, system.switch_distance = CUTOFF, REACH, 0.7
         system.electrostatics = mdir.Electrostatics.Cutoff
         if state is None:
             state = start.draw_velocities(system, 300.0, 7)
         integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+        ensemble.com_period = 0  # the default of before D[python-defaults]
         integrator.method = mdir.IntegratorMethod.VelocityVerlet
         integrator.timestep = 0.001
         ensemble.kind = mdir.EnsembleKind.NVE

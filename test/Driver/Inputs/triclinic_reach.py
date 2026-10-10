@@ -153,6 +153,7 @@ def run_python():
     system.periodic = True
     state = state.draw_velocities(system, 300.0, 11)
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     integrator.method = mdir.IntegratorMethod.VelocityVerlet
     integrator.timestep = 0.004
     ensemble.kind, ensemble.seed = mdir.EnsembleKind.NPT, 11

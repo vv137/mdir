@@ -1,0 +1,18 @@
+# REQUIRES: python-api, hdf5, cuda
+# The defaults of the Python model are those of the control file
+# (D[python-defaults], #281): the dipeptide in water given to both front
+# ends on a GPU with nothing beyond the files, the ensemble, the periodic
+# boundary, and the deterministic mode. The energies of step 0 are those
+# of the row of `mdir run`, and after 20 steps the positions, the
+# velocities, the forces, and the cell are those of its checkpoint to the
+# bit, with its fingerprint, at constant energy, temperature, and
+# pressure, in double and in mixed precision.
+# Inputs/python_defaults.py.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_defaults.py %S/Inputs/dipeptide GPU Double mdir %t/Double run | FileCheck %s -DL="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_defaults.py %S/Inputs/dipeptide GPU Mixed mdir %t/Mixed run | FileCheck %s -DL="GPU Mixed"
+# CHECK: [[L]] NVE: the energies of step 0 within {{[0-9.e-]+}} kcal/mol of the row of mdir run, and 20 steps to its bits, with its fingerprint
+# CHECK: [[L]] NVT: the energies of step 0 within {{[0-9.e-]+}} kcal/mol of the row of mdir run, and 20 steps to its bits, with its fingerprint
+# CHECK: [[L]] NPT: the energies of step 0 within {{[0-9.e-]+}} kcal/mol of the row of mdir run, and 20 steps to its bits, with its fingerprint
+# CHECK: defaults run [[L]] passed

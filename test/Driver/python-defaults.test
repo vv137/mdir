@@ -1,0 +1,23 @@
+# REQUIRES: python-api, hdf5
+# The defaults of the Python model are those of the control file
+# (D[python-defaults], #281): the dipeptide in water given to both front
+# ends on the CPU with nothing beyond the files, the ensemble, the periodic
+# boundary, and the deterministic mode. The energies of step 0 are those
+# of the row of `mdir run`, and after 20 steps the positions, the
+# velocities, the forces, and the cell are those of its checkpoint to the
+# bit, with its fingerprint, at constant energy, temperature, and
+# pressure, in double and in mixed precision. The fields give the
+# defaults and follow the cutoff until set, and the model of before, stated,
+# still compiles and differs. Inputs/python_defaults.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_defaults.py %S/Inputs/dipeptide CPU Double mdir %t/Double run | FileCheck %s -DL="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_defaults.py %S/Inputs/dipeptide CPU Mixed mdir %t/Mixed run | FileCheck %s -DL="CPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_defaults.py %S/Inputs/dipeptide CPU Double mdir %t/values values | FileCheck %s --check-prefix=VALUES
+# RUN: %mdir_python %S/Inputs/python_defaults.py %S/Inputs/dipeptide CPU Double mdir %t/old old | FileCheck %s --check-prefix=OLD
+# CHECK: [[L]] NVE: the energies of step 0 within {{[0-9.e-]+}} kcal/mol of the row of mdir run, and 20 steps to its bits, with its fingerprint
+# CHECK: [[L]] NVT: the energies of step 0 within {{[0-9.e-]+}} kcal/mol of the row of mdir run, and 20 steps to its bits, with its fingerprint
+# CHECK: [[L]] NPT: the energies of step 0 within {{[0-9.e-]+}} kcal/mol of the row of mdir run, and 20 steps to its bits, with its fingerprint
+# CHECK: defaults run [[L]] passed
+# VALUES: defaults values passed
+# OLD: CPU Double: the model of before, stated, begins at rest with the switch and without the correction; its potential differs from the default model's by {{[0-9.]+}} kJ/mol
+# OLD: defaults old CPU Double passed
