@@ -492,6 +492,19 @@ R_\text{in}$; the theorem of Section 4.1 applied to the pruning, as a build
 with the reach $R_\text{in}$ at $\mathbf x^p$, keeps it beyond $r_c$ by the
 second condition. $\blacksquare$
 
+A dual list is of the groups. A program may hold a neighbor matrix
+beside them, for the loops without an exchange contract (Section 4.4):
+the loops of the derivative in the tunables of a Python model are such
+loops. That matrix has no inner list, and its refresh takes the first
+condition alone, which is the theorem of Section 4.1 for it
+(D[python-groups]). Both front ends select the structures: the control
+file with `neighbor_structure` and `pruned_distance`, the Python model
+with `Execution.neighbor_structure` and `System.pruned_distance`, and
+with one structure they run at one rate (JAC, 23,558 atoms, at constant
+energy in mixed precision on one RTX 3090: 0.205 ms a step from
+`mdir run` and 0.206 from a Python simulation with the dual list, 0.258
+and 0.259 with the matrix).
+
 Two consequences shape the implementation. First, the inner list is
 always pruned from the outer list, never from the previous inner list: a
 pair dropped by one pruning may come within $R_\text{in}$ again and must be

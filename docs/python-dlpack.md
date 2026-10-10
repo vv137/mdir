@@ -374,7 +374,9 @@ It then checks everything before it changes anything:
   the cutoff; for a triclinic cell, the tilts are not all zero, the cell is
   reduced; for a program with the groups, in any cell, the pairlist
   distance is at most 0.999 of the least edge, the least of $a_x, b_y,
-  c_z$ (D242; the matrix takes any, D241)
+  c_z$ (D242; the matrix takes any, D241; the check of an orthorhombic
+  cell holds since D[python-groups], before which no Python program had
+  the groups)
   ([Tilts of a triclinic cell](#tilts-of-a-triclinic-cell-d238);
   `InputError`);
 - the values of the tunables pass the checks of an update of D213, and the

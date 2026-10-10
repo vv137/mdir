@@ -180,6 +180,152 @@ The differences of the default and the opt-out agree in mixed precision as
 in double: the tails are host constants in double, and the two runs
 evaluate the same pairs within the cutoff.
 
+## The groups and the dual list
+
+D[python-groups] (#270) gives the Python model the two keys of the control
+file that select the neighbor structure of the loops over pairs: the
+groups of 16 particles that share a list (D89,
+[groups-m1.md](groups-m1.md)) and the dual list (D114). Until then a
+Python simulation had the neighbor matrix alone, and the rates of
+`mdir run` with the groups could not be had from Python.
+
+| Python | Control file | Values |
+|---|---|---|
+| `Execution.neighbor_structure` | `[execution] neighbor_structure` | `mdir.NeighborStructure.Matrix` (the default), `mdir.NeighborStructure.Groups` |
+| `System.pruned_distance` | `[energy] pruned_distance` | a length in nm or a unit quantity (D200), between `System.cutoff` and `System.pairlist_distance`; `0`, the default, keeps one list |
+
+Each is where the control file has it: `neighbor_structure` is a key of
+`[execution]`, and `pruned_distance` a key of `[energy]` beside
+`pairlist_distance`, with which it is checked and which is
+`System.pairlist_distance`. Both are entries of the group `execution` of a
+checkpoint's fingerprint, as `mdir run` files them (D172): they decide how
+the forces are found, not what they are. `InitialState.draw_velocities`,
+which prepares the system for the default execution, leaves the dual list
+out: the draw does not read the lists.
+
+`mdir.compile` refuses what `mdir check` refuses, with its words and
+`model` for the path of the file, as `InputError`:
+
+| Case | Message |
+|---|---|
+| `Groups` with `Target.CPU`, or with `Execution.deterministic` | `model: 'neighbor_structure = "GROUPS"' needs 'target = "GPU"' and not 'deterministic'` |
+| `pruned_distance` with the matrix | `model: 'pruned_distance' keeps a dual list, which needs 'neighbor_structure = "GROUPS"'` |
+| `pruned_distance` not between the cutoff and the pairlist distance | `model: 'pruned_distance' is not between 'cutoff' and 'pairlist_distance'` |
+| a negative or non-finite `pruned_distance` | `System.pruned_distance must be positive, or 0 for one list` |
+| a pairlist distance above 0.999 of the least edge of the cell, the least of $a_x, b_y, c_z$ of a triclinic one (D242) | the builder's, with the distances in Å: `'pairlist_distance', 26 Å, exceeds 0.999 of the least edge of the cell, 25.3716 Å, the most that the groups take` |
+
+Which loops take the groups is the choice of `md-exec-choose-neighbors`,
+as under `mdir run`: those whose values all have an exchange contract
+(D89). The others keep the matrix, and the program then builds both; the
+loops of the derivative in the tunables (`System.tunable_gradient`, D230)
+are such loops. A structure that stays a matrix keeps one list under a
+dual list: only the groups have an inner list to prune. Before, the
+refresh of such a matrix kept the test of an inner list that it does not
+have, and the lowering refused the program (`'md_exec.reference_positions'
+op takes the configuration of the pruning of a dual list, which only a
+structure of groups keeps`); `md-exec-choose-neighbors` now takes the
+reach and the test of the inner list from the refreshes of the structures
+that it leaves as matrices
+(`test/Dialect/MDExec/Transforms/choose-neighbors.mlir`).
+
+`Program.plan["neighbor_structure"]` is `"matrix"` or `"groups"`, what was
+asked (the `neighbor_structure_requested` of a manifest of `mdir run`),
+and `Program.plan["pruned_distance"]` the reach of the inner list in nm,
+`0.0` without one. `Program.pipeline` has
+`md-exec-choose-neighbors{kind=groups}` and the `prune-skin` of
+`md-exec-reuse-neighbors`, so the key of the code that a `Program` keeps
+(D236), which holds the pipeline and the module, tells the structures
+apart.
+
+**What follows the structure.**
+
+- *A writable borrow.* A commit of a cell asks, for a program with the
+  groups, that the pairlist distance be at most 0.999 of the least edge of
+  the committed cell (D242, [python-dlpack.md](python-dlpack.md)). The
+  check stood after a return for orthorhombic cells and so held for
+  triclinic cells alone; no Python program had the groups, so nothing
+  reached it. It now holds for both kinds of cell, as D242 states.
+- *A barostat.* The runtime fails the part in which the barostat takes an
+  edge below the pairlist distance over 0.999, with the message of
+  `mdir run` (`SimulationError`; the cell of before the part is restored,
+  D225).
+- *The frame evaluator* (D240). A frame begins an activation, whose
+  structures are built for its positions and its cell: frames far from
+  each other and in other cells are evaluated as with the matrix. The
+  energy of a frame is that of the potential `@tunable`, whose loops
+  keep the matrix (above), so it is the number of the program with the
+  matrix; the virial is of the loops of the forces, over the groups.
+- *Tunables.* An update and `gradient()` are those of the matrix; the
+  loops of the derivative keep the matrix (above).
+- *Checkpoints.* The fingerprint has `[execution] neighbor_structure` when
+  the field was set and `[energy] pruned_distance` when there is a dual
+  list, so `mdir run --continue` takes a checkpoint of a Python simulation
+  with the same keys and a Python simulation one of `mdir run` without a
+  note; a continuation with another structure or reach is the same run
+  with other execution, with a note that names the keys (D223).
+- *The deterministic mode* refuses the groups (D89): their atomic
+  additions have no fixed order. Nothing with the groups is equal to the
+  bit, in either front end.
+
+**The order of the particles.** A Python simulation does not sort its
+particles (D196, #125). The measurement of #270 finds no rate in it:
+`mdir run` with `spatial_order = false` is as fast as with it, within
+0.004 ms a step, with the matrix, the groups, and the dual list on the
+three systems below, because every build sorts the particles into its own
+order of places (D86). Sorting in a Python simulation outside the
+deterministic mode is therefore not added; #125 stays a question of the
+deterministic mode.
+
+**Validation** (`python-groups*.test`, `Inputs/python_groups.py`; the
+dipeptide in 382 waters, 1,168 particles, PME on $32^3$, SHAKE and SETTLE,
+velocity Verlet at 1 fs; GPU; the largest difference seen and the
+tolerance of the test, relative to the larger magnitude of each number
+unless a unit is given):
+
+| Check | Reference | Double | Tolerance | Mixed | Tolerance |
+|---|---|---|---|---|---|
+| Energies at the start: the groups, the groups with `neighbor_capacity = 1`, the dual list (11 Å, pruned at 9.3 Å) | a Python simulation with the matrix | 0 | 1e-10 | 1.3e-7 | 2e-5 |
+| Forces at the start, kJ/mol/nm (largest force 1737) | the same | 1.1e-12 | 1e-7 | 5.8e-4 | 0.5 |
+| Energies at 5 rows over 100 steps | the same | 4.5e-12 | 1e-7 | 3.9e-5 | 5e-3 |
+| Rows of the energy file over 100 steps, Python with the groups and with the dual list | `mdir run` of the same control | 0 (equal to the 6 decimals of the file) | 1e-7 | 1.1e-4 | 5e-3 |
+| The same, `mdir run` against a second run of itself | | 0 | 1e-7 | 7.7e-5 | 5e-3 |
+| Positions after 100 steps, nm | `mdir run`, its checkpoint | 2.2e-13 | 1e-8 | 6.2e-7 | 1e-3 |
+| Two simulations of one `Program`, the second with the code of the first (`program_reused`), energies after 20 steps | each other | 1.9e-13 | 1e-7 | 2.3e-6 | 5e-3 |
+| A commit of the cell and the positions scaled by 1.01 through a borrow, energies; forces in kJ/mol/nm | a simulation compiled at that state | 0; 4.6e-13 | 1e-10; 1e-7 | 7.3e-9; 2.4e-4 | 2e-5; 0.5 |
+| A commit of a cell of 0.75 of the first (least edge 1.905 nm, reach 2 nm) | | `InputError`, the state unchanged; the matrix takes it | | the same | |
+| After an update of the tunables (22 charges times 1.05, $\epsilon$ of the pair OW-OW times 0.9): energies; `gradient()`, relative to its largest entry | a Python simulation with the matrix | 0; 2.8e-16 | 1e-10; 1e-9 | 2.9e-7; 2.2e-7 | 2e-5; 1e-3 |
+| The frame evaluator over 5 frames (the start, the state 200 steps later, the start, the later state in a cell 2% wider, the start): energy; virial; `vjp` | the evaluator of the program with the matrix | 0; 3.5e-16; 2.9e-16 | 1e-10; 1e-8; 1e-9 | 6.2e-9; 1.4e-7; 1.2e-7 | 2e-5; 1e-3; 1e-3 |
+| The same frame again, after frames far from it | its first evaluation | 0 | 1e-10 | 0 | 2e-5 |
+| NPT with the dual list, a checkpoint at step 20 of 40: Python to `mdir run --continue`; `mdir run` to Python, without a note; Python with the dual list to Python with one list and with the matrix, with a note that names the keys. Positions at step 40, nm | the Python run that did not stop | 3.1e-14 | 1e-8 | 8.8e-8 | 1e-3 |
+| The potential of every frame of 216 argon atoms under a barostat that shrinks the cell, reach 1.7 nm (0.77 to 0.89 of the edge), cube and tilted, one list and dual (`python-groups-reach-gpu.test`) | the sum in NumPy over every image of every pair within the cutoff | 0 of 79 frames differ by more than 1e-5 kcal/mol | | | |
+| The same with a reach of 2.0 nm; of 2.3 nm in the tilted cell | | the part fails with the runtime's message; `compile` refuses with the builder's | | | |
+
+In mixed precision the forces are f32 and two runs part as two runs of
+`mdir run` do: a Python simulation follows `mdir run` as closely as
+`mdir run` follows itself. Not to the bit: see above.
+
+**Rates** (#270; one RTX 3090, GPU 0 alone, mixed precision, the settings
+of the Amber suite's script that the Python model can state, the second
+half of one run of 200,000, 60,000, and 20,000 steps; ms per step):
+
+| System | Ensemble | `mdir run`, matrix | Python, matrix | `mdir run`, groups | Python, groups | `mdir run`, dual list | Python, dual list |
+|---|---|---|---|---|---|---|---|
+| Dipeptide (1,168) | NVE | 0.075 | 0.074 | 0.112 | 0.111 | 0.100 | 0.100 |
+| | NPT | 0.087 | 0.087 | 0.112 | 0.114 | 0.106 | 0.107 |
+| JAC (23,558) | NVE | 0.258 | 0.259 | 0.218 | 0.218 | 0.205 | 0.206 |
+| | NPT | 0.276 | 0.276 | 0.234 | 0.234 | 0.223 | 0.224 |
+| Factor IX (90,906) | NVE | 0.853 | 0.855 | 0.650 | 0.650 | 0.598 | 0.600 |
+| | NPT | 0.890 | 0.888 | 0.682 | 0.681 | 0.631 | 0.631 |
+
+The matrix and the groups have a pairlist distance of 10 Å; the dual list
+11 Å with the inner list at 8.6 Å, as the suite's script sets it. With one
+structure the two front ends run at one rate, within 1%; what a Python
+simulation lacked was the structure. Parts of 100 steps cost nothing that
+the timing resolves, and a step of energy every 100 steps 0.002 to 0.005
+ms a step in either front end. The default stays the matrix: on the
+dipeptide the groups are the slower structure, and the choice by the size
+of the system (G3 of the roadmap) is not made here.
+
 ## Python host array boundary
 
 D193 (#78) exposes the native vectors as independent read-only
