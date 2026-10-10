@@ -9,7 +9,7 @@
 # of a reweighted average of a Lennard-Jones mixture against central
 # differences of the reweighted average; and what is refused.
 # Also the evaluator of the terms that a tunable enters alone
-# (D[frame-evaluator-terms]) against that of the whole potential, and the
+# (D243) against that of the whole potential, and the
 # reweighting of a potential linear in its tunables from the sums that
 # `observe` records, without frames.
 # RUN: rm -rf %t && mkdir -p %t

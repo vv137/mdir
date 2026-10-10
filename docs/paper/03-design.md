@@ -1005,7 +1005,7 @@ $\partial U/\partial\boldsymbol\theta$, and $U_\text{fixed}$ is in
 neither: $\Delta U = \Delta U_\text{dep}$ and $\partial U/\partial
 \boldsymbol\theta = \partial U_\text{dep}/\partial\boldsymbol\theta$. An
 evaluator may therefore be given a program that has only $U_\text{dep}$
-(D[frame-evaluator-terms]): the pair term of a tunable constant with its
+(D243): the pair term of a tunable constant with its
 tail, the Lennard-Jones for a tunable $\sigma$ or $\epsilon$, and for
 tunable charges the electrostatics whole, since $E_\text{rec} =
 \tfrac12\mathbf q^{\mathsf T}\mathsf A\mathbf q$ couples every charge to

@@ -40,7 +40,7 @@ Scenarios:
            read with mdir.read_h5md and evaluated one at a time: in f64
            against the states of the same steps, to the bit, and in f32
   dependent  the evaluator of the terms that a tunable enters alone
-           (terms="dependent", D[frame-evaluator-terms]): for a constant of
+           (terms="dependent", D243): for a constant of
            a pair term with a parameter of a tuple term, for the charges
            with PME, for sigma and epsilon by pairs of types with the
            charges over frames of a run under a barostat, and for the

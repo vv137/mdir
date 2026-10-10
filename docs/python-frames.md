@@ -655,7 +655,7 @@ part of a start. At most 5 steps per frame: 0.35 ms on the dipeptide
 (2,900 frames/s) and 1.1 ms on JAC (900 frames/s), and under a minute for
 a pass of #140.
 
-## The dependent terms alone (D[frame-evaluator-terms])
+## The dependent terms alone (D243)
 
 Issue #264. Status: implemented, as the maintainer ruled on PR #266
 ([Maintainer rulings (dependent terms)](#maintainer-rulings-dependent-terms)).
@@ -930,7 +930,7 @@ is taken.
 | T2 | The name of the energy | `dependent_energy`; `energy` raises in that mode, and the reverse |
 | T3 | The virial and the columns of terms left out | not given, and listed in `unavailable` |
 | T4 | A branch or a second program | a second program |
-| T5 | The record | a decision of its own, `D[frame-evaluator-terms]` |
+| T5 | The record | a decision of its own, `D243` |
 | T6 | Lennard-Jones tunables | all Lennard-Jones pairs within the cutoff, for now |
 
 ## Slices
@@ -938,7 +938,7 @@ is taken.
 | Slice | Contents |
 |---|---|
 | 1 (done) | `FrameEvaluator`, `evaluate` over arrays and iterables with one evaluation per frame, `energy`, `virial`, `volume`, `observables`, `depends`, the Jacobian kept or the second pass, `mdir.torch.evaluate`, `mdir.KB` |
-| The dependent terms alone, and the example without frames (done, D[frame-evaluator-terms]) | `terms="dependent"`, `dependent_energy`, `plan["terms"]`; the sums of `observe` for a potential linear in its tunables |
+| The dependent terms alone, and the example without frames (done, D243) | `terms="dependent"`, `dependent_energy`, `plan["terms"]`; the sums of `observe` for a potential linear in its tunables |
 | 1, after D238 and D239 (done) | the tilts of each frame of a triclinic cell; the frames of `mdir.read_h5md` as input |
 | 2 | the frames inside one activation; frames read from a device tensor without a copy to the host |
 | 3 | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138); the metatomic shape of #138 |

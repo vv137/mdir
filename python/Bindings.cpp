@@ -563,7 +563,7 @@ PYBIND11_MODULE(_core, m) {
     })
     .def("check_current", &Program::checkCurrent)
     // The program of the terms that a tunable enters, alone
-    // (D[frame-evaluator-terms], docs/python-frames.md), for a frame
+    // (D243, docs/python-frames.md), for a frame
     // evaluator: built from the model of this one, with its inputs.
     .def("_dependent", [](const Program &p) {
       if (p.prepared->tunables.empty())
@@ -595,7 +595,7 @@ PYBIND11_MODULE(_core, m) {
       d["pme_grid"] = std::array<int64_t, 3>{c.program.pmeGrid[0], c.program.pmeGrid[1], c.program.pmeGrid[2]};
       d["tunables"] = tunables::describe(p.prepared->tunables, c.program);
       // The terms of the potential: all of the model, or those that a
-      // tunable enters (D[frame-evaluator-terms]).
+      // tunable enters (D243).
       if (p.prepared->control.dependentTerms)
         d["terms"] = driver::getDependentTerms(p.prepared->control, p.prepared->system).names;
       else

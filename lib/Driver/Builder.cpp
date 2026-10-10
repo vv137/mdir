@@ -61,7 +61,7 @@ public:
 private:
   /// With Control::dependentTerms, the terms that the program keeps: every
   /// potential has only these, and the host adds to the energy only what
-  /// belongs to them (D[frame-evaluator-terms]).
+  /// belongs to them (D243).
   std::optional<DependentTerms> dependent;
   llvm::Error collectParameters();
   llvm::Error emitPotential();
@@ -2008,7 +2008,7 @@ llvm::Error Builder::collectTopology() {
 
 double Builder::getTopologyDispersion(bool decoupled) const {
   // The correction and the estimate of its shift go with the
-  // Lennard-Jones (D[frame-evaluator-terms]).
+  // Lennard-Jones (D243).
   if (dependent && !dependent->lennardJones)
     return 0.0;
   const Topology &topology = *system.topology;
@@ -2159,7 +2159,7 @@ llvm::Expected<Builder::PairTail>
 Builder::getPairTail(unsigned index,
                      const llvm::StringMap<double> &changes) const {
   // The tail of a pair term goes with the term
-  // (D[frame-evaluator-terms]).
+  // (D243).
   if (dependent && !dependent->hasPair(index))
     return PairTail();
   // With a uniform density beyond the cutoff [AllenTildesley2017], each
@@ -3820,7 +3820,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int externalTerm) {
   double cutoff = control.cutoffDistance * units::length;
   // A program of the dependent terms has no other
-  // (D[frame-evaluator-terms]).
+  // (D243).
   if (dependent) {
     unsigned kept = 0;
     if (dependent->lennardJones)

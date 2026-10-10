@@ -285,7 +285,7 @@ struct Program {
 };
 
 /// The terms of a model that a tunable enters
-/// (D[frame-evaluator-terms], docs/python-frames.md): the Lennard-Jones of
+/// (D243, docs/python-frames.md): the Lennard-Jones of
 /// the pairs within the cutoff with its correction for the dispersion, if
 /// sigma or epsilon is tunable; the electrostatics, whole, if the charges
 /// are; the pair terms of which a tunable constant is read by the

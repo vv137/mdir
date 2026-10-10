@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - The frame evaluator over the terms that depend on the tunables alone
-  (D[frame-evaluator-terms], #264): `mdir.FrameEvaluator(program,
+  (D243, #264): `mdir.FrameEvaluator(program,
   terms="dependent")` compiles a second program with only the terms that a
   tunable enters (a tunable constant's pair term; a tunable parameter's
   tuple term; the Lennard-Jones for a tunable $\sigma$ or $\epsilon$; the
