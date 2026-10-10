@@ -7,7 +7,8 @@
 # checkpoint the one that wrote it; a commit of tilts through a writable
 # borrow followed by steps under the barostat equals a simulation compiled
 # from the committed state; a frame of the run is committed into the
-# simulation that ran it; 20 frames of the run are put into a second
+# simulation that ran it; a part that the barostat fails leaves the cell of
+# before with its tilts; 20 frames of the run are put into a second
 # simulation. python-triclinic-npt-cli-*.test compare the run with
 # `mdir run`.
 # RUN: rm -rf %t && mkdir -p %t
@@ -15,9 +16,11 @@
 # CHECK: Double: at constant pressure the tilts follow the barostat (by {{[0-9.e-]+}} nm in 60 steps, the shape kept within 0e+00); a run in parts equals one run to the bit, and one continued from a checkpoint the run that wrote it
 # CHECK: Double: a commit of tilts before the first step and 40 steps under the barostat, which moves the tilts by {{[0-9.e-]+}} nm, equal a simulation compiled from the committed state to the bit
 # CHECK: Double: a frame of the run committed into the simulation that ran it, 20 steps later: the evaluation equals that of a simulation compiled from the frame to the bit, and the barostat goes on from its cell
+# CHECK: Double: a part that the barostat fails after step {{[0-9]+}} leaves the cell of that step with its tilts
 # CHECK: Double: 20 frames of a Python run at constant pressure (c_x from {{[0-9.]+}} to {{[0-9.]+}} nm) put into one simulation: the energies and the forces of each equal those of a simulation compiled from the frame
 # CHECK: Mixed: at constant pressure the tilts follow the barostat (by {{[0-9.e-]+}} nm in 60 steps, the shape kept within 0e+00); a run in parts equals one run to the bit, and one continued from a checkpoint the run that wrote it
 # CHECK: Mixed: a commit of tilts before the first step and 40 steps under the barostat, which moves the tilts by {{[0-9.e-]+}} nm, equal a simulation compiled from the committed state to the bit
 # CHECK: Mixed: a frame of the run committed into the simulation that ran it, 20 steps later: the evaluation equals that of a simulation compiled from the frame to the bit, and the barostat goes on from its cell
+# CHECK: Mixed: a part that the barostat fails after step {{[0-9]+}} leaves the cell of that step with its tilts
 # CHECK: Mixed: 20 frames of a Python run at constant pressure (c_x from {{[0-9.]+}} to {{[0-9.]+}} nm) put into one simulation: the energies and the forces of each equal those of a simulation compiled from the frame
 # CHECK: triclinic npt CPU passed

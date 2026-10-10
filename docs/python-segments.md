@@ -623,6 +623,7 @@ its `-gpu` twin (`Inputs/python_dlpack_tilts.py npt`): the same cell with
 | The same | The run that did not stop, which kept its neighbor structures | $8.9\times10^{-16}$ nm in double, $5.6\times10^{-8}$ nm in mixed precision (CPU) | $10^{-12}$, $10^{-6}$ nm |
 | A commit of the tilts (0.03, −1.28, −1.29) nm through a writable borrow before the first step, then 40 steps under the barostat, which moves the tilts by $1.8\times10^{-3}$ nm | A simulation compiled from the committed state | 0 | 0 |
 | A frame of step 20 committed into the simulation that ran it, at step 40: `Borrow.tilt` before and after the commit; the forces, the potential, the virial, the pressure, and the volume of the evaluation | The tilts of the state and of the frame; a simulation compiled from the frame | 0 | 0 |
+| A barostat at $2\times10^5$ bar with a cutoff of 0.88 nm, which takes $c_z$ below twice the cutoff after two or three periods of coupling (the tilts $3.5\times10^{-2}$ nm from the start): the positions, the velocities, and the cell with its tilts that the failed run keeps | A simulation that runs to the step kept and stops | 0 | 0 |
 | 20 frames of 200 steps of a Python run at constant pressure ($c_x$ from 1.30091 to 1.30780 nm) put into a second simulation: energies and forces of each | A simulation compiled from the frame | 0 | 0 |
 
 **The frames of a Python run.** `python-triclinic-npt-frames.test` and its

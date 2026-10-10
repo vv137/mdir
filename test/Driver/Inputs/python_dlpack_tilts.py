@@ -153,11 +153,12 @@ consumer = NumpyConsumer() if target_name == "CPU" else DriverConsumer()
 
 # --- The system ---------------------------------------------------------------
 
-def make(precision, pme=True, kind="NVE", state=None, capacity=0, soft=False, grid=28):
+def make(precision, pme=True, kind="NVE", state=None, capacity=0, soft=False, grid=28,
+         pressure=1.0, tau_p=None, cutoff=CUTOFF):
     loaded = mdir.load_gromacs(root + "/water.top", root + "/dodecahedron.gro",
                                defines=["FLEXIBLE"])
     system, start = loaded.make_system(), loaded.make_state()
-    system.cutoff, system.pairlist_distance, system.switch_distance = CUTOFF, REACH, CUTOFF
+    system.cutoff, system.pairlist_distance, system.switch_distance = cutoff, REACH, cutoff
     system.truncation = mdir.Truncation.None_
     system.dispersion = mdir.DispersionCorrection.None_
     system.electrostatics = mdir.Electrostatics.PME if pme else mdir.Electrostatics.Cutoff
@@ -179,7 +180,9 @@ def make(precision, pme=True, kind="NVE", state=None, capacity=0, soft=False, gr
     if kind != "NVE":
         ensemble.temperature = 300.0
     if kind == "NPT":
-        ensemble.pressure = 1.0
+        ensemble.pressure = pressure
+        if tau_p:
+            ensemble.tau_p = tau_p
     execution.target, execution.precision = target, getattr(mdir.Precision, precision)
     execution.deterministic = True
     execution.neighbor_capacity = capacity
@@ -784,6 +787,44 @@ def npt(work):
         print(f"{precision}: a frame of the run committed into the simulation that ran it, "
               f"20 steps later: the evaluation equals that of a simulation compiled from the "
               f"frame to the bit, and the barostat goes on from its cell")
+
+        # A part that fails restores the tilts with the cell. A cutoff of
+        # 0.88 nm in a cell of 1.84 nm along z, and a barostat at 2e5 bar
+        # with a time constant of 1 ps, which takes c_z below twice the
+        # cutoff after a few periods of coupling: runs of 20 steps, two
+        # periods each, until one fails. A run is several parts, so the
+        # state kept is that of the last part that succeeded, which may
+        # be within the run that failed.
+        tight = make(precision, True, "NPT", pressure=2e5, tau_p=1.0, cutoff=0.88)
+        failing = mdir.Simulation(tight)
+        first, before = failing.state().cell, None
+        for _ in range(100):
+            try:
+                failing.run(20, energy=True)
+            except mdir.SimulationError as error:
+                assert "barostat" in str(error), str(error)
+                break
+            before = failing.state()
+        else:
+            raise AssertionError("the run did not fail")
+        assert failing.failed and before is not None and before.step > 0
+        kept = failing.state()
+        assert kept.step >= before.step and kept.step % 10 == 0
+        assert not np.array_equal(kept.cell.tilt, first.tilt)
+        assert kept.cell.diagonal[2] >= 2 * 0.88
+        # A simulation that stops before the part that fails has that state
+        # and that cell.
+        again = mdir.Simulation(tight)
+        again.run(kept.step)
+        reached = again.state()
+        for field in FIELDS[:2]:
+            assert np.array_equal(getattr(kept, field), getattr(reached, field)), field
+        assert np.array_equal(reached.cell.tilt, kept.cell.tilt), (reached.cell.tilt,
+                                                                   kept.cell.tilt)
+        assert np.array_equal(reached.cell.diagonal, kept.cell.diagonal)
+        print(f"{precision}: a part that the barostat fails after step {kept.step} leaves the "
+              f"cell of that step with its tilts, {float(np.abs(kept.cell.tilt - first.tilt).max()):.1e} "
+              f"nm from those of the start")
 
         # The frames of the run, put into a second simulation.
         source = mdir.Simulation(program)
