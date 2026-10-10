@@ -32,7 +32,10 @@ of the boundary along each axis alone lost pairs (#263).
 With `python` for MDIR the run is a Python simulation of the same model
 (D[python-triclinic-npt]), whose reporters write the two files: the neighbor
 matrix, which is the structure of every Python simulation (#270), under the
-barostat of a simulation.
+barostat of a simulation. The Python model has no key for the work of the
+barostat, so its run has the default, `work = "TROTTER"`, where the control
+file here has `"FIRST_ORDER"`; the rows of the two are of other
+configurations (see below).
 """
 import itertools
 import pathlib
@@ -166,7 +169,8 @@ def run_python():
     simulation.close_reporters()
 
 
-if cli == "python":
+TROTTER = cli == "python"
+if TROTTER:
     run_python()
 else:
     ran = subprocess.run([cli, "run", "run.toml"], cwd=work, capture_output=True, text=True)
@@ -203,9 +207,11 @@ def cell_of(frame):
 # potential of the step before the barostat scales, and the frame the
 # positions and the cell of after it, x diag(mu) and H diag(mu): the
 # configuration of the row is the frame taken back to the cell of the
-# frame before, which no scaling has changed since. A report of a Python
-# simulation is a step of energy of the state it leaves (D207): its row
-# has the potential of the frame itself, in the cell of the frame.
+# frame before, which no scaling has changed since. That is the row of
+# `work = "FIRST_ORDER"`. With `"TROTTER"`, the work of a Python
+# simulation, the scaling is within the drift of the step and the row has
+# the potential of the frame itself, in the cell of the frame (`mdir run`
+# without the key gives the same rows).
 frames = mdir.read_h5md(str(work / "run.h5md"))
 compared = wrong = beyond = 0
 worst, least = 0.0, np.inf
@@ -213,7 +219,7 @@ before = None
 for frame in frames:
     step, after = int(frame.step), cell_of(frame)
     if before is not None and step in rows:
-        H = after if cli == "python" else before
+        H = after if TROTTER else before
         x = np.asarray(frame.positions) * (np.diag(H) / np.diag(after))
         half = 0.5 * min(H[0, 0], H[1, 1], H[2, 2])
         assert half >= CUTOFF, (step, half)

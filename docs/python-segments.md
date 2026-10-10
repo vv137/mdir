@@ -570,7 +570,8 @@ validated by D127.
 isotropic coupling alone: `mdir.Ensemble` has no key for the
 `coupling = "SEMI_ISOTROPIC"` and `"ANISOTROPIC"` of `[barostat]`, which
 `mdir run` takes in a triclinic cell as well, so there is no such program
-to refuse or to compare. A Python simulation has the neighbor matrix
+to refuse or to compare; nor has it one for `work`, whose default,
+`TROTTER`, is the work of every Python simulation. A Python simulation has the neighbor matrix
 ([#270](https://github.com/vv137/mdir/issues/270)), which holds every
 image within its reach whatever the barostat does to the cell (D241); the
 stop of a run whose barostat takes the cell below the reach of the groups
@@ -638,11 +639,14 @@ volume, and the forces of each equal to those of a simulation compiled
 from it. The tests of D238 and D240 took these frames from `mdir run`.
 
 **A cell that the barostat shrinks.** `python-triclinic-reach.test` and its
-`-gpu` twin: the run of `triclinic-reach.test` (D241) as a Python
-simulation, 216 argon atoms in a cell with every tilt on its bound that
+`-gpu` twin: the system of `triclinic-reach.test` (D241) in a Python
+simulation, whose barostat has the default work (`TROTTER`; the Python
+model has no key for it, and the control file of that test has
+`FIRST_ORDER`), 216 argon atoms in a cell with every tilt on its bound that
 stochastic cell rescaling at 20,000 atm takes from 2.2 to 1.92 nm, with a
 pairlist distance of 1.1 nm, beyond half of the least of the diagonal at
-each of the 79 frames. The potential of each row equals the sum in NumPy
+each of the 79 frames. The potential of each row, which with that work is
+of the configuration and the cell of the frame of its step, equals the sum in NumPy
 over every image of every pair within the cutoff to $10^{-5}$ kcal/mol (0
 frames of 79 differ), on the CPU and on the device.
 
