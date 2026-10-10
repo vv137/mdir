@@ -619,6 +619,10 @@ PYBIND11_MODULE(_core, m) {
           p.prepared->control.neighborStructure == driver::NeighborStructure::Groups ? "groups" : "matrix";
       d["pruned_distance"] = p.prepared->control.prunedDistance * driver::units::length;
       d["entry"] = c.program.entry;
+      d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";
+      d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";
+      d["pme"] = c.program.pme;
+      d["pme_grid"] = std::array<int64_t, 3>{c.program.pmeGrid[0], c.program.pmeGrid[1], c.program.pmeGrid[2]};
       // The barostat of the program: its coupling and its work, or None
       // without one (D[python-barostat]).
       {
@@ -634,10 +638,6 @@ PYBIND11_MODULE(_core, m) {
           d["barostat"] = py::none();
         }
       }
-      d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";
-      d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";
-      d["pme"] = c.program.pme;
-      d["pme_grid"] = std::array<int64_t, 3>{c.program.pmeGrid[0], c.program.pmeGrid[1], c.program.pmeGrid[2]};
       d["tunables"] = tunables::describe(p.prepared->tunables, c.program);
       // The terms of the potential: all of the model, or those that a
       // tunable enters (D243).
