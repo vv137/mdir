@@ -33,8 +33,9 @@ mdir.read_checkpoint("prod.h5")           # a read-only view of a checkpoint
 
 - `Simulation.save_checkpoint(path)` writes the state after the last run:
   step, time, positions, velocities, the forces the next step begins with,
-  the cell, the energy the coupling has taken (`bath`), the fingerprint, and
-  the entries below. The file appears under its name only when it is
+  the cell, the energy the coupling has taken (`bath`), the state of a
+  Nosé–Hoover chain (`thermostat_state`, D[python-thermostats]), the
+  fingerprint, and the entries below. The file appears under its name only when it is
   complete and on stable storage; the one it replaces stays as
   `path + ".prev"` (D132, D173). It is the writer of `mdir run`, called on
   the host, not through the compiled code. A step begins with forces, so a

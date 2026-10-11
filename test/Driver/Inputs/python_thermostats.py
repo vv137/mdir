@@ -476,9 +476,7 @@ def refusals():
     print("thermostats refusals passed")
 
 
-if scenario == "none":
-    pass
-elif scenario == "refusals":
+if scenario == "refusals":
     refusals()
 else:
     cases()
