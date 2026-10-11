@@ -615,7 +615,10 @@ file of the same model writes, for a setting given explicitly; the
 defaults of the Python model are those of the control file
 (D248), so a setting left out is the same in both, and a
 Python script and a control file of the same model continue each other's
-run, and a change of either is named. Tunable parameters, the
+run, and a change of either is named. The coupling $\mathcal C$ of a
+Python model is any that the control file states: stochastic velocity
+rescaling, Langevin dynamics, a Nosé–Hoover chain, whose state the
+checkpoint holds, or Brownian dynamics (D[python-thermostats]). Tunable parameters, the
 front end, and hashes of the model and the plan are additional entries of
 format 1 with a hash of their own. A simulation that writes a checkpoint
 goes on from the state written, with new neighbor structures, as `mdir run`

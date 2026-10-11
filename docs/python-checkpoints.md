@@ -197,6 +197,19 @@ with another structure is the same run with other execution, with a note.
 entries `[barostat] coupling` and `[barostat] work` of the group
 `coupling`, when the field was set or is not the default of an absent key.
 
+`Ensemble.thermostat` (D[python-thermostats]) is the entry
+`[thermostat] method` of the group `coupling`, always written under a
+thermostat, as the control file must write the key: `"V-RESCALE"`,
+`"LANGEVIN"`, or `"NOSE-HOOVER"`. With it, `[thermostat] friction` under
+Langevin dynamics, `[thermostat] chain_length` when the field was set or
+is not 3 under a Nosé–Hoover chain, `[thermostat] time_constant` when
+`tau_t` was set (not under Langevin dynamics), and `[thermostat] interval`
+when `coupling_period` was set. Brownian dynamics has `[dynamics]
+integrator`, `[dynamics] friction`, and `[ensemble] ensemble = "NVT"`, and
+no entry of `[thermostat]`. A checkpoint holds the state of a Nosé–Hoover
+chain, which a continuation takes in either front end
+([python-model.md](python-model.md#the-thermostats-and-brownian-dynamics)).
+
 Settings without a control-file key (custom terms in Python's units,
 tunables) have entries of their own: a CLI run never has them, so a
 checkpoint with them is a new stage for `mdir run`, never `--continue`.
@@ -212,7 +225,7 @@ without the keys writes none; the rule below still writes the methods:
 | `switch_distance` | 1.0 nm (switch on) | equal to `cutoff` (no switch) |
 | `pairlist_distance` (execution group) | 1.35 nm | `cutoff` + 1.5 Å |
 | `center_of_mass_interval` under NVT/NPT | 0 (no removal) | the thermostat interval |
-| thermostat and barostat methods | implied by `Ensemble.kind` | must be written (Python: still implied) |
+| thermostat and barostat methods | implied by `Ensemble.kind` | must be written (Python: `Ensemble.thermostat`, stochastic velocity rescaling by default, since D[python-thermostats]; the barostat still implied) |
 
 Recording only given settings would let a Python model and a control file
 that both leave out `switch_distance` look identical with different

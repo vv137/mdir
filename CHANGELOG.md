@@ -12,6 +12,20 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The thermostats of the control file and Brownian dynamics in the Python
+  model (D[python-thermostats], #278): `Ensemble.thermostat`
+  (`mdir.ThermostatMethod.VRescale`, the default, `Langevin`,
+  `NoseHoover`), `Ensemble.friction` (1/ps, for Langevin dynamics), and
+  `Ensemble.chain_length` (3 by default, for a Nosé–Hoover chain), the
+  `method`, `friction`, and `chain_length` of `[thermostat]`; and
+  `mdir.IntegratorMethod.Brownian`, refused until now, with
+  `Integrator.friction`, the `friction` of `[dynamics]`, under
+  `EnsembleKind.NVT`. The refusals are those of the control file with its
+  words. `Program.plan["thermostat"]` and `["integrator"]`;
+  `Checkpoint.thermostat_state`. A checkpoint of a Python simulation holds
+  the state of the chain and continues in either front end. Each runs to
+  the bit of `mdir run` in the deterministic mode, on the CPU and a GPU,
+  in double and mixed precision.
 - The groups of 16 and the dual list in the Python model
   (D245, #270): `Execution.neighbor_structure`
   (`mdir.NeighborStructure.Matrix`, the default, or `Groups`) and
@@ -384,6 +398,14 @@ format, or the outputs; every such change is listed under **Changed** or
   A system given to both front ends with nothing beyond its inputs now
   runs to the same bits in the deterministic mode. `mdir run` and the
   control file are unchanged.
+- `Ensemble.coupling_period` of the Python model reads `None` until it is
+  set, where it read 10 (D[python-thermostats], #278): the control file
+  without `interval`, as the defaults above. For stochastic velocity
+  rescaling and a Nosé–Hoover chain that is every 10 steps as before (or
+  `com_period`, where that is set and not 0, which was refused when it was
+  not 10); under Langevin dynamics it is 10 with a barostat and no period
+  without one. A script that reads the attribute before setting it gets
+  `None`; `ensemble.coupling_period = 10` states the old value.
 - With the groups, `pairlist_distance` may be up to 0.999 of the least
   edge of the cell (the least of $a_x, b_y, c_z$ of a triclinic one),
   where a triclinic cell was limited to half of it and an orthorhombic
