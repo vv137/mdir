@@ -41,13 +41,32 @@ projection, waters first. A particle without mass is a virtual site:
 **Leapfrog** [[HockneyEastwood1988]](references.md#hockneyeastwood1988) stores $\mathbf v_{n-\frac12}$; its
 plain step is $\mathbf u = \mathbf v_{n-\frac12} + \Delta t\,\mathbf a_n$
 followed by the same drift, constraint, and correction, with no second
-kick. A step that needs the velocity at time $n$ (for the virial of the
-constraints, the log, or the barostat) computes
-$\mathbf u = \mathcal P_{\mathbf x_n}(\mathbf v_{n-\frac12} + h\mathbf
-a_n) + h\mathbf a_n$, the projected velocity of time $n$ kicked again,
-and continues as velocity Verlet; the two then give the same trajectory
-to rounding (`test/Driver/leapfrog-constraints.test` compares their logs
-to $10^{-7}$, D76). A run that starts leapfrog from velocities of time 0
+kick. Velocity Verlet drifts instead with
+$\mathbf u' = \mathcal P_{\mathbf x_n}(\mathbf v_{n-\frac12} + h\mathbf
+a_n) + h\mathbf a_n$, the projected velocity of time $n$ kicked again.
+The two differ by $\mathbf v_\parallel = (1 - \mathcal P_{\mathbf
+x_n})(\mathbf v_{n-\frac12} + h\mathbf a_n)$, along the directions in
+which the constraints move the particles back, so both drifts are brought
+to the same $\mathbf x_{n+1}$ and the corrected velocities are the same:
+the two integrators give the same trajectory to rounding
+(`test/Driver/leapfrog-constraints.test` compares their logs to $10^{-7}$,
+D76). A step that needs the virial of the constraints takes the drift
+with $\mathbf u'$ on the side, for that virial alone, and leaves the
+state of the plain step to the bit. The argument fails where the
+velocities change within the drift: under Langevin dynamics, whose
+friction takes $\mathbf u$ to $c\,\mathbf u + \dots$ at its middle
+(Section 6.3), the drifts differ by $h(1 + c)\mathbf v_\parallel$ and the
+stored velocities by $-\tfrac{1-c}{2}\mathbf v_\parallel$, and in the step
+that scales the cell (Section 6.4) by $\tfrac{1/\mu - 1}{2}
+\mathbf v_\parallel$. There every leapfrog step drifts with $\mathbf u'$,
+as velocity Verlet does; on a dipeptide in water at 2 fs and
+$\gamma$ = 1/ps a step with $\mathbf u$ leaves the velocities
+$1.3\times10^{-3}$ nm/ps away, and a NumPy reference of the step with
+constraints agrees with MDIR's within $2\times10^{-12}$ nm/ps
+(`test/Driver/leapfrog-langevin-reference.test`). In the deterministic
+mode a leapfrog run ends in the same state to the bit whatever steps
+write rows of energies (`test/Driver/leapfrog-energy-step.test`). A run
+that starts leapfrog from velocities of time 0
 takes $\mathbf v_{-\frac12} = \mathbf v_0 - h\mathbf a_0$.
 
 **Brownian dynamics** (`integrator = "BROWNIAN"`, D163b) is the limit of

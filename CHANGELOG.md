@@ -382,6 +382,44 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **Leapfrog with constraints: every step leaves the state of the plain
+  step, and under Langevin dynamics the plain step is the documented one**
+  (#285). With SHAKE or SETTLE, a step that writes a row of energies (and
+  every other step with the virial) began from the projected velocities of
+  the time of the positions, as velocity Verlet does, and the plain step
+  from a kick of a whole step. The two agree to rounding only while the
+  velocities do not change within the drift. Trajectories change as
+  follows; control files, checkpoints, and file formats do not.
+  - *Leapfrog, Langevin dynamics, constraints.* The friction acted on the
+    part of the kick along the constraints, and the stored velocities of a
+    plain step were off the documented step (that of velocity Verlet,
+    D135) by $(1 - e^{-\gamma\Delta t})/2$ of that part: 1.3 × 10⁻³ nm/ps
+    after one step at 1/ps and 2 fs on a dipeptide in water, 2.9 × 10⁻⁵ nm
+    in the positions after 20 steps. Every step now takes the form of
+    velocity Verlet, and leapfrog follows velocity Verlet to rounding
+    (2.9 × 10⁻¹⁴ nm after 20 steps); a NumPy reference of the step with
+    constraints agrees within 2 × 10⁻¹² nm/ps. The plain step has one
+    projection of the velocities more: on JAC of the Amber suite (23,558
+    atoms, RTX 4090, mixed precision) 0.149 ms a step instead of 0.135,
+    9% slower, and 0.160 instead of 0.148 with stochastic cell rescaling.
+    Runs with velocity Verlet are not affected.
+  - *Leapfrog, constraints, the barostat with `work =
+    "TROTTER_FIRST_ORDER"`.* The step that scales the cell had the same
+    defect with $1/\mu$ for the friction when it took no energies:
+    8.3 × 10⁻⁷ nm after 20 steps at 2000 atm. It now takes the form of
+    velocity Verlet with or without them.
+  - *Leapfrog, constraints, otherwise* (constant energy, velocity
+    rescaling, the Nosé–Hoover chain, the other steps of the barostats).
+    The state after a step with the virial is now that of the plain step
+    to the bit, where it differed by rounding (2 × 10⁻¹⁴ nm after 20
+    steps); the step takes the drift of velocity Verlet on the side for
+    the virial of the constraints. The rows of the energy file are the
+    same at their six decimals.
+
+  Two runs that differ only in `energy_interval`, and a Python simulation
+  in parts that do not follow the rows of `mdir run`, now end in the same
+  state to the bit in the deterministic mode. Leapfrog without constraints
+  was so already.
 - **The defaults of the Python model are those of the control file**
   (D248, #281). A script that relied on a default below gets
   another model than before; the last column gets the old one back.
