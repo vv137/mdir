@@ -228,7 +228,21 @@ def FuseLoops : Pass<"md-exec-fuse-loops", "::mlir::ModuleOp"> {
     none of them, move after the second (D150), as the sum of the virials
     of the sums over the centers of groups does while the weight of each
     next loop is computed between them.
+
+    With `integration-runs`, a loop over particles that reads a destination
+    of a loop over the tuples of a disjoint set is not fused with a later
+    one whose destination such a loop reads. A device joins a loop over
+    particles, the loops over disjoint tuples that read it, and the loop
+    over particles that reads them into one kernel (D110), and a loop is
+    the loop after of one run or the loop before of the next, not both: the
+    projection of the velocities of a leapfrog step and the constraints of
+    the positions that follow its drift are then one kernel each.
   }];
+  let options = [
+    Option<"integrationRuns", "integration-runs", "bool", /*default=*/"false",
+           "Leave apart the loop over particles that closes a run of loops "
+           "over disjoint tuples and the one that opens the next">
+  ];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect"];
 }
 

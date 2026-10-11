@@ -260,6 +260,35 @@ static bool canMoveUp(ParticleForOp first, ParticleForOp second) {
   return available;
 }
 
+/// Returns true if `loop` is a loop over the tuples of a disjoint set
+/// without global sums: one that a device joins with the loop over
+/// particles before it and the one after it (D110).
+static bool isOfIntegrationRun(Operation *op) {
+  auto loop = dyn_cast_or_null<TupleForOp>(op);
+  return loop && loop.getDisjoint() && loop.getReduce().empty();
+}
+
+/// Returns true if `loop` reads a destination of a loop over disjoint
+/// tuples: it is the loop after of a run of them.
+static bool closesIntegrationRun(ParticleForOp loop) {
+  return llvm::any_of(loop.getIns(), [](Value in) {
+    return isOfIntegrationRun(in.getDefiningOp());
+  });
+}
+
+/// Returns true if a loop over disjoint tuples reads a destination of
+/// `loop`, which has no global sums: it is the loop before of a run of
+/// them.
+static bool opensIntegrationRun(ParticleForOp loop) {
+  if (!loop.getReduce().empty())
+    return false;
+  for (Value result : loop->getResults())
+    for (Operation *user : result.getUsers())
+      if (isOfIntegrationRun(user))
+        return true;
+  return false;
+}
+
 /// Replaces `first` and `second` with one loop, placed at `point`, which
 /// is one of the two. The kernel of a particle runs the first kernel and
 /// then the second, which reads what the first has yielded for that
@@ -380,7 +409,7 @@ static void fuse(ParticleForOp first, ParticleForOp second,
 
 /// Fuses two loops over particles of `block`, if two can be fused. Returns
 /// true if it did.
-static bool fuseParticleLoopsOnce(Block &block) {
+static bool fuseParticleLoopsOnce(Block &block, bool integrationRuns) {
   SmallVector<ParticleForOp> loops;
   for (Operation &op : block)
     if (auto loop = dyn_cast<ParticleForOp>(&op))
@@ -391,6 +420,13 @@ static bool fuseParticleLoopsOnce(Block &block) {
       ParticleForOp first = loops[i];
       ParticleForOp second = loops[j];
       if (!canFollow(first, second))
+        continue;
+      // One loop that closes a run of loops over disjoint tuples and opens
+      // the next would leave the second run without a loop before of its
+      // own, and its loops and the loop after them three kernels on a
+      // device (D110): the two stay apart, and each run is one kernel.
+      if (integrationRuns && closesIntegrationRun(first) &&
+          opensIntegrationRun(second))
         continue;
       if (canMoveDown(first, second)) {
         fuse(first, second, second);
@@ -711,7 +747,7 @@ public:
         ;
       while (fuseTupleLoopsOnce(*block))
         ;
-      while (fuseParticleLoopsOnce(*block))
+      while (fuseParticleLoopsOnce(*block, integrationRuns))
         ;
     }
   }

@@ -1,0 +1,82 @@
+# The kernels of a leapfrog step under Langevin dynamics with constraints
+# (#287, D[leapfrog-langevin-kernels]). The step projects the velocities
+# after its first half kick and constrains the positions after its drift:
+# two runs of loops over the tuples of the constraints. On a device each
+# is one integration kernel with the loop over particles before it and
+# the one after it, and a second kernel for the tuples across warps
+# (D110), because `md-exec-fuse-loops` leaves apart the loop that closes
+# the first run and the one that opens the second. Fused, the one loop
+# was the loop after of the first run, and the constraints of the
+# positions and the loop after them were kernels of their own. The 19
+# plain steps of the run launch four integration kernels each; without
+# the option of the pass, two. The state at the end is the same to the
+# bit, in double and in mixed precision.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t/double %t/mixed
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' \
+# RUN:     | sed 's|INPUTS|%S/Inputs|' > %t/double/run.toml
+# RUN: sed 's|^precision = "DOUBLE"|precision = "MIXED"|' %t/double/run.toml > %t/mixed/run.toml
+# RUN: sed 's|run.h5|fused.h5|' %t/double/run.toml > %t/double/fused.toml
+# RUN: sed 's|run.h5|fused.h5|' %t/mixed/run.toml > %t/mixed/fused.toml
+#
+# RUN: cd %t/double && mdir emit run.toml --stage=pipeline > apart.pipeline
+# RUN: FileCheck %s --check-prefix=PIPELINE < %t/double/apart.pipeline
+# RUN: sed 's|md-exec-fuse-loops{integration-runs=true}|md-exec-fuse-loops|' %t/double/apart.pipeline > %t/double/fused.pipeline
+# RUN: cd %t/double && env MDRT_PROFILE=1 MDRT_WAIT=1 mdir run run.toml > apart.log 2>&1
+# RUN: cd %t/double && sh -c 'MDRT_PROFILE=1 MDRT_WAIT=1 MDIR_PIPELINE="$(cat fused.pipeline)" mdir run fused.toml' > fused.log 2>&1
+# RUN: FileCheck %s --check-prefix=APART < %t/double/apart.log
+# RUN: FileCheck %s --check-prefix=FUSED < %t/double/fused.log
+# RUN: mdir checkpoint %t/double/run.h5 %t/double/fused.h5 | FileCheck %s
+#
+# RUN: cd %t/mixed && mdir emit run.toml --stage=pipeline \
+# RUN:     | sed 's|md-exec-fuse-loops{integration-runs=true}|md-exec-fuse-loops|' > fused.pipeline
+# RUN: cd %t/mixed && env MDRT_PROFILE=1 MDRT_WAIT=1 mdir run run.toml > apart.log 2>&1
+# RUN: cd %t/mixed && sh -c 'MDRT_PROFILE=1 MDRT_WAIT=1 MDIR_PIPELINE="$(cat fused.pipeline)" mdir run fused.toml' > fused.log 2>&1
+# RUN: FileCheck %s --check-prefix=APART < %t/mixed/apart.log
+# RUN: FileCheck %s --check-prefix=FUSED < %t/mixed/fused.log
+# RUN: mdir checkpoint %t/mixed/run.h5 %t/mixed/fused.h5 | FileCheck %s
+
+# PIPELINE: md-exec-fuse-loops{integration-runs=true},
+# APART-COUNT-4: mdir_run_particle_for_l{{[0-9]+}}_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
+# APART-NOT: _integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
+# FUSED-COUNT-2: mdir_run_particle_for_l{{[0-9]+}}_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
+# FUSED-NOT: _integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
+# CHECK: the states are identical
+
+#--- run.toml
+[input]
+topology = "INPUTS/dipeptide/dipeptide.prmtop"
+coordinates = "INPUTS/dipeptide/dipeptide.inpcrd"
+[energy]
+cutoff = 8.0
+pairlist_distance = 9.0
+electrostatics = "PME"
+[pme]
+grid = [32, 32, 32]
+[constraints]
+hydrogen_bonds = true
+rigid_water = true
+[dynamics]
+integrator = "LEAPFROG"
+time_step = 0.002
+steps = 20
+seed = 2024
+[output]
+energy_interval = 20
+checkpoint = "run.h5"
+checkpoint_interval = 20
+[ensemble]
+ensemble = "NVT"
+temperature = 300.0
+[thermostat]
+method = "LANGEVIN"
+friction = 1.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "GPU"
+precision = "DOUBLE"
+deterministic = true
+#--- end
