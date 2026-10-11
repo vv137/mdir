@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5, cuda
 # The thermostats of the control file and Brownian dynamics in a Python
-# simulation (D[python-thermostats], #278) against `mdir run` of the same
+# simulation (D249, #278) against `mdir run` of the same
 # control on a GPU, in double precision in the deterministic mode: the
 # dipeptide in water (1,168 particles, PME, SHAKE and SETTLE), 40 steps.
 # Langevin dynamics at constant volume (no period of coupling), with

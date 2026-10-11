@@ -308,7 +308,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.integrator = integrator.method;
   c.minimize = integrator.minimize;
   // Brownian dynamics, with the refusals and the words of the control file
-  // (Reader::readDynamics and Reader::read; D163b, D[python-thermostats]):
+  // (Reader::readDynamics and Reader::read; D163b, D249):
   // its friction is that of `[dynamics]`, Integrator.friction, and it
   // takes no thermostat, no barostat, and no removal of a momentum that
   // it does not have.
@@ -354,7 +354,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.tauT = ensemble.tauT;
   if (brownian) c.friction = *integrator.friction;
   // The thermostat, as Reader::readThermostat takes it, with its refusals
-  // and its words (D135, D163a; D[python-thermostats]). Its fields are of
+  // and its words (D135, D163a; D249). Its fields are of
   // a thermostat: without one they are not read, as `tau_t` is not.
   if (c.thermostat) {
     c.thermostatMethod = ensemble.thermostat;
@@ -443,7 +443,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   }
   // Not given: as the control file without `interval`, which
   // `resolveControlCoupling` settles for the thermostat, and the barostat
-  // with it (D[python-thermostats]).
+  // with it (D249).
   c.thermostatPeriod = c.thermostat ? ensemble.couplingPeriod.value_or(-1) : 0;
   c.barostatPeriod = c.barostat ? ensemble.couplingPeriod.value_or(-1) : 0;
   // Not given: as the control file without `center_of_mass_interval`,

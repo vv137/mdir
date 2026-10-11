@@ -182,7 +182,7 @@ int main(int argc, char **argv) {
   auto precision=execution.precision;
   execution.precision=driver::Precision::Single; reject(prepare(),unsupported); execution.precision=precision;
   // Brownian dynamics needs its friction, as `[dynamics]` of the control file
-  // (D[python-thermostats]).
+  // (D249).
   integrator.method=driver::Integrator::Brownian; reject(prepare(),input); integrator.method=c.integrator;
   driver::PairTerm pair;
   pair.name="custom"; pair.expression="k*(r-r0)^2";

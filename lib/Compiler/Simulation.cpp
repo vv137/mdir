@@ -600,7 +600,7 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   output->couples = control.getCouplingPeriod() > 0 && !control.isLangevin();
   output->changesCell = control.barostat;
   // Brownian dynamics has no momenta (D163b), and a Nose-Hoover chain
-  // begins at rest (D163a), as in `mdir run` (D[python-thermostats]).
+  // begins at rest (D163a), as in `mdir run` (D249).
   output->overdamped = control.isBrownian();
   output->setChain(control, system);
   output->bathKinetic = 0.5 * system.getDegreesOfFreedom() *
@@ -2628,7 +2628,7 @@ llvm::Error Simulation::saveCheckpoint(const std::string &path,
   }
   checkpoint.bath = output->bath;
   // The state of a Nose-Hoover chain (D163a), which `mdir run --continue`
-  // and a simulation take (D[python-thermostats]).
+  // and a simulation take (D249).
   checkpoint.thermostatState = output->chain;
   checkpoint.fingerprint = prepared.fingerprint;
   checkpoint.creatorVersion = creatorVersion;

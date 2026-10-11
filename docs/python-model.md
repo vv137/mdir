@@ -29,7 +29,7 @@ leapfrog, minimization, NVE, stochastic velocity rescaling NVT, and isotropic
 stochastic cell rescaling NPT are included, on CPU/GPU, mixed/double (the
 semi-isotropic and the anisotropic coupling and the works of the barostat
 since D247, [python-segments.md](python-segments.md); Langevin dynamics, a
-Nosé–Hoover chain, and Brownian dynamics since D[python-thermostats],
+Nosé–Hoover chain, and Brownian dynamics since D249,
 [below](#the-thermostats-and-brownian-dynamics)).
 Basic custom pair and tuple expressions are included with MD-unit coordinate
 and energy adaptation at the boundary. Other expression families, implicit
@@ -382,7 +382,7 @@ was two.
 | The correction for the dispersion, in effect | off, with the warning `dispersion_switched` (the default switch turned it off) | on (`EnergyPressure`), without a warning | follows from the switch; or `system.dispersion = mdir.DispersionCorrection.None_` |
 | `System.pairlist_distance` | 1.35 nm | 0.15 nm beyond the cutoff; it follows `System.cutoff` until it is set (equal at the default cutoff) | `system.pairlist_distance = 1.35` |
 | `Ensemble.com_period` | 0: the motion of the center of mass is never removed | `None`: with a thermostat every `coupling_period`, without one never | `ensemble.com_period = 0` |
-| `Ensemble.coupling_period` (since D[python-thermostats]) | 10 | `None`: every 10 steps, or `com_period` where given; under Langevin dynamics 10 with a barostat and no period without one | `ensemble.coupling_period = 10` |
+| `Ensemble.coupling_period` (since D249) | 10 | `None`: every 10 steps, or `com_period` where given; under Langevin dynamics 10 with a barostat and no period without one | `ensemble.coupling_period = 10` |
 | A state without velocities | begins at rest | takes the velocities that `mdir run` draws: at `Ensemble.temperature`, with `Ensemble.seed` | `state.velocities = numpy.zeros((N, 3))` |
 
 - *The truncation.* The control file without `lennard_jones_modifier` and
@@ -439,7 +439,7 @@ cutoff, no reach, no truncation, no velocities, no periods.
 
 ## The thermostats and Brownian dynamics
 
-D[python-thermostats] (#278; from the inventory of #270). The Python model
+D249 (#278; from the inventory of #270). The Python model
 had stochastic velocity rescaling alone, implied by `Ensemble.kind`. It
 takes the thermostats of the control file and Brownian dynamics now, with
 the names, the values, and the refusals of the control file:

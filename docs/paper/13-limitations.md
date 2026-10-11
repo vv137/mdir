@@ -159,7 +159,7 @@ exact and the first-order work take it; the Python model has the
 couplings and the works of the barostat, with the compressibility of each
 axis, that of z, and the surface tension, since D247, and the
 thermostats of the control file and Brownian dynamics since
-D[python-thermostats]).
+D249).
 
 *M2b, differentiable simulation* (D195). The parameters of a potential
 fitted to ensemble averages by reweighting stored frames

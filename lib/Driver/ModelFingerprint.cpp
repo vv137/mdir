@@ -280,7 +280,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   if (has(given.integrator, "timestep"))
     add("coupling", "[dynamics] time_step", number(integrator.timestep));
   // The friction of Brownian dynamics, the key of `[dynamics]`
-  // (D163b; D[python-thermostats]).
+  // (D163b; D249).
   bool brownian = integrator.method == driver::Integrator::Brownian;
   if (brownian && integrator.friction)
     add("coupling", "[dynamics] friction", number(*integrator.friction));
@@ -307,7 +307,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     add("coupling", "[ensemble] pressure", number(ensemble.pressure / atm));
   if (thermostat) {
     // The method, which the control file always writes, and the keys of
-    // each method as it writes them (D[python-thermostats]): Langevin
+    // each method as it writes them (D249): Langevin
     // dynamics has its friction and no time constant.
     bool langevin = ensemble.thermostat == driver::ThermostatMethod::Langevin;
     bool chain = ensemble.thermostat == driver::ThermostatMethod::NoseHoover;

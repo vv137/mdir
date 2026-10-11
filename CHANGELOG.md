@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - The thermostats of the control file and Brownian dynamics in the Python
-  model (D[python-thermostats], #278): `Ensemble.thermostat`
+  model (D249, #278): `Ensemble.thermostat`
   (`mdir.ThermostatMethod.VRescale`, the default, `Langevin`,
   `NoseHoover`), `Ensemble.friction` (1/ps, for Langevin dynamics), and
   `Ensemble.chain_length` (3 by default, for a Nosé–Hoover chain), the
@@ -399,7 +399,7 @@ format, or the outputs; every such change is listed under **Changed** or
   runs to the same bits in the deterministic mode. `mdir run` and the
   control file are unchanged.
 - `Ensemble.coupling_period` of the Python model reads `None` until it is
-  set, where it read 10 (D[python-thermostats], #278): the control file
+  set, where it read 10 (D249, #278): the control file
   without `interval`, as the defaults above. For stochastic velocity
   rescaling and a Nosé–Hoover chain that is every 10 steps as before (or
   `com_period`, where that is set and not 0, which was refused when it was

@@ -1,5 +1,5 @@
 """The thermostats of the control file and Brownian dynamics in a Python
-simulation (D[python-thermostats], #278, docs/python-model.md) against
+simulation (D249, #278, docs/python-model.md) against
 `mdir run` of the same control, to the bit in the deterministic mode.
 
 Usage: python_thermostats.py INPUTS TARGET PRECISION MDIR WORK SCENARIO [CASE...]

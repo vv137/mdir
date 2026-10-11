@@ -85,8 +85,8 @@ snake case; defaults and the supported physics subset are those of
 |---|---|
 | System | `periodic`, `cutoff`, `pairlist_distance`, `pruned_distance` (D245), `switch_distance`, `truncation`, `electrostatics`, `coulomb_modifier`, `dispersion`, `pme_alpha`, `pme_tolerance`, `pme_spacing`, `pme_grid`, `pme_order`, `pme_influence`, `analytic_bonds` (D246), `rigid_hydrogen_bonds`, `rigid_water`, `flexible_water`, `water_residues`, `pair_terms`, `tuple_terms`, `restraints`, `restraint_reference`, `tunables` (D213); read-only `dispersion_given` (D222), `particle_count`, `topology` (D221, [python-topology.md](python-topology.md)) |
 | InitialState | `positions`, `velocities`, `cell` |
-| Integrator | `method`, `friction` (D[python-thermostats]), `timestep`, `minimize`, `minimize_step` |
-| Ensemble | `kind`, `temperature`, `thermostat`, `friction`, `chain_length` (D[python-thermostats]), `tau_t`, `pressure`, `tau_p`, `compressibility`, `barostat_coupling`, `barostat_work`, `compressibility_z`, `surface_tension`, `surfaces` (D247), `coupling_period`, `com_period`, `seed` |
+| Integrator | `method`, `friction` (D249), `timestep`, `minimize`, `minimize_step` |
+| Ensemble | `kind`, `temperature`, `thermostat`, `friction`, `chain_length` (D249), `tau_t`, `pressure`, `tau_p`, `compressibility`, `barostat_coupling`, `barostat_work`, `compressibility_z`, `surface_tension`, `surfaces` (D247), `coupling_period`, `com_period`, `seed` |
 | Execution | `target`, `precision`, `device`, `threads`, `deterministic`, `reorder`, `fast_math`, `neighbor_capacity` (D227), `neighbor_structure` (D245) |
 | Schedule | `steps`, `energy_period` |
 

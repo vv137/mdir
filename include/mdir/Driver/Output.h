@@ -262,7 +262,7 @@ struct Output {
   /// masses, the time and the parts of one action, and its state, that of
   /// `system.thermostatState` where it has the length of the chain (a
   /// checkpoint's), or at rest. Without such a thermostat, no chain. Both
-  /// front ends call it (D[python-thermostats]).
+  /// front ends call it (D249).
   void setChain(const Control &control, const System &system);
   /// Whether a barostat changes the cell, which the log then shows.
   bool changesCell = false;

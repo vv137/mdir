@@ -54,7 +54,7 @@ cannot be imported raises `InputError` too.
 | `Integrator.minimize_step` | nm | scalar |
 | `Ensemble.temperature` | K | scalar |
 | `Ensemble.tau_t`, `Ensemble.tau_p` | ps | scalar |
-| `Ensemble.friction`, `Integrator.friction` (D[python-thermostats]) | 1/ps | scalar, or `None` |
+| `Ensemble.friction`, `Integrator.friction` (D249) | 1/ps | scalar, or `None` |
 | `Ensemble.pressure` | bar | scalar |
 | `Ensemble.compressibility` | 1/bar | scalar |
 | `Simulation.part_seconds` | s (wall-clock time) | scalar |

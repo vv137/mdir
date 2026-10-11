@@ -323,7 +323,7 @@ the switch and the pairlist distance from the cutoff, the center of mass
 with the thermostat, drawn velocities for a state without them): a system
 given to both front ends with nothing beyond its inputs runs to the same
 bits. A breaking change of the Python API, listed in the changelog.
-D[python-thermostats] (#278) gives the Python model the thermostats of
+D249 (#278) gives the Python model the thermostats of
 the control file and Brownian dynamics (`Ensemble.thermostat`,
 `Ensemble.friction`, `Ensemble.chain_length`, `Integrator.friction`):
 Langevin dynamics (F1), a Nosé–Hoover chain, and Brownian dynamics (F10)

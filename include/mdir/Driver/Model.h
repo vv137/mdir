@@ -214,7 +214,7 @@ llvm::Expected<LoadedData> loadCharmm(llvm::StringRef structure,
                                     const driver::Cell &cell = {});
 struct Integrator {
   /// `[dynamics] integrator`; Brownian dynamics (D163b;
-  /// D[python-thermostats]) takes `friction` and `EnsembleKind::NVT`,
+  /// D249) takes `friction` and `EnsembleKind::NVT`,
   /// whose temperature is that of the bath, and no thermostat.
   driver::Integrator method = driver::Integrator::VelocityVerlet;
   /// `[dynamics] friction`, in 1/ps: of Brownian dynamics, which needs it,
@@ -230,7 +230,7 @@ struct Ensemble {
   double temperature = 298.15, tauT = 1.0;
   /// `[thermostat] method` of the control file, for NVT and NPT: stochastic
   /// velocity rescaling, Langevin dynamics by the middle scheme (D135), or
-  /// a Nose-Hoover chain (D163a; D[python-thermostats]). The control file
+  /// a Nose-Hoover chain (D163a; D249). The control file
   /// has no default; the model keeps the velocity rescaling that
   /// `EnsembleKind` implied before the field.
   driver::ThermostatMethod thermostat = driver::ThermostatMethod::VRescale;
@@ -257,7 +257,7 @@ struct Ensemble {
   double surfaceTension = 0.0;
   int64_t surfaces = 2;
   /// `[thermostat] interval`, in steps. Not given, it is what the control
-  /// file takes without the key (D[python-thermostats]): `comPeriod` where
+  /// file takes without the key (D249): `comPeriod` where
   /// that is given and not 0, else 10; under Langevin dynamics, which acts
   /// in every step, 10 with a barostat and 0, no period, without one.
   std::optional<int64_t> couplingPeriod;

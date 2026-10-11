@@ -233,7 +233,7 @@ PYBIND11_MODULE(_core, m) {
     .value("Leapfrog", driver::Integrator::Leapfrog)
     .value("Brownian", driver::Integrator::Brownian)
     ;
-  // `[thermostat] method` (D[python-thermostats]).
+  // `[thermostat] method` (D249).
   py::enum_<driver::ThermostatMethod>(m, "ThermostatMethod")
     .value("VRescale", driver::ThermostatMethod::VRescale)
     .value("Langevin", driver::ThermostatMethod::Langevin)
@@ -543,7 +543,7 @@ PYBIND11_MODULE(_core, m) {
   auto integrator = input<model::Integrator>(m, "Integrator");
   property(integrator, "method", &model::Integrator::method);
   property(integrator, "timestep", &model::Integrator::timestep, units::ps);
-  // `[dynamics] friction`, of Brownian dynamics (D[python-thermostats]).
+  // `[dynamics] friction`, of Brownian dynamics (D249).
   optionalProperty(integrator, "friction", &model::Integrator::friction, units::inversePs);
   property(integrator, "minimize", &model::Integrator::minimize);
   property(integrator, "minimize_step", &model::Integrator::minimizeStep, units::nm);
@@ -589,7 +589,7 @@ PYBIND11_MODULE(_core, m) {
   property(ensemble, "barostat_coupling", &model::Ensemble::barostatCoupling);
   property(ensemble, "barostat_work", &model::Ensemble::barostatWork);
   // The thermostat of the control file: `[thermostat] method`, `friction`,
-  // and `chain_length` (D135, D163a; D[python-thermostats]).
+  // and `chain_length` (D135, D163a; D249).
   property(ensemble, "thermostat", &model::Ensemble::thermostat);
   optionalProperty(ensemble, "friction", &model::Ensemble::friction, units::inversePs);
   property(ensemble, "chain_length", &model::Ensemble::chainLength);
@@ -747,7 +747,7 @@ PYBIND11_MODULE(_core, m) {
         // of Langevin dynamics in 1/ps or the length of a Nose-Hoover
         // chain; None without one, which Brownian dynamics is too, whose
         // friction is with the method of the integrator
-        // (D[python-thermostats]).
+        // (D249).
         if (control.thermostat) {
           py::dict thermostat;
           thermostat["method"] = control.thermostatMethod;
@@ -938,7 +938,7 @@ PYBIND11_MODULE(_core, m) {
     .def_property_readonly("bath", [](const Checkpoint &c) { return c.bath; })
     // The state of a Nose-Hoover chain: the positions of its thermostats,
     // then their velocities; empty without one (D163a,
-    // D[python-thermostats]).
+    // D249).
     .def_property_readonly("thermostat_state", [](const Checkpoint &c) { return c.thermostatState; })
     .def_property_readonly("fingerprint", [](const Checkpoint &c) {
       py::list entries;
