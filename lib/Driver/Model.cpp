@@ -179,8 +179,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     return input("device must be nonnegative; CPU execution uses device 0");
   if (execution.precision != driver::Precision::Mixed && execution.precision != driver::Precision::Double)
     return unsupported("the initial object subset supports mixed and double precision");
-  if (integrator.method != driver::Integrator::VelocityVerlet && integrator.method != driver::Integrator::Leapfrog)
-    return unsupported("the initial object subset supports velocity Verlet and leapfrog");
+  if (integrator.method != driver::Integrator::VelocityVerlet && integrator.method != driver::Integrator::Leapfrog &&
+      integrator.method != driver::Integrator::Brownian)
+    return unsupported("unsupported integrator");
+  if (ensemble.thermostat != driver::ThermostatMethod::VRescale && ensemble.thermostat != driver::ThermostatMethod::Langevin &&
+      ensemble.thermostat != driver::ThermostatMethod::NoseHoover)
+    return unsupported("unsupported thermostat");
   if (ensemble.kind != EnsembleKind::NVE && ensemble.kind != EnsembleKind::NVT && ensemble.kind != EnsembleKind::NPT)
     return unsupported("unsupported ensemble");
   if (ensemble.barostatCoupling != BarostatCoupling::Isotropic && ensemble.barostatCoupling != BarostatCoupling::SemiIsotropic &&
@@ -214,7 +218,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       !positive(ensemble.compressibility) || !std::isfinite(ensemble.pressure))
     return input("integrator and bath parameters must be finite, with positive time scales and temperature");
   if (schedule.steps < 0 || schedule.energyPeriod < 0 || execution.threads < 1 ||
-      ensemble.couplingPeriod < 1 || ensemble.comPeriod.value_or(0) < 0)
+      ensemble.couplingPeriod.value_or(0) < 0 || ensemble.comPeriod.value_or(0) < 0)
     return input("invalid step, thread or coupling count");
   if (execution.neighborCapacity < 0)
     return input("Execution.neighbor_capacity must be positive, or 0 for the estimate");
@@ -303,14 +307,79 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.settleResidues = s.waterResidues;
   c.integrator = integrator.method;
   c.minimize = integrator.minimize;
+  // Brownian dynamics, with the refusals and the words of the control file
+  // (Reader::readDynamics and Reader::read; D163b, D[python-thermostats]):
+  // its friction is that of `[dynamics]`, Integrator.friction, and it
+  // takes no thermostat, no barostat, and no removal of a momentum that
+  // it does not have.
+  const bool brownian = integrator.method == driver::Integrator::Brownian;
+  if (integrator.friction && !brownian)
+    return input("model: 'friction' in [dynamics] is for 'integrator = "
+                 "\"BROWNIAN\"'; Langevin dynamics takes 'friction' "
+                 "in [thermostat]");
+  if (brownian) {
+    if (!integrator.friction)
+      return input("model: expected 'friction' in [dynamics], in 1/ps, with "
+                   "'integrator = \"BROWNIAN\"'");
+    if (!positive(*integrator.friction))
+      return input("model: expected a positive number for 'friction'");
+    if (ensemble.comPeriod)
+      return input("model: Brownian dynamics has no momentum to remove: "
+                   "'center_of_mass_interval' is not for 'integrator "
+                   "= \"BROWNIAN\"'");
+  }
+  // What a `[thermostat]` table would hold: a field of the thermostat that
+  // is not as an ensemble begins.
+  const bool thermostatGiven =
+      ensemble.thermostat != driver::ThermostatMethod::VRescale || ensemble.friction ||
+      ensemble.chainLength != 3 || ensemble.tauT != 1.0 || ensemble.couplingPeriod;
+  if (brownian && !integrator.minimize) {
+    if (thermostatGiven)
+      return input("model: 'integrator = \"BROWNIAN\"' takes no [thermostat]: "
+                   "Brownian dynamics is coupled to the bath by its "
+                   "'friction' in [dynamics]");
+    if (ensemble.kind == EnsembleKind::NPT)
+      return input("model: Brownian dynamics has no barostat");
+    if (ensemble.kind != EnsembleKind::NVT)
+      return input("model: 'integrator = \"BROWNIAN\"' needs 'ensemble = \"NVT\"' "
+                   "in [ensemble], whose 'temperature' is that of the bath");
+  }
   c.minimizeStep = integrator.minimizeStep / driver::units::length;
   c.timestep = integrator.timestep;
   c.numSteps = schedule.steps;
   c.energyPeriod = schedule.energyPeriod;
-  c.thermostat = ensemble.kind != EnsembleKind::NVE;
+  c.thermostat = ensemble.kind != EnsembleKind::NVE && !brownian;
   c.barostat = ensemble.kind == EnsembleKind::NPT;
   c.temperature = ensemble.temperature;
   c.tauT = ensemble.tauT;
+  if (brownian) c.friction = *integrator.friction;
+  // The thermostat, as Reader::readThermostat takes it, with its refusals
+  // and its words (D135, D163a; D[python-thermostats]). Its fields are of
+  // a thermostat: without one they are not read, as `tau_t` is not.
+  if (c.thermostat) {
+    c.thermostatMethod = ensemble.thermostat;
+    if (c.isLangevin()) {
+      // `prepare` sees values, not whether a field was set: a time
+      // constant that is not that of a new ensemble was given.
+      if (ensemble.tauT != 1.0)
+        return input("model: 'time_constant' is for \"V-RESCALE\" and "
+                     "\"NOSE-HOOVER\"; Langevin dynamics takes "
+                     "'friction', in 1/ps");
+      if (!ensemble.friction)
+        return input("model: expected 'friction' in [thermostat], in 1/ps");
+      if (!positive(*ensemble.friction))
+        return input("model: expected a positive number for 'friction'");
+      c.friction = *ensemble.friction;
+    } else if (ensemble.friction) {
+      return input("model: 'friction' is for \"LANGEVIN\"; this thermostat "
+                   "takes 'time_constant', in ps");
+    }
+    if (ensemble.chainLength != 3 && !c.isNoseHoover())
+      return input("model: 'chain_length' is for \"NOSE-HOOVER\"");
+    if (ensemble.chainLength < 1)
+      return input("model: expected at least 1 for 'chain_length'");
+    c.chainLength = ensemble.chainLength;
+  }
   c.pressure = ensemble.pressure / 1.01325;
   c.tauP = ensemble.tauP;
   c.compressibility = ensemble.compressibility * 1.01325;
@@ -372,8 +441,11 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
                    "\"TROTTER\", "
                    "\"TROTTER_FIRST_ORDER\", or \"EXACT\"");
   }
-  c.thermostatPeriod = c.thermostat ? ensemble.couplingPeriod : 0;
-  c.barostatPeriod = c.barostat ? ensemble.couplingPeriod : 0;
+  // Not given: as the control file without `interval`, which
+  // `resolveControlCoupling` settles for the thermostat, and the barostat
+  // with it (D[python-thermostats]).
+  c.thermostatPeriod = c.thermostat ? ensemble.couplingPeriod.value_or(-1) : 0;
+  c.barostatPeriod = c.barostat ? ensemble.couplingPeriod.value_or(-1) : 0;
   // Not given: as the control file without `center_of_mass_interval`,
   // which `resolveControlCoupling` settles, with the thermostat or never
   // (D248); a minimization removes nothing.

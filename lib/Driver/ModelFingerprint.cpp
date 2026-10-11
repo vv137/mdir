@@ -279,33 +279,55 @@ Fingerprint mdir::model::getFingerprint(const System &s,
                                        : "VELOCITY_VERLET"));
   if (has(given.integrator, "timestep"))
     add("coupling", "[dynamics] time_step", number(integrator.timestep));
+  // The friction of Brownian dynamics, the key of `[dynamics]`
+  // (D163b; D[python-thermostats]).
+  bool brownian = integrator.method == driver::Integrator::Brownian;
+  if (brownian && integrator.friction)
+    add("coupling", "[dynamics] friction", number(*integrator.friction));
   if (has(given.ensemble, "seed"))
     add("coupling", "[dynamics] seed",
         getFingerprintNumber(static_cast<double>(ensemble.seed)));
-  bool thermostat = ensemble.kind != EnsembleKind::NVE;
+  // Brownian dynamics has `ensemble = "NVT"` and no `[thermostat]`.
+  bool bath = ensemble.kind != EnsembleKind::NVE;
+  bool thermostat = bath && !brownian;
   bool barostat = ensemble.kind == EnsembleKind::NPT;
   // Given, the key of the control file; not given, the model takes what
   // an absent key takes (D248).
   if (ensemble.comPeriod)
     add("coupling", "[dynamics] center_of_mass_interval",
         getFingerprintNumber(static_cast<double>(*ensemble.comPeriod)));
-  if (has(given.ensemble, "kind") || thermostat)
+  if (has(given.ensemble, "kind") || bath)
     add("coupling", "[ensemble] ensemble",
-        getFingerprintString(barostat     ? "NPT"
-                             : thermostat ? "NVT"
-                                          : "NVE"));
+        getFingerprintString(barostat ? "NPT"
+                             : bath   ? "NVT"
+                                      : "NVE"));
   if (has(given.ensemble, "temperature"))
     add("coupling", "[ensemble] temperature", number(ensemble.temperature));
   if (has(given.ensemble, "pressure"))
     add("coupling", "[ensemble] pressure", number(ensemble.pressure / atm));
   if (thermostat) {
-    add("coupling", "[thermostat] method", getFingerprintString("V-RESCALE"));
-    if (has(given.ensemble, "tau_t"))
+    // The method, which the control file always writes, and the keys of
+    // each method as it writes them (D[python-thermostats]): Langevin
+    // dynamics has its friction and no time constant.
+    bool langevin = ensemble.thermostat == driver::ThermostatMethod::Langevin;
+    bool chain = ensemble.thermostat == driver::ThermostatMethod::NoseHoover;
+    add("coupling", "[thermostat] method",
+        getFingerprintString(langevin ? "LANGEVIN"
+                             : chain  ? "NOSE-HOOVER"
+                                      : "V-RESCALE"));
+    if (!langevin && has(given.ensemble, "tau_t"))
       add("coupling", "[thermostat] time_constant", number(ensemble.tauT));
-    if (has(given.ensemble, "coupling_period") ||
-        ensemble.couplingPeriod != 10)
+    if (langevin && ensemble.friction)
+      add("coupling", "[thermostat] friction", number(*ensemble.friction));
+    if (chain &&
+        (has(given.ensemble, "chain_length") || ensemble.chainLength != 3))
+      add("coupling", "[thermostat] chain_length",
+          getFingerprintNumber(static_cast<double>(ensemble.chainLength)));
+    // Given, the key of the control file; not given, the model takes what
+    // an absent key takes.
+    if (ensemble.couplingPeriod)
       add("coupling", "[thermostat] interval",
-          getFingerprintNumber(static_cast<double>(ensemble.couplingPeriod)));
+          getFingerprintNumber(static_cast<double>(*ensemble.couplingPeriod)));
   }
   if (barostat) {
     add("coupling", "[barostat] method", getFingerprintString("C-RESCALE"));

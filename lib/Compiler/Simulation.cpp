@@ -599,6 +599,10 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   output->timestep = control.timestep;
   output->couples = control.getCouplingPeriod() > 0 && !control.isLangevin();
   output->changesCell = control.barostat;
+  // Brownian dynamics has no momenta (D163b), and a Nose-Hoover chain
+  // begins at rest (D163a), as in `mdir run` (D[python-thermostats]).
+  output->overdamped = control.isBrownian();
+  output->setChain(control, system);
   output->bathKinetic = 0.5 * system.getDegreesOfFreedom() *
                         units::boltzmann * control.temperature;
   output->leastEdge = 2.0 * control.cutoffDistance * units::length;
@@ -997,6 +1001,7 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   std::array<double, 6> cellBefore = getCell();
   double systemBoxBefore[3] = {system.box[0], system.box[1], system.box[2]};
   double bathBefore = out.bath;
+  std::vector<double> chainBefore = out.chain;
   Output::MinimizationRow rowBefore = out.lastMinimization;
 
   std::string failure;
@@ -1080,6 +1085,9 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
     for (int k = 0; k != 3; ++k)
       system.box[k] = systemBoxBefore[k];
     out.bath = bathBefore;
+    // The Nose-Hoover chain, which moved with the couplings of the part.
+    out.chain = chainBefore;
+    out.checkpoint.thermostatState = chainBefore;
     out.lastMinimization = rowBefore;
     failed = true;
     return simulationError("the simulation failed after step " +
@@ -2619,6 +2627,9 @@ llvm::Error Simulation::saveCheckpoint(const std::string &path,
     checkpoint.frames = output->trajectory->getNumFrames();
   }
   checkpoint.bath = output->bath;
+  // The state of a Nose-Hoover chain (D163a), which `mdir run --continue`
+  // and a simulation take (D[python-thermostats]).
+  checkpoint.thermostatState = output->chain;
   checkpoint.fingerprint = prepared.fingerprint;
   checkpoint.creatorVersion = creatorVersion;
   // The additional entries: the front end, the hashes of the model and of
@@ -2786,6 +2797,21 @@ Simulation::continueFrom(const Checkpoint &checkpoint, bool stage,
   system.positions = checkpoint.positions;
   system.velocities = checkpoint.velocities;
   takeCell();
+  // The chain of a Nose-Hoover thermostat continues where the checkpoint
+  // left it; that of another thermostat or ensemble is not this one's, and
+  // the chain begins at rest, as in `mdir run` (D163a, D172).
+  system.thermostatState = checkpoint.thermostatState;
+  bool otherThermostat =
+      llvm::any_of(coupling, [](const FingerprintChange &change) {
+        return StringRef(change.name).starts_with("[thermostat]") ||
+               StringRef(change.name).starts_with("[ensemble]");
+      });
+  if (otherThermostat && !system.thermostatState.empty()) {
+    notes.push_back("the thermostat differs from that of the checkpoint; "
+                    "its chain begins at rest");
+    system.thermostatState.clear();
+  }
+  output->setChain(control, system);
   if (takesForces)
     forces = checkpoint.forces;
   else

@@ -213,7 +213,14 @@ llvm::Expected<LoadedData> loadCharmm(llvm::StringRef structure,
                                     llvm::ArrayRef<std::string> parameters,
                                     const driver::Cell &cell = {});
 struct Integrator {
+  /// `[dynamics] integrator`; Brownian dynamics (D163b;
+  /// D[python-thermostats]) takes `friction` and `EnsembleKind::NVT`,
+  /// whose temperature is that of the bath, and no thermostat.
   driver::Integrator method = driver::Integrator::VelocityVerlet;
+  /// `[dynamics] friction`, in 1/ps: of Brownian dynamics, which needs it,
+  /// and of no other integrator (the friction of Langevin dynamics is
+  /// Ensemble::friction, as that of `[thermostat]`).
+  std::optional<double> friction;
   double timestep = 0.001;
   bool minimize = false;
   double minimizeStep = 0.01;
@@ -221,6 +228,18 @@ struct Integrator {
 struct Ensemble {
   EnsembleKind kind = EnsembleKind::NVE;
   double temperature = 298.15, tauT = 1.0;
+  /// `[thermostat] method` of the control file, for NVT and NPT: stochastic
+  /// velocity rescaling, Langevin dynamics by the middle scheme (D135), or
+  /// a Nose-Hoover chain (D163a; D[python-thermostats]). The control file
+  /// has no default; the model keeps the velocity rescaling that
+  /// `EnsembleKind` implied before the field.
+  driver::ThermostatMethod thermostat = driver::ThermostatMethod::VRescale;
+  /// `[thermostat] friction`, in 1/ps: of Langevin dynamics, which needs
+  /// it, and of no other thermostat.
+  std::optional<double> friction;
+  /// `[thermostat] chain_length`: the thermostats of a Nose-Hoover chain,
+  /// at least 1; of no other thermostat.
+  int64_t chainLength = 3;
   double pressure = 1.01325, tauP = 5.0, compressibility = 4.5e-5;
   /// `[barostat] coupling` and `work` of the control file, with its
   /// defaults (D77, D92, D119, D163c; D247).
@@ -237,7 +256,11 @@ struct Ensemble {
   std::optional<double> compressibilityZ;
   double surfaceTension = 0.0;
   int64_t surfaces = 2;
-  int64_t couplingPeriod = 10;
+  /// `[thermostat] interval`, in steps. Not given, it is what the control
+  /// file takes without the key (D[python-thermostats]): `comPeriod` where
+  /// that is given and not 0, else 10; under Langevin dynamics, which acts
+  /// in every step, 10 with a barostat and 0, no period, without one.
+  std::optional<int64_t> couplingPeriod;
   /// The steps between removals of the motion of the center of mass. Not
   /// given, it is what the control file takes without
   /// `center_of_mass_interval` (D248): with a thermostat its
