@@ -1,0 +1,25 @@
+# REQUIRES: python-api, hdf5
+# The thermostats of the control file and Brownian dynamics in a Python
+# simulation (D[python-thermostats], #278) against `mdir run` of the same
+# control on the CPU, in mixed precision in the deterministic mode: the
+# dipeptide in water (1,168 particles, PME, SHAKE and SETTLE), 40 steps.
+# Langevin dynamics at constant volume (no period of coupling), with
+# stochastic cell rescaling, with the motion of the center of mass
+# removed, and with the leapfrog integrator; a Nose-Hoover chain of 3 at
+# constant volume and of 5 with stochastic cell rescaling; and Brownian
+# dynamics. For each: the
+# positions, the velocities, the forces, and the cell to the bit, the
+# energy file and the DCD trajectory byte for byte, the fingerprint, and
+# the state of the chain, in parts, from a checkpoint of `mdir run`, and
+# into `mdir run --continue`. Inputs/python_thermostats.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_thermostats.py %S/Inputs CPU Mixed mdir %t cases | FileCheck %s
+# CHECK: CPU Mixed langevin-nvt: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: CPU Mixed langevin-npt: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: CPU Mixed langevin-com: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: CPU Mixed nose-hoover-nvt: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: CPU Mixed nose-hoover-nvt: a continuation with another thermostat is refused by both front ends, and a stage begins its chain at rest
+# CHECK: CPU Mixed nose-hoover-npt: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: CPU Mixed langevin-leapfrog: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: CPU Mixed brownian: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: thermostats CPU Mixed: 7 cases passed

@@ -936,6 +936,10 @@ PYBIND11_MODULE(_core, m) {
     .def_property_readonly("trajectory", [](const Checkpoint &c) { return c.trajectory; })
     .def_property_readonly("frames", [](const Checkpoint &c) { return c.frames; })
     .def_property_readonly("bath", [](const Checkpoint &c) { return c.bath; })
+    // The state of a Nose-Hoover chain: the positions of its thermostats,
+    // then their velocities; empty without one (D163a,
+    // D[python-thermostats]).
+    .def_property_readonly("thermostat_state", [](const Checkpoint &c) { return c.thermostatState; })
     .def_property_readonly("fingerprint", [](const Checkpoint &c) {
       py::list entries;
       for (const auto &e : c.fingerprint) entries.append(py::make_tuple(e.group, e.name, e.value));

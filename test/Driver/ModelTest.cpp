@@ -181,7 +181,9 @@ int main(int argc, char **argv) {
   s.pmeGrid={4,4,4}; reject(prepare(),input); s=saved;
   auto precision=execution.precision;
   execution.precision=driver::Precision::Single; reject(prepare(),unsupported); execution.precision=precision;
-  integrator.method=driver::Integrator::Brownian; reject(prepare(),unsupported); integrator.method=c.integrator;
+  // Brownian dynamics needs its friction, as `[dynamics]` of the control file
+  // (D[python-thermostats]).
+  integrator.method=driver::Integrator::Brownian; reject(prepare(),input); integrator.method=c.integrator;
   driver::PairTerm pair;
   pair.name="custom"; pair.expression="k*(r-r0)^2";
   pair.constants={{"k",100},{"r0",0.2}};

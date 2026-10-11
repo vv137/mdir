@@ -1,0 +1,11 @@
+# REQUIRES: python-api
+# The thermostats of the control file and Brownian dynamics as fields of
+# the Python model (D[python-thermostats], #278): `Ensemble.thermostat`,
+# `Ensemble.friction`, `Ensemble.chain_length`, `Ensemble.coupling_period`,
+# and `Integrator.friction` with their defaults and types, the refusals of
+# the control file with its words, and `Program.plan["thermostat"]` and
+# `["integrator"]`; Inputs/python_thermostats.py, scenario refusals, which
+# needs no device.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_thermostats.py %S/Inputs CPU Double mdir %t refusals | FileCheck %s
+# CHECK: thermostats refusals passed
