@@ -1,0 +1,17 @@
+# REQUIRES: python-api, hdf5
+# The other keys of the couplings of the barostat in a Python simulation
+# (D[python-barostat], #275) against `mdir run` on the CPU in double
+# precision in the deterministic mode, the dipeptide in water: a
+# compressibility of each axis under the anisotropic coupling, one of them
+# 0, whose axis keeps its length exactly; the compressibility of z, 0 and
+# not, with a surface tension on one and on two surfaces under the
+# semi-isotropic coupling; and a coupling period of 1 with the exact and
+# the first-order work, which scale the cell at every step. The state and
+# the cell to the bit, the files byte for byte, the fingerprint, and
+# `mdir run --continue` from the checkpoint of the simulation.
+# Inputs/python_barostat.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_barostat.py %S/Inputs CPU Double mdir %t/keys keys | FileCheck %s --check-prefix=KEYS
+# RUN: %mdir_python %S/Inputs/python_barostat.py %S/Inputs CPU Double mdir %t/every-step every-step | FileCheck %s --check-prefix=EVERY
+# KEYS: barostat keys CPU Double: 4 cases passed
+# EVERY: barostat every-step CPU Double: 4 cases passed

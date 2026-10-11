@@ -1,0 +1,28 @@
+# REQUIRES: python-api, hdf5, cuda
+# Each coupling and each work of the barostat in a Python simulation
+# (D[python-barostat], #275) against `mdir run` of the same control
+# on a GPU, in double precision in the deterministic mode:
+# the dipeptide in water (1,168 particles, PME, SHAKE and SETTLE) in its
+# orthorhombic cell, 40 steps with stochastic cell
+# rescaling every 10 at 2000 atm. For the isotropic, the semi-isotropic,
+# and the anisotropic coupling with the work of Trotter type, its
+# first-order form, and the exact work, and for the isotropic coupling with
+# the first-order work: the positions, the velocities, the forces, and the
+# cell to the bit, the energy file and the DCD trajectory byte for byte,
+# in parts, from a checkpoint of `mdir run`, and into `mdir run
+# --continue`; the axes move as the coupling says.
+# Inputs/python_barostat.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_barostat.py %S/Inputs GPU Double mdir %t orthorhombic | FileCheck %s
+# CHECK: GPU Double orthorhombic ISOTROPIC TROTTER: a continuation with another coupling or work is refused by both front ends
+# CHECK: GPU Double orthorhombic ISOTROPIC TROTTER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Double orthorhombic ISOTROPIC TROTTER_FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Double orthorhombic ISOTROPIC EXACT: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Double orthorhombic ISOTROPIC FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Double orthorhombic SEMI_ISOTROPIC TROTTER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Double orthorhombic SEMI_ISOTROPIC TROTTER_FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Double orthorhombic SEMI_ISOTROPIC EXACT: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Double orthorhombic ANISOTROPIC TROTTER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Double orthorhombic ANISOTROPIC TROTTER_FIRST_ORDER: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: GPU Double orthorhombic ANISOTROPIC EXACT: the state, the cell, the energy file, and the trajectory of mdir run, in parts and across a checkpoint in both directions
+# CHECK: barostat orthorhombic GPU Double: 10 cases passed

@@ -34,10 +34,10 @@ With `python` for MDIR the run is a Python simulation of the same model
 simulation: with the neighbor matrix, or with the groups and the dual list
 (`Execution.neighbor_structure`, `System.pruned_distance`;
 D245), whose refusal by the builder and whose stop by the
-runtime are then those of `mdir run`. The Python model has no key for the
-work of the barostat, so its run has the default, `work = "TROTTER"`, where the control
-file here has `"FIRST_ORDER"`; the rows of the two are of other
-configurations (see below).
+runtime are then those of `mdir run`. Its barostat has the
+`work = "FIRST_ORDER"` of the control file here
+(`Ensemble.barostat_work`, D[python-barostat]), so the rows of the two
+front ends are of the same configurations (see below).
 """
 import itertools
 import pathlib
@@ -159,6 +159,7 @@ def run_python():
     ensemble.temperature, ensemble.tau_t = 300.0, 0.5
     ensemble.pressure, ensemble.tau_p = 20000.0 * 1.01325, 1.0
     ensemble.coupling_period = PERIOD
+    ensemble.barostat_work = mdir.BarostatWork.FirstOrder
     execution.target = getattr(mdir.Target, target)
     execution.precision = mdir.Precision.Double
     if structure == "GROUPS":
@@ -174,8 +175,7 @@ def run_python():
     simulation.close_reporters()
 
 
-TROTTER = cli == "python"
-if TROTTER:
+if cli == "python":
     try:
         run_python()
     except (mdir.InputError, mdir.SimulationError) as error:
@@ -217,10 +217,9 @@ def cell_of(frame):
 # positions and the cell of after it, x diag(mu) and H diag(mu): the
 # configuration of the row is the frame taken back to the cell of the
 # frame before, which no scaling has changed since. That is the row of
-# `work = "FIRST_ORDER"`. With `"TROTTER"`, the work of a Python
-# simulation, the scaling is within the drift of the step and the row has
-# the potential of the frame itself, in the cell of the frame (`mdir run`
-# without the key gives the same rows).
+# `work = "FIRST_ORDER"`, in both front ends. (With `"TROTTER"` the
+# scaling is within the drift of the step and the row has the potential of
+# the frame itself, in the cell of the frame.)
 frames = mdir.read_h5md(str(work / "run.h5md"))
 compared = wrong = beyond = 0
 worst, least = 0.0, np.inf
@@ -228,7 +227,7 @@ before = None
 for frame in frames:
     step, after = int(frame.step), cell_of(frame)
     if before is not None and step in rows:
-        H = after if TROTTER else before
+        H = before
         x = np.asarray(frame.positions) * (np.diag(H) / np.diag(after))
         half = 0.5 * min(H[0, 0], H[1, 1], H[2, 2])
         assert half >= CUTOFF, (step, half)

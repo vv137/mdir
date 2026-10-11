@@ -183,6 +183,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     return unsupported("the initial object subset supports velocity Verlet and leapfrog");
   if (ensemble.kind != EnsembleKind::NVE && ensemble.kind != EnsembleKind::NVT && ensemble.kind != EnsembleKind::NPT)
     return unsupported("unsupported ensemble");
+  if (ensemble.barostatCoupling != BarostatCoupling::Isotropic && ensemble.barostatCoupling != BarostatCoupling::SemiIsotropic &&
+      ensemble.barostatCoupling != BarostatCoupling::Anisotropic)
+    return unsupported("unsupported coupling of the barostat");
+  if (ensemble.barostatWork != driver::BarostatWork::Trotter && ensemble.barostatWork != driver::BarostatWork::TrotterFirstOrder &&
+      ensemble.barostatWork != driver::BarostatWork::Exact && ensemble.barostatWork != driver::BarostatWork::FirstOrder)
+    return unsupported("unsupported work of the barostat");
   if (s.electrostatics != Electrostatics::Cutoff && s.electrostatics != Electrostatics::PME)
     return unsupported("unsupported electrostatics");
   // As the control file: the modifier is of the real-space term of PME.
@@ -303,6 +309,64 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pressure = ensemble.pressure / 1.01325;
   c.tauP = ensemble.tauP;
   c.compressibility = ensemble.compressibility * 1.01325;
+  // The coupling and the work of the barostat, as Reader::readBarostat
+  // takes them (D[python-barostat]): one compressibility, that of every
+  // axis and of z, no surface tension. They are of a barostat: without
+  // one they are not read, as `tau_p` is not.
+  if (c.barostat) {
+    c.barostatWork = ensemble.barostatWork;
+    c.semiIsotropic = ensemble.barostatCoupling == BarostatCoupling::SemiIsotropic;
+    c.anisotropic = ensemble.barostatCoupling == BarostatCoupling::Anisotropic;
+    for (double &value : c.compressibilities) value = c.compressibility;
+    c.compressibilityZ = c.compressibility;
+    // A compressibility of each axis, with the words of the control file.
+    if (!ensemble.compressibilities.empty()) {
+      if (!c.anisotropic)
+        return input("model: a 'compressibility' of each axis needs 'coupling = "
+                     "\"ANISOTROPIC\"'; give one number");
+      bool any = false;
+      if (ensemble.compressibilities.size() != 3)
+        return input("Ensemble.compressibility: expected one number, or three that are not "
+                     "negative, those of x, y, and z, in 1/bar");
+      for (size_t k = 0; k != 3; ++k) {
+        double value = ensemble.compressibilities[k];
+        if (!std::isfinite(value) || value < 0.0)
+          return input("Ensemble.compressibility: expected one number, or three that are not "
+                       "negative, those of x, y, and z, in 1/bar");
+        c.compressibilities[k] = value * 1.01325;
+        any |= value > 0.0;
+      }
+      if (!any)
+        return input("model: a barostat whose compressibilities are all 0 keeps the "
+                     "cell; give one that is not 0");
+    }
+    // The keys of semi-isotropic coupling (D119).
+    if (!c.semiIsotropic) {
+      const char *key = ensemble.compressibilityZ ? "compressibility_z"
+                        : ensemble.surfaceTension != 0.0 ? "surface_tension"
+                        : ensemble.surfaces != 2 ? "surfaces" : nullptr;
+      if (key)
+        return input("model: '" + std::string(key) + "' needs 'coupling = \"SEMI_ISOTROPIC\"'");
+    }
+    if (ensemble.compressibilityZ) {
+      if (!std::isfinite(*ensemble.compressibilityZ) || *ensemble.compressibilityZ < 0.0)
+        return input("model: expected 0 or a positive number for 'compressibility_z'");
+      c.compressibilityZ = *ensemble.compressibilityZ * 1.01325;
+    }
+    if (!std::isfinite(ensemble.surfaceTension))
+      return input("Ensemble.surface_tension must be finite");
+    if (ensemble.surfaces < 1)
+      return input("Ensemble.surfaces must be at least 1");
+    c.surfaceTension = ensemble.surfaceTension / driver::units::dynePerCmToBarNm;
+    c.surfaces = ensemble.surfaces;
+    if ((c.semiIsotropic || c.anisotropic) && c.barostatWork == driver::BarostatWork::FirstOrder)
+      return input("model: 'work = \"FIRST_ORDER\"' counts the work from the trace of "
+                   "the virial of the step with twice the internal kinetic "
+                   "energy, which holds for the trace only; with "
+                   "'coupling = \"SEMI_ISOTROPIC\"' or \"ANISOTROPIC\" use "
+                   "\"TROTTER\", "
+                   "\"TROTTER_FIRST_ORDER\", or \"EXACT\"");
+  }
   c.thermostatPeriod = c.thermostat ? ensemble.couplingPeriod : 0;
   c.barostatPeriod = c.barostat ? ensemble.couplingPeriod : 0;
   c.comPeriod = ensemble.comPeriod;

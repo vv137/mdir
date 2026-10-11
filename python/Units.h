@@ -21,6 +21,7 @@ inline constexpr Unit ps{"picosecond", "ps"};
 inline constexpr Unit kelvin{"kelvin", "K"};
 inline constexpr Unit bar{"bar", "bar"};
 inline constexpr Unit inverseBar{"bar**-1", "1/bar"};
+inline constexpr Unit barNm{"bar*nanometer", "bar nm"};
 inline constexpr Unit springConstant{"kilojoule_per_mole/nanometer**2", "kJ/mol/nm^2"};
 inline constexpr Unit second{"second", "s"};
 inline constexpr Unit charge{"elementary_charge", "e"};

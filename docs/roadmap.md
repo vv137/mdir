@@ -312,6 +312,11 @@ the system is G3.
 D[python-pme-fields] (#279) gives the Python model `[pme] influence`,
 `[constraints] analytic_bonds`, and the PME orders 6 and 8, the settings of
 the Amber suite's script that it lacked.
+D[python-barostat] (#275) gives `mdir.Ensemble` the `coupling` and the
+`work` of `[barostat]`: the semi-isotropic and the anisotropic coupling
+and the four works, each to the bit of `mdir run` in an orthorhombic and
+in a triclinic cell, and with the exact and the first-order work a
+coupling at every step.
 D221 (#120, [topology views](python-topology.md)) gives
 loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)

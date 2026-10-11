@@ -4,6 +4,7 @@
 #include "mdir/Driver/Builder.h"
 #include "mdir/Driver/Cell.h"
 #include "mdir/Driver/Checkpoint.h"
+#include <optional>
 #include <set>
 namespace mdir {
 namespace model {
@@ -32,6 +33,10 @@ enum class EnsembleKind { NVE, NVT, NPT };
 /// smooth PME, or the one that is optimal for the splines of the grid
 /// (D134).
 enum class PMEInfluence { SPME, Optimal };
+/// The `[barostat] coupling` of the control file: one strain for the three
+/// axes; x and y together and z by its own (D119); or each axis by its own
+/// (D163c).
+enum class BarostatCoupling { Isotropic, SemiIsotropic, Anisotropic };
 
 /// A tunable parameter (D213, docs/python-tunable.md): a
 /// vector θ of M entries and a map from the sites of `parameter` to them.
@@ -207,6 +212,21 @@ struct Ensemble {
   EnsembleKind kind = EnsembleKind::NVE;
   double temperature = 298.15, tauT = 1.0;
   double pressure = 1.01325, tauP = 5.0, compressibility = 4.5e-5;
+  /// `[barostat] coupling` and `work` of the control file, with its
+  /// defaults (D77, D92, D119, D163c; D[python-barostat]).
+  BarostatCoupling barostatCoupling = BarostatCoupling::Isotropic;
+  driver::BarostatWork barostatWork = driver::BarostatWork::Trotter;
+  /// The compressibility of each axis, 1/bar, for the anisotropic coupling
+  /// (0 keeps the axis); empty: `compressibility` for every axis. The
+  /// three numbers of `[barostat] compressibility`.
+  std::vector<double> compressibilities;
+  /// The keys of the semi-isotropic coupling (D119): the compressibility
+  /// of z in 1/bar (0 keeps the height; not given: `compressibility`),
+  /// the tension of each surface normal to z in bar nm, and the number of
+  /// such surfaces.
+  std::optional<double> compressibilityZ;
+  double surfaceTension = 0.0;
+  int64_t surfaces = 2;
   int64_t couplingPeriod = 10, comPeriod = 0;
   uint64_t seed = 314159;
 };
