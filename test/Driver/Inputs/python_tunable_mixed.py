@@ -77,7 +77,7 @@ def type_epsilon(cache=[]):
     if not cache:
         loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
         system, state = loaded.make_system(), loaded.make_state()
-        # The defaults of before D[python-defaults], with which this was written.
+        # The defaults of before D248, with which this was written.
         system.truncation = mdir.Truncation.Switch
         system.switch_distance = 1.0
         system.pairlist_distance = 1.35
@@ -94,7 +94,7 @@ def model(pme, kind):
     other than the charges."""
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.PME if pme else mdir.Electrostatics.Cutoff

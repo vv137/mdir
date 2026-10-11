@@ -34,7 +34,7 @@ def compile_program(kind="NVE", precision="Double", method="VelocityVerlet",
                     timestep=0.001, period=10, deterministic=True):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.PME
@@ -136,7 +136,7 @@ def errors():
            "every step")
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     integrator, execution = mdir.Integrator(), mdir.Execution()
@@ -158,7 +158,7 @@ def errors():
     # particles that are not bonded, on top of one another, make it so.
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     positions = state.positions.copy()

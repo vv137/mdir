@@ -1,5 +1,5 @@
 """The influence function and the order of PME and the analytic bonds in
-the Python model (D[python-pme-fields], #279, docs/python-model.md) against
+the Python model (D246, #279, docs/python-model.md) against
 `mdir run` of the same control, to the bit in the deterministic mode: the
 dipeptide in water with PME, SHAKE, and SETTLE.
 

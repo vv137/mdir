@@ -219,11 +219,11 @@ PYBIND11_MODULE(_core, m) {
     .value("NVT", model::EnsembleKind::NVT)
     .value("NPT", model::EnsembleKind::NPT)
     ;
-  // `[pme] influence` (D134, D[python-pme-fields]).
+  // `[pme] influence` (D134, D246).
   py::enum_<model::PMEInfluence>(m, "PMEInfluence")
     .value("SPME", model::PMEInfluence::SPME)
     .value("Optimal", model::PMEInfluence::Optimal);
-  // `[barostat] coupling` and `work` (D[python-barostat]).
+  // `[barostat] coupling` and `work` (D247).
   py::enum_<model::BarostatCoupling>(m, "BarostatCoupling")
     .value("Isotropic", model::BarostatCoupling::Isotropic)
     .value("SemiIsotropic", model::BarostatCoupling::SemiIsotropic)
@@ -379,7 +379,7 @@ PYBIND11_MODULE(_core, m) {
   property(system, "cutoff", &model::System::cutoff, units::nm);
   // Not set (or set to None), the two follow the cutoff as the control
   // file without their keys: 0.15 nm beyond it, and the cutoff itself
-  // (D[python-defaults]). Reading gives the value in effect.
+  // (D248). Reading gives the value in effect.
   auto followsCutoff = [&system](const char *name, std::optional<double> model::System::*member,
                                  double (model::System::*effective)() const) {
     std::string qualified = std::string("System.") + name;
@@ -528,7 +528,7 @@ PYBIND11_MODULE(_core, m) {
   property(ensemble, "pressure", &model::Ensemble::pressure, units::bar);
   property(ensemble, "tau_p", &model::Ensemble::tauP, units::ps);
   // One number, or one of each axis for the anisotropic coupling, as
-  // `[barostat] compressibility` (D[python-barostat]).
+  // `[barostat] compressibility` (D247).
   ensemble.def_property("compressibility", [](const Input<model::Ensemble> &o) -> py::object {
     if (o.value.compressibilities.empty()) return py::float_(o.value.compressibility);
     return py::tuple(py::cast(o.value.compressibilities));
@@ -548,7 +548,7 @@ PYBIND11_MODULE(_core, m) {
     }
     ++o.version; o.given.insert("compressibility");
   });
-  // The keys of the semi-isotropic coupling (D119, D[python-barostat]);
+  // The keys of the semi-isotropic coupling (D119, D247);
   // None for the compressibility of z follows `compressibility`.
   ensemble.def_property("compressibility_z", [](const Input<model::Ensemble> &o) -> py::object {
     if (!o.value.compressibilityZ) return py::none();
@@ -565,7 +565,7 @@ PYBIND11_MODULE(_core, m) {
   property(ensemble, "coupling_period", &model::Ensemble::couplingPeriod);
   // None, the default: as the control file without
   // `center_of_mass_interval`, with the thermostat or never
-  // (D[python-defaults]).
+  // (D248).
   ensemble.def_property("com_period", [](const Input<model::Ensemble> &o) -> py::object {
     if (!o.value.comPeriod) return py::none();
     return py::int_(*o.value.comPeriod);
@@ -688,7 +688,7 @@ PYBIND11_MODULE(_core, m) {
       d["pme"] = c.program.pme;
       d["pme_grid"] = std::array<int64_t, 3>{c.program.pmeGrid[0], c.program.pmeGrid[1], c.program.pmeGrid[2]};
       // The barostat of the program: its coupling and its work, or None
-      // without one (D[python-barostat]).
+      // without one (D247).
       {
         const auto &control = p.prepared->control;
         if (control.barostat) {

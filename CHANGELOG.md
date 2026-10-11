@@ -25,11 +25,11 @@ format, or the outputs; every such change is listed under **Changed** or
 - `System.pme_influence` (`mdir.PMEInfluence.SPME`, the default, or
   `Optimal`) and `System.analytic_bonds` in the Python model, the
   `[pme] influence` and `[constraints] analytic_bonds` of the control file,
-  and `System.pme_order` of 6 and 8 (D[python-pme-fields], #279): the
+  and `System.pme_order` of 6 and 8 (D246, #279): the
   settings of the Amber suite's script that a Python run could not state.
   Each runs to the bit of `mdir run` in the deterministic mode.
 - The coupling and the work of the barostat in the Python model
-  (D[python-barostat], #275): `Ensemble.barostat_coupling`
+  (D247, #275): `Ensemble.barostat_coupling`
   (`mdir.BarostatCoupling.Isotropic`, the default, `SemiIsotropic`,
   `Anisotropic`) and `Ensemble.barostat_work` (`mdir.BarostatWork.Trotter`, the
   default, `TrotterFirstOrder`, `Exact`, `FirstOrder`), the `coupling` and
@@ -369,7 +369,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **The defaults of the Python model are those of the control file**
-  (D[python-defaults], #281). A script that relied on a default below gets
+  (D248, #281). A script that relied on a default below gets
   another model than before; the last column gets the old one back.
 
 | Setting | Before | Now, as the control file without the key | To get the old model |

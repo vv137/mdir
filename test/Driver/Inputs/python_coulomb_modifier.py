@@ -134,7 +134,7 @@ for precision in ("Double", "Mixed"):
 # As the control file: the modifier is of PME's real-space term.
 loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
 system, state = loaded.make_system(), loaded.make_state()
-# The defaults of before D[python-defaults], with which this was written.
+# The defaults of before D248, with which this was written.
 system.truncation = mdir.Truncation.Switch
 system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
 system.coulomb_modifier = shift

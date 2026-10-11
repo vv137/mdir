@@ -1,5 +1,5 @@
 """The defaults of the Python model are those of the control file
-(D[python-defaults], #281, docs/python-model.md): a system given to both
+(D248, #281, docs/python-model.md): a system given to both
 front ends with nothing beyond its inputs is one model.
 
 Usage: python_defaults.py ROOT TARGET PRECISION MDIR WORK SCENARIO

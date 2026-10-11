@@ -264,7 +264,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.periodic = s.periodic;
   c.cutoffDistance = s.cutoff / driver::units::length;
   // Not given, the two are the control file's to the bit: 1.5 Å beyond its
-  // cutoff, and its cutoff (D[python-defaults]).
+  // cutoff, and its cutoff (D248).
   c.pairlistDistance = s.pairlistDistance ? *s.pairlistDistance / driver::units::length
                                           : c.cutoffDistance + 1.5;
   c.switchDistance = s.switchDistance ? *s.switchDistance / driver::units::length
@@ -315,7 +315,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.tauP = ensemble.tauP;
   c.compressibility = ensemble.compressibility * 1.01325;
   // The coupling and the work of the barostat, as Reader::readBarostat
-  // takes them (D[python-barostat]): one compressibility, that of every
+  // takes them (D247): one compressibility, that of every
   // axis and of z, no surface tension. They are of a barostat: without
   // one they are not read, as `tau_p` is not.
   if (c.barostat) {
@@ -376,7 +376,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.barostatPeriod = c.barostat ? ensemble.couplingPeriod : 0;
   // Not given: as the control file without `center_of_mass_interval`,
   // which `resolveControlCoupling` settles, with the thermostat or never
-  // (D[python-defaults]); a minimization removes nothing.
+  // (D248); a minimization removes nothing.
   c.comPeriod = ensemble.comPeriod ? *ensemble.comPeriod : integrator.minimize ? 0 : -1;
   c.seed = ensemble.seed;
   c.target = execution.target;
@@ -547,7 +547,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       s.restraintReference.empty() ? prepared->positions : s.restraintReference;
   // A state without velocities takes those that `mdir run` draws when its
   // coordinates give none: at the temperature of the ensemble, with its
-  // seed (D[python-defaults]). A minimization begins at rest, as there.
+  // seed (D248). A minimization begins at rest, as there.
   // Velocities that are given, zeros among them, are kept.
   if (state.velocities.empty() && !c.minimize)
     driver::assignVelocities(c, *prepared);

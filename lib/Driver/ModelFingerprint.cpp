@@ -154,7 +154,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   // Physics: [energy], [pme], [constraints], [restraints], [boundary].
   // Lengths in Å.
   // (The default, 1.2 nm, is the 12 Å of an absent key; a comparison of
-  // the two in nm took them for different, D[python-defaults].)
+  // the two in nm took them for different, D248.)
   if (has(given.system, "cutoff") || std::fabs(s.cutoff / length - 12.0) > 1e-9)
     add("physics", "[energy] cutoff", number(s.cutoff / length));
   // The control file switches from the cutoff, which is no switch, unless
@@ -285,7 +285,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   bool thermostat = ensemble.kind != EnsembleKind::NVE;
   bool barostat = ensemble.kind == EnsembleKind::NPT;
   // Given, the key of the control file; not given, the model takes what
-  // an absent key takes (D[python-defaults]).
+  // an absent key takes (D248).
   if (ensemble.comPeriod)
     add("coupling", "[dynamics] center_of_mass_interval",
         getFingerprintNumber(static_cast<double>(*ensemble.comPeriod)));
@@ -313,7 +313,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
       add("coupling", "[barostat] time_constant", number(ensemble.tauP));
     if (!ensemble.compressibilities.empty()) {
       // The three numbers of an anisotropic coupling, as the array of the
-      // control file (D[python-barostat]).
+      // control file (D247).
       std::string axes = "[";
       for (size_t k = 0; k != ensemble.compressibilities.size(); ++k)
         axes += (k ? "," : "") + number(ensemble.compressibilities[k] * atm);
@@ -334,7 +334,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
           getFingerprintNumber(static_cast<double>(ensemble.surfaces)));
     // The coupling and the work, as the keys of the control file write
     // them: when given, or when not the default that an absent key takes
-    // (D[python-barostat]).
+    // (D247).
     if (has(given.ensemble, "barostat_coupling") ||
         ensemble.barostatCoupling != BarostatCoupling::Isotropic)
       add("coupling", "[barostat] coupling",
@@ -360,7 +360,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   // Execution: [execution], and the reach of the neighbor structures.
   // The control file takes 'pairlist_distance' 1.5 Å beyond the cutoff.
   // Given, the key of the control file; not given, the model takes the
-  // 1.5 Å beyond the cutoff of an absent key (D[python-defaults]).
+  // 1.5 Å beyond the cutoff of an absent key (D248).
   if (s.pairlistDistance)
     add("execution", "[energy] pairlist_distance",
         number(*s.pairlistDistance / length));

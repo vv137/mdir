@@ -42,7 +42,7 @@ def compile_program(precision="Double", method="VelocityVerlet", timestep=0.001,
                     cutoff=0.8):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     # A state without velocities began at rest then; these tests read the
     # velocities of the start.
     state.velocities = np.zeros((system.particle_count, 3))
@@ -53,7 +53,7 @@ def compile_program(precision="Double", method="VelocityVerlet", timestep=0.001,
     if tunable:
         system.tunables = [mdir.Tunable("q", "charge")]
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
-    ensemble.com_period = 0  # the default of before D[python-defaults]
+    ensemble.com_period = 0  # the default of before D248
     integrator.method = getattr(mdir.IntegratorMethod, method)
     integrator.timestep = timestep
     ensemble.kind = getattr(mdir.EnsembleKind, kind)

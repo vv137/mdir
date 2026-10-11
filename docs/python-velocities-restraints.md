@@ -53,7 +53,7 @@ A refusal raises `InputError` (or `UnsupportedError` for what `compile`
 does not support) and returns nothing. To repeat `mdir run`, which takes
 one seed for both, give `draw_velocities` and `Ensemble.seed` the same
 seed. A state without velocities takes that draw by itself since
-D[python-defaults] ([python-model.md](python-model.md#the-defaults-are-those-of-the-control-file)):
+D248 ([python-model.md](python-model.md#the-defaults-are-those-of-the-control-file)):
 `mdir.compile` draws at `Ensemble.temperature` with `Ensemble.seed`, as
 `mdir run` does when its coordinates give none. Before, it started at
 rest; velocities of zero, given, still do.

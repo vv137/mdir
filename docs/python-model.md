@@ -28,7 +28,7 @@ and the two supported three-parent virtual-site kinds). Velocity Verlet,
 leapfrog, minimization, NVE, stochastic velocity rescaling NVT, and isotropic
 stochastic cell rescaling NPT are included, on CPU/GPU, mixed/double (the
 semi-isotropic and the anisotropic coupling and the works of the barostat
-since D[python-barostat], [python-segments.md](python-segments.md)).
+since D247, [python-segments.md](python-segments.md)).
 Basic custom pair and tuple expressions are included with MD-unit coordinate
 and energy adaptation at the boundary. Other expression families, implicit
 solvent, free energy, LJPME, alternate baths/barostats, and single precision
@@ -90,7 +90,7 @@ arity two, three or four and one value of each parameter per tuple. Pair and
 bond `r` is nm, angle/dihedral `theta` is radians, energy is kJ/mol. At the
 legacy builder boundary, coordinate variables and the energy expression are
 converted; numerical parameter values retain their stated MD meaning.
-PME uses spline order four (six and eight since D[python-pme-fields]) and
+PME uses spline order four (six and eight since D246) and
 automatic or explicit grids (at least eight points on each axis). The object model's defaults are stated in the header;
 file defaults remain unchanged. Bath pressures use bar and compressibility
 uses inverse bar. The temporary fixed schedule obeys the CLI's coupling
@@ -159,7 +159,7 @@ would leave out, the control file refuses the correction even by default.
 The Python model refuses it when it is set and, by default, turns it off
 with the warning `dispersion_switched`, so that the default `System`, whose
 truncation was `Switch` then, still compiled (the maintainer's choice on PR
-#187; since D[python-defaults] the default is a plain cutoff, with the
+#187; since D248 the default is a plain cutoff, with the
 correction on). Before, it kept the correction under a switch.
 
 Validation (`python-dispersion.test`, `-gpu.test`, `Inputs/python_dispersion.py`),
@@ -334,7 +334,7 @@ dipeptide the groups are the slower structure, and the choice by the size
 of the system (G3 of the roadmap) is not made here.
 ## The influence function and the order of PME, and the analytic bonds
 
-D[python-pme-fields] (#279, from the inventory of #270). Two settings of
+D246 (#279, from the inventory of #270). Two settings of
 the Amber suite's script had no field in the Python model, so a Python run
 could not compute the suite's model exactly, and `System.pme_order` took 4
 alone.
@@ -367,7 +367,7 @@ analytic bonds, the orders 6 and 8, and the suite's two settings together.
 | The potential at step 0 or the positions after 20 steps | the run without the setting | differ, each case: the field acts | more than 0 |
 ## The defaults are those of the control file
 
-D[python-defaults] (#281; the maintainer's decision on the inventory of
+D248 (#281; the maintainer's decision on the inventory of
 #270). Where the Python model and the control file had different defaults
 for one setting, the Python model takes the control file's: a system given
 to both front ends with nothing beyond its inputs is one model. Before, it

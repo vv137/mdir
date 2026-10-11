@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5
 # Each coupling and each work of the barostat in a Python simulation
-# (D[python-barostat], #275) against `mdir run` of the same control
+# (D247, #275) against `mdir run` of the same control
 # on the CPU, in mixed precision in the deterministic mode:
 # 403 rigid waters (PME, SETTLE) in the rhombic dodecahedron, 40 steps with stochastic cell
 # rescaling every 10 at 2000 atm. For the isotropic, the semi-isotropic,

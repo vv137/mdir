@@ -51,7 +51,7 @@ coordinates.write_text("""Two particles
 """)
 loaded = mdir.load_gromacs(str(topology), str(coordinates))
 system, state = loaded.make_system(), loaded.make_state()
-# The defaults of before D[python-defaults], with which this was written.
+# The defaults of before D248, with which this was written.
 system.truncation = mdir.Truncation.Switch
 system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
 integrator, ensemble = mdir.Integrator(), mdir.Ensemble()

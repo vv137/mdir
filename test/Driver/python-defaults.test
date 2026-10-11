@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5
 # The defaults of the Python model are those of the control file
-# (D[python-defaults], #281): the dipeptide in water given to both front
+# (D248, #281): the dipeptide in water given to both front
 # ends on the CPU with nothing beyond the files, the ensemble, the periodic
 # boundary, and the deterministic mode. The energies of step 0 are those
 # of the row of `mdir run`, and after 20 steps the positions, the

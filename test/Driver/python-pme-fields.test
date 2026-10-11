@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5
 # The influence function and the order of PME and the analytic bonds in
-# the Python model (D[python-pme-fields], #279) on the CPU:
+# the Python model (D246, #279) on the CPU:
 # `System.pme_influence`, `System.analytic_bonds`, and `System.pme_order`
 # of 6 and 8, each against `mdir run` with `[pme] influence`,
 # `[constraints] analytic_bonds`, and `[pme] order`, and the two settings

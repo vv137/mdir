@@ -1,5 +1,5 @@
 """The coupling and the work of the barostat in a Python simulation
-(D[python-barostat], #275, docs/python-segments.md) against `mdir run` of
+(D247, #275, docs/python-segments.md) against `mdir run` of
 the same control, to the bit in the deterministic mode.
 
 Usage: python_barostat.py INPUTS TARGET PRECISION MDIR WORK SCENARIO [COUPLING...]

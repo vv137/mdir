@@ -569,7 +569,7 @@ validated by D127.
 **The couplings and the works.** When this was written the Python model
 had the isotropic coupling and the default work alone. It has the
 semi-isotropic and the anisotropic coupling and the four works since
-D[python-barostat] ([below](#the-coupling-and-the-work-of-the-barostat-dpython-barostat)),
+D247 ([below](#the-coupling-and-the-work-of-the-barostat-d247)),
 in a triclinic cell as in an orthorhombic one, each to the bit of
 `mdir run`. With the neighbor
 matrix, the default, every image within the reach is held whatever the
@@ -644,7 +644,7 @@ from it. The tests of D238 and D240 took these frames from `mdir run`.
 **A cell that the barostat shrinks.** `python-triclinic-reach.test` and its
 `-gpu` twin: the system of `triclinic-reach.test` (D241) in a Python
 simulation, whose barostat has the `FIRST_ORDER` work of the control file
-of that test since D[python-barostat] (before, the default `TROTTER`, the
+of that test since D247 (before, the default `TROTTER`, the
 Python model having no key for it), 216 argon atoms in a cell with every tilt on its bound that
 stochastic cell rescaling at 20,000 atm takes from 2.2 to 1.92 nm, with a
 pairlist distance of 1.1 nm, beyond half of the least of the diagonal at
@@ -654,7 +654,7 @@ the frame before, as under `mdir run`, equals the sum in NumPy
 over every image of every pair within the cutoff to $10^{-5}$ kcal/mol (0
 frames of 79 differ), on the CPU and on the device.
 
-## The coupling and the work of the barostat (D[python-barostat])
+## The coupling and the work of the barostat (D247)
 
 Issue [#275](https://github.com/vv137/mdir/issues/275). `mdir.Ensemble`
 had `pressure`, `tau_p`, `compressibility`, and `coupling_period`, and
@@ -742,7 +742,7 @@ temperature, seed)`, and a typed `System.restraints` list mapped to
 `[[restraints]]` (D74, D124), in
 [python-velocities-restraints.md](python-velocities-restraints.md)
 (D198). A state without velocities started
-at rest then; since D[python-defaults] it takes the velocities that
+at rest then; since D248 it takes the velocities that
 `mdir run` draws.
 
 A program that minimizes is a simulation of its own, which takes

@@ -117,7 +117,7 @@ struct System {
   double cutoff = 1.2;
   /// The reach of the neighbor structures and where a switch begins, nm.
   /// Not given, they are what the control file takes without their keys
-  /// (D[python-defaults]): 0.15 nm beyond the cutoff, and the cutoff.
+  /// (D248): 0.15 nm beyond the cutoff, and the cutoff.
   std::optional<double> pairlistDistance, switchDistance;
   double getPairlistDistance() const {
     return pairlistDistance.value_or((cutoff / driver::units::length + 1.5) * driver::units::length);
@@ -130,7 +130,7 @@ struct System {
   /// (D245).
   double prunedDistance = 0.0;
   /// A plain cutoff, as the control file without `lennard_jones_modifier`
-  /// (D[python-defaults]).
+  /// (D248).
   driver::Truncation truncation = driver::Truncation::None;
   Electrostatics electrostatics = Electrostatics::Cutoff;
   /// For PME only; as the control file, none by default.
@@ -147,10 +147,10 @@ struct System {
   std::array<int64_t, 3> pmeGrid = {0,0,0};
   /// The order of the B-splines: 4, 6, or 8, as `[pme] order`.
   int64_t pmeOrder = 4;
-  /// `[pme] influence` (D134; D[python-pme-fields]).
+  /// `[pme] influence` (D134; D246).
   PMEInfluence pmeInfluence = PMEInfluence::SPME;
   /// `[constraints] analytic_bonds`: a group of SHAKE of one bond is
-  /// projected in closed form (D[python-pme-fields]).
+  /// projected in closed form (D246).
   bool analyticBonds = false;
   bool rigidHydrogenBonds = false, rigidWater = false;
   /// Explicitly permit flexible water when importing GROMACS SETTLE.
@@ -223,7 +223,7 @@ struct Ensemble {
   double temperature = 298.15, tauT = 1.0;
   double pressure = 1.01325, tauP = 5.0, compressibility = 4.5e-5;
   /// `[barostat] coupling` and `work` of the control file, with its
-  /// defaults (D77, D92, D119, D163c; D[python-barostat]).
+  /// defaults (D77, D92, D119, D163c; D247).
   BarostatCoupling barostatCoupling = BarostatCoupling::Isotropic;
   driver::BarostatWork barostatWork = driver::BarostatWork::Trotter;
   /// The compressibility of each axis, 1/bar, for the anisotropic coupling
@@ -240,7 +240,7 @@ struct Ensemble {
   int64_t couplingPeriod = 10;
   /// The steps between removals of the motion of the center of mass. Not
   /// given, it is what the control file takes without
-  /// `center_of_mass_interval` (D[python-defaults]): with a thermostat its
+  /// `center_of_mass_interval` (D248): with a thermostat its
   /// interval, without one never.
   std::optional<int64_t> comPeriod;
   uint64_t seed = 314159;

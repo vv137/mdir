@@ -271,7 +271,7 @@ def gromacs():
         assert top.constraints is None and top.rigid_waters is None
         # The waters that SETTLE holds, after preparation.
         system, state = loaded.make_system(), loaded.make_state()
-        # The defaults of before D[python-defaults], with which this was written.
+        # The defaults of before D248, with which this was written.
         system.truncation = mdir.Truncation.Switch
         system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
         system.rigid_water = not defines
@@ -433,7 +433,7 @@ def constraints(o):
     loaded = mdir.load_amber(str(inputs / "dipeptide/dipeptide.prmtop"),
                              str(inputs / "dipeptide/dipeptide.inpcrd"))
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.rigid_hydrogen_bonds, system.rigid_water = True, True

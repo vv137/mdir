@@ -1,5 +1,5 @@
 # REQUIRES: python-api, hdf5, cuda
-# python-pme-fields.test on a GPU (D[python-pme-fields], #279): the
+# python-pme-fields.test on a GPU (D246, #279): the
 # influence function and the order of PME and the analytic bonds of a
 # Python simulation against `mdir run`, to the bit in the deterministic
 # mode, in double and in mixed precision. Inputs/python_pme_fields.py.

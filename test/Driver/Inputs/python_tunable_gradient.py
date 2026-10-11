@@ -97,7 +97,7 @@ K_MAP = np.array([0, 1, 1, 2, -1, 0])
 def dipeptide(tunables, gradient=True):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.PME
@@ -276,7 +276,7 @@ def run_charges(target, precision):
     rc, f = 0.8, 138.935457644
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = rc, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.Cutoff
@@ -370,7 +370,7 @@ def run_dynamics(target, precision):
     double = precision == "Double"
     system, state = pair_model()
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
-    ensemble.com_period = 0  # the default of before D[python-defaults]
+    ensemble.com_period = 0  # the default of before D248
     integrator.timestep = 0.0005
     integrator.method = mdir.IntegratorMethod.Leapfrog
     ensemble.kind, ensemble.temperature, ensemble.coupling_period = mdir.EnsembleKind.NPT, 300.0, 10
@@ -436,7 +436,7 @@ def charge_model(pme, net=0.0):
     `net`."""
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.PME if pme else mdir.Electrostatics.Cutoff
@@ -511,7 +511,7 @@ def run_torchpme(target, precision):
     def simulate(points):
         loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
         system, state = loaded.make_system(), loaded.make_state()
-        # The defaults of before D[python-defaults], with which this was written.
+        # The defaults of before D248, with which this was written.
         system.truncation = mdir.Truncation.Switch
         system.cutoff, system.pairlist_distance, system.switch_distance = rc, 0.9, 0.7
         system.electrostatics = mdir.Electrostatics.PME
@@ -632,7 +632,7 @@ def run_lj_dipeptide(target, precision):
     double = precision == "Double"
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
-    # The defaults of before D[python-defaults], with which this was written.
+    # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.PME

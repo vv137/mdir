@@ -1,6 +1,6 @@
 # REQUIRES: python-api, hdf5, cuda
 # Each coupling and each work of the barostat in a Python simulation
-# (D[python-barostat], #275) against `mdir run` of the same control
+# (D247, #275) against `mdir run` of the same control
 # on a GPU, in mixed precision in the deterministic mode:
 # the dipeptide in water (1,168 particles, PME, SHAKE and SETTLE) in its
 # orthorhombic cell, 40 steps with stochastic cell

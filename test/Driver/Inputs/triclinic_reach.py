@@ -36,7 +36,7 @@ simulation: with the neighbor matrix, or with the groups and the dual list
 D245), whose refusal by the builder and whose stop by the
 runtime are then those of `mdir run`. Its barostat has the
 `work = "FIRST_ORDER"` of the control file here
-(`Ensemble.barostat_work`, D[python-barostat]), so the rows of the two
+(`Ensemble.barostat_work`, D247), so the rows of the two
 front ends are of the same configurations (see below).
 """
 import itertools
@@ -153,7 +153,7 @@ def run_python():
     system.periodic = True
     state = state.draw_velocities(system, 300.0, 11)
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
-    ensemble.com_period = 0  # the default of before D[python-defaults]
+    ensemble.com_period = 0  # the default of before D248
     integrator.method = mdir.IntegratorMethod.VelocityVerlet
     integrator.timestep = 0.004
     ensemble.kind, ensemble.seed = mdir.EnsembleKind.NPT, 11

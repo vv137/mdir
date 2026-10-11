@@ -110,7 +110,7 @@ int main(int argc, char **argv) {
   auto objectProgram = take(prepared.build());
   require(fileProgram.module == objectProgram.module, "file/object semantic IR differs");
   // A state without velocities takes those that `mdir run` draws for the
-  // control file (D[python-defaults]); a minimization begins at rest.
+  // control file (D248); a minimization begins at rest.
   auto fileStart = fileSystem.velocities;
   if (!fileSystem.givenVelocities && !c.minimize) {
     auto drawn = fileSystem;

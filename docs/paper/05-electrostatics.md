@@ -115,7 +115,7 @@ closer to the Ewald sum [[Ballenegger2012]](references.md#ballenegger2012); the 
 function of [[Essmann1995]](references.md#essmann1995). Both front ends select it,
 and the order of the splines: the control file with `influence` and
 `order` of `[pme]`, the Python model with `System.pme_influence` and
-`System.pme_order` (D[python-pme-fields]).
+`System.pme_order` (D246).
 
 **Real transforms.** $Q$ is real, so $\hat Q(-\mathbf k) =
 \overline{\hat Q(\mathbf k)}$ and a real-to-complex transform stores

@@ -13,7 +13,7 @@ import mdir
 root = sys.argv[1]
 loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
 system, state = loaded.make_system(), loaded.make_state()
-# The defaults of before D[python-defaults], with which this was written.
+# The defaults of before D248, with which this was written.
 system.truncation = mdir.Truncation.Switch
 system.switch_distance = 1.0
 system.cutoff = 0.8
