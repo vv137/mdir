@@ -153,14 +153,16 @@ Fingerprint mdir::model::getFingerprint(const System &s,
 
   // Physics: [energy], [pme], [constraints], [restraints], [boundary].
   // Lengths in Å.
-  if (has(given.system, "cutoff") || s.cutoff != 12.0 * length)
+  // (The default, 1.2 nm, is the 12 Å of an absent key; a comparison of
+  // the two in nm took them for different, D[python-defaults].)
+  if (has(given.system, "cutoff") || std::fabs(s.cutoff / length - 12.0) > 1e-9)
     add("physics", "[energy] cutoff", number(s.cutoff / length));
   // The control file switches from the cutoff, which is no switch, unless
   // it gives 'switch_distance'.
   if (switches(s.truncation) &&
-      (has(given.system, "switch_distance") || s.switchDistance != s.cutoff))
+      (has(given.system, "switch_distance") || s.getSwitchDistance() != s.cutoff))
     add("physics", "[energy] switch_distance",
-        number(s.switchDistance / length));
+        number(s.getSwitchDistance() / length));
   if (const char *modifier = truncationModifier(s.truncation))
     add("physics", "[energy] lennard_jones_modifier",
         getFingerprintString(modifier));
@@ -282,12 +284,11 @@ Fingerprint mdir::model::getFingerprint(const System &s,
         getFingerprintNumber(static_cast<double>(ensemble.seed)));
   bool thermostat = ensemble.kind != EnsembleKind::NVE;
   bool barostat = ensemble.kind == EnsembleKind::NPT;
-  // With a thermostat the control file removes the motion of the center of
-  // mass at its interval unless it says otherwise.
-  int64_t comAbsent = thermostat ? ensemble.couplingPeriod : 0;
-  if (has(given.ensemble, "com_period") || ensemble.comPeriod != comAbsent)
+  // Given, the key of the control file; not given, the model takes what
+  // an absent key takes (D[python-defaults]).
+  if (ensemble.comPeriod)
     add("coupling", "[dynamics] center_of_mass_interval",
-        getFingerprintNumber(static_cast<double>(ensemble.comPeriod)));
+        getFingerprintNumber(static_cast<double>(*ensemble.comPeriod)));
   if (has(given.ensemble, "kind") || thermostat)
     add("coupling", "[ensemble] ensemble",
         getFingerprintString(barostat     ? "NPT"
@@ -358,10 +359,11 @@ Fingerprint mdir::model::getFingerprint(const System &s,
 
   // Execution: [execution], and the reach of the neighbor structures.
   // The control file takes 'pairlist_distance' 1.5 Å beyond the cutoff.
-  if (has(given.system, "pairlist_distance") ||
-      std::fabs(s.pairlistDistance - (s.cutoff + 1.5 * length)) > 1e-12)
+  // Given, the key of the control file; not given, the model takes the
+  // 1.5 Å beyond the cutoff of an absent key (D[python-defaults]).
+  if (s.pairlistDistance)
     add("execution", "[energy] pairlist_distance",
-        number(s.pairlistDistance / length));
+        number(*s.pairlistDistance / length));
   // A dual list, where there is one, as the key of the control file; none
   // (0) has no key there (D245).
   if (s.prunedDistance != 0.0)

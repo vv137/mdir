@@ -741,8 +741,9 @@ four-stage example (#82) needs, followed in a small model PR after this one
 temperature, seed)`, and a typed `System.restraints` list mapped to
 `[[restraints]]` (D74, D124), in
 [python-velocities-restraints.md](python-velocities-restraints.md)
-(D198). A state without velocities still starts
-at rest; drawing them is explicit.
+(D198). A state without velocities started
+at rest then; since D[python-defaults] it takes the velocities that
+`mdir run` draws.
 
 A program that minimizes is a simulation of its own, which takes
 `minimize(steps)` in parts as `run(n)` takes steps (D202,

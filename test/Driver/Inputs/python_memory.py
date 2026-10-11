@@ -122,11 +122,14 @@ def check(what, samples):
 
 loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
 system, state = loaded.make_system(), loaded.make_state()
+# The defaults of before D[python-defaults], with which this was written.
+system.truncation = mdir.Truncation.Switch
 system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
 system.electrostatics = mdir.Electrostatics.PME
 system.rigid_hydrogen_bonds = system.rigid_water = True
 state = state.draw_velocities(system, 300.0, 1)
 integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+ensemble.com_period = 0  # the default of before D[python-defaults]
 integrator.timestep = 0.002
 ensemble.kind = mdir.EnsembleKind.NVT
 execution.target, execution.precision = target, mdir.Precision.Mixed

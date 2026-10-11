@@ -203,9 +203,10 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   if (s.dispersion != driver::DispersionCorrection::None && s.dispersion != driver::DispersionCorrection::EnergyPressure)
     return unsupported("unsupported dispersion correction");
   auto positive = [](double v) { return std::isfinite(v) && v > 0; };
-  if (!positive(s.cutoff) || !positive(s.pairlistDistance) || s.pairlistDistance <= s.cutoff ||
-      !std::isfinite(s.switchDistance) || s.switchDistance < 0 ||
-      (s.truncation != driver::Truncation::None && s.truncation != driver::Truncation::Shift && s.switchDistance >= s.cutoff))
+  const double pairlistDistance = s.getPairlistDistance(), switchDistance = s.getSwitchDistance();
+  if (!positive(s.cutoff) || !positive(pairlistDistance) || pairlistDistance <= s.cutoff ||
+      !std::isfinite(switchDistance) || switchDistance < 0 ||
+      (s.truncation != driver::Truncation::None && s.truncation != driver::Truncation::Shift && switchDistance >= s.cutoff))
     return input("cutoff/list/switch distances are inconsistent or nonfinite");
   if (!positive(integrator.timestep) || !positive(integrator.minimizeStep) ||
       (!std::isfinite(ensemble.temperature) || ensemble.temperature < 0 ||
@@ -213,7 +214,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
       !positive(ensemble.compressibility) || !std::isfinite(ensemble.pressure))
     return input("integrator and bath parameters must be finite, with positive time scales and temperature");
   if (schedule.steps < 0 || schedule.energyPeriod < 0 || execution.threads < 1 ||
-      ensemble.couplingPeriod < 1 || ensemble.comPeriod < 0)
+      ensemble.couplingPeriod < 1 || ensemble.comPeriod.value_or(0) < 0)
     return input("invalid step, thread or coupling count");
   if (execution.neighborCapacity < 0)
     return input("Execution.neighbor_capacity must be positive, or 0 for the estimate");
@@ -262,8 +263,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
 
   c.periodic = s.periodic;
   c.cutoffDistance = s.cutoff / driver::units::length;
-  c.pairlistDistance = s.pairlistDistance / driver::units::length;
-  c.switchDistance = s.switchDistance / driver::units::length;
+  // Not given, the two are the control file's to the bit: 1.5 Å beyond its
+  // cutoff, and its cutoff (D[python-defaults]).
+  c.pairlistDistance = s.pairlistDistance ? *s.pairlistDistance / driver::units::length
+                                          : c.cutoffDistance + 1.5;
+  c.switchDistance = s.switchDistance ? *s.switchDistance / driver::units::length
+                                      : c.cutoffDistance;
   // A dual list, with the refusals and the words of the control file
   // (Reader::readEnergy; D114, D245).
   if (!std::isfinite(s.prunedDistance) || s.prunedDistance < 0)
@@ -369,7 +374,10 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   }
   c.thermostatPeriod = c.thermostat ? ensemble.couplingPeriod : 0;
   c.barostatPeriod = c.barostat ? ensemble.couplingPeriod : 0;
-  c.comPeriod = ensemble.comPeriod;
+  // Not given: as the control file without `center_of_mass_interval`,
+  // which `resolveControlCoupling` settles, with the thermostat or never
+  // (D[python-defaults]); a minimization removes nothing.
+  c.comPeriod = ensemble.comPeriod ? *ensemble.comPeriod : integrator.minimize ? 0 : -1;
   c.seed = ensemble.seed;
   c.target = execution.target;
   c.precision = execution.precision;
@@ -537,6 +545,12 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
          "System.dispersion to DispersionCorrection.None_ to say so"});
   prepared->referencePositions =
       s.restraintReference.empty() ? prepared->positions : s.restraintReference;
+  // A state without velocities takes those that `mdir run` draws when its
+  // coordinates give none: at the temperature of the ensemble, with its
+  // seed (D[python-defaults]). A minimization begins at rest, as there.
+  // Velocities that are given, zeros among them, are kept.
+  if (state.velocities.empty() && !c.minimize)
+    driver::assignVelocities(c, *prepared);
   // The tunable parameters, whose initial values the prepared model takes
   // (D213).
   auto tunables = resolveTunables(s, c, *prepared);

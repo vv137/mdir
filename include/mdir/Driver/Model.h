@@ -114,14 +114,24 @@ struct System {
   driver::Topology topology;
   Format format = Format::Amber;
   bool periodic = true;
-  double cutoff = 1.2, pairlistDistance = 1.35, switchDistance = 1.0;
+  double cutoff = 1.2;
+  /// The reach of the neighbor structures and where a switch begins, nm.
+  /// Not given, they are what the control file takes without their keys
+  /// (D[python-defaults]): 0.15 nm beyond the cutoff, and the cutoff.
+  std::optional<double> pairlistDistance, switchDistance;
+  double getPairlistDistance() const {
+    return pairlistDistance.value_or((cutoff / driver::units::length + 1.5) * driver::units::length);
+  }
+  double getSwitchDistance() const { return switchDistance.value_or(cutoff); }
   /// The reach of the inner list of a dual list, `[energy] pruned_distance`
   /// (D114), in nm, between the cutoff and the pairlist distance; 0, the
   /// default, keeps one list. It needs the groups
   /// (Execution::neighborStructure), as in the control file
   /// (D245).
   double prunedDistance = 0.0;
-  driver::Truncation truncation = driver::Truncation::Switch;
+  /// A plain cutoff, as the control file without `lennard_jones_modifier`
+  /// (D[python-defaults]).
+  driver::Truncation truncation = driver::Truncation::None;
   Electrostatics electrostatics = Electrostatics::Cutoff;
   /// For PME only; as the control file, none by default.
   CoulombModifier coulombModifier = CoulombModifier::None;
@@ -227,7 +237,12 @@ struct Ensemble {
   std::optional<double> compressibilityZ;
   double surfaceTension = 0.0;
   int64_t surfaces = 2;
-  int64_t couplingPeriod = 10, comPeriod = 0;
+  int64_t couplingPeriod = 10;
+  /// The steps between removals of the motion of the center of mass. Not
+  /// given, it is what the control file takes without
+  /// `center_of_mass_interval` (D[python-defaults]): with a thermostat its
+  /// interval, without one never.
+  std::optional<int64_t> comPeriod;
   uint64_t seed = 314159;
 };
 struct Execution {

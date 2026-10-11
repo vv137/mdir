@@ -70,6 +70,7 @@ def simulation(kind, precision, constraints=False):
     system.rigid_hydrogen_bonds = system.rigid_water = constraints
     state = state.draw_velocities(system, 300.0, SEED)
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     integrator.timestep, ensemble.temperature, ensemble.seed = 0.0005, 300.0, SEED
     ensemble.kind = getattr(mdir.EnsembleKind, kind)
     ensemble.coupling_period = 10

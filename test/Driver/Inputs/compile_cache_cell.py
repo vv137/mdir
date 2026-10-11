@@ -43,6 +43,7 @@ system.rigid_hydrogen_bonds = system.rigid_water = True
 system.restraint_reference = initial.positions
 system.restraints = [mdir.Restraint("!:WAT & !@H*", 400.0)]
 integrator, ensemble = mdir.Integrator(), mdir.Ensemble()
+ensemble.com_period = 0  # the default of before D[python-defaults]
 integrator.method = mdir.IntegratorMethod.VelocityVerlet
 integrator.timestep = 0.001
 ensemble.kind = mdir.EnsembleKind.NPT

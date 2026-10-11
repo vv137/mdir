@@ -377,8 +377,27 @@ PYBIND11_MODULE(_core, m) {
   auto system = input<model::System>(m, "System");
   property(system, "periodic", &model::System::periodic);
   property(system, "cutoff", &model::System::cutoff, units::nm);
-  property(system, "pairlist_distance", &model::System::pairlistDistance, units::nm);
-  property(system, "switch_distance", &model::System::switchDistance, units::nm);
+  // Not set (or set to None), the two follow the cutoff as the control
+  // file without their keys: 0.15 nm beyond it, and the cutoff itself
+  // (D[python-defaults]). Reading gives the value in effect.
+  auto followsCutoff = [&system](const char *name, std::optional<double> model::System::*member,
+                                 double (model::System::*effective)() const) {
+    std::string qualified = std::string("System.") + name;
+    system.def_property(name, [effective](const Input<model::System> &o) {
+      return (o.value.*effective)();
+    }, [member, qualified, name](Input<model::System> &o, py::object value) {
+      if (value.is_none()) {
+        (o.value.*member).reset(); o.given.erase(name);
+      } else {
+        o.value.*member = units::scalar(value, qualified, units::nm); o.given.insert(name);
+      }
+      ++o.version;
+    });
+  };
+  followsCutoff("pairlist_distance", &model::System::pairlistDistance,
+                &model::System::getPairlistDistance);
+  followsCutoff("switch_distance", &model::System::switchDistance,
+                &model::System::getSwitchDistance);
   property(system, "pruned_distance", &model::System::prunedDistance, units::nm);
   property(system, "truncation", &model::System::truncation);
   property(system, "electrostatics", &model::System::electrostatics);
@@ -544,7 +563,20 @@ PYBIND11_MODULE(_core, m) {
   property(ensemble, "barostat_coupling", &model::Ensemble::barostatCoupling);
   property(ensemble, "barostat_work", &model::Ensemble::barostatWork);
   property(ensemble, "coupling_period", &model::Ensemble::couplingPeriod);
-  property(ensemble, "com_period", &model::Ensemble::comPeriod);
+  // None, the default: as the control file without
+  // `center_of_mass_interval`, with the thermostat or never
+  // (D[python-defaults]).
+  ensemble.def_property("com_period", [](const Input<model::Ensemble> &o) -> py::object {
+    if (!o.value.comPeriod) return py::none();
+    return py::int_(*o.value.comPeriod);
+  }, [](Input<model::Ensemble> &o, py::object value) {
+    if (value.is_none()) {
+      o.value.comPeriod.reset(); o.given.erase("com_period");
+    } else {
+      o.value.comPeriod = value.cast<int64_t>(); o.given.insert("com_period");
+    }
+    ++o.version;
+  });
   property(ensemble, "seed", &model::Ensemble::seed);
   auto execution = input<model::Execution>(m, "Execution");
   property(execution, "target", &model::Execution::target);

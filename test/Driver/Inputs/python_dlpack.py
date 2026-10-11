@@ -59,12 +59,15 @@ def make(precision="Double", deterministic=True, method="VelocityVerlet", kind="
          minimize=False, pressure=1.0, cutoff=0.8, tunables=True):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
+    # The defaults of before D[python-defaults], with which this was written.
+    system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance = cutoff, cutoff + (0.1 if cutoff < 1 else 0.005)
     system.switch_distance = cutoff - (0.1 if cutoff < 1 else 0.04)
     system.electrostatics = mdir.Electrostatics.PME
     if tunables:
         system.tunables = [mdir.Tunable("q", "charge")]
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     integrator.method = getattr(mdir.IntegratorMethod, method)
     integrator.timestep = 0.001
     integrator.minimize = minimize

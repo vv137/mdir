@@ -25,6 +25,7 @@ def build(temperature):
     system.electrostatics = mdir.Electrostatics.PME
     system.rigid_hydrogen_bonds = system.rigid_water = True
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     integrator.timestep = 0.002
     ensemble.kind = mdir.EnsembleKind.NPT
     ensemble.temperature, ensemble.pressure, ensemble.seed = temperature, 1.0, 1

@@ -228,6 +228,7 @@ def against_cli(precision):
     start.cell = state.cell
     start = start.draw_velocities(system, 300.0, SEED)
     integrator, ensemble = mdir.Integrator(), mdir.Ensemble()
+    ensemble.com_period = 0  # the default of before D[python-defaults]
     integrator.timestep, ensemble.temperature, ensemble.seed = 0.0005, 300.0, SEED
     ensemble.kind = mdir.EnsembleKind.NVT
     # The reference of the restraints is that of the control file.
