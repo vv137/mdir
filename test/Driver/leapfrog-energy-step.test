@@ -3,10 +3,12 @@
 # dipeptide in water, 20 steps in the deterministic mode on the CPU, in
 # double and in mixed precision; two runs that differ only in
 # 'energy_interval' end in the same state, at constant energy, with
-# velocity rescaling, and under Langevin dynamics, with and without
-# constraints, and with stochastic cell rescaling, whose step that scales
-# the cell takes or leaves the energies. In double precision the positions
-# are those of velocity Verlet within 1e-11 nm, where it takes the same
+# velocity rescaling, a Nose-Hoover chain, and Langevin dynamics, with and
+# without constraints, and with stochastic cell rescaling by each count of
+# its work ("TROTTER", "TROTTER_FIRST_ORDER", "EXACT", "FIRST_ORDER") and
+# each coupling of the cell, whose step that closes a period takes or
+# leaves the energies. In double precision the positions are those of
+# velocity Verlet within 1e-11 nm, where it takes the same
 # steps. Inputs/leapfrog_energy_step.py.
 #
 # REQUIRES: hdf5
@@ -25,19 +27,42 @@
 # RUN: mdir emit %t/langevin.toml | FileCheck %s --check-prefix=LANGEVIN
 
 # DOUBLE: CPU DOUBLE nve: the states are identical; within {{.*}} nm of velocity Verlet
-# DOUBLE: CPU DOUBLE nve-free: the states are identical; within
+# DOUBLE: CPU DOUBLE nve-free: the states are identical; within {{.*}} nm of velocity Verlet
 # DOUBLE: CPU DOUBLE v-rescale: the states are identical
-# DOUBLE: CPU DOUBLE langevin: the states are identical; within
-# DOUBLE: CPU DOUBLE langevin-free: the states are identical; within
-# DOUBLE: CPU DOUBLE langevin-npt: the states are identical; within
-# DOUBLE: CPU DOUBLE langevin-npt-first-order: the states are identical; within
-# DOUBLE: CPU DOUBLE v-rescale-npt-first-order: the states are identical; within
-# DOUBLE: leapfrog CPU DOUBLE: 8 of 8 cases passed
+# DOUBLE: CPU DOUBLE nose-hoover: the states are identical
+# DOUBLE: CPU DOUBLE langevin: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE langevin-free: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE langevin-trotter: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE langevin-trotter-first-order: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE v-rescale-trotter: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE v-rescale-trotter-first-order: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE v-rescale-exact: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE v-rescale-first-order: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE nose-hoover-trotter: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE v-rescale-semi-isotropic: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE v-rescale-anisotropic: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE v-rescale-anisotropic-exact: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE langevin-anisotropic: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: leapfrog CPU DOUBLE: 17 of 17 cases passed
 
 # MIXED: CPU MIXED nve: the states are identical
+# MIXED: CPU MIXED nve-free: the states are identical
+# MIXED: CPU MIXED v-rescale: the states are identical
+# MIXED: CPU MIXED nose-hoover: the states are identical
 # MIXED: CPU MIXED langevin: the states are identical
-# MIXED: CPU MIXED v-rescale-npt-first-order: the states are identical
-# MIXED: leapfrog CPU MIXED: 8 of 8 cases passed
+# MIXED: CPU MIXED langevin-free: the states are identical
+# MIXED: CPU MIXED langevin-trotter: the states are identical
+# MIXED: CPU MIXED langevin-trotter-first-order: the states are identical
+# MIXED: CPU MIXED v-rescale-trotter: the states are identical
+# MIXED: CPU MIXED v-rescale-trotter-first-order: the states are identical
+# MIXED: CPU MIXED v-rescale-exact: the states are identical
+# MIXED: CPU MIXED v-rescale-first-order: the states are identical
+# MIXED: CPU MIXED nose-hoover-trotter: the states are identical
+# MIXED: CPU MIXED v-rescale-semi-isotropic: the states are identical
+# MIXED: CPU MIXED v-rescale-anisotropic: the states are identical
+# MIXED: CPU MIXED v-rescale-anisotropic-exact: the states are identical
+# MIXED: CPU MIXED langevin-anisotropic: the states are identical
+# MIXED: leapfrog CPU MIXED: 17 of 17 cases passed
 
 # LANGEVIN:      dyn.program @step(
 # LANGEVIN:      %v0u = dyn.kick %v, %f, %m, %half : !vec

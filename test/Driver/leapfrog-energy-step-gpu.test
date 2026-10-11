@@ -11,11 +11,39 @@
 # RUN: %python %S/Inputs/leapfrog_energy_step.py mdir %S/Inputs %t/mixed GPU MIXED | FileCheck %s --check-prefix=MIXED
 
 # DOUBLE: GPU DOUBLE nve: the states are identical; within {{.*}} nm of velocity Verlet
-# DOUBLE: GPU DOUBLE langevin: the states are identical; within
-# DOUBLE: GPU DOUBLE langevin-npt-first-order: the states are identical; within
-# DOUBLE: GPU DOUBLE v-rescale-npt-first-order: the states are identical; within
-# DOUBLE: leapfrog GPU DOUBLE: 8 of 8 cases passed
+# DOUBLE: GPU DOUBLE nve-free: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE v-rescale: the states are identical
+# DOUBLE: GPU DOUBLE nose-hoover: the states are identical
+# DOUBLE: GPU DOUBLE langevin: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE langevin-free: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE langevin-trotter: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE langevin-trotter-first-order: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE v-rescale-trotter: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE v-rescale-trotter-first-order: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE v-rescale-exact: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE v-rescale-first-order: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE nose-hoover-trotter: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE v-rescale-semi-isotropic: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE v-rescale-anisotropic: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE v-rescale-anisotropic-exact: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE langevin-anisotropic: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: leapfrog GPU DOUBLE: 17 of 17 cases passed
 
 # MIXED: GPU MIXED nve: the states are identical
+# MIXED: GPU MIXED nve-free: the states are identical
+# MIXED: GPU MIXED v-rescale: the states are identical
+# MIXED: GPU MIXED nose-hoover: the states are identical
 # MIXED: GPU MIXED langevin: the states are identical
-# MIXED: leapfrog GPU MIXED: 8 of 8 cases passed
+# MIXED: GPU MIXED langevin-free: the states are identical
+# MIXED: GPU MIXED langevin-trotter: the states are identical
+# MIXED: GPU MIXED langevin-trotter-first-order: the states are identical
+# MIXED: GPU MIXED v-rescale-trotter: the states are identical
+# MIXED: GPU MIXED v-rescale-trotter-first-order: the states are identical
+# MIXED: GPU MIXED v-rescale-exact: the states are identical
+# MIXED: GPU MIXED v-rescale-first-order: the states are identical
+# MIXED: GPU MIXED nose-hoover-trotter: the states are identical
+# MIXED: GPU MIXED v-rescale-semi-isotropic: the states are identical
+# MIXED: GPU MIXED v-rescale-anisotropic: the states are identical
+# MIXED: GPU MIXED v-rescale-anisotropic-exact: the states are identical
+# MIXED: GPU MIXED langevin-anisotropic: the states are identical
+# MIXED: leapfrog GPU MIXED: 17 of 17 cases passed
