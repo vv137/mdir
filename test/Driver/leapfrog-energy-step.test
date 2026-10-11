@@ -1,0 +1,47 @@
+# Under leapfrog every program of a step leaves the same state: a step
+# that writes a row of energies is the plain step to the bit (#285). The
+# dipeptide in water, 20 steps in the deterministic mode on the CPU, in
+# double and in mixed precision; two runs that differ only in
+# 'energy_interval' end in the same state, at constant energy, with
+# velocity rescaling, and under Langevin dynamics, with and without
+# constraints, and with stochastic cell rescaling, whose step that scales
+# the cell takes or leaves the energies. In double precision the positions
+# are those of velocity Verlet within 1e-11 nm, where it takes the same
+# steps. Inputs/leapfrog_energy_step.py.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/leapfrog_energy_step.py mdir %S/Inputs %t/double CPU DOUBLE | FileCheck %s --check-prefix=DOUBLE
+# RUN: %python %S/Inputs/leapfrog_energy_step.py mdir %S/Inputs %t/mixed CPU MIXED | FileCheck %s --check-prefix=MIXED
+#
+# With constraints, where the velocities change within the drift, every
+# program takes the first half kick of velocity Verlet from the projected
+# velocities of the time of the positions: under Langevin dynamics the
+# plain step as well.
+# RUN: sed -e 's|"VELOCITY_VERLET"|"LEAPFROG"|' -e 's|^ensemble    = "NVE"|ensemble = "NVT"\ntemperature = 300.0\n[thermostat]\nmethod = "LANGEVIN"\nfriction = 1.0|' \
+# RUN:     -e "s|ff19.prmtop|%S/Inputs/ff19sb/ff19.prmtop|" -e "s|ff19.inpcrd|%S/Inputs/ff19sb/ff19.inpcrd|" \
+# RUN:     %S/leapfrog-constraints.test | sed -n '/^#--- run.toml/,/^#--- end/p' | sed '1d;$d' > %t/langevin.toml
+# RUN: mdir emit %t/langevin.toml | FileCheck %s --check-prefix=LANGEVIN
+
+# DOUBLE: CPU DOUBLE nve: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: CPU DOUBLE nve-free: the states are identical; within
+# DOUBLE: CPU DOUBLE v-rescale: the states are identical
+# DOUBLE: CPU DOUBLE langevin: the states are identical; within
+# DOUBLE: CPU DOUBLE langevin-free: the states are identical; within
+# DOUBLE: CPU DOUBLE langevin-npt: the states are identical; within
+# DOUBLE: CPU DOUBLE langevin-npt-first-order: the states are identical; within
+# DOUBLE: CPU DOUBLE v-rescale-npt-first-order: the states are identical; within
+# DOUBLE: leapfrog CPU DOUBLE: 8 of 8 cases passed
+
+# MIXED: CPU MIXED nve: the states are identical
+# MIXED: CPU MIXED langevin: the states are identical
+# MIXED: CPU MIXED v-rescale-npt-first-order: the states are identical
+# MIXED: leapfrog CPU MIXED: 8 of 8 cases passed
+
+# LANGEVIN:      dyn.program @step(
+# LANGEVIN:      %v0u = dyn.kick %v, %f, %m, %half : !vec
+# LANGEVIN:      %v1 = dyn.kick %v0, %f, %m, %half : !vec
+# LANGEVIN:      dyn.program @step_energy(
+# LANGEVIN:      %v0u = dyn.kick %v, %f, %m, %half : !vec
+# LANGEVIN:      %v1 = dyn.kick %v0, %f, %m, %half : !vec

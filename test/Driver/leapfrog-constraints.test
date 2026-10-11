@@ -19,13 +19,21 @@
 
 # BONDS: bonds ok
 
-# The step of energy takes the stored velocities to the time of the
-# positions, with no velocity along the bonds, and makes the first half
-# kick of velocity Verlet from there.
+# The step of energy kicks by a whole step, as the plain step does, and
+# leaves its state (#285). For the virial of the constraints it takes, on
+# the side, the stored velocities to the time of the positions, with no
+# velocity along the bonds, and the first half kick and the drift of
+# velocity Verlet from there.
 #
+# MODULE:      dyn.program @step(
+# MODULE:      %v1 = dyn.kick %v, %f, %m, %dt : !vec
+# MODULE-NOT:  %v0u
 # MODULE:      dyn.program @step_energy(
+# MODULE:      %v1 = dyn.kick %v, %f, %m, %dt : !vec
 # MODULE:      %v0u = dyn.kick %v, %f, %m, %half : !vec
-# MODULE:      %v1 = dyn.kick %v0, %f, %m, %half : !vec
+# MODULE:      %v1p = dyn.kick %v0, %f, %m, %half : !vec
+# MODULE:      %x1d = dyn.drift %x, %v1, %dt : !vec
+# MODULE:      %x1dp = dyn.drift %x, %v1p, %dt : !vec
 
 #--- run.toml
 [input]

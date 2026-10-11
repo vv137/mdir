@@ -1,0 +1,21 @@
+# leapfrog-energy-step.test on a GPU, in double and in mixed precision:
+# under leapfrog a step that writes a row of energies leaves the state of
+# the plain step to the bit (#285), and in double precision the positions
+# are those of velocity Verlet within 1e-11 nm where it takes the same
+# steps. Inputs/leapfrog_energy_step.py.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/leapfrog_energy_step.py mdir %S/Inputs %t/double GPU DOUBLE | FileCheck %s --check-prefix=DOUBLE
+# RUN: %python %S/Inputs/leapfrog_energy_step.py mdir %S/Inputs %t/mixed GPU MIXED | FileCheck %s --check-prefix=MIXED
+
+# DOUBLE: GPU DOUBLE nve: the states are identical; within {{.*}} nm of velocity Verlet
+# DOUBLE: GPU DOUBLE langevin: the states are identical; within
+# DOUBLE: GPU DOUBLE langevin-npt-first-order: the states are identical; within
+# DOUBLE: GPU DOUBLE v-rescale-npt-first-order: the states are identical; within
+# DOUBLE: leapfrog GPU DOUBLE: 8 of 8 cases passed
+
+# MIXED: GPU MIXED nve: the states are identical
+# MIXED: GPU MIXED langevin: the states are identical
+# MIXED: leapfrog GPU MIXED: 8 of 8 cases passed

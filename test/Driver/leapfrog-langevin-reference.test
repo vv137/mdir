@@ -1,0 +1,13 @@
+# REQUIRES: python-api
+# One leapfrog step of Langevin dynamics with constraints against a NumPy
+# reference of the documented step, that of velocity Verlet by the middle
+# scheme (D135; design-m1.md, Sections 11.6 and 23), with a SHAKE and a
+# RATTLE of its own (#285): the dipeptide in water, 2 fs, 1/ps, on the CPU
+# in double and in mixed precision, the plain step and the step of energy.
+# The reference tells the documented step from one whose kick is that of a
+# whole step without the projection of the velocities, 1.3e-3 nm/ps away.
+# Inputs/leapfrog_langevin_reference.py.
+# RUN: %mdir_python %S/Inputs/leapfrog_langevin_reference.py %S/Inputs %mdrt CPU Double | FileCheck %s -DMODE=Double
+# RUN: %mdir_python %S/Inputs/leapfrog_langevin_reference.py %S/Inputs %mdrt CPU Mixed | FileCheck %s -DMODE=Mixed
+# CHECK: CPU [[MODE]] plain step: positions within {{.*}} of the documented step; {{.*}}: ok
+# CHECK: CPU [[MODE]] step of energy: positions within {{.*}} of the documented step; {{.*}}: ok
