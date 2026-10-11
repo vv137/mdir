@@ -112,7 +112,10 @@ recursion of $M_n$ and passes them as a table. Under `influence =
 $S_p(x) = \sum_{j=-50}^{50}\big(x/(x+\pi j)\big)^p$, and $x = \pi k/K$, a
 factor of the aliasing of the B-splines that brings the energy of the grid
 closer to the Ewald sum [[Ballenegger2012]](references.md#ballenegger2012); the default is the influence
-function of [[Essmann1995]](references.md#essmann1995).
+function of [[Essmann1995]](references.md#essmann1995). Both front ends select it,
+and the order of the splines: the control file with `influence` and
+`order` of `[pme]`, the Python model with `System.pme_influence` and
+`System.pme_order` (D[python-pme-fields]).
 
 **Real transforms.** $Q$ is real, so $\hat Q(-\mathbf k) =
 \overline{\hat Q(\mathbf k)}$ and a real-to-complex transform stores

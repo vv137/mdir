@@ -219,6 +219,10 @@ PYBIND11_MODULE(_core, m) {
     .value("NVT", model::EnsembleKind::NVT)
     .value("NPT", model::EnsembleKind::NPT)
     ;
+  // `[pme] influence` (D134, D[python-pme-fields]).
+  py::enum_<model::PMEInfluence>(m, "PMEInfluence")
+    .value("SPME", model::PMEInfluence::SPME)
+    .value("Optimal", model::PMEInfluence::Optimal);
   py::enum_<model::Electrostatics>(m, "Electrostatics")
     .value("Cutoff", model::Electrostatics::Cutoff)
     .value("PME", model::Electrostatics::PME)
@@ -390,6 +394,8 @@ PYBIND11_MODULE(_core, m) {
   property(system, "pme_spacing", &model::System::pmeSpacing, units::nm);
   property(system, "pme_grid", &model::System::pmeGrid);
   property(system, "pme_order", &model::System::pmeOrder);
+  property(system, "pme_influence", &model::System::pmeInfluence);
+  property(system, "analytic_bonds", &model::System::analyticBonds);
   property(system, "rigid_hydrogen_bonds", &model::System::rigidHydrogenBonds);
   property(system, "rigid_water", &model::System::rigidWater);
   property(system, "flexible_water", &model::System::flexibleWater);

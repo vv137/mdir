@@ -309,6 +309,9 @@ run at one rate (JAC at constant energy, 0.206 ms a step from Python
 against 0.205 from `mdir run` with the dual list, and 0.259 against 0.258
 with the matrix). The matrix stays the default; the choice by the size of
 the system is G3.
+D[python-pme-fields] (#279) gives the Python model `[pme] influence`,
+`[constraints] analytic_bonds`, and the PME orders 6 and 8, the settings of
+the Amber suite's script that it lacked.
 D221 (#120, [topology views](python-topology.md)) gives
 loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)

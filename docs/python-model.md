@@ -88,8 +88,8 @@ arity two, three or four and one value of each parameter per tuple. Pair and
 bond `r` is nm, angle/dihedral `theta` is radians, energy is kJ/mol. At the
 legacy builder boundary, coordinate variables and the energy expression are
 converted; numerical parameter values retain their stated MD meaning.
-PME uses spline order four and automatic or explicit grids (at least eight
-points on each axis). The object model's defaults are stated in the header;
+PME uses spline order four (six and eight since D[python-pme-fields]) and
+automatic or explicit grids (at least eight points on each axis). The object model's defaults are stated in the header;
 file defaults remain unchanged. Bath pressures use bar and compressibility
 uses inverse bar. The temporary fixed schedule obeys the CLI's coupling
 multiples; arbitrary counts belong to the segment PR.
@@ -329,6 +329,39 @@ the timing resolves, and a step of energy every 100 steps 0.002 to 0.005
 ms a step in either front end. The default stays the matrix: on the
 dipeptide the groups are the slower structure, and the choice by the size
 of the system (G3 of the roadmap) is not made here.
+## The influence function and the order of PME, and the analytic bonds
+
+D[python-pme-fields] (#279, from the inventory of #270). Two settings of
+the Amber suite's script had no field in the Python model, so a Python run
+could not compute the suite's model exactly, and `System.pme_order` took 4
+alone.
+
+| Python | Control file | Values |
+|---|---|---|
+| `System.pme_influence` | `[pme] influence` | `mdir.PMEInfluence.SPME` (the default), `mdir.PMEInfluence.Optimal` (D134) |
+| `System.analytic_bonds` | `[constraints] analytic_bonds` | `False` (the default), `True`: a group of SHAKE of one bond is projected in closed form |
+| `System.pme_order` | `[pme] order` | 4 (the default), 6, or 8; before, 4 alone |
+
+Another order is an `InputError` with the words of the control file,
+`model: expected 4, 6, or 8 for 'order'`; a value of `pme_influence` that
+is not of the enumeration is a `TypeError`. The fingerprint of a checkpoint
+has `[pme] influence` and `[constraints] analytic_bonds` when the field
+was set, as it has `[pme] order`. The model hands the builder the control
+structure of the control file: no program or kernel is new.
+
+**Validation** (`python-pme-fields.test`, `-gpu.test`,
+`Inputs/python_pme_fields.py`): the dipeptide in 382 waters, PME on
+$32^3$, SHAKE and SETTLE, velocity Verlet at 2 fs, NVE from drawn
+velocities, in the deterministic mode, on the CPU and a GPU, in double and
+in mixed precision; five cases: the optimal influence function, the
+analytic bonds, the orders 6 and 8, and the suite's two settings together.
+
+| Check | Reference | Result | Tolerance |
+|---|---|---|---|
+| The potential at step 0 | the row of the energy file of `mdir run` with the keys (6 decimals of kcal/mol) | within 4.7e-7 kcal/mol | 1e-6 |
+| Positions, velocities, and forces after 20 steps | the checkpoint of `mdir run` | equal to the bit, each case | 0 |
+| The fingerprint of the checkpoint | that of `mdir run` | equal | equal |
+| The potential at step 0 or the positions after 20 steps | the run without the setting | differ, each case: the field acts | more than 0 |
 
 ## Python host array boundary
 

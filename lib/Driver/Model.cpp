@@ -242,9 +242,14 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   if (!s.periodic && (s.electrostatics == Electrostatics::PME || ensemble.kind == EnsembleKind::NPT ||
                      dispersion != driver::DispersionCorrection::None))
     return input("PME, pressure coupling and dispersion correction require periodic boundaries");
-  if (s.pmeOrder != 4 || !positive(s.pmeSpacing) || !std::isfinite(s.pmeAlpha) || s.pmeAlpha < 0 ||
+  // The orders of the control file, with its words.
+  if (s.pmeOrder != 4 && s.pmeOrder != 6 && s.pmeOrder != 8)
+    return input("model: expected 4, 6, or 8 for 'order'");
+  if (s.pmeInfluence != PMEInfluence::SPME && s.pmeInfluence != PMEInfluence::Optimal)
+    return unsupported("unsupported influence function of PME");
+  if (!positive(s.pmeSpacing) || !std::isfinite(s.pmeAlpha) || s.pmeAlpha < 0 ||
       !positive(s.pmeTolerance) || s.pmeTolerance >= 1)
-    return input("invalid PME settings (the initial subset uses order 4)");
+    return input("invalid PME settings");
   bool anyGrid = false, allGrid = true;
   for (auto n : s.pmeGrid) { anyGrid |= n != 0; allGrid &= n >= 8; }
   if (anyGrid && !allGrid) return input("PME grid must be automatic or have three positive dimensions at least the spline order");
@@ -278,6 +283,8 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pmeAlphaTolerance = s.pmeTolerance;
   c.pmeMaxSpacing = s.pmeSpacing / driver::units::length;
   c.pmeOrder = s.pmeOrder;
+  c.pmeOptimal = s.pmeInfluence == PMEInfluence::Optimal;
+  c.analyticBonds = s.analyticBonds;
   for (int k = 0; k != 3; ++k) c.pmeGrid[k] = s.pmeGrid[k];
   c.rigidBonds = s.rigidHydrogenBonds;
   c.fastWater = s.rigidWater;

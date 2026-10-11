@@ -1,0 +1,14 @@
+# REQUIRES: python-api, hdf5, cuda
+# python-pme-fields.test on a GPU (D[python-pme-fields], #279): the
+# influence function and the order of PME and the analytic bonds of a
+# Python simulation against `mdir run`, to the bit in the deterministic
+# mode, in double and in mixed precision. Inputs/python_pme_fields.py.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_pme_fields.py %S/Inputs/dipeptide GPU Double mdir %t/Double run | FileCheck %s -DL="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_pme_fields.py %S/Inputs/dipeptide GPU Mixed mdir %t/Mixed run | FileCheck %s -DL="GPU Mixed"
+# CHECK: [[L]] influence OPTIMAL: the potential of step 0 within {{[0-9.e-]+}} kcal/mol of the row of mdir run, and 20 steps to its bits, with its fingerprint
+# CHECK: [[L]] analytic_bonds: the potential of step 0 within
+# CHECK: [[L]] order 6: the potential of step 0 within
+# CHECK: [[L]] order 8: the potential of step 0 within
+# CHECK: [[L]] the suite's settings: the potential of step 0 within
+# CHECK: pme fields run [[L]]: 5 cases passed
