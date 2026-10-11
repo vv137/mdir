@@ -541,6 +541,38 @@ static double moveChain(const Output &output, double *xi, double *v,
 /// kJ/mol beyond 4; at about 6 the chain ran to infinity within an action.
 static constexpr double largestChainStep = 3.0;
 
+void Output::setChain(const Control &control, const System &system) {
+  chain.clear();
+  chainMasses.clear();
+  checkpoint.thermostatState.clear();
+  if (!control.isNoseHoover())
+    return;
+  // The masses of Martyna, Klein, and Tuckerman (1992),
+  // Q_1 = N_f k_B T / ω² and Q_j = k_B T / ω², with ω = 2π / τ, the
+  // frequency of the period τ; the chain at rest, or as the checkpoint
+  // left it.
+  double kT = units::boltzmann * control.temperature;
+  double omega = 2.0 * M_PI / control.tauT;
+  size_t m = static_cast<size_t>(control.chainLength);
+  chainKT = kT;
+  chainFreedom = system.getDegreesOfFreedom();
+  chainTime =
+      static_cast<double>(control.getCouplingPeriod()) * control.timestep;
+  // The action of the chain over the period is split into equal parts of
+  // at most τ / 50: with one part, a period of 10 steps of 4 fs and
+  // τ = 0.5 ps, a liquid far from the temperature of the bath drove the
+  // later thermostats beyond what the factorization follows, and the run
+  // failed.
+  chainSubsteps = std::max<int>(
+      1, static_cast<int>(std::ceil(50.0 * chainTime / control.tauT - 1e-9)));
+  chainMasses.assign(m, kT / (omega * omega));
+  chainMasses[0] *= chainFreedom;
+  chain.assign(2 * m, 0.0);
+  if (system.thermostatState.size() == 2 * m)
+    chain = system.thermostatState;
+  checkpoint.thermostatState = chain;
+}
+
 double mdrtNoseHooverFactor(int64_t step, double kinetic) {
   Output &output = *current;
   std::vector<double> &chain = output.chain;

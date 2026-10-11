@@ -323,6 +323,12 @@ the switch and the pairlist distance from the cutoff, the center of mass
 with the thermostat, drawn velocities for a state without them): a system
 given to both front ends with nothing beyond its inputs runs to the same
 bits. A breaking change of the Python API, listed in the changelog.
+D[python-thermostats] (#278) gives the Python model the thermostats of
+the control file and Brownian dynamics (`Ensemble.thermostat`,
+`Ensemble.friction`, `Ensemble.chain_length`, `Integrator.friction`):
+Langevin dynamics (F1), a Nosé–Hoover chain, and Brownian dynamics (F10)
+run from Python to the bit of `mdir run`, and a checkpoint with the state
+of the chain continues in either front end.
 D221 (#120, [topology views](python-topology.md)) gives
 loaded data, systems, and programs a read-only view of their topology
 (atoms, residues, bonded tuples, and, after preparation, the constraints)

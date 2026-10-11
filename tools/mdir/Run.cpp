@@ -1219,33 +1219,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // where its checkpoint left it, so that its conserved energy continues.
   if (own)
     output.bath = own->bath;
-  if (control->isNoseHoover()) {
-    // A Nose-Hoover chain (D163a): the masses of Martyna, Klein, and
-    // Tuckerman (1992), Q_1 = N_f k_B T / ω² and Q_j = k_B T / ω², with
-    // ω = 2π / τ, the frequency of the period τ; the chain at rest, or as
-    // the checkpoint left it.
-    double kT = units::boltzmann * control->temperature;
-    double omega = 2.0 * M_PI / control->tauT;
-    size_t m = static_cast<size_t>(control->chainLength);
-    output.chainKT = kT;
-    output.chainFreedom = system->getDegreesOfFreedom();
-    output.chainTime =
-        static_cast<double>(control->getCouplingPeriod()) * control->timestep;
-    // The action of the chain over the period is split into equal parts of
-    // at most τ / 50: with one part, a period of 10 steps of 4 fs and
-    // τ = 0.5 ps, a liquid far from the temperature of the bath drove the
-    // later thermostats beyond what the factorization follows, and the run
-    // failed.
-    output.chainSubsteps = std::max<int>(
-        1, static_cast<int>(std::ceil(50.0 * output.chainTime /
-                                      control->tauT - 1e-9)));
-    output.chainMasses.assign(m, kT / (omega * omega));
-    output.chainMasses[0] *= output.chainFreedom;
-    output.chain.assign(2 * m, 0.0);
-    if (system->thermostatState.size() == 2 * m)
-      output.chain = system->thermostatState;
-    output.checkpoint.thermostatState = output.chain;
-  }
+  // A Nose-Hoover chain (D163a), at rest or as the checkpoint left it.
+  output.setChain(*control, *system);
   output.began = began;
   output.maxWalltime = options.maxWalltime;
   setOutput(&output);

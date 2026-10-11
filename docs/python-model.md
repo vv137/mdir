@@ -28,10 +28,12 @@ and the two supported three-parent virtual-site kinds). Velocity Verlet,
 leapfrog, minimization, NVE, stochastic velocity rescaling NVT, and isotropic
 stochastic cell rescaling NPT are included, on CPU/GPU, mixed/double (the
 semi-isotropic and the anisotropic coupling and the works of the barostat
-since D247, [python-segments.md](python-segments.md)).
+since D247, [python-segments.md](python-segments.md); Langevin dynamics, a
+Nosé–Hoover chain, and Brownian dynamics since D[python-thermostats],
+[below](#the-thermostats-and-brownian-dynamics)).
 Basic custom pair and tuple expressions are included with MD-unit coordinate
 and energy adaptation at the boundary. Other expression families, implicit
-solvent, free energy, LJPME, alternate baths/barostats, and single precision
+solvent, free energy, LJPME, other barostats, and single precision
 are deferred and refused. Existing CLI support stays available.
 
 Shared validation checks loaded array shapes, finite values, type and
@@ -380,6 +382,7 @@ was two.
 | The correction for the dispersion, in effect | off, with the warning `dispersion_switched` (the default switch turned it off) | on (`EnergyPressure`), without a warning | follows from the switch; or `system.dispersion = mdir.DispersionCorrection.None_` |
 | `System.pairlist_distance` | 1.35 nm | 0.15 nm beyond the cutoff; it follows `System.cutoff` until it is set (equal at the default cutoff) | `system.pairlist_distance = 1.35` |
 | `Ensemble.com_period` | 0: the motion of the center of mass is never removed | `None`: with a thermostat every `coupling_period`, without one never | `ensemble.com_period = 0` |
+| `Ensemble.coupling_period` (since D[python-thermostats]) | 10 | `None`: every 10 steps, or `com_period` where given; under Langevin dynamics 10 with a barostat and no period without one | `ensemble.coupling_period = 10` |
 | A state without velocities | begins at rest | takes the velocities that `mdir run` draws: at `Ensemble.temperature`, with `Ensemble.seed` | `state.velocities = numpy.zeros((N, 3))` |
 
 - *The truncation.* The control file without `lennard_jones_modifier` and
@@ -433,6 +436,150 @@ cutoff, no reach, no truncation, no velocities, no periods.
 | The fingerprint of the checkpoint | that of `mdir run` | equal | equal |
 | The fields: the defaults, that the two distances follow the cutoff until set, `None` | | as stated above | |
 | The model of before, stated with the last column of the table | | compiles with the one warning `dispersion_switched`, begins at rest, and its potential differs from the default model's by 61.6 kJ/mol | |
+
+## The thermostats and Brownian dynamics
+
+D[python-thermostats] (#278; from the inventory of #270). The Python model
+had stochastic velocity rescaling alone, implied by `Ensemble.kind`. It
+takes the thermostats of the control file and Brownian dynamics now, with
+the names, the values, and the refusals of the control file:
+
+| Python | Control file | Values |
+|---|---|---|
+| `Ensemble.thermostat` | `[thermostat] method` | `mdir.ThermostatMethod.VRescale` (the default, stochastic velocity rescaling), `Langevin` (Langevin dynamics by the middle scheme, D135), `NoseHoover` (a Nosé–Hoover chain, D163a) |
+| `Ensemble.friction` | `[thermostat] friction` | 1/ps, or a unit quantity; `None` by default. Langevin dynamics needs it; the other two refuse it |
+| `Ensemble.chain_length` | `[thermostat] chain_length` | the thermostats of a Nosé–Hoover chain: 3 by default, at least 1 |
+| `Ensemble.tau_t` | `[thermostat] time_constant` | ps, for `VRescale` and `NoseHoover` (the period of the chain); Langevin dynamics refuses it |
+| `Ensemble.coupling_period` | `[thermostat] interval` | steps; `None` by default, the control file without the key (below) |
+| `Integrator.method` | `[dynamics] integrator` | `mdir.IntegratorMethod.Brownian` is accepted (D163b) |
+| `Integrator.friction` | `[dynamics] friction` | 1/ps, or a unit quantity; `None` by default. Brownian dynamics needs it; the other integrators refuse it |
+
+- *The default method.* The control file has none: `method` must be
+  written. The model keeps stochastic velocity rescaling, which
+  `EnsembleKind.NVT` and `NPT` implied before the field, so no program of
+  before changes.
+- *Without a thermostat* (`EnsembleKind.NVE`) the fields of the thermostat
+  are not read, as `tau_t` is not, and as those of the barostat are not
+  without one (D247).
+- *Brownian dynamics* is stated as in the control file:
+  `Integrator.method = IntegratorMethod.Brownian` with
+  `Integrator.friction`, and `Ensemble.kind = EnsembleKind.NVT`, whose
+  `temperature` is that of the bath. It has no thermostat, no barostat, and
+  no momentum whose removal `com_period` could ask for. Its velocities are
+  the displacements of a step over the time step, and its energies have no
+  kinetic energy, temperature, total, or conserved energy
+  ([driver-m0.md](driver-m0.md)).
+- *The two frictions* are two keys in the control file, of `[dynamics]`
+  and of `[thermostat]`, and two fields here, so that one given for the
+  other is refused as the file refuses it.
+- *`coupling_period`* read 10 until it was set; it reads `None` now and
+  hands the control the absent key, which it resolves as for the control
+  file: every 10 steps, or `com_period` where that is given and not 0.
+  Under Langevin dynamics, which acts in every step, the period paces only
+  the barostat and the removal of the motion of the center of mass: 10
+  with a barostat, and none (0) without one, so that a part of a run may
+  end at any step. A number is the key `interval`; 0 is accepted where the
+  file accepts it, under Langevin dynamics at constant volume. For
+  stochastic velocity rescaling an ensemble that does not set the field
+  is the program of before. This follows D248: a setting left out is the
+  control file without its key.
+- *Velocities.* A state without velocities takes those that `mdir run`
+  draws (D248), scaled to the temperature for the degrees of freedom of
+  the ensemble: Langevin dynamics without a removal of the motion of the
+  center of mass, and Brownian dynamics, do not keep the momentum and
+  have three more than the other ensembles. `State.draw_velocities` draws
+  for a system that keeps its momentum, so under these two it gives
+  velocities scaled by another factor than those that `mdir.compile`
+  draws; leave the state without velocities to get the run of `mdir run`.
+
+**Refusals**, as `InputError` of `mdir.compile`, with the words of the
+reader of the control file and `model` for its path:
+
+| Case | Message |
+|---|---|
+| `Langevin` without `friction` | `model: expected 'friction' in [thermostat], in 1/ps` |
+| `friction` with `VRescale` or `NoseHoover` | `model: 'friction' is for "LANGEVIN"; this thermostat takes 'time_constant', in ps` |
+| `tau_t` with `Langevin` | `model: 'time_constant' is for "V-RESCALE" and "NOSE-HOOVER"; Langevin dynamics takes 'friction', in 1/ps` |
+| `chain_length` without `NoseHoover` | `model: 'chain_length' is for "NOSE-HOOVER"` |
+| a friction that is not positive; a chain shorter than 1 | `model: expected a positive number for 'friction'`; `model: expected at least 1 for 'chain_length'` |
+| `coupling_period = 0` with `VRescale` or `NoseHoover`, or under Langevin dynamics with a barostat | `model: 'interval' in [thermostat] is 0` |
+| `Brownian` without `Integrator.friction` | `model: expected 'friction' in [dynamics], in 1/ps, with 'integrator = "BROWNIAN"'` |
+| `Integrator.friction` with another integrator | `model: 'friction' in [dynamics] is for 'integrator = "BROWNIAN"'; Langevin dynamics takes 'friction' in [thermostat]` |
+| `Brownian` with a field of the thermostat | `model: 'integrator = "BROWNIAN"' takes no [thermostat]: Brownian dynamics is coupled to the bath by its 'friction' in [dynamics]` |
+| `Brownian` with `EnsembleKind.NPT`; with `NVE` | `model: Brownian dynamics has no barostat`; `model: 'integrator = "BROWNIAN"' needs 'ensemble = "NVT"' in [ensemble], whose 'temperature' is that of the bath` |
+| `Brownian` with `com_period` | `model: Brownian dynamics has no momentum to remove: 'center_of_mass_interval' is not for 'integrator = "BROWNIAN"'` |
+
+The control file refuses a key by its presence, and the model sees values.
+`friction`, `coupling_period`, and `com_period` are `None` until they are
+set and are refused as the file refuses them. `tau_t` and `chain_length`
+are refused where they are not their defaults (1.0 ps and 3): an explicit
+`tau_t = 1.0` under Langevin dynamics passes, where the file would refuse
+the key. A field of the thermostat under Brownian dynamics is one of
+`thermostat`, `friction`, `chain_length`, `tau_t`, and `coupling_period`
+that is not as a new ensemble has it.
+
+**The plan, the fingerprint, and checkpoints.**
+`Program.plan["thermostat"]` is `{"method": ThermostatMethod}`, with
+`"friction"` in 1/ps for Langevin dynamics or `"chain_length"` for a
+Nosé–Hoover chain, and `None` without a thermostat, which Brownian
+dynamics is; `Program.plan["integrator"]` is `{"method":
+IntegratorMethod}`, with `"friction"` for Brownian dynamics. The
+fingerprint has the entries that the control file writes
+([python-checkpoints.md](python-checkpoints.md)). A checkpoint of a Python
+simulation holds the state of the chain (the positions of its thermostats,
+then their velocities; `Checkpoint.thermostat_state`), and a simulation
+takes that of a checkpoint, its own or of `mdir run`; a stage from a
+checkpoint whose `[thermostat]` or `[ensemble]` entries differ begins its
+chain at rest and warns so, as `mdir run` notes it. The noise of Langevin
+and of Brownian dynamics is keyed by the seed, the number of the step, and
+the number of the particle, so a continuation draws the numbers of the run
+that did not stop. A part that fails leaves the chain as it was before
+the part, with the state.
+
+No program, kernel, or step changes: `prepare` fills the control structure
+that the reader of the control file fills, and the builder is the same.
+The set-up of the chain (its masses and the parts of its action, D163a)
+is `Output::setChain`, which `mdir run` and a simulation both call. What
+each thermostat controls at a finite time step is the subject of #268 and
+is not touched here.
+
+**Validation** (`python-thermostats*.test`,
+`Inputs/python_thermostats.py`). The oracle is `mdir run` of a control
+file with the same settings, whose thermostats are validated against their
+own references (D135, D163a, D163b); this adds the way to them from
+Python. The dipeptide in 382 waters (1,168 particles, PME on 32³, SHAKE
+and SETTLE), 40 steps with a row of energies and a frame every 10 and a
+checkpoint at step 20, in the deterministic mode, on the CPU and on a GPU,
+in double and in mixed precision: 7 cases, 28 runs. Everything is to the
+bit: difference 0, tolerance 0.
+
+| Case | Settings |
+|---|---|
+| `langevin-nvt` | Langevin dynamics, 1/ps, 2 fs, constant volume, no period |
+| `langevin-npt` | the same with stochastic cell rescaling at 2000 atm, every 10 steps |
+| `langevin-com` | 2.5/ps, the motion of the center of mass removed every 10 steps |
+| `nose-hoover-nvt` | a chain of 3, period 0.5 ps, every 10 steps |
+| `nose-hoover-npt` | a chain of 5 with stochastic cell rescaling, `interval = 10` written |
+| `langevin-leapfrog` | Langevin dynamics with leapfrog, `interval = 0` written |
+| `brownian` | Brownian dynamics, 50/ps, 0.1 fs |
+
+| Quantity | Reference | Result |
+|---|---|---|
+| Positions, velocities, forces, and the cell after 40 steps in parts of 10 and 30 | the checkpoint of `mdir run` of the same control | equal to the bit in each of the 28 |
+| The energy file (5 rows) and the DCD trajectory (4 frames) | the files of `mdir run` | equal byte for byte |
+| The fingerprint of the checkpoint | that of `mdir run` | equal |
+| The state of the chain at steps 20 and 40 (6 and 10 numbers; at step 40 at constant volume $\xi$ = 0.0469, 1.72, 0.820 and $v_\xi$ = 0.509, 27.7, 47.7 /ps) | that of the checkpoints of `mdir run` | equal to the bit |
+| `mdir run` to step 20, a Python simulation from its checkpoint to step 40: the state, the cell, the files, the chain | `mdir run` of 40 steps | equal to the bit, byte for byte |
+| A Python simulation to step 20, `mdir run --continue` from its checkpoint | the same | the same |
+| Without a period (`langevin-nvt`, `brownian`): parts of 7, 13, and 20 steps | the checkpoint of `mdir run` | equal to the bit |
+| The checkpoint of the chain of 3 continued with Langevin dynamics, and with a chain of 4 | | refused by `mdir.Simulation` and (the first) by `mdir run --continue`, naming `[thermostat] method` or `[thermostat] chain_length`; as a stage, the chain of 4 begins at rest, with the warning |
+
+Under leapfrog the parts of the Python simulation follow the rows of
+`mdir run`: in `mdir run` itself a step that writes a row of energies is
+not the plain step to the bit under leapfrog (#285), so a run with other
+rows has other bits there, in either front end.
+`python-thermostats.test` checks the fields, their defaults and types, the
+refusals above with their messages, and the plan, and needs no device.
 
 ## Python host array boundary
 

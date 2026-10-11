@@ -72,6 +72,25 @@ static void property(py::class_<Input<T>, std::shared_ptr<Input<T>>> &c,
       o.given.insert(name);
     });
 }
+/// A real-valued property in `unit` that may be absent: None.
+template <class T>
+static void optionalProperty(py::class_<Input<T>, std::shared_ptr<Input<T>>> &c,
+                             const char *name, std::optional<double> T::*member,
+                             units::Unit unit) {
+  std::string qualified = py::cast<std::string>(c.attr("__name__")) + "." + name;
+  c.def_property(name, [member](const Input<T> &o) -> py::object {
+      if (!(o.value.*member)) return py::none();
+      return py::float_(*(o.value.*member));
+    },
+    [member, qualified, unit, name](Input<T> &o, py::object value) {
+      if (value.is_none()) {
+        (o.value.*member).reset(); o.given.erase(name);
+      } else {
+        o.value.*member = units::scalar(value, qualified, unit); o.given.insert(name);
+      }
+      ++o.version;
+    });
+}
 template <class T> static auto input(py::module_ &m, const char *name) {
   return py::class_<Input<T>, std::shared_ptr<Input<T>>>(m, name).def(py::init<>());
 }
@@ -214,6 +233,11 @@ PYBIND11_MODULE(_core, m) {
     .value("Leapfrog", driver::Integrator::Leapfrog)
     .value("Brownian", driver::Integrator::Brownian)
     ;
+  // `[thermostat] method` (D[python-thermostats]).
+  py::enum_<driver::ThermostatMethod>(m, "ThermostatMethod")
+    .value("VRescale", driver::ThermostatMethod::VRescale)
+    .value("Langevin", driver::ThermostatMethod::Langevin)
+    .value("NoseHoover", driver::ThermostatMethod::NoseHoover);
   py::enum_<model::EnsembleKind>(m, "EnsembleKind")
     .value("NVE", model::EnsembleKind::NVE)
     .value("NVT", model::EnsembleKind::NVT)
@@ -519,6 +543,8 @@ PYBIND11_MODULE(_core, m) {
   auto integrator = input<model::Integrator>(m, "Integrator");
   property(integrator, "method", &model::Integrator::method);
   property(integrator, "timestep", &model::Integrator::timestep, units::ps);
+  // `[dynamics] friction`, of Brownian dynamics (D[python-thermostats]).
+  optionalProperty(integrator, "friction", &model::Integrator::friction, units::inversePs);
   property(integrator, "minimize", &model::Integrator::minimize);
   property(integrator, "minimize_step", &model::Integrator::minimizeStep, units::nm);
   auto ensemble = input<model::Ensemble>(m, "Ensemble");
@@ -562,7 +588,23 @@ PYBIND11_MODULE(_core, m) {
   property(ensemble, "surfaces", &model::Ensemble::surfaces);
   property(ensemble, "barostat_coupling", &model::Ensemble::barostatCoupling);
   property(ensemble, "barostat_work", &model::Ensemble::barostatWork);
-  property(ensemble, "coupling_period", &model::Ensemble::couplingPeriod);
+  // The thermostat of the control file: `[thermostat] method`, `friction`,
+  // and `chain_length` (D135, D163a; D[python-thermostats]).
+  property(ensemble, "thermostat", &model::Ensemble::thermostat);
+  optionalProperty(ensemble, "friction", &model::Ensemble::friction, units::inversePs);
+  property(ensemble, "chain_length", &model::Ensemble::chainLength);
+  // `[thermostat] interval`; None is the control file without the key.
+  ensemble.def_property("coupling_period", [](const Input<model::Ensemble> &o) -> py::object {
+    if (!o.value.couplingPeriod) return py::none();
+    return py::int_(*o.value.couplingPeriod);
+  }, [](Input<model::Ensemble> &o, py::object value) {
+    if (value.is_none()) {
+      o.value.couplingPeriod.reset(); o.given.erase("coupling_period");
+    } else {
+      o.value.couplingPeriod = value.cast<int64_t>(); o.given.insert("coupling_period");
+    }
+    ++o.version;
+  });
   // None, the default: as the control file without
   // `center_of_mass_interval`, with the thermostat or never
   // (D248).
@@ -701,6 +743,24 @@ PYBIND11_MODULE(_core, m) {
         } else {
           d["barostat"] = py::none();
         }
+        // The thermostat of the program: its method, with the friction
+        // of Langevin dynamics in 1/ps or the length of a Nose-Hoover
+        // chain; None without one, which Brownian dynamics is too, whose
+        // friction is with the method of the integrator
+        // (D[python-thermostats]).
+        if (control.thermostat) {
+          py::dict thermostat;
+          thermostat["method"] = control.thermostatMethod;
+          if (control.isLangevin()) thermostat["friction"] = control.friction;
+          if (control.isNoseHoover()) thermostat["chain_length"] = control.chainLength;
+          d["thermostat"] = thermostat;
+        } else {
+          d["thermostat"] = py::none();
+        }
+        py::dict integrator;
+        integrator["method"] = control.integrator;
+        if (control.isBrownian()) integrator["friction"] = control.friction;
+        d["integrator"] = integrator;
       }
       d["tunables"] = tunables::describe(p.prepared->tunables, c.program);
       // The terms of the potential: all of the model, or those that a
@@ -876,6 +936,10 @@ PYBIND11_MODULE(_core, m) {
     .def_property_readonly("trajectory", [](const Checkpoint &c) { return c.trajectory; })
     .def_property_readonly("frames", [](const Checkpoint &c) { return c.frames; })
     .def_property_readonly("bath", [](const Checkpoint &c) { return c.bath; })
+    // The state of a Nose-Hoover chain: the positions of its thermostats,
+    // then their velocities; empty without one (D163a,
+    // D[python-thermostats]).
+    .def_property_readonly("thermostat_state", [](const Checkpoint &c) { return c.thermostatState; })
     .def_property_readonly("fingerprint", [](const Checkpoint &c) {
       py::list entries;
       for (const auto &e : c.fingerprint) entries.append(py::make_tuple(e.group, e.name, e.value));

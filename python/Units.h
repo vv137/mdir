@@ -18,6 +18,7 @@ inline constexpr Unit nm{"nanometer", "nm"};
 inline constexpr Unit inverseNm{"nanometer**-1", "1/nm"};
 inline constexpr Unit nmPerPs{"nanometer/picosecond", "nm/ps"};
 inline constexpr Unit ps{"picosecond", "ps"};
+inline constexpr Unit inversePs{"picosecond**-1", "1/ps"};
 inline constexpr Unit kelvin{"kelvin", "K"};
 inline constexpr Unit bar{"bar", "bar"};
 inline constexpr Unit inverseBar{"bar**-1", "1/bar"};
