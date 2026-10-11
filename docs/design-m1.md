@@ -777,7 +777,11 @@ the noise has a part along them, which the constraints of the positions
 and the velocities of the change remove, as the middle scheme of OpenMM
 does; [[Leimkuhler2016]](references.md#leimkuhler2016) projects after
 each part instead. Leapfrog takes the same step, whose stored velocities
-are those of its middle. A particle of mass 0 keeps its velocity.
+are those of its middle: with constraints every program of its step
+starts, as velocity Verlet does, from the projected velocities of the time
+of the positions, since the friction would act on what a kick of a whole
+step leaves along the constraints (Section 23). A particle of mass 0 keeps
+its velocity.
 
 | Item | Rule |
 |---|---|
@@ -1472,7 +1476,8 @@ velocities along the constraints at `x` (the second half of RATTLE):
 | Stored velocities | `v_n`, of the time of `x_n` | `v_{n−½}`, half a step behind (`velocity_offset = −0.5`) |
 | Carried state | `x_n, v_n, f_n` | `x_n, v_{n−½}, f_n` |
 | A step | `u = v_n + h f_n/m`; `x' = x_n + dt u`; constrain `x'` to `x_{n+1}`; `v_{n+½} = u + (x_{n+1} − x')/dt`; `f_{n+1}`; `v_{n+1} = P(v_{n+½} + h f_{n+1}/m)` | `u = v_{n−½} + dt f_n/m`; `x' = x_n + dt u`; constrain `x'` to `x_{n+1}`; `v_{n+½} = u + (x_{n+1} − x')/dt`; `f_{n+1}` |
-| A step with energies | The same, with the energy and the virial of `x_{n+1}` | `u = P(v_{n−½} + h f_n/m) + h f_n/m`, then as velocity Verlet, returning `v_{n+½}` to store and `v_{n+1} = P(v_{n+½} + h f_{n+1}/m)` for the energies |
+| A step with energies | The same, with the energy and the virial of `x_{n+1}` | The plain step, to the bit, returning `v_{n+½}` to store and `v_{n+1} = P(v_{n+½} + h f_{n+1}/m)` for the energies; on the side, for the virial of the constraints alone, the drift of velocity Verlet `x'' = x_n + dt (P(v_{n−½} + h f_n/m) + h f_n/m)` |
+| A step under Langevin dynamics, or one that scales the cell, with constraints | The step above, with the friction and the noise, or the scaling, in the middle of the drift | `u = P(v_{n−½} + h f_n/m) + h f_n/m`, then as velocity Verlet, in every program of a step |
 | Start | `v_0` drawn or read | `v_{−½} = v_0 − h f_0/m` |
 
 Why the steps are the same: without constraints, `v_{n−½} + dt f_n/m` is
@@ -1487,12 +1492,45 @@ follow, `(x_{n+1} − x_n)/dt`, are then the same too. The logs of the two
 agree row by row (`test/Driver/leapfrog.test`, and
 `test/Driver/leapfrog-constraints.test` with the peptide in OPC water).
 
+This holds while the velocities do not change within the drift. Where
+they do, the two forms are different steps. With
+`δ = (1 − P)(v_{n−½} + h f_n/m)`, the part along the constraints that the
+kick of a whole step keeps, Langevin dynamics (Section 11.6) drifts half
+with `u`, takes `c u + …`, and drifts half with that: the drifts of the
+two forms differ by `h (1 + c) δ`, still along the constraints, so the
+positions agree, but the stored velocities, those after the friction plus
+`(x_{n+1} − x')/dt`, differ by `−(1 − c) δ/2`, about `γ dt/2` of `δ`. The
+step that scales the cell within its drift (Section 12, D92) scales the
+velocities by `1/μ` there, and the same argument gives `(1/μ − 1) δ/2`.
+In both, every program of a leapfrog step therefore takes the form of
+velocity Verlet, with the projection. A plain step that kicked a whole
+step there (#285) left the stored velocities of the dipeptide in water
+1.3 × 10⁻³ nm/ps from those of this step after one step at 1/ps and
+2 fs, linear in the friction (6.3 × 10⁻⁴ at 0.5/ps, 2.6 × 10⁻³ at 2/ps),
+with `δ` up to 1.28 nm/ps, and the positions 2.9 × 10⁻⁵ nm from those of
+velocity Verlet after 20 steps; they are now within 2.9 × 10⁻¹⁴ nm. A
+NumPy reference of the step of velocity Verlet with a SHAKE and a RATTLE
+of its own agrees with the plain step and with the step of energy within
+4 × 10⁻¹⁵ nm and 2 × 10⁻¹² nm/ps (`test/Driver/leapfrog-langevin-reference.test`).
+
+Every program of a step leaves the same state, to the bit in the
+deterministic mode: the plain step, the step with energies, the steps
+with the virial of the barostats, and the scaling step with and without
+the energies. Two runs that differ only in the rows of their energies end
+in the same state (`test/Driver/leapfrog-energy-step.test`, on the CPU
+and a GPU, in double and mixed precision, for each thermostat, each count
+of the work of the barostat, and each coupling of the cell). Outside
+Langevin dynamics and the scaling step, the step with the virial would
+differ from the plain step by the rounding of the solvers if it drifted
+from the projected velocities; it drifts as the plain step does and takes
+the other drift on the side.
+
 What each quantity is taken from:
 
 | Quantity | Velocity Verlet | Leapfrog |
 |---|---|---|
 | Energy, virial, pressure in the log | $\mathbf x_{n+1}$ and $\mathbf v_{n+1}$ of the step with energies | The same $\mathbf x_{n+1}$ and $\mathbf v_{n+1}$ |
-| Virial of the constraints | $\tfrac12$ of the impulses of the positions ($\mathbf G = 2m\boldsymbol\Delta/\Delta t^2$ for $\mathbf x' = \mathbf x_n + \Delta t\, \mathbf v_n + \Delta t^2 \mathbf f_n/2m$) and $\tfrac12$ of those of the velocities (Section 9) | The same: the step with energies drifts from $P(\mathbf v_{n-1/2} + h \mathbf f_n/m)$, the form above, so $\boldsymbol\Delta$ has the same meaning. The plain step, whose drift is a whole kick, computes no virial |
+| Virial of the constraints | $\tfrac12$ of the impulses of the positions ($\mathbf G = 2m\boldsymbol\Delta/\Delta t^2$ for $\mathbf x' = \mathbf x_n + \Delta t\, \mathbf v_n + \Delta t^2 \mathbf f_n/2m$) and $\tfrac12$ of those of the velocities (Section 9) | The same: $\boldsymbol\Delta = \mathbf x_{n+1} - \mathbf x''$ from the drift $\mathbf x''$ of velocity Verlet, from $P(\mathbf v_{n-1/2} + h \mathbf f_n/m)$, which the step with the virial takes on the side: what the constraints added to its own drift, plus what that drift is ahead of $\mathbf x''$. The plain step computes no virial |
 | Thermostat alone | Scales $\mathbf v_n$, with its kinetic energy | Scales $\mathbf v_{n-1/2}$, with its kinetic energy, as GROMACS does with leapfrog |
 | Barostat (and the thermostat with it) | Pressure from $\mathbf v_{n+1}$; scales $\mathbf x_{n+1}$ by $\mu$ and $\mathbf v_{n+1}$ by $\alpha/\mu$; carries $\mathbf f' = \mathbf F(\mathbf x'_{n+1})$ (D77) | Pressure from $\mathbf v_{n+1}$; scales $\mathbf x_{n+1}$ by $\mu$ and $\mathbf v_{n+1}$ by $\alpha/\mu$; carries $\mathbf f'$ and stores $\mathbf v'_{n+1/2} = \mathbf v'_{n+1} - h \mathbf f'/m$, so that the next step is that of velocity Verlet |
 

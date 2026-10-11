@@ -571,13 +571,12 @@ bit: difference 0, tolerance 0.
 | The state of the chain at steps 20 and 40 (6 and 10 numbers; at step 40 at constant volume $\xi$ = 0.0469, 1.72, 0.820 and $v_\xi$ = 0.509, 27.7, 47.7 /ps) | that of the checkpoints of `mdir run` | equal to the bit |
 | `mdir run` to step 20, a Python simulation from its checkpoint to step 40: the state, the cell, the files, the chain | `mdir run` of 40 steps | equal to the bit, byte for byte |
 | A Python simulation to step 20, `mdir run --continue` from its checkpoint | the same | the same |
-| Without a period (`langevin-nvt`, `brownian`): parts of 7, 13, and 20 steps | the checkpoint of `mdir run` | equal to the bit |
+| Without a period (`langevin-nvt`, `langevin-leapfrog`, `brownian`): parts of 7, 13, and 20 steps | the checkpoint of `mdir run` | equal to the bit |
 | The checkpoint of the chain of 3 continued with Langevin dynamics, and with a chain of 4 | | refused by `mdir.Simulation` and (the first) by `mdir run --continue`, naming `[thermostat] method` or `[thermostat] chain_length`; as a stage, the chain of 4 begins at rest, with the warning |
 
-Under leapfrog the parts of the Python simulation follow the rows of
-`mdir run`: in `mdir run` itself a step that writes a row of energies is
-not the plain step to the bit under leapfrog (#285), so a run with other
-rows has other bits there, in either front end.
+Under leapfrog too the parts need not follow the rows of `mdir run`:
+every program of a leapfrog step leaves the same state to the bit (#285;
+design-m1.md, Section 23).
 `python-thermostats.test` checks the fields, their defaults and types, the
 refusals above with their messages, and the plan, and needs no device.
 

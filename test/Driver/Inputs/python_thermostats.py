@@ -31,9 +31,9 @@ For each:
   fingerprint, and the state of the chain to the bit;
 - `mdir run` -> Python and Python -> `mdir run --continue` at step 20, to
   the same bits and bytes;
-- without a period of coupling, parts of 7, 13, and 20 steps as well (not
-  with leapfrog, whose step of energy is not its plain step to the bit in
-  `mdir run` itself, #285: there the parts follow the rows).
+- without a period of coupling, parts of 7, 13, and 20 steps as well, also
+  with leapfrog, whose step of energy leaves the state of its plain step
+  (#285).
 
 A checkpoint ends a segment of `mdir run`, as it ends the activation of a
 simulation (D215, D218), so each run here has its checkpoint at step 20.
@@ -91,6 +91,7 @@ CASES = {
         thermostat='method = "LANGEVIN"\nfriction = 1.0\ninterval = 0\n',
         integrator={"method": I.Leapfrog},
         ensemble={"thermostat": T.Langevin, "friction": 1.0, "coupling_period": 0},
+        period=False,
         plan={"method": T.Langevin, "friction": 1.0}),
     "brownian": dict(
         kind="NVT", method="BROWNIAN", timestep=0.0001, dynamics="friction = 50.0\n",
@@ -282,8 +283,7 @@ def one_case(name):
         assert np.abs(reference.thermostat_state).min() > 0.0, reference.thermostat_state
         same_chain(tag, mdir.read_checkpoint(str(here / "run.h5.prev")), middle, chain)
 
-    # Without a period of coupling a part ends at any step (leapfrog is
-    # left out: #285).
+    # Without a period of coupling a part ends at any step.
     if not case.get("period", True):
         simulation = mdir.Simulation(program)
         simulation.reporters = [mdir.CheckpointReporter(str(here / "odd.h5"), STEPS // 2)]

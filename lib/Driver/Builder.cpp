@@ -5364,6 +5364,23 @@ void Builder::emitPrograms() {
     // Brownian dynamics (D163b) neither conserves a volume of phase space
     // nor reverses; it couples to the bath.
     bool brownian = control.isBrownian();
+    // Leapfrog with constraints. A kick of a whole step leaves a part
+    // along the constraints that the first half kick of velocity Verlet,
+    // from the projected velocities of the time of the positions, does
+    // not. The constraints of the positions take the drifts of both to
+    // the same place, and the velocities of the change are then the same,
+    // unless the velocities change within the drift: the friction of
+    // Langevin dynamics, or the scaling of the barostat of Trotter type,
+    // then acts on that part, and the stored velocities differ by
+    // (1 - c)/2 or (1/mu - 1)/2 of it. There every program of a step
+    // takes the form of velocity Verlet (`projectsState`). Elsewhere the
+    // state of every program is that of the plain step, and a step with
+    // the virial takes the drift of velocity Verlet on the side, for the
+    // virial of the constraints alone (`sideVirial`). Either way a step
+    // leaves the same state, to the bit, whatever else it returns.
+    bool projectsState =
+        leapfrog && constraints && (control.isLangevin() || scales);
+    bool sideVirial = leapfrog && constraints && withVirial && !projectsState;
     os << "dyn.program @" << kind.name
        << "(%x: !vec, %v: !vec, %f: !vec, %m: !real,\n"
        << "    %cell: !md.cell, %dt: f64"
@@ -5396,17 +5413,28 @@ void Builder::emitPrograms() {
       emitBrownianVelocity("  ", "%f", "%v1");
     } else if (!leapfrog) {
       os << "  %v1 = dyn.kick %v, %f, %m, %half : !vec\n";
-    } else if (withVirial && constraints) {
+    } else if (projectsState) {
       // The velocities of the time of the positions, as velocity Verlet
-      // has them, and its first half kick. The drift then takes the
-      // positions where the kick of a whole step does, up to the
-      // constraints, which bring both to the same place; the constraints
-      // of the step then give the virial of the first half (D76).
+      // has them, with none along the constraints, and its first half
+      // kick: the friction or the scaling of the middle of the drift
+      // would act on what a kick of a whole step leaves along the
+      // constraints.
       os << "  %v0u = dyn.kick %v, %f, %m, %half : !vec\n";
       std::string current = project("%x", "%v0u", "%v0", "").first;
       os << "  %v1 = dyn.kick " << current << ", %f, %m, %half : !vec\n";
     } else {
       os << "  %v1 = dyn.kick %v, %f, %m, %dt : !vec\n";
+      if (sideVirial) {
+        // The first half kick of velocity Verlet, from the velocities of
+        // the time of the positions with none along the constraints: its
+        // drift, `%x1dp` below, ends where the constraints give the
+        // virial of the first half of the step (D76). The constraints
+        // bring both drifts to the same place, and the state is that of
+        // the plain step: nothing of this feeds it.
+        os << "  %v0u = dyn.kick %v, %f, %m, %half : !vec\n";
+        std::string current = project("%x", "%v0u", "%v0", "").first;
+        os << "  %v1p = dyn.kick " << current << ", %f, %m, %half : !vec\n";
+      }
     }
     std::string drifting = "%v1";
     std::string drifted = sites || constraints ? "%x1d" : "%x1";
@@ -5446,6 +5474,8 @@ void Builder::emitPrograms() {
       drifting = "%v1o";
     } else {
       os << "  " << drifted << " = dyn.drift %x, %v1, %dt : !vec\n";
+      if (sideVirial)
+        os << "  %x1dp = dyn.drift %x, %v1p, %dt : !vec\n";
     }
     // The constraints back to their lengths, and the velocities that take
     // the atoms there over the step (the first half of RATTLE).
@@ -5488,6 +5518,28 @@ void Builder::emitPrograms() {
          << "    md.yield %vs_sum : vector<3xf64>\n"
          << "  } : !vec\n";
       velocities = "%v1c";
+      if (sideVirial) {
+        // What the constraints add to the drift of velocity Verlet: their
+        // change of this drift, and what this drift is ahead of that one,
+        // which lies along the constraints. Each set reads its own
+        // particles.
+        os << "  %dxp = md.map_particles gather(%x1d, %x1dp : !vec, !vec) {\n"
+           << "  ^bb0(%vs_a: vector<3xf64>, %vs_b: vector<3xf64>):\n"
+           << "    %vs_d = arith.subf %vs_a, %vs_b : vector<3xf64>\n"
+           << "    md.yield %vs_d : vector<3xf64>\n"
+           << "  } : !vec\n";
+        unsigned index = 0;
+        for (auto &[set, change] : changes) {
+          std::string whole = "%dxp" + std::to_string(index++);
+          os << "  " << whole << " = md.map_particles gather(" << change
+             << ", %dxp : !vec, !vec) {\n"
+             << "  ^bb0(%vs_a: vector<3xf64>, %vs_b: vector<3xf64>):\n"
+             << "    %vs_s = arith.addf %vs_a, %vs_b : vector<3xf64>\n"
+             << "    md.yield %vs_s : vector<3xf64>\n"
+             << "  } : !vec\n";
+          change = whole;
+        }
+      }
     }
     if (sites)
       emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");

@@ -44,6 +44,7 @@ element.
 | $\mathsf W$ | Virial tensor; $\mathsf W_{aa} = -\partial U/\partial\varepsilon_a$ along the scaling of positions and cell (Sections 6.4 and 6.5) |
 | $T,\ k_B$ | Temperature and Boltzmann's constant |
 | $\gamma$; $D_i = k_BT/(m_i\gamma)$ | Friction of Langevin and Brownian dynamics, in 1/ps (in Section 6.4, $\gamma$ is the surface tension); the diffusion constant of particle $i$ in Brownian dynamics (Section 6.1) |
+| $\mathcal P_{\mathbf x}$; $\mathbf v_\parallel$ | In Section 6.1, the projection that leaves no velocity along the constraints at $\mathbf x$ (the second half of RATTLE), and the part of a leapfrog kick along them, $\mathbf v_\parallel = (1 - \mathcal P_{\mathbf x_n})(\mathbf v_{n-\frac12} + h\mathbf a_n)$ |
 | $\eta_j,\ p_{\eta_j},\ Q_j$; $H'$ | Position, momentum, and mass of thermostat $j$ of a Nosé–Hoover chain of $M$, and the energy that the chain conserves (Section 6.3) |
 | $\tilde H,\ E_\text{bath},\ \Delta E_\text{sys}$ | The conserved energy of the log, $U + K + E_\text{bath}$; the energy the bath has taken, the sum of $-\Delta E_\text{sys}$ over the couplings, each of which gives the system $\Delta E_\text{sys}$ (Section 6.5) |
 | $\boldsymbol\lambda,\ \lambda_m;\ \boldsymbol\lambda^{(k)}$ | In Section 6.8, the coupling parameters of `[free_energy]` and a component of them, $\lambda_\text{C}$ of the Coulomb and $\lambda_\text{V}$ of the Lennard-Jones; the state $k$. In Section 6.4, $\lambda = \sqrt V$ |

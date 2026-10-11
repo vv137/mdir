@@ -1,0 +1,9 @@
+# REQUIRES: python-api, cuda
+# leapfrog-langevin-reference.test on a GPU: one leapfrog step of Langevin
+# dynamics with constraints against a NumPy reference of the documented
+# step (#285), in double and in mixed precision.
+# Inputs/leapfrog_langevin_reference.py.
+# RUN: %mdir_python %S/Inputs/leapfrog_langevin_reference.py %S/Inputs %mdrt GPU Double | FileCheck %s -DMODE=Double
+# RUN: %mdir_python %S/Inputs/leapfrog_langevin_reference.py %S/Inputs %mdrt GPU Mixed | FileCheck %s -DMODE=Mixed
+# CHECK: GPU [[MODE]] plain step: positions within {{.*}} of the documented step; {{.*}}: ok
+# CHECK: GPU [[MODE]] step of energy: positions within {{.*}} of the documented step; {{.*}}: ok
