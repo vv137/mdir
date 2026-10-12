@@ -1288,9 +1288,9 @@ LOOP_SINGLE = 25  # of every N frames, those given one a call
 # Bytes in use of the allocator from frame N to frame 2N. Nothing of an
 # evaluator grows with its frames or its calls (#306: +0 bytes a frame to
 # 131072 frames, scripts/validation/frames/heap.py), and this reads +0. The
-# bound is for the allocator, which now and then hands a request a block 16
-# bytes larger than the last time; it lets 0.64 bytes a frame and 2.3 a
-# call pass.
+# bound is not 0 so that a request that the allocator serves with a block
+# 16 bytes larger than the last time does not fail the test; it lets 0.64
+# bytes a frame and 2.3 a call pass.
 LOOP_IN_USE_BOUND = 64
 
 

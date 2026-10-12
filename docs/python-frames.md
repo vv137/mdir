@@ -637,20 +637,22 @@ the kernels with the neighbor build are 0.8 ms.
   50, and 256 frames, with the Jacobian kept, not returned
   (`jacobian_bytes=0`), and not asked (`gradient=False`), for the whole
   potential and the dependent terms, in double and mixed precision (48
-  cases to 3,200 frames or more, 8 of them to 131,072 frames), and on a
+  cases to 4,096 frames or more, and 8 to 102,400 or 131,072), and on a
   GPU, where they are the bytes of the host all the same, to 131,072
   frames. `mallinfo2` does not see the small objects of Python: the blocks
-  of the interpreter (`sys.getallocatedblocks`) rise by 150 to 300 over
-  the first calls, while its free lists fill, and are level from call 512
-  on. The movement that #306 reports, some 600 bytes in one step and 16
-  up and down, was the reader of the test: it made the `ctypes` class of
+  of the interpreter (`sys.getallocatedblocks`) rise by 70 to 180 over
+  the first 512 calls, while its free lists fill, and by 4 at most from
+  there to call 4,096, and by 1 at most from there to call 131,072. The movement that #306 reports, some 600 bytes in
+  one step and 16 up and down, was the reader of the test: it made the
+  `ctypes` class of
   the structure and the handle of the C library anew at every reading,
   and those are blocks in use that differ from one reading to the next
   (+576 once, at the fourth handle of a process that evaluates nothing).
   The tests now read with a structure and a handle made once, and their
   bound is 64 bytes over 100 frames given as 3 calls of 25 frames and 25
   calls of one frame, which lets 0.64 bytes a frame and 2.3 a call pass;
-  a vector of the host that takes 8 bytes a frame reads +1024 there.
+  a vector of the host that takes 8 bytes a frame reads +1024 there,
+  and one that takes 8 bytes a call +256.
 - **What is not checked in the text.** A row that is taken once, before
   the loop, holds at a frame what the frame before wrote: the evaluation
   must write every slot before the call that takes the row, as it does
