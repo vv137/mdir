@@ -52,7 +52,7 @@ run("the release, an unknown option", publish, "0.1.0", "--tag")
 # The file of the machine: everything the release needs, with stand-ins for
 # the programs; the environment wins over the file. The script then stops
 # at the device, before it reads the repository or writes anything.
-for directory in ("llvm", "hdf5", "cuda"):
+for directory in ("llvm", "hdf5", "cuda", "pybind11"):
     os.makedirs(os.path.join(work, directory))
 machine = os.path.join(work, "machine.env")
 with open(machine, "w") as file:
@@ -60,6 +60,7 @@ with open(machine, "w") as file:
     file.write(f"MDIR_RELEASE_DIR={work}/release\n")
     file.write(f"MDIR_LLVM={work}/llvm\nHDF5_PREFIX={work}/hdf5\n")
     file.write(f"CUDA_ROOT={work}/cuda\nMDIR_RELEASE_GPU=0\n")
+    file.write(f"PYBIND11_DIR={work}/pybind11\nMDIR_PYTHON={program('python')}\n")
     for name in ("cmake", "ninja", "lit", "pandoc", "tectonic", "docker"):
         file.write(f"{name.upper()}={program(name)}\n")
 run("the release, the file of the machine and a device from the environment",
@@ -67,7 +68,8 @@ run("the release, the file of the machine and a device from the environment",
 print("  the release directory was made:", os.path.exists(os.path.join(work, "release")))
 run("the release, a prefix that is no directory", publish, "0.1.0",
     MDIR_ENV_FILE=machine, HDF5_PREFIX=os.path.join(work, "none"),
-    PANDOC=os.path.join(work, "tools", "no-pandoc"))
+    PANDOC=os.path.join(work, "tools", "no-pandoc"),
+    MDIR_TORCH_PYTHON=os.path.join(work, "tools", "no-torch"))
 run("a file of the machine that is missing", publish, "0.1.0",
     MDIR_ENV_FILE=os.path.join(work, "no.env"))
 with open(os.path.join(work, "bad.env"), "w") as file:
