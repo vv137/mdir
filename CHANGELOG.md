@@ -778,6 +778,16 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A Python simulation keeps nothing for a step of energy (#300). Each
+  step of energy, of `run(n, energy=True)` or of a reporter, kept the time
+  of its row and, with rigid water, the temperatures of the solute and of
+  the solvent, which `mdir run` summarizes at the end of its log and a
+  simulation never reads: 48 bytes a row in vectors that double (measured:
+  +64 bytes a call of `run(1, energy=True)` on the dipeptide of the tests,
+  on the CPU and on a GPU, and 0 for `run(1)`), about 70 MB of resident
+  memory after 1.5 million calls. The memory of the host is now flat
+  across steps of energy (`python-memory.test`); `mdir run` and its log
+  are unchanged.
 - A writable borrow of a simulation with the groups refuses an orthorhombic
   cell whose least edge is below the pairlist distance over 0.999, as it
   refused a triclinic one (D242, D245); the check was skipped
