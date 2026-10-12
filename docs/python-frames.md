@@ -589,26 +589,50 @@ the kernels with the neighbor build are 0.8 ms.
 - **Memory in $K$.** Nothing on the device or on the stack of the entry
   grows with the frames: the buffers of the loop are loop-carried, the
   storage of the neighbor structures is the function's, and the rows that
-  the evaluation writes on the stack are taken once, before the loop.
+  the evaluation writes on the stack, which stand in the loop where the
+  start of a run takes them, are kept at one depth by the lowerings (below,
+  #309).
   Measured: 300,000 frames in one activation on the CPU with the resident
   memory constant to 0.1 MB, and 6,000 on a GPU with the memory of the
   device constant. There is no limit on $K$; the host keeps $8K$ bytes per
   output and the Jacobian up to its bound, as before.
-- **What the assembly of the loop assumes is checked** (#302). The builder
-  makes the loop from the text that it emitted for the start of a run: the
-  lines `%name = memref.alloca() : type` are moved before the loop, and a
-  call becomes `func.call`. Text that this matching misses would still
-  compile and give the right numbers, so the builder refuses, with an
-  error that names the line, a program of frames whose loop holds an
-  allocation of the stack in any other spelling, or one of the arguments
-  of the entry that a frame replaces (`%positions`, `%lx`, `%ly`, `%lz`,
-  the tilts, and `%box_memory`, which is filled from them: they are of
-  the program, not of the frame), or whose start evaluates nothing. A
-  call in the generic form, a `return`, and a name of the loop taken twice
-  are refused by the parser. `python-frames-loop.test` and
-  `python-frames-loop-gpu.test` read the same in the emitted module of
-  four evaluators, and measure the memory of a frame: the entry runs on a
-  stack of its own, so the address of the frame of its call of
+- **What the assembly of the loop assumes is checked** (#302, #309). The
+  builder makes the loop from the text that it emitted for the start of a
+  run, in which a call becomes `func.call` and nothing else changes. Text
+  that this assembly cannot take would still compile and give the right
+  numbers, so the builder refuses, with an error that names the line, a
+  program of frames whose loop holds one of the arguments of the entry
+  that a frame replaces (`%positions`, `%lx`, `%ly`, `%lz`, the tilts, and
+  `%box_memory`, which is filled from them: they are of the program, not
+  of the frame), or whose start evaluates nothing. A call in the generic
+  form, a `return`, and a name of the loop taken twice are refused by the
+  parser.
+- **The stack of the entry is kept by the lowerings** (#305, #309). The
+  entry never returns, so memory of the stack that a frame took and did
+  not give back would be taken again at every frame. The rows of the
+  evaluation (`%terms`, the observed columns, the derivative in the
+  tunables) are allocations in the loop, as they are in the loops over
+  steps of a run. On the CPU `hoist-static-allocas` takes every allocation
+  of a constant size once, where its function begins, when the lowering
+  ends (D117); on a GPU the lowering gives back the stack of each
+  iteration of a loop of the host, whatever its size. Until #309 the
+  builder moved the lines `%name = memref.alloca() : type` before the loop
+  itself and refused any other spelling of an allocation in it; that
+  matching of text is gone, since the lowerings do the same for every
+  spelling and for what a pass adds. What the pass cannot take once is an
+  allocation whose size is not a constant. No program has one: the
+  builder, the templates, and the passes allocate static shapes alone. So
+  that this is a check and not a reading, the lowering of a program of
+  frames for the CPU runs the pass with `refuse-rest`: a module in which
+  an allocation would be left outside the first block of a function (and
+  outside OpenMP, where each thread has its own) does not compile, with an
+  error that names the op, and a program of frames that compiles has none
+  (`test/Conversion/MDExecToLoops/hoist-allocas.mlir`).
+  `python-frames-loop.test` and `python-frames-loop-gpu.test` read the
+  emitted module of four evaluators (the rows in the loop, each of a
+  constant size; no call in the generic form; no argument of the entry
+  that a frame replaces) and measure the memory of a frame: the entry
+  runs on a stack of its own, so the address of the frame of its call of
   `@mdrtFrameBoundary` is the depth of that stack where it waits, and the
   depth after frame 201 is that after frame 1 to the byte, whatever put an
   allocation in the loop, the builder or a pass; the bytes in use of the
@@ -616,11 +640,7 @@ the kernels with the neighbor build are 0.8 ms.
   frame 101 to frame 201 (measured: +0; see the next item). The depth says
   nothing of memory that a frame takes and gives back, and the test covers
   the programs it compiles: the dipeptide in water with the whole
-  potential and with the dependent terms. Since #305 the lowerings are a
-  second guard of the same: on the CPU `hoist-static-allocas` moves every
-  allocation of a constant size to the start of its function where the
-  lowering ends (D117), and on a GPU the lowering releases the stack of
-  each iteration of a loop of the host; the matching and its check stay.
+  potential and with the dependent terms.
   The two handles of these tests,
   `Simulation._ir` (the emitted module) and `Simulation._stack_in_use`
   (the depth), are private: they are not part of the interface and may
@@ -664,8 +684,9 @@ the kernels with the neighbor build are 0.8 ms.
   calls of one frame, which lets 0.64 bytes a frame and 2.3 a call pass;
   a vector of the host that takes 8 bytes a frame reads +1024 there,
   and one that takes 8 bytes a call +256.
-- **What is not checked in the text.** A row that is taken once, before
-  the loop, holds at a frame what the frame before wrote: the evaluation
+- **What is not checked in the text.** A row that is taken once, where
+  the function begins, holds at a frame what the frame before wrote (on
+  the CPU; on a GPU it holds anything): the evaluation
   must write every slot before the call that takes the row, as it does
   today. No check of the text sees an evaluation that reads a slot first;
   this rests on the comparison, to the bit, of a frame with the same frame

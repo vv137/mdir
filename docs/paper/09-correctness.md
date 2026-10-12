@@ -428,7 +428,11 @@ failed, and beside the steps of other simulations
 at every frame gives every bit of it on 26 stored frames, orthorhombic,
 under a barostat, and triclinic. The entry of that program never
 returns, so memory of the stack taken in its loop would be taken at every
-frame: the stack of the entry, read where it waits for a frame, is as deep
+frame. The rows of the evaluation stand in that loop, and the lowerings
+keep the stack: for the CPU every allocation of a constant size is taken
+once, where the function begins, and a program of frames with any other
+is refused; for a device the stack of an iteration is given back where it
+ends. The stack of the entry, read where it waits for a frame, is as deep
 after frame 201 as after frame 1, to the byte
 (`python-frames-loop*.test`). Four frames of leapfrog under the barostat, each with its cell, give
 the energy and the derivative of a simulation compiled from that frame, in
