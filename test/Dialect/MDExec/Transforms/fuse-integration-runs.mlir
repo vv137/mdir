@@ -2,7 +2,7 @@
 // RUN: mdir-opt %s --md-exec-fuse-loops=integration-runs | FileCheck %s
 
 // The loop over particles that closes a run of loops over disjoint tuples
-// and the one that opens the next (D110, D[leapfrog-langevin-kernels]). A
+// and the one that opens the next (D110, D250). A
 // device joins a loop over particles, the loops over disjoint tuples that
 // read it, and the loop over particles that reads them into one kernel,
 // and a loop is the loop after of one run or the loop before of the next,

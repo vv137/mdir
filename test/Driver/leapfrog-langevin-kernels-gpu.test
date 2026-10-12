@@ -1,5 +1,5 @@
 # The kernels of a leapfrog step under Langevin dynamics with constraints
-# (#287, D[leapfrog-langevin-kernels]). The step projects the velocities
+# (#287, D250). The step projects the velocities
 # after its first half kick and constrains the positions after its drift:
 # two runs of loops over the tuples of the constraints. On a device each
 # is one integration kernel with the loop over particles before it and

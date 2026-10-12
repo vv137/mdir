@@ -1394,7 +1394,7 @@ a step that computes energies, the second kick and the kinetic energy
 become one loop.
 
 For a device the driver gives the pass `integration-runs`
-(D[leapfrog-langevin-kernels]). A loop over particles whose destination the
+(D250). A loop over particles whose destination the
 loops over the tuples of a disjoint set read as a field of their members,
 those loops, and the loop over particles that reads them become one kernel
 on a device (Section 10.8, D110), and there a loop is the loop after of one

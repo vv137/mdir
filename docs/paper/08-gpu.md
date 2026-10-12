@@ -164,7 +164,7 @@ with them (525 to 543 ns/day). `test/Driver/integration-gpu.test` runs propane w
 its hydrogens numbered after its carbons, whose groups are not contiguous,
 against the loops apart and the CPU.
 
-**Two runs in a row** (D[leapfrog-langevin-kernels]). A loop over particles
+**Two runs in a row** (D250). A loop over particles
 is the loop after of one run or the loop before of the next, not both: the
 kernel of a run computes its loop after once every member of a group has
 its correction, and a second run would need those values of every member
