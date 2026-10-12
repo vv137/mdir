@@ -778,6 +778,20 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- The test of the memory of the host across the frames of a frame
+  evaluator read bytes of its own (#306). It made the `ctypes` structure
+  of `mallinfo2` and the handle of the C library anew at every reading,
+  which moved the bytes in use by 16 up and down and by 576 once with no
+  evaluator at all, and its bound of 4096 bytes over 100 frames let that
+  pass. Read with a structure and a handle made once
+  (`scripts/validation/frames/heap.py`), the bytes in use of the host do
+  not move with the frames or the calls of an evaluator: +0 between
+  readings at powers of two of calls to 131,072 frames, on the CPU and a
+  GPU, in double and mixed precision, for calls of 1 to 256 frames with
+  and without the Jacobian. Nothing of `mdir.FrameEvaluator` changes.
+  `python-frames-loop.test` and `python-frames-loop-gpu.test` now bound
+  the growth by 64 bytes over 100 frames, in calls of 25 frames and of
+  one.
 - A run on the CPU takes the rows that it writes once on its stack, not
   again at every row (#305, an amendment of D117). The observed columns
   (`observe`), the coordinates and the terms of pulling (`pull`), and
