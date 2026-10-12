@@ -639,7 +639,18 @@ the kernels with the neighbor build are 0.8 ms.
   potential and the dependent terms, in double and mixed precision (48
   cases to 4,096 frames or more, and 8 to 102,400 or 131,072), and on a
   GPU, where they are the bytes of the host all the same, to 131,072
-  frames. `mallinfo2` does not see the small objects of Python: the blocks
+  frames. The reading sees everything that the host takes for a frame,
+  since all of it comes from the allocator of the C library: the C++ of
+  the driver and of the binding, the runtime (`malloc`, `calloc`,
+  `realloc`), and the buffers of the compiled code, whose `malloc` and
+  `free` are functions of the host. What is mapped otherwise is taken
+  once: the stack of an activation and the code of an engine, and the
+  address space mapped outside the heap (`/proc/self/maps`) is the same
+  number at each of 18 readings to 131,072 frames on the CPU, for each of
+  the three states of the Jacobian. Outside both are the memory of the
+  device and the page-locked memory of the host that the driver gives
+  (`python-memory-gpu.test` reads the device). `mallinfo2` does not see
+  the small objects of Python either: the blocks
   of the interpreter (`sys.getallocatedblocks`) rise by 70 to 180 over
   the first 512 calls, while its free lists fill, and by 4 at most from
   there to call 4,096, and by 1 at most from there to call 131,072. The movement that #306 reports, some 600 bytes in
