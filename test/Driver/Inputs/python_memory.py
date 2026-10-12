@@ -183,17 +183,17 @@ check(f"from borrow 5 to borrow {CALLS}, committed and abandoned in turn", borro
 def rows(what, step):
     """A simulation keeps nothing per step of energy (#300): the bytes in
     use after ROWS of them and after 2 ROWS differ by ROWS_BOUND at most.
-    What `mdir run` keeps of each row for the summary at the end of its log
-    (the time of the row, for its rate, and the temperatures of the solute
-    and of the solvent, D203), in vectors that double, took 65536 bytes
-    over these rows when a simulation kept it too, and 16384 at least for
-    any system: the simulation is new, so a vector with an entry of 16
-    bytes for each row holds ROWS of them, or one more, at the first
-    reading and has doubled at the second. Without it the difference read
-    0 bytes over 8192 rows on the CPU and on a GPU, so the bound is of
-    what Python may allocate between the two readings, not of the
-    allocator: the bytes in use count blocks, not pages. It lets through
-    what grows by less than 4 bytes a row; nothing smaller is covered."""
+    A run kept each row for the summary at the end of the log of `mdir
+    run` (the time of the row, for its rate, and the temperatures of the
+    solute and of the solvent, D203), in vectors that double: 65536 bytes
+    over these rows, and 16384 at least for any system, since the
+    simulation is new, so a vector with an entry of 16 bytes for each row
+    holds ROWS of them, or one more, at the first reading and has doubled
+    at the second. Without them the difference read 0 bytes over 8192 rows
+    on the CPU and on a GPU, so the bound is of what Python may allocate
+    between the two readings, not of the allocator: the bytes in use count
+    blocks, not pages. It lets through what grows by less than 4 bytes a
+    row; nothing smaller is covered."""
     step(ROWS)
     gc.collect()
     before = libc.mallinfo2()
