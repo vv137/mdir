@@ -382,6 +382,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- Leapfrog under Langevin dynamics with constraints is faster on a GPU
+  (D[leapfrog-langevin-kernels], #287): 2.4% on JAC of the Amber suite
+  (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on
+  Cellulose (66.0 to 66.8 ns/day). The constraints of the positions are
+  now one kernel with the drift before them and the loop after them, as in
+  velocity Verlet. In the deterministic mode the trajectory is the same to
+  the bit; no key, file, or checkpoint changes.
 - **Leapfrog with constraints: every step leaves the state of the plain
   step, and under Langevin dynamics the plain step is the documented one**
   (#285). With SHAKE or SETTLE, a step that writes a row of energies (and

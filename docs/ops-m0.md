@@ -1393,6 +1393,35 @@ With velocity Verlet, the kick and the drift of a step become one loop. In
 a step that computes energies, the second kick and the kinetic energy
 become one loop.
 
+For a device the driver gives the pass `integration-runs`
+(D[leapfrog-langevin-kernels]). A loop over particles whose destination the
+loops over the tuples of a disjoint set read as a field of their members,
+those loops, and the loop over particles that reads them become one kernel
+on a device (Section 10.8, D110), and there a loop is the loop after of one
+run or the loop before of the next, not both. With the option, a loop that
+reads a destination of such loops over tuples, which themselves read a loop
+over particles, is not fused with a later loop whose destination such loops
+read. A leapfrog step under Langevin dynamics with constraints has the two
+runs one after the other: half a kick, the projection of the velocities,
+the loop that adds its change, then half a kick, the drift with the
+friction and the noise, and the constraints of the positions. Fused, the
+loop between the two runs closed the first, and the constraints of the
+positions were left as kernels of their own, which read and write their
+values in memory; apart, the last half of the drift opens the second run
+and each run is one kernel. The loops over tuples must read the loop
+before as a field, not only as the positions of their displacements, and
+must have no global sums, as the kernel of a run requires: the scaling of
+the groups of a barostat, which reads the drift as positions alone, leaves
+the loops around it fused, and so does the projection of a step with the
+virial, whose destinations loops with global sums read. The run that the second loop opens
+must also end in loops over particles that open no third run: with
+virtual sites, whose placement takes the constrained positions, one kernel
+would only change places with another. Velocity Verlet with virtual sites
+has two runs in a row of its own, the spreading of the forces of the sites
+and the projection of the velocities after the kick, and the same rule
+makes each a kernel. On the CPU, which has no such kernels, the option is
+not set.
+
 ### 9.5 Powers of the squared distance
 
 The loop provides $r^2$, and a kernel that was written in terms of `r` starts
