@@ -1,0 +1,78 @@
+# The scripts that need something of the machine they run on (an install
+# prefix, a program, a directory to write to, a device) take it from the
+# environment and stop at their start, naming everything that is missing
+# with a line on what it is, before they fetch, remove, or write anything
+# (#289, scripts/environment.sh, docs/environment.md). They were written
+# with defaults that existed on one machine and stopped elsewhere at a
+# missing file, part of the way. The file that MDIR_ENV_FILE names gives
+# the values of a machine, and the environment wins over it. Each script
+# runs here in an environment that holds nothing
+# (Inputs/script_environment.py); no device, engine, or toolkit is needed.
+# RUN: %python %S/Inputs/script_environment.py %S/../.. %t | FileCheck %s
+# CHECK: the release, nothing set: exit 2
+# CHECK-NEXT: scripts/release/publish.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: MDIR_RELEASE_DIR is not set: the directory where a release writes its worktree, build tree, assets, and logs
+# CHECK-NEXT: MDIR_LLVM is not set: the install prefix of LLVM and MLIR
+# CHECK-NEXT: HDF5_PREFIX is not set: the install prefix of HDF5
+# CHECK-NEXT: CUDA_ROOT is not set: the CUDA toolkit of the build
+# CHECK-NEXT: MDIR_RELEASE_GPU is not set: the index of the GPU that runs the suite
+# CHECK-NEXT: CMAKE is not set and cmake is not on the path: CMake
+# CHECK-NEXT: NINJA is not set and ninja is not on the path: ninja
+# CHECK-NEXT: LIT is not set and lit is not on the path: LLVM's lit, which runs the suite
+# CHECK-NEXT: PANDOC is not set and pandoc is not on the path: pandoc 3, for the white paper
+# CHECK-NEXT: TECTONIC is not set and tectonic is not on the path: tectonic, for the white paper
+# CHECK-NEXT: DOCKER is not set and docker is not on the path: Docker with BuildKit, for the manylinux tree and the image
+# CHECK-NEXT: a dry run without the binary, nothing set: exit 2
+# CHECK-NEXT: scripts/release/publish.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: MDIR_RELEASE_DIR is not set: the directory where a release writes its worktree, build tree, assets, and logs
+# CHECK-NEXT: MDIR_LLVM is not set: the install prefix of LLVM and MLIR
+# CHECK-NEXT: HDF5_PREFIX is not set: the install prefix of HDF5
+# CHECK-NEXT: CUDA_ROOT is not set: the CUDA toolkit of the build
+# CHECK-NEXT: MDIR_RELEASE_GPU is not set: the index of the GPU that runs the suite
+# CHECK-NEXT: CMAKE is not set and cmake is not on the path: CMake
+# CHECK-NEXT: NINJA is not set and ninja is not on the path: ninja
+# CHECK-NEXT: LIT is not set and lit is not on the path: LLVM's lit, which runs the suite
+# CHECK-NEXT: PANDOC is not set and pandoc is not on the path: pandoc 3, for the white paper
+# CHECK-NEXT: TECTONIC is not set and tectonic is not on the path: tectonic, for the white paper
+# CHECK-NEXT: the release without its binary: exit 2
+# CHECK-NEXT: --no-binary is for --dry-run: a release has its binary
+# CHECK-NEXT: a dry run that publishes: exit 2
+# CHECK-NEXT: --dry-run publishes nothing: not with --publish
+# CHECK-NEXT: the release, an unknown option: exit 2
+# CHECK-NEXT: unknown: --tag
+# CHECK-NEXT: usage: scripts/release/publish.sh VERSION [--publish] [--container] | VERSION --dry-run [--no-binary] [--container]
+# CHECK-NEXT: the release, the file of the machine and a device from the environment: exit 2
+# CHECK-NEXT: MDIR_RELEASE_GPU is not the index of a GPU: first
+# CHECK-NEXT: the release directory was made: False
+# CHECK-NEXT: the release, a prefix that is no directory: exit 2
+# CHECK-NEXT: scripts/release/publish.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: HDF5_PREFIX names WORK/none, which is not a directory: the install prefix of HDF5
+# CHECK-NEXT: PANDOC names WORK/tools/no-pandoc, which is not a program: pandoc 3, for the white paper
+# CHECK-NEXT: a file of the machine that is missing: exit 2
+# CHECK-NEXT: scripts/release/publish.sh: MDIR_ENV_FILE names WORK/no.env, which cannot be read
+# CHECK-NEXT: a file of the machine with a line that is not NAME=value: exit 2
+# CHECK-NEXT: scripts/release/publish.sh: WORK/bad.env:2: not NAME=value: export HDF5_PREFIX=/y
+# CHECK-NEXT: the paper, nothing set: exit 2
+# CHECK-NEXT: scripts/paper/build-pdf.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: PANDOC is not set and pandoc is not on the path: pandoc 3
+# CHECK-NEXT: TECTONIC is not set and tectonic is not on the path: tectonic
+# CHECK-NEXT: the output directory was made: False
+# CHECK-NEXT: the comparison with GROMACS, nothing set: exit 2
+# CHECK-NEXT: scripts/validation/gromacs/run.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: TLEAP is not set and tleap is not on the path: tleap of AmberTools, on PATH or in ENGINES/bin
+# CHECK-NEXT: GMX is not set and gmx is not on the path: gmx of GROMACS, on PATH or in ENGINES/bin
+# CHECK-NEXT: MDIR is not set and mdir is not on the path: the mdir program to compare
+# CHECK-NEXT: the comparison with GROMACS, a prefix that is no directory: exit 2
+# CHECK-NEXT: scripts/validation/gromacs/run.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: ENGINES names WORK/none, which is not a directory: a prefix whose bin holds tleap and gmx
+# CHECK-NEXT: TLEAP is not set and tleap is not on the path: tleap of AmberTools, on PATH or in ENGINES/bin
+# CHECK-NEXT: GMX is not set and gmx is not on the path: gmx of GROMACS, on PATH or in ENGINES/bin
+# CHECK-NEXT: the work directory was made: False
+# CHECK-NEXT: the argon example, nothing set: exit 2
+# CHECK-NEXT: LLVM_PREFIX is not set: the install prefix of LLVM (bin/mlir-opt, bin/mlir-runner)
+# CHECK-NEXT: the argon example, a prefix without LLVM: exit 2
+# CHECK-NEXT: LLVM_PREFIX names WORK/llvm, which holds no bin/mlir-opt
+# CHECK-NEXT: the experiment on neighbor structures, nothing set: exit 2
+# CHECK-NEXT: scripts/experiments/neighbor-structures/run.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: MDIR_BENCH_DIR is not set: the prepared Amber suite (scripts/benchmarks/amber)
+# CHECK-NEXT: NVCC is not set and nvcc is not on the path: nvcc of the CUDA toolkit

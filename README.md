@@ -402,7 +402,7 @@ same system as a module that is written by hand, which
 `examples/argon/run.sh` compiles and runs with the tools, pass by pass:
 
 ```sh
-export MDIR_BUILD=build LLVM_PREFIX=$HOME/opt/llvm/23.1.2
+export MDIR_BUILD=build LLVM_PREFIX=$HOME/opt/llvm/23.1.2   # both are needed
 examples/argon/run.sh examples/argon/argon.mlir             # double precision
 examples/argon/run.sh examples/argon/argon.mlir mixed 16    # mixed, 16 threads
 CUDA_ROOT=/usr/local/cuda \

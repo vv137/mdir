@@ -2,11 +2,18 @@
 # Runs the prototypes of the loop over pairs and of the search on JAC and
 # writes their times to results/<date>-<device>.csv. See README.md.
 #
-#   MDIR_BENCH_DIR=~/opt/benchmarks/amber CUDA_VISIBLE_DEVICES=0 ./run.sh
+#   MDIR_BENCH_DIR=<the prepared Amber suite> CUDA_VISIBLE_DEVICES=0 ./run.sh
+#
+# NVCC is nvcc (on the path by default) and CUDA_ARCH the architecture to
+# compile for (sm_86 by default).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-bench=${MDIR_BENCH_DIR:?set MDIR_BENCH_DIR to the prepared Amber suite}
-nvcc=${NVCC:-nvcc}
+. "$here/../../environment.sh"
+need_directory MDIR_BENCH_DIR "the prepared Amber suite (scripts/benchmarks/amber)"
+need_program NVCC nvcc "nvcc of the CUDA toolkit"
+need_check
+bench=$MDIR_BENCH_DIR
+nvcc=$NVCC
 arch=${CUDA_ARCH:-sm_86}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT

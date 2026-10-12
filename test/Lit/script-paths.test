@@ -1,0 +1,11 @@
+# No tracked file of the scripts, the examples, the packaging, the tools,
+# the tests, or the build files names a path of one machine: a user's
+# directory, a path under the home directory, or a CUDA toolkit with its
+# version (#289). Such defaults made the scripts run on the machine they
+# were written on and nowhere else. What may name one (the default prefix
+# of a script that installs, a path inside a container image, a work
+# directory that a script makes) is listed with its reason in
+# Inputs/script_paths.py, and an entry of that list that matches nothing is
+# an error too. No device is needed.
+# RUN: %python %S/Inputs/script_paths.py %S/../.. | FileCheck %s
+# CHECK: no path of one machine in {{[0-9]+}} files, 6 lines excepted

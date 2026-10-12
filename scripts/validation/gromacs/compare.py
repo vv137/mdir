@@ -1,7 +1,8 @@
 """Compares the terms of MDIR at the start with those of GROMACS.
 
 Usage: compare.py <directory of one force field>, which holds energy.xvg
-of GROMACS and mdir.toml.
+of GROMACS and mdir.toml. MDIR names the mdir program (mdir on the path by
+default; run.sh sets it).
 """
 import os
 import re
@@ -13,7 +14,7 @@ ff = os.path.basename(d)
 rows = [l.split() for l in open(os.path.join(d, "energy.xvg")) if not l.startswith(("#", "@"))]
 legends = [re.search(r'"(.*)"', l).group(1) for l in open(os.path.join(d, "energy.xvg")) if l.startswith("@ s") and "legend" in l]
 g = dict(zip(legends, map(float, rows[0][1:])))
-mdir = os.environ.get("MDIR", os.path.expanduser("~/build/mdir/bin/mdir"))
+mdir = os.environ.get("MDIR") or "mdir"
 out = subprocess.run([mdir, "run", "mdir.toml"], cwd=d, capture_output=True,
                      text=True)
 if out.returncode != 0:

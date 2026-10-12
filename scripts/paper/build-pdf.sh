@@ -1,16 +1,22 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Builds the white paper as a PDF: writes each section of docs/paper from
 # Markdown to LaTeX with pandoc (OUT/sections/*.tex), copies the master file
 # docs/paper/tex/main.tex and the figures, and compiles with tectonic.
 #
 #   scripts/paper/build-pdf.sh OUT
 #
-# Needs pandoc (3.x) and tectonic on the path, or in PANDOC and TECTONIC.
+# Needs pandoc (3.x) and tectonic on the path, or named by PANDOC and
+# TECTONIC (docs/environment.md, Scripts; the file that MDIR_ENV_FILE names
+# is read), and stops at its start if one is not found.
 # The Markdown is the source; the generated sections are not edited.
 set -e
-out=$1
-pandoc=${PANDOC:-pandoc}
-tectonic=${TECTONIC:-tectonic}
+out=${1:?usage: $0 OUT}
+. "$(dirname "$0")/../environment.sh"
+need_program PANDOC pandoc "pandoc 3"
+need_program TECTONIC tectonic "tectonic"
+need_check
+pandoc=$PANDOC
+tectonic=$TECTONIC
 paper=$(cd "$(dirname "$0")/../../docs/paper" && pwd)
 mkdir -p "$out/sections" "$out/figures"
 cp "$paper/tex/main.tex" "$out/"

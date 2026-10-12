@@ -411,6 +411,16 @@ format, or the outputs; every such change is listed under **Changed** or
     `terms="dependent"` is compiled once for a `Program` too.
   - After a frame whose evaluation fails, the next frame pays one start of
     an activation. Errors and what is refused are as before.
+- **The scripts of the repository take what a machine provides from the
+  environment** (#289). `scripts/release/publish.sh`,
+  `scripts/validation/gromacs/run.sh`, and `examples/argon/run.sh` had
+  defaults that existed on one machine. They now stop at their start and
+  name what is missing: set `MDIR_RELEASE_DIR`, `MDIR_LLVM`, `HDF5_PREFIX`,
+  `CUDA_ROOT`, and `MDIR_RELEASE_GPU` for a release, and `LLVM_PREFIX` for
+  the argon example; `mdir`, `gmx`, and `tleap` are found on the path or
+  named by `MDIR`, `GMX`, and `TLEAP`. `MDIR_ENV_FILE` names a file with
+  the values of a machine. `publish.sh --dry-run` rehearses a release
+  without a tag ([docs/environment.md](docs/environment.md#scripts)).
 - **Leapfrog with constraints: every step leaves the state of the plain
   step, and under Langevin dynamics the plain step is the documented one**
   (#285). With SHAKE or SETTLE, a step that writes a row of energies (and

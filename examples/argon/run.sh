@@ -11,9 +11,10 @@
 #
 # Environment variables:
 #   MDIR_BUILD   The build directory of MDIR. The default is build.
-#   LLVM_PREFIX  The install prefix of LLVM.
+#   LLVM_PREFIX  The install prefix of LLVM. Required.
 #   CUDA_ROOT    The CUDA toolkit, for the target gpu. The kernels take
-#                their math functions from it.
+#                their math functions from it. The default is
+#                /usr/local/cuda, where the toolkit's installer links it.
 #   MDRT_DEVICE  The GPU to run on, among those that CUDA_VISIBLE_DEVICES
 #                leaves visible. The default is 0.
 #   SKIN, WIDTH  The skin of the neighbor structures, and the number of
@@ -26,7 +27,9 @@ MODE="${2:-double}"
 TARGET="${3:-}"
 
 MDIR_BUILD="${MDIR_BUILD:-build}"
-LLVM_PREFIX="${LLVM_PREFIX:-$HOME/opt/llvm/23.1.2}"
+[ -n "${LLVM_PREFIX:-}" ] || { echo "LLVM_PREFIX is not set: the install prefix of LLVM (bin/mlir-opt, bin/mlir-runner)" >&2; exit 2; }
+[ -x "$LLVM_PREFIX/bin/mlir-opt" ] || { echo "LLVM_PREFIX names $LLVM_PREFIX, which holds no bin/mlir-opt" >&2; exit 2; }
+[ -x "$MDIR_BUILD/bin/mdir-opt" ] || { echo "MDIR_BUILD names $MDIR_BUILD, which holds no bin/mdir-opt" >&2; exit 2; }
 SKIN="${SKIN:-0.1}"
 WIDTH="${WIDTH:-160}"
 

@@ -217,6 +217,27 @@ A release is two steps, scripted so that nothing is done by hand
    notes are the changelog's section; the maintainer runs it, or approves
    it. `--container` also builds the Docker image.
 
+`publish.sh` names no path of the machine it runs on. The machine provides,
+in the environment or in the file that `MDIR_ENV_FILE` names
+([environment.md](environment.md#scripts)): `MDIR_RELEASE_DIR`, where the
+release writes its worktree, build tree, assets, and logs; `MDIR_LLVM`,
+`HDF5_PREFIX`, and `CUDA_ROOT`, the prefixes of the build; and
+`MDIR_RELEASE_GPU`, the device of the suite. `cmake`, `ninja`, `lit`,
+`pandoc`, `tectonic`, and `docker` are found on the path or named by
+`CMAKE`, `NINJA`, `LIT`, `PANDOC`, `TECTONIC`, and `DOCKER`. On a shared
+machine, `MDIR_RELEASE_SUITE_LOCK` and `MDIR_RELEASE_GPU_LOCK` name its
+locks, which the script takes in that order around the suite. The script
+stops at its start and names everything that is missing.
+
+`publish.sh VERSION --dry-run` rehearses a release, also of a version that
+is tagged already: it does everything up to the tag in trees of its own
+(their names end in `-dry-run`) and tags, pushes, and publishes nothing;
+`--publish` is refused with it. With it, `--no-binary` leaves out the
+manylinux tree, for a machine without Docker. A run, dry or not, removes
+its worktree when it ends and leaves its build tree
+(`build-vVERSION[-dry-run]`), its assets (`vVERSION[-dry-run]`), and its
+logs under `MDIR_RELEASE_DIR`, to be removed by hand.
+
 The suite of a release runs more than the suite of a pull request.
 `publish.sh` gives lit `-Drelease=1`, which enables the tests that require
 `release-tests` (`*-release.test` and `*-release-gpu.test`): where a test
