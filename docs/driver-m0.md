@@ -472,7 +472,9 @@ of $T$ and of $2K/(N_fk_B)$ over the rows, with errors from ten blocks of
 rows, for the solvent, the waters of SETTLE (6 degrees of freedom each),
 and the solute, every other particle, ions included; the three degrees of
 freedom of the center of mass are shared in proportion
-(D203).
+(D203). The run keeps their sums and the sums of the ten blocks,
+whose length the number of rows of the run gives before it begins, and
+not the rows (#300).
 
 | Quantity | Kinetic energy | Reason |
 |---|---|---|
