@@ -10,8 +10,10 @@
 # as deep at the boundary after frame 201 as after frame 1, to the byte
 # (the entry never returns: memory of the stack taken in the loop, by the
 # builder or by a pass, is a depth that grows); and the bytes in use of the
-# allocator, read as python-memory.test reads them, grow by less than 4096
-# from frame 101 to frame 201, in calls of 25 frames (41 bytes a frame pass).
+# allocator (mallinfo2 with the thread cache off, read with a structure and
+# a handle made once) grow by 64 at most from frame 101 to frame 201, given
+# as 3 calls of 25 frames and 25 calls of one frame (#306: measured +0;
+# 0.64 bytes a frame and 2.3 a call pass).
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide loop CPU Double | FileCheck %s -DMODE="CPU Double"
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide loop CPU Mixed | FileCheck %s -DMODE="CPU Mixed"
 # CHECK: [[MODE]]: the loop over frames of the whole potential: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
@@ -19,7 +21,7 @@
 # CHECK: [[MODE]]: the loop over frames of a program with a barostat: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
 # CHECK: [[MODE]]: the loop over frames of a triclinic cell: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
 # CHECK: [[MODE]]: the stack of the entry of the whole potential at the boundary after frames 1, 101, and 201: {{[0-9]+}} bytes, then +0 and +0 bytes (bound 0): True
-# CHECK: [[MODE]]: the bytes in use of the allocator with the whole potential from frame 101 to frame 201: {{.*}} (bound 4096): True
+# CHECK: [[MODE]]: the bytes in use of the allocator with the whole potential from frame 101 to frame 201: {{.*}} (bound 64): True
 # CHECK: [[MODE]]: the stack of the entry of the dependent terms at the boundary after frames 1, 101, and 201: {{[0-9]+}} bytes, then +0 and +0 bytes (bound 0): True
-# CHECK: [[MODE]]: the bytes in use of the allocator with the dependent terms from frame 101 to frame 201: {{.*}} (bound 4096): True
+# CHECK: [[MODE]]: the bytes in use of the allocator with the dependent terms from frame 101 to frame 201: {{.*}} (bound 64): True
 # CHECK: loop passed

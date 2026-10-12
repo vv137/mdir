@@ -70,9 +70,9 @@ Scenarios:
            no allocation of the stack, no call in the generic form, and
            no argument of the entry that a frame replaces stands in the
            loop; the stack of the entry is as deep at the boundary of a
-           late frame as at that of an early one, to the byte; and on the
-           CPU the bytes in use of the allocator do not grow with the
-           frames
+           late frame as at that of an early one, to the byte; and the
+           bytes in use of the allocator of the host do not grow with the
+           frames or with the calls (#306)
   torch    the same average differentiated by PyTorch through
            mdir.torch.evaluate; gradcheck; a fit of sigma' to a synthetic
            target; refusals of the adapter; torch.compile
@@ -88,7 +88,7 @@ import mdir
 
 root, scenario, target, precision = sys.argv[1:5]
 TCACHE_OFF = "glibc.malloc.tcache_count=0"
-if scenario == "loop" and target == "CPU" and TCACHE_OFF not in os.environ.get("GLIBC_TUNABLES", ""):
+if scenario == "loop" and TCACHE_OFF not in os.environ.get("GLIBC_TUNABLES", ""):
     # The bytes in use of the allocator are read without its thread cache,
     # in which a freed block still counts as in use (#228,
     # Inputs/python_memory.py); the allocator reads its tunables when the
@@ -1283,8 +1283,15 @@ def run_activation():
 
 
 LOOP_FRAMES = 100  # N: the memory is read N and 2N frames after the first
-LOOP_BATCH = 25  # frames in a call
-LOOP_IN_USE_BOUND = 4096  # bytes in use of the allocator from frame N to frame 2N
+LOOP_BATCH = 25  # frames in a call of several
+LOOP_SINGLE = 25  # of every N frames, those given one a call
+# Bytes in use of the allocator from frame N to frame 2N. Nothing of an
+# evaluator grows with its frames or its calls (#306: +0 bytes a frame to
+# 131072 frames, scripts/validation/frames/heap.py), and this reads +0. The
+# bound is for the allocator, which now and then hands a request a block 16
+# bytes larger than the last time; it lets 0.64 bytes a frame and 2.3 a
+# call pass.
+LOOP_IN_USE_BOUND = 64
 
 
 def frame_loop(text):
@@ -1298,18 +1305,26 @@ def frame_loop(text):
     return lines[entry:heads[0]], lines[heads[0] + 1:-3]
 
 
+class Mallinfo2(ctypes.Structure):
+    _fields_ = [(name, ctypes.c_size_t) for name in (
+        "arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks", "fsmblks",
+        "uordblks", "fordblks", "keepcost")]
+
+
+LIBC = ctypes.CDLL(None)
+LIBC.mallinfo2.restype = Mallinfo2
+
+
 def in_use():
     """The bytes in use of the allocator: the blocks allocated and not
-    freed, in every arena, and the blocks mapped one by one."""
-    class Mallinfo2(ctypes.Structure):
-        _fields_ = [(name, ctypes.c_size_t) for name in (
-            "arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks", "fsmblks",
-            "uordblks", "fordblks", "keepcost")]
-
-    libc = ctypes.CDLL(None)
-    libc.mallinfo2.restype = Mallinfo2
+    freed, in every arena, and the blocks mapped one by one. The structure
+    and the handle of the C library are made once, above: made anew at
+    every reading, as before #306, they are themselves blocks in use that
+    differ from one reading to the next (16 bytes up and down, and 576 once,
+    at the fourth handle of a process, with no evaluator at all), which is
+    what #306 saw move."""
     gc.collect()
-    info = libc.mallinfo2()
+    info = LIBC.mallinfo2()
     return info.uordblks + info.hblkhd
 
 
@@ -1352,7 +1367,12 @@ def run_loop():
     positions = np.stack([s.positions for s in states])
     edges = np.tile(states[0].cell.diagonal, (count, 1))
 
+    # The frames of every call are arrays made here, so that between two
+    # readings the test itself allocates nothing that it keeps.
     batch = np.arange(LOOP_BATCH) % count
+    several = (np.ascontiguousarray(positions[batch]), np.ascontiguousarray(edges[batch]))
+    single = [(np.ascontiguousarray(positions[k:k + 1]), np.ascontiguousarray(edges[k:k + 1]))
+              for k in range(count)]
 
     for name in ("the whole potential", "the dependent terms"):
         evaluator = evaluators[name]
@@ -1360,24 +1380,29 @@ def run_loop():
         assert sim._stack_in_use == 0
         evaluator.evaluate(positions[:1], edges[:1])
         depths, memory = [sim._stack_in_use], []
-        # Calls of the same number of frames, so that the host keeps as
-        # much for one as for another.
+        # N frames: calls of LOOP_BATCH frames, whose Jacobian is kept, and
+        # LOOP_SINGLE calls of one frame, so that what a call would keep
+        # shows as what a frame would. The same calls before each reading,
+        # so that the host holds as much at one as at the other.
         for _ in range(2):
-            for _ in range(LOOP_FRAMES // LOOP_BATCH):
-                evaluator.evaluate(positions[batch], edges[batch])
+            for _ in range((LOOP_FRAMES - LOOP_SINGLE) // LOOP_BATCH):
+                evaluator.evaluate(*several)
+            for k in range(LOOP_SINGLE):
+                evaluator.evaluate(*single[k % count])
             depths.append(sim._stack_in_use)
-            memory.append(in_use() if target == "CPU" else 0)
+            memory.append(in_use())
         level = depths[0] > 0 and len(set(depths)) == 1
         print(f"{mode}: the stack of the entry of {name} at the boundary after frames 1, "
               f"{1 + LOOP_FRAMES}, and {1 + 2 * LOOP_FRAMES}: {depths[0]} bytes, then "
               f"{depths[1] - depths[0]:+d} and {depths[2] - depths[0]:+d} bytes (bound 0): {level}")
         assert level, depths
-        if target == "CPU":
-            growth = memory[1] - memory[0]
-            print(f"{mode}: the bytes in use of the allocator with {name} from frame "
-                  f"{1 + LOOP_FRAMES} to frame {1 + 2 * LOOP_FRAMES}: {growth:+d} (bound "
-                  f"{LOOP_IN_USE_BOUND}): {growth <= LOOP_IN_USE_BOUND}")
-            assert growth <= LOOP_IN_USE_BOUND, memory
+        # On a GPU these are the bytes of the host all the same: what the
+        # host and the runtime of the device keep there for a frame.
+        growth = memory[1] - memory[0]
+        print(f"{mode}: the bytes in use of the allocator with {name} from frame "
+              f"{1 + LOOP_FRAMES} to frame {1 + 2 * LOOP_FRAMES}: {growth:+d} (bound "
+              f"{LOOP_IN_USE_BOUND}): {growth <= LOOP_IN_USE_BOUND}")
+        assert growth <= LOOP_IN_USE_BOUND, memory
     print("loop passed")
 
 
