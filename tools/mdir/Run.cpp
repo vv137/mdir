@@ -989,6 +989,16 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.force = program->force;
   output.firstStep = firstStep;
   output.energyPeriod = control->energyPeriod;
+  // What the summary at the end takes of the rows, in constant memory
+  // (#300): the rate from the first row at or after the middle of the
+  // run, and the temperatures of the solute and of the solvent in ten
+  // blocks of the rows after the first, which has none.
+  output.rateStep = firstStep + control->numSteps / 2;
+  int64_t temperatureRows =
+      control->energyPeriod > 0 ? control->numSteps / control->energyPeriod : 0;
+  for (BlockMean *mean : {&output.soluteOptimal, &output.solventOptimal,
+                          &output.soluteFull, &output.solventFull})
+    mean->plan(temperatureRows);
   output.firstTime = firstTime;
   output.timestep = control->timestep;
   // Langevin dynamics exchanges energy with the bath in every step, which
@@ -1317,13 +1327,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.log.print("\n");
   // The rate past the start: from the first output of the energies at or
   // after half the steps to the last, which wait for the device.
-  if (!control->minimize && output.energyTimes.size() >= 2) {
-    int64_t half = firstStep + control->numSteps / 2;
-    auto from = llvm::find_if(output.energyTimes, [&](const auto &time) {
-      return time.first >= half;
-    });
-    const auto &last = output.energyTimes.back();
-    if (from != output.energyTimes.end() && from->first < last.first) {
+  if (!control->minimize && output.numEnergyTimes >= 2) {
+    const auto &from = output.rateFrom;
+    const auto &last = output.rateLast;
+    if (from && from->first < last.first) {
       double seconds = last.second - from->second;
       int64_t steps = last.first - from->first;
       double simulated = control->timestep * steps * 1.0e-3;
@@ -1446,33 +1453,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // over the rows of the log: their means, with errors from ten blocks of
   // rows (D203). A gradient between them at a time step
   // is the hot-solvent/cold-solute problem of Lingenheil et al. (2008).
+  // They are sums taken as the rows came (#300), with blocks of a tenth of
+  // the rows that the run was to write.
   if (!output.solventOptimal.empty()) {
-    auto summarize = [](const std::vector<double> &values) {
-      size_t n = values.size();
-      double sum = 0.0;
-      for (double value : values)
-        sum += value;
-      double mean = sum / static_cast<double>(n);
-      size_t blocks = std::min<size_t>(10, n), size = n / blocks;
-      double error = 0.0;
-      if (blocks > 1) {
-        double total = 0.0, squares = 0.0;
-        for (size_t b = 0; b != blocks; ++b) {
-          double block = 0.0;
-          for (size_t i = 0; i != size; ++i)
-            block += values[b * size + i];
-          block /= static_cast<double>(size);
-          total += block;
-          squares += block * block;
-        }
-        double average = total / static_cast<double>(blocks);
-        double variance =
-            (squares - static_cast<double>(blocks) * average * average) /
-            static_cast<double>(blocks - 1);
-        error = std::sqrt(std::max(variance, 0.0) /
-                          static_cast<double>(blocks));
-      }
-      return std::make_pair(mean, error);
+    auto summarize = [](const BlockMean &values) {
+      return std::make_pair(values.getMean(), values.getError());
     };
     auto solvent = summarize(output.solventOptimal);
     auto solventFull = summarize(output.solventFull);
@@ -1483,7 +1468,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           "MDIR: the temperatures over %zu rows, in K: of the solute "
           "%.2f ± %.2f, of the solvent %.2f ± %.2f; from the velocities of "
           "the steps alone, %.2f ± %.2f and %.2f ± %.2f\n",
-          output.solventOptimal.size(), solute.first, solute.second,
+          static_cast<size_t>(output.solventOptimal.count), solute.first,
+          solute.second,
           solvent.first, solvent.second, soluteFull.first, soluteFull.second,
           solventFull.first, solventFull.second);
     } else {
@@ -1491,9 +1477,20 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
           "MDIR: the temperature of the solvent over %zu rows, in K: "
           "%.2f ± %.2f; from the velocities of the steps alone, %.2f ± "
           "%.2f\n",
-          output.solventOptimal.size(), solvent.first, solvent.second,
-          solventFull.first, solventFull.second);
+          static_cast<size_t>(output.solventOptimal.count), solvent.first,
+          solvent.second, solventFull.first, solventFull.second);
     }
+    // The blocks are those of the rows only if the run wrote the rows
+    // that it planned.
+    if (!output.solventOptimal.isComplete())
+      output.log.print(
+          "MDIR: the run wrote %lld rows of these temperatures and planned "
+          "%lld, so their errors are of %lld blocks of %lld rows; this is "
+          "a defect of mdir\n",
+          static_cast<long long>(output.solventOptimal.count),
+          static_cast<long long>(output.solventOptimal.planned),
+          static_cast<long long>(output.solventOptimal.blocksDone),
+          static_cast<long long>(output.solventOptimal.blockSize));
   }
   // The momentum of the state at the end, which the removal of the motion
   // of the center of mass keeps at 0.

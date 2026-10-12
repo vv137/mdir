@@ -778,6 +778,20 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A run keeps nothing for a row of its energies (#300), in `mdir run` and
+  in a Python simulation. Each row kept its time and, with rigid water,
+  the temperatures of the solute and of the solvent, for the two lines of
+  the summary at the end of the log of `mdir run` (the rate from the
+  middle of the run, and the mean temperatures with the errors of ten
+  blocks, D203): 48 bytes a row in vectors that double. Measured: +48
+  bytes a row of `mdir run` with a row at every step, which is 24 GB for
+  5e8 steps, and +64 bytes a call of `run(1, energy=True)` of a
+  simulation, which printed no summary, on the CPU and on a GPU (0 for
+  `run(1)`), about 70 MB of resident memory after 1.5 million calls. The
+  summary now takes sums in constant memory, in the order of the pass over
+  the rows that they replace: its two lines are the same to the digit,
+  and the memory of the host is flat across rows (`output-rows.test`,
+  `python-memory.test`).
 - A writable borrow of a simulation with the groups refuses an orthorhombic
   cell whose least edge is below the pairlist distance over 0.999, as it
   refused a triclinic one (D242, D245); the check was skipped

@@ -210,6 +210,61 @@ stays that of one activation however many parts it runs (#110), and a live
 simulation holds it between runs, so that live simulations hold the sum of
 theirs. `mdir run` calls its entry once and opens no activation.
 
+A simulation keeps nothing for a step, a part, a call of `run`, or a step
+of energy (#300). `state().energies` is the row of the last step of
+energy and the next one replaces it; a reporter writes its rows and frames
+to its file and keeps none. What grows with use is what a program reads
+back, an entry for each event and none for a step: `Simulation.commits`,
+one `(step, fields)` for each commit of a writable borrow that changed the
+state (D229, [python-dlpack.md](python-dlpack.md)), and
+`Simulation.tunables.history`, one `(step, version)` for each update of
+the tunables, which a checkpoint carries (D213,
+[python-tunable.md](python-tunable.md)). A fit that takes millions of
+steps one call at a time, each a step of energy, therefore holds the
+memory it began with.
+
+Until #300 each row of the energies of a run was kept for the summary at
+the end of the log of `mdir run`: the time of the row (16 bytes, for the
+rate past the start of the run) and, with rigid water, the four
+temperatures of the solute and of the solvent (32 bytes, D203), 48 bytes
+a row in vectors that double. A simulation, whose every step of energy
+without an `EnergyReporter` is such a row, kept them too and never read
+them. On the dipeptide of the tests (1168 atoms, PME, rigid water), with
+the bytes in use of the allocator read after 512, 1024, 2048, 4096, and
+8192 calls, where a vector that doubles is full: +64.00 bytes a call of
+`run(1, energy=True)` between every two readings, on the CPU and on a
+GPU, in mixed and in double precision, NVE and NVT (48 of the rows, and
+16 more because the vector of the times, which held more entries than
+there were calls, had just doubled at each reading); +32.00 without rigid
+bonds; the same +64.00 a step for `run(1)` and for one call of `run(n)`
+with a reporter of every step; and 0.00 for `run(1)` and for `run(n)`
+without one. The growth followed the rows, not the calls or the steps.
+The memory was reachable and freed with the simulation, so no tool for
+leaks reports it, and the resident memory did not move over these 8192
+rows, in a heap that had the room. `mdir run` with a row at every step
+and a log file read +48.00 bytes a row between every two of rows 512 to
+65536: 24 GB of rows for $5\times10^8$ steps.
+
+Now a run keeps the sums that the summary takes and no row
+(`driver::BlockMean` and the two rows of the rate in `driver::Output`),
+for `mdir run` and for a simulation alike: the first row at or after the
+middle of the run and the last one, for the rate, and for each
+temperature its sum, and the sums of ten blocks of a tenth of the rows
+that the run is to write, `steps` over `energy_interval`, which is known
+before it begins. The sums are taken in the order of the pass over the
+rows that they replace, so the two lines of the summary are the same to
+the digit (`output-rows.test` compares them to the bit for 16 numbers of
+rows; the logs of twelve runs of `mdir run`, among them runs of 1, 7, 21,
+and 100 rows, a run without rows, leapfrog with a thermostat, a barostat,
+frames between the rows, and a run stopped by its wall time and
+continued, are those of before but for their times). A run that a signal
+or the wall time stops prints no summary, before as now; the run that
+continues it summarizes its own rows. The same readings are then 0.00
+bytes a row or a call in every case above. The frames of a
+`FrameEvaluator` are evaluations and not rows: its simulation kept
+nothing for a frame before, and keeps nothing now (0.00 bytes a frame up
+to 4096 frames one a call, and within 0.03 up to 16384 frames 64 a call).
+
 The device is resolved when the first GPU simulation in a process runs:
 `Execution.device` is an index among the devices that `CUDA_VISIBLE_DEVICES`
 leaves visible. The CUDA context is process-wide, so a later GPU simulation
@@ -372,7 +427,11 @@ and a GPU, in double and mixed precision:
   address space mapped outside the heap, bounded by 0.5 MiB from step 5 to
   step 30 and by a median of 16 KiB per step: the resident memory read +3
   to +4 MiB alone and up to +8.8 MiB beside the other tests of a suite for
-  the same 25 simulations, which keep nothing (#228).
+  the same 25 simulations, which keep nothing (#228). On the CPU the bytes
+  in use also stay within 4096 bytes from the 1024th to the 2048th step of
+  energy, for calls of `run(1, energy=True)` and for the steps of one run
+  with a reporter of every step (#300): the rows that a simulation kept
+  took 65536 bytes there, and 16384 at least in any system.
 
 ### Performance
 

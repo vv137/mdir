@@ -43,6 +43,7 @@ tools = [
     "mdir",
     "mdir-opt",
     "mdir-model-test",
+    "mdir-output-rows-test",
     "mdir-compile-test",
     "mdir-jit-memory-test",
     "mdir-compile-cache-test",

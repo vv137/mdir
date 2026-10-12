@@ -13,7 +13,9 @@
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/Support/Error.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <csignal>
 #include <cstdint>
 #include <cstdio>
@@ -86,6 +88,56 @@ public:
 private:
   std::FILE *file = nullptr;
   std::vector<Column> columns;
+};
+
+/// The mean of a value of the rows of a run and its error from ten blocks
+/// of rows (D203), in constant memory (#300): the sums that a pass over
+/// all the values would make, in the same order, taken as the values come.
+/// The blocks are `rows / min(10, rows)` rows long, which the number of
+/// rows of the run gives before it begins (`plan`); values past the last
+/// whole block count in the mean alone.
+struct BlockMean {
+  /// Before the first value: the run writes `rows` of them.
+  void plan(int64_t rows) {
+    *this = BlockMean();
+    planned = rows;
+    numBlocks = std::min<int64_t>(10, rows);
+    blockSize = numBlocks > 0 ? rows / numBlocks : 0;
+  }
+  void add(double value) {
+    sum += value;
+    ++count;
+    if (blocksDone == numBlocks)
+      return;
+    block += value;
+    if (++inBlock != blockSize)
+      return;
+    block /= static_cast<double>(blockSize);
+    total += block;
+    squares += block * block;
+    ++blocksDone;
+    block = 0.0;
+    inBlock = 0;
+  }
+  bool empty() const { return count == 0; }
+  /// Whether the run wrote the rows that were planned, so that the blocks
+  /// are the ten of its rows.
+  bool isComplete() const { return count == planned; }
+  double getMean() const { return sum / static_cast<double>(count); }
+  /// The standard error of the mean from the means of the blocks; 0 with
+  /// fewer than two.
+  double getError() const {
+    if (blocksDone < 2)
+      return 0.0;
+    double blocks = static_cast<double>(blocksDone);
+    double average = total / blocks;
+    double variance = (squares - blocks * average * average) / (blocks - 1.0);
+    return std::sqrt(std::max(variance, 0.0) / blocks);
+  }
+
+  int64_t planned = 0, count = 0;
+  int64_t numBlocks = 0, blockSize = 0, blocksDone = 0, inBlock = 0;
+  double sum = 0.0, block = 0.0, total = 0.0, squares = 0.0;
 };
 
 /// The output of the run that is under way. The functions that compiled
@@ -167,7 +219,10 @@ struct Output {
   /// of the next row, K and K_half, if `hasSolvent`, and for each row
   /// since the start, the temperatures of the solute and of the solvent:
   /// the optimal estimate and that of the velocities of the step
-  /// (D203).
+  /// (D203), as their means and the sums of ten blocks, which
+  /// `mdir run` prints at its end, and not as the rows (#300); it plans
+  /// them with the number of rows after the first, `steps` over the
+  /// interval of the energies.
   double solventFreedom = 0.0;
   bool hasSolvent = false;
   /// Whether a program embeds the run (a Python simulation, D196): its
@@ -181,8 +236,7 @@ struct Output {
   int64_t tunablesVersion = -1;
   int64_t quietStep = -1;
   double solventKinetic = 0.0, solventHalf = 0.0;
-  std::vector<double> soluteOptimal, solventOptimal, soluteFull,
-      solventFull;
+  BlockMean soluteOptimal, solventOptimal, soluteFull, solventFull;
   /// The last step of the run, and where it stops if a signal or the wall
   /// time asks for a stop: at the next checkpoint before the last step
   /// (D131). `began` is when the run began, `lastCheckpoint` when the last
@@ -297,11 +351,16 @@ struct Output {
   double firstTotal = 0.0;
   double lastTotal = 0.0;
 
-  /// The steps of the outputs of the energies and when each was written,
-  /// in seconds of a steady clock: the rate of the run past its start
-  /// (the set-up and the first build), as GROMACS reports it with
-  /// `-resethway`.
-  std::vector<std::pair<int64_t, double>> energyTimes;
+  /// The rate of the run past its start (the set-up and the first build),
+  /// as GROMACS reports it with `-resethway`: the number of the outputs of
+  /// the energies, and the step and the time, in seconds of a steady
+  /// clock, of the first of them at or after `rateStep` (the step in the
+  /// middle of the run, set before it begins) and of the last. Two rows
+  /// and not all of them (#300).
+  int64_t rateStep = 0;
+  int64_t numEnergyTimes = 0;
+  std::optional<std::pair<int64_t, double>> rateFrom;
+  std::pair<int64_t, double> rateLast = {0, 0.0};
 
   /// Where checkpoints go, and what they hold beside the state.
   std::string checkpointPath;

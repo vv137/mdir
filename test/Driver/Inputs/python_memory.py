@@ -178,4 +178,48 @@ def lend(call):
 borrowed = series(lend)
 assert simulation.versions["positions"] == CALLS // 2
 check(f"from borrow 5 to borrow {CALLS}, committed and abandoned in turn", borrowed)
+
+
+def rows(what, step):
+    """A simulation keeps nothing per step of energy (#300): the bytes in
+    use after ROWS of them and after 2 ROWS differ by ROWS_BOUND at most.
+    A run kept each row for the summary at the end of the log of `mdir
+    run` (the time of the row, for its rate, and the temperatures of the
+    solute and of the solvent, D203), in vectors that double: 65536 bytes
+    over these rows, and 16384 at least for any system, since the
+    simulation is new, so a vector with an entry of 16 bytes for each row
+    holds ROWS of them, or one more, at the first reading and has doubled
+    at the second. Without them the difference read 0 bytes over 8192 rows
+    on the CPU and on a GPU, so the bound is of what Python may allocate
+    between the two readings, not of the allocator: the bytes in use count
+    blocks, not pages. It lets through what grows by less than 4 bytes a
+    row; nothing smaller is covered."""
+    step(ROWS)
+    gc.collect()
+    before = libc.mallinfo2()
+    step(ROWS)
+    gc.collect()
+    after = libc.mallinfo2()
+    growth = after.uordblks + after.hblkhd - before.uordblks - before.hblkhd
+    print(f"{target_name}: host memory from {what} {ROWS} to {2 * ROWS}: in use "
+          f"{growth:+d} bytes (bound {ROWS_BOUND} bytes)")
+    assert growth <= ROWS_BOUND, growth
+
+
+if on_host:
+    ROWS = 1024
+    ROWS_BOUND = 4096  # bytes
+    del simulation
+    called = mdir.Simulation(program)
+
+    def call_by_call(count):
+        for _ in range(count):
+            assert called.run(1, energy=True) == 1
+
+    rows("run(1, energy=True)", call_by_call)
+    del called
+    # The rows of a reporter of every step, inside the parts of one call.
+    reported = mdir.Simulation(program)
+    reported.reporters.append(mdir.CallbackReporter(lambda simulation, state: None, 1))
+    rows("step of a run with a reporter of every step", reported.run)
 print("memory across calls passed")

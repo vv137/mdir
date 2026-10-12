@@ -1,0 +1,9 @@
+# A run keeps nothing for a row of its energies (#300): the summary at the
+# end of `mdir run` (the rate from the middle of the run, and the mean
+# temperatures of the solute and of the solvent with errors of ten blocks,
+# D203) takes sums in constant memory, which are those of a pass over all
+# the rows to the bit.
+# RUN: mdir-output-rows-test | FileCheck %s
+# CHECK: the means and the errors of ten blocks are those of a pass over the rows for 16 numbers of rows
+# CHECK: bytes in use from row 1024 to row 2048: {{-?[0-9]+}}
+# CHECK: rows passed
