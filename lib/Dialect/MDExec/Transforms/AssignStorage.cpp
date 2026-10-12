@@ -1334,7 +1334,14 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                            from.getBuffer().getType())))
       return failure();
     Value buffer = mapping.lookup(from.getBuffer());
-    if (!onDevice && &scope == root) {
+    // A buffer that a call in the body of a loop returns is given anew at
+    // every iteration, and may be the same memory each time: the frames of
+    // a frame evaluator, which the host hands the entry at a boundary
+    // (D[frames-activation]). Memory that the body allocates is its own.
+    bool givenAnew = &scope != root &&
+                     from.getBuffer().getDefiningOp<func::CallOp>() &&
+                     from.getBuffer().getParentBlock() == op->getBlock();
+    if (!onDevice && !givenAnew) {
       bind(from.getResult(), buffer, scope);
       scope.owned.insert(buffer);
       return success();
@@ -1347,11 +1354,9 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
           builder, op->getLoc(), buffer,
           arith::ConstantIndexOp::create(builder, op->getLoc(), 0));
     if (!onDevice) {
-      // In a loop the buffer is given anew at every iteration, and may be
-      // the same memory each time (the frames of a frame evaluator,
-      // D[frames-activation]): the loop cannot own it, since a buffer that
-      // a loop owns may hold what the loop carries to its next iteration.
-      // The field takes a buffer of the loop and a copy.
+      // The loop cannot own such a buffer, since a buffer that a loop owns
+      // may hold what the loop carries to its next iteration. The field
+      // takes a buffer of the loop and a copy.
       Value held =
           scope.request(getStorageType(field), sizes[set], set, op->getLoc());
       memref::CopyOp::create(builder, op->getLoc(), buffer, held);
@@ -1360,13 +1365,13 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     }
 
     // The field is copied to the device. The buffer on the host is free to
-    // take what is copied back, unless it is that of one iteration of a
-    // loop.
+    // take what is copied back, unless it is given anew at every iteration
+    // of a loop.
     Value device =
         scope.request(getStorageType(field), sizes[set], set, op->getLoc());
     createTransfer(builder, op->getLoc(), device, buffer);
     buffers[from.getResult()] = device;
-    if (&scope == root)
+    if (!givenAnew)
       hostBuffers[{buffer.getType(), set}].push_back(buffer);
     return success();
   }
