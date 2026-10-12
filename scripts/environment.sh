@@ -54,10 +54,13 @@ need_directory() {
 
 # need_program NAME DEFAULT WHAT: NAME, or DEFAULT when NAME is not set,
 # must be a program, by its path or on the path. NAME is then set to the
-# absolute path of what was found.
+# absolute path of what was found. An empty DEFAULT is for a program that
+# a machine has to choose, such as a Python interpreter with its packages.
 need_program() {
   local program=${!1:-$2} found
-  if found=$(command -v "$program" 2> /dev/null) && [[ -x $found ]]; then
+  if [[ -z $program ]]; then
+    mdir_env_missing+=("$1 is not set: $3")
+  elif found=$(command -v "$program" 2> /dev/null) && [[ -x $found ]]; then
     [[ $found != */* || $found == /* ]] || found=$PWD/$found
     printf -v "$1" %s "$found"
   elif [[ -n ${!1:-} ]]; then

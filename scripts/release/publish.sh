@@ -9,11 +9,15 @@
 # MDIR_RELEASE_DIR:
 #  1. checks that CMakeLists.txt and CHANGELOG.md name VERSION, and the
 #     decision numbers;
-#  2. configures and builds Release, and runs the full suite on the GPU
+#  2. configures and builds Release with the Python interface
+#     (MDIR_ENABLE_PYTHON, so that the suite holds the Python tests, #297),
+#     and runs the full suite on the GPU
 #     MDIR_RELEASE_GPU under the locks of the machine, if it has them
 #     (MDIR_RELEASE_SUITE_LOCK, then MDIR_RELEASE_GPU_LOCK),
 #     with the tests of a release (lit's -Drelease=1: the whole matrix of
-#     the tests that run a part of their cases by default);
+#     the tests that run a part of their cases by default) and, where the
+#     machine names their interpreters, the tests of PyTorch and of h5py;
+#     the log names each test that is unsupported;
 #  3. builds the white paper (PANDOC, TECTONIC);
 #  4. writes the assets to MDIR_RELEASE_DIR/vVERSION: the source archive
 #     (git archive), the installed tree for manylinux_2_28 x86-64 with CUDA
@@ -49,8 +53,18 @@
 #   MDIR_LLVM          the install prefix of LLVM and MLIR
 #   HDF5_PREFIX        the install prefix of HDF5
 #   CUDA_ROOT          the CUDA toolkit of the build
+#   MDIR_PYTHON        the Python interpreter of the build, which runs the
+#                      Python tests (with NumPy; with OpenMM for the tests
+#                      that compare with it)
+#   PYBIND11_DIR       the directory of pybind11's CMake package
 #   MDIR_RELEASE_GPU   the index of the GPU of the suite and of the run of
 #                      the manylinux tree
+#   MDIR_TORCH_PYTHON, MDIR_H5MD_PYTHON
+#                      optional: interpreters with PyTorch (and torch-pme)
+#                      and with h5py, given to lit as -Dtorch_python and
+#                      -Dh5md_python; without one, lit tries the Python of
+#                      the build, and the tests that need the package are
+#                      unsupported if it lacks it
 #   MDIR_RELEASE_GPU_LOCK, MDIR_RELEASE_SUITE_LOCK
 #                      optional: lock files held, with flock, while the GPU
 #                      is used and around the suite (the suite's first)
@@ -76,6 +90,10 @@ need_variable MDIR_RELEASE_DIR "the directory where a release writes its worktre
 need_directory MDIR_LLVM "the install prefix of LLVM and MLIR"
 need_directory HDF5_PREFIX "the install prefix of HDF5"
 need_directory CUDA_ROOT "the CUDA toolkit of the build"
+need_program MDIR_PYTHON "" "the Python interpreter of the build, which runs the Python tests"
+need_directory PYBIND11_DIR "the directory of pybind11's CMake package"
+if [[ -n ${MDIR_TORCH_PYTHON:-} ]]; then need_program MDIR_TORCH_PYTHON "" "a Python interpreter with PyTorch, for the tests that need it"; fi
+if [[ -n ${MDIR_H5MD_PYTHON:-} ]]; then need_program MDIR_H5MD_PYTHON "" "a Python interpreter with h5py, for the tests that need it"; fi
 need_variable MDIR_RELEASE_GPU "the index of the GPU that runs the suite"
 need_program CMAKE cmake "CMake"
 need_program NINJA ninja "ninja"
@@ -92,6 +110,12 @@ export PANDOC TECTONIC
 
 repo=$(git rev-parse --show-toplevel)
 gpu=$MDIR_RELEASE_GPU
+# What the suite of a release adds to lit's options: the tests of a
+# release, the interpreters that the machine names, and the names of the
+# tests that are unsupported, in the log.
+lit_release="-Drelease=1 --show-unsupported"
+[[ -z ${MDIR_TORCH_PYTHON:-} ]] || lit_release+=" -Dtorch_python=$MDIR_TORCH_PYTHON"
+[[ -z ${MDIR_H5MD_PYTHON:-} ]] || lit_release+=" -Dh5md_python=$MDIR_H5MD_PYTHON"
 # The lock of the suite is taken before that of the GPU, as everything else
 # on a machine that has both does (docs/workflow.md, Shared machines).
 gpu_locked=(); suite_locked=()
@@ -122,13 +146,17 @@ echo "== build $commit"
   -DLLVM_DIR="$MDIR_LLVM/lib/cmake/llvm" -DMLIR_DIR="$MDIR_LLVM/lib/cmake/mlir" \
   -DLLVM_EXTERNAL_LIT="$LIT" -DHDF5_ROOT="$HDF5_PREFIX" \
   -DCUDAToolkit_ROOT="$CUDA_ROOT" -DCMAKE_MAKE_PROGRAM="$NINJA" \
+  -DMDIR_ENABLE_PYTHON=ON -Dpybind11_DIR="$PYBIND11_DIR" -DPython_EXECUTABLE="$MDIR_PYTHON" \
   -DCMAKE_INSTALL_PREFIX=/ > "$log-cmake.log"
 "$NINJA" -C "$build" > "$log-build.log"
 
 echo "== suite on GPU $gpu (log $log-check.log)"
-"${suite_locked[@]}" "${gpu_locked[@]}" sh -c "nvidia-smi -i $gpu; CUDA_VISIBLE_DEVICES=$gpu LIT_OPTS=\"\${LIT_OPTS:-} -Drelease=1\" '$NINJA' -C '$build' check-mdir" > "$log-check.log" 2>&1 \
+"${suite_locked[@]}" "${gpu_locked[@]}" sh -c "nvidia-smi -i $gpu; CUDA_VISIBLE_DEVICES=$gpu LIT_OPTS=\"\${LIT_OPTS:-} $lit_release\" '$NINJA' -C '$build' check-mdir" > "$log-check.log" 2>&1 \
   || { grep -E '^FAIL:|Failed' "$log-check.log" >&2; echo "the suite failed: nothing is tagged" >&2; exit 1; }
 grep -E '^\s+(Passed|Unsupported)' "$log-check.log"
+# A build that lost the Python interface would pass with its tests
+# unsupported, as the releases before #297 did.
+grep -q '^MDIR_ENABLE_PYTHON:BOOL=ON$' "$build/CMakeCache.txt" || { echo "the build has no Python interface: nothing is tagged" >&2; exit 1; }
 
 echo "== assets in $out"
 rm -rf "$out" && mkdir -p "$out"
