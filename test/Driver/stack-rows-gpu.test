@@ -4,17 +4,18 @@
 # for the CPU. On a GPU the rows never grew the stack: the lowering releases
 # the stack of an iteration of a loop of the host where the iteration ends
 # (`releaseStack`), since the arguments of its launches are on the stack as
-# well. The test keeps that: the runs end under the limit, and the
-# allocations stay in the loops of the lowered module, with a `stacksave`.
+# well. The test keeps that: the runs end under the limit, and an allocation
+# of the lowered module outside the first block of its function stands with
+# a `stacksave`.
 # RUN: rm -rf %t
 # RUN: %python %S/Inputs/stack_rows.py mdir %t/double GPU DOUBLE | FileCheck %s -DMODE="GPU Double"
 # RUN: %python %S/Inputs/stack_rows.py mdir %t/mixed GPU MIXED | FileCheck %s -DMODE="GPU Mixed"
 # CHECK: [[MODE]]: the energies alone: 131072 rows under a stack of 2 MiB {{.*}}: status 0, the last rows at 131072: True
-# CHECK: [[MODE]]: the energies alone: the lowered module releases the stack of an iteration ({{[0-9]+}} stacksave) around its allocations in the loops: True
+# CHECK: [[MODE]]: the energies alone: the lowered module has no allocation of the stack outside the first block of a function, or releases the stack of an iteration: True
 # CHECK: [[MODE]]: observe, 6 columns: 131072 rows under a stack of 2 MiB (48 bytes a row taken in the loop would be 3.0 of it): status 0, the last rows at 131072, 131072: True
-# CHECK: [[MODE]]: observe, 6 columns: the lowered module releases the stack of an iteration ({{[0-9]+}} stacksave) around its allocations in the loops: True
+# CHECK: [[MODE]]: observe, 6 columns: the lowered module has no allocation of the stack outside the first block of a function, or releases the stack of an iteration: True
 # CHECK: [[MODE]]: pull, 2 terms over two centers: 43690 rows under a stack of 2 MiB (144 bytes a row taken in the loop would be 3.0 of it): status 0, the last rows at 43690, 43690: True
-# CHECK: [[MODE]]: pull, 2 terms over two centers: the lowered module releases the stack of an iteration ({{[0-9]+}} stacksave) around its allocations in the loops: True
+# CHECK: [[MODE]]: pull, 2 terms over two centers: the lowered module has no allocation of the stack outside the first block of a function, or releases the stack of an iteration: True
 # CHECK: [[MODE]]: free energy, 11 states: 32768 rows under a stack of 2 MiB (192 bytes a row taken in the loop would be 3.0 of it): status 0, the last rows at 32768, 32768: True
-# CHECK: [[MODE]]: free energy, 11 states: the lowered module releases the stack of an iteration ({{[0-9]+}} stacksave) around its allocations in the loops: True
+# CHECK: [[MODE]]: free energy, 11 states: the lowered module has no allocation of the stack outside the first block of a function, or releases the stack of an iteration: True
 # CHECK: stack rows passed

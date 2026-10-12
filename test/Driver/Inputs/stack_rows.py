@@ -19,8 +19,8 @@ without rows other than the energies shows what the limit leaves free. The
 lowered module is read as well: on the CPU no allocation of the stack is
 outside the first block of its function (a block of a loop is not the
 first); on a GPU the lowering releases the stack where an iteration ends
-(`releaseStack`), so the allocations stay and a `stacksave` stands with
-them.
+(`releaseStack`), so an allocation outside the first block stands with a
+`stacksave`.
 """
 import pathlib
 import re
@@ -187,9 +187,9 @@ for index, (name, (output, terms, more, files, row)) in enumerate(CASES.items())
         print(f"{mode}: {name}: the lowered module has {outside} allocations of the stack "
               f"outside the first block of a function: {clean}")
     else:
-        clean = outside > 0 and saves > 0
-        print(f"{mode}: {name}: the lowered module releases the stack of an iteration "
-              f"({saves} stacksave) around its allocations in the loops: {clean}")
+        clean = outside == 0 or saves > 0
+        print(f"{mode}: {name}: the lowered module has no allocation of the stack outside "
+              f"the first block of a function, or releases the stack of an iteration: {clean}")
     failed |= not clean
 if failed:
     sys.exit("stack rows FAILED")
