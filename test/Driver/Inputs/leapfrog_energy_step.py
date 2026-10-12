@@ -1,7 +1,12 @@
 """Under leapfrog a step that writes a row of energies leaves the state of
 the plain step (#285).
 
-    leapfrog_energy_step.py MDIR INPUTS WORK TARGET PRECISION
+    leapfrog_energy_step.py MDIR INPUTS WORK TARGET PRECISION [CASE...]
+
+Without the name of a case all the cases run; with names, those cases in
+the order of the table, and a name that the table does not have, or a
+name given twice, is an error. The last line counts the cases that ran, so
+that a test checks how many it believes it runs.
 
 The dipeptide in water (1,168 particles, PME), 20 steps from velocities
 drawn with a seed, in the deterministic mode. For each case two runs that
@@ -52,6 +57,16 @@ def barostat(work, coupling="ISOTROPIC"):
 # energies and what the log measures, and the plain steps of the period
 # are the same in both: what tells there that the plain step, the step
 # with the virial, and the scaling step agree is velocity Verlet.
+#
+# With constraints the step has three forms (#285), and the tests that do
+# not run all the cases run one case of each (leapfrog-energy-step.test):
+# under Langevin dynamics the velocities change within the drift and
+# every program takes the projected form ("langevin"); where they do not
+# change, the step with the virial keeps the kick of the plain step and
+# takes the drift of velocity Verlet on the side ("nve"); and the scaling
+# step of the barostat, which "TROTTER_FIRST_ORDER" takes without the
+# virial, has the projected form with and without it
+# ("v-rescale-anisotropic").
 CASES = [
     ("nve", "NVE", "", True, True),
     ("nve-free", "NVE", "", False, True),
@@ -125,8 +140,16 @@ def positions(checkpoint):
     return [[float(v) for v in line.split()[2:5]] for line in text.splitlines()]
 
 
+names = sys.argv[6:]
+unknown = sorted(set(names) - {case[0] for case in CASES})
+if unknown:
+    sys.exit(f"leapfrog_energy_step.py: no such case: {' '.join(unknown)}")
+if len(set(names)) != len(names):
+    sys.exit(f"leapfrog_energy_step.py: a case is given twice: {' '.join(names)}")
+selected = [case for case in CASES if not names or case[0] in names]
+
 failed = 0
-for name, kind, couplings, constrained, verlet in CASES:
+for name, kind, couplings, constrained, verlet in selected:
     rows = run(name, "LEAPFROG", kind, couplings, constrained, 10)
     plain = run(name, "LEAPFROG", kind, couplings, constrained, 20)
     same = subprocess.run([mdir, "checkpoint", rows, plain], stdout=subprocess.PIPE,
@@ -140,5 +163,5 @@ for name, kind, couplings, constrained, verlet in CASES:
         line += f"; within {apart:.1e} nm of velocity Verlet"
     failed += not ok
     print(line + ("" if ok else ": FAILED"), flush=True)
-print(f"leapfrog {target} {precision}: {len(CASES) - failed} of {len(CASES)} cases passed")
+print(f"leapfrog {target} {precision}: {len(selected) - failed} of {len(selected)} cases passed")
 sys.exit(1 if failed else 0)

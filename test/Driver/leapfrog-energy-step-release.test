@@ -1,0 +1,34 @@
+# The part of leapfrog-energy-step.test that only a release runs: all 17
+# cases of Inputs/leapfrog_energy_step.py on the CPU in mixed precision,
+# of which the default test runs three, one for each form of the step.
+# Under leapfrog a step that writes a row of energies leaves the state of
+# the plain step to the bit (#285). All 17 cases on the CPU in double
+# precision, with the comparison with velocity Verlet, are in the default
+# test, which a release runs as well, so they are not repeated here.
+#
+# It runs when lit is given -Drelease=1, as the suite of
+# scripts/release/publish.sh is (docs/workflow.md, Releases).
+#
+# REQUIRES: hdf5, release-tests
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/leapfrog_energy_step.py mdir %S/Inputs %t/mixed CPU MIXED | FileCheck %s --check-prefix=MIXED
+
+# MIXED: CPU MIXED nve: the states are identical
+# MIXED: CPU MIXED nve-free: the states are identical
+# MIXED: CPU MIXED v-rescale: the states are identical
+# MIXED: CPU MIXED nose-hoover: the states are identical
+# MIXED: CPU MIXED langevin: the states are identical
+# MIXED: CPU MIXED langevin-free: the states are identical
+# MIXED: CPU MIXED langevin-trotter: the states are identical
+# MIXED: CPU MIXED langevin-trotter-first-order: the states are identical
+# MIXED: CPU MIXED v-rescale-trotter: the states are identical
+# MIXED: CPU MIXED v-rescale-trotter-first-order: the states are identical
+# MIXED: CPU MIXED v-rescale-exact: the states are identical
+# MIXED: CPU MIXED v-rescale-first-order: the states are identical
+# MIXED: CPU MIXED nose-hoover-trotter: the states are identical
+# MIXED: CPU MIXED v-rescale-semi-isotropic: the states are identical
+# MIXED: CPU MIXED v-rescale-anisotropic: the states are identical
+# MIXED: CPU MIXED v-rescale-anisotropic-exact: the states are identical
+# MIXED: CPU MIXED langevin-anisotropic: the states are identical
+# MIXED: leapfrog CPU MIXED: 17 of 17 cases passed

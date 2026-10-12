@@ -169,6 +169,16 @@ if "cuda" in config.available_features and lit_config.params.get("sanitize"):
         config.available_features.add("compute-sanitizer")
         config.substitutions.append(("%compute_sanitizer", sanitizer))
 
+# The tests that a release adds to the default suite: the whole matrix of
+# a test whose default form runs a part of its cases, on every target and
+# in every precision. They are named *-release.test and
+# *-release-gpu.test, require "release-tests", and run when lit is given
+# -Drelease=1, as the suite of scripts/release/publish.sh is
+# (docs/workflow.md, Releases). The feature does not depend on a device:
+# such a test names the device it needs.
+if lit_config.params.get("release"):
+    config.available_features.add("release-tests")
+
 # Short runs of the systems of the Amber benchmark suite, which
 # scripts/benchmarks/amber/bench.py prepares in MDIR_BENCH_DIR
 # (docs/principles.md, Section 5).
