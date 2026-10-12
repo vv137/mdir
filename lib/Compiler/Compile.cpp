@@ -179,7 +179,13 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // The lowering for a device releases the stack of an iteration where it
   // ends instead (`releaseStack`), since the arguments of its launches are
   // on the stack as well.
-  os << "hoist-static-allocas,";
+  //
+  // The entry of a program of frames is a loop over frames that never
+  // returns, with the rows of the evaluation in it (#309): there the pass
+  // refuses what it cannot move, an allocation whose size is not a constant,
+  // so that a program of frames that compiles takes nothing of its stack
+  // again at a frame.
+  os << "hoist-static-allocas" << (control.frames ? "{refuse-rest=true}," : ",");
   if (threaded)
     os << "convert-openmp-to-llvm,";
   os << "reconcile-unrealized-casts";

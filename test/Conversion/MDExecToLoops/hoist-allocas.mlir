@@ -1,9 +1,20 @@
 // RUN: mdir-opt --hoist-static-allocas %s | FileCheck %s
+// RUN: not mdir-opt --hoist-static-allocas=refuse-rest %s 2>&1 | FileCheck %s --check-prefix=REFUSED
 
 // The variable of a reduction that `convert-scf-to-openmp` allocates in a
 // loop moves to the entry block, once for every iteration (D117); an
 // alloca inside a region of OpenMP, one for each thread, and one of a size
 // that is not a constant stay.
+
+// With `refuse-rest`, as the lowering of a program of frames runs the pass
+// where it ends (#309), the alloca that stays in the loop is an error that
+// names it: a module that the pass accepts has no allocation of the stack
+// outside the first block of a function, apart from those of the threads of
+// OpenMP, and one that it cannot prove so does not compile
+// (hoist-allocas-refuse-rest.mlir has the module that it accepts).
+
+// REFUSED: error: 'llvm.alloca' op takes memory of the stack of a size that is not a constant outside the first block of its function
+// REFUSED-NOT: error:
 
 // CHECK-LABEL: llvm.func @steps
 // CHECK-NEXT:    %[[ONE:.*]] = llvm.mlir.constant(1 : i64) : i64

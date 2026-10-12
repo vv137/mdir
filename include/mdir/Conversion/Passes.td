@@ -138,7 +138,22 @@ def HoistStaticAllocas : Pass<"hoist-static-allocas", "::mlir::ModuleOp"> {
     in one iteration, so one place serves every iteration here too. The
     lowering for a device does not need the pass: it releases the stack of
     an iteration of a loop of the host where the iteration ends.
+
+    With `refuse-rest` the pass fails where it would leave an `llvm.alloca`
+    outside the first block of its function and outside every op of OpenMP:
+    one whose size is not a constant, which it cannot take once. The
+    lowering of a program of frames runs it so where the lowering ends
+    (#309): the entry of such a program is a loop over frames that never
+    returns, and the builder no longer moves the rows of a frame before
+    that loop, so a module that the pass accepts has no allocation of the
+    stack that a frame could take again, and one that it cannot prove so is
+    an error that names the allocation, not a stack that grows.
   }];
+  let options = [
+    Option<"refuseRest", "refuse-rest", "bool", /*default=*/"false",
+           "Fail on an alloca outside the first block of its function that "
+           "the pass does not move">,
+  ];
   let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
 }
 
