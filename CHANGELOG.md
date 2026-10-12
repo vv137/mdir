@@ -389,6 +389,28 @@ format, or the outputs; every such change is listed under **Changed** or
   now one kernel with the drift before them and the loop after them, as in
   velocity Verlet. In the deterministic mode the trajectory is the same to
   the bit; no key, file, or checkpoint changes.
+- **The frame evaluator evaluates the frames of a call inside one
+  activation, in the order of the input** (D[frames-activation], #291).
+  `mdir.FrameEvaluator`, `evaluate`, and `mdir.torch.evaluate` are
+  unchanged; a frame costs what its kernels cost: on one RTX 4090 in mixed
+  precision 0.69 ms on JAC with the whole potential and 0.45 ms with the
+  dependent terms, where it took 5.00 ms and 2.07 ms, and 0.28 ms and 0.16
+  ms on the dipeptide in water, where it took 0.84 ms and 0.43 ms. What
+  changes for a script:
+  - The evaluator's program keeps the particles in the order of the input,
+    whatever `Execution.reorder` says. The energy of a frame is a function
+    of the frame alone, with the same bits in any call, and equals that of
+    a sampler compiled with `Execution.reorder = False` to the bit. Against
+    a sampler in the spatial order, the default, it differs by the rounding
+    of sums in another order: about $10^{-10}$ kJ/mol in double precision
+    and $2\times10^{-4}$ kJ/mol in mixed precision. A reweighting, which
+    takes both of its energies from the evaluator, is not affected.
+  - `FrameEvaluator(program)` compiles a program of its own with
+    `terms="all"` as well, once for a `Program` (about 2 to 3 s; a later
+    evaluator of the program 0.07 s), and the program of
+    `terms="dependent"` is compiled once for a `Program` too.
+  - After a frame whose evaluation fails, the next frame pays one start of
+    an activation. Errors and what is refused are as before.
 - **Leapfrog with constraints: every step leaves the state of the plain
   step, and under Langevin dynamics the plain step is the documented one**
   (#285). With SHAKE or SETTLE, a step that writes a row of energies (and

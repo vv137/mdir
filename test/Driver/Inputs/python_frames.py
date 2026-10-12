@@ -54,6 +54,17 @@ Scenarios:
            of the run give the differences of the energy, the weights, and
            the derivative of a reweighted average that the evaluator gives
            on the stored frames
+  activation  the frames of every call inside one activation of the
+           evaluator's program (D[frames-activation]): one frame per call,
+           frames that repeat and frames far apart in one call, batches
+           of two, 120 frames in one call, and the calls of a second
+           evaluator and the steps of a sampler in between, each against
+           the first evaluation, to the bit; a frame that fails in the
+           middle of a call and one that fails as the first of an
+           activation, and the calls after them; other values of the
+           tunables and the first ones again; and each frame against the
+           gradient() of a sampler in the order of the input, to the bit,
+           and of a simulation in the spatial order compiled from the frame
   torch    the same average differentiated by PyTorch through
            mdir.torch.evaluate; gradcheck; a fit of sigma' to a synthetic
            target; refusals of the adapter; torch.compile
@@ -78,10 +89,15 @@ def expect(error, call, text=""):
     raise AssertionError(f"expected {error.__name__} ({text})")
 
 
-def execution_(deterministic=True):
+def execution_(deterministic=True, reorder=False):
+    """The programs here keep the particles in the order of the input, as
+    the program of a frame evaluator does (D[frames-activation]): a sampler
+    then takes its sums in the order of the evaluator, and the two agree to
+    the bit. `activation` has a sampler in the spatial order."""
     execution = mdir.Execution()
     execution.target, execution.precision = getattr(mdir.Target, target), getattr(mdir.Precision, precision)
     execution.deterministic = deterministic
+    execution.reorder = reorder
     return execution
 
 
@@ -169,12 +185,12 @@ def dipeptide_model(gradient=True):
     return system, state
 
 
-def dipeptide_program(deterministic=True, gradient=True):
-    system, state = dipeptide_model(gradient)
+def dipeptide_program(deterministic=True, gradient=True, reorder=False, state=None):
+    system, first = dipeptide_model(gradient)
     integrator = mdir.Integrator()
     integrator.timestep = 0.0005
-    return mdir.compile(system, state, integrator, mdir.Ensemble(), execution_(deterministic),
-                        mdir.Schedule())
+    return mdir.compile(system, first if state is None else state, integrator, mdir.Ensemble(),
+                        execution_(deterministic, reorder), mdir.Schedule())
 
 
 def sample(sim, count, stride):
@@ -1127,6 +1143,125 @@ def run_torch():
     print("torch passed")
 
 
-{"frames": run_frames, "npt": run_npt, "refusals": run_refusals, "mixture": run_mixture,
+# The frames of every call inside one activation.
+def run_activation():
+    from mdir import _frames
+    # A sampler that keeps the particles in the order of the input: its
+    # sums are taken in the order in which those of the evaluator are.
+    program = dipeptide_program()
+    sim = simulation(program)
+    states, gradients = sample(sim, 6, 4)
+    count, last = len(states), len(states) - 1
+    positions = np.stack([s.positions for s in states])
+    edges = np.tile(states[0].cell.diagonal, (count, 1))
+    evaluator = mdir.FrameEvaluator(program)
+    out = evaluator.evaluate(positions, edges)
+    names = list(out.jacobian)
+
+    def same(other, frames=None):
+        """Whether `other` holds, at each of its frames, what `out` holds
+        at the frame that `frames` names."""
+        frames = np.arange(count) if frames is None else np.asarray(frames)
+        return bool(
+            np.array_equal(other.energy, out.energy[frames]) and
+            np.array_equal(other.virial, out.virial[frames]) and
+            np.array_equal(other.volume, out.volume[frames]) and
+            all(np.array_equal(other.observables[c], out.observables[c][frames])
+                for c in out.observables) and
+            all(np.array_equal(other.jacobian[name], out.jacobian[name][frames])
+                for name in names))
+
+    exact = all(out.energy[n] == g.energy and
+                out.virial[n] == states[n].energies["virial"] and
+                all(np.array_equal(out.jacobian[name][n], g[name]) for name in names)
+                for n, g in enumerate(gradients))
+    print(f"{mode}: {count} frames against the gradient() and the state of a sampler in the "
+          f"order of the input, equal to the bit: {exact}")
+    assert exact
+    # A simulation in the spatial order, compiled from the frame: the sums
+    # in another order.
+    energy = rows = 0.0
+    for n in (0, last):
+        start = mdir.InitialState.from_state(states[n], velocities=False)
+        g = simulation(dipeptide_program(reorder=True, state=start)).tunables.gradient()
+        energy = max(energy, abs(out.energy[n] - g.energy))
+        rows = max(rows, max(relative(out.jacobian[name][n], g[name]) for name in names))
+    print(f"{mode}: against a simulation in the spatial order compiled from the frame: the "
+          f"energy {energy:.1e} kJ/mol (tolerance {1e-9 if double else 5e-3:g}), the rows "
+          f"{rows:.1e} relative (tolerance {1e-12 if double else 1e-5:g}): "
+          f"{energy < (1e-9 if double else 5e-3) and rows < (1e-12 if double else 1e-5)}")
+    assert energy < (1e-9 if double else 5e-3) and rows < (1e-12 if double else 1e-5), \
+        (energy, rows)
+
+    singles = all(same(evaluator.evaluate(positions[n:n + 1], edges[n:n + 1]), [n])
+                  for n in range(count))
+    jumps = [0, 0, 0, last, 0, last, last, 1]
+    hops = same(evaluator.evaluate(positions[jumps], edges[jumps]), jumps)
+    step = _frames._BATCH_BYTES
+    _frames._BATCH_BYTES = 2 * 24 * positions.shape[1]
+    try:
+        batches = same(mdir.FrameEvaluator(program).evaluate(positions, edges))
+    finally:
+        _frames._BATCH_BYTES = step
+    many = np.tile(np.arange(count), 20)
+    long = same(evaluator.evaluate(positions[many], edges[many]), many)
+    print(f"{mode}: one frame per call: {singles}; frames that repeat and frames far apart in "
+          f"one call: {hops}; batches of two frames: {batches}; {len(many)} frames in one call: "
+          f"{long}")
+    assert singles and hops and batches and long
+
+    # Another evaluator and a sampler between the calls: each has an
+    # activation of its own.
+    other = mdir.FrameEvaluator(program, terms="dependent")
+    reference = other.evaluate(positions, edges).dependent_energy.copy()
+    # The program of the dependent terms is kept with the one it is made
+    # from: a second evaluator compiles nothing.
+    assert mdir.FrameEvaluator(program, terms="dependent").program is other.program
+    between = True
+    for n in range(count):
+        between = between and same(evaluator.evaluate(positions[n:n + 1], edges[n:n + 1]), [n])
+        between = between and other.evaluate(
+            positions[n:n + 1], edges[n:n + 1]).dependent_energy[0] == reference[n]
+        sim.run(1)
+    print(f"{mode}: with the calls of a second evaluator and the steps of a sampler in between: "
+          f"{between}")
+    assert between
+
+    # A frame that fails in the middle of a call; then as the first frame
+    # of an activation, which the failure before it ended.
+    collapsed = positions.copy()
+    collapsed[3] = 1.0
+    expect(mdir.SimulationError, lambda: evaluator.evaluate(collapsed, edges), "frame 3: ")
+    expect(mdir.SimulationError, lambda: evaluator.evaluate(collapsed[3:], edges[3:]), "frame 0: ")
+    after = same(evaluator.evaluate(positions, edges))
+    bad = positions.copy()
+    bad[2, 5, 1] = np.inf
+    expect(mdir.InputError, lambda: evaluator.evaluate(bad, edges), "frame 2: ")
+    small = edges.copy()
+    small[4, 1] = 1.5
+    expect(mdir.InputError, lambda: evaluator.evaluate(positions, small), "frame 4: ")
+    after = after and same(evaluator.evaluate(positions, edges))
+    fresh = mdir.FrameEvaluator(program)
+    expect(mdir.SimulationError, lambda: fresh.evaluate(collapsed[3:], edges[3:]), "frame 0: ")
+    after = after and same(fresh.evaluate(positions, edges))
+    print(f"{mode}: after a frame that fails in the middle of a call, one that fails as the "
+          f"first of an activation, and frames that are refused: {after}")
+    assert after
+
+    # Other values, and the first ones again.
+    sigma = evaluator.tunables["sigma"].copy()
+    evaluator.tunables["sigma"] = sigma * 1.01
+    moved = evaluator.evaluate(positions, edges)
+    assert moved.version == 1 and not np.array_equal(moved.energy, out.energy)
+    evaluator.tunables["sigma"] = sigma
+    again = evaluator.evaluate(positions, edges)
+    values = again.version == 2 and same(again)
+    print(f"{mode}: at other values of a tunable the energies change, and at the first values "
+          f"again they are those of before: {values}")
+    assert values
+    print("activation passed")
+
+
+{"activation": run_activation, "frames": run_frames, "npt": run_npt, "refusals": run_refusals, "mixture": run_mixture,
  "torch": run_torch, "triclinic": run_triclinic, "h5md": run_h5md, "dependent": run_dependent,
  "linear": run_linear}[scenario]()

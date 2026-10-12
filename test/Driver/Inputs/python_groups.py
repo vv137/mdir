@@ -444,7 +444,7 @@ def tunables():
 
     # Frames far from each other: the start, the state 200 steps later, the
     # start again, and the later state in a cell 2% wider with its positions
-    # scaled. Each frame begins an activation, whose lists are built for it.
+    # scaled. The lists of each frame are built for it, inside one activation.
     sampler = mdir.Simulation(programs["matrix"])
     sampler.run(200)
     later = sampler.state()

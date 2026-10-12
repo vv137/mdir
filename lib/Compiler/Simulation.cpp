@@ -77,6 +77,16 @@ template <unsigned Rank> struct HostBuffer {
     for (unsigned i = 0; i != Rank; ++i)
       arguments.push_back(&descriptor.strides[i]);
   }
+  /// Fills the buffer with `size` values, in its type.
+  void assign(const double *values, size_t size, Element element) {
+    if (element != Element::F32) {
+      std::memcpy(storage.data(), values, size * sizeof(double));
+      return;
+    }
+    float *narrow = reinterpret_cast<float *>(storage.data());
+    for (size_t i = 0; i != size; ++i)
+      narrow[i] = static_cast<float>(values[i]);
+  }
   std::vector<char> storage;
   StridedMemRefType<char, Rank> descriptor;
 };
@@ -275,6 +285,12 @@ struct compiler::Activation {
   double notNumbers = 0.0;
   /// The step that the next part begins after, and its counts.
   std::array<int64_t, 9> next{};
+  /// The next frame of a program of frames (D[frames-activation]): its
+  /// positions, in the order of the input and the type of the state, in a
+  /// buffer that the entry takes at each boundary, and its cell, the
+  /// diagonal and the tilts.
+  std::unique_ptr<HostBuffer<2>> framePositions;
+  std::array<double, 6> frameCell{};
   /// The particle at each place of the program, once read.
   std::vector<int32_t> places;
 };
@@ -315,6 +331,21 @@ extern "C" void _mlir_ciface_mdrtPartBoundary(StridedMemRefType<char, 2> *x,
   // The next part.
   for (size_t k = 0; k != a->next.size(); ++k)
     counts->data[counts->offset + k * counts->strides[0]] = a->next[k];
+}
+
+/// The boundary of a program of frames (D[frames-activation]): the entry
+/// waits here for the next frame, and takes the buffer of the host that
+/// holds its positions as the result and its cell in `cell`. What the last
+/// frame gave has reached the host through the calls of its evaluation.
+extern "C" void
+_mlir_ciface_mdrtFrameBoundary(StridedMemRefType<char, 2> *positions,
+                               StridedMemRefType<double, 1> *cell) {
+  compiler::Activation *a = runningActivation;
+  a->atBoundary = true;
+  swapcontext(&a->context, &a->host);
+  *positions = a->framePositions->descriptor;
+  for (size_t k = 0; k != a->frameCell.size(); ++k)
+    cell->data[cell->offset + k * cell->strides[0]] = a->frameCell[k];
 }
 } // namespace
 
@@ -479,6 +510,8 @@ compileEngine(const Control &control, const System &system,
     add("free", (void *)&freeForCode);
     add("_mlir_ciface_mdrtPartBoundary",
         (void *)&_mlir_ciface_mdrtPartBoundary);
+    add("_mlir_ciface_mdrtFrameBoundary",
+        (void *)&_mlir_ciface_mdrtFrameBoundary);
     add("_mlir_ciface_mdrtWriteCheckpoint",
         writesForces ? (void *)&_mlir_ciface_mdrtWriteCheckpointWithForces
                      : (void *)&_mlir_ciface_mdrtWriteCheckpoint);
@@ -542,7 +575,7 @@ compileEngine(const Control &control, const System &system,
 
 llvm::Expected<std::unique_ptr<Simulation>>
 Simulation::create(const model::PreparedModel &prepared, bool cache,
-                   compiler::CodeStore *store) {
+                   compiler::CodeStore *store, bool frames) {
   std::unique_lock<std::mutex> lock(getRunMutex());
   const Control &given = prepared.control;
   bool trotter = given.barostat &&
@@ -567,6 +600,7 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   // steps where `mdir run` writes its rows (D219).
   simulation->minimizationCheckPeriod = control.energyPeriod;
   control = compiler::getSegmentsControl(control);
+  control.frames = frames;
   System &system = simulation->system;
   system = start;
   size_t count = system.getNumParticles();
@@ -658,6 +692,9 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
     args.vectors.back()->addTo(args.pointers);
   };
   vector(system.positions, p.state);
+  if (engine.control.frames)
+    a->framePositions =
+        std::make_unique<HostBuffer<2>>(system.positions, p.state, count);
   vector(system.velocities, p.state);
   if (p.takesForces)
     vector(hasRun ? forces : std::vector<double>(3 * count, 0.0), p.force);
@@ -969,13 +1006,10 @@ void Simulation::freeSnapshot() {
   snapshot = Snapshot();
 }
 
-llvm::Error Simulation::runPart(Engine &engine, Part part) {
-  std::lock_guard<std::mutex> lock(getRunMutex());
-  Output &out = *output;
-  const Program &p = engine.program;
+void Simulation::describeProgram(Output &out, const Program &p) const {
   out.state = p.state;
   out.force = p.force;
-  out.firstVolume = engine.volume;
+  out.firstVolume = compiled->volume;
   out.dispersionEnergy = p.dispersionEnergy;
   out.dispersionVirial = p.dispersionVirial;
   out.observableVolumeConstants = p.observableVolumeConstants;
@@ -988,6 +1022,17 @@ llvm::Error Simulation::runPart(Engine &engine, Part part) {
   out.coulombSelfEnergy = p.coulombSelfEnergy;
   out.ljpme = p.ljpme;
   out.ljpmeSelfEnergy = p.ljpmeSelfEnergy;
+}
+
+llvm::Error Simulation::runPart(Engine &engine, Part part) {
+  // The entry of a frame evaluator's program is a loop over frames.
+  if (engine.control.frames)
+    return simulationError("the simulation of a frame evaluator takes no "
+                           "steps and no evaluation of its state");
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  Output &out = *output;
+  const Program &p = engine.program;
+  describeProgram(out, p);
   int64_t closing = p.segmentPeriod ? p.closingSteps : 0;
   // An interval of the second nest: periods of coupling, or plain steps
   // and the step of energy.
@@ -1756,6 +1801,9 @@ llvm::Expected<compiler::SimulationView> Simulation::takeView() {
   if (borrowed)
     if (llvm::Error error = checkLeases("a view"))
       return std::move(error);
+  if (compiled->control.frames)
+    return unsupported("the simulation of a frame evaluator lends no state: "
+                       "its program holds a frame, not a state");
   if (!activation || !activation->atBoundary)
     return describeNoActivation();
   compiler::SimulationView view = describeView();
@@ -1812,6 +1860,9 @@ llvm::Expected<compiler::SimulationView> Simulation::takeBorrow() {
   if (prepared.control.minimize)
     return unsupported("a simulation that minimizes takes no writable "
                        "borrow");
+  if (compiled->control.frames)
+    return unsupported("the simulation of a frame evaluator lends no state: "
+                       "its program holds a frame, not a state");
   if (!activation || !activation->atBoundary)
     return describeNoActivation();
   compiler::SimulationView view = describeView();
@@ -2369,43 +2420,90 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
         return inputError(message);
       }
   }
-  // The state of the host becomes the frame: its velocities and forces
-  // are those that the host has, which the evaluation does not read (the
-  // forces are evaluated anew). The state of the activation is not copied
-  // back once the host has arrays of the right sizes: a frame is not a
-  // continuation of the last one.
-  {
-    std::lock_guard<std::mutex> lock(getRunMutex());
-    if (forces.size() != 3 * count || system.velocities.size() != 3 * count)
-      downloadState();
-    endActivation(Ended::NotBegun);
-  }
-  std::vector<double> before = std::move(system.positions);
+  if (!compiled->control.frames)
+    return simulationError("frames are evaluated by the simulation of a "
+                           "frame evaluator; this is a defect of mdir");
+  // The frame is evaluated in the activation that the last one left
+  // waiting at its boundary (D[frames-activation]): the entry takes the
+  // positions from the buffer of the host that it was given and the cell
+  // from the six numbers, orders the particles, builds its neighbor
+  // structures, and evaluates. The first frame, and the first after a
+  // failure or an update of the tunables, begin an activation, whose start
+  // copies everything but the positions to where the program keeps it. The
+  // state of the host stays that of the program: only its cell is the
+  // frame's.
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  Output &out = *output;
+  const Program &p = compiled->program;
+  describeProgram(out, p);
+  out.endStep = step;
   double systemBoxBefore[3] = {system.box[0], system.box[1], system.box[2]};
-  system.positions.assign(positions, positions + 3 * count);
+  std::string failure;
+  auto fail = [&](const std::string &message) {
+    if (failure.empty())
+      failure = message;
+  };
+  out.fail = fail;
+  out.system = &system;
+  setOutput(&out);
+  // The row of a frame goes to no reporter.
+  out.quietStep = step;
+  out.tunablesVersion = tunablesVersion;
+  stopMessage.clear();
   hostCurrent = true;
-  if (changesCell)
-    setCell(*cell);
-  output->tunableGradientWritten = false;
-  output->tunableGradientFields.clear();
-  gradientAsked = true;
-  llvm::Error error = evaluatePart(/*committed=*/true);
-  gradientAsked = false;
+  auto begin = [&]() -> llvm::Error {
+    if (activation)
+      return llvm::Error::success();
+    gradientAsked = true;
+    llvm::Error started = startActivation(1);
+    gradientAsked = false;
+    return started;
+  };
+  llvm::Error error = begin();
+  if (!error && failure.empty() && stopMessage.empty() &&
+      activation->atBoundary) {
+    Activation &a = *activation;
+    a.framePositions->assign(positions, 3 * count, p.state);
+    if (changesCell)
+      setCell(*cell);
+    a.frameCell = getCell();
+    out.tunableGradientWritten = false;
+    out.tunableGradientFields.clear();
+    out.lastEnergies.step = -1;
+    resumeActivation();
+  }
+  out.fail = nullptr;
+  if (failure.empty())
+    failure = stopMessage;
+  if (!error && failure.empty() &&
+      (activation->returned || !activation->atBoundary))
+    failure = "the program did not reach the end of the frame; this is a "
+              "defect of mdir";
+  // A sum that is not a number: two particles at one place, or a state
+  // that is none.
+  if (!error && failure.empty() &&
+      (out.lastEnergies.step != step ||
+       !std::isfinite(out.lastEnergies.potential) ||
+       !std::isfinite(out.lastEnergies.virial)))
+    failure = "the energy or the virial at the frame is not a number (a bad "
+              "contact, or a defect of mdir)";
+  if (!error && !failure.empty())
+    error = simulationError("the simulation failed after step " +
+                            llvm::Twine(step) + ": " + failure +
+                            "; it keeps the state of step " +
+                            llvm::Twine(step));
   llvm::Expected<TunableGradient> derivative =
       error ? llvm::Expected<TunableGradient>(std::move(error))
             : collectTunableGradient();
   if (!derivative) {
+    // The activation is ended: what the frame left in it is not trusted,
+    // and the next frame begins one. The cell is that of before.
     if (changesCell) {
       setCell(cellBefore);
       for (int k = 0; k != 3; ++k)
         system.box[k] = systemBoxBefore[k];
     }
-    {
-      std::lock_guard<std::mutex> lock(getRunMutex());
-      endActivation(Ended::UndoneFrame);
-    }
-    system.positions = std::move(before);
-    hostCurrent = true;
+    endActivation(Ended::UndoneFrame);
     failed = false;
     ended = Ended::UndoneFrame;
     output->lastEnergies.step = -1;

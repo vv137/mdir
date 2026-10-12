@@ -31,7 +31,8 @@ and the derivative of the energy in them at a state
 ([python-gradient.md](python-gradient.md)).
 The evaluation at stored frames with its product in the tunables, and its
 PyTorch operation, are in [python-frames.md](python-frames.md)
-(D240, #249).
+(D240, #249; the frames of a call inside one activation,
+D[frames-activation], #291).
 D220 (#131) exposes the buffers of a
 simulation, the particle IDs, and the values of tunables as read-only DLPack
 views with leases and stream handoff ([python-dlpack.md](python-dlpack.md)).

@@ -1,0 +1,14 @@
+# REQUIRES: python-api, cuda
+# The frames of an evaluation inside one activation of the evaluator's
+# program (D[frames-activation], docs/python-frames.md) on a GPU, in
+# double and mixed precision: python-frames-activation.test has the
+# quantities.
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide activation GPU Double | FileCheck %s -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide activation GPU Mixed | FileCheck %s -DMODE="GPU Mixed"
+# CHECK: [[MODE]]: 6 frames against the gradient() and the state of a sampler in the order of the input, equal to the bit: True
+# CHECK: [[MODE]]: against a simulation in the spatial order compiled from the frame: the energy {{.*}} kJ/mol (tolerance {{.*}}), the rows {{.*}} relative (tolerance {{.*}}): True
+# CHECK: [[MODE]]: one frame per call: True; frames that repeat and frames far apart in one call: True; batches of two frames: True; 120 frames in one call: True
+# CHECK: [[MODE]]: with the calls of a second evaluator and the steps of a sampler in between: True
+# CHECK: [[MODE]]: after a frame that fails in the middle of a call, one that fails as the first of an activation, and frames that are refused: True
+# CHECK: [[MODE]]: at other values of a tunable the energies change, and at the first values again they are those of before: True
+# CHECK: activation passed

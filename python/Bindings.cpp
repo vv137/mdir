@@ -113,6 +113,10 @@ struct Program {
   /// Whether its compilations use the compile cache, the default of its
   /// simulations (D217).
   bool cache = true;
+  /// The program of the terms that a tunable enters (D243), once a frame
+  /// evaluator has asked for it: a second evaluator takes it, with the
+  /// code that the first left in its store (D[frames-activation]).
+  mutable std::shared_ptr<Program> dependent;
   std::vector<std::pair<std::shared_ptr<Version>, uint64_t>> inputs;
   template <class T> void track(const std::shared_ptr<Input<T>> &o) {
     inputs.emplace_back(o, o->version);
@@ -696,6 +700,8 @@ PYBIND11_MODULE(_core, m) {
     // (D243, docs/python-frames.md), for a frame
     // evaluator: built from the model of this one, with its inputs.
     .def("_dependent", [](const Program &p) {
+      if (p.dependent)
+        return p.dependent;
       if (p.prepared->tunables.empty())
         throw InputError("the program declares no tunable parameters (System.tunables)");
       if (!p.prepared->control.tunableGradient)
@@ -708,7 +714,8 @@ PYBIND11_MODULE(_core, m) {
       result.cache = p.cache;
       result.prepared = std::make_shared<const model::PreparedModel>(std::move(prepared));
       result.inputs = p.inputs;
-      return std::make_shared<Program>(std::move(result));
+      p.dependent = std::make_shared<Program>(std::move(result));
+      return p.dependent;
     })
     .def_property_readonly("plan", [](const Program &p) {
       py::dict d;
@@ -1398,7 +1405,8 @@ PYBIND11_MODULE(_core, m) {
   views::bind(m);
   py::class_<PySimulation>(m, "Simulation")
     .def(py::init([](std::shared_ptr<Program> program, std::optional<bool> cache,
-                     std::optional<std::string> checkpoint, bool stage, bool append) {
+                     std::optional<std::string> checkpoint, bool stage, bool append,
+                     bool frames) {
       if (!program) throw InputError("Simulation takes a compiled program");
       program->checkCurrent();
       if (!checkpoint && stage)
@@ -1416,7 +1424,7 @@ PYBIND11_MODULE(_core, m) {
         // The inputs were copied at compilation; nothing here touches Python.
         py::gil_scoped_release release;
         created.emplace(compiler::Simulation::create(*prepared, useCache,
-                                                     program->code.get()));
+                                                     program->code.get(), frames));
       }
       PySimulation result;
       result.program = std::move(program);
@@ -1432,7 +1440,10 @@ PYBIND11_MODULE(_core, m) {
       return result;
     }), py::arg("program"), py::kw_only(), py::arg("cache") = py::none(),
        py::arg("checkpoint") = py::none(), py::arg("stage") = false,
-       py::arg("append") = true)
+       py::arg("append") = true,
+       // The simulation of a frame evaluator, whose entry is a loop over
+       // frames (D[frames-activation]); private to `mdir.FrameEvaluator`.
+       py::arg("_frames") = false)
     .def("save_checkpoint", [](PySimulation &s, const std::string &path) {
       std::optional<llvm::Error> error;
       {

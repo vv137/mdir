@@ -1334,25 +1334,45 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                            from.getBuffer().getType())))
       return failure();
     Value buffer = mapping.lookup(from.getBuffer());
-    if (!onDevice) {
+    // A buffer that a call in the body of a loop returns is given anew at
+    // every iteration, and may be the same memory each time: the frames of
+    // a frame evaluator, which the host hands the entry at a boundary
+    // (D[frames-activation]). Memory that the body allocates is its own.
+    bool givenAnew = &scope != root &&
+                     from.getBuffer().getDefiningOp<func::CallOp>() &&
+                     from.getBuffer().getParentBlock() == op->getBlock();
+    if (!onDevice && !givenAnew) {
       bind(from.getResult(), buffer, scope);
       scope.owned.insert(buffer);
       return success();
     }
 
-    // The field is copied to the device. The buffer on the host is free to
-    // take what is copied back.
     Type field = from.getResult().getType();
     Attribute set = getParticleSet(field);
     if (!sizes.count(set))
       sizes[set] = memref::DimOp::create(
           builder, op->getLoc(), buffer,
           arith::ConstantIndexOp::create(builder, op->getLoc(), 0));
+    if (!onDevice) {
+      // The loop cannot own such a buffer, since a buffer that a loop owns
+      // may hold what the loop carries to its next iteration. The field
+      // takes a buffer of the loop and a copy.
+      Value held =
+          scope.request(getStorageType(field), sizes[set], set, op->getLoc());
+      memref::CopyOp::create(builder, op->getLoc(), buffer, held);
+      buffers[from.getResult()] = held;
+      return success();
+    }
+
+    // The field is copied to the device. The buffer on the host is free to
+    // take what is copied back, unless it is given anew at every iteration
+    // of a loop.
     Value device =
         scope.request(getStorageType(field), sizes[set], set, op->getLoc());
     createTransfer(builder, op->getLoc(), device, buffer);
     buffers[from.getResult()] = device;
-    hostBuffers[{buffer.getType(), set}].push_back(buffer);
+    if (!givenAnew)
+      hostBuffers[{buffer.getType(), set}].push_back(buffer);
     return success();
   }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {

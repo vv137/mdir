@@ -331,8 +331,10 @@ $g_k$ of the frame: the evaluator will call the same entry at each stored
 frame (positions and cell given), accumulate $\sum_k g_k\,\partial
 U_k/\partial d$ in f64, and apply the chain rule once. The first slice
 ([python-frames.md](python-frames.md), D240) evaluates each
-frame in an activation of its own and applies the chain rule at each; the
-accumulation of the fields belongs to the frames inside one activation.
+frame in an activation of its own and applies the chain rule at each.
+The frames are inside one activation since D[frames-activation]; the chain
+rule is still applied at each frame on the host, where it is not what a
+frame costs, so the accumulation of the fields was not taken.
 
 ## Stages
 
