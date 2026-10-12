@@ -30,7 +30,7 @@ need_check
 export PATH MDIR
 top=$(dirname "$(dirname "$GMX")")/share/gromacs/top
 mkdir -p "$work" && cd "$work"
-tleap -f "$here/peptide.leap" > leap.log 2>&1
+"$TLEAP" -f "$here/peptide.leap" > leap.log 2>&1
 
 for spec in amber99sb-ildn:tip3p amber99sb:tip3p amber03:tip3p amber14sb:tip3p \
             amber99sb-ildn:tip4pew amber19sb:tip3p charmm27:tip3p \
