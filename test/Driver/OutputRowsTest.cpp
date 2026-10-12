@@ -1,6 +1,7 @@
 // What a run keeps of the rows of its energies (#300): nothing for a row,
 // and the sums of the summary at the end of `mdir run`, which are those of
-// a pass over all the rows to the bit.
+// a pass over all the rows to the bit. Its log keeps nothing of them
+// either once no file will open (#304).
 #include "mdir/Driver/Output.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cmath>
@@ -131,6 +132,46 @@ int main() {
   // four temperatures when it was measured. The bound lets through what
   // grows by less than a byte a row.
   require(growth <= 1024, "the run keeps memory for each row");
+
+  // A log that prints and has no file keeps nothing of its rows either
+  // (#304): `mdir run` without `log` in [output] says after its set-up
+  // that no file will open. Until then the log keeps what it prints, for
+  // the file that may open.
+  Output printed;
+  printed.energyPeriod = 1;
+  printed.degreesOfFreedom = 3000.0;
+  printed.solventFreedom = 2000.0;
+  printed.volume = 27.0;
+  printed.rateStep = rows;
+  for (BlockMean *mean : {&printed.soluteOptimal, &printed.solventOptimal,
+                          &printed.soluteFull, &printed.solventFull})
+    mean->plan(2 * rows);
+  llvm::outs().flush();
+  printed.log.print("MDIR: a line of the set-up of a run\n");
+  require(printed.log.getNumPendingBytes() != 0,
+          "the log keeps no text for the file that may open");
+  printed.log.keepNothing();
+  require(printed.log.getNumPendingBytes() == 0,
+          "the log keeps text for a file that will not open");
+  setOutput(&printed);
+  write(0, rows + 1);
+  before = getBytesInUse();
+  write(rows + 1, 2 * rows + 1);
+  after = getBytesInUse();
+  setOutput(nullptr);
+  printed.log.flush();
+  require(printed.numEnergyTimes == 2 * rows + 1, "the rows of the log");
+  growth = static_cast<long long>(after) - static_cast<long long>(before);
+  llvm::outs() << "bytes in use of a log without a file from row " << rows
+               << " to row " << 2 * rows << ": " << growth << ", and "
+               << printed.log.getNumPendingBytes() << " bytes of text kept\n";
+  // A row of the log is 121 bytes of text here, kept in a string that
+  // doubles: 1024 rows are 123904 bytes at least, and 245760 when it was
+  // measured, with 247929 bytes of text kept. The bound lets through what
+  // grows by less than a byte a row.
+  require(growth <= 1024, "the log keeps memory for each row");
+  require(printed.log.getNumPendingBytes() == 0,
+          "the log keeps the text of its rows");
   llvm::outs() << "rows passed\n";
   return 0;
 }

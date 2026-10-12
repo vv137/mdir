@@ -3,7 +3,16 @@
 # temperatures of the solute and of the solvent with errors of ten blocks,
 # D203) takes sums in constant memory, which are those of a pass over all
 # the rows to the bit.
+#
+# Its log keeps nothing for a row either once no file will open (#304): a
+# log that prints its rows and was told so has the same bytes in use after
+# 1024 rows and after 2048, and no text kept. The rows are printed as those
+# of a run are.
 # RUN: mdir-output-rows-test | FileCheck %s
 # CHECK: the means and the errors of ten blocks are those of a pass over the rows for 16 numbers of rows
 # CHECK: bytes in use from row 1024 to row 2048: {{-?[0-9]+}}
-# CHECK: rows passed
+# CHECK: MDIR: a line of the set-up of a run
+# CHECK-NEXT: INFO: 0
+# CHECK: INFO: 2048
+# CHECK-NEXT: bytes in use of a log without a file from row 1024 to row 2048: {{-?[0-9]+}}, and 0 bytes of text kept
+# CHECK-NEXT: rows passed
