@@ -45,11 +45,17 @@ void Log::print(const char *format, ...) {
   if (quiet)
     return;
   std::fputs(text.c_str(), stdout);
-  // Kept for the file, if one opens.
+  // Kept for the file, while one may open.
   if (file)
     std::fputs(text.c_str(), file);
-  else
+  else if (keeps)
     pending += text;
+}
+
+void Log::keepNothing() {
+  keeps = false;
+  // `clear` would keep the allocation.
+  std::string().swap(pending);
 }
 
 llvm::Error Log::open(const std::string &path, bool appends) {
@@ -59,7 +65,8 @@ llvm::Error Log::open(const std::string &path, bool appends) {
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "cannot write the log '%s'", path.c_str());
   std::fputs(pending.c_str(), file);
-  pending.clear();
+  // The file has the text from here on, and after it closes none is kept.
+  keepNothing();
   std::fflush(file);
   return llvm::Error::success();
 }

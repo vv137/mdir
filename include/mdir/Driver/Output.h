@@ -29,7 +29,10 @@ namespace driver {
 
 /// The log of a run: every line goes to the standard output and, once
 /// `open` has named a file, to that file as well. What was printed before
-/// goes to the file when it opens, so that the file holds the whole log.
+/// goes to the file when it opens, so that the file holds the whole log:
+/// the log keeps that text until `open`, or until `keepNothing` says that
+/// no file will open. After either it keeps nothing of what it prints
+/// (#304).
 class Log {
 public:
   Log() = default;
@@ -45,11 +48,19 @@ public:
   /// Opens `path`, appending to what it holds if `appends`, and writes
   /// what was printed before.
   llvm::Error open(const std::string &path, bool appends);
+  /// No file will open: frees the text kept for one and keeps none from
+  /// here on. A run without a log file says so once its set-up knows it,
+  /// or every line of its log would stay in memory until it ends.
+  void keepNothing();
+  /// The bytes of the text kept for a file that may open.
+  size_t getNumPendingBytes() const { return pending.size(); }
   void flush();
   void close();
 
 private:
   std::FILE *file = nullptr;
+  /// What was printed before a file opened, while one may still open.
+  bool keeps = true;
   std::string pending;
 };
 

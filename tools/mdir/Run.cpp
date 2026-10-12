@@ -670,11 +670,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     }
   }
   // The log file holds what the run has printed so far; a continued run
-  // appends to it.
-  if (!control->logFile.empty())
+  // appends to it. Without one the log keeps nothing from here on: this
+  // is the only place where its file opens (#304).
+  if (!control->logFile.empty()) {
     if (llvm::Error error =
             output.log.open(getOutputPath(control->logFile), own.has_value()))
       return fail(std::move(error));
+  } else {
+    output.log.keepNothing();
+  }
 
   //===--------------------------------------------------------------------===//
   // Load
