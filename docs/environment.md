@@ -47,6 +47,56 @@ These are described in [debugging.md](debugging.md). They act on `mdir run`.
 | `MDIR_BENCH_DIR=<dir>` | `test/Scale`, `scripts/benchmarks/amber` | The prepared Amber benchmark suite. Without it, those tests are unsupported ([debugging.md](debugging.md)). |
 | `CHARMM_TOPPAR=<dir>` | `scripts/validation/charmm/run.py` | The CHARMM topology and parameter files of the validation against CHARMM ([charmm-m1.md](charmm-m1.md)). |
 
+## Scripts
+
+The scripts of the repository name no path of one machine (#289;
+`test/Lit/script-paths.test` keeps it so). What a machine provides comes
+from the environment, by one convention (`scripts/environment.sh`):
+
+- A **program** is a variable that holds its name or its path. Its default
+  is the bare name, looked up on the path.
+- A **directory or a choice of the machine** (an install prefix, where to
+  write, a device) is a variable without a default.
+- A script checks all that it needs at its start, before it fetches,
+  removes, or writes anything. It prints every variable that is missing, or
+  that names nothing, with one line on what it is, and exits with status 2
+  (`test/Lit/script-environment.test`).
+- A machine may keep its values in one file outside the repository. If
+  `MDIR_ENV_FILE` is set, the shell scripts below (but the argon example,
+  which is installed without the helper) read the lines `NAME=value` of
+  that file: the value is the rest of the line as it is (no quotes, no
+  expansion, nothing is executed), and lines that are empty or start with
+  `#` are skipped. A variable that the environment already has keeps its
+  value, so one call can override the file. A file that is named and cannot
+  be read, or a line of another form, is an error.
+
+| Variable | Read by | What it is | Without it |
+|---|---|---|---|
+| `MDIR_ENV_FILE=<file>` | the shell scripts of this table but `examples/argon/run.sh` | The file of the machine, as above. | Only the environment is read. |
+| `MDIR_RELEASE_DIR=<dir>` | `scripts/release/publish.sh` | Where a release writes: the worktree `src-vVERSION`, the build tree `build-vVERSION`, the assets `vVERSION`, and the logs `logs/release-vVERSION-*.log`; a dry run adds `-dry-run` to each name ([workflow.md](workflow.md#releases)). | The script stops. |
+| `MDIR_LLVM=<prefix>` | `publish.sh` | The install prefix of LLVM and MLIR. | The script stops. |
+| `HDF5_PREFIX=<prefix>` | `publish.sh` | The install prefix of HDF5, as `scripts/build-hdf5.sh` names its own. | The script stops. |
+| `CUDA_ROOT=<dir>` | `publish.sh` | The CUDA toolkit of the build of a release. The manylinux tree is run without it. | The script stops. |
+| `MDIR_RELEASE_GPU=<n>` | `publish.sh` | The index of the GPU that runs the suite of a release and the manylinux tree. | The script stops. |
+| `MDIR_RELEASE_SUITE_LOCK=<file>`, `MDIR_RELEASE_GPU_LOCK=<file>` | `publish.sh` | Lock files of a shared machine ([workflow.md](workflow.md#shared-machines)), held with `flock`: the first around the suite, the second while the GPU is used, taken in that order. | No lock is taken. |
+| `CMAKE`, `NINJA`, `LIT`, `DOCKER` | `publish.sh` | Programs: `cmake`, `ninja`, `lit` (the one beside `ninja` if there is one), and `docker` by default. `DOCKER` is needed for the manylinux tree and for `--container`. | The script stops if the program is not found. |
+| `PANDOC`, `TECTONIC` | `publish.sh`, `scripts/paper/build-pdf.sh` | Programs: `pandoc` (3.x) and `tectonic` by default. | The script stops if the program is not found. |
+| `ENGINES=<prefix>` | `scripts/validation/gromacs/run.sh` | A prefix whose `bin` is searched first for `tleap` and `gmx`. | The path is searched. |
+| `TLEAP`, `GMX` | `scripts/validation/gromacs/run.sh` | Programs: `tleap` of AmberTools and `gmx` of GROMACS by default. | The script stops if the program is not found. |
+| `MDIR` | `scripts/validation/gromacs/run.sh`, `compare.py` | The `mdir` program to compare; `mdir` by default. | The script stops if the program is not found. |
+| `MDIR_BENCH_DIR=<dir>` | `scripts/experiments/neighbor-structures/run.sh` | The prepared Amber suite (above); this script has no default for it. | The script stops. |
+| `NVCC`, `CUDA_ARCH` | `scripts/experiments/neighbor-structures/run.sh` | The program `nvcc` (by default) and the architecture it compiles for (`sm_86` by default). | The script stops if `nvcc` is not found. |
+| `LLVM_PREFIX=<prefix>` | `examples/argon/run.sh` | The install prefix of LLVM, as `scripts/build-llvm.sh` names its own. | The script stops. |
+| `MDIR_BUILD=<dir>` | `examples/argon/run.sh` | The build directory of MDIR; `build` by default. | The script stops if it holds no `bin/mdir-opt`. |
+
+`scripts/build-llvm.sh` and `scripts/build-hdf5.sh` install, and list their
+own variables in their headers; their default prefix is under the home
+directory, and nothing has to exist there. `CC`, `CXX`, `PATH`,
+`LD_LIBRARY_PATH`, `LIT_OPTS`, `CUDA_CACHE_PATH`, and `MDIR_BENCH_DIR` reach
+the build and the suite of a release as the environment has them.
+
+## Lit parameters
+
 The suite also takes lit parameters, given as `-D<name>=<value>` in
 `LIT_OPTS` (`test/mdir_lit.py`):
 
