@@ -75,11 +75,16 @@ def files(root):
     return sorted(found)
 
 
+# This file is not searched: its list of exceptions holds what they match.
+ITSELF = "test/Lit/Inputs/script_paths.py"
+
 root = sys.argv[1]
 used = [0] * len(EXCEPTIONS)
 complaints = []
 count = 0
 for path in files(root):
+    if path == ITSELF:
+        continue
     try:
         with open(os.path.join(root, path), encoding="utf-8") as file:
             lines = file.read().splitlines()
