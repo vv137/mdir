@@ -1,0 +1,22 @@
+# REQUIRES: python-api, cuda
+# The stack of the entry of a Python simulation does not grow with its steps
+# of energy (#305) on a GPU, in double and mixed precision: the depth of the
+# stack at the boundary, to the byte, as python-stack-rows.test has it. On a
+# GPU the row of the observed columns never grew the stack: the lowering
+# releases the stack of an iteration of a loop of the host where the
+# iteration ends (`releaseStack`), since the arguments of its launches are on
+# the stack as well. The test keeps that: the allocations stay in the loops
+# of the lowered module, with a `stacksave`.
+# RUN: %mdir_python %S/Inputs/python_stack.py %S/Inputs/dipeptide GPU Double | FileCheck %s -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_stack.py %S/Inputs/dipeptide GPU Mixed | FileCheck %s -DMODE="GPU Mixed"
+# CHECK: [[MODE]]: no observed column: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
+# CHECK: [[MODE]]: no observed column: the lowered module releases the stack of an iteration ({{[0-9]+}} stacksave) around its allocations in the loops: True
+# CHECK: [[MODE]]: 4 observed columns: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
+# CHECK: [[MODE]]: 4 observed columns: the lowered module releases the stack of an iteration ({{[0-9]+}} stacksave) around its allocations in the loops: True
+# CHECK: [[MODE]]: 5 observed columns: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
+# CHECK: [[MODE]]: 5 observed columns: the lowered module releases the stack of an iteration ({{[0-9]+}} stacksave) around its allocations in the loops: True
+# CHECK: [[MODE]]: 2 observed columns, a tunable, and the derivative in the tunables: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
+# CHECK: [[MODE]]: 2 observed columns, a tunable, and the derivative in the tunables: the lowered module releases the stack of an iteration ({{[0-9]+}} stacksave) around its allocations in the loops: True
+# CHECK: [[MODE]]: 4 observed columns under a barostat, coupled every 5 steps: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
+# CHECK: [[MODE]]: 4 observed columns under a barostat, coupled every 5 steps: the lowered module releases the stack of an iteration ({{[0-9]+}} stacksave) around its allocations in the loops: True
+# CHECK: python stack passed
