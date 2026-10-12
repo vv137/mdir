@@ -1517,9 +1517,12 @@ Every program of a step leaves the same state, to the bit in the
 deterministic mode: the plain step, the step with energies, the steps
 with the virial of the barostats, and the scaling step with and without
 the energies. Two runs that differ only in the rows of their energies end
-in the same state (`test/Driver/leapfrog-energy-step.test`, on the CPU
-and a GPU, in double and mixed precision, for each thermostat, each count
-of the work of the barostat, and each coupling of the cell). Outside
+in the same state (`test/Driver/leapfrog-energy-step.test`, for each
+thermostat, each count of the work of the barostat, and each coupling of
+the cell on the CPU in double precision; on the CPU in mixed precision
+and on a GPU in double and mixed precision for one case of each of the
+three forms of the step by default, and for all of them in the suite of a
+release, `lit -Drelease=1`). Outside
 Langevin dynamics and the scaling step, the step with the virial would
 differ from the plain step by the rounding of the solvers if it drifted
 from the projected velocities; it drifts as the plain step does and takes

@@ -115,6 +115,7 @@ at a later call. To find the kernel that failed:
 |---|---|---|
 | Default | `lit test` | Units, dialects, lowerings, short runs on CPU and GPU |
 | Sanitizer | `lit -Dsanitize=1 test` | The GPU tests under compute-sanitizer |
+| Release | `lit -Drelease=1 test` | The whole matrix of the tests that run a part of their cases by default (`*-release.test`, `*-release-gpu.test`); the suite of `scripts/release/publish.sh` |
 | PyTorch | `lit -Dtorch_python=<python> test` | The DLPack views with PyTorch as the consumer (`python-dlpack-torch*.test`), with an interpreter that imports torch and the module of the build; without it, and without torch in the interpreter of the tests, they are unsupported |
 | Scale | `MDIR_BENCH_DIR=<dir> lit test/Scale` | Short runs of the Amber benchmark suite |
 | Host sanitizers | `scripts/build-sanitized.sh <dir>` | All tests, with the driver and runtimes under AddressSanitizer and UndefinedBehaviorSanitizer |
