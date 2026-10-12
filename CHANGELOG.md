@@ -399,6 +399,11 @@ format, or the outputs; every such change is listed under **Changed** or
   named by `MDIR`, `GMX`, and `TLEAP`. `MDIR_ENV_FILE` names a file with
   the values of a machine. `publish.sh --dry-run` rehearses a release
   without a tag ([docs/environment.md](docs/environment.md#scripts)).
+- **The build of a release has the Python interface, and its suite runs
+  the Python tests** (#297): `scripts/release/publish.sh` also needs
+  `MDIR_PYTHON` and `PYBIND11_DIR`, and gives lit the interpreters that
+  `MDIR_TORCH_PYTHON` and `MDIR_H5MD_PYTHON` name. Until now a release was
+  tagged on a suite in which every Python test was unsupported.
 - **Leapfrog with constraints: every step leaves the state of the plain
   step, and under Langevin dynamics the plain step is the documented one**
   (#285). With SHAKE or SETTLE, a step that writes a row of energies (and

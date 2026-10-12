@@ -77,6 +77,9 @@ from the environment, by one convention (`scripts/environment.sh`):
 | `MDIR_LLVM=<prefix>` | `publish.sh` | The install prefix of LLVM and MLIR. | The script stops. |
 | `HDF5_PREFIX=<prefix>` | `publish.sh` | The install prefix of HDF5, as `scripts/build-hdf5.sh` names its own. | The script stops. |
 | `CUDA_ROOT=<dir>` | `publish.sh` | The CUDA toolkit of the build of a release: the same name, and the same toolkit, that `mdir` reads at run time (above), so that a machine states it once. The manylinux tree is run without it. | The script stops. |
+| `MDIR_PYTHON=<interpreter>` | `publish.sh` | The Python interpreter of the build of a release, which is built with the Python interface so that its suite holds the Python tests (#297). It runs those tests, so it has NumPy, and OpenMM for the tests that compare with it. It has no default: the interpreter and its packages are a choice of the machine. | The script stops. |
+| `PYBIND11_DIR=<dir>` | `publish.sh` | The directory of pybind11's CMake package (CMake's `pybind11_DIR`). | The script stops. |
+| `MDIR_TORCH_PYTHON=<interpreter>`, `MDIR_H5MD_PYTHON=<interpreter>` | `publish.sh` | Interpreters with PyTorch (and torch-pme) and with h5py, which the suite of a release gives to lit as `-Dtorch_python` and `-Dh5md_python` (below). | lit tries the Python of the build; the tests that need a package it lacks are unsupported. |
 | `MDIR_RELEASE_GPU=<n>` | `publish.sh` | The index of the GPU that runs the suite of a release and the manylinux tree. | The script stops. |
 | `MDIR_RELEASE_SUITE_LOCK=<file>`, `MDIR_RELEASE_GPU_LOCK=<file>` | `publish.sh` | Lock files of a shared machine ([workflow.md](workflow.md#shared-machines)), held with `flock`: the first around the suite, the second while the GPU is used, taken in that order. | No lock is taken. |
 | `CMAKE`, `NINJA`, `LIT`, `DOCKER` | `publish.sh` | Programs: `cmake`, `ninja`, `lit` (the one beside `ninja` if there is one), and `docker` by default. `DOCKER` is needed for the manylinux tree and for `--container`. | The script stops if the program is not found. |
@@ -104,5 +107,7 @@ The suite also takes lit parameters, given as `-D<name>=<value>` in
 - `compile_threads` sets the `MDIR_COMPILE_THREADS` of each test;
 - `compile_cache=off` runs the suite without its compile cache.
 - `torch_python=<interpreter>` runs the tests that need PyTorch with it (the feature `torch`), and those that need torch-pme if it imports `torchpme` as well (the feature `torchpme`, D231).
+- `h5md_python=<interpreter>` runs the tests that read a trajectory with h5py with it (the feature `h5py`).
+- `release=1` enables the tests of a release ([workflow.md](workflow.md#releases)).
 
 A change that adds or reads an environment variable adds its row here.

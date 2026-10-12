@@ -221,8 +221,9 @@ A release is two steps, scripted so that nothing is done by hand
 in the environment or in the file that `MDIR_ENV_FILE` names
 ([environment.md](environment.md#scripts)): `MDIR_RELEASE_DIR`, where the
 release writes its worktree, build tree, assets, and logs; `MDIR_LLVM`,
-`HDF5_PREFIX`, and `CUDA_ROOT`, the prefixes of the build; and
-`MDIR_RELEASE_GPU`, the device of the suite. `cmake`, `ninja`, `lit`,
+`HDF5_PREFIX`, and `CUDA_ROOT`, the prefixes of the build; `MDIR_PYTHON`
+and `PYBIND11_DIR`, the interpreter and pybind11's CMake directory of the
+Python interface; and `MDIR_RELEASE_GPU`, the device of the suite. `cmake`, `ninja`, `lit`,
 `pandoc`, `tectonic`, and `docker` are found on the path or named by
 `CMAKE`, `NINJA`, `LIT`, `PANDOC`, `TECTONIC`, and `DOCKER`. On a shared
 machine, `MDIR_RELEASE_SUITE_LOCK` and `MDIR_RELEASE_GPU_LOCK` name its
@@ -237,6 +238,16 @@ manylinux tree, for a machine without Docker. A run, dry or not, removes
 its worktree when it ends and leaves its build tree
 (`build-vVERSION[-dry-run]`), its assets (`vVERSION[-dry-run]`), and its
 logs under `MDIR_RELEASE_DIR`, to be removed by hand.
+
+The build of a release has the Python interface (`MDIR_ENABLE_PYTHON`),
+so that its suite holds the Python tests as the suite of a pull request
+does; before #297 it had not, and a release was tagged on a suite in which
+they were unsupported. A machine that has interpreters with PyTorch and
+with h5py names them in `MDIR_TORCH_PYTHON` and `MDIR_H5MD_PYTHON`, and the
+suite gives them to lit (`-Dtorch_python`, `-Dh5md_python`); a release
+should set both and `MDIR_BENCH_DIR`. The log of the suite names every
+test that is unsupported, and the script prints their count: read it
+before `--publish`.
 
 The suite of a release runs more than the suite of a pull request.
 `publish.sh` gives lit `-Drelease=1`, which enables the tests that require
