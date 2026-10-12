@@ -2,8 +2,10 @@
 
 Issue #249, a step of M2b (#138, [roadmap](roadmap.md), Section 6.1).
 Status: the first slice is implemented, as the maintainer ruled on PR #250
-([Maintainer rulings](#maintainer-rulings)); what later slices add is in
-[Slices](#slices).
+([Maintainer rulings](#maintainer-rulings)), and the frames of every call
+are evaluated inside one activation of the evaluator's program
+([D\[frames-activation\]](#the-frames-inside-one-activation-dframes-activation),
+#291); what later slices add is in [Slices](#slices).
 
 A fit of the parameters of a potential by reweighting
 [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) takes frames $S_n$
@@ -61,6 +63,13 @@ particles, and its leases, and the evaluator may be at other values of the
 tunables than the sampler. The program need not be the sampler's (ruling
 Q11): any program over the same particles. The values of its tunables begin
 as those of the program and change only through `evaluator.tunables`.
+The simulation runs a program of its own, built from the model of the one
+given: a loop over frames
+([below](#the-frames-inside-one-activation-dframes-activation)). The first
+evaluator of a program compiles it (with its first frame 1.9 s for the
+dipeptide in water and 2.7 s for JAC on a GPU); a later evaluator of the
+same program takes the code that the first left with the `Program` (D236;
+0.07 s).
 
 `evaluate(positions, cells=None, tilts=None, *, gradient=True)`:
 
@@ -132,8 +141,10 @@ diagonal. With `UnsupportedError`: positions or cells that require a gradient (a
 `requires_grad`), whose gradient is not returned yet and is not zero. A
 frame whose evaluation fails (two particles at one place, a neighbor
 structure that overflows) raises `SimulationError` naming the frame. After
-any of these the evaluator is usable and gives what it gave before: the
-state of its simulation is that of the last frame that succeeded. The
+any of these the evaluator is usable and gives what it gave before, to the
+bit: a frame that is refused changes nothing, and a frame whose evaluation
+fails ends the activation, so that nothing of it reaches another frame;
+the next frame begins a new one, at the cost of one start. The
 checks of a frame are made when its turn comes, so the frames before a
 refused one have been evaluated; nothing of the call is returned.
 `FrameEvaluator` itself refuses, with `InputError`, a program without
@@ -280,15 +291,41 @@ state in float64 with its velocities and forces.
 
 ## Order and identity
 
-- **The order of the input, at every boundary.** Frames come in the order
-  of the input, which is the order of trajectory files, of `state()`, and
-  of other programs. The order of the program (D44, D215) is chosen anew at
-  each evaluation, since a frame is not near the one before it; `ids` stays
-  inside the evaluator. The outputs of this slice are numbers per frame and
-  per entry of a tunable, which have no order of particles. When the
-  gradient in the positions is added, the evaluator returns it in the order
-  of the input, gathered by the `ids` of the same evaluation, so that the
-  stale gather of #137 (item 1) cannot happen in a script.
+- **The order of the input, at every boundary and inside.** Frames come
+  in the order of the input, which is the order of trajectory files, of
+  `state()`, and of other programs, and the evaluator's program keeps the
+  particles in that order, whatever `Execution.reorder` of the program
+  given says (D[frames-activation]; until then the spatial order of D44
+  was chosen anew at each frame). An order chosen at a frame would renumber
+  every tuple set on the host and upload it again with its incidence
+  structure at that frame, which is most of what the start of an
+  activation costs, and it buys nothing: the neighbor structures bin the
+  particles themselves when they are built, and the kernels of a frame
+  take the same time in either order
+  ([measured](#the-order-of-the-particles)). The outputs are numbers per
+  frame and per entry of a tunable, which have no order of particles. When
+  the gradient in the positions is added, it is in the order of the input
+  with nothing to gather, so that the stale gather of #137 (item 1) cannot
+  happen in a script.
+- **The energy of a frame is a function of the frame alone**, of the
+  program, and of the values of the tunables: the same bits in any call,
+  after any frames, after a frame that failed, and whatever other
+  simulations do in between, in the deterministic mode
+  (`python-frames-activation.test`). Against a sampler the sums are taken
+  in the same order when the sampler keeps the order of the input
+  (`Execution.reorder = False`), and the two agree to the bit; against a
+  sampler in the spatial order, the default, they agree within the
+  rounding of sums in another order: $1.7\times10^{-10}$ kJ/mol
+  ($1.5\times10^{-14}$ relative) on systems of 1,168 to 1,209 atoms in
+  double precision, and in mixed precision $1.8\times10^{-4}$ to
+  $3.2\times10^{-4}$ kJ/mol on them ($3\times10^{-8}$ relative; on the
+  CPU the orthorhombic sets agree to the bit and only the triclinic one
+  differs) and $1.2\times10^{-4}$ kJ/mol of 307,567 on JAC
+  ([Validation](#validation-of-the-frames-inside-one-activation)). A
+  reweighting takes both of its energies from the evaluator
+  ([below](#reference-energies-and-what-is-stored)) and is not affected; a
+  comparison with energies that a sampler in the spatial order recorded
+  is, at that size.
 - **Cells.** Each frame has its edges (constant pressure). What follows the
   volume follows it per frame, as `gradient()` does after steps under a
   barostat: the tails of pair terms and the correction for the dispersion
@@ -306,9 +343,14 @@ state in float64 with its velocities and forces.
   diagonal, and tilts that are not all zero. A frame is not reduced for
   the caller: a cell that is not reduced is refused with the index of its
   frame. The grid of PME and the neighbor capacity stay the program's.
-- **Neighbor structures** are built anew at every frame; nothing is carried
-  from one frame to the next. The tests hold that the frames give the same
-  numbers to the bit in another order and one at a time.
+- **Neighbor structures** are built anew at every frame, in storage that
+  is allocated once; no list is carried from one frame to the next, though
+  the frames of a call share an activation. Keeping a structure would need
+  frames within half a skin of each other, which stored frames are not,
+  and would make the bits of a frame depend on the frames before it; the
+  build is 0.17 ms of the 0.69 ms of a frame of JAC. The tests hold that
+  the frames give the same numbers to the bit in another order, one at a
+  time, and after repeats of a frame and jumps between distant ones.
 - **Positions are taken as given**: not projected onto the constraints, not
   wrapped, not scaled with the cell, as a commit takes them (D229). Virtual
   sites are placed from their atoms at the start of the evaluation,
@@ -481,19 +523,18 @@ Nothing is added to a trajectory file.
 
 - `compiler::Simulation::evaluateFrame(positions, cell, gradient)` is the
   single evaluation of a frame. It checks the frame (the cell with
-  `checkCommittedCell` of D238), makes the state of the host the frame (the
-  positions given, the six numbers of the cell with `setCell`; the
-  velocities and forces that the host has), ends the activation of the
-  entry, and begins one from that state with the branch of the derivative
-  (`evaluatePart` with `%tunable_gradient = 1`; the start of a run for the
-  first frame of an evaluator, `%first_call = 2` after it): one start of
-  an activation per frame, where a borrow, a commit, and `gradient()` take
-  two and copy the state of the device to the host in between. The state of
-  the last frame is not copied back from the device: a frame is not a
-  continuation of the one before. If the evaluation fails, the positions
-  and the cell of before are restored and the simulation has not failed.
-  `collectTunableGradient` is the chain rule of D230, which `gradient()`
-  shares.
+  `checkCommittedCell` of D238), writes the positions into the buffer of
+  the host that the entry takes at its boundary and the six numbers of
+  the cell (`setCell` for what the host adds at the volume of the frame),
+  and resumes the activation, which evaluates the frame and waits at the
+  boundary again ([below](#the-frames-inside-one-activation-dframes-activation));
+  the first frame, and the first after a failure or an update of the
+  tunables, begin an activation. Until D[frames-activation] every frame
+  began one: a borrow, a commit, and `gradient()` take two and copy the
+  state of the device to the host in between. If the evaluation fails, the
+  activation is ended, the cell of before is restored, and the simulation
+  has not failed. `collectTunableGradient` is the chain rule of D230,
+  which `gradient()` shares.
 - `Simulation._evaluate_frames` (Python, private) runs a batch of frames
   with the GIL released and returns the columns and the rows; an error
   carries the index of its frame.
@@ -503,10 +544,66 @@ Nothing is added to a trajectory file.
   the build tree and in the wheel.
 - The second pass applies the chain rule at each frame and adds the rows on
   the host; accumulating the fields on the device and applying it once
-  ([python-gradient.md](python-gradient.md), "At $K$ frames") belongs to
-  the slice that keeps the frames inside one activation.
-- No kernel, runtime function, pass, or program text changes, and nothing
-  on the path of a step.
+  ([python-gradient.md](python-gradient.md), "At $K$ frames") was not
+  taken with the frames inside one activation: a field reaches the host in
+  one small copy a frame, and the chain rule is not what a frame costs.
+- No kernel and no runtime function of a device changes, and nothing on the
+  path of a step: the text of every other program is what it was, to the
+  byte.
+
+### The frames inside one activation (D[frames-activation])
+
+Issue #291. Until this slice every frame was the start of an activation
+(D215): the buffers of the whole model copied to the device, the tuples
+renumbered and their incidence structures built on the host, then the
+kernels. Of a frame of JAC on one RTX 4090 in mixed precision, 5.0 ms,
+the kernels with the neighbor build are 0.8 ms.
+
+- **A program of frames.** `Control::frames`, which the simulation of an
+  evaluator sets as `dependentTerms` is set (no key of a control file),
+  makes the entry of the program of segments a loop over frames in place
+  of the start and the loop over parts. Everything but the positions and
+  the cell is taken from the buffers of the host once, before the loop:
+  the masses, the parameters, the tables, the tuples with their incidence
+  structures, the identities.
+- **The boundary.** Each iteration begins with `@mdrtFrameBoundary`, where
+  the entry waits on its own stack as the entry of a run waits at
+  `@mdrtPartBoundary`. The call returns the buffer of the host that holds
+  the positions of the next frame, in the type of the state, and writes
+  the six numbers of its cell. The buffer is a value of the iteration
+  (`mdrt.from_buffer` of the result of a call), so that no pass can take
+  the positions of one frame for those of another; in a loop,
+  `md-exec-assign-storage` gives such a field a buffer of the loop and a
+  copy, since a buffer that a loop owns may hold what it carries to its
+  next iteration.
+- **The iteration** builds the cell (triclinic included, D238, and the
+  scale of the reference of restraints), places the virtual sites, and
+  runs the text of the evaluation at the start of a run, unchanged, in a
+  loop of one iteration with `mdrt.segment`: the neighbor structures are
+  built anew (D218), the energy, the forces, and the virial are evaluated,
+  and `@tunable` with the derivative. The results reach the host through
+  the calls that a start makes (`mdrtWriteEnergies`, `mdrtWriteVirial`,
+  `mdrtWriteObservables`, `mdrtWriteTunableGradient`,
+  `mdrtWriteTunableGradientField`), and the host applies the chain rule
+  at each frame as before.
+- **Memory in $K$.** Nothing on the device or on the stack of the entry
+  grows with the frames: the buffers of the loop are loop-carried, the
+  storage of the neighbor structures is the function's, and the rows that
+  the evaluation writes on the stack are taken once, before the loop.
+  Measured: 300,000 frames in one activation on the CPU with the resident
+  memory constant to 0.1 MB, and 6,000 on a GPU with the memory of the
+  device constant. There is no limit on $K$; the host keeps $8K$ bytes per
+  output and the Jacobian up to its bound, as before.
+- **The activation lives** across the batches of a call and across calls.
+  It ends at an update of the tunables (their values are arguments of the
+  entry), at a frame whose evaluation fails, and with the evaluator. The
+  state of the host stays that of the program; only its cell is the
+  frame's. The simulation of an evaluator takes no steps, no evaluation of
+  its state, no view, and no borrow.
+- **The program of the dependent terms** (D243) is kept with the program
+  it is made from, so that a second evaluator with `terms="dependent"`
+  compiles nothing: 1.62 s for the first on the dipeptide and 0.05 s for
+  the second, where each took 1.7 s.
 
 ## Validation
 
@@ -593,6 +690,64 @@ vectors that is not lower triangular.
 
 No device code changed, so the compute-sanitizer suite was not run.
 
+### Validation of the frames inside one activation
+
+**Against the evaluator of before** (`main` at 7be2e19, one start of an
+activation per frame), on the same stored frames:
+`scripts/validation/frames/activation.py`. Four sets, 26 frames: the
+dipeptide in water with the whole potential (25 tied charges, $\sigma$
+and $\epsilon$ of OW-OW, the constant of a soft pair term; an observed
+pair term and an observed wall) and with the dependent terms; 6 frames
+under a barostat with leapfrog, each with its cell (20.442 to 20.506
+nm³); 6 frames at constant pressure in a rhombic dodecahedron, each with
+its diagonal and its tilts (12.478 to 12.729 nm³, the tilts moved by
+$8.7\times10^{-3}$ nm). Each set is evaluated in one call, one frame per
+call ($K = 1$), in the reverse order, in the order 0, 0, 0, last, 0, last,
+last, 1, and again after a call in which a frame fails. Quantities: the
+energy (up to $1.2\times10^4$ kJ/mol), the virial, the volume, the
+observed columns, the rows of the Jacobian, and a product with a random
+cotangent; the largest difference over all sets and ways, absolute for
+the energy in kJ/mol and relative for the rows.
+
+| Reference | CPU double | GPU double | CPU mixed | GPU mixed | Tolerance (double, mixed) |
+|---|---|---|---|---|---|
+| The evaluator of before on programs compiled in the order of the input (`Execution.reorder = False`), the deterministic mode: every quantity | 0 | 0 | 0 | 0 | 0 |
+| The same, without the deterministic mode, mixed precision | | | 0 | energy 1.5e-11; virial 1.3e-9 and rows 4.7e-9 relative | the spread of that mode: the evaluator of before against itself, virial 1.1e-9, rows 2.9e-9 |
+| The evaluator of before on programs in the spatial order, the deterministic mode: the energy; the rows | 1.7e-10; 1.6e-15 | 2.9e-11; 1.4e-15 | 1.8e-4; 2.2e-8 | 2.9e-4; 3.4e-8 | 1e-9, 1e-12; 5e-3, 1e-5 |
+| The same, without the deterministic mode, mixed precision | | | 1.8e-4; 2.2e-8 | 3.2e-4; 4.2e-8 | 5e-3, 1e-5 |
+| Every way of evaluating a set against its evaluation in one call, the deterministic mode | 0 | 0 | 0 | 0 | 0 |
+
+The volume is equal to the bit in every row. Without the deterministic
+mode on a GPU the sums of the forces are not taken in one order, on `main`
+either, and the two evaluators differ by what one differs from itself.
+
+**In the suite**, `python-frames-activation.test` and
+`python-frames-activation-gpu.test` (the dipeptide in water, 6 frames; the
+deterministic mode):
+
+| Quantity | Reference | CPU double | GPU double | CPU mixed | GPU mixed | Tolerance (double, mixed) |
+|---|---|---|---|---|---|---|
+| The energy, the virial, and the rows of each frame | `gradient()` and `state()` of a sampler in the order of the input at the step of the frame | 0 | 0 | 0 | 0 | 0 |
+| The energy (kJ/mol) and the rows of the first and the last frame | `gradient()` of a simulation in the spatial order compiled from the frame | 2.9e-11, 0 | 1.5e-11, 5.3e-16 | 0, 0 | 1.4e-4, 1.1e-8 | 1e-9, 1e-12; 5e-3, 1e-5 |
+| One frame per call; the order 0, 0, 0, last, 0, last, last, 1; batches of two frames; 120 frames in one call: every output | the first evaluation | 0 | 0 | 0 | 0 | 0 |
+| With the calls of a second evaluator (the dependent terms) and the steps of a sampler between the calls | the first evaluation | 0 | 0 | 0 | 0 | 0 |
+| After a frame that fails in the middle of a call, one that fails as the first of an activation, and frames that are refused | the first evaluation | 0 | 0 | 0 | 0 | 0 |
+| At other values of a tunable and at the first values again | the first evaluation | 0 | 0 | 0 | 0 | 0 |
+
+The tests of the tables above (`python-frames*.test`,
+`python-frames-h5md*.test`, `python-frames-torch*.test`,
+`python-triclinic-npt-frames*.test`) keep every zero: their samplers are
+compiled in the order of the input (`execution_` of
+`test/Driver/Inputs/python_frames.py`), as the program of an evaluator is.
+With the spatial order chosen at every frame, before the order of the
+input was taken, the same tests passed with their samplers in the spatial
+order, and the CPU in double precision gave every bit of the evaluator of
+before.
+
+No kernel and no function of the device runtime changed. The scenario
+`activation` on a GPU in mixed precision ran under `compute-sanitizer
+--tool memcheck` with no error (it held the lock of its GPU for 32 s).
+
 ## Performance
 
 One RTX 3090 (GPU 0 under its lock, 300 W cap), PME, a cutoff of 0.8 nm,
@@ -649,14 +804,101 @@ The steps of a run are not touched: no program text and no code on the
 path of a step changes, so the rate of `mdir run` and of a Python
 simulation is that of main.
 
-### Target of the next slice
+### The frames inside one activation
 
-Not measured. The frames inside one activation: the entry takes the
-positions and the cell of the next frame at a boundary, builds its neighbor
-structures, and evaluates `@tunable`, without the copies and the host's
-part of a start. At most 5 steps per frame: 0.35 ms on the dipeptide
-(2,900 frames/s) and 1.1 ms on JAC (900 frames/s), and under a minute for
-a pass of #140.
+One RTX 4090 (GPU 0 under its lock, nothing else on it), mixed precision,
+not the deterministic mode, PME, a cutoff of 0.8 nm, flexible, 0.5 fs; the
+constant $l$ of a soft pair term tunable; frames 40 steps apart kept in
+float64, the same stored frames for both builds;
+`scripts/benchmarks/frames/bench.py`. ms per frame of `evaluate` as a
+function of the frames $K$ of a call, the least of 5 repeats after three
+passes that are not timed. "Before" is `main` at 7be2e19, one start of an
+activation per frame. These are not the rates of the RTX 3090 of the
+tables above.
+
+| System | Terms | | $K$ = 1 | 4 | 16 | 64 | 256 | Frames/s | In steps |
+|---|---|---|---|---|---|---|---|---|---|
+| Dipeptide, 1,168 atoms (a step 0.052 ms) | whole potential | before | 0.885 | 0.853 | 0.838 | 0.834 | 0.843 | 1,186 | 16.3 |
+| | | now | 0.322 | 0.297 | 0.285 | 0.283 | 0.284 | 3,527 | 5.5 |
+| | dependent | before | 0.482 | 0.447 | 0.437 | 0.434 | 0.420 | 2,380 | 8.1 |
+| | | now | 0.194 | 0.168 | 0.160 | 0.160 | 0.158 | 6,316 | 3.1 |
+| JAC, 23,558 atoms (a step 0.122 ms) | whole potential | before | 5.06 | 5.04 | 5.00 | 4.99 | 5.00 | 200 | 40.9 |
+| | | now | 0.721 | 0.692 | 0.684 | 0.686 | 0.686 | 1,457 | 5.6 |
+| | dependent | before | 2.11 | 2.09 | 2.07 | 2.07 | 2.08 | 482 | 17.0 |
+| | | now | 0.476 | 0.459 | 0.444 | 0.450 | 0.447 | 2,239 | 3.7 |
+
+3.0 and 2.7 times on the dipeptide, 7.3 and 4.6 times on JAC. A call of one
+frame pays about 0.03 ms more than a frame of a long call, the work of a
+call in Python. For #140's system (21,403 atoms, 38,000 frames) a pass is
+about half a minute where it was three. With other tunables on JAC, at $K$
+= 256: $\sigma$ and $\epsilon$ of OW-OW, 0.918 ms (whole) and 0.725 ms
+(dependent); the charges of the water, 0.970 ms and 0.866 ms.
+
+**What a frame is made of now.** Under `MDRT_PROFILE`, per frame, from the
+difference of runs of 100 and 400 frames; a copy to the host waits for the
+kernels before it, so the kernels' time is in the copies and the waits:
+
+| | JAC, whole | JAC, dependent | Dipeptide, whole | Dipeptide, dependent |
+|---|---|---|---|---|
+| Before: copies between host and device | 50 | 18 | | |
+| Launches | 65, 0.155 ms | 26, 0.061 ms | 53, 0.092 ms | 26, 0.051 ms |
+| Copies (the positions to the device, 565 KB on JAC; the sums and the fields to the host) | 13, 0.419 ms | 7, 0.392 ms | 13, 0.118 ms | 7, 0.066 ms |
+| Waits | 13, 0.040 ms | 7, 0.059 ms | 13, 0.012 ms | 7, 0.014 ms |
+
+With `MDRT_WAIT`, which waits for every launch, the kernels of a frame of
+JAC with the whole potential sum to 0.77 ms (the build of the neighbor
+matrix 0.17 ms, the three pair kernels 0.15 ms), more than the 0.69 ms of
+a frame without it: a frame costs what its kernels cost. What is outside
+them is the copy of the positions (0.03 ms on JAC), the checks of a frame
+and the chain rule on the host, and the call in Python, about 0.07 ms a
+frame on JAC.
+
+#### The order of the particles
+
+The loop was first written with the spatial order chosen at every frame,
+as a start chooses it. One RTX 4090, mixed precision, the whole potential,
+ms per frame; (A) the spatial order at every frame, (B) the order of the
+input, which was taken, (D) the spatial order of the first frame of an
+activation kept for its frames:
+
+| System | Atoms | Neighbor structure | Before | (A) | (B) | (D) |
+|---|---|---|---|---|---|---|
+| JAC | 23,558 | matrix | 5.00 | 4.41 | 0.688 | 0.693 |
+| JAC | 23,558 | groups of 16 | | 3.97 | 0.704 | 0.758 |
+| Factor IX | 90,906 | matrix | | 55.6 | 1.947 | 1.959 |
+| Cellulose | 408,609 | matrix | | | 8.08 to 9.42 | 8.24 to 8.93 |
+
+In (A) every tuple set is renumbered on the host and uploaded with its
+incidence structure at every frame: per frame of JAC, 5 reads of the
+identities and uploads of 1.6, 7.2, 21.6, 4.2, and 8.0 MB, and a cost that
+grows faster than the system (#294). The kernels do not see the order:
+with `MDRT_WAIT` those of a frame of Factor IX sum to 1.849 ms in (B) and
+1.868 ms in (D), the build of the neighbor matrix 0.599 and 0.597 ms, the
+pair kernels the same to 0.002 ms; on JAC 0.769 ms in (B) and 0.824 ms in
+(A), whose two ordering kernels cost more than its pair kernels gain. And
+the order of the input of these systems is a bad one already: consecutive
+water oxygens are 2.97 nm apart in the mean in JAC and 4.99 nm in Factor
+IX, as far as after a random shuffle of the waters (2.97 and 5.01 nm);
+Cellulose is local (1.4 nm against 8.5 nm). Renumbering the tuples on the
+device, which would let a frame be ordered at no such cost, is #295.
+
+Two further items that the roadmap named for this slice. *The tuples of
+the bonded terms that a program of the dependent terms still builds*: they
+are built once for an activation now and are in no frame. *A relation over
+the particles of the types of a tunable Lennard-Jones pair*: not taken. Of
+a frame of JAC with $\sigma$ and $\epsilon$ of OW-OW tunable and the
+dependent terms, 0.725 ms, the kernels are 0.48 ms, of which the build of
+the neighbor matrix is 0.17 ms and the three pair kernels 0.15 ms; a
+structure over the 7,023 oxygens alone could take at most about 0.25 ms of
+the 0.725 ms, for one kind of tunable, against a new relation in the
+compiler.
+
+**A run is not slower.** The text of the program of a run is the same to
+the byte (`mdir emit` of JAC of the Amber suite, both builds). JAC of the
+suite with the settings of `scripts/benchmarks/amber/bench.py`, two runs
+each: NVE 1302.9 and 1305.7 ns/day before, 1305.8 and 1312.7 now (0.1325
+and 0.1320 ms a step); NPT 1183.4 and 1173.5 before, 1186.7 and 1176.5
+now.
 
 ## The dependent terms alone (D243)
 
@@ -665,6 +907,11 @@ Issue #264. Status: implemented, as the maintainer ruled on PR #266
 **The mode saves time, 2 to 2.5 times a frame for a tunable of a pair term
 and 1.45 to 1.9 times for the charges; it does not change the accuracy of a
 difference in mixed precision** ([measured](#what-the-mode-saves)).
+Those ratios are of frames that each began an activation; with the frames
+inside one activation (D[frames-activation]) both modes cost less and the
+mode saves 1.5 to 1.8 times for a tunable of a pair term and 1.1 to 1.3
+times for the charges and for $\sigma$ and $\epsilon$
+([measured](#the-frames-inside-one-activation)).
 
 A reweighting takes differences at one frame, $U_{\boldsymbol\theta}(S_n)
 - U_{\hat{\boldsymbol\theta}}(S_n)$, and the derivative in
@@ -771,11 +1018,13 @@ the deterministic mode; ms per frame of `evaluate`, one run each.
 | Dipeptide, 200 frames | GPU, double | $l$ of the pair term | `pair:soft` | | 2.140 | 0.918 | 2.3 |
 | JAC, 60 frames | GPU, double | $l$ of the pair term | `pair:soft` | | 27.72 | 11.28 | 2.5 |
 
-A frame of the dependent terms is still the start of an activation: 7 to
+A frame of the dependent terms was still the start of an activation: 7 to
 11 steps on the dipeptide and 11 to 16 on JAC.
 
-**The next slice, and its bound.** What a frame costs beyond its kernels
-is fixed by the start of an activation, in either mode. Under
+**The next slice, and its bound** (done since:
+[the frames inside one activation](#the-frames-inside-one-activation), 3.1
+steps on the dipeptide and 3.7 on JAC). What a frame cost beyond its
+kernels was fixed by the start of an activation, in either mode. Under
 `MDRT_PROFILE` on JAC in mixed precision, with the constant of a pair term
 tunable, per frame over 300 frames:
 
@@ -800,7 +1049,8 @@ measurement. Two smaller items inside that: the tuples of the bonded terms
 are among what a program of the dependent terms still builds and copies at
 a start, though no term reads them (what the 18 copies carry was not
 separated); and with Lennard-Jones tunables the kernel still runs over all
-pairs (T6). None of the three is implemented here.
+pairs (T6). None of the three was implemented in D243; D[frames-activation]
+took the first, with which the second went, and measured the third.
 
 **Accuracy in mixed precision: unchanged.** The difference of two sums of
 the size of $U_\text{dep}$ is not more accurate than that of two sums of
@@ -943,7 +1193,8 @@ is taken.
 | 1 (done) | `FrameEvaluator`, `evaluate` over arrays and iterables with one evaluation per frame, `energy`, `virial`, `volume`, `observables`, `depends`, the Jacobian kept or the second pass, `mdir.torch.evaluate`, `mdir.KB` |
 | The dependent terms alone, and the example without frames (done, D243) | `terms="dependent"`, `dependent_energy`, `plan["terms"]`; the sums of `observe` for a potential linear in its tunables |
 | 1, after D238 and D239 (done) | the tilts of each frame of a triclinic cell; the frames of `mdir.read_h5md` as input |
-| 2 | the frames inside one activation; frames read from a device tensor without a copy to the host |
+| 2 (done, D[frames-activation], #291) | the frames inside one activation, in the order of the input; the program of the dependent terms kept with its program |
+| 2b | frames read from a device tensor without a copy to the host (the positions of a frame are one copy of 0.03 ms on JAC now) |
 | 3 | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138); the metatomic shape of #138 |
 | Later | the derivative of the virial and of observed columns in $\boldsymbol\theta$ (M2b-3); the JAX adapter (M2b-2); learned terms (M3), whose parameters stay in the framework; frames over several nodes (M4) |
 

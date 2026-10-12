@@ -933,10 +933,19 @@ A fit evaluates $U_{\boldsymbol\theta}$ at the frames again for every
 $\boldsymbol\theta$ that it tries, while the frames stay those sampled at
 $\hat{\boldsymbol\theta}$. The frame evaluator
 (D240, `docs/python-frames.md`) does this in a simulation of
-its own, apart from the one that samples: each frame, given in the order of
-the input with its cell, becomes the state of that simulation and is
-evaluated once, with its neighbor structures built anew, since a stored
-frame is not near the one before it. What the host adds to the energy
+its own, apart from the one that samples, whose program is a loop over
+frames (D[frames-activation]): everything but the positions and the cell
+is put where the program keeps it once, and each frame, given in the order
+of the input with its cell, is evaluated with its neighbor structures built
+anew, since a stored frame is not near the one before it. The particles
+stay in the order of the input: an order chosen for a frame would have the
+tuples of the bonded terms renumbered at that frame, and the neighbor
+structures bin the particles themselves, so the kernels gain nothing from
+it. $U_{\boldsymbol\theta}(S_n)$ is then a function of the frame alone,
+with the same bits wherever the frame stands in a call, which is what makes
+the weights uniform to the bit at $\hat{\boldsymbol\theta}$; against the
+sampler, whose sums run in its own order, it agrees to the rounding of
+those sums (Section 9). What the host adds to the energy
 follows the volume of each frame (the tails and $E_\text{disp}$,
 $E_\text{bg}$, all $\propto 1/V$; Section 5.4), so frames of a run at
 constant pressure are evaluated each at its own volume.
@@ -1013,7 +1022,7 @@ evaluator may therefore be given a program that has only $U_\text{dep}$
 tail, the Lennard-Jones for a tunable $\sigma$ or $\epsilon$, and for
 tunable charges the electrostatics whole, since $E_\text{rec} =
 \tfrac12\mathbf q^{\mathsf T}\mathsf A\mathbf q$ couples every charge to
-every other through the mesh. A frame then costs 1.5 to 2.5 times less
+every other through the mesh. A frame then costs 1.1 to 1.8 times less
 (`docs/python-frames.md`). It saves time and leaves the accuracy in mixed precision
 as it was: each term is accumulated in f64
 from contributions in f32, the fixed terms give the same number at both

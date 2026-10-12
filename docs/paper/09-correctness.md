@@ -416,7 +416,17 @@ charges and $\sigma$, $\epsilon$ of a pair of types tunable give the
 energy, the derivative, the virial, and the observed columns of the
 sampler's own evaluation at the step of each frame to the bit in the
 deterministic mode, in the order sampled, in another order, and one at a
-time. Four frames of leapfrog under the barostat, each with its cell, give
+time, when the sampler keeps the particles in the order of the input, as
+the evaluator does (D[frames-activation]); against a simulation in the
+spatial order the energy agrees within $1.7\times10^{-10}$ kJ/mol in
+double precision and $3.2\times10^{-4}$ kJ/mol in mixed precision, the
+rounding of sums in another order. The frames of a call are evaluated in
+one activation of the program, and a frame gives the same bits after
+repeats of a frame, after jumps between distant frames, after a frame that
+failed, and beside the steps of other simulations
+(`python-frames-activation*.test`); the evaluator that began an activation
+at every frame gives every bit of it on 26 stored frames, orthorhombic,
+under a barostat, and triclinic. Four frames of leapfrog under the barostat, each with its cell, give
 the energy and the derivative of a simulation compiled from that frame, in
 which what follows the volume is computed at it instead of scaled: the
 energy to the bit and the derivative within $1.5\times10^{-18}$. Twenty
