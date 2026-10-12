@@ -238,12 +238,16 @@ def FuseLoops : Pass<"md-exec-fuse-loops", "::mlir::ModuleOp"> {
     velocities of a leapfrog step under Langevin dynamics and the
     constraints of the positions that follow its drift are then one kernel
     each. A loop closes a run if the loops over tuples that it reads are
-    all over disjoint sets and without global sums and one of them reads a
+    all over disjoint sets and without global sums, their destinations are
+    read by loops over particles alone, and one of them reads a
     destination of a loop over particles as a field of its members. A loop
     opens a run if it has no global sums, such a loop over tuples reads a
     destination of it as a field of its members, and the destinations of
     that loop are read by loops over particles alone, none of which feeds
     loops over disjoint tuples in its turn (a third run).
+    Neither holds for a loop over particles that a loop over disjoint
+    tuples with global sums reads, as the projection that sums the virial:
+    its run is no kernel.
   }];
   let options = [
     Option<"integrationRuns", "integration-runs", "bool", /*default=*/"false",

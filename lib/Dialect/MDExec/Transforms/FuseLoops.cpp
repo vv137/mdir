@@ -279,16 +279,30 @@ static bool feedsDisjointTuples(ParticleForOp loop) {
   return false;
 }
 
+/// Returns true if a loop over the tuples of a disjoint set with global
+/// sums reads a result of `loop`: the run that `loop` is before then holds
+/// a loop that no kernel of a run takes, as the projection of the
+/// velocities does where it sums the virial.
+static bool feedsDisjointSums(ParticleForOp loop) {
+  for (Value result : loop->getResults())
+    for (Operation *user : result.getUsers())
+      if (auto tuples = dyn_cast<TupleForOp>(user))
+        if (tuples.getDisjoint() && !tuples.getReduce().empty())
+          return true;
+  return false;
+}
+
 /// Returns true if `loop` is the loop before of a run of loops over
 /// disjoint tuples that a device joins with it and the loop after them
 /// into one kernel (D110): it has no global sums, a loop of the run reads
 /// a destination of it as a field of its members, and the destinations of
 /// that loop are read by loops over particles alone, none of which is
-/// read by loops over disjoint tuples in its turn. With a third run, as
+/// read by loops over disjoint tuples in its turn, and no loop over
+/// disjoint tuples with global sums reads it. With a third run, as
 /// the placement of virtual sites after the constraints, the runs that
 /// are one kernel would only change places.
 static bool opensIntegrationRun(ParticleForOp loop) {
-  if (!loop.getReduce().empty())
+  if (!loop.getReduce().empty() || feedsDisjointSums(loop))
     return false;
   for (unsigned i = 0, e = loop.getOuts().size(); i != e; ++i) {
     Value field = loop->getResult(i);
@@ -316,7 +330,9 @@ static bool opensIntegrationRun(ParticleForOp loop) {
 /// Returns true if `loop` is the loop after of such a run: the loops over
 /// tuples that it reads are all over disjoint sets and without global
 /// sums, and one of them reads a destination of a loop over particles
-/// without global sums as a field of its members.
+/// without global sums as a field of its members, which no loop over
+/// disjoint tuples with global sums reads; and loops over particles alone
+/// read their destinations.
 static bool closesIntegrationRun(ParticleForOp loop) {
   bool closes = false;
   for (Value in : loop.getIns()) {
@@ -325,10 +341,16 @@ static bool closesIntegrationRun(ParticleForOp loop) {
       continue;
     if (!isOfIntegrationRun(tuples))
       return false;
+    // A loop over tuples that reads the destinations, as the sum of the
+    // virial of the projection does, parts the run.
+    for (unsigned j = 0, n = tuples.getOuts().size(); j != n; ++j)
+      for (Operation *reader : tuples->getResult(j).getUsers())
+        if (!isa<ParticleForOp>(reader))
+          return false;
     for (Value field : tuples.getIns()) {
       auto before = dyn_cast_or_null<ParticleForOp>(field.getDefiningOp());
       closes |= before && isFieldOf(field, before) &&
-                before.getReduce().empty();
+                before.getReduce().empty() && !feedsDisjointSums(before);
     }
   }
   return closes;
