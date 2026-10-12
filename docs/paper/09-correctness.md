@@ -426,7 +426,11 @@ repeats of a frame, after jumps between distant frames, after a frame that
 failed, and beside the steps of other simulations
 (`python-frames-activation*.test`); the evaluator that began an activation
 at every frame gives every bit of it on 26 stored frames, orthorhombic,
-under a barostat, and triclinic. Four frames of leapfrog under the barostat, each with its cell, give
+under a barostat, and triclinic. The entry of that program never
+returns, so memory of the stack taken in its loop would be taken at every
+frame: the stack of the entry, read where it waits for a frame, is as deep
+after frame 201 as after frame 1, to the byte
+(`python-frames-loop*.test`). Four frames of leapfrog under the barostat, each with its cell, give
 the energy and the derivative of a simulation compiled from that frame, in
 which what follows the volume is computed at it instead of scaled: the
 energy to the bit and the derivative within $1.5\times10^{-18}$. Twenty

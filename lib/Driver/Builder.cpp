@@ -9050,8 +9050,9 @@ static std::string checkFrameLoop(StringRef body) {
     for (StringRef name : replaced)
       if (namesValue(line, name))
         return fail("takes '" + name +
-                    "', which is of the program and not of the frame: the "
-                    "positions of a frame are '%x0' and its cell is '%cell'");
+                    "', which is of the program and not of the frame: in "
+                    "the loop the positions of the frame are '%x0' and its "
+                    "cell is '%cell', made from '%frame_cell'");
     evaluates |= line.contains("md.evaluate ");
   }
   if (!evaluates)

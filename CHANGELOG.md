@@ -1167,6 +1167,13 @@ format, or the outputs; every such change is listed under **Changed** or
   its control file (`unused_parameter` and `constant_expression`, D158) in
   `mdir check`, `mdir check --json`, and `mdir run`, as a run from a
   topology does; they were dropped before (#129).
+- The loop over frames of an evaluator (D251) is checked where it is
+  assembled from the emitted text (#302): a program whose loop would take
+  memory of the stack at every frame, or the cell or the positions of the
+  program in place of those of the frame, is refused when it is built,
+  with the line. No program of today is refused, and no number, key, or
+  call changes. `python-frames-loop*.test` measure the stack of the entry
+  per frame to the byte.
 
 ## [0.1.0] - 2026-10-04
 
