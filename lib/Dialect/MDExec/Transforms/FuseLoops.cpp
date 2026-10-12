@@ -260,6 +260,102 @@ static bool canMoveUp(ParticleForOp first, ParticleForOp second) {
   return available;
 }
 
+/// Returns true if `op` is a loop over the tuples of a disjoint set
+/// without global sums: one that a device can join with the loop over
+/// particles before it and the one after it (D110).
+static bool isOfIntegrationRun(Operation *op) {
+  auto loop = dyn_cast_or_null<TupleForOp>(op);
+  return loop && loop.getDisjoint() && loop.getReduce().empty();
+}
+
+/// Returns true if a loop over the tuples of a disjoint set uses a result
+/// of `loop`, as a field of its members or as its positions.
+static bool feedsDisjointTuples(ParticleForOp loop) {
+  for (Value result : loop->getResults())
+    for (Operation *user : result.getUsers())
+      if (auto tuples = dyn_cast<TupleForOp>(user))
+        if (tuples.getDisjoint())
+          return true;
+  return false;
+}
+
+/// Returns true if a loop over the tuples of a disjoint set with global
+/// sums reads a result of `loop`: the run that `loop` is before then holds
+/// a loop that no kernel of a run takes, as the projection of the
+/// velocities does where it sums the virial.
+static bool feedsDisjointSums(ParticleForOp loop) {
+  for (Value result : loop->getResults())
+    for (Operation *user : result.getUsers())
+      if (auto tuples = dyn_cast<TupleForOp>(user))
+        if (tuples.getDisjoint() && !tuples.getReduce().empty())
+          return true;
+  return false;
+}
+
+/// Returns true if `loop` is the loop before of a run of loops over
+/// disjoint tuples that a device joins with it and the loop after them
+/// into one kernel (D110): it has no global sums, a loop of the run reads
+/// a destination of it as a field of its members, and the destinations of
+/// that loop are read by loops over particles alone, none of which is
+/// read by loops over disjoint tuples in its turn, and no loop over
+/// disjoint tuples with global sums reads it. With a third run, as
+/// the placement of virtual sites after the constraints, the runs that
+/// are one kernel would only change places.
+static bool opensIntegrationRun(ParticleForOp loop) {
+  if (!loop.getReduce().empty() || feedsDisjointSums(loop))
+    return false;
+  for (unsigned i = 0, e = loop.getOuts().size(); i != e; ++i) {
+    Value field = loop->getResult(i);
+    for (Operation *user : field.getUsers()) {
+      if (!isOfIntegrationRun(user))
+        continue;
+      auto tuples = cast<TupleForOp>(user);
+      if (!llvm::is_contained(tuples.getIns(), field))
+        continue;
+      bool closed = false, free = true;
+      for (unsigned j = 0, n = tuples.getOuts().size(); j != n; ++j) {
+        for (Operation *reader : tuples->getResult(j).getUsers()) {
+          auto after = dyn_cast<ParticleForOp>(reader);
+          free &= after && !feedsDisjointTuples(after);
+          closed |= bool(after);
+        }
+      }
+      if (closed && free)
+        return true;
+    }
+  }
+  return false;
+}
+
+/// Returns true if `loop` is the loop after of such a run: the loops over
+/// tuples that it reads are all over disjoint sets and without global
+/// sums, and one of them reads a destination of a loop over particles
+/// without global sums as a field of its members, which no loop over
+/// disjoint tuples with global sums reads; and loops over particles alone
+/// read their destinations.
+static bool closesIntegrationRun(ParticleForOp loop) {
+  bool closes = false;
+  for (Value in : loop.getIns()) {
+    auto tuples = dyn_cast_or_null<TupleForOp>(in.getDefiningOp());
+    if (!tuples)
+      continue;
+    if (!isOfIntegrationRun(tuples))
+      return false;
+    // A loop over tuples that reads the destinations, as the sum of the
+    // virial of the projection does, parts the run.
+    for (unsigned j = 0, n = tuples.getOuts().size(); j != n; ++j)
+      for (Operation *reader : tuples->getResult(j).getUsers())
+        if (!isa<ParticleForOp>(reader))
+          return false;
+    for (Value field : tuples.getIns()) {
+      auto before = dyn_cast_or_null<ParticleForOp>(field.getDefiningOp());
+      closes |= before && isFieldOf(field, before) &&
+                before.getReduce().empty() && !feedsDisjointSums(before);
+    }
+  }
+  return closes;
+}
+
 /// Replaces `first` and `second` with one loop, placed at `point`, which
 /// is one of the two. The kernel of a particle runs the first kernel and
 /// then the second, which reads what the first has yielded for that
@@ -380,7 +476,7 @@ static void fuse(ParticleForOp first, ParticleForOp second,
 
 /// Fuses two loops over particles of `block`, if two can be fused. Returns
 /// true if it did.
-static bool fuseParticleLoopsOnce(Block &block) {
+static bool fuseParticleLoopsOnce(Block &block, bool integrationRuns) {
   SmallVector<ParticleForOp> loops;
   for (Operation &op : block)
     if (auto loop = dyn_cast<ParticleForOp>(&op))
@@ -391,6 +487,13 @@ static bool fuseParticleLoopsOnce(Block &block) {
       ParticleForOp first = loops[i];
       ParticleForOp second = loops[j];
       if (!canFollow(first, second))
+        continue;
+      // One loop that closes a run of loops over disjoint tuples and opens
+      // the next would leave the second run without a loop before of its
+      // own, and its loops and the loop after them three kernels on a
+      // device (D110): the two stay apart, and each run is one kernel.
+      if (integrationRuns && closesIntegrationRun(first) &&
+          opensIntegrationRun(second))
         continue;
       if (canMoveDown(first, second)) {
         fuse(first, second, second);
@@ -711,7 +814,7 @@ public:
         ;
       while (fuseTupleLoopsOnce(*block))
         ;
-      while (fuseParticleLoopsOnce(*block))
+      while (fuseParticleLoopsOnce(*block, integrationRuns))
         ;
     }
   }

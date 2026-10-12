@@ -164,6 +164,26 @@ with them (525 to 543 ns/day). `test/Driver/integration-gpu.test` runs propane w
 its hydrogens numbered after its carbons, whose groups are not contiguous,
 against the loops apart and the CPU.
 
+**Two runs in a row** (D[leapfrog-langevin-kernels]). A loop over particles
+is the loop after of one run or the loop before of the next, not both: the
+kernel of a run computes its loop after once every member of a group has
+its correction, and a second run would need those values of every member
+before its own tuples. A leapfrog step under Langevin dynamics with
+constraints (Section 6.1) has two runs one after the other, the projection
+of the velocities after its first half kick and the constraints of the
+positions after its drift, and the fusion of loops over particles
+(Section 3.4) made of everything between them one loop. That loop closed the
+first run, and the constraints of the positions were kernels of their own
+as before D110. For a device the pass therefore leaves apart the loop that
+closes a run and the one that opens the next (`integration-runs` of
+`md-exec-fuse-loops`): the first takes the half kick, the half drift, and
+the friction and the noise, the second the other half of the drift, and
+each run is one kernel. On JAC the step went from 0.1482 to 0.1447 ms
+(RTX 4090, mixed precision), and velocity Verlet, whose two runs have the
+evaluation of the forces between them, takes 0.1408: what remains is the
+sum of the forces, which closes a leapfrog step as a launch of its own and
+which velocity Verlet computes in the kernel of its second half kick.
+
 *Table 8.1. Integration kernels (µs per step, the run of the positions
 plus the run of the velocities, RTX 3090).*
 

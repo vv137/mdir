@@ -94,8 +94,14 @@ std::string mdir::compiler::getPipeline(const Control &control,
   if (control.rebuildPeriod > 0)
     os << "md-exec-rebuild-at-interval{interval=" << control.rebuildPeriod
        << "},";
+  // On a device each run of loops over disjoint tuples is one kernel with
+  // the loop over particles before it and the one after it (D110), so
+  // the loop that closes one run is not fused with the one that opens the
+  // next.
   os << "md-exec-expose-validity,"
-     << "md-exec-fuse-loops,md-exec-accumulate-destinations,"
+     << "md-exec-fuse-loops"
+     << (control.target == Target::GPU ? "{integration-runs=true}" : "")
+     << ",md-exec-accumulate-destinations,"
      << "md-exec-narrow-sums,";
   if (control.fastMath)
     os << "md-exec-simplify-distance{radial=true},";
