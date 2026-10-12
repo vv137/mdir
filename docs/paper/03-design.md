@@ -431,7 +431,12 @@ one thread, `convert-scf-to-openmp` makes them OpenMP. A global sum is
 the reduction of its `scf.parallel`, which OpenMP combines from partial
 sums per thread; the variable of each reduction is an alloca, which
 `hoist-static-allocas` moves to the entry of the function so that the loop
-of the steps does not grow the stack (D117). `convert-md-exec-to-gpu` lowers
+of the steps does not grow the stack (D117). The pass runs again where the
+lowering ends, for every program, on the rows that the entry allocates
+where it writes them (the observed columns, pulling, the free energy): an
+allocation in a loop is given back only when its function returns, and the
+entry of a simulation does not return (Section 3.6). `convert-md-exec-to-gpu`
+releases the stack of each iteration of a loop of the host instead, and lowers
 to kernels of the `gpu` dialect (Section 8), and the upstream
 `gpu-lower-to-nvvm-pipeline` outlines them, lowers them to NVVM, links
 libdevice, and embeds PTX in the module.
