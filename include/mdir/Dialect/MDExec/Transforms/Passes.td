@@ -229,14 +229,21 @@ def FuseLoops : Pass<"md-exec-fuse-loops", "::mlir::ModuleOp"> {
     of the sums over the centers of groups does while the weight of each
     next loop is computed between them.
 
-    With `integration-runs`, a loop over particles that reads a destination
-    of a loop over the tuples of a disjoint set is not fused with a later
-    one whose destination such a loop reads. A device joins a loop over
-    particles, the loops over disjoint tuples that read it, and the loop
-    over particles that reads them into one kernel (D110), and a loop is
-    the loop after of one run or the loop before of the next, not both: the
-    projection of the velocities of a leapfrog step and the constraints of
-    the positions that follow its drift are then one kernel each.
+    With `integration-runs`, a loop over particles that closes a run of
+    loops over the tuples of a disjoint set is not fused with a later one
+    that opens the next run. A device joins a loop over particles, the
+    loops over disjoint tuples that read it, and the loop over particles
+    that reads them into one kernel (D110), and a loop is the loop after of
+    one run or the loop before of the next, not both: the projection of the
+    velocities of a leapfrog step under Langevin dynamics and the
+    constraints of the positions that follow its drift are then one kernel
+    each. A loop closes a run if the loops over tuples that it reads are
+    all over disjoint sets and without global sums and one of them reads a
+    destination of a loop over particles as a field of its members. A loop
+    opens a run if it has no global sums, such a loop over tuples reads a
+    destination of it as a field of its members, and the destinations of
+    that loop are read by loops over particles alone, none of which feeds
+    loops over disjoint tuples in its turn (a third run).
   }];
   let options = [
     Option<"integrationRuns", "integration-runs", "bool", /*default=*/"false",
