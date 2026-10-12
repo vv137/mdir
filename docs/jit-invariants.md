@@ -86,7 +86,16 @@ activation before it destroys its engine, under the process runtime mutex.
 An activation never returns and is never unwound. It ends at a boundary:
 the simulation frees what the activation allocated, which the records of
 the runtimes (`mdrtActivationClose`, `mdrtDeviceActivationClose`) and of
-the memory of the host that its code takes list, and unmaps its stack. The
+the memory of the host that its code takes list, and unmaps its stack.
+Since the entry never returns, memory of the stack that it took in a loop
+would never be given back: its depth at a boundary must not depend on the
+steps taken. On the CPU `hoist-static-allocas` moves every allocation of a
+constant size to the start of its function where the lowering ends (D117,
+amended by #305, where the rows of the observed columns grew the stack by
+32 bytes a step of energy); on a GPU the lowering releases the stack of
+each iteration of a loop of the host. `python-stack-rows.test` and
+`python-frames-loop.test` read the depth (`Simulation._stack_in_use`,
+private) to the byte. The
 generated code holds no other resource on its stack (no destructors, locks,
 or registrations), and the two frames of the host on that stack, the start
 of the activation and the boundary, hold none either; no exception crosses

@@ -170,6 +170,16 @@ std::string mdir::compiler::getPipeline(const Control &control,
      << "convert-vector-to-llvm,expand-strided-metadata,"
      << "finalize-memref-to-llvm,convert-arith-to-llvm,"
      << "convert-func-to-llvm,convert-cf-to-llvm,convert-ub-to-llvm,";
+  // The rows that the builder allocates where it writes them (the observed
+  // columns, the coordinates and the terms of pulling, dH/dλ and the
+  // energies of the states) are in the loops over steps: allocated there,
+  // each is taken again at every row and given back when the entry returns,
+  // which that of a simulation never does (D117, #305). Every
+  // allocation of a constant size is taken once, where the function begins.
+  // The lowering for a device releases the stack of an iteration where it
+  // ends instead (`releaseStack`), since the arguments of its launches are
+  // on the stack as well.
+  os << "hoist-static-allocas,";
   if (threaded)
     os << "convert-openmp-to-llvm,";
   os << "reconcile-unrealized-casts";

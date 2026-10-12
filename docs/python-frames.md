@@ -616,7 +616,12 @@ the kernels with the neighbor build are 0.8 ms.
   (measured: -16), which lets 41 bytes a frame pass. The depth says
   nothing of memory that a frame takes and gives back, and the test covers
   the programs it compiles: the dipeptide in water with the whole
-  potential and with the dependent terms. The two handles of these tests,
+  potential and with the dependent terms. Since #305 the lowerings are a
+  second guard of the same: on the CPU `hoist-static-allocas` moves every
+  allocation of a constant size to the start of its function where the
+  lowering ends (D117), and on a GPU the lowering releases the stack of
+  each iteration of a loop of the host; the matching and its check stay.
+  The two handles of these tests,
   `Simulation._ir` (the emitted module) and `Simulation._stack_in_use`
   (the depth), are private: they are not part of the interface and may
   change or go.

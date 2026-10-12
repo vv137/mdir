@@ -1,0 +1,24 @@
+# The stack of `mdir run` does not grow with the rows that a run writes
+# (#305), on the CPU in double and mixed precision (Inputs/stack_rows.py).
+# The rows that are allocated where they are written (the observed columns,
+# the coordinates and the terms of pulling, dH/dlambda with the energies of
+# the states) were taken again at every row and kept until the entry
+# returned at the end of the run: 48, 144, and 192 bytes a row for the runs
+# here, and a run of 100,000 rows of pulling ended with a segmentation fault
+# under the usual 8 MiB. Each run writes a row at every step for as many
+# steps as would take three times its limit of 2 MiB, and must end with the
+# status 0 and its last rows in its files; a run with the energies alone is
+# the control. No allocation of the stack of the lowered module of each is
+# outside the first block of its function.
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/stack_rows.py mdir %t/double CPU DOUBLE | FileCheck %s -DMODE="CPU Double"
+# RUN: %python %S/Inputs/stack_rows.py mdir %t/mixed CPU MIXED | FileCheck %s -DMODE="CPU Mixed"
+# CHECK: [[MODE]]: the energies alone: 131072 rows under a stack of 2 MiB {{.*}}: status 0, the last rows at 131072: True
+# CHECK: [[MODE]]: the energies alone: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: observe, 6 columns: 131072 rows under a stack of 2 MiB (48 bytes a row taken in the loop would be 3.0 of it): status 0, the last rows at 131072, 131072: True
+# CHECK: [[MODE]]: observe, 6 columns: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: pull, 2 terms over two centers: 43690 rows under a stack of 2 MiB (144 bytes a row taken in the loop would be 3.0 of it): status 0, the last rows at 43690, 43690: True
+# CHECK: [[MODE]]: pull, 2 terms over two centers: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: free energy, 11 states: 32768 rows under a stack of 2 MiB (192 bytes a row taken in the loop would be 3.0 of it): status 0, the last rows at 32768, 32768: True
+# CHECK: [[MODE]]: free energy, 11 states: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: stack rows passed

@@ -778,6 +778,36 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A run on the CPU takes the rows that it writes once on its stack, not
+  again at every row (#305, an amendment of D117). The observed columns
+  (`observe`), the coordinates and the terms of pulling (`pull`), and
+  dH/dλ with the energies of the states (`free_energy`) are written to
+  rows that the program allocates where it writes them, in its loops over
+  steps, and memory of the stack taken in a loop is given back only when
+  the function returns: 16 bytes for every two numbers of a row, at every
+  row. Measured on the CPU: 32 bytes a step of energy of a Python
+  simulation with 4 observed columns (48 with 5, 80 with 9), whose entry
+  never returns between parts (D215), so that the 64 MiB of its stack
+  last 2.1 million steps of energy; and in `mdir run` 80 bytes a row of
+  one term of pulling over two centers, 144 of two, 32 of 3 observed
+  columns, and 192 of a free energy with 11 states, until the stack of
+  the process is full: under the usual 8 MiB a run of pulling with a row
+  at every step ended with a segmentation fault at row 100,902. Runs
+  without these rows did not grow, and neither did any run on a GPU,
+  where the lowering gives back the stack of each iteration of a loop of
+  the host. `hoist-static-allocas` now runs a second time where the
+  lowering for the CPU ends, for every program, and every allocation of a
+  constant size is taken once, where its function begins. No number
+  changes: the energies, the observed columns, the rows of pulling and of
+  the free energy, and the checkpoints equal those of before, byte for
+  byte and bit for bit in the deterministic mode, on the CPU and on a GPU
+  in double and mixed precision. What changes: the pipeline of a CPU
+  program (`Program.pipeline`, `mdir emit --stage=pipeline`) names the
+  pass once more, and the lowered module of a CPU program with a topology
+  has its allocations in another place, so its entry of the compile cache
+  on disk is compiled anew once; the emitted module and everything of a
+  GPU program are unchanged (`python-stack-rows.test`, `stack-rows.test`,
+  and their GPU twins).
 - A run keeps nothing for a row of its energies (#300), in `mdir run` and
   in a Python simulation. Each row kept its time and, with rigid water,
   the temperatures of the solute and of the solvent, for the two lines of

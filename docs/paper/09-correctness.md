@@ -592,7 +592,19 @@ checkpoint: the variables of the reductions of OpenMP were allocas inside
 the loop of the steps, and the stack grew by 22 bytes a step until a call
 at the end overflowed it. They are now allocated once (D117), and the
 stack of 100,000 steps stays at its size after the compilation
-(`hoist-allocas.mlir`).
+(`hoist-allocas.mlir`). The same defect came again from the rows that the
+entry allocates where it writes them, the observed columns, pulling, and
+the free energy: on the CPU a run of pulling with a row at every step
+ended with a segmentation fault at row 100,902, at 80 bytes of the stack a
+row, and a Python simulation, whose entry does not return, took 32 bytes
+at every step of energy with four observed columns. The pass now runs
+where the lowering for the CPU ends as well, for every program. The depth
+of the stack of the entry of a simulation, read where it waits at the end
+of a part, is the same to the byte after 1, 9, and 17 steps of energy,
+and runs of `mdir run` with these rows end under a stack of 2 MiB that
+they would have filled three times (`python-stack-rows.test`,
+`stack-rows.test`). On a GPU the rows did not grow the stack: the lowering
+releases the stack of each iteration of a loop of the host.
 
 ## 9.9 The GPU against the CPU over long runs
 
