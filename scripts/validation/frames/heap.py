@@ -37,8 +37,11 @@ READER is how they are read:
 With INFO, a directory, `malloc_info` is written there at every reading
 (`info-<calls>.xml`), whose counts by size of the free blocks tell which
 sizes move. Each line printed: the calls, the frames, the bytes in use,
-their change since the reading before, that change per frame, and the
-blocks that the interpreter has allocated (`sys.getallocatedblocks`).
+their change since the reading before, that change per frame, the address
+space mapped outside the heap of the main arena (`/proc/self/maps`), which
+holds what the allocator does not give, and the blocks that the
+interpreter has allocated (`sys.getallocatedblocks`), which the allocator
+does not see either.
 """
 import ctypes
 import gc
@@ -93,6 +96,22 @@ def in_use_each():
     gc.collect()
     data = library.mallinfo2()
     return data.uordblks + data.hblkhd
+
+
+def mapped():
+    """The address space mapped outside the heap of the main arena, in
+    bytes (as Inputs/python_memory.py reads it): what does not come from
+    the allocator, such as the stack of an activation, the code of an
+    engine, the arenas of the interpreter and of other threads, and on a
+    GPU what the driver maps."""
+    total = 0
+    with open("/proc/self/maps") as f:
+        for line in f:
+            fields = line.split()
+            if fields[-1] != "[heap]":
+                low, high = (int(address, 16) for address in fields[0].split("-"))
+                total += high - low
+    return total
 
 
 def tied_charges(system):
@@ -175,7 +194,7 @@ def measure():
             result = call()
             del result
             done += 1
-        now = read()
+        now, outside = read(), mapped()
         if info:
             stream = libc.fopen(f"{info}/info-{done}.xml".encode(), b"w")
             libc.malloc_info(0, stream)
@@ -183,6 +202,7 @@ def measure():
         change = "" if last is None else (
             f" {now - last:+d} bytes, {(now - last) / (batch * (at - before)):+.3f} a frame")
         print(f"calls {done:7d} frames {done * batch:8d} in use {now}{change}; "
+              f"mapped outside the heap {outside}; "
               f"blocks of the interpreter {sys.getallocatedblocks()}", flush=True)
         last, before, at = now, at, (at + 1 if every else 2 * at)
 

@@ -70,9 +70,9 @@ Scenarios:
            no allocation of the stack, no call in the generic form, and
            no argument of the entry that a frame replaces stands in the
            loop; the stack of the entry is as deep at the boundary of a
-           late frame as at that of an early one, to the byte; and the
-           bytes in use of the allocator of the host do not grow with the
-           frames or with the calls (#306)
+           late frame as at that of an early one, to the byte; and on the
+           CPU the bytes in use of the allocator do not grow with the
+           frames
   torch    the same average differentiated by PyTorch through
            mdir.torch.evaluate; gradcheck; a fit of sigma' to a synthetic
            target; refusals of the adapter; torch.compile
