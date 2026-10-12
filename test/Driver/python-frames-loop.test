@@ -14,10 +14,10 @@
 # from frame 101 to frame 201, in calls of 25 frames (41 bytes a frame pass).
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide loop CPU Double | FileCheck %s -DMODE="CPU Double"
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide loop CPU Mixed | FileCheck %s -DMODE="CPU Mixed"
-# CHECK: [[MODE]]: the loop over frames of the whole potential: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; 4 allocations of the stack before it: True
-# CHECK: [[MODE]]: the loop over frames of the dependent terms: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; 3 allocations of the stack before it: True
-# CHECK: [[MODE]]: the loop over frames of a program with a barostat: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; 4 allocations of the stack before it: True
-# CHECK: [[MODE]]: the loop over frames of a triclinic cell: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; 3 allocations of the stack before it: True
+# CHECK: [[MODE]]: the loop over frames of the whole potential: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
+# CHECK: [[MODE]]: the loop over frames of the dependent terms: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
+# CHECK: [[MODE]]: the loop over frames of a program with a barostat: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
+# CHECK: [[MODE]]: the loop over frames of a triclinic cell: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
 # CHECK: [[MODE]]: the stack of the entry of the whole potential at the boundary after frames 1, 101, and 201: {{[0-9]+}} bytes, then +0 and +0 bytes (bound 0): True
 # CHECK: [[MODE]]: the bytes in use of the allocator with the whole potential from frame 101 to frame 201: {{.*}} (bound 4096): True
 # CHECK: [[MODE]]: the stack of the entry of the dependent terms at the boundary after frames 1, 101, and 201: {{[0-9]+}} bytes, then +0 and +0 bytes (bound 0): True

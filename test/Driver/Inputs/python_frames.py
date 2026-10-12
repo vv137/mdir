@@ -1314,10 +1314,11 @@ def in_use():
 
 
 def run_loop():
-    # The text. A stack allocation in any spelling; a call that is neither
-    # `func.call` nor `mdrt.host_call`; the positions and the cell that the
-    # entry is given, and the memory of the barostat filled from them.
-    allocation = re.compile(r"alloca")
+    # The text. An op `alloca` of any dialect, with any operands and
+    # attributes; a call that is neither `func.call` nor `mdrt.host_call`;
+    # the positions and the cell that the entry is given, and the memory of
+    # the barostat filled from them.
+    allocation = re.compile(r"\.alloca(?!\w)")
     generic = re.compile(r"(?<![\w.])call\b")
     replaced = re.compile(r"%(positions|lx|ly|lz|tilt_bx|tilt_cx|tilt_cy|box_memory)(?![\w$.-])")
     program = dipeptide_program()

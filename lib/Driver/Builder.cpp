@@ -9004,6 +9004,23 @@ static bool namesValue(StringRef line, StringRef name) {
   return false;
 }
 
+/// Whether `line` holds an op that takes memory of the stack: `alloca` as
+/// the name of an op of any dialect (`memref.alloca`, `llvm.alloca`), with
+/// any operands and attributes. A name that a model gives (a parameter, a
+/// term) is not one, and neither is `memref.alloca_scope`, which gives back
+/// what is taken in it.
+static bool takesStack(StringRef line) {
+  static const StringRef op = ".alloca";
+  for (size_t at = line.find(op); at != StringRef::npos;
+       at = line.find(op, at + 1)) {
+    size_t end = at + op.size();
+    if (end == line.size() ||
+        !(llvm::isAlnum(line[end]) || line[end] == '_'))
+      return true;
+  }
+  return false;
+}
+
 /// What the assembly of the loop over frames (emitEntry) assumes of the text
 /// that it makes the body of the loop from, checked (#302): the
 /// assembly matches text, and a line that it does not match still parses,
@@ -9041,7 +9058,7 @@ static std::string checkFrameLoop(StringRef body) {
               "inside one activation)")
           .str();
     };
-    if (line.contains("alloca"))
+    if (takesStack(line))
       return fail("takes memory of the stack, which the entry, never "
                   "returning, would take again at every frame: spell it "
                   "'%name = memref.alloca() : type' on one line, which is "
