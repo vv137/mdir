@@ -231,9 +231,12 @@ stops at its start and names everything that is missing.
 
 `publish.sh VERSION --dry-run` rehearses a release, also of a version that
 is tagged already: it does everything up to the tag in trees of its own
-(their names end in `-dry-run`) and tags, pushes, and publishes nothing.
-With it, `--no-binary` leaves out the manylinux tree, for a machine without
-Docker.
+(their names end in `-dry-run`) and tags, pushes, and publishes nothing;
+`--publish` is refused with it. With it, `--no-binary` leaves out the
+manylinux tree, for a machine without Docker. A run, dry or not, removes
+its worktree when it ends and leaves its build tree
+(`build-vVERSION[-dry-run]`), its assets (`vVERSION[-dry-run]`), and its
+logs under `MDIR_RELEASE_DIR`, to be removed by hand.
 
 The suite of a release runs more than the suite of a pull request.
 `publish.sh` gives lit `-Drelease=1`, which enables the tests that require

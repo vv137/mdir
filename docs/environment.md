@@ -76,7 +76,7 @@ from the environment, by one convention (`scripts/environment.sh`):
 | `MDIR_RELEASE_DIR=<dir>` | `scripts/release/publish.sh` | Where a release writes: the worktree `src-vVERSION`, the build tree `build-vVERSION`, the assets `vVERSION`, and the logs `logs/release-vVERSION-*.log`; a dry run adds `-dry-run` to each name ([workflow.md](workflow.md#releases)). | The script stops. |
 | `MDIR_LLVM=<prefix>` | `publish.sh` | The install prefix of LLVM and MLIR. | The script stops. |
 | `HDF5_PREFIX=<prefix>` | `publish.sh` | The install prefix of HDF5, as `scripts/build-hdf5.sh` names its own. | The script stops. |
-| `CUDA_ROOT=<dir>` | `publish.sh` | The CUDA toolkit of the build of a release. The manylinux tree is run without it. | The script stops. |
+| `CUDA_ROOT=<dir>` | `publish.sh` | The CUDA toolkit of the build of a release: the same name, and the same toolkit, that `mdir` reads at run time (above), so that a machine states it once. The manylinux tree is run without it. | The script stops. |
 | `MDIR_RELEASE_GPU=<n>` | `publish.sh` | The index of the GPU that runs the suite of a release and the manylinux tree. | The script stops. |
 | `MDIR_RELEASE_SUITE_LOCK=<file>`, `MDIR_RELEASE_GPU_LOCK=<file>` | `publish.sh` | Lock files of a shared machine ([workflow.md](workflow.md#shared-machines)), held with `flock`: the first around the suite, the second while the GPU is used, taken in that order. | No lock is taken. |
 | `CMAKE`, `NINJA`, `LIT`, `DOCKER` | `publish.sh` | Programs: `cmake`, `ninja`, `lit` (the one beside `ninja` if there is one), and `docker` by default. `DOCKER` is needed for the manylinux tree and for `--container`. | The script stops if the program is not found. |

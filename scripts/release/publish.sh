@@ -30,9 +30,14 @@
 # --dry-run rehearses a release, also of a version that is tagged already:
 # it does steps 1 to 4 in trees of its own (src-vVERSION-dry-run,
 # build-vVERSION-dry-run, vVERSION-dry-run, and logs of that name) and
-# stops before the tag. Nothing is tagged, pushed, or published. With it,
-# --no-binary leaves out the manylinux tree and its two runs, for a machine
-# without Docker.
+# stops before the tag. Nothing is tagged, pushed, or published, and
+# --publish is refused with it. With it, --no-binary leaves out the
+# manylinux tree and its two runs, for a machine without Docker.
+#
+# The worktree is removed when the script ends, however it ends. The build
+# tree, the assets, and the logs stay under MDIR_RELEASE_DIR, those of a
+# dry run as well: remove them when they are no longer needed. A run
+# replaces those of the same name.
 #
 # The script names no path of the machine: it reads these from the
 # environment, or from the file that MDIR_ENV_FILE names
