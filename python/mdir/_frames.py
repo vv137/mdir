@@ -318,9 +318,9 @@ class FrameEvaluator:
         if int(jacobian_bytes) < 0:
             raise _core.InputError("FrameEvaluator: jacobian_bytes is not negative")
         self.program, self.jacobian_bytes = program, int(jacobian_bytes)
-        self._simulation = _core.Simulation(program)
-        # A part of this simulation is one evaluation.
-        self._simulation.part_seconds = 1e9
+        # A simulation whose entry is a loop over frames: the frames of
+        # every call are evaluated in one activation of it.
+        self._simulation = _core.Simulation(program, _frames=True)
         self._particles = self._simulation._particle_count
         # The cell of a frame that gives none is that of the program, not
         # that of the last frame evaluated.

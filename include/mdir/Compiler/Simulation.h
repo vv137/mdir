@@ -107,7 +107,7 @@ public:
   /// (D236); without `cache` it does neither.
   static llvm::Expected<std::unique_ptr<Simulation>>
   create(const model::PreparedModel &prepared, bool cache = true,
-         CodeStore *store = nullptr);
+         CodeStore *store = nullptr, bool frames = false);
   ~Simulation();
   Simulation(const Simulation &) = delete;
   Simulation &operator=(const Simulation &) = delete;
@@ -382,6 +382,9 @@ private:
     int64_t closePeriods = 0;
   };
   llvm::Error runPart(Engine &engine, Part part);
+  /// Tells `out` what the host adds for the program `p`: the constants of
+  /// its corrections and of its sums.
+  void describeProgram(driver::Output &out, const driver::Program &p) const;
   /// The program built anew with the values `values` of the tunables, or
   /// an InputError if its text would change.
   llvm::Expected<driver::Program>

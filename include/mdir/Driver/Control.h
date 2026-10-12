@@ -187,6 +187,12 @@ struct Control {
   /// frame evaluator of the dependent terms, which takes no steps of a
   /// trajectory. No key of the control file sets it.
   bool dependentTerms = false;
+  /// Whether the entry of the program of segments is a loop over frames
+  /// (D[frames-activation], docs/python-frames.md): the program of a frame
+  /// evaluator, which takes the cell and the positions of a frame at each
+  /// boundary and evaluates what the start of a run evaluates. It takes no
+  /// steps. No key of the control file sets it.
+  bool frames = false;
   enum class TunableKind {
     Charge,
     Sigma,

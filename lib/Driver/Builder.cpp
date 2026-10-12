@@ -9023,7 +9023,10 @@ void Builder::emitEntry() {
   // end of each part, and takes the counts of the next part there
   // (D215); a run ends with its state in the buffers of the
   // host.
-  if (control.segments)
+  if (control.frames)
+    os << "func.func private @mdrtFrameBoundary(memref<6xf64>) -> memref<?x3x"
+       << state << ">\n    attributes {llvm.emit_c_interface}\n";
+  else if (control.segments)
     os << "func.func private @mdrtPartBoundary(memref<?x3x" << state
        << ">, memref<?x3x" << state << ">, memref<?x3x" << force
        << ">, memref<?xi32>, f64, memref<" << getPartCountsSize()
@@ -9190,23 +9193,51 @@ void Builder::emitEntry() {
          << "  memref.store " << initial[k] << ", %box_memory[%c_edge" << k
          << "] : " << getBoxMemoryType() << "\n";
   }
-  if (scalesReference()) {
+  if (scalesReference())
     // The edges of the cell of the file, which the reference positions of
     // the restraints are for, arguments of the entry (collectStartValues);
     // they scale with the cell, axis by axis.
     os << "  %rest_edges = vector.from_elements %rest_edge0, %rest_edge1, "
           "%rest_edge2 : vector<3xf64>\n";
-    emitReferenceScale(os, "  ", "%rest_scale", "%lx", "%ly", "%lz");
+  // A program of frames (D[frames-activation]) takes the cell and the
+  // positions of each frame in its loop over frames, where this text goes:
+  // the boundary gives the buffer of the host that holds the positions of
+  // the frame and writes the six numbers of its cell. The buffer is a value
+  // of the iteration, so that nothing takes the positions of one frame for
+  // those of another; the buffer %positions of the entry is not read.
+  std::string frameHead;
+  os.flush();
+  size_t frameMark = program.module.size();
+  if (control.frames) {
+    os << "  %frame_positions = call @mdrtFrameBoundary(%frame_cell) : "
+          "(memref<6xf64>) -> memref<?x3x"
+       << state << ">\n";
+    for (int k = 0; k != getCellSize(); ++k)
+      os << "  %frame_cell_" << k << " = memref.load %frame_cell[%frame_at"
+         << k << "] : memref<6xf64>\n";
+    if (scalesReference())
+      emitReferenceScale(os, "  ", "%rest_scale", "%frame_cell_0",
+                         "%frame_cell_1", "%frame_cell_2");
+    emitCellOf("  ", "%cell", "%frame_cell");
+  } else {
+    if (scalesReference())
+      emitReferenceScale(os, "  ", "%rest_scale", "%lx", "%ly", "%lz");
+    if (isTriclinic()) {
+      os << "  %cell = md.triclinic_cell %lx, %ly, %lz, %tilt_bx, %tilt_cx, "
+            "%tilt_cy\n";
+    } else
+      os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n";
   }
-  if (isTriclinic()) {
-    os << "  %cell = md.triclinic_cell %lx, %ly, %lz, %tilt_bx, %tilt_cx, "
-          "%tilt_cy\n";
-  } else
-    os << "  %cell = md.orthorhombic_cell %lx, %ly, %lz\n";
   os << "  %x" << (program.reorders ? "_in" : "0") << (hasSites() ? "u" : "")
-     << " = mdrt.from_buffer %positions : memref<?x3x" << state
-     << "> to !vec\n"
-     << "  " << (program.reorders ? "%v_in" : velocities)
+     << " = mdrt.from_buffer "
+     << (control.frames ? "%frame_positions" : "%positions")
+     << " : memref<?x3x" << state << "> to !vec\n";
+  if (control.frames) {
+    os.flush();
+    frameHead = program.module.substr(frameMark);
+    program.module.resize(frameMark);
+  }
+  os << "  " << (program.reorders ? "%v_in" : velocities)
      << " = mdrt.from_buffer %velocities : memref<?x3x" << state
      << "> to !vec\n"
      << "  %m" << given << " = mdrt.from_buffer %masses : memref<?x" << mass
@@ -9237,6 +9268,8 @@ void Builder::emitEntry() {
     os << "  " << (program.reorders ? "%f_in" : givenForcesName)
        << " = mdrt.from_buffer %forces : memref<?x3x" << force
        << "> to !vec\n";
+  os.flush();
+  frameMark = program.module.size();
   // The virtual sites where their atoms put them, whatever the file says.
   if (hasSites()) {
     StringRef positions = program.reorders ? "%x_in" : "%x0";
@@ -9244,8 +9277,15 @@ void Builder::emitEntry() {
                    program.reorders ? "%ro_" : "%r_");
   }
   if (program.reorders)
-    emitReorder("  ", "_in", "0", "", givenForces, velocities,
-                branchesStart() ? "%fg" : "");
+    emitReorder("  ", "_in", "0", "", givenForces && !control.frames,
+                velocities, branchesStart() ? "%fg" : "");
+  if (control.frames) {
+    // The order of the particles of each frame is its own: a frame is not
+    // near the one before it.
+    os.flush();
+    frameHead += program.module.substr(frameMark);
+    program.module.resize(frameMark);
+  }
   if (control.minimize) {
     emitMinimization(velocities);
     return;
@@ -9419,6 +9459,42 @@ void Builder::emitEntry() {
          << "  %behind = arith.mulf %back, %dt : f64\n"
          << "  %v0 = dyn.kick %vg, %f0, %m, %behind : !vec\n";
     }
+  }
+  if (control.frames) {
+    // The loop over frames, which has no end of its own, as the loop over
+    // parts has none: each iteration waits at its boundary for the cell and
+    // the positions of a frame, orders the particles, and evaluates what
+    // the start of a run evaluates, in a segment of its own, so that the
+    // neighbor structures are built anew (D218).
+    os.flush();
+    std::string chunk = frameHead + "  scf.for %i_frame_once = %c0 to %c1 "
+                                    "step %c1 {\n" +
+                        program.module.substr(startMark) +
+                        "  } {mdrt.segment}\n";
+    program.module.resize(startMark);
+    for (size_t at = chunk.find(" call @"); at != std::string::npos;
+         at = chunk.find(" call @", at))
+      chunk.replace(at, 7, " func.call @");
+    // The memory of the stack that the evaluation writes its rows to is
+    // taken once, before the loop: taken in it, it would be taken again at
+    // every frame and never given back, since the entry does not return.
+    std::string body;
+    for (StringRef rest = chunk; !rest.empty();) {
+      auto [line, tail] = rest.split('\n');
+      rest = tail;
+      if (line.contains(" = memref.alloca() : "))
+        os << "  " << line.ltrim() << "\n";
+      else
+        body += (line + "\n").str();
+    }
+    chunk = std::move(body);
+    os << "  %frame_cell = memref.alloca() : memref<6xf64>\n";
+    for (int k = 0; k != getCellSize(); ++k)
+      os << "  %frame_at" << k << " = arith.constant " << k << " : index\n";
+    os << "  %frame_end = arith.constant 9223372036854775807 : index\n"
+       << "  scf.for %i_frame = %c0 to %frame_end step %c1 {\n"
+       << chunk << "  }\n  return\n}\n";
+    return;
   }
   if (branchesStart()) {
     os.flush();
