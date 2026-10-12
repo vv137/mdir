@@ -8,8 +8,12 @@
 # compile for (sm_86 by default).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-bench=${MDIR_BENCH_DIR:?set MDIR_BENCH_DIR to the prepared Amber suite}
-nvcc=${NVCC:-nvcc}
+. "$here/../../environment.sh"
+need_directory MDIR_BENCH_DIR "the prepared Amber suite (scripts/benchmarks/amber)"
+need_program NVCC nvcc "nvcc of the CUDA toolkit"
+need_check
+bench=$MDIR_BENCH_DIR
+nvcc=$NVCC
 arch=${CUDA_ARCH:-sm_86}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
