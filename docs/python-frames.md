@@ -594,6 +594,41 @@ the kernels with the neighbor build are 0.8 ms.
   memory constant to 0.1 MB, and 6,000 on a GPU with the memory of the
   device constant. There is no limit on $K$; the host keeps $8K$ bytes per
   output and the Jacobian up to its bound, as before.
+- **What the assembly of the loop assumes is checked** (#302). The builder
+  makes the loop from the text that it emitted for the start of a run: the
+  lines `%name = memref.alloca() : type` are moved before the loop, and a
+  call becomes `func.call`. Text that this matching misses would still
+  compile and give the right numbers, so the builder refuses, with an
+  error that names the line, a program of frames whose loop holds an
+  allocation of the stack in any other spelling, or one of the arguments
+  of the entry that a frame replaces (`%positions`, `%lx`, `%ly`, `%lz`,
+  the tilts, and `%box_memory`, which is filled from them: they are of
+  the program, not of the frame), or whose start evaluates nothing. A
+  call in the generic form, a `return`, and a name of the loop taken twice
+  are refused by the parser. `python-frames-loop.test` and
+  `python-frames-loop-gpu.test` read the same in the emitted module of
+  four evaluators, and measure the memory of a frame: the entry runs on a
+  stack of its own, so the address of the frame of its call of
+  `@mdrtFrameBoundary` is the depth of that stack where it waits, and the
+  depth after frame 201 is that after frame 1 to the byte, whatever put an
+  allocation in the loop, the builder or a pass; on the CPU the bytes in
+  use of the allocator grow by less than 4096 from frame 101 to frame 201
+  (measured: -16), which lets 41 bytes a frame pass. The depth says
+  nothing of memory that a frame takes and gives back, and the test covers
+  the programs it compiles: the dipeptide in water with the whole
+  potential and with the dependent terms. The two handles of these tests,
+  `Simulation._ir` (the emitted module) and `Simulation._stack_in_use`
+  (the depth), are private: they are not part of the interface and may
+  change or go.
+- **What is not checked in the text.** A row that is taken once, before
+  the loop, holds at a frame what the frame before wrote: the evaluation
+  must write every slot before the call that takes the row, as it does
+  today. No check of the text sees an evaluation that reads a slot first;
+  this rests on the comparison, to the bit, of a frame with the same frame
+  after other frames (`python-frames-activation*.test`), so the check of
+  the builder is not the whole of what the loop assumes. Text that should
+  stand before the loop and is in it is evaluated at every frame, with the
+  right numbers: only a timing sees that.
 - **The activation lives** across the batches of a call and across calls.
   It ends at an update of the tunables (their values are arguments of the
   entry), at a frame whose evaluation fails, and with the evaluator. The

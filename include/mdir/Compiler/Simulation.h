@@ -209,6 +209,17 @@ public:
     return tunableValues;
   }
   int64_t getTunablesVersion() const { return tunablesVersion; }
+  /// The module that the builder emitted for the program of this
+  /// simulation, as `mdir emit` prints that of a run: for the tests of
+  /// what the builder emits (#302).
+  const std::string &getProgramText() const;
+  /// The bytes of its own stack that the entry held at the last boundary
+  /// where it waits (the address of the frame of that call, from the top of
+  /// the stack), or 0 without an activation. The entry never returns, so
+  /// memory of the stack that it takes in a loop and does not give back
+  /// shows here as a depth that grows from one boundary to the next, to the
+  /// byte: for the tests of the memory per frame (#302).
+  size_t getStackInUse() const;
   const std::vector<std::pair<int64_t, int64_t>> &getTunablesHistory() const {
     return tunablesHistory;
   }

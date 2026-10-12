@@ -277,6 +277,9 @@ struct compiler::Activation {
   ucontext_t context, host;
   void *stack = nullptr;
   size_t stackSize = 0;
+  /// The frame of the call of the last boundary on that stack, which is
+  /// how deep the entry was there (Simulation::getStackInUse).
+  const char *boundary = nullptr;
   bool atBoundary = false, returned = false;
   /// The state at the last boundary, where it is, in the order of the
   /// program, and the number of its components that are not numbers.
@@ -326,6 +329,7 @@ extern "C" void _mlir_ciface_mdrtPartBoundary(StridedMemRefType<char, 2> *x,
   a->f = *f;
   a->id = *id;
   a->notNumbers = notNumbers;
+  a->boundary = static_cast<const char *>(__builtin_frame_address(0));
   a->atBoundary = true;
   swapcontext(&a->context, &a->host);
   // The next part.
@@ -341,6 +345,7 @@ extern "C" void
 _mlir_ciface_mdrtFrameBoundary(StridedMemRefType<char, 2> *positions,
                                StridedMemRefType<double, 1> *cell) {
   compiler::Activation *a = runningActivation;
+  a->boundary = static_cast<const char *>(__builtin_frame_address(0));
   a->atBoundary = true;
   swapcontext(&a->context, &a->host);
   *positions = a->framePositions->descriptor;
@@ -362,6 +367,18 @@ Simulation::~Simulation() {
   endActivation(Ended::NotBegun);
   freeSnapshot();
   compiled.reset();
+}
+
+const std::string &Simulation::getProgramText() const {
+  return compiled->program.module;
+}
+
+size_t Simulation::getStackInUse() const {
+  if (!activation || !activation->boundary)
+    return 0;
+  const char *top =
+      static_cast<const char *>(activation->stack) + activation->stackSize;
+  return static_cast<size_t>(top - activation->boundary);
 }
 
 static llvm::Expected<std::unique_ptr<Simulation::Engine>>
