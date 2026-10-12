@@ -934,7 +934,7 @@ $\boldsymbol\theta$ that it tries, while the frames stay those sampled at
 $\hat{\boldsymbol\theta}$. The frame evaluator
 (D240, `docs/python-frames.md`) does this in a simulation of
 its own, apart from the one that samples, whose program is a loop over
-frames (D[frames-activation]): everything but the positions and the cell
+frames (D251): everything but the positions and the cell
 is put where the program keeps it once, and each frame, given in the order
 of the input with its cell, is evaluated with its neighbor structures built
 anew, since a stored frame is not near the one before it. The particles

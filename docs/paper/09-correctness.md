@@ -417,7 +417,7 @@ energy, the derivative, the virial, and the observed columns of the
 sampler's own evaluation at the step of each frame to the bit in the
 deterministic mode, in the order sampled, in another order, and one at a
 time, when the sampler keeps the particles in the order of the input, as
-the evaluator does (D[frames-activation]); against a simulation in the
+the evaluator does (D251); against a simulation in the
 spatial order the energy agrees within $1.7\times10^{-10}$ kJ/mol in
 double precision and $3.2\times10^{-4}$ kJ/mol in mixed precision, the
 rounding of sums in another order. The frames of a call are evaluated in

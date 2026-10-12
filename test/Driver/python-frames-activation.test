@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The frames of an evaluation inside one activation of the evaluator's
-# program (D[frames-activation], docs/python-frames.md) on the CPU, in
+# program (D251, docs/python-frames.md) on the CPU, in
 # double and mixed precision, Inputs/python_frames.py: what a frame gives
 # does not depend on the call it is in, on the frames before it, on a frame
 # that failed before it, or on what other simulations do in between, to

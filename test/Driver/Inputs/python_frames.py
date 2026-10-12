@@ -55,7 +55,7 @@ Scenarios:
            the derivative of a reweighted average that the evaluator gives
            on the stored frames
   activation  the frames of every call inside one activation of the
-           evaluator's program (D[frames-activation]): one frame per call,
+           evaluator's program (D251): one frame per call,
            frames that repeat and frames far apart in one call, batches
            of two, 120 frames in one call, and the calls of a second
            evaluator and the steps of a sampler in between, each against
@@ -91,7 +91,7 @@ def expect(error, call, text=""):
 
 def execution_(deterministic=True, reorder=False):
     """The programs here keep the particles in the order of the input, as
-    the program of a frame evaluator does (D[frames-activation]): a sampler
+    the program of a frame evaluator does (D251): a sampler
     then takes its sums in the order of the evaluator, and the two agree to
     the bit. `activation` has a sampler in the spatial order."""
     execution = mdir.Execution()

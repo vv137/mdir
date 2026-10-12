@@ -243,7 +243,7 @@ struct Program {
   /// `mdrtPartBoundary`, which hands the host the state where it is and
   /// takes the step and the counts of the loops of the next part. With
   /// Control::frames the entry is a loop over frames instead
-  /// (D[frames-activation]): each iteration begins with `mdrtFrameBoundary`,
+  /// (D251): each iteration begins with `mdrtFrameBoundary`,
   /// which gives the buffer of the positions of the next frame and writes
   /// its cell, and evaluates what the start of a run evaluates. `segmentPeriod` is the period of coupling that an iteration of
   /// its outer loop takes, or 0 if the outer loop is over single steps;

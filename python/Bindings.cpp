@@ -115,7 +115,7 @@ struct Program {
   bool cache = true;
   /// The program of the terms that a tunable enters (D243), once a frame
   /// evaluator has asked for it: a second evaluator takes it, with the
-  /// code that the first left in its store (D[frames-activation]).
+  /// code that the first left in its store (D251).
   mutable std::shared_ptr<Program> dependent;
   std::vector<std::pair<std::shared_ptr<Version>, uint64_t>> inputs;
   template <class T> void track(const std::shared_ptr<Input<T>> &o) {
@@ -1442,7 +1442,7 @@ PYBIND11_MODULE(_core, m) {
        py::arg("checkpoint") = py::none(), py::arg("stage") = false,
        py::arg("append") = true,
        // The simulation of a frame evaluator, whose entry is a loop over
-       // frames (D[frames-activation]); private to `mdir.FrameEvaluator`.
+       // frames (D251); private to `mdir.FrameEvaluator`.
        py::arg("_frames") = false)
     .def("save_checkpoint", [](PySimulation &s, const std::string &path) {
       std::optional<llvm::Error> error;

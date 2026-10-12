@@ -1337,7 +1337,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     // A buffer that a call in the body of a loop returns is given anew at
     // every iteration, and may be the same memory each time: the frames of
     // a frame evaluator, which the host hands the entry at a boundary
-    // (D[frames-activation]). Memory that the body allocates is its own.
+    // (D251). Memory that the body allocates is its own.
     bool givenAnew = &scope != root &&
                      from.getBuffer().getDefiningOp<func::CallOp>() &&
                      from.getBuffer().getParentBlock() == op->getBlock();

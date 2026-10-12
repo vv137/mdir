@@ -4,7 +4,7 @@ Issue #249, a step of M2b (#138, [roadmap](roadmap.md), Section 6.1).
 Status: the first slice is implemented, as the maintainer ruled on PR #250
 ([Maintainer rulings](#maintainer-rulings)), and the frames of every call
 are evaluated inside one activation of the evaluator's program
-([D\[frames-activation\]](#the-frames-inside-one-activation-dframes-activation),
+([D251](#the-frames-inside-one-activation-d251),
 #291); what later slices add is in [Slices](#slices).
 
 A fit of the parameters of a potential by reweighting
@@ -65,7 +65,7 @@ Q11): any program over the same particles. The values of its tunables begin
 as those of the program and change only through `evaluator.tunables`.
 The simulation runs a program of its own, built from the model of the one
 given: a loop over frames
-([below](#the-frames-inside-one-activation-dframes-activation)). The first
+([below](#the-frames-inside-one-activation-d251)). The first
 evaluator of a program compiles it (with its first frame 1.9 s for the
 dipeptide in water and 2.7 s for JAC on a GPU); a later evaluator of the
 same program takes the code that the first left with the `Program` (D236;
@@ -295,7 +295,7 @@ state in float64 with its velocities and forces.
   in the order of the input, which is the order of trajectory files, of
   `state()`, and of other programs, and the evaluator's program keeps the
   particles in that order, whatever `Execution.reorder` of the program
-  given says (D[frames-activation]; until then the spatial order of D44
+  given says (D251; until then the spatial order of D44
   was chosen anew at each frame). An order chosen at a frame would renumber
   every tuple set on the host and upload it again with its incidence
   structure at that frame, which is most of what the start of an
@@ -527,9 +527,9 @@ Nothing is added to a trajectory file.
   the host that the entry takes at its boundary and the six numbers of
   the cell (`setCell` for what the host adds at the volume of the frame),
   and resumes the activation, which evaluates the frame and waits at the
-  boundary again ([below](#the-frames-inside-one-activation-dframes-activation));
+  boundary again ([below](#the-frames-inside-one-activation-d251));
   the first frame, and the first after a failure or an update of the
-  tunables, begin an activation. Until D[frames-activation] every frame
+  tunables, begin an activation. Until D251 every frame
   began one: a borrow, a commit, and `gradient()` take two and copy the
   state of the device to the host in between. If the evaluation fails, the
   activation is ended, the cell of before is restored, and the simulation
@@ -551,7 +551,7 @@ Nothing is added to a trajectory file.
   path of a step: the text of every other program is what it was, to the
   byte.
 
-### The frames inside one activation (D[frames-activation])
+### The frames inside one activation (D251)
 
 Issue #291. Until this slice every frame was the start of an activation
 (D215): the buffers of the whole model copied to the device, the tuples
@@ -908,7 +908,7 @@ Issue #264. Status: implemented, as the maintainer ruled on PR #266
 and 1.45 to 1.9 times for the charges; it does not change the accuracy of a
 difference in mixed precision** ([measured](#what-the-mode-saves)).
 Those ratios are of frames that each began an activation; with the frames
-inside one activation (D[frames-activation]) both modes cost less and the
+inside one activation (D251) both modes cost less and the
 mode saves 1.5 to 1.8 times for a tunable of a pair term and 1.1 to 1.3
 times for the charges and for $\sigma$ and $\epsilon$
 ([measured](#the-frames-inside-one-activation)).
@@ -1049,7 +1049,7 @@ measurement. Two smaller items inside that: the tuples of the bonded terms
 are among what a program of the dependent terms still builds and copies at
 a start, though no term reads them (what the 18 copies carry was not
 separated); and with Lennard-Jones tunables the kernel still runs over all
-pairs (T6). None of the three was implemented in D243; D[frames-activation]
+pairs (T6). None of the three was implemented in D243; D251
 took the first, with which the second went, and measured the third.
 
 **Accuracy in mixed precision: unchanged.** The difference of two sums of
@@ -1193,7 +1193,7 @@ is taken.
 | 1 (done) | `FrameEvaluator`, `evaluate` over arrays and iterables with one evaluation per frame, `energy`, `virial`, `volume`, `observables`, `depends`, the Jacobian kept or the second pass, `mdir.torch.evaluate`, `mdir.KB` |
 | The dependent terms alone, and the example without frames (done, D243) | `terms="dependent"`, `dependent_energy`, `plan["terms"]`; the sums of `observe` for a potential linear in its tunables |
 | 1, after D238 and D239 (done) | the tilts of each frame of a triclinic cell; the frames of `mdir.read_h5md` as input |
-| 2 (done, D[frames-activation], #291) | the frames inside one activation, in the order of the input; the program of the dependent terms kept with its program |
+| 2 (done, D251, #291) | the frames inside one activation, in the order of the input; the program of the dependent terms kept with its program |
 | 2b | frames read from a device tensor without a copy to the host (the positions of a frame are one copy of 0.03 ms on JAC now) |
 | 3 | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138); the metatomic shape of #138 |
 | Later | the derivative of the virial and of observed columns in $\boldsymbol\theta$ (M2b-3); the JAX adapter (M2b-2); learned terms (M3), whose parameters stay in the framework; frames over several nodes (M4) |

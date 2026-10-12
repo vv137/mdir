@@ -1,5 +1,5 @@
 """The frame evaluator of one build against that of another on the same
-stored frames (D[frames-activation], docs/python-frames.md): the oracle of
+stored frames (D251, docs/python-frames.md): the oracle of
 the frames inside one activation is the evaluator that starts an activation
 per frame.
 

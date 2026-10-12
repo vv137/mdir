@@ -175,7 +175,7 @@ of types, and the charges, under a Coulomb cutoff and with particle mesh
 Ewald (D231); and the evaluation at stored frames with
 its vector-Jacobian product in the tunables, as an operation of PyTorch
 (D240, Section 3.6), with the frames of a call inside one activation
-(D[frames-activation]): 0.28 ms on the dipeptide in water and 0.69 ms on
+(D251): 0.28 ms on the dipeptide in water and 0.69 ms on
 JAC on one RTX 4090, 5.5 and 5.6 steps, what the kernels of a frame cost.
 Remaining: the gradients in the positions and the strain as outputs; the derivative of
 the virial and of observed terms in the parameters, which a fit to the

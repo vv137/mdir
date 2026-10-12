@@ -285,7 +285,7 @@ struct compiler::Activation {
   double notNumbers = 0.0;
   /// The step that the next part begins after, and its counts.
   std::array<int64_t, 9> next{};
-  /// The next frame of a program of frames (D[frames-activation]): its
+  /// The next frame of a program of frames (D251): its
   /// positions, in the order of the input and the type of the state, in a
   /// buffer that the entry takes at each boundary, and its cell, the
   /// diagonal and the tilts.
@@ -333,7 +333,7 @@ extern "C" void _mlir_ciface_mdrtPartBoundary(StridedMemRefType<char, 2> *x,
     counts->data[counts->offset + k * counts->strides[0]] = a->next[k];
 }
 
-/// The boundary of a program of frames (D[frames-activation]): the entry
+/// The boundary of a program of frames (D251): the entry
 /// waits here for the next frame, and takes the buffer of the host that
 /// holds its positions as the result and its cell in `cell`. What the last
 /// frame gave has reached the host through the calls of its evaluation.
@@ -2424,7 +2424,7 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
     return simulationError("frames are evaluated by the simulation of a "
                            "frame evaluator; this is a defect of mdir");
   // The frame is evaluated in the activation that the last one left
-  // waiting at its boundary (D[frames-activation]): the entry takes the
+  // waiting at its boundary (D251): the entry takes the
   // positions from the buffer of the host that it was given and the cell
   // from the six numbers, orders the particles, builds its neighbor
   // structures, and evaluates. The first frame, and the first after a

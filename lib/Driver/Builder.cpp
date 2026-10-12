@@ -9199,7 +9199,7 @@ void Builder::emitEntry() {
     // they scale with the cell, axis by axis.
     os << "  %rest_edges = vector.from_elements %rest_edge0, %rest_edge1, "
           "%rest_edge2 : vector<3xf64>\n";
-  // A program of frames (D[frames-activation]) takes the cell and the
+  // A program of frames (D251) takes the cell and the
   // positions of each frame in its loop over frames, where this text goes:
   // the boundary gives the buffer of the host that holds the positions of
   // the frame and writes the six numbers of its cell. The buffer is a value
@@ -10042,7 +10042,7 @@ llvm::Error Builder::build() {
   // Cells of half the reach of a neighbor structure: particles that are
   // neighbors are then a few cells apart in memory.
   // A program of frames keeps the particles in the order of the input
-  // (D[frames-activation]): an order chosen at every frame would renumber
+  // (D251): an order chosen at every frame would renumber
   // the tuples and build their incidence structures on the host at every
   // frame, which is most of what the start of an activation costs, and the
   // neighbor structures bin the particles themselves.

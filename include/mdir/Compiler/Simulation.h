@@ -105,7 +105,7 @@ public:
   /// the compile cache (D217). With `store`, the simulation takes the code
   /// that an earlier one left there under the same key, or leaves its own
   /// (D236); without `cache` it does neither. With `frames`, the simulation
-  /// is that of a frame evaluator (D[frames-activation]): the entry of its
+  /// is that of a frame evaluator (D251): the entry of its
   /// program is a loop over frames (Control::frames), it takes
   /// `evaluateFrame` and updates of the tunables, and it takes no steps, no
   /// evaluation of its state, no view, and no borrow.
@@ -254,7 +254,7 @@ public:
   /// in the order of the input) and, if given, the cell `cell`, its
   /// diagonal a_x, b_y, c_z and its tilts b_x, c_x, c_y, of which a commit's
   /// checks are asked (D238), in the activation that the last frame left
-  /// waiting at its boundary (D[frames-activation]), or in one that it
+  /// waiting at its boundary (D251), or in one that it
   /// begins; nothing is carried from the frame before but the buffers, and
   /// the positions are taken as given. The state of the simulation stays
   /// that of its program, with the cell of the frame. Everything is checked

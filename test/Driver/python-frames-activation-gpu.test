@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # The frames of an evaluation inside one activation of the evaluator's
-# program (D[frames-activation], docs/python-frames.md) on a GPU, in
+# program (D251, docs/python-frames.md) on a GPU, in
 # double and mixed precision: python-frames-activation.test has the
 # quantities.
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide activation GPU Double | FileCheck %s -DMODE="GPU Double"

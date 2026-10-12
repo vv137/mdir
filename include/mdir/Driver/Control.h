@@ -188,7 +188,7 @@ struct Control {
   /// trajectory. No key of the control file sets it.
   bool dependentTerms = false;
   /// Whether the entry of the program of segments is a loop over frames
-  /// (D[frames-activation], docs/python-frames.md): the program of a frame
+  /// (D251, docs/python-frames.md): the program of a frame
   /// evaluator, which takes the cell and the positions of a frame at each
   /// boundary and evaluates what the start of a run evaluates, with the
   /// particles in the order of the input whatever `reorder` says. It takes

@@ -390,7 +390,7 @@ format, or the outputs; every such change is listed under **Changed** or
   velocity Verlet. In the deterministic mode the trajectory is the same to
   the bit; no key, file, or checkpoint changes.
 - **The frame evaluator evaluates the frames of a call inside one
-  activation, in the order of the input** (D[frames-activation], #291).
+  activation, in the order of the input** (D251, #291).
   `mdir.FrameEvaluator`, `evaluate`, and `mdir.torch.evaluate` are
   unchanged; a frame costs what its kernels cost: on one RTX 4090 in mixed
   precision 0.69 ms on JAC with the whole potential and 0.45 ms with the
