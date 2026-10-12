@@ -65,16 +65,36 @@ Scenarios:
            tunables and the first ones again; and each frame against the
            gradient() of a sampler in the order of the input, to the bit,
            and of a simulation in the spatial order compiled from the frame
+  loop     what the assembly of the loop over frames assumes of the text
+           that the builder emits (#302): in the module of an evaluator,
+           no allocation of the stack, no call in the generic form, and
+           no argument of the entry that a frame replaces stands in the
+           loop; the stack of the entry is as deep at the boundary of a
+           late frame as at that of an early one, to the byte; and on the
+           CPU the bytes in use of the allocator do not grow with the
+           frames
   torch    the same average differentiated by PyTorch through
            mdir.torch.evaluate; gradcheck; a fit of sigma' to a synthetic
            target; refusals of the adapter; torch.compile
 """
+import ctypes
+import gc
+import os
+import re
 import sys
 
 import numpy as np
 import mdir
 
 root, scenario, target, precision = sys.argv[1:5]
+TCACHE_OFF = "glibc.malloc.tcache_count=0"
+if scenario == "loop" and target == "CPU" and TCACHE_OFF not in os.environ.get("GLIBC_TUNABLES", ""):
+    # The bytes in use of the allocator are read without its thread cache,
+    # in which a freed block still counts as in use (#228,
+    # Inputs/python_memory.py); the allocator reads its tunables when the
+    # process begins.
+    os.environ["GLIBC_TUNABLES"] = ":".join(filter(None, [os.environ.get("GLIBC_TUNABLES"), TCACHE_OFF]))
+    os.execv(sys.executable, [sys.executable] + sys.argv)
 mixture = extra = sys.argv[5] if len(sys.argv) > 5 else None
 double = precision == "Double"
 mode = f"{target} {precision}"
@@ -1262,6 +1282,104 @@ def run_activation():
     print("activation passed")
 
 
+LOOP_FRAMES = 100  # N: the memory is read N and 2N frames after the first
+LOOP_BATCH = 25  # frames in a call
+LOOP_IN_USE_BOUND = 4096  # bytes in use of the allocator from frame N to frame 2N
+
+
+def frame_loop(text):
+    """The lines of the entry before its loop over frames, and those of the
+    loop, which ends the entry."""
+    lines = text.splitlines()
+    heads = [n for n, line in enumerate(lines) if line.lstrip().startswith("scf.for %i_frame = ")]
+    assert len(heads) == 1, heads
+    entry = max(n for n in range(heads[0]) if lines[n].startswith("func.func @"))
+    assert lines[-3:] == ["  }", "  return", "}"], lines[-3:]
+    return lines[entry:heads[0]], lines[heads[0] + 1:-3]
+
+
+def in_use():
+    """The bytes in use of the allocator: the blocks allocated and not
+    freed, in every arena, and the blocks mapped one by one."""
+    class Mallinfo2(ctypes.Structure):
+        _fields_ = [(name, ctypes.c_size_t) for name in (
+            "arena", "ordblks", "smblks", "hblks", "hblkhd", "usmblks", "fsmblks",
+            "uordblks", "fordblks", "keepcost")]
+
+    libc = ctypes.CDLL(None)
+    libc.mallinfo2.restype = Mallinfo2
+    gc.collect()
+    info = libc.mallinfo2()
+    return info.uordblks + info.hblkhd
+
+
+def run_loop():
+    # The text. A stack allocation in any spelling; a call that is neither
+    # `func.call` nor `mdrt.host_call`; the positions and the cell that the
+    # entry is given, and the memory of the barostat filled from them.
+    allocation = re.compile(r"alloca")
+    generic = re.compile(r"(?<![\w.])call\b")
+    replaced = re.compile(r"%(positions|lx|ly|lz|tilt_bx|tilt_cx|tilt_cy|box_memory)(?![\w$.-])")
+    program = dipeptide_program()
+    whole = mdir.FrameEvaluator(program)
+    evaluators = {"the whole potential": whole,
+                  "the dependent terms": mdir.FrameEvaluator(program, terms="dependent"),
+                  "a program with a barostat": mdir.FrameEvaluator(npt_program()),
+                  "a triclinic cell": mdir.FrameEvaluator(triclinic_program())}
+    for name, evaluator in evaluators.items():
+        before, loop = frame_loop(evaluator._simulation._ir)
+        found = {what: [line.strip() for line in loop if pattern.search(line)]
+                 for what, pattern in (("allocations of the stack", allocation),
+                                       ("calls in the generic form", generic),
+                                       ("arguments of the entry that a frame replaces", replaced))}
+        rows = sum(1 for line in before if " = memref.alloca() : " in line)
+        boundaries = sum(1 for line in loop if "func.call @mdrtFrameBoundary(" in line)
+        evaluations = sum(1 for line in loop if "md.evaluate " in line)
+        clean = not any(found.values()) and boundaries == 1 and evaluations >= 1 and rows >= 2
+        print(f"{mode}: the loop over frames of {name}: {len(loop)} lines with {evaluations} "
+              f"evaluations after one boundary; in it " +
+              ", ".join(f"{len(lines)} {what}" for what, lines in found.items()) +
+              f"; {rows} allocations of the stack before it: {clean}")
+        assert clean, (found, boundaries, evaluations, rows)
+
+    # The stack of the entry at the boundary where it waits, after an early
+    # frame and after late ones: the same depth, to the byte. Memory of the
+    # stack that the loop takes and does not give back, whatever emitted it
+    # (the builder or a pass), is a depth that grows.
+    states, _ = sample(simulation(program), 4, 4)
+    count = len(states)
+    positions = np.stack([s.positions for s in states])
+    edges = np.tile(states[0].cell.diagonal, (count, 1))
+
+    batch = np.arange(LOOP_BATCH) % count
+
+    for name in ("the whole potential", "the dependent terms"):
+        evaluator = evaluators[name]
+        sim = evaluator._simulation
+        assert sim._stack_in_use == 0
+        evaluator.evaluate(positions[:1], edges[:1])
+        depths, memory = [sim._stack_in_use], []
+        # Calls of the same number of frames, so that the host keeps as
+        # much for one as for another.
+        for _ in range(2):
+            for _ in range(LOOP_FRAMES // LOOP_BATCH):
+                evaluator.evaluate(positions[batch], edges[batch])
+            depths.append(sim._stack_in_use)
+            memory.append(in_use() if target == "CPU" else 0)
+        level = depths[0] > 0 and len(set(depths)) == 1
+        print(f"{mode}: the stack of the entry of {name} at the boundary after frames 1, "
+              f"{1 + LOOP_FRAMES}, and {1 + 2 * LOOP_FRAMES}: {depths[0]} bytes, then "
+              f"{depths[1] - depths[0]:+d} and {depths[2] - depths[0]:+d} bytes (bound 0): {level}")
+        assert level, depths
+        if target == "CPU":
+            growth = memory[1] - memory[0]
+            print(f"{mode}: the bytes in use of the allocator with {name} from frame "
+                  f"{1 + LOOP_FRAMES} to frame {1 + 2 * LOOP_FRAMES}: {growth:+d} (bound "
+                  f"{LOOP_IN_USE_BOUND}): {growth <= LOOP_IN_USE_BOUND}")
+            assert growth <= LOOP_IN_USE_BOUND, memory
+    print("loop passed")
+
+
 {"activation": run_activation, "frames": run_frames, "npt": run_npt, "refusals": run_refusals, "mixture": run_mixture,
  "torch": run_torch, "triclinic": run_triclinic, "h5md": run_h5md, "dependent": run_dependent,
- "linear": run_linear}[scenario]()
+ "linear": run_linear, "loop": run_loop}[scenario]()

@@ -1457,6 +1457,10 @@ PYBIND11_MODULE(_core, m) {
     // (D251): private, for the tests of what the builder
     // emits (#302).
     .def_property_readonly("_ir", [](const PySimulation &s) { return s.simulation->getProgramText(); })
+    // The bytes of its stack that the entry held at the last boundary,
+    // 0 without an activation: private, for the tests of the memory per
+    // frame (#302).
+    .def_property_readonly("_stack_in_use", [](const PySimulation &s) { return s.simulation->getStackInUse(); })
     // The evaluation of stored frames (D240,
     // docs/python-frames.md), for `mdir.FrameEvaluator`: `positions` is
     // (k, N, 3) float64 in nm in the order of the input, `cells` and
