@@ -126,6 +126,18 @@ def HoistStaticAllocas : Pass<"hoist-static-allocas", "::mlir::ModuleOp"> {
     of the entry block of its function, where it is allocated once. The
     variable of a reduction is live within one iteration of the loops
     around it, so one place serves every iteration.
+
+    The pass runs a second time where the lowering for the CPU ends, for
+    every program, on what `finalize-memref-to-llvm` has made of the
+    `memref.alloca` of the module by then (#305): the rows that the builder
+    allocates where it writes them (the observed columns, the coordinates
+    and the terms of pulling, dH/dλ and the energies of the states) stand in
+    the loops over steps, 16 bytes of the stack for every two numbers at
+    every row, kept until the entry returns, which the entry of a
+    simulation never does. A row is written anew before the host reads it,
+    in one iteration, so one place serves every iteration here too. The
+    lowering for a device does not need the pass: it releases the stack of
+    an iteration of a loop of the host where the iteration ends.
   }];
   let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
 }
