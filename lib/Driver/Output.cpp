@@ -775,12 +775,9 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   double temperature =
       2.0 * optimal / (output.degreesOfFreedom * units::boltzmann);
   // The temperatures of the solvent, the rigid waters, and of the solute,
-  // the rest, each with its own degrees of freedom (D203). They are kept
-  // for the summary at the end of `mdir run`; an embedded program reads
-  // none and takes any number of rows, so it keeps none (#300).
-  if (output.hasSolvent && output.embedded) {
-    output.hasSolvent = false;
-  } else if (output.hasSolvent) {
+  // the rest, each with its own degrees of freedom (D203): their sums,
+  // for the summary at the end of `mdir run`, and no row (#300).
+  if (output.hasSolvent) {
     output.hasSolvent = false;
     double solvent = output.solventFreedom;
     double solute = output.degreesOfFreedom - solvent;
@@ -790,13 +787,13 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     };
     double k = output.solventKinetic, h = output.solventHalf;
     if (solvent > 0.0) {
-      output.solventOptimal.push_back(get(k, h, solvent));
-      output.solventFull.push_back(2.0 * k / (solvent * units::boltzmann));
+      output.solventOptimal.add(get(k, h, solvent));
+      output.solventFull.add(2.0 * k / (solvent * units::boltzmann));
     }
     if (solute > 0.5) {
-      output.soluteOptimal.push_back(
+      output.soluteOptimal.add(
           get(kinetic - k, kinetic + excess - h, solute));
-      output.soluteFull.push_back(2.0 * (kinetic - k) /
+      output.soluteFull.add(2.0 * (kinetic - k) /
                                   (solute * units::boltzmann));
     }
   }
@@ -857,13 +854,16 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     output.firstTotal = total;
   output.hasEnergies = true;
   output.lastTotal = total;
-  // For the rate at the end of `mdir run`; an embedded program reports
-  // none and keeps no time of its rows (#300).
-  if (!output.embedded)
-    output.energyTimes.emplace_back(
-        step, std::chrono::duration<double>(
-                  std::chrono::steady_clock::now().time_since_epoch())
-                  .count());
+  // For the rate at the end of `mdir run`: the first row at or after the
+  // middle of the run and the last one (#300).
+  std::pair<int64_t, double> time = {
+      step, std::chrono::duration<double>(
+                std::chrono::steady_clock::now().time_since_epoch())
+                .count()};
+  ++output.numEnergyTimes;
+  if (!output.rateFrom && step >= output.rateStep)
+    output.rateFrom = time;
+  output.rateLast = time;
 }
 
 /// The values of a buffer with three numbers per particle, scaled, in the
