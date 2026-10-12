@@ -792,6 +792,19 @@ format, or the outputs; every such change is listed under **Changed** or
   the rows that they replace: its two lines are the same to the digit,
   and the memory of the host is flat across rows (`output-rows.test`,
   `python-memory.test`).
+- `mdir run` without a log file keeps no text of its log (#304). The log
+  keeps what it prints until its file opens, so that the file holds the
+  lines before it; a run without `log` in `[output]` opens none, and
+  every line stayed in memory until the run ended, in a string that
+  doubles: +154 to +170 bytes a row of the energies between rows 512 and
+  65536, in dynamics and in a minimization (a row is about 121 bytes of
+  text), which is about 60 GB of text for 5e8 steps with a row at every
+  step. The run now tells its log after the set-up that no file will
+  open, and the log frees what it holds and keeps nothing; with a file it
+  frees the lines before the file once they are written. The standard
+  output and the log file are the same bytes, and the memory is flat
+  across rows with and without a log file (`output-rows.test`). The log of
+  a Python simulation is quiet and never kept text.
 - A writable borrow of a simulation with the groups refuses an orthorhombic
   cell whose least edge is below the pairlist distance over 0.999, as it
   refused a triclinic one (D242, D245); the check was skipped

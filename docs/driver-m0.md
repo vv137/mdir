@@ -419,7 +419,11 @@ The log goes to the standard output and, with `log` in `[output]`, to that
 file as well (D149, Section 2.8); `energy` writes its rows as columns. Its
 first line names the build that wrote it, `MDIR 0.1.0, commit
 <12 hexadecimal digits>`, followed by `with uncommitted changes` when the
-tree had them (D174).
+tree had them (D174). The file holds every line from the first: the run
+keeps what it prints before the file opens, at the end of its set-up, and
+writes it there. After that it keeps no text of its log, and a run without
+`log` keeps none from the same point (#304): its memory does not grow with
+the rows.
 
 ```text
 INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
