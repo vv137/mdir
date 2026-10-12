@@ -240,9 +240,11 @@ reading);
 one call of `run(n)` with a reporter of every step; and 0.00 for
 `run(1)` and for `run(n)` without one. The growth followed the rows, not
 the calls or the steps. The memory was reachable and freed with the
-simulation, so no tool for leaks reports it; the resident memory showed
-it only past some $10^5$ rows. `mdir run` keeps the same 48 bytes a row of
-its log, bounded by the number of its rows, and reads them at its end.
+simulation, so no tool for leaks reports it, and the resident memory
+did not move over these 8192 rows, in a heap that had the room. `mdir
+run` keeps the same 48 bytes a row of its log, bounded by the number of
+its rows (48 MB of rows for $10^9$ steps with a row every 1000 steps), and
+reads them at its end.
 
 The device is resolved when the first GPU simulation in a process runs:
 `Execution.device` is an index among the devices that `CUDA_VISIBLE_DEVICES`

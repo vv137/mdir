@@ -192,7 +192,8 @@ def rows(what, step):
     reading and has doubled at the second. Without it the difference read
     0 bytes over 8192 rows on the CPU and on a GPU, so the bound is of
     what Python may allocate between the two readings, not of the
-    allocator: the bytes in use count blocks, not pages."""
+    allocator: the bytes in use count blocks, not pages. It lets through
+    what grows by less than 4 bytes a row; nothing smaller is covered."""
     step(ROWS)
     gc.collect()
     before = libc.mallinfo2()
