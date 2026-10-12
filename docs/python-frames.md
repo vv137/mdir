@@ -611,9 +611,9 @@ the kernels with the neighbor build are 0.8 ms.
   stack of its own, so the address of the frame of its call of
   `@mdrtFrameBoundary` is the depth of that stack where it waits, and the
   depth after frame 201 is that after frame 1 to the byte, whatever put an
-  allocation in the loop, the builder or a pass; on the CPU the bytes in
-  use of the allocator grow by less than 4096 from frame 101 to frame 201
-  (measured: -16), which lets 41 bytes a frame pass. The depth says
+  allocation in the loop, the builder or a pass; the bytes in use of the
+  allocator of the host, on the CPU and on a GPU, grow by 64 at most from
+  frame 101 to frame 201 (measured: +0; see the next item). The depth says
   nothing of memory that a frame takes and gives back, and the test covers
   the programs it compiles: the dipeptide in water with the whole
   potential and with the dependent terms. Since #305 the lowerings are a
@@ -625,6 +625,45 @@ the kernels with the neighbor build are 0.8 ms.
   `Simulation._ir` (the emitted module) and `Simulation._stack_in_use`
   (the depth), are private: they are not part of the interface and may
   change or go.
+- **The memory of the host does not grow with the frames or the calls**
+  (#306). What a call returns is the caller's: $8K$ bytes per output and
+  the rows of the Jacobian, freed with the result. Besides it the host
+  keeps nothing for a frame or for a call. Measured with
+  `scripts/validation/frames/heap.py`: one evaluator of the dipeptide, the
+  bytes in use of the allocator (`mallinfo2`: `uordblks + hblkhd`, the
+  thread cache off) read after 1, 2, 4, ... calls, where a vector that
+  doubles would read the same number of bytes a frame at every reading.
+  They read +0 between every two readings on the CPU for calls of 1, 25,
+  50, and 256 frames, with the Jacobian kept, not returned
+  (`jacobian_bytes=0`), and not asked (`gradient=False`), for the whole
+  potential and the dependent terms, in double and mixed precision (48
+  cases to 4,096 frames or more, and 8 to 102,400 or 131,072), and on a
+  GPU, where they are the bytes of the host all the same, to 131,072
+  frames. The reading sees everything that the host takes for a frame,
+  since all of it comes from the allocator of the C library: the C++ of
+  the driver and of the binding, the runtime (`malloc`, `calloc`,
+  `realloc`), and the buffers of the compiled code, whose `malloc` and
+  `free` are functions of the host. What is mapped otherwise is taken
+  once: the stack of an activation and the code of an engine, and the
+  address space mapped outside the heap (`/proc/self/maps`) is the same
+  number at each of 18 readings to 131,072 frames on the CPU, for each of
+  the three states of the Jacobian. Outside both are the memory of the
+  device and the page-locked memory of the host that the driver gives
+  (`python-memory-gpu.test` reads the device). `mallinfo2` does not see
+  the small objects of Python either: the blocks
+  of the interpreter (`sys.getallocatedblocks`) rise by 70 to 180 over
+  the first 512 calls, while its free lists fill, and by 4 at most from
+  there to call 4,096, and by 1 at most from there to call 131,072. The movement that #306 reports, some 600 bytes in
+  one step and 16 up and down, was the reader of the test: it made the
+  `ctypes` class of
+  the structure and the handle of the C library anew at every reading,
+  and those are blocks in use that differ from one reading to the next
+  (+576 once, at the fourth handle of a process that evaluates nothing).
+  The tests now read with a structure and a handle made once, and their
+  bound is 64 bytes over 100 frames given as 3 calls of 25 frames and 25
+  calls of one frame, which lets 0.64 bytes a frame and 2.3 a call pass;
+  a vector of the host that takes 8 bytes a frame reads +1024 there,
+  and one that takes 8 bytes a call +256.
 - **What is not checked in the text.** A row that is taken once, before
   the loop, holds at a frame what the frame before wrote: the evaluation
   must write every slot before the call that takes the row, as it does

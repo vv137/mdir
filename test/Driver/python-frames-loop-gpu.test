@@ -1,8 +1,10 @@
 # REQUIRES: python-api, cuda
 # What the assembly of the loop over frames assumes of the text that the
 # builder emits (#302) on a GPU, in double and mixed precision: the text of
-# the loop and the stack of the entry at the boundary, to the byte, as
-# python-frames-loop.test has them; the memory of the host is read there.
+# the loop, the stack of the entry at the boundary, to the byte, and the
+# bytes in use of the allocator of the host from frame 101 to frame 201
+# (#306: what the host and the runtime of the device keep for a frame), as
+# python-frames-loop.test has them.
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide loop GPU Double | FileCheck %s -DMODE="GPU Double"
 # RUN: %mdir_python %S/Inputs/python_frames.py %S/Inputs/dipeptide loop GPU Mixed | FileCheck %s -DMODE="GPU Mixed"
 # CHECK: [[MODE]]: the loop over frames of the whole potential: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
@@ -10,5 +12,7 @@
 # CHECK: [[MODE]]: the loop over frames of a program with a barostat: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
 # CHECK: [[MODE]]: the loop over frames of a triclinic cell: {{.*}}; in it 0 allocations of the stack, 0 calls in the generic form, 0 arguments of the entry that a frame replaces; {{[0-9]+}} allocations of the stack before it: True
 # CHECK: [[MODE]]: the stack of the entry of the whole potential at the boundary after frames 1, 101, and 201: {{[0-9]+}} bytes, then +0 and +0 bytes (bound 0): True
+# CHECK: [[MODE]]: the bytes in use of the allocator with the whole potential from frame 101 to frame 201: {{.*}} (bound 64): True
 # CHECK: [[MODE]]: the stack of the entry of the dependent terms at the boundary after frames 1, 101, and 201: {{[0-9]+}} bytes, then +0 and +0 bytes (bound 0): True
+# CHECK: [[MODE]]: the bytes in use of the allocator with the dependent terms from frame 101 to frame 201: {{.*}} (bound 64): True
 # CHECK: loop passed
