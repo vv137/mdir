@@ -53,7 +53,8 @@ public:
                    "constant outside the first block of its function, where "
                    "'hoist-static-allocas' cannot take it once: in a loop of "
                    "a function that does not return, the stack would grow "
-                   "with every iteration";
+                   "with every iteration; this is a defect of mdir, not of "
+                   "the input";
             failed = true;
           }
           return;

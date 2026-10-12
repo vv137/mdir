@@ -625,9 +625,15 @@ the kernels with the neighbor build are 0.8 ms.
   that this is a check and not a reading, the lowering of a program of
   frames for the CPU runs the pass with `refuse-rest`: a module in which
   an allocation would be left outside the first block of a function (and
-  outside OpenMP, where each thread has its own) does not compile, with an
-  error that names the op, and a program of frames that compiles has none
-  (`test/Conversion/MDExecToLoops/hoist-allocas.mlir`).
+  outside OpenMP, where each thread has its own) does not compile, and a
+  program of frames that compiles has none
+  (`test/Conversion/MDExecToLoops/hoist-allocas.mlir`). A user would see
+  it where the evaluator is made: `mdir.FrameEvaluator(program)` raises
+  `mdir.CompileError`, "cannot lower program: ... 'llvm.alloca' op takes
+  memory of the stack of a size that is not a constant outside the first
+  block of its function ... this is a defect of mdir, not of the input",
+  with the line of the op in the emitted module. It is a defect to report,
+  not something a model or a frame can cause or mend.
   `python-frames-loop.test` and `python-frames-loop-gpu.test` read the
   emitted module of four evaluators (the rows in the loop, each of a
   constant size; no call in the generic form; no argument of the entry

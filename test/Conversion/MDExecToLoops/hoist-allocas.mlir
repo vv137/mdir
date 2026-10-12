@@ -13,7 +13,7 @@
 // OpenMP, and one that it cannot prove so does not compile
 // (hoist-allocas-refuse-rest.mlir has the module that it accepts).
 
-// REFUSED: error: 'llvm.alloca' op takes memory of the stack of a size that is not a constant outside the first block of its function
+// REFUSED: error: 'llvm.alloca' op takes memory of the stack of a size that is not a constant outside the first block of its function{{.*}}this is a defect of mdir, not of the input
 // REFUSED-NOT: error:
 
 // CHECK-LABEL: llvm.func @steps
