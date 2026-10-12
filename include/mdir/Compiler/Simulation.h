@@ -104,7 +104,11 @@ public:
   /// (D211). Without `cache`, the compilation reads and writes no entry of
   /// the compile cache (D217). With `store`, the simulation takes the code
   /// that an earlier one left there under the same key, or leaves its own
-  /// (D236); without `cache` it does neither.
+  /// (D236); without `cache` it does neither. With `frames`, the simulation
+  /// is that of a frame evaluator (D[frames-activation]): the entry of its
+  /// program is a loop over frames (Control::frames), it takes
+  /// `evaluateFrame` and updates of the tunables, and it takes no steps, no
+  /// evaluation of its state, no view, and no borrow.
   static llvm::Expected<std::unique_ptr<Simulation>>
   create(const model::PreparedModel &prepared, bool cache = true,
          CodeStore *store = nullptr, bool frames = false);
@@ -249,14 +253,17 @@ public:
   /// Evaluates the program at the positions `positions` (3 N numbers in nm,
   /// in the order of the input) and, if given, the cell `cell`, its
   /// diagonal a_x, b_y, c_z and its tilts b_x, c_x, c_y, of which a commit's
-  /// checks are asked (D238), in one start of an activation; nothing is carried
-  /// from the state of before, and the positions are taken as given. The
-  /// state of the simulation is then that frame, with the velocities of
-  /// before. Everything is checked before anything changes (InputError);
-  /// if the evaluation fails, the state of before is restored and the
-  /// simulation has not failed (SimulationError). Only a program compiled
-  /// with the derivative in the tunables takes it, since the energy of
-  /// D210 is that of `@tunable`.
+  /// checks are asked (D238), in the activation that the last frame left
+  /// waiting at its boundary (D[frames-activation]), or in one that it
+  /// begins; nothing is carried from the frame before but the buffers, and
+  /// the positions are taken as given. The state of the simulation stays
+  /// that of its program, with the cell of the frame. Everything is checked
+  /// before anything changes (InputError); if the evaluation fails, the
+  /// activation is ended, the cell of before is restored, and the
+  /// simulation has not failed (SimulationError). Only a simulation of a
+  /// frame evaluator (`create` with `frames`) takes it, of a program
+  /// compiled with the derivative in the tunables, since the energy of D210
+  /// is that of `@tunable`.
   llvm::Expected<FrameEvaluation>
   evaluateFrame(const double *positions,
                 const std::optional<std::array<double, 6>> &cell,

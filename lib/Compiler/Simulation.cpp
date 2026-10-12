@@ -1801,6 +1801,9 @@ llvm::Expected<compiler::SimulationView> Simulation::takeView() {
   if (borrowed)
     if (llvm::Error error = checkLeases("a view"))
       return std::move(error);
+  if (compiled->control.frames)
+    return unsupported("the simulation of a frame evaluator lends no state: "
+                       "its program holds a frame, not a state");
   if (!activation || !activation->atBoundary)
     return describeNoActivation();
   compiler::SimulationView view = describeView();
@@ -1857,6 +1860,9 @@ llvm::Expected<compiler::SimulationView> Simulation::takeBorrow() {
   if (prepared.control.minimize)
     return unsupported("a simulation that minimizes takes no writable "
                        "borrow");
+  if (compiled->control.frames)
+    return unsupported("the simulation of a frame evaluator lends no state: "
+                       "its program holds a frame, not a state");
   if (!activation || !activation->atBoundary)
     return describeNoActivation();
   compiler::SimulationView view = describeView();
