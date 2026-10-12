@@ -209,6 +209,10 @@ public:
     return tunableValues;
   }
   int64_t getTunablesVersion() const { return tunablesVersion; }
+  /// The module that the builder emitted for the program of this
+  /// simulation, as `mdir emit` prints that of a run: for the tests of
+  /// what the builder emits (#302).
+  const std::string &getProgramText() const;
   const std::vector<std::pair<int64_t, int64_t>> &getTunablesHistory() const {
     return tunablesHistory;
   }

@@ -1452,6 +1452,11 @@ PYBIND11_MODULE(_core, m) {
       }
       if (*error) raise(std::move(*error));
     }, py::arg("path"))
+    // The module that the builder emitted for the program of the
+    // simulation, which for an evaluator is the loop over frames
+    // (D251): private, for the tests of what the builder
+    // emits (#302).
+    .def_property_readonly("_ir", [](const PySimulation &s) { return s.simulation->getProgramText(); })
     // The evaluation of stored frames (D240,
     // docs/python-frames.md), for `mdir.FrameEvaluator`: `positions` is
     // (k, N, 3) float64 in nm in the order of the input, `cells` and

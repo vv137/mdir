@@ -364,6 +364,10 @@ Simulation::~Simulation() {
   compiled.reset();
 }
 
+const std::string &Simulation::getProgramText() const {
+  return compiled->program.module;
+}
+
 static llvm::Expected<std::unique_ptr<Simulation::Engine>>
 compileEngine(const Control &control, const System &system,
               const model::Execution &execution, bool cache,
