@@ -167,7 +167,8 @@ struct Output {
   /// of the next row, K and K_half, if `hasSolvent`, and for each row
   /// since the start, the temperatures of the solute and of the solvent:
   /// the optimal estimate and that of the velocities of the step
-  /// (D203).
+  /// (D203). `mdir run` summarizes them at its end; an embedded
+  /// run keeps none (#300).
   double solventFreedom = 0.0;
   bool hasSolvent = false;
   /// Whether a program embeds the run (a Python simulation, D196): its
@@ -300,7 +301,8 @@ struct Output {
   /// The steps of the outputs of the energies and when each was written,
   /// in seconds of a steady clock: the rate of the run past its start
   /// (the set-up and the first build), as GROMACS reports it with
-  /// `-resethway`.
+  /// `-resethway`. An embedded run, which reports no rate and may take
+  /// any number of rows, keeps none (#300).
   std::vector<std::pair<int64_t, double>> energyTimes;
 
   /// Where checkpoints go, and what they hold beside the state.
