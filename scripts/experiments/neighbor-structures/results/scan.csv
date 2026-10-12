@@ -1,5 +1,5 @@
 # JAC NVE (jac_nve of the Amber suite), 20000 steps (after) or 4000 steps x 5 (before), RTX 3090 (GPU 0).
-# before: the D79 build (2026-09-30, ~/notes); after: the warp search with the exclusions in it.
+# before: the D79 build (2026-09-30); after: the warp search with the exclusions in it.
 label,reach,ns_per_day,steps_between_builds
 before (D79 build: thread search + marks; before D81 and D83),8.6,324.1,3.0
 before (D79 build: thread search + marks; before D81 and D83),8.8,341.0,

@@ -25,8 +25,7 @@ box of an orthorhombic cell, the shape of a truncated octahedron or a
 rhombic dodecahedron, the hexagonal prism of a hexagonal cell. Hydrogens
 and virtual sites are not drawn; waters are their oxygens.
 
-Needs numpy, matplotlib, and ffmpeg on PATH (the environment ~/opt/render
-has them).
+Needs numpy and matplotlib in the Python that runs it, and ffmpeg on PATH.
 """
 import argparse
 import multiprocessing

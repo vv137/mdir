@@ -17,15 +17,20 @@ compiler.
 | `build.cu` | The build of groups of 16 on a device (order by a counting sort on a Z curve, or the compact order from the host with `ORDER=compact`; boxes; the lists, a warp a group and a lane a candidate), compared entry by entry with lists built on the host |
 | `search.cu` | The search of a build of the matrix as the template of MDIR does it (cells, runs of cells): a thread per particle, a warp per particle with ballots (with and without the excluded pairs), and a block per cell with the runs in shared memory. The matrices are compared entry by entry |
 | `run.sh` | Builds both, runs the sweeps, and writes `results/<date>-<device>.csv` |
-| `plot.py` | Draws `pairs.png`, `search.png`, `model.png`, and `scan.png` into `results/` (matplotlib; the project uses the environment `~/opt/render`) |
+| `plot.py` | Draws `pairs.png`, `search.png`, `model.png`, and `scan.png` into `results/` (needs numpy and matplotlib) |
 | `results/reference.csv` | Numbers measured with nsys in MDIR and in GROMACS 2026.3, which the plots set beside the prototypes |
 | `results/scan.csv` | The rate of MDIR on JAC against `pairlist_distance`, with the interval between builds |
 
 ```sh
-MDIR_BENCH_DIR=~/opt/benchmarks/amber CUDA_VISIBLE_DEVICES=0 \
-    NVCC=/usr/local/cuda-13.4/bin/nvcc ./run.sh
-~/opt/render/bin/python plot.py results/<date>-<device>.csv
+MDIR_BENCH_DIR=<the prepared Amber suite> CUDA_VISIBLE_DEVICES=0 \
+    NVCC=<the toolkit>/bin/nvcc ./run.sh
+python3 plot.py results/<date>-<device>.csv
 ```
+
+`MDIR_BENCH_DIR` is required
+([docs/environment.md](../../../docs/environment.md)); `NVCC` is `nvcc` on
+the path by default, and `CUDA_ARCH` the architecture to compile for
+(`sm_86` by default).
 
 ## What they showed (RTX 3090, 2026-09-30)
 
