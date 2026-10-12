@@ -17,7 +17,7 @@ Usage:
   bench.py PRMTOP INPCRD [--tunable soft|charges|lj] [--terms all|dependent]
            [--target GPU] [--precision Mixed] [--deterministic]
            [--frames 1,4,16,64,256] [--stride 40] [--repeats 5] [--profile N]
-           [--check-gpu N] [--store FILE] [--input-order]
+           [--check-gpu N] [--store FILE] [--input-order] [--groups]
 
 With `--profile N` the script evaluates N frames once after the first and
 stops, for the counters of `MDRT_PROFILE`: the difference of two runs with
@@ -28,7 +28,8 @@ a device that nothing else uses. With `--store FILE` the frames are kept
 in FILE (`.npz`) and read from it if it is there, so that runs that are
 compared evaluate the same frames and a run for the counters takes no step.
 With `--input-order` the program is compiled without the spatial order of
-the particles (`Execution.reorder = False`).
+the particles (`Execution.reorder = False`); with `--groups`, with the
+groups of 16 as its neighbor structure in place of the matrix.
 """
 import argparse
 import os
@@ -53,6 +54,7 @@ parser.add_argument("--profile", type=int, default=0)
 parser.add_argument("--check-gpu", type=int, default=None)
 parser.add_argument("--store", default=None)
 parser.add_argument("--input-order", action="store_true")
+parser.add_argument("--groups", action="store_true")
 args = parser.parse_args()
 
 if args.check_gpu is not None:
@@ -100,13 +102,15 @@ def program_():
     execution.deterministic = args.deterministic
     if args.input_order:
         execution.reorder = False
+    if args.groups:
+        execution.neighbor_structure = mdir.NeighborStructure.Groups
     integrator = mdir.Integrator()
     integrator.timestep = 0.0005
     return mdir.compile(system, state, integrator, mdir.Ensemble(), execution, mdir.Schedule())
 
 
 counts = sorted({int(k) for k in args.frames.split(",")})
-most = max(counts + [args.profile])
+most = args.profile or max(counts)
 program = program_()
 if args.store and os.path.exists(args.store):
     kept = np.load(args.store)
