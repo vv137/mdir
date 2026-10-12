@@ -217,6 +217,30 @@ A release is two steps, scripted so that nothing is done by hand
    notes are the changelog's section; the maintainer runs it, or approves
    it. `--container` also builds the Docker image.
 
+The suite of a release runs more than the suite of a pull request.
+`publish.sh` gives lit `-Drelease=1`, which enables the tests that require
+`release-tests` (`*-release.test` and `*-release-gpu.test`): where a test
+runs only a part of its cases by default, to keep the suite of every pull
+request short, its release twin runs the whole matrix. Today these are
+the tests of the leapfrog step that leaves the state of the plain step
+(`test/Driver/leapfrog-energy-step*.test`). By default all 17 cases run on
+the CPU in double precision, and the CPU in mixed precision and a GPU in
+double and in mixed precision run three of them, one for each form of the
+step with constraints; a release adds the 17 cases on the CPU in mixed
+precision and on a GPU in double and in mixed precision. Without the
+parameter the release tests are reported as unsupported. To run them by
+hand, give lit the parameter: `LIT_OPTS="-Drelease=1"` with `check-mdir`,
+or `lit -Drelease=1 test`.
+
+A test is a candidate for a release twin when it is among the slowest of
+a suite because it repeats its cases over targets, precisions, or
+parameters, and when its default form still runs every path of the code
+that the whole matrix checks, with a case that failed before the fix it
+guards for each. Its twin then holds what the default form leaves out, so
+that a case leaves the default suite without leaving the release. The
+tier is not a place for a case that fails or fails now and then: that is
+a defect, and an issue.
+
 GitHub has no GPU, so the build and the suite run on the maintainer's
 machine; the workflow `release-check` checks on the pushed tag that the
 version, the changelog, the notes, and the decision numbers agree.

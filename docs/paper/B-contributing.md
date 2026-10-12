@@ -30,6 +30,7 @@ image, on CUDA's runtime image with libdevice from the toolkit.
 |---|---|---|
 | Default | `lit test` | Dialects and passes (`test/Dialect`), lowerings (`test/Conversion`), templates (`test/Runtime`), generated code run on the host (`test/Integration`), and runs of the driver on the CPU and the GPU (`test/Driver`) |
 | Sanitizer | `lit -Dsanitize=1 test` | The GPU tests under compute-sanitizer |
+| Release | `lit -Drelease=1 test` | The whole matrix of the tests that run a part of their cases by default (`*-release.test`, `*-release-gpu.test`); the suite of `scripts/release/publish.sh` |
 | Scale | `MDIR_BENCH_DIR=<dir> lit test/Scale` | Short runs of the Amber benchmark suite |
 | Host sanitizers | `scripts/build-sanitized.sh <dir>` | All tests with the driver and runtimes under AddressSanitizer and UndefinedBehaviorSanitizer |
 

@@ -8,7 +8,9 @@
 #  1. checks that CMakeLists.txt and CHANGELOG.md name VERSION, and the
 #     decision numbers;
 #  2. configures and builds Release, and runs the full suite on GPU 1 under
-#     its lock (MDIR_RELEASE_GPU_LOCK, default ~/build/locks/gpu1.lock);
+#     its lock (MDIR_RELEASE_GPU_LOCK, default ~/build/locks/gpu1.lock),
+#     with the tests of a release (lit's -Drelease=1: the whole matrix of
+#     the tests that run a part of their cases by default);
 #  3. builds the white paper (PANDOC, default ~/opt/pandoc/bin/pandoc);
 #  4. writes the assets to ~/build/release/vVERSION: the source archive
 #     (git archive), the installed tree for manylinux_2_28 x86-64 with CUDA
@@ -54,7 +56,7 @@ cmake -G Ninja -S "$src" -B "$build" -DCMAKE_BUILD_TYPE=Release \
 "$ninja" -C "$build" > "$log-build.log"
 
 echo "== suite on GPU 1 (log $log-check.log)"
-flock "$lock" sh -c "nvidia-smi -i 1; CUDA_VISIBLE_DEVICES=1 '$ninja' -C '$build' check-mdir" > "$log-check.log" 2>&1 \
+flock "$lock" sh -c "nvidia-smi -i 1; CUDA_VISIBLE_DEVICES=1 LIT_OPTS=\"\${LIT_OPTS:-} -Drelease=1\" '$ninja' -C '$build' check-mdir" > "$log-check.log" 2>&1 \
   || { grep -E '^FAIL:|Failed' "$log-check.log" >&2; echo "the suite failed: nothing is tagged" >&2; exit 1; }
 grep -E '^\s+(Passed|Unsupported)' "$log-check.log"
 

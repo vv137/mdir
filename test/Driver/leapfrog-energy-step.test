@@ -1,21 +1,40 @@
 # Under leapfrog every program of a step leaves the same state: a step
 # that writes a row of energies is the plain step to the bit (#285). The
-# dipeptide in water, 20 steps in the deterministic mode on the CPU, in
-# double and in mixed precision; two runs that differ only in
-# 'energy_interval' end in the same state, at constant energy, with
-# velocity rescaling, a Nose-Hoover chain, and Langevin dynamics, with and
-# without constraints, and with stochastic cell rescaling by each count of
-# its work ("TROTTER", "TROTTER_FIRST_ORDER", "EXACT", "FIRST_ORDER") and
-# each coupling of the cell, whose step that closes a period takes or
-# leaves the energies. In double precision the positions are those of
-# velocity Verlet within 1e-11 nm, where it takes the same
-# steps. Inputs/leapfrog_energy_step.py.
+# dipeptide in water, 20 steps in the deterministic mode on the CPU; two
+# runs that differ only in 'energy_interval' end in the same state, at
+# constant energy, with velocity rescaling, a Nose-Hoover chain, and
+# Langevin dynamics, with and without constraints, and with stochastic
+# cell rescaling by each count of its work ("TROTTER",
+# "TROTTER_FIRST_ORDER", "EXACT", "FIRST_ORDER") and each coupling of the
+# cell, whose step that closes a period takes or leaves the energies. In
+# double precision the positions are those of velocity Verlet within
+# 1e-11 nm, where it takes the same steps. Inputs/leapfrog_energy_step.py.
+#
+# All 17 cases run here in double precision: the programs of a step are
+# written once for the CPU and a GPU and for both precisions, so every
+# suite checks every case here. In mixed precision three cases run by
+# default, as on a GPU (leapfrog-energy-step-gpu.test); all 17 run there
+# in the suite of a release (leapfrog-energy-step-release.test and its
+# -gpu twin, lit's -Drelease=1).
+#
+# The three cases, one for each form of the step with constraints (#285):
+#   langevin               Langevin dynamics: the velocities change within
+#                          the drift, so every program takes the projected
+#                          form, the first half kick of velocity Verlet;
+#   nve                    constant energy: the step with the virial keeps
+#                          the kick of the plain step and takes the drift
+#                          of velocity Verlet on the side, for the virial;
+#   v-rescale-anisotropic  the scaling step of the barostat with
+#                          "TROTTER_FIRST_ORDER" and the anisotropic
+#                          coupling, with against without the virial.
+# Before the fix the two runs of each of the three differed (by 2.7e-6,
+# 2.3e-14, and 4.8e-6 nm on the CPU in double precision).
 #
 # REQUIRES: hdf5
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/leapfrog_energy_step.py mdir %S/Inputs %t/double CPU DOUBLE | FileCheck %s --check-prefix=DOUBLE
-# RUN: %python %S/Inputs/leapfrog_energy_step.py mdir %S/Inputs %t/mixed CPU MIXED | FileCheck %s --check-prefix=MIXED
+# RUN: %python %S/Inputs/leapfrog_energy_step.py mdir %S/Inputs %t/mixed CPU MIXED langevin nve v-rescale-anisotropic | FileCheck %s --check-prefix=MIXED
 #
 # With constraints, where the velocities change within the drift, every
 # program takes the first half kick of velocity Verlet from the projected
@@ -46,23 +65,9 @@
 # DOUBLE: leapfrog CPU DOUBLE: 17 of 17 cases passed
 
 # MIXED: CPU MIXED nve: the states are identical
-# MIXED: CPU MIXED nve-free: the states are identical
-# MIXED: CPU MIXED v-rescale: the states are identical
-# MIXED: CPU MIXED nose-hoover: the states are identical
 # MIXED: CPU MIXED langevin: the states are identical
-# MIXED: CPU MIXED langevin-free: the states are identical
-# MIXED: CPU MIXED langevin-trotter: the states are identical
-# MIXED: CPU MIXED langevin-trotter-first-order: the states are identical
-# MIXED: CPU MIXED v-rescale-trotter: the states are identical
-# MIXED: CPU MIXED v-rescale-trotter-first-order: the states are identical
-# MIXED: CPU MIXED v-rescale-exact: the states are identical
-# MIXED: CPU MIXED v-rescale-first-order: the states are identical
-# MIXED: CPU MIXED nose-hoover-trotter: the states are identical
-# MIXED: CPU MIXED v-rescale-semi-isotropic: the states are identical
 # MIXED: CPU MIXED v-rescale-anisotropic: the states are identical
-# MIXED: CPU MIXED v-rescale-anisotropic-exact: the states are identical
-# MIXED: CPU MIXED langevin-anisotropic: the states are identical
-# MIXED: leapfrog CPU MIXED: 17 of 17 cases passed
+# MIXED: leapfrog CPU MIXED: 3 of 3 cases passed
 
 # LANGEVIN:      dyn.program @step(
 # LANGEVIN:      %v0u = dyn.kick %v, %f, %m, %half : !vec
