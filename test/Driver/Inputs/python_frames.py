@@ -89,10 +89,15 @@ def expect(error, call, text=""):
     raise AssertionError(f"expected {error.__name__} ({text})")
 
 
-def execution_(deterministic=True):
+def execution_(deterministic=True, reorder=False):
+    """The programs here keep the particles in the order of the input, as
+    the program of a frame evaluator does (D[frames-activation]): a sampler
+    then takes its sums in the order of the evaluator, and the two agree to
+    the bit. `activation` has a sampler in the spatial order."""
     execution = mdir.Execution()
     execution.target, execution.precision = getattr(mdir.Target, target), getattr(mdir.Precision, precision)
     execution.deterministic = deterministic
+    execution.reorder = reorder
     return execution
 
 
@@ -180,14 +185,12 @@ def dipeptide_model(gradient=True):
     return system, state
 
 
-def dipeptide_program(deterministic=True, gradient=True, reorder=True, state=None):
+def dipeptide_program(deterministic=True, gradient=True, reorder=False, state=None):
     system, first = dipeptide_model(gradient)
     integrator = mdir.Integrator()
     integrator.timestep = 0.0005
-    execution = execution_(deterministic)
-    execution.reorder = reorder
     return mdir.compile(system, first if state is None else state, integrator, mdir.Ensemble(),
-                        execution, mdir.Schedule())
+                        execution_(deterministic, reorder), mdir.Schedule())
 
 
 def sample(sim, count, stride):
@@ -1145,7 +1148,7 @@ def run_activation():
     from mdir import _frames
     # A sampler that keeps the particles in the order of the input: its
     # sums are taken in the order in which those of the evaluator are.
-    program = dipeptide_program(reorder=False)
+    program = dipeptide_program()
     sim = simulation(program)
     states, gradients = sample(sim, 6, 4)
     count, last = len(states), len(states) - 1
@@ -1180,12 +1183,12 @@ def run_activation():
     energy = rows = 0.0
     for n in (0, last):
         start = mdir.InitialState.from_state(states[n], velocities=False)
-        g = simulation(dipeptide_program(state=start)).tunables.gradient()
+        g = simulation(dipeptide_program(reorder=True, state=start)).tunables.gradient()
         energy = max(energy, abs(out.energy[n] - g.energy))
         rows = max(rows, max(relative(out.jacobian[name][n], g[name]) for name in names))
     print(f"{mode}: against a simulation in the spatial order compiled from the frame: the "
-          f"energy within {1e-9 if double else 5e-3:g} kJ/mol, the rows within "
-          f"{1e-12 if double else 1e-5:g} relative: "
+          f"energy {energy:.1e} kJ/mol (tolerance {1e-9 if double else 5e-3:g}), the rows "
+          f"{rows:.1e} relative (tolerance {1e-12 if double else 1e-5:g}): "
           f"{energy < (1e-9 if double else 5e-3) and rows < (1e-12 if double else 1e-5)}")
     assert energy < (1e-9 if double else 5e-3) and rows < (1e-12 if double else 1e-5), \
         (energy, rows)
@@ -1211,6 +1214,9 @@ def run_activation():
     # activation of its own.
     other = mdir.FrameEvaluator(program, terms="dependent")
     reference = other.evaluate(positions, edges).dependent_energy.copy()
+    # The program of the dependent terms is kept with the one it is made
+    # from: a second evaluator compiles nothing.
+    assert mdir.FrameEvaluator(program, terms="dependent").program is other.program
     between = True
     for n in range(count):
         between = between and same(evaluator.evaluate(positions[n:n + 1], edges[n:n + 1]), [n])

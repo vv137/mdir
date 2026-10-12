@@ -9280,8 +9280,6 @@ void Builder::emitEntry() {
     emitReorder("  ", "_in", "0", "", givenForces && !control.frames,
                 velocities, branchesStart() ? "%fg" : "");
   if (control.frames) {
-    // The order of the particles of each frame is its own: a frame is not
-    // near the one before it.
     os.flush();
     frameHead += program.module.substr(frameMark);
     program.module.resize(frameMark);
@@ -9463,9 +9461,9 @@ void Builder::emitEntry() {
   if (control.frames) {
     // The loop over frames, which has no end of its own, as the loop over
     // parts has none: each iteration waits at its boundary for the cell and
-    // the positions of a frame, orders the particles, and evaluates what
-    // the start of a run evaluates, in a segment of its own, so that the
-    // neighbor structures are built anew (D218).
+    // the positions of a frame, places the virtual sites, and evaluates
+    // what the start of a run evaluates, in a segment of its own, so that
+    // the neighbor structures are built anew (D218).
     os.flush();
     std::string chunk = frameHead + "  scf.for %i_frame_once = %c0 to %c1 "
                                     "step %c1 {\n" +
@@ -10043,7 +10041,12 @@ llvm::Error Builder::build() {
         (control.prunedDistance - control.cutoffDistance) * units::length;
   // Cells of half the reach of a neighbor structure: particles that are
   // neighbors are then a few cells apart in memory.
-  program.reorders = control.reorder && !control.minimize;
+  // A program of frames keeps the particles in the order of the input
+  // (D[frames-activation]): an order chosen at every frame would renumber
+  // the tuples and build their incidence structures on the host at every
+  // frame, which is most of what the start of an activation costs, and the
+  // neighbor structures bin the particles themselves.
+  program.reorders = control.reorder && !control.minimize && !control.frames;
   program.orderWidth = 0.5 * control.pairlistDistance * units::length;
   program.neighborWidth = control.neighborWidth;
   if (program.neighborWidth == 0) {
