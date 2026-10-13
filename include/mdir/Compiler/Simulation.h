@@ -260,7 +260,16 @@ public:
     std::vector<double> observables;
     /// One array per tunable; empty without `gradient`.
     std::vector<std::vector<double>> gradient;
+    /// The gradient of that energy in the strain, dU/dε_ab under
+    /// x -> (1 + ε) x of the positions and the cell vectors, row by row, in
+    /// kJ/mol, if it was asked (D[frame-gradients]): the virial tensor of
+    /// the forces with the opposite sign, without the constraints, with
+    /// what the host adds at the volume of the frame.
+    std::array<double, 9> strain{};
   };
+  /// Whether the forces of the program, and so the gradient in the
+  /// positions that `evaluateFrame` writes, are f64; f32 otherwise.
+  bool keepsForcesInDouble() const;
   /// Evaluates the program at the positions `positions` (3 N numbers in nm,
   /// in the order of the input) and, if given, the cell `cell`, its
   /// diagonal a_x, b_y, c_z and its tilts b_x, c_x, c_y, of which a commit's
@@ -275,10 +284,19 @@ public:
   /// frame evaluator (`create` with `frames`) takes it, of a program
   /// compiled with the derivative in the tunables, since the energy of D210
   /// is that of `@tunable`.
+  ///
+  /// `positionGradient`, if not null, is memory for 3 N numbers of the type
+  /// of the forces (`keepsForcesInDouble`), which takes the gradient of the
+  /// energy in the positions, dU/dx = -F in kJ/mol/nm, in the order of the
+  /// input; with `strain` the result has the gradient in the strain
+  /// (D[frame-gradients]). A frame that asks for neither copies nothing
+  /// more than before. After a frame that fails the memory holds numbers of
+  /// no meaning.
   llvm::Expected<FrameEvaluation>
   evaluateFrame(const double *positions,
                 const std::optional<std::array<double, 6>> &cell,
-                bool gradient);
+                bool gradient, void *positionGradient = nullptr,
+                bool strain = false);
   size_t getParticleCount() const { return system.getNumParticles(); }
   /// Writes the checkpoint of `mdir run` (H5MD format 1, D173) of the state
   /// after the last run, with `.prev` rotation and durable replacement, and

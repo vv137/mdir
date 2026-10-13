@@ -284,6 +284,43 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz) {
                (zz + constant) / units::energy);
 }
 
+void _mlir_ciface_mdrtWriteFrameForces(void *forces, void *ids) {
+  Output &output = *current;
+  if (!output.frameGradient)
+    return;
+  // dU/dx = -F, in the order of the input and in the type of the forces:
+  // nothing is converted.
+  auto *buffer = static_cast<StridedMemRefType<char, 2> *>(forces);
+  auto *numbers = static_cast<StridedMemRefType<int32_t, 1> *>(ids);
+  int64_t count = buffer->sizes[0];
+  auto fill = [&](auto *from, auto *to) {
+    for (int64_t i = 0; i != count; ++i) {
+      int64_t place = numbers->data[numbers->offset + i * numbers->strides[0]];
+      for (int64_t c = 0; c != 3; ++c)
+        to[3 * place + c] = -from[buffer->offset + i * buffer->strides[0] +
+                                  c * buffer->strides[1]];
+    }
+  };
+  if (output.force == Element::F32)
+    fill(reinterpret_cast<const float *>(buffer->data),
+         static_cast<float *>(output.frameGradient));
+  else
+    fill(reinterpret_cast<const double *>(buffer->data),
+         static_cast<double *>(output.frameGradient));
+  output.frameGradientWritten = true;
+}
+
+void _mlir_ciface_mdrtWriteFrameVirial(double xx, double xy, double xz,
+                                       double yx, double yy, double yz,
+                                       double zx, double zy, double zz) {
+  Output &output = *current;
+  // W = Σ d ⊗ F, and dU/dε_ab = Σ (dU/dx_a) x_b = -W_ba under x -> (1 + ε) x
+  // of the positions and the cell vectors. What the host adds at the volume
+  // of the frame is added by the one who reads this (Output::getFrameStrain).
+  output.frameStrain = {-xx, -yx, -zx, -xy, -yy, -zy, -xz, -yz, -zz};
+  output.frameStrainWritten = true;
+}
+
 void _mlir_ciface_mdrtWriteTerms(void *terms) {
   Output &output = *current;
   auto *values = static_cast<StridedMemRefType<double, 1> *>(terms);

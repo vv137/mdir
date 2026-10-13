@@ -294,6 +294,9 @@ struct compiler::Activation {
   /// diagonal and the tilts.
   std::unique_ptr<HostBuffer<2>> framePositions;
   std::array<double, 6> frameCell{};
+  /// What the host asks of that frame, each 1 or 0: its forces, its virial
+  /// (D[frame-gradients]).
+  std::array<double, 2> frameAsks{};
   /// The particle at each place of the program, once read.
   std::vector<int32_t> places;
 };
@@ -339,11 +342,13 @@ extern "C" void _mlir_ciface_mdrtPartBoundary(StridedMemRefType<char, 2> *x,
 
 /// The boundary of a program of frames (D251): the entry
 /// waits here for the next frame, and takes the buffer of the host that
-/// holds its positions as the result and its cell in `cell`. What the last
+/// holds its positions as the result, its cell in `cell`, and in `asks`
+/// what the host asks of it besides (D[frame-gradients]). What the last
 /// frame gave has reached the host through the calls of its evaluation.
 extern "C" void
 _mlir_ciface_mdrtFrameBoundary(StridedMemRefType<char, 2> *positions,
-                               StridedMemRefType<double, 1> *cell) {
+                               StridedMemRefType<double, 1> *cell,
+                               StridedMemRefType<double, 1> *asks) {
   compiler::Activation *a = runningActivation;
   a->boundary = static_cast<const char *>(__builtin_frame_address(0));
   a->atBoundary = true;
@@ -351,6 +356,8 @@ _mlir_ciface_mdrtFrameBoundary(StridedMemRefType<char, 2> *positions,
   *positions = a->framePositions->descriptor;
   for (size_t k = 0; k != a->frameCell.size(); ++k)
     cell->data[cell->offset + k * cell->strides[0]] = a->frameCell[k];
+  for (size_t k = 0; k != a->frameAsks.size(); ++k)
+    asks->data[asks->offset + k * asks->strides[0]] = a->frameAsks[k];
 }
 } // namespace
 
@@ -503,6 +510,10 @@ compileEngine(const Control &control, const System &system,
     add("_mlir_ciface_mdrtCheckSpread", (void *)&_mlir_ciface_mdrtCheckSpread);
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
+    add("_mlir_ciface_mdrtWriteFrameForces",
+        (void *)&_mlir_ciface_mdrtWriteFrameForces);
+    add("_mlir_ciface_mdrtWriteFrameVirial",
+        (void *)&_mlir_ciface_mdrtWriteFrameVirial);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
     add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);
@@ -2378,9 +2389,13 @@ Simulation::evaluateTunableGradient() {
   return collectTunableGradient();
 }
 
+bool Simulation::keepsForcesInDouble() const {
+  return compiled->program.force == Element::F64;
+}
+
 llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
     const double *positions, const std::optional<std::array<double, 6>> &cell,
-    bool gradient) {
+    bool gradient, void *positionGradient, bool strain) {
   if (busy.exchange(true))
     return simulationError("another operation is under way on this "
                            "simulation");
@@ -2484,18 +2499,30 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
     if (changesCell)
       setCell(*cell);
     a.frameCell = getCell();
+    // What is asked of this frame travels with it, so that a call that asks
+    // and one that does not share an activation.
+    a.frameAsks = {positionGradient ? 1.0 : 0.0, strain ? 1.0 : 0.0};
+    out.frameGradient = positionGradient;
+    out.frameGradientWritten = out.frameStrainWritten = false;
     out.tunableGradientWritten = false;
     out.tunableGradientFields.clear();
     out.lastEnergies.step = -1;
     resumeActivation();
   }
   out.fail = nullptr;
+  out.frameGradient = nullptr;
   if (failure.empty())
     failure = stopMessage;
   if (!error && failure.empty() &&
       (activation->returned || !activation->atBoundary))
     failure = "the program did not reach the end of the frame; this is a "
               "defect of mdir";
+  // What was asked and not handed over is a failure, not zeros.
+  if (!error && failure.empty() &&
+      ((positionGradient && !out.frameGradientWritten) ||
+       (strain && !out.frameStrainWritten)))
+    failure = "the program did not hand over the forces or the virial of the "
+              "frame that were asked; this is a defect of mdir";
   // A sum that is not a number: two particles at one place, or a state
   // that is none.
   if (!error && failure.empty() &&
@@ -2534,6 +2561,8 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
   result.observables = output->lastObservables.values;
   if (gradient)
     result.gradient = std::move(derivative->values);
+  if (strain)
+    result.strain = output->getFrameStrain();
   return result;
 }
 
