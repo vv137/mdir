@@ -137,7 +137,7 @@ freed blocks up to 32 MiB, and a larger structure was mapped from the
 system, faulted in page by page, and unmapped at every start: none of the
 five structures of JAC, one of Factor IX, four of Cellulose. A simulation
 now keeps the structures across its activations (Section 3.6,
-D[activation-start]): a start at which the particles have
+D253): a start at which the particles have
 not moved compares the order and the members with the kept copies (0.08,
 0.24, and 1.7 ms on the three systems) and builds nothing, and a start in
 a new order builds in the kept memory (2.4, 7.5, and 71 ms on the host,

@@ -1,7 +1,7 @@
 // With `kept-tuples`, the renumbered members of a tuple set and its
 // incidence structure are taken from the runtime, which may keep them from
 // one activation of an embedding program to the next
-// (D[activation-start]), and given back to it where they
+// (D253), and given back to it where they
 // would be freed. Without the option they are built by loops in the
 // module, as before.
 //

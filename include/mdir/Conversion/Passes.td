@@ -73,7 +73,7 @@ def ConvertMDExecToLoops
     taken from the runtime (`mdrtTuplesRenumber`, `mdrtTuplesIncidence`)
     and given back to it where they would be freed (`mdrtTuplesRelease`):
     a program that an embedding front end runs in activations keeps them
-    from one activation to the next (D[activation-start]). Without it they
+    from one activation to the next (D253). Without it they
     are built by loops in the module, as before.
   }];
   let options = [
@@ -280,7 +280,7 @@ def ConvertMDExecToGPU
            "taken from the runtime (mdrtDeviceTuplesRenumber, "
            "mdrtDeviceTuplesIncidence, mdrtDeviceTuplesMembers), which keeps "
            "them across the activations of an embedding program "
-           "(D[activation-start])">
+           "(D253)">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

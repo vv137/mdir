@@ -64,7 +64,7 @@ static const char *const flagFinishName = "mdrtFlagFinish";
 static const char *const flagMemoryName = "mdrtFlagMemory";
 /// The renumbered members, the incidence structures, and the copies of the
 /// members on the device that the runtime keeps (mdrt_cuda.c,
-/// D[activation-start]).
+/// D253).
 static const char *const tuplesRenumberName = "mdrtDeviceTuplesRenumber";
 static const char *const tuplesIncidenceName = "mdrtDeviceTuplesIncidence";
 static const char *const tuplesMembersName = "mdrtDeviceTuplesMembers";
@@ -186,7 +186,7 @@ public:
   /// Whether the renumbered members of the tuples, their incidence
   /// structures, and the copies of the members on the device are taken from
   /// the runtime, which may keep them from one activation of an embedding
-  /// program to the next (`kept-tuples`, D[activation-start]).
+  /// program to the next (`kept-tuples`, D253).
   bool keptTuples = false;
 
 private:

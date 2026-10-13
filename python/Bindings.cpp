@@ -1464,7 +1464,7 @@ PYBIND11_MODULE(_core, m) {
     // (taken, built, seconds): how many structures of the tuples the
     // activations took from those that the simulation keeps, how many they
     // built, and the time their code spent on both
-    // (D[activation-start]). Private, for the tests and the
+    // (D253). Private, for the tests and the
     // measurements: it may change or go.
     .def_property_readonly("_kept_tuples", [](const PySimulation &s) { return s.simulation->getKeptTuples(); })
     // False: every activation from the next on builds its structures of

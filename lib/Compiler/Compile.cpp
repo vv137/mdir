@@ -143,7 +143,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // The entry of an embedding front end runs in activations, which
        // begin again and again in the same order of the particles: the
        // runtime keeps the renumbered tuples and their incidence
-       // structures across them (D[activation-start]).
+       // structures across them (D253).
        << (control.segments ? "kept-tuples=true " : "")
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
@@ -161,7 +161,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // Reductions summed over fixed chunks in a fixed order: the same bits
   // from run to run and for any number of threads (D171).
   // The tuples of the entry of an embedding front end are the runtime's to
-  // keep across its activations (D[activation-start]).
+  // keep across its activations (D253).
   os << "md-exec-assign-storage,convert-md-exec-to-loops"
      << (control.segments ? "{kept-tuples=true}" : "")
      << ",fixed-order-reductions,";

@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The structures of the tuples that a simulation keeps from one activation
-# of its entry to the next (D[activation-start], #294),
+# of its entry to the next (D253, #294),
 # Inputs/python_kept_tuples.py, on the CPU: the store of the runtime
 # against a reference in NumPy, a kept structure that is written over under
 # MDRT_CHECK_KEPT_TUPLES, and a sequence of starts against a simulation that

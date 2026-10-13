@@ -40,7 +40,7 @@ static const char *const buildNeighborsName = "mdrt.build_neighbors_matrix";
 static const char *const createMatrixName = "mdrtHostMatrixCreate";
 static const char *const matrixEntriesName = "mdrtHostMatrixEntries";
 /// The renumbered members and the incidence structures that the runtime
-/// keeps (mdrt.c, D[activation-start]).
+/// keeps (mdrt.c, D253).
 static const char *const tuplesRenumberName = "mdrtTuplesRenumber";
 static const char *const tuplesIncidenceName = "mdrtTuplesIncidence";
 static const char *const tuplesReleaseName = "mdrtTuplesRelease";
@@ -136,7 +136,7 @@ private:
 
   /// The renumbered members and the incidence structures that the runtime
   /// gives and may keep from one activation of an embedding program to the
-  /// next (`kept-tuples`, D[activation-start]). A call of
+  /// next (`kept-tuples`, D253). A call of
   /// the runtime function `name` with `members`, as a buffer of any arity,
   /// and `other`, which gives a buffer of the type `type`; the runtime takes
   /// the buffer back before the end of the block of `op`.

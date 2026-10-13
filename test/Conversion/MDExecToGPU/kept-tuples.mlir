@@ -2,7 +2,7 @@
 // structure, and the copy of the members on the device for the loops that
 // evaluate each tuple once are taken from the runtime, which may keep them
 // from one activation of an embedding program to the next
-// (D[activation-start]), and given back to it where they
+// (D253), and given back to it where they
 // would be freed. Without the option they are built by loops in the module
 // and uploaded, as before.
 //

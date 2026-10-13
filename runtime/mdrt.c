@@ -684,7 +684,7 @@ void mdrtHostMatrixGrow(int64_t handle, int64_t width) {
 
 /*===----------------------------------------------------------------------===
   The structures of the tuples, kept from one activation to the next
-  (D[activation-start], mdrt_tuples.h)
+  (D253, mdrt_tuples.h)
   ===----------------------------------------------------------------------===
 
   An embedding program opens a store, tells it where an activation begins,

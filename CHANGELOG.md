@@ -439,7 +439,7 @@ format, or the outputs; every such change is listed under **Changed** or
   their text, and their entries of the cache are unchanged, and so is
   every number of an evaluator that asks for nothing new.
 - **A Python simulation keeps the structures of its tuples across the
-  starts of its activations** (D[activation-start], #294).
+  starts of its activations** (D253, #294).
   Each evaluation after a run, update of the tunables, commit of a borrow,
   and start after a checkpoint begins an activation (D215), which
   renumbered the bonds, angles, dihedrals, 1-4 pairs, and excluded pairs
@@ -478,7 +478,7 @@ format, or the outputs; every such change is listed under **Changed** or
   every kept structure that is taken is also built anew and compared, and
   a difference ends the program
   ([docs/environment.md](docs/environment.md#debugging),
-  [docs/jit-invariants.md](docs/jit-invariants.md#what-a-simulation-keeps-across-activations-dactivation-start)).
+  [docs/jit-invariants.md](docs/jit-invariants.md#what-a-simulation-keeps-across-activations-d253)).
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on

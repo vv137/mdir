@@ -118,7 +118,7 @@ on three threads, whose activations wait side by side.
 the one it began on, with four threads of execution on the CPU, and give the
 state of a run on one thread to the bit.
 
-## What a simulation keeps across activations (D[activation-start])
+## What a simulation keeps across activations (D253)
 
 An activation ends by freeing what it allocated (above), and the next one
 begins from the state of the host. One thing outlives it, since #294: the

@@ -225,7 +225,7 @@ public:
   /// incidence structure of a tuple set, in an order of the particles) the
   /// activations of the simulation took from those that it keeps, and how
   /// many they built, with the seconds that their code spent taking and
-  /// building them (D[activation-start]): for the tests and
+  /// building them (D253): for the tests and
   /// the measurements.
   std::tuple<int64_t, int64_t, double> getKeptTuples() const;
   /// Whether an activation takes the structures that the simulation keeps
@@ -510,7 +510,7 @@ private:
   std::unique_ptr<Activation> activation;
   /// The store of the runtime (mdrt_tuples.h) that keeps the renumbered
   /// members of the tuples and their incidence structures from one
-  /// activation to the next (D[activation-start]): opened
+  /// activation to the next (D253): opened
   /// with the first activation, in the runtime of the device if the program
   /// runs on one, and closed with the simulation.
   void *keptTuples = nullptr;

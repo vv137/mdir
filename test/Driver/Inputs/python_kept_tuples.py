@@ -1,5 +1,5 @@
 """The structures of the tuples that a simulation keeps from one activation
-of its entry to the next (D[activation-start], #294,
+of its entry to the next (D253, #294,
 docs/jit-invariants.md).
 
 Usage:

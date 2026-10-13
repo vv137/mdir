@@ -859,7 +859,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
     if (auto open = findRuntime<void *()>("mdrtDeviceActivationOpen"))
       a->deviceRecord = open();
   // What the activation before this one held of the kept structures of the
-  // tuples is free to be taken or built anew (D[activation-start]).
+  // tuples is free to be taken or built anew (D253).
   if (!keptTuples) {
     keptTuplesOnDevice = a->onDevice;
     if (auto open = findRuntime<void *()>(a->onDevice ? "mdrtDeviceTuplesOpen"

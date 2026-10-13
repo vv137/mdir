@@ -1013,7 +1013,7 @@ Cellulose is local (1.4 nm against 8.5 nm). Renumbering the tuples on the
 device, which would let a frame be ordered at no such cost, is #295. (The
 cost that grew faster than the system was found in #294 to be the memory
 of the structures, mapped and faulted in anew at every build once a
-structure is over 32 MiB; since D[activation-start] a build
+structure is over 32 MiB; since D253 a build
 takes the memory of the last, and a start in the order of the last start
 builds nothing.)
 

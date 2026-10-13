@@ -536,7 +536,7 @@ the device. The runtimes record what an activation allocates, which is
 freed when it ends; the state at the end of each part is copied on the
 device, so that a part that fails returns to it (D196). One
 thing is the simulation's and outlives its activations
-(D[activation-start]): the members of the tuples of the
+(D253): the members of the tuples of the
 topology renumbered to the places of the particles, and the incidence
 structure of each tuple set (Section 3.4). Both are functions of the
 members in the order of the files and of the identity of the particle at

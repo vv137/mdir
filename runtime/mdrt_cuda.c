@@ -1217,7 +1217,7 @@ void mdrtDeviceWaitAll(void) {
 
 /*===----------------------------------------------------------------------===
   The structures of the tuples, kept from one activation to the next
-  (D[activation-start], mdrt_tuples.h)
+  (D253, mdrt_tuples.h)
   ===----------------------------------------------------------------------===
 
   As in the runtime of the host (mdrt.c), with the incidence structure and

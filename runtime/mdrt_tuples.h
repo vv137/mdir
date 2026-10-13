@@ -1,5 +1,5 @@
 /* The structures of the tuples of a topology that an embedding program keeps
-   from one activation of its entry to the next (D[activation-start], #294).
+   from one activation of its entry to the next (D253, #294).
 
    When the particles are put in an order, the members of every tuple set
    are renumbered to their places and the incidence structure of the set is

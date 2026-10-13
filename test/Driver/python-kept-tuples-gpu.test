@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # The structures of the tuples that a simulation keeps from one activation
-# of its entry to the next (D[activation-start], #294),
+# of its entry to the next (D253, #294),
 # Inputs/python_kept_tuples.py, on a GPU, where the incidence structures and
 # the copies of the members are on the device: a sequence of starts against
 # a simulation that builds every structure anew, with every structure that

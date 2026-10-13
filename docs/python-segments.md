@@ -211,14 +211,14 @@ simulation holds it between runs, so that live simulations hold the sum of
 theirs. `mdir run` calls its entry once and opens no activation.
 
 One thing is the simulation's and not an activation's
-(D[activation-start], #294): the renumbered members of the tuples
+(D253, #294): the renumbered members of the tuples
 of the topology and their incidence structures, which a start of an
 activation takes as they are where the particles are in the order of the
 last start, and builds in the same memory where they are not. They are
 allocated outside the records of the activations, on the device outside
 the pool of blocks, and are freed with the simulation; what is kept, what
 invalidates it, and how a stale structure is excluded are in
-[jit-invariants.md](jit-invariants.md#what-a-simulation-keeps-across-activations-dactivation-start).
+[jit-invariants.md](jit-invariants.md#what-a-simulation-keeps-across-activations-d253).
 While an activation is alive a simulation therefore holds what it held
 before (the structures were the activation's), and between activations it
 holds them still; new on the host are two copies of the members and one of
@@ -412,7 +412,7 @@ upload. The commit of a writable borrow (D229,
 does the same with the state that a consumer wrote. An
 upload in place that kept the order would make an update cheaper, at the
 cost of that comparison; it can follow if M2b needs it. Since
-D[activation-start] such a start no longer renumbers the
+D253 such a start no longer renumbers the
 tuples and builds and uploads their incidence structures, which was most
 of what it cost beyond its evaluation: the order that it computes is the
 order of the last start wherever the particles have not moved, and the
