@@ -1,0 +1,20 @@
+# REQUIRES: python-api
+# The structures of the tuples that a simulation keeps from one activation
+# of its entry to the next (D[activation-start], #294),
+# Inputs/python_kept_tuples.py, on the CPU: the store of the runtime
+# against a reference in NumPy, a kept structure that is written over under
+# MDRT_CHECK_KEPT_TUPLES, and a sequence of starts against a simulation that
+# builds every structure anew, with every structure that is taken also built
+# and compared.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_kept_tuples.py store | FileCheck %s --check-prefix=STORE
+# RUN: %mdir_python %S/Inputs/python_kept_tuples.py loud | FileCheck %s --check-prefix=LOUD
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_kept_tuples.py starts %S/Inputs/dipeptide CPU %t | FileCheck %s
+# STORE: without a store: the renumbered members and the incidence structures of tuples of 2, 3, and 4 equal the reference, each built for its caller
+# STORE: with a store: a structure is taken where the identities and the members are those of before and built where one element of either differs; the order of the files is kept by its members; what the code holds is not built over
+# STORE: kept tuples store passed
+# LOUD: a kept structure written over ends the program under MDRT_CHECK_KEPT_TUPLES, with the structure named
+# LOUD: kept tuples loud passed
+# CHECK: CPU Double: 78 states, energies, and derivatives over 13 evaluations, an update, a commit, a checkpoint, and a run continued from it equal those of a simulation that builds its structures anew, to the bit; 5 structures taken where nothing moved, 5 built after the particles were ordered anew
+# CHECK: CPU Mixed: 78 states, energies, and derivatives over 13 evaluations, an update, a commit, a checkpoint, and a run continued from it equal those of a simulation that builds its structures anew, to the bit; 5 structures taken where nothing moved, 5 built after the particles were ordered anew
+# CHECK: kept tuples starts CPU passed

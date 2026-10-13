@@ -373,7 +373,29 @@ Simulation::~Simulation() {
   // (D199).
   endActivation(Ended::NotBegun);
   freeSnapshot();
+  // What was kept for the activations of the entry, after the last of them.
+  if (keptTuples)
+    if (auto close = findRuntime<void(void *)>(keptTuplesOnDevice
+                                                   ? "mdrtDeviceTuplesClose"
+                                                   : "mdrtTuplesClose"))
+      close(keptTuples);
   compiled.reset();
+}
+
+std::tuple<int64_t, int64_t, double> Simulation::getKeptTuples() const {
+  int64_t counts[2] = {0, 0};
+  double seconds = 0.0;
+  if (keptTuples) {
+    if (auto read = findRuntime<void(void *, int64_t *)>(
+            keptTuplesOnDevice ? "mdrtDeviceTuplesCounts"
+                               : "mdrtTuplesCounts"))
+      read(keptTuples, counts);
+    if (auto read = findRuntime<double(void *)>(
+            keptTuplesOnDevice ? "mdrtDeviceTuplesSeconds"
+                               : "mdrtTuplesSeconds"))
+      seconds = read(keptTuples);
+  }
+  return {counts[0], counts[1], seconds};
 }
 
 const std::string &Simulation::getProgramText() const {
@@ -836,6 +858,23 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   if (a->onDevice)
     if (auto open = findRuntime<void *()>("mdrtDeviceActivationOpen"))
       a->deviceRecord = open();
+  // What the activation before this one held of the kept structures of the
+  // tuples is free to be taken or built anew (D[activation-start]).
+  if (!keptTuples) {
+    keptTuplesOnDevice = a->onDevice;
+    if (auto open = findRuntime<void *()>(a->onDevice ? "mdrtDeviceTuplesOpen"
+                                                      : "mdrtTuplesOpen"))
+      keptTuples = open();
+  }
+  if (keptTuples) {
+    if (auto keep = findRuntime<void(void *, int32_t)>(
+            keptTuplesOnDevice ? "mdrtDeviceTuplesKeep" : "mdrtTuplesKeep"))
+      keep(keptTuples, keepsTuples ? 1 : 0);
+    if (auto begin = findRuntime<void(void *)>(keptTuplesOnDevice
+                                                   ? "mdrtDeviceTuplesBegin"
+                                                   : "mdrtTuplesBegin"))
+      begin(keptTuples);
+  }
   getcontext(&a->context);
   a->context.uc_stack.ss_sp = stack;
   a->context.uc_stack.ss_size = activationStack;
@@ -858,6 +897,11 @@ void Simulation::resumeActivation() {
   if (a.onDevice)
     if (auto enter = findRuntime<void(void *)>("mdrtDeviceActivationEnter"))
       enter(a.deviceRecord);
+  if (keptTuples)
+    if (auto enter = findRuntime<void(void *)>(keptTuplesOnDevice
+                                                   ? "mdrtDeviceTuplesEnter"
+                                                   : "mdrtTuplesEnter"))
+      enter(keptTuples);
   {
     std::lock_guard<std::mutex> lock(getAllocationMutex());
     currentAllocations = &a.allocations;
@@ -873,6 +917,11 @@ void Simulation::resumeActivation() {
     leave();
   if (a.onDevice)
     if (auto leave = findRuntime<void()>("mdrtDeviceActivationLeave"))
+      leave();
+  if (keptTuples)
+    if (auto leave = findRuntime<void()>(keptTuplesOnDevice
+                                             ? "mdrtDeviceTuplesLeave"
+                                             : "mdrtTuplesLeave"))
       leave();
 }
 

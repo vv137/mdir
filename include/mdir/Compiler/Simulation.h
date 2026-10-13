@@ -12,6 +12,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <tuple>
 #include <vector>
 namespace mdir { namespace driver { struct Output; } }
 namespace mdir { namespace compiler {
@@ -220,6 +221,19 @@ public:
   /// shows here as a depth that grows from one boundary to the next, to the
   /// byte: for the tests of the memory per frame (#302).
   size_t getStackInUse() const;
+  /// How many structures of the tuples (the renumbered members and the
+  /// incidence structure of a tuple set, in an order of the particles) the
+  /// activations of the simulation took from those that it keeps, and how
+  /// many they built, with the seconds that their code spent taking and
+  /// building them (D[activation-start]): for the tests and
+  /// the measurements.
+  std::tuple<int64_t, int64_t, double> getKeptTuples() const;
+  /// Whether an activation takes the structures that the simulation keeps
+  /// where their inputs are those given (the default), or builds every one
+  /// anew: for the tests, which compare the two. It holds from the next
+  /// activation on.
+  void setKeepsTuples(bool keeps) { keepsTuples = keeps; }
+  bool getKeepsTuples() const { return keepsTuples; }
   const std::vector<std::pair<int64_t, int64_t>> &getTunablesHistory() const {
     return tunablesHistory;
   }
@@ -494,6 +508,14 @@ private:
   /// none before the first part, after a failure, and while the values of
   /// the program change.
   std::unique_ptr<Activation> activation;
+  /// The store of the runtime (mdrt_tuples.h) that keeps the renumbered
+  /// members of the tuples and their incidence structures from one
+  /// activation to the next (D[activation-start]): opened
+  /// with the first activation, in the runtime of the device if the program
+  /// runs on one, and closed with the simulation.
+  void *keptTuples = nullptr;
+  bool keptTuplesOnDevice = false;
+  bool keepsTuples = true;
   /// Whether `system` and `forces` hold the state of the activation, or of
   /// the simulation if there is none.
   mutable bool hostCurrent = true;
