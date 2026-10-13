@@ -113,6 +113,11 @@ struct MdrtTupleStore {
      code has spent in the functions that give them. */
   int64_t kept, built;
   double seconds;
+  /* On a device: the memory of the host in which the rows of a structure
+     are written, a range of particles at a time, before their upload; of a
+     bounded size (mdrt_cuda.c). */
+  int32_t *staging;
+  size_t stagingBytes;
 };
 
 static double mdrtTuplesNow(void) {

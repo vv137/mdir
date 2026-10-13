@@ -449,21 +449,29 @@ format, or the outputs; every such change is listed under **Changed** or
   the system because memory over 32 MiB is mapped and faulted in anew at
   every start. A simulation now keeps them, takes them at a start where
   the particles are in the order of the last one, and builds them in the
-  same memory where they are not. On the host the tuples of a start then
-  cost 0.08 ms on JAC, 0.24 ms on Factor IX, and 1.7 ms on Cellulose
-  where they took 2 ms, 14 ms, and 315 ms, and in a new order 2.4 ms,
-  7.5 ms, and 71 ms; on a GPU the uploads go with the build (on JAC on
-  one RTX PRO 6000 the tuples were 3.0 of the 5.0 ms of such a start).
+  same memory where they are not. On one RTX PRO 6000 Blackwell in mixed
+  precision, a start with its evaluation at which the particles have not
+  moved (`tunables.gradient()` again) takes 2.0 ms on JAC, 6.1 ms on
+  Factor IX, and 30 ms on Cellulose where it took 5.0, 61, and 413 ms; an
+  update of the tunables with its evaluation 8.3, 30, and 203 ms where it
+  took 15, 135, and 867 ms (what remains of an update is not its starts,
+  #324); a start after steps, in a new order, 5.1, 17, and 98 ms where it
+  took 5.0, 58, and 387 ms: nothing on JAC, whose structures were under
+  32 MiB. The rate of a step is unchanged on JAC and Factor IX (0.1%
+  and 0.3%); on Cellulose two runs of each build in turn gave 0.8% less
+  in the mean, within the 1.9% by which `main` differs from itself.
   Nothing of the interface changes and no number: every state, energy,
   and derivative of a sequence of starts equals that of before to the
-  bit, in double and mixed precision, in the deterministic mode
-  (`python-kept-tuples.test`, `python-kept-tuples-gpu.test`). What
+  bit, on the CPU and a GPU, in double and mixed precision, in the
+  deterministic mode (`python-kept-tuples.test`,
+  `python-kept-tuples-gpu.test`). What
   changes: the pipeline of the program of a
   simulation and of a frame evaluator names a new option of the lowering,
   so the code that a `Program` keeps for its simulations and the entries
   of the compile cache on disk are made anew once; a simulation holds on
   the host two copies of the members of its tuples and one of the order
-  for each tuple set (2 MB on JAC, 48 MB on Cellulose), and holds the
+  for each tuple set (2 MB on JAC, 48 MB on Cellulose) and on a GPU
+  16 MiB in which the structures are written, and holds the
   structures between activations as it held them during one. `mdir run`
   is unchanged: its programs, their pipeline, and their lowered text. New
   for diagnosis: with `MDRT_CHECK_KEPT_TUPLES` set in the environment,

@@ -168,15 +168,17 @@ for the next activation, so the device memory of the process is what it
 was). The second is new: two copies of the members (as given, and
 renumbered) and one of the identities for each tuple set. On a GPU the
 host never holds a whole incidence structure: its rows are written a few
-megabytes at a time and uploaded (`tuplesBuildOnDevice`), where each was
-built whole in new memory of the host before.
+megabytes at a time and uploaded (`tuplesBuildOnDevice`), in 16 MiB of
+the store that are taken once, where each was built whole in new memory
+of the host before.
 
 **What the comparison costs.** A start that takes its structures compares
 the identities and the members of every tuple set with the kept copies: on
 the CPU target 0.08 ms on JAC, 0.24 ms on Factor IX, and 1.7 ms on
 Cellulose for the five sets together, against the 2 ms, 14 ms, and 315 ms
 that building them took; on a GPU the identities are read from the device
-once for each set as before.
+once for each set as before, and the whole is 0.13, 0.43, and 2.1 ms (one
+RTX PRO 6000) of starts of 2.0, 6.1, and 30 ms.
 
 **I1. A kept structure is taken only where it is the one that would be
 built.** The renumbered members and the incidence structure are functions

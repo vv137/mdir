@@ -141,9 +141,13 @@ D[activation-start]): a start at which the particles have
 not moved compares the order and the members with the kept copies (0.08,
 0.24, and 1.7 ms on the three systems) and builds nothing, and a start in
 a new order builds in the kept memory (2.4, 7.5, and 71 ms on the host,
-where it took 2, 14, and 315 ms). On a GPU the upload goes with the
-build: on JAC on one RTX PRO 6000 in mixed precision the tuples were 2.97
-of the 5.04 ms of a start with its evaluation, 1.96 ms of it the uploads.
+where it took 2, 14, and 315 ms). On one RTX PRO 6000 Blackwell in mixed
+precision, where the upload goes with the build, a start with its
+evaluation at which the particles have not moved takes 2.0, 6.1, and 30
+ms on the three systems where it took 5.0, 61, and 413 ms, and one in a
+new order 5.1, 17, and 98 ms where it took 5.0, 58, and 387 ms. An update
+of the parameters with its evaluation takes 8.3, 30, and 203 ms where it
+took 15, 135, and 867 ms; its two starts are now the smaller part of it.
 
 ## 10.5 Over long runs
 

@@ -1264,6 +1264,7 @@ void mdrtDeviceTuplesClose(void *opaque) {
       check(cuMemFree((CUdeviceptr)e->deviceMembers), "cuMemFree");
     free(e);
   }
+  free(store->staging);
   free(store->entries);
   free(store);
 }
@@ -1309,24 +1310,38 @@ static void *tuplesDeviceKept(size_t bytes) {
 
 /* Builds the incidence structure of `members` at `device`: the rows are
    written on the host a range of particles at a time, in memory of a few
-   megabytes that the processor keeps in its caches, and each range is
+   megabytes (16 MiB at most), and each range is
    uploaded before the next is written. The host never holds the whole
    structure (355 MB for the dihedrals of Cellulose), whose memory would be
    mapped and faulted in at every build (#294). */
 static void tuplesBuildOnDevice(void *device, const int32_t *members,
                                 int64_t tuples, int64_t arity,
                                 int64_t particles, int64_t width) {
-  enum { STAGING_BYTES = 4 << 20 };
+  /* The memory of the ranges is the store's, taken once and cleared once:
+     taking and clearing it for every structure cost more than the build of
+     the structures of JAC (0.5 ms with 4 MiB, 1.2 ms with 16). */
+  enum { STAGING_BYTES = 16 << 20 };
+  struct MdrtTupleStore *store = currentTuples;
   struct MdrtTupleIndex index;
   mdrtTupleIndexBuild(&index, members, tuples, arity, particles);
   size_t rowBytes = (size_t)width * sizeof(int32_t);
   int64_t rows = (int64_t)(STAGING_BYTES / rowBytes);
   if (rows < 1)
     rows = 1;
-  int32_t *staging = calloc((size_t)rows, rowBytes);
-  if (!staging) {
-    fprintf(stderr, "mdrt: out of memory of the host\n");
-    abort();
+  size_t needed = (size_t)rows * rowBytes;
+  int32_t *staging = store ? store->staging : NULL;
+  if (!staging || (store && store->stagingBytes < needed)) {
+    if (store)
+      free(store->staging);
+    staging = calloc(1, needed);
+    if (!staging) {
+      fprintf(stderr, "mdrt: out of memory of the host\n");
+      abort();
+    }
+    if (store) {
+      store->staging = staging;
+      store->stagingBytes = needed;
+    }
   }
   for (int64_t begin = 0; begin < particles; begin += rows) {
     int64_t end = begin + rows < particles ? begin + rows : particles;
@@ -1334,7 +1349,8 @@ static void tuplesBuildOnDevice(void *device, const int32_t *members,
     tuplesToDevice((char *)device + (size_t)begin * rowBytes, staging,
                    (size_t)(end - begin) * rowBytes);
   }
-  free(staging);
+  if (!store)
+    free(staging);
   mdrtTupleIndexFree(&index);
 }
 

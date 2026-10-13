@@ -590,9 +590,9 @@ position that is not a number, the generator Philox 4×32-10
 isotropic or semi-isotropic, drawn from it, the means of the pressures by
 axis that the semi-isotropic barostat took, the FFT of the host
 [[Reinecke2019]](references.md#reinecke2019), and the matrix of the host),
-414 for the structures of the tuples that a simulation keeps across its
+419 for the structures of the tuples that a simulation keeps across its
 activations, shared by both (`runtime/mdrt_tuples.h`),
-and 1502 lines for NVIDIA devices (`runtime/mdrt_cuda.c`, on the driver
+and 1518 lines for NVIDIA devices (`runtime/mdrt_cuda.c`, on the driver
 API only: loading of modules, launches that skip empty grids, one stream
 in order plus an optional second one, words of memory of the host mapped
 for the device for flags (D118), a caching allocator whose frees do not

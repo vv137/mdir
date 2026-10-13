@@ -222,7 +222,9 @@ invalidates it, and how a stale structure is excluded are in
 While an activation is alive a simulation therefore holds what it held
 before (the structures were the activation's), and between activations it
 holds them still; new on the host are two copies of the members and one of
-the identities for each tuple set (1.9 MB on JAC, 48 MB on Cellulose). The
+the identities for each tuple set (1.9 MB on JAC, 48 MB on Cellulose) and,
+on a GPU, 16 MiB in which the rows of a structure are written before
+their upload. The
 number of kept structures is that of the tuple sets, whatever the number
 of starts and of orders.
 
@@ -416,10 +418,25 @@ of what it cost beyond its evaluation: the order that it computes is the
 order of the last start wherever the particles have not moved, and the
 structures that the simulation keeps are taken as they are; the
 comparison with a simulation compiled from the state holds to the bit as
-before (`python-kept-tuples*.test`). On JAC on one RTX PRO 6000 in mixed
-precision the tuples were 2.97 of the 5.04 ms of such a start: the reads
-of the identities 0.08 ms, the renumbering 0.12 ms, the build 0.79 ms,
-and the uploads 1.96 ms.
+before (`python-kept-tuples*.test`). On one RTX PRO 6000 Blackwell in
+mixed precision (PME, flexible, the length of a soft pair term tunable;
+`scripts/benchmarks/activation/start.py`; ms, the least of five, before →
+after):
+
+| System | `gradient()` again | `update()` and `gradient()` | 20 steps and `gradient()`, a new order |
+|---|---|---|---|
+| JAC, 23,558 atoms | 4.95 → 2.01 | 14.9 → 8.29 | 4.98 → 5.08 |
+| Factor IX, 90,906 | 60.9 → 6.08 | 135 → 29.7 | 57.5 → 17.3 |
+| Cellulose, 408,609 | 413 → 29.5 | 867 → 203 | 387 → 98.0 |
+
+Before, the tuples were 2.97 of 5.04 ms on JAC, 55.7 of 61.9 ms on Factor
+IX, and 233 of 264 ms on Cellulose (the build on the host 0.79, 38, and
+167 ms; the uploads 1.96, 9.7, and 41.7 ms; the free of the host's
+structures 0.03, 6.9, and 19 ms). After, a start that takes them spends
+0.13, 0.43, and 2.1 ms on them, and one in a new order 3.2, 12.4, and
+75 ms, which on JAC is what it took before: no structure of JAC was over
+the 32 MiB from which memory is mapped anew. What an update costs beyond
+its two starts (4, 18, and 144 ms) is #324.
 
 **The CPU** has the same ownership: the activation keeps its buffers of the
 host, which are those that the entry was given, and the views are their
