@@ -1,0 +1,26 @@
+# REQUIRES: python-api, torch, torchpme, cuda
+# The Coulomb part of the gradients of the energy of a frame in the
+# positions and in the strain (D[frame-gradients], docs/python-frames.md)
+# against torch-pme (Loche et al., J. Chem. Phys. 162, 142501 (2025)), an
+# independent differentiable PME, on a GPU, in double and mixed precision,
+# Inputs/python_frame_gradients.py: the gradients of the evaluator at the
+# charges of the model less those at charges of zero, against the autograd
+# of PyTorch in the positions and in a strain of torch-pme's sum of the
+# mesh with the pair sums written in PyTorch, at the same positions, cell,
+# charges, splitting parameter, and grid. The dipeptide in water in an
+# orthorhombic cell at 64 and 128 points, and water in a rhombic
+# dodecahedron at 32 and 64; the tolerance is three times what the two
+# programs change by between the grids.
+# RUN: %torch_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide torchpme GPU Double | FileCheck %s --check-prefixes=DIPEPTIDE,CHECK -DMODE="GPU Double"
+# RUN: %torch_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide torchpme-water GPU Double | FileCheck %s --check-prefixes=WATER,CHECK -DMODE="GPU Double"
+# RUN: %torch_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide torchpme GPU Mixed | FileCheck %s --check-prefixes=DIPEPTIDE,CHECK -DMODE="GPU Mixed"
+# RUN: %torch_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide torchpme-water GPU Mixed | FileCheck %s --check-prefixes=WATER,CHECK -DMODE="GPU Mixed"
+# DIPEPTIDE: [[MODE]]: the dipeptide in water, 1168 particles, 79024 pairs: the Coulomb part of G against torch-pme, grid 64
+# DIPEPTIDE: [[MODE]]: the dipeptide in water: the Coulomb part of the nine components of S, grid 64
+# DIPEPTIDE: [[MODE]]: the dipeptide in water: the same at 128 points, G
+# DIPEPTIDE: [[MODE]]: the dipeptide in water: the same at 128 points, S
+# WATER: [[MODE]]: water in a rhombic dodecahedron, 1209 particles, 124961 pairs: the Coulomb part of G against torch-pme, grid 32
+# WATER: [[MODE]]: water in a rhombic dodecahedron: the Coulomb part of the nine components of S, grid 32
+# WATER: [[MODE]]: water in a rhombic dodecahedron: the same at 64 points, G
+# WATER: [[MODE]]: water in a rhombic dodecahedron: the same at 64 points, S
+# CHECK: torchpme passed

@@ -1467,11 +1467,15 @@ PYBIND11_MODULE(_core, m) {
     // `tilts` (k, 3) or None; `first` is the index of the first frame, for the messages.
     // Returns the energies, the virials, the volumes (k,), the observed
     // columns (k, columns), and with `gradient` the rows of the Jacobian
-    // (k, entries of all tunables in their order), else None.
+    // (k, entries of all tunables in their order), else None; then, with
+    // `position_gradient`, the gradient of the energies in the positions
+    // (k, N, 3) in the type of the forces of the program, kJ/mol/nm, and
+    // with `strain_gradient` that in the strain (k, 3, 3) float64, kJ/mol
+    // (D[frame-gradients]), else None.
     .def("_evaluate_frames", [](py::object self,
                                 py::array_t<double, py::array::c_style> positions,
                                 py::object cellsGiven, py::object tiltsGiven, bool gradient,
-                                int64_t first) {
+                                int64_t first, bool positionGradient, bool strainGradient) {
       auto &s = self.cast<PySimulation &>();
       compiler::Simulation &sim = *s.simulation;
       const auto &set = sim.getTunables();
@@ -1502,6 +1506,25 @@ PYBIND11_MODULE(_core, m) {
           observed(frames * columns), rows(gradient ? frames * entries : 0);
       const double *x = positions.data();
       const double *c = cells ? cells->data() : nullptr;
+      // The gradient in the positions is written where the caller will
+      // have it, in the type of the forces: no copy of it is kept here.
+      py::object positionGradients = py::none(), strainGradients = py::none();
+      char *g = nullptr;
+      double *strains = nullptr;
+      size_t width = sim.keepsForcesInDouble() ? sizeof(double) : sizeof(float);
+      if (positionGradient) {
+        std::vector<py::ssize_t> shape = {static_cast<py::ssize_t>(frames),
+                                          static_cast<py::ssize_t>(count), 3};
+        py::array made = sim.keepsForcesInDouble() ? py::array(py::array_t<double>(shape))
+                                                   : py::array(py::array_t<float>(shape));
+        g = static_cast<char *>(made.mutable_data());
+        positionGradients = made;
+      }
+      if (strainGradient) {
+        py::array_t<double> made({static_cast<py::ssize_t>(frames), py::ssize_t(3), py::ssize_t(3)});
+        strains = made.mutable_data();
+        strainGradients = made;
+      }
       std::optional<llvm::Error> error;
       size_t at = 0;
       {
@@ -1512,8 +1535,12 @@ PYBIND11_MODULE(_core, m) {
           if (c)
             cell = {c[3 * at], c[3 * at + 1], c[3 * at + 2],
                     t ? t[3 * at] : 0.0, t ? t[3 * at + 1] : 0.0, t ? t[3 * at + 2] : 0.0};
-          auto result = sim.evaluateFrame(x + 3 * count * at, cell, gradient);
+          auto result = sim.evaluateFrame(x + 3 * count * at, cell, gradient,
+                                          g ? g + 3 * count * width * at : nullptr,
+                                          strains != nullptr);
           if (!result) { error.emplace(result.takeError()); break; }
+          if (strains)
+            std::copy(result->strain.begin(), result->strain.end(), strains + 9 * at);
           energy[at] = result->energy; virial[at] = result->virial; volume[at] = result->volume;
           for (size_t k = 0; k != columns && k != result->observables.size(); ++k)
             observed[at * columns + k] = result->observables[k];
@@ -1547,11 +1574,17 @@ PYBIND11_MODULE(_core, m) {
           host::copy(volume.data(), frames, shape1),
           host::copy(observed.data(), observed.size(),
                      {static_cast<py::ssize_t>(frames), static_cast<py::ssize_t>(columns)}),
-          jacobian);
+          jacobian, positionGradients, strainGradients);
     }, py::arg("positions"), py::arg("cells"), py::arg("tilts"), py::arg("gradient"),
-       py::arg("first") = 0)
+       py::arg("first") = 0, py::arg("position_gradient") = false,
+       py::arg("strain_gradient") = false)
     .def_property_readonly("_particle_count", [](PySimulation &s) {
       return s.simulation->getParticleCount();
+    })
+    // Whether the program keeps its forces in f64, the type of the gradient
+    // in the positions of `_evaluate_frames`; private.
+    .def_property_readonly("_forces_double", [](PySimulation &s) {
+      return s.simulation->keepsForcesInDouble();
     })
     .def("run", [](py::object self, int64_t steps, bool energy) {
       auto &s = self.cast<PySimulation &>();

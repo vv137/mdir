@@ -42,6 +42,7 @@ element.
 | $c_i,\ \gamma(x)$ | Coefficient of the dispersion of particle $i$, $2\sqrt{\varepsilon}\,\sigma^3$ of its type, so that $C_{6,ij} = c_ic_j$; and $\gamma(x) = e^{-x^2}(1 + x^2 + x^4/2)$, the share of $-c_ic_j/r^6$ at $x = \beta r$ that the direct terms of the mesh of the dispersion keep (Section 5.5) |
 | $K_a$ | In Section 5, the number of grid points of PME along axis $a$; $n$ the order of the B-splines (4) |
 | $\mathsf W$ | Virial tensor; $\mathsf W_{aa} = -\partial U/\partial\varepsilon_a$ along the scaling of positions and cell (Sections 6.4 and 6.5) |
+| $\boldsymbol\varepsilon$ | In Section 3.6, a strain as a matrix, under which $\mathbf x_i \to (\mathsf 1 + \boldsymbol\varepsilon)\mathbf x_i$ and each cell vector, a row of $H$, alike, so that $\varepsilon_{aa}$ is a change of $\varepsilon_a$ and $\partial U/\partial\varepsilon_{ab} = -\mathsf W_{ba}$; $\mathbf K$ there is the force on the second end of a displacement $\mathbf d$ |
 | $T,\ k_B$ | Temperature and Boltzmann's constant |
 | $\gamma$; $D_i = k_BT/(m_i\gamma)$ | Friction of Langevin and Brownian dynamics, in 1/ps (in Section 6.4, $\gamma$ is the surface tension); the diffusion constant of particle $i$ in Brownian dynamics (Section 6.1) |
 | $\mathcal P_{\mathbf x}$; $\mathbf v_\parallel$ | In Section 6.1, the projection that leaves no velocity along the constraints at $\mathbf x$ (the second half of RATTLE), and the part of a leapfrog kick along them, $\mathbf v_\parallel = (1 - \mathcal P_{\mathbf x_n})(\mathbf v_{n-\frac12} + h\mathbf a_n)$ |

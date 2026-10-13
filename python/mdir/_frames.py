@@ -7,6 +7,7 @@ needs U and dU/dtheta at frames sampled at other values of theta; the
 weights and the loss stay in the framework.
 """
 from collections.abc import Mapping
+from types import MappingProxyType
 
 import numpy as np
 
@@ -14,16 +15,37 @@ from . import _core
 
 #: The bytes of float64 positions that one call into the extension takes.
 _BATCH_BYTES = 1 << 26
+#: The gradients of the energy that `evaluate` gives as arrays where they
+#: are asked, in the order of what `_evaluate_frames` returns.
+_GRADIENTS = ("positions", "strain")
+
+
+def _named(gradients):
+    """The names of `gradients`, each once, in the order given: a tuple
+    among "tunables", "positions", and "strain"."""
+    if isinstance(gradients, str) or not hasattr(gradients, "__iter__"):
+        raise _core.InputError("frames: gradients is a tuple of names among 'tunables', "
+                               f"'positions', and 'strain'; found {gradients!r}")
+    named = tuple(dict.fromkeys(gradients))
+    for name in named:
+        if name not in ("tunables",) + _GRADIENTS:
+            raise _core.InputError("frames: gradients names 'tunables', 'positions', and "
+                                   f"'strain'; found {name!r}")
+    return named
 
 
 def _array(source, name):
     """A NumPy array of `source` on the host, without a copy where it is one
-    already. A tensor that requires a gradient is refused: the gradient in
-    the positions and the strain is not returned yet, and is not zero."""
+    already. A tensor that requires a gradient is refused here: the
+    evaluator returns arrays, which carry no graph, and a gradient left out
+    is not zero. `mdir.torch.evaluate` differentiates in the positions and
+    the cell given as tensors (D[frame-gradients])."""
     if getattr(source, "requires_grad", False):
         raise _core.UnsupportedError(
-            f"{name} require a gradient: the gradients of the energy in the positions and "
-            "the cell are not returned by the frame evaluator yet; detach them")
+            f"{name} require a gradient, which the arrays of FrameEvaluator.evaluate do not "
+            "carry: ask for gradients=('positions', 'strain'), or give mdir.torch.evaluate the "
+            "positions as one tensor (K, N, 3) and the cells and tilts as tensors; or detach "
+            "them")
     if isinstance(source, np.ndarray):
         return source
     if hasattr(source, "__dlpack__"):
@@ -220,8 +242,14 @@ class FrameEnergies:
     name raises in the other mode, and `unavailable` lists what the mode
     does not give."""
 
-    def __init__(self, evaluator, source, energy, virial, volume, observed, rows, gradient):
+    def __init__(self, evaluator, source, energy, virial, volume, observed, rows, gradient,
+                 gradients):
         self._evaluator, self._source, self._gradient = evaluator, source, gradient
+        # The gradients of the energy that were asked (D[frame-gradients]):
+        # "positions", dU/dx (K, N, 3) in kJ/mol/nm, in the order of the
+        # input and the type of the forces of the program; "strain",
+        # dU/d(epsilon) (K, 3, 3) float64 in kJ/mol.
+        self.gradients = MappingProxyType({name: _frozen(a) for name, a in gradients.items()})
         self._energy, self._virial, self.volume = _frozen(energy), _frozen(virial), _frozen(volume)
         self.terms, self.unavailable = evaluator.terms, evaluator.unavailable
         self.count = len(energy)
@@ -266,7 +294,7 @@ class FrameEnergies:
         over the frames otherwise."""
         evaluator = self._evaluator
         if not self._gradient:
-            raise _core.InputError("these frames were evaluated with gradient=False")
+            raise _core.InputError("these frames were evaluated without 'tunables' in gradients")
         g = np.asarray(_array(cotangent, "cotangent"), dtype=np.float64)
         if g.shape != (self.count,):
             raise _core.InputError(f"vjp: expected a cotangent of shape ({self.count},); found "
@@ -322,6 +350,10 @@ class FrameEvaluator:
         # every call are evaluated in one activation of it.
         self._simulation = _core.Simulation(program, _frames=True)
         self._particles = self._simulation._particle_count
+        # The type of the gradient in the positions: that of the forces of
+        # the program.
+        self._force_type = np.dtype(np.float64 if self._simulation._forces_double
+                                    else np.float32)
         # The cell of a frame that gives none is that of the program, not
         # that of the last frame evaluated.
         cell = self._simulation.state().cell
@@ -347,7 +379,7 @@ class FrameEvaluator:
             self.unavailable = ("dependent_energy",)
         else:
             self._depends = {"dependent_energy": reads, "volume": frozenset()}
-            self.unavailable = ("energy", "virial") + tuple(
+            self.unavailable = ("energy", "virial", "gradients") + tuple(
                 c for c in given if c not in self._columns)
         for column in self._columns:
             term = column.rsplit(".", 1)[0]
@@ -390,11 +422,23 @@ class FrameEvaluator:
         (`TunableValues`, D213); those of the program at first."""
         return self._simulation.tunables
 
-    def evaluate(self, positions, cells=None, tilts=None, *, gradient=True):
+    def evaluate(self, positions, cells=None, tilts=None, *, gradients=("tunables",)):
         """The energies, virials, volumes, and observed columns of the
-        frames `positions`, and with `gradient` their derivative in the
-        tunables; see docs/python-frames.md."""
+        frames `positions`, and the gradients of the energy that
+        `gradients` names, a tuple among "tunables" (the derivative in the
+        tunables: `jacobian` and `vjp`; the default), "positions", and
+        "strain" (`gradients["positions"]`, `gradients["strain"]`); see
+        docs/python-frames.md."""
         simulation = self._simulation
+        named = _named(gradients)
+        gradient = "tunables" in named
+        asked = tuple(name for name in named if name != "tunables")
+        if asked and self.terms != "all":
+            raise _core.UnsupportedError(
+                "the gradients in the positions and the strain are not given by a frame "
+                "evaluator with terms='dependent': it evaluates the terms that a tunable enters "
+                "alone, whose gradients are not those of the potential energy")
+        wants = ("positions" in asked, "strain" in asked)
         source = _source(positions, cells, tilts, self._particles)
         keep = bool(gradient)
         if keep and source.count is not None:
@@ -414,16 +458,23 @@ class FrameEvaluator:
                         f"passes jacobian_bytes ({self.jacobian_bytes}), so that vjp needs the "
                         "frames again, and an iterator gives them once: give a sequence")
                 keep = False
-                parts = [p[:4] + (None,) for p in parts]
-            parts.append(simulation._evaluate_frames(x, *self._cells(x, c, t), keep, at))
+                parts = [p[:4] + (None,) + p[5:] for p in parts]
+            parts.append(simulation._evaluate_frames(x, *self._cells(x, c, t), keep, at, *wants))
             at += len(x)
         if not parts:
             raise _core.InputError("frames: no frames were given")
         if source.count is None:
             source.count = at
-        columns = [np.concatenate([p[k] for p in parts]) for k in range(4)]
-        rows = np.concatenate([p[4] for p in parts]) if keep else None
-        return FrameEnergies(self, source, *columns, rows, bool(gradient))
+
+        def joined(k):
+            # One batch is the usual case, and its array is not copied.
+            return parts[0][k] if len(parts) == 1 else np.concatenate([p[k] for p in parts])
+
+        columns = [joined(k) for k in range(4)]
+        rows = joined(4) if keep else None
+        given = {name: joined(5 + k) for k, name in enumerate(_GRADIENTS) if name in asked}
+        return FrameEnergies(self, source, *columns, rows, bool(gradient),
+                             {name: given[name] for name in asked})
 
     def __repr__(self):
         return (f"FrameEvaluator(terms='{self.terms}', tunables={list(self._slices)}, "

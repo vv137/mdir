@@ -1,0 +1,19 @@
+# REQUIRES: python-api, openmm
+# The gradients of the energy of a frame in the positions and in the strain
+# (D[frame-gradients], docs/python-frames.md) of the whole potential
+# against OpenMM, on the CPU, in double and mixed precision,
+# Inputs/python_frame_gradients.py: the dipeptide in water with PME at the
+# same splitting parameter and grid, a cutoff of 0.8 nm, and the
+# Lennard-Jones shifted there. G against OpenMM's forces (its Reference
+# platform, in double precision); the nine components of S against central
+# differences under the strain of OpenMM's energy less u(r_c) of the pairs
+# within the cutoff, since OpenMM reports no virial and cuts without a
+# shift. At 64 and 128 points; the tolerance is three times what the two
+# programs change by between the grids.
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide openmm CPU Double | FileCheck %s -DMODE="CPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide openmm CPU Mixed | FileCheck %s -DMODE="CPU Mixed"
+# CHECK: [[MODE]]: the dipeptide in water, 1168 particles: G of the whole potential against the forces of OpenMM, grid 64
+# CHECK: [[MODE]]: the dipeptide in water: the nine components of S against central differences of the energy of OpenMM, grid 64
+# CHECK: [[MODE]]: the dipeptide in water: the same at 128 points, G
+# CHECK: [[MODE]]: the dipeptide in water: the same at 128 points, S
+# CHECK: openmm passed

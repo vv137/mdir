@@ -12,6 +12,37 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The gradients of the energy of a frame in the positions and in the
+  strain, from the frame evaluator (D[frame-gradients], #313):
+  `evaluator.evaluate(frames, gradients=("tunables", "positions",
+  "strain"))` gives `out.gradients["positions"]`, `(K, N, 3)` in
+  kJ/mol/nm, $\partial U/\partial\mathbf x = -\mathbf F$ in the order of
+  the input and in the type of the forces of the program (float32 in
+  `mixed`, float64 in `double` and in `mixed` with the deterministic
+  mode), and `out.gradients["strain"]`, `(K, 3, 3)` float64 in kJ/mol,
+  $\partial U/\partial\boldsymbol\varepsilon$ under $\mathbf x \to
+  (\mathsf 1 + \boldsymbol\varepsilon)\mathbf x$ of the positions and the
+  cell vectors: the virial tensor with the opposite sign, nine components
+  for orthorhombic and triclinic programs, not symmetrized. Without
+  constraints `virial` is $-\operatorname{tr}$ of it; with them `virial`
+  has the term of the constraint forces besides, and a pressure takes
+  `virial`. For a program with restraints to reference positions
+  `"strain"` is refused: their virial is taken about the references and
+  is not that derivative. A frame that asks for neither costs what it cost; one that
+  asks pays one more evaluation of its forces (a third of a frame on the
+  CPU; on one RTX 4090 in mixed precision 13% to 29% of a frame of the
+  dipeptide and 20% to 37% of one of JAC, by what is asked). Through
+  `mdir.torch.evaluate`, positions `(K, N, 3)`, `cells`, and `tilts` that
+  are tensors requiring a gradient are differentiated (the energy at
+  fixed Cartesian positions), and `gradients=("positions", "strain")`
+  returns the two as tensors. A loss on the forces or the stress can be
+  evaluated but cannot yet train the tunables: its derivative in them
+  (force matching) and every other second derivative raise
+  `mdir.UnsupportedError`, never a zero. Checked against central
+  differences of the evaluator's energy, torch-pme (the Coulomb part),
+  and OpenMM (the whole potential), on the CPU and a GPU, in double and
+  mixed precision. See
+  [docs/python-frames.md](docs/python-frames.md#the-gradients-in-the-positions-and-the-strain-dframe-gradients).
 - The thermostats of the control file and Brownian dynamics in the Python
   model (D249, #278): `Ensemble.thermostat`
   (`mdir.ThermostatMethod.VRescale`, the default, `Langevin`,
@@ -382,6 +413,31 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **`FrameEvaluator.evaluate` takes `gradients=` in place of `gradient=`**
+  (D[frame-gradients], #313; the maintainer's ruling on PR #314). The
+  argument `gradient=True` or `False`, whether the derivative in the
+  tunables is kept, is removed, with no alias. A script names what it
+  wants: `gradients=("tunables",)` is the default and what `gradient=True`
+  was, `gradients=()` what `gradient=False` was, and `"positions"` and
+  `"strain"` are the new outputs (under Added). What a user has to do:
+  replace `gradient=False` by `gradients=()` and drop `gradient=True`; a
+  call that still writes `gradient=` raises `TypeError`.
+- A second derivative through `mdir.torch.evaluate` raises
+  `mdir.UnsupportedError`, naming the derivative, where it raised
+  PyTorch's `RuntimeError` for an operation without a registered
+  derivative (D[frame-gradients]). It was an error before and is one now;
+  a script that caught `RuntimeError` there catches the other class.
+- The program of a frame evaluator hands the forces and the virial tensor
+  of a frame to the host where the host asks (D[frame-gradients]): its
+  boundary takes what is asked of each frame, and two calls stand, with
+  an evaluation of their own, in branches that a frame without the
+  request does not take. The emitted
+  module of a program of frames (private, `Simulation._ir` of an
+  evaluator) changes by these lines, so the kept code of an evaluator, in
+  memory and in the compile cache on disk, is compiled anew once on each
+  target, as after #309. The programs of `mdir run` and of a `Simulation`,
+  their text, and their entries of the cache are unchanged, and so is
+  every number of an evaluator that asks for nothing new.
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on

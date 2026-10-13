@@ -14,6 +14,7 @@
 #include "llvm/Support/Error.h"
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -210,6 +211,18 @@ struct Output {
   std::vector<std::vector<double>> tunableGradientFields;
   double tunableGradientVolume = 0.0;
   bool tunableGradientWritten = false;
+  /// What a frame of a frame evaluator hands over where the host asks
+  /// (D[frame-gradients]). `frameGradient`, if not null, is the memory of
+  /// the caller for the gradient of the energy in the positions, 3 N
+  /// numbers of the type `force` in the order of the input, which
+  /// mdrtWriteFrameForces fills with the forces of the frame with the
+  /// opposite sign, in kJ/mol/nm. `frameStrain` is the gradient in the
+  /// strain, the virial tensor of the frame with the opposite sign and what
+  /// the host adds at its volume, row by row, in kJ/mol, which
+  /// mdrtWriteFrameVirial fills. Each call sets its flag.
+  void *frameGradient = nullptr;
+  std::array<double, 9> frameStrain{};
+  bool frameGradientWritten = false, frameStrainWritten = false;
   std::unique_ptr<TrajectoryWriter> trajectory;
   bool hasTrajectory = false;
 
@@ -306,6 +319,22 @@ struct Output {
   }
   double getCoulombConstantVirial() const {
     return coulombConstantVirial * firstVolume / volume;
+  }
+  /// The gradient of the energy in the strain at the frame that
+  /// mdrtWriteFrameVirial was last called for, at the volume `volume`
+  /// (D[frame-gradients]): `frameStrain` with the virials of the correction
+  /// for the dispersion and of the background of a net charge, which are
+  /// isotropic, a third of each on each axis. They are the derivatives of
+  /// what the host adds to the energy at the volume of the frame, the tail
+  /// with the estimate of the shift and the background, all proportional
+  /// to 1 / V.
+  std::array<double, 9> getFrameStrain() const {
+    double constant =
+        (getDispersionVirial() + getCoulombConstantVirial()) / 3.0;
+    std::array<double, 9> strain = frameStrain;
+    for (int k : {0, 4, 8})
+      strain[k] -= constant;
+    return strain;
   }
 
   /// Whether the velocities are coupled, and the energy that the coupling
@@ -480,6 +509,14 @@ void _mlir_ciface_mdrtWriteTerms(void *terms);
 /// The diagonal of the virial of the forces at the start, without those of
 /// the constraints, in kJ/mol; the constant terms are added here.
 void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz);
+/// The forces of a frame of a frame evaluator (D[frame-gradients]), in
+/// kJ/mol/nm, for Output::frameGradient.
+void _mlir_ciface_mdrtWriteFrameForces(void *forces, void *ids);
+/// The virial tensor of the forces of that frame, W = Σ d ⊗ F row by row,
+/// in kJ/mol, without the constraints, for Output::frameStrain.
+void _mlir_ciface_mdrtWriteFrameVirial(double xx, double xy, double xz,
+                                       double yx, double yy, double yz,
+                                       double zx, double zy, double zz);
 /// The energy that a coupling of the velocities has just taken from the
 /// system, in kJ/mol.
 void _mlir_ciface_mdrtAddBath(double energy);
