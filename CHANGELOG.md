@@ -457,9 +457,9 @@ format, or the outputs; every such change is listed under **Changed** or
   took 15, 135, and 867 ms (what remains of an update is not its starts,
   #324); a start after steps, in a new order, 5.1, 17, and 98 ms where it
   took 5.0, 58, and 387 ms: nothing on JAC, whose structures were under
-  32 MiB. The rate of a step is unchanged on JAC and Factor IX (0.1%
-  and 0.3%); on Cellulose two runs of each build in turn gave 0.8% less
-  in the mean, within the 1.9% by which `main` differs from itself.
+  32 MiB. The rate of a step is unchanged: over five runs of 20,000
+  steps of each build in turn, 0.13% on Cellulose and 0.24% on Factor
+  IX, of the size of the spread of the runs (0.26% and 0.2%).
   Nothing of the interface changes and no number: every state, energy,
   and derivative of a sequence of starts equals that of before to the
   bit, on the CPU and a GPU, in double and mixed precision, in the
