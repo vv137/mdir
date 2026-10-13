@@ -27,7 +27,10 @@ Usage:
   start.py PRMTOP INPCRD [PRMTOP INPCRD ...] [--target GPU]
            [--precision Mixed] [--repeats 5] [--steps 20] [--input-order]
            [--deterministic] [--no-keep] [--only gradient|update|moved]
+           [--long N]
 
+With `--long N` one run of N steps follows, with its ms per step and ns
+per day: the rate of a plain run, which a change of the starts must leave.
 Several systems are measured one after another, each in a simulation of
 its own. With `--no-keep` the simulation builds its structures anew at
 every start (`Simulation._keep_tuples = False`, private), in the memory
@@ -52,6 +55,7 @@ parser.add_argument("--warm", type=int, default=200)
 parser.add_argument("--input-order", action="store_true")
 parser.add_argument("--deterministic", action="store_true")
 parser.add_argument("--no-keep", action="store_true")
+parser.add_argument("--long", type=int, default=0)
 parser.add_argument("--only", default=None, choices=("gradient", "update", "moved"))
 args = parser.parse_args()
 if len(args.files) % 2:
@@ -147,6 +151,17 @@ def measure(prmtop, inpcrd):
             sim.tunables.gradient()
 
         report("moved", [timed(moved) for _ in range(args.repeats)], less=steps_ms)
+
+    if args.long:
+        # One long run in one part, which begins no activation: the rate of
+        # a step, to compare between builds.
+        sim.run(args.steps)
+        t0 = time.perf_counter()
+        sim.run(args.long)
+        sim.state()
+        step = 1e3 * (time.perf_counter() - t0) / args.long
+        print(f"a run of {args.long} steps: {step:.4f} ms per step, "
+              f"{86400.0 * integrator.timestep / step:.1f} ns per day", flush=True)
 
 
 for prmtop, inpcrd in zip(args.files[0::2], args.files[1::2]):
