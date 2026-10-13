@@ -39,6 +39,11 @@ static const char *const cellWidthName = "mdrt.cell_width";
 static const char *const buildNeighborsName = "mdrt.build_neighbors_matrix";
 static const char *const createMatrixName = "mdrtHostMatrixCreate";
 static const char *const matrixEntriesName = "mdrtHostMatrixEntries";
+/// The renumbered members and the incidence structures that the runtime
+/// keeps (mdrt.c, D[activation-start]).
+static const char *const tuplesRenumberName = "mdrtTuplesRenumber";
+static const char *const tuplesIncidenceName = "mdrtTuplesIncidence";
+static const char *const tuplesReleaseName = "mdrtTuplesRelease";
 static const char *const growMatrixName = "mdrtHostMatrixGrow";
 static const char *const countBuildName = "mdrtCountBuild";
 /// Counts a build at an interval that found the structure no longer valid
@@ -73,8 +78,8 @@ struct Neighbors {
 
 class Lowering {
 public:
-  explicit Lowering(ModuleOp module)
-      : module(module), context(module.getContext()) {
+  explicit Lowering(ModuleOp module, bool keptTuples)
+      : keptTuples(keptTuples), module(module), context(module.getContext()) {
     // A module with a triclinic cell lowers every cell to the vector of six,
     // a_x, b_y, c_z, b_x, c_x, c_y; one without, to the three edges.
     module.walk([&](md::TriclinicCellOp) { triclinic = true; });
@@ -128,6 +133,21 @@ private:
   /// The rows of the neighbor matrix `handle`, as they are where `builder`
   /// is.
   Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle);
+
+  /// The renumbered members and the incidence structures that the runtime
+  /// gives and may keep from one activation of an embedding program to the
+  /// next (`kept-tuples`, D[activation-start]). A call of
+  /// the runtime function `name` with `members`, as a buffer of any arity,
+  /// and `other`, which gives a buffer of the type `type`; the runtime takes
+  /// the buffer back before the end of the block of `op`.
+  Value takeFromRuntime(Operation *op, StringRef name, Value members,
+                        Value other, MemRefType type);
+
+  /// Whether the renumbered members and the incidence structures are taken
+  /// from the runtime.
+  bool keptTuples;
+  /// The members that the runtime has renumbered.
+  llvm::DenseSet<Value> runtimeMembers;
 
   /// Whether the module has a triclinic cell.
   bool triclinic = false;
@@ -368,6 +388,31 @@ func::FuncOp Lowering::getOrDeclare(StringRef name, FunctionType type) {
   function.setPrivate();
   module.push_back(function);
   return function;
+}
+
+Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
+                                Value other, MemRefType type) {
+  Location loc = op->getLoc();
+  OpBuilder builder(op);
+  MemRefType wide = MemRefType::get(
+      {ShapedType::kDynamic, ShapedType::kDynamic}, builder.getI32Type());
+  if (members.getType() != wide)
+    members = memref::CastOp::create(builder, loc, wide, members);
+  func::FuncOp callee = getOrDeclare(
+      name, builder.getFunctionType({wide, other.getType()}, {wide}));
+  callee->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  Value given =
+      func::CallOp::create(builder, loc, callee, ValueRange{members, other})
+          .getResult(0);
+  // The runtime frees it, or keeps it for the next activation.
+  OpBuilder atEnd(op->getBlock()->getTerminator());
+  func::FuncOp release = getOrDeclare(
+      tuplesReleaseName, atEnd.getFunctionType({wide}, {}));
+  release->setAttr("llvm.emit_c_interface", atEnd.getUnitAttr());
+  func::CallOp::create(atEnd, loc, release, ValueRange{given});
+  if (type == wide)
+    return given;
+  return memref::CastOp::create(builder, loc, type, given);
 }
 
 LogicalResult Lowering::addTemplates(Type real) {
@@ -1013,20 +1058,38 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     if (isDeviceType(build.getResult().getType()))
       return op->emitOpError() << "builds on a device; use "
                                   "'convert-md-exec-to-gpu'";
-    OpBuilder builder(op);
-    Value incidence = emitBuildIncidence(builder, op->getLoc(),
-                                         build.getRelation(), build.getSize());
-    build.getResult().replaceAllUsesWith(incidence);
-    freeAtEndOfBlock(op, incidence);
+    // The structure of the members of a tuple set, in the order of the
+    // files or renumbered, is the runtime's to keep; one of tuples that
+    // the program finds (the triplets) is built here.
+    if (keptTuples && (runtimeMembers.count(build.getRelation()) ||
+                       isGivenToFunction(build.getRelation()))) {
+      build.getResult().replaceAllUsesWith(takeFromRuntime(
+          op, tuplesIncidenceName, build.getRelation(), build.getSize(),
+          cast<MemRefType>(build.getResult().getType())));
+    } else {
+      OpBuilder builder(op);
+      Value incidence = emitBuildIncidence(
+          builder, op->getLoc(), build.getRelation(), build.getSize());
+      build.getResult().replaceAllUsesWith(incidence);
+      freeAtEndOfBlock(op, incidence);
+    }
   } else if (auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(op)) {
     if (failed(lowerReciprocal(reciprocal)))
       return failure();
   } else if (auto renumber = dyn_cast<md_exec::RenumberOp>(op)) {
-    OpBuilder builder(op);
-    Value members = emitRenumber(builder, op->getLoc(), renumber.getMembers(),
-                                 renumber.getIds());
-    renumber.getResult().replaceAllUsesWith(members);
-    freeAtEndOfBlock(op, members);
+    if (keptTuples) {
+      Value members = takeFromRuntime(
+          op, tuplesRenumberName, renumber.getMembers(), renumber.getIds(),
+          cast<MemRefType>(renumber.getResult().getType()));
+      runtimeMembers.insert(members);
+      renumber.getResult().replaceAllUsesWith(members);
+    } else {
+      OpBuilder builder(op);
+      Value members = emitRenumber(builder, op->getLoc(),
+                                   renumber.getMembers(), renumber.getIds());
+      renumber.getResult().replaceAllUsesWith(members);
+      freeAtEndOfBlock(op, members);
+    }
   } else if (auto cell = dyn_cast<md::OrthorhombicCellOp>(op)) {
     OpBuilder builder(op);
     Type real = builder.getF64Type();
@@ -1178,7 +1241,7 @@ public:
       ConvertMDExecToLoops>::ConvertMDExecToLoopsBase;
 
   void runOnOperation() final {
-    Lowering lowering(getOperation());
+    Lowering lowering(getOperation(), keptTuples);
     if (failed(lowering.run()))
       signalPassFailure();
   }

@@ -302,6 +302,11 @@ void lowerLookups(mlir::Operation *root);
 mlir::Value emitRenumber(mlir::OpBuilder &builder, mlir::Location loc,
                          mlir::Value members, mlir::Value ids);
 
+/// Whether the buffer `members` is one that the function was given by its
+/// caller, as it is or through casts: the members of a tuple set in the
+/// order of the files, which do not change while the function runs.
+bool isGivenToFunction(mlir::Value members);
+
 /// Emits, on the host, the triplets centered on each particle of the
 /// neighbor matrix `counts`, `entries` (D160): for each particle `i`, each
 /// pair `a < b` of the entries of its row within `cutoff` once, as the

@@ -140,6 +140,11 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // as the kernels of the constraints alone do (#102).
        << (control.deterministic ? "deterministic=true explicit-fma=true "
                                  : "")
+       // The entry of an embedding front end runs in activations, which
+       // begin again and again in the same order of the particles: the
+       // runtime keeps the renumbered tuples and their incidence
+       // structures across them (D[activation-start]).
+       << (control.segments ? "kept-tuples=true " : "")
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        << "mdir-gpu-lower-to-nvvm{";
@@ -155,7 +160,11 @@ std::string mdir::compiler::getPipeline(const Control &control,
 
   // Reductions summed over fixed chunks in a fixed order: the same bits
   // from run to run and for any number of threads (D171).
-  os << "md-exec-assign-storage,convert-md-exec-to-loops,fixed-order-reductions,";
+  // The tuples of the entry of an embedding front end are the runtime's to
+  // keep across its activations (D[activation-start]).
+  os << "md-exec-assign-storage,convert-md-exec-to-loops"
+     << (control.segments ? "{kept-tuples=true}" : "")
+     << ",fixed-order-reductions,";
   bool threaded = control.threads > 1;
   if (threaded)
     os << "convert-scf-to-openmp,hoist-static-allocas,canonicalize,";

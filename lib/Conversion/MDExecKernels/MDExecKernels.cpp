@@ -2080,6 +2080,18 @@ Value kernels::emitRenumber(OpBuilder &builder, Location loc, Value members,
   return result;
 }
 
+bool kernels::isGivenToFunction(Value members) {
+  while (Operation *op = members.getDefiningOp()) {
+    if (!isa<memref::CastOp, memref::MemorySpaceCastOp>(op))
+      return false;
+    members = op->getOperand(0);
+  }
+  Block *block = cast<BlockArgument>(members).getOwner();
+  Operation *parent = block->getParentOp();
+  return block->isEntryBlock() && parent &&
+         parent->getName().getStringRef() == "func.func";
+}
+
 Value kernels::emitBuildTriplets(OpBuilder &builder, Location loc,
                                  Value counts, Value entries, Value positions,
                                  Value box, Value inverse, Type computed,
