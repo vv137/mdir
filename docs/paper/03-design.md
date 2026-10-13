@@ -1008,6 +1008,112 @@ recorded by the run the weights collapse to 9 effective frames of 400.
 Frames in f64 are the default because they serve any term chosen later,
 not because rounded frames fail in general.
 
+*The gradients in the positions and the strain.* The forces and the
+virial tensor of a frame are the two first derivatives of $U(S_n)$ in its
+configuration, and the evaluator hands them over where they are asked
+(D[frame-gradients]). They are evaluated for that in a branch of the loop
+over frames that a frame without the request does not take: the
+evaluation of the energy reads only the trace of the virial and the
+square of the forces, and a second reader of the whole of either changed
+its kernels, 3% to 5% of every frame on the CPU, so a frame that asks
+pays one more evaluation of its forces, a third of a frame, and a frame
+that does not pays nothing and has the same bits. The first is $\partial U/\partial\mathbf x_i = -\mathbf F_i$. For the
+second, deform the positions and the cell together by a matrix
+$\boldsymbol\varepsilon$, $\mathbf x_i \to (\mathsf 1 +
+\boldsymbol\varepsilon)\mathbf x_i$ and each cell vector, a row of
+$H$, alike. A displacement between two particles, or between a
+particle and an image, $\mathbf d$, becomes $(\mathsf 1 +
+\boldsymbol\varepsilon)\mathbf d$, so for an energy $u(\lVert\mathbf
+d\rVert)$ of that displacement, whose force on its second end is $\mathbf K
+= -u'\,\mathbf d/\lVert\mathbf d\rVert$,
+
+$$
+\frac{\partial u}{\partial\varepsilon_{ab}}
+= u'\,\frac{d_a d_b}{\lVert\mathbf d\rVert} = -K_a d_b,
+\qquad
+\frac{\partial U}{\partial\varepsilon_{ab}}
+= -\sum K_a d_b = -\mathsf W_{ba},
+$$
+
+with $\mathsf W = \sum\mathbf d\otimes\mathbf K$ the virial tensor of
+Section 6.4; the same holds term by term for a term of several
+displacements and for the reciprocal sum, whose energy is a function of
+$\mathbf u_i$ and of the cell. This is why the virial is the quantity of
+a pressure. In the canonical ensemble $Z \propto V^N\int
+e^{-U(\mathbf u H)/k_BT}\,d\mathbf u$ over the coordinates in the
+frame of the cell, and a strain changes $F = -k_BT\ln Z$ by
+
+$$
+\frac{\partial F}{\partial\varepsilon_{ab}}
+= -Nk_BT\,\delta_{ab}
++ \Big\langle\frac{\partial U}{\partial\varepsilon_{ab}}\Big\rangle ,
+$$
+
+whose trace with $\partial V/\partial\varepsilon_{aa} = V$ is $-3PV$:
+$P = (Nk_BT - \tfrac13\langle\operatorname{tr}\,\partial U/\partial
+\boldsymbol\varepsilon\rangle)/V$, the pressure $(2K +
+\operatorname{tr}\mathsf W)/3V$ of the log in the mean. A fit of a pressure
+or of a stress differentiates exactly this output. What the host adds to
+the energy at the volume of a frame is $c/V$ for a constant $c$, with
+$\partial(c/V)/\partial\varepsilon_{ab} = -(c/V)\,\delta_{ab}$, a third of
+its virial $3c/V$ on each axis. For the tail of a pair energy $u$ cut at
+$r_c$ at a uniform density, $E_\text{tail} \propto V^{-1}\int_{r_c}^\infty
+u\,r^2dr$ and the estimate of what the shift takes within the cutoff is
+$E_\text{sh} \propto V^{-1}u(r_c)\,r_c^3/3$ with the same factor
+(D210); the virial of the tail is that of $-\int_{r_c}^\infty
+r\,u'\,r^2dr = u(r_c)\,r_c^3 + 3\int_{r_c}^\infty u\,r^2dr$, by parts,
+which is $3(E_\text{tail} + E_\text{sh})$: the virial that the run adds
+for the tail ($6E_\text{tail}$ for $r^{-6}$) is the derivative of the
+energy of the evaluator, the potential shifted at the cutoff with both
+estimates, and not of the cut energy with its tail alone. So
+$-\operatorname{tr}\,\partial U/\partial\boldsymbol\varepsilon$ equals
+the virial of the log in a program without constraints, to the rounding
+of a sum of three numbers. With constraints the log adds the virial of
+the constraint forces, which belongs to the pressure of the constrained
+dynamics and is no derivative of $U$: the output leaves it out, and the
+gradient in the positions is the plain gradient in every coordinate, since
+a stored frame is taken as given and need not satisfy a constraint. A
+virtual site is a function of its atoms, $\mathbf x_s = \mathbf
+s(\mathbf x)$, and the energy is $U(\mathbf x, \mathbf s(\mathbf x))$: the
+gradient in the row of the site is zero and its atoms take
+$(\partial\mathbf s/\partial\mathbf x_i)^{\mathsf T}\partial
+U/\partial\mathbf x_s$, the spread of Section 6.
+
+The outputs are not symmetrized. For a potential that a rotation of the
+positions and the cell together leaves unchanged,
+$\partial U/\partial\boldsymbol\varepsilon$ is symmetric, since an
+antisymmetric $\boldsymbol\varepsilon$ is a rotation to first order; a
+term of the absolute positions has no such invariance, and its part
+$\sum_i(\partial U/\partial x_{i,a})\,x_{i,b}$ is returned as it is. A
+program takes a cell that is lower triangular, and $(\mathsf 1 +
+\boldsymbol\varepsilon)$ of such a cell is one only for
+$\boldsymbol\varepsilon$ on and above the diagonal; the components below
+it are derivatives of the potential as a function of three free cell
+vectors, which the pair sums and the reciprocal sum are, and are checked
+by rotating the deformed frame back (Section 9).
+
+A framework that differentiates in the cell holds the six numbers of
+$H$ at fixed Cartesian positions, not a strain. The chain rule on
+the deformation, $\partial U/\partial\varepsilon_{ab} =
+\sum_i(\partial U/\partial x_{i,a})x_{i,b} + \sum_k(\partial U/\partial
+H_{ka})H_{kb}$, gives
+
+$$
+\frac{\partial U}{\partial H}\bigg\rvert_{\mathbf x}
+= H^{-\mathsf T}\Big(\frac{\partial U}{\partial\boldsymbol\varepsilon}
+- \sum_i\frac{\partial U}{\partial\mathbf x_i}\otimes\mathbf x_i\Big)^{\mathsf T},
+$$
+
+whose entries on and below the diagonal use the strain only on and above
+it. The two terms nearly cancel (for the dipeptide in water the result is
+636 kJ/mol/nm where $\partial U/\partial\boldsymbol\varepsilon$ is
+14,000 kJ/mol), so the sum over the particles is taken in f64 in every
+mode. The backward of the adapter is these products with what the forward
+pass kept; a second derivative, which a loss on the forces or the stress
+needs for its gradient in $\boldsymbol\theta$, is not computed, and each
+product is an operation whose own derivative is an error, so that the
+missing term is never taken for zero.
+
 *What is not differentiated.* The first term of the gradient,
 $\langle\partial O/\partial\boldsymbol\theta\rangle$, is not zero for
 an observable that reads the parameters at fixed positions: the virial,

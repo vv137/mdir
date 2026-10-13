@@ -9480,24 +9480,70 @@ void Builder::emitEntry() {
     if (control.frames) {
       // The forces and the virial of the frame, where the host asks for
       // them (D[frame-gradients]): the gradients of the energy in the
-      // positions and in the strain with the opposite sign. Each call stands
-      // in a loop of one iteration or none, as the frame of a reporter does
-      // (emitFrameIfDue), so that a frame without the request copies
-      // nothing from where the program keeps its forces. The forces are
+      // positions and in the strain with the opposite sign. The forces are
       // those of the potential, the virtual sites spread and the restraints
       // added, without the constraints; the virial is that of these forces.
+      //
+      // They come from an evaluation of their own, in a loop of one
+      // iteration or none (the form of the frame of a reporter,
+      // emitFrameIfDue), and not from the evaluation above. A frame reads
+      // of that one the energy, the trace and the diagonal of the virial,
+      // and the square of the forces; a call here that took its forces or
+      // the nine components of its virial changed what its kernels compute
+      // and how its loops are joined, in every frame, asked or not: measured
+      // on the CPU in double precision, 46.6 to 47.2 ms a frame of the
+      // dipeptide against 45.1 ms. With the evaluation in the branch the
+      // text of a frame without the request is that of before but for the
+      // branch, and so are its numbers, to the bit, whatever is asked.
+      // One evaluation serves both: where the virial is asked the forces
+      // are handed over from it.
+      StringRef raw = hasSites() ? "e" : "";
+      std::string held = hasRestraints() ? "p" : "";
+      auto emitAsked = [&](StringRef tag, bool withVirial) {
+        std::string f = ("%f" + tag + "0").str(), w = ("%w" + tag + "0").str();
+        os << "    " << f << held << raw;
+        if (withVirial)
+          os << ", " << w << held << raw;
+        os << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
+           << getTimeValue("%time0") << ")\n"
+           << "        request [forces" << (withVirial ? ", virial" : "")
+           << "]\n        : (!vec, !md.cell" << getFieldTypes() << getTimeType()
+           << ") -> " << (withVirial ? "(!vec, vector<9xf64>)" : "!vec")
+           << "\n";
+        std::string tensor = withVirial ? w + held + raw.str() : std::string();
+        if (hasSites())
+          tensor = emitSpreadSites(
+              "    ", "%x0", f + held + "e", f + held, "%r_", tensor,
+              withVirial ? w + held : std::string());
+        if (hasRestraints()) {
+          emitRestraints("    ", "%x0", "%p_", f + "p", f, "", "", tensor,
+                         withVirial ? w : std::string());
+          if (withVirial)
+            tensor = w;
+        }
+        return std::make_pair(f, tensor);
+      };
+      auto emitForces = [&](StringRef indent, StringRef f) {
+        os << indent << "mdrt.host_call @mdrtWriteFrameForces(" << f << ", "
+           << idName << ") : (!vec, !ids)\n";
+      };
       os << "  %frame_none = arith.constant 0.0 : f64\n"
          << "  %frame_wf = arith.cmpf one, %frame_ask_0, %frame_none : f64\n"
-         << "  %frame_nf = arith.select %frame_wf, %c1, %c0 : index\n"
-         << "  scf.for %frame_if = %c0 to %frame_nf step %c1 {\n"
-         << "    mdrt.host_call @mdrtWriteFrameForces(%f0, " << idName
-         << ") : (!vec, !ids)\n"
-         << "  }\n"
          << "  %frame_ww = arith.cmpf one, %frame_ask_1, %frame_none : f64\n"
+         << "  %frame_nf = arith.select %frame_wf, %c1, %c0 : index\n"
          << "  %frame_nw = arith.select %frame_ww, %c1, %c0 : index\n"
+         // The forces alone: asked without the virial.
+         << "  %frame_no = arith.select %frame_ww, %c0, %frame_nf : index\n"
+         << "  scf.for %frame_if = %c0 to %frame_no step %c1 {\n";
+      emitForces("    ", emitAsked("g", false).first);
+      os << "  }\n"
          << "  scf.for %frame_iw = %c0 to %frame_nw step %c1 {\n";
+      auto [forces, tensor] = emitAsked("w", true);
+      os << "    scf.for %frame_ib = %c0 to %frame_nf step %c1 {\n";
+      emitForces("      ", forces);
+      os << "    }\n";
       for (int k = 0; k != 9; ++k)
-        os << "    %frame_w" << k << " = vector.extract " << virial << "[" << k
+        os << "    %frame_w" << k << " = vector.extract " << tensor << "[" << k
            << "] : f64 from vector<9xf64>\n";
       os << "    call @mdrtWriteFrameVirial(";
       for (int k = 0; k != 9; ++k)

@@ -18,10 +18,12 @@ Usage:
            [--target GPU] [--precision Mixed] [--deterministic]
            [--frames 1,4,16,64,256] [--stride 40] [--repeats 5] [--profile N]
            [--check-gpu N] [--store FILE] [--input-order] [--groups]
-           [--gradients positions,strain]
+           [--gradients none/positions/strain/positions,strain]
 
-With `--gradients` every timed call asks for the gradients of the energy
-named, in the positions, in the strain, or both (D[frame-gradients]).
+With `--gradients` the timed calls ask for the gradients of the energy
+named besides the derivative in the tunables, in the positions, in the
+strain, or both (D[frame-gradients]); sets separated by `/` are timed one
+after another in the same process, `none` being a call that names none.
 
 With `--profile N` the script evaluates N frames once after the first and
 stops, for the counters of `MDRT_PROFILE`: the difference of two runs with
@@ -59,13 +61,14 @@ parser.add_argument("--check-gpu", type=int, default=None)
 parser.add_argument("--store", default=None)
 parser.add_argument("--input-order", action="store_true")
 parser.add_argument("--groups", action="store_true")
-parser.add_argument("--gradients", default="")
+parser.add_argument("--gradients", default="none")
 args = parser.parse_args()
-# The gradients of the energy that every timed call asks for besides the
-# derivative in the tunables (D[frame-gradients]); without the option the
-# call names none and takes the default, which is that derivative alone.
-asked = ({"gradients": ("tunables",) + tuple(n for n in args.gradients.split(",") if n)}
-         if args.gradients else {})
+# The gradients of the energy that the timed calls ask for besides the
+# derivative in the tunables (D[frame-gradients]), one set after another;
+# `none`, and no option, is a call that names none and takes the default,
+# that derivative alone.
+sets = [(name, {} if name == "none" else {"gradients": ("tunables",) + tuple(name.split(","))})
+        for name in args.gradients.split("/")]
 
 if args.check_gpu is not None:
     said = subprocess.run(
@@ -157,26 +160,28 @@ print(f"{args.tunable} terms={args.terms} {args.target} {args.precision}"
       flush=True)
 if args.profile:
     t0 = time.perf_counter()
-    evaluator.evaluate(frames[:args.profile], cells[:args.profile], **asked)
+    evaluator.evaluate(frames[:args.profile], cells[:args.profile], **sets[0][1])
     print(f"profile: {args.profile} frames, "
           f"{1e3 * (time.perf_counter() - t0) / args.profile:.4f} ms per frame")
     raise SystemExit(0)
 
-# The device has taken its clocks up before anything is timed.
-for _ in range(3):
-    evaluator.evaluate(frames, cells, **asked)
-print(f"gradients asked: {args.gradients or 'none'}")
-print("K, ms per frame (least of the repeats), ms per call, frames/s, in steps")
-for count in counts:
-    # At least 64 frames in a repeat, so that a call of few frames is not
-    # timed once.
-    calls = max(1, 64 // count)
-    least = np.inf
-    for _ in range(args.repeats):
-        t0 = time.perf_counter()
-        for _ in range(calls):
-            evaluator.evaluate(frames[:count], cells[:count], **asked)
-        least = min(least, (time.perf_counter() - t0) / calls)
-    per_frame = 1e3 * least / count
-    print(f"{count}, {per_frame:.4f}, {1e3 * least:.3f}, {1e3 / per_frame:.0f}, "
-          f"{per_frame / step_ms:.1f}", flush=True)
+for name, asked in sets:
+    # The device has taken its clocks up before anything is timed.
+    for _ in range(3):
+        evaluator.evaluate(frames, cells, **asked)
+    print(f"gradients asked besides the tunables: {name}")
+    print("K, ms per frame (least of the repeats), ms per call, frames/s, in steps")
+    for count in counts:
+        # At least 64 frames in a repeat, so that a call of few frames is
+        # not timed once.
+        calls = max(1, 64 // count)
+        least = np.inf
+        for _ in range(args.repeats):
+            t0 = time.perf_counter()
+            for _ in range(calls):
+                evaluator.evaluate(frames[:count], cells[:count], **asked)
+            least = min(least, (time.perf_counter() - t0) / calls)
+        per_frame = 1e3 * least / count
+        print(f"{count}, {per_frame:.4f}, {1e3 * least:.3f}, {1e3 / per_frame:.0f}, "
+              f"{per_frame / step_ms:.1f}", flush=True)
+

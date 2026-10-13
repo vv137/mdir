@@ -40,7 +40,7 @@ sample again stay in the framework (#138).
 ```python
 evaluator = mdir.FrameEvaluator(program)     # a simulation of its own (D236)
 evaluator.tunables.update({"sigma": s1})     # the TunableValues of D213
-out = evaluator.evaluate(positions, cells=None, tilts=None, gradient=True)
+out = evaluator.evaluate(positions, cells=None, tilts=None, gradients=("tunables",))
 out.energy                  # (K,) float64, kJ/mol: the potential that the forces sample (D210)
 out.virial, out.volume      # (K,) float64, kJ/mol and nm^3
 out.observables["lower.d_z0"]   # (K,) float64, the columns of `observe` (D232)
@@ -50,6 +50,8 @@ out.jacobian["sigma"]       # (K, M) float64, or `out.jacobian is None` above th
 g = out.vjp(cotangent)      # cotangent (K,) float64 on `energy`
 g["sigma"]                  # (M,) float64, kJ/mol per unit of the tunable
 g.zero                      # the names whose derivative is zero by proof (D230)
+out.gradients["positions"]  # with gradients=(..., "positions"): (K, N, 3), dU/dx, kJ/mol/nm
+out.gradients["strain"]     # with gradients=(..., "strain"): (K, 3, 3) float64, kJ/mol
 ```
 
 `mdir.FrameEvaluator(program, jacobian_bytes=2**28)` takes a program of
@@ -71,7 +73,7 @@ dipeptide in water and 2.7 s for JAC on a GPU); a later evaluator of the
 same program takes the code that the first left with the `Program` (D236;
 0.07 s).
 
-`evaluate(positions, cells=None, tilts=None, *, gradient=True)`:
+`evaluate(positions, cells=None, tilts=None, *, gradients=("tunables",))`:
 
 | Argument | Shape, type | Meaning |
 |---|---|---|
@@ -79,7 +81,7 @@ same program takes the code that the first left with the `Program` (D236;
 | `positions` | an iterable, one frame per item | each item an object with `positions` and `cell` (an `mdir.State`; a `Frame` of `mdir.read_h5md`), a pair `(positions, cell)`, or `(N, 3)` positions alone; `cells` and `tilts` must be `None` |
 | `cells` | `None`, `(3,)`, or `(K, 3)` float64 | the diagonal $a_x, b_y, c_z$ of the cell of every frame, or of each, in nm (the edges of an orthorhombic cell); `None`: the cell of the program's initial state, with its tilts, whatever was evaluated before |
 | `tilts` | `None`, `(3,)`, or `(K, 3)` float64 | the tilts $b_x, c_x, c_y$ of the cell of every frame, or of each, the arrays of `mdir.Cell` and of `Borrow.tilt` (D238); `None` with `cells`: an orthorhombic cell |
-| `gradient` | bool | whether the derivative in the tunables is kept or can be asked for with `vjp` |
+| `gradients` | a tuple of names among `"tunables"`, `"positions"`, `"strain"`; `("tunables",)` by default | the gradients of the energy that are asked (D[frame-gradients]): `"tunables"`, the derivative in the tunables, kept as `jacobian` or asked for with `vjp`; `"positions"` and `"strain"`, the arrays `gradients["positions"]` and `gradients["strain"]` ([below](#the-gradients-in-the-positions-and-the-strain-dframe-gradients)). `()` asks for none. Until D[frame-gradients] the derivative in the tunables was the argument `gradient=True`, which is gone |
 
 The cell of a frame of an iterable is an `mdir.Cell` (or any object with
 `diagonal` and `tilt`), the array of its three edges, or the `(3, 3)`
@@ -113,6 +115,7 @@ It returns a `FrameEnergies`:
 | `version`, `count`, `zero` | int, int, frozenset | the value version of $\boldsymbol\theta$; $K$; the tunables whose derivative is zero by proof |
 | `jacobian` | dict of names to `(K, M)` float64, or `None` | $\partial U_n/\partial\theta_m$, when it is kept ([below](#the-product-and-its-memory)) |
 | `vjp(cotangent)` | `(K,)` float64 in; a `FrameGradient` out | $\sum_n g_n\,\partial U_n/\partial\boldsymbol\theta$: a read-only mapping of names to `(M,)` float64, with `zero` and `version`, as `TunableGradient` is at one state |
+| `gradients` | a read-only mapping of the names `"positions"` and `"strain"` that were asked to arrays `(K, N, 3)` and `(K, 3, 3)`; empty by default | $\partial U_n/\partial\mathbf x_i$ and $\partial U_n/\partial\boldsymbol\varepsilon$ ([below](#the-gradients-in-the-positions-and-the-strain-dframe-gradients)) |
 
 There is no kinetic energy and no pressure: a frame has no velocities. A
 script forms the pressure from the virial, the volume, and the kinetic term
@@ -137,8 +140,11 @@ with an iterable; and what a commit refuses of a cell (D238): tilts for a
 program compiled for an orthorhombic cell, or none for a triclinic one
 (which of the two a program takes is fixed when it is compiled), a cell
 that is not reduced, a pairlist distance above half of the least of the
-diagonal. With `UnsupportedError`: positions or cells that require a gradient (a PyTorch tensor with
-`requires_grad`), whose gradient is not returned yet and is not zero. A
+diagonal; a name of `gradients` that is not one of the three, or
+`gradients` that is not a tuple of names. With `UnsupportedError`: positions or cells that require a gradient (a PyTorch tensor with
+`requires_grad`), which the arrays of `evaluate` do not carry and which is
+not zero (`mdir.torch.evaluate` takes them); `"positions"` or `"strain"`
+from an evaluator of the dependent terms. A
 frame whose evaluation fails (two particles at one place, a neighbor
 structure that overflows) raises `SimulationError` naming the frame. After
 any of these the evaluator is usable and gives what it gave before, to the
@@ -175,11 +181,11 @@ $10^4$ frames), and `out.jacobian` is `None` otherwise. Every charge of
 23,558 particles at $10^4$ frames would take 1.9 GB, and takes the second
 pass. For an iterable without a length the rows are kept until they pass
 the bound and dropped then. An iterator that can be read only once (a
-generator) is taken when the Jacobian is kept or with `gradient=False`; if
+generator) is taken when the Jacobian is kept or without `"tunables"`; if
 its rows pass the bound, `evaluate` raises `InputError` naming the first
 frame beyond it, since the second pass would need the frames again.
 
-`gradient=False` keeps no rows and refuses `vjp`. It does not make a pass
+`gradients` without `"tunables"` keeps no rows and refuses `vjp`. It does not make a pass
 faster: the energy of D210 is that of `@tunable`, which is evaluated with
 its derivative at every frame (measured: 1.047 ms against 1.050 ms per
 frame on the dipeptide).
@@ -188,11 +194,20 @@ frame on the dipeptide).
 
 ```python
 import mdir.torch                      # imports torch; `import mdir` does not
-out = mdir.torch.evaluate(evaluator, theta, positions, cells=None, tilts=None)
+out = mdir.torch.evaluate(evaluator, theta, positions, cells=None, tilts=None, gradients=())
 out.energy                             # (K,) float64 tensor with a grad_fn in theta
 out.virial, out.volume, out.observables[name]     # (K,) float64 tensors
 out.depends, out.version, out.count, out.zero     # as FrameEnergies
+out.gradients                          # "positions" and "strain" where asked, as tensors
 ```
+
+**What can be trained.** `energy` is differentiable once, in the tunables
+and, where they are tensors that require a gradient, in the positions and
+the cell ([below](#through-mdirtorchevaluate)). A loss on the forces or on
+the stress can be evaluated, since both are outputs, but it cannot yet
+train the tunables: its derivative in $\boldsymbol\theta$ is a second
+derivative of $U$ (force matching, stage 4 of #138), and asking for it is
+an error, `UnsupportedError`, never a zero.
 
 - `theta` is a `dict[str, Tensor]` of float64 tensors of shape `(M,)`, on
   one device, for some or all of the tunables; a tunable that is not named
@@ -204,9 +219,11 @@ out.depends, out.version, out.count, out.zero     # as FrameEnergies
   precision mode (the energy of a frame is a sum over the device that the
   host completes with the self term, the tails, and the estimates of the
   shift): they are copied to the device of `theta`, 8 bytes per frame.
-  Nothing that has $N$ rows crosses the adapter in this slice, so no device
-  buffer is leased (D220, D229) and no stream is handed over; positions
-  given as a tensor of a device are copied to the host.
+  The gradient in the positions, where it is asked or a backward needs
+  it, is the one array of $N$ rows a frame that crosses the adapter: it is
+  copied from the host to the device of `theta` as the others are. No
+  device buffer is leased (D220, D229) and no stream is handed over;
+  positions given as a tensor of a device are copied to the host.
 - The backward of `energy` is the product above: with the Jacobian kept, a
   product of tensors on the device of `theta`; otherwise the second pass,
   which needs that the evaluator has evaluated nothing else since
@@ -220,13 +237,20 @@ out.depends, out.version, out.count, out.zero     # as FrameEnergies
   positions is not implemented in this slice, and leaving it out silently
   would give a wrong gradient (#140, T1b: the direct term and the
   covariance cancel). A script that means to drop the term says so with
-  `.detach()`.
-- `positions`, `cells`, and `tilts` that require a gradient are refused
-  (`UnsupportedError`).
-- **No double backward.** The product of the backward is an operation for
-  which no derivative is registered, so a second differentiation raises
-  PyTorch's `RuntimeError` for a tensor that does not require a gradient; it
-  is not a silent zero. A Hessian in $\boldsymbol\theta$ is out of scope.
+  `.detach()`. In a call whose positions or cell take a gradient every
+  such output is a function of them as well, and has that `grad_fn`
+  whatever `depends` says.
+- `positions`, `cells`, and `tilts` that require a gradient are taken
+  where each is one tensor, and `energy` is differentiable in them
+  (D[frame-gradients], [below](#through-mdirtorchevaluate)); frames of an
+  iterable carry no graph, and such frames that require a gradient are
+  refused (`UnsupportedError`).
+- **No double backward.** Every product of the backward is an operation
+  whose own backward raises `UnsupportedError`, naming the derivative that
+  was asked: a second differentiation is an error, not a silent zero
+  (until D[frame-gradients] it was PyTorch's `RuntimeError` for an
+  operation without a registered derivative). A Hessian in
+  $\boldsymbol\theta$ is out of scope.
 - One operation at a time on an evaluator, from any thread, with the GIL
   released during the frames; a second call while one runs raises
   `SimulationError` (D196).
@@ -303,10 +327,10 @@ state in float64 with its velocities and forces.
   particles themselves when they are built, and the kernels of a frame
   take the same time in either order
   ([measured](#the-order-of-the-particles)). The outputs are numbers per
-  frame and per entry of a tunable, which have no order of particles. When
-  the gradient in the positions is added, it is in the order of the input
-  with nothing to gather, so that the stale gather of #137 (item 1) cannot
-  happen in a script.
+  frame and per entry of a tunable, which have no order of particles, and
+  the gradient in the positions (D[frame-gradients]), which is in the
+  order of the input with nothing to gather, so that the stale gather of
+  #137 (item 1) cannot happen in a script.
 - **The energy of a frame is a function of the frame alone**, of the
   program, and of the values of the tunables: the same bits in any call,
   after any frames, after a frame that failed, and whatever other
@@ -369,8 +393,8 @@ state in float64 with its velocities and forces.
 | $U_n$ in $\boldsymbol\theta$ | the product, with the three outcomes of D230 for each tunable: `"rule"`; `"zero"`, a proof, listed in `zero`; or a refusal at `mdir.compile` | |
 | An output $O_n$ that reads no tunable at fixed positions | a constant, by a proof that `depends` states | |
 | An output that may read a tunable (the virial; a column of a term that a tunable enters) | the value; its derivative is refused where it is asked for, never returned as zero | M2b-3: $\partial\mathsf W/\partial\boldsymbol\theta$, a mixed derivative |
-| $U_n$ in the positions and the strain | not returned; a request is refused | the forces and the virial of the forward pass, as #138 says |
-| Second derivatives | refused | out of scope |
+| $U_n$ in the positions and the strain | since D[frame-gradients]: `gradients["positions"]` and `gradients["strain"]`, the forces and the virial tensor of the forward pass with the opposite sign, and through `mdir.torch.evaluate` the backward in the positions and the cell | |
+| Second derivatives, the derivative of the forces or of the stress in $\boldsymbol\theta$ among them | refused, with `UnsupportedError` | force matching: stage 4 of #138 |
 
 `depends[name]` is built from the plan of the program. A column of
 `observe` belongs to one term: it may read the tunable constants and
@@ -661,7 +685,7 @@ the kernels with the neighbor build are 0.8 ms.
   doubles would read the same number of bytes a frame at every reading.
   They read +0 between every two readings on the CPU for calls of 1, 25,
   50, and 256 frames, with the Jacobian kept, not returned
-  (`jacobian_bytes=0`), and not asked (`gradient=False`), for the whole
+  (`jacobian_bytes=0`), and not asked (`gradients=()`), for the whole
   potential and the dependent terms, in double and mixed precision (48
   cases to 4,096 frames or more, and 8 to 102,400 or 131,072), and on a
   GPU, where they are the bytes of the host all the same, to 131,072
@@ -1294,17 +1318,16 @@ is taken.
 
 ## The gradients in the positions and the strain (D[frame-gradients])
 
-Issue #313, slice 3. **Status: proposed in the draft pull request of
-#313; the questions put there are not ruled on yet, and nothing of this
-section is implemented.**
+Issue #313, slice 3. Status: implemented, as the maintainer ruled on PR
+#314 ([Maintainer rulings (gradients)](#maintainer-rulings-gradients)).
 
 The program of an evaluator evaluates the forces and the virial tensor of
-every frame already (`md.evaluate @energy ... request [energy, forces,
-virial]`), and gives the host the energy and the trace of the virial
-alone. This slice gives a caller who asks the two first derivatives of
-the energy of a frame that those hold, as #138 names them after
-metatomic's standard outputs: the gradient in the positions and the
-gradient in the strain.
+every frame on the way to its energy (`md.evaluate @energy ... request
+[energy, forces, virial]`), and until this slice gave the host the energy
+and the trace of the virial alone. A caller who asks now takes the two
+first derivatives of the energy of a frame that those hold, named as #138
+names them after metatomic's standard outputs: the gradient in the
+positions and the gradient in the strain.
 
 ### What is returned
 
@@ -1325,81 +1348,89 @@ $$
 = -\mathbf F_i,\qquad
 \mathsf S_{\alpha\beta} =
 \frac{\partial U}{\partial\varepsilon_{\alpha\beta}}\bigg\rvert_{\boldsymbol\varepsilon = 0}
-= -\mathsf W_{\alpha\beta},
+= -\mathsf W_{\beta\alpha},
 $$
 
 of the energy $U$ that `energy` returns (D210), with everything that the
-host adds at the volume of the frame.
+host adds at the volume of the frame. The paper derives both, and why the
+second is the quantity of a pressure (Section 3.6).
 
 ```python
-out = evaluator.evaluate(positions, cells, tilts, gradients=("positions", "strain"))
+out = evaluator.evaluate(positions, cells, tilts, gradients=("tunables", "positions", "strain"))
+out.jacobian, out.vjp(g)    # "tunables": as before
 out.gradients["positions"]  # (K, N, 3), kJ/mol/nm, in the order of the input: dU/dx = -F
 out.gradients["strain"]     # (K, 3, 3) float64, kJ/mol: dU/d(epsilon), row alpha, column beta
 ```
 
 | | |
 |---|---|
-| The argument | `gradients=()`, keyword only: a tuple of names among `"positions"` and `"strain"`. Any other name is an `InputError`. `gradient` stays what it is, the derivative in the tunables, and now refuses a value that is not a `bool`, so that `gradient=("positions",)` is not taken for `True` |
-| The output | `FrameEnergies.gradients`, a read-only mapping of the names that were asked to arrays, read-only, on the host; empty when nothing was asked |
-| `"positions"` | `(K, N, 3)`, kJ/mol/nm, the rows in the order of the input, as the positions of the frame are (the program of an evaluator keeps that order, D251: nothing is gathered). In the type in which the program keeps its forces: float64 in `double`, float32 in `mixed` (float64 in `mixed` with the deterministic mode, whose forces are kept in f64, #102). No conversion: the numbers are the forces of the program with the opposite sign |
-| `"strain"` | `(K, 3, 3)` float64, kJ/mol ($\boldsymbol\varepsilon$ has no unit), all nine components, not symmetrized |
-| Memory | $24KN$ bytes (12 in `mixed`) for `"positions"`, which the evaluator allocates and the caller owns: 565 KB a frame of JAC in f64. It is the one output that grows with $N$; a caller bounds it by the frames of a call. $72K$ bytes for `"strain"` |
-| When not asked | nothing is copied and nothing allocated: the request reaches the program with the frame, at its boundary, and the copy of the forces from the device is in a branch that a frame without the request does not take. A frame costs what it cost |
-| `terms="dependent"` | refused (`UnsupportedError`), and `"gradients"` is listed in `unavailable`: the gradient of $U_\text{dep}$ is not that of $U$, as its virial is not the virial (T3) |
+| The argument | `gradients=("tunables",)`, keyword only: a tuple of names among `"tunables"`, `"positions"`, and `"strain"`, each once, in any order. Anything else is an `InputError`: another name, a string, a `bool`. It replaces the argument `gradient` of slice 1, which is removed without an alias: `gradients=("tunables",)`, the default, is what `gradient=True` was, and `gradients=()` what `gradient=False` was |
+| **The default** | **an evaluator that is not given `gradients` returns what it returned before this slice: the derivative in the tunables (`jacobian`, or `vjp` by a second pass), and no gradient in the positions or the strain; `out.gradients` is empty** |
+| `"tunables"` | `out.jacobian` and `out.vjp`, unchanged ([above](#the-product-and-its-memory)); it is not an entry of `out.gradients` |
+| `out.gradients` | a read-only mapping of those of `"positions"` and `"strain"` that were asked, in the order asked, to read-only arrays on the host |
+| `"positions"` | `(K, N, 3)`, kJ/mol/nm, the rows in the order of the input, as the positions of the frame are (the program of an evaluator keeps that order, D251: nothing is gathered). In the type in which the program keeps its forces, with no conversion: float64 in `double`, float32 in `mixed`, and float64 in `mixed` with the deterministic mode, whose forces are kept in f64 (#102). There is no `dtype` argument: a caller who wants another type converts, and an f32 force widened to f64 carries no more |
+| `"strain"` | `(K, 3, 3)` float64 in every mode, kJ/mol ($\boldsymbol\varepsilon$ has no unit), all nine components, not symmetrized, not divided by the volume: a script forms the stress $\mathsf S/V$ with `volume` |
+| Memory | $24KN$ bytes (12 in f32) for `"positions"`, which the evaluator allocates and the caller owns: 565 KB a frame of JAC in f64. It is the one output that grows with $N$; a caller bounds it by the frames of a call. $72K$ bytes for `"strain"` |
+| When not asked | nothing is evaluated, copied, or allocated for them: the request reaches the program with the frame, at its boundary, and the forces and the virial that are handed over are evaluated in a branch that a frame without the request does not take ([measured](#the-cost-of-the-gradients)). Calls that ask and calls that do not share an activation, and the other outputs of a frame are the same to the bit whatever is asked |
+| When asked | one more evaluation of the forces of the frame, a third of a frame on the CPU ([measured](#the-cost-of-the-gradients)); `"positions"` and `"strain"` together cost what `"strain"` costs |
+| `terms="dependent"` | `"positions"` and `"strain"` are refused (`UnsupportedError`), and `"gradients"` is listed in `unavailable`: the gradient of $U_\text{dep}$ is not that of $U$, as its virial is not the virial (T3). `"tunables"` is taken as before |
 
-**Sign and the relation to `virial`.** $\mathsf W$ is the virial tensor of
-MDIR, $\sum \mathbf d\otimes\mathbf F$ over the interactions, in the sign
+**Sign, and the relation to `virial`.** $\mathsf W$ is the virial tensor of
+MDIR, $\sum \mathbf d\otimes\mathbf K$ over the interactions, in the sign
 in which the pressure is $(2K + \operatorname{tr}\mathsf W)/3V$; what the
 host adds at the volume of a frame (the correction for the dispersion with
 the estimate of the shift, the background of a net charge), all $\propto
-1/V$, enters as a third of its virial on each axis. `virial` is the trace
-that the pressure of a run takes, which with constraints has the term of
-the constraint forces besides:
+1/V$, enters as a third of its virial on each axis.
+
+**With constraints, `virial` and $-\operatorname{tr}\mathsf S$ differ, and
+a pressure takes `virial`.** `virial` is the trace that the pressure of a
+run takes, which in a program with constraints has the term of the
+constraint forces besides:
 
 $$
 \texttt{virial} = -\operatorname{tr}\mathsf S + W_c ,
 $$
 
-$W_c = 0$ in a program without constraints. Measured before anything was
-written, on the dipeptide in water in double precision on the CPU:
-$\texttt{virial} + \partial U/\partial s$ under $\mathbf x\to(1+s)\mathbf
-x$, $\mathsf h\to(1+s)\mathsf h$ is $-5\times10^{-5}$ of 29,703 kJ/mol
-with PME and $3\times10^{-6}$ of 17,138 with a Coulomb cutoff, at a step
-of $s = 10^{-6}$ (the energy is only continuous at the cutoff, so that a
-difference over a longer step is rough: 0.02 and 150 kJ/mol at $3\times
-10^{-4}$), and with the correction for the dispersion under a plain
-cutoff and under the shift as well: the virial of the tail, $6E$ for
-$r^{-6}$, is the derivative of the tail and of the estimate of the shift
-together.
+$W_c = 0$ in a program without constraints, where the two are equal to
+the rounding of a sum (measured: 0 in double precision and at most
+$4\times10^{-12}$ kJ/mol in mixed). $\mathsf S$ is a derivative of $U$
+and has no such term: with rigid water the dipeptide at its first frame
+has `virial` $= -7{,}075$ kJ/mol and $-\operatorname{tr}\mathsf S =
+30{,}949$, $W_c = -38{,}024$. A script that forms the pressure of a
+constrained model takes `virial`, with the kinetic term of its ensemble;
+one that differentiates $U$ in the cell takes $\mathsf S$.
 
 **Symmetry.** $\mathsf S$ is symmetric where the potential does not change
 under a rotation of the positions and the cell together: every term of
-pairs, of tuples, and of the reciprocal sum. A term of the absolute
-positions (`mdir.ExternalTerm`, a restraint to reference positions) is
-not, and neither is $\mathsf S$ then; it is returned as it is. A script
-that wants the stress forms $\mathsf S/V$; one that wants the symmetric
-part takes it.
+pairs, of tuples, and of the reciprocal sum (measured on the dipeptide:
+$\mathsf S - \mathsf S^{\mathsf T}$ is $2\times10^{-13}$ of 14,001 kJ/mol
+in double precision and $1.3\times10^{-4}$ in mixed). A term of the
+absolute positions (`mdir.ExternalTerm`, a restraint to reference
+positions) is not, and neither is $\mathsf S$ then; it is returned as it
+is.
 
-**Rectangular and triclinic cells.** The definition is the same for both.
-A program takes its cells reduced and lower triangular, $\mathbf a =
-(a_x, 0, 0)$, $\mathbf b = (b_x, b_y, 0)$, $\mathbf c = (c_x, c_y, c_z)$,
-and $(\mathsf 1 + \boldsymbol\varepsilon)$ of such a cell is not one for
-an $\boldsymbol\varepsilon$ with a part above the diagonal; $\mathsf S$
-is the derivative of the potential as a function of the positions and of
-three cell vectors, which the pair sums and the reciprocal sum are for
-any three vectors. An orthorhombic program returns the nine components as
-a triclinic one does.
+**Rectangular and triclinic cells.** The definition is the same for both,
+and an orthorhombic program returns the nine components as a triclinic
+one does. A program takes its cells reduced and lower triangular, and
+$(\mathsf 1 + \boldsymbol\varepsilon)$ of such a cell is one only for an
+$\boldsymbol\varepsilon$ on and above the diagonal ($\mathbf a$ stays
+along $x$ and $\mathbf b$ in the plane $xy$). The components of $\mathsf
+S$ below the diagonal are derivatives of the potential as a function of
+the positions and of three free cell vectors, which the pair sums and the
+reciprocal sum are.
 
 **Constraints and virtual sites.** The positions are taken as given
 (above), and $U$ is a function of all of them: $\mathbf G$ is the plain
-gradient, not projected onto the constraints, and $\mathsf S$ has no term
-of the constraint forces. A script that wants the gradient along the
-constrained manifold projects it. A virtual site is placed from its atoms
-whatever the frame says, so $U$ does not depend on the row of the frame
-that holds it: the row of a site in $\mathbf G$ is zero, and the rows of
-its atoms hold what the site passes to them (the chain rule through its
-placement, the spread of its force), with the virial of the spread in
-$\mathsf S$.
+gradient, not projected onto the constraints. A script that wants the
+gradient along the constrained manifold projects it. A virtual site is
+placed from its atoms whatever the frame says, so $U$ does not depend on
+the row of the frame that holds it: the row of a site in $\mathbf G$ is
+zero, and the rows of its atoms hold what the site passes to them (the
+spread of its force), with the virial of the spread in $\mathsf S$. In
+mixed precision the row of a site holds what the spread leaves of an f32
+force, an ulp of it ($1.2\times10^{-4}$ kJ/mol/nm where the largest entry
+is 3,876): the numbers are those of the program, and are not set to zero
+on the host.
 
 ### Through `mdir.torch.evaluate`
 
@@ -1410,11 +1441,17 @@ out = mdir.torch.evaluate(evaluator, theta, x, cells, tilts, gradients=("strain"
 out.gradients["strain"]                                   # (K, 3, 3) tensor, as below
 ```
 
-- **`positions`, `cells`, and `tilts` that require a gradient** are taken:
-  `energy` is differentiable in them, as it is in `theta`. The function
-  that is differentiated is $U(\mathbf x, \mathsf h)$ at the Cartesian
-  positions given, and its backward is a product with what the forward
-  kept, without a second pass:
+- **`gradients=()`** takes the names of the evaluator. `"positions"` and
+  `"strain"` give `out.gradients[name]` as tensors on the device of
+  `theta`. `"tunables"` is taken and changes nothing: the derivative in
+  `theta` is autograd's, kept where a tensor of `theta` requires a
+  gradient, as before.
+- **`positions`, `cells`, and `tilts` that require a gradient** are taken
+  where each is one tensor (`(K, N, 3)` or `(N, 3)`; `(K, 3)` or `(3,)`),
+  and `energy` is differentiable in them, as it is in `theta`. The
+  function that is differentiated is $U(\mathbf x, \mathsf h)$ at the
+  Cartesian positions given, and its backward is a product with what the
+  forward kept, without a second pass:
   $\bar{\mathbf x}_{n,i} = g_n\mathbf G_{n,i}$, and for the cell
 
   $$
@@ -1425,45 +1462,259 @@ out.gradients["strain"]                                   # (K, 3, 3) tensor, as
 
   (rows as the rows of $\mathsf h$), of which `cells` takes the diagonal
   and `tilts` the entries $(b, x)$, $(c, x)$, $(c, y)$; it follows from
-  the chain rule on the deformation above, and uses $\mathsf S$ only
-  along strains that keep the cell lower triangular. The sum over the
-  particles is formed on the host in f64. The gradient has the type and
-  the device of the tensor it is of.
-- **`gradients=`** gives `out.gradients[name]` as tensors on the device of
-  `theta`. They depend on `theta` and on the positions, and their
-  derivative, a second derivative of $U$, is not implemented: each has a
-  `grad_fn` whose backward raises `UnsupportedError` when it is given a
-  cotangent that is not zero, as `virial` does (ruling Q5), unless the
-  output is detached. A loss on the forces or on the stress is therefore
-  evaluated in the framework, and its derivative in $\boldsymbol\theta$,
-  the force matching that #138 defers (the vector-Jacobian product of the
-  forces in $\boldsymbol\theta$), is refused and not returned as zero.
+  the chain rule on the deformation above, and uses $\mathsf S$ only on
+  and above the diagonal. The two terms nearly cancel (636 kJ/mol/nm of
+  14,000 kJ/mol on the dipeptide), so the sum over the particles is
+  formed on the host in f64 in every mode. A gradient has the shape, the
+  type, and the device of the tensor it is of; one cell given for every
+  frame takes the sum over the frames. The gradient in the cell is not
+  $\mathsf S$: the strain moves the positions with the cell, and is the
+  output `gradients["strain"]`.
+- **The gradients as outputs** depend on `theta` and on the positions,
+  and their derivative, a second derivative of $U$, is not implemented:
+  each has a `grad_fn` whose backward raises `UnsupportedError` when it is
+  given a cotangent that is not zero, as `virial` does (ruling Q5), unless
+  the output is detached; an output that reads no tunable of `theta`, in
+  a call whose positions and cell take no gradient, is a constant without
+  a graph. **A loss on the forces or on the stress can therefore be
+  evaluated, and it cannot yet train the tunables: its derivative in
+  $\boldsymbol\theta$ is force matching, which #138 defers (stage 4, the
+  vector-Jacobian product of the forces in $\boldsymbol\theta$), and it is
+  an error, not a zero.**
 - **Second derivatives are refused with `UnsupportedError`**, for every
   input: the products of the backward (in `theta`, in the positions, in
   the cell) are operations whose own backward raises, naming the
   derivative that is missing. For `theta` this replaces the error of
   slice 1, PyTorch's `RuntimeError` "Trying to backward through
   mdir.frame_vjp.default but no autograd formula was registered", which
-  is a refusal too but says nothing a user of the evaluator can act on.
-  The products in the positions and the cell are operations of their own
-  for this reason: written as a multiplication of tensors, the gradient
-  $g_n\mathbf G_{n,i}$ would be differentiable in $g_n$ alone, and a
-  second derivative in the positions would come out as zero.
+  was a refusal too but said nothing a user of the evaluator could act
+  on. The products in the positions and the cell are operations of their
+  own for this reason: written as a multiplication of tensors, the
+  gradient $g_n\mathbf G_{n,i}$ would be differentiable in $g_n$ alone,
+  and a second derivative in the positions would come out as zero.
+- In a call whose positions or cell take a gradient, `virial` and every
+  observed column are functions of them, whose derivative is not
+  implemented either: their backward raises whatever `depends` says.
 - With `terms="dependent"`, positions or cells that require a gradient
-  are refused as `gradients=` is.
+  are refused as `"positions"` and `"strain"` are.
+- Frames of an iterable carry no graph: positions that require a gradient
+  inside one are refused (`UnsupportedError`), in `FrameEvaluator.evaluate`
+  as well, whose arrays carry none.
 
-### Validation planned
+**The operations.** `mdir::frame_energies` takes the positions, the
+cells, and the tilts as tensors where they require a gradient (empty
+tensors otherwise: the frames are read from the record of the call, as
+before) and returns, besides its four outputs, the gradient in the
+positions, in the strain, and in the six numbers of the cell, each empty
+unless it is asked or a backward needs it. `mdir::frame_input_vjp` is the
+product of the cotangent of the energies with one of them. It and
+`mdir::frame_vjp` have a registered backward that raises.
 
-| Quantity | Reference |
-|---|---|
-| $\mathbf G$, every component of the dipeptide's solute and a sample of the water; $\mathsf S$, nine components | central differences of the evaluator's own `energy` in double precision, at steps small enough for a potential that is only continuous at the cutoff; for the components of $\mathsf S$ above the diagonal the deformed cell and positions are rotated back to the lower-triangular form (a QR factorization), which a rotation-invariant potential allows |
-| $-\operatorname{tr}\mathsf S$ | `virial`, in programs without constraints |
-| $\mathbf G$ of a frame | the forces of the sampler's state at that step, to the bit in the deterministic mode |
-| The reciprocal sum alone: $\mathbf G$ and $\mathsf S$ | torch-pme [[Loche2025]](references.md#loche2025) at the same positions, cell, charges, $\beta$, grid, and order, its forces and its derivative in the strain by autograd; tolerance from the error of the mesh, measured at two grids |
-| The whole potential: $\mathbf G$; $\mathsf S$ | OpenMM 8.6.1: its forces; central differences of its energy under the same strain (it reports no virial) |
-| Systems and modes | the dipeptide in water and JAC; rectangular and triclinic (the rhombic dodecahedron of the tests); CPU and GPU; `double` and `mixed` |
-| The adapter | `torch.autograd.gradcheck` in the positions, `cells`, and `tilts` in double; the refusals |
-| Cost | a frame with and without each output against `main` (`scripts/benchmarks/frames/bench.py`) |
+### Implementation of the gradients
+
+- **The request travels with the frame.** `@mdrtFrameBoundary` takes a
+  second buffer, two numbers that the host sets for each frame: whether
+  its forces are asked, and its virial. They are not values of the
+  activation, as `tunable_gradient` is, so that a call that asks and one
+  that does not share an activation and no start is paid.
+- **An evaluation of their own, in a branch.** After the evaluation of
+  the frame the loop holds two loops of one iteration or none (the form
+  that the frame of a reporter has, D207): one for a frame that asks for
+  its forces alone, with `md.evaluate @energy ... request [forces]` and
+  `mdrt.host_call @mdrtWriteFrameForces`; one for a frame that asks for
+  its virial, with `request [forces, virial]`, `call
+  @mdrtWriteFrameVirial` with the nine components, and the call of the
+  forces if they are asked as well. The forces are those of the
+  potential, with the spread of the virtual sites and the restraints,
+  without the constraints. So a frame that asks pays one more evaluation
+  of the forces ([measured](#the-cost-of-the-gradients)), and a frame
+  that does not pays nothing.
+- **Why not the forces and the virial of the evaluation that is there.**
+  That was written first: the two calls took `%f0` and the nine
+  components of `%w0` of the evaluation of the frame, and nothing more
+  was evaluated. But a frame reads of that evaluation only the energy,
+  the trace and the diagonal of the virial, and the square of the forces,
+  and a consumer of the whole of either changes what the kernels compute
+  and how the loops are joined in every frame, asked or not: on the CPU
+  in double precision a frame of the dipeptide that asked for nothing
+  took 47.2 ms with both calls and 46.6 ms with the call of the virial
+  alone, against 45.1 ms on `main`. With the evaluation in the branch it
+  takes 45.0 ms, the text of a frame without the request is that of
+  before but for a branch that is not taken, and its numbers are the same
+  to the bit whatever a call asks. The price is that of the frames that
+  ask.
+- **On the host** the forces are written with the opposite sign straight
+  into the array that the caller will hold, in their type
+  (`Simulation::evaluateFrame` takes the memory); the virial is
+  transposed, negated, and completed with a third of the virials of the
+  correction for the dispersion and of the background on each axis
+  (`Output::getFrameStrain`). A frame that asked and was not handed its
+  forces or its virial fails, as a defect of mdir: it is not returned as
+  zeros.
+- No kernel and no function of a device runtime changes. The text of a
+  program of frames changes by the buffer, its two loads, and the two
+  branches with their evaluation, so the kept code of every evaluator is compiled anew once
+  (`python-frames-loop*.test` read that text and pass unchanged). The
+  programs of `mdir run` and of a `Simulation` are the same to the byte.
+
+### Validation of the gradients
+
+`test/Driver/Inputs/python_frame_gradients.py`;
+`python-frame-gradients.test`, `-torch.test`, `-torchpme.test` (`REQUIRES:
+torch, torchpme`), `-openmm.test` (`REQUIRES: openmm`), and their GPU
+twins; the deterministic mode unless stated. Differences are relative to
+the largest entry of the reference. "FD" is a central difference of the
+evaluator's own `energy` in double precision, extrapolated from two steps
+(for a program in mixed precision, of the same model compiled in double
+precision on the same target).
+
+**The steps of the differences.** The energy is only continuous where a
+pair crosses the cutoff: the direct sum of PME is shifted there (D210),
+and its force jumps by about $10^{-3}$ kJ/mol/nm a pair. A difference
+over a long step is rough at the particles that have such a pair, and one
+over a short step meets the rounding of the energy. Measured on the
+dipeptide in double precision, the largest error of 102 components of
+$\mathbf G$ is $7\times10^{-3}$ kJ/mol/nm at a step of $10^{-3}$ nm,
+$3\times10^{-3}$ at $2\times10^{-5}$, $1\times10^{-4}$ at
+$4\times10^{-6}$, and $3\times10^{-4}$ at $10^{-6}$; the tests take
+$4\times10^{-6}$ nm for the positions, $10^{-6}$ for the strain, and
+$2\times10^{-5}$ nm for the edges of the cell at fixed positions, where
+the difference is of a quantity twenty times smaller. The tolerances in
+double precision are those of the differences, not of the outputs.
+
+*Systems:* the alanine dipeptide in 382 flexible waters (1,168 atoms,
+PME, a switched Lennard-Jones, a soft pair term), orthorhombic; 403
+flexible waters in a rhombic dodecahedron sheared by 1% so that its cell
+is inside the reduced form (1,209 atoms, PME), triclinic.
+
+| Quantity | Reference | CPU double | CPU mixed | Tolerance (double, mixed) |
+|---|---|---|---|---|
+| $\mathbf G$ of the dipeptide: every component of the solute and of 12 atoms of the water, 102 | FD | 3.1e-8 | 2.5e-5 | 5e-7, 1e-4 |
+| The diagonal of $\mathsf S$ of the dipeptide | FD under $\varepsilon_{\alpha\alpha}$ | 7.9e-8 | 1.6e-5 | 5e-7, 1e-4 |
+| $\mathsf S$ of the water in the triclinic cell, on and above the diagonal | FD under $\varepsilon_{\alpha\beta}$, $\alpha\le\beta$ | 7.4e-9 | 7.4e-6 | 5e-7, 1e-4 |
+| The same below the diagonal | FD with the deformed positions and cell rotated back to the lower-triangular form (a QR factorization), which a potential of pairs and of the mesh allows | 1.8e-8 | 3.3e-6 | 5e-7, 1e-4 |
+| $\mathbf G$ of the water, 36 components | FD | 9.0e-10 | 5.3e-7 | 5e-7, 1e-4 |
+| `virial` $+ \operatorname{tr}\mathsf S$, kJ/mol: the dipeptide; the water | 0 | 0; 0 | 0; 0 | 1e-9 relative |
+| $\mathbf G$ of a frame of the dipeptide | the forces of the sampler's state at that step, with the opposite sign (sums in a step and at a start: another order) | 2.5e-16 | 1.5e-7 | 1e-13, 1e-5 |
+| The same without the deterministic mode: $\mathbf G$ in float32 in mixed | the forces of a sampler without it | 2.3e-16 | 9.2e-8 | 1e-12, 1e-5 |
+| With the correction for the dispersion under a plain cutoff and a net charge of 0.44 e (what the host adds at the volume): the diagonal of $\mathsf S$; `virial` $+ \operatorname{tr}\mathsf S$ | FD; 0 | 2.4e-8; 0 | 1.1e-5; 3.6e-12 kJ/mol | 5e-7, 1e-4 |
+| With a term of the absolute positions on the water ($\mathsf S - \mathsf S^{\mathsf T}$ is 93,180 kJ/mol): $\mathsf S$ on and above the diagonal; $\mathbf G$, 24 components | FD | 2.0e-9; 1.9e-9 | 1.5e-6; 2.1e-7 | 5e-7, 1e-4 |
+| With rigid water: $\mathbf G$, 36 components, in every position; the diagonal of $\mathsf S$ | FD | 1.1e-7; 1.8e-8 | 2.7e-6; 4.1e-7 | 5e-7, 1e-4 |
+| With 387 virtual sites (OPC): $\mathbf G$ of 36 components of their atoms; the diagonal of $\mathsf S$; the rows of the sites | FD; FD; 0 | 1.2e-7; 9.9e-8; 0 | 1.7e-5; 5.0e-6; 3.1e-8 | 5e-7, 1e-4; 1e-6 for the rows in mixed |
+| Calls that ask for nothing, for one gradient, and for all three, as states, as an array, and one frame alone, in one activation: every output | the first evaluation | 0 | 0 | 0 |
+
+**Against torch-pme** [[Loche2025]](references.md#loche2025), the
+reciprocal part (moved here from #203 by #138). The evaluator returns
+whole gradients, so the Coulomb part is taken as the difference of the
+gradients at the charges of the model and at charges of zero (every
+charge a tunable), at the same frame. The reference is torch-pme 0.5.0's
+sum of the mesh at the same positions, cell, charges, $\beta$ = 3.5/nm,
+grid, and order 4, with the pair sums written in PyTorch as
+`python_tunable_gradient.py` has them (the direct sum over the pairs
+within the cutoff, the excluded pairs, the 1-4 pairs), differentiated by
+autograd in the positions and in a strain of zero that deforms the
+positions and the cell: all nine components of $\mathsf S$ are compared.
+The tolerance is three times what the two programs change by between the
+grid and one of twice the points.
+
+| System | Grid | $\mathbf G$: CPU double, CPU mixed | $\mathsf S$: CPU double, CPU mixed | MDIR and torch-pme change by ($\mathbf G$; $\mathsf S$) |
+|---|---|---|---|---|
+| Dipeptide, 1,168 charges, 79,024 pairs | 64 | 5.9e-5, 5.9e-5 | 2.1e-5, 2.0e-5 | 3.4e-5 and 5.8e-5; 2.3e-5 and 1.8e-5 |
+| | 128 | 4.8e-6, 5.3e-6 | 7.7e-7, 5.8e-7 | |
+| Water in the rhombic dodecahedron, 1,209 charges, 124,961 pairs | 32 | 8.5e-4, 8.5e-4 | 3.0e-4, 3.0e-4 | 8.1e-4 and 9.6e-4; 3.2e-4 and 2.5e-4 |
+| | 64 | 5.2e-5, 5.3e-5 | 8.8e-6, 8.5e-6 | |
+| JAC, 23,558 charges, 2,430,398 pairs (by hand: the system is not in the repository) | 128 | 7.5e-5 | 7.6e-6 | 3.1e-5 and 8.3e-5; 1.5e-5 and 8.8e-6 |
+| | 256 | 4.9e-6 | 8.0e-7 | |
+
+**Against OpenMM 8.6.1**, the whole potential: the dipeptide with PME at
+$\beta$ = 3.5/nm and the same grid, a cutoff of 0.8 nm, and the
+Lennard-Jones shifted to 0 there, whose forces are those of OpenMM's
+plain cutoff. $\mathbf G$ is compared with OpenMM's forces (its Reference
+platform, double precision). OpenMM reports no virial, and it cuts the
+Lennard-Jones and the direct sum without a shift, so that its energy
+jumps where a pair crosses the cutoff: $\mathsf S$ is compared with
+central differences, under each of the nine components of the strain, of
+OpenMM's energy less $u_{ij}(r_c)$ of every pair within the cutoff that is
+not an exception (summed in the test from OpenMM's own parameters), the
+energy whose derivative its forces are; the deformed cell is rotated
+back to the reduced form, which OpenMM takes as well. OpenMM's B-splines
+are of order 5 and MDIR's of order 4.
+
+| Quantity | Grid | CPU double | CPU mixed | MDIR and OpenMM change by |
+|---|---|---|---|---|
+| $\mathbf G$, 1,168 particles | 64 | 3.4e-5 | 8.8e-5 | 3.3e-5 and 2.4e-6 |
+| | 128 | 3.7e-6 | 8.7e-5 | |
+| $\mathsf S$, nine components | 64 | 8.4e-6 | 2.0e-5 | 1.1e-5 and 6.0e-7 |
+| | 128 | 3.5e-6 | 7.8e-6 | |
+
+In mixed precision the difference of $\mathbf G$ at 128 points is that of
+the f32 kernels of the pairs, which a finer mesh does not lower.
+
+**The adapter** (`python-frame-gradients-torch*.test`):
+
+| Quantity | Reference | CPU double | CPU mixed | Tolerance (double, mixed) |
+|---|---|---|---|---|
+| The gradient of autograd in positions `(K, N, 3)` that require one, of $\sum_n c_nU_n$, on the host and on the device of `theta`; in float32 positions; for one frame `(N, 3)` | $c_n\mathbf G_n$ of the evaluator | 0 | 0 | 0 |
+| The gradient in the edges `(K, 3)` of three frames of the dipeptide at fixed positions (largest 636 kJ/mol/nm) | FD in each edge | 2.0e-6 | 1.6e-5 | 1e-5, 1e-3 |
+| One cell `(3,)` for every frame | the sum over the frames of the gradients of each | within the tolerance | within the tolerance | 1e-13 |
+| In the triclinic cell of the water: the diagonal; the tilts | FD in each | 2.8e-8; 3.2e-8 | 2.8e-6; 6.8e-6 | 1e-5, 1e-3 |
+| `torch.autograd.gradcheck` of the energy in the diagonal and the tilts (`eps` 2e-5, `atol` 2e-2, `rtol` 1e-5) | the differences of PyTorch | passes | | |
+| `gradients["positions"]`, `gradients["strain"]` as tensors | the arrays of the evaluator | 0 | 0 | 0 |
+| The gradients in the positions, the cells, and the tunable under `torch.compile(backend="aot_eager")` | eager | 0 | 0 | 0 |
+
+Also checked: the default (`jacobian`, an empty `gradients`); `gradients`
+in any order and with a name twice; the types of `"positions"` in the
+three modes; read-only arrays and mapping; the refusals of
+[What is returned](#what-is-returned), `gradient=` among them
+(`TypeError`), and that the evaluator gives the numbers of before after
+each; in the adapter, a backward through a gradient that is an output
+and through the virial of positions that require a gradient
+(`UnsupportedError`), the same loss with the output detached, every
+second derivative in the positions, the cells, and the tunables, alone
+and in a loss that has another path to the same inputs
+(`UnsupportedError`, in `python-frames-torch*.test` for the tunables),
+the dependent terms, frames of an iterable that require a gradient, and
+the records of the adapter empty after every call, a failed one included.
+
+### The cost of the gradients
+
+`scripts/benchmarks/frames/bench.py --gradients
+none/positions/strain/positions,strain`, the same stored frames for both
+builds, ms per frame of `evaluate`, the least of 5 repeats after three
+passes that are not timed; "before" is `main` at f378ac4, whose
+`evaluate` has no such argument. One run each.
+
+*The CPU of a shared login node (32 cores, the default threads), double
+precision, the dipeptide in water, the constant $l$ of a soft pair term
+tunable; a step takes 15.0 ms.* `main` gave 44.90 to 45.30 ms at $K = 1$
+and 44.95 to 45.27 ms at $K = 16$ over three runs.
+
+| Asked besides `"tunables"` | $K$ = 1 | $K$ = 16 | Against `main` |
+|---|---|---|---|
+| before (`main`) | 44.90 | 45.19 | |
+| nothing (the default) | 45.04 | 44.95 | within the spread of `main` |
+| `"positions"` | 57.98 | 58.09 | +29% |
+| `"strain"` | 60.30 | 60.28 | +34% |
+| `"positions"`, `"strain"` | 60.47 | 60.59 | +34% |
+
+The evaluator and its first frame take 1.08 s where they took 0.71 s:
+the program of frames holds the two evaluations of the branches besides
+its own.
+
+### Maintainer rulings (gradients)
+
+The seven questions put on PR #314 were decided as proposed, but the
+first.
+
+| | Question | Ruling |
+|---|---|---|
+| G1 | Names and shapes | one argument, `gradients=`, a tuple among `"tunables"`, `"positions"`, `"strain"`; the argument `gradient` is removed with no alias and no hint; `jacobian` stays the output of `"tunables"`, and `gradients` holds `"positions"` `(K, N, 3)` and `"strain"` `(K, 3, 3)`; the same for `mdir.torch.evaluate`. (Proposed: a second argument beside `gradient`) |
+| G2 | The gradient in the strain | $\partial U/\partial\boldsymbol\varepsilon$ of the energy that `energy` returns, kJ/mol, float64, nine components for every cell, not symmetrized, not divided by the volume |
+| G3 | Constraints and virtual sites | the plain gradient; $\mathsf S$ without the term of the constraint forces, and the document says which of `virial` and $-\operatorname{tr}\mathsf S$ a pressure takes; the row of a site is zero |
+| G4 | The type of `"positions"` in `mixed` | that of the forces of the program, no `dtype` argument; `"strain"` float64 |
+| G5 | The autograd contract | positions, cells, and tilts that require a gradient are taken, $U(\mathbf x, \mathsf h)$ at fixed positions; the gradients as outputs raise from a backward unless detached; every second derivative raises `UnsupportedError`, for `theta` as well. Force matching stays deferred: only the refusal |
+| G6 | `terms="dependent"` | refused, `"gradients"` in `unavailable` |
+| G7 | The cost when not asked | a branch that is not taken, with the measurement; the kept code of every evaluator is compiled anew once |
 
 ## Slices
 
@@ -1474,7 +1725,8 @@ out.gradients["strain"]                                   # (K, 3, 3) tensor, as
 | 1, after D238 and D239 (done) | the tilts of each frame of a triclinic cell; the frames of `mdir.read_h5md` as input |
 | 2 (done, D251, #291) | the frames inside one activation, in the order of the input; the program of the dependent terms kept with its program |
 | 2b | frames read from a device tensor without a copy to the host (the positions of a frame are one copy of 0.03 ms on JAC now) |
-| 3 | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138); the metatomic shape of #138 |
+| 3 (done, D[frame-gradients], #313) | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138) and of the whole potential with OpenMM; autograd in the positions and the cell through `mdir.torch.evaluate`; one argument `gradients=` |
+| 3b | the metatomic shape of #138 (a list of systems in, outputs out) |
 | Later | the derivative of the virial and of observed columns in $\boldsymbol\theta$ (M2b-3); the JAX adapter (M2b-2); learned terms (M3), whose parameters stay in the framework; frames over several nodes (M4) |
 
 ## Maintainer rulings

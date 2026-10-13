@@ -457,6 +457,41 @@ formed from the evaluator's arrays within $2\times10^{-13}$,
 `torch.autograd.gradcheck` passes, and Newton steps on a synthetic target,
 the reweighted average at $\hat\sigma' + 0.0005$ nm, return to it within
 $4\times10^{-16}$ nm ($10^{-7}$ nm in mixed precision).
+The gradients of the energy of a frame in the positions and in the strain
+(Section 3.6, D[frame-gradients]) are checked three ways
+(`python-frame-gradients*.test`), each relative to the largest entry.
+Against central differences of the evaluator's own energy in double
+precision: the energy is only continuous where a pair crosses the cutoff,
+so the steps are short ($4\times10^{-6}$ nm, a strain of $10^{-6}$), and
+the agreement is that of the differences, $3\times10^{-8}$ for the
+gradient in the positions of the dipeptide in water and $2\times10^{-8}$
+for the nine components of $\partial U/\partial\boldsymbol\varepsilon$ of
+water in a sheared rhombic dodecahedron ($2.5\times10^{-5}$ and
+$7\times10^{-6}$ in mixed precision), the components below the diagonal
+with the deformed frame rotated back to a lower-triangular cell; the same
+holds with the correction for the dispersion and a net charge, with a
+term of the absolute positions, for which the tensor is not symmetric,
+with rigid water, and with virtual sites, and the trace equals the virial
+of the log with the opposite sign, to the bit in double precision, in
+every program without constraints. Against torch-pme
+[[Loche2025]](references.md#loche2025) for the Coulomb part, the
+difference of the gradients at the charges of the model and at charges of
+zero, by the autograd of PyTorch in the positions and in a strain of its
+sum of the mesh with the pair sums: $5\times10^{-6}$ and
+$8\times10^{-7}$ on the dipeptide at 128 points, $5\times10^{-5}$ and
+$9\times10^{-6}$ in the triclinic cell at 64, and $5\times10^{-6}$ and
+$8\times10^{-7}$ on the 23,558 particles of JAC at 256, each within what
+the two programs change by when the points are doubled. And against
+OpenMM for the whole potential of the dipeptide: its forces within
+$4\times10^{-6}$, and, since it reports no virial and cuts without a
+shift, central differences under the nine strains of its energy less
+$u(r_c)$ of the pairs within the cutoff, within $4\times10^{-6}$. Through
+the PyTorch operation the gradient in positions that require one is the
+cotangent times the gradient of the evaluator to the bit, the gradient in
+the edges and the tilts of the cell at fixed positions agrees with
+central differences within $2\times10^{-6}$ and $3\times10^{-8}$, and a
+second derivative, alone or in a loss with another path to the same
+input, raises an error in every case tried.
 The derivatives of one evaluation are independent (Section 3.6), which is
 checked directly: 28 programs declare the charges, free or tied in 25
 entries, with particle mesh Ewald or a Coulomb cutoff, together with
