@@ -681,3 +681,165 @@ void mdrtHostMatrixGrow(int64_t handle, int64_t width) {
   matrix->width = width + width / 4;
   allocateHostMatrix(matrix);
 }
+
+/*===----------------------------------------------------------------------===
+  The structures of the tuples, kept from one activation to the next
+  (D[activation-start], mdrt_tuples.h)
+  ===----------------------------------------------------------------------===
+
+  An embedding program opens a store, tells it where an activation begins,
+  enters it while the code of the activation runs, and closes it when the
+  program ends. The code takes the renumbered members of a tuple set and
+  its incidence structure from these functions and gives them back where
+  it would have freed them; without a store each is built for the caller,
+  which frees it. */
+
+#include "mdrt_tuples.h"
+
+static struct MdrtTupleStore *currentTuples = NULL;
+
+void *mdrtTuplesOpen(void) { return mdrtTupleStoreOpen(); }
+
+void mdrtTuplesBegin(void *store) { mdrtTupleStoreBegin(store); }
+
+/* Whether the store gives a structure that it has, or builds every one
+   anew: for the tests, which compare the two. */
+void mdrtTuplesKeep(void *store, int32_t keeps) {
+  ((struct MdrtTupleStore *)store)->keeps = keeps != 0;
+}
+
+void mdrtTuplesEnter(void *store) { currentTuples = store; }
+
+void mdrtTuplesLeave(void) { currentTuples = NULL; }
+
+void mdrtTuplesClose(void *opaque) {
+  struct MdrtTupleStore *store = opaque;
+  if (!store)
+    return;
+  if (currentTuples == store)
+    currentTuples = NULL;
+  for (size_t i = 0; i != store->count; ++i) {
+    struct MdrtTuples *e = store->entries[i];
+    free(e->file);
+    free(e->ids);
+    free(e->members);
+    free(e->incidence);
+    free(e);
+  }
+  free(store->entries);
+  free(store);
+}
+
+/* The numbers of structures that were taken from the store and that were
+   built, since it was opened. */
+void mdrtTuplesCounts(void *opaque, int64_t *counts) {
+  struct MdrtTupleStore *store = opaque;
+  counts[0] = store ? store->kept : 0;
+  counts[1] = store ? store->built : 0;
+}
+
+/* The time that the code has spent in the functions below with the store,
+   in seconds. */
+double mdrtTuplesSeconds(void *opaque) {
+  struct MdrtTupleStore *store = opaque;
+  return store ? store->seconds : 0.0;
+}
+
+static void tuplesRenumber(struct MdrtMemref2 *result,
+                           struct MdrtMemref2 *members,
+                           struct MdrtMemref1 *ids) {
+  const int32_t *file = mdrtTuplesMembersOf(members);
+  const int32_t *id = (const int32_t *)ids->aligned + ids->offset;
+  int64_t tuples = members->sizes[0], arity = members->sizes[1];
+  size_t bytes = (size_t)(tuples * arity) * sizeof(int32_t);
+  if (!currentTuples) {
+    int32_t *fresh = mdrtTuplesAllocate(bytes);
+    mdrtTuplesRenumber(file, tuples, arity, id, ids->size, fresh);
+    mdrtTuplesSetMemref2(result, fresh, tuples, arity);
+    return;
+  }
+  int found = 0;
+  struct MdrtTuples *e = mdrtTupleStoreTake(currentTuples, file, tuples, arity,
+                                            id, ids->size, &found);
+  if (!found) {
+    mdrtTuplesRenumber(file, tuples, arity, id, ids->size, e->members);
+  } else if (mdrtTuplesChecks()) {
+    int32_t *anew = mdrtTuplesAllocate(bytes);
+    mdrtTuplesRenumber(file, tuples, arity, id, ids->size, anew);
+    if (memcmp(anew, e->members, bytes) != 0)
+      mdrtTuplesDiffer("the renumbered members of a tuple set");
+    free(anew);
+  }
+  ++e->held;
+  mdrtTuplesSetMemref2(result, e->members, tuples, arity);
+}
+
+void _mlir_ciface_mdrtTuplesRenumber(struct MdrtMemref2 *result,
+                                     struct MdrtMemref2 *members,
+                                     struct MdrtMemref1 *ids) {
+  double start = mdrtTuplesNow();
+  tuplesRenumber(result, members, ids);
+  mdrtTuplesSpent(currentTuples, start);
+}
+
+static void tuplesIncidence(struct MdrtMemref2 *result,
+                            struct MdrtMemref2 *members, int64_t particles) {
+  const int32_t *given = mdrtTuplesMembersOf(members);
+  int64_t tuples = members->sizes[0], arity = members->sizes[1];
+  struct MdrtTuples *e = mdrtTupleStoreFind(currentTuples, given);
+  if (!e && currentTuples) {
+    /* The members of the files, in their order. */
+    int found = 0;
+    e = mdrtTupleStoreTake(currentTuples, given, tuples, arity, NULL,
+                           particles, &found);
+    e->given = given;
+  }
+  if (e && e->particles != particles)
+    e = NULL;
+  /* The width does not depend on the order: an entry that has had a
+     structure has the width of the next. */
+  int64_t width = e && e->width
+                      ? e->width
+                      : mdrtTuplesWidth(given, tuples, arity, particles);
+  size_t bytes = (size_t)(particles * width) * sizeof(int32_t);
+  if (!e) {
+    int32_t *fresh = mdrtTuplesAllocate(bytes);
+    mdrtTuplesFill(given, tuples, arity, particles, width, fresh);
+    mdrtTuplesSetMemref2(result, fresh, particles, width);
+    return;
+  }
+  if (!e->hasIncidence) {
+    if (!e->incidence || e->width != width) {
+      free(e->incidence);
+      e->incidence = mdrtTuplesAllocate(bytes);
+    }
+    e->width = width;
+    mdrtTuplesFill(given, tuples, arity, particles, width, e->incidence);
+    e->hasIncidence = 1;
+  } else if (mdrtTuplesChecks()) {
+    int64_t anewWidth = mdrtTuplesWidth(given, tuples, arity, particles);
+    int32_t *anew =
+        mdrtTuplesAllocate((size_t)(particles * anewWidth) * sizeof(int32_t));
+    mdrtTuplesFill(given, tuples, arity, particles, anewWidth, anew);
+    if (anewWidth != width ||
+        !mdrtTuplesSameRows(anew, e->incidence, arity, particles, width))
+      mdrtTuplesDiffer("the incidence structure of a tuple set");
+    free(anew);
+  }
+  ++e->held;
+  mdrtTuplesSetMemref2(result, e->incidence, particles, width);
+}
+
+void _mlir_ciface_mdrtTuplesIncidence(struct MdrtMemref2 *result,
+                                      struct MdrtMemref2 *members,
+                                      int64_t particles) {
+  double start = mdrtTuplesNow();
+  tuplesIncidence(result, members, particles);
+  mdrtTuplesSpent(currentTuples, start);
+}
+
+/* Where the code would free the members or the structure that it took. */
+void _mlir_ciface_mdrtTuplesRelease(struct MdrtMemref2 *buffer) {
+  if (!mdrtTupleStoreGiveBack(currentTuples, buffer->allocated))
+    free(buffer->allocated);
+}

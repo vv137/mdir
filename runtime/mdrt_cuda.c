@@ -1214,3 +1214,272 @@ void mdrtDeviceWaitAll(void) {
   check(cuCtxSynchronize(), "cuCtxSynchronize");
   isPending = 0;
 }
+
+/*===----------------------------------------------------------------------===
+  The structures of the tuples, kept from one activation to the next
+  (D[activation-start], mdrt_tuples.h)
+  ===----------------------------------------------------------------------===
+
+  As in the runtime of the host (mdrt.c), with the incidence structure and
+  the copy of the members on the device. What the store keeps on the device
+  is memory of its own, outside the activations and the pool of blocks: an
+  activation that ends leaves it, and it is freed when the store closes. The
+  renumbered members are on the host; the identities are read from the
+  device where the members are renumbered. */
+
+#include "mdrt_tuples.h"
+
+static struct MdrtTupleStore *currentTuples = NULL;
+
+void *mdrtDeviceTuplesOpen(void) { return mdrtTupleStoreOpen(); }
+
+void mdrtDeviceTuplesBegin(void *store) { mdrtTupleStoreBegin(store); }
+
+void mdrtDeviceTuplesKeep(void *store, int32_t keeps) {
+  ((struct MdrtTupleStore *)store)->keeps = keeps != 0;
+}
+
+void mdrtDeviceTuplesEnter(void *store) { currentTuples = store; }
+
+void mdrtDeviceTuplesLeave(void) { currentTuples = NULL; }
+
+void mdrtDeviceTuplesClose(void *opaque) {
+  struct MdrtTupleStore *store = opaque;
+  if (!store)
+    return;
+  if (currentTuples == store)
+    currentTuples = NULL;
+  int gone = isDriverGone();
+  /* No work may still read what is freed. */
+  if (!gone)
+    finish();
+  for (size_t i = 0; i != store->count; ++i) {
+    struct MdrtTuples *e = store->entries[i];
+    free(e->file);
+    free(e->ids);
+    free(e->members);
+    if (!gone && e->deviceIncidence)
+      check(cuMemFree((CUdeviceptr)e->deviceIncidence), "cuMemFree");
+    if (!gone && e->deviceMembers)
+      check(cuMemFree((CUdeviceptr)e->deviceMembers), "cuMemFree");
+    free(e);
+  }
+  free(store->staging);
+  free(store->entries);
+  free(store);
+}
+
+void mdrtDeviceTuplesCounts(void *opaque, int64_t *counts) {
+  struct MdrtTupleStore *store = opaque;
+  counts[0] = store ? store->kept : 0;
+  counts[1] = store ? store->built : 0;
+}
+
+/* Copies between the host and the device, done when they return. */
+static void tuplesToDevice(void *device, const void *host, size_t bytes) {
+  if (!bytes)
+    return;
+  mgpuStreamCreate();
+  double start = begin();
+  check(cuMemcpyHtoDAsync((CUdeviceptr)device, host, bytes, sharedStream),
+        "cuMemcpyHtoDAsync");
+  isPending = 1;
+  end(COPY, start);
+  finish();
+}
+
+static void tuplesToHost(void *host, const void *device, size_t bytes) {
+  if (!bytes)
+    return;
+  mgpuStreamCreate();
+  double start = begin();
+  check(cuMemcpyDtoHAsync(host, (CUdeviceptr)device, bytes, sharedStream),
+        "cuMemcpyDtoHAsync");
+  isPending = 1;
+  end(COPY, start);
+  finish();
+}
+
+/* Memory of the device that the store keeps. */
+static void *tuplesDeviceKept(size_t bytes) {
+  CUdeviceptr pointer = 0;
+  if (bytes)
+    check(cuMemAlloc(&pointer, bytes), "cuMemAlloc");
+  return (void *)pointer;
+}
+
+double mdrtDeviceTuplesSeconds(void *opaque) {
+  struct MdrtTupleStore *store = opaque;
+  return store ? store->seconds : 0.0;
+}
+
+static void tuplesRenumber(struct MdrtMemref2 *result,
+                           struct MdrtMemref2 *members,
+                           struct MdrtMemref1 *ids) {
+  enter();
+  const int32_t *file = mdrtTuplesMembersOf(members);
+  int64_t tuples = members->sizes[0], arity = members->sizes[1];
+  int64_t particles = ids->size;
+  size_t bytes = (size_t)(tuples * arity) * sizeof(int32_t);
+  int32_t *id = mdrtTuplesAllocate((size_t)particles * sizeof(int32_t));
+  tuplesToHost(id, (const int32_t *)ids->aligned + ids->offset,
+               (size_t)particles * sizeof(int32_t));
+  if (!currentTuples) {
+    int32_t *fresh = mdrtTuplesAllocate(bytes);
+    mdrtTuplesRenumber(file, tuples, arity, id, particles, fresh);
+    mdrtTuplesSetMemref2(result, fresh, tuples, arity);
+    free(id);
+    return;
+  }
+  int found = 0;
+  struct MdrtTuples *e = mdrtTupleStoreTake(currentTuples, file, tuples, arity,
+                                            id, particles, &found);
+  if (!found) {
+    mdrtTuplesRenumber(file, tuples, arity, id, particles, e->members);
+  } else if (mdrtTuplesChecks()) {
+    int32_t *anew = mdrtTuplesAllocate(bytes);
+    mdrtTuplesRenumber(file, tuples, arity, id, particles, anew);
+    if (memcmp(anew, e->members, bytes) != 0)
+      mdrtTuplesDiffer("the renumbered members of a tuple set");
+    free(anew);
+  }
+  free(id);
+  ++e->held;
+  mdrtTuplesSetMemref2(result, e->members, tuples, arity);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesRenumber(struct MdrtMemref2 *result,
+                                           struct MdrtMemref2 *members,
+                                           struct MdrtMemref1 *ids) {
+  double start = mdrtTuplesNow();
+  tuplesRenumber(result, members, ids);
+  mdrtTuplesSpent(currentTuples, start);
+}
+
+static void tuplesIncidence(struct MdrtMemref2 *result,
+                            struct MdrtMemref2 *members, int64_t particles) {
+  enter();
+  const int32_t *given = mdrtTuplesMembersOf(members);
+  int64_t tuples = members->sizes[0], arity = members->sizes[1];
+  struct MdrtTuples *e = mdrtTupleStoreFind(currentTuples, given);
+  if (!e && currentTuples) {
+    /* The members of the files, in their order. */
+    int found = 0;
+    e = mdrtTupleStoreTake(currentTuples, given, tuples, arity, NULL,
+                           particles, &found);
+    e->given = given;
+  }
+  if (e && e->particles != particles)
+    e = NULL;
+  /* The width does not depend on the order: an entry that has had a
+     structure has the width of the next. */
+  int64_t width = e && e->width
+                      ? e->width
+                      : mdrtTuplesWidth(given, tuples, arity, particles);
+  size_t bytes = (size_t)(particles * width) * sizeof(int32_t);
+  if (!e) {
+    int32_t *host = mdrtTuplesAllocate(bytes);
+    mdrtTuplesFill(given, tuples, arity, particles, width, host);
+    void *device = mgpuMemAlloc(bytes, NULL, false);
+    tuplesToDevice(device, host, bytes);
+    free(host);
+    mdrtTuplesSetMemref2(result, device, particles, width);
+    return;
+  }
+  if (!e->hasIncidence) {
+    if (!e->deviceIncidence || e->width != width) {
+      if (e->deviceIncidence) {
+        finish();
+        check(cuMemFree((CUdeviceptr)e->deviceIncidence), "cuMemFree");
+      }
+      e->deviceIncidence = tuplesDeviceKept(bytes);
+    }
+    e->width = width;
+    /* Built in memory of the host that the store keeps: memory taken anew
+       for each structure is mapped and faulted in page by page at every
+       start once a structure is larger than the C library recycles (#294:
+       190 ms in place of 16 for the dihedrals of Cellulose). */
+    struct MdrtTupleStore *store = currentTuples;
+    if (store->stagingBytes < bytes) {
+      free(store->staging);
+      store->staging = mdrtTuplesAllocate(bytes);
+      store->stagingBytes = bytes;
+    }
+    mdrtTuplesFill(given, tuples, arity, particles, width, store->staging);
+    tuplesToDevice(e->deviceIncidence, store->staging, bytes);
+    e->hasIncidence = 1;
+  } else if (mdrtTuplesChecks()) {
+    int64_t anewWidth = mdrtTuplesWidth(given, tuples, arity, particles);
+    int32_t *anew =
+        mdrtTuplesAllocate((size_t)(particles * anewWidth) * sizeof(int32_t));
+    mdrtTuplesFill(given, tuples, arity, particles, anewWidth, anew);
+    int32_t *kept = mdrtTuplesAllocate(bytes);
+    tuplesToHost(kept, e->deviceIncidence, bytes);
+    if (anewWidth != width ||
+        !mdrtTuplesSameRows(anew, kept, arity, particles, width))
+      mdrtTuplesDiffer("the incidence structure of a tuple set");
+    free(kept);
+    free(anew);
+  }
+  ++e->held;
+  mdrtTuplesSetMemref2(result, e->deviceIncidence, particles, width);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesIncidence(struct MdrtMemref2 *result,
+                                            struct MdrtMemref2 *members,
+                                            int64_t particles) {
+  double start = mdrtTuplesNow();
+  tuplesIncidence(result, members, particles);
+  mdrtTuplesSpent(currentTuples, start);
+}
+
+/* The members on the device, for the loops that evaluate each tuple once:
+   those that the incidence structure was built from. */
+static void tuplesMembers(struct MdrtMemref2 *result,
+                          struct MdrtMemref2 *members) {
+  enter();
+  const int32_t *given = mdrtTuplesMembersOf(members);
+  int64_t tuples = members->sizes[0], arity = members->sizes[1];
+  size_t bytes = (size_t)(tuples * arity) * sizeof(int32_t);
+  struct MdrtTuples *e = mdrtTupleStoreFind(currentTuples, given);
+  if (!e) {
+    void *device = mgpuMemAlloc(bytes, NULL, false);
+    tuplesToDevice(device, given, bytes);
+    mdrtTuplesSetMemref2(result, device, tuples, arity);
+    return;
+  }
+  if (!e->hasDeviceMembers) {
+    if (!e->deviceMembers)
+      e->deviceMembers = tuplesDeviceKept(bytes);
+    tuplesToDevice(e->deviceMembers, given, bytes);
+    e->hasDeviceMembers = 1;
+  } else if (mdrtTuplesChecks()) {
+    int32_t *kept = mdrtTuplesAllocate(bytes);
+    tuplesToHost(kept, e->deviceMembers, bytes);
+    if (memcmp(kept, given, bytes) != 0)
+      mdrtTuplesDiffer("the copy on the device of the members of a tuple "
+                       "set");
+    free(kept);
+  }
+  ++e->held;
+  mdrtTuplesSetMemref2(result, e->deviceMembers, tuples, arity);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesMembers(struct MdrtMemref2 *result,
+                                          struct MdrtMemref2 *members) {
+  double start = mdrtTuplesNow();
+  tuplesMembers(result, members);
+  mdrtTuplesSpent(currentTuples, start);
+}
+
+/* Where the code would free what it took: the renumbered members, on the
+   host, or a structure on the device. */
+void _mlir_ciface_mdrtDeviceTuplesRelease(struct MdrtMemref2 *buffer) {
+  void *pointer = buffer->allocated;
+  if (!pointer || mdrtTupleStoreGiveBack(currentTuples, pointer))
+    return;
+  if (isOnDevice(pointer))
+    mgpuMemFree(pointer, NULL);
+  else
+    free(pointer);
+}
