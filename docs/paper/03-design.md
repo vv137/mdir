@@ -1016,7 +1016,8 @@ over frames that a frame without the request does not take: the
 evaluation of the energy reads only the trace of the virial and the
 square of the forces, and a second reader of the whole of either changed
 its kernels, 3% to 5% of every frame on the CPU, so a frame that asks
-pays one more evaluation of its forces, a third of a frame, and a frame
+pays one more evaluation of its forces, a third of a frame on the CPU
+and 13% to 37% on a GPU by the system and what is asked, and a frame
 that does not pays nothing and has the same bits. The first is $\partial U/\partial\mathbf x_i = -\mathbf F_i$. For the
 second, deform the positions and the cell together by a matrix
 $\boldsymbol\varepsilon$, $\mathbf x_i \to (\mathsf 1 +

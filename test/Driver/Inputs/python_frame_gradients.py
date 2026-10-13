@@ -35,7 +35,8 @@ Scenarios:
              the positions and in a strain: its sum of the mesh with the
              pair sums written in PyTorch, as python_tunable_gradient.py
              has them for the derivative in the charges; the dipeptide in
-             an orthorhombic cell and water in a rhombic dodecahedron, at
+             an orthorhombic cell, and with `torchpme-water` water in a
+             rhombic dodecahedron (a process of its own), at
              two grids. Needs an interpreter with torch and torchpme
   openmm     G and the nine components of S of the whole potential against
              OpenMM: its forces, and central differences of its energy
@@ -499,7 +500,11 @@ def run_interface():
     print(f"{mode}: the gradient in the positions is {g.dtype} in the deterministic mode and "
           f"{narrow.dtype} without it, in the type of the forces of the program; the two differ "
           f"by {apart:.1e} relative")
-    assert apart < (1e-12 if double else 1e-5)
+    # Two programs, whose kernels differ: on a device the deterministic mode
+    # contracts no product into a fused multiply-add and takes its sums in
+    # one order (D201). Measured in double precision: 0 on the CPU and
+    # 6.1e-12 on an RTX 4090, the rounding of sums of forces that cancel.
+    assert apart < (1e-10 if double else 1e-5), apart
     # Without the deterministic mode, what a script compares: the gradient
     # of a frame against the forces of the sampler's state at that step.
     sampler = mdir.Simulation(loose_program)
@@ -509,7 +514,9 @@ def run_interface():
     found = loose.evaluate(at, gradients=("positions",)).gradients["positions"][0]
     forces = np.asarray(at.forces)
     apart = float(np.abs(found + forces).max() / np.abs(forces).max())
-    tolerance = 1e-12 if double else 1e-5
+    # A sampler and an evaluator without the deterministic mode: on a
+    # device neither takes its sums in one order.
+    tolerance = 1e-10 if double else 1e-5
     print(f"{mode}: without the deterministic mode, the gradient in the positions of a frame, "
           f"{found.dtype}, against the forces of the sampler's state at that step, "
           f"{forces.dtype}: {apart:.1e} of the largest ({np.abs(forces).max():.5g} kJ/mol/nm; "
@@ -737,9 +744,15 @@ def run_torchpme():
         compared(f"{name}: the same at {2 * points} points, S", s2, rs2,
                  np.abs(s - s2).max() / scale_s, np.abs(rs - rs2).max() / scale_s, 2e-5)
 
-    one("amber", first_grid(), "the dipeptide in water" if len(sys.argv) <= 6 else "the system")
-    if len(sys.argv) <= 6:
+    # One system a process: on a device the runtime keeps a plan of FFT for
+    # each grid, direction, and precision of a process, 8 at most, and a
+    # program in mixed precision with tunable charges takes four a grid;
+    # the two grids of one system fill that.
+    if scenario == "torchpme-water":
         one("water", 32, "water in a rhombic dodecahedron")
+    else:
+        one("amber", first_grid(),
+            "the dipeptide in water" if len(sys.argv) <= 6 else "the system")
     print("torchpme passed")
 
 
@@ -912,7 +925,7 @@ def run_torch():
         tt = None if tilt is None else torch.tensor(tilt, requires_grad=True)
         out = mdir.torch.evaluate(evaluator_, {"sigma": sigma.detach()}, positions, tc, tt)
         return [t.numpy() for t in torch.autograd.grad(
-            (weights.cpu()[:len(out.energy)] * out.energy).sum(),
+            (weights[:len(out.energy)].to(out.energy.device) * out.energy).sum(),
             (tc,) if tt is None else (tc, tt))]
 
     def differences(evaluator_, positions, cell, tilt, which, at, step=2e-5):
@@ -1051,7 +1064,7 @@ if scenario == "finite":
     run_finite()
 elif scenario == "torch":
     run_torch()
-elif scenario == "torchpme":
+elif scenario in ("torchpme", "torchpme-water"):
     run_torchpme()
 elif scenario == "openmm":
     run_openmm()

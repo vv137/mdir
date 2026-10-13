@@ -30,7 +30,8 @@ format, or the outputs; every such change is listed under **Changed** or
   `"strain"` is refused: their virial is taken about the references and
   is not that derivative. A frame that asks for neither costs what it cost; one that
   asks pays one more evaluation of its forces (a third of a frame on the
-  CPU). Through
+  CPU; on one RTX 4090 in mixed precision 13% to 29% of a frame of the
+  dipeptide and 20% to 37% of one of JAC, by what is asked). Through
   `mdir.torch.evaluate`, positions `(K, N, 3)`, `cells`, and `tilts` that
   are tensors requiring a gradient are differentiated (the energy at
   fixed Cartesian positions), and `gradients=("positions", "strain")`

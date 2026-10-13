@@ -1546,8 +1546,9 @@ product of the cotangent of the energies with one of them. It and
   nothing took 45.35 to 45.65 ms in it, 1% more than on `main`, so the
   forces alone keep a loop of their own. The forces of the two loops
   come from two evaluations, of the same potential at the same frame;
-  on the CPU they are the same numbers to the bit
-  (`python-frame-gradients.test`).
+  in the deterministic mode they are the same numbers to the bit, on the
+  CPU and on a GPU, in double and mixed precision
+  (`python-frame-gradients*.test`).
 - **Why not the forces and the virial of the evaluation that is there.**
   That was written first: the two calls took `%f0` and the nine
   components of `%w0` of the evaluation of the frame, and nothing more
@@ -1604,24 +1605,37 @@ double precision are those of the differences, not of the outputs.
 *Systems:* the alanine dipeptide in 382 flexible waters (1,168 atoms,
 PME, a switched Lennard-Jones, a soft pair term), orthorhombic; 403
 flexible waters in a rhombic dodecahedron sheared by 1% so that its cell
-is inside the reduced form (1,209 atoms, PME), triclinic.
+is inside the reduced form (1,209 atoms, PME), triclinic. The CPU is
+that of a login node; the GPU is one RTX 4090 in every table of this
+section.
 
-| Quantity | Reference | CPU double | CPU mixed | Tolerance (double, mixed) |
-|---|---|---|---|---|
-| $\mathbf G$ of the dipeptide: every component of the solute and of 12 atoms of the water, 102 | FD | 3.1e-8 | 2.5e-5 | 5e-7, 1e-4 |
-| The diagonal of $\mathsf S$ of the dipeptide | FD under $\varepsilon_{\alpha\alpha}$ | 7.9e-8 | 1.6e-5 | 5e-7, 1e-4 |
-| $\mathsf S$ of the water in the triclinic cell, on and above the diagonal | FD under $\varepsilon_{\alpha\beta}$, $\alpha\le\beta$ | 7.4e-9 | 7.4e-6 | 5e-7, 1e-4 |
-| The same below the diagonal | FD with the deformed positions and cell rotated back to the lower-triangular form (a QR factorization), which a potential of pairs and of the mesh allows | 1.8e-8 | 3.3e-6 | 5e-7, 1e-4 |
-| $\mathbf G$ of the water, 36 components | FD | 9.0e-10 | 5.3e-7 | 5e-7, 1e-4 |
-| `virial` $+ \operatorname{tr}\mathsf S$, kJ/mol: the dipeptide; the water | 0 | 0; 0 | 0; 0 | 1e-9 relative |
-| $\mathbf G$ of a frame of the dipeptide | the forces of the sampler's state at that step, with the opposite sign (sums in a step and at a start: another order) | 2.5e-16 | 1.5e-7 | 1e-13, 1e-5 |
-| The same without the deterministic mode: $\mathbf G$ in float32 in mixed | the forces of a sampler without it | 2.3e-16 | 9.2e-8 | 1e-12, 1e-5 |
-| With the correction for the dispersion under a plain cutoff and a net charge of 0.44 e (what the host adds at the volume): the diagonal of $\mathsf S$; `virial` $+ \operatorname{tr}\mathsf S$ | FD; 0 | 2.4e-8; 0 | 1.1e-5; 3.6e-12 kJ/mol | 5e-7, 1e-4 |
-| With a term of the absolute positions on the water ($\mathsf S - \mathsf S^{\mathsf T}$ is 93,180 kJ/mol): $\mathsf S$ on and above the diagonal; $\mathbf G$, 24 components | FD | 2.0e-9; 1.9e-9 | 1.5e-6; 2.1e-7 | 5e-7, 1e-4 |
-| With rigid water: $\mathbf G$, 36 components, in every position; the diagonal of $\mathsf S$ | FD | 1.1e-7; 1.8e-8 | 2.7e-6; 4.1e-7 | 5e-7, 1e-4 |
-| With 387 virtual sites (OPC): $\mathbf G$ of 36 components of their atoms; the diagonal of $\mathsf S$; the rows of the sites | FD; FD; 0 | 1.0e-7; 9.9e-8; 0 | 1.5e-5; 5.0e-6; 3.1e-8 | 5e-7, 1e-4; 1e-6 for the rows in mixed |
-| With restraints to reference positions on the heavy atoms of the solute: $\mathbf G$ of its first 10 atoms; `"strain"` | FD; refused | 5.7e-9 | 1.9e-6 | 5e-7, 1e-4 |
-| Calls that ask for nothing, for one gradient, and for all three, as states, as an array, and one frame alone, in one activation: every output | the first evaluation | 0 | 0 | 0 |
+| Quantity | Reference | CPU double | GPU double | CPU mixed | GPU mixed | Tolerance (double, mixed) |
+|---|---|---|---|---|---|---|
+| $\mathbf G$ of the dipeptide: every component of the solute and of 12 atoms of the water, 102 | FD | 3.1e-8 | 3.3e-8 | 2.5e-5 | 3.0e-5 | 5e-7, 1e-4 |
+| The diagonal of $\mathsf S$ of the dipeptide | FD under $\varepsilon_{\alpha\alpha}$ | 7.9e-8 | 8.3e-8 | 1.6e-5 | 1.1e-5 | 5e-7, 1e-4 |
+| $\mathsf S$ of the water in the triclinic cell, on and above the diagonal | FD under $\varepsilon_{\alpha\beta}$, $\alpha\le\beta$ | 7.4e-9 | 6.1e-9 | 7.4e-6 | 7.9e-6 | 5e-7, 1e-4 |
+| The same below the diagonal | FD with the deformed positions and cell rotated back to the lower-triangular form (a QR factorization), which a potential of pairs and of the mesh allows | 1.8e-8 | 2.2e-8 | 3.3e-6 | 3.4e-6 | 5e-7, 1e-4 |
+| $\mathbf G$ of the water, 36 components | FD | 9.0e-10 | 9.0e-10 | 5.3e-7 | 5.3e-7 | 5e-7, 1e-4 |
+| `virial` $+ \operatorname{tr}\mathsf S$, kJ/mol: the dipeptide; the water | 0 | 0; 0 | 0; 0 | 0; 0 | 0; 0 | 1e-9 relative |
+| $\mathsf S - \mathsf S^{\mathsf T}$ of the dipeptide, kJ/mol of 14,001 | 0 | 2.3e-13 | 5.1e-13 | 1.3e-4 | 2.3e-4 | 1e-9, 1e-4 relative |
+| $\mathbf G$ of a frame of the dipeptide | the forces of the sampler's state at that step, with the opposite sign (sums in a step and at a start: another order) | 2.5e-16 | 3.9e-16 | 1.5e-7 | 1.9e-7 | 1e-13, 1e-5 |
+| The same without the deterministic mode: $\mathbf G$ in float32 in mixed | the forces of a sampler without it | 2.3e-16 | 3.4e-16 | 9.2e-8 | 1.7e-7 | 1e-10, 1e-5 |
+| $\mathbf G$ of a program without the deterministic mode | $\mathbf G$ of the program with it: two programs, whose kernels differ on a device (no fused multiply-add and one order of the sums with it, D201) | 0 | 6.1e-12 | 3.5e-8 | 4.8e-7 | 1e-10, 1e-5 |
+| With the correction for the dispersion under a plain cutoff and a net charge of 0.44 e (what the host adds at the volume): the diagonal of $\mathsf S$; `virial` $+ \operatorname{tr}\mathsf S$, kJ/mol | FD; 0 | 2.4e-8; 0 | 7.0e-9; 3.6e-12 | 1.1e-5; 3.6e-12 | 1.4e-5; 3.6e-12 | 5e-7, 1e-4; 1e-9 relative |
+| With a term of the absolute positions on the water ($\mathsf S - \mathsf S^{\mathsf T}$ is 93,180 kJ/mol): $\mathsf S$ on and above the diagonal; $\mathbf G$, 24 components | FD | 2.0e-9; 1.9e-9 | 1.0e-9; 1.8e-9 | 1.5e-6; 2.1e-7 | 1.6e-6; 2.1e-7 | 5e-7, 1e-4 |
+| With rigid water: $\mathbf G$, 36 components, in every position; the diagonal of $\mathsf S$ | FD | 1.1e-7; 1.8e-8 | 1.1e-7; 5.6e-9 | 2.7e-6; 4.1e-7 | 2.4e-6; 4.8e-7 | 5e-7, 1e-4 |
+| With 387 virtual sites (OPC): $\mathbf G$ of 36 components of their atoms; the diagonal of $\mathsf S$; the rows of the sites | FD; FD; 0 | 1.0e-7; 9.9e-8; 0 | 1.0e-7; 1.2e-7; 0 | 1.5e-5; 5.0e-6; 3.1e-8 | 1.5e-5; 3.8e-6; 3.1e-8 | 5e-7, 1e-4; 1e-6 for the rows in mixed |
+| With restraints to reference positions on the heavy atoms of the solute: $\mathbf G$ of its first 10 atoms; `"strain"` | FD; refused | 5.7e-9 | 5.3e-9 | 1.9e-6 | 1.9e-6 | 5e-7, 1e-4 |
+| Calls that ask for nothing, for one gradient, and for all three, as states, as an array, and one frame alone, in one activation: every output, the forces asked alone and with the strain among them | the first evaluation | 0 | 0 | 0 | 0 | 0 |
+
+The tolerance of the two rows without the deterministic mode was
+$10^{-12}$ in double precision when the tests were written on the CPU,
+where both differences are 0 and $2\times10^{-16}$; on the device the
+program without the mode differs from the one with it by
+$6.1\times10^{-12}$ of the largest force ($2.4\times10^{-8}$ kJ/mol/nm of
+3,991), the rounding of sums of forces that cancel taken with and without
+fused multiply-adds, so the tolerance is $10^{-10}$.
+
 
 **Against torch-pme** [[Loche2025]](references.md#loche2025), the
 reciprocal part (moved here from #203 by #138). The evaluator returns
@@ -1635,16 +1649,23 @@ within the cutoff, the excluded pairs, the 1-4 pairs), differentiated by
 autograd in the positions and in a strain of zero that deforms the
 positions and the cell: all nine components of $\mathsf S$ are compared.
 The tolerance is three times what the two programs change by between the
-grid and one of twice the points.
+grid and one of twice the points. Each entry is CPU, GPU.
 
-| System | Grid | $\mathbf G$: CPU double, CPU mixed | $\mathsf S$: CPU double, CPU mixed | MDIR and torch-pme change by ($\mathbf G$; $\mathsf S$) |
-|---|---|---|---|---|
-| Dipeptide, 1,168 charges, 79,024 pairs | 64 | 5.9e-5, 5.9e-5 | 2.1e-5, 2.0e-5 | 3.4e-5 and 5.8e-5; 2.3e-5 and 1.8e-5 |
-| | 128 | 4.8e-6, 5.3e-6 | 7.7e-7, 5.8e-7 | |
-| Water in the rhombic dodecahedron, 1,209 charges, 124,961 pairs | 32 | 8.5e-4, 8.5e-4 | 3.0e-4, 3.0e-4 | 8.1e-4 and 9.6e-4; 3.2e-4 and 2.5e-4 |
-| | 64 | 5.2e-5, 5.3e-5 | 8.8e-6, 8.5e-6 | |
-| JAC, 23,558 charges, 2,430,398 pairs (by hand: the system is not in the repository) | 128 | 7.5e-5 | 7.6e-6 | 3.1e-5 and 8.3e-5; 1.5e-5 and 8.8e-6 |
-| | 256 | 4.9e-6 | 8.0e-7 | |
+| System | Grid | $\mathbf G$, double | $\mathbf G$, mixed | $\mathsf S$, double | $\mathsf S$, mixed | MDIR and torch-pme change by ($\mathbf G$; $\mathsf S$) |
+|---|---|---|---|---|---|---|
+| Dipeptide, 1,168 charges, 79,024 pairs | 64 | 5.9e-5, 5.9e-5 | 5.9e-5, 5.9e-5 | 2.1e-5, 2.1e-5 | 2.0e-5, 2.0e-5 | 3.4e-5 and 5.8e-5; 2.3e-5 and 1.8e-5 |
+| | 128 | 4.8e-6, 4.8e-6 | 5.3e-6, 5.1e-6 | 7.7e-7, 7.7e-7 | 5.8e-7, 6.8e-7 | |
+| Water in the rhombic dodecahedron, 1,209 charges, 124,961 pairs | 32 | 8.5e-4, 8.5e-4 | 8.5e-4, 8.5e-4 | 3.0e-4, 3.0e-4 | 3.0e-4, 3.0e-4 | 8.1e-4 and 9.6e-4; 3.2e-4 and 2.5e-4 |
+| | 64 | 5.2e-5, 5.2e-5 | 5.3e-5, 5.3e-5 | 8.8e-6, 8.8e-6 | 8.5e-6, 8.7e-6 | |
+| JAC, 23,558 charges, 2,430,398 pairs (by hand: the system is not in the repository; no CPU run in mixed) | 128 | 7.5e-5, 7.5e-5 | GPU 7.6e-5 | 7.6e-6, 7.6e-6 | GPU 7.7e-6 | 3.1e-5 and 8.3e-5; 1.5e-5 and 8.8e-6 |
+| | 256 | 4.9e-6, 4.9e-6 | GPU 4.3e-5 | 8.0e-7, 8.0e-7 | GPU 1.4e-6 | |
+
+In mixed precision on JAC at 256 points the difference of $\mathbf G$,
+$4.3\times10^{-5}$, is that of the f32 kernels, which a finer mesh does
+not lower. On a device the two systems run in a process each: the
+runtime keeps at most 8 plans of FFT a process, and a program in mixed
+precision with tunable charges takes four a grid (#323).
+
 
 **Against OpenMM 8.6.1**, the whole potential: the dipeptide with PME at
 $\beta$ = 3.5/nm and the same grid, a cutoff of 0.8 nm, and the
@@ -1660,31 +1681,37 @@ energy whose derivative its forces are; the deformed cell is rotated
 back to the reduced form, which OpenMM takes as well. OpenMM's B-splines
 are of order 5 and MDIR's of order 4.
 
-| Quantity | Grid | CPU double | CPU mixed | MDIR and OpenMM change by |
-|---|---|---|---|---|
-| $\mathbf G$, 1,168 particles | 64 | 3.4e-5 | 8.8e-5 | 3.3e-5 and 2.4e-6 |
-| | 128 | 3.7e-6 | 8.7e-5 | |
-| $\mathsf S$, nine components | 64 | 8.4e-6 | 2.0e-5 | 1.1e-5 and 6.0e-7 |
-| | 128 | 3.5e-6 | 7.8e-6 | |
-| JAC, 23,558 particles (by hand): $\mathbf G$ | 128 | 2.1e-5 | | 2.0e-5 and 1.9e-6 |
-| | 256 | 2.4e-6 | | |
-| JAC: $\mathsf S$, nine components | 128 | 7.7e-6 | | 6.8e-6 and 4.3e-7 |
-| | 256 | 4.6e-7 | | |
+| Quantity | Grid | CPU double | GPU double | CPU mixed | GPU mixed | MDIR and OpenMM change by |
+|---|---|---|---|---|---|---|
+| $\mathbf G$, 1,168 particles | 64 | 3.4e-5 | 3.4e-5 | 8.8e-5 | 8.9e-5 | 3.3e-5 and 2.4e-6 |
+| | 128 | 3.7e-6 | 3.7e-6 | 8.7e-5 | 8.8e-5 | |
+| $\mathsf S$, nine components | 64 | 8.4e-6 | 8.4e-6 | 2.0e-5 | 2.2e-5 | 1.1e-5 and 6.0e-7 |
+| | 128 | 3.5e-6 | 3.5e-6 | 7.8e-6 | 1.0e-5 | |
+| JAC, 23,558 particles (by hand): $\mathbf G$ | 128 | 2.1e-5 | | | 1.0e-4 | 2.0e-5 and 1.9e-6 |
+| | 256 | 2.4e-6 | | | 1.0e-4 | |
+| JAC: $\mathsf S$, nine components | 128 | 7.7e-6 | | | 1.2e-5 | 6.8e-6 and 4.3e-7 |
+| | 256 | 4.6e-7 | | | 4.8e-6 | |
 
-In mixed precision the difference of $\mathbf G$ at 128 points is that of
-the f32 kernels of the pairs, which a finer mesh does not lower.
+In mixed precision the difference of $\mathbf G$ at the finer grid is
+that of the f32 kernels of the pairs, which a finer mesh does not lower:
+$9\times10^{-5}$ on the dipeptide and $1.0\times10^{-4}$ on JAC, where
+the tolerance of the test, three times the changes with the grid and
+$5\times10^{-5}$ for f32, is $1.2\times10^{-4}$. JAC was not run on a
+GPU in double precision or on the CPU in mixed.
 
-**The adapter** (`python-frame-gradients-torch*.test`):
+**The adapter** (`python-frame-gradients-torch*.test`); on a GPU the
+tunables are tensors of the device:
 
-| Quantity | Reference | CPU double | CPU mixed | Tolerance (double, mixed) |
-|---|---|---|---|---|
-| The gradient of autograd in positions `(K, N, 3)` that require one, of $\sum_n c_nU_n$, on the host and on the device of `theta`; in float32 positions; for one frame `(N, 3)` | $c_n\mathbf G_n$ of the evaluator | 0 | 0 | 0 |
-| The gradient in the edges `(K, 3)` of three frames of the dipeptide at fixed positions (largest 636 kJ/mol/nm) | FD in each edge | 2.0e-6 | 1.6e-5 | 1e-5, 1e-3 |
-| One cell `(3,)` for every frame | the sum over the frames of the gradients of each | within the tolerance | within the tolerance | 1e-13 |
-| In the triclinic cell of the water: the diagonal; the tilts | FD in each | 2.8e-8; 3.2e-8 | 2.8e-6; 6.8e-6 | 1e-5, 1e-3 |
-| `torch.autograd.gradcheck` of the energy in the diagonal and the tilts (`eps` 2e-5, `atol` 2e-2, `rtol` 1e-5) | the differences of PyTorch | passes | | |
-| `gradients["positions"]`, `gradients["strain"]` as tensors | the arrays of the evaluator | 0 | 0 | 0 |
-| The gradients in the positions, the cells, and the tunable under `torch.compile(backend="aot_eager")` | eager | 0 | 0 | 0 |
+| Quantity | Reference | CPU double | GPU double | CPU mixed | GPU mixed | Tolerance (double, mixed) |
+|---|---|---|---|---|---|---|
+| The gradient of autograd in positions `(K, N, 3)` that require one, of $\sum_n c_nU_n$, on the host and on the device of `theta`; in float32 positions; for one frame `(N, 3)` | $c_n\mathbf G_n$ of the evaluator | 0 | 0 | 0 | 0 | 0 |
+| The gradient in the edges `(K, 3)` of three frames of the dipeptide at fixed positions (largest 636 kJ/mol/nm) | FD in each edge | 2.0e-6 | 2.0e-6 | 1.6e-5 | 7.9e-6 | 1e-5, 1e-3 |
+| One cell `(3,)` for every frame | the sum over the frames of the gradients of each | within the tolerance | within | within | within | 1e-13 |
+| In the triclinic cell of the water: the diagonal; the tilts | FD in each | 2.8e-8; 3.2e-8 | 2.8e-8; 3.2e-8 | 2.8e-6; 6.8e-6 | 2.8e-6; 6.9e-6 | 1e-5, 1e-3 |
+| `torch.autograd.gradcheck` of the energy in the diagonal and the tilts (`eps` 2e-5, `atol` 2e-2, `rtol` 1e-5) | the differences of PyTorch | passes | passes | | | |
+| `gradients["positions"]`, `gradients["strain"]` as tensors | the arrays of the evaluator | 0 | 0 | 0 | 0 | 0 |
+| The gradients in the positions, the cells, and the tunable under `torch.compile(backend="aot_eager")` | eager | 0 | 0 | 0 | 0 | 0 |
+
 
 Also checked: the default (`jacobian`, an empty `gradients`); `gradients`
 in any order and with a name twice; the types of `"positions"` in the
@@ -1726,6 +1753,34 @@ $K = 16$ over two.
 The evaluator and its first frame take 1.08 s where they took 0.71 s:
 the program of frames holds the two evaluations of the branches besides
 its own.
+
+*One RTX 4090 (a node of the cluster, the device idle before each run),
+mixed precision, not the deterministic mode; the same stored frames for
+both builds; `main` at f378ac4.* ms per frame.
+
+| System | Asked besides `"tunables"` | $K$ = 1 | 4 | 16 | 64 | 256 | Against `main` at $K$ = 64 |
+|---|---|---|---|---|---|---|---|
+| Dipeptide, 1,168 atoms (a step 0.0525 ms) | before (`main`) | 0.3266 | 0.3117 | 0.3017 | 0.2998 | 0.2984 | |
+| | nothing (the default) | 0.3206 | 0.3037 | 0.2987 | 0.2978 | 0.2959 | −0.7% |
+| | `"positions"` | 0.3694 | 0.3492 | 0.3430 | 0.3401 | 0.3375 | +13% |
+| | `"strain"` | 0.3994 | 0.3806 | 0.3742 | 0.3718 | 0.3715 | +24% |
+| | `"positions"`, `"strain"` | 0.4158 | 0.3961 | 0.3896 | 0.3878 | 0.3861 | +29% |
+| JAC, 23,558 atoms (a step 0.1270 ms) | before (`main`) | 0.7258 | 0.7076 | 0.7020 | 0.7010 | 0.7009 | |
+| | nothing (the default) | 0.7267 | 0.7092 | 0.7050 | 0.7036 | 0.7039 | +0.4% |
+| | `"positions"` | 0.8675 | 0.8488 | 0.8425 | 0.8412 | 0.9142 | +20% |
+| | `"strain"` | 0.9164 | 0.8971 | 0.8918 | 0.8911 | 0.8905 | +27% |
+| | `"positions"`, `"strain"` | 0.9895 | 0.9670 | 0.9613 | 0.9596 | 1.0266 | +37% |
+
+A frame that asks for nothing costs what it costs on `main`, on both
+systems (one run each: the differences of 0.7% and 0.4% have opposite
+signs and are not resolved). On the device `"positions"` with `"strain"`
+costs more than either, unlike on the CPU: the copy of the forces from
+the device, $12N$ bytes in mixed precision, waits for the kernels of the
+evaluation in the branch. With `"positions"` on JAC a call of 256 frames
+takes 0.07 ms a frame more than one of 64: the array that it returns is
+72 MB, whose pages the host touches for the first time. The evaluator
+and its first frame take 2.32 s on the dipeptide and 2.98 s on JAC where
+they took 1.50 s and 2.16 s.
 
 ### Maintainer rulings (gradients)
 

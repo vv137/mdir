@@ -491,7 +491,9 @@ cotangent times the gradient of the evaluator to the bit, the gradient in
 the edges and the tilts of the cell at fixed positions agrees with
 central differences within $2\times10^{-6}$ and $3\times10^{-8}$, and a
 second derivative, alone or in a loss with another path to the same
-input, raises an error in every case tried.
+input, raises an error in every case tried. These are the numbers of the
+CPU; on a GPU (one RTX 4090) each is of the same size, at most twice
+larger, in double and in mixed precision.
 The derivatives of one evaluation are independent (Section 3.6), which is
 checked directly: 28 programs declare the charges, free or tied in 25
 entries, with particle mesh Ewald or a Coulomb cutoff, together with
