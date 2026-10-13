@@ -1,0 +1,44 @@
+# REQUIRES: python-api, cuda
+# The gradients of the energy of a frame in the positions and in the strain
+# (D[frame-gradients], docs/python-frames.md) on a GPU, in double and
+# mixed precision, Inputs/python_frame_gradients.py: G = dU/dx and
+# S = dU/d(epsilon) against central differences of the evaluator's own
+# energy in double precision, in an orthorhombic cell and in a triclinic
+# one, where the components of S below the diagonal take the deformed cell
+# rotated back; the trace of S against the virial; G against the forces of
+# the sampler's state. With what the host adds at the volume of a frame,
+# with a term of the absolute positions, with rigid water, and with virtual
+# sites. What is asked is what is given, calls that ask and calls that do
+# not share an activation, and the refusals.
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide finite GPU Double | FileCheck %s --check-prefix=FINITE -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide finite GPU Mixed | FileCheck %s --check-prefix=FINITE -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide special GPU Double | FileCheck %s --check-prefix=SPECIAL -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide special GPU Mixed | FileCheck %s --check-prefix=SPECIAL -DMODE="GPU Mixed"
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide interface GPU Double | FileCheck %s --check-prefix=INTERFACE -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide interface GPU Mixed | FileCheck %s --check-prefix=INTERFACE -DMODE="GPU Mixed"
+# FINITE: [[MODE]]: the gradient in the positions of a frame of the dipeptide, float64, against the forces of the sampler's state at that step
+# FINITE: [[MODE]]: G, 102 components of the solute and of 12 atoms of the water, against central differences of the energy
+# FINITE: [[MODE]]: S, its diagonal in an orthorhombic cell, against central differences of the energy
+# FINITE: [[MODE]]: the virial plus the trace of S
+# FINITE: [[MODE]]: S less its transpose
+# FINITE: [[MODE]]: S of water in a triclinic cell, on and above the diagonal, against central differences of the energy
+# FINITE: [[MODE]]: S of the same, below the diagonal, the deformed cell rotated back
+# FINITE: [[MODE]]: G of the same, 36 components, against central differences of the energy
+# FINITE: [[MODE]]: the virial plus the trace of S, triclinic
+# FINITE: finite passed
+# SPECIAL: [[MODE]]: with the correction for the dispersion under a plain cutoff and a net charge of 0.44 e, the diagonal of S against central differences of the energy
+# SPECIAL: [[MODE]]: there, the virial plus the trace of S
+# SPECIAL: [[MODE]]: with a term of the absolute positions, S on and above the diagonal against central differences of the energy
+# SPECIAL: [[MODE]]: there, S less its transpose: {{.*}} (not symmetric)
+# SPECIAL: [[MODE]]: there, G, 24 components
+# SPECIAL: [[MODE]]: with rigid water, G, 36 components, against central differences of the energy in every position
+# SPECIAL: [[MODE]]: with rigid water, the diagonal of S
+# SPECIAL: [[MODE]]: with rigid water, the virial plus the trace of S, the term of the constraint forces
+# SPECIAL: [[MODE]]: with 387 virtual sites, whose rows of G are {{.*}} of the largest whatever their rows of the frame hold, G of 36 components of their atoms against central differences
+# SPECIAL: [[MODE]]: with virtual sites, the diagonal of S
+# SPECIAL: special passed
+# INTERFACE: [[MODE]]: the gradient in the positions is float64 in the deterministic mode and float{{32|64}} without it, in the type of the forces of the program
+# INTERFACE: [[MODE]]: without the deterministic mode, the gradient in the positions of a frame, float{{32|64}}, against the forces of the sampler's state at that step
+# INTERFACE: [[MODE]]: calls that ask for nothing, for one gradient, and for all three, as states, as an array, and one frame alone, in one activation, equal to the bit: True
+# INTERFACE: [[MODE]]: refused: a name that is not a gradient, names that are not a tuple, the argument `gradient` of before, the gradients in the positions and the strain of an evaluator of the dependent terms; the evaluator stays usable
+# INTERFACE: interface passed

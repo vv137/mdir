@@ -11,13 +11,13 @@ Scenarios:
   finite     G and S against central differences of the evaluator's own
              energy (in double precision; in mixed precision against the
              same differences of a program in double precision): the
-             dipeptide in water with PME, a pair term, and a wall, in an
+             dipeptide in water with PME and a pair term, in an
              orthorhombic cell (G of the solute and of some waters, the
              diagonal of S); flexible water in a sheared rhombic
              dodecahedron (the nine components of S, those below the
              diagonal with the deformed cell rotated back to the
              lower-triangular form); the trace of S against the virial; G
-             against the forces of the sampler's state, to the bit
+             against the forces of the sampler's state
   special    with the correction for the dispersion under a plain cutoff
              and a net charge (what the host adds at the volume of the
              frame); with a wall, which no rotation leaves unchanged (the
@@ -27,7 +27,27 @@ Scenarios:
   interface  what is asked is what is given, in the type of the forces;
              calls that ask and calls that do not share an activation and
              give the same numbers to the bit; the refusals
+  torchpme   the Coulomb part of G and of the nine components of S, the
+             difference of the gradients at the charges of the model and at
+             charges of zero, against torch-pme (Loche et al., J. Chem.
+             Phys. 162, 142501 (2025)) at the same positions, cell, charges,
+             splitting parameter, and grid, by the autograd of PyTorch in
+             the positions and in a strain: its sum of the mesh with the
+             pair sums written in PyTorch, as python_tunable_gradient.py
+             has them for the derivative in the charges; the dipeptide in
+             an orthorhombic cell and water in a rhombic dodecahedron, at
+             two grids. Needs an interpreter with torch and torchpme
+  openmm     G and the nine components of S of the whole potential against
+             OpenMM: its forces, and central differences of its energy
+             under the strain (it reports no virial), with the same
+             splitting parameter and grid, at two grids. Needs openmm
+
+`torchpme` and `openmm` take after PRECISION, optionally, PRMTOP INPCRD
+GRID of another system in an orthorhombic cell (JAC of the Amber suite, by
+hand: it is not in the repository), in place of the dipeptide and its grid
+of 64.
 """
+import math
 import sys
 
 import numpy as np
@@ -177,7 +197,7 @@ def strain_differences(evaluator, x, h, components, step, triclinic):
     positions = np.stack([f[0] for f in frames])
     cells = np.stack([np.diag(f[1]) for f in frames])
     tilts = np.stack([[f[1][1, 0], f[1][2, 0], f[1][2, 1]] for f in frames]) if triclinic else None
-    u = evaluator.evaluate(positions, cells, tilts, gradient=False).energy.reshape(-1, 4)
+    u = evaluator.evaluate(positions, cells, tilts, gradients=()).energy.reshape(-1, 4)
     return (4.0 * (u[:, 2] - u[:, 3]) / step - (u[:, 0] - u[:, 1]) / (2.0 * step)) / 3.0
 
 
@@ -188,7 +208,7 @@ def position_differences(evaluator, x, cell, tilt, entries, step):
     for k, (i, c) in enumerate(entries):
         for j, s in enumerate((step, -step, 0.5 * step, -0.5 * step)):
             frames[4 * k + j, i, c] += s
-    u = evaluator.evaluate(frames, cell, tilt, gradient=False).energy.reshape(-1, 4)
+    u = evaluator.evaluate(frames, cell, tilt, gradients=()).energy.reshape(-1, 4)
     return (4.0 * (u[:, 2] - u[:, 3]) / step - (u[:, 0] - u[:, 1]) / (2.0 * step)) / 3.0
 
 
@@ -396,12 +416,17 @@ def run_special():
     out = evaluator.evaluate(np.stack([x, moved]), cell, gradients=("positions", "strain"))
     g, s = out.gradients["positions"], out.gradients["strain"]
     # To the rounding of sums: the neighbor structures bin the rows given.
-    assert abs(out.energy[0] - out.energy[1]) < 1e-9 * abs(out.energy[0])
+    assert abs(out.energy[0] - out.energy[1]) < (1e-9 if double else 1e-6) * abs(out.energy[0])
     assert np.abs(g[0] - g[1]).max() < (1e-12 if double else 1e-5) * np.abs(g[0]).max()
-    assert not np.any(g[0][sites]) and not np.any(g[1][sites]) and np.any(g[0][atoms])
+    # The rows of the sites: zero in double precision; in mixed precision
+    # what the spread leaves of an f32 force, an ulp of it (measured: 1.2e-4
+    # kJ/mol/nm where the largest entry is 3,876).
+    left = float(np.abs(g[:, sites]).max() / np.abs(g[0]).max())
+    assert left == 0.0 if double else left < 1e-6, left
+    assert np.any(g[0][atoms])
     entries = [(int(i), c) for i in rng.choice(atoms, 12, replace=False) for c in range(3)]
     fd = position_differences(reference, x, cell, None, entries, POSITION_STEP)
-    checked(f"with {len(sites)} virtual sites, whose rows of G are zero whatever their rows of the "
+    checked(f"with {len(sites)} virtual sites, whose rows of G are {left:.1e} of the largest whatever their rows of the "
             "frame hold, G of 36 components of their atoms against central differences",
             [g[0][i, c] for i, c in entries], fd, float(np.abs(g[0]).max()), g_tolerance)
     fd = strain_differences(reference, x, np.diag(cell), [(0, 0), (1, 1), (2, 2)], STRAIN_STEP,
@@ -423,18 +448,24 @@ def run_interface():
     x = np.stack([f.positions for f in frames])
     count = x.shape[1]
     evaluator = mdir.FrameEvaluator(program)
+    # The default is the derivative in the tunables alone: `jacobian` and
+    # `vjp`, and no gradient in the positions or the strain.
     plain = evaluator.evaluate(frames)
-    assert len(plain.gradients) == 0 and dict(plain.gradients) == {}
-    both = evaluator.evaluate(frames, gradients=("positions", "strain"))
+    assert plain.jacobian is not None and dict(plain.gradients) == {}
+    assert np.array_equal(evaluator.evaluate(frames, gradients=("tunables",)).jacobian["sigma"],
+                          plain.jacobian["sigma"])
+    everything = ("tunables", "positions", "strain")
+    both = evaluator.evaluate(frames, gradients=everything)
     g, s = both.gradients["positions"], both.gradients["strain"]
-    assert list(both.gradients) == ["positions", "strain"]
+    assert list(both.gradients) == ["positions", "strain"] and both.jacobian is not None
     assert g.shape == (4, count, 3) and s.shape == (4, 3, 3) and s.dtype == np.float64
     assert not g.flags.writeable and not s.flags.writeable
     assert not hasattr(both.gradients, "__setitem__")
     # In the deterministic mode the forces of a program in mixed precision
     # are f64 (#102); without it they are f32, and so is the gradient.
     assert g.dtype == np.float64, g.dtype
-    loose = mdir.FrameEvaluator(compile_(system, state, deterministic=False))
+    loose_program = compile_(system, state, deterministic=False)
+    loose = mdir.FrameEvaluator(loose_program)
     narrow = loose.evaluate(frames, gradients=("positions",)).gradients["positions"]
     expected = np.float64 if double else np.float32
     assert narrow.dtype == expected, narrow.dtype
@@ -443,48 +474,561 @@ def run_interface():
           f"{narrow.dtype} without it, in the type of the forces of the program; the two differ "
           f"by {apart:.1e} relative")
     assert apart < (1e-12 if double else 1e-5)
+    # Without the deterministic mode, what a script compares: the gradient
+    # of a frame against the forces of the sampler's state at that step.
+    sampler = mdir.Simulation(loose_program)
+    sampler.part_seconds = 1e9
+    sampler.run(30)
+    at = sampler.state()
+    found = loose.evaluate(at, gradients=("positions",)).gradients["positions"][0]
+    forces = np.asarray(at.forces)
+    apart = float(np.abs(found + forces).max() / np.abs(forces).max())
+    tolerance = 1e-12 if double else 1e-5
+    print(f"{mode}: without the deterministic mode, the gradient in the positions of a frame, "
+          f"{found.dtype}, against the forces of the sampler's state at that step, "
+          f"{forces.dtype}: {apart:.1e} of the largest ({np.abs(forces).max():.5g} kJ/mol/nm; "
+          f"tolerance {tolerance:.0e})")
+    assert apart < tolerance, apart
 
     # What is asked travels with each frame: calls that ask for nothing,
-    # for one, and for both share an activation and give the same numbers.
+    # for one gradient, and for all three share an activation and give the
+    # same numbers.
     def same(out, of=both):
         return (np.array_equal(out.energy, of.energy) and np.array_equal(out.virial, of.virial)
-                and all(np.array_equal(out.jacobian[n], of.jacobian[n]) for n in of.jacobian)
+                and (out.jacobian is None or
+                     all(np.array_equal(out.jacobian[n], of.jacobian[n]) for n in of.jacobian))
                 and all(np.array_equal(a, of.gradients[n]) for n, a in out.gradients.items()))
 
     depth = evaluator._simulation._stack_in_use
+    nothing = evaluator.evaluate(frames, gradients=())
+    assert nothing.jacobian is None and len(nothing.gradients) == 0
+    expect(mdir.InputError, lambda: nothing.vjp(np.ones(4)), "without 'tunables' in gradients")
     only_g = evaluator.evaluate(x, gradients=("positions",))
-    only_s = evaluator.evaluate(frames, gradients="strain")
+    only_s = evaluator.evaluate(frames, gradients=("strain",))
     assert list(only_g.gradients) == ["positions"] and list(only_s.gradients) == ["strain"]
-    again = evaluator.evaluate(x, gradients=("strain", "positions", "strain"))
-    assert list(again.gradients) == ["strain", "positions"]
-    one = [evaluator.evaluate(x[n], gradients=("positions", "strain")) for n in (3, 0)]
-    exact = (same(plain) and same(only_g) and same(only_s) and same(again) and
+    assert only_g.jacobian is None and only_s.jacobian is None
+    again = evaluator.evaluate(x, gradients=("strain", "tunables", "positions", "strain"))
+    assert list(again.gradients) == ["strain", "positions"] and again.jacobian is not None
+    one = [evaluator.evaluate(x[n], gradients=everything) for n in (3, 0)]
+    exact = (same(plain) and same(nothing) and same(only_g) and same(only_s) and same(again) and
              same(evaluator.evaluate(frames)) and
              all(np.array_equal(o.gradients[name][0], both.gradients[name][n])
                  for o, n in zip(one, (3, 0)) for name in ("positions", "strain")))
     assert evaluator._simulation._stack_in_use == depth
-    print(f"{mode}: calls that ask for nothing, for one gradient, and for both, as states, as an "
-          f"array, and one frame alone, in one activation, equal to the bit: {exact}")
+    print(f"{mode}: calls that ask for nothing, for one gradient, and for all three, as states, "
+          f"as an array, and one frame alone, in one activation, equal to the bit: {exact}")
     assert exact
 
     # Refused.
     expect(mdir.InputError, lambda: evaluator.evaluate(x, gradients=("forces",)),
-           "gradients names 'positions' and 'strain'")
-    expect(mdir.InputError, lambda: evaluator.evaluate(x, gradient=("positions",)),
-           "gradient is True or False")
+           "gradients names 'tunables', 'positions', and 'strain'")
+    expect(mdir.InputError, lambda: evaluator.evaluate(x, gradients="strain"),
+           "gradients is a tuple of names")
+    expect(mdir.InputError, lambda: evaluator.evaluate(x, gradients=True),
+           "gradients is a tuple of names")
+    expect(TypeError, lambda: evaluator.evaluate(x, gradient=True), "gradient")
     dependent = mdir.FrameEvaluator(program, terms="dependent")
     assert "gradients" in dependent.unavailable and "gradients" not in evaluator.unavailable
     expect(mdir.UnsupportedError, lambda: dependent.evaluate(x, gradients=("strain",)),
            "terms='dependent'")
-    assert len(dependent.evaluate(x).gradients) == 0
-    assert same(evaluator.evaluate(frames, gradients=("positions", "strain")))
-    print(f"{mode}: refused: a name that is not a gradient, a gradient that is not a bool, the "
-          "gradients of an evaluator of the dependent terms; the evaluator stays usable")
+    partial = dependent.evaluate(x, gradients=("tunables",))
+    assert len(partial.gradients) == 0 and partial.jacobian is not None
+    assert same(evaluator.evaluate(frames, gradients=everything))
+    print(f"{mode}: refused: a name that is not a gradient, names that are not a tuple, the "
+          "argument `gradient` of before, the gradients in the positions and the strain of an "
+          "evaluator of the dependent terms; the evaluator stays usable")
     print("interface passed")
+
+
+BETA = 3.5  # the splitting parameter of the comparisons with other programs, 1/nm
+COULOMB = 138.935457644  # kJ nm / (mol e^2), the constant of the programs
+
+
+def oracle_model(points, kind="amber", charges=False):
+    """The model of a comparison with another program: PME with the
+    splitting parameter BETA and `points` points along each edge, a cutoff
+    of 0.8 nm, the Lennard-Jones shifted to 0 there (the forces of a plain
+    cutoff), no correction for the dispersion. `amber`: the dipeptide, or
+    the system given after PRECISION; `water`: the rhombic dodecahedron."""
+    if kind == "water":
+        triclinic = root + "/../triclinic"
+        loaded = mdir.load_gromacs(triclinic + "/water.top", triclinic + "/dodecahedron.gro",
+                                   defines=["FLEXIBLE"])
+    elif len(sys.argv) > 6:
+        loaded = mdir.load_amber(sys.argv[5], sys.argv[6])
+    else:
+        loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
+    system, state = loaded.make_system(), loaded.make_state()
+    system.truncation = mdir.Truncation.Shift
+    system.cutoff, system.pairlist_distance = 0.8, 0.9
+    system.electrostatics = mdir.Electrostatics.PME
+    system.pme_alpha, system.pme_grid = BETA, [points] * 3
+    system.dispersion = mdir.DispersionCorrection.None_
+    system.tunables = ([mdir.Tunable("q", "charge")] if charges else
+                       [mdir.Tunable("sigma", "sigma_pair", map=one_pair(system, "OW", "OW"))])
+    system.tunable_gradient = True
+    return system, state
+
+
+def first_grid():
+    return int(sys.argv[7]) if len(sys.argv) > 7 else 64
+
+
+def compared(label, found, reference, own, theirs, floor):
+    """`found` against `reference` relative to the largest entry of the
+    reference, within three times what the two programs change by between
+    the two grids (`own`, `theirs`, relative as well), and in mixed
+    precision the rounding of the kernels of the pairs besides."""
+    scale = float(np.abs(reference).max())
+    difference = float(np.abs(found - reference).max()) / scale
+    tolerance = 3.0 * (own + theirs) + (0.0 if double else floor)
+    print(f"{mode}: {label}: {difference:.1e} of the largest ({scale:.5g}); with twice the "
+          f"points MDIR changes by {own:.1e} and the reference by {theirs:.1e}; tolerance "
+          f"{tolerance:.1e}")
+    assert difference < tolerance, (label, difference, tolerance)
+
+
+def run_torchpme():
+    import torch
+    import torchpme
+    torch.set_default_dtype(torch.float64)
+    rc = 0.8
+
+    def coulomb(points, kind):
+        """The Coulomb part of G and S: the gradients at the charges of the
+        model less those at charges of zero, at the same frame."""
+        system, state = oracle_model(points, kind, charges=True)
+        evaluator = mdir.FrameEvaluator(compile_(system, state))
+        x = np.array(state.positions)
+        cell = (np.array(state.cell.diagonal), np.array(state.cell.tilt))
+        tilts = cell[1][None] if kind == "water" else None
+        q0 = evaluator.tunables["q"].copy()
+        charged = evaluator.evaluate(x[None], cell[0][None], tilts,
+                                     gradients=("positions", "strain"))
+        evaluator.tunables.update({"q": np.zeros_like(q0)})
+        bare = evaluator.evaluate(x[None], cell[0][None], tilts,
+                                  gradients=("positions", "strain"))
+        g = charged.gradients["positions"][0].astype(np.float64) - bare.gradients["positions"][0]
+        s = charged.gradients["strain"][0] - bare.gradients["strain"][0]
+        return system, x, vectors(*cell), q0, g, s
+
+    def reference(system, x, h, q0, spacing):
+        """dU/dx and dU/d(epsilon) of the Coulomb energy of MDIR's model
+        from torch-pme: its sum over the pairs within the cutoff that are
+        not excluded and its sum of the mesh, less f q_i q_j erf(beta r) / r
+        of the excluded pairs, which the mesh holds, plus the 1-4 pairs
+        (f q_i q_j / (1.2 r), ff14SB). The shift of the direct sum (D210)
+        is a constant of a frame. The distances are functions of the
+        positions and the cell through the image of each pair, and both are
+        deformed by a strain of zero that autograd differentiates in."""
+        top = system.topology
+        n = len(x)
+        graph = {i: set() for i in range(n)}
+        for i, j in top.bonds:
+            graph[int(i)].add(int(j))
+            graph[int(j)].add(int(i))
+        amber = hasattr(top, "residue_names") and "WAT" in set(top.residue_names)
+        excluded, scaled = set(), set()
+        for i in range(n):
+            seen, frontier = {i}, {i}
+            for depth in range(3):
+                frontier = {k for m in frontier for k in graph[m]} - seen
+                seen |= frontier
+                for j in frontier:
+                    if j > i:
+                        (scaled if depth == 2 else excluded).add((i, j))
+        if not amber:
+            scaled = set()      # the water of GROMACS: no pair three bonds apart
+
+        def image(d):
+            """The lattice vector, in units of the cell vectors, that brings
+            each difference to its nearest image, for a reduced cell."""
+            k = np.zeros_like(d)
+            for axis in (2, 1, 0):
+                k[:, axis] = -np.round((d + k @ h)[:, axis] / h[axis, axis])
+            return k
+
+        near, shifts = [], []
+        for i in range(n - 1):
+            d = x[i + 1:] - x[i]
+            k = image(d)
+            r = np.sqrt(((d + k @ h) ** 2).sum(axis=1))
+            for j in np.nonzero(r < rc)[0]:
+                pair = (i, i + 1 + int(j))
+                if pair not in excluded and pair not in scaled:
+                    near.append(pair)
+                    shifts.append(k[j])
+        held =np.array(sorted(excluded | scaled))
+        fourteen = np.array(sorted(scaled)).reshape(-1, 2)
+        held_shift = image(x[held[:, 1]] - x[held[:, 0]])
+        fourteen_shift = image(x[fourteen[:, 1]] - x[fourteen[:, 0]]) if len(fourteen) else None
+        positions = torch.tensor(x, requires_grad=True)
+        strain = torch.zeros(3, 3, requires_grad=True)
+        deform = torch.eye(3) + strain
+        moved, cell = positions @ deform.T, torch.tensor(h) @ deform.T
+        charges = torch.tensor(q0)
+
+        def distances(pairs, shift):
+            pairs = torch.tensor(np.asarray(pairs))
+            d = moved[pairs[:, 1]] - moved[pairs[:, 0]] + torch.tensor(np.asarray(shift)) @ cell
+            return pairs, torch.sqrt((d * d).sum(dim=1))
+
+        product = lambda pairs: charges[pairs[:, 0]] * charges[pairs[:, 1]]
+        near_pairs, near_r = distances(near, shifts)
+        potential = torchpme.CoulombPotential(smearing=1.0 / (np.sqrt(2.0) * BETA),
+                                              prefactor=COULOMB)
+        calculator = torchpme.PMECalculator(potential, mesh_spacing=spacing,
+                                            interpolation_nodes=5)
+        column = charges.unsqueeze(1)
+        energy = (column * calculator(column, cell, moved, near_pairs, near_r)).sum()
+        held_pairs, held_r = distances(held, held_shift)
+        energy = energy - (COULOMB * product(held_pairs) * torch.erf(BETA * held_r) / held_r).sum()
+        if len(fourteen):
+            scaled_pairs, scaled_r = distances(fourteen, fourteen_shift)
+            energy = energy + (COULOMB * product(scaled_pairs) / (1.2 * scaled_r)).sum()
+        g, s = torch.autograd.grad(energy, (positions, strain))
+        return g.numpy(), s.numpy(), len(near)
+
+    def one(kind, points, name):
+        system, x, h, q0, g, s = coulomb(points, kind)
+        _, _, _, _, g2, s2 = coulomb(2 * points, kind)
+        # torch-pme takes the power of 2 at or above 2 L / spacing + 1.
+        length = float(np.sqrt((h * h).sum(axis=1)).max())
+        spacings = [2.0 * length / (m - 1.5) for m in (points, 2 * points)]
+        for m, spacing in zip((points, 2 * points), spacings):
+            mesh = [int(k) for k in torchpme.lib.get_ns_mesh(torch.tensor(h), spacing)]
+            assert mesh == [m] * 3, (mesh, m)
+        rg, rs, pairs = reference(system, x, h, q0, spacings[0])
+        rg2, rs2, _ = reference(system, x, h, q0, spacings[1])
+        scale_g, scale_s = np.abs(rg).max(), np.abs(rs).max()
+        compared(f"{name}, {len(x)} particles, {pairs} pairs: the Coulomb part of G against "
+                 f"torch-pme, grid {points}", g, rg, np.abs(g - g2).max() / scale_g,
+                 np.abs(rg - rg2).max() / scale_g, 2e-5)
+        compared(f"{name}: the Coulomb part of the nine components of S, grid {points}", s, rs,
+                 np.abs(s - s2).max() / scale_s, np.abs(rs - rs2).max() / scale_s, 2e-5)
+        compared(f"{name}: the same at {2 * points} points, G", g2, rg2,
+                 np.abs(g - g2).max() / scale_g, np.abs(rg - rg2).max() / scale_g, 2e-5)
+        compared(f"{name}: the same at {2 * points} points, S", s2, rs2,
+                 np.abs(s - s2).max() / scale_s, np.abs(rs - rs2).max() / scale_s, 2e-5)
+
+    one("amber", first_grid(), "the dipeptide in water" if len(sys.argv) <= 6 else "the system")
+    if len(sys.argv) <= 6:
+        one("water", 32, "water in a rhombic dodecahedron")
+    print("torchpme passed")
+
+
+def run_openmm():
+    import openmm
+    from openmm import app, unit
+
+    def own(points):
+        system, state = oracle_model(points)
+        evaluator = mdir.FrameEvaluator(compile_(system, state))
+        x, cell = np.array(state.positions), np.array(state.cell.diagonal)
+        out = evaluator.evaluate(x[None], cell[None], gradients=("positions", "strain"))
+        return x, cell, (out.gradients["positions"][0].astype(np.float64),
+                         out.gradients["strain"][0])
+
+    prmtop = app.AmberPrmtopFile(sys.argv[5] if len(sys.argv) > 6 else root + "/dipeptide.prmtop")
+    rc = 0.8
+
+    def theirs(points, x, cell):
+        system = prmtop.createSystem(nonbondedMethod=app.PME, nonbondedCutoff=rc * unit.nanometer,
+                                     constraints=None, rigidWater=False, removeCMMotion=False)
+        for force in system.getForces():
+            if isinstance(force, openmm.NonbondedForce):
+                force.setPMEParameters(BETA, points, points, points)
+                force.setUseDispersionCorrection(False)
+                nonbonded = force
+        # OpenMM cuts the Lennard-Jones and the direct sum at the cutoff
+        # without a shift, so its energy jumps where a pair crosses it, and
+        # a difference of it has the jumps. The energy differenced is the
+        # one whose forces OpenMM gives: its energy less u_ij(r_c) of every
+        # pair within the cutoff that is not an exception, the Lennard-Jones
+        # with the combining rule of Lorentz and Berthelot and
+        # f q_i q_j erfc(beta r_c) / r_c, summed here from its parameters.
+        count = system.getNumParticles()
+        parameters = [nonbonded.getParticleParameters(i) for i in range(count)]
+        charge = np.array([p[0].value_in_unit(unit.elementary_charge) for p in parameters])
+        lj_sigma = np.array([p[1].value_in_unit(unit.nanometer) for p in parameters])
+        lj_epsilon = np.array([p[2].value_in_unit(unit.kilojoule_per_mole) for p in parameters])
+        partners = [[] for _ in range(count)]
+        for k in range(nonbonded.getNumExceptions()):
+            i, j = nonbonded.getExceptionParameters(k)[:2]
+            partners[min(i, j)].append(max(i, j))
+        direct = COULOMB * math.erfc(BETA * rc) / rc
+
+        def shifts(positions, h):
+            total = 0.0
+            for i in range(count - 1):
+                d = positions[i + 1:] - positions[i]
+                k = np.zeros_like(d)
+                for axis in (2, 1, 0):
+                    k[:, axis] = -np.round((d + k @ h)[:, axis] / h[axis, axis])
+                d = d + k @ h
+                within = (d * d).sum(axis=1) < rc * rc
+                if partners[i]:
+                    within[np.array(partners[i]) - i - 1] = False
+                s6 = (0.5 * (lj_sigma[i] + lj_sigma[i + 1:][within]) / rc) ** 6
+                total += float((4.0 * np.sqrt(lj_epsilon[i] * lj_epsilon[i + 1:][within]) *
+                                (s6 * s6 - s6)).sum())
+                total += direct * charge[i] * float(charge[i + 1:][within].sum())
+            return total
+        # The Reference platform, in double precision, whatever the target
+        # of MDIR.
+        context = openmm.Context(system, openmm.VerletIntegrator(0.001),
+                                 openmm.Platform.getPlatformByName("Reference"))
+
+        def at(positions, h, forces=False):
+            context.setPeriodicBoxVectors(*[openmm.Vec3(*row) for row in h])
+            context.setPositions(positions)
+            state = context.getState(getEnergy=True, getForces=forces)
+            energy = state.getPotentialEnergy().value_in_unit(unit.kilojoule_per_mole)
+            if not forces:
+                return energy - shifts(positions, h)
+            return energy, state.getForces(asNumpy=True).value_in_unit(
+                unit.kilojoule_per_mole / unit.nanometer)
+
+        h = np.diag(cell)
+        _, forces = at(x, h, forces=True)
+        # No virial is reported: central differences of that energy under
+        # the strain, the cell rotated back to the reduced form, which
+        # OpenMM takes as well.
+        step, strain = 2e-5, np.zeros((3, 3))
+        for a in range(3):
+            for b in range(3):
+                u = []
+                for s in (step, -step, 0.5 * step, -0.5 * step):
+                    epsilon = np.zeros((3, 3))
+                    epsilon[a, b] = s
+                    u.append(at(*deformed(x, h, epsilon)))
+                strain[a, b] = (4.0 * (u[2] - u[3]) / step - (u[0] - u[1]) / (2.0 * step)) / 3.0
+        return -np.asarray(forces), strain
+
+    points = first_grid()
+    x, cell, (g, s) = own(points)
+    _, _, (g2, s2) = own(2 * points)
+    rg, rs = theirs(points, x, cell)
+    rg2, rs2 = theirs(2 * points, x, cell)
+    scale_g, scale_s = np.abs(rg).max(), np.abs(rs).max()
+    name = "the dipeptide in water" if len(sys.argv) <= 6 else "the system"
+    compared(f"{name}, {len(x)} particles: G of the whole potential against the forces of OpenMM, "
+             f"grid {points}", g, rg, np.abs(g - g2).max() / scale_g,
+             np.abs(rg - rg2).max() / scale_g, 5e-5)
+    compared(f"{name}: the nine components of S against central differences of the energy of "
+             f"OpenMM, grid {points}", s, rs, np.abs(s - s2).max() / scale_s,
+             np.abs(rs - rs2).max() / scale_s, 5e-5)
+    compared(f"{name}: the same at {2 * points} points, G", g2, rg2,
+             np.abs(g - g2).max() / scale_g, np.abs(rg - rg2).max() / scale_g, 5e-5)
+    compared(f"{name}: the same at {2 * points} points, S", s2, rs2,
+             np.abs(s - s2).max() / scale_s, np.abs(rs - rs2).max() / scale_s, 5e-5)
+    print("openmm passed")
+
+
+def run_torch():
+    import torch
+    import mdir.torch
+
+    device = "cuda" if target == "GPU" else "cpu"
+    rng = np.random.default_rng(3)
+
+    # The dipeptide: three frames of a run, each with a cell of its own.
+    system, state = dipeptide()
+    program = compile_(system, state)
+    sim = mdir.Simulation(program)
+    sim.part_seconds = 1e9
+    frames = []
+    for _ in range(3):
+        sim.run(20)
+        frames.append(np.array(sim.state().positions))
+    x = np.stack(frames)
+    cells = np.array(state.cell.diagonal) * (1.0 + 1e-3 * rng.standard_normal((3, 3)))
+    evaluator = mdir.FrameEvaluator(program)
+    arrays = evaluator.evaluate(x, cells, gradients=("tunables", "positions", "strain"))
+    g, s = arrays.gradients["positions"], arrays.gradients["strain"]
+    sigma = torch.tensor(evaluator.tunables["sigma"], device=device, requires_grad=True)
+    weights = torch.tensor(rng.normal(size=3), device=device)
+
+    def tensors(positions=x, cell=cells, where="cpu"):
+        return (torch.tensor(positions, device=where, requires_grad=True),
+                torch.tensor(cell, device=where, requires_grad=True))
+
+    # The backward in the positions is the product with G, and the one in
+    # the tunables is what it was.
+    for where in dict.fromkeys(("cpu", device)):
+        tx, tc = tensors(where=where)
+        out = mdir.torch.evaluate(evaluator, {"sigma": sigma}, tx, tc)
+        by_x, by_c, by_sigma = torch.autograd.grad((weights * out.energy).sum(), (tx, tc, sigma))
+        assert by_x.shape == tx.shape and by_x.dtype == tx.dtype and by_x.device == tx.device
+        assert by_c.shape == tc.shape and by_c.device == tc.device
+        expected = weights.cpu().numpy()[:, None, None] * g.astype(np.float64)
+        exact = np.array_equal(by_x.cpu().numpy(), expected)
+        product = arrays.vjp(weights.cpu().numpy())["sigma"]
+        assert np.allclose(by_sigma.cpu().numpy(), product, rtol=1e-13, atol=0.0)
+    print(f"{mode}: the gradient of autograd in positions (K, N, 3) that require one against the "
+          f"cotangent times G of the evaluator, to the bit: {exact}")
+    assert exact
+    # In float32 positions, and for one frame without its axis.
+    tx = torch.tensor(x[1].astype(np.float32), requires_grad=True)
+    out = mdir.torch.evaluate(evaluator, {"sigma": sigma.detach()}, tx, cells[1])
+    by_x, = torch.autograd.grad(out.energy.sum(), tx)
+    narrow = mdir.FrameEvaluator(program).evaluate(x[1].astype(np.float32), cells[1],
+                                                   gradients=("positions",))
+    assert by_x.shape == (x.shape[1], 3) and by_x.dtype == torch.float32
+    assert np.array_equal(by_x.numpy(), narrow.gradients["positions"][0].astype(np.float32))
+    assert out.energy.grad_fn is not None
+
+    # The gradient in the cell at fixed positions against the differences
+    # of PyTorch, in double precision: the three edges of each frame, and
+    # one cell for every frame.
+    def cell_gradient(evaluator_, positions, cell, tilt=None):
+        tc = torch.tensor(cell, requires_grad=True)
+        tt = None if tilt is None else torch.tensor(tilt, requires_grad=True)
+        out = mdir.torch.evaluate(evaluator_, {"sigma": sigma.detach()}, positions, tc, tt)
+        return [t.numpy() for t in torch.autograd.grad(
+            (weights.cpu()[:len(out.energy)] * out.energy).sum(),
+            (tc,) if tt is None else (tc, tt))]
+
+    def differences(evaluator_, positions, cell, tilt, which, at, step=2e-5):
+        """A central difference of the weighted sum of the energies in the
+        entry `at` of the cells (`which` 0) or the tilts (1), the positions
+        fixed."""
+        values = []
+        for sign in (1.0, -1.0, 0.5, -0.5):
+            moved = [np.array(cell, dtype=np.float64), None if tilt is None else np.array(tilt)]
+            moved[which][at] += sign * step
+            u = evaluator_.evaluate(positions, moved[0], moved[1], gradients=()).energy
+            values.append(float(weights.cpu().numpy()[:len(u)] @ u))
+        return (4.0 * (values[2] - values[3]) / step - (values[0] - values[1]) / (2.0 * step)) / 3.0
+
+    reference = reference_evaluator(program, system, state)
+    by_c, = cell_gradient(evaluator, x, cells)
+    entries = [(n, a) for n in range(3) for a in range(3)]
+    fd = np.array([differences(reference, x, cells, None, 0, at) for at in entries])
+    # The differences bound the comparison: an edge moved at fixed
+    # positions carries every image across the cutoff with it, and the
+    # gradient is a small difference of S and the moment of G (636 kJ/mol/nm
+    # where S is 14,000 kJ/mol). Measured in double precision, the largest
+    # error of the nine entries is 2e-2 kJ/mol/nm at a step of 2e-4 nm,
+    # 1.3e-3 at 2e-5, and 1.2e-2 at 2e-6.
+    tolerance = 1e-5 if double else 1e-3
+    checked("the gradient of autograd in the edges of the cells (K, 3) at fixed positions against "
+            "central differences of the energy", [by_c[at] for at in entries], fd,
+            float(np.abs(by_c).max()), tolerance)
+    shared, = cell_gradient(evaluator, x, cells[0])
+    assert shared.shape == (3,)
+    each, = cell_gradient(evaluator, x, np.broadcast_to(cells[0], (3, 3)).copy())
+    assert np.allclose(shared, each.sum(axis=0), rtol=1e-13, atol=0.0)
+
+    # A triclinic cell: the diagonal and the tilts.
+    wsystem, wstate = water()
+    wprogram = compile_(wsystem, wstate)
+    wx, wh = sheared_water(wstate)
+    wcell, wtilt = np.diag(wh).copy(), np.array([wh[1, 0], wh[2, 0], wh[2, 1]])
+    wevaluator = mdir.FrameEvaluator(wprogram)
+    wsigma = torch.tensor(wevaluator.tunables["sigma"])
+    wreference = reference_evaluator(wprogram, wsystem, wstate)
+    tc, tt = torch.tensor(wcell, requires_grad=True), torch.tensor(wtilt, requires_grad=True)
+    out = mdir.torch.evaluate(wevaluator, {"sigma": wsigma}, wx, tc, tt)
+    by_c, by_t = [t.numpy() for t in torch.autograd.grad(out.energy.sum(), (tc, tt))]
+    one = torch.ones(1)
+    weights, kept = one, weights
+    fd_c = np.array([differences(wreference, wx, wcell, wtilt, 0, a) for a in range(3)])
+    fd_t = np.array([differences(wreference, wx, wcell, wtilt, 1, a) for a in range(3)])
+    weights = kept
+    scale = float(max(np.abs(by_c).max(), np.abs(by_t).max()))
+    checked("in a triclinic cell, the gradient of autograd in the diagonal against central "
+            "differences of the energy", by_c, fd_c, scale, tolerance)
+    checked("in a triclinic cell, the gradient in the tilts", by_t, fd_t, scale, tolerance)
+    if double:
+        def function(c, t):
+            return mdir.torch.evaluate(wevaluator, {"sigma": wsigma}, wx, c, t).energy
+        passed = torch.autograd.gradcheck(function, (tc, tt), eps=2e-5, atol=2e-2, rtol=1e-5)
+        print(f"{mode}: torch.autograd.gradcheck of the energy in the diagonal and the tilts of a "
+              f"triclinic cell: {passed}")
+        assert passed
+
+    # The gradients as outputs: the arrays of the evaluator, on the device
+    # of theta; a backward that reaches one is refused, and so is every
+    # second derivative.
+    tx, tc = tensors(where=device)
+    out = mdir.torch.evaluate(evaluator, {"sigma": sigma}, tx, tc, gradients=("strain", "positions"))
+    assert list(out.gradients) == ["strain", "positions"]
+    given_g, given_s = out.gradients["positions"], out.gradients["strain"]
+    assert given_g.device.type == device and given_s.dtype == torch.float64
+    assert np.array_equal(given_g.detach().cpu().numpy(), g)
+    assert np.array_equal(given_s.detach().cpu().numpy(), s)
+    text = expect(mdir.UnsupportedError, lambda: (given_g ** 2).sum().backward(),
+                  "the gradient of the energy in the positions")
+    assert "not implemented" in text and "not zero" in text, text
+    out = mdir.torch.evaluate(evaluator, {"sigma": sigma}, x, cells, gradients=("strain",))
+    expect(mdir.UnsupportedError, lambda: out.gradients["strain"].sum().backward(),
+           "the gradient of the energy in the strain")
+    out = mdir.torch.evaluate(evaluator, {"sigma": sigma}, x, cells, gradients=("strain",))
+    (out.energy.sum() + out.gradients["strain"].detach().sum()).backward()
+    with torch.no_grad():
+        constant = mdir.torch.evaluate(evaluator, {"sigma": sigma}, x, cells,
+                                       gradients=("positions",))
+    assert constant.gradients["positions"].grad_fn is None
+    # With positions that take a gradient the virial is a function of them.
+    tx, tc = tensors()
+    out = mdir.torch.evaluate(evaluator, {"sigma": sigma.detach()}, tx, tc)
+    expect(mdir.UnsupportedError, lambda: out.virial.sum().backward(), "'virial'")
+    for inputs in ("positions", "cells", "both"):
+        tx, tc = tensors()
+        out = mdir.torch.evaluate(evaluator, {"sigma": sigma}, tx, tc)
+        of = {"positions": (tx,), "cells": (tc,), "both": (tx, tc, sigma)}[inputs]
+        first = torch.autograd.grad(out.energy.sum(), of, create_graph=True)
+        expect(mdir.UnsupportedError, lambda: sum((f ** 2).sum() for f in first).backward(),
+               "second derivative")
+        # With another path to the inputs as well: not a zero.
+        tx, tc = tensors()
+        out = mdir.torch.evaluate(evaluator, {"sigma": sigma}, tx, tc)
+        of = {"positions": (tx,), "cells": (tc,), "both": (tx, tc, sigma)}[inputs]
+        first = torch.autograd.grad(out.energy.sum(), of, create_graph=True)
+        loss = sum((f ** 2).sum() for f in first) + (tx ** 2).sum() + (tc ** 2).sum()
+        expect(mdir.UnsupportedError, loss.backward, "second derivative")
+    dependent = mdir.FrameEvaluator(program, terms="dependent")
+    tx, tc = tensors()
+    for call in (lambda: mdir.torch.evaluate(dependent, {"sigma": sigma}, tx),
+                 lambda: mdir.torch.evaluate(dependent, {"sigma": sigma}, x, tc),
+                 lambda: mdir.torch.evaluate(dependent, {"sigma": sigma}, x, gradients=("strain",))):
+        expect(mdir.UnsupportedError, call, "terms='dependent'")
+    expect(mdir.InputError,
+           lambda: mdir.torch.evaluate(evaluator, {"sigma": sigma}, x, gradients=("forces",)),
+           "gradients names")
+    expect(mdir.UnsupportedError,
+           lambda: mdir.torch.evaluate(evaluator, {"sigma": sigma}, [tx[0], tx[1]]),
+           "positions require a gradient")
+    assert all(r.out is None and r.frames is None for r in mdir.torch._RECORDS.values())
+    print(f"{mode}: refused: a backward through a gradient that is an output, through the virial "
+          "of positions that require a gradient, every second derivative, alone and beside "
+          "another path, the gradients of the dependent terms, frames of an iterable that "
+          "require a gradient")
+
+    # Inside torch.compile.
+    def loss(positions, cell, sig):
+        out = mdir.torch.evaluate(evaluator, {"sigma": sig}, positions, cell)
+        return (weights * out.energy).sum()
+    tx, tc = tensors(where=device)
+    eager = torch.autograd.grad(loss(tx, tc, sigma), (tx, tc, sigma))
+    traced = torch.autograd.grad(torch.compile(loss, backend="aot_eager")(tx, tc, sigma),
+                                 (tx, tc, sigma))
+    same = all(torch.equal(a, b) for a, b in zip(eager, traced))
+    print(f"{mode}: under torch.compile (aot_eager), the same gradients in the positions, the "
+          f"cells, and the tunable: {same}")
+    assert same
+    print("torch passed")
 
 
 if scenario == "finite":
     run_finite()
+elif scenario == "torch":
+    run_torch()
+elif scenario == "torchpme":
+    run_torchpme()
+elif scenario == "openmm":
+    run_openmm()
 elif scenario == "special":
     run_special()
 elif scenario == "interface":

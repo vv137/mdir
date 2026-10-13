@@ -9,10 +9,10 @@ the pair OW-OW tunable, an observed pair term and an observed wall), in
 the deterministic mode. TERMS is `all` or `dependent`. One evaluator takes
 calls of BATCH frames each, the same array at every call; KEEP is
 
-  kept     gradient=True, the rows of the Jacobian returned and kept by the
+  kept     gradients=("tunables",), the rows of the Jacobian returned and kept by the
            result of the call (which is dropped before the next call);
-  dropped  gradient=True with jacobian_bytes=0: the rows are not returned;
-  none     gradient=False;
+  dropped  the same with jacobian_bytes=0: the rows are not returned;
+  none     gradients=();
   nothing  no evaluation: an empty function in place of the call, which
            reads what the script and the interpreter move by themselves.
 
@@ -186,7 +186,7 @@ def measure():
     def call():
         if keep == "nothing":
             return None
-        return evaluator.evaluate(positions, edges, gradient=keep != "none")
+        return evaluator.evaluate(positions, edges, gradients=() if keep == "none" else ("tunables",))
 
     done, last, before, at = 0, None, 0, 1
     while at <= calls:

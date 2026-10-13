@@ -1581,6 +1581,11 @@ PYBIND11_MODULE(_core, m) {
     .def_property_readonly("_particle_count", [](PySimulation &s) {
       return s.simulation->getParticleCount();
     })
+    // Whether the program keeps its forces in f64, the type of the gradient
+    // in the positions of `_evaluate_frames`; private.
+    .def_property_readonly("_forces_double", [](PySimulation &s) {
+      return s.simulation->keepsForcesInDouble();
+    })
     .def("run", [](py::object self, int64_t steps, bool energy) {
       auto &s = self.cast<PySimulation &>();
       if (steps < 0) throw InputError("run takes a nonnegative number of steps");

@@ -1,0 +1,21 @@
+# REQUIRES: python-api, torch
+# The frame evaluator as an operation of PyTorch, differentiated in the
+# positions and the cell (D[frame-gradients], docs/python-frames.md), on
+# the CPU, in double and mixed precision, Inputs/python_frame_gradients.py:
+# the gradient of autograd in positions that require one is the cotangent
+# times the gradient of the evaluator; the gradient in the edges and the
+# tilts of the cell at fixed positions against central differences of the
+# energy and, in double precision, torch.autograd.gradcheck; the gradients
+# as outputs; every second derivative and every backward through an output
+# whose derivative is not implemented is refused with UnsupportedError,
+# never a zero; torch.compile.
+# RUN: %torch_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide torch CPU Double | FileCheck %s --check-prefixes=CHECK,DOUBLE -DMODE="CPU Double"
+# RUN: %torch_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide torch CPU Mixed | FileCheck %s -DMODE="CPU Mixed"
+# CHECK: [[MODE]]: the gradient of autograd in positions (K, N, 3) that require one against the cotangent times G of the evaluator, to the bit: True
+# CHECK: [[MODE]]: the gradient of autograd in the edges of the cells (K, 3) at fixed positions against central differences of the energy
+# CHECK: [[MODE]]: in a triclinic cell, the gradient of autograd in the diagonal against central differences of the energy
+# CHECK: [[MODE]]: in a triclinic cell, the gradient in the tilts
+# DOUBLE: [[MODE]]: torch.autograd.gradcheck of the energy in the diagonal and the tilts of a triclinic cell: True
+# CHECK: [[MODE]]: refused: a backward through a gradient that is an output, through the virial of positions that require a gradient, every second derivative, alone and beside another path, the gradients of the dependent terms, frames of an iterable that require a gradient
+# CHECK: [[MODE]]: under torch.compile (aot_eager), the same gradients in the positions, the cells, and the tunable: True
+# CHECK: torch passed

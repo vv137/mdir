@@ -167,7 +167,7 @@ def product_differences(evaluator, frames, cotangent, product, entries, step):
                     v = v0.copy()
                     v[m] += sign * h
                     evaluator.tunables[name] = v
-                    sums.append(float(cotangent @ evaluator.evaluate(frames, gradient=False).energy))
+                    sums.append(float(cotangent @ evaluator.evaluate(frames, gradients=()).energy))
                 return (sums[0] - sums[1]) / (2.0 * h)
             h = step * max(abs(v0[m]), 1e-3)
             fd = (4.0 * central(0.5 * h) - central(h)) / 3.0
@@ -466,9 +466,9 @@ def run_refusals():
     listed = bounded.evaluate(states)
     assert listed.jacobian is None
     expect(mdir.InputError, lambda: bounded.evaluate(iter(states)), "frame 2: the Jacobian passes")
-    assert bounded.evaluate(iter(states), gradient=False).jacobian is None
-    expect(mdir.InputError, lambda: bounded.evaluate(iter(states), gradient=False).vjp(np.ones(3)),
-           "gradient=False")
+    assert bounded.evaluate(iter(states), gradients=()).jacobian is None
+    expect(mdir.InputError, lambda: bounded.evaluate(iter(states), gradients=()).vjp(np.ones(3)),
+           "without 'tunables' in gradients")
     expect(mdir.InputError, lambda: out.vjp(np.ones(2)), "shape (3,)")
     cotangent = np.array([1.0, -2.0, 0.5])
     before = listed.vjp(cotangent)
@@ -779,7 +779,7 @@ def run_dependent():
         assert out_all.unavailable == ("dependent_energy",)
         if kind == "terms":
             assert list(out_dep.observables) == ["soft.energy", "soft.d_l"], list(out_dep.observables)
-            assert out_dep.unavailable == ("energy", "virial", "wall.energy", "wall.d_z0")
+            assert out_dep.unavailable == ("energy", "virial", "gradients", "wall.energy", "wall.d_z0")
             same = all(np.array_equal(out_dep.observables[c], out_all.observables[c]) or not double
                        for c in out_dep.observables)
             assert same
@@ -788,7 +788,7 @@ def run_dependent():
                                        "soft.energy": frozenset({"l"}),
                                        "soft.d_l": frozenset({"l"})}, out_dep.depends
         else:
-            assert out_dep.unavailable == ("energy", "virial")
+            assert out_dep.unavailable == ("energy", "virial", "gradients")
     expect(mdir.InputError, lambda: mdir.FrameEvaluator(program, terms="some"), "'all' or")
     print(f"{mode}: each mode refuses the names of the other; the columns of the terms left "
           "out are absent and listed")
@@ -808,7 +808,7 @@ def run_dependent():
         w /= w.sum()
         observable = out.observables["slab.d_c"] if terms == "all" else None
         results[terms] = (w, out.jacobian["sig"][:, 0], observable, out)
-    assert results["dependent"][3].unavailable == ("energy", "virial", "slab.energy", "slab.d_c")
+    assert results["dependent"][3].unavailable == ("energy", "virial", "gradients", "slab.energy", "slab.d_c")
     observable = results["all"][2]
     values = {}
     for terms, (w, g, _, _) in results.items():
@@ -1117,8 +1117,16 @@ def run_torch():
     assert sig.grad is not None
     out = mdir.torch.evaluate(evaluator, {"sig": sig}, frames)
     once, = torch.autograd.grad(out.energy.sum(), sig, create_graph=True)
-    expect(RuntimeError, lambda: once.sum().backward())
-    moving = torch.tensor(np.stack([f[0] for f in frames[:3]]), requires_grad=True)
+    # A second derivative is refused in the words of the evaluator
+    # (D[frame-gradients]), also where the loss has another path to sigma.
+    expect(mdir.UnsupportedError, lambda: once.sum().backward(), "second derivative")
+    out = mdir.torch.evaluate(evaluator, {"sig": sig}, frames)
+    once, = torch.autograd.grad(out.energy.sum(), sig, create_graph=True)
+    expect(mdir.UnsupportedError, lambda: (once.sum() + (sig ** 2).sum()).backward(),
+           "second derivative")
+    # Frames of an iterable carry no graph: positions that require a
+    # gradient are one tensor (K, N, 3) (python-frame-gradients-torch.test).
+    moving = [torch.tensor(f[0], requires_grad=True) for f in frames[:3]]
     expect(mdir.UnsupportedError, lambda: mdir.torch.evaluate(evaluator, {"sig": sig}, moving),
            "positions require a gradient")
     expect(mdir.InputError, lambda: mdir.torch.evaluate(evaluator, {"sig": sig.float()}, frames),
@@ -1127,7 +1135,7 @@ def run_torch():
            "no tunable named 'eps'")
     assert all(r.out is None and r.frames is None for r in mdir.torch._RECORDS.values())
     print(f"{mode}: refused: a backward through the virial and through a column that the tunable "
-          "enters, a second backward, positions that require a gradient")
+          "enters, a second backward, frames of an iterable that require a gradient")
 
     # The terms that a tunable enters, alone: the same gradient under the
     # name of that energy.
