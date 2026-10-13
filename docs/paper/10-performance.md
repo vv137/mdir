@@ -127,6 +127,28 @@ steps 2.73 ms, where it took 10.3 ms when every part copied its buffers to
 the device and built its structures anew; a part of one step takes 0.309
 ms instead of 8.77 (`docs/python-segments.md`).
 
+What remains outside the parts is the start of an activation, which every
+update of the parameters in a fit pays. It renumbered the tuples of the
+topology and built their incidence structures on the host, 1.7 to 1.8 kB
+an atom, and its cost for each atom grew with the system: 0.09 µs on JAC,
+0.15 µs on Factor IX, and 0.77 µs on Cellulose for the host's part. The
+algorithm is linear; the memory was not free. The C library recycles
+freed blocks up to 32 MiB, and a larger structure was mapped from the
+system, faulted in page by page, and unmapped at every start: none of the
+five structures of JAC, one of Factor IX, four of Cellulose. A simulation
+now keeps the structures across its activations (Section 3.6,
+D[activation-start]): a start at which the particles have
+not moved compares the order and the members with the kept copies (0.08,
+0.24, and 1.7 ms on the three systems) and builds nothing, and a start in
+a new order builds in the kept memory (2.4, 7.5, and 71 ms on the host,
+where it took 2, 14, and 315 ms). On one RTX PRO 6000 Blackwell in mixed
+precision, where the upload goes with the build, a start with its
+evaluation at which the particles have not moved takes 2.0, 6.1, and 30
+ms on the three systems where it took 5.0, 61, and 413 ms, and one in a
+new order 5.1, 17, and 98 ms where it took 5.0, 58, and 387 ms. An update
+of the parameters with its evaluation takes 8.3, 30, and 203 ms where it
+took 15, 135, and 867 ms; its two starts are now the smaller part of it.
+
 ## 10.5 Over long runs
 
 Over 2 ns of JAC at constant energy before the dual list (D112), the rate

@@ -534,7 +534,20 @@ from part to part: a run in parts is the run in one part, to the bit in the
 deterministic mode, and a part of 10 steps of JAC no longer copies 50 MB to
 the device. The runtimes record what an activation allocates, which is
 freed when it ends; the state at the end of each part is copied on the
-device, so that a part that fails returns to it (D196).
+device, so that a part that fails returns to it (D196). One
+thing is the simulation's and outlives its activations
+(D[activation-start]): the members of the tuples of the
+topology renumbered to the places of the particles, and the incidence
+structure of each tuple set (Section 3.4). Both are functions of the
+members in the order of the files and of the identity of the particle at
+each place, and of nothing else; the runtime keeps a copy of these two
+inputs with them, and an activation that begins takes the kept structures
+only where the inputs it has are equal to the copies, element for element.
+That holds at every start at which the particles have not moved (an
+update of the tunables, an evaluation, a commit of velocities or
+parameters, the start after a checkpoint), which then uploads nothing of
+the topology; a start in another order builds the structures in the
+memory of the last.
 
 A consumer such as PyTorch takes those buffers through DLPack without a
 copy (D220, `docs/python-dlpack.md`): a view of
@@ -570,14 +583,16 @@ from the copy of the
 state that the simulation holds since the last part. A commit costs an
 evaluation, so a borrow serves changes between runs, not at every step.
 
-The runtime is small and holds what cannot be IR: 681 lines of C for the
+The runtime is small and holds what cannot be IR: 845 lines of C for the
 host (`runtime/mdrt.c`: counters of builds and prunings, the stop on a
 position that is not a number, the generator Philox 4×32-10
 [[Salmon2011]](references.md#salmon2011) and the factors of the thermostat and the barostat,
 isotropic or semi-isotropic, drawn from it, the means of the pressures by
 axis that the semi-isotropic barostat took, the FFT of the host
-[[Reinecke2019]](references.md#reinecke2019), and the matrix of the host)
-and 1216 lines for NVIDIA devices (`runtime/mdrt_cuda.c`, on the driver
+[[Reinecke2019]](references.md#reinecke2019), and the matrix of the host),
+419 for the structures of the tuples that a simulation keeps across its
+activations, shared by both (`runtime/mdrt_tuples.h`),
+and 1518 lines for NVIDIA devices (`runtime/mdrt_cuda.c`, on the driver
 API only: loading of modules, launches that skip empty grids, one stream
 in order plus an optional second one, words of memory of the host mapped
 for the device for flags (D118), a caching allocator whose frees do not

@@ -1010,7 +1010,12 @@ the order of the input of these systems is a bad one already: consecutive
 water oxygens are 2.97 nm apart in the mean in JAC and 4.99 nm in Factor
 IX, as far as after a random shuffle of the waters (2.97 and 5.01 nm);
 Cellulose is local (1.4 nm against 8.5 nm). Renumbering the tuples on the
-device, which would let a frame be ordered at no such cost, is #295.
+device, which would let a frame be ordered at no such cost, is #295. (The
+cost that grew faster than the system was found in #294 to be the memory
+of the structures, mapped and faulted in anew at every build once a
+structure is over 32 MiB; since D[activation-start] a build
+takes the memory of the last, and a start in the order of the last start
+builds nothing.)
 
 Two further items that the roadmap named for this slice. *The tuples of
 the bonded terms that a program of the dependent terms still builds*: they

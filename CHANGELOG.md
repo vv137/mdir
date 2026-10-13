@@ -438,6 +438,47 @@ format, or the outputs; every such change is listed under **Changed** or
   target, as after #309. The programs of `mdir run` and of a `Simulation`,
   their text, and their entries of the cache are unchanged, and so is
   every number of an evaluator that asks for nothing new.
+- **A Python simulation keeps the structures of its tuples across the
+  starts of its activations** (D[activation-start], #294).
+  Each evaluation after a run, update of the tunables, commit of a borrow,
+  and start after a checkpoint begins an activation (D215), which
+  renumbered the bonds, angles, dihedrals, 1-4 pairs, and excluded pairs
+  to the order of the particles and built an incidence structure for each
+  on the host, in new memory, and on a GPU uploaded them: 43 MB on JAC of
+  the Amber suite and 696 MB on Cellulose, at a cost that grew faster than
+  the system because memory over 32 MiB is mapped and faulted in anew at
+  every start. A simulation now keeps them, takes them at a start where
+  the particles are in the order of the last one, and builds them in the
+  same memory where they are not. On one RTX PRO 6000 Blackwell in mixed
+  precision, a start with its evaluation at which the particles have not
+  moved (`tunables.gradient()` again) takes 2.0 ms on JAC, 6.1 ms on
+  Factor IX, and 30 ms on Cellulose where it took 5.0, 61, and 413 ms; an
+  update of the tunables with its evaluation 8.3, 30, and 203 ms where it
+  took 15, 135, and 867 ms (what remains of an update is not its starts,
+  #324); a start after steps, in a new order, 5.1, 17, and 98 ms where it
+  took 5.0, 58, and 387 ms: nothing on JAC, whose structures were under
+  32 MiB. The rate of a step is unchanged: over five runs of 20,000
+  steps of each build in turn, 0.13% on Cellulose and 0.24% on Factor
+  IX, of the size of the spread of the runs (0.26% and 0.2%).
+  Nothing of the interface changes and no number: every state, energy,
+  and derivative of a sequence of starts equals that of before to the
+  bit, on the CPU and a GPU, in double and mixed precision, in the
+  deterministic mode (`python-kept-tuples.test`,
+  `python-kept-tuples-gpu.test`). What
+  changes: the pipeline of the program of a
+  simulation and of a frame evaluator names a new option of the lowering,
+  so the code that a `Program` keeps for its simulations and the entries
+  of the compile cache on disk are made anew once; a simulation holds on
+  the host two copies of the members of its tuples and one of the order
+  for each tuple set (2 MB on JAC, 48 MB on Cellulose) and on a GPU
+  16 MiB in which the structures are written, and holds the
+  structures between activations as it held them during one. `mdir run`
+  is unchanged: its programs, their pipeline, and their lowered text. New
+  for diagnosis: with `MDRT_CHECK_KEPT_TUPLES` set in the environment,
+  every kept structure that is taken is also built anew and compared, and
+  a difference ends the program
+  ([docs/environment.md](docs/environment.md#debugging),
+  [docs/jit-invariants.md](docs/jit-invariants.md#what-a-simulation-keeps-across-activations-dactivation-start)).
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on

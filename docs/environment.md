@@ -39,6 +39,7 @@ These are described in [debugging.md](debugging.md). They act on `mdir run`.
 | `MDRT_TRACE` (set) | The device runtime prints each module that it loads, its kernels, and each launch with its grid. |
 | `MDRT_PROFILE` (set) | The device runtime counts its calls and their time, and reports them at the end. |
 | `MDRT_WAIT=1` | The device runtime waits for each launch. A failing kernel is then reported at its own launch, and with `MDRT_PROFILE`, each kernel is timed. |
+| `MDRT_CHECK_KEPT_TUPLES` (set) | The runtimes (`runtime/mdrt.c`, `runtime/mdrt_cuda.c`) build anew every structure of the tuples that a simulation takes from those it keeps across its activations (D[activation-start]) and compare the two, on a device after reading the kept one back; a difference ends the program with a message. A start then costs what it cost without the kept structures, and more ([jit-invariants.md](jit-invariants.md#what-a-simulation-keeps-across-activations-dactivation-start)). |
 
 ## Tests and validation
 

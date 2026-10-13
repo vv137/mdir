@@ -66,7 +66,22 @@ def ConvertMDExecToLoops
 
     The pass decides nothing about buffers; `md-exec-assign-storage` has
     done that. It rejects ops in the value form.
+
+    With `kept-tuples`, the members that `md_exec.renumber` puts at their
+    places, and the incidence structure that `md_exec.build_incidence`
+    builds from them or from the members that the entry was given, are
+    taken from the runtime (`mdrtTuplesRenumber`, `mdrtTuplesIncidence`)
+    and given back to it where they would be freed (`mdrtTuplesRelease`):
+    a program that an embedding front end runs in activations keeps them
+    from one activation to the next (D[activation-start]). Without it they
+    are built by loops in the module, as before.
   }];
+  let options = [
+    Option<"keptTuples", "kept-tuples", "bool", /*default=*/"false",
+           "Whether the renumbered members of the tuples and their incidence "
+           "structures are taken from the runtime, which keeps them across "
+           "the activations of an embedding program">,
+  ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",
                            "::mlir::math::MathDialect",
@@ -258,7 +273,14 @@ def ConvertMDExecToGPU
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
            "Whether sums are added in an order that does not depend on the "
            "threads (D84): the charges of PME in fixed point, not with "
-           "floating-point atomics">
+           "floating-point atomics">,
+    Option<"keptTuples", "kept-tuples", "bool", /*default=*/"false",
+           "Whether the renumbered members of the tuples, their incidence "
+           "structures, and the copies of the members on the device are "
+           "taken from the runtime (mdrtDeviceTuplesRenumber, "
+           "mdrtDeviceTuplesIncidence, mdrtDeviceTuplesMembers), which keeps "
+           "them across the activations of an embedding program "
+           "(D[activation-start])">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

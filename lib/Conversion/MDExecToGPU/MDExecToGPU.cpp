@@ -62,6 +62,13 @@ static const char *const countBuildName = "mdrtCountBuild";
 static const char *const flagStartName = "mdrtFlagStart";
 static const char *const flagFinishName = "mdrtFlagFinish";
 static const char *const flagMemoryName = "mdrtFlagMemory";
+/// The renumbered members, the incidence structures, and the copies of the
+/// members on the device that the runtime keeps (mdrt_cuda.c,
+/// D[activation-start]).
+static const char *const tuplesRenumberName = "mdrtDeviceTuplesRenumber";
+static const char *const tuplesIncidenceName = "mdrtDeviceTuplesIncidence";
+static const char *const tuplesMembersName = "mdrtDeviceTuplesMembers";
+static const char *const tuplesReleaseName = "mdrtDeviceTuplesRelease";
 /// Counts a build at an interval that found the structure no longer valid
 /// (D88).
 static const char *const countLateBuildName = "mdrtCountLateBuild";
@@ -176,7 +183,22 @@ public:
   /// may, unless it was audited not to.
   bool allocates(Operation *op);
 
+  /// Whether the renumbered members of the tuples, their incidence
+  /// structures, and the copies of the members on the device are taken from
+  /// the runtime, which may keep them from one activation of an embedding
+  /// program to the next (`kept-tuples`, D[activation-start]).
+  bool keptTuples = false;
+
 private:
+  /// A call of the runtime function `name` with `members`, a buffer of the
+  /// host, as a buffer of any arity, and `other` if it is given, which gives
+  /// a buffer of the type `type`; the runtime takes the buffer back before
+  /// the end of the block of `op`.
+  Value takeFromRuntime(Operation *op, StringRef name, Value members,
+                        Value other, MemRefType type);
+  /// The members that the runtime has renumbered.
+  llvm::DenseSet<Value> runtimeMembers;
+
   LogicalResult lowerFunction(func::FuncOp function);
   void releaseStack(func::FuncOp function);
   LogicalResult lowerOp(Operation *op);
@@ -2794,6 +2816,25 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
 /// the device.
 void Lowering::lowerBuildIncidence(md_exec::BuildIncidenceOp op) {
   Location loc = op.getLoc();
+  // The structure of the members of a tuple set, in the order of the files
+  // or renumbered, is the runtime's to keep, with the copy of the members
+  // for the loops that evaluate each tuple once; one of tuples that the
+  // program finds (the triplets) is built here.
+  if (keptTuples && (runtimeMembers.count(op.getRelation()) ||
+                     isGivenToFunction(op.getRelation()))) {
+    Value relation = op.getRelation();
+    Value device =
+        takeFromRuntime(op, tuplesIncidenceName, relation, op.getSize(),
+                        cast<MemRefType>(op.getResult().getType()));
+    op.getResult().replaceAllUsesWith(device);
+    auto hostType = cast<MemRefType>(relation.getType());
+    if (deterministic || !tuplesOnce || hostType.getRank() != 2)
+      return;
+    members[device] = takeFromRuntime(
+        op, tuplesMembersName, relation, Value(),
+        getDeviceType(hostType.getShape(), hostType.getElementType()));
+    return;
+  }
   OpBuilder builder(op);
   Value host =
       emitBuildIncidence(builder, loc, op.getRelation(), op.getSize());
@@ -2828,6 +2869,44 @@ void Lowering::lowerBuildIncidence(md_exec::BuildIncidenceOp op) {
   freeDeviceAtEndOfBlock(op, copy);
 }
 
+Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
+                                Value other, MemRefType type) {
+  Location loc = op->getLoc();
+  OpBuilder builder(op);
+  Type narrow = builder.getI32Type();
+  MemRefType wide = MemRefType::get(
+      {ShapedType::kDynamic, ShapedType::kDynamic}, narrow);
+  MemRefType given =
+      type.getMemorySpace()
+          ? getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, narrow)
+          : wide;
+  if (members.getType() != wide)
+    members = memref::CastOp::create(builder, loc, wide, members);
+  SmallVector<Value, 2> arguments = {members};
+  SmallVector<Type, 2> types = {wide};
+  if (other) {
+    arguments.push_back(other);
+    types.push_back(other.getType());
+  }
+  func::FuncOp callee =
+      getOrDeclare(name, builder.getFunctionType(types, {given}));
+  callee->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  Value taken =
+      func::CallOp::create(builder, loc, callee, arguments).getResult(0);
+  // The runtime frees it, or keeps it for the next activation.
+  OpBuilder atEnd(op->getBlock()->getTerminator());
+  Value plain = taken;
+  if (given != wide)
+    plain = memref::MemorySpaceCastOp::create(atEnd, loc, wide, taken);
+  func::FuncOp release = getOrDeclare(
+      tuplesReleaseName, atEnd.getFunctionType({wide}, {}));
+  release->setAttr("llvm.emit_c_interface", atEnd.getUnitAttr());
+  func::CallOp::create(atEnd, loc, release, ValueRange{plain});
+  if (type == given)
+    return taken;
+  return memref::CastOp::create(builder, loc, type, taken);
+}
+
 void Lowering::freeDeviceAtEndOfBlock(Operation *op, Value buffer) {
   // The lowering of `gpu.dealloc` takes a buffer without a memory space.
   OpBuilder builder(op->getBlock()->getTerminator());
@@ -2843,6 +2922,14 @@ void Lowering::freeDeviceAtEndOfBlock(Operation *op, Value buffer) {
 /// are copied there from the device.
 void Lowering::lowerRenumber(md_exec::RenumberOp op) {
   Location loc = op.getLoc();
+  if (keptTuples) {
+    Value members =
+        takeFromRuntime(op, tuplesRenumberName, op.getMembers(), op.getIds(),
+                        cast<MemRefType>(op.getResult().getType()));
+    runtimeMembers.insert(members);
+    op.getResult().replaceAllUsesWith(members);
+    return;
+  }
   OpBuilder builder(op);
   Value ids = op.getIds();
   auto type = cast<MemRefType>(ids.getType());
@@ -4945,6 +5032,7 @@ public:
     Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
                       fuseIntegration, deterministic, tuplesOnce,
                       fuseCenters);
+    lowering.keptTuples = keptTuples;
     if (failed(lowering.run()))
       return signalPassFailure();
     // Products and sums in the kernels may become fused multiply-adds, as

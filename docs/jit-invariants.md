@@ -118,6 +118,142 @@ on three threads, whose activations wait side by side.
 the one it began on, with four threads of execution on the CPU, and give the
 state of a run on one thread to the bit.
 
+## What a simulation keeps across activations (D[activation-start])
+
+An activation ends by freeing what it allocated (above), and the next one
+begins from the state of the host. One thing outlives it, since #294: the
+structures of the tuples of the topology, which the simulation keeps in a
+store of the runtime (`runtime/mdrt_tuples.h`) from its first activation
+to its end. The rest of this section is what holds for that store.
+
+**What is kept.** For each tuple set and each order of the particles that
+an activation asked for:
+
+- the members of the set renumbered to the places of the particles
+  (`md_exec.renumber`), on the host;
+- the incidence structure built from them (`md_exec.build_incidence`), on
+  the host for the CPU target and on the device for a GPU;
+- on a GPU outside the deterministic mode, the copy of the renumbered
+  members that the loops over tuples evaluated once read;
+- and, to decide whether these may be taken again, a copy of both of their
+  inputs: the members in the order of the files, as the entry was given
+  them, and the identity of the particle at each place.
+
+A program in the order of the input (that of a frame evaluator, or
+`Execution.reorder = False`) has no identities to compare: its structures
+are kept under the members alone.
+
+**How much, and its bound.** The store has one entry for each pair of
+members and kind of order (identities, or the order of the files) that an
+activation has asked for, which is one for each tuple set of the program:
+an order that differs from the kept one does not add an entry, it replaces
+the kept one in its memory (I2). A second entry of a tuple set exists only
+while the code of one activation holds two orders of it at once (the
+anchors of the constraint groups, which the order is computed from before
+the particles are permuted), and it is reused in the same way at the next
+start. The number of entries therefore does not grow with the starts, the
+steps, or the orders that a simulation passes through
+(`python-memory*.test`, and the counts of `python-kept-tuples*.test`). The
+bytes, on the three explicit systems of the Amber suite:
+
+| System | Atoms | Incidence structures and the copy of the members (device on a GPU, host on the CPU), MB | Kept inputs and renumbered members (host), MB |
+|---|---|---|---|
+| JAC | 23,558 | 42.6 + 0.7 | 1.9 |
+| Factor IX | 90,906 | 164.4 + 2.2 | 6.3 |
+| Cellulose | 408,609 | 696.3 + 19.9 | 48.0 |
+
+The first column is what an activation held before as its own, and gave
+back to the pool of device blocks when it ended (the pool kept the blocks
+for the next activation, so the device memory of the process is what it
+was). The second is new: two copies of the members (as given, and
+renumbered) and one of the identities for each tuple set. On a GPU the
+host never holds a whole incidence structure: its rows are written a few
+megabytes at a time and uploaded (`tuplesBuildOnDevice`), in 16 MiB of
+the store that are taken once, where each was built whole in new memory
+of the host before.
+
+**What the comparison costs.** A start that takes its structures compares
+the identities and the members of every tuple set with the kept copies: on
+the CPU target 0.08 ms on JAC, 0.24 ms on Factor IX, and 1.7 ms on
+Cellulose for the five sets together, against the 2 ms, 14 ms, and 315 ms
+that building them took; on a GPU the identities are read from the device
+once for each set as before, and the whole is 0.13, 0.43, and 2.1 ms (one
+RTX PRO 6000) of starts of 2.0, 6.1, and 30 ms.
+
+**I1. A kept structure is taken only where it is the one that would be
+built.** The renumbered members and the incidence structure are functions
+of the two inputs and of nothing else: not of the positions, the cell, the
+values of the tunables, the step, or the precision. Where the code asks
+for them, the runtime compares the identities that the program has just
+computed (read from the device on a GPU) and the members that the entry
+was given with the kept copies, element for element, and takes the kept
+structure only if both are equal. Nothing is inferred from what the host
+did since the last activation: no call of the simulation marks the store
+valid or invalid, so no call can forget to. What invalidates a kept
+structure is therefore exactly one of:
+
+- the particles are in another order than the one it was built for (one
+  identity differs): after steps, after a commit of a borrow that moves a
+  particle into another cell of the order, in a simulation that continues
+  a checkpoint;
+- the members that the entry is given differ in one element from those it
+  was built for, by whatever path they changed.
+
+An update of the tunables, a commit of velocities, tunables, or a cell, an
+evaluation, `gradient()`, and a checkpoint invalidate nothing unless they
+change the order, and then by the comparison alone.
+
+**I2. The code that runs never has its structures built over.** The
+runtime counts what the code of the activation holds of an entry (taken
+and not given back, `mdrtTuplesRelease`). A structure that is not found
+is built in the memory of an entry of the same tuple set that is not held,
+whose sizes are those needed (the width of a row does not depend on the
+order), and otherwise in new memory. When an activation begins, the one
+before it has ended at a boundary without giving anything back, and
+nothing is held.
+
+**I3. The kept memory is not the activation's.** It is allocated outside
+the records of the activations (on a device, outside the pool of blocks
+that `mdrtDeviceActivationClose` returns blocks to), so the end of an
+activation leaves it, and it is freed when the simulation is destroyed,
+after its last activation and before its engine. The code of the program
+does not free it: where it would free a structure it gives it back to the
+runtime, which frees only what it did not keep.
+
+**I4. The kept structures are read, never written.** The loops over
+tuples and the build of a neighbor structure read an incidence structure
+and the members; no kernel and no loop of the host stores into them.
+With `MDRT_CHECK_KEPT_TUPLES` set in the environment
+([environment.md](environment.md#debugging)) the runtime checks I1 and I4
+at every use: each structure that is taken is also built anew from the
+inputs given and compared with the kept one (read back from the device),
+and a difference ends the program with a message that names the structure.
+`python-kept-tuples*.test` run with it.
+
+**Which programs.** The lowerings of a program of an embedding front end
+(`Control::segments`: a Python simulation and the simulation of a frame
+evaluator) take the structures of the tuple sets from the runtime (the
+option `kept-tuples` of `convert-md-exec-to-loops` and
+`convert-md-exec-to-gpu`). `mdir run` opens no store, its pipeline does
+not set the option, and its module builds the structures in loops as
+before. The structure of tuples that a program finds at run time (the
+triplets of a three-body term) is not kept in any program. A simulation
+whose code runs without a store entered (none does) gets structures of its
+own from the same functions and frees them.
+
+**Tests.** `python-kept-tuples.test` and `-gpu.test`: the store called as
+the code calls it, against a renumbering and an incidence structure
+written in NumPy, with one identity or one member changed; a kept
+structure written over by the test, which ends the program under the
+check; and a sequence of starts (evaluations, an update of the tunables,
+steps that order the particles anew, a commit of a borrow, a checkpoint,
+a run continued from it, and on the CPU a commit that moves a particle)
+whose every state, energy, and derivative equals, to the bit, that of a
+simulation that builds every structure anew (`Simulation._keep_tuples`,
+private), in double and mixed precision, with the numbers of structures
+taken and built at each start (`Simulation._kept_tuples`, private): a
+start that should have built and took, or the reverse, fails the test.
+
 ## Enforced transitions and dependency boundary
 
 Each object starts in `Linking`. RuntimeDyld allocates and relocates sections,
