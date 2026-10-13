@@ -9,5 +9,6 @@
 # RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_kept_tuples.py starts %S/Inputs/dipeptide GPU %t | FileCheck %s
 # CHECK: GPU Double: 62 states, energies, and derivatives over 10 evaluations, an update, a commit, a checkpoint, and a run continued from it equal those of a simulation that builds its structures anew, to the bit; 5 structures taken where nothing moved, 5 built after the particles were ordered anew
 # CHECK: GPU Mixed: 62 states, energies, and derivatives over 10 evaluations, an update, a commit, a checkpoint, and a run continued from it equal those of a simulation that builds its structures anew, to the bit; 5 structures taken where nothing moved, 5 built after the particles were ordered anew
+# CHECK: GPU Mixed: two simulations and a frame evaluator of one program keep their structures apart; the evaluator builds its 5 once and takes them at every start after
 # CHECK: GPU Mixed, not deterministic: the copies of the members on the device are taken with their structures, and the energy of the state is that of the first evaluation to rounding
 # CHECK: kept tuples starts GPU passed

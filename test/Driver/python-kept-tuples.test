@@ -17,4 +17,5 @@
 # LOUD: kept tuples loud passed
 # CHECK: CPU Double: 78 states, energies, and derivatives over 13 evaluations, an update, a commit, a checkpoint, and a run continued from it equal those of a simulation that builds its structures anew, to the bit; 5 structures taken where nothing moved, 5 built after the particles were ordered anew
 # CHECK: CPU Mixed: 78 states, energies, and derivatives over 13 evaluations, an update, a commit, a checkpoint, and a run continued from it equal those of a simulation that builds its structures anew, to the bit; 5 structures taken where nothing moved, 5 built after the particles were ordered anew
+# CHECK: CPU Mixed: two simulations and a frame evaluator of one program keep their structures apart; the evaluator builds its 5 once and takes them at every start after
 # CHECK: kept tuples starts CPU passed

@@ -373,6 +373,49 @@ class Sequence:
         return self
 
 
+def run_apart(root, target, precision):
+    """Two simulations and a frame evaluator of one program: each keeps its
+    own structures and takes none of another's, though the three build the
+    same ones."""
+    program = make(root, target, precision)
+    first, second = mdir.Simulation(program), mdir.Simulation(program)
+    for sim in (first, second):
+        sim.part_seconds = 1e9
+    first.run(8)
+    one = first.tunables.gradient()
+    sets = sum(first._kept_tuples[:2]) // 2
+    assert sets > 0 and first._kept_tuples[1] >= sets
+    # The second is at the state of the first, in its order, with its
+    # members: a store that they shared would hand it the structures.
+    assert second._kept_tuples[:2] == (0, 0)
+    second.run(8)
+    assert second._kept_tuples[:2] == (0, sets), second._kept_tuples
+    other = second.tunables.gradient()
+    assert other.energy == one.energy
+    assert all(np.array_equal(other[key], one[key]) for key in one.keys())
+    # The evaluator has a simulation of its own, in the order of the input:
+    # it builds once and takes its structures at every start after.
+    evaluator = mdir.FrameEvaluator(program)
+    state = first.state()
+    frames = np.array(state.positions)[None]
+    cells = np.array(state.cell.diagonal)[None]
+    before = evaluator.evaluate(frames, cells).energy.copy()
+    private = evaluator._simulation
+    assert private._kept_tuples[:2] == (0, sets), private._kept_tuples
+    length = np.array(evaluator.tunables["l"])
+    evaluator.tunables.update({"l": length * 1.1})
+    evaluator.evaluate(frames, cells)
+    evaluator.tunables.update({"l": length})
+    after = evaluator.evaluate(frames, cells).energy
+    assert np.array_equal(before, after), (before, after)
+    taken, built = private._kept_tuples[:2]
+    assert built == sets and taken >= 2 * sets, private._kept_tuples
+    assert second._kept_tuples[0] + second._kept_tuples[1] == 2 * sets
+    print(f"{target} {precision}: two simulations and a frame evaluator of one program keep "
+          f"their structures apart; the evaluator builds its {sets} once and takes them at "
+          f"every start after")
+
+
 def run_starts():
     root, target, work = sys.argv[2], sys.argv[3], sys.argv[4]
     mode = sys.argv[5] if len(sys.argv) > 5 else None
@@ -382,7 +425,7 @@ def run_starts():
         subject = Sequence(root, target, precision, work, keeps=True).run()
         for name, values in subject.records.items():
             written[f"{precision}: {name}"] = values
-        if mode is not None:
+        if not kept_here:
             continue
         anew = Sequence(root, target, precision, work, keeps=False).run()
         assert subject.records.keys() == anew.records.keys()
@@ -412,7 +455,9 @@ def run_starts():
               f"run continued from it equal those of a simulation that builds its structures "
               f"anew, to the bit; {sets} structures taken where nothing moved, {sets} built "
               f"after the particles were ordered anew")
-    if target == "GPU" and mode is None:
+    if kept_here:
+        run_apart(root, target, "Mixed")
+    if target == "GPU" and kept_here:
         # Outside the deterministic mode a GPU evaluates each tuple once,
         # from a copy of the members on the device, which is kept with
         # their structure (and checked with it, under the variable). Its

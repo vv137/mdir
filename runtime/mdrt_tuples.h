@@ -113,10 +113,6 @@ struct MdrtTupleStore {
      code has spent in the functions that give them. */
   int64_t kept, built;
   double seconds;
-  /* On a device: the memory of the host in which a structure is built
-     before it is uploaded, as large as the largest so far. */
-  int32_t *staging;
-  size_t stagingBytes;
 };
 
 static double mdrtTuplesNow(void) {
@@ -192,26 +188,79 @@ static int64_t mdrtTuplesWidth(const int32_t *members, int64_t tuples,
   return widest * (arity + 2) + 1;
 }
 
-/* The rows, in the order of the tuples. Of a row, the entries after the
-   tuples of its particle are not written. */
+/* The tuples of each particle, in the order of the tuples: for the particle
+   p, `entries` holds from 2 first[p] to 2 first[p + 1] the number of each of
+   its tuples and its place in it. The rows of an incidence structure are
+   written from it one after another, a range of particles at a time, where
+   writing them tuple by tuple would visit the rows of a structure of
+   hundreds of megabytes in the order of the members (#294). */
+struct MdrtTupleIndex {
+  int64_t *first;
+  int32_t *entries;
+};
+
+static void mdrtTupleIndexBuild(struct MdrtTupleIndex *index,
+                                const int32_t *members, int64_t tuples,
+                                int64_t arity, int64_t particles) {
+  index->first = calloc((size_t)particles + 2, sizeof(int64_t));
+  if (!index->first) {
+    fprintf(stderr, "mdrt: out of memory of the host\n");
+    abort();
+  }
+  index->entries =
+      mdrtTuplesAllocate((size_t)(2 * tuples * arity) * sizeof(int32_t));
+  /* The count of the particle p at first[p + 2], so that the sums that
+     follow leave at first[p + 1] where the next entry of p goes, and, once
+     every entry is placed, where those of p + 1 begin. */
+  int64_t *first = index->first;
+  for (int64_t i = 0, e = tuples * arity; i != e; ++i)
+    ++first[members[i] + 2];
+  for (int64_t p = 0; p != particles; ++p)
+    first[p + 2] += first[p + 1];
+  for (int64_t t = 0; t != tuples; ++t)
+    for (int64_t s = 0; s != arity; ++s) {
+      int64_t at = first[members[t * arity + s] + 1]++;
+      index->entries[2 * at] = (int32_t)t;
+      index->entries[2 * at + 1] = (int32_t)s;
+    }
+}
+
+static void mdrtTupleIndexFree(struct MdrtTupleIndex *index) {
+  free(index->first);
+  free(index->entries);
+}
+
+/* The rows of the particles from `begin` to `end`, at `rows`: the number of
+   tuples of the particle and, for each in the order of the tuples, its
+   number, the place of the particle in it, and its members. Of a row, the
+   entries after the tuples of its particle are not written. */
+static void mdrtTuplesRows(const struct MdrtTupleIndex *index,
+                           const int32_t *members, int64_t arity,
+                           int64_t width, int64_t begin, int64_t end,
+                           int32_t *rows) {
+  for (int64_t p = begin; p != end; ++p) {
+    int32_t *row = rows + (p - begin) * width;
+    int64_t from = index->first[p], count = index->first[p + 1] - from;
+    row[0] = (int32_t)count;
+    int32_t *at = row + 1;
+    for (int64_t k = 0; k != count; ++k, at += arity + 2) {
+      int32_t tuple = index->entries[2 * (from + k)];
+      at[0] = tuple;
+      at[1] = index->entries[2 * (from + k) + 1];
+      memcpy(at + 2, members + (int64_t)tuple * arity,
+             (size_t)arity * sizeof(int32_t));
+    }
+  }
+}
+
+/* The whole structure on the host. */
 static void mdrtTuplesFill(const int32_t *members, int64_t tuples,
                            int64_t arity, int64_t particles, int64_t width,
                            int32_t *incidence) {
-  int64_t entry = arity + 2;
-  for (int64_t p = 0; p != particles; ++p)
-    incidence[p * width] = 0;
-  for (int64_t t = 0; t != tuples; ++t) {
-    const int32_t *tuple = members + t * arity;
-    for (int64_t s = 0; s != arity; ++s) {
-      int32_t *row = incidence + (int64_t)tuple[s] * width;
-      int32_t *at = row + 1 + (int64_t)row[0] * entry;
-      at[0] = (int32_t)t;
-      at[1] = (int32_t)s;
-      for (int64_t q = 0; q != arity; ++q)
-        at[2 + q] = tuple[q];
-      ++row[0];
-    }
-  }
+  struct MdrtTupleIndex index;
+  mdrtTupleIndexBuild(&index, members, tuples, arity, particles);
+  mdrtTuplesRows(&index, members, arity, width, 0, particles, incidence);
+  mdrtTupleIndexFree(&index);
 }
 
 /* Whether two incidence structures hold the same rows, in what a loop over
