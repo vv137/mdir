@@ -409,7 +409,17 @@ upload. The commit of a writable borrow (D229,
 [python-dlpack.md](python-dlpack.md#writable-borrows-d229))
 does the same with the state that a consumer wrote. An
 upload in place that kept the order would make an update cheaper, at the
-cost of that comparison; it can follow if M2b needs it.
+cost of that comparison; it can follow if M2b needs it. Since
+D[activation-start] such a start no longer renumbers the
+tuples and builds and uploads their incidence structures, which was most
+of what it cost beyond its evaluation: the order that it computes is the
+order of the last start wherever the particles have not moved, and the
+structures that the simulation keeps are taken as they are; the
+comparison with a simulation compiled from the state holds to the bit as
+before (`python-kept-tuples*.test`). On JAC on one RTX PRO 6000 in mixed
+precision the tuples were 2.97 of the 5.04 ms of such a start: the reads
+of the identities 0.08 ms, the renumbering 0.12 ms, the build 0.79 ms,
+and the uploads 1.96 ms.
 
 **The CPU** has the same ownership: the activation keeps its buffers of the
 host, which are those that the entry was given, and the views are their
