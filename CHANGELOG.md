@@ -26,7 +26,9 @@ format, or the outputs; every such change is listed under **Changed** or
   for orthorhombic and triclinic programs, not symmetrized. Without
   constraints `virial` is $-\operatorname{tr}$ of it; with them `virial`
   has the term of the constraint forces besides, and a pressure takes
-  `virial`. A frame that asks for neither costs what it cost; one that
+  `virial`. For a program with restraints to reference positions
+  `"strain"` is refused: their virial is taken about the references and
+  is not that derivative. A frame that asks for neither costs what it cost; one that
   asks pays one more evaluation of its forces (a third of a frame on the
   CPU). Through
   `mdir.torch.evaluate`, positions `(K, N, 3)`, `cells`, and `tilts` that

@@ -2420,6 +2420,19 @@ llvm::Expected<Simulation::FrameEvaluation> Simulation::evaluateFrame(
   if (prepared.control.minimize)
     return inputError("this program minimizes: frames are evaluated by a "
                       "program that takes steps");
+  // The virial of restraints to reference positions is taken about the
+  // references (D124): it is the derivative of their energy when the
+  // references deform with the cell, which those of a frame do not. With
+  // them the virial tensor is not the derivative of the energy of the frame
+  // in the strain (measured on the dipeptide with its heavy atoms
+  // restrained: the diagonal differs from central differences of the energy
+  // by up to 51 of 51,680 kJ/mol), and it is not returned as if it were.
+  if (strain && !system.restraintConstants.empty())
+    return unsupported("the gradient in the strain is not given for a "
+                       "program with restraints to reference positions: "
+                       "their virial is taken about the references, which is "
+                       "not the derivative of the energy of a frame in the "
+                       "strain; the gradient in the positions is given");
   // Everything is checked before anything changes.
   size_t count = system.getNumParticles();
   for (size_t i = 0; i != 3 * count; ++i)

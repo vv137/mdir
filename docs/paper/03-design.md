@@ -1085,6 +1085,11 @@ $\partial U/\partial\boldsymbol\varepsilon$ is symmetric, since an
 antisymmetric $\boldsymbol\varepsilon$ is a rotation to first order; a
 term of the absolute positions has no such invariance, and its part
 $\sum_i(\partial U/\partial x_{i,a})\,x_{i,b}$ is returned as it is. A
+restraint to a reference position is the exception: its virial is taken
+about the reference (Section 6.4), the derivative when the references
+deform with the cell, as a pressure wants, and not the derivative of the
+energy of a frame, whose references stay; the gradient in the strain is
+refused for a program with restraints, not returned with that term. A
 program takes a cell that is lower triangular, and $(\mathsf 1 +
 \boldsymbol\varepsilon)$ of such a cell is one only for
 $\boldsymbol\varepsilon$ on and above the diagonal; the components below

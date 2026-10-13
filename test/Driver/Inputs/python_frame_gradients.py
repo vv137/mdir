@@ -125,6 +125,8 @@ def dipeptide(kind="plain"):
         system.external_terms = [wall]
     if kind == "rigid":
         system.rigid_water = True
+    if kind == "restrained":
+        system.restraints = [mdir.Restraint("!:WAT & !@H*", 500.0)]
     system.tunables = [mdir.Tunable("sigma", "sigma_pair", map=one_pair(system, "OW", "OW"))]
     if kind == "tail":
         system.tunables += [mdir.Tunable("q", "charge", map=net_charge_map(system),
@@ -392,6 +394,30 @@ def run_special():
     print(f"{mode}: with rigid water, the virial plus the trace of S, the term of the constraint "
           f"forces: {constraint:.3f} kJ/mol of {out.virial[0]:.3f}")
     assert abs(constraint) > 1.0
+
+    # Restraints to reference positions, a term of the absolute positions
+    # that the program adds to its forces after the evaluation.
+    system, state = dipeptide("restrained")
+    program = compile_(system, state)
+    evaluator = mdir.FrameEvaluator(program)
+    reference = reference_evaluator(program, system, state)
+    x, cell = np.array(state.positions), np.array(state.cell.diagonal)
+    x = x + 0.01 * rng.standard_normal(x.shape)
+    out = evaluator.evaluate(x[None], cell[None], gradients=("positions",))
+    g = out.gradients["positions"][0]
+    entries = [(i, c) for i in range(10) for c in range(3)]
+    fd = position_differences(reference, x, cell, None, entries, POSITION_STEP)
+    checked("with restraints to reference positions, G of the first 10 atoms of the solute",
+            [g[i, c] for i, c in entries], fd, float(np.abs(g).max()), g_tolerance)
+    # Their virial is taken about the references, and is not the derivative
+    # of the energy of a frame in the strain: that gradient is refused.
+    text = expect(mdir.UnsupportedError,
+                  lambda: evaluator.evaluate(x[None], cell[None], gradients=("strain",)),
+                  "restraints to reference positions")
+    assert text.startswith("frame 0: "), text
+    assert np.array_equal(evaluator.evaluate(x[None], cell[None]).energy, out.energy)
+    print(f"{mode}: with restraints, the gradient in the strain is refused, and the evaluator "
+          "stays usable")
 
     # Virtual sites (OPC): a site is placed from its atoms whatever the
     # frame says, so the energy does not depend on its row.

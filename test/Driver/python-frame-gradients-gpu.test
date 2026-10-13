@@ -34,6 +34,8 @@
 # SPECIAL: [[MODE]]: with rigid water, G, 36 components, against central differences of the energy in every position
 # SPECIAL: [[MODE]]: with rigid water, the diagonal of S
 # SPECIAL: [[MODE]]: with rigid water, the virial plus the trace of S, the term of the constraint forces
+# SPECIAL: [[MODE]]: with restraints to reference positions, G of the first 10 atoms of the solute
+# SPECIAL: [[MODE]]: with restraints, the gradient in the strain is refused, and the evaluator stays usable
 # SPECIAL: [[MODE]]: with 387 virtual sites, whose rows of G are {{.*}} of the largest whatever their rows of the frame hold, G of 36 components of their atoms against central differences
 # SPECIAL: [[MODE]]: with virtual sites, the diagonal of S
 # SPECIAL: special passed

@@ -9496,7 +9496,11 @@ void Builder::emitEntry() {
       // text of a frame without the request is that of before but for the
       // branch, and so are its numbers, to the bit, whatever is asked.
       // One evaluation serves both: where the virial is asked the forces
-      // are handed over from it.
+      // are handed over from it. The forces alone have a loop of their
+      // own: one loop for either, with the two calls in loops inside it,
+      // was measured too, and a frame that asked for nothing took 45.35 to
+      // 45.65 ms in it where `main` takes 44.84 to 45.30 ms and this text
+      // 44.75 to 45.04 ms.
       StringRef raw = hasSites() ? "e" : "";
       std::string held = hasRestraints() ? "p" : "";
       auto emitAsked = [&](StringRef tag, bool withVirial) {

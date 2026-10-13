@@ -1373,7 +1373,7 @@ out.gradients["strain"]     # (K, 3, 3) float64, kJ/mol: dU/d(epsilon), row alph
 | Memory | $24KN$ bytes (12 in f32) for `"positions"`, which the evaluator allocates and the caller owns: 565 KB a frame of JAC in f64. It is the one output that grows with $N$; a caller bounds it by the frames of a call. $72K$ bytes for `"strain"` |
 | When not asked | nothing is evaluated, copied, or allocated for them: the request reaches the program with the frame, at its boundary, and the forces and the virial that are handed over are evaluated in a branch that a frame without the request does not take ([measured](#the-cost-of-the-gradients)). Calls that ask and calls that do not share an activation, and the other outputs of a frame are the same to the bit whatever is asked |
 | When asked | one more evaluation of the forces of the frame, a third of a frame on the CPU ([measured](#the-cost-of-the-gradients)); `"positions"` and `"strain"` together cost what `"strain"` costs |
-| `terms="dependent"` | `"positions"` and `"strain"` are refused (`UnsupportedError`), and `"gradients"` is listed in `unavailable`: the gradient of $U_\text{dep}$ is not that of $U$, as its virial is not the virial (T3). `"tunables"` is taken as before |
+| `terms="dependent"` | `"positions"` and `"strain"` are refused (`UnsupportedError`), and `"gradients"` is listed in `unavailable`: the gradient of $U_\text{dep}$ is not that of $U$, as its virial is not the virial (T3). `"tunables"` is taken as before, and `out.gradients` is there and empty: it is the request that raises, not the attribute |
 
 **Sign, and the relation to `virial`.** $\mathsf W$ is the virial tensor of
 MDIR, $\sum \mathbf d\otimes\mathbf K$ over the interactions, in the sign
@@ -1405,9 +1405,8 @@ under a rotation of the positions and the cell together: every term of
 pairs, of tuples, and of the reciprocal sum (measured on the dipeptide:
 $\mathsf S - \mathsf S^{\mathsf T}$ is $2\times10^{-13}$ of 14,001 kJ/mol
 in double precision and $1.3\times10^{-4}$ in mixed). A term of the
-absolute positions (`mdir.ExternalTerm`, a restraint to reference
-positions) is not, and neither is $\mathsf S$ then; it is returned as it
-is.
+absolute positions (`mdir.ExternalTerm`) is not, and neither is $\mathsf
+S$ then; it is returned as it is.
 
 **Rectangular and triclinic cells.** The definition is the same for both,
 and an orthorhombic program returns the nine components as a triclinic
@@ -1418,6 +1417,20 @@ along $x$ and $\mathbf b$ in the plane $xy$). The components of $\mathsf
 S$ below the diagonal are derivatives of the potential as a function of
 the positions and of three free cell vectors, which the pair sums and the
 reciprocal sum are.
+
+**Restraints to reference positions: `"strain"` is refused.** The virial
+of a restraint is taken about its reference (D124), $\sum\mathbf
+F\otimes(\mathbf x - \mathbf x^\text{ref})$: the derivative of its energy
+when the references deform with the cell, which is what a pressure
+wants and not what a frame does, whose references stay. The virial
+tensor of such a program is therefore not the derivative of the energy
+of a frame in the strain (measured on the dipeptide with its heavy atoms
+restrained at 500 kJ/mol/nm²: the diagonal differs from central
+differences of the energy by up to 51 of 51,680 kJ/mol), and
+`gradients=("strain",)` raises `UnsupportedError` for a program with
+restraints, as do cells that require a gradient in the adapter;
+`"positions"` is given and checked. `mdir.ExternalTerm` is not concerned:
+its virial is the derivative.
 
 **Constraints and virtual sites.** The positions are taken as given
 (above), and $U$ is a function of all of them: $\mathbf G$ is the plain
@@ -1528,7 +1541,13 @@ product of the cotangent of the energies with one of them. It and
   potential, with the spread of the virtual sites and the restraints,
   without the constraints. So a frame that asks pays one more evaluation
   of the forces ([measured](#the-cost-of-the-gradients)), and a frame
-  that does not pays nothing.
+  that does not pays nothing. One loop for either request, with the two
+  calls in loops inside it, was measured as well: a frame that asked for
+  nothing took 45.35 to 45.65 ms in it, 1% more than on `main`, so the
+  forces alone keep a loop of their own. The forces of the two loops
+  come from two evaluations, of the same potential at the same frame;
+  on the CPU they are the same numbers to the bit
+  (`python-frame-gradients.test`).
 - **Why not the forces and the virial of the evaluation that is there.**
   That was written first: the two calls took `%f0` and the nine
   components of `%w0` of the evaluation of the frame, and nothing more
@@ -1539,7 +1558,7 @@ product of the cotangent of the energies with one of them. It and
   in double precision a frame of the dipeptide that asked for nothing
   took 47.2 ms with both calls and 46.6 ms with the call of the virial
   alone, against 45.1 ms on `main`. With the evaluation in the branch it
-  takes 45.0 ms, the text of a frame without the request is that of
+  takes 44.75 to 45.04 ms, the text of a frame without the request is that of
   before but for a branch that is not taken, and its numbers are the same
   to the bit whatever a call asks. The price is that of the frames that
   ask.
@@ -1600,7 +1619,8 @@ is inside the reduced form (1,209 atoms, PME), triclinic.
 | With the correction for the dispersion under a plain cutoff and a net charge of 0.44 e (what the host adds at the volume): the diagonal of $\mathsf S$; `virial` $+ \operatorname{tr}\mathsf S$ | FD; 0 | 2.4e-8; 0 | 1.1e-5; 3.6e-12 kJ/mol | 5e-7, 1e-4 |
 | With a term of the absolute positions on the water ($\mathsf S - \mathsf S^{\mathsf T}$ is 93,180 kJ/mol): $\mathsf S$ on and above the diagonal; $\mathbf G$, 24 components | FD | 2.0e-9; 1.9e-9 | 1.5e-6; 2.1e-7 | 5e-7, 1e-4 |
 | With rigid water: $\mathbf G$, 36 components, in every position; the diagonal of $\mathsf S$ | FD | 1.1e-7; 1.8e-8 | 2.7e-6; 4.1e-7 | 5e-7, 1e-4 |
-| With 387 virtual sites (OPC): $\mathbf G$ of 36 components of their atoms; the diagonal of $\mathsf S$; the rows of the sites | FD; FD; 0 | 1.2e-7; 9.9e-8; 0 | 1.7e-5; 5.0e-6; 3.1e-8 | 5e-7, 1e-4; 1e-6 for the rows in mixed |
+| With 387 virtual sites (OPC): $\mathbf G$ of 36 components of their atoms; the diagonal of $\mathsf S$; the rows of the sites | FD; FD; 0 | 1.0e-7; 9.9e-8; 0 | 1.5e-5; 5.0e-6; 3.1e-8 | 5e-7, 1e-4; 1e-6 for the rows in mixed |
+| With restraints to reference positions on the heavy atoms of the solute: $\mathbf G$ of its first 10 atoms; `"strain"` | FD; refused | 5.7e-9 | 1.9e-6 | 5e-7, 1e-4 |
 | Calls that ask for nothing, for one gradient, and for all three, as states, as an array, and one frame alone, in one activation: every output | the first evaluation | 0 | 0 | 0 |
 
 **Against torch-pme** [[Loche2025]](references.md#loche2025), the
@@ -1646,6 +1666,10 @@ are of order 5 and MDIR's of order 4.
 | | 128 | 3.7e-6 | 8.7e-5 | |
 | $\mathsf S$, nine components | 64 | 8.4e-6 | 2.0e-5 | 1.1e-5 and 6.0e-7 |
 | | 128 | 3.5e-6 | 7.8e-6 | |
+| JAC, 23,558 particles (by hand): $\mathbf G$ | 128 | 2.1e-5 | | 2.0e-5 and 1.9e-6 |
+| | 256 | 2.4e-6 | | |
+| JAC: $\mathsf S$, nine components | 128 | 7.7e-6 | | 6.8e-6 and 4.3e-7 |
+| | 256 | 4.6e-7 | | |
 
 In mixed precision the difference of $\mathbf G$ at 128 points is that of
 the f32 kernels of the pairs, which a finer mesh does not lower.
@@ -1686,8 +1710,10 @@ passes that are not timed; "before" is `main` at f378ac4, whose
 
 *The CPU of a shared login node (32 cores, the default threads), double
 precision, the dipeptide in water, the constant $l$ of a soft pair term
-tunable; a step takes 15.0 ms.* `main` gave 44.90 to 45.30 ms at $K = 1$
-and 44.95 to 45.27 ms at $K = 16$ over three runs.
+tunable; a step takes 15.0 ms.* `main` gave 44.84 to 45.30 ms at $K = 1$
+and 44.93 to 45.27 ms at $K = 16$ over five runs, and the default call
+of this branch 44.75 and 45.04 ms at $K = 1$ and 44.84 and 44.95 ms at
+$K = 16$ over two.
 
 | Asked besides `"tunables"` | $K$ = 1 | $K$ = 16 | Against `main` |
 |---|---|---|---|
