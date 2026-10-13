@@ -210,6 +210,22 @@ stays that of one activation however many parts it runs (#110), and a live
 simulation holds it between runs, so that live simulations hold the sum of
 theirs. `mdir run` calls its entry once and opens no activation.
 
+One thing is the simulation's and not an activation's
+(D[activation-start], #294): the renumbered members of the tuples
+of the topology and their incidence structures, which a start of an
+activation takes as they are where the particles are in the order of the
+last start, and builds in the same memory where they are not. They are
+allocated outside the records of the activations, on the device outside
+the pool of blocks, and are freed with the simulation; what is kept, what
+invalidates it, and how a stale structure is excluded are in
+[jit-invariants.md](jit-invariants.md#what-a-simulation-keeps-across-activations-dactivation-start).
+While an activation is alive a simulation therefore holds what it held
+before (the structures were the activation's), and between activations it
+holds them still; new on the host are two copies of the members and one of
+the identities for each tuple set (1.9 MB on JAC, 48 MB on Cellulose). The
+number of kept structures is that of the tuple sets, whatever the number
+of starts and of orders.
+
 A simulation keeps nothing for a step, a part, a call of `run`, or a step
 of energy (#300). `state().energies` is the row of the last step of
 energy and the next one replaces it; a reporter writes its rows and frames
