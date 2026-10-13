@@ -81,7 +81,7 @@ same program takes the code that the first left with the `Program` (D236;
 | `positions` | an iterable, one frame per item | each item an object with `positions` and `cell` (an `mdir.State`; a `Frame` of `mdir.read_h5md`), a pair `(positions, cell)`, or `(N, 3)` positions alone; `cells` and `tilts` must be `None` |
 | `cells` | `None`, `(3,)`, or `(K, 3)` float64 | the diagonal $a_x, b_y, c_z$ of the cell of every frame, or of each, in nm (the edges of an orthorhombic cell); `None`: the cell of the program's initial state, with its tilts, whatever was evaluated before |
 | `tilts` | `None`, `(3,)`, or `(K, 3)` float64 | the tilts $b_x, c_x, c_y$ of the cell of every frame, or of each, the arrays of `mdir.Cell` and of `Borrow.tilt` (D238); `None` with `cells`: an orthorhombic cell |
-| `gradients` | a tuple of names among `"tunables"`, `"positions"`, `"strain"`; `("tunables",)` by default | the gradients of the energy that are asked (D[frame-gradients]): `"tunables"`, the derivative in the tunables, kept as `jacobian` or asked for with `vjp`; `"positions"` and `"strain"`, the arrays `gradients["positions"]` and `gradients["strain"]` ([below](#the-gradients-in-the-positions-and-the-strain-dframe-gradients)). `()` asks for none. Until D[frame-gradients] the derivative in the tunables was the argument `gradient=True`, which is gone |
+| `gradients` | a tuple of names among `"tunables"`, `"positions"`, `"strain"`; `("tunables",)` by default | the gradients of the energy that are asked (D252): `"tunables"`, the derivative in the tunables, kept as `jacobian` or asked for with `vjp`; `"positions"` and `"strain"`, the arrays `gradients["positions"]` and `gradients["strain"]` ([below](#the-gradients-in-the-positions-and-the-strain-d252)). `()` asks for none. Until D252 the derivative in the tunables was the argument `gradient=True`, which is gone |
 
 The cell of a frame of an iterable is an `mdir.Cell` (or any object with
 `diagonal` and `tilt`), the array of its three edges, or the `(3, 3)`
@@ -115,7 +115,7 @@ It returns a `FrameEnergies`:
 | `version`, `count`, `zero` | int, int, frozenset | the value version of $\boldsymbol\theta$; $K$; the tunables whose derivative is zero by proof |
 | `jacobian` | dict of names to `(K, M)` float64, or `None` | $\partial U_n/\partial\theta_m$, when it is kept ([below](#the-product-and-its-memory)) |
 | `vjp(cotangent)` | `(K,)` float64 in; a `FrameGradient` out | $\sum_n g_n\,\partial U_n/\partial\boldsymbol\theta$: a read-only mapping of names to `(M,)` float64, with `zero` and `version`, as `TunableGradient` is at one state |
-| `gradients` | a read-only mapping of the names `"positions"` and `"strain"` that were asked to arrays `(K, N, 3)` and `(K, 3, 3)`; empty by default | $\partial U_n/\partial\mathbf x_i$ and $\partial U_n/\partial\boldsymbol\varepsilon$ ([below](#the-gradients-in-the-positions-and-the-strain-dframe-gradients)) |
+| `gradients` | a read-only mapping of the names `"positions"` and `"strain"` that were asked to arrays `(K, N, 3)` and `(K, 3, 3)`; empty by default | $\partial U_n/\partial\mathbf x_i$ and $\partial U_n/\partial\boldsymbol\varepsilon$ ([below](#the-gradients-in-the-positions-and-the-strain-d252)) |
 
 There is no kinetic energy and no pressure: a frame has no velocities. A
 script forms the pressure from the virial, the volume, and the kinetic term
@@ -242,13 +242,13 @@ an error, `UnsupportedError`, never a zero.
   whatever `depends` says.
 - `positions`, `cells`, and `tilts` that require a gradient are taken
   where each is one tensor, and `energy` is differentiable in them
-  (D[frame-gradients], [below](#through-mdirtorchevaluate)); frames of an
+  (D252, [below](#through-mdirtorchevaluate)); frames of an
   iterable carry no graph, and such frames that require a gradient are
   refused (`UnsupportedError`).
 - **No double backward.** Every product of the backward is an operation
   whose own backward raises `UnsupportedError`, naming the derivative that
   was asked: a second differentiation is an error, not a silent zero
-  (until D[frame-gradients] it was PyTorch's `RuntimeError` for an
+  (until D252 it was PyTorch's `RuntimeError` for an
   operation without a registered derivative). A Hessian in
   $\boldsymbol\theta$ is out of scope.
 - One operation at a time on an evaluator, from any thread, with the GIL
@@ -328,7 +328,7 @@ state in float64 with its velocities and forces.
   take the same time in either order
   ([measured](#the-order-of-the-particles)). The outputs are numbers per
   frame and per entry of a tunable, which have no order of particles, and
-  the gradient in the positions (D[frame-gradients]), which is in the
+  the gradient in the positions (D252), which is in the
   order of the input with nothing to gather, so that the stale gather of
   #137 (item 1) cannot happen in a script.
 - **The energy of a frame is a function of the frame alone**, of the
@@ -393,7 +393,7 @@ state in float64 with its velocities and forces.
 | $U_n$ in $\boldsymbol\theta$ | the product, with the three outcomes of D230 for each tunable: `"rule"`; `"zero"`, a proof, listed in `zero`; or a refusal at `mdir.compile` | |
 | An output $O_n$ that reads no tunable at fixed positions | a constant, by a proof that `depends` states | |
 | An output that may read a tunable (the virial; a column of a term that a tunable enters) | the value; its derivative is refused where it is asked for, never returned as zero | M2b-3: $\partial\mathsf W/\partial\boldsymbol\theta$, a mixed derivative |
-| $U_n$ in the positions and the strain | since D[frame-gradients]: `gradients["positions"]` and `gradients["strain"]`, the forces and the virial tensor of the forward pass with the opposite sign, and through `mdir.torch.evaluate` the backward in the positions and the cell | |
+| $U_n$ in the positions and the strain | since D252: `gradients["positions"]` and `gradients["strain"]`, the forces and the virial tensor of the forward pass with the opposite sign, and through `mdir.torch.evaluate` the backward in the positions and the cell | |
 | Second derivatives, the derivative of the forces or of the stress in $\boldsymbol\theta$ among them | refused, with `UnsupportedError` | force matching: stage 4 of #138 |
 
 `depends[name]` is built from the plan of the program. A column of
@@ -1316,7 +1316,7 @@ is taken.
 | T5 | The record | a decision of its own, `D243` |
 | T6 | Lennard-Jones tunables | all Lennard-Jones pairs within the cutoff, for now |
 
-## The gradients in the positions and the strain (D[frame-gradients])
+## The gradients in the positions and the strain (D252)
 
 Issue #313, slice 3. Status: implemented, as the maintainer ruled on PR
 #314 ([Maintainer rulings (gradients)](#maintainer-rulings-gradients)).
@@ -1806,7 +1806,7 @@ first.
 | 1, after D238 and D239 (done) | the tilts of each frame of a triclinic cell; the frames of `mdir.read_h5md` as input |
 | 2 (done, D251, #291) | the frames inside one activation, in the order of the input; the program of the dependent terms kept with its program |
 | 2b | frames read from a device tensor without a copy to the host (the positions of a frame are one copy of 0.03 ms on JAC now) |
-| 3 (done, D[frame-gradients], #313) | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138) and of the whole potential with OpenMM; autograd in the positions and the cell through `mdir.torch.evaluate`; one argument `gradients=` |
+| 3 (done, D252, #313) | the gradients `positions` and `strain` as outputs, with the comparison of the forces and the virial of PME with torch-pme (moved here from #203 by #138) and of the whole potential with OpenMM; autograd in the positions and the cell through `mdir.torch.evaluate`; one argument `gradients=` |
 | 3b | the metatomic shape of #138 (a list of systems in, outputs out) |
 | Later | the derivative of the virial and of observed columns in $\boldsymbol\theta$ (M2b-3); the JAX adapter (M2b-2); learned terms (M3), whose parameters stay in the framework; frames over several nodes (M4) |
 

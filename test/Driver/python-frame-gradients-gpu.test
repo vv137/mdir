@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # The gradients of the energy of a frame in the positions and in the strain
-# (D[frame-gradients], docs/python-frames.md) on a GPU, in double and
+# (D252, docs/python-frames.md) on a GPU, in double and
 # mixed precision, Inputs/python_frame_gradients.py: G = dU/dx and
 # S = dU/d(epsilon) against central differences of the evaluator's own
 # energy in double precision, in an orthorhombic cell and in a triclinic

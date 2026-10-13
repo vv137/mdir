@@ -1118,7 +1118,7 @@ def run_torch():
     out = mdir.torch.evaluate(evaluator, {"sig": sig}, frames)
     once, = torch.autograd.grad(out.energy.sum(), sig, create_graph=True)
     # A second derivative is refused in the words of the evaluator
-    # (D[frame-gradients]), also where the loss has another path to sigma.
+    # (D252), also where the loss has another path to sigma.
     expect(mdir.UnsupportedError, lambda: once.sum().backward(), "second derivative")
     out = mdir.torch.evaluate(evaluator, {"sig": sig}, frames)
     once, = torch.autograd.grad(out.energy.sum(), sig, create_graph=True)

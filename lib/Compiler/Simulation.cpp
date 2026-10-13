@@ -295,7 +295,7 @@ struct compiler::Activation {
   std::unique_ptr<HostBuffer<2>> framePositions;
   std::array<double, 6> frameCell{};
   /// What the host asks of that frame, each 1 or 0: its forces, its virial
-  /// (D[frame-gradients]).
+  /// (D252).
   std::array<double, 2> frameAsks{};
   /// The particle at each place of the program, once read.
   std::vector<int32_t> places;
@@ -343,7 +343,7 @@ extern "C" void _mlir_ciface_mdrtPartBoundary(StridedMemRefType<char, 2> *x,
 /// The boundary of a program of frames (D251): the entry
 /// waits here for the next frame, and takes the buffer of the host that
 /// holds its positions as the result, its cell in `cell`, and in `asks`
-/// what the host asks of it besides (D[frame-gradients]). What the last
+/// what the host asks of it besides (D252). What the last
 /// frame gave has reached the host through the calls of its evaluation.
 extern "C" void
 _mlir_ciface_mdrtFrameBoundary(StridedMemRefType<char, 2> *positions,

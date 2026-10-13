@@ -22,7 +22,7 @@ Usage:
 
 With `--gradients` the timed calls ask for the gradients of the energy
 named besides the derivative in the tunables, in the positions, in the
-strain, or both (D[frame-gradients]); sets separated by `/` are timed one
+strain, or both (D252); sets separated by `/` are timed one
 after another in the same process, `none` being a call that names none.
 
 With `--profile N` the script evaluates N frames once after the first and
@@ -64,7 +64,7 @@ parser.add_argument("--groups", action="store_true")
 parser.add_argument("--gradients", default="none")
 args = parser.parse_args()
 # The gradients of the energy that the timed calls ask for besides the
-# derivative in the tunables (D[frame-gradients]), one set after another;
+# derivative in the tunables (D252), one set after another;
 # `none`, and no option, is a call that names none and takes the default,
 # that derivative alone.
 sets = [(name, {} if name == "none" else {"gradients": ("tunables",) + tuple(name.split(","))})

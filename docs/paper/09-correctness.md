@@ -458,7 +458,7 @@ formed from the evaluator's arrays within $2\times10^{-13}$,
 the reweighted average at $\hat\sigma' + 0.0005$ nm, return to it within
 $4\times10^{-16}$ nm ($10^{-7}$ nm in mixed precision).
 The gradients of the energy of a frame in the positions and in the strain
-(Section 3.6, D[frame-gradients]) are checked three ways
+(Section 3.6, D252) are checked three ways
 (`python-frame-gradients*.test`), each relative to the largest entry.
 Against central differences of the evaluator's own energy in double
 precision: the energy is only continuous where a pair crosses the cutoff,

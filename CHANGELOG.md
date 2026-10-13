@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - The gradients of the energy of a frame in the positions and in the
-  strain, from the frame evaluator (D[frame-gradients], #313):
+  strain, from the frame evaluator (D252, #313):
   `evaluator.evaluate(frames, gradients=("tunables", "positions",
   "strain"))` gives `out.gradients["positions"]`, `(K, N, 3)` in
   kJ/mol/nm, $\partial U/\partial\mathbf x = -\mathbf F$ in the order of
@@ -42,7 +42,7 @@ format, or the outputs; every such change is listed under **Changed** or
   differences of the evaluator's energy, torch-pme (the Coulomb part),
   and OpenMM (the whole potential), on the CPU and a GPU, in double and
   mixed precision. See
-  [docs/python-frames.md](docs/python-frames.md#the-gradients-in-the-positions-and-the-strain-dframe-gradients).
+  [docs/python-frames.md](docs/python-frames.md#the-gradients-in-the-positions-and-the-strain-d252).
 - The thermostats of the control file and Brownian dynamics in the Python
   model (D249, #278): `Ensemble.thermostat`
   (`mdir.ThermostatMethod.VRescale`, the default, `Langevin`,
@@ -414,7 +414,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **`FrameEvaluator.evaluate` takes `gradients=` in place of `gradient=`**
-  (D[frame-gradients], #313; the maintainer's ruling on PR #314). The
+  (D252, #313; the maintainer's ruling on PR #314). The
   argument `gradient=True` or `False`, whether the derivative in the
   tunables is kept, is removed, with no alias. A script names what it
   wants: `gradients=("tunables",)` is the default and what `gradient=True`
@@ -425,10 +425,10 @@ format, or the outputs; every such change is listed under **Changed** or
 - A second derivative through `mdir.torch.evaluate` raises
   `mdir.UnsupportedError`, naming the derivative, where it raised
   PyTorch's `RuntimeError` for an operation without a registered
-  derivative (D[frame-gradients]). It was an error before and is one now;
+  derivative (D252). It was an error before and is one now;
   a script that caught `RuntimeError` there catches the other class.
 - The program of a frame evaluator hands the forces and the virial tensor
-  of a frame to the host where the host asks (D[frame-gradients]): its
+  of a frame to the host where the host asks (D252): its
   boundary takes what is asked of each frame, and two calls stand, with
   an evaluation of their own, in branches that a frame without the
   request does not take. The emitted

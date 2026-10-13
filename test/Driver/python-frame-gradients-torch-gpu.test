@@ -1,6 +1,6 @@
 # REQUIRES: python-api, torch, cuda
 # The frame evaluator as an operation of PyTorch, differentiated in the
-# positions and the cell (D[frame-gradients], docs/python-frames.md), on
+# positions and the cell (D252, docs/python-frames.md), on
 # a GPU, with the tunables as tensors of the device, in double and mixed precision, Inputs/python_frame_gradients.py:
 # the gradient of autograd in positions that require one is the cotangent
 # times the gradient of the evaluator; the gradient in the edges and the

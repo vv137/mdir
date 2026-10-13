@@ -9095,7 +9095,7 @@ void Builder::emitEntry() {
   // host.
   if (control.frames)
     // The boundary of a frame also says what the host asks of the frame
-    // (D[frame-gradients]): its forces, its virial. The two calls below
+    // (D252): its forces, its virial. The two calls below
     // hand them over, each in a branch that a frame without the request
     // does not take.
     os << "func.func private @mdrtFrameBoundary(memref<6xf64>, memref<2xf64>)"
@@ -9479,7 +9479,7 @@ void Builder::emitEntry() {
     std::string virial = emitStartForces();
     if (control.frames) {
       // The forces and the virial of the frame, where the host asks for
-      // them (D[frame-gradients]): the gradients of the energy in the
+      // them (D252): the gradients of the energy in the
       // positions and in the strain with the opposite sign. The forces are
       // those of the potential, the virtual sites spread and the restraints
       // added, without the constraints; the virial is that of these forces.

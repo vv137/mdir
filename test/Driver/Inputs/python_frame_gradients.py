@@ -1,5 +1,5 @@
 """The gradients of the energy of a frame in the positions and in the
-strain (D[frame-gradients], docs/python-frames.md).
+strain (D252, docs/python-frames.md).
 
 Usage: python_frame_gradients.py ROOT SCENARIO TARGET PRECISION
 

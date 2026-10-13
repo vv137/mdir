@@ -39,7 +39,7 @@ def _array(source, name):
     already. A tensor that requires a gradient is refused here: the
     evaluator returns arrays, which carry no graph, and a gradient left out
     is not zero. `mdir.torch.evaluate` differentiates in the positions and
-    the cell given as tensors (D[frame-gradients])."""
+    the cell given as tensors (D252)."""
     if getattr(source, "requires_grad", False):
         raise _core.UnsupportedError(
             f"{name} require a gradient, which the arrays of FrameEvaluator.evaluate do not "
@@ -245,7 +245,7 @@ class FrameEnergies:
     def __init__(self, evaluator, source, energy, virial, volume, observed, rows, gradient,
                  gradients):
         self._evaluator, self._source, self._gradient = evaluator, source, gradient
-        # The gradients of the energy that were asked (D[frame-gradients]):
+        # The gradients of the energy that were asked (D252):
         # "positions", dU/dx (K, N, 3) in kJ/mol/nm, in the order of the
         # input and the type of the forces of the program; "strain",
         # dU/d(epsilon) (K, 3, 3) float64 in kJ/mol.

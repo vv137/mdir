@@ -212,7 +212,7 @@ struct Output {
   double tunableGradientVolume = 0.0;
   bool tunableGradientWritten = false;
   /// What a frame of a frame evaluator hands over where the host asks
-  /// (D[frame-gradients]). `frameGradient`, if not null, is the memory of
+  /// (D252). `frameGradient`, if not null, is the memory of
   /// the caller for the gradient of the energy in the positions, 3 N
   /// numbers of the type `force` in the order of the input, which
   /// mdrtWriteFrameForces fills with the forces of the frame with the
@@ -322,7 +322,7 @@ struct Output {
   }
   /// The gradient of the energy in the strain at the frame that
   /// mdrtWriteFrameVirial was last called for, at the volume `volume`
-  /// (D[frame-gradients]): `frameStrain` with the virials of the correction
+  /// (D252): `frameStrain` with the virials of the correction
   /// for the dispersion and of the background of a net charge, which are
   /// isotropic, a third of each on each axis. They are the derivatives of
   /// what the host adds to the energy at the volume of the frame, the tail
@@ -509,7 +509,7 @@ void _mlir_ciface_mdrtWriteTerms(void *terms);
 /// The diagonal of the virial of the forces at the start, without those of
 /// the constraints, in kJ/mol; the constant terms are added here.
 void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz);
-/// The forces of a frame of a frame evaluator (D[frame-gradients]), in
+/// The forces of a frame of a frame evaluator (D252), in
 /// kJ/mol/nm, for Output::frameGradient.
 void _mlir_ciface_mdrtWriteFrameForces(void *forces, void *ids);
 /// The virial tensor of the forces of that frame, W = Σ d ⊗ F row by row,

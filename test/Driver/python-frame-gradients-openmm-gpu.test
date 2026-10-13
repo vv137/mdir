@@ -1,6 +1,6 @@
 # REQUIRES: python-api, openmm, cuda
 # The gradients of the energy of a frame in the positions and in the strain
-# (D[frame-gradients], docs/python-frames.md) of the whole potential
+# (D252, docs/python-frames.md) of the whole potential
 # against OpenMM, on a GPU, in double and mixed precision,
 # Inputs/python_frame_gradients.py: the dipeptide in water with PME at the
 # same splitting parameter and grid, a cutoff of 0.8 nm, and the

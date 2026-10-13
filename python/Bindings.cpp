@@ -1471,7 +1471,7 @@ PYBIND11_MODULE(_core, m) {
     // `position_gradient`, the gradient of the energies in the positions
     // (k, N, 3) in the type of the forces of the program, kJ/mol/nm, and
     // with `strain_gradient` that in the strain (k, 3, 3) float64, kJ/mol
-    // (D[frame-gradients]), else None.
+    // (D252), else None.
     .def("_evaluate_frames", [](py::object self,
                                 py::array_t<double, py::array::c_style> positions,
                                 py::object cellsGiven, py::object tiltsGiven, bool gradient,

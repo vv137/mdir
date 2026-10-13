@@ -1,6 +1,6 @@
 # REQUIRES: python-api, torch, torchpme, cuda
 # The Coulomb part of the gradients of the energy of a frame in the
-# positions and in the strain (D[frame-gradients], docs/python-frames.md)
+# positions and in the strain (D252, docs/python-frames.md)
 # against torch-pme (Loche et al., J. Chem. Phys. 162, 142501 (2025)), an
 # independent differentiable PME, on a GPU, in double and mixed precision,
 # Inputs/python_frame_gradients.py: the gradients of the evaluator at the

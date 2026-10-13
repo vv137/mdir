@@ -1011,7 +1011,7 @@ not because rounded frames fail in general.
 *The gradients in the positions and the strain.* The forces and the
 virial tensor of a frame are the two first derivatives of $U(S_n)$ in its
 configuration, and the evaluator hands them over where they are asked
-(D[frame-gradients]). They are evaluated for that in a branch of the loop
+(D252). They are evaluated for that in a branch of the loop
 over frames that a frame without the request does not take: the
 evaluation of the energy reads only the trace of the virial and the
 square of the forces, and a second reader of the whole of either changed

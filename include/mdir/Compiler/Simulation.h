@@ -262,7 +262,7 @@ public:
     std::vector<std::vector<double>> gradient;
     /// The gradient of that energy in the strain, dU/dε_ab under
     /// x -> (1 + ε) x of the positions and the cell vectors, row by row, in
-    /// kJ/mol, if it was asked (D[frame-gradients]): the virial tensor of
+    /// kJ/mol, if it was asked (D252): the virial tensor of
     /// the forces with the opposite sign, without the constraints, with
     /// what the host adds at the volume of the frame.
     std::array<double, 9> strain{};
@@ -289,7 +289,7 @@ public:
   /// of the forces (`keepsForcesInDouble`), which takes the gradient of the
   /// energy in the positions, dU/dx = -F in kJ/mol/nm, in the order of the
   /// input; with `strain` the result has the gradient in the strain
-  /// (D[frame-gradients]). A frame that asks for neither copies nothing
+  /// (D252). A frame that asks for neither copies nothing
   /// more than before. After a frame that fails the memory holds numbers of
   /// no meaning.
   llvm::Expected<FrameEvaluation>

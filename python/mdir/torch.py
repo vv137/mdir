@@ -5,7 +5,7 @@ energies of the frames as a tensor that autograd differentiates in the
 tunables `theta` through the vector-Jacobian product of the evaluator, and
 in the positions and the cell, where they are tensors that require a
 gradient, through the gradients of the energy that the evaluator gives
-(D[frame-gradients]). The operation is a `torch.library.custom_op` with
+(D252). The operation is a `torch.library.custom_op` with
 `register_autograd`, so that it is opaque to `torch.compile`. Importing
 this module imports torch; `import mdir` does not.
 """
