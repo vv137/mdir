@@ -389,6 +389,29 @@ format, or the outputs; every such change is listed under **Changed** or
   now one kernel with the drift before them and the loop after them, as in
   velocity Verlet. In the deterministic mode the trajectory is the same to
   the bit; no key, file, or checkpoint changes.
+- The program of a frame evaluator takes the rows of its evaluation in
+  its loop over frames, as a run takes them in its loops over steps, and
+  no longer before it (#309, amendments of D251 and D117). The builder
+  moved the allocations of these rows before the loop by matching its own
+  text, and refused any other spelling of an allocation in the loop
+  (#303); since #305 the lowerings keep the stack of that entry, which
+  never returns, whatever the text holds, so the matching and the stack
+  part of the check are removed. For the CPU `hoist-static-allocas` takes
+  every allocation of a constant size once, and for a program of frames
+  it now refuses a module that would keep any other outside the first
+  block of a function (`refuse-rest`; no program has one); for a GPU the
+  stack of each frame is given back where the frame ends. Nothing of the
+  interface changes and no number: every output of an evaluator equals
+  that of before to the bit, on the CPU and a GPU, in double and mixed
+  precision, and the stack of the entry is as deep after frame 201 as
+  after frame 1, to the byte. What changes: the emitted module of a
+  program of frames (private, `Simulation._ir` of an evaluator) has these
+  rows in the loop, so the kept code of an evaluator, in memory and in
+  the compile cache on disk, is compiled anew once on each target. The
+  programs of `mdir run` and of a `Simulation`, their text, their
+  pipeline, and their entries of the cache are unchanged
+  (`python-frames-loop.test`, `python-frames-loop-gpu.test`,
+  `hoist-allocas.mlir`).
 - **The frame evaluator evaluates the frames of a call inside one
   activation, in the order of the input** (D251, #291).
   `mdir.FrameEvaluator`, `evaluate`, and `mdir.torch.evaluate` are

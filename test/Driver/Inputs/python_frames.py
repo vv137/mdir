@@ -66,10 +66,11 @@ Scenarios:
            gradient() of a sampler in the order of the input, to the bit,
            and of a simulation in the spatial order compiled from the frame
   loop     what the assembly of the loop over frames assumes of the text
-           that the builder emits (#302): in the module of an evaluator,
-           no allocation of the stack, no call in the generic form, and
-           no argument of the entry that a frame replaces stands in the
-           loop; the stack of the entry is as deep at the boundary of a
+           that the builder emits (#302, #309): in the module of an
+           evaluator, no call in the generic form and no argument of the
+           entry that a frame replaces stands in the loop, and the rows of
+           the evaluation, which stand in it, are allocations of a constant
+           size; the stack of the entry is as deep at the boundary of a
            late frame as at that of an early one, to the byte; and on the
            CPU the bytes in use of the allocator do not grow with the
            frames
@@ -1330,10 +1331,17 @@ def in_use():
 
 def run_loop():
     # The text. An op `alloca` of any dialect, with any operands and
-    # attributes; a call that is neither `func.call` nor `mdrt.host_call`;
-    # the positions and the cell that the entry is given, and the memory of
-    # the barostat filled from them.
+    # attributes, and among them the one spelling whose size is a constant,
+    # `memref.alloca()` without an operand of a type without `?`; a call
+    # that is neither `func.call` nor `mdrt.host_call`; the positions and
+    # the cell that the entry is given, and the memory of the barostat
+    # filled from them. The rows that the evaluation takes stand in the
+    # loop, where the start of a run takes them (#309): the lowerings keep
+    # the stack of the entry, by moving an allocation of a constant size to
+    # the start of the function on the CPU and by giving back the stack of
+    # an iteration on a GPU, and the depth below is the measure of it.
     allocation = re.compile(r"\.alloca(?!\w)")
+    constant = re.compile(r"^\s*%[\w$.-]+ = memref\.alloca\(\) : memref<[^?>]*>$")
     generic = re.compile(r"(?<![\w.])call\b")
     replaced = re.compile(r"%(positions|lx|ly|lz|tilt_bx|tilt_cx|tilt_cy|box_memory)(?![\w$.-])")
     program = dipeptide_program()
@@ -1344,19 +1352,24 @@ def run_loop():
                   "a triclinic cell": mdir.FrameEvaluator(triclinic_program())}
     for name, evaluator in evaluators.items():
         before, loop = frame_loop(evaluator._simulation._ir)
+        rows = [line.strip() for line in loop if allocation.search(line)]
         found = {what: [line.strip() for line in loop if pattern.search(line)]
-                 for what, pattern in (("allocations of the stack", allocation),
-                                       ("calls in the generic form", generic),
+                 for what, pattern in (("calls in the generic form", generic),
                                        ("arguments of the entry that a frame replaces", replaced))}
-        rows = sum(1 for line in before if " = memref.alloca() : " in line)
+        found["allocations of the stack of a size that is not a constant"] = [
+            line for line in rows if not constant.search(line)]
+        # The cell of a frame, which the boundary fills, is taken before the
+        # loop in every program of frames.
+        cells = sum(1 for line in before if "%frame_cell = memref.alloca() : memref<6xf64>" in line)
         boundaries = sum(1 for line in loop if "func.call @mdrtFrameBoundary(" in line)
         evaluations = sum(1 for line in loop if "md.evaluate " in line)
-        clean = not any(found.values()) and boundaries == 1 and evaluations >= 1 and rows >= 2
+        clean = (not any(found.values()) and boundaries == 1 and evaluations >= 1 and
+                 len(rows) >= 1 and cells == 1)
         print(f"{mode}: the loop over frames of {name}: {len(loop)} lines with {evaluations} "
               f"evaluations after one boundary; in it " +
               ", ".join(f"{len(lines)} {what}" for what, lines in found.items()) +
-              f"; {rows} allocations of the stack before it: {clean}")
-        assert clean, (found, boundaries, evaluations, rows)
+              f"; {len(rows)} allocations of the stack of a constant size in it: {clean}")
+        assert clean, (found, boundaries, evaluations, rows, cells)
 
     # The stack of the entry at the boundary where it waits, after an early
     # frame and after late ones: the same depth, to the byte. Memory of the
