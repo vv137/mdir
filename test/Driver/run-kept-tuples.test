@@ -18,6 +18,9 @@
 # RUN: sed -e 's|whole|part|g' %t/whole.toml > %t/part.toml
 # RUN: mdir emit %t/whole.toml --stage=lowered | FileCheck %s --check-prefix=LOWERED
 # RUN: env MDRT_CHECK_KEPT_TUPLES=1 mdir run %t/whole.toml | FileCheck %s
+# RUN: sed -e 's|whole|plain|g' %t/whole.toml > %t/plain.toml
+# RUN: mdir run %t/plain.toml | FileCheck %s --check-prefix=PLAIN
+# RUN: mdir checkpoint %t/whole.h5 %t/plain.h5 | FileCheck %s --check-prefix=STATES
 # RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
 # RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
 # RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
@@ -32,6 +35,12 @@
 # The start and three of the four segments build; the first segment takes.
 # CHECK: INFO: 400
 # CHECK: MDIR: the structures of the tuples were built 36 times and taken as they were kept 9 times
+
+# The counts are a diagnostic of the check (the maintainer's ruling on PR
+# #327): a run without the variable prints what it printed before, and its
+# state is the same.
+# PLAIN: INFO: 400
+# PLAIN-NOT: structures of the tuples
 
 # The last part, from step 300, builds its structures in a process of its
 # own. (A part that stops on the wall time writes no counts.)

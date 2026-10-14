@@ -1422,7 +1422,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   } else {
     llvm::consumeError(count.takeError());
   }
-  if (tupleCounts[0] + tupleCounts[1] > 0)
+  // A diagnostic of the check of the kept structures (the maintainer's
+  // ruling on PR #327): a run without the variable prints what it printed.
+  if (tupleCounts[0] + tupleCounts[1] > 0 && getenv("MDRT_CHECK_KEPT_TUPLES"))
     output.log.print("MDIR: the structures of the tuples were built %lld "
                      "times and taken as they were kept %lld times\n",
                      static_cast<long long>(tupleCounts[1]),

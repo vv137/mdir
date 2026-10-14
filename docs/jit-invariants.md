@@ -258,11 +258,13 @@ order. I1 and I2 hold as they do across activations, inside one call:
   the 16 MiB in which a device's rows are written, where `main` built each
   structure whole in new memory of the host and freed it.
 
-`mdir run` writes in its log how many structures were built and how many
-taken (`MDIR: the structures of the tuples were built N times and taken as
-they were kept M times`); `run-kept-tuples.test` and its GPU twin check
-the counts of a run of four segments under `MDRT_CHECK_KEPT_TUPLES`, and
-that the run equals, to the bit, the same run continued at every
+With `MDRT_CHECK_KEPT_TUPLES` set, `mdir run` writes at the end of its log
+how many structures were built and how many taken (`MDIR: the structures
+of the tuples were built N times and taken as they were kept M times`);
+without it the log is that of before (the maintainer's ruling on PR
+#327). `run-kept-tuples.test` and its GPU twin check the counts of a run
+of four segments under the variable, that a run without it prints no
+counts and ends in the same state, and that the run equals, to the bit, the same run continued at every
 checkpoint, whose processes build in new memory. The structure of tuples
 that a program finds at run time (the triplets of a three-body term) is
 not kept in any program. Code that runs without a store entered (a tool

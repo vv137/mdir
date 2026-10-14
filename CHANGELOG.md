@@ -496,8 +496,9 @@ format, or the outputs; every such change is listed under **Changed** or
   every program of `mdir run` with tuples, which calls the runtime where
   it had loops (its kernels are the same text, so their entries in the
   compile cache, which are keyed by the kernels, are still found; a
-  Python simulation is not changed); and the log of a run says at its end
-  how many structures were built and how many taken as they were kept.
+  Python simulation is not changed). With `MDRT_CHECK_KEPT_TUPLES` set,
+  the log of a run says at its end how many structures were built and how
+  many taken as they were kept; without it the log is that of before.
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on
