@@ -5,6 +5,7 @@
 #include "mdir/Compiler/CompileCache.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Model.h"
+#include "mdir/Driver/Profile.h"
 #include "mdir/Driver/Trajectory.h"
 #include <array>
 #include <atomic>
@@ -228,6 +229,10 @@ public:
   /// building them (D253): for the tests and
   /// the measurements.
   std::tuple<int64_t, int64_t, double> getKeptTuples() const;
+  /// Where the host has spent its time outside the code of the program, in
+  /// the updates of the tunables and the starts of the activations (#324):
+  /// the sums of its marks, for the measurements.
+  const driver::HostProfile &getHostTimes() const { return hostTimes; }
   /// Whether an activation takes the structures that the simulation keeps
   /// where their inputs are those given (the default), or builds every one
   /// anew: for the tests, which compare the two. It holds from the next
@@ -516,6 +521,7 @@ private:
   void *keptTuples = nullptr;
   bool keptTuplesOnDevice = false;
   bool keepsTuples = true;
+  mutable driver::HostProfile hostTimes;
   /// Whether `system` and `forces` hold the state of the activation, or of
   /// the simulation if there is none.
   mutable bool hostCurrent = true;

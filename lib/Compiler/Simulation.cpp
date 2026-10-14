@@ -12,6 +12,7 @@
 #include "mdir/Driver/Fingerprint.h"
 #include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/Output.h"
+#include "mdir/Driver/Profile.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 #include "JITEngine.h"
 #include "llvm/ExecutionEngine/Orc/Mangling.h"
@@ -726,6 +727,8 @@ llvm::Expected<Simulation::Engine *> Simulation::getEngine() {
 }
 
 llvm::Error Simulation::startActivation(int64_t firstCall) {
+  HostProfile::Scope profiled(hostTimes);
+  HostMark mark("start.arguments");
   Engine &engine = *compiled;
   const Program &p = engine.program;
   auto a = std::make_unique<Activation>();
@@ -843,6 +846,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
 
   // A stack of its own, below which a page that is not mapped stops an
   // overflow.
+  mark.next("start.open");
   void *stack = mmap(nullptr, activationStack, PROT_READ | PROT_WRITE,
                      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_STACK,
                      -1, 0);
@@ -882,7 +886,9 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   makecontext(&a->context, runActivation, 0);
   startingActivation = a.get();
   activation = std::move(a);
+  mark.next("start.program");
   resumeActivation();
+  mark.end();
   startingActivation = nullptr;
   return llvm::Error::success();
 }
@@ -928,6 +934,8 @@ void Simulation::resumeActivation() {
 void Simulation::endActivation(Ended reason) {
   if (!activation)
     return;
+  HostProfile::Scope profiled(hostTimes);
+  HostMark mark("end");
   ended = reason;
   Activation &a = *activation;
   waitForConsumers();
@@ -1015,6 +1023,8 @@ void readState(compiler::Activation &a, const Program &p, const void *x,
 void Simulation::downloadState() const {
   if (hostCurrent || !activation)
     return;
+  HostProfile::Scope profiled(hostTimes);
+  HostMark mark("download");
   Activation &a = *activation;
   const Program &p = compiled->program;
   readState(a, p, getStart(a.x, getWidth(p.state)),
@@ -2278,6 +2288,8 @@ llvm::Expected<SimulationState> Simulation::getState() const {
 
 llvm::Error Simulation::updateTunables(
     const std::vector<std::pair<std::string, std::vector<double>>> &changes) {
+  HostProfile::Scope profiled(hostTimes);
+  HostMark whole("update");
   if (busy.exchange(true))
     return simulationError("another operation is under way on this "
                            "simulation");
@@ -2343,17 +2355,23 @@ Simulation::rebuildTunables(const std::vector<std::vector<double>> &values) {
   // The values of the program, built from the model with the new values by
   // the code that compiled it: everything that depends on them, and the
   // same program, or the change is structural.
+  HostProfile::Scope profiled(hostTimes);
+  HostMark whole("rebuild");
+  HostMark mark("rebuild.copy");
   Control control = compiled->control;
   System system = compiledSystem;
+  mark.next("rebuild.apply");
   if (llvm::Error error = model::applyTunables(set, values, control, system))
     return error;
   // The width of the neighbor structures is the compiled program's: counting
   // the neighbors anew took 0.8 s of the 0.81 s of an update on JAC.
   control.neighborWidth = compiled->program.neighborWidth;
+  mark.next("rebuild.build");
   auto program = buildProgram(control, system);
   if (!program)
     return inputError("the new values of the tunables: " +
                       llvm::toString(program.takeError()));
+  mark.next("rebuild.compare");
   if (program->module != compiled->program.module) {
     StringRef was = compiled->program.module, now = program->module;
     size_t at = 0;
@@ -2381,6 +2399,8 @@ llvm::Error Simulation::evaluatePart(bool committed) {
                        "parameters: leapfrog's velocities are half a step "
                        "behind the positions");
   bool refresh = hasRun;
+  HostProfile::Scope profiled(hostTimes);
+  HostMark whole("evaluate");
   // The evaluation begins an activation from the state of the host.
   {
     std::lock_guard<std::mutex> lock(getRunMutex());
@@ -2428,6 +2448,8 @@ Simulation::evaluateTunableGradient() {
                       "steps");
   // The evaluation of the state, whose entry takes the branch of the
   // derivative this once.
+  HostProfile::Scope profiled(hostTimes);
+  HostMark whole("gradient");
   output->tunableGradientWritten = false;
   output->tunableGradientFields.clear();
   gradientAsked = true;

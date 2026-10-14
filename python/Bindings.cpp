@@ -1473,6 +1473,17 @@ PYBIND11_MODULE(_core, m) {
     .def_property("_keep_tuples",
                   [](const PySimulation &s) { return s.simulation->getKeepsTuples(); },
                   [](PySimulation &s, bool keeps) { s.simulation->setKeepsTuples(keeps); })
+    // {name: (seconds, page faults, calls)}: where the host has spent its
+    // time in the updates of the tunables and the starts of the activations,
+    // summed since the simulation was made (#324). A name with a dot is a
+    // part of the name before the dot. Private, for the measurements: it
+    // may change or go.
+    .def_property_readonly("_host_times", [](const PySimulation &s) {
+      py::dict d;
+      for (const auto &[name, slice] : s.simulation->getHostTimes().slices)
+        d[py::str(name)] = py::make_tuple(slice.seconds, slice.faults, slice.calls);
+      return d;
+    })
     // The evaluation of stored frames (D240,
     // docs/python-frames.md), for `mdir.FrameEvaluator`: `positions` is
     // (k, N, 3) float64 in nm in the order of the input, `cells` and

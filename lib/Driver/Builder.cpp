@@ -3,6 +3,7 @@
 #include "mdir/Driver/Builder.h"
 
 #include "mdir/Driver/Expression.h"
+#include "mdir/Driver/Profile.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -1453,6 +1454,7 @@ llvm::Error Builder::collectTopology() {
   size_t count = topology.getNumParticles();
 
   // The fields of the particles.
+  HostMark mark("rebuild.build.topology.fields");
   Program::Field charges;
   charges.name = "q";
   charges.values = topology.charges;
@@ -1638,6 +1640,7 @@ llvm::Error Builder::collectTopology() {
     return set.fields.size() - 1;
   };
 
+  mark.next("rebuild.build.topology.tuples");
   if (!topology.bonds.empty()) {
     Program::TupleSet &set = addSet("bonds", 2);
     size_t k = addField(set, "k"), r0 = addField(set, "r0");
@@ -1946,6 +1949,7 @@ llvm::Error Builder::collectTopology() {
     }
   }
 
+  mark.next("rebuild.build.topology.constants");
   if (control.pme)
     if (llvm::Error error = collectPME())
       return error;
@@ -10257,12 +10261,14 @@ llvm::Error Builder::build() {
     }
   }
 
+  HostMark mark("rebuild.build.topology");
   if (system.topology) {
     if (llvm::Error error = collectTopology())
       return error;
   } else if (llvm::Error error = collectParameters()) {
     return error;
   }
+  mark.next("rebuild.build.sets");
   // The polynomials of the tabulated functions, a row of 4ⁿ numbers for
   // each cell of a function of n arguments (D138, D165), or the values of a
   // discrete one.
@@ -10320,6 +10326,7 @@ llvm::Error Builder::build() {
     os << "]\n";
   }
   os << "\n";
+  mark.next("rebuild.build.text");
   if (system.topology) {
     emitTopologyPotential("energy", AllTerms);
     // Each term on its own, for the log at the start.

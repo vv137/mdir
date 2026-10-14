@@ -3,6 +3,7 @@
 // model, and their values put into it, from which the builder computes the
 // values of the program and every quantity derived from them.
 #include "mdir/Driver/Model.h"
+#include "mdir/Driver/Profile.h"
 #include "llvm/ADT/StringExtras.h"
 #include <cmath>
 #include <set>
@@ -361,7 +362,9 @@ llvm::Error mdir::model::applyTunables(
     return llvm::Error::success();
   if (llvm::Error error = checkTunableValues(set, values))
     return error;
+  driver::HostMark mark("rebuild.apply.topology");
   auto topology = std::make_shared<driver::Topology>(*system.topology);
+  mark.next("rebuild.apply.values");
   size_t types = topology->getNumTypes();
   std::vector<double> sigma = set.typeSigma, epsilon = set.typeEpsilon;
   bool mixesSigma = false, mixesEpsilon = false;
@@ -482,9 +485,11 @@ llvm::Error mdir::model::applyTunables(
     }
     system.tunableSeedWeights.push_back(std::move(weights));
   }
+  mark.next("rebuild.apply.release");
   system.topology = std::move(topology);
   // The tails of the pair terms (D209), whose classes of particles and
   // values follow the charges, the table, and the constants.
+  mark.next("rebuild.apply.tails");
   if (llvm::Error error = driver::recollectPairTails(control, system))
     return input("the new values: " + llvm::toString(std::move(error)));
   for (size_t k = 0; k != set.pairTails.size() && k != system.pairTails.size(); ++k)
