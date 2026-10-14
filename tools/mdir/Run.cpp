@@ -1307,12 +1307,45 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     sigaction(SIGINT, &action, nullptr);
   }
 
+  // The store of the process for the structures of the tuples (D253, #316):
+  // a segment begins in a new order of the particles and builds them in the
+  // memory of the segment before, and takes them as they are only where the
+  // identities and the members compare equal. It is open while the entry
+  // runs.
+  bool onDevice = control->target == Target::GPU;
+  auto findRuntime = [&](StringRef host, StringRef device) -> void * {
+    auto symbol = (*engine)->lookup(onDevice ? device : host);
+    if (!symbol) {
+      llvm::consumeError(symbol.takeError());
+      return nullptr;
+    }
+    return *symbol;
+  };
+  void *tupleStore = nullptr;
+  if (void *open = findRuntime("mdrtTuplesOpen", "mdrtDeviceTuplesOpen"))
+    tupleStore = reinterpret_cast<void *(*)()>(open)();
+  if (tupleStore)
+    if (void *enter = findRuntime("mdrtTuplesEnter", "mdrtDeviceTuplesEnter"))
+      reinterpret_cast<void (*)(void *)>(enter)(tupleStore);
+
   begin = std::chrono::steady_clock::now();
   output.lastCheckpoint = begin;
   (*function)(arguments.data());
   double runTime = std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
+  // How many structures of the tuples the starts of the segments took as
+  // they were kept and how many they built.
+  int64_t tupleCounts[2] = {-1, -1};
+  if (tupleStore) {
+    if (void *read = findRuntime("mdrtTuplesCounts", "mdrtDeviceTuplesCounts"))
+      reinterpret_cast<void (*)(void *, int64_t *)>(read)(tupleStore,
+                                                          tupleCounts);
+    if (void *leave = findRuntime("mdrtTuplesLeave", "mdrtDeviceTuplesLeave"))
+      reinterpret_cast<void (*)()>(leave)();
+    if (void *close = findRuntime("mdrtTuplesClose", "mdrtDeviceTuplesClose"))
+      reinterpret_cast<void (*)(void *)>(close)(tupleStore);
+  }
   if (output.trajectory)
     output.trajectory->close();
   if (llvm::Error error = manifest.finish("completed", control->minimize
@@ -1389,6 +1422,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   } else {
     llvm::consumeError(count.takeError());
   }
+  // A diagnostic of the check of the kept structures (the maintainer's
+  // ruling on PR #327): a run without the variable prints what it printed.
+  if (tupleCounts[0] + tupleCounts[1] > 0 && getenv("MDRT_CHECK_KEPT_TUPLES"))
+    output.log.print("MDIR: the structures of the tuples were built %lld "
+                     "times and taken as they were kept %lld times\n",
+                     static_cast<long long>(tupleCounts[1]),
+                     static_cast<long long>(tupleCounts[0]));
   // The prunings of the inner lists of dual lists (D114).
   if (auto count = (*engine)->lookup("mdrtGetPruneCount")) {
     int64_t prunes = reinterpret_cast<int64_t (*)()>(*count)();

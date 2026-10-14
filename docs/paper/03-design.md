@@ -549,6 +549,21 @@ parameters, the start after a checkpoint), which then uploads nothing of
 the topology; a start in another order builds the structures in the
 memory of the last.
 
+`mdir run` uses the same store for its one call of the entry
+(D[run-tuples-memory]). Its program orders the particles where the run
+begins and where each segment of checkpoints begins, so that every segment
+asks for the structures of its own order. The argument above decides what
+can be taken. The structures are functions of the members in the order of
+the files and of the identities alone; the first segment follows the
+start with no step between them, so it computes the order of the same
+positions and its identities equal those of the start, element for
+element: its structures are taken. After a segment of steps the positions
+have moved, and an order equal to the one before is not excluded but is
+not assumed either: the comparison finds the identities different where
+they are, and the segment builds, in the memory that the segment before
+gave back. A run therefore does the work it did before, less one build,
+in memory taken once.
+
 A consumer such as PyTorch takes those buffers through DLPack without a
 copy (D220, `docs/python-dlpack.md`): a view of
 the positions, velocities, and forces in the order of the program and the

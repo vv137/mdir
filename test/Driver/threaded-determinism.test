@@ -48,7 +48,7 @@
 
 # CHECK: the states are identical
 
-# PIPELINE: convert-md-exec-to-loops,fixed-order-reductions,convert-scf-to-openmp,
+# PIPELINE: convert-md-exec-to-loops{kept-tuples=true},fixed-order-reductions,convert-scf-to-openmp,
 
 #--- aniso.toml
 [input]

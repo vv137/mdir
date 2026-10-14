@@ -1,0 +1,92 @@
+# The test of run-kept-tuples.test on a GPU, in mixed precision in the
+# deterministic mode.
+#
+# The segments of `mdir run` take the renumbered members of the tuples and
+# their incidence structures from the runtime, in a store of the process
+# that the run opens (D[run-tuples-memory], #316); on a device the
+# structures are built there 16 MiB at a time. Each segment begins in a new
+# order of the particles, builds the structures in the memory of the
+# segment before, and takes them as they are only where the identities and
+# the members compare equal to those they were built from (D253): the first
+# segment, which begins in the order of the start, takes all nine. With
+# MDRT_CHECK_KEPT_TUPLES every structure that is taken is also built anew
+# and compared with the one read back from the device. A run in one
+# process, which builds in kept memory, and the same run continued at every
+# checkpoint, whose processes build in new memory, arrive at the same state
+# to the bit.
+#
+# REQUIRES: hdf5, cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/whole.toml
+# RUN: sed -e 's|whole|part|g' %t/whole.toml > %t/part.toml
+# RUN: mdir emit %t/whole.toml --stage=lowered | FileCheck %s --check-prefix=LOWERED
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 mdir run %t/whole.toml | FileCheck %s
+# RUN: sed -e 's|whole|plain|g' %t/whole.toml > %t/plain.toml
+# RUN: mdir run %t/plain.toml | FileCheck %s --check-prefix=PLAIN
+# RUN: mdir checkpoint %t/whole.h5 %t/plain.h5 | FileCheck %s --check-prefix=STATES
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: not mdir run --continue --max-walltime 0.000001 %t/part.toml > /dev/null
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 mdir run --continue %t/part.toml | FileCheck %s --check-prefix=PART
+# RUN: mdir checkpoint %t/whole.h5 %t/part.h5 | FileCheck %s --check-prefix=STATES
+
+# The structures are calls of the runtime, not loops of the module.
+# LOWERED: llvm.call @mdrtDeviceTuplesRenumber(
+# LOWERED: llvm.call @mdrtDeviceTuplesIncidence(
+# LOWERED: llvm.call @mdrtDeviceTuplesRelease(
+
+# The start and three of the four segments build; the first segment takes.
+# CHECK: INFO: 400
+# CHECK: MDIR: the structures of the tuples were built 36 times and taken as they were kept 9 times
+
+# The counts are a diagnostic of the check (the maintainer's ruling on PR
+# #327): a run without the variable prints what it printed before, and its
+# state is the same.
+# PLAIN: INFO: 400
+# PLAIN-NOT: structures of the tuples
+
+# The last part, from step 300, builds its structures in a process of its
+# own. (A part that stops on the wall time writes no counts.)
+# PART: INFO: 400
+# PART: MDIR: the structures of the tuples were built {{[0-9]+}} times
+
+# STATES: the states are identical
+
+#--- run.toml
+[input]
+topology   = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[output]
+checkpoint = "whole.h5"
+energy_interval = 100
+checkpoint_interval = 100
+
+[energy]
+cutoff       = 9.0
+pairlist_distance = 10.0
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.001
+steps         = 400
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target        = "gpu"
+precision     = "mixed"
+deterministic = true
+spatial_order = true
+#--- end

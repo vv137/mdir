@@ -73,14 +73,16 @@ def ConvertMDExecToLoops
     taken from the runtime (`mdrtTuplesRenumber`, `mdrtTuplesIncidence`)
     and given back to it where they would be freed (`mdrtTuplesRelease`):
     a program that an embedding front end runs in activations keeps them
-    from one activation to the next (D253). Without it they
-    are built by loops in the module, as before.
+    from one activation to the next (D253), and `mdir run` from one
+    segment to the next (D[run-tuples-memory]). The pipelines of both set
+    it; without it they are built by loops in the module.
   }];
   let options = [
     Option<"keptTuples", "kept-tuples", "bool", /*default=*/"false",
            "Whether the renumbered members of the tuples and their incidence "
            "structures are taken from the runtime, which keeps them across "
-           "the activations of an embedding program">,
+           "the activations of an embedding program and the segments of "
+           "mdir run">,
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",
@@ -280,7 +282,7 @@ def ConvertMDExecToGPU
            "taken from the runtime (mdrtDeviceTuplesRenumber, "
            "mdrtDeviceTuplesIncidence, mdrtDeviceTuplesMembers), which keeps "
            "them across the activations of an embedding program "
-           "(D253)">
+           "(D253) and the segments of mdir run (D[run-tuples-memory])">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

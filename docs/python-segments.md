@@ -208,7 +208,11 @@ the device blocks return to the runtime's pool, where later activations
 take the blocks of the same sizes. The memory of a simulation therefore
 stays that of one activation however many parts it runs (#110), and a live
 simulation holds it between runs, so that live simulations hold the sum of
-theirs. `mdir run` calls its entry once and opens no activation.
+theirs. `mdir run` calls its entry once and opens no activation; for
+that call it opens a store of the structures of the tuples (below), so
+that each of its segments of checkpoints, which begins in a new order of
+the particles, builds them in the memory of the segment before
+(D[run-tuples-memory]).
 
 One thing is the simulation's and not an activation's
 (D253, #294): the renumbered members of the tuples

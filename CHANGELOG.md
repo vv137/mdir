@@ -518,6 +518,32 @@ format, or the outputs; every such change is listed under **Changed** or
   [docs/jit-invariants.md](docs/jit-invariants.md#what-an-update-of-the-tunables-keeps-dupdate-cost)).
   What an update still costs is its two starts, the arrays of the program
   built from the topology, and the copies of a start (#326).
+- **The segments of `mdir run` build the structures of their tuples in the
+  memory of the segment before** (D[run-tuples-memory], #316). A run
+  orders its particles anew where each segment of checkpoints begins,
+  and renumbered the tuples and built their incidence structures there on
+  the host, in new memory, and on a GPU uploaded them: on one RTX 4090 in
+  mixed precision 4.6 ms a segment on JAC of the Amber suite, 27 ms on
+  Factor IX, 152 ms on Cellulose, and 465 ms on STMV. A run now takes them
+  from the store of the runtime that a Python simulation keeps (D253),
+  opened for the run: 4.5, 15, 78, and 238 ms. A run with a checkpoint
+  every 10,000 steps is 0.45% faster on Factor IX, 0.88% on Cellulose, and
+  0.81% on STMV, and with one every 1,000 steps 3.5%, 5.0%, and 5.5%; JAC
+  and the CPU target do not change. A run without checkpoints, such as
+  those of the Amber suite, orders its particles once: its rate does not
+  change, and it ends sooner by the build of its start (56 ms on
+  Cellulose, 194 ms on STMV). The host holds less at its peak, since no
+  whole structure is built there: 1,112 to 786 MB on Cellulose and 2,581
+  to 1,495 MB on STMV. Every number of a run is that of before to the bit
+  (checkpoints and energies on the four systems on a GPU and on JAC and
+  Factor IX on the CPU, in mixed and double precision, a run and its
+  continuation). What changes: the lowered text of the host's code of
+  every program of `mdir run` with tuples, which calls the runtime where
+  it had loops (its kernels are the same text, so their entries in the
+  compile cache, which are keyed by the kernels, are still found; a
+  Python simulation is not changed). With `MDRT_CHECK_KEPT_TUPLES` set,
+  the log of a run says at its end how many structures were built and how
+  many taken as they were kept; without it the log is that of before.
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on
