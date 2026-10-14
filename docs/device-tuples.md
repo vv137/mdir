@@ -3,7 +3,7 @@
 Issue #295; the design, for review before it is implemented. It builds on
 the store of D253 (`runtime/mdrt_tuples.h`), which a Python simulation and
 a frame evaluator keep across their activations and, with #316
-(D[run-tuples-memory], PR #327), `mdir run` across its segments. Section
+(D255, #316), `mdir run` across its segments. Section
 numbers below refer to this document.
 
 ## 1. What a start in a new order costs now
@@ -26,7 +26,7 @@ uploaded, 16 MiB at a time (D253):
   well, for the loops that evaluate each tuple once.
 
 Measured (one RTX 4090, mixed precision, the settings of the Amber suite,
-a segment of `mdir run` with #327; PR #327 and D[run-tuples-memory]): 4.5
+a segment of `mdir run`; D255): 4.5
 ms on JAC, 15 ms on Factor IX, 78 ms on Cellulose, and 238 ms on STMV a
 start in a new order. A Python simulation pays the same at a start after
 steps (D253: 5.1, 17, and 98 ms with its evaluation on JAC, Factor IX, and
