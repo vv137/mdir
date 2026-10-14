@@ -490,9 +490,15 @@ format, or the outputs; every such change is listed under **Changed** or
   opened for the run: 4.5, 15, 78, and 238 ms. A run with a checkpoint
   every 10,000 steps is 0.45% faster on Factor IX, 0.88% on Cellulose, and
   0.81% on STMV, and with one every 1,000 steps 3.5%, 5.0%, and 5.5%; JAC
-  and the CPU target do not change, nor does a run without checkpoints,
-  which orders its particles once. Every number of a run is that of
-  before to the bit. What changes: the lowered text of the host's code of
+  and the CPU target do not change. A run without checkpoints, such as
+  those of the Amber suite, orders its particles once: its rate does not
+  change, and it ends sooner by the build of its start (56 ms on
+  Cellulose, 194 ms on STMV). The host holds less at its peak, since no
+  whole structure is built there: 1,112 to 786 MB on Cellulose and 2,581
+  to 1,495 MB on STMV. Every number of a run is that of before to the bit
+  (checkpoints and energies on the four systems on a GPU and on JAC and
+  Factor IX on the CPU, in mixed and double precision, a run and its
+  continuation). What changes: the lowered text of the host's code of
   every program of `mdir run` with tuples, which calls the runtime where
   it had loops (its kernels are the same text, so their entries in the
   compile cache, which are keyed by the kernels, are still found; a
