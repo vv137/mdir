@@ -665,7 +665,12 @@ scalars in the kernel. A new $\boldsymbol\theta$ is put into the model,
 and the builder computes the values of the program from it by the code
 that compiles it; the update is accepted only if the text it builds is the
 compiled one, so that an update and a compile with the new values give the
-same buffers, and the same trajectory to the bit (Section 9).
+same buffers, and the same trajectory to the bit (Section 9). The model
+that takes the values is a copy that the simulation keeps for its updates
+and writes in place (D[update-cost]): the sites written are fixed by the
+maps $\iota$, not by the values, and each is written from
+$\boldsymbol\theta$ alone, so the copy after an update does not depend on
+the updates before it.
 
 The quantities derived from $\boldsymbol\theta$ are recomputed with it.
 With $q_i$ the charges, the self term and the background of a net charge

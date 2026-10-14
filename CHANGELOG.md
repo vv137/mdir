@@ -479,6 +479,40 @@ format, or the outputs; every such change is listed under **Changed** or
   a difference ends the program
   ([docs/environment.md](docs/environment.md#debugging),
   [docs/jit-invariants.md](docs/jit-invariants.md#what-a-simulation-keeps-across-activations-d253)).
+- **An update of the tunables of a Python simulation no longer copies its
+  model, sorts the members of its tuples, or repeats the quadratures of a
+  tail** (D[update-cost], #324). `Simulation.tunables.update()` (and the
+  commit of a borrow that changes tunables, a simulation that continues a
+  checkpoint with other values, and the update of a frame evaluator) put
+  the new values into a copy of the whole model, built the program from
+  it, and compared its text with the compiled one. On one RTX 4090 in
+  mixed precision, of an update with the `gradient()` after it on JAC,
+  Factor IX, and Cellulose of the Amber suite (8.4, 31, and 205 ms with a
+  constant of a pair term tunable), the rebuild was 4.2, 18, and 143 ms,
+  and of that a sort that asks whether each tuple set is disjoint 2.7, 13,
+  and 108 ms and the copies of the model 0.3, 2.0, and 11 ms; where a pair
+  term has its tail in the correction for the dispersion the rebuild was
+  120, 186, and 199 ms, 114, 164, and 40 ms of it the same quadratures
+  repeated for every pair of classes of particles. A simulation now keeps
+  one copy of its model for its updates and writes the values into it in
+  place, a tuple set is found disjoint in one pass over its members, and a
+  build computes each integral of a tail once. Nothing of the interface
+  changes and no number: every state, force, energy, and derivative of a
+  sequence of updates of every kind of tunable equals that of before to
+  the bit, on the CPU and a GPU, in double and mixed precision, in the
+  deterministic mode (`python-update-cost.test`,
+  `python-update-cost-gpu.test`), and the text of every program and its
+  lowered module are those of before to the byte, so no entry of the
+  compile cache is made anew. What changes: from its first update on a
+  simulation holds the copy of its model (13 MB on JAC, 150 MB on
+  Cellulose), which every update allocated and freed before. With
+  `MDRT_CHECK_KEPT_TUPLES` set in the environment every update also builds
+  its program from a copy of the model of the compile, as before, and
+  compares the two; a difference fails the update
+  ([docs/environment.md](docs/environment.md#debugging),
+  [docs/jit-invariants.md](docs/jit-invariants.md#what-an-update-of-the-tunables-keeps-dupdate-cost)).
+  What an update still costs is its two starts, the arrays of the program
+  built from the topology, and the copies of a start (#326).
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on

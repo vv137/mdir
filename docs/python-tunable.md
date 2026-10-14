@@ -248,13 +248,20 @@ explicit exception. This is a question to the maintainer on the PR (Q1).
 
 **How an update builds them.** `Simulation` keeps the system that its
 program was built from (at its first step) and the control it was built
-with. An update copies both, puts the new values into them
-(`model::applyTunables`: the charges, the per-type σ and ε and the table
+with. At its first update it copies both once, with a topology of its own;
+every update puts the new values into that copy in place
+(`model::applyTunablesInPlace`: the charges, the per-type σ and ε and the table
 of the rule, the pairs of the table that pair tunables take, the constants of pair terms, the parameters of tuple terms,
 and the classes and values of the tails, `driver::recollectPairTails`),
-and runs `driver::buildProgram` on the copy with the compiled program's
-neighbor width. The new program's text must equal the compiled one's; its
-values replace the old. The activation of the entry that holds the old
+and runs `driver::buildProgram` on it with the compiled program's
+neighbor width. The sites that an update writes are fixed by the
+declarations and each is written from the values given, so the copy after
+an update is what `model::applyTunables` makes of the model of the
+compile, whatever it held before, a refused update included
+(D[update-cost],
+[jit-invariants.md](jit-invariants.md#what-an-update-of-the-tunables-keeps-dupdate-cost));
+until #324 an update copied the model of the compile each time. The new
+program's text must equal the compiled one's; its values replace the old. The activation of the entry that holds the old
 values in its buffers ends, after the state is copied from it, and the
 next part begins another from the state of the host, which uploads the new
 values (D215, [python-segments.md](python-segments.md#resident-buffers)).
