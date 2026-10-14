@@ -1,4 +1,4 @@
-# The structures of the tuples built on the device (D[device-tuples])
+# The structures of the tuples built on the device (D257)
 
 Issue #295; the design as ruled by the maintainer on PR #329 (all three questions as proposed). It builds on
 the store of D253 (`runtime/mdrt_tuples.h`), which a Python simulation and

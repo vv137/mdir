@@ -148,7 +148,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // (#316).
        << "kept-tuples=true "
        // ... and builds them on the device where it does not take them
-       // (D[device-tuples]).
+       // (D257).
        << "device-tuples=true "
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"

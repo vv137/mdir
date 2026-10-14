@@ -2398,7 +2398,7 @@ void Simulation::keepModel() {
   // The arrays of the program that no value of a tunable enters are those
   // that a build makes the same, to the bit, from a model that holds no
   // such value: every site of every tunable is not a number in it
-  // (D[update-kept-arrays]). They are kept, as the arrays of the compiled
+  // (D256). They are kept, as the arrays of the compiled
   // program, which every later program shares; the others are made at
   // every update. The model holds no values until an update puts them in,
   // which writes every site that this wrote (U1 of D254).
@@ -2447,7 +2447,7 @@ Simulation::buildTuned(const std::vector<std::vector<double>> &values) {
     return error;
   mark.next("rebuild.build");
   // With the kept arrays the build makes the arrays that a value of a
-  // tunable enters, the constants, and the text (D[update-kept-arrays]).
+  // tunable enters, the constants, and the text (D256).
   auto program = buildProgram(control, system, tuned->arrays.get());
   if (!program)
     program = inputError("the new values of the tunables: " +

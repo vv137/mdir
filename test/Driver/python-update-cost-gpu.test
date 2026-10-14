@@ -1,7 +1,7 @@
 # REQUIRES: python-api, cuda
 # The model that a simulation keeps for the updates of its tunables
 # (D254, #324) and the arrays of its program that no value of a
-# tunable enters (D[update-kept-arrays], #328), Inputs/python_update_cost.py, on a GPU: a
+# tunable enters (D256, #328), Inputs/python_update_cost.py, on a GPU: a
 # sequence of updates of every kind of tunable against a simulation whose
 # updates copy the model of the compile, with every program that is built
 # from the kept model also built from a copy and compared

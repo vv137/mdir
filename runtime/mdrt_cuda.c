@@ -1539,7 +1539,7 @@ void _mlir_ciface_mdrtDeviceTuplesRelease(struct MdrtMemref2 *buffer) {
 }
 
 /*===----------------------------------------------------------------------===
-  The structures of the tuples built on the device (D[device-tuples], #295)
+  The structures of the tuples built on the device (D257, #295)
   ===----------------------------------------------------------------------===
 
   The code compares the identities that it holds with the store's copy of

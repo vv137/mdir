@@ -328,7 +328,7 @@ llvm::Error applyTunablesInPlace(const TunableSet &set,
 /// writes, by the same code, and leaves the tails as they are: the model
 /// then holds no value of a tunable, and what a build makes from it without
 /// such a number does not depend on any (driver::keepArraysOf,
-/// D[update-kept-arrays]).
+/// D256).
 void poisonTunables(const TunableSet &set, driver::Control &control,
                     driver::System &system);
 /// Checks new values of the tunables `set`: one array of the right shape

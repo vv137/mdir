@@ -20,7 +20,7 @@ namespace driver {
 enum class Element { F32, F64 };
 
 /// An array of a program, one number or one row for each particle or each
-/// tuple, that programs may share (D[update-kept-arrays]): a copy is a reference to
+/// tuple, that programs may share (D256): a copy is a reference to
 /// the same numbers, and a write to an array that is shared copies it first,
 /// so that an array that two programs hold is never written. The program
 /// that an update of the tunables builds shares with the one before it every
@@ -392,7 +392,7 @@ void keepDependentTerms(Control &control, const System &system);
 
 /// The arrays of a program as a build has them once it has made them from
 /// the topology (the fields, the tables, and the tuple sets) and before it
-/// computes anything from them (D[update-kept-arrays], docs/jit-invariants.md).
+/// computes anything from them (D256, docs/jit-invariants.md).
 struct BuildKept;
 
 /// Builds the program of `control` and `system`. With `kept`, the arrays of

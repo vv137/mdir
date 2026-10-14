@@ -151,7 +151,7 @@ def run_store():
     print("without a store: the renumbered members and the incidence structures of tuples of "
           "2, 3, and 4 equal the reference, each built for its caller")
 
-    # The claim that the build on a device rests on (D[device-tuples]): the
+    # The claim that the build on a device rests on (D257): the
     # host lists the tuples of a row in the order of their numbers, so the
     # row of place p in a new order is the row of the particle order[p] in
     # the order of the files, with its members relabeled to their places.

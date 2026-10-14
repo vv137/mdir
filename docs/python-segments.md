@@ -232,7 +232,7 @@ number of kept structures is that of the tuple sets, whatever the number
 of starts and of orders. On a GPU a start in a new order builds the
 structures on the device, by kernels of the program, and copies nothing
 between the host and the device but a flag of 4 bytes; the device holds
-the members and an index of each tuple set besides (D[device-tuples],
+the members and an index of each tuple set besides (D257,
 [device-tuples.md](device-tuples.md)).
 
 A simulation keeps nothing for a step, a part, a call of `run`, or a step

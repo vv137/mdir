@@ -189,7 +189,7 @@ public:
   /// program to the next (`kept-tuples`, D253).
   bool keptTuples = false;
   /// With `keptTuples`: whether the structures are built on the device, by
-  /// kernels of the module (`device-tuples`, D[device-tuples]).
+  /// kernels of the module (`device-tuples`, D257).
   bool deviceTuples = false;
 
 private:
@@ -2959,7 +2959,7 @@ Value Lowering::callRuntime(OpBuilder &builder, Location loc, StringRef name,
 /// The identities `ids` against the store's copy of the last order: a
 /// kernel sets a flag where one differs (every such thread writes the same
 /// value), and the runtime reads the flag, once in a block for each value
-/// of the identities (D[device-tuples]).
+/// of the identities (D257).
 void Lowering::compareOrder(Operation *op, Value ids) {
   if (!comparedOrders.insert({ids, op->getBlock()}).second)
     return;

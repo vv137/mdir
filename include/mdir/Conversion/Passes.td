@@ -287,7 +287,7 @@ def ConvertMDExecToGPU
            "With kept-tuples: whether the renumbered members and the "
            "incidence structures are built on the device by kernels of the "
            "module, in memory of the runtime's store, where it does not "
-           "take them as kept (D[device-tuples])">
+           "take them as kept (D257)">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

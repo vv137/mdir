@@ -519,7 +519,7 @@ format, or the outputs; every such change is listed under **Changed** or
   What an update still costs is its two starts, the arrays of the program
   built from the topology, and the copies of a start (#326).
 - **An update of the tunables keeps the arrays of the program that no value
-  of a tunable enters** (D[update-kept-arrays], #328). After D254 an update
+  of a tunable enters** (D256, #328). After D254 an update
   still made every array of the program from the topology. A simulation
   now keeps those that a build from its model with every tunable site set
   to not-a-number makes the same to the bit, shared with the compiled
@@ -566,7 +566,7 @@ format, or the outputs; every such change is listed under **Changed** or
   the log of a run says at its end how many structures were built and how
   many taken as they were kept; without it the log is that of before.
 - **On a GPU the structures of the tuples are built on the device**
-  (D[device-tuples], #295). Where the particles are ordered anew (a
+  (D257, #295). Where the particles are ordered anew (a
   segment of `mdir run`, a start of a Python simulation after steps), the
   renumbered members and the incidence structures are now built by
   kernels of the program, from the structure in the order of the files,

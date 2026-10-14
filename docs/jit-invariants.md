@@ -170,7 +170,7 @@ renumbered) and one of the identities for each tuple set. On a GPU the
 host never holds a whole incidence structure: its rows are written a few
 megabytes at a time and uploaded (`tuplesBuildOnDevice`), in 16 MiB of
 the store that are taken once, where each was built whole in new memory
-of the host before. (Since D[device-tuples] a GPU builds them on the
+of the host before. (Since D257 a GPU builds them on the
 device, below, and the host holds none of their rows.)
 
 **What the comparison costs.** A start that takes its structures compares
@@ -179,7 +179,7 @@ the CPU target 0.08 ms on JAC, 0.24 ms on Factor IX, and 1.7 ms on
 Cellulose for the five sets together, against the 2 ms, 14 ms, and 315 ms
 that building them took; on a GPU the identities are read from the device
 once for each set as before, and the whole is 0.13, 0.43, and 2.1 ms (one
-RTX PRO 6000) of starts of 2.0, 6.1, and 30 ms. (Since D[device-tuples]
+RTX PRO 6000) of starts of 2.0, 6.1, and 30 ms. (Since D257
 they are compared on the device, below.)
 
 **I1. A kept structure is taken only where it is the one that would be
@@ -278,7 +278,7 @@ structures of its own from the same functions and frees them; code for a
 device needs the store (below), and ends with a message that names a
 defect of mdir if it has none.
 
-**On a GPU the structures are built on the device (D[device-tuples],
+**On a GPU the structures are built on the device (D257,
 #295).** The store's decisions are those above; what moves is where the
 inputs are compared and where a structure is built
 ([device-tuples.md](device-tuples.md)).
@@ -405,7 +405,7 @@ entry for each pair of classes and each point of a derivative that the one
 build asks for, and ends with the build. Nothing of a tail is kept from one update to the
 next, so the values that a fit passes through leave nothing behind.
 
-**The arrays of the program (D[update-kept-arrays], #328).** A
+**The arrays of the program (D256, #328).** A
 simulation also keeps, from its first update, the arrays of its program
 that no value of a tunable enters: of the fields of the particles, the
 tables, the members and the fields of the tuple sets, and the sites of the

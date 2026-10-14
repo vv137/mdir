@@ -104,7 +104,7 @@ struct MdrtTuples {
   /* The buffer of the members that the activation gave for the order of
      the files. */
   const int32_t *given;
-  /* Built on the device (D[device-tuples], mdrt_cuda.c): whether the
+  /* Built on the device (D257, mdrt_cuda.c): whether the
      entry is of that kind and in a new order (`ordered`) or in the order
      of the files; the number of the store's order it was built in; the
      members in the order of the files and the index of the tuples of each
@@ -132,7 +132,7 @@ struct MdrtTupleStore {
      bounded size (mdrt_cuda.c). */
   int32_t *staging;
   size_t stagingBytes;
-  /* On a device, for the structures built there (D[device-tuples]): the
+  /* On a device, for the structures built there (D257): the
      identities of the last order that the code compared, the number of
      that order, the flag of the comparison, and the inverse of an order. */
   void *deviceIds, *deviceFlag, *devicePlace;

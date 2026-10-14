@@ -466,8 +466,8 @@ Two starts of an activation are about 4, 12, and 61 ms of each; what the
 rebuild still cost was the arrays of the program built from the topology
 and, for a tuple parameter with its derivative, the numbering of the
 tuples of each member ([jit-invariants.md](jit-invariants.md#what-an-update-of-the-tunables-keeps-d254)).
-Since D[update-kept-arrays] (#328) an update keeps the arrays that no value
-of a tunable enters, and the same calls take, D254 → D[update-kept-arrays]:
+Since D256 (#328) an update keeps the arrays that no value
+of a tunable enters, and the same calls take, D254 → D256:
 a constant of a pair term 5.35 → 4.60, 15.8 → 13.1, 87.3 → 65.3 ms; a
 parameter of a tuple term 9.35 → 5.30, 32.8 → 16.3, 171 → 75.1 ms; all
 four 13.4 → 9.27, 43.9 → 27.0, 212 → 118 ms. What remains is the two

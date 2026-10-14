@@ -1490,7 +1490,7 @@ PYBIND11_MODULE(_core, m) {
     // model of the compile; the arrays of the program that the simulation
     // keeps and those that every update makes, and the comparisons of a
     // program built with the kept arrays with one built from a copy
-    // (D[update-kept-arrays]); zeros before the first update. Private, for
+    // (D256); zeros before the first update. Private, for
     // the tests and the measurements: it may change or go.
     .def_property_readonly("_tunable_builds", [](const PySimulation &s) {
       auto counts = s.simulation->getTunableBuilds();

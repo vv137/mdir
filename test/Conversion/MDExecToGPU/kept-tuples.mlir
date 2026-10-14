@@ -10,7 +10,7 @@
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="kept-tuples=true deterministic=true" | FileCheck %s --check-prefix=ROWS
 // RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=LOOPS
 //
-// With `device-tuples` as well (D[device-tuples]), the identities are
+// With `device-tuples` as well (D257), the identities are
 // compared with the store's order by a kernel, the entry is taken from the
 // store, and where it is to be built the inverse of the order, the
 // renumbered members, and the rows are kernels of the module; the copy of

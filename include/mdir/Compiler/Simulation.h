@@ -238,7 +238,7 @@ public:
   /// the model that the simulation keeps for them (D254) and from
   /// a copy of the model of the compile; the arrays of the program that the
   /// simulation keeps and those that every update makes
-  /// (D[update-kept-arrays]); and the comparisons of a program built with
+  /// (D256); and the comparisons of a program built with
   /// the kept arrays with one built from a copy. Zeros before the first
   /// update. For the tests and the measurements.
   std::array<int64_t, 5> getTunableBuilds() const;
@@ -610,7 +610,7 @@ private:
   /// (D254): the model that the values are put into, in place,
   /// a copy of the control and the system of the compile with a topology
   /// that nothing else holds; and the arrays of the program that no value
-  /// of a tunable enters (D[update-kept-arrays]).
+  /// of a tunable enters (D256).
   struct Tuned {
     driver::Control control;
     driver::System system;

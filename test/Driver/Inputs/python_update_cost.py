@@ -315,7 +315,7 @@ def run_loud():
 
 
 def run_array():
-    """A number of a kept array written over (D[update-kept-arrays]): with
+    """A number of a kept array written over (D256): with
     the variable the update fails and names the array; without it the
     first update of the set of tunables that it changes finds it, says so
     once on the standard error, and takes the program built from a copy;

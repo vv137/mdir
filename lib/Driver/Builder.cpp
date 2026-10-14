@@ -22,7 +22,7 @@ static StringRef getName(Element element) {
 /// What a build holds where it has made the arrays of its program from the
 /// topology and before it computes anything from them: the fields, the
 /// tables, and the tuple sets, with what the builder notes beside them
-/// (D[update-kept-arrays]). An array that is empty where the program needs
+/// (D256). An array that is empty where the program needs
 /// numbers is one that a value of a tunable enters: the build that takes
 /// these arrays fills it from its model.
 struct mdir::driver::BuildKept {
@@ -96,7 +96,7 @@ public:
 
   /// The arrays of another build of the same model at other values of its
   /// tunables, which this build takes in place of making them from the
-  /// topology (D[update-kept-arrays]); none for a build that makes its own.
+  /// topology (D256); none for a build that makes its own.
   const BuildKept *kept = nullptr;
   /// Where a build that makes only its arrays leaves them, and stops.
   BuildKept *capture = nullptr;

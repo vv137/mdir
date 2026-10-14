@@ -157,7 +157,7 @@ it took 8.4, 31, and 204 ms, and 8.1, 22, and 112 ms where it took 121,
 189, and 259 ms with the tail of a pair term in the correction. The
 arrays of the program that no value of a tunable enters, which a build
 from the model with every tunable site set to not-a-number makes the same
-to the bit, are kept since D[update-kept-arrays]: an update with its
+to the bit, are kept since D256: an update with its
 evaluation then takes 4.6, 13, and 65 ms, about its two starts.
 
 The segments of `mdir run` begin in a new order each (Section 3.6), so
@@ -177,7 +177,7 @@ remained on a GPU was the build on the host and the upload.
 
 On a device that build is now three kernels, a scatter and two gathers
 from the structure in the order of the files (Section 3.6,
-D[device-tuples]), and the order is compared there, so that a start in a
+D257), and the order is compared there, so that a start in a
 new order copies 4 bytes between the host and the device. On the same
 device a start in a new order of a Python simulation with its evaluation
 takes 1.98 ms on JAC, 5.67 ms on Factor IX, and 26.2 ms on Cellulose

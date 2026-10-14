@@ -564,7 +564,7 @@ they are, and the segment builds, in the memory that the segment before
 gave back. A run therefore does the work it did before, less one build,
 in memory taken once.
 
-On a device the build itself moves there (D[device-tuples]). In the
+On a device the build itself moves there (D257). In the
 notation of Section 2 ($\pi$, $j_{t,k}$), the row of place $p$ of the
 incidence structure holds every pair $(t, k)$ of a tuple and a slot with
 $j'_{t,k} = p$, in the order of $t$; since $j'_{t,k} = \pi^{-1}(j_{t,k})$,
