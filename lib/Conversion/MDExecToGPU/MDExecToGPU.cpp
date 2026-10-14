@@ -188,8 +188,28 @@ public:
   /// the runtime, which may keep them from one activation of an embedding
   /// program to the next (`kept-tuples`, D253).
   bool keptTuples = false;
+  /// With `keptTuples`: whether the structures are built on the device, by
+  /// kernels of the module (`device-tuples`, D[device-tuples]).
+  bool deviceTuples = false;
 
 private:
+  /// An entry of the runtime's store for a tuple set built on the device:
+  /// its handle, whether the code builds it, and its buffers on the device.
+  struct DeviceTuples {
+    Value handle, build, file, first, entries, renumbered, ids;
+    int64_t arity = 0;
+  };
+  /// The entries taken where the members are renumbered, by the result of
+  /// the renumbering.
+  DenseMap<Value, DeviceTuples> deviceTuplesOf;
+  /// The identities compared with the store's order, in a block.
+  llvm::DenseSet<std::pair<Value, Block *>> comparedOrders;
+  Value callRuntime(OpBuilder &builder, Location loc, StringRef name,
+                    ValueRange arguments, Type result, bool memrefs);
+  void compareOrder(Operation *op, Value ids);
+  DeviceTuples takeOnDevice(Operation *op, Value members, Value ids,
+                            Value particles);
+  void buildOnDevice(md_exec::BuildIncidenceOp op, const DeviceTuples &tuples);
   /// A call of the runtime function `name` with `members`, a buffer of the
   /// host, as a buffer of any arity, and `other` if it is given, which gives
   /// a buffer of the type `type`; the runtime takes the buffer back before
@@ -2820,6 +2840,18 @@ void Lowering::lowerBuildIncidence(md_exec::BuildIncidenceOp op) {
   // or renumbered, is the runtime's to keep, with the copy of the members
   // for the loops that evaluate each tuple once; one of tuples that the
   // program finds (the triplets) is built here.
+  if (deviceTuples) {
+    auto found = deviceTuplesOf.find(op.getRelation());
+    if (found != deviceTuplesOf.end()) {
+      buildOnDevice(op, found->second);
+      return;
+    }
+    if (isGivenToFunction(op.getRelation())) {
+      buildOnDevice(op, takeOnDevice(op, op.getRelation(), Value(),
+                                     op.getSize()));
+      return;
+    }
+  }
   if (keptTuples && (runtimeMembers.count(op.getRelation()) ||
                      isGivenToFunction(op.getRelation()))) {
     Value relation = op.getRelation();
@@ -2907,6 +2939,259 @@ Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
   return memref::CastOp::create(builder, loc, type, taken);
 }
 
+Value Lowering::callRuntime(OpBuilder &builder, Location loc, StringRef name,
+                            ValueRange arguments, Type result, bool memrefs) {
+  SmallVector<Type> types;
+  for (Value argument : arguments)
+    types.push_back(argument.getType());
+  SmallVector<Type, 1> results;
+  if (result)
+    results.push_back(result);
+  func::FuncOp callee =
+      getOrDeclare(name, builder.getFunctionType(types, results));
+  // A function that takes or gives a buffer has the C interface.
+  if (memrefs)
+    callee->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  auto call = func::CallOp::create(builder, loc, callee, arguments);
+  return result ? call.getResult(0) : Value();
+}
+
+/// The identities `ids` against the store's copy of the last order: a
+/// kernel sets a flag where one differs (every such thread writes the same
+/// value), and the runtime reads the flag, once in a block for each value
+/// of the identities (D[device-tuples]).
+void Lowering::compareOrder(Operation *op, Value ids) {
+  if (!comparedOrders.insert({ids, op->getBlock()}).second)
+    return;
+  Location loc = op->getLoc();
+  OpBuilder builder(op);
+  Type narrow = builder.getI32Type();
+  Value kept = callRuntime(builder, loc, "mdrtDeviceTuplesOrderKept", {ids},
+                           ids.getType(), true);
+  Value flag = callRuntime(builder, loc, "mdrtDeviceTuplesOrderFlag", {},
+                           getDeviceType({1}, narrow), true);
+  Value count =
+      memref::DimOp::create(builder, loc, ids, createIndex(builder, loc, 0));
+  launchOver(builder, loc, count, [&](OpBuilder &body, Value p) {
+    Value now = memref::LoadOp::create(body, loc, ids, ValueRange{p});
+    Value before = memref::LoadOp::create(body, loc, kept, ValueRange{p});
+    Value differs = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ne,
+                                          now, before);
+    scf::IfOp::create(body, loc, differs, [&](OpBuilder &then, Location) {
+      memref::StoreOp::create(
+          then, loc,
+          arith::ConstantOp::create(then, loc, narrow,
+                                    then.getI32IntegerAttr(1)),
+          flag, ValueRange{createIndex(then, loc, 0)});
+      scf::YieldOp::create(then, loc);
+    });
+  });
+  callRuntime(builder, loc, "mdrtDeviceTuplesOrderEnd", {ids}, Type(), true);
+}
+
+/// Takes the entry of the store for `members` (on the host), in the order
+/// `ids` or, without them, in the order of the files; where the runtime
+/// says to build it, launches the inverse of the order and the renumbered
+/// members. The entry is given back at the end of the block.
+Lowering::DeviceTuples Lowering::takeOnDevice(Operation *op, Value members,
+                                              Value ids, Value particles) {
+  Location loc = op->getLoc();
+  if (ids)
+    compareOrder(op, ids);
+  OpBuilder builder(op);
+  Type narrow = builder.getI32Type();
+  Type wide64 = builder.getI64Type();
+  MemRefType wide = MemRefType::get(
+      {ShapedType::kDynamic, ShapedType::kDynamic}, narrow);
+  MemRefType device2 =
+      getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, narrow);
+  MemRefType device1 = getDeviceType({ShapedType::kDynamic}, narrow);
+  DeviceTuples tuples;
+  tuples.arity = cast<MemRefType>(members.getType()).getDimSize(1);
+  tuples.ids = ids;
+  Value given = members;
+  if (given.getType() != wide)
+    given = memref::CastOp::create(builder, loc, wide, given);
+  Value count = arith::IndexCastOp::create(builder, loc, wide64, particles);
+  Value ordered = arith::ConstantOp::create(
+      builder, loc, narrow, builder.getI32IntegerAttr(ids ? 1 : 0));
+  tuples.handle = callRuntime(builder, loc, "mdrtDeviceTuplesTake",
+                              {given, count, ordered}, wide64, true);
+  Value build = callRuntime(builder, loc, "mdrtDeviceTuplesBuild",
+                            {tuples.handle}, narrow, false);
+  tuples.build = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::ne, build,
+      arith::ConstantOp::create(builder, loc, narrow,
+                                builder.getI32IntegerAttr(0)));
+  tuples.file = callRuntime(builder, loc, "mdrtDeviceTuplesFile",
+                            {tuples.handle}, device2, true);
+  tuples.first = callRuntime(builder, loc, "mdrtDeviceTuplesFirst",
+                             {tuples.handle}, device1, true);
+  tuples.entries = callRuntime(builder, loc, "mdrtDeviceTuplesEntries",
+                               {tuples.handle}, device1, true);
+  tuples.renumbered = callRuntime(builder, loc, "mdrtDeviceTuplesRenumbered",
+                                  {tuples.handle}, device2, true);
+  if (ids) {
+    Value place = callRuntime(builder, loc, "mdrtDeviceTuplesPlace",
+                              {tuples.handle}, device1, true);
+    Value file = tuples.file, renumbered = tuples.renumbered;
+    int64_t arity = tuples.arity;
+    Value tupleCount = memref::DimOp::create(builder, loc, file,
+                                             createIndex(builder, loc, 0));
+    Value elements = arith::MulIOp::create(builder, loc, tupleCount,
+                                           createIndex(builder, loc, arity));
+    scf::IfOp::create(builder, loc, tuples.build, [&](OpBuilder &then,
+                                                       Location) {
+      // The inverse of the order: place[ids[p]] = p, each element once.
+      launchOver(then, loc, particles, [&](OpBuilder &body, Value p) {
+        Value id = memref::LoadOp::create(body, loc, ids, ValueRange{p});
+        memref::StoreOp::create(
+            body, loc, arith::IndexCastOp::create(body, loc, narrow, p), place,
+            ValueRange{arith::IndexCastOp::create(body, loc,
+                                                  body.getIndexType(), id)});
+      });
+      // The members at their places.
+      Value hasTuples = arith::CmpIOp::create(
+          then, loc, arith::CmpIPredicate::ugt, elements,
+          createIndex(then, loc, 0));
+      scf::IfOp::create(then, loc, hasTuples, [&](OpBuilder &some, Location) {
+        launchOver(some, loc, elements, [&](OpBuilder &body, Value i) {
+          Value a = createIndex(body, loc, arity);
+          Value t = arith::DivUIOp::create(body, loc, i, a);
+          Value s = arith::RemUIOp::create(body, loc, i, a);
+          Value member =
+              memref::LoadOp::create(body, loc, file, ValueRange{t, s});
+          Value now = memref::LoadOp::create(
+              body, loc, place,
+              ValueRange{arith::IndexCastOp::create(
+                  body, loc, body.getIndexType(), member)});
+          memref::StoreOp::create(body, loc, now, renumbered,
+                                  ValueRange{t, s});
+        });
+        scf::YieldOp::create(some, loc);
+      });
+      scf::YieldOp::create(then, loc);
+    });
+  }
+  OpBuilder atEnd(op->getBlock()->getTerminator());
+  callRuntime(atEnd, loc, "mdrtDeviceTuplesDone", {tuples.handle}, Type(),
+              false);
+  return tuples;
+}
+
+/// The rows of the incidence structure of an entry taken by
+/// `takeOnDevice`, where it is to be built: one thread for each slot k of
+/// each place p, which copies the k-th tuple of the particle at p in the
+/// order of the files, its members relabeled.
+void Lowering::buildOnDevice(md_exec::BuildIncidenceOp op,
+                             const DeviceTuples &tuples) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Type narrow = builder.getI32Type();
+  MemRefType device2 =
+      getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, narrow);
+  Value structure = callRuntime(builder, loc, "mdrtDeviceTuplesStructure",
+                                {tuples.handle}, device2, true);
+  int64_t arity = tuples.arity, entry = arity + 2;
+  Value particles = memref::DimOp::create(builder, loc, structure,
+                                          createIndex(builder, loc, 0));
+  Value width = memref::DimOp::create(builder, loc, structure,
+                                      createIndex(builder, loc, 1));
+  Value slots = arith::DivUIOp::create(
+      builder, loc,
+      arith::SubIOp::create(builder, loc, width, createIndex(builder, loc, 1)),
+      createIndex(builder, loc, entry));
+  // A row has at least its count.
+  Value lanes = arith::MaxUIOp::create(builder, loc, slots,
+                                       createIndex(builder, loc, 1));
+  Value items = arith::MulIOp::create(builder, loc, particles, lanes);
+  Value some = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ugt,
+                                     items, createIndex(builder, loc, 0));
+  Value build = arith::AndIOp::create(builder, loc, tuples.build, some);
+  Value ids = tuples.ids, first = tuples.first, entries = tuples.entries,
+        renumbered = tuples.renumbered;
+  scf::IfOp::create(builder, loc, build, [&](OpBuilder &then, Location) {
+    launchOver(then, loc, items, [&](OpBuilder &body, Value i) {
+      Type index = body.getIndexType();
+      auto toIndex = [&](Value value) -> Value {
+        return arith::IndexCastOp::create(body, loc, index, value);
+      };
+      Value p = arith::DivUIOp::create(body, loc, i, lanes);
+      Value k = arith::RemUIOp::create(body, loc, i, lanes);
+      // The particle at p in the order of the files.
+      Value q = ids ? toIndex(memref::LoadOp::create(body, loc, ids,
+                                                     ValueRange{p}))
+                    : p;
+      Value from = toIndex(memref::LoadOp::create(body, loc, first,
+                                                  ValueRange{q}));
+      Value next = arith::AddIOp::create(body, loc, q,
+                                         createIndex(body, loc, 1));
+      Value to = toIndex(memref::LoadOp::create(body, loc, first,
+                                                ValueRange{next}));
+      Value count = arith::SubIOp::create(body, loc, to, from);
+      Value zero = createIndex(body, loc, 0);
+      Value head = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                         k, zero);
+      scf::IfOp::create(body, loc, head, [&](OpBuilder &b, Location) {
+        memref::StoreOp::create(
+            b, loc, arith::IndexCastOp::create(b, loc, narrow, count),
+            structure, ValueRange{p, zero});
+        scf::YieldOp::create(b, loc);
+      });
+      Value inside = arith::CmpIOp::create(body, loc,
+                                           arith::CmpIPredicate::ult, k, count);
+      scf::IfOp::create(body, loc, inside, [&](OpBuilder &b, Location) {
+        Value at = arith::MulIOp::create(
+            b, loc, arith::AddIOp::create(b, loc, from, k),
+            createIndex(b, loc, 2));
+        Value t = memref::LoadOp::create(b, loc, entries, ValueRange{at});
+        Value s = memref::LoadOp::create(
+            b, loc, entries,
+            ValueRange{arith::AddIOp::create(b, loc, at,
+                                             createIndex(b, loc, 1))});
+        Value base = arith::AddIOp::create(
+            b, loc,
+            arith::MulIOp::create(b, loc, k, createIndex(b, loc, entry)),
+            createIndex(b, loc, 1));
+        auto column = [&](int64_t c) -> Value {
+          return arith::AddIOp::create(b, loc, base, createIndex(b, loc, c));
+        };
+        memref::StoreOp::create(b, loc, t, structure, ValueRange{p, column(0)});
+        memref::StoreOp::create(b, loc, s, structure, ValueRange{p, column(1)});
+        Value tuple = arith::IndexCastOp::create(b, loc, index, t);
+        for (int64_t j = 0; j != arity; ++j) {
+          Value member = memref::LoadOp::create(
+              b, loc, renumbered,
+              ValueRange{tuple, createIndex(b, loc, j)});
+          memref::StoreOp::create(b, loc, member, structure,
+                                  ValueRange{p, column(2 + j)});
+        }
+        scf::YieldOp::create(b, loc);
+      });
+    });
+    scf::YieldOp::create(then, loc);
+  });
+  callRuntime(builder, loc, "mdrtDeviceTuplesBuilt", {tuples.handle}, Type(),
+              false);
+  auto type = cast<MemRefType>(op.getResult().getType());
+  Value result = structure;
+  if (type != device2)
+    result = memref::CastOp::create(builder, loc, type, structure);
+  op.getResult().replaceAllUsesWith(result);
+
+  // The members for the loops that evaluate each tuple once: the renumbered
+  // members on the device, written before on the same stream.
+  auto hostType = cast<MemRefType>(op.getRelation().getType());
+  if (deterministic || !tuplesOnce || hostType.getRank() != 2)
+    return;
+  MemRefType membersType =
+      getDeviceType(hostType.getShape(), hostType.getElementType());
+  Value copy = renumbered;
+  if (copy.getType() != membersType)
+    copy = memref::CastOp::create(builder, loc, membersType, copy);
+  members[result] = copy;
+}
+
 void Lowering::freeDeviceAtEndOfBlock(Operation *op, Value buffer) {
   // The lowering of `gpu.dealloc` takes a buffer without a memory space.
   OpBuilder builder(op->getBlock()->getTerminator());
@@ -2922,6 +3207,23 @@ void Lowering::freeDeviceAtEndOfBlock(Operation *op, Value buffer) {
 /// are copied there from the device.
 void Lowering::lowerRenumber(md_exec::RenumberOp op) {
   Location loc = op.getLoc();
+  if (deviceTuples) {
+    // The renumbered members are on the device; the result of the op on
+    // the host is read by nothing but the build of its structure, which
+    // takes the entry from here.
+    OpBuilder builder(op);
+    Value ids = op.getIds();
+    Value particles =
+        memref::DimOp::create(builder, loc, ids, createIndex(builder, loc, 0));
+    DeviceTuples tuples = takeOnDevice(op, op.getMembers(), ids, particles);
+    // A value of its own, so that two renumberings of one set (the anchors
+    // in the order before and in the new one) keep their entries apart.
+    Value result = memref::CastOp::create(
+        builder, loc, op.getResult().getType(), op.getMembers());
+    op.getResult().replaceAllUsesWith(result);
+    deviceTuplesOf[result] = tuples;
+    return;
+  }
   if (keptTuples) {
     Value members =
         takeFromRuntime(op, tuplesRenumberName, op.getMembers(), op.getIds(),
@@ -5033,6 +5335,7 @@ public:
                       fuseIntegration, deterministic, tuplesOnce,
                       fuseCenters);
     lowering.keptTuples = keptTuples;
+    lowering.deviceTuples = keptTuples && deviceTuples;
     if (failed(lowering.run()))
       return signalPassFailure();
     // Products and sums in the kernels may become fused multiply-adds, as

@@ -151,6 +151,35 @@ def run_store():
     print("without a store: the renumbered members and the incidence structures of tuples of "
           "2, 3, and 4 equal the reference, each built for its caller")
 
+    # The claim that the build on a device rests on (D[device-tuples]): the
+    # host lists the tuples of a row in the order of their numbers, so the
+    # row of place p in a new order is the row of the particle order[p] in
+    # the order of the files, with its members relabeled to their places.
+    # Both structures built by the host's code, compared element for
+    # element in what a loop over tuples reads.
+    place = np.empty(particles, dtype=np.int64)
+    place[order] = np.arange(particles)
+    for arity, members in sets.items():
+        files = incidence(lib, members, particles)
+        taken = renumber(lib, members, order)
+        moved = incidence(lib, taken, particles)
+        a, b = view(files), view(moved)
+        assert a.shape == b.shape, (a.shape, b.shape)
+        assert max(np.bincount(members.ravel(), minlength=particles)) > 2, arity
+        for p in range(particles):
+            row = a[order[p]]
+            count = row[0]
+            assert b[p, 0] == count, p
+            entries = row[1:1 + count * (arity + 2)].reshape(count, arity + 2).copy()
+            entries[:, 2:] = place[entries[:, 2:]]
+            got = b[p, 1:1 + count * (arity + 2)].reshape(count, arity + 2)
+            assert np.array_equal(got, entries), p
+            assert np.all(np.diff(entries[:, 0]) >= 0), p
+        for buffer in (moved, taken, files):
+            lib._mlir_ciface_mdrtTuplesRelease(ctypes.byref(buffer))
+    print("the row of a place in a new order is the row of its particle in the order of the "
+          "files, its members relabeled, for tuples of 2, 3, and 4")
+
     store = lib.mdrtTuplesOpen()
     lib.mdrtTuplesEnter(store)
 

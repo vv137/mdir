@@ -1249,6 +1249,13 @@ void mdrtDeviceTuplesClose(void *opaque) {
     return;
   if (currentTuples == store)
     currentTuples = NULL;
+  if (begin() >= 0.0 && (store->deviceBytes[0] || store->deviceBytes[3]))
+    fprintf(stderr,
+            "mdrt: the store of the tuples kept on the device %lld bytes of "
+            "incidence structures, %lld of renumbered members, %lld of the "
+            "members and indexes of the tuple sets, and %lld of the order\n",
+            (long long)store->deviceBytes[0], (long long)store->deviceBytes[1],
+            (long long)store->deviceBytes[2], (long long)store->deviceBytes[3]);
   int gone = isDriverGone();
   /* No work may still read what is freed. */
   if (!gone)
@@ -1262,7 +1269,21 @@ void mdrtDeviceTuplesClose(void *opaque) {
       check(cuMemFree((CUdeviceptr)e->deviceIncidence), "cuMemFree");
     if (!gone && e->deviceMembers)
       check(cuMemFree((CUdeviceptr)e->deviceMembers), "cuMemFree");
+    if (!gone && e->deviceRenumbered)
+      check(cuMemFree((CUdeviceptr)e->deviceRenumbered), "cuMemFree");
+    if (!gone && e->ownsSet) {
+      void *shared[3] = {e->deviceFile, e->deviceFirst, e->deviceEntries};
+      for (int k = 0; k != 3; ++k)
+        if (shared[k])
+          check(cuMemFree((CUdeviceptr)shared[k]), "cuMemFree");
+    }
     free(e);
+  }
+  if (!gone) {
+    void *own[3] = {store->deviceIds, store->deviceFlag, store->devicePlace};
+    for (int k = 0; k != 3; ++k)
+      if (own[k])
+        check(cuMemFree((CUdeviceptr)own[k]), "cuMemFree");
   }
   free(store->staging);
   free(store->entries);
@@ -1515,4 +1536,328 @@ void _mlir_ciface_mdrtDeviceTuplesRelease(struct MdrtMemref2 *buffer) {
     mgpuMemFree(pointer, NULL);
   else
     free(pointer);
+}
+
+/*===----------------------------------------------------------------------===
+  The structures of the tuples built on the device (D[device-tuples], #295)
+  ===----------------------------------------------------------------------===
+
+  The code compares the identities that it holds with the store's copy of
+  the last order (a kernel that writes a flag, which mdrtDeviceTuplesOrderEnd
+  reads), takes an entry for each tuple set (mdrtDeviceTuplesTake), and,
+  where the entry is to be built, launches three kernels: the inverse of
+  the order, the renumbered members, and the rows of the incidence
+  structure, each element written by one thread. The rows of place p are
+  those of the particle at p in the order of the files, from the index of
+  the tuples of each particle in that order, which the host builds once and
+  uploads once for each tuple set; their members are relabeled. The entry
+  becomes valid when the code says that it is built
+  (mdrtDeviceTuplesBuilt), never before: an activation that ends before
+  leaves it to be built again. A failed launch ends the process (check). */
+
+static struct MdrtTupleStore *deviceTupleStore(void) {
+  if (!currentTuples) {
+    fprintf(stderr, "mdrt: the structures of the tuples are built on the "
+                    "device without a store; this is a defect of mdir\n");
+    abort();
+  }
+  return currentTuples;
+}
+
+static void setMemref1(struct MdrtMemref1 *result, void *memory,
+                       int64_t size) {
+  result->allocated = memory;
+  result->aligned = memory;
+  result->offset = 0;
+  result->size = size;
+  result->stride = 1;
+}
+
+/* The store's copy of the identities of the last order, with the flag of
+   the comparison cleared; a copy that is new holds no identity (-1), so
+   that the comparison finds a new order. */
+void _mlir_ciface_mdrtDeviceTuplesOrderKept(struct MdrtMemref1 *result,
+                                            struct MdrtMemref1 *ids) {
+  enter();
+  double start = mdrtTuplesNow();
+  struct MdrtTupleStore *store = deviceTupleStore();
+  int64_t n = ids->size;
+  mgpuStreamCreate();
+  if (store->deviceIdsCount != n) {
+    if (store->deviceIds) {
+      finish();
+      check(cuMemFree((CUdeviceptr)store->deviceIds), "cuMemFree");
+    }
+    store->deviceIds = tuplesDeviceKept((size_t)n * sizeof(int32_t));
+    store->deviceIdsCount = n;
+    store->deviceBytes[3] += n * (int64_t)sizeof(int32_t) + 4;
+    if (n)
+      check(cuMemsetD32Async((CUdeviceptr)store->deviceIds, 0xFFFFFFFFu,
+                             (size_t)n, sharedStream),
+            "cuMemsetD32Async");
+    ++store->order;
+  }
+  if (!store->deviceFlag)
+    store->deviceFlag = tuplesDeviceKept(sizeof(int32_t));
+  check(cuMemsetD32Async((CUdeviceptr)store->deviceFlag, 0, 1, sharedStream),
+        "cuMemsetD32Async");
+  isPending = 1;
+  setMemref1(result, store->deviceIds, n);
+  mdrtTuplesSpent(store, start);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesOrderFlag(struct MdrtMemref1 *result) {
+  setMemref1(result, deviceTupleStore()->deviceFlag, 1);
+}
+
+/* The flag is read (4 bytes); where an identity differed, the identities
+   are copied on the device and the number of the order advances. */
+void _mlir_ciface_mdrtDeviceTuplesOrderEnd(struct MdrtMemref1 *ids) {
+  enter();
+  double start = mdrtTuplesNow();
+  struct MdrtTupleStore *store = deviceTupleStore();
+  int32_t differs = 0;
+  tuplesToHost(&differs, store->deviceFlag, sizeof(int32_t));
+  if (differs) {
+    if (ids->size)
+      check(cuMemcpyDtoDAsync(
+                (CUdeviceptr)store->deviceIds,
+                (CUdeviceptr)((const int32_t *)ids->aligned + ids->offset),
+                (size_t)ids->size * sizeof(int32_t), sharedStream),
+            "cuMemcpyDtoDAsync");
+    isPending = 1;
+    ++store->order;
+  }
+  mdrtTuplesSpent(store, start);
+}
+
+/* Compares a structure built or kept on the device with the one that the
+   host builds from the same inputs (MDRT_CHECK_KEPT_TUPLES). */
+static void tuplesCheckOnDevice(struct MdrtTupleStore *store,
+                                struct MdrtTuples *e) {
+  int64_t tuples = e->tuples, arity = e->arity, particles = e->particles;
+  size_t bytes = (size_t)(tuples * arity) * sizeof(int32_t);
+  int32_t *renumbered = mdrtTuplesAllocate(bytes);
+  if (e->ordered) {
+    int32_t *ids = mdrtTuplesAllocate((size_t)particles * sizeof(int32_t));
+    tuplesToHost(ids, store->deviceIds, (size_t)particles * sizeof(int32_t));
+    mdrtTuplesRenumber(e->file, tuples, arity, ids, particles, renumbered);
+    free(ids);
+    int32_t *kept = mdrtTuplesAllocate(bytes);
+    tuplesToHost(kept, e->deviceRenumbered, bytes);
+    if (memcmp(kept, renumbered, bytes) != 0)
+      mdrtTuplesDiffer("the renumbered members of a tuple set on the device");
+    free(kept);
+  } else {
+    memcpy(renumbered, e->file, bytes);
+  }
+  int64_t width = mdrtTuplesWidth(renumbered, tuples, arity, particles);
+  size_t structure = (size_t)(particles * width) * sizeof(int32_t);
+  int32_t *anew = mdrtTuplesAllocate(structure);
+  mdrtTuplesFill(renumbered, tuples, arity, particles, width, anew);
+  int32_t *kept = mdrtTuplesAllocate(structure);
+  if (width == e->width)
+    tuplesToHost(kept, e->deviceIncidence, structure);
+  if (width != e->width ||
+      !mdrtTuplesSameRows(anew, kept, arity, particles, width))
+    mdrtTuplesDiffer("the incidence structure of a tuple set on the device");
+  free(kept);
+  free(anew);
+  free(renumbered);
+}
+
+static int sameSet(const struct MdrtTuples *e, const int32_t *file,
+                   int64_t tuples, int64_t arity, int64_t particles) {
+  return e->device && e->tuples == tuples && e->arity == arity &&
+         e->particles == particles &&
+         memcmp(e->file, file, (size_t)(tuples * arity) * sizeof(int32_t)) ==
+             0;
+}
+
+/* The members in the order of the files and the index of the tuples of
+   each particle, on the device, for a tuple set that has none yet. */
+static void uploadSet(struct MdrtTuples *e) {
+  int64_t tuples = e->tuples, arity = e->arity, particles = e->particles;
+  size_t bytes = (size_t)(tuples * arity) * sizeof(int32_t);
+  struct MdrtTupleIndex index;
+  mdrtTupleIndexBuild(&index, e->file, tuples, arity, particles);
+  int32_t *first = mdrtTuplesAllocate((size_t)(particles + 1) * sizeof(int32_t));
+  int64_t widest = 0;
+  for (int64_t p = 0; p <= particles; ++p) {
+    first[p] = (int32_t)index.first[p];
+    if (p < particles && index.first[p + 1] - index.first[p] > widest)
+      widest = index.first[p + 1] - index.first[p];
+  }
+  e->widest = widest;
+  e->deviceFile = tuplesDeviceKept(bytes);
+  tuplesToDevice(e->deviceFile, e->file, bytes);
+  e->deviceFirst = tuplesDeviceKept((size_t)(particles + 1) * sizeof(int32_t));
+  tuplesToDevice(e->deviceFirst, first, (size_t)(particles + 1) * sizeof(int32_t));
+  e->deviceEntries = tuplesDeviceKept(2 * bytes);
+  tuplesToDevice(e->deviceEntries, index.entries, 2 * bytes);
+  e->ownsSet = 1;
+  free(first);
+  mdrtTupleIndexFree(&index);
+}
+
+/* An entry for the members `members` of `particles` particles, in the
+   current order (`ordered`) or in the order of the files: one taken as it
+   is, or one to build, which mdrtDeviceTuplesBuild then says. */
+int64_t _mlir_ciface_mdrtDeviceTuplesTake(struct MdrtMemref2 *members,
+                                          int64_t particles, int32_t ordered) {
+  enter();
+  double start = mdrtTuplesNow();
+  struct MdrtTupleStore *store = deviceTupleStore();
+  const int32_t *file = mdrtTuplesMembersOf(members);
+  int64_t tuples = members->sizes[0], arity = members->sizes[1];
+  size_t bytes = (size_t)(tuples * arity) * sizeof(int32_t);
+  for (size_t i = 0; i != store->count; ++i) {
+    struct MdrtTuples *e = store->entries[i];
+    if (!sameSet(e, file, tuples, arity, particles) ||
+        e->ordered != (ordered != 0) || !e->deviceValid ||
+        (ordered && e->order != store->order) ||
+        (!store->keeps && e->held == 0))
+      continue;
+    ++store->kept;
+    e->building = 0;
+    ++e->held;
+    if (mdrtTuplesChecks())
+      tuplesCheckOnDevice(store, e);
+    mdrtTuplesSpent(store, start);
+    return (int64_t)(intptr_t)e;
+  }
+  ++store->built;
+  struct MdrtTuples *e = NULL;
+  for (size_t i = 0; i != store->count && !e; ++i) {
+    struct MdrtTuples *other = store->entries[i];
+    if (sameSet(other, file, tuples, arity, particles) &&
+        other->ordered == (ordered != 0) && other->held == 0)
+      e = other;
+  }
+  if (!e) {
+    e = calloc(1, sizeof(struct MdrtTuples));
+    if (!e) {
+      fprintf(stderr, "mdrt: out of memory of the host\n");
+      abort();
+    }
+    e->device = 1;
+    e->ordered = ordered != 0;
+    e->tuples = tuples;
+    e->arity = arity;
+    e->particles = particles;
+    e->file = mdrtTuplesAllocate(bytes);
+    memcpy(e->file, file, bytes);
+    struct MdrtTuples *owner = NULL;
+    for (size_t i = 0; i != store->count && !owner; ++i)
+      if (sameSet(store->entries[i], file, tuples, arity, particles) &&
+          store->entries[i]->ownsSet)
+        owner = store->entries[i];
+    if (owner) {
+      e->deviceFile = owner->deviceFile;
+      e->deviceFirst = owner->deviceFirst;
+      e->deviceEntries = owner->deviceEntries;
+      e->widest = owner->widest;
+    } else {
+      uploadSet(e);
+      store->deviceBytes[2] +=
+          (int64_t)(3 * bytes + (size_t)(particles + 1) * sizeof(int32_t));
+    }
+    e->width = e->widest * (arity + 2) + 1;
+    e->deviceIncidence =
+        tuplesDeviceKept((size_t)(particles * e->width) * sizeof(int32_t));
+    store->deviceBytes[0] += particles * e->width * (int64_t)sizeof(int32_t);
+    if (e->ordered) {
+      e->deviceRenumbered = tuplesDeviceKept(bytes);
+      store->deviceBytes[1] += (int64_t)bytes;
+    }
+    if (store->count == store->room) {
+      store->room = store->room ? 2 * store->room : 8;
+      store->entries =
+          realloc(store->entries, store->room * sizeof(*store->entries));
+      if (!store->entries) {
+        fprintf(stderr, "mdrt: out of memory of the host\n");
+        abort();
+      }
+    }
+    store->entries[store->count++] = e;
+  }
+  if (ordered && store->devicePlaceCount < particles) {
+    if (store->devicePlace) {
+      finish();
+      check(cuMemFree((CUdeviceptr)store->devicePlace), "cuMemFree");
+    }
+    store->devicePlace = tuplesDeviceKept((size_t)particles * sizeof(int32_t));
+    store->devicePlaceCount = particles;
+    store->deviceBytes[3] += particles * (int64_t)sizeof(int32_t);
+  }
+  e->deviceValid = 0;
+  e->building = 1;
+  e->order = store->order;
+  ++e->held;
+  mdrtTuplesSpent(store, start);
+  return (int64_t)(intptr_t)e;
+}
+
+int32_t mdrtDeviceTuplesBuild(int64_t handle) {
+  return ((struct MdrtTuples *)(intptr_t)handle)->building;
+}
+
+void _mlir_ciface_mdrtDeviceTuplesFile(struct MdrtMemref2 *result,
+                                       int64_t handle) {
+  struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
+  mdrtTuplesSetMemref2(result, e->deviceFile, e->tuples, e->arity);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesRenumbered(struct MdrtMemref2 *result,
+                                             int64_t handle) {
+  struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
+  mdrtTuplesSetMemref2(result,
+                       e->ordered ? e->deviceRenumbered : e->deviceFile,
+                       e->tuples, e->arity);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesFirst(struct MdrtMemref1 *result,
+                                        int64_t handle) {
+  struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
+  setMemref1(result, e->deviceFirst, e->particles + 1);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesEntries(struct MdrtMemref1 *result,
+                                          int64_t handle) {
+  struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
+  setMemref1(result, e->deviceEntries, 2 * e->tuples * e->arity);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesPlace(struct MdrtMemref1 *result,
+                                        int64_t handle) {
+  struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
+  struct MdrtTupleStore *store = deviceTupleStore();
+  setMemref1(result, e->ordered ? store->devicePlace : e->deviceFirst,
+             e->ordered ? e->particles : 0);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesStructure(struct MdrtMemref2 *result,
+                                            int64_t handle) {
+  struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
+  mdrtTuplesSetMemref2(result, e->deviceIncidence, e->particles, e->width);
+}
+
+/* The code has launched the kernels of the build, or taken the entry: it
+   is valid from here on. */
+void mdrtDeviceTuplesBuilt(int64_t handle) {
+  struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
+  int built = e->building;
+  e->building = 0;
+  e->deviceValid = 1;
+  if (built && mdrtTuplesChecks()) {
+    enter();
+    tuplesCheckOnDevice(deviceTupleStore(), e);
+  }
+}
+
+/* Where the code would free what it took. */
+void mdrtDeviceTuplesDone(int64_t handle) {
+  struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
+  if (e->held > 0)
+    --e->held;
 }

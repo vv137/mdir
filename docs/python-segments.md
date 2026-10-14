@@ -226,11 +226,14 @@ invalidates it, and how a stale structure is excluded are in
 While an activation is alive a simulation therefore holds what it held
 before (the structures were the activation's), and between activations it
 holds them still; new on the host are two copies of the members and one of
-the identities for each tuple set (1.9 MB on JAC, 48 MB on Cellulose) and,
-on a GPU, 16 MiB in which the rows of a structure are written before
-their upload. The
+the identities for each tuple set (1.9 MB on JAC, 48 MB on Cellulose) on
+the CPU, and on a GPU the members of each set alone. The
 number of kept structures is that of the tuple sets, whatever the number
-of starts and of orders.
+of starts and of orders. On a GPU a start in a new order builds the
+structures on the device, by kernels of the program, and copies nothing
+between the host and the device but a flag of 4 bytes; the device holds
+the members and an index of each tuple set besides (D[device-tuples],
+[device-tuples.md](device-tuples.md)).
 
 A simulation keeps nothing for a step, a part, a call of `run`, or a step
 of energy (#300). `state().energies` is the row of the last step of

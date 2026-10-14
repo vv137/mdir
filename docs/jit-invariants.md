@@ -170,7 +170,8 @@ renumbered) and one of the identities for each tuple set. On a GPU the
 host never holds a whole incidence structure: its rows are written a few
 megabytes at a time and uploaded (`tuplesBuildOnDevice`), in 16 MiB of
 the store that are taken once, where each was built whole in new memory
-of the host before.
+of the host before. (Since D[device-tuples] a GPU builds them on the
+device, below, and the host holds none of their rows.)
 
 **What the comparison costs.** A start that takes its structures compares
 the identities and the members of every tuple set with the kept copies: on
@@ -178,7 +179,8 @@ the CPU target 0.08 ms on JAC, 0.24 ms on Factor IX, and 1.7 ms on
 Cellulose for the five sets together, against the 2 ms, 14 ms, and 315 ms
 that building them took; on a GPU the identities are read from the device
 once for each set as before, and the whole is 0.13, 0.43, and 2.1 ms (one
-RTX PRO 6000) of starts of 2.0, 6.1, and 30 ms.
+RTX PRO 6000) of starts of 2.0, 6.1, and 30 ms. (Since D[device-tuples]
+they are compared on the device, below.)
 
 **I1. A kept structure is taken only where it is the one that would be
 built.** The renumbered members and the incidence structure are functions
@@ -270,9 +272,57 @@ of four segments under the variable, that a run without it prints no
 counts and ends in the same state, and that the run equals, to the bit, the same run continued at every
 checkpoint, whose processes build in new memory. The structure of tuples
 that a program finds at run time (the triplets of a three-body term) is
-not kept in any program. Code that runs without a store entered (a tool
-that executes a module without opening one) gets structures of its own
-from the same functions and frees them.
+not kept in any program. Code for the CPU that runs without a store
+entered (a tool that executes a module without opening one) gets
+structures of its own from the same functions and frees them; code for a
+device needs the store (below), and ends with a message that names a
+defect of mdir if it has none.
+
+**On a GPU the structures are built on the device (D[device-tuples],
+#295).** The store's decisions are those above; what moves is where the
+inputs are compared and where a structure is built
+([device-tuples.md](device-tuples.md)).
+
+- *The identities* are compared on the device with the store's copy of the
+  last order, by a kernel that sets a flag (every thread that finds a
+  difference writes the same value), once in a block for each value of the
+  identities that the code holds: once at the start of a Python
+  simulation, twice at a segment of `mdir run` (the anchors are renumbered
+  in the order before). The store reads the flag, 4 bytes, and where it is
+  set copies the identities on the device and advances the number of its
+  order. An entry is taken only where its members compare equal on the
+  host and its number of order is the current one, which is the
+  element-wise comparison of I1, since the number advances wherever one
+  identity differs.
+- *A structure that is built* is built by three kernels of the module into
+  the memory of the entry: the inverse of the order, the renumbered
+  members, and the rows. The row of place $p$ in a new order is the row of
+  the particle at $p$ in the order of the files with its members
+  relabeled, since the host lists the tuples of a row in the order of
+  their numbers; the rows are copied from the index of the tuples of each
+  particle in the order of the files, which the host builds once for each
+  tuple set and uploads once. Every element is written by one thread, so
+  the structure is the host's, element for element, in any order of the
+  threads and in either mode (`python-kept-tuples.test` checks the claim on
+  the host's code directly).
+- *An entry becomes valid only when the code says it is built*
+  (`mdrtDeviceTuplesBuilt`, after the launches), never when it is taken: an
+  activation that ends between the two leaves it invalid, and the next
+  start builds it again. A launch that fails ends the process.
+- *The renumbered members on the device* are the copy that the loops over
+  each tuple once read: the kernels run on the stream of the program, so
+  they are complete before the first loop that reads them.
+- *What the device holds besides the structures* (one RTX 4090; the store
+  counts it, and `MDRT_PROFILE` reports it at the end): the members and the
+  index of each tuple set and the identities and inverse of the order,
+  2.8 MB on JAC, 9.2 MB on Factor IX, 71.1 MB on Cellulose, and 152 MB on
+  STMV (6% to 10% of the incidence structures). The host no longer holds
+  the renumbered members, a copy of the identities for each set, or the
+  16 MiB in which rows were written.
+- *Nothing is copied between the host and the device* at a start, in the
+  same order or a new one, but the flag; under `MDRT_CHECK_KEPT_TUPLES`
+  the identities and the structures are read back for the comparison with
+  the host's build, of every structure taken and every structure built.
 
 **Tests.** `python-kept-tuples.test` and `-gpu.test`: the store called as
 the code calls it, against a renumbering and an incidence structure

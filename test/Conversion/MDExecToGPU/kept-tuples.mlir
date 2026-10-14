@@ -9,6 +9,43 @@
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="kept-tuples=true" | FileCheck %s
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="kept-tuples=true deterministic=true" | FileCheck %s --check-prefix=ROWS
 // RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=LOOPS
+//
+// With `device-tuples` as well (D[device-tuples]), the identities are
+// compared with the store's order by a kernel, the entry is taken from the
+// store, and where it is to be built the inverse of the order, the
+// renumbered members, and the rows are kernels of the module; the copy of
+// the members for the loops over each tuple once is the renumbered members
+// on the device. Nothing is copied between the host and the device.
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="kept-tuples=true device-tuples=true" | FileCheck %s --check-prefix=DEVICE
+// DEVICE-LABEL: func.func @renumbered(
+// DEVICE:         call @mdrtDeviceTuplesOrderKept(
+// DEVICE:         call @mdrtDeviceTuplesOrderFlag()
+// DEVICE:         gpu.launch
+// DEVICE:         call @mdrtDeviceTuplesOrderEnd(
+// DEVICE:         %[[H:[a-z0-9_]+]] = call @mdrtDeviceTuplesTake(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %c1_i32)
+// DEVICE:         call @mdrtDeviceTuplesBuild(%[[H]])
+// DEVICE:         %[[REN:[a-z0-9_]+]] = call @mdrtDeviceTuplesRenumbered(%[[H]])
+// DEVICE:         call @mdrtDeviceTuplesPlace(%[[H]])
+// DEVICE:         scf.if
+// DEVICE:         gpu.launch
+// DEVICE:         gpu.launch
+// DEVICE:         call @mdrtDeviceTuplesStructure(%[[H]])
+// DEVICE:         scf.if
+// DEVICE:         gpu.launch
+// DEVICE:         call @mdrtDeviceTuplesBuilt(%[[H]])
+// DEVICE-NOT:     gpu.memcpy
+// DEVICE-NOT:     mdrtDeviceTuplesMembers
+// DEVICE:         gpu.launch
+// DEVICE:         call @mdrtDeviceTuplesDone(%[[H]])
+// DEVICE-NEXT:    return
+// DEVICE-LABEL: func.func @given(
+// DEVICE-NOT:     mdrtDeviceTuplesOrder
+// DEVICE:         %[[G:[a-z0-9_]+]] = call @mdrtDeviceTuplesTake(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}}, %c0_i32)
+// DEVICE:         call @mdrtDeviceTuplesBuilt(%[[G]])
+// DEVICE:         call @mdrtDeviceTuplesDone(%[[G]])
+// DEVICE-LABEL: func.func @found(
+// DEVICE-NOT:     call @mdrtDeviceTuples
+// DEVICE:         return
 
 md.particle_set @atoms
 

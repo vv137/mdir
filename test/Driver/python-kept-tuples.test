@@ -11,6 +11,7 @@
 # RUN: %mdir_python %S/Inputs/python_kept_tuples.py loud | FileCheck %s --check-prefix=LOUD
 # RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_kept_tuples.py starts %S/Inputs/dipeptide CPU %t | FileCheck %s
 # STORE: without a store: the renumbered members and the incidence structures of tuples of 2, 3, and 4 equal the reference, each built for its caller
+# STORE: the row of a place in a new order is the row of its particle in the order of the files, its members relabeled, for tuples of 2, 3, and 4
 # STORE: with a store: a structure is taken where the identities and the members are those of before and built where one element of either differs; the order of the files is kept by its members; what the code holds is not built over
 # STORE: kept tuples store passed
 # LOUD: a kept structure written over ends the program under MDRT_CHECK_KEPT_TUPLES, with the structure named

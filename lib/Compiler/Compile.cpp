@@ -147,6 +147,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // segment of `mdir run` builds in the memory of the one before
        // (#316).
        << "kept-tuples=true "
+       // ... and builds them on the device where it does not take them
+       // (D[device-tuples]).
+       << "device-tuples=true "
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        << "mdir-gpu-lower-to-nvvm{";
