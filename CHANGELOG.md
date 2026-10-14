@@ -518,6 +518,27 @@ format, or the outputs; every such change is listed under **Changed** or
   [docs/jit-invariants.md](docs/jit-invariants.md#what-an-update-of-the-tunables-keeps-d254)).
   What an update still costs is its two starts, the arrays of the program
   built from the topology, and the copies of a start (#326).
+- **An update of the tunables keeps the arrays of the program that no value
+  of a tunable enters** (D[update-kept-arrays], #328). After D254 an update
+  still made every array of the program from the topology. A simulation
+  now keeps those that a build from its model with every tunable site set
+  to not-a-number makes the same to the bit, shared with the compiled
+  program, and makes only the others. On one RTX 4090 in mixed precision
+  an update with its `gradient()` on JAC, Factor IX, and Cellulose takes
+  4.6, 13, and 65 ms with a constant of a pair term tunable where it took
+  5.3, 16, and 87 ms; 5.3, 16, and 75 ms with a parameter of a tuple term
+  where it took 9.4, 33, and 171 ms; and 9.3, 27, and 118 ms with four
+  kinds of tunable where it took 13, 44, and 212 ms. A step is unchanged,
+  and the host holds less after many updates (791 MB against 853 MB on
+  Factor IX after 21). Nothing of the interface changes and no number:
+  the update sequence of D254 equals that of `main` to the bit on the CPU
+  and a GPU, in double and mixed precision. The first update of each set
+  of tunables that changed is compared with a program built from a copy
+  of the model of the compile; with `MDRT_CHECK_KEPT_TUPLES` every update
+  is, and a difference fails the update; without it a difference, which
+  only a defect of mdir can cause, is said once on the standard error and
+  the simulation builds every later program from a copy
+  ([docs/jit-invariants.md](docs/jit-invariants.md#what-an-update-of-the-tunables-keeps-d254)).
 - **The segments of `mdir run` build the structures of their tuples in the
   memory of the segment before** (D255, #316). A run
   orders its particles anew where each segment of checkpoints begins,
