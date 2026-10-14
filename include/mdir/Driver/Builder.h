@@ -338,7 +338,7 @@ llvm::Expected<Program> buildProgram(const Control &control,
 /// The first thing in which two programs differ, to the bit, in words; an
 /// empty string if they are the same. Every member of Program is compared:
 /// one that is added to Program is added there
-/// (D[update-cost]).
+/// (D254).
 std::string describeDifference(const Program &a, const Program &b);
 
 } // namespace driver

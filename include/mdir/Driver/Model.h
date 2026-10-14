@@ -313,7 +313,7 @@ llvm::Error applyTunables(const TunableSet &set,
                           const std::vector<std::vector<double>> &values,
                           driver::Control &control, driver::System &system);
 /// The same into a topology that `system` alone holds, without a copy of
-/// it (D[update-cost]). The sites that it writes are those of the
+/// it (D254). The sites that it writes are those of the
 /// declarations, whatever the values: every site of every tunable, the
 /// table of the pairs of types that the combining rule or a tunable of the
 /// table gives, the weights of the seeds, and the tails. So the values that

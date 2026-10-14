@@ -1,6 +1,6 @@
 # The segments of `mdir run` take the renumbered members of the tuples and
 # their incidence structures from the runtime, in a store of the process
-# that the run opens (D[run-tuples-memory], #316). Each segment begins in a
+# that the run opens (D255, #316). Each segment begins in a
 # new order of the particles, builds the structures in the memory of the
 # segment before, and takes them as they are only where the identities and
 # the members compare equal to those they were built from (D253): the first

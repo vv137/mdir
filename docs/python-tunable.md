@@ -258,8 +258,8 @@ neighbor width. The sites that an update writes are fixed by the
 declarations and each is written from the values given, so the copy after
 an update is what `model::applyTunables` makes of the model of the
 compile, whatever it held before, a refused update included
-(D[update-cost],
-[jit-invariants.md](jit-invariants.md#what-an-update-of-the-tunables-keeps-dupdate-cost));
+(D254,
+[jit-invariants.md](jit-invariants.md#what-an-update-of-the-tunables-keeps-d254));
 until #324 an update copied the model of the compile each time. The new
 program's text must equal the compiled one's; its values replace the old. The activation of the entry that holds the old
 values in its buffers ends, after the state is copied from it, and the
@@ -449,9 +449,9 @@ Factor IX (90,906 atoms) before the first run, the host building the
 program's text and values; during a run, with the evaluation of the forces
 of the state, 20 ms and 104 ms.
 
-*Since D[update-cost]* (#324; one RTX 4090, mixed precision, PME,
+*Since D254* (#324; one RTX 4090, mixed precision, PME,
 `scripts/benchmarks/activation/start.py --only update --tunable KIND`;
-`update()` with the `gradient()` after it, ms, `main` → D[update-cost]):
+`update()` with the `gradient()` after it, ms, `main` → D254):
 
 | Tunable | JAC, 23,558 | Factor IX, 90,906 | Cellulose, 408,609 |
 |---|---|---|---|
@@ -465,4 +465,4 @@ of the state, 20 ms and 104 ms.
 Two starts of an activation are about 4, 12, and 61 ms of each; what the
 rebuild still costs is the arrays of the program built from the topology
 and, for a tuple parameter with its derivative, the numbering of the
-tuples of each member ([jit-invariants.md](jit-invariants.md#what-an-update-of-the-tunables-keeps-dupdate-cost)).
+tuples of each member ([jit-invariants.md](jit-invariants.md#what-an-update-of-the-tunables-keeps-d254)).

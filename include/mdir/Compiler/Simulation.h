@@ -234,7 +234,7 @@ public:
   /// the sums of its marks, for the measurements.
   const driver::HostProfile &getHostTimes() const { return hostTimes; }
   /// The programs that the updates of the tunables have built from the
-  /// model that the simulation keeps for them (D[update-cost]), and from a
+  /// model that the simulation keeps for them (D254), and from a
   /// copy of the model of the compile; zeros before the first update. For
   /// the tests and the measurements.
   std::array<int64_t, 2> getTunableBuilds() const;
@@ -461,7 +461,7 @@ private:
   llvm::Expected<driver::Program>
   rebuildTunables(const std::vector<std::vector<double>> &values);
   /// The program at the values `values`, built from the model that the
-  /// simulation keeps for its updates (D[update-cost]), or,
+  /// simulation keeps for its updates (D254), or,
   /// `buildAnew`, from a copy of the model of the compile.
   llvm::Expected<driver::Program>
   buildTuned(const std::vector<std::vector<double>> &values);
@@ -599,7 +599,7 @@ private:
   /// values, version, and history (D213).
   driver::System compiledSystem;
   /// What the updates of the tunables keep from one to the next
-  /// (D[update-cost]): the model that the values are put into, in place,
+  /// (D254): the model that the values are put into, in place,
   /// a copy of the control and the system of the compile with a topology
   /// that nothing else holds.
   struct Tuned {

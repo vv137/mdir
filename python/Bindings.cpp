@@ -1486,7 +1486,7 @@ PYBIND11_MODULE(_core, m) {
     })
     // (kept, anew): the programs that the updates of the tunables built
     // from the model that the simulation keeps for them
-    // (D[update-cost]), and from a copy of the model of the compile; zeros
+    // (D254), and from a copy of the model of the compile; zeros
     // before the first update. Private, for the tests and the measurements:
     // it may change or go.
     .def_property_readonly("_tunable_builds", [](const PySimulation &s) {

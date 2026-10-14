@@ -468,7 +468,7 @@ private:
   /// for the values of the names that its expression reads: a build asks
   /// for the same one for every pair of classes of particles that differ
   /// in what the expression does not read, and again for each derivative
-  /// of the correction (D[update-cost]: 114 ms of an update of JAC and
+  /// of the correction (D254: 114 ms of an update of JAC and
   /// 164 ms of Factor IX were these quadratures, for a exp(-r/l), which
   /// reads neither the types nor the charges). Not finite where the tail
   /// diverges. The memo is the build's: it holds what one build asked for,

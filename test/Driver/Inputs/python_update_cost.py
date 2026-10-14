@@ -1,4 +1,4 @@
-"""What an update of the tunables keeps (D[update-cost],
+"""What an update of the tunables keeps (D254,
 docs/jit-invariants.md): the model that the values are put into, in place.
 
 On the dipeptide in water with PME, the shift at the cutoff with the

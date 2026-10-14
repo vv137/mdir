@@ -2381,7 +2381,7 @@ void Simulation::keepModel() {
   // The model that the values are put into is the simulation's own: the
   // control and the system of the compile with a topology that nothing
   // else holds, made at the first update and written in place at each
-  // (D[update-cost]). A copy of both at every update, with the topology,
+  // (D254). A copy of both at every update, with the topology,
   // took 62 of the 220 ms of an update of 408,609 atoms.
   tuned = std::make_shared<Tuned>();
   tuned->control = compiled->control;
@@ -2429,7 +2429,7 @@ Simulation::buildTuned(const std::vector<std::vector<double>> &values) {
                          llvm::toString(program.takeError()));
   ++tuned->keptBuilds;
   // With MDRT_CHECK_KEPT_TUPLES the program is also built as before
-  // D[update-cost], from a copy of the model of the compile with the values
+  // D254, from a copy of the model of the compile with the values
   // put into it, and the two are compared, member for member and to the
   // bit. A difference is a defect of mdir: the update fails and names it,
   // and the simulation uses its kept model no more.

@@ -28,7 +28,7 @@
    library has its own copy (the host's in mdrt.c, the device's in
    mdrt_cuda.c, where the incidence structure and a copy of the members are
    on the device) and exports its own functions. `mdir run` opens a store
-   for its one call of the entry (D[run-tuples-memory], #316): a segment
+   for its one call of the entry (D255, #316): a segment
    begins in a new order of the particles, so nothing is taken as it is but
    where a segment begins in the order of the start, and each segment builds
    in the memory of the one before. Code that runs with no store entered

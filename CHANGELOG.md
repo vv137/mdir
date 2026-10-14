@@ -481,7 +481,7 @@ format, or the outputs; every such change is listed under **Changed** or
   [docs/jit-invariants.md](docs/jit-invariants.md#what-a-simulation-keeps-across-activations-d253)).
 - **An update of the tunables of a Python simulation no longer copies its
   model, sorts the members of its tuples, or repeats the quadratures of a
-  tail** (D[update-cost], #324). `Simulation.tunables.update()` (and the
+  tail** (D254, #324). `Simulation.tunables.update()` (and the
   commit of a borrow that changes tunables, a simulation that continues a
   checkpoint with other values, and the update of a frame evaluator) put
   the new values into a copy of the whole model, built the program from
@@ -515,11 +515,11 @@ format, or the outputs; every such change is listed under **Changed** or
   its program from a copy of the model of the compile, as before, and
   compares the two; a difference fails the update
   ([docs/environment.md](docs/environment.md#debugging),
-  [docs/jit-invariants.md](docs/jit-invariants.md#what-an-update-of-the-tunables-keeps-dupdate-cost)).
+  [docs/jit-invariants.md](docs/jit-invariants.md#what-an-update-of-the-tunables-keeps-d254)).
   What an update still costs is its two starts, the arrays of the program
   built from the topology, and the copies of a start (#326).
 - **The segments of `mdir run` build the structures of their tuples in the
-  memory of the segment before** (D[run-tuples-memory], #316). A run
+  memory of the segment before** (D255, #316). A run
   orders its particles anew where each segment of checkpoints begins,
   and renumbered the tuples and built their incidence structures there on
   the host, in new memory, and on a GPU uploaded them: on one RTX 4090 in

@@ -212,7 +212,7 @@ theirs. `mdir run` calls its entry once and opens no activation; for
 that call it opens a store of the structures of the tuples (below), so
 that each of its segments of checkpoints, which begins in a new order of
 the particles, builds them in the memory of the segment before
-(D[run-tuples-memory]).
+(D255).
 
 One thing is the simulation's and not an activation's
 (D253, #294): the renumbered members of the tuples
@@ -440,7 +440,7 @@ structures 0.03, 6.9, and 19 ms). After, a start that takes them spends
 0.13, 0.43, and 2.1 ms on them, and one in a new order 3.2, 12.4, and
 75 ms, which on JAC is what it took before: no structure of JAC was over
 the 32 MiB from which memory is mapped anew. What an update cost beyond
-its two starts (4, 18, and 144 ms) was #324: since D[update-cost] an
+its two starts (4, 18, and 144 ms) was #324: since D254 an
 update and its `gradient()` take 5.4, 16, and 87 ms on one RTX 4090
 ([python-tunable.md](python-tunable.md#performance)).
 

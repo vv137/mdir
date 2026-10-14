@@ -31,7 +31,7 @@ Usage:
            [--marks] [--alone]
 
 `--tunable` chooses what is tunable, since what an update costs follows
-what its values enter (#324, D[update-cost]): `pair`, the length of the
+what its values enter (#324, D254): `pair`, the length of the
 pair term (the default); `pair-tail`, the same with the tail of the term
 in the correction for the dispersion, under a shift at the cutoff; `lj`,
 sigma and epsilon of the types with Lennard-Jones, with the correction;

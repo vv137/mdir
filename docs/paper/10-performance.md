@@ -150,7 +150,7 @@ of the parameters with its evaluation took 8.3, 30, and 203 ms where it
 took 15, 135, and 867 ms, its two starts the smaller part of it: the rest
 was a sort of the members of every tuple set, copies of the model, and
 quadratures of the tails repeated for every pair of classes of particles.
-Since D[update-cost] the simulation writes the values into a model that it
+Since D254 the simulation writes the values into a model that it
 keeps, the sort is one pass, and a build computes each quadrature once; on
 one RTX 4090 an update with its evaluation takes 5.4, 16, and 87 ms where
 it took 8.4, 31, and 204 ms, and 8.1, 22, and 112 ms where it took 121,
@@ -158,7 +158,7 @@ it took 8.4, 31, and 204 ms, and 8.1, 22, and 112 ms where it took 121,
 
 The segments of `mdir run` begin in a new order each (Section 3.6), so
 they cannot take what is kept, but they build in the kept memory
-(D[run-tuples-memory]). On one RTX 4090 in mixed precision, with the
+(D255). On one RTX 4090 in mixed precision, with the
 settings of the Amber suite and a checkpoint every $n$ steps, the
 structures cost a segment 4.6 ms on JAC, 27 ms on Factor IX, 152 ms on
 Cellulose, and 465 ms on STMV, of which the build on the host in new

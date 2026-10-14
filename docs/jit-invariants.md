@@ -236,7 +236,7 @@ from the runtime: the pipeline sets the option `kept-tuples` of
 A Python simulation and the simulation of a frame evaluator
 (`Control::segments`) keep a store across their activations, as above.
 `mdir run` opens a store of the process for its one call of the entry and
-closes it when the entry returns (D[run-tuples-memory], #316): its program
+closes it when the entry returns (D255, #316): its program
 orders the particles where the run begins and where each segment of
 checkpoints begins, so each segment asks for its structures in a new
 order. I1 and I2 hold as they do across activations, inside one call:
@@ -287,7 +287,7 @@ private), in double and mixed precision, with the numbers of structures
 taken and built at each start (`Simulation._kept_tuples`, private): a
 start that should have built and took, or the reverse, fails the test.
 
-## What an update of the tunables keeps (D[update-cost])
+## What an update of the tunables keeps (D254)
 
 An update of the tunables (D213) gives the program of a simulation new
 values: it puts the values into the model, builds the program from it by
@@ -298,7 +298,7 @@ tunable: 143 ms for 408,609 atoms on the host of an RTX 4090, to change one
 number, of which a sort that asks whether each tuple set is disjoint 108 ms
 and the two copies of the model 11 ms; and 114 ms more on 23,558 atoms
 where a pair term has its tail in the correction for the dispersion, for
-quadratures that most of the pairs of classes share. Since D[update-cost]
+quadratures that most of the pairs of classes share. Since D254
 a simulation keeps, from its first update to its end, the model that the
 values are put into. The rest of this section is what holds for it.
 
@@ -325,7 +325,7 @@ simulation's own, and only an update touches it.
 
 **U2. Checked where it is asked.** With `MDRT_CHECK_KEPT_TUPLES` set in
 the environment ([environment.md](environment.md#debugging)) every update
-also builds its program as before D[update-cost], from a copy of the model
+also builds its program as before D254, from a copy of the model
 of the compile with the values put into it by `applyTunables`, and
 compares the two programs member for member and to the bit
 (`driver::describeDifference`). A difference is a defect of MDIR: the

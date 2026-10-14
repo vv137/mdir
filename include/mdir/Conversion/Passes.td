@@ -74,7 +74,7 @@ def ConvertMDExecToLoops
     and given back to it where they would be freed (`mdrtTuplesRelease`):
     a program that an embedding front end runs in activations keeps them
     from one activation to the next (D253), and `mdir run` from one
-    segment to the next (D[run-tuples-memory]). The pipelines of both set
+    segment to the next (D255). The pipelines of both set
     it; without it they are built by loops in the module.
   }];
   let options = [
@@ -282,7 +282,7 @@ def ConvertMDExecToGPU
            "taken from the runtime (mdrtDeviceTuplesRenumber, "
            "mdrtDeviceTuplesIncidence, mdrtDeviceTuplesMembers), which keeps "
            "them across the activations of an embedding program "
-           "(D253) and the segments of mdir run (D[run-tuples-memory])">
+           "(D253) and the segments of mdir run (D255)">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",
