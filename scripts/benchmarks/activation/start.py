@@ -27,7 +27,24 @@ Usage:
   start.py PRMTOP INPCRD [PRMTOP INPCRD ...] [--target GPU]
            [--precision Mixed] [--repeats 5] [--steps 20] [--input-order]
            [--deterministic] [--no-keep] [--only gradient|update|moved]
-           [--long N]
+           [--long N] [--tunable pair|pair-tail|lj|charge|tuple|all]
+           [--marks] [--alone]
+
+`--tunable` chooses what is tunable, since what an update costs follows
+what its values enter (#324, D[update-cost]): `pair`, the length of the
+pair term (the default); `pair-tail`, the same with the tail of the term
+in the correction for the dispersion, under a shift at the cutoff; `lj`,
+sigma and epsilon of the types with Lennard-Jones, with the correction;
+`charge`, the charges; `tuple`, the constant of a weak spring on every
+bond; `all`, the four together. An update alternates between the values of
+the model and values 0.1% from them. With `--alone` the updates are also
+timed without the `gradient()` after them. With `--marks` each line is
+followed by where the host spent the time of the call
+(`Simulation._host_times`, private): the build of the program anew
+(`rebuild`) with its parts, the copy of the state from the activation
+(`download`), the end of an activation (`end`), and the arguments
+(`start.arguments`), the stack and the records (`start.open`), and the
+program (`start.program`) of each start.
 
 With `--long N` one run of N steps follows, with its ms per step and ns
 per day: the rate of a plain run, which a change of the starts must leave.
@@ -40,6 +57,7 @@ prints its counters when the script ends; with `--only gradient
 of each.
 """
 import argparse
+import re
 import time
 
 import numpy as np
@@ -57,9 +75,49 @@ parser.add_argument("--deterministic", action="store_true")
 parser.add_argument("--no-keep", action="store_true")
 parser.add_argument("--long", type=int, default=0)
 parser.add_argument("--only", default=None, choices=("gradient", "update", "moved"))
+parser.add_argument("--tunable", default="pair",
+                    choices=("pair", "pair-tail", "lj", "charge", "tuple", "all"))
+parser.add_argument("--marks", action="store_true")
+parser.add_argument("--alone", action="store_true")
 args = parser.parse_args()
 if len(args.files) % 2:
     parser.error("each system is a topology and its coordinates")
+
+
+def declare(system):
+    """Declares the tunables of `--tunable` on `system`, with the terms that
+    they need."""
+    kinds = ("pair", "lj", "charge", "tuple") if args.tunable == "all" else (args.tunable,)
+    tunables = []
+    if "pair" in kinds or "pair-tail" in kinds:
+        soft = mdir.PairTerm()
+        soft.name, soft.expression = "soft", "a*exp(-r/l)"
+        soft.constants = [("a", 2.0), ("l", 0.05)]
+        system.pair_terms = [soft]
+        tunables.append(mdir.Tunable("l", "l", term="soft"))
+    # The correction for the dispersion is a derived quantity of the table of
+    # the Lennard-Jones, and holds the tail of the pair term where it is on
+    # (D209): `lj`, `pair-tail`, and `all` keep it, with the shift at the
+    # cutoff in place of the switch, which takes no correction.
+    if args.tunable in ("lj", "pair-tail", "all"):
+        system.truncation = mdir.Truncation.Shift
+    else:
+        system.dispersion = mdir.DispersionCorrection.None_
+    if "lj" in kinds:
+        tunables += [mdir.Tunable("sigma", "sigma"), mdir.Tunable("epsilon", "epsilon")]
+    if "charge" in kinds:
+        tunables.append(mdir.Tunable("q", "charge"))
+    if "tuple" in kinds:
+        # A weak spring on every bond of the topology, a constant for each.
+        bonds = np.asarray(system.topology.bonds, dtype=np.int64)
+        spring = mdir.TupleTerm()
+        spring.name, spring.expression, spring.arity = "spring", "0.5*k*(r - r0)^2", 2
+        spring.particles = bonds
+        spring.parameters = [("k", np.full(len(bonds), 100.0)),
+                             ("r0", np.full(len(bonds), 0.1))]
+        system.tuple_terms = [spring]
+        tunables.append(mdir.Tunable("k", "k", term="spring"))
+    system.tunables = tunables
 
 
 def measure(prmtop, inpcrd):
@@ -68,12 +126,7 @@ def measure(prmtop, inpcrd):
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance, system.switch_distance = 0.8, 0.9, 0.7
     system.electrostatics = mdir.Electrostatics.PME
-    system.dispersion = mdir.DispersionCorrection.None_
-    soft = mdir.PairTerm()
-    soft.name, soft.expression = "soft", "a*exp(-r/l)"
-    soft.constants = [("a", 2.0), ("l", 0.05)]
-    system.pair_terms = [soft]
-    system.tunables = [mdir.Tunable("l", "l", term="soft")]
+    declare(system)
     system.tunable_gradient = True
     execution = mdir.Execution()
     execution.target = getattr(mdir.Target, args.target)
@@ -83,8 +136,26 @@ def measure(prmtop, inpcrd):
         execution.reorder = False
     integrator = mdir.Integrator()
     integrator.timestep = 0.0005
-    program = mdir.compile(system, state, integrator, mdir.Ensemble(), execution,
-                           mdir.Schedule())
+    # A type without Lennard-Jones (the hydrogen of a water) keeps its
+    # values: the combining rule has no derivative in an epsilon of 0, which
+    # the compile says, naming the type.
+    names = list(system.topology.type_names)
+    left = set()
+    while True:
+        try:
+            program = mdir.compile(system, state, integrator, mdir.Ensemble(), execution,
+                                   mdir.Schedule())
+            break
+        except mdir.InputError as error:
+            found = re.search(r"is 0 for the type (\S+), where the combining rule", str(error))
+            if not found or found.group(1) in left:
+                raise
+            left.add(found.group(1))
+            keep = np.array([name not in left for name in names])
+            entries = np.where(keep, np.cumsum(keep) - 1, -1)
+            system.tunables = [mdir.Tunable(t.name, t.parameter, term=t.term, map=entries)
+                               if t.parameter in ("sigma", "epsilon") and t.term is None else t
+                               for t in system.tunables]
 
     sim = mdir.Simulation(program)
     sim.part_seconds = 1e9
@@ -98,16 +169,25 @@ def measure(prmtop, inpcrd):
     sim.state()
     first = time.perf_counter() - t0
 
+    marked = hasattr(sim, "_host_times")
+
     def timed(call):
-        """The time of `call` in ms, and what it took, built, and spent on
-        the structures of the tuples."""
+        """The time of `call` in ms; what it took, built, and spent on the
+        structures of the tuples; and the marks of the host in it, each
+        (ms, page faults, calls)."""
         before = sim._kept_tuples if counted else (0, 0, 0.0)
+        marks = sim._host_times if marked else {}
         t0 = time.perf_counter()
         call()
         elapsed = 1e3 * (time.perf_counter() - t0)
         after = sim._kept_tuples if counted else (0, 0, 0.0)
+        parts = {}
+        for name, (seconds, faults, calls) in (sim._host_times if marked else {}).items():
+            was = marks.get(name, (0.0, 0, 0))
+            if calls != was[2]:
+                parts[name] = (1e3 * (seconds - was[0]), faults - was[1], calls - was[2])
         return (elapsed, after[0] - before[0], after[1] - before[1],
-                1e3 * (after[2] - before[2]))
+                1e3 * (after[2] - before[2]), parts)
 
     def run_steps():
         sim.run(args.steps)
@@ -131,19 +211,36 @@ def measure(prmtop, inpcrd):
             line += (f"; structures of the tuples: {least[1]} taken, {least[2]} built, "
                      f"{least[3]:.3f} ms")
         print(line, flush=True)
+        # Where the host spent the time of that call: a name with a dot is a
+        # part of the name before the dot.
+        if args.marks:
+            for mark, (ms, faults, calls) in sorted(least[4].items()):
+                print(f"    {mark:34s} {ms:9.3f} ms {faults:8d} faults {calls:3d} calls",
+                      flush=True)
 
     sim.tunables.gradient()
     if args.only in (None, "gradient"):
         report("gradient", [timed(sim.tunables.gradient) for _ in range(args.repeats)])
 
     if args.only in (None, "update"):
-        values = [0.0501, 0.05]
+        # The values of the model, and others 0.1% from them, in turn.
+        base = {name: np.array(sim.tunables[name]) for name in sim.tunables.keys()}
+        values = [{name: value * 1.001 for name, value in base.items()}, base]
 
         def update(k):
-            sim.tunables.update({"l": np.array([values[k % 2]])})
+            sim.tunables.update(values[k % 2])
             sim.tunables.gradient()
 
-        report("update", [timed(lambda: update(k)) for k in range(args.repeats)])
+        report(f"update ({args.tunable})",
+               [timed(lambda: update(k)) for k in range(args.repeats)])
+        if args.alone:
+            report(f"update alone ({args.tunable})",
+                   [timed(lambda: sim.tunables.update(values[k % 2]))
+                    for k in range(args.repeats)])
+        if hasattr(sim, "_tunable_builds"):
+            print(f"the updates: programs built from the model that the simulation keeps, "
+                  f"and from a copy of the model of the compile: "
+                  f"{tuple(sim._tunable_builds)}", flush=True)
 
     if args.only in (None, "moved"):
         def moved():

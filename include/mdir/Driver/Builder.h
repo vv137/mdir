@@ -95,10 +95,28 @@ struct Program {
     size_t size() const { return arity ? members.size() / arity : 0; }
     /// Whether no particle is a member of two tuples, as in the groups of
     /// a constraint.
-    bool isDisjoint() const {
-      std::vector<int32_t> sorted(members);
-      std::sort(sorted.begin(), sorted.end());
-      return std::adjacent_find(sorted.begin(), sorted.end()) == sorted.end();
+    bool isDisjoint() const { return hasNoRepeat({&members}); }
+    /// Whether no particle is in the lists `lists` twice: one pass over
+    /// them with a mark for each particle. A sort of a copy was 64 to 75%
+    /// of what an update of the tunables built anew (#324): 108 of 143 ms
+    /// for the five sets of 408,609 atoms.
+    static bool hasNoRepeat(
+        std::initializer_list<const std::vector<int32_t> *> lists) {
+      int64_t least = 0, most = -1;
+      for (const std::vector<int32_t> *list : lists)
+        for (int32_t member : *list) {
+          least = std::min<int64_t>(least, member);
+          most = std::max<int64_t>(most, member);
+        }
+      std::vector<bool> seen(static_cast<size_t>(most - least + 1), false);
+      for (const std::vector<int32_t> *list : lists)
+        for (int32_t member : *list) {
+          size_t at = static_cast<size_t>(member - least);
+          if (seen[at])
+            return false;
+          seen[at] = true;
+        }
+      return true;
     }
     llvm::StringRef getOrientation() const {
       if (arity == 2 && !oriented)
@@ -316,6 +334,12 @@ void keepDependentTerms(Control &control, const System &system);
 
 llvm::Expected<Program> buildProgram(const Control &control,
                                      const System &system);
+
+/// The first thing in which two programs differ, to the bit, in words; an
+/// empty string if they are the same. Every member of Program is compared:
+/// one that is added to Program is added there
+/// (D[update-cost]).
+std::string describeDifference(const Program &a, const Program &b);
 
 } // namespace driver
 } // namespace mdir

@@ -248,13 +248,20 @@ explicit exception. This is a question to the maintainer on the PR (Q1).
 
 **How an update builds them.** `Simulation` keeps the system that its
 program was built from (at its first step) and the control it was built
-with. An update copies both, puts the new values into them
-(`model::applyTunables`: the charges, the per-type σ and ε and the table
+with. At its first update it copies both once, with a topology of its own;
+every update puts the new values into that copy in place
+(`model::applyTunablesInPlace`: the charges, the per-type σ and ε and the table
 of the rule, the pairs of the table that pair tunables take, the constants of pair terms, the parameters of tuple terms,
 and the classes and values of the tails, `driver::recollectPairTails`),
-and runs `driver::buildProgram` on the copy with the compiled program's
-neighbor width. The new program's text must equal the compiled one's; its
-values replace the old. The activation of the entry that holds the old
+and runs `driver::buildProgram` on it with the compiled program's
+neighbor width. The sites that an update writes are fixed by the
+declarations and each is written from the values given, so the copy after
+an update is what `model::applyTunables` makes of the model of the
+compile, whatever it held before, a refused update included
+(D[update-cost],
+[jit-invariants.md](jit-invariants.md#what-an-update-of-the-tunables-keeps-dupdate-cost));
+until #324 an update copied the model of the compile each time. The new
+program's text must equal the compiled one's; its values replace the old. The activation of the entry that holds the old
 values in its buffers ends, after the state is copied from it, and the
 next part begins another from the state of the host, which uploads the new
 values (D215, [python-segments.md](python-segments.md#resident-buffers)).
@@ -441,3 +448,21 @@ of runs, since the program is the same but for where its values come from.
 Factor IX (90,906 atoms) before the first run, the host building the
 program's text and values; during a run, with the evaluation of the forces
 of the state, 20 ms and 104 ms.
+
+*Since D[update-cost]* (#324; one RTX 4090, mixed precision, PME,
+`scripts/benchmarks/activation/start.py --only update --tunable KIND`;
+`update()` with the `gradient()` after it, ms, `main` → D[update-cost]):
+
+| Tunable | JAC, 23,558 | Factor IX, 90,906 | Cellulose, 408,609 |
+|---|---|---|---|
+| A constant of a pair term | 8.43 → 5.38 | 30.8 → 15.9 | 204 → 86.9 |
+| The same, its tail in the correction | 121 → 8.11 | 189 → 22.1 | 259 → 112 |
+| Per-type σ and ε | 9.31 → 6.19 | 33.8 → 19.0 | 223 → 105 |
+| The charges | 9.00 → 5.88 | 32.6 → 18.0 | 214 → 96.9 |
+| A parameter of a tuple term, every bond | 12.9 → 9.35 | 53.1 → 32.8 | 308 → 171 |
+| All four | 127 → 13.4 | 216 → 43.3 | 376 → 212 |
+
+Two starts of an activation are about 4, 12, and 61 ms of each; what the
+rebuild still costs is the arrays of the program built from the topology
+and, for a tuple parameter with its derivative, the numbering of the
+tuples of each member ([jit-invariants.md](jit-invariants.md#what-an-update-of-the-tunables-keeps-dupdate-cost)).

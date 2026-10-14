@@ -435,8 +435,10 @@ IX, and 233 of 264 ms on Cellulose (the build on the host 0.79, 38, and
 structures 0.03, 6.9, and 19 ms). After, a start that takes them spends
 0.13, 0.43, and 2.1 ms on them, and one in a new order 3.2, 12.4, and
 75 ms, which on JAC is what it took before: no structure of JAC was over
-the 32 MiB from which memory is mapped anew. What an update costs beyond
-its two starts (4, 18, and 144 ms) is #324.
+the 32 MiB from which memory is mapped anew. What an update cost beyond
+its two starts (4, 18, and 144 ms) was #324: since D[update-cost] an
+update and its `gradient()` take 5.4, 16, and 87 ms on one RTX 4090
+([python-tunable.md](python-tunable.md#performance)).
 
 **The CPU** has the same ownership: the activation keeps its buffers of the
 host, which are those that the entry was given, and the views are their

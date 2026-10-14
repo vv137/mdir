@@ -3,11 +3,13 @@
 #include "mdir/Driver/Builder.h"
 
 #include "mdir/Driver/Expression.h"
+#include "mdir/Driver/Profile.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <array>
 #include <cmath>
+#include <cstring>
 #include <map>
 
 using namespace mdir::driver;
@@ -462,6 +464,22 @@ private:
   /// The expressions of the pair terms, whose tails beyond the cutoff
   /// System::pairTails counts (D209).
   std::vector<Expression> tailExpressions;
+  /// The integral of the tail of a pair term and its value at the cutoff,
+  /// for the values of the names that its expression reads: a build asks
+  /// for the same one for every pair of classes of particles that differ
+  /// in what the expression does not read, and again for each derivative
+  /// of the correction (D[update-cost]: 114 ms of an update of JAC and
+  /// 164 ms of Factor IX were these quadratures, for a exp(-r/l), which
+  /// reads neither the types nor the charges). Not finite where the tail
+  /// diverges. The memo is the build's: it holds what one build asked for,
+  /// at most one entry for each pair of classes and each point of a
+  /// derivative, and ends with it.
+  struct TailIntegral {
+    bool finite = false;
+    double integral = 0.0, edge = 0.0;
+  };
+  mutable std::vector<std::map<std::vector<uint64_t>, TailIntegral>>
+      tailIntegrals;
   /// Collects the tails of the observed pair terms and their derivatives
   /// in the observed constants, for the columns of `observe`.
   void collectObservedTails();
@@ -1453,6 +1471,7 @@ llvm::Error Builder::collectTopology() {
   size_t count = topology.getNumParticles();
 
   // The fields of the particles.
+  HostMark mark("rebuild.build.topology.fields");
   Program::Field charges;
   charges.name = "q";
   charges.values = topology.charges;
@@ -1638,6 +1657,7 @@ llvm::Error Builder::collectTopology() {
     return set.fields.size() - 1;
   };
 
+  mark.next("rebuild.build.topology.tuples");
   if (!topology.bonds.empty()) {
     Program::TupleSet &set = addSet("bonds", 2);
     size_t k = addField(set, "k"), r0 = addField(set, "r0");
@@ -1946,6 +1966,7 @@ llvm::Error Builder::collectTopology() {
     }
   }
 
+  mark.next("rebuild.build.topology.constants");
   if (control.pme)
     if (llvm::Error error = collectPME())
       return error;
@@ -2181,33 +2202,54 @@ Builder::getPairTail(unsigned index,
   const Expression &expression = tailExpressions[index];
   double rc = control.cutoffDistance;
   double energy = 0.0, virial = 0.0, shift = 0.0;
+  if (tailIntegrals.size() <= index)
+    tailIntegrals.resize(index + 1);
   for (const System::TailPair &pair : system.pairTails[index]) {
     llvm::StringMap<double> values = pair.values;
     for (const auto &entry : changes)
       if (values.count(entry.getKey()))
         values[entry.getKey()] = entry.getValue();
-    if (!hasFiniteTail(expression, values, rc))
+    // The integral is a function of the values of the names that the
+    // expression reads, in their order, and of nothing else of the pair:
+    // one that was computed for these values, compared as bits, is taken,
+    // the same number to the bit.
+    std::vector<uint64_t> key;
+    for (const std::string &name : expression.getNames()) {
+      auto found = values.find(name);
+      uint64_t bits = 0;
+      if (found != values.end())
+        std::memcpy(&bits, &found->second, sizeof bits);
+      key.push_back(bits);
+      key.push_back(found != values.end());
+    }
+    auto [memo, computes] = tailIntegrals[index].try_emplace(std::move(key));
+    TailIntegral &tail = memo->second;
+    if (computes && hasFiniteTail(expression, values, rc)) {
+      auto u = [&](double r) {
+        values["r"] = r;
+        return expression.evaluate(values);
+      };
+      auto size = [&](double r) {
+        values["r"] = r;
+        return expression.evaluateMagnitude(values);
+      };
+      tail.finite = true;
+      tail.integral = integrateUnit(
+          [&](double x) {
+            if (x == 0.0)
+              return 0.0;
+            return rc * rc * rc * u(rc / x) / (x * x * x * x);
+          },
+          [&](double x) {
+            if (x == 0.0)
+              return 0.0;
+            return rc * rc * rc * size(rc / x) / (x * x * x * x);
+          });
+      tail.edge = rc * rc * rc * u(rc);
+    }
+    if (!tail.finite)
       return makeError("diverges");
-    auto u = [&](double r) {
-      values["r"] = r;
-      return expression.evaluate(values);
-    };
-    auto size = [&](double r) {
-      values["r"] = r;
-      return expression.evaluateMagnitude(values);
-    };
-    double integral = integrateUnit(
-        [&](double x) {
-          if (x == 0.0)
-            return 0.0;
-          return rc * rc * rc * u(rc / x) / (x * x * x * x);
-        },
-        [&](double x) {
-          if (x == 0.0)
-            return 0.0;
-          return rc * rc * rc * size(rc / x) / (x * x * x * x);
-        });
-    double edge = rc * rc * rc * u(rc);
+    double integral = tail.integral, edge = tail.edge;
     if (!std::isfinite(integral) || !std::isfinite(edge))
       return makeError("cannot be integrated");
     energy += pair.count * integral;
@@ -10257,12 +10299,14 @@ llvm::Error Builder::build() {
     }
   }
 
+  HostMark mark("rebuild.build.topology");
   if (system.topology) {
     if (llvm::Error error = collectTopology())
       return error;
   } else if (llvm::Error error = collectParameters()) {
     return error;
   }
+  mark.next("rebuild.build.sets");
   // The polynomials of the tabulated functions, a row of 4ⁿ numbers for
   // each cell of a function of n arguments (D138, D165), or the values of a
   // discrete one.
@@ -10310,9 +10354,7 @@ llvm::Error Builder::build() {
   std::vector<int32_t> members;
   for (const Program::TupleSet *set : groups)
     members.insert(members.end(), set->members.begin(), set->members.end());
-  std::sort(members.begin(), members.end());
-  if (groups.size() >= 2 &&
-      std::adjacent_find(members.begin(), members.end()) == members.end()) {
+  if (groups.size() >= 2 && Program::TupleSet::hasNoRepeat({&members})) {
     os << "md.disjoint_union @constraints on(@atoms) of [";
     llvm::interleaveComma(groups, os, [&](const Program::TupleSet *set) {
       os << "@" << set->name;
@@ -10320,6 +10362,7 @@ llvm::Error Builder::build() {
     os << "]\n";
   }
   os << "\n";
+  mark.next("rebuild.build.text");
   if (system.topology) {
     emitTopologyPotential("energy", AllTerms);
     // Each term on its own, for the log at the start.
@@ -10487,4 +10530,144 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
   if (llvm::Error error = builder.build())
     return std::move(error);
   return std::move(program);
+}
+
+namespace {
+/// Whether two lists of numbers are the same to the bit; a number that is
+/// not a number equals itself here.
+template <typename T>
+bool sameBits(const std::vector<T> &a, const std::vector<T> &b) {
+  return a.size() == b.size() &&
+         (a.empty() ||
+          std::memcmp(a.data(), b.data(), a.size() * sizeof(T)) == 0);
+}
+bool sameBits(double a, double b) { return std::memcmp(&a, &b, sizeof a) == 0; }
+} // namespace
+
+std::string mdir::driver::describeDifference(const Program &a,
+                                             const Program &b) {
+  auto fields = [&](const std::vector<Program::Field> &x,
+                    const std::vector<Program::Field> &y,
+                    const std::string &where) -> std::string {
+    if (x.size() != y.size())
+      return "the number of the fields of " + where;
+    for (size_t k = 0; k != x.size(); ++k)
+      if (x[k].name != y[k].name || x[k].isInteger != y[k].isInteger ||
+          !sameBits(x[k].values, y[k].values))
+        return "the field '" + x[k].name + "' of " + where;
+    return "";
+  };
+  if (a.module != b.module)
+    return "the text";
+  if (a.entry != b.entry || a.state != b.state || a.force != b.force ||
+      a.mass != b.mass || a.parameter != b.parameter ||
+      a.takesForces != b.takesForces || a.writesForces != b.writesForces ||
+      a.pme != b.pme || a.reactionField != b.reactionField ||
+      a.tunableGradient != b.tunableGradient || a.ljpme != b.ljpme ||
+      a.neighborWidth != b.neighborWidth || a.reorders != b.reorders ||
+      a.segmentPeriod != b.segmentPeriod || a.closingSteps != b.closingSteps ||
+      a.tunable != b.tunable || a.gradientOutcomes != b.gradientOutcomes ||
+      a.gradientArguments != b.gradientArguments ||
+      !std::equal(std::begin(a.pmeGrid), std::end(a.pmeGrid), b.pmeGrid) ||
+      !std::equal(std::begin(a.ljpmeGrid), std::end(a.ljpmeGrid), b.ljpmeGrid))
+    return "the description of the program";
+  if (std::string where = fields(a.fields, b.fields, "the particles");
+      !where.empty())
+    return where;
+  if (a.tables.size() != b.tables.size())
+    return "the number of the tables";
+  for (size_t k = 0; k != a.tables.size(); ++k)
+    if (a.tables[k].name != b.tables[k].name ||
+        a.tables[k].count != b.tables[k].count ||
+        a.tables[k].columns != b.tables[k].columns ||
+        !sameBits(a.tables[k].values, b.tables[k].values))
+      return "the table '" + a.tables[k].name + "'";
+  if (a.tupleSets.size() != b.tupleSets.size())
+    return "the number of the tuple sets";
+  for (size_t k = 0; k != a.tupleSets.size(); ++k) {
+    const Program::TupleSet &x = a.tupleSets[k], &y = b.tupleSets[k];
+    if (x.name != y.name || x.arity != y.arity ||
+        x.reversible != y.reversible || x.oriented != y.oriented ||
+        !sameBits(x.members, y.members))
+      return "the tuple set '" + x.name + "'";
+    if (std::string where = fields(x.fields, y.fields, "'" + x.name + "'");
+        !where.empty())
+      return where;
+  }
+  struct Scalar {
+    const char *name;
+    double a, b;
+  };
+  for (const Scalar &scalar : std::initializer_list<Scalar>{
+           {"dispersionEnergy", a.dispersionEnergy, b.dispersionEnergy},
+           {"dispersionVirial", a.dispersionVirial, b.dispersionVirial},
+           {"dispersionFixedEnergy", a.dispersionFixedEnergy,
+            b.dispersionFixedEnergy},
+           {"coulombConstantEnergy", a.coulombConstantEnergy,
+            b.coulombConstantEnergy},
+           {"coulombConstantVirial", a.coulombConstantVirial,
+            b.coulombConstantVirial},
+           {"coulombSelfEnergy", a.coulombSelfEnergy, b.coulombSelfEnergy},
+           {"gradientShiftEnergy", a.gradientShiftEnergy, b.gradientShiftEnergy},
+           {"gradientShiftFixedEnergy", a.gradientShiftFixedEnergy,
+            b.gradientShiftFixedEnergy},
+           {"pmeBeta", a.pmeBeta, b.pmeBeta},
+           {"ljpmeSelfEnergy", a.ljpmeSelfEnergy, b.ljpmeSelfEnergy},
+           {"ljpmeBeta", a.ljpmeBeta, b.ljpmeBeta},
+           {"skin", a.skin, b.skin},
+           {"pruneSkin", a.pruneSkin, b.pruneSkin},
+           {"orderWidth", a.orderWidth, b.orderWidth}})
+    if (!sameBits(scalar.a, scalar.b))
+      return std::string("the value '") + scalar.name + "'";
+  struct List {
+    const char *name;
+    const std::vector<double> &a, &b;
+  };
+  for (const List &list : std::initializer_list<List>{
+           {"stateFixedEnergies", a.stateFixedEnergies, b.stateFixedEnergies},
+           {"stateVolumeEnergies", a.stateVolumeEnergies, b.stateVolumeEnergies},
+           {"lambdaFixedDerivatives", a.lambdaFixedDerivatives,
+            b.lambdaFixedDerivatives},
+           {"lambdaVolumeDerivatives", a.lambdaVolumeDerivatives,
+            b.lambdaVolumeDerivatives},
+           {"observableVolumeConstants", a.observableVolumeConstants,
+            b.observableVolumeConstants},
+           {"observableFixedConstants", a.observableFixedConstants,
+            b.observableFixedConstants},
+           {"gradientChargeFixed", a.gradientChargeFixed, b.gradientChargeFixed},
+           {"gradientChargeVolume", a.gradientChargeVolume,
+            b.gradientChargeVolume}})
+    if (!sameBits(list.a, list.b))
+      return std::string("the values '") + list.name + "'";
+  if (a.gradientSlots.size() != b.gradientSlots.size())
+    return "the number of the derivatives in the tunable constants";
+  for (size_t k = 0; k != a.gradientSlots.size(); ++k) {
+    const Program::GradientSlot &x = a.gradientSlots[k], &y = b.gradientSlots[k];
+    if (x.tunable != y.tunable || x.site != y.site ||
+        !sameBits(x.volumeConstant, y.volumeConstant) ||
+        !sameBits(x.fixedConstant, y.fixedConstant))
+      return "the derivative in the tunable constant " + std::to_string(k);
+  }
+  if (a.gradientFields.size() != b.gradientFields.size())
+    return "the number of the fields of the derivatives";
+  for (size_t k = 0; k != a.gradientFields.size(); ++k) {
+    const Program::GradientField &x = a.gradientFields[k],
+                                 &y = b.gradientFields[k];
+    bool same = x.tunable == y.tunable && sameBits(x.sites, y.sites) &&
+                x.rows.size() == y.rows.size();
+    for (size_t r = 0; same && r != x.rows.size(); ++r)
+      same = x.rows[r].site == y.rows[r].site &&
+             sameBits(x.rows[r].scale, y.rows[r].scale) &&
+             sameBits(x.rows[r].volumeConstant, y.rows[r].volumeConstant) &&
+             sameBits(x.rows[r].fixedConstant, y.rows[r].fixedConstant);
+    if (!same)
+      return "the field " + std::to_string(k) + " of the derivatives";
+  }
+  if (a.startValues.size() != b.startValues.size())
+    return "the number of the start values";
+  for (size_t k = 0; k != a.startValues.size(); ++k)
+    if (a.startValues[k].name != b.startValues[k].name ||
+        !sameBits(a.startValues[k].value, b.startValues[k].value))
+      return "the start value '" + a.startValues[k].name + "'";
+  return "";
 }

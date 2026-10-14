@@ -254,6 +254,92 @@ private), in double and mixed precision, with the numbers of structures
 taken and built at each start (`Simulation._kept_tuples`, private): a
 start that should have built and took, or the reverse, fails the test.
 
+## What an update of the tunables keeps (D[update-cost])
+
+An update of the tunables (D213) gives the program of a simulation new
+values: it puts the values into the model, builds the program from it by
+the code of the compile, compares the text with the compiled one, and
+begins an activation. Until #324 it copied the model of the compile at
+every update, and what it built anew grew with the system and not with the
+tunable: 143 ms for 408,609 atoms on the host of an RTX 4090, to change one
+number, of which a sort that asks whether each tuple set is disjoint 108 ms
+and the two copies of the model 11 ms; and 114 ms more on 23,558 atoms
+where a pair term has its tail in the correction for the dispersion, for
+quadratures that most of the pairs of classes share. Since D[update-cost]
+a simulation keeps, from its first update to its end, the model that the
+values are put into. The rest of this section is what holds for it.
+
+**What is kept.** A copy of the control and the system of the compile with
+a topology that nothing else holds, made at the first update. An update
+writes the values into it in place (`model::applyTunablesInPlace`) and
+builds the program from it. Everything of the program is built at every
+update, as before: every array, every constant that the host adds, and
+the whole text, which is compared with the compiled one as before (D213):
+a value that would change the program is refused as before.
+
+**U1. The model that the values are put into is the model that
+`applyTunables` makes from the model of the compile.** The sites that an
+update writes are fixed by the declarations, not by the values: every site
+of every tunable, every pair of types that the combining rule or a tunable
+of the table gives, the weights of the seeds, and the tails, which are
+collected anew. Each is written from the values given and from the values
+of the types that the declarations hold (`TunableSet::typeSigma`,
+`typeEpsilon`), never from what the model held there. So what the model
+held in those sites before (the values of the last update, or of one that
+was refused after it had written them) does not matter, and a refusal
+needs no undo. Nothing else of the model is written by anything: it is the
+simulation's own, and only an update touches it.
+
+**U2. Checked where it is asked.** With `MDRT_CHECK_KEPT_TUPLES` set in
+the environment ([environment.md](environment.md#debugging)) every update
+also builds its program as before D[update-cost], from a copy of the model
+of the compile with the values put into it by `applyTunables`, and
+compares the two programs member for member and to the bit
+(`driver::describeDifference`). A difference is a defect of MDIR: the
+update fails with a message that names what differs and changes nothing,
+and the simulation builds from a copy from then on. Without the variable
+nothing is compared, and U1 is what holds. `python-update-cost*.test` run
+with it.
+
+**How much, and its bound.** One model for a simulation, whatever the
+number of its updates, from its first update on: the copy of the control
+and the system with its topology, which every update made and freed
+before. A simulation that is never updated holds none.
+
+**Whether a tuple set is disjoint** is asked of its members in one pass
+with a mark for each particle (`Program::TupleSet::hasNoRepeat`), where a
+copy of the members was sorted: the same answer for every list, at every
+build, of a compile and of `mdir run` as of an update.
+
+**The tails of the pair terms** (D209) are constants that every build
+makes. Their quadratures are functions of the values of the names that the
+expression of the term reads and of the cutoff, and of nothing else of a
+pair of classes of particles. A build computes each once for those values,
+compared as bits, and takes it for every pair of classes and every point
+of a derivative that asks for the same: to the bit the number that it
+computed each time before. The memo is the build's: it holds at most one
+entry for each pair of classes and each point of a derivative that the one
+build asks for, and ends with the build. Nothing of a tail is kept from one update to the
+next, so the values that a fit passes through leave nothing behind.
+
+**Not kept.** The arrays of the program, which every update builds from
+the topology, most of what the rebuild of 408,609 atoms still costs; and
+the arguments of the entry, which a start copies (#326).
+
+**Tests.** `python-update-cost.test` and `-gpu.test`: a sequence on the
+dipeptide in water with every kind of tunable (updates of each alone, of
+all together, and back; between steps; a commit of a borrow;
+`gradient()`; an update that is refused after its values were written,
+and the one after it; a checkpoint and a run continued from it; a frame
+evaluator beside its sampler), in double and mixed precision, with the
+comparison of U2 at every update, whose every state, force, energy, and
+derivative equals, to the bit, that of a simulation whose updates copy
+the model of the compile (`Simulation._keep_model`, private), with the
+counts of the programs built from the kept model and from a copy
+(`Simulation._tunable_builds`, private); and a number of the kept model
+written over by the test (`Simulation._spoil_kept_model`, private), which
+the comparison finds and names.
+
 ## Enforced transitions and dependency boundary
 
 Each object starts in `Linking`. RuntimeDyld allocates and relocates sections,

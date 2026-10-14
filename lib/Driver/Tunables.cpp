@@ -3,6 +3,7 @@
 // model, and their values put into it, from which the builder computes the
 // values of the program and every quantity derived from them.
 #include "mdir/Driver/Model.h"
+#include "mdir/Driver/Profile.h"
 #include "llvm/ADT/StringExtras.h"
 #include <cmath>
 #include <set>
@@ -354,14 +355,27 @@ llvm::Error mdir::model::checkTunableValues(
   return llvm::Error::success();
 }
 
-llvm::Error mdir::model::applyTunables(
-    const TunableSet &set, const std::vector<std::vector<double>> &values,
-    driver::Control &control, driver::System &system) {
+namespace {
+enum class Apply {
+  /// Into a copy of the topology.
+  Copy,
+  /// Into the topology of the system, which nothing else holds.
+  InPlace
+};
+}
+
+static llvm::Error apply(Apply mode, const TunableSet &set,
+                         const std::vector<std::vector<double>> &values,
+                         driver::Control &control, driver::System &system) {
   if (set.empty())
     return llvm::Error::success();
   if (llvm::Error error = checkTunableValues(set, values))
     return error;
-  auto topology = std::make_shared<driver::Topology>(*system.topology);
+  driver::HostMark mark("rebuild.apply.topology");
+  std::shared_ptr<driver::Topology> topology =
+      mode == Apply::Copy ? std::make_shared<driver::Topology>(*system.topology)
+                          : system.topology;
+  mark.next("rebuild.apply.values");
   size_t types = topology->getNumTypes();
   std::vector<double> sigma = set.typeSigma, epsilon = set.typeEpsilon;
   bool mixesSigma = false, mixesEpsilon = false;
@@ -485,6 +499,7 @@ llvm::Error mdir::model::applyTunables(
   system.topology = std::move(topology);
   // The tails of the pair terms (D209), whose classes of particles and
   // values follow the charges, the table, and the constants.
+  mark.next("rebuild.apply.tails");
   if (llvm::Error error = driver::recollectPairTails(control, system))
     return input("the new values: " + llvm::toString(std::move(error)));
   for (size_t k = 0; k != set.pairTails.size() && k != system.pairTails.size(); ++k)
@@ -497,4 +512,16 @@ llvm::Error mdir::model::applyTunables(
                                        "dispersion would take it in") +
                    "; that changes the program: compile it with these values");
   return llvm::Error::success();
+}
+
+llvm::Error mdir::model::applyTunables(
+    const TunableSet &set, const std::vector<std::vector<double>> &values,
+    driver::Control &control, driver::System &system) {
+  return apply(Apply::Copy, set, values, control, system);
+}
+
+llvm::Error mdir::model::applyTunablesInPlace(
+    const TunableSet &set, const std::vector<std::vector<double>> &values,
+    driver::Control &control, driver::System &system) {
+  return apply(Apply::InPlace, set, values, control, system);
 }

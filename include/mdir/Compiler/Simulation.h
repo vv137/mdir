@@ -5,6 +5,7 @@
 #include "mdir/Compiler/CompileCache.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Model.h"
+#include "mdir/Driver/Profile.h"
 #include "mdir/Driver/Trajectory.h"
 #include <array>
 #include <atomic>
@@ -228,6 +229,26 @@ public:
   /// building them (D253): for the tests and
   /// the measurements.
   std::tuple<int64_t, int64_t, double> getKeptTuples() const;
+  /// Where the host has spent its time outside the code of the program, in
+  /// the updates of the tunables and the starts of the activations (#324):
+  /// the sums of its marks, for the measurements.
+  const driver::HostProfile &getHostTimes() const { return hostTimes; }
+  /// The programs that the updates of the tunables have built from the
+  /// model that the simulation keeps for them (D[update-cost]), and from a
+  /// copy of the model of the compile; zeros before the first update. For
+  /// the tests and the measurements.
+  std::array<int64_t, 2> getTunableBuilds() const;
+  /// Whether an update of the tunables builds its program from the model
+  /// that the simulation keeps, written in place (the default), or from a
+  /// copy of the model of the compile: for the tests, which compare the
+  /// two.
+  void setKeepsModel(bool keeps) { keepsModel = keeps; }
+  bool getKeepsModel() const { return keepsModel; }
+  /// Writes over one number of the kept model that no tunable owns (the
+  /// length of the first bond), as a defect would leave it: for the test of
+  /// what the comparison of MDRT_CHECK_KEPT_TUPLES says. False if the model
+  /// has no bond.
+  bool spoilKeptModel();
   /// Whether an activation takes the structures that the simulation keeps
   /// where their inputs are those given (the default), or builds every one
   /// anew: for the tests, which compare the two. It holds from the next
@@ -439,6 +460,15 @@ private:
   /// an InputError if its text would change.
   llvm::Expected<driver::Program>
   rebuildTunables(const std::vector<std::vector<double>> &values);
+  /// The program at the values `values`, built from the model that the
+  /// simulation keeps for its updates (D[update-cost]), or,
+  /// `buildAnew`, from a copy of the model of the compile.
+  llvm::Expected<driver::Program>
+  buildTuned(const std::vector<std::vector<double>> &values);
+  llvm::Expected<driver::Program>
+  buildAnew(const std::vector<std::vector<double>> &values);
+  /// Makes the model that the updates keep, at the first update.
+  void keepModel();
   /// A part of no steps: the evaluation of `evaluate`, the start of an
   /// activation. With `committed`, the evaluation of a state that a borrow
   /// committed, which every program of segments takes with leapfrog too
@@ -516,6 +546,7 @@ private:
   void *keptTuples = nullptr;
   bool keptTuplesOnDevice = false;
   bool keepsTuples = true;
+  mutable driver::HostProfile hostTimes;
   /// Whether `system` and `forces` hold the state of the activation, or of
   /// the simulation if there is none.
   mutable bool hostCurrent = true;
@@ -567,6 +598,23 @@ private:
   /// the values of the tunables are put into to build them anew; their
   /// values, version, and history (D213).
   driver::System compiledSystem;
+  /// What the updates of the tunables keep from one to the next
+  /// (D[update-cost]): the model that the values are put into, in place,
+  /// a copy of the control and the system of the compile with a topology
+  /// that nothing else holds.
+  struct Tuned {
+    driver::Control control;
+    driver::System system;
+    /// Whether a program built from it differed from one built from a copy
+    /// of the model of the compile (MDRT_CHECK_KEPT_TUPLES): it is not used
+    /// after that.
+    bool differs = false;
+    /// The programs built from it, and from a copy of the model of the
+    /// compile.
+    int64_t keptBuilds = 0, anewBuilds = 0;
+  };
+  std::shared_ptr<Tuned> tuned;
+  bool keepsModel = true;
   std::vector<std::vector<double>> tunableValues;
   int64_t tunablesVersion = 0;
   std::vector<std::pair<int64_t, int64_t>> tunablesHistory;
