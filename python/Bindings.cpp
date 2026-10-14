@@ -1484,15 +1484,21 @@ PYBIND11_MODULE(_core, m) {
         d[py::str(name)] = py::make_tuple(slice.seconds, slice.faults, slice.calls);
       return d;
     })
-    // (kept, anew): the programs that the updates of the tunables built
-    // from the model that the simulation keeps for them
-    // (D254), and from a copy of the model of the compile; zeros
-    // before the first update. Private, for the tests and the measurements:
-    // it may change or go.
+    // (kept, anew, arrays kept, arrays made, comparisons): the programs
+    // that the updates of the tunables built from the model that the
+    // simulation keeps for them (D254) and from a copy of the
+    // model of the compile; the arrays of the program that the simulation
+    // keeps and those that every update makes, and the comparisons of a
+    // program built with the kept arrays with one built from a copy
+    // (D[update-kept-arrays]); zeros before the first update. Private, for
+    // the tests and the measurements: it may change or go.
     .def_property_readonly("_tunable_builds", [](const PySimulation &s) {
       auto counts = s.simulation->getTunableBuilds();
-      return py::make_tuple(counts[0], counts[1]);
+      return py::make_tuple(counts[0], counts[1], counts[2], counts[3], counts[4]);
     })
+    // Adds 1 to a number of an array that the updates keep, as a defect
+    // would. Private, for the test of the comparison.
+    .def("_spoil_kept_array", [](PySimulation &s) { return s.simulation->spoilKeptArray(); })
     // False: every update of the tunables builds its program from a copy of
     // the model of the compile. Private, for the tests and the
     // measurements, which compare the two.

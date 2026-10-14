@@ -399,10 +399,14 @@ std::tuple<int64_t, int64_t, double> Simulation::getKeptTuples() const {
   return {counts[0], counts[1], seconds};
 }
 
-std::array<int64_t, 2> Simulation::getTunableBuilds() const {
+std::array<int64_t, 5> Simulation::getTunableBuilds() const {
   if (!tuned)
-    return {0, 0};
-  return {tuned->keptBuilds, tuned->anewBuilds};
+    return {0, 0, 0, 0, 0};
+  std::pair<size_t, size_t> arrays =
+      tuned->arrays ? countArrays(*tuned->arrays) : std::pair<size_t, size_t>();
+  return {tuned->keptBuilds, tuned->anewBuilds,
+          static_cast<int64_t>(arrays.first),
+          static_cast<int64_t>(arrays.second), tuned->comparisons};
 }
 
 const std::string &Simulation::getProgramText() const {
@@ -2391,17 +2395,36 @@ void Simulation::keepModel() {
   // counting the neighbors anew took 0.8 s of the 0.81 s of an update on
   // JAC.
   tuned->control.neighborWidth = compiled->program.neighborWidth;
+  // The arrays of the program that no value of a tunable enters are those
+  // that a build makes the same, to the bit, from a model that holds no
+  // such value: every site of every tunable is not a number in it
+  // (D[update-kept-arrays]). They are kept, as the arrays of the compiled
+  // program, which every later program shares; the others are made at
+  // every update. The model holds no values until an update puts them in,
+  // which writes every site that this wrote (U1 of D254).
+  model::poisonTunables(prepared.tunables, tuned->control, tuned->system);
+  auto arrays = buildArrays(tuned->control, tuned->system);
+  if (!arrays)
+    llvm::consumeError(arrays.takeError());
+  else if (keepArraysOf(**arrays, compiled->program))
+    tuned->arrays = std::move(*arrays);
 }
 
 bool Simulation::spoilKeptModel() {
   if (prepared.tunables.empty())
     return false;
   keepModel();
-  Topology &topology = *tuned->system.topology;
-  if (topology.bonds.empty())
-    return false;
-  topology.bonds.front().r0 += 0.01;
+  // The edge of the cell, which the constants of every build read; the
+  // arrays that the updates keep (bonds, say) are not built from the model.
+  tuned->system.box[0] *= 1.0 + 1.0e-9;
   return true;
+}
+
+bool Simulation::spoilKeptArray() {
+  if (prepared.tunables.empty())
+    return false;
+  keepModel();
+  return tuned->arrays && spoilArray(*tuned->arrays);
 }
 
 llvm::Expected<Program>
@@ -2423,18 +2446,32 @@ Simulation::buildTuned(const std::vector<std::vector<double>> &values) {
           model::applyTunablesInPlace(set, values, control, system))
     return error;
   mark.next("rebuild.build");
-  auto program = buildProgram(control, system);
+  // With the kept arrays the build makes the arrays that a value of a
+  // tunable enters, the constants, and the text (D[update-kept-arrays]).
+  auto program = buildProgram(control, system, tuned->arrays.get());
   if (!program)
     program = inputError("the new values of the tunables: " +
                          llvm::toString(program.takeError()));
   ++tuned->keptBuilds;
-  // With MDRT_CHECK_KEPT_TUPLES the program is also built as before
-  // D254, from a copy of the model of the compile with the values
-  // put into it, and the two are compared, member for member and to the
-  // bit. A difference is a defect of mdir: the update fails and names it,
-  // and the simulation uses its kept model no more.
-  if (std::getenv("MDRT_CHECK_KEPT_TUPLES")) {
+  // The program is also built as before D254, from a copy of the
+  // model of the compile with the values put into it, and the two are
+  // compared member for member and to the bit: with
+  // MDRT_CHECK_KEPT_TUPLES at every update; without it, with kept arrays,
+  // at the first update of each set of tunables that changed. An array
+  // that a value enters only through a condition, which a number that is
+  // not one passes without a trace, is kept as it was made at the first
+  // update; an update that changes the tunables of that condition is the
+  // first of its set and is compared. A difference is a defect of mdir:
+  // under the variable the update fails and names it; without it the
+  // simulation says it once on the standard error and builds every program
+  // from a copy of the model of the compile from then on.
+  bool checks = std::getenv("MDRT_CHECK_KEPT_TUPLES") != nullptr;
+  std::vector<bool> changed;
+  for (size_t k = 0; k != values.size(); ++k)
+    changed.push_back(values[k] != tunableValues[k]);
+  if (checks || (tuned->arrays && !tuned->checkedChanges.count(changed))) {
     HostMark checking("rebuild.check");
+    ++tuned->comparisons;
     auto anew = buildAnew(values);
     std::string difference;
     if (anew && program)
@@ -2442,20 +2479,32 @@ Simulation::buildTuned(const std::vector<std::vector<double>> &values) {
     else if (anew || program)
       difference = anew ? "only the model of the compile gives a program"
                         : "only the kept model gives a program";
+    // A refusal by both compares nothing: the set is still unchecked.
+    if (anew)
+      tuned->checkedChanges.insert(changed);
     if (!difference.empty()) {
       tuned->differs = true;
-      if (!anew)
-        llvm::consumeError(anew.takeError());
+      tuned->arrays.reset();
+      std::string message = "the program built from what the simulation "
+                            "keeps for its updates differs from the one "
+                            "built from a copy of the model of the compile "
+                            "(" + difference + "); this is a defect of mdir";
+      if (checks) {
+        if (!anew)
+          llvm::consumeError(anew.takeError());
+        if (!program)
+          llvm::consumeError(program.takeError());
+        return simulationError(message);
+      }
+      llvm::errs() << "mdir: warning: " << message
+                   << "; the simulation builds every program from a copy "
+                      "of the model of the compile from now on\n";
       if (!program)
         llvm::consumeError(program.takeError());
-      return simulationError("the program built from the model that the "
-                             "simulation keeps for its updates differs from "
-                             "the one built from a copy of the model of the "
-                             "compile (" + difference +
-                             "); this is a defect of mdir");
-    }
-    if (!anew)
+      program = std::move(anew);
+    } else if (!anew) {
       llvm::consumeError(anew.takeError());
+    }
   }
   return program;
 }

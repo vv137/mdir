@@ -154,7 +154,11 @@ Since D254 the simulation writes the values into a model that it
 keeps, the sort is one pass, and a build computes each quadrature once; on
 one RTX 4090 an update with its evaluation takes 5.4, 16, and 87 ms where
 it took 8.4, 31, and 204 ms, and 8.1, 22, and 112 ms where it took 121,
-189, and 259 ms with the tail of a pair term in the correction.
+189, and 259 ms with the tail of a pair term in the correction. The
+arrays of the program that no value of a tunable enters, which a build
+from the model with every tunable site set to not-a-number makes the same
+to the bit, are kept since D[update-kept-arrays]: an update with its
+evaluation then takes 4.6, 13, and 65 ms, about its two starts.
 
 The segments of `mdir run` begin in a new order each (Section 3.6), so
 they cannot take what is kept, but they build in the kept memory
