@@ -479,6 +479,25 @@ format, or the outputs; every such change is listed under **Changed** or
   a difference ends the program
   ([docs/environment.md](docs/environment.md#debugging),
   [docs/jit-invariants.md](docs/jit-invariants.md#what-a-simulation-keeps-across-activations-d253)).
+- **The segments of `mdir run` build the structures of their tuples in the
+  memory of the segment before** (D[run-tuples-memory], #316). A run
+  orders its particles anew where each segment of checkpoints begins,
+  and renumbered the tuples and built their incidence structures there on
+  the host, in new memory, and on a GPU uploaded them: on one RTX 4090 in
+  mixed precision 4.6 ms a segment on JAC of the Amber suite, 27 ms on
+  Factor IX, 152 ms on Cellulose, and 465 ms on STMV. A run now takes them
+  from the store of the runtime that a Python simulation keeps (D253),
+  opened for the run: 4.5, 15, 78, and 238 ms. A run with a checkpoint
+  every 10,000 steps is 0.45% faster on Factor IX, 0.88% on Cellulose, and
+  0.81% on STMV, and with one every 1,000 steps 3.5%, 5.0%, and 5.5%; JAC
+  and the CPU target do not change, nor does a run without checkpoints,
+  which orders its particles once. Every number of a run is that of
+  before to the bit. What changes: the lowered text of the host's code of
+  every program of `mdir run` with tuples, which calls the runtime where
+  it had loops (its kernels are the same text, so their entries in the
+  compile cache, which are keyed by the kernels, are still found; a
+  Python simulation is not changed); and the log of a run says at its end
+  how many structures were built and how many taken as they were kept.
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on

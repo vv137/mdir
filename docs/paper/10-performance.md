@@ -149,6 +149,21 @@ new order 5.1, 17, and 98 ms where it took 5.0, 58, and 387 ms. An update
 of the parameters with its evaluation takes 8.3, 30, and 203 ms where it
 took 15, 135, and 867 ms; its two starts are now the smaller part of it.
 
+The segments of `mdir run` begin in a new order each (Section 3.6), so
+they cannot take what is kept, but they build in the kept memory
+(D[run-tuples-memory]). On one RTX 4090 in mixed precision, with the
+settings of the Amber suite and a checkpoint every $n$ steps, the
+structures cost a segment 4.6 ms on JAC, 27 ms on Factor IX, 152 ms on
+Cellulose, and 465 ms on STMV, of which the build on the host in new
+memory was 55% to 67% on the three larger systems and the allocation and
+upload most of the rest: 3% to 8% of a segment at $n = 1000$ and 0.3% to
+1% at $n = 10{,}000$. Written in the kept memory and uploaded 16 MiB at a
+time they cost 4.5, 15, 78, and 238 ms; at $n = 10{,}000$ a run is 0.45%,
+0.88%, and 0.81% faster on Factor IX, Cellulose, and STMV, and at
+$n = 1000$ 3.5%, 5.0%, and 5.5%. The CPU target gains nothing that a run
+can see, since a step there costs 40 to 720 ms on these systems; what
+remains on a GPU is the build on the host and the upload (#295).
+
 ## 10.5 Over long runs
 
 Over 2 ns of JAC at constant energy before the dual list (D112), the rate

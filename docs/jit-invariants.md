@@ -230,16 +230,44 @@ inputs given and compared with the kept one (read back from the device),
 and a difference ends the program with a message that names the structure.
 `python-kept-tuples*.test` run with it.
 
-**Which programs.** The lowerings of a program of an embedding front end
-(`Control::segments`: a Python simulation and the simulation of a frame
-evaluator) take the structures of the tuple sets from the runtime (the
-option `kept-tuples` of `convert-md-exec-to-loops` and
-`convert-md-exec-to-gpu`). `mdir run` opens no store, its pipeline does
-not set the option, and its module builds the structures in loops as
-before. The structure of tuples that a program finds at run time (the
-triplets of a three-body term) is not kept in any program. A simulation
-whose code runs without a store entered (none does) gets structures of its
-own from the same functions and frees them.
+**Which programs.** Every program takes the structures of its tuple sets
+from the runtime: the pipeline sets the option `kept-tuples` of
+`convert-md-exec-to-loops` and `convert-md-exec-to-gpu` for all of them.
+A Python simulation and the simulation of a frame evaluator
+(`Control::segments`) keep a store across their activations, as above.
+`mdir run` opens a store of the process for its one call of the entry and
+closes it when the entry returns (D[run-tuples-memory], #316): its program
+orders the particles where the run begins and where each segment of
+checkpoints begins, so each segment asks for its structures in a new
+order. I1 and I2 hold as they do across activations, inside one call:
+
+- the first segment begins in the order of the start, with no step
+  between them, so its inputs compare equal and it takes every structure
+  of the start; every later segment compares its identities, finds them
+  different, and builds;
+- the structures of the start are held by the code of the entry until it
+  returns (they stand in the first block of the entry), and those of a
+  segment are given back at the end of its iteration. A later segment
+  therefore builds in the memory of the entry of the segment before, which
+  is not held, and the number of entries does not grow with the segments:
+  those of the start, which its code holds, and those that the segments
+  pass on to one another. On a device these are the structures that the run held on
+  `main` as well, where the start's stood until the end and each segment
+  took the blocks of the one before from the pool; on the host the store
+  adds the kept inputs and the renumbered members of the two entries and
+  the 16 MiB in which a device's rows are written, where `main` built each
+  structure whole in new memory of the host and freed it.
+
+`mdir run` writes in its log how many structures were built and how many
+taken (`MDIR: the structures of the tuples were built N times and taken as
+they were kept M times`); `run-kept-tuples.test` and its GPU twin check
+the counts of a run of four segments under `MDRT_CHECK_KEPT_TUPLES`, and
+that the run equals, to the bit, the same run continued at every
+checkpoint, whose processes build in new memory. The structure of tuples
+that a program finds at run time (the triplets of a three-body term) is
+not kept in any program. Code that runs without a store entered (a tool
+that executes a module without opening one) gets structures of its own
+from the same functions and frees them.
 
 **Tests.** `python-kept-tuples.test` and `-gpu.test`: the store called as
 the code calls it, against a renumbering and an incidence structure
