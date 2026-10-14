@@ -355,9 +355,59 @@ entry for each pair of classes and each point of a derivative that the one
 build asks for, and ends with the build. Nothing of a tail is kept from one update to the
 next, so the values that a fit passes through leave nothing behind.
 
-**Not kept.** The arrays of the program, which every update builds from
-the topology, most of what the rebuild of 408,609 atoms still costs; and
-the arguments of the entry, which a start copies (#326).
+**The arrays of the program (D[update-kept-arrays], #328).** A
+simulation also keeps, from its first update, the arrays of its program
+that no value of a tunable enters: of the fields of the particles, the
+tables, the members and the fields of the tuple sets, and the sites of the
+derivatives. They are the arrays of the compiled program, which the
+program of every later update shares (`driver::SharedArray`: a copy is a
+reference, and a write to an array that is shared copies it first). Every
+other array, the constants, and the text are made at every update as
+above. On Cellulose this took the rebuild of an update of a pair constant
+from 25.0 to 2.5 ms (below).
+
+- **A1. A kept array holds no value of a tunable.** Which arrays are kept
+  is neither written down by hand nor inferred from the tunables that an
+  update names. At the first update the simulation writes a number that is
+  not one into every site of every tunable of its kept model
+  (`model::poisonTunables`, the code of U1 with values that are not
+  numbers), builds the arrays alone from it (`driver::buildArrays`), and
+  compares each with the array of the compiled program
+  (`driver::keepArraysOf`). An array that is the same to the bit was made
+  without a value of a tunable, and is kept; one that differs is emptied.
+  A kept array is never written. Then the update puts its values in, which
+  writes every site that the numbers that are not numbers took (U1).
+- **A2. An array that is not kept is made at every update by the function
+  that makes it at a compile** (`Builder::fillCharges`, `fillTypeTable`,
+  `fillTupleParameter`, `fillPairProducts`). A build that would leave an
+  array without its numbers fails, and the update is compared (A3).
+- **A3. Checked, and said.** What A1 does not exclude is a value of a
+  tunable that enters an array only through a condition, which a number
+  that is not one passes without a trace: such an array would be kept as
+  the first update made it, and a later update that moves that value across
+  the condition would differ where the first did not. So the program of
+  the first update of each set of tunables that changed (one flag for each
+  tunable) is built also from a copy of the model of the compile and
+  compared member for member and to the bit; an update that changes the
+  tunables of such a condition is the first of its set. With
+  `MDRT_CHECK_KEPT_TUPLES` every update is compared. A difference is a
+  defect of MDIR, never a silent fallback: under the variable the update
+  fails, names what differs, and changes nothing; without it the
+  simulation says it once on the standard error, naming what differs, takes
+  the program built from the copy, and builds every program from a copy
+  from then on. What A3 still leaves: a condition on a value that an
+  update moves without changing which tunables it changes (a second update
+  of the same tunable that crosses the threshold); the arrays of the stage
+  that A1 builds read the values of the tunables only where the functions
+  of A2 do, as copies and products, and nowhere in a condition.
+- **Granularity.** Every array that some declared tunable enters is made at
+  every update, whichever tunables changed (the maintainer's ruling on
+  #325).
+- **Memory.** The kept arrays are those of the compiled program and take
+  none of their own; the arrays that a value enters are made anew at each
+  update, as before.
+
+**Not kept.** The arguments of the entry, which a start copies (#326).
 
 **Tests.** `python-update-cost.test` and `-gpu.test`: a sequence on the
 dipeptide in water with every kind of tunable (updates of each alone, of
@@ -368,10 +418,15 @@ evaluator beside its sampler), in double and mixed precision, with the
 comparison of U2 at every update, whose every state, force, energy, and
 derivative equals, to the bit, that of a simulation whose updates copy
 the model of the compile (`Simulation._keep_model`, private), with the
-counts of the programs built from the kept model and from a copy
-(`Simulation._tunable_builds`, private); and a number of the kept model
-written over by the test (`Simulation._spoil_kept_model`, private), which
-the comparison finds and names.
+counts of the programs built from the kept model and from a copy, of the
+arrays kept and made, and of the comparisons
+(`Simulation._tunable_builds`, private); a number of the kept model
+written over by the test (`Simulation._spoil_kept_model`, private: the
+first edge of the cell, which the constants read), which the comparison
+finds and names; and a number of a kept array written over
+(`Simulation._spoil_kept_array`, private), which fails the update under
+the variable and is said once on the standard error without it, the
+results being those of a simulation that was not spoiled.
 
 ## Enforced transitions and dependency boundary
 

@@ -1,6 +1,7 @@
 # REQUIRES: python-api
 # The model that a simulation keeps for the updates of its tunables
-# (D254, #324), Inputs/python_update_cost.py, on the CPU: a
+# (D254, #324) and the arrays of its program that no value of a
+# tunable enters (D[update-kept-arrays], #328), Inputs/python_update_cost.py, on the CPU: a
 # sequence of updates of every kind of tunable against a simulation whose
 # updates copy the model of the compile, with every program that is built
 # from the kept model also built from a copy and compared
@@ -9,8 +10,16 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_update_cost.py updates %S/Inputs/dipeptide CPU %t | FileCheck %s
 # RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_update_cost.py loud %S/Inputs/dipeptide CPU | FileCheck %s --check-prefix=LOUD
-# CHECK: CPU Double: 203 states, energies, and derivatives over 22 updates of each tunable alone and of all, between steps, a commit, a refusal, a checkpoint with a run continued from it, and a frame evaluator equal those of a simulation whose updates copy the model of the compile, to the bit; 23 programs built from the kept model, each compared with one built from a copy
-# CHECK: CPU Mixed: 203 states, energies, and derivatives over 22 updates of each tunable alone and of all, between steps, a commit, a refusal, a checkpoint with a run continued from it, and a frame evaluator equal those of a simulation whose updates copy the model of the compile, to the bit; 23 programs built from the kept model, each compared with one built from a copy
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_update_cost.py array %S/Inputs/dipeptide CPU | FileCheck %s --check-prefix=ARRAY
+# RUN: env -u MDRT_CHECK_KEPT_TUPLES %mdir_python %S/Inputs/python_update_cost.py array %S/Inputs/dipeptide CPU 2>&1 | FileCheck %s --check-prefix=ONCE
+# CHECK: CPU Double: 203 states, energies, and derivatives over 22 updates of each tunable alone and of all, between steps, a commit, a refusal, a checkpoint with a run continued from it, and a frame evaluator equal those of a simulation whose updates copy the model of the compile, to the bit; 23 programs built from the kept model, 25 arrays kept and 7 made at each, each compared with one built from a copy
+# CHECK: CPU Mixed: 203 states, energies, and derivatives over 22 updates of each tunable alone and of all, between steps, a commit, a refusal, a checkpoint with a run continued from it, and a frame evaluator equal those of a simulation whose updates copy the model of the compile, to the bit; 23 programs built from the kept model, 25 arrays kept and 7 made at each, each compared with one built from a copy
 # CHECK: update cost updates CPU passed
 # LOUD: CPU: a number of the kept model that was written over is found by the comparison with a build from a copy of the model of the compile, which fails the update and names it; the simulation builds from a copy from then on, with the results of one that was not spoiled
 # LOUD: update cost loud CPU passed
+# ARRAY: CPU: a number of a kept array that was written over is found by the comparison with a build from a copy of the model of the compile, which fails the update and names it; the simulation builds from a copy from then on, with the results of one that was not spoiled
+# ARRAY: update cost array CPU passed
+# ONCE: mdir: warning: the program built from what the simulation keeps for its updates differs from the one built from a copy of the model of the compile (the field
+# ONCE-NOT: mdir: warning
+# ONCE: CPU: a number of a kept array that was written over is found by the comparison with a build from a copy of the model of the compile, said once; the simulation builds from a copy from then on, with the results of one that was not spoiled
+# ONCE: update cost array CPU passed

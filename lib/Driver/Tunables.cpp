@@ -360,7 +360,10 @@ enum class Apply {
   /// Into a copy of the topology.
   Copy,
   /// Into the topology of the system, which nothing else holds.
-  InPlace
+  InPlace,
+  /// In place, numbers that are not numbers, without the checks of the
+  /// values and without the tails.
+  Poison
 };
 }
 
@@ -369,8 +372,10 @@ static llvm::Error apply(Apply mode, const TunableSet &set,
                          driver::Control &control, driver::System &system) {
   if (set.empty())
     return llvm::Error::success();
-  if (llvm::Error error = checkTunableValues(set, values))
-    return error;
+  bool poison = mode == Apply::Poison;
+  if (!poison)
+    if (llvm::Error error = checkTunableValues(set, values))
+      return error;
   driver::HostMark mark("rebuild.apply.topology");
   std::shared_ptr<driver::Topology> topology =
       mode == Apply::Copy ? std::make_shared<driver::Topology>(*system.topology)
@@ -482,7 +487,7 @@ static llvm::Error apply(Apply mode, const TunableSet &set,
         double weight = 0.5;
         if (!seed.sigma || entry.mixing == driver::Mixing::Geometric) {
           // √(x y) is not differentiable in x at 0 unless y is 0 too.
-          if (values[a] == 0.0 && values[b] != 0.0)
+          if (!poison && values[a] == 0.0 && values[b] != 0.0)
             return input("the tunable '" + entry.name + "' is 0 for the type " +
                          topology->typeNames[a] + ", where the combining "
                          "rule √(x y) has no derivative; give the type -1 "
@@ -497,6 +502,8 @@ static llvm::Error apply(Apply mode, const TunableSet &set,
     system.tunableSeedWeights.push_back(std::move(weights));
   }
   system.topology = std::move(topology);
+  if (poison)
+    return llvm::Error::success();
   // The tails of the pair terms (D209), whose classes of particles and
   // values follow the charges, the table, and the constants.
   mark.next("rebuild.apply.tails");
@@ -524,4 +531,13 @@ llvm::Error mdir::model::applyTunablesInPlace(
     const TunableSet &set, const std::vector<std::vector<double>> &values,
     driver::Control &control, driver::System &system) {
   return apply(Apply::InPlace, set, values, control, system);
+}
+
+void mdir::model::poisonTunables(const TunableSet &set,
+                                 driver::Control &control,
+                                 driver::System &system) {
+  std::vector<std::vector<double>> values;
+  for (const TunableSet::Entry &entry : set.tunables)
+    values.emplace_back(entry.entries, std::nan(""));
+  llvm::cantFail(apply(Apply::Poison, set, values, control, system));
 }

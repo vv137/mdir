@@ -9,6 +9,7 @@
 #include "mdir/Driver/System.h"
 
 #include <algorithm>
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -17,6 +18,63 @@ namespace driver {
 
 /// A floating-point type that a buffer of the host holds.
 enum class Element { F32, F64 };
+
+/// An array of a program, one number or one row for each particle or each
+/// tuple, that programs may share (D[update-kept-arrays]): a copy is a reference to
+/// the same numbers, and a write to an array that is shared copies it first,
+/// so that an array that two programs hold is never written. The program
+/// that an update of the tunables builds shares with the one before it every
+/// array that no value of a tunable enters (BuildKept), which is most of
+/// what a program holds: 1.7 kB an atom.
+template <typename T> class SharedArray {
+public:
+  SharedArray() = default;
+  SharedArray(std::vector<T> values)
+      : values(std::make_shared<std::vector<T>>(std::move(values))) {}
+  SharedArray &operator=(std::vector<T> given) {
+    values = std::make_shared<std::vector<T>>(std::move(given));
+    return *this;
+  }
+
+  /// The numbers, to read.
+  const std::vector<T> &get() const { return values ? *values : getNone(); }
+  operator const std::vector<T> &() const { return get(); }
+  size_t size() const { return get().size(); }
+  bool empty() const { return get().empty(); }
+  const T *data() const { return get().data(); }
+  const T &operator[](size_t i) const { return get()[i]; }
+  auto begin() const { return get().begin(); }
+  auto end() const { return get().end(); }
+
+  /// The numbers, to write: its own copy, if another array shares them.
+  std::vector<T> &edit() {
+    if (!values)
+      values = std::make_shared<std::vector<T>>();
+    else if (values.use_count() != 1)
+      values = std::make_shared<std::vector<T>>(*values);
+    return *values;
+  }
+  void push_back(const T &value) { edit().push_back(value); }
+  void assign(size_t count, const T &value) { edit().assign(count, value); }
+  void clear() { values.reset(); }
+
+  /// Whether both hold the same numbers because they share them: what an
+  /// update has not built anew.
+  bool shares(const SharedArray &other) const {
+    return values == other.values;
+  }
+  bool operator==(const SharedArray &other) const {
+    return shares(other) || get() == other.get();
+  }
+  bool operator!=(const SharedArray &other) const { return !(*this == other); }
+
+private:
+  static const std::vector<T> &getNone() {
+    static const std::vector<T> none;
+    return none;
+  }
+  std::shared_ptr<std::vector<T>> values;
+};
 
 /// The program of a run, and what the host must pass to it.
 ///
@@ -50,7 +108,7 @@ struct Program {
   /// in the units of the control file.
   struct Field {
     std::string name;
-    std::vector<double> values;
+    SharedArray<double> values;
     /// Whether the field holds whole numbers, which the program takes as
     /// i32: the types of the particles.
     bool isInteger = false;
@@ -82,7 +140,7 @@ struct Program {
   struct TupleSet {
     std::string name;
     unsigned arity = 0;
-    std::vector<int32_t> members;
+    SharedArray<int32_t> members;
     std::vector<Field> fields;
     /// Whether a tuple is the same read backward, as the members of a bond
     /// or of a dihedral are. Those of a virtual site or a correction map
@@ -95,7 +153,7 @@ struct Program {
     size_t size() const { return arity ? members.size() / arity : 0; }
     /// Whether no particle is a member of two tuples, as in the groups of
     /// a constraint.
-    bool isDisjoint() const { return hasNoRepeat({&members}); }
+    bool isDisjoint() const { return hasNoRepeat({&members.get()}); }
     /// Whether no particle is in the lists `lists` twice: one pass over
     /// them with a mark for each particle. A sort of a copy was 64 to 75%
     /// of what an update of the tunables built anew (#324): 108 of 143 ms
@@ -210,7 +268,7 @@ struct Program {
   /// tunable at the volume of the build, proportional to 1 / V.
   struct GradientField {
     unsigned tunable = 0;
-    std::vector<std::pair<uint32_t, uint32_t>> sites;
+    SharedArray<std::pair<uint32_t, uint32_t>> sites;
     struct Row {
       int64_t site = -1;
       double scale = 1.0, volumeConstant = 0.0;
@@ -332,8 +390,38 @@ DependentTerms getDependentTerms(const Control &control, const System &system);
 /// enters them, and keeps the observed columns of the terms that stay.
 void keepDependentTerms(Control &control, const System &system);
 
+/// The arrays of a program as a build has them once it has made them from
+/// the topology (the fields, the tables, and the tuple sets) and before it
+/// computes anything from them (D[update-kept-arrays], docs/jit-invariants.md).
+struct BuildKept;
+
+/// Builds the program of `control` and `system`. With `kept`, the arrays of
+/// another build of the same model at other values of its tunables, the
+/// build takes them in place of making them from the topology, and fills
+/// those that `kept` holds empty from the model: everything else, the
+/// constants that the host adds and the text, it makes as without them.
 llvm::Expected<Program> buildProgram(const Control &control,
-                                     const System &system);
+                                     const System &system,
+                                     const BuildKept *kept = nullptr);
+
+/// The arrays alone, as a build of `control` and `system` makes them.
+llvm::Expected<std::shared_ptr<BuildKept>> buildArrays(const Control &control,
+                                                       const System &system);
+
+/// Compares the arrays `arrays` with those of `program`, which a build of
+/// the same model with other values in the sites of its tunables made. An
+/// array that is the same to the bit in both is one that those values do not
+/// enter: `arrays` keeps it, sharing the array of the program. One that
+/// differs is emptied, for the build that takes `arrays` to fill. Returns
+/// false, and leaves `arrays` of no use, if the two do not hold the same
+/// arrays or differ in the members of a tuple set.
+bool keepArraysOf(BuildKept &arrays, const Program &program);
+/// How many arrays `keepArraysOf` kept, and how many it emptied.
+std::pair<size_t, size_t> countArrays(const BuildKept &arrays);
+/// Adds 1 to the first number of the first kept field of the particles, in
+/// a copy of its own: what a defect would leave, for the test of the
+/// comparison. False if there is none.
+bool spoilArray(BuildKept &arrays);
 
 /// The first thing in which two programs differ, to the bit, in words; an
 /// empty string if they are the same. Every member of Program is compared:

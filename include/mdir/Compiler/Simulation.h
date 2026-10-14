@@ -8,6 +8,7 @@
 #include "mdir/Driver/Profile.h"
 #include "mdir/Driver/Trajectory.h"
 #include <array>
+#include <set>
 #include <atomic>
 #include <functional>
 #include <memory>
@@ -233,11 +234,18 @@ public:
   /// the updates of the tunables and the starts of the activations (#324):
   /// the sums of its marks, for the measurements.
   const driver::HostProfile &getHostTimes() const { return hostTimes; }
-  /// The programs that the updates of the tunables have built from the
-  /// model that the simulation keeps for them (D254), and from a
-  /// copy of the model of the compile; zeros before the first update. For
-  /// the tests and the measurements.
-  std::array<int64_t, 2> getTunableBuilds() const;
+  /// What the updates of the tunables have built: the programs built from
+  /// the model that the simulation keeps for them (D254) and from
+  /// a copy of the model of the compile; the arrays of the program that the
+  /// simulation keeps and those that every update makes
+  /// (D[update-kept-arrays]); and the comparisons of a program built with
+  /// the kept arrays with one built from a copy. Zeros before the first
+  /// update. For the tests and the measurements.
+  std::array<int64_t, 5> getTunableBuilds() const;
+  /// Adds 1 to the first number of the first array of the particles that
+  /// the updates keep, as a defect would leave it: for the test of the
+  /// comparison. False if nothing is kept.
+  bool spoilKeptArray();
   /// Whether an update of the tunables builds its program from the model
   /// that the simulation keeps, written in place (the default), or from a
   /// copy of the model of the compile: for the tests, which compare the
@@ -245,7 +253,7 @@ public:
   void setKeepsModel(bool keeps) { keepsModel = keeps; }
   bool getKeepsModel() const { return keepsModel; }
   /// Writes over one number of the kept model that no tunable owns (the
-  /// length of the first bond), as a defect would leave it: for the test of
+  /// first edge of the cell), as a defect would leave it: for the test of
   /// what the comparison of MDRT_CHECK_KEPT_TUPLES says. False if the model
   /// has no bond.
   bool spoilKeptModel();
@@ -601,17 +609,23 @@ private:
   /// What the updates of the tunables keep from one to the next
   /// (D254): the model that the values are put into, in place,
   /// a copy of the control and the system of the compile with a topology
-  /// that nothing else holds.
+  /// that nothing else holds; and the arrays of the program that no value
+  /// of a tunable enters (D[update-kept-arrays]).
   struct Tuned {
     driver::Control control;
     driver::System system;
-    /// Whether a program built from it differed from one built from a copy
-    /// of the model of the compile (MDRT_CHECK_KEPT_TUPLES): it is not used
-    /// after that.
+    std::shared_ptr<driver::BuildKept> arrays;
+    /// The sets of tunables that an update changed (one flag for each
+    /// tunable) whose first program built with the kept arrays was
+    /// compared with one built from a copy of the model of the compile.
+    std::set<std::vector<bool>> checkedChanges;
+    /// Whether a program built from what is kept differed from one built
+    /// from a copy of the model of the compile: nothing kept is used after
+    /// that, and the difference was said.
     bool differs = false;
     /// The programs built from it, and from a copy of the model of the
-    /// compile.
-    int64_t keptBuilds = 0, anewBuilds = 0;
+    /// compile, and the comparisons of the two.
+    int64_t keptBuilds = 0, anewBuilds = 0, comparisons = 0;
   };
   std::shared_ptr<Tuned> tuned;
   bool keepsModel = true;

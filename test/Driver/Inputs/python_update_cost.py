@@ -124,9 +124,9 @@ class Sequence:
         """An update, with the programs that it built from the kept model
         and from a copy of the model of the compile."""
         sim = sim or self.sim
-        before = sim._tunable_builds if hasattr(sim, "_tunable_builds") else (0, 0)
+        before = sim._tunable_builds if hasattr(sim, "_tunable_builds") else (0,) * 5
         sim.tunables.update(values)
-        after = sim._tunable_builds if hasattr(sim, "_tunable_builds") else (0, 0)
+        after = sim._tunable_builds if hasattr(sim, "_tunable_builds") else (0,) * 5
         self.builds[name] = (after[0] - before[0], after[1] - before[1])
 
     def run(self):
@@ -240,20 +240,22 @@ def run_updates():
         for name, values in subject.records.items():
             assert np.array_equal(values, anew.records[name]), (precision, name)
         # A simulation that keeps no model counts nothing.
-        assert anew.final == (0, 0), anew.final
+        assert anew.final == (0,) * 5, anew.final
         # Every update but a refused one built one program from the kept
         # model (the one from a copy beside it, under the variable, is the
         # comparison and is not counted), and none from a copy alone.
-        kept, copied = subject.final
-        assert kept > 0 and copied == 0, subject.final
+        kept, copied, arrays, made, compared = subject.final
+        assert kept > 0 and copied == 0 and arrays > 0 and made > 0, subject.final
+        assert (compared == kept) if checked else (1 <= compared <= kept), subject.final
         for name, counts in subject.builds.items():
             assert counts == (1, 0), (name, counts)
-        assert subject.evaluator_builds == (len(NAMES) + 1, 0), subject.evaluator_builds
+        assert subject.evaluator_builds[:2] == (len(NAMES) + 1, 0), subject.evaluator_builds
+        assert subject.evaluator_builds[2:4] == (arrays, made), subject.evaluator_builds
         print(f"{target} {precision}: {len(subject.records)} states, energies, and derivatives "
               f"over {len(subject.builds)} updates of each tunable alone and of all, between "
               f"steps, a commit, a refusal, a checkpoint with a run continued from it, and a "
               f"frame evaluator equal those of a simulation whose updates copy the model of "
-              f"the compile, to the bit; {kept} programs built from the kept model"
+              f"the compile, to the bit; {kept} programs built from the kept model, {arrays} arrays kept and {made} made at each"
               f"{', each compared with one built from a copy' if checked else ''}")
     if mode == "--write":
         np.savez(sys.argv[6], **written)
@@ -285,7 +287,8 @@ def run_loud():
     right.tunables.update({"l": length * 1.1})
     assert sim._spoil_kept_model()
     # The comparison of every update: the update fails, names what differs
-    # (the length of the first bond), and changes nothing.
+    # (the first edge of the cell, which the constants read), and changes
+    # nothing.
     try:
         sim.tunables.update({"l": length * 1.1})
         raise AssertionError("the spoiled model was not found")
@@ -293,12 +296,12 @@ def run_loud():
         message = str(error)
         assert "differs from the one built from a copy of the model of the compile" in message, \
             message
-        assert "the field 'r0' of 'bonds'" in message, message
+        assert "(the value '" in message or "(the start value '" in message, message
     assert sim.tunables.version == 0
     assert np.array_equal(sim.tunables["l"], length)
     # The next one builds from a copy of the model of the compile.
     sim.tunables.update({"l": length * 1.1})
-    assert sim._tunable_builds == (1, 1), sim._tunable_builds
+    assert sim._tunable_builds[:2] == (1, 1), sim._tunable_builds
     for one in (sim, right):
         one.run(4)
     a, b = sim.state(), right.state()
@@ -311,10 +314,59 @@ def run_loud():
     print(f"update cost loud {target} passed")
 
 
+def run_array():
+    """A number of a kept array written over (D[update-kept-arrays]): with
+    the variable the update fails and names the array; without it the
+    first update of the set of tunables that it changes finds it, says so
+    once on the standard error, and takes the program built from a copy;
+    every update after builds from a copy. The results are those of a
+    simulation that was not spoiled."""
+    root, target = sys.argv[2], sys.argv[3]
+    checked = "MDRT_CHECK_KEPT_TUPLES" in os.environ
+    program = make(root, target, "Double")
+    sim, right = mdir.Simulation(program), mdir.Simulation(program)
+    for one in (sim, right):
+        one.part_seconds = 1e9
+        one.run(4)
+    length = np.array(sim.tunables["l"])
+    for factor in (1.1, 1.2):
+        right.tunables.update({"l": length * factor})
+    assert sim._spoil_kept_array()
+    if checked:
+        try:
+            sim.tunables.update({"l": length * 1.1})
+            raise AssertionError("the spoiled array was not found")
+        except mdir.SimulationError as error:
+            message = str(error)
+            assert "differs from the one built from a copy of the model of the compile" in message, \
+                message
+            assert "the field '" in message, message
+        assert sim.tunables.version == 0
+    sim.tunables.update({"l": length * 1.1})
+    sim.tunables.update({"l": length * 1.2})
+    counts = sim._tunable_builds
+    # Nothing is kept any more, and the updates after the difference build
+    # from a copy.
+    assert counts[2:4] == (0, 0) and counts[1] == (2 if checked else 1), counts
+    for one in (sim, right):
+        one.run(4)
+    a, b = sim.state(), right.state()
+    assert np.array_equal(a.positions, b.positions) and np.array_equal(a.forces, b.forces)
+    assert sim.tunables.gradient().energy == right.tunables.gradient().energy
+    print(f"{target}: a number of a kept array that was written over is found by the "
+          f"comparison with a build from a copy of the model of the compile, "
+          f"{'which fails the update and names it' if checked else 'said once'}; the "
+          f"simulation builds from a copy from then on, with the results of one that was not "
+          f"spoiled", flush=True)
+    print(f"update cost array {target} passed")
+
+
 scenario = sys.argv[1]
 if scenario == "updates":
     run_updates()
 elif scenario == "loud":
     run_loud()
+elif scenario == "array":
+    run_array()
 else:
     raise SystemExit(f"unknown scenario {scenario}")

@@ -19,6 +19,40 @@ static StringRef getName(Element element) {
   return element == Element::F32 ? "f32" : "f64";
 }
 
+/// What a build holds where it has made the arrays of its program from the
+/// topology and before it computes anything from them: the fields, the
+/// tables, and the tuple sets, with what the builder notes beside them
+/// (D[update-kept-arrays]). An array that is empty where the program needs
+/// numbers is one that a value of a tunable enters: the build that takes
+/// these arrays fills it from its model.
+struct mdir::driver::BuildKept {
+  std::vector<Program::Field> fields;
+  std::vector<Program::Table> tables;
+  std::vector<Program::TupleSet> tupleSets;
+  std::vector<Program::GradientField> gradientFields;
+  /// The tunable parameters of the terms over tuples whose derivatives
+  /// `@tunable` gives (D230). The derivative in the
+  /// parameter of each tuple leaves the program as a field of the
+  /// particles: `@tunable` takes fields of zeros, `%tg_d<c>`, and the
+  /// parameter of a tuple is its value plus the value of one of them at one
+  /// member of the tuple, the member at the place `place`, so that the
+  /// derivative of the energy in that field at that particle is the
+  /// derivative in the parameter of the tuple. Tuples that share the
+  /// member take different fields: the tuple field `tgc_<parameter>` holds
+  /// which, from 0 to `count` - 1, and the fields of the parameter are
+  /// `first` and those after it.
+  struct TupleGradient {
+    unsigned tunable = 0, term = 0;
+    std::string parameter;
+    unsigned place = 0, count = 0, first = 0;
+  };
+  std::vector<TupleGradient> tupleGradients;
+  bool gradientCharges = false;
+  /// The arrays kept and the arrays that a build fills, counted where the
+  /// arrays were compared with those of a program (keepArraysOf).
+  size_t kept = 0, filled = 0;
+};
+
 namespace {
 
 /// The Coulomb constant in the units of the control file, kcal Å mol⁻¹ e⁻²,
@@ -60,7 +94,34 @@ public:
 
   llvm::Error build();
 
+  /// The arrays of another build of the same model at other values of its
+  /// tunables, which this build takes in place of making them from the
+  /// topology (D[update-kept-arrays]); none for a build that makes its own.
+  const BuildKept *kept = nullptr;
+  /// Where a build that makes only its arrays leaves them, and stops.
+  BuildKept *capture = nullptr;
+
 private:
+  /// The stage of `collectTopology` that makes the arrays of the program
+  /// from the topology: every field, table, and tuple set, each one number
+  /// or one row for each particle, type, or tuple.
+  void collectTopologyArrays();
+  /// The stage after it: the constants of the energy that the host adds,
+  /// from the arrays and the model.
+  llvm::Error collectTopologyConstants();
+  /// In its place, for a build that was given the arrays of another: takes
+  /// them, fills those that hold the values of the tunables from the model,
+  /// and checks that none is left without its numbers.
+  llvm::Error adoptArrays();
+  /// The arrays that the values of the tunables enter, each from the model,
+  /// for both stages: the field of the charges, the tables of the
+  /// Lennard-Jones, of the weights of their seeds, and of the tunable
+  /// constants, a parameter of a term over tuples, and the products of the
+  /// charges of the 1-4 pairs.
+  void fillCharges(Program::Field &field) const;
+  void fillTypeTable(Program::Table &table) const;
+  void fillTupleParameter(Program::Field &field, const TupleTerm &term) const;
+  void fillPairProducts(Program::Field &field) const;
   /// With Control::dependentTerms, the terms that the program keeps: every
   /// potential has only these, and the host adds to the energy only what
   /// belongs to them (D243).
@@ -378,11 +439,7 @@ private:
   /// member take different fields: the tuple field `tgc_<parameter>` holds
   /// which, from 0 to `count` - 1, and the fields of the parameter are
   /// `first` and those after it.
-  struct TupleGradient {
-    unsigned tunable = 0, term = 0;
-    std::string parameter;
-    unsigned place = 0, count = 0, first = 0;
-  };
+  using TupleGradient = BuildKept::TupleGradient;
   std::vector<TupleGradient> tupleGradients;
   /// For each tunable, whether the energy reads it, and the values that
   /// the entry hands the host (Program::gradientSlots), with the column of
@@ -1466,7 +1523,138 @@ llvm::Error Builder::computeDispersion() {
 /// The Coulomb constant in kJ nm mol⁻¹ e⁻², from CODATA 2018.
 constexpr double coulombInternal = 138.935457644;
 
+void Builder::fillCharges(Program::Field &field) const {
+  field.values = system.topology->charges;
+}
+
+void Builder::fillTypeTable(Program::Table &table) const {
+  const Topology &topology = *system.topology;
+  if (table.name == "lj_sigma") {
+    table.values = topology.sigma;
+  } else if (table.name == "lj_epsilon") {
+    table.values = topology.epsilon;
+  } else if (table.name == "tunable_constants") {
+    // The tunable constants of the pair terms (D213), a row that the
+    // kernels read in place of constants of their text.
+    table.values.clear();
+    for (const auto &[term, name] : control.tunableConstants)
+      for (const auto &[key, value] : control.pairs[term].constants)
+        if (key == name)
+          table.values.push_back(value);
+  } else {
+    // The weights of a seed of the derivatives in the tables (D230).
+    unsigned seed = 0;
+    StringRef(table.name).drop_front(3).getAsInteger(10, seed);
+    table.values = system.tunableSeedWeights[seed];
+  }
+}
+
+void Builder::fillTupleParameter(Program::Field &field,
+                                 const TupleTerm &term) const {
+  for (const auto &[name, values] : term.parameters)
+    if (name == field.name)
+      field.values = values;
+}
+
+void Builder::fillPairProducts(Program::Field &field) const {
+  // f q_i q_j s_C of each 1-4 pair.
+  const Topology &topology = *system.topology;
+  std::vector<double> products;
+  products.reserve(topology.pairs.size());
+  for (const Topology::Pair &pair : topology.pairs)
+    products.push_back(coulombInternal * topology.charges[pair.i] *
+                       topology.charges[pair.j] * pair.scaleCoulomb);
+  field.values = std::move(products);
+}
+
+/// Whether `name` is the table of the weights of a seed, `tgw<c>`.
+static bool isSeedTable(StringRef name) {
+  unsigned seed;
+  return name.consume_front("tgw") && !name.getAsInteger(10, seed);
+}
+
+llvm::Error Builder::adoptArrays() {
+  program.fields = kept->fields;
+  program.tables = kept->tables;
+  program.tupleSets = kept->tupleSets;
+  program.gradientFields = kept->gradientFields;
+  tupleGradients = kept->tupleGradients;
+  gradientCharges = kept->gradientCharges;
+  // The arrays that the other build left empty hold the values of the
+  // tunables: each is made here by the function that makes it in a build
+  // from the topology.
+  const Topology &topology = *system.topology;
+  size_t count = topology.getNumParticles();
+  for (Program::Field &field : program.fields)
+    if (field.values.empty() && field.name == "q")
+      fillCharges(field);
+  for (Program::Table &table : program.tables)
+    if (table.values.empty() &&
+        (table.name == "lj_sigma" || table.name == "lj_epsilon" ||
+         table.name == "tunable_constants" || isSeedTable(table.name)))
+      fillTypeTable(table);
+  for (Program::TupleSet &set : program.tupleSets) {
+    if (set.name == "pairs14")
+      for (Program::Field &field : set.fields)
+        if (field.values.empty() && field.name == "qq")
+          fillPairProducts(field);
+    for (const TupleTerm &term : topology.tupleTerms)
+      if (!term.isCentroid() && set.name == "custom_" + term.name)
+        for (Program::Field &field : set.fields)
+          if (field.values.empty())
+            fillTupleParameter(field, term);
+  }
+  // Nothing is left without its numbers: an array that a value of a
+  // tunable enters and that nothing above makes would be one, and the
+  // build fails here.
+  auto lacks = [&](const llvm::Twine &what) {
+    return makeError("the array '" + what + "' of the program has no "
+                     "numbers after the values of the tunables were put in");
+  };
+  for (const Program::Field &field : program.fields)
+    if (field.values.size() != count)
+      return lacks(field.name);
+  for (const Program::Table &table : program.tables)
+    if (table.values.size() != size_t(table.count) * table.getColumns())
+      return lacks(table.name);
+  for (const Program::TupleSet &set : program.tupleSets) {
+    if (set.members.size() % set.arity != 0)
+      return lacks(set.name);
+    for (const Program::Field &field : set.fields)
+      if (field.values.size() != set.size())
+        return lacks(set.name + "." + field.name);
+  }
+  return llvm::Error::success();
+}
+
 llvm::Error Builder::collectTopology() {
+  HostMark mark("rebuild.build.topology.arrays");
+  if (kept) {
+    if (llvm::Error error = adoptArrays())
+      return error;
+  } else {
+    collectTopologyArrays();
+  }
+  if (capture) {
+    capture->fields = program.fields;
+    capture->tables = program.tables;
+    capture->tupleSets = program.tupleSets;
+    capture->gradientFields = program.gradientFields;
+    capture->tupleGradients = tupleGradients;
+    capture->gradientCharges = gradientCharges;
+    return llvm::Error::success();
+  }
+  mark.next("rebuild.build.topology.constants");
+  if (control.pme)
+    if (llvm::Error error = collectPME())
+      return error;
+  if (control.ljpme)
+    if (llvm::Error error = collectLJPME())
+      return error;
+  return collectTopologyConstants();
+}
+
+void Builder::collectTopologyArrays() {
   const Topology &topology = *system.topology;
   size_t count = topology.getNumParticles();
 
@@ -1474,7 +1662,7 @@ llvm::Error Builder::collectTopology() {
   HostMark mark("rebuild.build.topology.fields");
   Program::Field charges;
   charges.name = "q";
-  charges.values = topology.charges;
+  fillCharges(charges);
   program.fields.push_back(std::move(charges));
   Program::Field types;
   types.name = "type";
@@ -1559,14 +1747,14 @@ llvm::Error Builder::collectTopology() {
     on.name = flag;
     on.values.assign(count, 0.0);
     for (unsigned particle : term.particles)
-      on.values[particle] = 1.0;
+      on.values.edit()[particle] = 1.0;
     program.fields.push_back(std::move(on));
     for (const auto &[name, values] : term.parameters) {
       Program::Field field;
       field.name = flag + "_" + name;
       field.values.assign(count, 0.0);
       for (auto [place, particle] : llvm::enumerate(term.particles))
-        field.values[particle] = values[place];
+        field.values.edit()[particle] = values[place];
       program.fields.push_back(std::move(field));
     }
   }
@@ -1610,8 +1798,13 @@ llvm::Error Builder::collectTopology() {
 
   // Lennard-Jones for each pair of types.
   unsigned numTypes = topology.getNumTypes();
-  program.tables.push_back({"lj_sigma", numTypes, topology.sigma});
-  program.tables.push_back({"lj_epsilon", numTypes, topology.epsilon});
+  for (const char *name : {"lj_sigma", "lj_epsilon"}) {
+    Program::Table table;
+    table.name = name;
+    table.count = numTypes;
+    fillTypeTable(table);
+    program.tables.push_back(std::move(table));
+  }
   // The weights of the seeds of the derivatives in those tables, a table
   // of all ordered pairs of types each, and the field of the particles
   // that each gives (D230).
@@ -1621,7 +1814,7 @@ llvm::Error Builder::collectTopology() {
       table.name = "tgw" + std::to_string(c);
       table.count = numTypes;
       table.columns = numTypes;
-      table.values = system.tunableSeedWeights[c];
+      fillTypeTable(table);
       program.tables.push_back(std::move(table));
       Program::GradientField field;
       field.tunable = seed.tunable;
@@ -1636,10 +1829,7 @@ llvm::Error Builder::collectTopology() {
     table.name = "tunable_constants";
     table.count = 1;
     table.columns = control.tunableConstants.size();
-    for (const auto &[term, name] : control.tunableConstants)
-      for (const auto &[key, value] : control.pairs[term].constants)
-        if (key == name)
-          table.values.push_back(value);
+    fillTypeTable(table);
     program.tables.push_back(std::move(table));
   }
 
@@ -1747,10 +1937,8 @@ llvm::Error Builder::collectTopology() {
     Program::TupleSet &set = addSet("custom_" + term.name, term.arity);
     for (unsigned member : term.particles)
       set.members.push_back(member);
-    for (const auto &[name, values] : term.parameters) {
-      size_t field = addField(set, name);
-      set.fields[field].values = values;
-    }
+    for (const auto &[name, values] : term.parameters)
+      fillTupleParameter(set.fields[addField(set, name)], term);
     // The tunable parameters of the term whose derivatives the program
     // carries (D230): for each, the place whose members are
     // shared by the fewest tuples, and for each tuple its number among the
@@ -1841,11 +2029,8 @@ llvm::Error Builder::collectTopology() {
       set.members.push_back(pair.j);
       set.fields[sigma].values.push_back(pair.sigma);
       set.fields[epsilon].values.push_back(pair.epsilon * pair.scaleLJ);
-      set.fields[qq].values.push_back(coulombInternal *
-                                      topology.charges[pair.i] *
-                                      topology.charges[pair.j] *
-                                      pair.scaleCoulomb);
     }
+    fillPairProducts(set.fields[qq]);
   }
   // The virtual sites: the site, then the atoms that it is built from.
   for (auto [kind, name] :
@@ -1966,13 +2151,10 @@ llvm::Error Builder::collectTopology() {
     }
   }
 
-  mark.next("rebuild.build.topology.constants");
-  if (control.pme)
-    if (llvm::Error error = collectPME())
-      return error;
-  if (control.ljpme)
-    if (llvm::Error error = collectLJPME())
-      return error;
+}
+
+llvm::Error Builder::collectTopologyConstants() {
+  const Topology &topology = *system.topology;
   // The reaction field (D140): its self term, −c f Σ q² / 2, which with
   // the terms of the excluded pairs makes the field act on every pair of
   // charges within the cutoff, those of one molecule as well: the
@@ -2211,8 +2393,8 @@ Builder::getPairTail(unsigned index,
         values[entry.getKey()] = entry.getValue();
     // The integral is a function of the values of the names that the
     // expression reads, in their order, and of nothing else of the pair:
-    // one that was computed for these values, compared as bits, is taken,
-    // the same number to the bit.
+    // one that was computed for these values is taken, the same number to
+    // the bit.
     std::vector<uint64_t> key;
     for (const std::string &name : expression.getNames()) {
       auto found = values.find(name);
@@ -10306,6 +10488,9 @@ llvm::Error Builder::build() {
   } else if (llvm::Error error = collectParameters()) {
     return error;
   }
+  // A build of the arrays alone ends with them.
+  if (capture)
+    return llvm::Error::success();
   mark.next("rebuild.build.sets");
   // The polynomials of the tabulated functions, a row of 4ⁿ numbers for
   // each cell of a function of n arguments (D138, D165), or the values of a
@@ -10524,12 +10709,25 @@ void mdir::driver::keepDependentTerms(Control &control, const System &system) {
 }
 
 llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
-                                                   const System &system) {
+                                                   const System &system,
+                                                   const BuildKept *kept) {
   Program program;
   Builder builder(control, system, program);
+  builder.kept = kept;
   if (llvm::Error error = builder.build())
     return std::move(error);
   return std::move(program);
+}
+
+llvm::Expected<std::shared_ptr<BuildKept>>
+mdir::driver::buildArrays(const Control &control, const System &system) {
+  auto arrays = std::make_shared<BuildKept>();
+  Program program;
+  Builder builder(control, system, program);
+  builder.capture = arrays.get();
+  if (llvm::Error error = builder.build())
+    return std::move(error);
+  return arrays;
 }
 
 namespace {
@@ -10541,8 +10739,93 @@ bool sameBits(const std::vector<T> &a, const std::vector<T> &b) {
          (a.empty() ||
           std::memcmp(a.data(), b.data(), a.size() * sizeof(T)) == 0);
 }
+template <typename T>
+bool sameBits(const SharedArray<T> &a, const SharedArray<T> &b) {
+  return a.shares(b) || sameBits(a.get(), b.get());
+}
 bool sameBits(double a, double b) { return std::memcmp(&a, &b, sizeof a) == 0; }
 } // namespace
+
+bool mdir::driver::keepArraysOf(BuildKept &arrays, const Program &program) {
+  // The lists are those of the program, which may hold more after them
+  // (the tables of the mesh and of the tabulated functions).
+  if (arrays.fields.size() > program.fields.size() ||
+      arrays.tables.size() > program.tables.size() ||
+      arrays.tupleSets.size() != program.tupleSets.size() ||
+      arrays.gradientFields.size() != program.gradientFields.size())
+    return false;
+  arrays.kept = arrays.filled = 0;
+  auto keep = [&](Program::Field &field, const Program::Field &other) {
+    if (field.name != other.name || field.isInteger != other.isInteger)
+      return false;
+    if (sameBits(field.values, other.values)) {
+      field.values = other.values;
+      ++arrays.kept;
+    } else {
+      field.values.clear();
+      ++arrays.filled;
+    }
+    return true;
+  };
+  for (size_t k = 0; k != arrays.fields.size(); ++k)
+    if (!keep(arrays.fields[k], program.fields[k]))
+      return false;
+  for (size_t k = 0; k != arrays.tables.size(); ++k) {
+    Program::Table &table = arrays.tables[k];
+    const Program::Table &other = program.tables[k];
+    if (table.name != other.name || table.count != other.count ||
+        table.columns != other.columns)
+      return false;
+    if (sameBits(table.values, other.values)) {
+      ++arrays.kept;
+    } else {
+      table.values.clear();
+      ++arrays.filled;
+    }
+  }
+  for (size_t k = 0; k != arrays.tupleSets.size(); ++k) {
+    Program::TupleSet &set = arrays.tupleSets[k];
+    const Program::TupleSet &other = program.tupleSets[k];
+    // The members of a tuple set hold no value of a tunable.
+    if (set.name != other.name || set.arity != other.arity ||
+        set.reversible != other.reversible || set.oriented != other.oriented ||
+        set.fields.size() != other.fields.size() ||
+        !sameBits(set.members, other.members))
+      return false;
+    set.members = other.members;
+    ++arrays.kept;
+    for (size_t f = 0; f != set.fields.size(); ++f)
+      if (!keep(set.fields[f], other.fields[f]))
+        return false;
+  }
+  for (size_t k = 0; k != arrays.gradientFields.size(); ++k) {
+    Program::GradientField &field = arrays.gradientFields[k];
+    const Program::GradientField &other = program.gradientFields[k];
+    if (field.tunable != other.tunable || field.rows.size() != other.rows.size() ||
+        !sameBits(field.sites, other.sites))
+      return false;
+    for (size_t r = 0; r != field.rows.size(); ++r)
+      if (field.rows[r].site != other.rows[r].site ||
+          !sameBits(field.rows[r].scale, other.rows[r].scale))
+        return false;
+    field.sites = other.sites;
+    ++arrays.kept;
+  }
+  return true;
+}
+
+std::pair<size_t, size_t> mdir::driver::countArrays(const BuildKept &arrays) {
+  return {arrays.kept, arrays.filled};
+}
+
+bool mdir::driver::spoilArray(BuildKept &arrays) {
+  for (Program::Field &field : arrays.fields)
+    if (!field.values.empty() && !field.isInteger) {
+      field.values.edit()[0] += 1.0;
+      return true;
+    }
+  return false;
+}
 
 std::string mdir::driver::describeDifference(const Program &a,
                                              const Program &b) {
