@@ -544,6 +544,28 @@ format, or the outputs; every such change is listed under **Changed** or
   Python simulation is not changed). With `MDRT_CHECK_KEPT_TUPLES` set,
   the log of a run says at its end how many structures were built and how
   many taken as they were kept; without it the log is that of before.
+- **On a GPU the structures of the tuples are built on the device**
+  (D[device-tuples], #295). Where the particles are ordered anew (a
+  segment of `mdir run`, a start of a Python simulation after steps), the
+  renumbered members and the incidence structures are now built by
+  kernels of the program, from the structure in the order of the files,
+  whose rows are gathered and whose members are relabeled; the order is
+  compared on the device, and only a flag of 4 bytes reaches the host. On
+  one RTX 4090 in mixed precision a start in a new order of a Python
+  simulation with its evaluation takes 1.98 ms on JAC of the Amber suite,
+  5.67 ms on Factor IX, and 26.2 ms on Cellulose where it took 5.29, 18.1,
+  and 96.9 ms; `mdir run` with a checkpoint every 1,000 steps is 2.3% to
+  4.5% faster on the four systems and every 10,000 steps 0.2% to 0.6%; a
+  run without checkpoints keeps its rate and ends sooner by the build of
+  its start. The device holds 6% to 10% more than the incidence structures
+  (the members and an index of each tuple set: 71 MB on Cellulose, 152 MB
+  on STMV); the host holds less (735 MB at its peak on Cellulose where it
+  held 822 MB). Every number of a run is that of before to the bit, and
+  the CPU target does not change. The lowered text of the host's code of
+  every GPU program with tuples changes once; new kernels are compiled
+  once and kept in the compile cache. `MDRT_CHECK_KEPT_TUPLES` now also
+  compares every structure built on the device with the host's build, and
+  `MDRT_PROFILE` reports the bytes that the store keeps on the device.
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on

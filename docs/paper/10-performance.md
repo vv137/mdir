@@ -169,7 +169,20 @@ time they cost 4.5, 15, 78, and 238 ms; at $n = 10{,}000$ a run is 0.45%,
 0.88%, and 0.81% faster on Factor IX, Cellulose, and STMV, and at
 $n = 1000$ 3.5%, 5.0%, and 5.5%. The CPU target gains nothing that a run
 can see, since a step there costs 40 to 720 ms on these systems; what
-remains on a GPU is the build on the host and the upload (#295).
+remained on a GPU was the build on the host and the upload.
+
+On a device that build is now three kernels, a scatter and two gathers
+from the structure in the order of the files (Section 3.6,
+D[device-tuples]), and the order is compared there, so that a start in a
+new order copies 4 bytes between the host and the device. On the same
+device a start in a new order of a Python simulation with its evaluation
+takes 1.98 ms on JAC, 5.67 ms on Factor IX, and 26.2 ms on Cellulose
+where it took 5.29, 18.1, and 96.9 ms, and the functions of the store,
+the comparison and the launches included, 0.07, 0.17, and 1.8 ms of it;
+`mdir run` with a checkpoint every 1,000 steps is 2.3% to 4.5% faster on
+the four systems, and a run of the suite as it is, one segment, keeps its
+rate. The device holds the members and an index of each tuple set
+besides, 6% to 10% of the incidence structures.
 
 ## 10.5 Over long runs
 

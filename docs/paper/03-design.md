@@ -564,6 +564,22 @@ they are, and the segment builds, in the memory that the segment before
 gave back. A run therefore does the work it did before, less one build,
 in memory taken once.
 
+On a device the build itself moves there (D[device-tuples]). In the
+notation of Section 2 ($\pi$, $j_{t,k}$), the row of place $p$ of the
+incidence structure holds every pair $(t, k)$ of a tuple and a slot with
+$j'_{t,k} = p$, in the order of $t$; since $j'_{t,k} = \pi^{-1}(j_{t,k})$,
+these are the pairs with $j_{t,k} = \pi(p)$, the row of particle $\pi(p)$
+in the order of the files, in the same order. A row in a new order is
+therefore a row in the order of the files, gathered by $\pi$, with the
+members it copies relabeled by $\pi^{-1}$. The index of the tuples of each
+particle in the order of the files depends on the members alone, so the
+host builds it once; a start in a new order is then a scatter (the array
+$\pi^{-1}$ written from $\pi$) and two gathers, every element
+written by one thread, and the structure equals the host's element for
+element whatever the order of the threads. The identities are compared on
+the device with those of the last order, and only a flag reaches the
+host.
+
 A consumer such as PyTorch takes those buffers through DLPack without a
 copy (D220, `docs/python-dlpack.md`): a view of
 the positions, velocities, and forces in the order of the program and the

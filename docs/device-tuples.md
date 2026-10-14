@@ -1,6 +1,6 @@
-# The structures of the tuples built on the device (D[device-tuples], proposed)
+# The structures of the tuples built on the device (D[device-tuples])
 
-Issue #295; the design, for review before it is implemented. It builds on
+Issue #295; the design as ruled by the maintainer on PR #329 (all three questions as proposed). It builds on
 the store of D253 (`runtime/mdrt_tuples.h`), which a Python simulation and
 a frame evaluator keep across their activations and, with #316
 (D255, #316), `mdir run` across its segments. Section
@@ -217,15 +217,25 @@ members are new as well.
 
 `scripts/benchmarks/activation/start.py --only moved` (20 steps and
 `gradient()`, the steps subtracted; a start with its evaluation), `main`
-(b12ee87) and the prototype in turn six times in one job on one RTX 4090,
+(7bfa755) and this decision in turn six times in one job on one RTX 4090,
 mixed precision; the least of five starts, ms, the medians of the five
 rounds after the first:
 
-| System | main | Prototype | Of which the functions of the store |
+| System | main | This decision | Of which the functions of the store |
 |---|---|---|---|
-| JAC | 5.25 | 1.92 | 3.3 → 0.07 |
-| Factor IX | 18.0 | 5.5 | 12.2 → 0.17 |
-| Cellulose | 94.8 | 25.6 | 70.4 → 1.75 |
+| JAC | 5.29 | 1.98 | 3.3 → 0.07 |
+| Factor IX | 18.1 | 5.67 | 12.2 → 0.17 |
+| Cellulose | 96.9 | 26.2 | 70 → 1.8 |
+
+`mdir run` with the settings of the Amber suite, the same way, s a run
+(mean ± standard deviation of the five rounds after the first):
+
+| System | Checkpoint every 1,000 steps, five segments | every 10,000, two | The suite's own run, one segment, ms a step in its second half |
+|---|---|---|---|
+| JAC | 0.784 ± 0.005 → 0.766 ± 0.005 | 2.810 → 2.806 | 0.1400 → 0.1398 |
+| Factor IX | 1.970 ± 0.007 → 1.900 ± 0.007 | 7.092 → 7.080 | 0.3454 → 0.3454 |
+| Cellulose | 8.724 ± 0.015 → 8.330 ± 0.038 | 31.41 → 31.26 | 1.515 → 1.509 |
+| STMV | 27.41 ± 0.07 → 26.18 ± 0.03 | 100.76 → 100.15 | 4.810 → 4.813 |
 
 What remains of a start on Cellulose is not the tuples (1.75 ms in the
 functions of the store, with the comparison and the launches): it is the
@@ -319,7 +329,7 @@ of its own, and frees them.
 - **Keeping the identities' comparison on the host**, reading them back
   once a start (1.6 MB on Cellulose) instead of once a set: simpler, and
   0.1 to 0.7 ms; it leaves a copy where the issue asks for none
-  (a question for the maintainer).
+  (ruled on PR #329: compared on the device).
 - **Kernels in the runtime library** (PTX compiled with the toolkit at
   the build of MDIR): a second way of making kernels, which the build does
   not have; the lowering already emits every kernel.
