@@ -140,11 +140,13 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // as the kernels of the constraints alone do (#102).
        << (control.deterministic ? "deterministic=true explicit-fma=true "
                                  : "")
-       // The entry of an embedding front end runs in activations, which
-       // begin again and again in the same order of the particles: the
-       // runtime keeps the renumbered tuples and their incidence
-       // structures across them (D253).
-       << (control.segments ? "kept-tuples=true " : "")
+       // The renumbered tuples and their incidence structures are the
+       // runtime's, in a store of the program that runs the code: the
+       // entry of an embedding front end runs in activations, which begin
+       // again and again in the same order of the particles (D253), and a
+       // segment of `mdir run` builds in the memory of the one before
+       // (#316).
+       << "kept-tuples=true "
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        << "mdir-gpu-lower-to-nvvm{";
@@ -160,10 +162,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
 
   // Reductions summed over fixed chunks in a fixed order: the same bits
   // from run to run and for any number of threads (D171).
-  // The tuples of the entry of an embedding front end are the runtime's to
-  // keep across its activations (D253).
-  os << "md-exec-assign-storage,convert-md-exec-to-loops"
-     << (control.segments ? "{kept-tuples=true}" : "")
+  // The structures of the tuples are the runtime's to keep, across the
+  // activations of the entry of an embedding front end (D253) and across
+  // the segments of `mdir run` (#316).
+  os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true}"
      << ",fixed-order-reductions,";
   bool threaded = control.threads > 1;
   if (threaded)
