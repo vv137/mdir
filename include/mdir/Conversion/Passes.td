@@ -282,7 +282,12 @@ def ConvertMDExecToGPU
            "taken from the runtime (mdrtDeviceTuplesRenumber, "
            "mdrtDeviceTuplesIncidence, mdrtDeviceTuplesMembers), which keeps "
            "them across the activations of an embedding program "
-           "(D253) and the segments of mdir run (D255)">
+           "(D253) and the segments of mdir run (D255)">,
+    Option<"deviceTuples", "device-tuples", "bool", /*default=*/"false",
+           "With kept-tuples: whether the renumbered members and the "
+           "incidence structures are built on the device by kernels of the "
+           "module, in memory of the runtime's store, where it does not "
+           "take them as kept (D[device-tuples])">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",
