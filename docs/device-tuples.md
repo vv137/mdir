@@ -193,9 +193,65 @@ JAC, 8.5 MB on Factor IX, and 68 MB on Cellulose, against incidence
 structures of 42.6, 164.4, and 696.3 MB. On the host the store no longer
 needs the copy of the identities of each set and the renumbered members
 (1.2 MB on JAC, 28 MB on Cellulose of the 48 MB of D253), nor, on a
-device, the 16 MiB in which rows are written. The
-exact bytes of the four systems of the suite go in the description of the
-pull request when measured.
+device, the 16 MiB in which rows are written.
+
+Measured with the prototype (the store's own count, `MDRT_PROFILE`; a
+Python simulation of each system of the suite with PME, flexible, five
+tuple sets, mixed precision, outside the deterministic mode), bytes on the
+device:
+
+| System | Atoms | Incidence structures | Renumbered members | Members and indexes of the sets | Order (identities and place) | New |
+|---|---|---|---|---|---|---|
+| JAC | 23,558 | 42,592,864 | 704,244 | 2,583,912 | 188,468 | 2.77 MB, 6.5% |
+| Factor IX | 90,906 | 164,358,048 | 2,219,052 | 8,475,296 | 727,252 | 9.20 MB, 5.6% |
+| Cellulose | 408,609 | 696,269,736 | 19,895,616 | 67,859,048 | 3,268,876 | 71.1 MB, 10.2% |
+| STMV | 1,067,095 | 2,211,020,840 | 40,757,344 | 143,613,952 | 8,536,764 | 152.2 MB, 6.9% |
+
+The renumbered members replace the copy that the loops over tuples once
+read, of the same size, so what is new is the members and indexes of the
+sets and the order (the last column, against the incidence structures).
+In the deterministic mode, where there is no such copy, the renumbered
+members are new as well.
+
+## 5a. The cost of a start in a new order, measured
+
+`scripts/benchmarks/activation/start.py --only moved` (20 steps and
+`gradient()`, the steps subtracted; a start with its evaluation), `main`
+(b12ee87) and the prototype in turn six times in one job on one RTX 4090,
+mixed precision; the least of five starts, ms, the medians of the five
+rounds after the first:
+
+| System | main | Prototype | Of which the functions of the store |
+|---|---|---|---|
+| JAC | 5.25 | 1.92 | 3.3 → 0.07 |
+| Factor IX | 18.0 | 5.5 | 12.2 → 0.17 |
+| Cellulose | 94.8 | 25.6 | 70.4 → 1.75 |
+
+What remains of a start on Cellulose is not the tuples (1.75 ms in the
+functions of the store, with the comparison and the launches): it is the
+evaluation, the arguments of the entry, and the rest of D253's list.
+
+## 5b. Failures, the order of the stream, and the deterministic mode
+
+- **A kernel that fails.** The device runtime ends the process at the
+  first call that reports an error of the device (`check` in
+  `mdrt_cuda.c`), with the name of the last kernel launched; nothing of
+  the store survives the process. An activation that ends otherwise
+  between the launches and `mdrtDeviceTuplesBuilt` (D215's boundaries:
+  a part that is not numbers, a stop) leaves the entry invalid, since it
+  becomes valid only at that call, and `mdrtTupleStoreBegin` does not
+  change that: the next start in that order builds it again.
+- **The order of the stream.** The comparison, the three kernels, the
+  copy of the identities into the store (`cuMemcpyDtoDAsync`), and every
+  kernel of the program run on the one stream of the runtime. The
+  renumbered members that the loops over tuples once read are therefore
+  complete before the first of those kernels, as the rows are before the
+  loops over the incidence structure; no wait is needed.
+- **The deterministic mode** has no loops that evaluate each tuple once
+  (D84), so nothing reads the renumbered members there but the kernel of
+  the rows, on the same stream. The kernels are the same in both modes,
+  and none uses an atomic: the flag of the comparison is written with the
+  same value by every thread that writes it.
 
 ## 6. The check, and the CPU
 
