@@ -1484,6 +1484,25 @@ PYBIND11_MODULE(_core, m) {
         d[py::str(name)] = py::make_tuple(slice.seconds, slice.faults, slice.calls);
       return d;
     })
+    // (kept, anew): the programs that the updates of the tunables built
+    // from the model that the simulation keeps for them
+    // (D[update-cost]), and from a copy of the model of the compile; zeros
+    // before the first update. Private, for the tests and the measurements:
+    // it may change or go.
+    .def_property_readonly("_tunable_builds", [](const PySimulation &s) {
+      auto counts = s.simulation->getTunableBuilds();
+      return py::make_tuple(counts[0], counts[1]);
+    })
+    // False: every update of the tunables builds its program from a copy of
+    // the model of the compile. Private, for the tests and the
+    // measurements, which compare the two.
+    .def_property("_keep_model",
+                  [](const PySimulation &s) { return s.simulation->getKeepsModel(); },
+                  [](PySimulation &s, bool keeps) { s.simulation->setKeepsModel(keeps); })
+    // Writes over one number of the kept model that no tunable owns, as a
+    // defect would. Private, for the test of the comparison of
+    // MDRT_CHECK_KEPT_TUPLES.
+    .def("_spoil_kept_model", [](PySimulation &s) { return s.simulation->spoilKeptModel(); })
     // The evaluation of stored frames (D240,
     // docs/python-frames.md), for `mdir.FrameEvaluator`: `positions` is
     // (k, N, 3) float64 in nm in the order of the input, `cells` and

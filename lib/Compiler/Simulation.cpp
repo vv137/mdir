@@ -399,6 +399,12 @@ std::tuple<int64_t, int64_t, double> Simulation::getKeptTuples() const {
   return {counts[0], counts[1], seconds};
 }
 
+std::array<int64_t, 2> Simulation::getTunableBuilds() const {
+  if (!tuned)
+    return {0, 0};
+  return {tuned->keptBuilds, tuned->anewBuilds};
+}
+
 const std::string &Simulation::getProgramText() const {
   return compiled->program.module;
 }
@@ -2350,28 +2356,121 @@ llvm::Error Simulation::updateTunables(
 }
 
 llvm::Expected<Program>
-Simulation::rebuildTunables(const std::vector<std::vector<double>> &values) {
-  const model::TunableSet &set = prepared.tunables;
-  // The values of the program, built from the model with the new values by
-  // the code that compiled it: everything that depends on them, and the
-  // same program, or the change is structural.
-  HostProfile::Scope profiled(hostTimes);
-  HostMark whole("rebuild");
+Simulation::buildAnew(const std::vector<std::vector<double>> &values) {
+  // A copy of the model of the compile with the values in it, and every
+  // array, constant, and line of the program from it.
   HostMark mark("rebuild.copy");
   Control control = compiled->control;
   System system = compiledSystem;
   mark.next("rebuild.apply");
-  if (llvm::Error error = model::applyTunables(set, values, control, system))
+  if (llvm::Error error =
+          model::applyTunables(prepared.tunables, values, control, system))
     return error;
-  // The width of the neighbor structures is the compiled program's: counting
-  // the neighbors anew took 0.8 s of the 0.81 s of an update on JAC.
   control.neighborWidth = compiled->program.neighborWidth;
   mark.next("rebuild.build");
   auto program = buildProgram(control, system);
   if (!program)
     return inputError("the new values of the tunables: " +
                       llvm::toString(program.takeError()));
-  mark.next("rebuild.compare");
+  return program;
+}
+
+void Simulation::keepModel() {
+  if (tuned)
+    return;
+  // The model that the values are put into is the simulation's own: the
+  // control and the system of the compile with a topology that nothing
+  // else holds, made at the first update and written in place at each
+  // (D[update-cost]). A copy of both at every update, with the topology,
+  // took 62 of the 220 ms of an update of 408,609 atoms.
+  tuned = std::make_shared<Tuned>();
+  tuned->control = compiled->control;
+  tuned->system = compiledSystem;
+  tuned->system.topology = std::make_shared<Topology>(*compiledSystem.topology);
+  // The width of the neighbor structures is the compiled program's:
+  // counting the neighbors anew took 0.8 s of the 0.81 s of an update on
+  // JAC.
+  tuned->control.neighborWidth = compiled->program.neighborWidth;
+}
+
+bool Simulation::spoilKeptModel() {
+  if (prepared.tunables.empty())
+    return false;
+  keepModel();
+  Topology &topology = *tuned->system.topology;
+  if (topology.bonds.empty())
+    return false;
+  topology.bonds.front().r0 += 0.01;
+  return true;
+}
+
+llvm::Expected<Program>
+Simulation::buildTuned(const std::vector<std::vector<double>> &values) {
+  const model::TunableSet &set = prepared.tunables;
+  // Nothing that is not allowed is put into the model.
+  if (llvm::Error error = model::checkTunableValues(set, values))
+    return error;
+  HostMark mark("rebuild.model");
+  keepModel();
+  if (tuned->differs) {
+    ++tuned->anewBuilds;
+    return buildAnew(values);
+  }
+  Control &control = tuned->control;
+  System &system = tuned->system;
+  mark.next("rebuild.apply");
+  if (llvm::Error error =
+          model::applyTunablesInPlace(set, values, control, system))
+    return error;
+  mark.next("rebuild.build");
+  auto program = buildProgram(control, system);
+  if (!program)
+    program = inputError("the new values of the tunables: " +
+                         llvm::toString(program.takeError()));
+  ++tuned->keptBuilds;
+  // With MDRT_CHECK_KEPT_TUPLES the program is also built as before
+  // D[update-cost], from a copy of the model of the compile with the values
+  // put into it, and the two are compared, member for member and to the
+  // bit. A difference is a defect of mdir: the update fails and names it,
+  // and the simulation uses its kept model no more.
+  if (std::getenv("MDRT_CHECK_KEPT_TUPLES")) {
+    HostMark checking("rebuild.check");
+    auto anew = buildAnew(values);
+    std::string difference;
+    if (anew && program)
+      difference = describeDifference(*program, *anew);
+    else if (anew || program)
+      difference = anew ? "only the model of the compile gives a program"
+                        : "only the kept model gives a program";
+    if (!difference.empty()) {
+      tuned->differs = true;
+      if (!anew)
+        llvm::consumeError(anew.takeError());
+      if (!program)
+        llvm::consumeError(program.takeError());
+      return simulationError("the program built from the model that the "
+                             "simulation keeps for its updates differs from "
+                             "the one built from a copy of the model of the "
+                             "compile (" + difference +
+                             "); this is a defect of mdir");
+    }
+    if (!anew)
+      llvm::consumeError(anew.takeError());
+  }
+  return program;
+}
+
+llvm::Expected<Program>
+Simulation::rebuildTunables(const std::vector<std::vector<double>> &values) {
+  // The values of the program, built from the model with the new values by
+  // the code that compiled it: everything that depends on them, and the
+  // same program, or the change is structural.
+  HostProfile::Scope profiled(hostTimes);
+  HostMark whole("rebuild");
+  auto program = keepsModel ? buildTuned(values) : buildAnew(values);
+  if (!program)
+    return program.takeError();
+  HostMark mark("rebuild.compare");
   if (program->module != compiled->program.module) {
     StringRef was = compiled->program.module, now = program->module;
     size_t at = 0;

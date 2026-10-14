@@ -355,15 +355,26 @@ llvm::Error mdir::model::checkTunableValues(
   return llvm::Error::success();
 }
 
-llvm::Error mdir::model::applyTunables(
-    const TunableSet &set, const std::vector<std::vector<double>> &values,
-    driver::Control &control, driver::System &system) {
+namespace {
+enum class Apply {
+  /// Into a copy of the topology.
+  Copy,
+  /// Into the topology of the system, which nothing else holds.
+  InPlace
+};
+}
+
+static llvm::Error apply(Apply mode, const TunableSet &set,
+                         const std::vector<std::vector<double>> &values,
+                         driver::Control &control, driver::System &system) {
   if (set.empty())
     return llvm::Error::success();
   if (llvm::Error error = checkTunableValues(set, values))
     return error;
   driver::HostMark mark("rebuild.apply.topology");
-  auto topology = std::make_shared<driver::Topology>(*system.topology);
+  std::shared_ptr<driver::Topology> topology =
+      mode == Apply::Copy ? std::make_shared<driver::Topology>(*system.topology)
+                          : system.topology;
   mark.next("rebuild.apply.values");
   size_t types = topology->getNumTypes();
   std::vector<double> sigma = set.typeSigma, epsilon = set.typeEpsilon;
@@ -485,7 +496,6 @@ llvm::Error mdir::model::applyTunables(
     }
     system.tunableSeedWeights.push_back(std::move(weights));
   }
-  mark.next("rebuild.apply.release");
   system.topology = std::move(topology);
   // The tails of the pair terms (D209), whose classes of particles and
   // values follow the charges, the table, and the constants.
@@ -502,4 +512,16 @@ llvm::Error mdir::model::applyTunables(
                                        "dispersion would take it in") +
                    "; that changes the program: compile it with these values");
   return llvm::Error::success();
+}
+
+llvm::Error mdir::model::applyTunables(
+    const TunableSet &set, const std::vector<std::vector<double>> &values,
+    driver::Control &control, driver::System &system) {
+  return apply(Apply::Copy, set, values, control, system);
+}
+
+llvm::Error mdir::model::applyTunablesInPlace(
+    const TunableSet &set, const std::vector<std::vector<double>> &values,
+    driver::Control &control, driver::System &system) {
+  return apply(Apply::InPlace, set, values, control, system);
 }

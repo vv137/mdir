@@ -27,7 +27,24 @@ Usage:
   start.py PRMTOP INPCRD [PRMTOP INPCRD ...] [--target GPU]
            [--precision Mixed] [--repeats 5] [--steps 20] [--input-order]
            [--deterministic] [--no-keep] [--only gradient|update|moved]
-           [--long N]
+           [--long N] [--tunable pair|pair-tail|lj|charge|tuple|all]
+           [--marks] [--alone]
+
+`--tunable` chooses what is tunable, since what an update costs follows
+what its values enter (#324, D[update-cost]): `pair`, the length of the
+pair term (the default); `pair-tail`, the same with the tail of the term
+in the correction for the dispersion, under a shift at the cutoff; `lj`,
+sigma and epsilon of the types with Lennard-Jones, with the correction;
+`charge`, the charges; `tuple`, the constant of a weak spring on every
+bond; `all`, the four together. An update alternates between the values of
+the model and values 0.1% from them. With `--alone` the updates are also
+timed without the `gradient()` after them. With `--marks` each line is
+followed by where the host spent the time of the call
+(`Simulation._host_times`, private): the build of the program anew
+(`rebuild`) with its parts, the copy of the state from the activation
+(`download`), the end of an activation (`end`), and the arguments
+(`start.arguments`), the stack and the records (`start.open`), and the
+program (`start.program`) of each start.
 
 With `--long N` one run of N steps follows, with its ms per step and ns
 per day: the rate of a plain run, which a change of the starts must leave.
@@ -220,6 +237,10 @@ def measure(prmtop, inpcrd):
             report(f"update alone ({args.tunable})",
                    [timed(lambda: sim.tunables.update(values[k % 2]))
                     for k in range(args.repeats)])
+        if hasattr(sim, "_tunable_builds"):
+            kept, copied = sim._tunable_builds
+            print(f"the updates: {kept} programs built from the model that the simulation "
+                  f"keeps, {copied} from a copy of the model of the compile", flush=True)
 
     if args.only in (None, "moved"):
         def moved():

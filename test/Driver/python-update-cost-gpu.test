@@ -1,0 +1,16 @@
+# REQUIRES: python-api, cuda
+# The model that a simulation keeps for the updates of its tunables
+# (D[update-cost], #324), Inputs/python_update_cost.py, on a GPU: a
+# sequence of updates of every kind of tunable against a simulation whose
+# updates copy the model of the compile, with every program that is built
+# from the kept model also built from a copy and compared
+# (MDRT_CHECK_KEPT_TUPLES), and a number of the kept model that is written
+# over.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_update_cost.py updates %S/Inputs/dipeptide GPU %t | FileCheck %s
+# RUN: env MDRT_CHECK_KEPT_TUPLES=1 %mdir_python %S/Inputs/python_update_cost.py loud %S/Inputs/dipeptide GPU | FileCheck %s --check-prefix=LOUD
+# CHECK: GPU Double: 203 states, energies, and derivatives over 22 updates of each tunable alone and of all, between steps, a commit, a refusal, a checkpoint with a run continued from it, and a frame evaluator equal those of a simulation whose updates copy the model of the compile, to the bit; 23 programs built from the kept model, each compared with one built from a copy
+# CHECK: GPU Mixed: 203 states, energies, and derivatives over 22 updates of each tunable alone and of all, between steps, a commit, a refusal, a checkpoint with a run continued from it, and a frame evaluator equal those of a simulation whose updates copy the model of the compile, to the bit; 23 programs built from the kept model, each compared with one built from a copy
+# CHECK: update cost updates GPU passed
+# LOUD: GPU: a number of the kept model that was written over is found by the comparison with a build from a copy of the model of the compile, which fails the update and names it; the simulation builds from a copy from then on, with the results of one that was not spoiled
+# LOUD: update cost loud GPU passed
