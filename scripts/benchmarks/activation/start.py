@@ -238,9 +238,9 @@ def measure(prmtop, inpcrd):
                    [timed(lambda: sim.tunables.update(values[k % 2]))
                     for k in range(args.repeats)])
         if hasattr(sim, "_tunable_builds"):
-            kept, copied = sim._tunable_builds
-            print(f"the updates: {kept} programs built from the model that the simulation "
-                  f"keeps, {copied} from a copy of the model of the compile", flush=True)
+            print(f"the updates: programs built from the model that the simulation keeps, "
+                  f"and from a copy of the model of the compile: "
+                  f"{tuple(sim._tunable_builds)}", flush=True)
 
     if args.only in (None, "moved"):
         def moved():
