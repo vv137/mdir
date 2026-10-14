@@ -496,7 +496,12 @@ format, or the outputs; every such change is listed under **Changed** or
   repeated for every pair of classes of particles. A simulation now keeps
   one copy of its model for its updates and writes the values into it in
   place, a tuple set is found disjoint in one pass over its members, and a
-  build computes each integral of a tail once. Nothing of the interface
+  build computes each integral of a tail once. An update with its
+  `gradient()` now takes 5.4, 16, and 87 ms with a constant of a pair term
+  tunable, 8.1, 22, and 112 ms with its tail in the correction, and 13, 43,
+  and 212 ms with charges, Lennard-Jones, a pair constant, and a tuple
+  parameter all tunable (where it took 127, 216, and 376 ms); a start alone
+  and the rate of a step are unchanged. Nothing of the interface
   changes and no number: every state, force, energy, and derivative of a
   sequence of updates of every kind of tunable equals that of before to
   the bit, on the CPU and a GPU, in double and mixed precision, in the

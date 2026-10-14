@@ -146,8 +146,15 @@ precision, where the upload goes with the build, a start with its
 evaluation at which the particles have not moved takes 2.0, 6.1, and 30
 ms on the three systems where it took 5.0, 61, and 413 ms, and one in a
 new order 5.1, 17, and 98 ms where it took 5.0, 58, and 387 ms. An update
-of the parameters with its evaluation takes 8.3, 30, and 203 ms where it
-took 15, 135, and 867 ms; its two starts are now the smaller part of it.
+of the parameters with its evaluation took 8.3, 30, and 203 ms where it
+took 15, 135, and 867 ms, its two starts the smaller part of it: the rest
+was a sort of the members of every tuple set, copies of the model, and
+quadratures of the tails repeated for every pair of classes of particles.
+Since D[update-cost] the simulation writes the values into a model that it
+keeps, the sort is one pass, and a build computes each quadrature once; on
+one RTX 4090 an update with its evaluation takes 5.4, 16, and 87 ms where
+it took 8.4, 31, and 204 ms, and 8.1, 22, and 112 ms where it took 121,
+189, and 259 ms with the tail of a pair term in the correction.
 
 ## 10.5 Over long runs
 
