@@ -2836,20 +2836,38 @@ llvm::Error Builder::collectProlate() {
   bool automatic = control.pmeGrid[0] == 0 && control.pmeMaxSpacing == 0.0;
   double aliasing = prolate::getAliasing(psi, window, edges, grid, rc);
   double bound = 0.5 * epsilon;
-  for (int round = 0; automatic && aliasing > bound; ++round) {
-    if (round == 64)
+  int64_t start[3] = {grid[0], grid[1], grid[2]};
+  double spacing = 0.0;
+  for (int k = 0; k != 3; ++k)
+    spacing = std::max(spacing, edges[k] / static_cast<double>(grid[k]));
+  while (automatic && aliasing > bound) {
+    // Twice the grid of eq. 15 on every axis and still above: the estimate
+    // is near the floor that the tail of the window sets, which a finer
+    // grid lowers only slowly (at ε = 1e-9 with 8 points: 8.4e-8 at twice
+    // the grid, 6.4e-10 at ten times, against 5e-10).
+    if (grid[0] >= 2 * start[0] && grid[1] >= 2 * start[1] &&
+        grid[2] >= 2 * start[2])
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "the grid of the prolate kernel does not reach half the tolerance "
-          "%g of [pme] by its aliasing estimate (%g at %lld × %lld × %lld "
-          "points); give 'grid', or more points of the window in 'order'",
-          epsilon, aliasing, static_cast<long long>(grid[0]),
-          static_cast<long long>(grid[1]), static_cast<long long>(grid[2]));
+          "the aliasing estimate of the prolate kernel with %lld points of "
+          "the window stays above half the tolerance %g of [pme] on every "
+          "grid: it is %g at %lld × %lld × %lld points, twice the grid of "
+          "eq. 15, and falls only slowly beyond it, toward the floor that "
+          "the tail of the window sets; %s",
+          static_cast<long long>(points), epsilon, aliasing,
+          static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
+          static_cast<long long>(grid[2]),
+          points < 8 ? "give more points of the window in 'order' (up to 8), "
+                       "a looser 'tolerance', or 'grid'"
+                     : "8 points are the most; give a looser 'tolerance', or "
+                       "the grid in 'grid'");
     // One spacing for the three axes, made finer by the least that adds a
-    // point to some axis, so that the grid stays in proportion to the edges.
-    double spacing = 0.0;
+    // point to some axis, and by at least 2%, so that the grid stays in
+    // proportion to the edges.
+    double finer = 0.0;
     for (int k = 0; k != 3; ++k)
-      spacing = std::max(spacing, edges[k] / static_cast<double>(grid[k] + 1));
+      finer = std::max(finer, edges[k] / static_cast<double>(grid[k] + 1));
+    spacing = std::min(finer, 0.98 * spacing);
     for (int k = 0; k != 3; ++k)
       grid[k] = getSmoothSize(
           static_cast<int64_t>(std::ceil(edges[k] / spacing - 1e-9)));

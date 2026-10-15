@@ -1,6 +1,6 @@
 # The keys of [pme] for the prolate kernel (D[prolate-ewald]): what belongs
 # to the other kernel is refused, not ignored, and so is an order of the
-# window outside 5 to 8.
+# window outside 5 to 8, and a tolerance that the automatic grid cannot meet.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
@@ -26,6 +26,14 @@
 # RUN: sed 's/^#PME$/kernel = "ELLIPTIC"/' %t/base.toml > %t/kernel.toml
 # RUN: not mdir run %t/kernel.toml 2>&1 | FileCheck %s --check-prefix=KERNEL
 # KERNEL: expected one of GAUSSIAN, PROLATE for 'kernel', got 'ELLIPTIC'
+# A tolerance that the aliasing estimate of the window does not reach
+# below half of it on twice the grid of eq. 15: refused, with what to do.
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ntolerance = 1e-9\norder = 8/' %t/base.toml > %t/floor8.toml
+# RUN: not mdir run %t/floor8.toml 2>&1 | FileCheck %s --check-prefix=FLOOR8
+# FLOOR8: the aliasing estimate of the prolate kernel with 8 points of the window stays above half the tolerance 1e-09 of [pme] on every grid: it is {{.*}} points, twice the grid of eq. 15, and falls only slowly beyond it, toward the floor that the tail of the window sets; 8 points are the most; give a looser 'tolerance', or the grid in 'grid'
+# RUN: sed 's/^#PME$/kernel = "PROLATE"\ntolerance = 1e-9\norder = 5/' %t/base.toml > %t/floor5.toml
+# RUN: not mdir run %t/floor5.toml 2>&1 | FileCheck %s --check-prefix=FLOOR5
+# FLOOR5: with 5 points of the window stays above half the tolerance 1e-09 of [pme] on every grid: {{.*}}; give more points of the window in 'order' (up to 8), a looser 'tolerance', or 'grid'
 
 #--- run.toml
 [input]
