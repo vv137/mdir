@@ -127,7 +127,11 @@ std::string mdir::compiler::getPipeline(const Control &control,
     // Kernels in f32 look their tables up in f32.
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")
-       << "},md-exec-assign-streams,convert-md-exec-to-gpu{"
+       << "},md-exec-assign-streams"
+       // EXPERIMENT (#345, not for merging): MDIR_EXP_PME_STREAM=1 runs
+       // the reciprocal sums on a second stream (D81, D87), to time it.
+       << (std::getenv("MDIR_EXP_PME_STREAM") ? "{reciprocal=true}" : "")
+       << ",convert-md-exec-to-gpu{"
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes. LLVM contracts a product
        // into a fused multiply-add only where it has one use, and the

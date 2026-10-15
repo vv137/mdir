@@ -16,6 +16,8 @@
 #include "mlir/IR/TypeUtilities.h"
 #include "llvm/ADT/StringExtras.h"
 
+#include <cstdlib>
+
 using namespace mlir;
 using namespace mdir;
 using namespace mdir::kernels;
@@ -460,10 +462,343 @@ static Value fromComponents(OpBuilder &b, Location loc, Type type,
 static void emitAtomicAdd(OpBuilder &b, Location loc, Value value,
                           Value buffer, Value row);
 
+// EXPERIMENT (#345, not for merging): MDIR_EXP_PAIR_LOOP selects a variant
+// of the loop over groups, to time it:
+//   noshuffle   the values and forces of the entries do not turn (wrong
+//               results; an upper bound of what the shuffles cost);
+//   bcast       each lane keeps its entry for the round, the particles of
+//               the group come by a broadcast shuffle from their lane, their
+//               forces are kept in registers, 16 of them, and reduced once
+//               a unit (a reduce-scatter over the warp);
+//   bcast-load  the same, the particles of the group read by loads of one
+//               address for the whole warp instead of shuffles.
+static StringRef getPairLoopExperiment() {
+  static const char *experiment = std::getenv("MDIR_EXP_PAIR_LOOP");
+  return experiment ? StringRef(experiment) : StringRef();
+}
+
+static SmallVector<Value> emitGroupPairKernelBroadcast(
+    OpBuilder &builder, md_exec::PairForOp op, const GroupLists &lists,
+    const PairLayout &layout, Value box, Value unit, Value lane,
+    IRMapping &local, bool loads) {
+  Location loc = op.getLoc();
+  Block &kernel = op.getKernel().front();
+  Operation *yield = kernel.getTerminator();
+  unsigned numIns = op.getIns().size();
+  unsigned numOuts = op.getOuts().size();
+  unsigned numYields = yield->getNumOperands();
+  Type computed = kernel.getArgument(0).getType();
+  double cutoff = op.getCutoff().convertToDouble();
+  Value cutoff2 = createCutoff2(builder, loc, computed, cutoff);
+  Type i32 = builder.getI32Type();
+  auto constant32 = [&](OpBuilder &b, int64_t v) -> Value {
+    return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
+  };
+  auto toIndex = [&](OpBuilder &b, Value v) -> Value {
+    return arith::IndexCastOp::create(b, loc, b.getIndexType(), v);
+  };
+  Value width = constant32(builder, 32);
+  auto shuffleWith = [&](OpBuilder &b, Value value, Value offset,
+                         gpu::ShuffleMode mode) -> Value {
+    SmallVector<Value> parts = getComponents(b, loc, value);
+    for (Value &part : parts)
+      part = gpu::ShuffleOp::create(b, loc, part, offset, width, mode)
+                 .getShuffleResult();
+    return fromComponents(b, loc, value.getType(), parts);
+  };
+
+  Value group = memref::LoadOp::create(builder, loc, lists.units,
+                                       ValueRange{unit});
+  Value k = memref::LoadOp::create(builder, loc, lists.ordinals,
+                                   ValueRange{unit});
+  Value groupIndex = toIndex(builder, group);
+  Value begin, end;
+  if (lists.blockCounts) {
+    begin = constant32(builder, 0);
+    end = memref::LoadOp::create(builder, loc, lists.blockCounts,
+                                 ValueRange{unit});
+  } else {
+    Value count = memref::LoadOp::create(builder, loc, lists.counts,
+                                         ValueRange{groupIndex});
+    begin = arith::MulIOp::create(builder, loc, k, constant32(builder, 64));
+    end = arith::MinSIOp::create(
+        builder, loc, count,
+        arith::AddIOp::create(builder, loc, begin, constant32(builder, 64)));
+  }
+  Value lane32 = arith::IndexCastOp::create(builder, loc, i32, lane);
+  Value u = arith::AndIOp::create(builder, loc, lane32, constant32(builder, 15));
+  Value base32 =
+      arith::MulIOp::create(builder, loc, group, constant32(builder, 16));
+  Value mine = toIndex(builder, arith::AddIOp::create(builder, loc, base32, u));
+  Value myPosition;
+  SmallVector<Value> myValues;
+  if (!loads) {
+    myPosition = loadElement(builder, loc, layout.positions, mine);
+    for (Value buffer : layout.ins)
+      myValues.push_back(loadElement(builder, loc, buffer, mine));
+  }
+
+  auto getNarrow = [&](unsigned i) -> Value {
+    if (i < numOuts)
+      return Value();
+    auto widen = yield->getOperand(i).getDefiningOp<arith::ExtFOp>();
+    if (!widen || widen->getBlock() != &kernel)
+      return Value();
+    return widen.getIn();
+  };
+  auto yieldType = [&](unsigned i) {
+    Value narrow = getNarrow(i);
+    return narrow ? narrow.getType() : yield->getOperand(i).getType();
+  };
+  // The carried values: the forces of the 16 particles of the group, out
+  // by out, then the sums.
+  SmallVector<Value> initial;
+  for (unsigned i = 0; i != numOuts; ++i)
+    for (int p = 0; p != 16; ++p)
+      initial.push_back(createZero(builder, loc, yieldType(i)));
+  for (unsigned i = numOuts; i != numYields; ++i)
+    initial.push_back(createZero(builder, loc, yieldType(i)));
+
+  Value blockBase = arith::MulIOp::create(builder, loc, unit,
+                                          createIndex(builder, loc, 64));
+  Value first = toIndex(builder, begin);
+  Value last = toIndex(builder, end);
+  Value step32 = createIndex(builder, loc, 32);
+  auto rounds = scf::ForOp::create(
+      builder, loc, first, last, step32, initial,
+      [&](OpBuilder &b, Location, Value e0, ValueRange acc) {
+        Value e = arith::AddIOp::create(b, loc, e0, lane);
+        Value has = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
+                                          e, last);
+        Value safe = arith::SelectOp::create(b, loc, has, e, first);
+        Value at = arith::AddIOp::create(
+            b, loc, arith::SubIOp::create(b, loc, safe, first), blockBase);
+        Value place32 =
+            memref::LoadOp::create(b, loc, lists.entries, ValueRange{at});
+        Value mask = arith::SelectOp::create(
+            b, loc, has,
+            memref::LoadOp::create(b, loc, lists.masks, ValueRange{at}),
+            constant32(b, 0));
+        Value place = toIndex(b, place32);
+        Value position = loadElement(b, loc, layout.positions, place);
+        {
+          auto positionType = cast<VectorType>(position.getType());
+          Type element = positionType.getElementType();
+          int64_t bitsWidth = getEntryShiftBits(isTriclinic(box));
+          int64_t offset = getEntryShiftOffset(isTriclinic(box));
+          SmallVector<Value> cells;
+          for (int64_t axis = 0; axis != 3; ++axis) {
+            Value bits = arith::AndIOp::create(
+                b, loc,
+                arith::ShRUIOp::create(b, loc, mask,
+                                       constant32(b, 16 + bitsWidth * axis)),
+                constant32(b, (1 << bitsWidth) - 1));
+            cells.push_back(arith::SIToFPOp::create(
+                b, loc, element,
+                arith::SubIOp::create(b, loc, bits, constant32(b, offset))));
+          }
+          Value shift = emitLatticeShift(
+              b, loc,
+              vector::FromElementsOp::create(b, loc, positionType, cells),
+              convertReal(b, loc, box, element));
+          position = arith::AddFOp::create(b, loc, position, shift);
+        }
+        SmallVector<Value> values;
+        for (Value buffer : layout.ins)
+          values.push_back(loadElement(b, loc, buffer, place));
+
+        SmallVector<Value> own(acc.begin(), acc.begin() + 16 * numOuts);
+        SmallVector<Value> sums(acc.begin() + 16 * numOuts, acc.end());
+        SmallVector<Value> received;
+        for (unsigned i = 0; i != numOuts; ++i)
+          received.push_back(createZero(b, loc, yieldType(i)));
+        // 16 steps, unrolled: at step p every lane pairs its entry with
+        // particle p of the group.
+        for (int p = 0; p != 16; ++p) {
+          Value iPosition;
+          SmallVector<Value> iValues;
+          if (loads) {
+            Value at = toIndex(
+                b, arith::AddIOp::create(b, loc, base32, constant32(b, p)));
+            iPosition = loadElement(b, loc, layout.positions, at);
+            for (Value buffer : layout.ins)
+              iValues.push_back(loadElement(b, loc, buffer, at));
+          } else {
+            Value source = constant32(b, p);
+            iPosition = shuffleWith(b, myPosition, source,
+                                    gpu::ShuffleMode::IDX);
+            for (Value value : myValues)
+              iValues.push_back(
+                  shuffleWith(b, value, source, gpu::ShuffleMode::IDX));
+          }
+          Value paired = arith::CmpIOp::create(
+              b, loc, arith::CmpIPredicate::ne,
+              arith::AndIOp::create(b, loc, mask, constant32(b, 1 << p)),
+              constant32(b, 0));
+          Value d = convertReal(
+              b, loc, arith::SubFOp::create(b, loc, iPosition, position),
+              computed);
+          Value squares = arith::MulFOp::create(b, loc, d, d);
+          Value distance2 = vector::ReductionOp::create(
+              b, loc, vector::CombiningKind::ADD, squares);
+          Value r2 = arith::SelectOp::create(
+              b, loc, paired, distance2,
+              createReal(b, loc, computed, 4.0 * cutoff * cutoff));
+          IRMapping inside = local;
+          inside.map(kernel.getArgument(0), r2);
+          inside.map(kernel.getArgument(1), d);
+          for (unsigned i = 0; i != numIns; ++i) {
+            inside.map(kernel.getArgument(2 + 2 * i), iValues[i]);
+            inside.map(kernel.getArgument(3 + 2 * i), values[i]);
+          }
+          for (Operation &nested : kernel.without_terminator())
+            b.clone(nested, inside);
+          Value within = arith::CmpFOp::create(
+              b, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
+          for (unsigned i = 0; i != numYields; ++i) {
+            Value narrow = getNarrow(i);
+            Value value =
+                inside.lookupOrDefault(narrow ? narrow : yield->getOperand(i));
+            Value masked = arith::SelectOp::create(
+                b, loc, within, value, createZero(b, loc, value.getType()));
+            if (i < numOuts) {
+              Value &mineAcc = own[16 * i + p];
+              mineAcc = arith::AddFOp::create(b, loc, mineAcc, masked);
+              bool antisymmetric =
+                  op.getExchange(i) == md::Exchange::Antisymmetric;
+              received[i] =
+                  antisymmetric
+                      ? arith::SubFOp::create(b, loc, received[i], masked)
+                            .getResult()
+                      : arith::AddFOp::create(b, loc, received[i], masked)
+                            .getResult();
+            } else {
+              Value &sum = sums[i - numOuts];
+              sum = arith::AddFOp::create(b, loc, sum, masked);
+            }
+          }
+        }
+        Value particle32 = memref::LoadOp::create(b, loc, lists.order,
+                                                  ValueRange{place});
+        Value real = arith::AndIOp::create(
+            b, loc, has,
+            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sge,
+                                  particle32, constant32(b, 0)));
+        scf::IfOp::create(b, loc, real, [&](OpBuilder &then, Location) {
+          Value particle = toIndex(then, particle32);
+          for (unsigned i = 0; i != numOuts; ++i) {
+            Value destination = op.getOuts()[i];
+            Type stored = getElementTypeOrSelf(destination.getType());
+            emitAtomicAdd(then, loc, convertReal(then, loc, received[i], stored),
+                          destination, particle);
+          }
+          scf::YieldOp::create(then, loc);
+        });
+        SmallVector<Value> next(own);
+        next.append(sums.begin(), sums.end());
+        scf::YieldOp::create(b, loc, next);
+      });
+
+  // The forces of the 16 particles, a reduce-scatter over the warp: at
+  // offsets 16, 8, 4, 2 each lane keeps half of what it holds and adds its
+  // partner's; lane l then holds particle (l >> 1) & 15, as lane l ^ 1
+  // does after the last exchange.
+  ValueRange results = rounds.getResults();
+  SmallVector<Value> totals;
+  for (unsigned i = 0; i != numOuts; ++i) {
+    SmallVector<Value> held(results.begin() + 16 * i,
+                            results.begin() + 16 * (i + 1));
+    for (int64_t offset = 16; offset >= 2; offset /= 2) {
+      Value upper = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::ne,
+          arith::AndIOp::create(builder, loc, lane32,
+                                constant32(builder, offset)),
+          constant32(builder, 0));
+      size_t half = held.size() / 2;
+      SmallVector<Value> kept;
+      for (size_t q = 0; q != half; ++q) {
+        Value low = held[q], high = held[q + half];
+        Value send = arith::SelectOp::create(builder, loc, upper, low, high);
+        Value keep = arith::SelectOp::create(builder, loc, upper, high, low);
+        kept.push_back(arith::AddFOp::create(
+            builder, loc, keep,
+            shuffleWith(builder, send, constant32(builder, offset),
+                        gpu::ShuffleMode::XOR)));
+      }
+      held = kept;
+    }
+    totals.push_back(arith::AddFOp::create(
+        builder, loc, held[0],
+        shuffleWith(builder, held[0], constant32(builder, 1),
+                    gpu::ShuffleMode::XOR)));
+  }
+  Value which = arith::AndIOp::create(
+      builder, loc,
+      arith::ShRUIOp::create(builder, loc, lane32, constant32(builder, 1)),
+      constant32(builder, 15));
+  Value held32 = arith::AddIOp::create(builder, loc, base32, which);
+  Value particle32 = memref::LoadOp::create(builder, loc, lists.order,
+                                            ValueRange{toIndex(builder, held32)});
+  Value even = arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::eq,
+      arith::AndIOp::create(builder, loc, lane32, constant32(builder, 1)),
+      constant32(builder, 0));
+  Value writes = arith::AndIOp::create(
+      builder, loc,
+      arith::AndIOp::create(
+          builder, loc, even,
+          arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::sge,
+                                particle32, constant32(builder, 0))),
+      arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::slt, begin,
+                            end));
+  if (numOuts != 0)
+    scf::IfOp::create(builder, loc, writes, [&](OpBuilder &then, Location) {
+      Value particle = toIndex(then, particle32);
+      for (unsigned i = 0; i != numOuts; ++i) {
+        Value destination = op.getOuts()[i];
+        Type stored = getElementTypeOrSelf(destination.getType());
+        emitAtomicAdd(then, loc, convertReal(then, loc, totals[i], stored),
+                      destination, particle);
+      }
+      scf::YieldOp::create(then, loc);
+    });
+
+  SmallVector<Value> contributions;
+  for (unsigned i = numOuts; i != numYields; ++i) {
+    Value total = results[16 * numOuts + (i - numOuts)];
+    if (getNarrow(i))
+      total = arith::ExtFOp::create(builder, loc,
+                                    yield->getOperand(i).getType(), total);
+    double weight = 2.0;
+    if (auto weights = op.getWeights())
+      weight *= (*weights)[i - numOuts];
+    if (weight != 1.0) {
+      Type type = total.getType();
+      FloatAttr scalar =
+          builder.getFloatAttr(getElementTypeOrSelf(type), weight);
+      Value factor;
+      if (auto vector = dyn_cast<VectorType>(type))
+        factor = arith::ConstantOp::create(
+            builder, loc, type,
+            DenseElementsAttr::get(vector, scalar.getValue()));
+      else
+        factor = arith::ConstantOp::create(builder, loc, type, scalar);
+      total = arith::MulFOp::create(builder, loc, factor, total);
+    }
+    contributions.push_back(total);
+  }
+  return contributions;
+}
+
 SmallVector<Value> kernels::emitGroupPairKernel(
     OpBuilder &builder, md_exec::PairForOp op, const GroupLists &lists,
     const PairLayout &layout, Value box, Value inverse, Value unit,
     Value lane, IRMapping &local) {
+  StringRef experiment = getPairLoopExperiment();
+  if (experiment == "bcast" || experiment == "bcast-load")
+    return emitGroupPairKernelBroadcast(builder, op, lists, layout, box, unit,
+                                        lane, local,
+                                        experiment == "bcast-load");
   Location loc = op.getLoc();
   Block &kernel = op.getKernel().front();
   Operation *yield = kernel.getTerminator();
@@ -525,7 +860,11 @@ SmallVector<Value> kernels::emitGroupPairKernel(
           arith::AddIOp::create(builder, loc, u, constant32(builder, 15)),
           constant32(builder, 15)));
   Value width = constant32(builder, 32);
+  bool noShuffle = experiment == "noshuffle";
+  bool skipSteps = experiment == "skip";
   auto shuffle = [&](OpBuilder &b, Value value) -> Value {
+    if (noShuffle)
+      return value;
     SmallVector<Value> parts = getComponents(b, loc, value);
     for (Value &part : parts)
       part = gpu::ShuffleOp::create(b, loc, part, source, width,
@@ -671,32 +1010,73 @@ SmallVector<Value> kernels::emitGroupPairKernel(
               Value squares = arith::MulFOp::create(s, loc, d, d);
               Value distance2 = vector::ReductionOp::create(
                   s, loc, vector::CombiningKind::ADD, squares);
+              // EXPERIMENT: without the shuffles a lane may pair a particle
+              // with itself; keep the distance finite.
+              if (noShuffle)
+                distance2 = arith::MaximumFOp::create(
+                    s, loc, distance2, createReal(s, loc, computed, 1.0));
               // A slot whose bit is clear takes a squared distance beyond
               // the cutoff, so that one comparison masks it: the kernel
               // sees a finite distance and its value is not taken.
               Value r2 = arith::SelectOp::create(
                   s, loc, paired, distance2,
                   createReal(s, loc, computed, 4.0 * cutoff * cutoff));
-              IRMapping inside = local;
-              inside.map(kernel.getArgument(0), r2);
-              inside.map(kernel.getArgument(1), d);
-              for (unsigned i = 0; i != numIns; ++i) {
-                inside.map(kernel.getArgument(2 + 2 * i), myValues[i]);
-                inside.map(kernel.getArgument(3 + 2 * i), otherValues[i]);
-              }
-              for (Operation &nested : kernel.without_terminator())
-                s.clone(nested, inside);
               Value within = arith::CmpFOp::create(
                   s, loc, arith::CmpFPredicate::OLT, r2, cutoff2);
+              // The masked values of the kernel at this slot.
+              auto evaluate = [&](OpBuilder &e) {
+                IRMapping inside = local;
+                inside.map(kernel.getArgument(0), r2);
+                inside.map(kernel.getArgument(1), d);
+                for (unsigned i = 0; i != numIns; ++i) {
+                  inside.map(kernel.getArgument(2 + 2 * i), myValues[i]);
+                  inside.map(kernel.getArgument(3 + 2 * i), otherValues[i]);
+                }
+                for (Operation &nested : kernel.without_terminator())
+                  e.clone(nested, inside);
+                SmallVector<Value> out;
+                for (unsigned i = 0; i != numYields; ++i) {
+                  Value narrow = getNarrow(i);
+                  Value value = inside.lookupOrDefault(
+                      narrow ? narrow : yield->getOperand(i));
+                  out.push_back(arith::SelectOp::create(
+                      e, loc, within, value,
+                      createZero(e, loc, value.getType())));
+                }
+                return out;
+              };
+              SmallVector<Value> values;
+              if (skipSteps) {
+                // EXPERIMENT: a step where no lane of the warp has its pair
+                // within the cutoff skips the arithmetic.
+                Value any = arith::CmpIOp::create(
+                    s, loc, arith::CmpIPredicate::ne,
+                    gpu::BallotOp::create(s, loc, s.getI32Type(), within),
+                    constant32(s, 0));
+                SmallVector<Type> types;
+                for (unsigned i = 0; i != numYields; ++i)
+                  types.push_back(yieldType(i));
+                auto branch = scf::IfOp::create(s, loc, types, any, true);
+                {
+                  OpBuilder e = OpBuilder::atBlockBegin(branch.thenBlock());
+                  scf::YieldOp::create(e, loc, evaluate(e));
+                }
+                {
+                  OpBuilder e = OpBuilder::atBlockBegin(branch.elseBlock());
+                  SmallVector<Value> zeros;
+                  for (Type type : types)
+                    zeros.push_back(createZero(e, loc, type));
+                  scf::YieldOp::create(e, loc, zeros);
+                }
+                values.assign(branch.getResults().begin(),
+                              branch.getResults().end());
+              } else {
+                values = evaluate(s);
+              }
 
               SmallVector<Value> nextOwn, nextReceived;
               for (unsigned i = 0; i != numYields; ++i) {
-                Value narrow = getNarrow(i);
-                Value value =
-                    inside.lookupOrDefault(narrow ? narrow : yield->getOperand(i));
-                Value nothing = createZero(s, loc, value.getType());
-                Value masked =
-                    arith::SelectOp::create(s, loc, within, value, nothing);
+                Value masked = values[i];
                 nextOwn.push_back(arith::AddFOp::create(s, loc, own[i], masked));
                 if (i < numOuts) {
                   // k(j, i) = s k(i, j), s the sign of the contract.
