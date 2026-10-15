@@ -1,5 +1,6 @@
 """GPU job: MDIR's step on the control files of a system, alternated in
-rounds (the first dropped), then one profiled run of each.
+rounds (the first dropped), then one profiled run of each. A run may name its own binary
+(`mdir` in RUNS_JSON).
 mdir_job.py RUNS_JSON OUT_JSONL ROUNDS [MDIR]"""
 import json, os, re, subprocess, sys, statistics
 
@@ -13,7 +14,7 @@ res = {r['tag']: [] for r in runs}
 
 
 def one(r, env=None, log='mdir.out'):
-    p = subprocess.run([mdir, 'run', 'mdir.toml'], cwd=r['dir'], capture_output=True, text=True, env=env)
+    p = subprocess.run([r.get('mdir') or mdir, 'run', 'mdir.toml'], cwd=r['dir'], capture_output=True, text=True, env=env)
     open(os.path.join(r['dir'], log), 'w').write(p.stdout + p.stderr)
     m = re.search(r'from step \d+ to step \d+, ([0-9.]+) ms per step', p.stdout + p.stderr) or \
         re.search(r'ran in [0-9.]+ s, ([0-9.]+) ms per step', p.stdout + p.stderr)
@@ -37,6 +38,8 @@ for r in runs:
     env = dict(os.environ, MDRT_PROFILE='1', MDRT_WAIT='1')
     rc, ms, text = one(r, env, 'profile.out')
     d['profile_ms'] = ms
+    g = re.search(r'grid of (\d+) x (\d+) x (\d+)', text) or re.search(r'PME grid[^0-9]*(\d+) x (\d+) x (\d+)', text)
+    d['grid'] = [int(g[1]), int(g[2]), int(g[3])] if g else None
     d['profile'] = [l for l in text.splitlines() if 'pme' in l.lower() or 'fft' in l.lower() or 'recip' in l.lower()][:80]
     out.write(json.dumps(d) + '\n')
     out.flush()
