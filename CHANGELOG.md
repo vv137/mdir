@@ -413,6 +413,16 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The step of steepest descent grows to at most 0.1 Å, not 1 Å**
+  (D[minimize-step-cap], #351; the maintainer's ruling on PR #348). Near a
+  cap of 1 Å many trials turned rigid waters further than the constraints
+  can take back and were not taken (D[minimize-large-opc]). On 103,292
+  OPC waters the largest force falls below 5 kcal/mol/Å by step 500
+  rather than 3300, at the same energy after 5000 steps (within 0.03%).
+  `initial_step` is unchanged and its first step is taken as given. A
+  minimization now gives other rows: the dipeptide of
+  `minimize-tolerance.test` stops at step 90 rather than 100.
+
 - **`FrameEvaluator.evaluate` takes `gradients=` in place of `gradient=`**
   (D252, #313; the maintainer's ruling on PR #314). The
   argument `gradient=True` or `False`, whether the derivative in the

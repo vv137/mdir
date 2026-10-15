@@ -46,7 +46,7 @@ raise `InputError`.
 The minimizer is that of `mdir run`, not a second implementation: the
 same program (`emitMinimization`), with steepest descent whose first step
 moves no particle farther than `minimize_step`, a step that lowers the
-energy accepted and the next one 1.2 times longer (at most 0.1 nm), a step
+energy accepted and the next one 1.2 times longer (at most 0.01 nm, D[minimize-step-cap]), a step
 that does not rejected and the next one 0.2 times as long (as is a step
 whose groups the constraints did not take back to their shapes,
 D259), the positions
