@@ -1,7 +1,8 @@
 """Validation of the prolate kernel in mdir run (D[prolate-ewald]): the
 forces of one step of a tiny time step, from a checkpoint, against a
 reference of the Gaussian kernel in double precision on the CPU at a tight
-tolerance, as the relative force error Δ of eq. 16 of Liang et al. (2026)
+tolerance (erfc 1e-13, 0.33 A, order 8: erfc 1e-11 at 0.5 A was itself off
+by 1.9e-6; grid_sweep.py measures Delta over the Coulomb forces alone), as the relative force error Δ of eq. 16 of Liang et al. (2026)
 over all forces (the terms other than the Coulomb sum are those of the
 reference, so the difference is that of the Coulomb sum, and the
 denominator the norm of all forces, as stated); the Coulomb energy
@@ -18,7 +19,7 @@ import numpy as np
 
 CASES = {
     # name: (target, precision, deterministic, [pme] lines)
-    'reference': ('CPU', 'DOUBLE', False, ['tolerance = 1e-11', 'max_spacing = 0.5', 'order = 8']),
+    'reference': ('CPU', 'DOUBLE', False, ['tolerance = 1e-13', 'max_spacing = 0.33', 'order = 8']),
     'prolate-cpu': ('CPU', 'DOUBLE', False, ['kernel = "PROLATE"']),
     'prolate-mixed': ('GPU', 'MIXED', False, ['kernel = "PROLATE"']),
     'prolate-double': ('GPU', 'DOUBLE', False, ['kernel = "PROLATE"']),

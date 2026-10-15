@@ -192,16 +192,45 @@ along $z$ and complex along $y$ and $x$, with cached plans), and the
 product and gathering are loops over the grid and the particles, the
 gathering parallel under OpenMP.
 
-**Cost.** On Cellulose (408,609 atoms, a grid of 270 × 126 × 126) the
-places take 27 µs a step, the additions 214, the copy and the clearing 63
-(304 µs in all), the two transforms 292, the product with the virial 30,
-and the gathering 90 (RTX 3090; medians of a launch, from D102, D104,
-D108, and D109).
+**Cost.** ESP was built for many processors, where the smaller grid saves
+communication: the transposes of a distributed transform move data in
+proportion to the points of the grid, and at the same $\Delta$ the prolate
+grid has 6 to 7 times fewer points than the Gaussian of order 6 at
+$10^{-5}$ and 10 to 12 times fewer at $10^{-4}$; its spreading reaches
+$P - 1$ layers beyond a domain on each side, 5 for $P = 6$, as many as
+order 6 and two more than order 4. On one device the smaller grid saves the
+transform, a small part of the step, and the spreading of $P^3$ points
+costs more. MDIR's whole step in mixed precision (JAC, Cellulose, STMV;
+an RTX 4090 and an RTX PRO 6000, each comparison on one device) takes 1.2
+to 1.4 times as long with the prolate kernel at the accuracy of MDIR's
+default, 1.04 to 1.21 times at $\Delta \approx 10^{-4}$, and 0.85 to 1.07
+times at $10^{-5}$ against the faster of orders 6 and 8 (the table, with
+the grids, is in `docs/pme-m1.md`, Section 7). The
+Gaussian kernel stays the default; spreading in tiles of block memory,
+which would serve both kernels, is issue #336.
 
-**Accuracy.** On Cellulose the reciprocal energy in mixed precision is
-30206.42227 kcal/mol against 30206.42041 in double precision, a relative
-difference of $6\times10^{-8}$ (D104). Section 9 compares the terms with
-sander and with a direct Ewald sum.
+**Accuracy.** On three OPC waters the Coulomb terms sum to within
+$1.9\times10^{-6}$ of the Ewald sum over the wave vectors at the default;
+the trace of the virial agrees with $-dU/d\lambda$ to $2.2\times10^{-6}$,
+its diagonal with $-dU/d\varepsilon_{aa}$ to $6.6\times10^{-6}$, and all
+nine components of $\partial U/\partial\boldsymbol\varepsilon$ in a sheared
+rhombic dodecahedron with central differences of the energy to
+$1.5\times10^{-8}$ in double precision (Section 3.6); in a rhombic
+dodecahedron the default is within $1.0\times10^{-8}$ of the Gaussian
+kernel at a tight setting. $\partial H/\partial\lambda$ of a decoupled
+ethanol agrees with central differences of the energies of the states
+beside it to $2.9\times10^{-5}$ kcal/mol, within the tolerance of the
+Gaussian's test, and the derivative in the charges to $7.6\times10^{-11}$
+relative in double precision. On JAC, $\Delta = 1.04\times10^{-5}$ at the default (50³) on the
+CPU and on a GPU in double; mixed precision adds about $1.0\times10^{-4}$
+with either kernel ($\Delta = 1.02\times10^{-4}$ for the prolate default,
+the Gaussian of order 6 at $1.1\times10^{-5}$, and order 8 at
+$1.1\times10^{-5}$ alike), so that below $10^{-4}$ the accuracy of a run
+in mixed precision is that of the precision, not of the kernel. In NVE
+over 2 ns the energy of JAC drifts by $-0.06$ kcal/mol/ns at the default
+(the slopes of its halves 0.87 and 0.29) against $-0.01$ (0.13, 0.86) for
+the Gaussian default; in NPT over 1 ns its volume is $234{,}301 \pm 113$
+Å³ against $234{,}470 \pm 101$, 1.1 combined standard errors apart.
 
 ## 5.4 The long-range correction of dispersion
 
@@ -471,16 +500,39 @@ GROMACS do. The difference between the rules beyond the cutoff is not
 corrected. The 1–4 pairs are among the excluded pairs, and their scaled
 Lennard-Jones remains a term of its own.
 
-**Parameters.** $\beta$ is given, or found by bisection, as in
-Section 5.1, such that $\gamma(\beta r_c)$ equals a tolerance, $10^{-3}$
-by default: the share of the dispersion at the cutoff that is left out
-(GROMACS's `ewald-rtol-lj` is the same quantity); for $r_c = 8$ Å that is
-$\beta = 4.189$ nm⁻¹. The grid has its own points and order, by default
-from the same largest spacing, 1.2 Å. The correction of Section 5.4 is
-off, and asking for it is an error; so is a switch of the
-Lennard-Jones, which would take away within the cutoff what the grid
-does not give back. A potential shift applies to the whole bracket of
-$E^\text{d}_\text{dir}$.
+**Parameters.** $\eta = 10^{-5}$ by default, which gives $c = 14.4712$;
+$c_1 = c(\eta/2)$, as the paper's code takes it; $P = 6$; and the grid of
+the paper's eq. 15, $n_f = \lceil cL/(\pi r_c)\rceil$ along each edge,
+refined at one spacing for the three edges until its estimate of the
+aliasing (eq. 10),
+$$
+E_A = 6\,\frac{\sum_\mathbf k w(\mathbf k)\lvert\hat\phi_1(2\pi(k_a + K_a)/K_a)/\hat\phi_1(2\pi k_a/K_a)\rvert}{\sum_\mathbf k w(\mathbf k)},
+\qquad w = \hat\chi(2\pi r_c\lvert\mathbf m\rvert)/m^2
+$$
+over the band of $\hat\chi$, the largest of the three axes, is at most
+$\eta/2$. The factor $\tfrac12$ is measured, not derived. Against a
+Gaussian reference at $\mathrm{erfc}(\beta r_c) = 10^{-13}$, 0.33 Å, and
+order 8 (which agrees with the prolate kernel at $\eta = 10^{-9}$ to
+$1.3\times10^{-7}$), with $\Delta$ over the Coulomb forces of the topology,
+its exclusions and 1-4 scaling included (the forces of the system less
+those of the same system without charges): $\Delta$ of a fine grid, the
+floor that the tails of $\chi$ and $\phi_1$ leave, is $0.6$ to $0.9\,\eta$;
+$E_A$ lies 2.5 to 3 times below $\Delta$ near that floor; and with
+$E_A \le \eta$ the grids of $P = 5$ and 7 fell at 2.7 to 2.9 times the
+floor while $P = 6$ fell at 1.3 to 1.5. With $E_A \le \eta/2$ every
+$\eta$ from $10^{-3}$ to $10^{-5}$ and $P$ from 5 to 8 lands within 1.3
+times its floor on JAC and Cellulose, so that $\Delta \lesssim 1.2\,\eta$;
+at $\eta = 10^{-6}$, 1.4 to 2.0 times ($\Delta \le 1.7\,\eta$). Where
+twice the grid of eq. 15 still leaves $E_A$ above $\eta/2$, the window is
+too short for the tolerance (with 8 points at $10^{-9}$, $E_A$ falls only
+to $6.4\times10^{-10}$ on 500³), and the automatic grid is refused with
+what to do. The same tolerance is thus a very different accuracy with the
+two kernels: the Gaussian's $\mathrm{erfc}(\beta r_c) = 10^{-5}$ with its
+grid of 1.2 Å gives $\Delta = 1.4\times10^{-3}$ on JAC and Cellulose, the
+prolate kernel's $\eta = 10^{-5}$ gives $1.0$ to $1.2\times10^{-5}$.
+(Over the Coulomb forces of all pairs without exclusions, as the paper and
+the earlier sweep of #334 measured it, the same errors read about 4.5 times
+smaller, the bonded pairs inflating the norm.)
 
 **The excluded pairs.** At small $y = \beta^2r^2$, $1 - \gamma$ is a
 difference of numbers near 1 that leaves $y^3/6$; for the pairs of a
@@ -590,10 +642,10 @@ from $\chi$ as they follow from the Gaussian.
   Section 5.2. $g\hat\chi = (k/c)\lambda_0\psi_0^{c\,\prime}(k/c)/(2C_0)$
   at $k = r_c\xi$.
 
-**The window.** The spreading takes $\phi_1(d) = \psi_0^{c_1}(2d/P)$ on
-$P$ points along each edge, $\lvert d\rvert \le P/2$ in points of the
-grid, with its own bandwidth $c_1$ (paper, eq. 14), and the product with
-the transform of the grid divides by the window's transform,
+**The window.** The spreading takes $\phi_1(d) = \psi_0^{c_1}(2d/P) -
+\psi_0^{c_1}(1)$ on $P$ points along each edge, $\lvert d\rvert \le P/2$ in
+points of the grid, with its own bandwidth $c_1$, and the product with the
+transform of the grid divides by the window's transform,
 $B(\mathbf k) = \prod_a\hat\phi_1(2\pi k_a/K_a)^{-2}$ (paper, eq. 9), which
 for the B-splines is $\prod_a\lvert b_a\rvert^2$. A particle at the scaled
 coordinate $u$ adds to the points from $\lfloor u - h\rfloor - \lfloor
@@ -603,6 +655,36 @@ are Chebyshev series in the fraction of the place, within $10^{-14}$ of
 $\psi(0)$; the forces take the slopes of the window, so that $\mathbf F_i
 = -\partial E_\text{rec}/\partial\mathbf x_i$ of the discrete sum as in
 Section 5.2.
+
+*Why the value at the edge is taken off.* The paper's window (its eq. 14)
+is $\psi_0^{c_1}(2d/P)$, which is $\psi_0^{c_1}(1) \approx \eta/2$ at the
+edge of its support, not 0. When a particle crosses a plane of the grid,
+its first point drops out at $d = -P/2$ with that weight, and a new point
+enters at $d = +P/2$ with the same weight: the charge on the grid, and with
+it $E_\text{rec}$, jumps by a term of order $\eta\,q_i\phi$, while the
+force, the derivative between the crossings, has no impulse for it. The
+energy of a run then drifts as under an unshifted cutoff: on JAC in NVE,
+mixed precision, at $\eta = 10^{-3}$ and 24³, by 75 kcal/mol/ns. B-splines
+vanish at their edges, so the Gaussian kernel never had this. With the
+constant taken off, $\phi_1$ is continuous on the line, $E_\text{rec}$ is a
+continuous function of the positions whose gradient the forces are, and
+$\hat\phi_1$, and with it $B$, follows from the same quadrature,
+$$
+\hat\phi_1(\kappa) = \frac P2\int_{-1}^1\big(\psi_0^{c_1}(t) - \psi_0^{c_1}(1)\big)\cos\frac{\kappa Pt}{2}\,dt
+= \hat\phi_1^\text{paper}(\kappa) - 2\psi_0^{c_1}(1)\frac{\sin(\kappa P/2)}{\kappa}.
+$$
+The last term decays as $1/\kappa$ where the paper's window has the jump's
+own $1/\kappa$ tail; the two cancel in leading order, and $\phi_1$, whose
+first discontinuity is in its slope, has the faster decay $1/\kappa^2$.
+The change costs nothing measurable at the default and 12% of $\Delta$ at
+$\eta = 10^{-3}$ (JAC: $1.02$ to $1.04\times10^{-5}$ at 50³ and $6.2$ to
+$6.9\times10^{-4}$ at 24³), and over 2 ns the drift falls to 5.1
+kcal/mol/ns at $10^{-3}$, the slopes of its halves 2.7 and 6.3 (the
+Gaussian's unshifted direct sum at the same tolerance: 281) and to that of the Gaussian default, within the scatter of a
+slope, at $10^{-5}$. This shift is MDIR's own: the paper truncates its window
+without it, and we know of no source that takes the value at the edge off
+in this way. The aliasing estimate below keeps the paper's window,
+with which it was calibrated.
 
 **$\psi_0^c$ itself.** The prolate differential operator
 $-\frac{d}{dx}(1 - x^2)\frac{d}{dx} + c^2x^2$ commutes with the band-limited

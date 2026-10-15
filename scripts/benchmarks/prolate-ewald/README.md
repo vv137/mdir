@@ -36,6 +36,9 @@ which agree to $2\times10^{-12}$.
 | `proto_job.py`, `proto_all.py`, `table.py`, `compare.py` | A GPU job over the cases and variants; the best variant of each case; the table of the PR by system and target |
 | `pswf_reference.py C...` | ψ₀ᶜ by the Nyström method on the integral operator in mpmath, the reference of `test/Driver/prolate-function.test` |
 | `mk_mdir.py NAME STEPS`, `mdir_job.py RUNS OUT ROUNDS MDIR` | Control files of `mdir run` for the Gaussian cases and for order 4 at the ESP grids; a GPU job that alternates them in rounds, the first dropped, then one profiled run of each |
+| `grid_sweep.py make/run/report` | MDIR's own $\Delta$ on the CPU in double at explicit grids, over the Coulomb forces of the topology (the forces less those of the system without charges), against the Gaussian at erfc 10⁻¹³, 0.33 Å, order 8, checked by the prolate kernel at 10⁻⁹; the eq. 10 estimate of each run; the calibration of the grid rule |
+| `perf_cases.py NAME STEPS OUT [MAIN]`, `ws_table.py LOG...` | The whole step at matched $\Delta$ (the grids by the spacing of JAC), with runs of a build of `main` for the order-4 path; the table from the round lines of a job's log |
+| `dynamics.py make/run/report` | JAC in NVE (the drift, with the slopes of the two halves) and NPT (the mean volume), both kernels, mixed and double precision |
 
 ## Use
 
