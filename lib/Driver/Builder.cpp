@@ -2702,6 +2702,12 @@ llvm::Error Builder::collectPME() {
   const Topology &topology = *system.topology;
   double rc = control.cutoffDistance * units::length;
 
+  if (control.pmeKernel == PMEKernel::Prolate)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "kernel = \"PROLATE\" of [pme] is not implemented yet "
+        "(D[prolate-ewald])");
+
   // β: given, or such that erfc(β rc) is the tolerance, by bisection.
   double beta = control.pmeAlpha / units::length;
   if (beta == 0.0) {

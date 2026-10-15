@@ -36,6 +36,10 @@ enum class Mixing { Arithmetic, Geometric, Product };
 /// What the correction for the dispersion beyond the cutoff corrects: none,
 /// or the energy and the pressure.
 enum class DispersionCorrection { None, EnergyPressure };
+/// The kernel of the splitting and the spreading of particle mesh Ewald:
+/// the Gaussian with B-splines, or the prolate spheroidal wave function
+/// (D[prolate-ewald]).
+enum class PMEKernel { Gaussian, Prolate };
 
 /// A term of the potential energy over pairs, given by an expression in the
 /// distance `r`.
@@ -418,6 +422,17 @@ struct Control {
   /// or that of Essmann et al. alone, as GROMACS has it
   /// (docs/pme-m1.md, Section 1.1).
   bool pmeOptimal = false;
+  /// The kernel of the splitting and the spreading (D[prolate-ewald]): the
+  /// Gaussian with B-splines, or the prolate spheroidal wave function of
+  /// order zero for both, "Ewald summation with prolates" [Liang2026]. For
+  /// the prolate kernel `pmeAlphaTolerance` is ε with ψ₀ᶜ(1) = ε; the
+  /// bandwidths c of the splitting and c₁ of the window, or 0 to take them
+  /// from ε (c₁ from ε/2); `pmeOrder` is the number P of points of the
+  /// window along an edge (5 to 8, 6 by default); and `pmeMaxSpacing` 0
+  /// takes the spacing of eq. 15 of [Liang2026], π r_c / c.
+  PMEKernel pmeKernel = PMEKernel::Gaussian;
+  double pmeBandwidth = 0.0;
+  double pmeWindowBandwidth = 0.0;
   /// Particle mesh Ewald for the dispersion of the Lennard-Jones of a
   /// topology (D162): the grid sums −c_i c_j / r⁶ with the coefficients
   /// c_i = 2 √ε_i σ_i³ of the types, and the direct terms add c_i c_j

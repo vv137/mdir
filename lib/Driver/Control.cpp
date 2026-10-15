@@ -116,7 +116,8 @@ private:
   /// The entries that the grids of particle mesh Ewald share: β, the
   /// tolerance that gives it, the grid or its largest spacing, the order.
   Error readMesh(const toml::table &table, double &beta, double &tolerance,
-                 int64_t (&grid)[3], double &spacing, int64_t &order);
+                 int64_t (&grid)[3], double &spacing, int64_t &order,
+                 bool prolateOrders = false);
   Error readOutput(const toml::table &table);
   /// [free_energy]: the alchemical states (D161).
   Error readFreeEnergy(const toml::table &table);
@@ -2246,7 +2247,8 @@ Error Reader::readEnergy(const toml::table &table) {
 
 Error Reader::readMesh(const toml::table &table, double &beta,
                        double &tolerance, int64_t (&grid)[3],
-                       double &spacing, int64_t &order) {
+                       double &spacing, int64_t &order,
+                       bool prolateOrders) {
   if (Error error = readPositive(table, "beta", beta))
     return error;
   if (Error error = readPositive(table, "tolerance", tolerance))
@@ -2270,20 +2272,56 @@ Error Reader::readMesh(const toml::table &table, double &beta,
     return error;
   if (Error error = readCount(table, "order", order, 4))
     return error;
-  if (order != 4 && order != 6 && order != 8)
+  if (!prolateOrders && order != 4 && order != 6 && order != 8)
     return fail(*table.get("order"), "expected 4, 6, or 8 for 'order'");
+  if (prolateOrders && (order < 5 || order > 8))
+    return fail(*table.get("order"),
+                "expected 5, 6, 7, or 8 points of the window for 'order' "
+                "with kernel = \"PROLATE\"");
   return Error::success();
 }
 
 Error Reader::readPME(const toml::table &table) {
   if (Error error = checkKeywords(table, "pme",
-                                  {"tolerance", "beta", "max_spacing", "grid",
-                                   "order", "influence"},
+                                  {"kernel", "tolerance", "beta",
+                                   "bandwidth", "window_bandwidth",
+                                   "max_spacing", "grid", "order",
+                                   "influence"},
                                   {}))
     return error;
+  if (Error error = readChoice<PMEKernel>(
+          table, "kernel", control.pmeKernel,
+          {{"GAUSSIAN", PMEKernel::Gaussian},
+           {"PROLATE", PMEKernel::Prolate}}))
+    return error;
+  bool prolate = control.pmeKernel == PMEKernel::Prolate;
+  // What belongs to the other kernel is refused, not ignored
+  // (D[prolate-ewald]).
+  if (prolate)
+    for (StringRef key : {"beta", "influence"})
+      if (const toml::node *node = table.get(std::string_view(key)))
+        return fail(*node, "'" + key + "' is for kernel = \"GAUSSIAN\"; the "
+                           "prolate kernel takes 'bandwidth' and "
+                           "'window_bandwidth'");
+  if (!prolate)
+    for (StringRef key : {"bandwidth", "window_bandwidth"})
+      if (const toml::node *node = table.get(std::string_view(key)))
+        return fail(*node, "'" + key + "' is for kernel = \"PROLATE\"");
+  // The prolate kernel takes 6 points by default, and the spacing of the
+  // grid from its bandwidth.
+  if (prolate) {
+    control.pmeOrder = 6;
+    control.pmeMaxSpacing = 0.0;
+  }
   if (Error error = readMesh(table, control.pmeAlpha,
                              control.pmeAlphaTolerance, control.pmeGrid,
-                             control.pmeMaxSpacing, control.pmeOrder))
+                             control.pmeMaxSpacing, control.pmeOrder,
+                             prolate))
+    return error;
+  if (Error error = readPositive(table, "bandwidth", control.pmeBandwidth))
+    return error;
+  if (Error error = readPositive(table, "window_bandwidth",
+                                 control.pmeWindowBandwidth))
     return error;
   if (Error error = readChoice<bool>(table, "influence", control.pmeOptimal,
                                      {{"OPTIMAL", true}, {"SPME", false}}))
@@ -3450,12 +3488,20 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 
 # Particle mesh Ewald; every entry has a default.
 # [pme]
-# tolerance   = 1.0e-5          # erfc(β r_c), which gives β
-# beta        = 0.35            # β (1/Å), instead
-# max_spacing = 1.2             # largest spacing of the grid (Å)
+# kernel      = "GAUSSIAN"      # GAUSSIAN, PROLATE (ESP; slower but for
+                                # force errors below about 1e-5)
+# tolerance   = 1.0e-5          # erfc(β r_c), which gives β; PROLATE:
+                                # ψ(1), which gives c (force error ~2e-6,
+                                # where the Gaussian 1e-5 gives ~3e-4)
+# beta        = 0.35            # β (1/Å), instead (GAUSSIAN)
+# bandwidth   = 14.47           # c, instead (PROLATE)
+# window_bandwidth = 15.2       # c1 of the window (PROLATE; from ε/2)
+# max_spacing = 1.2             # largest spacing of the grid (Å);
+                                # PROLATE: π r_c / c by default
 # grid        = [48, 48, 48]    # the grid, instead
-# order       = 4               # of the B-splines: 4, 6, 8
-# influence   = "SPME"          # SPME, OPTIMAL (as sander)
+# order       = 4               # of the B-splines: 4, 6, 8; PROLATE:
+                                # points of the window, 5 to 8 (6)
+# influence   = "SPME"          # SPME, OPTIMAL (as sander; GAUSSIAN)
 
 # Particle mesh Ewald of the dispersion, with lennard_jones = "PME";
 # every entry has a default.
