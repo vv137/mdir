@@ -12,6 +12,23 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Ewald summation with prolates, a second kernel of particle mesh Ewald
+  (D[prolate-ewald], #334): `[pme] kernel = "PROLATE"` takes the prolate
+  spheroidal wave function of order zero as the splitting and as the
+  window of the spreading, on the CPU and a GPU, in orthorhombic and
+  triclinic cells, in `mixed` and `double` and the deterministic mode. Its
+  `tolerance` is $\psi_0^c(1)$, 10⁻⁵ by default, which gives a relative
+  force error near 10⁻⁵ where the Gaussian's 10⁻⁵ gives 3 × 10⁻⁴;
+  `bandwidth` and `window_bandwidth` give $c$ and $c_1$, `order` the points
+  of the window (5 to 8, 6 by default), and the grid follows from eq. 15 of
+  Liang et al. (2026) and its aliasing estimate unless `grid` or
+  `max_spacing` is given; `beta` and `influence` are refused with it, and
+  `bandwidth` and `window_bandwidth` without it. The Python model has
+  `System.pme_kernel` (`mdir.PMEKernel`), `pme_bandwidth`, and
+  `pme_window_bandwidth`; the manifest of a run names the kernel. The
+  Gaussian stays the default: at MDIR's default accuracy the prolate kernel
+  is slower on one GPU (the PR's measurement).
+
 - The gradients of the energy of a frame in the positions and in the
   strain, from the frame evaluator (D252, #313):
   `evaluator.evaluate(frames, gradients=("tunables", "positions",

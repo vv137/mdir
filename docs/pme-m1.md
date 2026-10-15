@@ -189,12 +189,23 @@ points numbered in i32, it takes 90 µs (D102); pmemd.cuda gathers in 79
 |---|---|---|
 | `electrostatics = "PME"` in `[energy]` | Particle mesh Ewald, with the cutoff `cutoff` for the direct sum | |
 | `coulomb_modifier` in `[energy]` | `"POTENTIAL_SHIFT"` shifts the direct sum to 0 at the cutoff, as GROMACS does by default; `"NONE"` does not, as sander | `"NONE"` |
-| `beta` in `[pme]` | $\beta$, in Å⁻¹ | From `tolerance` |
-| `tolerance` in `[pme]` | $\beta$ such that $\mathrm{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it; less than 1 | 10⁻⁵ |
+| `kernel` in `[pme]` | `"GAUSSIAN"`: the Gaussian splitting with B-splines; `"PROLATE"`: the prolate spheroidal wave function for both, Ewald summation with prolates (Section 7, D[prolate-ewald]) | `"GAUSSIAN"` |
+| `beta` in `[pme]` | $\beta$, in Å⁻¹; refused with `kernel = "PROLATE"` | From `tolerance` |
+| `tolerance` in `[pme]` | The size of the tail of the splitting kernel at the cutoff. Gaussian: $\beta$ such that $\mathrm{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it. Prolate: the bandwidth $c$ such that $\psi_0^c(1) = \texttt{tolerance}$. **The same number gives very different force errors with the two kernels**: the Gaussian default of 10⁻⁵ gives a relative force error $\Delta \approx 3.3\times10^{-4}$ (JAC, Cellulose, STMV, with its default grid), the prolate 10⁻⁵ about 2×10⁻⁶ to 10⁻⁵. Less than 1 | 10⁻⁵ |
+| `bandwidth` in `[pme]` | Prolate only: $c$, instead of the tolerance | From `tolerance` |
+| `window_bandwidth` in `[pme]` | Prolate only: $c_1$ of the window of the spreading | $c(\texttt{tolerance}/2)$ |
 | `grid` in `[pme]` | The numbers of points of the grid along the three edges, `[nx, ny, nz]`, each 8 or more | From `max_spacing` |
 | `max_spacing` in `[pme]` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
-| `order` in `[pme]` | The order of the B-splines: 4, 6, or 8 | 4 |
-| `influence` in `[pme]` | `"SPME"` or `"OPTIMAL"` (Section 1.1) | `"SPME"` |
+| `order` in `[pme]` | The order of the B-splines: 4, 6, or 8; prolate: the points $P$ of the window, 5 to 8 | 4; prolate 6 |
+| `influence` in `[pme]` | `"SPME"` or `"OPTIMAL"` (Section 1.1); refused with `kernel = "PROLATE"` | `"SPME"` |
+
+With `kernel = "PROLATE"` and neither `grid` nor `max_spacing` given, the
+grid has the modes of eq. 15 of [[Liang2026]](references.md#liang2026),
+$n_f = \lceil c L / (\pi r_c)\rceil$ along each edge, raised until the aliasing
+estimate of its eq. 10, relative to the sum it perturbs, is at most the
+tolerance; the log names $c$, $c_1$, $P$, the grid, and the estimate. On JAC
+the estimate lies above the relative force error by 1.2 to 3 at every grid
+and order measured (issue #334).
 
 The table `[pme]` is for `electrostatics = "PME"` only, and a grid needs at
 least twice the order of points along each edge.
@@ -238,3 +249,41 @@ Results (2026-09-30):
 | The virial of each term | Against its analytic value, and the reciprocal sum against $\sum_{\mathbf m} E_\mathbf m (1 - 2\pi^2 m^2/\beta^2)$ of a script: to 10⁻⁵ |
 | Dipeptide in OPC against sander, `"OPTIMAL"`, 30 × 30 × 24 points (`test/Driver/amber-pme.test`) | The electrostatic energy agrees to 2 × 10⁻⁵ kcal/mol, the precision of sander's log |
 | The same with rigid water and the shift, 0.5 ps at constant energy (`test/Driver/pme-settle.test`, `pme-gpu.test`) | The total energy stays within 0.3 kcal/mol; its largest change is 5.9 × 10⁻⁵ of it at 1 fs and 7.8 × 10⁻⁶ at 0.5 fs. A GPU in double gives the energies of the CPU to the digits of the log, and the same from run to run. |
+
+## 7. The prolate kernel (D[prolate-ewald])
+
+`kernel = "PROLATE"` replaces both the Gaussian of the splitting and the
+B-splines of the spreading by the prolate spheroidal wave function of order
+zero, $\psi_0^c$, the eigenfunction of largest eigenvalue of
+$\varphi \mapsto \int_{-1}^{1} e^{icxt}\varphi(t)\,dt$ [[Slepian1961]](references.md#slepian1961):
+"Ewald summation with prolates" (ESP) [[Liang2026]](references.md#liang2026).
+The white paper derives the terms (Section 5.6); this section says where
+they are.
+
+| Part | Where |
+|---|---|
+| $\psi_0^c$, $\lambda_0$, $C_0 = \int_0^1\psi_0^c$, $\langle x^2\rangle$, the transform | `lib/Driver/Prolate.cpp`: a series of Legendre polynomials of even degree from the eigenvector of the tridiagonal matrix of the prolate operator [[Xiao2001]](references.md#xiao2001), normalized to $\int_{-1}^{1}\psi^2 = 1$; $c$ solves $\psi_0^c(1) = \varepsilon$, which gives Table 2 of the paper at 10⁻³, 10⁻⁴, and 10⁻⁵. Against the eigenfunction of the integral operator by Gauss–Legendre in mpmath at 40 digits to 1–4 × 10⁻¹⁶ (`test/Driver/prolate-function.test`) |
+| $c$, $c_1$, $P$, the grid, the self term and the background | `Builder::collectProlate`: $c_1 = c(\varepsilon/2)$ as the paper's code takes it; $P = 6$; the grid by eq. 15 and the aliasing estimate of eq. 10; self $-f\,\chi(0)/(2r_c)\sum q^2$; background $-f\pi Q^2 r_c^2\langle x^2\rangle/V$ |
+| The table of `md.reciprocal` (`prolate`) | Rows 0 to 2 the factors $1/\hat\phi_1(2\pi k/K)^2$ of each edge; row 3 the weights and slopes of the window, a Chebyshev series in the fraction of the place for each of the $P$ points, to 10⁻¹⁴ of $\psi(0)$; row 4 the series of $\hat\chi$ and of $k\hat\chi'(k)$ in $2x^2 - 1$ |
+| The direct, excluded, and alchemical pairs | $1 - \Phi(x)$ and $\Phi(x)/x$, $x = r/r_c$, as tables of cells of polynomials (`pme_far`, `pme_near`): 64 cells of 10 terms within 10⁻¹⁴ for kernels in f64, 128 cells of 4 terms within 4 × 10⁻¹⁰ for kernels in f32 |
+| The host | `PME.mlir`: the window by Clenshaw's recurrence where the B-splines were, chosen by the five rows of the table; the influence and its virial in the product |
+| A device | `PMEGPUProlate.mlir`, generated by `scripts/generate-pme-prolate-gpu-template.py`: the coefficients converted once a sum into the type of the grid, term by term (a buffer, not constant memory: issue #337, P0); the places; the spreading a warp a particle, the lanes $0$ to $3P-1$ evaluating each weight once and the others taking them by shuffles, into the bricks of D108 or, in the deterministic mode and in f64, in fixed point (D70); the influence of the product as the dispersion's tables are (D104, D162) with $\hat\chi$ in place of $F$; the gathering a warp a particle, every value of the grid read once for the three components. Triclinic cells have their places, gathering, and influence |
+
+LJ-PME (D162) stays Gaussian and can be combined with it. The derivative
+in the charges (D231) takes `pme_prolate_potential`.
+
+**Validation.** Three OPC waters against the Ewald sum over the wave
+vectors (`test/Driver/prolate.test`, `prolate-gpu.test`): at the default
+the Coulomb terms sum to within 1.9 × 10⁻⁶ of it, and at ε = 10⁻⁷ with
+8 points they agree to the printed precision; the trace of the virial
+against $-dU/d\lambda$ to 2.2 × 10⁻⁶ and each diagonal component against
+$-dU/d\varepsilon_{aa}$ to 6.6 × 10⁻⁶; a GPU in double gives the terms of
+the CPU to the digits of the log, and the deterministic mode the same bits
+in two runs. The dodecahedron of `triclinic.test` against the Gaussian
+kernel at a tight setting to 1.8 × 10⁻⁷ at the default and 2.5 × 10⁻¹⁰
+at ε = 10⁻⁹ (`prolate-triclinic.test`). On JAC, against the Gaussian
+kernel in double at erfc 10⁻¹¹, 0.5 Å, and order 8, the relative force
+error over all forces is 1.2 × 10⁻⁵ at the default (Gaussian default:
+1.3 × 10⁻³), and mixed precision adds 9.3 × 10⁻⁵, which the Gaussian
+kernel's mixed precision adds as well
+(`scripts/benchmarks/prolate-ewald/validate.py`).

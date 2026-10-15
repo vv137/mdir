@@ -5,7 +5,7 @@ mesh Ewald (PME) in the smooth form of [[Essmann1995]](references.md#essmann1995
 [[Darden1993]](references.md#darden1993). This section derives the terms as they are implemented,
 the forces and the virial of the reciprocal sum, and how the sum runs on a
 device; Sections 5.4 and 5.5 treat the dispersion beyond the cutoff, by a
-correction and by the same mesh. Internally the energies are in kJ/mol and the Coulomb constant is
+correction and by the same mesh; Section 5.6 a second kernel of the splitting and the spreading. Internally the energies are in kJ/mol and the Coulomb constant is
 $f = 138.935457644$ kJ nm/(mol e²), that of CODATA 2018
 [[Tiesinga2021]](references.md#tiesinga2021), whatever the format of the
 input: Amber's constant is smaller by a factor 1.0000346 and CHARMM's
@@ -529,3 +529,140 @@ the same state in the deterministic mode.
 particles) in mixed precision is $-138.130538$ kcal/mol against
 $-138.130465$ in double precision, $5\times10^{-7}$ of it. Section 9
 compares the terms with OpenMM, GROMACS, and a direct Ewald sum.
+
+## 5.6 Ewald summation with prolates
+
+The Gaussian of Section 5.1 is one choice of a splitting. Any even kernel
+$\chi$ on the line with $\int_0^\infty\chi = 1$ splits the Coulomb energy
+in the same way, and `[pme] kernel = "PROLATE"` takes the one that
+concentrates the most of itself in a given band limit, the prolate
+spheroidal wave function of order zero [[Slepian1961]](references.md#slepian1961),
+as both the splitting and the window of the spreading: Ewald summation with
+prolates (ESP) [[Liang2026]](references.md#liang2026) (D[prolate-ewald]).
+
+**The splitting.** With $\Phi(y) = \int_0^y\chi$ and $x = r/r_c$,
+
+$$
+\frac1r = \frac{1 - \Phi(r/r_c)}{r} + \frac{\Phi(r/r_c)}{r},
+$$
+
+and $\chi = \psi_0^c/C_0$ on $[-1, 1]$, 0 beyond, so that $\Phi = 1$ from
+$x = 1$ on: the first part vanishes at the cutoff, up to the size of
+$\psi_0^c(1) = \eta$, which sets $c$; the second is smooth. The Gaussian is
+$\chi(x) = 2\sqrt{\alpha/\pi}\,e^{-\alpha x^2}$ with $\beta = \sqrt\alpha/r_c$,
+for which $\Phi(y) = \mathrm{erf}(\beta r_c y)$: the terms of Table 5.1 follow
+from $\chi$ as they follow from the Gaussian.
+
+- **The direct and excluded pairs.** $f q_iq_j(1 - \Phi(r/r_c))/r$ within
+  the cutoff and $-f q_iq_j\Phi(r/r_c)/r$ for an excluded pair; the force
+  of the first is $f q_iq_j\big[(1-\Phi)/r^3 + \chi(r/r_c)/(r_cr^2)\big]$
+  times $\mathbf d$, the derivative of $\Phi$ being $\chi$.
+- **The self term.** The smooth part at $r \to 0$ is
+  $\Phi(r/r_c)/r \to \chi(0)/r_c$, and each charge meets itself in the
+  reciprocal sum once with a half: $E_\text{self} = -f\frac{\chi(0)}{2r_c}\sum_i q_i^2$;
+  for the Gaussian, $\chi(0)/(2r_c) = \beta/\sqrt\pi$.
+- **The reciprocal sum.** The transform of the smooth part,
+  $\int e^{-2\pi i\mathbf m\cdot\mathbf r}\Phi(r/r_c)/r\,d^3r =
+  \hat\chi(2\pi r_c\lvert\mathbf m\rvert)/(\pi m^2)$, with $\hat\chi$ the
+  transform of $\chi$ as an even function on the line, halved so that
+  $\hat\chi(0) = 1$ (the Coulomb kernel $1/(\pi m^2)$ at small $m$): this
+  follows from $\Phi(r/r_c)/r = \int_0^{r/r_c}\chi(t)\,dt/r$ written as a
+  superposition of shells. So $C(\mathbf m) = \frac{f}{\pi V}\hat\chi(2\pi
+  r_c\lvert\mathbf m\rvert)/m^2$ in place of the Gaussian factor; for the
+  Gaussian $\hat\chi(2\pi r_c m) = e^{-\pi^2m^2/\beta^2}$. For $\psi_0^c$,
+  $\int_{-1}^1\psi_0^c(t)e^{icxt}dt = \lambda_0\psi_0^c(x)$, so
+  $\hat\chi(k) = \lambda_0\psi_0^c(k/c)/(2C_0)$ for $k \le c$, and its
+  value beyond, of the size $\eta$, is taken as 0, as the paper's code
+  takes it.
+- **The net charge.** The background removes the $m \to 0$ limit of the
+  sum of a uniform charge, $\frac{fQ^2}{2\pi V}\lim(1 - \hat\chi(2\pi r_cm))/m^2$;
+  with $\hat\chi(k) = 1 - k^2\langle x^2\rangle/2 + O(k^4)$,
+  $\langle x^2\rangle = \int x^2\chi/\int\chi$ over $[-1, 1]$,
+  $E_Q = -f\pi Q^2r_c^2\langle x^2\rangle/V$; for the Gaussian
+  $\langle x^2\rangle = 1/(2\alpha)$ gives $-f\pi Q^2/(2V\beta^2)$.
+- **The virial.** As in Section 5.2, only $1/V$ and the factor of
+  $\mathbf m$ depend on the strain. With $\xi = 2\pi\lvert\mathbf m\rvert$
+  and $g = d\ln\hat\chi/d\ln\xi$,
+  $$
+  W_{ab} = \sum_{\mathbf m\ne0}E_\mathbf m\Big[\delta_{ab} - (2 - g)\frac{m_am_b}{m^2}\Big],
+  $$
+  which for the Gaussian, $g = -2\pi^2m^2/\beta^2$, is the virial of
+  Section 5.2. $g\hat\chi = (k/c)\lambda_0\psi_0^{c\,\prime}(k/c)/(2C_0)$
+  at $k = r_c\xi$.
+
+**The window.** The spreading takes $\phi_1(d) = \psi_0^{c_1}(2d/P)$ on
+$P$ points along each edge, $\lvert d\rvert \le P/2$ in points of the
+grid, with its own bandwidth $c_1$ (paper, eq. 14), and the product with
+the transform of the grid divides by the window's transform,
+$B(\mathbf k) = \prod_a\hat\phi_1(2\pi k_a/K_a)^{-2}$ (paper, eq. 9), which
+for the B-splines is $\prod_a\lvert b_a\rvert^2$. A particle at the scaled
+coordinate $u$ adds to the points from $\lfloor u - h\rfloor - \lfloor
+P/2\rfloor + 1$, $h = \tfrac12$ for an odd $P$, so that the points are those
+within $P/2$ of $u$. The weights of each point, and their slopes in $u$,
+are Chebyshev series in the fraction of the place, within $10^{-14}$ of
+$\psi(0)$; the forces take the slopes of the window, so that $\mathbf F_i
+= -\partial E_\text{rec}/\partial\mathbf x_i$ of the discrete sum as in
+Section 5.2.
+
+**$\psi_0^c$ itself.** The prolate differential operator
+$-\frac{d}{dx}(1 - x^2)\frac{d}{dx} + c^2x^2$ commutes with the band-limited
+transform and so has the same eigenfunctions; in the normalized Legendre
+polynomials it is tridiagonal, coupling degree $k$ with $k \pm 2$, and
+$\psi_0^c$ is the eigenvector of its smallest eigenvalue
+[[Xiao2001]](references.md#xiao2001) [[Osipov2013]](references.md#osipov2013),
+found on the host in f64 by bisection and inverse iteration. Normalized to
+$\int\psi^2 = 1$, $\psi_0^c(1) = \eta$ gives the bandwidths of Table 2 of
+the paper (9.5392, 12.024, and 14.471 at $10^{-3}$, $10^{-4}$, and
+$10^{-5}$); $\psi$, $\lambda_0$, $C_0$, and $\hat\chi$ agree with the
+eigenfunction of the integral operator by Gauss–Legendre in 40-digit
+arithmetic to $1$–$4\times10^{-16}$.
+
+**Parameters.** $\eta = 10^{-5}$ by default, which gives $c = 14.4712$;
+$c_1 = c(\eta/2)$, as the paper's code takes it; $P = 6$; and the grid of
+the paper's eq. 15, $n_f = \lceil cL/(\pi r_c)\rceil$ along each edge,
+raised until its estimate of the aliasing (eq. 10), $6\sum_\mathbf k
+w(\mathbf k)\lvert\hat\phi_1(2\pi(k_a + K_a)/K_a)/\hat\phi_1(2\pi k_a/K_a)
+\rvert/\sum_\mathbf k w(\mathbf k)$ with $w = \hat\chi/m^2$ over the band of
+$\hat\chi$, is at most $\eta$ on every axis. On JAC that estimate lies
+1.2 to 3 times above the relative force error $\Delta$ at every grid and
+$P$ from 5 to 8 measured, so the default grid meets its tolerance as a
+force error. The same tolerance is thus a very different accuracy with the
+two kernels: the Gaussian's $\mathrm{erfc}(\beta r_c) = 10^{-5}$ with its
+grid of 1.2 Å gives $\Delta \approx 3.3\times10^{-4}$, the prolate kernel's
+$\eta = 10^{-5}$ about $10^{-5}$.
+
+**The pair terms.** $1 - \Phi(x)$ and $\Phi(x)/x$, the latter computed as
+$\int_0^1\chi(xt)\,dt$ with no cancellation at small $x$, are tables of
+cells of polynomials in the place within a cell (Section 3.1, the tables of
+the control file): 64 cells of 10 terms within $10^{-14}$ for kernels in
+f64, 128 cells of 4 terms within $4\times10^{-10}$ for kernels in f32. The
+excluded pairs take $\Phi(x)/(xr_c)$ within the cutoff and $1/r$ beyond it.
+
+**On a device.** The kernels are generated from those of the dispersion
+(Section 5.5) and the bricks of D108. The coefficients of the window are
+converted once a sum into the type of the grid, term by term, so that the
+lanes of a term read adjacent words: in a prototype, the same coefficients
+read from constant memory at addresses that differ across the lanes of a
+warp made the gathering 1.5 to 2.8 times slower for an odd number of
+terms (PR #337, P0). The spreading and the gathering run a warp a particle;
+lanes $0$ to $3P - 1$ evaluate each weight once and the others take them by
+shuffles. The deterministic mode adds the grid in fixed point (D70).
+
+**Accuracy.** On three OPC waters the Coulomb terms sum to within
+$1.9\times10^{-6}$ of the Ewald sum over the wave vectors at the default;
+the trace of the virial agrees with $-dU/d\lambda$ to $2.2\times10^{-6}$,
+and its diagonal with $-dU/d\varepsilon_{aa}$ to $6.6\times10^{-6}$; in a
+rhombic dodecahedron the default is within $1.8\times10^{-7}$ of the
+Gaussian kernel at a tight setting. On JAC the relative force error
+against the Gaussian kernel at $\mathrm{erfc}(\beta r_c) = 10^{-11}$, a
+spacing of 0.5 Å, and order 8 is $1.2\times10^{-5}$ at the default, against
+$1.3\times10^{-3}$ for the Gaussian default (both over all forces).
+
+**Cost.** ESP was built for many processors, where the smaller grid saves
+communication of the transform. On one device the smaller grid saves the
+transform, which is a small part of the sum, and the spreading of $P^3$
+points costs more: in a prototype on an RTX 4090 in f32, at a relative
+force error of $10^{-3}$ to $3\times10^{-4}$, MDIR's accuracy, the sum takes
+1.6 to 2 times as long as with B-splines of order 4; at $10^{-5}$ it takes
+0.37 to 0.49 times as long as the fastest Gaussian sum on Cellulose and
+STMV, and as long on JAC. The Gaussian kernel stays the default.
