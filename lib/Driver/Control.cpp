@@ -3360,9 +3360,12 @@ trajectory_interval = 0         # steps between frames; 0: none
 [energy]
 cutoff            = 12.0        # Å
 switch_distance   = 10.0        # where switching begins (Å); the cutoff: none
-pairlist_distance = 13.5        # reach of the neighbor structures (Å)
+# pairlist_distance = 13.5      # reach of the neighbor structures (Å);
+                                # the cutoff + 1.5, + 3 for the groups
+                                # that AUTO takes
 # pruned_distance = 0           # reach of the inner list of a dual list,
-                                # pruned from the structure; needs GROUPS (Å)
+                                # pruned from the structure; needs GROUPS
+                                # or AUTO (Å)
 # rebuild_interval = 0          # 0: rebuild when a particle has moved half
                                 # the skin (default); N: every N steps, not
                                 # tested between; may miss pairs (opt-in)
@@ -3418,8 +3421,10 @@ deterministic = false           # on a GPU, sums in an order the threads do
                                 # not decide: the same bits from run to run
                                 # (on the CPU they always are)
 # neighbor_capacity = 160       # neighbors per particle at first; grows
-# neighbor_structure = "MATRIX" # MATRIX, GROUPS: groups of 16 that share
-                                # a list, each pair once (GPU only)
+# neighbor_structure = "AUTO"   # AUTO: the groups on a GPU for large
+                                # systems, else the matrix; MATRIX;
+                                # GROUPS: groups of 16 that share a
+                                # list, each pair once
 )TOML";
 }
 
@@ -3448,9 +3453,12 @@ checkpoint_interval = 50000     # steps between checkpoints
 
 [energy]
 cutoff            = 9.0         # of the direct terms (Å)
-pairlist_distance = 10.0        # reach of the neighbor structures (Å)
+# pairlist_distance = 10.5      # reach of the neighbor structures (Å);
+                                # the cutoff + 1.5, + 3 for the groups
+                                # that AUTO takes
 # pruned_distance = 0           # reach of the inner list of a dual list,
-                                # pruned from the structure; needs GROUPS (Å)
+                                # pruned from the structure; needs GROUPS
+                                # or AUTO (Å)
 # rebuild_interval = 0          # 0: rebuild when a particle has moved half
                                 # the skin (default); N: every N steps, not
                                 # tested between; may miss pairs (opt-in)
@@ -3551,8 +3559,10 @@ type = "PERIODIC"               # the box is that of the coordinates;
 target    = "GPU"               # CPU, GPU
 precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 # threads = 1                   # for the target CPU
-# neighbor_structure = "MATRIX"  # MATRIX, GROUPS: groups of 16 that share
-                                # a list, each pair once
+# neighbor_structure = "AUTO"   # AUTO: the groups on a GPU for large
+                                # systems, else the matrix; MATRIX;
+                                # GROUPS: groups of 16 that share a
+                                # list, each pair once
 
 # A minimization instead of dynamics: steepest descent.
 # [minimize]
