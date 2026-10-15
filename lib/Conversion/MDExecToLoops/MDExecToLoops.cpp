@@ -961,7 +961,10 @@ void Lowering::lowerPermute(md_exec::PermuteOp op) {
 }
 
 /// The places of the particles whose value is not zero, in ascending
-/// order, then −1 (D[pme-skip-zero]): one pass that counts.
+/// order, then −1 − the place of each of the others, in ascending order
+/// (D[pme-skip-zero]): a pass that writes the entries of the
+/// listed particles and counts them, and one that writes the others after
+/// them.
 void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
@@ -971,34 +974,44 @@ void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
   Value one = createIndex(builder, loc, 1);
   Type element = cast<MemRefType>(field.getType()).getElementType();
   Type i32 = builder.getI32Type();
-  auto listed = scf::ForOp::create(
-      builder, loc, zero, size, one, ValueRange{zero},
-      [&](OpBuilder &body, Location, Value i, ValueRange args) {
-        Value value = memref::LoadOp::create(body, loc, field, ValueRange{i});
-        Value none = arith::ConstantOp::create(
-            body, loc, body.getFloatAttr(element, 0.0));
-        // Unordered or not equal: a value that is not a number is listed.
-        Value nonzero = arith::CmpFOp::create(
-            body, loc, arith::CmpFPredicate::UNE, value, none);
-        Value count = args[0];
-        scf::IfOp::create(body, loc, nonzero, [&](OpBuilder &then, Location) {
-          Value place = arith::IndexCastOp::create(then, loc, i32, i);
-          memref::StoreOp::create(then, loc, place, out, ValueRange{count});
-          scf::YieldOp::create(then, loc);
+  // Unordered or not equal: a value that is not a number is listed.
+  auto isListed = [&](OpBuilder &body, Value i) -> Value {
+    Value value = memref::LoadOp::create(body, loc, field, ValueRange{i});
+    Value none = arith::ConstantOp::create(
+        body, loc, body.getFloatAttr(element, 0.0));
+    return arith::CmpFOp::create(body, loc, arith::CmpFPredicate::UNE, value,
+                                 none);
+  };
+  // Writes the entries of the listed particles, or of the others, from
+  // `first` on, and returns the place after the last.
+  auto writeEntries = [&](Value first, bool listedOnes) -> Value {
+    auto loop = scf::ForOp::create(
+        builder, loc, zero, size, one, ValueRange{first},
+        [&](OpBuilder &body, Location, Value i, ValueRange args) {
+          Value writes = isListed(body, i);
+          if (!listedOnes)
+            writes = arith::XOrIOp::create(
+                body, loc, writes,
+                arith::ConstantOp::create(body, loc, body.getBoolAttr(true)));
+          Value count = args[0];
+          scf::IfOp::create(body, loc, writes, [&](OpBuilder &then, Location) {
+            Value entry = arith::IndexCastOp::create(then, loc, i32, i);
+            if (!listedOnes)
+              entry = arith::SubIOp::create(
+                  then, loc,
+                  arith::ConstantOp::create(then, loc,
+                                            then.getI32IntegerAttr(-1)),
+                  entry);
+            memref::StoreOp::create(then, loc, entry, out, ValueRange{count});
+            scf::YieldOp::create(then, loc);
+          });
+          Value more = arith::AddIOp::create(body, loc, count, one);
+          Value next = arith::SelectOp::create(body, loc, writes, more, count);
+          scf::YieldOp::create(body, loc, ValueRange{next});
         });
-        Value more = arith::AddIOp::create(body, loc, count, one);
-        Value next = arith::SelectOp::create(body, loc, nonzero, more, count);
-        scf::YieldOp::create(body, loc, ValueRange{next});
-      });
-  Value end = arith::ConstantOp::create(builder, loc,
-                                        builder.getI32IntegerAttr(-1));
-  scf::ForOp::create(builder, loc, listed.getResult(0), size, one,
-                     ValueRange(),
-                     [&](OpBuilder &body, Location, Value k, ValueRange) {
-                       memref::StoreOp::create(body, loc, end, out,
-                                               ValueRange{k});
-                       scf::YieldOp::create(body, loc);
-                     });
+    return loop.getResult(0);
+  };
+  writeEntries(writeEntries(zero, /*listedOnes=*/true), /*listedOnes=*/false);
 }
 
 //===----------------------------------------------------------------------===//

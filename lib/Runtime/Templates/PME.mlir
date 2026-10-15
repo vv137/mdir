@@ -1195,7 +1195,7 @@ func.func private @mdrt.pme_potential_triclinic(%x: memref<?x3x!pme_pos>, %q: me
 }
 
 // The number of the listed particles of `list` (D[pme-skip-zero]):
-// its entries before the first −1.
+// its entries before the first negative one.
 func.func private @mdrt.pme_count_listed(%list: memref<?xi32>) -> index {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -1213,7 +1213,7 @@ func.func private @mdrt.pme_count_listed(%list: memref<?xi32>) -> index {
 
 // Spreads the charges of the listed particles to `grid`, as
 // @mdrt.pme_spread spreads those of all (D[pme-skip-zero]): `list` holds
-// their places, then −1.
+// their places, then −1 − the place of each of the others.
 func.func private @mdrt.pme_spread_listed(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
                                    %box: vector<3xf64>, %grid: memref<?xi64>,
@@ -1320,7 +1320,7 @@ func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
 
 // Spreads the charges of the listed particles to `grid`, as
 // @mdrt.pme_spread_triclinic spreads those of all (D[pme-skip-zero]): `list` holds
-// their places, then −1.
+// their places, then −1 − the place of each of the others.
 func.func private @mdrt.pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
                                    %box: vector<6xf64>, %grid: memref<?xi64>,

@@ -3955,11 +3955,10 @@ func.func private @mdrt_gpu_pme_potential(%x: memref<?x3x!pme_pos, 1>, %q: memre
 // Spreads the charges to `grid`, in fixed point, so that the sum does not depend on the order of
 // the threads (D70; the deterministic mode, D84),
 // of the listed particles (D[pme-skip-zero]): `list` holds their places,
-// then -1. A force of zero is stored at every particle, for the gathering,
-// which stores those of the listed particles.
+// then -1 - the place of each of the others.
 func.func private @mdrt_gpu_pme_spread_listed(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %list: memref<?xi32, 1>, %box: vector<3xf64>, %grid: memref<?xi64, 1>,
-                                       %k1: index, %k2: index, %k3: index, %n: index, %f: memref<?x3x!pme_frc, 1>) {
+                                       %k1: index, %k2: index, %k3: index, %n: index) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -3996,17 +3995,6 @@ func.func private @mdrt_gpu_pme_spread_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
       %lanes = arith.constant PME_ORDER : index
       %slot = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
-      %lane0 = arith.constant 0 : index
-      %zeroes = arith.cmpi eq, %j3, %lane0 : index
-      scf.if %zeroes {
-        %fz_c0 = arith.constant 0 : index
-        %fz_c1 = arith.constant 1 : index
-        %fz_c2 = arith.constant 2 : index
-        %fz_none = arith.constant 0.0 : !pme_frc
-        memref.store %fz_none, %f[%slot, %fz_c0] : memref<?x3x!pme_frc, 1>
-        memref.store %fz_none, %f[%slot, %fz_c1] : memref<?x3x!pme_frc, 1>
-        memref.store %fz_none, %f[%slot, %fz_c2] : memref<?x3x!pme_frc, 1>
-      }
       %listed = memref.load %list[%slot] : memref<?xi32, 1>
       %listed_none = arith.constant 0 : i32
       %is_listed = arith.cmpi sge, %listed, %listed_none : i32
@@ -4402,11 +4390,10 @@ func.func private @mdrt_gpu_pme_spread_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
 // Spreads the charges to `grid`, in !pme_real, with floating-point atomics, whose sum depends on
 // the order of the threads (the default mode, D84),
 // of the listed particles (D[pme-skip-zero]): `list` holds their places,
-// then -1. A force of zero is stored at every particle, for the gathering,
-// which stores those of the listed particles.
+// then -1 - the place of each of the others.
 func.func private @mdrt_gpu_pme_spread_float_listed(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %list: memref<?xi32, 1>, %box: vector<3xf64>, %grid: memref<?x!pme_real, 1>,
-                                       %k1: index, %k2: index, %k3: index, %n: index, %f: memref<?x3x!pme_frc, 1>) {
+                                       %k1: index, %k2: index, %k3: index, %n: index) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
@@ -4443,17 +4430,6 @@ func.func private @mdrt_gpu_pme_spread_float_listed(%x: memref<?x3x!pme_pos, 1>,
       %lanes = arith.constant PME_ORDER : index
       %slot = arith.divui %item, %lanes : index
       %j3 = arith.remui %item, %lanes : index
-      %lane0 = arith.constant 0 : index
-      %zeroes = arith.cmpi eq, %j3, %lane0 : index
-      scf.if %zeroes {
-        %fz_c0 = arith.constant 0 : index
-        %fz_c1 = arith.constant 1 : index
-        %fz_c2 = arith.constant 2 : index
-        %fz_none = arith.constant 0.0 : !pme_frc
-        memref.store %fz_none, %f[%slot, %fz_c0] : memref<?x3x!pme_frc, 1>
-        memref.store %fz_none, %f[%slot, %fz_c1] : memref<?x3x!pme_frc, 1>
-        memref.store %fz_none, %f[%slot, %fz_c2] : memref<?x3x!pme_frc, 1>
-      }
       %listed = memref.load %list[%slot] : memref<?xi32, 1>
       %listed_none = arith.constant 0 : i32
       %is_listed = arith.cmpi sge, %listed, %listed_none : i32
@@ -4851,11 +4827,10 @@ func.func private @mdrt_gpu_pme_spread_float_listed(%x: memref<?x3x!pme_pos, 1>,
 
 // The weights of the particles for the spreading and the gathering of
 // order 4, of the listed
-// particles (D[pme-skip-zero]), with a force of zero stored at every
-// particle for the gathering: see weights_kernels in the script.
+// particles (D[pme-skip-zero]), at the entries of the list: see weights_kernels in the script.
 func.func private @mdrt_gpu_pme_weights_listed(%x: memref<?x3x!pme_pos, 1>, %list: memref<?xi32, 1>, %box: vector<3xf64>,
                                         %weights: memref<?x!pme_real, 1>,
-                                        %k1: index, %k2: index, %k3: index, %f: memref<?x3x!pme_frc, 1>) {
+                                        %k1: index, %k2: index, %k3: index) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
@@ -4871,7 +4846,6 @@ func.func private @mdrt_gpu_pme_weights_listed(%x: memref<?x3x!pme_pos, 1>, %lis
   %b12 = arith.muli %b1, %b2 : index
   %b123 = arith.muli %b12, %k3 : index
   %brick_points = arith.muli %b123, %c16 : index
-  %true = arith.constant true
   %lx = vector.extract %box[0] : f64 from vector<3xf64>
   %ly = vector.extract %box[1] : f64 from vector<3xf64>
   %lz = vector.extract %box[2] : f64 from vector<3xf64>
@@ -4886,15 +4860,6 @@ func.func private @mdrt_gpu_pme_weights_listed(%x: memref<?x3x!pme_pos, 1>, %lis
     %item = arith.addi %base, %tx : index
     %inside = arith.cmpi ult, %item, %n_all : index
     scf.if %inside {
-      scf.if %true {
-        %fz_c0 = arith.constant 0 : index
-        %fz_c1 = arith.constant 1 : index
-        %fz_c2 = arith.constant 2 : index
-        %fz_none = arith.constant 0.0 : !pme_frc
-        memref.store %fz_none, %f[%item, %fz_c0] : memref<?x3x!pme_frc, 1>
-        memref.store %fz_none, %f[%item, %fz_c1] : memref<?x3x!pme_frc, 1>
-        memref.store %fz_none, %f[%item, %fz_c2] : memref<?x3x!pme_frc, 1>
-      }
       %listed = memref.load %list[%item] : memref<?xi32, 1>
       %listed_none = arith.constant 0 : i32
       %is_listed = arith.cmpi sge, %listed, %listed_none : i32
@@ -4933,12 +4898,12 @@ func.func private @mdrt_gpu_pme_weights_listed(%x: memref<?x3x!pme_pos, 1>, %lis
       %px_start = arith.remui %px_start0, %k1 : index
       %xfc = arith.constant 3 : index
       %xfn = arith.muli %n_all, %xfc : index
-      %xfat = arith.addi %xfn, %i : index
+      %xfat = arith.addi %xfn, %item : index
       memref.store %px_w, %weights[%xfat] : memref<?x!pme_real, 1>
       %xstart_i = arith.index_cast %px_start : index to i32
       %xstart_r = arith.sitofp %xstart_i : i32 to !pme_real
       %xsn = arith.muli %n_all, %xc : index
-      %xsat = arith.addi %xsn, %i : index
+      %xsat = arith.addi %xsn, %item : index
       memref.store %xstart_r, %weights[%xsat] : memref<?x!pme_real, 1>
       %yc = arith.constant 1 : index
       %ys = memref.load %x[%i, %yc] : memref<?x3x!pme_pos, 1>
@@ -4969,12 +4934,12 @@ func.func private @mdrt_gpu_pme_weights_listed(%x: memref<?x3x!pme_pos, 1>, %lis
       %py_start = arith.remui %py_start0, %k2 : index
       %yfc = arith.constant 4 : index
       %yfn = arith.muli %n_all, %yfc : index
-      %yfat = arith.addi %yfn, %i : index
+      %yfat = arith.addi %yfn, %item : index
       memref.store %py_w, %weights[%yfat] : memref<?x!pme_real, 1>
       %ystart_i = arith.index_cast %py_start : index to i32
       %ystart_r = arith.sitofp %ystart_i : i32 to !pme_real
       %ysn = arith.muli %n_all, %yc : index
-      %ysat = arith.addi %ysn, %i : index
+      %ysat = arith.addi %ysn, %item : index
       memref.store %ystart_r, %weights[%ysat] : memref<?x!pme_real, 1>
       %zc = arith.constant 2 : index
       %zs = memref.load %x[%i, %zc] : memref<?x3x!pme_pos, 1>
@@ -5005,12 +4970,12 @@ func.func private @mdrt_gpu_pme_weights_listed(%x: memref<?x3x!pme_pos, 1>, %lis
       %pz_start = arith.remui %pz_start0, %k3 : index
       %zfc = arith.constant 5 : index
       %zfn = arith.muli %n_all, %zfc : index
-      %zfat = arith.addi %zfn, %i : index
+      %zfat = arith.addi %zfn, %item : index
       memref.store %pz_w, %weights[%zfat] : memref<?x!pme_real, 1>
       %zstart_i = arith.index_cast %pz_start : index to i32
       %zstart_r = arith.sitofp %zstart_i : i32 to !pme_real
       %zsn = arith.muli %n_all, %zc : index
-      %zsat = arith.addi %zsn, %i : index
+      %zsat = arith.addi %zsn, %item : index
       memref.store %zstart_r, %weights[%zsat] : memref<?x!pme_real, 1>
       }
     }
@@ -5059,7 +5024,7 @@ func.func private @mdrt_gpu_pme_spread_bricks_listed(%x: memref<?x3x!pme_pos, 1>
       %i = arith.index_cast %listed : i32 to index
       %item32 = arith.index_cast %item : index to i32
       %n32 = arith.index_cast %n_all : index to i32
-      %i32 = arith.index_cast %i : index to i32
+      %i32 = arith.index_cast %slot : index to i32
       %t32 = arith.constant 32 : i32
       %t2 = arith.constant 2 : i32
       %t3 = arith.constant 3 : i32
@@ -5353,10 +5318,10 @@ func.func private @mdrt_gpu_pme_spread_bricks_listed(%x: memref<?x3x!pme_pos, 1>
 // thread of a particle stores. The threads of a particle are consecutive
 // and within a warp. The shuffles take every thread of the
 // block, so the threads beyond the last particle compute too, from the
-// last particle, and do not store.// With `list`, the places of the listed particles then -1, the threads take
-// its entries in place of the particles (D[pme-skip-zero]): a
-// warp past the last listed place leaves at once, and the forces of the
-// other particles are those of zero that the spreading stored.
+// last particle, and do not store.// With `list`, the places of the listed particles, then -1 - the place of
+// each of the others, the threads take its entries in place of the
+// particles (D[pme-skip-zero]): a warp past the last listed
+// place skips the gathering, and stores the forces of zero of the others.
 func.func private @mdrt_gpu_pme_gather_listed(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %list: memref<?xi32, 1>,
                                        %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>,
@@ -5421,6 +5386,8 @@ func.func private @mdrt_gpu_pme_gather_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
       // its warp, which is listed, and does not store.
       %listed_or = arith.select %is_listed, %listed, %warp_listed : i32
       %i = arith.index_cast %listed_or : i32 to index
+      // The entry of that particle, at which the weights are stored.
+      %entry = arith.select %is_listed, %slot, %wslot_c : index
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
@@ -5892,6 +5859,25 @@ func.func private @mdrt_gpu_pme_gather_listed(%x: memref<?x3x!pme_pos, 1>, %q: m
         memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
       }
     }
+    %zslot0 = arith.divui %item0, %lanes_l : index
+    %zslot = arith.select %inside, %zslot0, %c0 : index
+    %zentry = memref.load %list[%zslot] : memref<?xi32, 1>
+    %znone = arith.constant 0 : i32
+    %zunlisted = arith.cmpi slt, %zentry, %znone : i32
+    %zfirst = arith.cmpi eq, %lane_of, %c0 : index
+    %zin = arith.andi %inside, %zfirst : i1
+    %zstores = arith.andi %zin, %zunlisted : i1
+    scf.if %zstores {
+      %zminus = arith.constant -1 : i32
+      %zplace32 = arith.subi %zminus, %zentry : i32
+      %zplace = arith.index_cast %zplace32 : i32 to index
+      %zc1 = arith.constant 1 : index
+      %zc2 = arith.constant 2 : index
+      %zero_f = arith.constant 0.0 : !pme_frc
+      memref.store %zero_f, %f[%zplace, %c0] : memref<?x3x!pme_frc, 1>
+      memref.store %zero_f, %f[%zplace, %zc1] : memref<?x3x!pme_frc, 1>
+      memref.store %zero_f, %f[%zplace, %zc2] : memref<?x3x!pme_frc, 1>
+    }
     gpu.terminator
   }
   return
@@ -5960,6 +5946,8 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
       // its warp, which is listed, and does not store.
       %listed_or = arith.select %is_listed, %listed, %warp_listed : i32
       %i = arith.index_cast %listed_or : i32 to index
+      // The entry of that particle, at which the weights are stored.
+      %entry = arith.select %is_listed, %slot, %wslot_c : index
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
@@ -5974,12 +5962,12 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
       %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
       %xsc = arith.constant 0 : index
       %xsn = arith.muli %count, %xsc : index
-      %xsat = arith.addi %xsn, %i : index
+      %xsat = arith.addi %xsn, %entry : index
       %xstart_r = memref.load %weights[%xsat] : memref<?x!pme_real, 1>
       %xstart = arith.fptosi %xstart_r : !pme_real to i32
       %xfc = arith.constant 3 : index
       %xfn = arith.muli %count, %xfc : index
-      %xfat = arith.addi %xfn, %i : index
+      %xfat = arith.addi %xfn, %entry : index
       %xfrac = memref.load %weights[%xfat] : memref<?x!pme_real, 1>
       %bx_c0 = arith.constant 0 : index
       %bx_c1 = arith.constant 1 : index
@@ -6072,12 +6060,12 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
       memref.store %bx_f_bottom, %wx[%bx_c0] : memref<8x!pme_real>
       %ysc = arith.constant 1 : index
       %ysn = arith.muli %count, %ysc : index
-      %ysat = arith.addi %ysn, %i : index
+      %ysat = arith.addi %ysn, %entry : index
       %ystart_r = memref.load %weights[%ysat] : memref<?x!pme_real, 1>
       %ystart = arith.fptosi %ystart_r : !pme_real to i32
       %yfc = arith.constant 4 : index
       %yfn = arith.muli %count, %yfc : index
-      %yfat = arith.addi %yfn, %i : index
+      %yfat = arith.addi %yfn, %entry : index
       %yfrac = memref.load %weights[%yfat] : memref<?x!pme_real, 1>
       %by_c0 = arith.constant 0 : index
       %by_c1 = arith.constant 1 : index
@@ -6170,12 +6158,12 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
       memref.store %by_f_bottom, %wy[%by_c0] : memref<8x!pme_real>
       %zsc = arith.constant 2 : index
       %zsn = arith.muli %count, %zsc : index
-      %zsat = arith.addi %zsn, %i : index
+      %zsat = arith.addi %zsn, %entry : index
       %zstart_r = memref.load %weights[%zsat] : memref<?x!pme_real, 1>
       %zstart = arith.fptosi %zstart_r : !pme_real to i32
       %zfc = arith.constant 5 : index
       %zfn = arith.muli %count, %zfc : index
-      %zfat = arith.addi %zfn, %i : index
+      %zfat = arith.addi %zfn, %entry : index
       %zfrac = memref.load %weights[%zfat] : memref<?x!pme_real, 1>
       %bz_c0 = arith.constant 0 : index
       %bz_c1 = arith.constant 1 : index
@@ -6384,6 +6372,25 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
         memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
         memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
       }
+    }
+    %zslot0 = arith.divui %item0, %lanes_l : index
+    %zslot = arith.select %inside, %zslot0, %c0 : index
+    %zentry = memref.load %list[%zslot] : memref<?xi32, 1>
+    %znone = arith.constant 0 : i32
+    %zunlisted = arith.cmpi slt, %zentry, %znone : i32
+    %zfirst = arith.cmpi eq, %lane_of, %c0 : index
+    %zin = arith.andi %inside, %zfirst : i1
+    %zstores = arith.andi %zin, %zunlisted : i1
+    scf.if %zstores {
+      %zminus = arith.constant -1 : i32
+      %zplace32 = arith.subi %zminus, %zentry : i32
+      %zplace = arith.index_cast %zplace32 : i32 to index
+      %zc1 = arith.constant 1 : index
+      %zc2 = arith.constant 2 : index
+      %zero_f = arith.constant 0.0 : !pme_frc
+      memref.store %zero_f, %f[%zplace, %c0] : memref<?x3x!pme_frc, 1>
+      memref.store %zero_f, %f[%zplace, %zc1] : memref<?x3x!pme_frc, 1>
+      memref.store %zero_f, %f[%zplace, %zc2] : memref<?x3x!pme_frc, 1>
     }
     gpu.terminator
   }

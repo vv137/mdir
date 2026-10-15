@@ -252,7 +252,8 @@ def MDExec_NonzeroOp : MDExec_Op<"nonzero", [
   let description = [{
     Returns a field of `i32` whose first entries are the places of the
     particles whose value in `field` is not zero, in ascending order, and
-    whose other entries are −1. A value that is not a number is not zero.
+    whose other entries are −1 − the place of each of the others, in
+    ascending order. A value that is not a number is not zero.
     The reciprocal sum of PME spreads and gathers the particles of such a
     list only (D[pme-skip-zero]); where the particles are
     put in a new order, the list is made again from the permuted field.

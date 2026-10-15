@@ -3496,18 +3496,18 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         ValueRange());
   // The charges in fixed point in the deterministic mode, then converted;
   // by default with floating-point atomics, straight to the grid (D84).
-  // With a list, the first kernel of the spreading also stores a force of
-  // zero at every particle, and the gathering those of the listed ones.
+  // With a list, the gathering stores the forces of the listed particles
+  // and a force of zero at each of the others.
   if (listed && deterministic) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_listed"),
                          ValueRange{positions, charges, listed, box, fixed, k1,
-                                    k2, k3, order, forces});
+                                    k2, k3, order});
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
                          ValueRange{fixed, real});
   } else if (listed && usesWeights) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights_listed"),
                          ValueRange{positions, listed, box, weights, k1, k2,
-                                    k3, forces});
+                                    k3});
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_spread_bricks_listed"),
                          ValueRange{positions, charges, listed, weights,
@@ -3516,7 +3516,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_spread_float_listed"),
                          ValueRange{positions, charges, listed, box, real, k1,
-                                    k2, k3, order, forces});
+                                    k2, k3, order});
   } else if (deterministic) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread"),
                          ValueRange{positions, charges, box, fixed, k1, k2,
@@ -4665,11 +4665,12 @@ void Lowering::lowerPermute(md_exec::PermuteOp op) {
 }
 
 /// The places of the particles whose value is not zero, in ascending
-/// order, then −1 (D[pme-skip-zero]), in integers: the
-/// list is filled with −1, a thread counts the listed particles of each chunk
-/// of 256 places, one thread sums the counts of the chunks before each, and
-/// a thread writes the places of each chunk from there. It runs where the
-/// particles take a new order, not at every step.
+/// order, then −1 − the place of each of the others, in ascending order
+/// (D[pme-skip-zero]), in integers: a thread counts the
+/// listed particles of each chunk of 256 places, one thread sums the counts
+/// of the chunks before each and of all, and a thread writes the entries
+/// of each chunk from there. It runs where the particles take a new order,
+/// not at every step.
 void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
@@ -4681,15 +4682,12 @@ void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
   Value chunks = createGroups(builder, loc, size, width);
   Type i32 = builder.getI32Type();
   Type element = cast<MemRefType>(field.getType()).getElementType();
-  Value counts =
-      createDeviceBuffer(builder, loc, getDeviceType({ShapedType::kDynamic}, i32),
-                         ValueRange{chunks});
+  // The counts of the chunks, and after them that of all.
+  Value counts = createDeviceBuffer(
+      builder, loc, getDeviceType({ShapedType::kDynamic}, i32),
+      ValueRange{arith::AddIOp::create(builder, loc, chunks, one)});
 
-  launchOver(builder, loc, size, [&](OpBuilder &body, Value place) {
-    Value end = arith::ConstantOp::create(body, loc, body.getI32IntegerAttr(-1));
-    memref::StoreOp::create(body, loc, end, out, ValueRange{place});
-  });
-  // The places of chunk `c` and whether particle `i` is listed: a value
+  // The places of chunk `c`, and whether particle `i` is listed: a value
   // that is not a number is.
   auto bounds = [&](OpBuilder &body, Value c) {
     Value from = arith::MulIOp::create(body, loc, c, chunk);
@@ -4704,12 +4702,15 @@ void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
     return arith::CmpFOp::create(body, loc, arith::CmpFPredicate::UNE, value,
                                  none);
   };
+  auto constant = [&](OpBuilder &body, int32_t value) -> Value {
+    return arith::ConstantOp::create(body, loc, body.getI32IntegerAttr(value));
+  };
   launchOver(builder, loc, chunks, [&](OpBuilder &body, Value c) {
     auto [from, to] = bounds(body, c);
-    Value none = arith::ConstantOp::create(body, loc, body.getI32IntegerAttr(0));
-    Value add = arith::ConstantOp::create(body, loc, body.getI32IntegerAttr(1));
+    Value add = constant(body, 1);
     auto loop = scf::ForOp::create(
-        body, loc, from, to, createIndex(body, loc, 1), ValueRange{none},
+        body, loc, from, to, createIndex(body, loc, 1),
+        ValueRange{constant(body, 0)},
         [&](OpBuilder &inner, Location, Value i, ValueRange args) {
           Value more = arith::AddIOp::create(inner, loc, args[0], add);
           Value next = arith::SelectOp::create(inner, loc, isListed(inner, i),
@@ -4720,36 +4721,53 @@ void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
                             ValueRange{c});
   });
   launchOver(builder, loc, one, [&](OpBuilder &body, Value) {
-    Value none = arith::ConstantOp::create(body, loc, body.getI32IntegerAttr(0));
-    scf::ForOp::create(
+    auto loop = scf::ForOp::create(
         body, loc, createIndex(body, loc, 0), chunks, createIndex(body, loc, 1),
-        ValueRange{none},
+        ValueRange{constant(body, 0)},
         [&](OpBuilder &inner, Location, Value c, ValueRange args) {
-          Value count = memref::LoadOp::create(inner, loc, counts, ValueRange{c});
+          Value count =
+              memref::LoadOp::create(inner, loc, counts, ValueRange{c});
           memref::StoreOp::create(inner, loc, args[0], counts, ValueRange{c});
           Value next = arith::AddIOp::create(inner, loc, args[0], count);
           scf::YieldOp::create(inner, loc, ValueRange{next});
         });
+    memref::StoreOp::create(body, loc, loop.getResult(0), counts,
+                            ValueRange{chunks});
   });
   launchOver(builder, loc, chunks, [&](OpBuilder &body, Value c) {
     auto [from, to] = bounds(body, c);
-    Value first = memref::LoadOp::create(body, loc, counts, ValueRange{c});
-    Value add = arith::ConstantOp::create(body, loc, body.getI32IntegerAttr(1));
+    // The listed particles of the chunk from the count of those before it,
+    // the others from the count of all and of the others before it.
+    Value listedFirst =
+        memref::LoadOp::create(body, loc, counts, ValueRange{c});
+    Value all = memref::LoadOp::create(body, loc, counts, ValueRange{chunks});
+    Value from32 = arith::IndexCastOp::create(body, loc, i32, from);
+    Value othersFirst = arith::AddIOp::create(
+        body, loc, all, arith::SubIOp::create(body, loc, from32, listedFirst));
+    Value add = constant(body, 1);
+    Value minusOne = constant(body, -1);
     scf::ForOp::create(
-        body, loc, from, to, createIndex(body, loc, 1), ValueRange{first},
+        body, loc, from, to, createIndex(body, loc, 1),
+        ValueRange{listedFirst, othersFirst},
         [&](OpBuilder &inner, Location, Value i, ValueRange args) {
           Value listed = isListed(inner, i);
-          scf::IfOp::create(inner, loc, listed, [&](OpBuilder &then, Location) {
-            Value at = arith::IndexCastOp::create(then, loc,
-                                                  then.getIndexType(), args[0]);
-            Value place = arith::IndexCastOp::create(then, loc, i32, i);
-            memref::StoreOp::create(then, loc, place, out, ValueRange{at});
-            scf::YieldOp::create(then, loc);
-          });
-          Value more = arith::AddIOp::create(inner, loc, args[0], add);
-          Value next =
-              arith::SelectOp::create(inner, loc, listed, more, args[0]);
-          scf::YieldOp::create(inner, loc, ValueRange{next});
+          Value place = arith::IndexCastOp::create(inner, loc, i32, i);
+          Value other = arith::SubIOp::create(inner, loc, minusOne, place);
+          Value at32 =
+              arith::SelectOp::create(inner, loc, listed, args[0], args[1]);
+          Value entry =
+              arith::SelectOp::create(inner, loc, listed, place, other);
+          Value at = arith::IndexCastOp::create(inner, loc,
+                                                inner.getIndexType(), at32);
+          memref::StoreOp::create(inner, loc, entry, out, ValueRange{at});
+          Value nextListed = arith::SelectOp::create(
+              inner, loc, listed,
+              arith::AddIOp::create(inner, loc, args[0], add), args[0]);
+          Value nextOthers = arith::SelectOp::create(
+              inner, loc, listed, args[1],
+              arith::AddIOp::create(inner, loc, args[1], add));
+          scf::YieldOp::create(inner, loc,
+                               ValueRange{nextListed, nextOthers});
         });
   });
   freeDeviceAtEndOfBlock(op, counts);

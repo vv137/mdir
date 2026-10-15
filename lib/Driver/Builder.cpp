@@ -217,7 +217,8 @@ private:
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
   /// The field `name` of the places of the particles whose `values` are not
-  /// zero, then −1 (D[pme-skip-zero]), which the reciprocal
+  /// zero, then −1 − the place of each of the others
+  /// (D[pme-skip-zero]), which the reciprocal
   /// sum of PME spreads and gathers alone; none where every value is
   /// nonzero, or where a tunable of one of `kinds` may change the values.
   void collectListed(llvm::StringRef name, llvm::ArrayRef<double> values,
@@ -2802,8 +2803,11 @@ void Builder::collectListed(StringRef name, llvm::ArrayRef<double> values,
       field.values.push_back(static_cast<double>(place));
   if (field.values.size() == values.size())
     return;
-  while (field.values.size() != values.size())
-    field.values.push_back(-1.0);
+  // Then −1 − the place of each of the others, whose forces of zero the
+  // gathering stores.
+  for (auto [place, value] : llvm::enumerate(values))
+    if (value == 0.0)
+      field.values.push_back(-1.0 - static_cast<double>(place));
   program.fields.push_back(std::move(field));
 }
 

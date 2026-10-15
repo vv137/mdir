@@ -225,15 +225,16 @@ zero where $q_j$ is; where the derivative in the charges asks for it, it
 is gathered at every particle.
 
 A set is a field of the particles, its first entries the places of its
-members in ascending order and the rest $-1$; it is made from the
+members in ascending order and the rest $-1-j$ for each other particle
+$j$; it is made from the
 topology and made again, by counting in chunks of 256 places and a prefix
 sum, wherever the particles take a new order (at the start and at each
 segment), so that it follows the order of the particles. A kernel takes
-an entry of the set where it took a particle, and a warp whose first
-entry is past the last member leaves at once. On a device the first
-kernel of the spreading, which runs over every place, stores a force of
-zero at each, and the gathering stores those of the members; on the host
-the gathering stores the zeros first. A model with no such
+an entry of the set where it took a particle; the weights of order 4 are
+stored at the entry, so that they are read in order. In the gathering a
+warp whose first entry is past the last member skips the sum and stores
+the forces of zero of the particles it holds: the gathering writes every
+force. A model with no such
 particle, or with tunable parameters that could move a coefficient across
 zero, has no set, and its kernels are those of before.
 
