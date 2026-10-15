@@ -1,0 +1,31 @@
+# REQUIRES: cuda
+# prolate-skip-zero.test on a device (D[prolate-ewald], D262): the spreading
+# over the list of the particles of a nonzero charge, in bricks and in fixed
+# point, the gathering of every particle (gather_all, examples/ala3 in OPC),
+# and the gathering over the list (every other water uncharged, in the
+# orthorhombic cell and in the rhombic dodecahedron). In the deterministic
+# mode in double precision the rows are those of the host, which are those
+# of the prolate kernel without a list; in mixed precision two runs give
+# the same bits. The comparison with the kernel without a list to the bit
+# (deterministic mode, double and mixed precision) is on PR #337.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../../examples/ala3/ala3.prmtop %S/../../examples/ala3/ala3.inpcrd %S/Inputs/triclinic/dodecahedron.gro %t
+# RUN: %python %S/Inputs/zero_water_charges.py %t/ala3.prmtop %t/half.prmtop
+# RUN: sed -n '/^#--- water-half.top/,/^#--- end/p' %S/prolate-skip-zero.test | sed '1d;$d' > %t/water-half.top
+# RUN: sed -n '/^#--- ala3.toml/,/^#--- dodec.toml/p' %S/prolate-skip-zero.test | sed '1d;$d' | sed 's/^target        = "CPU"/target        = "GPU"/; s/^threads .*/deterministic = true/' > %t/ala3.toml
+# RUN: sed -n '/^#--- dodec.toml/,/^#--- water-half.top/p' %S/prolate-skip-zero.test | sed '1d;$d' | sed 's/^target        = "CPU"/target        = "GPU"/; s/^threads .*/deterministic = true/' > %t/dodec.toml
+# RUN: sed 's/ala3.prmtop/half.prmtop/; s/ala3.h5/half.h5/' %t/ala3.toml > %t/half.toml
+# RUN: sed 's/^precision     = "DOUBLE"/precision     = "MIXED"/' %t/half.toml > %t/half-mixed.toml
+# RUN: sed 's/^precision     = "DOUBLE"/precision     = "MIXED"/' %t/dodec.toml > %t/dodec-mixed.toml
+# RUN: cd %t && mdir run ala3.toml | FileCheck %S/prolate-skip-zero.test --check-prefix=DOUBLE
+# RUN: cd %t && mdir run half.toml | FileCheck %S/prolate-skip-zero.test --check-prefix=HALF
+# RUN: cd %t && mdir run dodec.toml | FileCheck %S/prolate-skip-zero.test --check-prefix=DODEC
+# RUN: cd %t && mdir run half-mixed.toml > half-a.log && mv half.h5 half-a.h5
+# RUN: cd %t && mdir run half-mixed.toml > half-b.log && mv half.h5 half-b.h5
+# RUN: mdir checkpoint %t/half-a.h5 %t/half-b.h5 | FileCheck %s
+# RUN: cd %t && mdir run dodec-mixed.toml > dodec-a.log && mv dodec.h5 dodec-a.h5
+# RUN: cd %t && mdir run dodec-mixed.toml > dodec-b.log && mv dodec.h5 dodec-b.h5
+# RUN: mdir checkpoint %t/dodec-a.h5 %t/dodec-b.h5 | FileCheck %s
+
+# CHECK: the states are identical

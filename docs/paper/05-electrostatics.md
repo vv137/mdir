@@ -651,6 +651,15 @@ $\psi(0)$; the forces take the slopes of the window, so that $\mathbf F_i
 = -\partial E_\text{rec}/\partial\mathbf x_i$ of the discrete sum as in
 Section 5.2.
 
+*Particles without a charge.* The window, like the B-splines, enters
+$Q(\mathbf l)$ multiplied by $q_j$, and the force on particle $j$ is
+$-q_j$ times the sum of $\phi$ against the slopes of its window: a
+particle with $q_j = 0$ adds nothing to the grid and takes a force of zero.
+The sums of the mesh of the prolate kernel therefore run over
+$\mathcal J_q$ as those of the Gaussian do (D262), with the
+same set, the same rule for the gathering on a device, and the same bits
+in the deterministic mode as without it.
+
 *Why the value at the edge is taken off.* The paper's window (its eq. 14)
 is $\psi_0^{c_1}(2d/P)$, which is $\psi_0^{c_1}(1) \approx \eta/2$ at the
 edge of its support, not 0. When a particle crosses a plane of the grid,
