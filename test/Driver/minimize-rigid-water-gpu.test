@@ -1,0 +1,55 @@
+# The minimization of minimize-rigid-water.test on a GPU, in mixed and
+# double precision (D[minimize-large-opc], #343).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: sed -n '/^#--- min.toml/,/^#--- end/p' %s | sed '1d;$d' | sed -e 's|@PRECISION@|MIXED|' -e 's|@NAME@|mixed|' > %t/mixed.toml
+# RUN: sed -n '/^#--- min.toml/,/^#--- end/p' %s | sed '1d;$d' | sed -e 's|@PRECISION@|DOUBLE|' -e 's|@NAME@|double|' > %t/double.toml
+# RUN: mdir run %t/mixed.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_bonds.py %t/three.prmtop %t/mixed.dcd | FileCheck %s --check-prefix=BONDS
+# RUN: mdir run %t/double.toml | FileCheck %s
+# RUN: %python %S/Inputs/check_bonds.py %t/three.prmtop %t/double.dcd | FileCheck %s --check-prefix=BONDS
+
+# The trials of the first steps are not taken, and the step shrinks from
+# 2 Å; the energy at step 50 is that of double precision, -16.1484 (mixed
+# precision -16.1484 on the CPU and -16.1483 on a GPU).
+#
+# CHECK:      MDIR: 12 particles, 50 steps of steepest descent
+# CHECK:      INFO:         0 {{ *}}-11.78{{[0-9]+}} {{.*}} 2.000000
+# CHECK-NEXT: INFO:         5 {{ *}}-13.848{{[0-9]}} {{.*}} 0.138240
+# CHECK:      INFO:        50 {{ *}}-16.148{{[0-9]}} {{.*}} 0.010836
+
+# BONDS: bonds ok
+
+#--- min.toml
+[input]
+topology    = "three.prmtop"
+coordinates = "three.inpcrd"
+
+[output]
+energy_interval     = 5
+trajectory          = "@NAME@.dcd"
+trajectory_interval = 50
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+
+[minimize]
+steps        = 50
+initial_step = 2.0
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"
+precision = "@PRECISION@"
+#--- end

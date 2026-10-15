@@ -1038,6 +1038,24 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- Steepest descent stalled with a step of 0, or failed, on rigid water
+  (D[minimize-large-opc], #343). A trial longer than SETTLE or M-SHAKE can
+  take back, which the step reaches as it grows toward its cap of 1 Å,
+  left a water torn in mixed precision (an O-H of 8 Å). The trial was
+  taken when its energy was lower; every later trial then held the change
+  that takes the water back, which does not shrink with the step, so the
+  step shrank to 0 and the run of dynamics after it failed. In double
+  precision SETTLE gave positions that are not numbers, and on a GPU the
+  run failed at a build of the neighbor structure. Such a trial is now not
+  taken, and the step shrinks. With `main`, 1000 steps on a GPU in mixed
+  precision stalled for 103,292 OPC waters (by step 200) and for 31,808
+  (by step 300); with the fix both go 5000 steps, to -14.37 and -14.29
+  kcal/mol per water in mixed precision and -14.37 and -14.29 in double,
+  with every water at its shape, and NVT from the large box runs (10 ps
+  in mixed precision, 2 ps in double).
+  `minimize-rigid-water.test` and `minimize-rigid-water-gpu.test` take
+  three OPC waters with a first step of 2 Å.
+
 - The test of the memory of the host across the frames of a frame
   evaluator read bytes of its own (#306). It made the `ctypes` structure
   of `mallinfo2` and the handle of the C library anew at every reading,

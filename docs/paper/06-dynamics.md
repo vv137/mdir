@@ -922,6 +922,36 @@ choice is a select of each particle, so each field keeps its own storage.
 A step is one `dyn.step @descend`, which evaluates the energy and the
 forces once.
 
+**A trial that the constraints do not take back** (D[minimize-large-opc]).
+The direction is tangent to the surface of the constraints, so $C$ moves
+a trial by a change of second order in $\ell$; but as $\ell$ grows toward
+1 Å, a group with a large $\lVert\mathbf g_i\rVert$ turns by tens of
+degrees, beyond what SETTLE and M-SHAKE solve. For one bond of length
+$d_k$ moved across itself, the projection along the old bond of Section
+6.2 has a solution only if the move is no longer than $d_k$, 0.87 Å for
+the O–H of OPC; in double precision the cosines of the angles of SETTLE
+become square roots of negative numbers. Such a trial is not a point of the surface, and its
+energy is not that of the minimization: a torn water has no energy of its
+own, since its bonds are constraints, and its energy was lower. Taken, it
+left the surface, and every later trial carried the change that takes the
+group back, which does not shrink with $\ell$ (as the start of D120 did);
+$\ell$ shrank to 0. On 103,292 OPC waters on a GPU this happened within
+240 steps in mixed precision in each of four runs, and in double precision
+SETTLE gave positions that are not numbers, which stopped the run at a
+build of the neighbor structure. A trial is therefore taken only if every
+constrained bond $\mathbf r_k$ of SETTLE and SHAKE meets
+$\big\lvert\lVert\mathbf r_k\rVert^2/d_k^2 - 1\big\rvert \le 10^{-8}$ in
+double precision and $\le 10^{-4}$ below it, a comparison that fails for
+a number that is not one; below double precision the
+lengths of intact waters in a cell of 150 Å, stored in f32, are off by up
+to $4\times10^{-7}$ and those of a torn water by more than $10^{-1}$. A
+trial that fails it is evaluated at $\mathbf x$ instead, so that every
+position the neighbor structure is built from is a number, and is given
+the energy $+\infty$, so that $\ell$ shrinks as for a trial that raises
+the energy. Steepest descent with constraints by GROMACS likewise counts a
+step whose constraints fail as one that is not taken
+[[Abraham2015]](references.md#abraham2015).
+
 **The start** (D120). The positions of the file are first taken onto the
 surface of the constraints, by SETTLE (M-SHAKE below double precision) and
 SHAKE with themselves as the reference, and the sites are placed again,
