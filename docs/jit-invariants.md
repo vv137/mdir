@@ -518,6 +518,29 @@ pipeline, with the pass. The state and the identities are not declared:
 the program on the CPU works in the buffers of the state, and a device
 may copy into them.
 
+*What the proof does not see.* It is a proof about the code of the
+module, as the lowering leaves it, and two things outside it are trusted:
+
+- *The functions of the runtime* whose parameters the lowerings declare
+  read-only. The pass takes the declaration as it is; that the C code only
+  reads is a fact of its source, which no compiler checks: the parameter
+  is a pointer to a descriptor (`struct MdrtMemref2 *`) whose `aligned`
+  member points to memory that the type would let the function write. Today
+  each of them reads the members through `mdrtTuplesMembersOf`, which
+  returns a `const int32_t *`, and copies or compares them; a change that
+  wrote them would not fail the compile. It would fail under the check
+  below, which compares every buffer handed without a copy, the members
+  among them, when the activation ends, and `python-start-arguments*.test`
+  run with it through starts that build and that take the structures of the
+  tuples.
+- *The passes after it* (`fixed-order-reductions`, the lowerings to OpenMP,
+  to LLVM, and to NVVM): they change how the code is written, not what it
+  stores where, and the pass does not run again after them.
+
+A program whose code comes from the compile cache is one that the same
+pipeline compiled from the same text, so the proof of that compile is
+its proof; nothing is checked again when it is loaded.
+
 **R2. An array of the program that the entry takes in its own type is
 handed as it is.** The tables, the members and the fields of the tuple
 sets, the masses, and, in double precision, the fields of the particles:
@@ -526,7 +549,14 @@ The activation holds a share of each (`driver::SharedArray`, D256), so
 each lives as long as the activation, and a program built by a later
 update that shares it cannot write it (a write to a shared array copies
 it first). The tables are those of the program of the engine, which an
-update replaces only after the activation has ended.
+update replaces only after the activation has ended. No view and no
+borrow (D220, D229) lends a handed array: a view is of the state and the
+identities that the entry gives the host at a boundary
+(`mdrtPartBoundary`), which can never be a declared argument, since that
+call does not declare its parameters read-only and the pass would refuse
+the program; and of the values of the tunables, which are the
+simulation's own (a borrow writes a copy of them, which a commit turns
+into an update).
 
 **R3. A conversion is taken only where it was made from the same array.**
 A field of the particles in f32 (mixed and single precision), the types in
@@ -556,6 +586,21 @@ that names the buffer. `python-start-arguments*.test` run with it.
 identities, and the conversions, for each simulation, of the sizes of one
 start's, which every start allocated and freed before; the handed arrays
 take nothing.
+
+**What the declaration changes in a program.** The same builder makes the
+entry of `mdir run`, which calls it once. On JAC, Factor IX, Cellulose,
+and STMV of the Amber suite, NVE and NPT, the module text is that of
+before but for the attribute, and the lowered code differs in one buffer
+alone: on the CPU the identities in a new order were permuted into the
+buffer of the types of the particles, an argument, and now go to a buffer
+of their own, allocated once (4 bytes a particle: 0.09 MB on JAC, 1.6 MB
+on Cellulose, 4.3 MB on STMV); on a GPU the copy of the identities back to
+the host at the end of the run went to the buffer of the types and now
+goes to that of the identities, which the entry was given too. The code
+is otherwise the same, op for op once the values are renamed, so a step
+of `mdir run` does what it did. A Python simulation of the CPU target that
+handed its types without a copy would have had them written over by that
+permutation on `main`: the case that R1 excludes.
 
 **Tests.** `check-read-only.mlir` and `check-read-only-invalid.mlir`: the
 reads that the pass accepts, and eleven uses that it refuses with the

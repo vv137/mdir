@@ -611,7 +611,11 @@ format, or the outputs; every such change is listed under **Changed** or
   `main` to the bit on the CPU and a GPU, in double and mixed precision.
   The module text of every program gains the attribute `mdrt.read_only`
   on these arguments, so every entry of the compile cache is compiled
-  anew once. With `MDRT_CHECK_KEPT_TUPLES` every conversion that a start
+  anew once. The code of `mdir run` is that of before but for one buffer:
+  on the CPU the identities in a new order go to a buffer of their own (4
+  bytes a particle, 1.6 MB on Cellulose), where they were written into
+  the buffer of the types of the particles, and on a GPU their copy at the
+  end of the run goes to their own buffer; a step does what it did. With `MDRT_CHECK_KEPT_TUPLES` every conversion that a start
   takes as kept is made anew and compared, and every buffer handed
   without a copy is compared at the end of its activation
   ([docs/jit-invariants.md](docs/jit-invariants.md#what-a-start-gives-the-entry-dstart-arguments)).
