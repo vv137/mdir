@@ -133,11 +133,11 @@ for kind in ("NVE", "NVT"):
                 # 6.7e-4 kcal/mol of a potential energy of 3719, against
                 # 1.1e-2 between the two programs in mixed precision, whose
                 # thermostat takes the half steps measured with the
-                # constraints, D[thermostat-kopt]).
+                # constraints, D263).
                 bound = 1e-6 + 3 * np.abs(b - d) + 1e-5 * np.abs(b)
                 # The virial (column 6) is that of the groups, the virial of
                 # the forces less that within the rigid groups
-                # (D[barostat-group-pressure]): a difference of sums larger
+                # (D264): a difference of sums larger
                 # than it, whose rounding in mixed precision the two
                 # programs make apart, up to 1e-4 of it.
                 bound[6] += 1e-4 * abs(b[6])

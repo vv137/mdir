@@ -274,7 +274,7 @@ which is the exact solution over the period of the stochastic
 differential equation of [[Bussi2007]](references.md#bussi2007) for $K$. $K_t$
 here is not the kinetic energy of the velocities of the step but that of
 the optimal temperature of Section 6.5, $K_T = K + \tfrac23(K_\text{half} -
-K)$ without the center of mass (D[thermostat-kopt]); the factor $\alpha$
+K)$ without the center of mass (D263); the factor $\alpha$
 scales every velocity, which keeps the constraints of the velocities.
 The reason is the configurational distribution. For one harmonic mode of
 frequency $\omega$ the positions of velocity Verlet obey $x_{n+1} - 2x_n +
@@ -332,7 +332,7 @@ symmetric drift around them leaves canonical. With constraints the
 momenta live on the cotangent space of the constraint surface, and the
 step is g-BAOAB, that of the Appendix of
 [[Leimkuhler2016]](references.md#leimkuhler2016) with one drift in each A
-(D[langevin-gbaoab]): B is the half kick followed by the projection
+(D265): B is the half kick followed by the projection
 $\Pi_{\mathbf x}$ of the velocities on the constraints at $\mathbf x$
 (RATTLE, SETTLE); A a drift of $\Delta t/2$, the constraints of the
 positions along those before the drift (SHAKE, SETTLE), the velocities of
@@ -447,7 +447,7 @@ acting once a period follows a period $\tau_T$ shorter than about 20
 periods of coupling poorly, which the run warns of. The chain is a few numbers, moved on the host,
 which returns $\alpha$ for the loop over particles. The chain is driven by
 $K_T$ in place of $K$ in $G_1$, as velocity rescaling is
-(D[thermostat-kopt]), while its friction scales $K$; $H'$ is then no
+(D263), while its friction scales $K$; $H'$ is then no
 longer a constant of the motion (the investigation of #268 measured it
 drifting by $9\times10^{-3}$ of its value over 5 ns at 2 fs). The bath
 therefore takes what the scaling takes from the particles,
@@ -470,7 +470,7 @@ pressure $P_0$ every $N_P$ steps; $N_P = N_T$, and a barostat requires the
 thermostat. The scaling moves each group $g$ that the constraints keep
 rigid by its center $\mathbf X_g$, and every other particle alone, so the
 pressure conjugate to it is that of the groups
-(D[barostat-group-pressure], [[Jung2020]](references.md#jung2020)). The
+(D264, [[Jung2020]](references.md#jung2020)). The
 virial theorem for the centers, $\tfrac{d}{dt}\langle\sum_g\mathbf
 X_g\cdot\mathbf P_g\rangle = 0$, gives $3PV = \langle2K_g +
 \mathrm{tr}\,\mathsf W_g\rangle$, and the forces of the constraints, which
@@ -858,7 +858,7 @@ constraints of the positions: after its second half kick, the step takes
 the first half of the next as that step will, without changing the state
 (D203). Under g-BAOAB the two half steps are the drifts of the A around
 the end of the step, each of $\Delta t/2$: that of the step, and that of
-the next without its noise, which comes after it (D[langevin-gbaoab]).
+the next without its noise, which comes after it (D265).
 Under Langevin dynamics the log's temperature is that of $K_\text{half}$
 rather than of $K_T$: the friction and the noise act on the velocities of
 the middle of the step, between the drifts, and BAOAB samples those at

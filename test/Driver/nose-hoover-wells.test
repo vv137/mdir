@@ -11,7 +11,7 @@
 # (D206), at step 60, with the rows before it those of the
 # oscillator moved with the same chain by nose_hoover_wells.py, which stops
 # there too. The chain takes the kinetic energy of the optimal temperature
-# (D[thermostat-kopt]).
+# (D263).
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/brownian_wells.py write %t 125

@@ -367,7 +367,7 @@ struct Output {
   /// Maxwellian.
   bool overdamped = false;
   double bathKinetic = 0.0;
-  /// Langevin dynamics (D[langevin-gbaoab]): the temperature takes K_half,
+  /// Langevin dynamics (D265): the temperature takes K_half,
   /// the kinetic energy of the velocities of the drifts around the step,
   /// between which the friction and the noise act, rather than the optimal
   /// estimate.
@@ -502,7 +502,7 @@ extern "C" {
 /// `kinetic`, K_half - K (D203), which the temperature takes. `virial` is
 /// the trace of the virial of the pressure, and `pressureKinetic` its
 /// kinetic energy: those of the groups that the barostat scales, their
-/// centers at the half steps (D[barostat-group-pressure]).
+/// centers at the half steps (D264).
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double excess,
                                     double virial, double pressureKinetic);

@@ -24,7 +24,7 @@
 # CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
 # The pressure is that of the groups that the barostat scales, the waters
-# by their centers (D[barostat-group-pressure]): the forces of the
+# by their centers (D264): the forces of the
 # constraints do not enter it, and the forces give the kinetic energy of
 # the centers at the half steps at step 0 as well. It falls by about 150
 # atm per step here, from step 0 on.

@@ -453,7 +453,7 @@ the names, the values, and the refusals of the control file:
 
 | Python | Control file | Values |
 |---|---|---|
-| `Ensemble.thermostat` | `[thermostat] method` | `mdir.ThermostatMethod.VRescale` (the default, stochastic velocity rescaling), `Langevin` (Langevin dynamics by the middle scheme, with constraints g-BAOAB, D135, D[langevin-gbaoab]), `NoseHoover` (a Nosé–Hoover chain, D163a) |
+| `Ensemble.thermostat` | `[thermostat] method` | `mdir.ThermostatMethod.VRescale` (the default, stochastic velocity rescaling), `Langevin` (Langevin dynamics by the middle scheme, with constraints g-BAOAB, D135, D265), `NoseHoover` (a Nosé–Hoover chain, D163a) |
 | `Ensemble.friction` | `[thermostat] friction` | 1/ps, or a unit quantity; `None` by default. Langevin dynamics needs it; the other two refuse it |
 | `Ensemble.chain_length` | `[thermostat] chain_length` | the thermostats of a Nosé–Hoover chain: 3 by default, at least 1 |
 | `Ensemble.tau_t` | `[thermostat] time_constant` | ps, for `VRescale` and `NoseHoover` (the period of the chain); Langevin dynamics refuses it |

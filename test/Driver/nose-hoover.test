@@ -1,6 +1,6 @@
 # A Nose-Hoover chain (D163a) on the mixture of thermostat.test: the chain
 # acts at the end of each period of 10 steps, driven by the kinetic energy
-# of the optimal temperature (D[thermostat-kopt]), and the energy of the
+# of the optimal temperature (D263), and the energy of the
 # system with what the scaling took from it, the effective energy, is
 # conserved. A run that continues from a checkpoint takes the
 # chain from it and ends in the state of one that does not stop.

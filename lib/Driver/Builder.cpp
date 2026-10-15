@@ -744,7 +744,7 @@ private:
   /// (D203): with constraints, which the forces alone do
   /// not give it for. Under Langevin dynamics, by g-BAOAB, the half steps
   /// are the drifts of its two A around the end of the step
-  /// (D[langevin-gbaoab]). Brownian dynamics has no momenta.
+  /// (D265). Brownian dynamics has no momenta.
   bool measuresHalfSteps() const {
     return hasConstraints() && !control.isBrownian();
   }
@@ -762,7 +762,7 @@ private:
   bool reportsSolvent() const { return measuresHalfSteps() && hasSettles(); }
   /// Whether the steps that close a period of coupling measure the half
   /// steps for the thermostat, which controls the optimal temperature
-  /// (D[thermostat-kopt]).
+  /// (D263).
   bool measuresCoupling() const {
     return measuresHalfSteps() && rescalesVelocities();
   }
@@ -880,7 +880,7 @@ struct Coupled {
   /// `positions` with their forces `forces`: K_g, without the motion of the
   /// center of mass if the run removes it; the term (Δt²/8) Σ F_g² / M_g;
   /// and their sum, K_half of the groups [Jung2020], exact with or without
-  /// constraints (D[barostat-group-pressure]).
+  /// constraints (D264).
   struct GroupKinetic {
     std::string kinetic, forceTerm, half;
   };
@@ -895,10 +895,10 @@ struct Coupled {
                                StringRef relations, StringRef tag);
   /// `groups` is the diagonal of the virial of the groups, which the
   /// pressure of the barostat takes with their kinetic energy at the half
-  /// steps (D[barostat-group-pressure]); `optimal`, if given, the kinetic
+  /// steps (D264); `optimal`, if given, the kinetic
   /// energy of the optimal temperature, K + (2/3)(K_half − K), with that
   /// of the center of mass, which the factor of the thermostat takes
-  /// (D[thermostat-kopt]).
+  /// (D263).
   Coupled emitCoupling(StringRef indent, StringRef positions,
                        StringRef velocities, StringRef forces,
                        StringRef energy, StringRef tag, StringRef step,
@@ -926,7 +926,7 @@ struct Coupled {
   /// trace `trace`; `groups` is the trace of the virial of its groups
   /// (emitMolecularTrace). `givenKinetic`, if given, is the kinetic energy
   /// without the center of mass, computed before.
-  /// The pressure is that of the groups (D[barostat-group-pressure]):
+  /// The pressure is that of the groups (D264):
   /// their virial `groups` and the kinetic energy of their centers at the
   /// half steps, from `positions`, `velocities`, and `forces`, or
   /// `givenKinetic`, computed before.
@@ -5691,7 +5691,7 @@ void Builder::emitPrograms() {
   };
   llvm::SmallVector<Kind> kinds = {{"step", false, false, false, false},
                                    {"step_energy", true, true, false, true}};
-  // The thermostats control the optimal temperature (D[thermostat-kopt]):
+  // The thermostats control the optimal temperature (D263):
   // with constraints the step that closes a period of coupling measures
   // the half steps as well.
   bool coupledHalves = measuresCoupling();
@@ -5711,11 +5711,11 @@ void Builder::emitPrograms() {
     bool scales = kind.scales;
     // The steps of the rows of the log, and those that close a period of
     // a thermostat, return the kinetic energy of each axis at the half
-    // steps around their end, measured (D203, D[thermostat-kopt]).
+    // steps around their end, measured (D203, D263).
     bool measured = measuresHalfSteps() && kind.measures;
     bool returnsCurrent = leapfrog && (withVirial || scales || measured);
     // The steps with the virial also return the diagonal of the virial of
-    // the groups, which the pressure (D[barostat-group-pressure]) and the
+    // the groups, which the pressure (D264) and the
     // count of the work of a scaling of Trotter type (D116) take.
     bool molecular = withVirial && !control.isBrownian();
     // The steps of the rows of the log also report the rigid waters, the
@@ -5804,7 +5804,7 @@ void Builder::emitPrograms() {
     // Langevin dynamics with constraints: the g-BAOAB step of
     // [Leimkuhler2016] (its Appendix, one drift in each A), which projects
     // the velocities on the constraints after each part of the step
-    // (D[langevin-gbaoab]). B: the half kick, projected. A: a drift of
+    // (D265). B: the half kick, projected. A: a drift of
     // Δt/2, the constraints of the positions with those before the drift as
     // the reference, the velocities of the displacement, projected at the
     // new positions. O: the friction and the noise, projected. Under the
@@ -6091,7 +6091,7 @@ void Builder::emitHalfStepKinetic(StringRef velocities, bool leapfrog,
   // taken here as that step takes them, by a kick, a drift, and the
   // constraints of the positions. The forces alone do not give them with
   // constraints (D203). Nothing here feeds the state
-  // that the step returns. Under g-BAOAB (`geodesic`, D[langevin-gbaoab])
+  // that the step returns. Under g-BAOAB (`geodesic`, D265)
   // the half steps are the drifts of the two A of half a step around the
   // end of the step: that of this step, and that of the next without its
   // noise, which comes after it.
@@ -7649,7 +7649,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     };
     // The kinetic energy of the optimal temperature at the end of a step,
     // K + (2/3)(K_half − K) [Jung2019], which the thermostat controls
-    // (D[thermostat-kopt]): from `full`, the velocities of the time of the
+    // (D263): from `full`, the velocities of the time of the
     // positions, and K_half measured (`measured`) with constraints or from
     // the forces `f` without. None without a thermostat that rescales.
     auto emitOptimal = [&](StringRef tag, StringRef full, StringRef measured,
@@ -7834,7 +7834,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         return;
       }
       // With constraints the step that closes the period of the thermostat
-      // measures the half steps (D[thermostat-kopt]).
+      // measures the half steps (D263).
       bool measured = measuresCoupling();
       bool ahead = isLeapfrog() && rescalesVelocities();
       std::string noise5 = emitNoiseValue(inner);
@@ -7933,7 +7933,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       if (reportsSolvent())
         emitWriteSolvent(inner, "%kwsl");
       // The pressure of the log is that of the barostat, of the groups
-      // (D[barostat-group-pressure]): the trace of their virial and the
+      // (D264): the trace of their virial and the
       // kinetic energy of their centers at the half steps.
       if (control.isBrownian()) {
         emitTrace(os, "%tr", virialName, inner);
@@ -8186,7 +8186,7 @@ Builder::GroupKinetic Builder::emitGroupKinetic(StringRef indent,
                                                 StringRef forces,
                                                 StringRef tag) {
   // The groups are those that the barostat scales by their centers: each
-  // rigid group, and each other particle alone (D[barostat-group-pressure]).
+  // rigid group, and each other particle alone (D264).
   // A center moves by its force alone, the forces of the constraints
   // summing to zero within a group, so its momenta half a step before and
   // after the step are P_g ∓ (Δt/2) F_g, and the mean of their kinetic
@@ -8715,7 +8715,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       kinetic = "%kt" + t;
     }
     // The factor takes the kinetic energy of the optimal temperature
-    // [Jung2019] without that of the center of mass (D[thermostat-kopt]);
+    // [Jung2019] without that of the center of mass (D263);
     // it scales every velocity, and the bath takes the change of the
     // kinetic energy of the velocities scaled, exactly.
     std::string controlled = kinetic;
@@ -8757,7 +8757,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
     std::string kinetic = kineticAxes;
     // The pressure of the groups that the barostat scales, with the kinetic
     // energy of their centers at the half steps, which the forces give
-    // with or without constraints (D[barostat-group-pressure]).
+    // with or without constraints (D264).
     GroupKinetic centers;
     if (!trotter || scalesEveryStep())
       centers = emitGroupKinetic(indent, positions, velocities, forces,
@@ -10410,7 +10410,7 @@ void Builder::emitEntry() {
     } else {
       // The pressure of the groups, whose kinetic energy at the half steps
       // the forces give with constraints as well
-      // (D[barostat-group-pressure]).
+      // (D264).
       emitDiagonal(os, "%dgp0", virial, "  ");
       std::string groups = emitMolecularDiagonal(
           "  ", "%dgp0", "%x0", "%f0", "%cell", "%m", "%r_", "p0");
@@ -10820,7 +10820,7 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
     os << "    %gpl = arith.constant 0.0 : f64\n";
   else
     emitSum3(os, "%gpl", plainExcess, "    ");
-  // The pressure of the groups (D[barostat-group-pressure]).
+  // The pressure of the groups (D264).
   if (brownian) {
     emitTrace(os, "%trpl", "%wpl", "    ");
     os << "    %kphpl = arith.addf %kpl, %gpl : f64\n";

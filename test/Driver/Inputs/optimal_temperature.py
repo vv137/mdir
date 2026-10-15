@@ -1,5 +1,5 @@
 """The temperatures of harmonic wells under velocity Verlet with a
-thermostat (D203, D[thermostat-kopt]).
+thermostat (D203, D263).
 
   optimal_temperature.py LOG N OMEGA_DT TARGET
 

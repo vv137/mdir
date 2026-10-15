@@ -1,6 +1,6 @@
 """A NumPy reference of one leapfrog step of Langevin dynamics with
 constraints, g-BAOAB, against the plain step and the step of energy of a
-Python simulation (#285, D[langevin-gbaoab]).
+Python simulation (#285, D265).
 
     leapfrog_langevin_reference.py INPUTS LIBMDRT TARGET PRECISION
 

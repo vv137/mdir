@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # One leapfrog step of Langevin dynamics with constraints, g-BAOAB
-# (D[langevin-gbaoab]; design-m1.md, Sections 11.6 and 23), against a NumPy
+# (D265; design-m1.md, Sections 11.6 and 23), against a NumPy
 # reference with a SHAKE and a RATTLE of its own (#285): the dipeptide in
 # water, 2 fs, 1/ps, on the CPU in double and in mixed precision, the plain
 # step and the step of energy. The reference tells the documented step from

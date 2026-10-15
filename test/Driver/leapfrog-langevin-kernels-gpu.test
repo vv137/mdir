@@ -1,5 +1,5 @@
 # The kernels of a leapfrog step under Langevin dynamics with constraints
-# (#287, D250). The step is g-BAOAB (D[langevin-gbaoab]): it projects the
+# (#287, D250). The step is g-BAOAB (D265): it projects the
 # velocities after its first half kick, constrains the positions after the
 # first drift, projects after the friction and the noise, constrains the
 # positions after the second drift, and projects after the last half kick:

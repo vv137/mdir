@@ -31,7 +31,7 @@
 # and run as one kernel with the loops over particles around them, an
 # integration kernel (D110). (This checked before for kernels of runs of
 # rows: the loops of the virial of the constraints at the start, which the
-# pressure of the groups no longer takes, D[barostat-group-pressure], and
+# pressure of the groups no longer takes, D264, and
 # a run in the step of energy, which no longer forms; neither is a loop of
 # the constraints of the step.)
 #

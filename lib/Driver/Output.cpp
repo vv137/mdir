@@ -674,7 +674,7 @@ double mdrtNoseHooverFactor(int64_t step, double kinetic) {
   }
   chain = std::move(moved);
   // The chain is driven by the kinetic energy of the optimal temperature
-  // while its scaling acts on the velocities (D[thermostat-kopt]), so the
+  // while its scaling acts on the velocities (D263), so the
   // energy of the system and of the chain is not conserved: the bath counts
   // what the scaling takes from the particles, exactly, in the program, as
   // under velocity rescaling.
@@ -811,10 +811,10 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // K_half, exceeds `kinetic` by `excess`: (dt^2 / 8) sum F^2 / m without
   // constraints, measured from the velocities of the half steps with them.
   // The temperature takes the optimal estimate (2 K_half + K) / 3 (D45,
-  // D203), which the thermostats control (D[thermostat-kopt]); the
+  // D203), which the thermostats control (D263); the
   // pressure takes the kinetic energy of the centers of the groups at the
   // half steps, `pressureKinetic`, with the virial of the groups
-  // (D[barostat-group-pressure]). See Jung et al., J. Chem. Phys. 148,
+  // (D264). See Jung et al., J. Chem. Phys. 148,
   // 164109 (2018), J. Chem. Theory Comput. 15, 84 (2019), and Jung and
   // Sugita, J. Chem. Phys. 153, 234115 (2020).
   double half = pressureKinetic;
@@ -822,7 +822,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // velocities of the middle of the step, between its drifts, which sample
   // the temperature of the bath where the configurations do (BAOAB
   // [Leimkuhler2013]; g-BAOAB [Leimkuhler2016]): the temperature takes the
-  // kinetic energy of the half steps, K_half (D[langevin-gbaoab]).
+  // kinetic energy of the half steps, K_half (D265).
   double optimal = output.halfTemperature ? kinetic + excess
                                           : kinetic + 2.0 * excess / 3.0;
   double temperature =

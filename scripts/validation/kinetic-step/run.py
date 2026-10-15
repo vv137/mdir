@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The state against the time step under each thermostat (#268,
-D[thermostat-kopt], D[barostat-group-pressure], D[langevin-gbaoab]).
+D263, D264, D265).
 
     scripts/validation/kinetic-step/run.py WORK --mdir MDIR
         [--system ethanol|water] [--ns 5] [--steps 0.5,1,2,4]

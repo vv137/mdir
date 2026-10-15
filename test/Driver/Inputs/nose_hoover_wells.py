@@ -12,7 +12,7 @@ frequency omega = sqrt(k/m), whose kinetic energy starts at N_f k_B T / 2.
 This script moves that oscillator and the chain of Martyna, Klein, and
 Tuckerman (1992), with Q_1 = N_f k_B T / w^2 and Q_j = k_B T / w^2, w =
 2 pi / tau, acting at the end of each period of 10 steps, driven by the
-kinetic energy of the optimal temperature (D[thermostat-kopt]); its action over
+kinetic energy of the optimal temperature (D263); its action over
 the period is factorized as in Martyna, Tuckerman, Tobias, and Klein
 (1996), Suzuki-Yoshida weights of order 6, in n_c = ceil(50 h / tau) = 11
 equal parts. It finds the first action in which some part s meets
@@ -92,7 +92,7 @@ for step in range(1, steps + 1):
         reference[step] = k0 * omega2 * x * x / kcal
         # The chain takes the kinetic energy of the optimal temperature,
         # K + (2/3)(K_half - K), with K_half - K = (dt^2 / 8) sum F^2 / m
-        # = k0 dt^2 omega^4 x^2 / 4 (D[thermostat-kopt]).
+        # = k0 dt^2 omega^4 x^2 / 4 (D263).
         alpha, largest = chain(
             k0 * (b * b + dt * dt * omega2 * omega2 * x * x / 6.0))
         if largest > 3.0:
