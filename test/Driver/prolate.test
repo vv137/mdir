@@ -24,7 +24,8 @@
 
 # The defaults: ε = 1e-5 gives c = 14.4712 (Table 2 of Liang et al. 2026),
 # c1 = c(ε/2), 6 points, and the grid of eq. 15 raised until the aliasing
-# estimate of eq. 10 is below ε. The sum is within 1.9e-6 of the Ewald sum;
+# estimate of eq. 10 is at most ε/2. The sum is within 1.6e-6 of the Ewald
+# sum;
 # with ε = 1e-7 and 8 points it agrees to the printed precision (3.6e-8, the
 # six decimals of the terms of the log).
 #

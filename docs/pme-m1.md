@@ -339,7 +339,7 @@ falls only to 6.4 × 10⁻¹⁰ on 500³). STMV takes 180³ at the default.
 **Validation.**
 - Three OPC waters against the Ewald sum over the wave vectors
   (`test/Driver/prolate.test`, `prolate-gpu.test`): the Coulomb terms sum
-  to within 1.9 × 10⁻⁶ of it at the default, and to the printed precision
+  to within 1.6 × 10⁻⁶ of it at the default, and to the printed precision
   at ε = 10⁻⁷ with 8 points; the trace of the virial against
   $-dU/d\lambda$ to 2.2 × 10⁻⁶ and each diagonal component against
   $-dU/d\varepsilon_{aa}$ to 6.6 × 10⁻⁶; a GPU in double gives the terms

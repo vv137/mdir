@@ -210,7 +210,7 @@ Gaussian kernel stays the default; spreading in tiles of block memory,
 which would serve both kernels, is issue #336.
 
 **Accuracy.** On three OPC waters the Coulomb terms sum to within
-$1.9\times10^{-6}$ of the Ewald sum over the wave vectors at the default;
+$1.6\times10^{-6}$ of the Ewald sum over the wave vectors at the default;
 the trace of the virial agrees with $-dU/d\lambda$ to $2.2\times10^{-6}$,
 its diagonal with $-dU/d\varepsilon_{aa}$ to $6.6\times10^{-6}$, and all
 nine components of $\partial U/\partial\boldsymbol\varepsilon$ in a sheared
@@ -731,7 +731,7 @@ lanes $0$ to $3P - 1$ evaluate each weight once and the others take them by
 shuffles. The deterministic mode adds the grid in fixed point (D70).
 
 **Accuracy.** On three OPC waters the Coulomb terms sum to within
-$1.9\times10^{-6}$ of the Ewald sum over the wave vectors at the default;
+$1.6\times10^{-6}$ of the Ewald sum over the wave vectors at the default;
 the trace of the virial agrees with $-dU/d\lambda$ to $2.2\times10^{-6}$,
 and its diagonal with $-dU/d\varepsilon_{aa}$ to $6.6\times10^{-6}$; in a
 rhombic dodecahedron the default is within $1.8\times10^{-7}$ of the

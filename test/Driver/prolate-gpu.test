@@ -36,9 +36,9 @@
 # RUN: %python %S/Inputs/check_coulomb_total.py %t/tric-double.log -3963.615657 1e-6 | FileCheck %s
 # RUN: %python %S/Inputs/check_coulomb_total.py %t/tric-mixed.log -3963.615657 1e-6 | FileCheck %s
 
-# Double precision: the CPU's terms (the diff); both within 1.9e-6 of the
-# Ewald sum at ε = 1e-5, mixed precision within 2e-6; the dodecahedron
-# within 1.8e-7 (double) and 2e-7 (mixed).
+# Double precision: the CPU's terms (the diff); within 1.6e-6 of the Ewald
+# sum at ε = 1e-5, mixed precision within 5.2e-7; the dodecahedron within
+# 1.0e-8 (double) and 4.8e-7 (mixed).
 # CHECK: ok
 # DRIFT: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
 # SAME: the states are identical
