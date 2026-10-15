@@ -8718,13 +8718,13 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       if (scalesEveryStep()) {
         std::string stored = centers.half;
         if (rescalesVelocities()) {
-          os << indent << "%gka2" << t << " = vector.broadcast %alpha2" << t
+          os << indent << "%gst2" << t << " = vector.broadcast %alpha2" << t
              << " : f64 to vector<3xf64>\n"
-             << indent << "%gkas" << t << " = arith.mulf %gka2" << t << ", "
+             << indent << "%gsts" << t << " = arith.mulf %gst2" << t << ", "
              << centers.kinetic << " : vector<3xf64>\n"
-             << indent << "%gkah" << t << " = arith.addf %gkas" << t << ", "
+             << indent << "%gsth" << t << " = arith.addf %gsts" << t << ", "
              << centers.forceTerm << " : vector<3xf64>\n";
-          stored = "%gkah" + t;
+          stored = "%gsth" + t;
         }
         emitStoreTrotterState(indent, diagonal, groupsAfter, stored);
       }

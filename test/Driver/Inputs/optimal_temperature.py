@@ -1,5 +1,5 @@
 """The temperatures of harmonic wells under velocity Verlet with a
-thermostat (D203).
+thermostat (D203, D[thermostat-kopt]).
 
   optimal_temperature.py LOG N OMEGA_DT TARGET
 
@@ -7,9 +7,9 @@ LOG is the log of a run of N particles in the wells of brownian_wells.py,
 each three oscillators of frequency omega, with the step omega dt. Along
 an orbit of velocity Verlet, <K> = (1 - w/4) <U> and <K_half> = <U> with
 w = (omega dt)^2, so the optimal estimate (K + 2 K_half) / 3 that the log
-reports is (1 - w/12) <U>. The thermostat holds the kinetic energy of the
-velocities of the steps, K, at TARGET. This prints the mean temperature of
-K against TARGET, and the ratios of it and of the temperature of the
+reports is (1 - w/12) <U>. The thermostat holds that optimal estimate at
+TARGET. This prints the mean temperature of the log against TARGET, and
+the ratios of it and of the temperature of the
 configurations, 2 <U> / (3 N k_B), to the log's temperature against these
 closed forms, with N_f = 3N - 3 for the temperatures of the log.
 """
@@ -39,8 +39,8 @@ full = 2 * mean("KINETIC_ENE") / (nf * kB)
 configurations = 2 * mean("POTENTIAL_ENE") / (3 * n * kB) / optimal
 expected_full = (1 - w / 4) / (1 - w / 12)
 expected_configurations = nf / (3 * n) / (1 - w / 12)
-print("temperature of the steps %.2f K, target %.2f: %s" % (
-    full, target, "agrees" if abs(full - target) < 0.01 * target
+print("temperature of the log %.2f K, target %.2f: %s" % (
+    optimal, target, "agrees" if abs(optimal - target) < 0.01 * target
     else "differs"))
 print("full / optimal %.4f, closed form %.4f: %s" % (
     full / optimal, expected_full,
