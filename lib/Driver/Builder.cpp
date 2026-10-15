@@ -715,11 +715,11 @@ private:
   /// Whether the steps that the log reads measure the kinetic energy of
   /// the half steps around their end from the velocities
   /// (D203): with constraints, which the forces alone do
-  /// not give it for. Under Langevin dynamics the half steps hold the noise
-  /// of a step not yet taken, and Brownian dynamics has no momenta, so
-  /// neither measures them.
+  /// not give it for. Under Langevin dynamics, by g-BAOAB, the half steps
+  /// are the drifts of its two A around the end of the step
+  /// (D[langevin-gbaoab]). Brownian dynamics has no momenta.
   bool measuresHalfSteps() const {
-    return hasConstraints() && !control.isLangevin() && !control.isBrownian();
+    return hasConstraints() && !control.isBrownian();
   }
   /// Emits `%khs`, in a program of a step, the kinetic energy of each axis
   /// at the half steps around its end, from `velocities`, those it drifted
@@ -728,11 +728,17 @@ private:
   /// that of the velocities of the time of the positions, `%v2`, and
   /// K_half.
   void emitHalfStepKinetic(StringRef velocities, bool leapfrog,
-                           bool solvent = false);
+                           bool solvent = false, bool geodesic = false);
   /// Whether the steps of energy report the kinetic energies of the rigid
   /// waters, from which the log gives the temperatures of the solvent and
   /// of the solute (D203).
   bool reportsSolvent() const { return measuresHalfSteps() && hasSettles(); }
+  /// Whether the steps that close a period of coupling measure the half
+  /// steps for the thermostat, which controls the optimal temperature
+  /// (D[thermostat-kopt]).
+  bool measuresCoupling() const {
+    return measuresHalfSteps() && rescalesVelocities();
+  }
   /// Emits the call that gives the host the kinetic energies of the rigid
   /// waters `sums` (emitHalfStepKinetic) before the row of the log.
   void emitWriteSolvent(StringRef indent, StringRef sums);
@@ -841,16 +847,35 @@ struct Coupled {
                                  StringRef positions, StringRef forces,
                                  StringRef cell, StringRef masses,
                                  StringRef relations, StringRef tag);
+  /// The kinetic energy of the centers of the groups that the barostat
+  /// scales (the rigid groups, every other particle alone), of each axis,
+  /// at the velocities `velocities` of the time of the positions
+  /// `positions` with their forces `forces`: K_g, without the motion of the
+  /// center of mass if the run removes it; the term (Δt²/8) Σ F_g² / M_g;
+  /// and their sum, K_half of the groups [Jung2020], exact with or without
+  /// constraints (D[barostat-group-pressure]).
+  struct GroupKinetic {
+    std::string kinetic, forceTerm, half;
+  };
+  GroupKinetic emitGroupKinetic(StringRef indent, StringRef positions,
+                                StringRef velocities, StringRef forces,
+                                StringRef tag);
   /// `positions` scaled by `mu`, a scale for each axis, each rigid group
   /// with its center of mass, keeping its shape (`oneMinusMu` is 1 − mu).
   std::string emitGroupScaling(StringRef indent, StringRef positions,
                                StringRef mu, StringRef oneMinusMu,
                                StringRef cell, StringRef masses,
                                StringRef relations, StringRef tag);
+  /// `groups` is the diagonal of the virial of the groups, which the
+  /// pressure of the barostat takes with their kinetic energy at the half
+  /// steps (D[barostat-group-pressure]); `optimal`, if given, the kinetic
+  /// energy of the optimal temperature, K + (2/3)(K_half − K), with that
+  /// of the center of mass, which the factor of the thermostat takes
+  /// (D[thermostat-kopt]).
   Coupled emitCoupling(StringRef indent, StringRef positions,
                        StringRef velocities, StringRef forces,
                        StringRef energy, StringRef tag, StringRef step,
-                       StringRef trace,
+                       StringRef trace, StringRef groups, StringRef optimal,
                        const TrotterScaling *trotter = nullptr);
   /// Emits and returns the name of K_half - K of each axis at the end of a
   /// step, a vector<3xf64>: from `measured`, the K_half that the step
@@ -874,9 +899,14 @@ struct Coupled {
   /// trace `trace`; `groups` is the trace of the virial of its groups
   /// (emitMolecularTrace). `givenKinetic`, if given, is the kinetic energy
   /// without the center of mass, computed before.
-  TrotterScaling emitTrotterStrain(StringRef indent, StringRef velocities,
-                                   StringRef trace, StringRef groups,
-                                   StringRef tag, StringRef step,
+  /// The pressure is that of the groups (D[barostat-group-pressure]):
+  /// their virial `groups` and the kinetic energy of their centers at the
+  /// half steps, from `positions`, `velocities`, and `forces`, or
+  /// `givenKinetic`, computed before.
+  TrotterScaling emitTrotterStrain(StringRef indent, StringRef positions,
+                                   StringRef velocities, StringRef forces,
+                                   StringRef groups, StringRef tag,
+                                   StringRef step,
                                    StringRef givenKinetic = "");
   TrotterScaling finishTrotterStrain(StringRef indent, StringRef groups,
                                      StringRef tag);
@@ -5572,28 +5602,37 @@ void Builder::emitPrograms() {
   };
   llvm::SmallVector<Kind> kinds = {{"step", false, false, false, false},
                                    {"step_energy", true, true, false, true}};
+  // The thermostats control the optimal temperature (D[thermostat-kopt]):
+  // with constraints the step that closes a period of coupling measures
+  // the half steps as well.
+  bool coupledHalves = measuresCoupling();
   if (trotter) {
     if (!scalesEveryStep())
       kinds.push_back({"step_virial", false, true, false, false});
     kinds.push_back(
-        {"step_trotter", false, countsAfterScaling(), true, false});
+        {"step_trotter", false, countsAfterScaling(), true, coupledHalves});
     kinds.push_back({"step_trotter_energy", true, true, true, true});
   } else if (control.barostat && measuresHalfSteps()) {
-    kinds.push_back({"step_coupling", true, true, false, false});
+    kinds.push_back({"step_coupling", true, true, false, coupledHalves});
+  } else if (coupledHalves) {
+    kinds.push_back({"step_thermostat", false, false, false, true});
   }
   for (const Kind &kind : kinds) {
     bool withEnergy = kind.energy, withVirial = kind.virial;
     bool scales = kind.scales;
-    bool returnsCurrent = leapfrog && (withVirial || scales);
-    // The steps of the rows of the log return the kinetic energy of each
-    // axis at the half steps around their end, measured
-    // (D203).
+    // The steps of the rows of the log, and those that close a period of
+    // a thermostat, return the kinetic energy of each axis at the half
+    // steps around their end, measured (D203, D[thermostat-kopt]).
     bool measured = measuresHalfSteps() && kind.measures;
-    // The steps around a scaling of Trotter type also return the trace of
-    // the virial of the groups at their new positions, which the count of
-    // the work takes (D116).
-    bool molecular = trotter && withVirial &&
-                     (scales || StringRef(kind.name) == "step_virial");
+    bool returnsCurrent = leapfrog && (withVirial || scales || measured);
+    // The steps with the virial also return the diagonal of the virial of
+    // the groups, which the pressure (D[barostat-group-pressure]) and the
+    // count of the work of a scaling of Trotter type (D116) take.
+    bool molecular = withVirial && !control.isBrownian();
+    // The steps of the rows of the log also report the rigid waters, the
+    // solvent (D203).
+    bool solvent = measured && withEnergy && reportsSolvent() &&
+                   StringRef(kind.name) != "step_coupling";
     // Brownian dynamics (D163b) neither conserves a volume of phase space
     // nor reverses; it couples to the bath.
     bool brownian = control.isBrownian();
@@ -5626,8 +5665,7 @@ void Builder::emitPrograms() {
        << (returnsCurrent ? ", !vec" : "")
        << (scales ? ", vector<3xf64>" : "")
        << (measured ? ", vector<3xf64>" : "")
-       << (measured && withEnergy && reportsSolvent() ? ", vector<3xf64>"
-                                                      : "")
+       << (solvent ? ", vector<3xf64>" : "")
        << ")\n"
        << "    attributes {"
        << (leapfrog ? "velocity_offset = -0.5,\n                " : "")
@@ -5671,7 +5709,78 @@ void Builder::emitPrograms() {
     }
     std::string drifting = "%v1";
     std::string drifted = sites || constraints ? "%x1d" : "%x1";
-    if (scales) {
+    // The positions that the constraints of the drift below take as their
+    // reference, and the length of that drift.
+    std::string reference = "%x", length = "%dt";
+    // Langevin dynamics with constraints: the g-BAOAB step of
+    // [Leimkuhler2016] (its Appendix, one drift in each A), which projects
+    // the velocities on the constraints after each part of the step
+    // (D[langevin-gbaoab]). B: the half kick, projected. A: a drift of
+    // Δt/2, the constraints of the positions with those before the drift as
+    // the reference, the velocities of the displacement, projected at the
+    // new positions. O: the friction and the noise, projected. Under the
+    // barostat of Trotter type the scaling follows. A: as the first, by the
+    // block of the constraints below. Then the forces and the half kick.
+    bool geodesic = constraints && control.isLangevin();
+    if (geodesic) {
+      std::string kicked = project("%x", "%v1", "%vgk", "").first;
+      os << "  %xga = dyn.drift %x, " << kicked << ", %half : !vec\n";
+      std::string current = "%xga";
+      unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
+      auto next = [&]() {
+        ++step;
+        return step == steps ? std::string("%xgc")
+                             : "%xgc" + std::to_string(step);
+      };
+      if (settles) {
+        std::string result = next();
+        emitSettlePositions("  ", "%x", current, "%dxg", result);
+        current = result;
+      }
+      for (const Program::TupleSet *set : shakeSets) {
+        std::string result = next();
+        emitShakePositions("  ", "%x", current, *set, result);
+        current = result;
+      }
+      os << "  %gone = arith.constant 1.0 : f64\n"
+         << "  %grate = arith.divf %gone, %half : f64\n"
+         << "  %vga = md.map_particles gather(" << kicked << ", " << current
+         << ", %xga : !vec, !vec, !vec) {\n"
+         << "  ^bb0(%vs_v: vector<3xf64>, %vs_c: vector<3xf64>, "
+            "%vs_u: vector<3xf64>):\n"
+         << "    %vs_d = arith.subf %vs_c, %vs_u : vector<3xf64>\n"
+         << "    %vs_r = vector.broadcast %grate : f64 to vector<3xf64>\n"
+         << "    %vs_dv = arith.mulf %vs_r, %vs_d : vector<3xf64>\n"
+         << "    %vs_sum = arith.addf %vs_v, %vs_dv : vector<3xf64>\n"
+         << "    md.yield %vs_sum : vector<3xf64>\n"
+         << "  } : !vec\n";
+      std::string moved = project("%xgc", "%vga", "%vgb", "").first;
+      emitLangevin("  ", moved, "%vgo");
+      std::string thermal = project("%xgc", "%vgo", "%vgp", "").first;
+      reference = "%xgc";
+      drifting = thermal;
+      if (scales) {
+        // The scale of each axis, μ (D119): each rigid group with its
+        // center, which keeps its shape, and the velocities by 1/μ; the
+        // constraints of the second A take back what an anisotropic
+        // scaling leaves along them.
+        os << "  %mu_unit = arith.constant dense<1.0> : vector<3xf64>\n"
+           << "  %mu_m1 = arith.subf %mu_unit, %mu : vector<3xf64>\n"
+           << "  %muinv = arith.divf %mu_unit, %mu : vector<3xf64>\n";
+        reference = emitGroupScaling("  ", "%xgc", "%mu", "%mu_m1", "%cell",
+                                     "%m", "%r_", "_t");
+        emitKineticVector(os, "%khalf", thermal, "%m", "  ");
+        os << "  %v1t = md.map_particles gather(" << thermal << " : !vec) {\n"
+           << "  ^bb0(%v_i: vector<3xf64>):\n"
+           << "    %v_s = arith.mulf %muinv, %v_i : vector<3xf64>\n"
+           << "    md.yield %v_s : vector<3xf64>\n"
+           << "  } : !vec\n";
+        drifting = "%v1t";
+      }
+      os << "  " << drifted << " = dyn.drift " << reference << ", "
+         << drifting << ", %half : !vec\n";
+      length = "%half";
+    } else if (scales) {
       // The scale of each axis, μ, the same for the three with isotropic
       // coupling (D119).
       os << "  %xh = dyn.drift %x, %v1, %half : !vec\n"
@@ -5725,7 +5834,7 @@ void Builder::emitPrograms() {
       };
       if (settles) {
         std::string result = next();
-        emitSettlePositions("  ", "%x", current, "%dx1", result);
+        emitSettlePositions("  ", reference, current, "%dx1", result);
         changes.push_back({program.tupleSets.data(), "%dx1"});
         for (const Program::TupleSet &set : program.tupleSets)
           if (set.name == "settles")
@@ -5734,12 +5843,12 @@ void Builder::emitPrograms() {
       }
       for (const Program::TupleSet *set : shakeSets) {
         std::string result = next();
-        emitShakePositions("  ", "%x", current, *set, result);
+        emitShakePositions("  ", reference, current, *set, result);
         changes.push_back({set, result + "_change"});
         current = result;
       }
       os << "  %one = arith.constant 1.0 : f64\n"
-         << "  %rate = arith.divf %one, %dt : f64\n"
+         << "  %rate = arith.divf %one, " << length << " : f64\n"
          << "  %v1c = md.map_particles gather(" << drifting << ", " << current
          << ", %x1d : !vec, !vec, !vec) {\n"
          << "  ^bb0(%vs_v: vector<3xf64>, %vs_c: vector<3xf64>, "
@@ -5806,7 +5915,7 @@ void Builder::emitPrograms() {
       groups = emitMolecularDiagonal("  ", "%gd1", "%x1", "%f1", "%cell",
                                      "%m", "%r_", "1");
     }
-    if (leapfrog && !withVirial && !scales) {
+    if (leapfrog && !withVirial && !scales && !measured) {
       os << "  dyn.return %x1, " << velocities
          << ", %f1 : !vec, !vec, !vec\n}\n\n";
       continue;
@@ -5848,10 +5957,10 @@ void Builder::emitPrograms() {
     }
     std::string stored = leapfrog ? velocities : "%v2";
     // The steps of energy also report the rigid waters, the solvent.
-    bool solvent = measured && withEnergy && reportsSolvent();
     if (measured)
-      emitHalfStepKinetic(velocities, leapfrog, solvent);
-    if (withVirial || scales)
+      emitHalfStepKinetic(velocities, leapfrog && !geodesic, solvent,
+                          geodesic);
+    if (withVirial || scales || measured)
       os << "  dyn.return %x1, " << stored << ", %f1"
          << (withEnergy ? ", %u1" : "")
          << (withVirial ? ", " + virial : "")
@@ -5882,7 +5991,7 @@ void Builder::emitWriteSolvent(StringRef indent, StringRef sums) {
 }
 
 void Builder::emitHalfStepKinetic(StringRef velocities, bool leapfrog,
-                                  bool solvent) {
+                                  bool solvent, bool geodesic) {
   // The kinetic energy of each axis at the half steps around the end of
   // the step, K_half = [K(t - dt/2) + K(t + dt/2)] / 2 [Jung2019], from the
   // velocities after their constraints: `velocities`, those that this step
@@ -5890,14 +5999,18 @@ void Builder::emitHalfStepKinetic(StringRef velocities, bool leapfrog,
   // taken here as that step takes them, by a kick, a drift, and the
   // constraints of the positions. The forces alone do not give them with
   // constraints (D203). Nothing here feeds the state
-  // that the step returns.
+  // that the step returns. Under g-BAOAB (`geodesic`, D[langevin-gbaoab])
+  // the half steps are the drifts of the two A of half a step around the
+  // end of the step: that of this step, and that of the next without its
+  // noise, which comes after it.
   bool settles = hasSettles();
   std::vector<const Program::TupleSet *> shakeSets = getShakeSets();
+  StringRef length = geodesic ? "%half" : "%dt";
   if (leapfrog)
     os << "  %v3k = dyn.kick " << velocities << ", %f1, %m, %dt : !vec\n";
   else
     os << "  %v3k = dyn.kick %v2, %f1, %m, %half : !vec\n";
-  os << "  %x3d = dyn.drift %x1, %v3k, %dt : !vec\n";
+  os << "  %x3d = dyn.drift %x1, %v3k, " << length << " : !vec\n";
   std::string current = "%x3d";
   unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
   auto next = [&]() {
@@ -5916,7 +6029,7 @@ void Builder::emitHalfStepKinetic(StringRef velocities, bool leapfrog,
     current = result;
   }
   os << "  %h3one = arith.constant 1.0 : f64\n"
-     << "  %h3rate = arith.divf %h3one, %dt : f64\n"
+     << "  %h3rate = arith.divf %h3one, " << length << " : f64\n"
      << "  %v3c = md.map_particles gather(%v3k, " << current
      << ", %x3d : !vec, !vec, !vec) {\n"
      << "  ^bb0(%vs_v: vector<3xf64>, %vs_c: vector<3xf64>, "
@@ -7425,11 +7538,13 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
     // counts (D76).
     auto getCoupled = [&](StringRef x, StringRef v, StringRef f,
                           StringRef energy, StringRef trace,
+                          StringRef groups, StringRef optimal,
                           StringRef current = "",
                           const TrotterScaling *trotter = nullptr) {
       Coupled coupled =
           emitCoupling(inner, x, current.empty() ? v : current, f, energy,
-                       here, "%step" + here, trace, trotter);
+                       here, "%step" + here, trace, groups, optimal,
+                       trotter);
       std::string velocities = coupled.velocities;
       if (!current.empty()) {
         std::string behind = "%vh" + here;
@@ -7439,6 +7554,38 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         velocities = behind;
       }
       return coupled.positions + ", " + velocities + ", " + coupled.forces;
+    };
+    // The kinetic energy of the optimal temperature at the end of a step,
+    // K + (2/3)(K_half − K) [Jung2019], which the thermostat controls
+    // (D[thermostat-kopt]): from `full`, the velocities of the time of the
+    // positions, and K_half measured (`measured`) with constraints or from
+    // the forces `f` without. None without a thermostat that rescales.
+    auto emitOptimal = [&](StringRef tag, StringRef full, StringRef measured,
+                           StringRef f) -> std::string {
+      if (!rescalesVelocities())
+        return "";
+      std::string o = ("%ko" + tag).str();
+      std::string excess =
+          emitKineticExcess(inner, ("o" + tag).str(), measured, f, full);
+      if (excess.empty())
+        return "";
+      emitKineticEnergy(os, o + "k", full, massName, inner);
+      emitSum3(os, o + "g", excess, inner);
+      os << inner << o << "c = arith.constant " << formatReal(2.0 / 3.0)
+         << " : f64\n"
+         << inner << o << "e = arith.mulf " << o << "c, " << o << "g : f64\n"
+         << inner << o << " = arith.addf " << o << "k, " << o << "e : f64\n";
+      return o;
+    };
+    // The velocities of the time of the positions of a plain step of
+    // leapfrog, half a kick ahead of those it stores.
+    auto emitAhead = [&](StringRef tag, StringRef v, StringRef f) {
+      std::string name = ("%vah" + tag).str();
+      os << inner << name << "c = arith.constant 5.0e-01 : f64\n"
+         << inner << name << "t = arith.mulf " << name << "c, %dt : f64\n"
+         << inner << name << " = dyn.kick " << v << ", " << f << ", "
+         << massName << ", " << name << "t : !vec\n";
+      return name;
     };
     bool couplesBelow = levels[level + 1].name == "couple";
     // The last two steps of a period with the barostat of Trotter type
@@ -7497,20 +7644,23 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       emitStep();
       TrotterScaling scaling =
           scalesEveryStep()
-              ? emitTrotterStrain(inner, "", trace, groups, here,
+              ? emitTrotterStrain(inner, "", "", "", groups, here,
                                   "%step" + here, kinetic)
-              : emitTrotterStrain(inner, leapfrog ? "%vc" + a : "%v" + a,
-                                  trace, groups, here, "%step" + here);
+              : emitTrotterStrain(inner, "%x" + a,
+                                  leapfrog ? "%vc" + a : "%v" + a,
+                                  "%f" + a, groups, here, "%step" + here);
       std::string outerScale = scaleName;
       if (!scaling.scale.empty())
         scaleName = scaling.scale;
       bool virial = withEnergy || countsAfterScaling();
+      bool measuredHere =
+          measuresHalfSteps() && (withEnergy || measuresCoupling());
       std::string noise3 = emitNoiseValue(inner);
       os << inner << "%x" << n << ", %v" << n << ", %f" << n
          << (withEnergy ? ", %u" + n : "") << (virial ? ", %w" + n : "")
          << (virial ? ", %gw" + n : "")
          << (leapfrog ? ", %vc" + n : "") << ", %kh" << n
-         << (withEnergy && measuresHalfSteps() ? ", %khs" + n : "")
+         << (measuredHere ? ", %khs" + n : "")
          << (withEnergy && reportsSolvent() ? ", %kws" + n : "")
          << " = dyn.step @step_trotter" << (withEnergy ? "_energy" : "")
          << "(" << x << ", " << v << ", %f"
@@ -7523,7 +7673,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
          << (withEnergy ? ", f64" : "")
          << (virial ? ", vector<9xf64>, vector<3xf64>" : "")
          << (leapfrog ? ", !vec" : "") << ", vector<3xf64>"
-         << (withEnergy && measuresHalfSteps() ? ", vector<3xf64>" : "")
+         << (measuredHere ? ", vector<3xf64>" : "")
          << (withEnergy && reportsSolvent() ? ", vector<3xf64>" : "")
          << ")\n";
       scaleName = outerScale;
@@ -7544,8 +7694,11 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
           trace = "%dg" + k;
           emitDiagonal(os, trace, "%w" + k, inner);
         }
+        std::string optimal = emitOptimal(
+            k, isLeapfrog() ? "%vc" + k : "%v" + k,
+            measuresCoupling() ? "%khs" + k : "", "%f" + k);
         std::string coupled =
-            getCoupled("%x" + k, "%v" + k, "%f" + k, "", trace,
+            getCoupled("%x" + k, "%v" + k, "%f" + k, "", trace, "", optimal,
                        isLeapfrog() ? "%vc" + k : "", &scaling);
         os << inner << "scf.yield " << coupled << " : " << state << "\n";
         os << indent << "}\n";
@@ -7557,9 +7710,12 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         // With leapfrog the pressure takes the velocities of the time of
         // the positions, which the step of energy returns.
         std::string current = isLeapfrog() ? "%vck" + here : "";
+        bool measured = measuresCoupling();
         std::string noise4 = emitNoiseValue(inner);
         os << inner << getValues("k" + here) << ", %uk" << here << ", %wk"
-           << here << (isLeapfrog() ? ", " + current : "")
+           << here << ", %gwk" << here
+           << (isLeapfrog() ? ", " + current : "")
+           << (measured ? ", %khsk" + here : "")
            << " = dyn.step @step_"
            << (measuresHalfSteps() ? "coupling" : "energy") << "(%x" << last
            << ", %v" << last << ", %f" << last << ", " << massName << ", "
@@ -7567,30 +7723,50 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise4 << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
            << getFieldTypes() << getNoiseType()
-           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
-           << (isLeapfrog() ? ", !vec" : "") << ")\n";
+           << ") -> (!vec, !vec, !vec, f64, vector<9xf64>, vector<3xf64>"
+           << (isLeapfrog() ? ", !vec" : "")
+           << (measured ? ", vector<3xf64>" : "") << ")\n";
         trace = "%dgk" + here;
         emitDiagonal(os, trace, "%wk" + here, inner);
         emitStep();
+        std::string optimal = emitOptimal(
+            "k" + here, isLeapfrog() ? current : "%vk" + here,
+            measured ? "%khsk" + here : "", "%fk" + here);
         std::string coupled =
             getCoupled("%xk" + here, "%vk" + here, "%fk" + here,
-                       "%uk" + here, trace, current);
+                       "%uk" + here, trace, "%gwk" + here, optimal, current);
         os << inner << "scf.yield " << coupled << " : " << state << "\n";
         os << indent << "}\n";
         cellName = outerCell;
         scaleName = outerScale;
         return;
       }
+      // With constraints the step that closes the period of the thermostat
+      // measures the half steps (D[thermostat-kopt]).
+      bool measured = measuresCoupling();
+      bool ahead = isLeapfrog() && rescalesVelocities();
       std::string noise5 = emitNoiseValue(inner);
-      os << inner << getValues("k" + here) << " = dyn.step @step(";
+      os << inner << getValues("k" + here)
+         << (measured && isLeapfrog() ? ", %vck" + here : "")
+         << (measured ? ", %khsk" + here : "")
+         << " = dyn.step @step" << (measured ? "_thermostat" : "") << "(";
       os << "%x" << last << ", %v" << last << ", %f" << last << ", "
            << massName << ", " << cellName << ", %dt" << getScaleValue() << getFieldValues(fieldPrefix) << noise5
            << ")\n"
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
-           << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec)\n";
+           << getFieldTypes() << getNoiseType() << ") -> (!vec, !vec, !vec"
+           << (measured && isLeapfrog() ? ", !vec" : "")
+           << (measured ? ", vector<3xf64>" : "") << ")\n";
       emitStep();
-      std::string coupled =
-          getCoupled("%xk" + here, "%vk" + here, "%fk" + here, "", "");
+      std::string full = "%vk" + here;
+      if (ahead)
+        full = measured ? "%vck" + here
+                        : emitAhead("k" + here, "%vk" + here, "%fk" + here);
+      std::string optimal = emitOptimal("k" + here, full,
+                                        measured ? "%khsk" + here : "",
+                                        "%fk" + here);
+      std::string coupled = getCoupled("%xk" + here, "%vk" + here,
+                                       "%fk" + here, "", "", "", optimal);
       os << inner << "scf.yield " << coupled << " : " << state << "\n";
       os << indent << "}\n";
       cellName = outerCell;
@@ -7636,6 +7812,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       } else {
         std::string noise7 = emitNoiseValue(inner);
         os << inner << "%xl, %vl, %fl, %u, %w"
+           << (control.isBrownian() ? "" : ", %gwl")
            << (isLeapfrog() ? ", %vn" : "")
            << (measuresHalfSteps() ? ", %khsl" : "")
            << (reportsSolvent() ? ", %kwsl" : "")
@@ -7646,6 +7823,7 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
            << inner << "    : (!vec, !vec, !vec, !real, !md.cell, f64"
            << getScaleType() << getFieldTypes() << getNoiseType()
            << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+           << (control.isBrownian() ? "" : ", vector<3xf64>")
            << (isLeapfrog() ? ", !vec" : "")
            << (measuresHalfSteps() ? ", vector<3xf64>" : "")
            << (reportsSolvent() ? ", vector<3xf64>" : "") << ")\n";
@@ -7662,13 +7840,25 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
         emitSum3(os, "%g", excess, inner);
       if (reportsSolvent())
         emitWriteSolvent(inner, "%kwsl");
-      emitTrace(os, "%tr", virialName, inner);
+      // The pressure of the log is that of the barostat, of the groups
+      // (D[barostat-group-pressure]): the trace of their virial and the
+      // kinetic energy of their centers at the half steps.
+      if (control.isBrownian()) {
+        emitTrace(os, "%tr", virialName, inner);
+        os << inner << "%kph = arith.addf %k, %g : f64\n";
+      } else {
+        emitSum3(os, "%tr", "%gwl", inner);
+        GroupKinetic centers =
+            emitGroupKinetic(inner, "%xl", full, "%fl", "l" + here);
+        emitSum3(os, "%kph", centers.half, inner);
+      }
       if (couplesBelow && control.barostat)
         emitDiagonal(os, "%dg", virialName, inner);
       if (!scalesHere)
         emitStep();
       os << inner << "func.call @mdrtWriteEnergies(%step" << here << ", "
-         << energyName << ", %k, %g, %tr) : (i64, f64, f64, f64, f64) -> ()\n";
+         << energyName
+         << ", %k, %g, %tr, %kph) : (i64, f64, f64, f64, f64, f64) -> ()\n";
       // The cell of the positions of the row: with the barostat of Trotter
       // type the step has scaled them, and they are in the cell after the
       // scaling, not in that of the start of the interval (#218). The
@@ -7716,10 +7906,19 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       if (!control.periodic && !framesAtEnergies)
         os << inner << "mdrt.host_call @mdrtCheckSpread(%step" << here
            << ", %xl, " << idName << ") : (i64, !vec, !ids)\n";
+      std::string optimal;
+      if (couplesBelow && rescalesVelocities() && !excess.empty()) {
+        os << inner << "%kolc = arith.constant " << formatReal(2.0 / 3.0)
+           << " : f64\n"
+           << inner << "%kole = arith.mulf %kolc, %g : f64\n"
+           << inner << "%kol = arith.addf %k, %kole : f64\n";
+        optimal = "%kol";
+      }
       std::string yielded =
           couplesBelow
               ? getCoupled("%xl", "%vl", "%fl", energyName,
                            control.barostat ? "%dg" : "",
+                           control.barostat ? "%gwl" : "", optimal,
                            isLeapfrog() && control.barostat ? now : "",
                            scalesHere ? &scaling : nullptr)
               : getValues("l");
@@ -7887,6 +8086,153 @@ std::string Builder::emitMolecularDiagonal(StringRef indent,
     molecular = next;
   }
   return molecular;
+}
+
+Builder::GroupKinetic Builder::emitGroupKinetic(StringRef indent,
+                                                StringRef positions,
+                                                StringRef velocities,
+                                                StringRef forces,
+                                                StringRef tag) {
+  // The groups are those that the barostat scales by their centers: each
+  // rigid group, and each other particle alone (D[barostat-group-pressure]).
+  // A center moves by its force alone, the forces of the constraints
+  // summing to zero within a group, so its momenta half a step before and
+  // after the step are P_g ∓ (Δt/2) F_g, and the mean of their kinetic
+  // energies is K_g + (Δt²/8) |F_g|² / M_g exactly [Jung2020, eq. 42].
+  // Over the particles first, less the motion within each group.
+  std::string t = tag.str();
+  std::string inner = (indent + "  ").str();
+  std::string relations = ("%r" + StringRef(fieldPrefix).drop_front(2)).str();
+  GroupKinetic result;
+  std::string kinetic = "%gka" + t, force = "%gfa" + t;
+  emitKineticVector(os, kinetic, velocities, massName, indent);
+  os << indent << force << " = md.sum_particles gather(" << forces << ", "
+     << massName << " : !vec, !real) {\n"
+     << indent << "^bb0(%kx_f: vector<3xf64>, %kx_m: f64):\n"
+     << indent << "  %kx_sq = arith.mulf %kx_f, %kx_f : vector<3xf64>\n"
+     << indent << "  %kx_zero = arith.constant 0.0 : f64\n"
+     << indent << "  %kx_one = arith.constant 1.0 : f64\n"
+     << indent << "  %kx_massless = arith.cmpf oeq, %kx_m, %kx_zero : f64\n"
+     << indent
+     << "  %kx_safe = arith.select %kx_massless, %kx_one, %kx_m : f64\n"
+     << indent << "  %kx_inv = arith.divf %kx_one, %kx_safe : f64\n"
+     << indent
+     << "  %kx_w = arith.select %kx_massless, %kx_zero, %kx_inv : f64\n"
+     << indent << "  %kx_wb = vector.broadcast %kx_w : f64 to vector<3xf64>\n"
+     << indent << "  %kx_g = arith.mulf %kx_sq, %kx_wb : vector<3xf64>\n"
+     << indent << "  md.yield %kx_g : vector<3xf64>\n"
+     << indent << "} : vector<3xf64>\n";
+  for (const Program::TupleSet *set : getRigidGroups()) {
+    unsigned count = set->arity - 1;
+    std::string members;
+    for (unsigned k = 0; k <= count; ++k)
+      members += "%vs_v" + std::to_string(k) + ": vector<3xf64>, ";
+    std::string masses;
+    for (unsigned k = 0; k <= count; ++k)
+      masses += "%vs_m" + std::to_string(k) + ": f64" +
+                (k == count ? "" : ", ");
+    // Twice the kinetic energy of the motion about the center, and
+    // Σ F_k² / m_k − F_g² / M_g, of each axis.
+    for (int part = 0; part != 2; ++part) {
+      std::string within =
+          (part == 0 ? "%gki" : "%gfi") + t + "_" + set->name;
+      os << indent << within << " = md.sum_tuples " << relations
+         << set->name << ", " << positions << ", " << cellName << "\n"
+         << indent << "    coordinates(displacement(1, 0))\n"
+         << indent << "    gather(" << (part == 0 ? velocities : forces)
+         << ", " << massName << " : !vec, !real) {\n"
+         << indent << "^bb0(%vs_r: vector<3xf64>, " << members << masses
+         << "):\n";
+      SiteKernel k(os, inner);
+      std::string total = "%vs_m0";
+      for (unsigned j = 1; j <= count; ++j)
+        total = k.real("addf", total, "%vs_m" + std::to_string(j));
+      std::string sum;
+      if (part == 0) {
+        std::string moment = k.scale("%vs_m0", "%vs_v0");
+        for (unsigned j = 1; j <= count; ++j) {
+          std::string n = std::to_string(j);
+          moment =
+              k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_v" + n));
+        }
+        std::string center =
+            k.scale(k.real("divf", k.constant(1.0), total), moment);
+        for (unsigned j = 0; j <= count; ++j) {
+          std::string n = std::to_string(j);
+          std::string relative = k.vector("subf", "%vs_v" + n, center);
+          std::string term = k.scale(
+              "%vs_m" + n, k.vector("mulf", relative, relative));
+          sum = sum.empty() ? term : k.vector("addf", sum, term);
+        }
+      } else {
+        std::string resultant = "%vs_v0";
+        for (unsigned j = 1; j <= count; ++j)
+          resultant = k.vector("addf", resultant, "%vs_v" + std::to_string(j));
+        for (unsigned j = 0; j <= count; ++j) {
+          std::string n = std::to_string(j);
+          std::string term =
+              k.scale(k.real("divf", k.constant(1.0), "%vs_m" + n),
+                      k.vector("mulf", "%vs_v" + n, "%vs_v" + n));
+          sum = sum.empty() ? term : k.vector("addf", sum, term);
+        }
+        std::string whole =
+            k.scale(k.real("divf", k.constant(1.0), total),
+                    k.vector("mulf", resultant, resultant));
+        sum = k.vector("subf", sum, whole);
+      }
+      os << inner << "md.yield " << sum << " : vector<3xf64>\n"
+         << indent << "} : !rel_" << set->name << ", !vec -> vector<3xf64>\n";
+      if (part == 0) {
+        std::string half = within + "_h";
+        os << indent << within << "_c = arith.constant dense<5.0e-01>"
+           << " : vector<3xf64>\n"
+           << indent << half << " = arith.mulf " << within << ", " << within
+           << "_c : vector<3xf64>\n"
+           << indent << within << "_k = arith.subf " << kinetic << ", "
+           << half << " : vector<3xf64>\n";
+        kinetic = within + "_k";
+      } else {
+        os << indent << within << "_k = arith.subf " << force << ", "
+           << within << " : vector<3xf64>\n";
+        force = within + "_k";
+      }
+    }
+  }
+  // Without the motion of the center of mass, if the run removes it.
+  if (control.comPeriod > 0) {
+    os << indent << "%gpc" << t << " = md.sum_particles gather(" << velocities
+       << ", " << massName << " : !vec, !real) {\n"
+       << indent << "^bb0(%v_i: vector<3xf64>, %m_i: f64):\n"
+       << indent << "  %mb = vector.broadcast %m_i : f64 to vector<3xf64>\n"
+       << indent << "  %p = arith.mulf %mb, %v_i : vector<3xf64>\n"
+       << indent << "  md.yield %p : vector<3xf64>\n"
+       << indent << "} : vector<3xf64>\n"
+       << indent << "%gvcm" << t << " = arith.divf %gpc" << t
+       << ", %total_mass : vector<3xf64>\n"
+       << indent << "%gpvs" << t << " = arith.mulf %gpc" << t << ", %gvcm"
+       << t << " : vector<3xf64>\n"
+       << indent << "%gkch" << t
+       << " = arith.constant dense<5.0e-01> : vector<3xf64>\n"
+       << indent << "%gkcm" << t << " = arith.mulf %gkch" << t << ", %gpvs" << t
+       << " : vector<3xf64>\n"
+       << indent << "%gkt" << t << " = arith.subf " << kinetic << ", %gkcm"
+       << t << " : vector<3xf64>\n";
+    kinetic = "%gkt" + t;
+  }
+  os << indent << "%gdt" << t << " = arith.mulf %dt, %dt : f64\n"
+     << indent << "%gdc" << t << " = arith.constant 1.25e-01 : f64\n"
+     << indent << "%gds" << t << " = arith.mulf %gdt" << t << ", %gdc" << t
+     << " : f64\n"
+     << indent << "%gdb" << t << " = vector.broadcast %gds" << t
+     << " : f64 to vector<3xf64>\n"
+     << indent << "%gft" << t << " = arith.mulf " << force << ", %gdb" << t
+     << " : vector<3xf64>\n"
+     << indent << "%gkh" << t << " = arith.addf " << kinetic << ", %gft" << t
+     << " : vector<3xf64>\n";
+  result.kinetic = kinetic;
+  result.forceTerm = "%gft" + t;
+  result.half = "%gkh" + t;
+  return result;
 }
 
 std::string Builder::emitGroupScaling(StringRef indent, StringRef positions,
@@ -8079,16 +8425,17 @@ void Builder::emitStrain(StringRef indent, StringRef kinetic,
 }
 
 Builder::TrotterScaling Builder::emitTrotterStrain(
-    StringRef indent, StringRef velocities, StringRef diagonal,
-    StringRef groups, StringRef tag, StringRef step,
+    StringRef indent, StringRef positions, StringRef velocities,
+    StringRef forces, StringRef groups, StringRef tag, StringRef step,
     StringRef givenKinetic) {
   std::string t = tag.str();
-  // The kinetic energy of the pressure, axis by axis: that of the
-  // velocities of the step, without the center of mass.
+  // The kinetic energy of the pressure, axis by axis: that of the centers
+  // of the groups at the half steps, without the center of mass.
   std::string kinetic = givenKinetic.str();
   if (kinetic.empty())
-    kinetic = emitKineticWithoutCenter(indent, velocities, massName, t);
-  emitStrain(indent, kinetic, diagonal, t, step);
+    kinetic =
+        emitGroupKinetic(indent, positions, velocities, forces, "t" + t).half;
+  emitStrain(indent, kinetic, groups, t, step);
   return finishTrotterStrain(indent, groups, t);
 }
 
@@ -8216,7 +8563,8 @@ Builder::Coupled
 Builder::emitCoupling(StringRef indent, StringRef positions,
                       StringRef velocities, StringRef forces,
                       StringRef energy, StringRef tag, StringRef step,
-                      StringRef diagonal, const TrotterScaling *trotter) {
+                      StringRef diagonal, StringRef groups,
+                      StringRef optimal, const TrotterScaling *trotter) {
   std::string newForces = forces.str();
   bool removesMotion = control.comPeriod > 0;
   std::string t = tag.str();
@@ -8274,26 +8622,36 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
          << " : f64\n";
       kinetic = "%kt" + t;
     }
+    // The factor takes the kinetic energy of the optimal temperature
+    // [Jung2019] without that of the center of mass (D[thermostat-kopt]);
+    // it scales every velocity, and the bath takes the change of the
+    // kinetic energy of the velocities scaled, exactly.
+    std::string controlled = kinetic;
+    if (!optimal.empty()) {
+      controlled = optimal.str();
+      if (removesMotion) {
+        os << indent << "%kot" << t << " = arith.subf " << optimal << ", %kcm"
+           << t << " : f64\n";
+        controlled = "%kot" + t;
+      }
+    }
     if (control.isNoseHoover()) {
-      // A Nose-Hoover chain (D163a) moves on the host over the period and
-      // counts the change of its energy into the bath itself.
+      // A Nose-Hoover chain (D163a) moves on the host over the period.
       os << indent << "%alpha" << t << " = func.call @mdrtNoseHooverFactor("
-         << step << ", " << kinetic << ") : (i64, f64) -> f64\n"
-         << indent << "%alpha2" << t << " = arith.mulf %alpha" << t
-         << ", %alpha" << t << " : f64\n";
+         << step << ", " << controlled << ") : (i64, f64) -> f64\n";
     } else {
       os << indent << "%alpha" << t << " = func.call @mdrtBussiFactor(%seed, "
-         << step << ", " << kinetic
+         << step << ", " << controlled
          << ", %target_kinetic, %freedom, %decay)\n"
-         << indent << "    : (i64, i64, f64, f64, f64, f64) -> f64\n"
-         << indent << "%alpha2" << t << " = arith.mulf %alpha" << t
-         << ", %alpha" << t << " : f64\n"
-         << indent << "%kn" << t << " = arith.mulf %alpha2" << t << ", "
-         << kinetic << " : f64\n"
-         << indent << "%heat" << t << " = arith.subf %kc" << t << ", %kn"
-         << t << " : f64\n";
-      bath = "%heat" + t;
+         << indent << "    : (i64, i64, f64, f64, f64, f64) -> f64\n";
     }
+    os << indent << "%alpha2" << t << " = arith.mulf %alpha" << t
+       << ", %alpha" << t << " : f64\n"
+       << indent << "%kn" << t << " = arith.mulf %alpha2" << t << ", "
+       << kinetic << " : f64\n"
+       << indent << "%heat" << t << " = arith.subf %kc" << t << ", %kn" << t
+       << " : f64\n";
+    bath = "%heat" + t;
   }
   // Stochastic cell rescaling (Bernetti and Bussi 2020): the pressure of
   // the step, with the virials of the correction for the dispersion and of
@@ -8302,11 +8660,18 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   // μ = exp(ε/3), the velocities by 1/μ (design-m1.md, Section 11.4).
   std::string newPositions = positions.str();
   if (control.barostat) {
-    // The kinetic energy of the pressure: that of the velocities of the
-    // step, without the center of mass.
+    // The kinetic energy of the velocities of the step, without the center
+    // of mass, whose change the scaling counts.
     std::string kinetic = kineticAxes;
+    // The pressure of the groups that the barostat scales, with the kinetic
+    // energy of their centers at the half steps, which the forces give
+    // with or without constraints (D[barostat-group-pressure]).
+    GroupKinetic centers;
+    if (!trotter || scalesEveryStep())
+      centers = emitGroupKinetic(indent, positions, velocities, forces,
+                                 "c" + t);
     if (!trotter)
-      emitStrain(indent, kinetic, diagonal, t, step);
+      emitStrain(indent, centers.half, groups, t, step);
     // The energy that the scaling gives the system, summed over the axes:
     // exactly in the velocities, (1/μ_a² − 1) K_a, and in the positions
     // either exactly, from the energy of the scaled positions (below), or
@@ -8344,11 +8709,25 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
            << " : vector<3xf64>\n";
         emitSum3(os, "%bwork" + t, "%bwl" + t, indent);
       }
-      std::string groups = countsAfterScaling() ? trotter->groupsAfter : "";
+      std::string groupsAfter =
+          countsAfterScaling() ? trotter->groupsAfter : "";
       // With a scaling every step, the state that the next one takes its
-      // pressure from: the kinetic energy after the thermostat.
-      if (scalesEveryStep())
-        emitStoreTrotterState(indent, diagonal, groups, after);
+      // pressure from: the kinetic energy of the centers at the half steps
+      // after the thermostat, which scales K_g by α² and leaves the term of
+      // the forces.
+      if (scalesEveryStep()) {
+        std::string stored = centers.half;
+        if (rescalesVelocities()) {
+          os << indent << "%gka2" << t << " = vector.broadcast %alpha2" << t
+             << " : f64 to vector<3xf64>\n"
+             << indent << "%gkas" << t << " = arith.mulf %gka2" << t << ", "
+             << centers.kinetic << " : vector<3xf64>\n"
+             << indent << "%gkah" << t << " = arith.addf %gkas" << t << ", "
+             << centers.forceTerm << " : vector<3xf64>\n";
+          stored = "%gkah" + t;
+        }
+        emitStoreTrotterState(indent, diagonal, groupsAfter, stored);
+      }
       if (countsAfterScaling()) {
         os << indent << "%bwca" << t << " = arith.divf %baro_constant, "
            << trotter->newVolume << " : f64\n"
@@ -8356,7 +8735,8 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
            << ", %c_third : f64\n"
            << indent << "%bwcab" << t << " = vector.broadcast %bwca3" << t
            << " : f64 to vector<3xf64>\n"
-           << indent << "%bwb" << t << " = arith.addf " << groups << ", %bwcab"
+           << indent << "%bwb" << t << " = arith.addf " << groupsAfter
+           << ", %bwcab"
            << t << " : vector<3xf64>\n"
            << indent << "%bws" << t << " = arith.addf " << trotter->workBefore
            << ", %bwb" << t << " : vector<3xf64>\n"
@@ -8385,13 +8765,9 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
          << " : vector<3xf64>\n";
     if (!exact && !trotter) {
       // To first order, isotropic only (Control): the trace of the virial
-      // of the step with twice the internal kinetic energy, a third to
-      // each axis.
-      emitSum3(os, "%dtr" + t, diagonal, indent);
-      std::string groupTrace =
-          emitGroupTrace(indent, "%dtr" + t, positions, velocities, cellName,
-                         massName, relations, t);
-      os << indent << "%bwt" << t << " = arith.addf " << groupTrace
+      // of the groups, a third to each axis.
+      emitSum3(os, "%dtr" + t, groups, indent);
+      os << indent << "%bwt" << t << " = arith.addf %dtr" << t
          << ", %bwc" << t << " : f64\n"
          << indent << "%bwt3" << t << " = arith.mulf %bwt" << t
          << ", %c_third : f64\n"
@@ -9412,7 +9788,7 @@ void Builder::emitEntry() {
   StringRef mass = getName(program.mass);
   StringRef parameter = getName(program.parameter);
 
-  os << "func.func private @mdrtWriteEnergies(i64, f64, f64, f64, f64)\n"
+  os << "func.func private @mdrtWriteEnergies(i64, f64, f64, f64, f64, f64)\n"
      << "    attributes {llvm.emit_c_interface}\n"
      << "func.func private @mdrtWritePull(i64, memref<?xf64>, memref<?xf64>)\n"
      << "    attributes {llvm.emit_c_interface}\n"
@@ -9928,13 +10304,28 @@ void Builder::emitEntry() {
       os << "  %g0 = arith.constant 0.0 : f64\n";
     else
       emitSum3(os, "%g0", startExcess, "  ");
-    emitTrace(os, "%tr0", virial, "  ");
-    std::string trace = "%tr0";
-    if (hasConstraints())
-      trace = emitStartConstraintTrace("%x0", "%f0", velocities, trace);
+    std::string trace = "%tr0", pressureKinetic = "%kph0";
+    if (control.frames || control.isBrownian()) {
+      // The frame evaluator reports the atomic virial of the forces.
+      emitTrace(os, "%tr0", virial, "  ");
+      if (hasConstraints())
+        trace = emitStartConstraintTrace("%x0", "%f0", velocities, trace);
+      os << "  %kph0 = arith.addf %k0, %g0 : f64\n";
+    } else {
+      // The pressure of the groups, whose kinetic energy at the half steps
+      // the forces give with constraints as well
+      // (D[barostat-group-pressure]).
+      emitDiagonal(os, "%dgp0", virial, "  ");
+      std::string groups = emitMolecularDiagonal(
+          "  ", "%dgp0", "%x0", "%f0", "%cell", "%m", "%r_", "p0");
+      emitSum3(os, "%tr0", groups, "  ");
+      GroupKinetic centers =
+          emitGroupKinetic("  ", "%x0", velocities, "%f0", "s0");
+      emitSum3(os, "%kph0", centers.half, "  ");
+    }
     os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
-       << ")\n"
-       << "      : (i64, f64, f64, f64, f64) -> ()\n";
+       << ", " << pressureKinetic << ")\n"
+       << "      : (i64, f64, f64, f64, f64, f64) -> ()\n";
     emitPullOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     emitFreeEnergyOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     emitObservablesOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
@@ -9951,7 +10342,7 @@ void Builder::emitEntry() {
           "  ", diagonal,
           emitMolecularDiagonal("  ", "%dg0", "%x0", "%f0", "%cell", "%m",
                                 "%r_", "s0"),
-          emitKineticWithoutCenter("  ", velocities, "%m", "s0"));
+          emitGroupKinetic("  ", "%x0", velocities, "%f0", "t0").half);
     }
 
     if (isLeapfrog() && branchesStart()) {
@@ -10308,7 +10699,9 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
      << f << ")\n"
      << "      -> (!vec, !vec, !vec) {\n";
   std::string noise = emitNoiseValue("    ");
-  os << "    %xpl, %vpl, %fpl, %upl, %wpl" << (isLeapfrog() ? ", %vpn" : "")
+  bool brownian = control.isBrownian();
+  os << "    %xpl, %vpl, %fpl, %upl, %wpl" << (brownian ? "" : ", %gwpl")
+     << (isLeapfrog() ? ", %vpn" : "")
      << (measuresHalfSteps() ? ", %khspl" : "")
      << (reportsSolvent() ? ", %kwspl" : "")
      << " = dyn.step @step_energy(%xpa, %vpa, %fpa, " << massName << ", "
@@ -10317,6 +10710,7 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
      << "        : (!vec, !vec, !vec, !real, !md.cell, f64" << getScaleType()
      << getFieldTypes() << getNoiseType()
      << ") -> (!vec, !vec, !vec, f64, vector<9xf64>"
+     << (brownian ? "" : ", vector<3xf64>")
      << (isLeapfrog() ? ", !vec" : "")
      << (measuresHalfSteps() ? ", vector<3xf64>" : "")
      << (reportsSolvent() ? ", vector<3xf64>" : "") << ")\n";
@@ -10330,9 +10724,18 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
     os << "    %gpl = arith.constant 0.0 : f64\n";
   else
     emitSum3(os, "%gpl", plainExcess, "    ");
-  emitTrace(os, "%trpl", "%wpl", "    ");
+  // The pressure of the groups (D[barostat-group-pressure]).
+  if (brownian) {
+    emitTrace(os, "%trpl", "%wpl", "    ");
+    os << "    %kphpl = arith.addf %kpl, %gpl : f64\n";
+  } else {
+    emitSum3(os, "%trpl", "%gwpl", "    ");
+    GroupKinetic centers =
+        emitGroupKinetic("    ", "%xpl", plainFull, "%fpl", "pl");
+    emitSum3(os, "%kphpl", centers.half, "    ");
+  }
   os << "    func.call @mdrtWriteEnergies(%step_plain, %upl, %kpl, %gpl, "
-        "%trpl) : (i64, f64, f64, f64, f64) -> ()\n";
+        "%trpl, %kphpl) : (i64, f64, f64, f64, f64, f64) -> ()\n";
   if (!control.observables.empty()) {
     // The observed terms at the positions after the step (D189), as at a
     // row of the second nest.

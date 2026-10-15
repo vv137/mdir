@@ -23,17 +23,15 @@
 # CHECK: MDIR: the temperatures over 2 rows, in K: of the solute {{[0-9.]+}} ± {{[0-9.]+}}, of the solvent {{[0-9.]+}} ± {{[0-9.]+}}; from the velocities of the steps alone
 # CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
-# At the start no step has given the forces of the constraints; their
-# virial is that of the forces that keep the accelerations on the
-# constraints, less twice the kinetic energy within the rigid waters. The
-# pressure of step 0 then continues those of the steps after it, which
-# fall by about 135 atm per step here, rather than being 20000 atm. The
-# rows after it take K_half, measured from the velocities of the half
-# steps, and step 0, which has no step before it, K (D203).
+# The pressure is that of the groups that the barostat scales, the waters
+# by their centers (D[barostat-group-pressure]): the forces of the
+# constraints do not enter it, and the forces give the kinetic energy of
+# the centers at the half steps at step 0 as well. It falls by about 150
+# atm per step here, from step 0 on.
 #
-# START: INFO:         0 {{.*}} -818.5888 {{ *}}695.9850
-# START: INFO:         1 {{.*}} -950.4970 {{ *}}558.9504
-# START: INFO:         2 {{.*}} -1078.0753 {{ *}}428.7343
+# START: INFO:         0 {{.*}} -109.2539 {{ *}}696.2892
+# START: INFO:         1 {{.*}} -242.3091 {{ *}}543.8247
+# START: INFO:         2 {{.*}} -363.3908 {{ *}}403.2319
 
 #--- run.toml
 [input]

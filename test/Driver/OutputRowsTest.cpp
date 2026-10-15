@@ -107,7 +107,7 @@ int main() {
       if (step > 0)
         mdrtWriteSolvent(2500.0 + step % 7, 2510.0 + step % 5);
       _mlir_ciface_mdrtWriteEnergies(step, -1.0e4, 3750.0 + step % 3, 12.0,
-                                     -500.0);
+                                     -500.0, 3762.0 + step % 3);
     }
   };
   write(0, rows + 1);

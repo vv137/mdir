@@ -494,10 +494,13 @@ std::string getPartPath(llvm::StringRef path, int64_t part);
 extern "C" {
 /// `kinetic` is the kinetic energy of the velocities of the step, and
 /// `excess` the mean of those of the half steps before and after it less
-/// `kinetic`, K_half - K (D203).
+/// `kinetic`, K_half - K (D203), which the temperature takes. `virial` is
+/// the trace of the virial of the pressure, and `pressureKinetic` its
+/// kinetic energy: those of the groups that the barostat scales, their
+/// centers at the half steps (D[barostat-group-pressure]).
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double excess,
-                                    double virial);
+                                    double virial, double pressureKinetic);
 void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids);
 /// Without a periodic cell (D142), stops the run if the positions at the
 /// step `step` have spread so far that images interact.
