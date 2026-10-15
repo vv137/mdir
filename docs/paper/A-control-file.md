@@ -200,12 +200,21 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 
 # Particle mesh Ewald; every entry has a default.
 # [pme]
-# tolerance   = 1.0e-5          # erfc(β r_c), which gives β
-# beta        = 0.35            # β (1/Å), instead
-# max_spacing = 1.2             # largest spacing of the grid (Å)
+# kernel      = "GAUSSIAN"      # GAUSSIAN, PROLATE (ESP; fewer grid
+                                # points, slower on one GPU at the usual
+                                # force errors)
+# tolerance   = 1.0e-5          # erfc(β r_c), which gives β; PROLATE:
+                                # ψ(1), which gives c (force error ~1e-5,
+                                # where the Gaussian default gives ~1e-3)
+# beta        = 0.35            # β (1/Å), instead (GAUSSIAN)
+# bandwidth   = 14.47           # c, instead (PROLATE)
+# window_bandwidth = 15.2       # c1 of the window (PROLATE; from ε/2)
+# max_spacing = 1.2             # largest spacing of the grid (Å);
+                                # PROLATE: by its aliasing estimate
 # grid        = [48, 48, 48]    # the grid, instead
-# order       = 4               # of the B-splines: 4, 6, 8
-# influence   = "SPME"          # SPME, OPTIMAL (as sander)
+# order       = 4               # of the B-splines: 4, 6, 8; PROLATE:
+                                # points of the window, 5 to 8 (6)
+# influence   = "SPME"          # SPME, OPTIMAL (as sander; GAUSSIAN)
 
 # Particle mesh Ewald of the dispersion, with lennard_jones = "PME";
 # every entry has a default.
