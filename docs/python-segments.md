@@ -451,6 +451,19 @@ update and its `gradient()` take 5.4, 16, and 87 ms on one RTX 4090
 host, which are those that the entry was given, and the views are their
 addresses.
 
+**The arguments of a start** (D[start-arguments], #326).
+A start no longer copies the model into new memory: the arrays of the
+program that the entry takes in their own type (the tables, the members
+and fields of the tuple sets, the masses, and in double precision the
+fields of the particles) are handed as they are, which the compile proves
+safe (`check-read-only-arguments`: the entry writes none of them); the
+conversions into the type of the entry (the fields in f32, the types in
+i32) are kept and taken where a start is given the same array; and the
+buffers of the state and the identities are kept from one start to the
+next and written at every start, in one copy where the type is f64. What
+holds, and how it is checked, is in
+[jit-invariants.md](jit-invariants.md#what-a-start-gives-the-entry-dstart-arguments).
+
 ### Validation
 
 On the dipeptide in water with PME, in the deterministic mode, on the CPU

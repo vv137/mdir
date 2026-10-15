@@ -457,7 +457,8 @@ from 25.0 to 2.5 ms (below).
   none of their own; the arrays that a value enters are made anew at each
   update, as before.
 
-**Not kept.** The arguments of the entry, which a start copies (#326).
+**Not kept here.** The arguments of the entry: what a start gives the
+entry is the next section's (D[start-arguments], #326).
 
 **Tests.** `python-update-cost.test` and `-gpu.test`: a sequence on the
 dipeptide in water with every kind of tunable (updates of each alone, of
@@ -477,6 +478,108 @@ finds and names; and a number of a kept array written over
 (`Simulation._spoil_kept_array`, private), which fails the update under
 the variable and is said once on the standard error without it, the
 results being those of a simulation that was not spoiled.
+
+## What a start gives the entry (D[start-arguments])
+
+A start of an activation (D215) gives the entry its arguments: the state,
+the masses, the fields of the particles, the tables, the members and the
+fields of every tuple set, and the identities. Until #326 it copied every
+one of them into new memory of the host at every start, one number at a
+time where the type was that of the host already: 0.46, 1.8, and 11.7 ms
+of a start of 2.2, 6.2, and 31 ms on JAC, Factor IX, and Cellulose of the
+Amber suite (one RTX 4090, mixed precision), the same in double precision,
+so the copy and not the conversion. It copied because the entry could
+write them: on the CPU `md-exec-assign-storage` owned every buffer of a
+field it was given, so a loop could write another field into it once the
+field was dead; on a device it took them for the copies back from the
+device (`mdrt.to_buffer`, a host call that is not `in_place`). The rest of
+this section is what holds since.
+
+**R1. The entry writes no buffer of the model, and the compile proves
+it.** The builder declares the masses, the fields of the particles, the
+tables, and the members and fields of the tuple sets read-only, with the
+attribute `mdrt.read_only` on the arguments of the entry.
+`md-exec-assign-storage` never owns such a buffer on the host and never
+takes it for a copy back from a device: a field that a loop would write in
+place gets a buffer of its own, and a copy back a buffer of the host of its
+own. Where the lowering to loops or to a device ends,
+`check-read-only-arguments` follows every use of each declared argument,
+through its views and into the functions of the module, and accepts only
+reads: an op whose memory effects on it are reads alone, its shape, and a
+call of a function of the runtime that declares the parameter read-only
+too (the members, which `mdrtTuplesRenumber`, `mdrtTuplesIncidence`, and
+`mdrtDeviceTuples...` read through a `const int32_t *` and copy). Anything
+else fails the compile with an error that names the argument and the op,
+so a program that compiles is one whose code provably writes none of these
+buffers, and there is no program that runs without that proof. A program
+taken from the compile cache (D212) carries the proof of the compile that
+made it: its key holds the module text, with the attributes, and the
+pipeline, with the pass. The state and the identities are not declared:
+the program on the CPU works in the buffers of the state, and a device
+may copy into them.
+
+**R2. An array of the program that the entry takes in its own type is
+handed as it is.** The tables, the members and the fields of the tuple
+sets, the masses, and, in double precision, the fields of the particles:
+the descriptors that the entry takes point into the arrays of the program.
+The activation holds a share of each (`driver::SharedArray`, D256), so
+each lives as long as the activation, and a program built by a later
+update that shares it cannot write it (a write to a shared array copies
+it first). The tables are those of the program of the engine, which an
+update replaces only after the activation has ended.
+
+**R3. A conversion is taken only where it was made from the same array.**
+A field of the particles in f32 (mixed and single precision), the types in
+i32, and the masses in f32 (single) are converted into memory that the
+simulation keeps, one slot for each argument, with a share of the array
+it was made from. A start takes the conversion as it is only where its
+array is that array (`SharedArray::shares`): nothing is inferred from what
+the host did since the last start. The array cannot have changed while the
+share is held (R2), and the entry does not write the conversion (it is a
+read-only argument, R1), so the conversion is that of the array's numbers.
+An update whose tunables enter the array gives a new array (D256), and the
+start converts it anew in the memory of the slot.
+
+**R4. The buffers of the state and the identities are written at every
+start.** The simulation keeps them from one start to the next, and every
+start writes every number of them, in one copy where the type is f64:
+nothing that a start reads there comes from an earlier one.
+
+**Checked where it is asked.** With `MDRT_CHECK_KEPT_TUPLES` set in the
+environment ([environment.md](environment.md#debugging)) every conversion
+that a start takes as kept is also made anew and compared, and every buffer
+that the entry takes without a copy is copied when the activation starts
+and compared when it ends; a difference ends the process with a message
+that names the buffer. `python-start-arguments*.test` run with it.
+
+**How much, and its bound.** One set of buffers for the state, the
+identities, and the conversions, for each simulation, of the sizes of one
+start's, which every start allocated and freed before; the handed arrays
+take nothing.
+
+**Tests.** `check-read-only.mlir` and `check-read-only-invalid.mlir`: the
+reads that the pass accepts, and eleven uses that it refuses with the
+error that names them (a store, a store through a view, the target of a
+copy from the host or from a device, a release, a call of the runtime
+without the declaration, a store in a function of the module, a buffer
+carried by a loop, returned, or whose address is taken, and the attribute
+on a number). `assign-storage-read-only.mlir`: on the host and on a device
+the pass takes a buffer of its own where, without the declaration, it
+takes the argument. Every program that the suite compiles passes the
+check. `python-start-arguments.test` and `-gpu.test`: a sequence of starts
+(steps, `gradient()` again, an evaluation, an update of each kind of
+tunable and back, updates between steps, a commit of a borrow of the
+charges and, on the CPU, of the positions and the velocities, a second
+simulation of the same program between the starts of the first, a
+checkpoint and a run continued from it, and a frame evaluator beside its
+sampler), in double and mixed precision, whose every state, force, energy,
+and derivative equals, to the bit, that of a simulation whose starts copy
+and convert every array anew (`Simulation._keep_start_arguments`,
+private), with the counts of what each start handed, took as kept, and
+made (`Simulation._start_arguments`, private); and a byte of the masses
+that the entry took without a copy, written over by the test
+(`Simulation._spoil_start_argument`, private), which ends the process
+under the variable and is not looked for without it.
 
 ## Enforced transitions and dependency boundary
 

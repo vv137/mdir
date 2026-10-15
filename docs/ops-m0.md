@@ -1533,8 +1533,15 @@ each loop inside it. A region **owns** the buffers that it may overwrite.
 
 | Region | Buffers it owns |
 |---|---|
-| Body of a function | The buffers of its field arguments, the buffers handed over with `mdrt.from_buffer`, and the buffers it allocates |
+| Body of a function | The buffers of its field arguments, the buffers handed over with `mdrt.from_buffer`, and the buffers it allocates, but not an argument that the function declares read-only (`mdrt.read_only`) |
 | Body of a loop | The buffers that the loop carries |
+
+An argument with `mdrt.read_only` (the buffers of the model that the
+entry of a program takes, D[start-arguments]) is read where it
+is and never owned; on a device it is not kept for what is copied back
+(Section 10.8), which then goes to a buffer of the host of its own.
+`check-read-only-arguments`, where the lowering ends, proves that the
+lowered code writes none of them, or fails.
 
 A field is **dead** after the last op of its region that uses it. When a
 field dies, its buffer goes to the **pool** of its region, from which a
@@ -1630,7 +1637,7 @@ With `memory=device`, storage assignment puts the buffers on a device.
 
 | Value form | Storage form on a device |
 |---|---|
-| `mdrt.from_buffer` | A buffer on the device, and a copy from the host to it. The buffer of the host is kept for what is copied back. |
+| `mdrt.from_buffer` | A buffer on the device, and a copy from the host to it. The buffer of the host is kept for what is copied back, unless it is read-only (`mdrt.read_only`). |
 | `mdrt.to_buffer` | A copy from the device to a buffer of the host. The field stays on the device. |
 | A loop with global sums | The loop with two buffers in `scratch` for each sum |
 | A refresh that tests validity | The refresh with two buffers in `scratch` |
