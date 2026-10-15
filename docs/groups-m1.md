@@ -448,18 +448,19 @@ shared. The setup:
 | TIP3P box | 20,931 | 9 | 136.6 | 138.6 | 1.015 | 132.8 | 114.0 | 0.858 |
 | JAC | 23,558 | 8 | 137.0 | 135.2 | 0.987 | 127.8 | 113.8 | 0.890 |
 | JAC, 4 fs | 23,558 | 8 | 148.0 | 146.0 | 0.986 | 136.0 | 123.0 | 0.904 |
-| TIP3P box | 23,598 | 9 | 150.0 | 145.2 | 0.968 |  |  |  |
-| TIP3P box | 25,860 | 9 | 162.0 | 151.2 | 0.933 |  |  |  |
+| TIP3P box | 23,598 | 9 | 150.0 | 145.2 | 0.968 | 152.0 | 128.2 | 0.843 |
+| TIP3P box | 25,860 | 9 | 162.0 | 151.2 | 0.933 | 153.2 | 128.6 | 0.839 |
 | Ubiquitin in OPC | 26,031 | 9 | 253.0 | 190.4 | 0.753 | 196.0 | 161.8 | 0.826 |
 | TIP3P box | 27,234 | 9 | 171.0 | 157.0 | 0.918 | 162.4 | 136.6 | 0.841 |
 | TIP3P box | 52,686 | 9 | 394.2 | 244.0 | 0.619 | 283.4 | 204.2 | 0.721 |
 | OPC box | 61,324 | 9 | 575.2 | 291.6 | 0.507 | 419.2 | 225.6 | 0.538 |
+| Factor IX | 90,906 | 8 | 538.8 | 329.2 | 0.611 | 410.8 | 241.6 | 0.588 |
 | TIP3P box | 103,158 | 9 | 710.8 | 411.2 | 0.579 | 549.8 | 308.6 | 0.561 |
 | TIP3P box | 203,490 | 9 | 1320.0 | 775.6 | 0.588 | 1108.8 | 624.4 | 0.563 |
 | TIP3P box | 309,876 | 9 | 1970.8 | 1140.4 | 0.579 | 1679.4 | 985.0 | 0.587 |
 | Cellulose | 408,609 | 8 | 2394.4 | 1490.0 | 0.622 | 1821.8 | 1116.0 | 0.613 |
 | OPC box | 413,168 | 9 | 3350.2 | 1634.4 | 0.488 | 2729.2 | 1426.0 | 0.522 |
-| STMV, 4 fs | 1,067,095 | 8 | 7500.2 | 4916.4 | 0.656 |  |  |  |
+| STMV, 4 fs | 1,067,095 | 8 | 7500.2 | 4916.4 | 0.656 | 6216.4 | 3641.0 | 0.586 |
 
 The groups win from 23,558 particles on the RTX 4090, and from 13,899 on
 the RTX PRO 6000; why the crossover moves with the device is not
@@ -477,12 +478,15 @@ proportion to the step, the rule of the Amber suite's script.
 |---|---|---|
 | TIP3P, 103,158 sites, 9 Å | 12 / 9.6 Å 411.2; 11 / 9.6 Å 418.6; 13 / 9.6 Å 414.6; 12 / 10 Å 418.8 | 308.6; 322.0; 310.4; 314.6 |
 | JAC, 8 Å, 2 fs | 11 / 8.6 Å 135.2; 11 / 9.0 Å 136.0; 10 / 8.6 Å 141.4; 12 / 8.6 Å 133.8 | 113.8; 113.0; 121.0; 111.4 |
+| Factor IX, 8 Å, 2 fs | 11 / 8.6 Å 329.2; 11 / 9.0 Å 334.6; 10 / 8.6 Å 340.4; 12 / 8.6 Å 330.4 | 241.6; 245.6; 247.8; 240.0 |
 | JAC, 4 fs | 11 / 8.6 Å 146.0, pruned every 1.9 steps; 11 / 9.2 Å 145.0, every 3.5 | 123.0; 119.6 |
-| STMV, 4 fs | 11 / 8.6 Å 4916.4, pruned every 1.0 step; 11 / 9.2 Å 4807.6, every 2.1 | |
+| STMV, 4 fs | 11 / 8.6 Å 4916.4, pruned every 1.0 step; 11 / 9.2 Å 4807.6, every 2.1 | 3641.0; 3527.6 |
 
-At 8 Å an outer reach of 12 Å is 1 to 2% faster than 11 Å on JAC. The
-default keeps cutoff + 3 Å, the reach of the suite and of #345, which is
-within 2% of the best on every system measured.
+At 8 Å an outer reach of 12 Å is 1 to 2% faster than 11 Å on JAC, and
+on Factor IX 0.4% slower on the RTX 4090 and 0.7% faster on the RTX PRO
+6000. The default keeps cutoff + 3 Å, the reach of the
+suite and of #345, which is within 2% of the best on every system
+measured.
 
 **The validation.** A run without the keys, on an RTX 4090, against
 `GROUPS` given at these reaches and against the matrix:
@@ -491,6 +495,7 @@ within 2% of the best on every system measured.
 |---|---|---|---|---|
 | TIP3P box | 309,876 | 1140.8 | 1130.2 | 1970.4 |
 | Cellulose | 408,609 | 1489.2 | 1488.4 | 2395.6 |
+| STMV, 4 fs | 1,067,095 | 4766.8 (11 / 9.2 Å) | 4860.0 (11 / 8.6 Å) | 7474.2 |
 | JAC | 23,558 | 132.2 | 132.6 | 134.2 |
 | Dipeptide | 1,168 | 72.4 | 85.0 | 72.6 |
 | TIP3P box | 13,899 | 114.2 | 116.6 | 114.0 |
