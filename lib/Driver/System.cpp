@@ -9,6 +9,7 @@
 #include <algorithm>
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Format.h"
 #include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
 
@@ -1307,10 +1308,11 @@ void mdir::driver::resolveNeighborStructure(Control &control,
   if (control.periodic) {
     double least = std::min({system.box[0], system.box[1], system.box[2]});
     if (outer * units::length > 0.999 * least)
-      return matrix(llvm::formatv("the reach of the groups, {0} Å, exceeds "
-                                  "0.999 of the least edge of the cell, "
-                                  "{1:f2} Å",
-                                  outer, 0.999 * least / units::length)
+      return matrix((llvm::Twine("the reach of the groups, ") +
+                     llvm::formatv("{0}", llvm::format("%g", outer)) +
+                     " Å, exceeds 0.999 of the least edge of the cell, " +
+                     llvm::formatv("{0:f2}", 0.999 * least / units::length) +
+                     " Å")
                         .str());
   }
   control.neighborStructure = NeighborStructure::Groups;
