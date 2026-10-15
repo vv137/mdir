@@ -505,6 +505,30 @@ energy in mixed precision on one RTX 3090: 0.205 ms a step from
 `mdir run` and 0.206 from a Python simulation with the dual list, 0.258
 and 0.259 with the matrix).
 
+**Which structure by default** (D261). The time per step of
+either structure is roughly a fixed cost plus a cost per particle.
+
+- The groups have the larger fixed cost: more kernels a step, the
+  prunings, and the boxes of the build.
+- They have the smaller cost per particle: a sixteenth of the entries,
+  each pair once.
+
+The groups therefore win above some $N$ and lose below it. Measured
+against the matrix at its default reach, the groups at 3 Å and 0.6 Å
+beyond the cutoff lose on the dipeptide (1,168 atoms) by 17% on an RTX
+4090. They lose by 1.5% on a TIP3P box of 20,931 sites, and win from JAC
+(23,558 atoms, 1.3%) up to 42% less time on 103,158 sites. On an RTX PRO
+6000 Blackwell they win from 13,899 sites. The default,
+`neighbor_structure = "AUTO"`, takes the groups with these reaches on a
+GPU outside the deterministic mode from 23,000 particles, the crossover
+of the device where it comes later. Below that, and wherever a loop
+cannot take each pair once, it takes the matrix (`docs/groups-m1.md`,
+Section 6.3). The inner skin grows in proportion to the time step: the
+displacement over a fixed number of steps roughly does, so the interval between
+prunings stays the same. On STMV at 4 fs an inner reach of 9.2 Å is
+pruned every 2.1 steps and takes 2% less time than 8.6 Å, pruned every
+step.
+
 Two consequences shape the implementation. First, the inner list is
 always pruned from the outer list, never from the previous inner list: a
 pair dropped by one pruning may come within $R_\text{in}$ again and must be

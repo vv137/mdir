@@ -1,0 +1,104 @@
+# `neighbor_structure = "AUTO"`, the default (D261): `mdir
+# check` states the structure that a run builds and why. On a GPU, outside
+# the deterministic mode, a system of at least the threshold takes the
+# groups of 16 with a dual list, 3 Å and 0.6 Å beyond the cutoff at 2 fs,
+# the inner reach wider in proportion to a longer step, each reach given
+# kept; a smaller one, the CPU, the deterministic mode, `rebuild_interval`,
+# or a reach of the groups beyond the cell takes the matrix with its own
+# reach. A structure that was given is kept as before.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/argon_lattice.py 20 %t/small.pdb
+# RUN: %python %S/Inputs/argon_lattice.py 40 %t/big.pdb
+# RUN: %python %S/Inputs/argon_lattice.py 29 %t/dense.pdb 1.0
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/big.toml
+# RUN: sed -e 's|big.pdb|small.pdb|' -e 's|152.0|76.0|g' %t/big.toml > %t/small.toml
+# RUN: sed -e 's|big.pdb|dense.pdb|' -e 's|152.0|29.0|g' -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 29.0|' %t/big.toml > %t/dense.toml
+# RUN: sed -e 's|^target = "GPU"|target = "CPU"|' %t/big.toml > %t/cpu.toml
+# RUN: sed -e 's|^target = "GPU"|target = "GPU"\ndeterministic = true|' %t/big.toml > %t/deterministic.toml
+# RUN: sed -e 's|^time_step = 0.002|time_step = 0.004|' %t/big.toml > %t/long-step.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 11.0|' %t/big.toml > %t/outer.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 9.4|' %t/big.toml > %t/short.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npruned_distance = 9.3|' %t/big.toml > %t/inner.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npruned_distance = 9.3|' %t/small.toml > %t/small-inner.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\nrebuild_interval = 10|' %t/big.toml > %t/interval.toml
+# RUN: sed -e 's|^target = "GPU"|target = "GPU"\nneighbor_structure = "MATRIX"|' %t/big.toml > %t/matrix.toml
+# RUN: sed -e 's|^target = "GPU"|target = "GPU"\nneighbor_structure = "GROUPS"|' %t/big.toml > %t/groups.toml
+# RUN: sed -e 's|^target = "GPU"|target = "GPU"\nneighbor_structure = "AUTO"|' %t/small.toml > %t/given.toml
+# RUN: sed -e 's|^target = "GPU"|target = "CPU"|' %t/inner.toml > %t/cpu-inner.toml
+# RUN: cd %t && mdir check big.toml | FileCheck %s --check-prefix=BIG
+# RUN: cd %t && mdir check small.toml | FileCheck %s --check-prefix=SMALL
+# RUN: cd %t && mdir check given.toml | FileCheck %s --check-prefix=SMALL
+# RUN: cd %t && mdir check dense.toml | FileCheck %s --check-prefix=DENSE
+# RUN: cd %t && mdir check cpu.toml | FileCheck %s --check-prefix=CPU
+# RUN: cd %t && mdir check deterministic.toml | FileCheck %s --check-prefix=DETERMINISTIC
+# RUN: cd %t && mdir check long-step.toml | FileCheck %s --check-prefix=LONG
+# RUN: cd %t && mdir check outer.toml | FileCheck %s --check-prefix=OUTER
+# RUN: cd %t && mdir check short.toml | FileCheck %s --check-prefix=SHORT
+# RUN: cd %t && mdir check inner.toml | FileCheck %s --check-prefix=INNER
+# RUN: cd %t && mdir check small-inner.toml | FileCheck %s --check-prefix=UNUSED
+# RUN: cd %t && mdir check interval.toml 2> /dev/null | FileCheck %s --check-prefix=INTERVAL
+# RUN: cd %t && mdir check matrix.toml | FileCheck %s --check-prefix=MATRIX
+# RUN: cd %t && mdir check groups.toml | FileCheck %s --check-prefix=GROUPS
+# RUN: cd %t && not mdir check cpu-inner.toml 2>&1 | FileCheck %s --check-prefix=REFUSED
+# RUN: cd %t && mdir check --json big.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['neighbors'], sort_keys=True))" | FileCheck %s --check-prefix=JSON
+
+# BIG: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles, at least {{[0-9]+}}, on a GPU)
+# SMALL: neighbors: matrix, reach 10.5 Å (AUTO: 8000 particles, fewer than {{[0-9]+}})
+# DENSE: neighbors: matrix, reach 29 Å (AUTO: the reach of the groups, 29 Å, exceeds 0.999 of the least edge of the cell, 28.97 Å)
+# CPU: neighbors: matrix, reach 10.5 Å (AUTO: the target is the CPU)
+# DETERMINISTIC: neighbors: matrix, reach 10.5 Å (AUTO: the deterministic mode)
+# LONG: neighbors: groups of 16, reach 12 Å, pruned to 10.2 Å (AUTO:
+# OUTER: neighbors: groups of 16, reach 11 Å, pruned to 9.6 Å (AUTO:
+# SHORT: neighbors: groups of 16, reach 9.4 Å (AUTO:
+# INNER: neighbors: groups of 16, reach 12 Å, pruned to 9.3 Å (AUTO:
+# UNUSED: neighbors: matrix, reach 10.5 Å (AUTO: 8000 particles, fewer than {{[0-9]+}}; 'pruned_distance' is not used)
+# INTERVAL: neighbors: matrix, reach 10.5 Å (AUTO: 'rebuild_interval' is given)
+# MATRIX: neighbors: matrix, reach 10.5 Å{{$}}
+# GROUPS: neighbors: groups of 16, reach 10.5 Å{{$}}
+# REFUSED: 'pruned_distance' keeps a dual list, which needs 'neighbor_structure = "GROUPS"', or "AUTO" on a GPU and not 'deterministic'
+# JSON: {"pairlist_distance_angstrom": 12, "pruned_distance_angstrom": 9.6, "reason": "64000 particles, at least {{[0-9]+}}, on a GPU", "requested": "auto", "structure": "groups"}
+
+#--- run.toml
+[input]
+coordinates = "big.pdb"
+
+[output]
+energy_interval = 10
+
+[energy]
+cutoff = 9.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step = 0.002
+steps = 20
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 100.0
+
+[thermostat]
+method = "V-RESCALE"
+interval = 10
+time_constant = 0.5
+
+[boundary]
+type = "PERIODIC"
+box  = [152.0, 152.0, 152.0]
+
+[execution]
+target = "GPU"
+precision = "MIXED"
+#--- end

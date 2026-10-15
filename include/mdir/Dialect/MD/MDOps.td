@@ -400,18 +400,41 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
                      !md.table<2, f64>
                    -> f64, !md.field<@atoms, 3 x f64>, vector<9xf64>
     ```
+
+    With `listed`, a field of `i32` whose first entries are the places of
+    the particles whose charge can be nonzero, in ascending order, and
+    whose other entries are −1 − the place of each of the others
+    (`md_exec.nonzero`), the sum spreads and gathers those particles only
+    (D262): the others have a charge of zero, add
+    nothing to the grid, and take a force of zero. The potential at the
+    particles is still gathered at every particle. With `gather_all` as
+    well, a device spreads the listed particles and gathers every one, as
+    without a list, which gives the others their force of zero by the
+    product with their charge: where most particles are listed, the
+    others share the points of the grid of their neighbors in a warp, and
+    gathering them costs less than the list does.
+
+    ```mlir
+    %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli listed(%l)
+                   grid([32, 32, 32]) order(4) beta(3.12) coulomb(138.935)
+                   : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>,
+                     !md.table<2, f64>, !md.field<@atoms, i32>
+                   -> f64, !md.field<@atoms, 3 x f64>, vector<9xf64>
+    ```
   }];
   let arguments = (ins
     MD_ReferenceFieldType:$positions,
     MD_ReferenceFieldType:$charges,
     MD_CellType:$cell,
     MD_TableType:$moduli,
+    Optional<MD_ReferenceFieldType>:$listed,
     DenseI64ArrayAttr:$grid,
     I64Attr:$order,
     F64Attr:$beta,
     F64Attr:$coulomb,
     UnitAttr:$dispersion,
-    UnitAttr:$prolate
+    UnitAttr:$prolate,
+    UnitAttr:$gather_all
   );
   let results = (outs
     F64:$energy,
@@ -421,11 +444,14 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
   );
   let assemblyFormat = [{
     $positions `,` $charges `,` $cell `,` $moduli
+    (`listed` `(` $listed^ `)`)?
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
     (`prolate` $prolate^)?
+    (`gather_all` $gather_all^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
-    `,` qualified(type($moduli)) `->` type($energy) `,`
+    `,` qualified(type($moduli)) (`,` qualified(type($listed))^)?
+    `->` type($energy) `,`
     qualified(type($forces)) `,` type($virial)
     (`,` qualified(type($potential))^)?
   }];

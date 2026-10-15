@@ -231,6 +231,33 @@ private:
   llvm::Error collectPME();
   /// The parameters and tables of the prolate kernel (D[prolate-ewald]).
   llvm::Error collectProlate();
+  /// The field `name` of the places of the particles whose `values` are not
+  /// zero, then −1 − the place of each of the others
+  /// (D262), which the reciprocal
+  /// sum of PME spreads and gathers alone; none where every value is
+  /// nonzero, or where a tunable of one of `kinds` may change the values.
+  void collectListed(llvm::StringRef name, llvm::ArrayRef<double> values,
+                     llvm::ArrayRef<Control::TunableKind> kinds);
+  /// Whether the program has the field `name`.
+  bool hasField(llvm::StringRef name) const {
+    return llvm::any_of(program.fields, [&](const Program::Field &field) {
+      return field.name == name;
+    });
+  }
+  /// Whether more than half the particles are in the list `name` of
+  /// collectListed: a device then gathers every particle (`gather_all`),
+  /// as the gathering over the list costs more than the others where they
+  /// are few and share the points of the grid of their neighbors
+  /// (D262).
+  bool gathersAll(llvm::StringRef name) const {
+    for (const Program::Field &field : program.fields)
+      if (field.name == name) {
+        size_t listed = llvm::count_if(field.values.get(),
+                                       [](double v) { return v >= 0.0; });
+        return 2 * listed > field.values.size();
+      }
+    return false;
+  }
   /// The grid of particle mesh Ewald: given, or from the largest spacing in
   /// Å; and the table `name` of the factors of its influence function along
   /// each edge.
@@ -248,6 +275,12 @@ private:
   /// Emits `@descend`, one step of steepest descent that moves no particle
   /// farther than `%h`, and the loops of a minimization in the entry.
   void emitDescend();
+  /// Emits `result`, an f64: the number of constrained lengths of SETTLE
+  /// and SHAKE at the positions `x` whose square is off its target by more
+  /// than a tolerance of the precision, or is not a number
+  /// (D259).
+  void emitConstraintFailures(StringRef indent, StringRef x,
+                              StringRef result);
   /// Emits `result`, the forces `f` over the masses, 0 for particles
   /// without mass, without their parts along the constraints at the
   /// positions `x`: the direction of steepest descent in the metric of the
@@ -1139,9 +1172,20 @@ void Builder::emitReorder(StringRef indent, StringRef from,
       permute(forcesTo, "%f" + from, "!vec");
   }
   permute("%m" + otherTo, "%m" + from, "!real");
-  for (const Program::Field &field : program.fields)
+  for (const Program::Field &field : program.fields) {
+    // A list of the places of particles is made again from the permuted
+    // field that it lists (D262), which comes
+    // before it.
+    StringRef name = field.name;
+    if (name == "pme_listed" || name == "ljpme_listed") {
+      StringRef source = name == "pme_listed" ? "q" : "ljpme_c";
+      os << indent << "%p" << otherTo << "_" << name << " = md_exec.nonzero %p"
+         << otherTo << "_" << source << " : !real -> !ids\n";
+      continue;
+    }
     permute("%p" + otherTo + "_" + field.name,
             "%p" + from + "_" + field.name, getFieldType(field));
+  }
   permute("%id" + otherTo, "%id" + from, "!ids");
   emitRenumber(indent, "%id" + otherTo, "%r" + otherTo + "_");
 }
@@ -2778,6 +2822,10 @@ llvm::Error Builder::collectPME() {
   program.pmeBeta = beta;
   for (int k = 0; k != 3; ++k)
     program.pmeGrid[k] = grid[k];
+  // The particles of a charge that can be nonzero: the test is on the
+  // charge of the topology, which [free_energy] scales by 1 − a λ, so that
+  // a charge of zero is zero at every λ (D161).
+  collectListed("pme_listed", topology.charges, {Control::TunableKind::Charge});
   return llvm::Error::success();
 }
 
@@ -2943,6 +2991,34 @@ llvm::Error Builder::collectProlate() {
   return llvm::Error::success();
 }
 
+void Builder::collectListed(StringRef name, llvm::ArrayRef<double> values,
+                            llvm::ArrayRef<Control::TunableKind> kinds) {
+  // A tunable may move a value across zero, and the text of the program,
+  // which an update keeps, says whether it has the list. Without the
+  // declarations of the tunables, any may.
+  if (control.tunables &&
+      (control.tunableDeclarations.empty() ||
+       llvm::any_of(control.tunableDeclarations,
+                    [&](const Control::TunableDeclaration &declaration) {
+                      return llvm::is_contained(kinds, declaration.kind);
+                    })))
+    return;
+  Program::Field field;
+  field.name = name.str();
+  field.isInteger = true;
+  for (auto [place, value] : llvm::enumerate(values))
+    if (value != 0.0)
+      field.values.push_back(static_cast<double>(place));
+  if (field.values.size() == values.size())
+    return;
+  // Then −1 − the place of each of the others, whose forces of zero the
+  // gathering stores.
+  for (auto [place, value] : llvm::enumerate(values))
+    if (value == 0.0)
+      field.values.push_back(-1.0 - static_cast<double>(place));
+  program.fields.push_back(std::move(field));
+}
+
 llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
                                  double spacing, int64_t order, bool optimal,
                                  int64_t (&grid)[3]) {
@@ -3051,7 +3127,16 @@ llvm::Error Builder::collectLJPME() {
     field.values.push_back(coefficients[type]);
     squares += coefficients[type] * coefficients[type];
   }
+  std::vector<double> perParticle;
+  for (unsigned type : topology.types)
+    perParticle.push_back(coefficients[type]);
   program.fields.push_back(std::move(field));
+  // The particles of a coefficient that is not zero, which the grid of the
+  // dispersion spreads and gathers alone.
+  collectListed("ljpme_listed", perParticle,
+                {Control::TunableKind::Sigma, Control::TunableKind::Epsilon,
+                 Control::TunableKind::SigmaPair,
+                 Control::TunableKind::EpsilonPair});
   std::vector<double> products(numTypes * numTypes);
   for (unsigned a = 0; a != numTypes; ++a)
     for (unsigned b = 0; b != numTypes; ++b)
@@ -5083,13 +5168,17 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   }
   if (program.ljpme && (terms & LennardJonesReciprocal)) {
     // The grid of the dispersion (D162), of the coefficients c_i.
+    bool listed = hasField("ljpme_listed");
     os << "  %u_lj_reciprocal, %f_lj_reciprocal, %w_lj_reciprocal = "
-          "md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli\n"
+          "md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli"
+       << (listed ? " listed(%p_ljpme_listed)" : "") << "\n"
        << "      grid([" << program.ljpmeGrid[0] << ", "
        << program.ljpmeGrid[1] << ", " << program.ljpmeGrid[2]
        << "]) order(" << control.ljpmeOrder << ") beta("
-       << formatReal(program.ljpmeBeta) << ") coulomb(1.0) dispersion\n"
-       << "      : !vec, !real, !grid -> f64, !vec, vector<9xf64>\n";
+       << formatReal(program.ljpmeBeta) << ") coulomb(1.0) dispersion"
+       << (listed && gathersAll("ljpme_listed") ? " gather_all" : "") << "\n"
+       << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
+       << " -> f64, !vec, vector<9xf64>\n";
     add("lj_reciprocal");
   }
   if (program.pme && (terms & CoulombReciprocal)) {
@@ -5107,14 +5196,20 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << "  } : !real\n";
       charges = "%q_scaled";
     }
+    // The particles of a charge that can be nonzero alone
+    // (D262).
+    bool listed = hasField("pme_listed");
     os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
-       << charges << ", %cell, %t_pme_moduli\n"
+       << charges << ", %cell, %t_pme_moduli"
+       << (listed ? " listed(%p_pme_listed)" : "") << "\n"
        << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
        << ", " << program.pmeGrid[2] << "]) order(" << program.pmeOrder
        << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
        << formatReal(coulombInternal) << ")"
-       << (program.pmeProlate ? " prolate" : "") << "\n"
-       << "      : !vec, !real, !grid -> f64, !vec, vector<9xf64>\n";
+       << (program.pmeProlate ? " prolate" : "")
+       << (listed && gathersAll("pme_listed") ? " gather_all" : "") << "\n"
+       << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
+       << " -> f64, !vec, vector<9xf64>\n";
     add("reciprocal");
   }
   if ((terms & Bonds) && has("bonds")) {
@@ -9005,6 +9100,98 @@ std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
   return current;
 }
 
+void Builder::emitConstraintFailures(StringRef indent, StringRef x,
+                                     StringRef result) {
+  // A length fails if |r²/d² − 1| is above the tolerance or is not a
+  // number (an unordered comparison). Below double precision the lengths of
+  // intact waters of a box of 150 Å, stored in f32, are off by up to
+  // 4·10⁻⁷ (measured, #343), and a water that the constraints did not take
+  // back to its shape by 10⁻¹ or more: 10⁻⁴ lies between them. In double
+  // precision SETTLE and SHAKE meet them to the rounding of f64.
+  double tolerance = control.precision == Precision::Double ? 1.0e-8 : 1.0e-4;
+  struct Group {
+    std::string set;
+    unsigned arity;
+    std::vector<ConstrainedBond> bonds;
+    std::vector<std::string> fields;
+  };
+  std::vector<Group> groups;
+  if (hasSettles())
+    groups.push_back({"settles",
+                      3,
+                      {{0, 1, "%vs_doh"}, {0, 2, "%vs_doh"}, {1, 2, "%vs_dhh"}},
+                      {"%f_settles_doh", "%f_settles_dhh"}});
+  for (const Program::TupleSet *set : getShakeSets()) {
+    Group group{set->name, set->arity, {}, {}};
+    for (unsigned k = 1; k < set->arity; ++k) {
+      group.bonds.push_back({0, k, "%vs_d" + std::to_string(k)});
+      group.fields.push_back("%f_" + set->name + "_d" + std::to_string(k));
+    }
+    groups.push_back(std::move(group));
+  }
+  std::string current;
+  for (auto [index, group] : llvm::enumerate(groups)) {
+    std::string coordinates, arguments, fieldTypes, fieldList;
+    for (auto [k, bond] : llvm::enumerate(group.bonds)) {
+      coordinates += (k == 0 ? "" : ", ") +
+                     ("displacement(" + std::to_string(bond.second) + ", " +
+                      std::to_string(bond.first) + ")");
+      arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+    }
+    for (auto [k, field] : llvm::enumerate(group.fields)) {
+      fieldList += (k == 0 ? "" : ", ") + field;
+      fieldTypes += (k == 0 ? "" : ", ") + ("!of_" + group.set);
+    }
+    std::vector<std::string> lengths;
+    for (const ConstrainedBond &bond : group.bonds)
+      if (!llvm::is_contained(lengths, bond.length))
+        lengths.push_back(bond.length);
+    for (auto [k, name] : llvm::enumerate(lengths))
+      arguments += name + ": f64" + (k + 1 == lengths.size() ? "" : ", ");
+    std::string sum = (result + "_" + group.set).str();
+    std::string inner = (indent + "  ").str();
+    os << indent << sum << " = md.sum_tuples %r_" << group.set << ", " << x
+       << ", %cell\n"
+       << indent << "    coordinates(" << coordinates << ")\n"
+       << indent << "    tuple(" << fieldList << " : " << fieldTypes
+       << ") {\n"
+       << indent << "^bb0(" << arguments << "):\n";
+    SiteKernel k(os, inner);
+    std::string one = k.constant(1.0), zero = k.constant(0.0),
+                limit = k.constant(tolerance);
+    std::string count;
+    for (auto [i, bond] : llvm::enumerate(group.bonds)) {
+      std::string r = "%vs_r" + std::to_string(i);
+      std::string d2 = k.real("mulf", bond.length, bond.length);
+      std::string off = k.real("subf", k.real("divf", k.dot(r, r), d2), one);
+      std::string n = std::to_string(i);
+      os << inner << "%vs_abs" << n << " = math.absf " << off << " : f64\n"
+         << inner << "%vs_bad" << n << " = arith.cmpf ugt, %vs_abs" << n
+         << ", " << limit << " : f64\n"
+         << inner << "%vs_one" << n << " = arith.select %vs_bad" << n << ", "
+         << one << ", " << zero << " : f64\n";
+      std::string failed = "%vs_one" + n;
+      count = count.empty() ? failed : k.real("addf", count, failed);
+    }
+    os << inner << "md.yield " << count << " : f64\n"
+       << indent << "} : !rel_" << group.set << ", !vec -> f64\n";
+    if (index == 0) {
+      current = sum;
+    } else {
+      std::string next = (result + "_" + std::to_string(index)).str();
+      os << indent << next << " = arith.addf " << current << ", " << sum
+         << " : f64\n";
+      current = next;
+    }
+  }
+  std::string none = (result + "_none").str();
+  os << indent << none << " = arith.constant 0.0 : f64\n";
+  if (current.empty())
+    current = none;
+  os << indent << result << " = arith.addf " << current << ", " << none
+     << " : f64\n";
+}
+
 void Builder::emitDescend() {
   // The step moves each particle along g, its force over its mass without
   // the parts along the constraints, by `%h` times g over the 16-norm of
@@ -9068,7 +9255,7 @@ void Builder::emitDescend() {
   // atoms put them.
   if (constraints) {
     std::string current = "%x1d";
-    std::string constrained = sites ? "%x1s" : "%x1";
+    std::string constrained = "%x1k";
     unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
     auto next = [&]() {
       ++step;
@@ -9084,6 +9271,25 @@ void Builder::emitDescend() {
       emitShakePositions("  ", "%x", current, *set, result);
       current = result;
     }
+    // A trial whose groups the constraints did not take back to their
+    // shapes, a step too long for SETTLE or M-SHAKE, is not taken: the
+    // energy is evaluated where the step began, so that no position that
+    // is not a number reaches the neighbor structure, and is returned as
+    // +inf, so that the step shrinks. Taken, it would leave the surface of
+    // the constraints, and every later trial would hold the change that
+    // takes the group back, which does not shrink with the step
+    // (D259, #343).
+    emitConstraintFailures("  ", "%x1k", "%broken");
+    os << "  %intact = arith.cmpf oeq, %broken, %zero : f64\n"
+       << "  " << (sites ? "%x1s" : "%x1")
+       << " = md.map_particles gather(%x1k, %x : !vec, !vec) {\n"
+       << "  ^bb0(%new_i: vector<3xf64>, %old_i: vector<3xf64>):\n"
+       << "    %zero_i = arith.constant 0.0 : f64\n"
+       << "    %intact_i = arith.cmpf oeq, %broken, %zero_i : f64\n"
+       << "    %chosen = arith.select %intact_i, %new_i, %old_i "
+          ": vector<3xf64>\n"
+       << "    md.yield %chosen : vector<3xf64>\n"
+       << "  } : !vec\n";
   }
   if (sites)
     emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
@@ -9099,7 +9305,13 @@ void Builder::emitDescend() {
     emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1", "%u1p", "%u1", "%w1z",
                    "%w1r");
   }
-  os << "  dyn.return %x1, %f1, %u1 : !vec, !vec, f64\n}\n\n";
+  std::string energy = "%u1";
+  if (constraints) {
+    os << "  %never = arith.constant 0x7FF0000000000000 : f64\n"
+       << "  %u1c = arith.select %intact, %u1, %never : f64\n";
+    energy = "%u1c";
+  }
+  os << "  dyn.return %x1, %f1, " << energy << " : !vec, !vec, f64\n}\n\n";
 }
 
 void Builder::emitMinimization(StringRef velocities) {
@@ -9180,7 +9392,11 @@ void Builder::emitMinimization(StringRef velocities) {
   if (!control.segments)
     os << "  %h0 = arith.constant "
        << formatReal(control.minimizeStep * units::length) << " : f64\n";
-  os << "  %h_most = arith.constant " << formatReal(1.0 * units::length)
+  // A step grows to at most 0.1 Å (D260): longer ones turn
+  // rigid groups beyond what the constraints take back, and are not taken
+  // (D259); on 103,292 OPC waters the largest force fell
+  // below 5 kcal/mol/Å in 500 steps rather than 3300 with a cap of 1 Å.
+  os << "  %h_most = arith.constant " << formatReal(0.1 * units::length)
      << " : f64\n"
      << "  %grow = arith.constant 1.2 : f64\n"
      << "  %shrink = arith.constant 0.2 : f64\n"
@@ -10591,6 +10807,11 @@ void Builder::setSchedule() {
 }
 
 llvm::Error Builder::build() {
+  // Every front end resolves `AUTO` for its system first
+  // (resolveNeighborStructure, D261).
+  if (control.neighborStructure == NeighborStructure::Auto)
+    return makeError("the neighbor structure 'AUTO' was not resolved; this "
+                     "is a defect of mdir");
   // The neighbor matrix of a triclinic cell holds every pair that has an
   // image within its reach, whatever the reach: its build tests the images
   // beyond that of the one pass where the reach is more than half of the

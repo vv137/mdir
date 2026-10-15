@@ -29,6 +29,7 @@ comparison prints its largest difference to the standard error and holds
 it to a tolerance stated where it is made.
 """
 import pathlib
+import re
 import subprocess
 import sys
 import warnings
@@ -94,8 +95,9 @@ def inputs(structure="Matrix", pairlist=1.0, pruned=0.0, kind="NVE", target="GPU
         execution.deterministic = True
     if capacity:
         execution.neighbor_capacity = capacity
-    if structure != "Matrix":
-        execution.neighbor_structure = getattr(mdir.NeighborStructure, structure)
+    # Given always: the default, Auto, would choose by the size
+    # (D261).
+    execution.neighbor_structure = getattr(mdir.NeighborStructure, structure)
     return system, state, integrator, ensemble, execution
 
 
@@ -216,7 +218,7 @@ def refusals():
            "25.3716 Å, the most that the groups take")
     # The fields: their defaults, their types, and a unit quantity.
     system, execution = mdir.System(), mdir.Execution()
-    assert execution.neighbor_structure == mdir.NeighborStructure.Matrix
+    assert execution.neighbor_structure == mdir.NeighborStructure.Auto
     assert system.pruned_distance == 0.0
     for wrong in ("GROUPS", 1, None):
         try:
@@ -228,10 +230,33 @@ def refusals():
     # The matrix, as before, on the CPU: the plan says what was asked.
     plan = make(target="CPU").plan
     assert plan["neighbor_structure"] == "matrix" and plan["pruned_distance"] == 0.0, plan
+    assert plan["neighbor_structure_requested"] == "matrix", plan
+    assert plan["neighbor_structure_reason"] == "given", plan
+    # Auto, the default, on the CPU: the matrix and its reach as given
+    # (D261); a dual list is refused there, as in the control
+    # file.
+    plan = make(structure="Auto", target="CPU").plan
+    assert plan["neighbor_structure"] == "matrix", plan
+    assert plan["neighbor_structure_requested"] == "auto", plan
+    assert plan["neighbor_structure_reason"] == "the target is the CPU", plan
+    assert abs(plan["pairlist_distance"] - 1.0) < 1e-15, plan
+    expect(mdir.InputError, compiled(structure="Auto", target="CPU", pruned=0.9),
+           "model: 'pruned_distance' keeps a dual list, which needs "
+           "'neighbor_structure = \"GROUPS\"', or \"AUTO\" on a GPU and not "
+           "'deterministic'")
     print("refusals passed")
 
 
 def energies():
+    # Auto on the GPU (D261): the dipeptide, 1,168 particles, is
+    # below the size of the groups; a dual list given is not used.
+    plan = make(structure="Auto").plan
+    assert plan["neighbor_structure"] == "matrix", plan
+    assert re.fullmatch(r"1168 particles, fewer than [0-9]+",
+                        plan["neighbor_structure_reason"]), plan
+    plan = make(structure="Auto", pruned=0.9).plan
+    assert plan["neighbor_structure"] == "matrix" and plan["pruned_distance"] == 0.0, plan
+    assert plan["neighbor_structure_reason"].endswith("; 'pruned_distance' is not used"), plan
     reference = make(**MATRIX)
     assert reference.plan["neighbor_structure"] == "matrix"
     assert "md-exec-choose-neighbors" not in reference.pipeline

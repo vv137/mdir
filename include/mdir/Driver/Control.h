@@ -127,7 +127,15 @@ enum class Truncation {
 enum class Integrator { VelocityVerlet, Leapfrog, Brownian };
 enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };
-enum class NeighborStructure { Matrix, Groups };
+/// `AUTO` is resolved to one of the other two before a program is built
+/// (`resolveNeighborStructure`, D261).
+enum class NeighborStructure { Matrix, Groups, Auto };
+/// "matrix", "groups", or "auto", as a manifest names them.
+inline const char *getNeighborStructureName(NeighborStructure structure) {
+  return structure == NeighborStructure::Groups ? "groups"
+         : structure == NeighborStructure::Auto ? "auto"
+                                                : "matrix";
+}
 enum class BarostatWork { Trotter, TrotterFirstOrder, Exact, FirstOrder };
 /// How the reference positions of restraints follow a barostat (D124): their
 /// center scales with the cell and the offsets from it stay, or each
@@ -322,8 +330,19 @@ struct Control {
   int64_t rebuildPeriod = 0;
   /// The neighbor structure of the loops over pairs on a device: a row a
   /// particle, or groups of 16 that share a list, each pair once, where the
-  /// loops allow it (D89).
-  NeighborStructure neighborStructure = NeighborStructure::Matrix;
+  /// loops allow it (D89). `Auto` until `resolveNeighborStructure` chooses
+  /// one of the two by the target, the mode, and the size of the system
+  /// (D261); every program is built from a resolved one.
+  NeighborStructure neighborStructure = NeighborStructure::Auto;
+  /// What the control file or the model asked for, `neighborStructure`
+  /// before it was resolved, and why it was resolved so: words for the
+  /// log, the manifest, and `mdir check`.
+  NeighborStructure neighborStructureRequested = NeighborStructure::Auto;
+  std::string neighborStructureReason;
+  /// Whether `pairlist_distance` and `pruned_distance` were given: under
+  /// `AUTO` the groups take their own defaults for those that were not.
+  bool pairlistDistanceGiven = false;
+  bool prunedDistanceGiven = false;
   Truncation truncation = Truncation::Switch;
   std::vector<PairTerm> pairs;
   /// Terms over the triplets centered on each particle (D160):

@@ -1,0 +1,82 @@
+# `neighbor_structure = "AUTO"`, the default, on a GPU (D261):
+# a run without the keys of the structure builds what `mdir check` states.
+# Argon on a lattice: 64,000 atoms take the groups with the dual list of
+# 12 / 9.6 Å at a cutoff of 9 Å, and their log in double precision is that
+# of `GROUPS` given with those reaches; 8,000 atoms take the matrix with
+# its reach of 10.5 Å, and their log is that of `MATRIX` given. The log
+# and the manifest state the structure and why.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/argon_lattice.py 40 %t/big.pdb
+# RUN: %python %S/Inputs/argon_lattice.py 20 %t/small.pdb
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/big.toml
+# RUN: sed -e 's|big.pdb|small.pdb|' -e 's|152.0|76.0|g' -e 's|big.jsonl|small.jsonl|' %t/big.toml > %t/small.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 12.0\npruned_distance = 9.6|' \
+# RUN:     -e 's|^precision = "DOUBLE"|precision = "DOUBLE"\nneighbor_structure = "GROUPS"|' \
+# RUN:     -e '/^manifest/d' %t/big.toml > %t/groups.toml
+# RUN: sed -e 's|^precision = "DOUBLE"|precision = "DOUBLE"\nneighbor_structure = "MATRIX"|' \
+# RUN:     -e '/^manifest/d' %t/small.toml > %t/matrix.toml
+# RUN: cd %t && mdir run big.toml > big.out
+# RUN: cd %t && mdir run groups.toml > groups.out
+# RUN: cd %t && mdir run small.toml > small.out
+# RUN: cd %t && mdir run matrix.toml > matrix.out
+# RUN: FileCheck %s --check-prefix=BIG < %t/big.out
+# RUN: FileCheck %s --check-prefix=SMALL < %t/small.out
+# RUN: FileCheck %s --check-prefix=GIVEN --implicit-check-not='neighbor structure:' < %t/groups.out
+# RUN: grep 'INFO: ' %t/big.out > %t/big.log
+# RUN: grep 'INFO: ' %t/groups.out > %t/groups.log
+# RUN: diff %t/big.log %t/groups.log
+# RUN: grep 'INFO: ' %t/small.out > %t/small.log
+# RUN: grep 'INFO: ' %t/matrix.out > %t/matrix.log
+# RUN: diff %t/small.log %t/matrix.log
+# RUN: %python -c "import json, sys; [print(json.dumps({k: v for k, v in json.loads(l)['effective'].items() if 'neighbor' in k or 'distance' in k}, sort_keys=True)) for l in open(sys.argv[1]) if '\"start\"' in l]" %t/big.jsonl | FileCheck %s --check-prefix=BIGJSON
+# RUN: %python -c "import json, sys; [print(json.dumps({k: v for k, v in json.loads(l)['effective'].items() if 'neighbor' in k or 'distance' in k}, sort_keys=True)) for l in open(sys.argv[1]) if '\"start\"' in l]" %t/small.jsonl | FileCheck %s --check-prefix=SMALLJSON
+
+# BIG: MDIR: neighbor structure: groups of 16 with the reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles, at least {{[0-9]+}}, on a GPU)
+# BIG: MDIR: the inner lists were pruned {{[0-9]+}} times
+# SMALL: MDIR: neighbor structure: the matrix with the reach 10.5 Å (AUTO: 8000 particles, fewer than {{[0-9]+}})
+# GIVEN: MDIR: the inner lists were pruned {{[0-9]+}} times
+# BIGJSON: {"neighbor_structure": "groups", "neighbor_structure_reason": "64000 particles, at least {{[0-9]+}}, on a GPU", "neighbor_structure_requested": "auto", "neighbor_structures": ["groups"], "pairlist_distance_angstrom": 12, "pruned_distance_angstrom": 9.6}
+# SMALLJSON: {"neighbor_structure": "matrix", "neighbor_structure_reason": "8000 particles, fewer than {{[0-9]+}}", "neighbor_structure_requested": "auto", "neighbor_structures": ["matrix"], "pairlist_distance_angstrom": 10.5, "pruned_distance_angstrom": null}
+
+#--- run.toml
+[input]
+coordinates = "big.pdb"
+
+[output]
+energy_interval = 10
+manifest = "big.jsonl"
+
+[energy]
+cutoff = 9.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step = 0.002
+steps = 40
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 120.0
+
+[boundary]
+type = "PERIODIC"
+box  = [152.0, 152.0, 152.0]
+
+[execution]
+target = "GPU"
+precision = "DOUBLE"
+#--- end

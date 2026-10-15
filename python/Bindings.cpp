@@ -231,7 +231,8 @@ PYBIND11_MODULE(_core, m) {
   // `[execution] neighbor_structure` (D89, D245).
   py::enum_<driver::NeighborStructure>(m, "NeighborStructure")
     .value("Matrix", driver::NeighborStructure::Matrix)
-    .value("Groups", driver::NeighborStructure::Groups);
+    .value("Groups", driver::NeighborStructure::Groups)
+    .value("Auto", driver::NeighborStructure::Auto);
   py::enum_<driver::Integrator>(m, "IntegratorMethod")
     .value("VelocityVerlet", driver::Integrator::VelocityVerlet)
     .value("Leapfrog", driver::Integrator::Leapfrog)
@@ -733,12 +734,17 @@ PYBIND11_MODULE(_core, m) {
       d["deterministic"] = c.execution.deterministic;
       d["reorders"] = c.program.reorders;
       d["neighbor_capacity"] = c.program.neighborWidth;
-      // What was asked, as `neighbor_structure_requested` of a manifest,
-      // and the reach of the inner list of a dual list in nm, 0 without
-      // one (D245).
-      d["neighbor_structure"] =
-          p.prepared->control.neighborStructure == driver::NeighborStructure::Groups ? "groups" : "matrix";
-      d["pruned_distance"] = p.prepared->control.prunedDistance * driver::units::length;
+      // The structure that the program builds, `Auto` resolved, what was
+      // asked and why it was resolved so, as the manifest of `mdir run`
+      // has them (D261), and the reaches in nm, the inner one
+      // of a dual list 0 without one (D245).
+      const driver::Control &resolved = p.prepared->control;
+      d["neighbor_structure"] = driver::getNeighborStructureName(resolved.neighborStructure);
+      d["neighbor_structure_requested"] =
+          driver::getNeighborStructureName(resolved.neighborStructureRequested);
+      d["neighbor_structure_reason"] = resolved.neighborStructureReason;
+      d["pairlist_distance"] = resolved.pairlistDistance * driver::units::length;
+      d["pruned_distance"] = resolved.prunedDistance * driver::units::length;
       d["entry"] = c.program.entry;
       d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";

@@ -376,6 +376,18 @@ static void describeRun(const Control &control, const System &system,
   if (control.target == Target::CPU)
     std::printf("threads:            %lld\n",
                 static_cast<long long>(control.threads));
+  // The structure that the run builds, as `AUTO` resolves it for this
+  // system, and why (D261).
+  std::printf("neighbors:          %s, reach %g Å",
+              control.neighborStructure == NeighborStructure::Groups
+                  ? "groups of 16"
+                  : "matrix",
+              control.pairlistDistance);
+  if (control.prunedDistance != 0.0)
+    std::printf(", pruned to %g Å", control.prunedDistance);
+  if (control.neighborStructureRequested == NeighborStructure::Auto)
+    std::printf(" (AUTO: %s)", control.neighborStructureReason.c_str());
+  std::printf("\n");
   if (!control.restartInput.empty())
     std::printf("input checkpoint:   %s (not loaded by check)\n",
                 control.restartInput.c_str());
@@ -491,6 +503,15 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
       {"target", control.target == Target::GPU ? "gpu" : "cpu"},
       {"precision", getName(control.precision)},
       {"threads", control.threads},
+      {"neighbors",
+       Object{{"requested",
+               getNeighborStructureName(control.neighborStructureRequested)},
+              {"structure", getNeighborStructureName(control.neighborStructure)},
+              {"reason", control.neighborStructureReason},
+              {"pairlist_distance_angstrom", control.pairlistDistance},
+              {"pruned_distance_angstrom",
+               control.prunedDistance != 0.0 ? Value(control.prunedDistance)
+                                             : Value(nullptr)}}},
       {"input_checkpoint", control.restartInput.empty() ? Value(nullptr)
                                                        : Value(control.restartInput)}};
   if (control.pme) {
@@ -537,6 +558,8 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   auto system = readSystem(*control);
   if (!system)
     return fail(system.takeError(), json);
+  // As `mdir run` resolves it (D261).
+  resolveNeighborStructure(*control, *system);
   if (llvm::Error error = checkManifestPath(control->manifestFile,
           getManifestInputs(controlFile, *control, *system),
           {control->logFile, control->energyFile, control->pullFile,

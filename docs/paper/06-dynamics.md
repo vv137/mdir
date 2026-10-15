@@ -917,10 +917,48 @@ constraints applied from $\mathbf x$, and the sites placed again. Since
 $\lVert\mathbf g\rVert_{16} \ge \max_i\lVert\mathbf g_i\rVert$, no particle
 moves farther than $\ell$, and no reduction to a maximum is needed. A trial
 that lowers the energy is taken and $\ell$ grows by a factor 1.2, to at most
-1 Å; otherwise $\mathbf x$ stays and $\ell$ shrinks by a factor 0.2. The
+0.1 Å (D260); otherwise $\mathbf x$ stays and $\ell$ shrinks by a factor 0.2. The
 choice is a select of each particle, so each field keeps its own storage.
 A step is one `dyn.step @descend`, which evaluates the energy and the
 forces once.
+
+**A trial that the constraints do not take back** (D259).
+The direction is tangent to the surface of the constraints, so $C$ moves
+a trial by a change of second order in $\ell$; but with $\ell$ near 1 Å,
+the cap before D260, or a long first step, a group with a large $\lVert\mathbf g_i\rVert$ turns by tens of
+degrees, beyond what SETTLE and M-SHAKE solve. For one bond of length
+$d_k$ moved across itself, the projection along the old bond of Section
+6.2 has a solution only if the move is no longer than $d_k$, 0.87 Å for
+the O–H of OPC; in double precision the cosines of the angles of SETTLE
+become square roots of negative numbers. Such a trial is not a point of the surface, and its
+energy is not that of the minimization: a torn water has no energy of its
+own, since its bonds are constraints, and its energy was lower. Taken, it
+left the surface, and every later trial carried the change that takes the
+group back, which does not shrink with $\ell$ (as the start of D120 did);
+$\ell$ shrank to 0. On 103,292 OPC waters on a GPU this happened within
+240 steps in mixed precision in each of four runs, and in double precision
+SETTLE gave positions that are not numbers, which stopped the run at a
+build of the neighbor structure. A trial is therefore taken only if every
+constrained bond $\mathbf r_k$ of SETTLE and SHAKE meets
+$\big\lvert\lVert\mathbf r_k\rVert^2/d_k^2 - 1\big\rvert \le 10^{-8}$ in
+double precision and $\le 10^{-4}$ below it, a comparison that fails for
+a number that is not one; below double precision the
+lengths of intact waters in a cell of 150 Å, stored in f32, are off by up
+to $4\times10^{-7}$ and those of a torn water by more than $10^{-1}$. A
+trial that fails it is evaluated at $\mathbf x$ instead, so that every
+position the neighbor structure is built from is a number, and is given
+the energy $+\infty$, so that $\ell$ shrinks as for a trial that raises
+the energy. Steepest descent with constraints by GROMACS likewise counts a
+step whose constraints fail as one that is not taken
+[[Abraham2015]](references.md#abraham2015).
+
+**The cap of the step** (D260). With the test above a long
+trial is safe but wasted: near a cap of 1 Å many trials fail it, and each
+failure shrinks $\ell$ by 0.2. The cap is therefore 0.1 Å. On the boxes of
+103,292 and 31,808 OPC waters on a GPU in mixed precision, the largest
+force fell below 5 kcal/mol/Å first at step 500 and 700 with a cap of
+0.1 Å, 2400 and 800 with 0.3 Å, and 3300 and 1600 with 1 Å, while the
+energies after 5000 steps agree within 0.03%.
 
 **The start** (D120). The positions of the file are first taken onto the
 surface of the constraints, by SETTLE (M-SHAKE below double precision) and

@@ -437,6 +437,37 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The step of steepest descent grows to at most 0.1 Å, not 1 Å**
+  (D260, #351; the maintainer's ruling on PR #348). Near a
+  cap of 1 Å many trials turned rigid waters further than the constraints
+  can take back and were not taken (D259). On 103,292
+  OPC waters the largest force falls below 5 kcal/mol/Å by step 500
+  rather than 3300, at the same energy after 5000 steps (within 0.03%).
+  `initial_step` is unchanged and its first step is taken as given. A
+  minimization now gives other rows: the dipeptide of
+  `minimize-tolerance.test` stops at step 90 rather than 100.
+
+- **The default neighbor structure is `neighbor_structure = "AUTO"`**
+  (D261, #350, stage G3 of `docs/groups-m1.md`). On a GPU,
+  outside the deterministic mode, a system of at least 23,000 particles
+  whose loops over pairs all take each pair once runs on the groups of 16
+  with a dual list, `pairlist_distance` 3 Å and `pruned_distance` 0.6 Å
+  beyond the cutoff at 2 fs (wider in proportion to a longer step), for
+  the reaches not given; every other run keeps the matrix and its reach of
+  1.5 Å beyond the cutoff, as before. A large system that gave no
+  structure runs about 1.6 to 2 times as fast (a TIP3P box of 103,292
+  waters, RTX 4090: 1971 to 1140 µs a step). The log (`MDIR: neighbor
+  structure: ...`), `mdir check` (`neighbors:`, and `run.neighbors` with
+  `--json`), the manifest (`neighbor_structure`,
+  `neighbor_structure_reason`, `pairlist_distance_angstrom`,
+  `pruned_distance_angstrom`; `neighbor_structure_requested` may be
+  `"auto"`), and `Program.plan` state the structure and why.
+  `MATRIX` and `GROUPS` given are unchanged. In Python,
+  `Execution.neighbor_structure` defaults to `NeighborStructure.Auto`.
+  To keep the old default, set `neighbor_structure = "MATRIX"`.
+  `pruned_distance` under `AUTO` is refused only on the CPU and in the
+  deterministic mode, and is left unused, with a note, where the size
+  takes the matrix.
 - **`FrameEvaluator.evaluate` takes `gradients=` in place of `gradient=`**
   (D252, #313; the maintainer's ruling on PR #314). The
   argument `gradient=True` or `False`, whether the derivative in the
@@ -1061,6 +1092,24 @@ format, or the outputs; every such change is listed under **Changed** or
   fails differentiation (D182, part 1 of #15).
 
 ### Fixed
+
+- Steepest descent stalled with a step of 0, or failed, on rigid water
+  (D259, #343). A trial longer than SETTLE or M-SHAKE can
+  take back, which the step reaches as it grows toward its cap of 1 Å,
+  left a water torn in mixed precision (an O-H of 8 Å). The trial was
+  taken when its energy was lower; every later trial then held the change
+  that takes the water back, which does not shrink with the step, so the
+  step shrank to 0 and the run of dynamics after it failed. In double
+  precision SETTLE gave positions that are not numbers, and on a GPU the
+  run failed at a build of the neighbor structure. Such a trial is now not
+  taken, and the step shrinks. With `main`, 1000 steps on a GPU in mixed
+  precision stalled for 103,292 OPC waters (by step 200) and for 31,808
+  (by step 300); with the fix both go 5000 steps, to -14.37 and -14.29
+  kcal/mol per water in mixed precision and -14.37 and -14.29 in double,
+  with every water at its shape, and NVT from the large box runs (10 ps
+  in mixed precision, 2 ps in double).
+  `minimize-rigid-water.test` and `minimize-rigid-water-gpu.test` take
+  three OPC waters with a first step of 2 Å.
 
 - The test of the memory of the host across the frames of a frame
   evaluator read bytes of its own (#306). It made the `ctypes` structure

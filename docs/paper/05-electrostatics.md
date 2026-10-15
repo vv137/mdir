@@ -198,6 +198,53 @@ places take 27 µs a step, the additions 214, the copy and the clearing 63
 and the gathering 90 (RTX 3090; medians of a launch, from D102, D104,
 D108, and D109).
 
+**Particles without a coefficient.** A particle with $q_j = 0$ adds
+nothing to $Q(\mathbf l)$, and its force,
+
+$$
+\mathbf F_j = -\frac{\partial E_\text{rec}}{\partial\mathbf x_j}
+= -q_j\sum_{\mathbf l}\phi(\mathbf l)\,\nabla_j\prod_a M_n(u_{aj} - l_a),
+$$
+
+with $\phi$ the grid after the product with $BC$ and the backward
+transform, is zero; the energy and the virial are functions of $\hat Q$
+alone. The sums of the mesh therefore run over $\mathcal J_q$ and
+$\mathcal J_c$ (D262): the oxygen of a
+four-site water (OPC, TIP4P-Ew) has no charge, and the hydrogens and the
+virtual site of a water no coefficient of the dispersion. Under
+`[free_energy]` the charges are $q_j(1 - a_j\lambda_\text{C})$ (Section
+6.8), zero at every $\lambda_\text{C}$ where $q_j = 0$, and the share of
+particle $j$ in $\partial U/\partial\lambda_\text{C} = \sum_j
+(\partial U/\partial q_j)(-a_jq_j)$ is zero too; the sets are taken from
+the charges of the topology, not from the scaled ones, so that a particle
+that $\lambda_\text{C} = 1$ decouples stays in them. The restriction is
+exact: in the deterministic mode the grid is the same sum of integers and
+every force the same product, and the run is the same to the bit. The
+potential at the particles, $\partial E_\text{rec}/\partial q_j$, is not
+zero where $q_j$ is; where the derivative in the charges asks for it, it
+is gathered at every particle.
+
+A set is a field of the particles, its first entries the places of its
+members in ascending order and the rest $-1-j$ for each other particle
+$j$; it is made from the
+topology and made again, by counting in chunks of 256 places and a prefix
+sum, wherever the particles take a new order (at the start and at each
+segment), so that it follows the order of the particles. A kernel takes
+an entry of the set where it took a particle. In the gathering a warp
+whose first entry is past the last member skips the sum and stores the
+forces of zero of the particles it holds: the gathering writes every
+force. Where a set holds more than half the particles, a device gathers
+every particle instead, as without a set: the oxygen of a four-site water
+sits beside its virtual site in the order of the particles, and a warp
+reads the points of the grid of both at once, so that the oxygen costs
+almost nothing there, while a warp of the set reads those of more
+waters. On 103,292 OPC waters (RTX 4090, mixed precision) the
+reciprocal sum takes 241 µs a step where it took 274, against 225 for as
+many TIP3P waters; with the mesh of the dispersion as well, on 31,808 OPC
+waters the two sums take 163 µs where they took 203. A model with no such
+particle, or with tunable parameters that could move a coefficient across
+zero, has no set, and its kernels are those of before.
+
 **Accuracy.** On Cellulose the reciprocal energy in mixed precision is
 30206.42227 kcal/mol against 30206.42041 in double precision, a relative
 difference of $6\times10^{-8}$ (D104). Section 9 compares the terms with

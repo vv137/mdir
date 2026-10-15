@@ -493,7 +493,7 @@ def main():
                    help="of the inner list of a dual list of MDIR (Å) at a "
                         "step of 2 fs, in proportion to the step (D114); "
                         "one list if absent")
-    p.add_argument("--neighbor-structure", choices=["MATRIX", "GROUPS"],
+    p.add_argument("--neighbor-structure", choices=["AUTO", "MATRIX", "GROUPS"],
                    help="of MDIR on the device; its default if absent")
     p.add_argument("--barostat-work",
                    choices=["TROTTER", "TROTTER_FIRST_ORDER", "EXACT",

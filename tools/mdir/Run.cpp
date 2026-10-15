@@ -307,6 +307,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     return fail(system.takeError());
   for (const auto &[code, message] : system->warnings)
     warn(message);
+  // `neighbor_structure = "AUTO"` is resolved for the system before
+  // anything is built from it (D261).
+  resolveNeighborStructure(*control, *system);
 
   InputPaths inputPaths = getManifestInputs(controlFile, *control, *system);
   if (!control->manifestFile.empty() && emit == Emit::Run) {
@@ -972,7 +975,12 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"trajectory_format", control->framePeriod == 0 ? llvm::json::Value(nullptr) :
             llvm::json::Value(getTrajectoryFormatName(control->trajectoryFormat))},
         {"neighbor_structure_requested",
-         control->neighborStructure == NeighborStructure::Groups ? "groups" : "matrix"},
+         getNeighborStructureName(control->neighborStructureRequested)},
+        {"neighbor_structure", getNeighborStructureName(control->neighborStructure)},
+        {"neighbor_structure_reason", control->neighborStructureReason},
+        {"pairlist_distance_angstrom", control->pairlistDistance},
+        {"pruned_distance_angstrom", control->prunedDistance != 0.0
+             ? llvm::json::Value(control->prunedDistance) : llvm::json::Value(nullptr)},
         {"neighbor_structures", std::move(neighbors)},
         {"buffer_precision", llvm::json::Object{{"state", element(program->state)},
             {"force", element(program->force)}, {"mass", element(program->mass)},
@@ -1313,6 +1321,20 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  "coordinates\n");
   for (const std::string &note : notes)
     output.log.print("MDIR: note: %s\n", note.c_str());
+  // The structure that `AUTO` took, and why (D261); a
+  // structure that was given is not repeated.
+  if (control->neighborStructureRequested == NeighborStructure::Auto) {
+    if (control->neighborStructure == NeighborStructure::Groups)
+      output.log.print("MDIR: neighbor structure: groups of 16 with the "
+                       "reach %g Å", control->pairlistDistance);
+    else
+      output.log.print("MDIR: neighbor structure: the matrix with the "
+                       "reach %g Å", control->pairlistDistance);
+    if (control->prunedDistance != 0.0)
+      output.log.print(", pruned to %g Å", control->prunedDistance);
+    output.log.print(" (AUTO: %s)\n",
+                     control->neighborStructureReason.c_str());
+  }
   output.log.print("MDIR: compiled in %.2f s\n", compileTime);
   writeLogHeader(output);
 

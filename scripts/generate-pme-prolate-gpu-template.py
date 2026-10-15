@@ -370,7 +370,39 @@ def particle_warp(name, args, body):
 '''
 
 
-def launch_warps(inner):
+# A warp an entry of the list of the particles whose charge can be nonzero
+# (D262): the entry is the place of the particle, or, after the listed
+# places, −1 − the place of a particle of charge zero, whose warp spreads
+# nothing and, in a gathering, stores its force of zero from its first lane.
+LISTED_ENTER = '''      %listed = memref.load %list[%slot] : memref<?xi32, 1>
+      %listed_none = arith.constant 0 : i32
+      %is_listed = arith.cmpi sge, %listed, %listed_none : i32
+      scf.if %is_listed {
+      %i = arith.index_cast %listed : i32 to index
+'''
+LISTED_ZERO = '''      } else {
+      %zfirst = arith.cmpi eq, %lane_x, %c0w : index
+      scf.if %zfirst {
+        %zminus = arith.constant -1 : i32
+        %zplace32 = arith.subi %zminus, %listed : i32
+        %zplace = arith.index_cast %zplace32 : i32 to index
+        %zc1 = arith.constant 1 : index
+        %zc2 = arith.constant 2 : index
+        %zero_f = arith.constant 0.0 : !pme_frc
+        memref.store %zero_f, %f[%zplace, %c0w] : memref<?x3x!pme_frc, 1>
+        memref.store %zero_f, %f[%zplace, %zc1] : memref<?x3x!pme_frc, 1>
+        memref.store %zero_f, %f[%zplace, %zc2] : memref<?x3x!pme_frc, 1>
+      }
+'''
+
+
+def launch_warps(inner, listed=False, zero=False):
+    """The launch of a warp a particle; with `listed`, a warp an entry of
+    the list (LISTED_ENTER), and with `zero` the force of zero of an entry
+    of a particle of charge zero (LISTED_ZERO)."""
+    if listed:
+        inner = LISTED_ENTER + inner + (LISTED_ZERO if zero else '') + '''      }
+'''
     return '''  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
     %c0w = arith.constant 0 : index
@@ -382,9 +414,9 @@ def launch_warps(inner):
     %lane_x = arith.remui %tx, %c32w : index
     %lane = arith.index_cast %lane_x : index to i32
     %wb = arith.muli %bx, %four_w : index
-    %i = arith.addi %wb, %warp : index
+    %''' + ('slot' if listed else 'i') + ''' = arith.addi %wb, %warp : index
     // The whole warp is inside or outside: the shuffles take all its lanes.
-    %inside = arith.cmpi ult, %i, %n_all : index
+    %inside = arith.cmpi ult, %''' + ('slot' if listed else 'i') + ''', %n_all : index
     scf.if %inside {
 ''' + inner + '''    }
     gpu.terminator
@@ -413,11 +445,13 @@ def wrap(name, start, offset, k):
 '''
 
 
-def spread(fixed):
+def spread(fixed, listed=False):
     """Spreads the charges: into bricks with floating-point atomics, then
-    copies them into the grid (D108), or into the grid in fixed point."""
+    copies them into the grid (D108), or into the grid in fixed point; with
+    `listed`, those of the listed particles alone (D262)."""
     name = 'mdrt_gpu_pme_prolate_spread_fixed' if fixed else 'mdrt_gpu_pme_prolate_spread_bricks'
-    args = ('%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, '
+    name += '_listed' if listed else ''
+    args = ('%q: memref<?x!pme_chg, 1>, ' + ('%list: memref<?xi32, 1>, ' if listed else '') + '%places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, '
             + ('%grid: memref<?xi64, 1>, ' if fixed else '%bricks: memref<?x!pme_real, 1>, %real: memref<?x!pme_real, 1>, ')
             + '%k1: index, %k2: index, %k3: index')
     body = ''
@@ -540,7 +574,7 @@ def spread(fixed):
     inner += '''        }
       }
 '''
-    body += launch_warps(inner)
+    body += launch_warps(inner, listed)
     if not fixed:
         # The copy of the bricks into the grid, that of spread_bricks.
         text = function('mdrt_gpu_pme_spread_bricks')
@@ -550,14 +584,18 @@ def spread(fixed):
     return particle_warp(name, args, body)
 
 
-def gather(potential, triclinic=False):
+def gather(potential, triclinic=False, listed=False):
     """The forces, F = −q (K/L) Σ φ ∂θ, or the potential Σ φ θ (D231), a warp
     a particle: lanes 0 .. 3P − 1 evaluate the weights and slopes once, the
-    lanes of a pass take a row (a, b) each and sum along z."""
-    name = ('mdrt_gpu_pme_prolate_potential' if potential else 'mdrt_gpu_pme_prolate_gather') + ('_triclinic' if triclinic else '')
+    lanes of a pass take a row (a, b) each and sum along z. With `listed`,
+    the forces of the listed particles, and zero at the others (D262)."""
+    assert not (potential and listed)
+    name = (('mdrt_gpu_pme_prolate_potential' if potential else 'mdrt_gpu_pme_prolate_gather')
+            + ('_listed' if listed else '') + ('_triclinic' if triclinic else ''))
     width = 6 if triclinic else 3
     out = '%f: memref<?x!pme_frc, 1>' if potential else '%f: memref<?x3x!pme_frc, 1>'
-    args = ('%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, '
+    args = ('%q: memref<?x!pme_chg, 1>, ' + ('%list: memref<?xi32, 1>, ' if listed else '')
+            + '%places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, '
             f'%phi: memref<?x!pme_real, 1>, %box: vector<{width}xf64>, %k1: index, %k2: index, %k3: index, ' + out)
     body = f'''  %lx = vector.extract %box[0] : f64 from vector<{width}xf64>
   %ly = vector.extract %box[1] : f64 from vector<{width}xf64>
@@ -757,7 +795,7 @@ def gather(potential, triclinic=False):
 '''
     inner += '''      }
 '''
-    body += launch_warps(inner)
+    body += launch_warps(inner, listed, zero=listed)
     return particle_warp(name, args, body)
 
 
@@ -889,6 +927,11 @@ def main():
         out += '// The product with the influence function of the prolate kernel, with the\n'
         out += '// energy and the virial (convolve_dispersion with χ̂ in place of F).\n' + convolve + '\n'
         out += '// The product alone (scale_dispersion with χ̂ in place of F).\n' + scale + '\n'
+    # The kernels of a list of the particles (D262), after the others, so
+    # that those of a module without a list are those of before; the
+    # compiler adds them where a sum has a list.
+    out += spread(fixed=False, listed=True) + spread(fixed=True, listed=True)
+    out += gather(potential=False, listed=True) + gather(potential=False, triclinic=True, listed=True)
     out = out.replace('@mdrt_gpu_pme_blocks(', '@mdrt_gpu_pme_prolate_blocks(')
     out = out.replace('@mdrt_gpu_pme_blocks_triclinic(', '@mdrt_gpu_pme_prolate_blocks(')
     sys.stdout.write(out)

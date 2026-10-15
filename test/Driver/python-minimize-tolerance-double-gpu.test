@@ -6,7 +6,7 @@
 # `Simulation.minimize(tolerance=...)` stopping at the same step.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_minimize_tolerance.py %S/Inputs/dipeptide GPU mdir %t Double | FileCheck %s
-# CHECK: GPU Double: mdir run stops at step 100 (NumPy reference 100)
+# CHECK: GPU Double: mdir run stops at step 90 (NumPy reference 90)
 # CHECK: GPU Double: not converged after 20 steps at 1 kcal/mol/A; converged at step 0 at 30
-# CHECK: GPU Double: Python stops at step 100, converged
+# CHECK: GPU Double: Python stops at step 90, converged
 # CHECK: minimization tolerance double passed

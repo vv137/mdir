@@ -196,8 +196,8 @@ Python simulation had the neighbor matrix alone, and the rates of
 
 | Python | Control file | Values |
 |---|---|---|
-| `Execution.neighbor_structure` | `[execution] neighbor_structure` | `mdir.NeighborStructure.Matrix` (the default), `mdir.NeighborStructure.Groups` |
-| `System.pruned_distance` | `[energy] pruned_distance` | a length in nm or a unit quantity (D200), between `System.cutoff` and `System.pairlist_distance`; `0`, the default, keeps one list |
+| `Execution.neighbor_structure` | `[execution] neighbor_structure` | `mdir.NeighborStructure.Auto` (the default, D261), `mdir.NeighborStructure.Matrix`, `mdir.NeighborStructure.Groups` |
+| `System.pruned_distance` | `[energy] pruned_distance` | a length in nm or a unit quantity (D200), between `System.cutoff` and `System.pairlist_distance`; `0`, the default, keeps one list, and under `Auto` is the key not given: groups that `Auto` takes have the inner reach of the control file |
 
 Each is where the control file has it: `neighbor_structure` is a key of
 `[execution]`, and `pruned_distance` a key of `[energy]` beside
@@ -214,7 +214,7 @@ out: the draw does not read the lists.
 | Case | Message |
 |---|---|
 | `Groups` with `Target.CPU`, or with `Execution.deterministic` | `model: 'neighbor_structure = "GROUPS"' needs 'target = "GPU"' and not 'deterministic'` |
-| `pruned_distance` with the matrix | `model: 'pruned_distance' keeps a dual list, which needs 'neighbor_structure = "GROUPS"'` |
+| `pruned_distance` with `Matrix`, or with `Auto` on the CPU or in the deterministic mode | `model: 'pruned_distance' keeps a dual list, which needs 'neighbor_structure = "GROUPS"', or "AUTO" on a GPU and not 'deterministic'` |
 | `pruned_distance` not between the cutoff and the pairlist distance | `model: 'pruned_distance' is not between 'cutoff' and 'pairlist_distance'` |
 | a negative or non-finite `pruned_distance` | `System.pruned_distance must be positive, or 0 for one list` |
 | a pairlist distance above 0.999 of the least edge of the cell, the least of $a_x, b_y, c_z$ of a triclinic one (D242) | the builder's, with the distances in Å: `'pairlist_distance', 26 Å, exceeds 0.999 of the least edge of the cell, 25.3716 Å, the most that the groups take` |
@@ -233,10 +233,15 @@ reach and the test of the inner list from the refreshes of the structures
 that it leaves as matrices
 (`test/Dialect/MDExec/Transforms/choose-neighbors.mlir`).
 
-`Program.plan["neighbor_structure"]` is `"matrix"` or `"groups"`, what was
-asked (the `neighbor_structure_requested` of a manifest of `mdir run`),
-and `Program.plan["pruned_distance"]` the reach of the inner list in nm,
-`0.0` without one. `Program.pipeline` has
+`Program.plan["neighbor_structure"]` is `"matrix"` or `"groups"`, the
+structure that the program builds (`Auto` resolved for the system;
+D261), `Program.plan["neighbor_structure_requested"]` what was
+asked (`"auto"`, `"matrix"`, or `"groups"`, the
+`neighbor_structure_requested` of a manifest of `mdir run`),
+`Program.plan["neighbor_structure_reason"]` why (`"given"`, or the words of
+the log of `mdir run`), `Program.plan["pairlist_distance"]` the reach of the
+lists in nm, and `Program.plan["pruned_distance"]` the reach of the inner
+list in nm, `0.0` without one. `Program.pipeline` has
 `md-exec-choose-neighbors{kind=groups}` and the `prune-skin` of
 `md-exec-reuse-neighbors`, so the key of the code that a `Program` keeps
 (D236), which holds the pipeline and the module, tells the structures
@@ -331,9 +336,11 @@ The matrix and the groups have a pairlist distance of 10 Å; the dual list
 structure the two front ends run at one rate, within 1%; what a Python
 simulation lacked was the structure. Parts of 100 steps cost nothing that
 the timing resolves, and a step of energy every 100 steps 0.002 to 0.005
-ms a step in either front end. The default stays the matrix: on the
-dipeptide the groups are the slower structure, and the choice by the size
-of the system (G3 of the roadmap) is not made here.
+ms a step in either front end. The default stayed the matrix here: on the
+dipeptide the groups are the slower structure. The choice by the size of
+the system (G3 of the roadmap) is `NeighborStructure.Auto`, the default
+since D261, which `prepare` resolves with the function of `mdir
+run`.
 ## The influence function and the order of PME, and the analytic bonds
 
 D246 (#279, from the inventory of #270). Two settings of

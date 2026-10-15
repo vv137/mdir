@@ -173,6 +173,19 @@ llvm::Expected<System> prepareTopologySystem(const Control &control,
 /// (D213); the warnings of `system` are kept as they are.
 llvm::Error recollectPairTails(const Control &control, System &system);
 
+/// The least number of particles for which `neighbor_structure = "AUTO"`
+/// takes the groups on a device (D261).
+constexpr size_t autoGroupsParticles = 23000;
+
+/// Resolves `neighbor_structure = "AUTO"` of `control` for `system`: the
+/// groups of 16 with a dual list on a GPU, outside the deterministic mode,
+/// where every loop over pairs takes them and the system has at least
+/// `autoGroupsParticles` particles; the matrix otherwise. The groups take
+/// the reaches `cutoff + 3` Å and, inner, `cutoff + 0.6` Å at 2 fs, for
+/// those not given (D261). Records why in
+/// `control.neighborStructureReason`. A structure that was given is kept.
+void resolveNeighborStructure(Control &control, const System &system);
+
 /// Gives the particles velocities of the temperature of `control`, from
 /// the seed of `control`, with the center of mass at rest.
 void assignVelocities(const Control &control, System &system);

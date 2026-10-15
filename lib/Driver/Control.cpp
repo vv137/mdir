@@ -1846,6 +1846,10 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error =
           readPositive(table, "pairlist_distance", control.pairlistDistance))
     return error;
+  // Under `AUTO` the groups take reaches of their own where these are not
+  // given (D261).
+  control.pairlistDistanceGiven = table.contains("pairlist_distance");
+  control.prunedDistanceGiven = table.contains("pruned_distance");
 
   // Opt-in, not a default: a structure rebuilt at a fixed interval may miss
   // pairs within the cutoff (D88). The run warns.
@@ -2846,10 +2850,12 @@ Error Reader::readExecution(const toml::table &table) {
     return error;
   // Groups of 16 that share a list of neighbors, each pair once, where the
   // loops allow them (D89): on a device, and not yet in the deterministic
-  // mode.
+  // mode. `AUTO`, the default, chooses by the target, the mode, and the
+  // size of the system when the program is built (D261).
   if (Error error = readChoice<NeighborStructure>(
           table, "neighbor_structure", control.neighborStructure,
-          {{"MATRIX", NeighborStructure::Matrix},
+          {{"AUTO", NeighborStructure::Auto},
+           {"MATRIX", NeighborStructure::Matrix},
            {"GROUPS", NeighborStructure::Groups}}))
     return error;
   if (control.neighborStructure == NeighborStructure::Groups &&
@@ -3076,13 +3082,20 @@ Error Reader::read(const toml::table &root) {
 }
 
 llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
+  // Under `AUTO` a dual list is kept where the groups are chosen, which
+  // they never are on the CPU or in the deterministic mode
+  // (D261).
   if (control.prunedDistance != 0.0 &&
-      control.neighborStructure != NeighborStructure::Groups)
+      (control.neighborStructure == NeighborStructure::Matrix ||
+       (control.neighborStructure == NeighborStructure::Auto &&
+        (control.target != Target::GPU || control.deterministic))))
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
         "%s: 'pruned_distance' keeps a dual list, which needs "
-        "'neighbor_structure = \"GROUPS\"'",
+        "'neighbor_structure = \"GROUPS\"', or \"AUTO\" on a GPU and not "
+        "'deterministic'",
         path.str().c_str());
+  control.neighborStructureRequested = control.neighborStructure;
   if (control.checkpointPeriod != 0 && control.restartOutput.empty())
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
@@ -3385,9 +3398,12 @@ trajectory_interval = 0         # steps between frames; 0: none
 [energy]
 cutoff            = 12.0        # Å
 switch_distance   = 10.0        # where switching begins (Å); the cutoff: none
-pairlist_distance = 13.5        # reach of the neighbor structures (Å)
+# pairlist_distance = 13.5      # reach of the neighbor structures (Å);
+                                # the cutoff + 1.5, + 3 for the groups
+                                # that AUTO takes
 # pruned_distance = 0           # reach of the inner list of a dual list,
-                                # pruned from the structure; needs GROUPS (Å)
+                                # pruned from the structure; needs GROUPS
+                                # or AUTO (Å)
 # rebuild_interval = 0          # 0: rebuild when a particle has moved half
                                 # the skin (default); N: every N steps, not
                                 # tested between; may miss pairs (opt-in)
@@ -3443,8 +3459,10 @@ deterministic = false           # on a GPU, sums in an order the threads do
                                 # not decide: the same bits from run to run
                                 # (on the CPU they always are)
 # neighbor_capacity = 160       # neighbors per particle at first; grows
-# neighbor_structure = "MATRIX" # MATRIX, GROUPS: groups of 16 that share
-                                # a list, each pair once (GPU only)
+# neighbor_structure = "AUTO"   # AUTO: the groups on a GPU for large
+                                # systems, else the matrix; MATRIX;
+                                # GROUPS: groups of 16 that share a
+                                # list, each pair once
 )TOML";
 }
 
@@ -3473,9 +3491,12 @@ checkpoint_interval = 50000     # steps between checkpoints
 
 [energy]
 cutoff            = 9.0         # of the direct terms (Å)
-pairlist_distance = 10.0        # reach of the neighbor structures (Å)
+# pairlist_distance = 10.5      # reach of the neighbor structures (Å);
+                                # the cutoff + 1.5, + 3 for the groups
+                                # that AUTO takes
 # pruned_distance = 0           # reach of the inner list of a dual list,
-                                # pruned from the structure; needs GROUPS (Å)
+                                # pruned from the structure; needs GROUPS
+                                # or AUTO (Å)
 # rebuild_interval = 0          # 0: rebuild when a particle has moved half
                                 # the skin (default); N: every N steps, not
                                 # tested between; may miss pairs (opt-in)
@@ -3585,8 +3606,10 @@ type = "PERIODIC"               # the box is that of the coordinates;
 target    = "GPU"               # CPU, GPU
 precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 # threads = 1                   # for the target CPU
-# neighbor_structure = "MATRIX"  # MATRIX, GROUPS: groups of 16 that share
-                                # a list, each pair once
+# neighbor_structure = "AUTO"   # AUTO: the groups on a GPU for large
+                                # systems, else the matrix; MATRIX;
+                                # GROUPS: groups of 16 that share a
+                                # list, each pair once
 
 # A minimization instead of dynamics: steepest descent.
 # [minimize]
