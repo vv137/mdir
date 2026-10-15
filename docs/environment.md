@@ -90,6 +90,7 @@ from the environment, by one convention (`scripts/environment.sh`):
 | `MDIR` | `scripts/validation/gromacs/run.sh`, `compare.py` | The `mdir` program to compare; `mdir` by default. | The script stops if the program is not found. |
 | `MDIR_BENCH_DIR=<dir>` | `scripts/experiments/neighbor-structures/run.sh` | The prepared Amber suite (above); this script has no default for it. | The script stops. |
 | `NVCC`, `CUDA_ARCH` | `scripts/experiments/neighbor-structures/run.sh` | The program `nvcc` (by default) and the architecture it compiles for (`sm_86` by default). | The script stops if `nvcc` is not found. |
+| `CUDA_ROOT=<dir>` | `scripts/benchmarks/prolate-ewald/resources.py`, `p0_job.py` | The CUDA toolkit whose `cuobjdump`, `cu++filt`, and `ncu` the measurement of #337 runs. | `resources.py` stops; `p0_job.py` skips Nsight Compute. |
 | `LLVM_PREFIX=<prefix>` | `examples/argon/run.sh` | The install prefix of LLVM, as `scripts/build-llvm.sh` names its own. | The script stops. |
 | `MDIR_BUILD=<dir>` | `examples/argon/run.sh` | The build directory of MDIR; `build` by default. | The script stops if it holds no `bin/mdir-opt`. |
 

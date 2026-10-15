@@ -63,7 +63,11 @@ json.dump(summary, open(out, 'w'), indent=1)
 for window in ['bspline', 'pswf']:
     case = f'{D}p0/{name}-{window}-5.bin'
     rep = f'{out}-ncu-{window}-5.txt'
-    p = subprocess.run(['/usr/local/cuda-13.2/bin/ncu', '--kernel-name', 'regex:gather', '--launch-count', '6',
+    # Nsight Compute from CUDA_ROOT (docs/environment.md, Scripts).
+    if 'CUDA_ROOT' not in os.environ:
+        print('ncu skipped: CUDA_ROOT is not set', flush=True)
+        continue
+    p = subprocess.run([os.path.join(os.environ['CUDA_ROOT'], 'bin', 'ncu'), '--kernel-name', 'regex:gather', '--launch-count', '6',
                         '--section', 'SpeedOfLight', '--section', 'LaunchStats', '--section', 'Occupancy',
                         '--section', 'MemoryWorkloadAnalysis', bench, case, 'f', '3', 'tiled4', '32', 'sorted', '-'],
                        capture_output=True, text=True, env=env)

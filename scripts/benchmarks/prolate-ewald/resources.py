@@ -1,13 +1,17 @@
 """Registers, spills (local memory), and shared memory of the gathering
 kernels of the prototype, from cuobjdump --dump-resource-usage, for the
 (P, D, lanes) of the cases of P0 (#337).  resources.py BINARY ARCH"""
-import re, subprocess, sys
+import os, re, subprocess, sys
 
+# The CUDA toolkit from CUDA_ROOT (docs/environment.md, Scripts).
+if 'CUDA_ROOT' not in os.environ:
+    sys.exit('resources.py: set CUDA_ROOT to the CUDA toolkit')
+tools = os.path.join(os.environ['CUDA_ROOT'], 'bin')
 binary, arch = sys.argv[1], sys.argv[2]
-out = subprocess.run(['/usr/local/cuda-13.2/bin/cuobjdump', '--dump-resource-usage', '--gpu-architecture', arch, binary],
+out = subprocess.run([os.path.join(tools, 'cuobjdump'), '--dump-resource-usage', '--gpu-architecture', arch, binary],
                      capture_output=True, text=True).stdout
 out = re.sub(r'(Function \S+):', r'\1', out)
-names = subprocess.run(['/usr/local/cuda-13.2/bin/cu++filt'], input=out, capture_output=True, text=True).stdout.splitlines()
+names = subprocess.run([os.path.join(tools, 'cu++filt')], input=out, capture_output=True, text=True).stdout.splitlines()
 wanted = {(4, 4), (4, 11), (5, 5), (5, 10), (6, 6), (6, 9), (8, 8)}
 for i, line in enumerate(names):
     m = re.search(r'Function (?:void )?(gather|gatherPre)<float, ((?:\(int\)\d+(?:, )?)+)>', line)
