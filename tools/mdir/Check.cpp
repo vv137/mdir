@@ -349,11 +349,18 @@ static void describeRun(const Control &control, const System &system,
                   static_cast<long long>(control.pmeGrid[1]),
                   static_cast<long long>(control.pmeGrid[2]),
                   static_cast<long long>(control.pmeOrder));
+    else if (control.pmeMaxSpacing == 0.0)
+      std::printf("PME grid:           automatic, from the bandwidth and the "
+                  "aliasing, %lld points of the window\n",
+                  static_cast<long long>(control.pmeOrder));
     else
       std::printf("PME grid:           automatic, max spacing %g Å, order %lld\n",
                   control.pmeMaxSpacing,
                   static_cast<long long>(control.pmeOrder));
-    if (control.pmeAlpha > 0)
+    if (control.pmeKernel == PMEKernel::Prolate)
+      std::printf("PME kernel:         PROLATE, tolerance %g\n",
+                  control.pmeAlphaTolerance);
+    else if (control.pmeAlpha > 0)
       std::printf("PME beta:           %g Å^-1\n", control.pmeAlpha);
     else
       std::printf("PME beta:           automatic, tolerance %g\n",

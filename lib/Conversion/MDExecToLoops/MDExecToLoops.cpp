@@ -523,7 +523,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
 
   func::CallOp::create(builder, loc, instance("mdrt.pme_spread"),
                        ValueRange{positions, charges, box, fixed, k1, k2, k3,
-                                  order});
+                                  order, op.getModuli()});
   func::CallOp::create(builder, loc, instance("mdrt.pme_real"),
                        ValueRange{fixed, real});
   // The transforms of the runtime take the numbers of points as i64.
@@ -552,7 +552,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                        instance(op.getPotential() ? "mdrt.pme_potential"
                                                   : "mdrt.pme_gather"),
                        ValueRange{positions, charges, real, box, k1, k2, k3,
-                                  order, forces});
+                                  order, forces, op.getModuli()});
   op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
   op.getVirial().replaceAllUsesWith(convolve.getResult(1));
   return success();

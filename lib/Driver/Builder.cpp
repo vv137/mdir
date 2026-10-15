@@ -2905,10 +2905,12 @@ llvm::Error Builder::collectProlate() {
   program.pmeSelfFactor = psi.value(0.0) / psi.halfIntegral() / (2.0 * rc);
   program.pmeBackgroundFactor = rc * rc * psi.secondMoment();
 
-  return llvm::createStringError(
-      llvm::inconvertibleErrorCode(),
-      "kernel = \"PROLATE\" of [pme] is not implemented yet on this target "
-      "(D[prolate-ewald])");
+  if (control.target == Target::GPU)
+    return llvm::createStringError(
+        llvm::inconvertibleErrorCode(),
+        "kernel = \"PROLATE\" of [pme] is not implemented yet on a GPU "
+        "(D[prolate-ewald])");
+  return llvm::Error::success();
 }
 
 llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
@@ -5079,7 +5081,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
        << ", " << program.pmeGrid[2] << "]) order(" << program.pmeOrder
        << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
-       << formatReal(coulombInternal) << ")\n"
+       << formatReal(coulombInternal) << ")"
+       << (program.pmeProlate ? " prolate" : "") << "\n"
        << "      : !vec, !real, !grid -> f64, !vec, vector<9xf64>\n";
     add("reciprocal");
   }

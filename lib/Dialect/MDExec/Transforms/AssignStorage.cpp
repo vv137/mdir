@@ -907,7 +907,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       /*forces=*/Type(), positions, charges, mapping.lookup(op.getCell()),
       moduli, out, scratch, op.getGridAttr(), op.getOrderAttr(),
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
-      op.getPotentialAttr());
+      op.getPotentialAttr(), op.getProlateAttr());
   mapping.map(op.getEnergy(), created.getEnergy());
   mapping.map(op.getVirial(), created.getVirial());
   buffers[op.getForces()] = out;
