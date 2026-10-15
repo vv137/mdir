@@ -1,5 +1,5 @@
 # The minimization of minimize-rigid-water.test on a GPU, in mixed and
-# double precision (D[minimize-large-opc], #343).
+# double precision (D259, #343).
 #
 # REQUIRES: cuda
 #

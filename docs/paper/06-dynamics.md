@@ -922,7 +922,7 @@ choice is a select of each particle, so each field keeps its own storage.
 A step is one `dyn.step @descend`, which evaluates the energy and the
 forces once.
 
-**A trial that the constraints do not take back** (D[minimize-large-opc]).
+**A trial that the constraints do not take back** (D259).
 The direction is tangent to the surface of the constraints, so $C$ moves
 a trial by a change of second order in $\ell$; but as $\ell$ grows toward
 1 Å, a group with a large $\lVert\mathbf g_i\rVert$ turns by tens of

@@ -1039,7 +1039,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Fixed
 
 - Steepest descent stalled with a step of 0, or failed, on rigid water
-  (D[minimize-large-opc], #343). A trial longer than SETTLE or M-SHAKE can
+  (D259, #343). A trial longer than SETTLE or M-SHAKE can
   take back, which the step reaches as it grows toward its cap of 1 Å,
   left a water torn in mixed precision (an O-H of 8 Å). The trial was
   taken when its energy was lower; every later trial then held the change

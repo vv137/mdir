@@ -49,7 +49,7 @@ moves no particle farther than `minimize_step`, a step that lowers the
 energy accepted and the next one 1.2 times longer (at most 0.1 nm), a step
 that does not rejected and the next one 0.2 times as long (as is a step
 whose groups the constraints did not take back to their shapes,
-D[minimize-large-opc]), the positions
+D259), the positions
 first put on the surface of the constraints (SHAKE, SETTLE) and every
 trial put back on it, virtual sites placed, and the restraints of the
 system. Like `mdir run`, it takes a fixed number of steps unless it is

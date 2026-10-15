@@ -236,7 +236,7 @@ private:
   /// Emits `result`, an f64: the number of constrained lengths of SETTLE
   /// and SHAKE at the positions `x` whose square is off its target by more
   /// than a tolerance of the precision, or is not a number
-  /// (D[minimize-large-opc]).
+  /// (D259).
   void emitConstraintFailures(StringRef indent, StringRef x,
                               StringRef result);
   /// Emits `result`, the forces `f` over the masses, 0 for particles
@@ -8926,7 +8926,7 @@ void Builder::emitDescend() {
     // +inf, so that the step shrinks. Taken, it would leave the surface of
     // the constraints, and every later trial would hold the change that
     // takes the group back, which does not shrink with the step
-    // (D[minimize-large-opc], #343).
+    // (D259, #343).
     emitConstraintFailures("  ", "%x1k", "%broken");
     os << "  %intact = arith.cmpf oeq, %broken, %zero : f64\n"
        << "  " << (sites ? "%x1s" : "%x1")

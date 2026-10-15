@@ -1,5 +1,5 @@
 # Steepest descent whose first trial is longer than the constraints can
-# take back (D[minimize-large-opc], #343): three OPC waters with a first
+# take back (D259, #343): three OPC waters with a first
 # step of 2 Å turn the water of the largest force by more than SETTLE or
 # M-SHAKE solves. Such a trial is not taken and the step shrinks, so that
 # the waters keep their shapes and the minimization goes on.
