@@ -78,6 +78,43 @@ int main() {
     std::printf("epsilon %g bandwidth %.6f table %.4f %s\n", tolerances[i], c,
                 table[i], ok ? "ok" : "FAIL");
   }
+  // The window and the influence as Chebyshev series, against ψ itself;
+  // and the aliasing estimate on a cube of JAC's edge, 6.223 nm, with
+  // r_c = 0.8 nm, ε = 1e-5, P = 6, against alias.py of the measurement of
+  // #334 (5.20e-6 at 48 points, 6.82e-5 at 36).
+  {
+    double c = mdir::prolate::bandwidthForTolerance(1e-5);
+    double c1 = mdir::prolate::bandwidthForTolerance(5e-6);
+    Function psi(c), window1(c1);
+    mdir::prolate::Window window = mdir::prolate::getWindow(c1, 6);
+    double worst = 0.0;
+    for (int j = 0; j != 6; ++j)
+      for (double t : {-1.0, -0.3, 0.4, 1.0}) {
+        // T_k(t) by the recurrence.
+        double t0 = 1.0, t1 = t, sum = window.values[j * window.degree];
+        for (int64_t k = 1; k < window.degree; ++k) {
+          sum += window.values[j * window.degree + k] * t1;
+          double t2 = 2 * t * t1 - t0;
+          t0 = t1;
+          t1 = t2;
+        }
+        double d = 0.5 * (t + 1.0) + 2.0 - j;
+        worst = std::max(worst, std::fabs(sum - window1.value(d / 3.0)));
+      }
+    bool ok = worst <= 1e-14 * window1.value(0.0) && window.degree <= 20;
+    failures += !ok;
+    std::printf("window of %lld terms, largest difference %.1e %s\n",
+                static_cast<long long>(window.degree), worst,
+                ok ? "ok" : "FAIL");
+    const double edges[3] = {6.223, 6.223, 6.223};
+    const int64_t fine[3] = {48, 48, 48}, coarse[3] = {36, 36, 36};
+    double a48 = mdir::prolate::getAliasing(psi, window, edges, fine, 0.8);
+    double a36 = mdir::prolate::getAliasing(psi, window, edges, coarse, 0.8);
+    ok = std::fabs(a48 / 5.20e-6 - 1) < 0.01 && std::fabs(a36 / 6.82e-5 - 1) < 0.01;
+    failures += !ok;
+    std::printf("aliasing %.3g at 48, %.3g at 36 %s\n", a48, a36,
+                ok ? "ok" : "FAIL");
+  }
   std::printf("%d failures\n", failures);
   return failures ? 1 : 0;
 }

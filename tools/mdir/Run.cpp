@@ -1259,6 +1259,17 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
+  // The parameters that the prolate kernel derives (D[prolate-ewald]).
+  if (program->pmeProlate)
+    output.log.print("MDIR: the prolate kernel of PME: c = %.6g, c1 = %.6g, "
+                     "%lld points of the window, a grid of %lld x %lld x "
+                     "%lld, the aliasing estimate %.2g\n",
+                     program->pmeBandwidth, program->pmeWindowBandwidth,
+                     static_cast<long long>(program->pmeOrder),
+                     static_cast<long long>(program->pmeGrid[0]),
+                     static_cast<long long>(program->pmeGrid[1]),
+                     static_cast<long long>(program->pmeGrid[2]),
+                     program->pmeAliasing);
   if (!control->periodic)
     output.log.print(
                  "MDIR: no periodic cell; the particles are in a cell of "

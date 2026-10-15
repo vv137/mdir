@@ -4,6 +4,7 @@
 
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Profile.h"
+#include "mdir/Driver/Prolate.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -13,6 +14,7 @@
 #include <map>
 
 using namespace mdir::driver;
+namespace prolate = mdir::prolate;
 using llvm::StringRef;
 
 static StringRef getName(Element element) {
@@ -216,6 +218,8 @@ private:
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
+  /// The parameters and tables of the prolate kernel (D[prolate-ewald]).
+  llvm::Error collectProlate();
   /// The grid of particle mesh Ewald: given, or from the largest spacing in
   /// Å; and the table `name` of the factors of its influence function along
   /// each edge.
@@ -2543,11 +2547,12 @@ std::pair<double, double> Builder::getPMEConstants(double lambda) const {
     squares += q * q;
     net += q;
   }
-  double beta = program.pmeBeta;
-  double self = -coulombInternal * beta / std::sqrt(M_PI) * squares;
+  // −f s Σ q² and −f π Q² b / V; for the Gaussian s = β/√π and
+  // b = 1/(2β²) (D[prolate-ewald]).
+  double self = -coulombInternal * program.pmeSelfFactor * squares;
   double volume = system.box[0] * system.box[1] * system.box[2];
-  double background =
-      -coulombInternal * M_PI * net * net / (2.0 * volume * beta * beta);
+  double background = -coulombInternal * M_PI * net * net *
+                      program.pmeBackgroundFactor / volume;
   return {self, background};
 }
 
@@ -2702,15 +2707,16 @@ llvm::Error Builder::collectPME() {
   const Topology &topology = *system.topology;
   double rc = control.cutoffDistance * units::length;
 
-  if (control.pmeKernel == PMEKernel::Prolate)
-    return llvm::createStringError(
-        llvm::inconvertibleErrorCode(),
-        "kernel = \"PROLATE\" of [pme] is not implemented yet "
-        "(D[prolate-ewald])");
+  if (control.pmeKernel == PMEKernel::Prolate) {
+    if (llvm::Error error = collectProlate())
+      return error;
+  }
 
   // β: given, or such that erfc(β rc) is the tolerance, by bisection.
   double beta = control.pmeAlpha / units::length;
-  if (beta == 0.0) {
+  if (program.pmeProlate) {
+    beta = 0.0;
+  } else if (beta == 0.0) {
     double low = 0.0, high = 1.0;
     while (std::erfc(high * rc) > control.pmeAlphaTolerance)
       high *= 2.0;
@@ -2725,10 +2731,19 @@ llvm::Error Builder::collectPME() {
   }
 
   int64_t grid[3];
-  if (llvm::Error error =
-          collectMesh("pme_moduli", control.pmeGrid, control.pmeMaxSpacing,
-                      control.pmeOrder, control.pmeOptimal, grid))
-    return error;
+  if (program.pmeProlate) {
+    for (int k = 0; k != 3; ++k)
+      grid[k] = program.pmeGrid[k];
+  } else {
+    if (llvm::Error error = collectMesh("pme_moduli", control.pmeGrid,
+                                        control.pmeMaxSpacing,
+                                        control.pmeOrder, control.pmeOptimal,
+                                        grid))
+      return error;
+    program.pmeOrder = control.pmeOrder;
+    program.pmeSelfFactor = beta / std::sqrt(M_PI);
+    program.pmeBackgroundFactor = 1.0 / (2.0 * beta * beta);
+  }
 
   // The grid holds charges in fixed point at the scale 2^40, up to about
   // 8e6 e at a point (D70); a charge beyond 100 e is not of a molecule.
@@ -2753,6 +2768,130 @@ llvm::Error Builder::collectPME() {
   for (int k = 0; k != 3; ++k)
     program.pmeGrid[k] = grid[k];
   return llvm::Error::success();
+}
+
+llvm::Error Builder::collectProlate() {
+  // Ewald summation with prolates [Liang2026]: the splitting
+  // 1/r = (1 − Φ(r/r_c))/r + Φ(r/r_c)/r with Φ(y) = ∫₀ʸ χ, χ = ψ₀ᶜ/C₀, and
+  // the spreading by the window φ₁(d) = ψ₀^{c₁}(2d/P) on P points.
+  double rc = control.cutoffDistance * units::length;
+  double epsilon = control.pmeAlphaTolerance;
+  double c = control.pmeBandwidth > 0.0
+                 ? control.pmeBandwidth
+                 : prolate::bandwidthForTolerance(epsilon);
+  // c₁ "slightly larger" than c [Liang2026]; c(ε/2) as the paper's code.
+  double c1 = control.pmeWindowBandwidth > 0.0
+                  ? control.pmeWindowBandwidth
+                  : prolate::bandwidthForTolerance(0.5 * epsilon);
+  int64_t points = control.pmeOrder;
+  prolate::Function psi(c);
+  prolate::Window window = prolate::getWindow(c1, points);
+  prolate::Influence influence = prolate::getInfluence(psi);
+
+  // The edges along which the grid is spaced, as collectMesh takes them.
+  double edges[3];
+  for (int k = 0; k != 3; ++k) {
+    double edge = system.inputBox[k] > 0.0 ? system.inputBox[k] : system.box[k];
+    if (isTriclinic())
+      edge = k == 0 ? system.box[0]
+             : k == 1 ? std::hypot(system.tilt[0], system.box[1])
+                      : std::sqrt(system.tilt[1] * system.tilt[1] +
+                                  system.tilt[2] * system.tilt[2] +
+                                  system.box[2] * system.box[2]);
+    edges[k] = edge;
+  }
+  // The grid: given; or from the largest spacing given; or the modes of
+  // eq. 15 of [Liang2026], n_f = ⌈c L / (π r_c)⌉, raised until the
+  // aliasing estimate of its eq. 10, relative to the sum it perturbs, is
+  // at most ε. On JAC that estimate is above the relative force error of
+  // eq. 16 by a factor of 1.2 to 3 at every grid and order measured
+  // (issue #334), so the default grid meets the tolerance as a force error.
+  int64_t grid[3];
+  for (int k = 0; k != 3; ++k) {
+    grid[k] = control.pmeGrid[k];
+    if (grid[k] == 0) {
+      double spacing = control.pmeMaxSpacing > 0.0
+                           ? control.pmeMaxSpacing * units::length
+                           : M_PI * rc / c;
+      grid[k] = getSmoothSize(
+          static_cast<int64_t>(std::ceil(edges[k] / spacing - 1e-9)));
+    }
+  }
+  bool automatic = control.pmeGrid[0] == 0 && control.pmeMaxSpacing == 0.0;
+  double aliasing = prolate::getAliasing(psi, window, edges, grid, rc);
+  for (int round = 0; automatic && aliasing > epsilon; ++round) {
+    if (round == 64)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the grid of the prolate kernel does not reach the tolerance %g "
+          "of [pme] by its aliasing estimate (%g at %lld × %lld × %lld "
+          "points); give 'grid', or more points of the window in 'order'",
+          epsilon, aliasing, static_cast<long long>(grid[0]),
+          static_cast<long long>(grid[1]), static_cast<long long>(grid[2]));
+    // Every axis a step finer, in proportion to its edge.
+    for (int k = 0; k != 3; ++k)
+      grid[k] = getSmoothSize(grid[k] + 1);
+    aliasing = prolate::getAliasing(psi, window, edges, grid, rc);
+  }
+  for (int k = 0; k != 3; ++k)
+    if (grid[k] < 2 * points)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the grid of particle mesh Ewald has %lld points along an edge, "
+          "fewer than twice the %lld points of the window",
+          static_cast<long long>(grid[k]), static_cast<long long>(points));
+
+  // The table of the op: rows 0 to 2 the factor B_a(k) = 1/φ̂₁(2πk/K_a)² of
+  // each edge [Liang2026, eq. 9]; row 3 the Chebyshev series of the
+  // weights of the window and then of their slopes in u; row 4 the number
+  // of terms D of a weight, the number of them that f32 takes, the number
+  // of terms n of χ̂, the scale x/|m| =
+  // 2π r_c / c, then the series of χ̂ and of k χ̂'(k) in 2x² − 1.
+  int64_t longest = std::max({grid[0], grid[1], grid[2]});
+  int64_t columns = std::max({longest, 2 * points * window.degree,
+                              4 + 2 * influence.terms});
+  Program::Table table;
+  table.name = "pme_moduli";
+  table.count = 5;
+  table.columns = columns;
+  table.values.assign(5 * columns, 0.0);
+  for (int k = 0; k != 3; ++k)
+    for (int64_t i = 0; i != grid[k]; ++i) {
+      int64_t m = i <= grid[k] / 2 ? i : i - grid[k];
+      double hat = window.transform(2.0 * M_PI * static_cast<double>(m) /
+                                    static_cast<double>(grid[k]));
+      table.values[k * columns + i] = 1.0 / (hat * hat);
+    }
+  std::copy(window.values.begin(), window.values.end(),
+            table.values.begin() + 3 * columns);
+  std::copy(window.slopes.begin(), window.slopes.end(),
+            table.values.begin() + 3 * columns + points * window.degree);
+  double *row = table.values.data() + 4 * columns;
+  row[0] = static_cast<double>(window.degree);
+  row[1] = static_cast<double>(window.degreeSingle);
+  row[2] = static_cast<double>(influence.terms);
+  row[3] = 2.0 * M_PI * rc / c;
+  std::copy(influence.value.begin(), influence.value.end(), row + 4);
+  std::copy(influence.slope.begin(), influence.slope.end(),
+            row + 4 + influence.terms);
+  program.tables.push_back(std::move(table));
+
+  program.pmeProlate = true;
+  program.pmeBandwidth = c;
+  program.pmeWindowBandwidth = c1;
+  program.pmeAliasing = aliasing;
+  program.pmeOrder = points;
+  for (int k = 0; k != 3; ++k)
+    program.pmeGrid[k] = grid[k];
+  // −f χ(0)/(2 r_c) Σ q², from Φ(r/r_c)/r → χ(0)/r_c, and the background
+  // −f π Q² r_c² ⟨x²⟩ / V, from χ̂(k) = 1 − k² ⟨x²⟩ / 2 + O(k⁴).
+  program.pmeSelfFactor = psi.value(0.0) / psi.halfIntegral() / (2.0 * rc);
+  program.pmeBackgroundFactor = rc * rc * psi.secondMoment();
+
+  return llvm::createStringError(
+      llvm::inconvertibleErrorCode(),
+      "kernel = \"PROLATE\" of [pme] is not implemented yet on this target "
+      "(D[prolate-ewald])");
 }
 
 llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
@@ -3536,15 +3675,17 @@ llvm::Error Builder::collectTunableGradient() {
       program.gradientChargeFixed.assign(charges.size(), 0.0);
       program.gradientChargeVolume.assign(charges.size(), 0.0);
       if (program.pme) {
-        double beta = program.pmeBeta, net = 0.0;
+        // −2 f s q_i and −2 f π Q b / V, with s and b of the kernel.
+        double net = 0.0;
         for (double q : charges)
           net += q;
         double volume = system.box[0] * system.box[1] * system.box[2];
         for (size_t i = 0; i != charges.size(); ++i) {
           program.gradientChargeFixed[i] =
-              -2.0 * coulombInternal * beta / std::sqrt(M_PI) * charges[i];
-          program.gradientChargeVolume[i] =
-              -coulombInternal * M_PI * net / (volume * beta * beta);
+              -2.0 * coulombInternal * program.pmeSelfFactor * charges[i];
+          program.gradientChargeVolume[i] = -2.0 * coulombInternal * M_PI *
+                                            net * program.pmeBackgroundFactor /
+                                            volume;
         }
       }
       outcome = Program::GradientOutcome::Rule;
@@ -4854,7 +4995,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
        << charges << ", %cell, %t_pme_moduli\n"
        << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
-       << ", " << program.pmeGrid[2] << "]) order(" << control.pmeOrder
+       << ", " << program.pmeGrid[2] << "]) order(" << program.pmeOrder
        << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
        << formatReal(coulombInternal) << ")\n"
        << "      : !vec, !real, !grid -> f64, !vec, vector<9xf64>\n";

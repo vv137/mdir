@@ -213,3 +213,145 @@ double mdir::prolate::bandwidthForTolerance(double epsilon) {
   }
   return 0.5 * (low + high);
 }
+
+std::vector<double>
+mdir::prolate::getChebyshevSeries(const std::function<double(double)> &f,
+                                  double tolerance, double scale) {
+  // Interpolation at the points of Chebyshev of the first kind: a_k =
+  // (2/n) Σ_j f(t_j) T_k(t_j), halved for k = 0.
+  const int n = 64;
+  std::vector<double> samples(n), a(n);
+  for (int j = 0; j != n; ++j)
+    samples[j] = f(std::cos(M_PI * (j + 0.5) / n));
+  double largest = 0.0;
+  for (int k = 0; k != n; ++k) {
+    double sum = 0.0;
+    for (int j = 0; j != n; ++j)
+      sum += samples[j] * std::cos(M_PI * k * (j + 0.5) / n);
+    a[k] = (k == 0 ? 1.0 : 2.0) * sum / n;
+    largest = std::max(largest, std::fabs(a[k]));
+  }
+  int terms = 1;
+  for (int k = 0; k != n; ++k)
+    if (std::fabs(a[k]) > tolerance * std::max(largest, scale))
+      terms = k + 1;
+  a.resize(terms);
+  return a;
+}
+
+Window mdir::prolate::getWindow(double c1, int64_t points) {
+  Function psi(c1);
+  Window window;
+  window.points = points;
+  window.c1 = c1;
+  double half = 0.5 * static_cast<double>(points);
+  double shift = points % 2 ? 0.5 : 0.0;
+  int64_t below = points / 2;
+  // The series to 1e-14 of ψ(0), above the rounding of the Legendre series
+  // (2e-15): the kernels in f32 and in f64
+  // evaluate the same window, so that the factor B of the transform is
+  // that of what they spread.
+  std::vector<std::vector<double>> values, slopes;
+  size_t degree = 1;
+  for (int64_t j = 0; j != points; ++j) {
+    double offset = shift + static_cast<double>(below - 1 - j);
+    auto at = [&](double t) {
+      double d = 0.5 * (t + 1.0) + offset;
+      double x = d / half;
+      return std::fabs(x) <= 1.0 ? psi.value(x) : 0.0;
+    };
+    auto slope = [&](double t) {
+      double d = 0.5 * (t + 1.0) + offset;
+      double x = d / half;
+      return std::fabs(x) <= 1.0 ? psi.derivative(x) / half : 0.0;
+    };
+    values.push_back(getChebyshevSeries(at, 1e-14, psi.value(0.0)));
+    slopes.push_back(getChebyshevSeries(slope, 1e-14, 4.0 * psi.value(0.0) / half));
+    degree = std::max({degree, values.back().size(), slopes.back().size()});
+  }
+  window.degree = static_cast<int64_t>(degree);
+  for (int64_t j = 0; j != points; ++j)
+    for (size_t k = 0; k != degree; ++k) {
+      double v = k < values[j].size() ? std::fabs(values[j][k]) : 0.0;
+      double s = k < slopes[j].size() ? std::fabs(slopes[j][k]) * half / 4.0 : 0.0;
+      if (std::max(v, s) > 1e-8 * psi.value(0.0))
+        window.degreeSingle = std::max<int64_t>(window.degreeSingle, k + 1);
+    }
+  for (int64_t j = 0; j != points; ++j) {
+    values[j].resize(degree, 0.0);
+    slopes[j].resize(degree, 0.0);
+    window.values.insert(window.values.end(), values[j].begin(),
+                         values[j].end());
+    window.slopes.insert(window.slopes.end(), slopes[j].begin(),
+                         slopes[j].end());
+  }
+  // φ̂₁(κ) = (P/2) ∫₋₁¹ ψ(t) cos(κ P t / 2) dt.
+  int count = std::max(200, static_cast<int>(4 * c1) + 100);
+  std::vector<double> x, w;
+  gaussLegendre(count, x, w);
+  for (int i = 0; i != count; ++i) {
+    window.transformNodes.push_back(x[i] * half);
+    window.transformWeights.push_back(w[i] * psi.value(x[i]) * half);
+  }
+  return window;
+}
+
+double Window::transform(double kappa) const {
+  double sum = 0.0;
+  for (size_t i = 0; i != transformNodes.size(); ++i)
+    sum += transformWeights[i] * std::cos(kappa * transformNodes[i]);
+  return sum;
+}
+
+Influence mdir::prolate::getInfluence(const Function &psi) {
+  double scale = psi.eigenvalue() / (2.0 * psi.halfIntegral());
+  Influence influence;
+  auto x = [](double y) { return std::sqrt(std::max(0.0, 0.5 * (y + 1.0))); };
+  influence.value = getChebyshevSeries(
+      [&](double y) { return scale * psi.value(x(y)); }, 1e-14);
+  influence.slope = getChebyshevSeries(
+      [&](double y) { return scale * x(y) * psi.derivative(x(y)); }, 1e-14,
+      scale * psi.value(0.0));
+  size_t terms = std::max(influence.value.size(), influence.slope.size());
+  influence.value.resize(terms, 0.0);
+  influence.slope.resize(terms, 0.0);
+  influence.terms = static_cast<int64_t>(terms);
+  return influence;
+}
+
+double mdir::prolate::getAliasing(const Function &psi, const Window &window,
+                                  const double (&edges)[3],
+                                  const int64_t (&grid)[3], double cutoff) {
+  double c = psi.bandwidth();
+  double scale = psi.eigenvalue() / (2.0 * psi.halfIntegral());
+  int64_t reach[3];
+  std::vector<double> ratio[3];
+  for (int a = 0; a != 3; ++a) {
+    reach[a] = static_cast<int64_t>(
+        std::floor(c * edges[a] / (2.0 * M_PI * cutoff)));
+    for (int64_t k = -reach[a]; k <= reach[a]; ++k) {
+      double kappa = 2.0 * M_PI * k / grid[a];
+      double alias = 2.0 * M_PI * (k + grid[a]) / grid[a];
+      ratio[a].push_back(
+          std::fabs(window.transform(alias) / window.transform(kappa)));
+    }
+  }
+  double total = 0.0, aliased[3] = {0.0, 0.0, 0.0};
+  for (int64_t i = -reach[0]; i <= reach[0]; ++i)
+    for (int64_t j = -reach[1]; j <= reach[1]; ++j)
+      for (int64_t k = -reach[2]; k <= reach[2]; ++k) {
+        double mx = i / edges[0], my = j / edges[1], mz = k / edges[2];
+        double m2 = mx * mx + my * my + mz * mz;
+        double x = 2.0 * M_PI * cutoff * std::sqrt(m2) / c;
+        if (m2 == 0.0 || x >= 1.0)
+          continue;
+        double weight = scale * psi.value(x) / m2;
+        total += weight;
+        aliased[0] += weight * ratio[0][i + reach[0]];
+        aliased[1] += weight * ratio[1][j + reach[1]];
+        aliased[2] += weight * ratio[2][k + reach[2]];
+      }
+  if (total == 0.0)
+    return 0.0;
+  return 6.0 * std::max({aliased[0], aliased[1], aliased[2]}) / total;
+}

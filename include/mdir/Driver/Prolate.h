@@ -15,6 +15,8 @@
 #ifndef MDIR_DRIVER_PROLATE_H
 #define MDIR_DRIVER_PROLATE_H
 
+#include <cstdint>
+#include <functional>
 #include <vector>
 
 namespace mdir {
@@ -52,6 +54,54 @@ private:
 
 /// The bandwidth c such that ψ₀ᶜ(1) = `epsilon` (0 < ε < 1), by bisection.
 double bandwidthForTolerance(double epsilon);
+
+/// The coefficients a_0 .. a_{n−1} of the Chebyshev series Σ a_k T_k(t) on
+/// [−1, 1] that interpolates `f` at 64 Chebyshev points, cut after the
+/// last coefficient above `tolerance` times the largest, or times `scale`
+/// if that is larger.
+
+std::vector<double>
+getChebyshevSeries(const std::function<double(double)> &f, double tolerance,
+                   double scale = 0.0);
+
+/// The window of the spreading, φ₁(d) = ψ₀^{c₁}(2d / P) for |d| ≤ P/2 in
+/// points of the grid [Liang2026, eq. 14], as the kernels evaluate it: a
+/// particle at the scaled coordinate u adds to the P points first + j,
+/// first = ⌊u − h⌋ − ⌊P/2⌋ + 1 with h = ½ for odd P and 0 for even P, with
+/// the weight φ₁(s + h + ⌊P/2⌋ − 1 − j) where s = u − h − ⌊u − h⌋. Each
+/// weight, and its derivative in u, is a Chebyshev series in t = 2s − 1 of
+/// `degree` terms, row j of `values` and of `slopes` (degree × P each).
+struct Window {
+  int64_t points = 0, degree = 0;
+  /// The terms that f32 takes: those above 1e-8 of ψ(0) in any weight or
+  /// slope, a window within the rounding of f32 of the full one.
+  int64_t degreeSingle = 0;
+  std::vector<double> values, slopes;
+  /// φ̂₁(κ) = ∫ φ₁(d) e^{−iκd} dd, of κ in radians a point.
+  double transform(double kappa) const;
+  double c1 = 0.0;
+  std::vector<double> transformNodes, transformWeights;
+};
+Window getWindow(double c1, int64_t points);
+
+/// The spectral factor of the splitting, χ̂(k) = λ₀ ψ₀ᶜ(k/c) / (2C₀) for
+/// k ≤ c and 0 beyond, with χ̂(0) = 1 [Liang2026, eq. 5], and k χ̂'(k),
+/// each a Chebyshev series in y = 2x² − 1 of x = k/c, of `terms` terms.
+struct Influence {
+  int64_t terms = 0;
+  std::vector<double> value, slope;
+};
+Influence getInfluence(const Function &psi);
+
+/// The aliasing error of the spreading relative to the spectral sum that
+/// it perturbs, the estimate of eq. 10 of [Liang2026] divided by the same
+/// sum without the factor of the alias: for each axis a,
+/// 6 Σ_k w(k) |φ̂₁(2π(k_a + K_a)/K_a) / φ̂₁(2πk_a/K_a)| / Σ_k w(k), with
+/// w(k) = χ̂(2π r_c |m|) / |m|² over the wave vectors m = k/L within the
+/// band of χ̂; the largest of the three. Lengths in any one unit.
+double getAliasing(const Function &psi, const Window &window,
+                   const double (&edges)[3], const int64_t (&grid)[3],
+                   double cutoff);
 
 } // namespace prolate
 } // namespace mdir
