@@ -89,6 +89,8 @@ from the environment, by one convention (`scripts/environment.sh`):
 | `TLEAP`, `GMX` | `scripts/validation/gromacs/run.sh` | Programs: `tleap` of AmberTools and `gmx` of GROMACS by default. | The script stops if the program is not found. |
 | `MDIR` | `scripts/validation/gromacs/run.sh`, `compare.py` | The `mdir` program to compare; `mdir` by default. | The script stops if the program is not found. |
 | `MDIR_BENCH_DIR=<dir>` | `scripts/experiments/neighbor-structures/run.sh` | The prepared Amber suite (above); this script has no default for it. | The script stops. |
+| `SWEEP_DIR=<dir>` | `scripts/benchmarks/pair-loop/sweep.py` | The directory of the systems of the size sweep, one directory each, where the script writes its runs and `results.json` (D[pair-loop-staging]). | The script stops. |
+| `GMX`, `NSYS`, `MDIR`, `MDIR_NEW` | `scripts/benchmarks/pair-loop/sweep.py` | Programs: `gmx`, `nsys`, and `mdir` by default; `MDIR_NEW` is the build that runs the variants under trial, `MDIR` by default. | A run that cannot start records no time. |
 | `NVCC`, `CUDA_ARCH` | `scripts/experiments/neighbor-structures/run.sh` | The program `nvcc` (by default) and the architecture it compiles for (`sm_86` by default). | The script stops if `nvcc` is not found. |
 | `LLVM_PREFIX=<prefix>` | `examples/argon/run.sh` | The install prefix of LLVM, as `scripts/build-llvm.sh` names its own. | The script stops. |
 | `MDIR_BUILD=<dir>` | `examples/argon/run.sh` | The build directory of MDIR; `build` by default. | The script stops if it holds no `bin/mdir-opt`. |
