@@ -101,7 +101,7 @@ grid of 64 points with splines of order 8. On the default grid, 35 points
 at order 4, the reciprocal sum is off by $7\times10^{-4}$ of itself, the
 error of the method. The virial is checked against the derivative of
 the energy with respect to a uniform scaling $\lambda$ of the cell and
-the positions: $\operatorname{tr}\mathsf W$ against $-dU/d\lambda$ by
+the positions: $\mathrm{tr}\,\mathsf W$ against $-dU/d\lambda$ by
 Richardson's central difference, to $3\times10^{-5}$ relative
 (`check_virial.py`). On the ff19SB system the influence function of
 Essmann et al. is $-1.8\times10^{-3}$ from the Ewald sum and the optimal

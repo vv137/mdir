@@ -24,7 +24,7 @@ format, or the outputs; every such change is listed under **Changed** or
   (\mathsf 1 + \boldsymbol\varepsilon)\mathbf x$ of the positions and the
   cell vectors: the virial tensor with the opposite sign, nine components
   for orthorhombic and triclinic programs, not symmetrized. Without
-  constraints `virial` is $-\operatorname{tr}$ of it; with them `virial`
+  constraints `virial` is $-\mathrm{tr}$ of it; with them `virial`
   has the term of the constraint forces besides, and a pressure takes
   `virial`. For a program with restraints to reference positions
   `"strain"` is refused: their virial is taken about the references and

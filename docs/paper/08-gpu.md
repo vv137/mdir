@@ -109,7 +109,7 @@ each member by shuffles from their lanes, computes the tuple, and every
 member takes its correction back from that lane and computes the loop
 after. Because the sets of a disjoint union share no particle, one set of
 shuffles serves all the sets: the source lane of member $q$ is
-$\operatorname{select}_k(\text{in}_k, \text{lane}(\text{member}_q^{(k)}))$
+$\mathrm{select}_k(\text{in}_k, \text{lane}(\text{member}_q^{(k)}))$
 over the sets $k$. Each lane loads its own inputs once, narrowed to f32
 where the kernel narrows them at once, and takes its position relative to
 that of the member at place 0 in f64 before narrowing it, so that the

@@ -385,7 +385,7 @@ Fitting the parameters of a potential to measured averages, as Differentiable
 Trajectory Reweighting does [[ThalerZavadlav2021]](references.md#thalerzavadlav2021),
 needs no derivative through the trajectory. Frames $S_i$ sampled at
 $\hat\theta$ are reweighted to $\theta$ by
-$w_i = \operatorname{softmax}_i[-\beta(U_\theta(S_i) - U_{\hat\theta}(S_i))]$,
+$w_i = \mathrm{softmax}_i[-\beta(U_\theta(S_i) - U_{\hat\theta}(S_i))]$,
 and $\langle O\rangle_\theta = \sum_i w_i O_i$. Automatic differentiation of
 that expression in the framework gives the gradient,
 $\langle\partial O/\partial\theta\rangle - \beta(\langle O\,\partial U/\partial\theta\rangle - \langle O\rangle\langle\partial U/\partial\theta\rangle)$,

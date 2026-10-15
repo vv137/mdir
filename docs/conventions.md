@@ -42,7 +42,7 @@ The constants come from CODATA 2018 [[Tiesinga2021]](references.md#tiesinga2021)
 | Angle $\theta(a, b, c)$ | At $b$, between $\mathbf d_{ab}$ and $\mathbf d_{cb}$, from $0$ to $\pi$ |
 | Dihedral $\phi(a, b, c, d)$ | The IUPAC convention: $0$ for cis, $\pi$ for trans, positive where $a$ turns clockwise onto $d$ as seen along $b \to c$. From $-\pi$ to $\pi$. |
 | Improper dihedral | A dihedral of the four members in the order that the topology gives them. For an Amber improper the central atom is the third. |
-| Virial | $\mathsf W = \sum \mathbf d_{ij} \otimes \mathbf F_{ij}$, with $\mathbf F_{ij}$ the force on $i$ due to $j$, positive for repulsion (B8). The pressure is $(2K + \operatorname{tr}\mathsf W) / (3V)$. GROMACS writes $-\mathsf W / 2$. |
+| Virial | $\mathsf W = \sum \mathbf d_{ij} \otimes \mathbf F_{ij}$, with $\mathbf F_{ij}$ the force on $i$ due to $j$, positive for repulsion (B8). The pressure is $(2K + \mathrm{tr}\,\mathsf W) / (3V)$. GROMACS writes $-\mathsf W / 2$. |
 
 The sign of the dihedral is checked by a test: with $b$ at the origin, $c$
 on the $z$ axis, and $a$ on the $x$ axis, $d$ on the $y$ axis gives $+90°$.

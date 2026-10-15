@@ -175,7 +175,7 @@ cutoff and `Truncation.Shift`, CPU and GPU, double and mixed:
 | Explicit correction and term's request against the default | the default | equal to the bit | 0 |
 | Default less opt-out: the term's tail, $\nu(4\pi/V)N_\text{pairs}\int_{r_c}^\infty r^2u\,dr$ (and under the shift $+\nu(4\pi/3V)N_\text{pairs}f r_c^3u(r_c)$) | Simpson's rule in $\ln r$ of `check_pair_tail.py` | energy −0.033825540 kcal/mol (cutoff), −0.088177850 (shift), within 3.4e-13 relative | 1e-9 (double), 1e-5 (mixed) |
 | Its trace of the virial, $-\nu(4\pi/V)N_\text{pairs}\int r^3u'\,dr$, the same under the shift | the same | −0.270926137 kcal/mol, within 3.5e-13 | the same |
-| Its pressure, $\operatorname{tr}\mathsf W/3V$ | the same | −0.191478708 bar, within 2.0e-12 | the same |
+| Its pressure, $\mathrm{tr}\,\mathsf W/3V$ | the same | −0.191478708 bar, within 2.0e-12 | the same |
 | $-c_8/(l^5r^3)$, a divergent tail | `mdir check` refuses it under `ENERGY_PRESSURE` in `[energy]` or in the term | `InputError` naming the term in both; by default one warning, energies equal to the opt-out and to `mdir run` | |
 | No cell; a switch | the control file | default off without a cell, explicit refused; explicit with a switch refused; by default with a switch off, one warning, energies equal to those with the correction set off | |
 | Messages and types | | a refused tail and the warning name `PairTerm.dispersion`; a string or an integer is a `TypeError` | |

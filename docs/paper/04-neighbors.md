@@ -553,7 +553,7 @@ The pruning now runs a warp per group (`emitGroupsPrune`,
    entries that keep a bit:
 
    $$
-   \text{rank}_\ell = \operatorname{popc}\!\big(\operatorname{ballot}(\text{keep}) \wedge (2^\ell - 1)\big),
+   \text{rank}_\ell = \mathrm{popc}\!\big(\mathrm{ballot}(\text{keep}) \wedge (2^\ell - 1)\big),
    $$
 
    for lane $\ell$, writing the entry to position $k + \text{rank}_\ell$ of

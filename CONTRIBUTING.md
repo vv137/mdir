@@ -60,3 +60,9 @@ passes and of kernels are narrowed down.
 ## Language
 
 Files in the repository are written in American English.
+
+Equations in Markdown are TeX between `$...$` and `$$...$$`, and in a cell
+of a table `\lvert` stands for `|`. A named operator is written
+`\mathrm{erfc}`, `\mathrm{tr}`, and so on, not with `\operatorname`, which
+GitHub does not render; where the operator is followed by a symbol, a thin
+space keeps them apart: `\mathrm{tr}\,\mathsf W`.

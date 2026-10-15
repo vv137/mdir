@@ -779,7 +779,7 @@ $$
 U(\tilde S_n) - U(S_n) = -\mathbf F\cdot\boldsymbol\delta
 + \tfrac12\boldsymbol\delta^{\mathsf T}\mathsf H\boldsymbol\delta,\qquad
 \big\langle U(\tilde S_n) - U(S_n)\big\rangle_{\boldsymbol\delta}
-= \frac{q^2}{24}\operatorname{tr}\mathsf H
+= \frac{q^2}{24}\mathrm{tr}\,\mathsf H
 = \frac{q^2}{24}\sum_i\nabla_i^2U .
 $$
 
@@ -998,7 +998,7 @@ $$
 $$
 
 the second proportional to $1/V$. The direct sum, shifted to 0 at the
-cutoff, the excluded pairs $-fq_iq_j\operatorname{erf}(\beta r)/r$, and the
+cutoff, the excluded pairs $-fq_iq_j\mathrm{erf}(\beta r)/r$, and the
 pairs three bonds apart are sums that gather the charges, differentiated
 as fields.
 
@@ -1117,9 +1117,9 @@ $$
 $$
 
 whose trace with $\partial V/\partial\varepsilon_{aa} = V$ is $-3PV$:
-$P = (Nk_BT - \tfrac13\langle\operatorname{tr}\,\partial U/\partial
+$P = (Nk_BT - \tfrac13\langle\mathrm{tr}\,\partial U/\partial
 \boldsymbol\varepsilon\rangle)/V$, the pressure $(2K +
-\operatorname{tr}\mathsf W)/3V$ of the log in the mean. A fit of a pressure
+\mathrm{tr}\,\mathsf W)/3V$ of the log in the mean. A fit of a pressure
 or of a stress differentiates exactly this output. What the host adds to
 the energy at the volume of a frame is $c/V$ for a constant $c$, with
 $\partial(c/V)/\partial\varepsilon_{ab} = -(c/V)\,\delta_{ab}$, a third of
@@ -1133,7 +1133,7 @@ which is $3(E_\text{tail} + E_\text{sh})$: the virial that the run adds
 for the tail ($6E_\text{tail}$ for $r^{-6}$) is the derivative of the
 energy of the evaluator, the potential shifted at the cutoff with both
 estimates, and not of the cut energy with its tail alone. So
-$-\operatorname{tr}\,\partial U/\partial\boldsymbol\varepsilon$ equals
+$-\mathrm{tr}\,\partial U/\partial\boldsymbol\varepsilon$ equals
 the virial of the log in a program without constraints, to the rounding
 of a sum of three numbers. With constraints the log adds the virial of
 the constraint forces, which belongs to the pressure of the constrained

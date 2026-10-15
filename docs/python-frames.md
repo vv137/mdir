@@ -454,7 +454,7 @@ that holds for those two cases only, #264.)
 Measured (`scripts/validation/frames/precision.py`, GPU, double precision,
 #264): 400 frames of one run, kept in f64, rounded to f32, and rounded to
 $10^{-3}$ nm; the same reweighting from each, to $\boldsymbol\theta =
-\hat{\boldsymbol\theta} + \tfrac12k_BT/\operatorname{std}(\partial
+\hat{\boldsymbol\theta} + \tfrac12k_BT/\mathrm{std}(\partial
 U/\partial\theta)$, with both energies evaluated at the stored frame.
 "Error" is against the frames in f64; the derivative is that of a
 reweighted average, $-\mathrm{Cov}_w(O, \partial U/\partial\theta)/k_BT$,
@@ -1382,25 +1382,25 @@ out.gradients["strain"]     # (K, 3, 3) float64, kJ/mol: dU/d(epsilon), row alph
 
 **Sign, and the relation to `virial`.** $\mathsf W$ is the virial tensor of
 MDIR, $\sum \mathbf d\otimes\mathbf K$ over the interactions, in the sign
-in which the pressure is $(2K + \operatorname{tr}\mathsf W)/3V$; what the
+in which the pressure is $(2K + \mathrm{tr}\,\mathsf W)/3V$; what the
 host adds at the volume of a frame (the correction for the dispersion with
 the estimate of the shift, the background of a net charge), all $\propto
 1/V$, enters as a third of its virial on each axis.
 
-**With constraints, `virial` and $-\operatorname{tr}\mathsf S$ differ, and
+**With constraints, `virial` and $-\mathrm{tr}\,\mathsf S$ differ, and
 a pressure takes `virial`.** `virial` is the trace that the pressure of a
 run takes, which in a program with constraints has the term of the
 constraint forces besides:
 
 $$
-\texttt{virial} = -\operatorname{tr}\mathsf S + W_c ,
+\texttt{virial} = -\mathrm{tr}\,\mathsf S + W_c ,
 $$
 
 $W_c = 0$ in a program without constraints, where the two are equal to
 the rounding of a sum (measured: 0 in double precision and at most
 $4\times10^{-12}$ kJ/mol in mixed). $\mathsf S$ is a derivative of $U$
 and has no such term: with rigid water the dipeptide at its first frame
-has `virial` $= -7{,}075$ kJ/mol and $-\operatorname{tr}\mathsf S =
+has `virial` $= -7{,}075$ kJ/mol and $-\mathrm{tr}\,\mathsf S =
 30{,}949$, $W_c = -38{,}024$. A script that forms the pressure of a
 constrained model takes `virial`, with the kinetic term of its ensemble;
 one that differentiates $U$ in the cell takes $\mathsf S$.
@@ -1621,12 +1621,12 @@ section.
 | $\mathsf S$ of the water in the triclinic cell, on and above the diagonal | FD under $\varepsilon_{\alpha\beta}$, $\alpha\le\beta$ | 7.4e-9 | 6.1e-9 | 7.4e-6 | 7.9e-6 | 5e-7, 1e-4 |
 | The same below the diagonal | FD with the deformed positions and cell rotated back to the lower-triangular form (a QR factorization), which a potential of pairs and of the mesh allows | 1.8e-8 | 2.2e-8 | 3.3e-6 | 3.4e-6 | 5e-7, 1e-4 |
 | $\mathbf G$ of the water, 36 components | FD | 9.0e-10 | 9.0e-10 | 5.3e-7 | 5.3e-7 | 5e-7, 1e-4 |
-| `virial` $+ \operatorname{tr}\mathsf S$, kJ/mol: the dipeptide; the water | 0 | 0; 0 | 0; 0 | 0; 0 | 0; 0 | 1e-9 relative |
+| `virial` $+ \mathrm{tr}\,\mathsf S$, kJ/mol: the dipeptide; the water | 0 | 0; 0 | 0; 0 | 0; 0 | 0; 0 | 1e-9 relative |
 | $\mathsf S - \mathsf S^{\mathsf T}$ of the dipeptide, kJ/mol of 14,001 | 0 | 2.3e-13 | 5.1e-13 | 1.3e-4 | 2.3e-4 | 1e-9, 1e-4 relative |
 | $\mathbf G$ of a frame of the dipeptide | the forces of the sampler's state at that step, with the opposite sign (sums in a step and at a start: another order) | 2.5e-16 | 3.9e-16 | 1.5e-7 | 1.9e-7 | 1e-13, 1e-5 |
 | The same without the deterministic mode: $\mathbf G$ in float32 in mixed | the forces of a sampler without it | 2.3e-16 | 3.4e-16 | 9.2e-8 | 1.7e-7 | 1e-10, 1e-5 |
 | $\mathbf G$ of a program without the deterministic mode | $\mathbf G$ of the program with it: two programs, whose kernels differ on a device (no fused multiply-add and one order of the sums with it, D201) | 0 | 6.1e-12 | 3.5e-8 | 4.8e-7 | 1e-10, 1e-5 |
-| With the correction for the dispersion under a plain cutoff and a net charge of 0.44 e (what the host adds at the volume): the diagonal of $\mathsf S$; `virial` $+ \operatorname{tr}\mathsf S$, kJ/mol | FD; 0 | 2.4e-8; 0 | 7.0e-9; 3.6e-12 | 1.1e-5; 3.6e-12 | 1.4e-5; 3.6e-12 | 5e-7, 1e-4; 1e-9 relative |
+| With the correction for the dispersion under a plain cutoff and a net charge of 0.44 e (what the host adds at the volume): the diagonal of $\mathsf S$; `virial` $+ \mathrm{tr}\,\mathsf S$, kJ/mol | FD; 0 | 2.4e-8; 0 | 7.0e-9; 3.6e-12 | 1.1e-5; 3.6e-12 | 1.4e-5; 3.6e-12 | 5e-7, 1e-4; 1e-9 relative |
 | With a term of the absolute positions on the water ($\mathsf S - \mathsf S^{\mathsf T}$ is 93,180 kJ/mol): $\mathsf S$ on and above the diagonal; $\mathbf G$, 24 components | FD | 2.0e-9; 1.9e-9 | 1.0e-9; 1.8e-9 | 1.5e-6; 2.1e-7 | 1.6e-6; 2.1e-7 | 5e-7, 1e-4 |
 | With rigid water: $\mathbf G$, 36 components, in every position; the diagonal of $\mathsf S$ | FD | 1.1e-7; 1.8e-8 | 1.1e-7; 5.6e-9 | 2.7e-6; 4.1e-7 | 2.4e-6; 4.8e-7 | 5e-7, 1e-4 |
 | With 387 virtual sites (OPC): $\mathbf G$ of 36 components of their atoms; the diagonal of $\mathsf S$; the rows of the sites | FD; FD; 0 | 1.0e-7; 9.9e-8; 0 | 1.0e-7; 1.2e-7; 0 | 1.5e-5; 5.0e-6; 3.1e-8 | 1.5e-5; 3.8e-6; 3.1e-8 | 5e-7, 1e-4; 1e-6 for the rows in mixed |
@@ -1796,7 +1796,7 @@ first.
 |---|---|---|
 | G1 | Names and shapes | one argument, `gradients=`, a tuple among `"tunables"`, `"positions"`, `"strain"`; the argument `gradient` is removed with no alias and no hint; `jacobian` stays the output of `"tunables"`, and `gradients` holds `"positions"` `(K, N, 3)` and `"strain"` `(K, 3, 3)`; the same for `mdir.torch.evaluate`. (Proposed: a second argument beside `gradient`) |
 | G2 | The gradient in the strain | $\partial U/\partial\boldsymbol\varepsilon$ of the energy that `energy` returns, kJ/mol, float64, nine components for every cell, not symmetrized, not divided by the volume |
-| G3 | Constraints and virtual sites | the plain gradient; $\mathsf S$ without the term of the constraint forces, and the document says which of `virial` and $-\operatorname{tr}\mathsf S$ a pressure takes; the row of a site is zero |
+| G3 | Constraints and virtual sites | the plain gradient; $\mathsf S$ without the term of the constraint forces, and the document says which of `virial` and $-\mathrm{tr}\,\mathsf S$ a pressure takes; the row of a site is zero |
 | G4 | The type of `"positions"` in `mixed` | that of the forces of the program, no `dtype` argument; `"strain"` float64 |
 | G5 | The autograd contract | positions, cells, and tilts that require a gradient are taken, $U(\mathbf x, \mathsf h)$ at fixed positions; the gradients as outputs raise from a backward unless detached; every second derivative raises `UnsupportedError`, for `theta` as well. Force matching stays deferred: only the refusal |
 | G6 | `terms="dependent"` | refused, `"gradients"` in `unavailable` |

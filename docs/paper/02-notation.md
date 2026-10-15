@@ -13,12 +13,12 @@ element.
 | $K = \tfrac12\sum_i m_i\lVert\mathbf v_i\rVert^2$ | Kinetic energy; $K_a$ its part along axis $a$ (Section 6) |
 | $K_\text{half},\ K_T,\ K_P$ | The mean of the kinetic energies of the half steps before and after a step; the kinetic energies of the temperature, $\tfrac13K + \tfrac23K_\text{half}$, and of the pressure, $K_\text{half}$, of the log (Section 6.5) |
 | $\mathbf L = (L_x, L_y, L_z)$, $V = L_xL_yL_z$ | Edges and volume of the orthorhombic periodic cell |
-| $H$, $\mathbf a = (a_x, 0, 0)$, $\mathbf b = (b_x, b_y, 0)$, $\mathbf c = (c_x, c_y, c_z)$ | A triclinic cell: the lower-triangular matrix whose rows are the cell vectors, reduced so that $\lvert b_x\rvert \le a_x/2$, $\lvert c_x\rvert \le a_x/2$, $\lvert c_y\rvert \le b_y/2$; $V = a_xb_yc_z$; an orthorhombic cell is $H = \operatorname{diag}(\mathbf L)$ (D123) |
+| $H$, $\mathbf a = (a_x, 0, 0)$, $\mathbf b = (b_x, b_y, 0)$, $\mathbf c = (c_x, c_y, c_z)$ | A triclinic cell: the lower-triangular matrix whose rows are the cell vectors, reduced so that $\lvert b_x\rvert \le a_x/2$, $\lvert c_x\rvert \le a_x/2$, $\lvert c_y\rvert \le b_y/2$; $V = a_xb_yc_z$; an orthorhombic cell is $H = \mathrm{diag}(\mathbf L)$ (D123) |
 | $A = \lVert \mathbf a \times \mathbf b \rVert$ | Area of the face spanned by the first two cell vectors; $A = L_x L_y$ in the reduced triangular frame (D170) |
 | $u_{ij}(r),\ I_{ij};\ \nu$ | The energy of a pair term at distance $r$ for the pair $\{i,j\}$, and its tail $\int_{r_c}^\infty r^2u_{ij}\,dr$; $\nu = N^2/(N(N-1) - 2N_\text{excluded})$, the factor of the correction for the dispersion of a topology (Section 5.4) |
 | $u_\text{shift},\ U_\text{shift};\ N_\text{in},\ E_\text{sh}$ | A pair energy shifted to 0 at $r_c$, $u - u(r_c)$ within it, and its sum over the pairs; the number of pairs within $r_c$, and the estimate at a uniform density of what the shift takes from them (Sections 5.4, 6.8) |
 | $\xi;\ \Pi$ | A constant of a term given by an expression, whose derivative `observe` writes (Section 6.8); the osmotic pressure of a solution held between walls |
-| $\mathbf d_{ij} = \mathbf x_i - \mathbf x_j - \mathbf L\odot\operatorname{round}((\mathbf x_i - \mathbf x_j)\oslash\mathbf L)$ | Displacement in the minimum image; $r_{ij} = \lVert\mathbf d_{ij}\rVert$. In a triclinic cell the image is taken in one pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, exact within half of the least of $a_x, b_y, c_z$ (Sections 4.3 and 4.4) |
+| $\mathbf d_{ij} = \mathbf x_i - \mathbf x_j - \mathbf L\odot\mathrm{round}((\mathbf x_i - \mathbf x_j)\oslash\mathbf L)$ | Displacement in the minimum image; $r_{ij} = \lVert\mathbf d_{ij}\rVert$. In a triclinic cell the image is taken in one pass along $\mathbf c$, $\mathbf b$, and $\mathbf a$, exact within half of the least of $a_x, b_y, c_z$ (Sections 4.3 and 4.4) |
 | $\mathbf n = (n_a, n_b, n_c)$ | Lattice indices of an image of a displacement, $\mathbf d - \mathbf n H$ (Sections 4.3 and 4.4) |
 | $r_c$ | Cutoff of the pair terms and of the direct sum of Ewald |
 | $r_s$, $S_2(r)$ | Onset and squared-distance potential switch of a topology Lennard-Jones term (Section 3.3) |
@@ -37,7 +37,7 @@ element.
 | $Z,\ F$ | Canonical partition function and Helmholtz free energy (a force is bold, $\mathbf F_i$) |
 | $\Delta t$ | Time step |
 | $F_\text{tol};\ k_\text{h};\ \chi_k,\ \Lambda_k$ | The force tolerance of a minimization, compared with the largest force $\max_i\lVert m_i\mathbf g_i\rVert$ without its parts along the constraints; the force constant of a harmonic mode; a holonomic constraint $\chi_k(\mathbf x) = 0$ and its Lagrange multiplier (Section 6.7) |
-| $\beta$ | Ewald splitting parameter; $\operatorname{erfc}(\beta r_c)$ is the tolerance of the direct sum |
+| $\beta$ | Ewald splitting parameter; $\mathrm{erfc}(\beta r_c)$ is the tolerance of the direct sum |
 | $q_i$ | Partial charge; $f = 1/(4\pi\varepsilon_0)$ the Coulomb constant in the units of the run |
 | $c_i,\ \gamma(x)$ | Coefficient of the dispersion of particle $i$, $2\sqrt{\varepsilon}\,\sigma^3$ of its type, so that $C_{6,ij} = c_ic_j$; and $\gamma(x) = e^{-x^2}(1 + x^2 + x^4/2)$, the share of $-c_ic_j/r^6$ at $x = \beta r$ that the direct terms of the mesh of the dispersion keep (Section 5.5) |
 | $K_a$ | In Section 5, the number of grid points of PME along axis $a$; $n$ the order of the B-splines (4) |
