@@ -308,7 +308,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   for (const auto &[code, message] : system->warnings)
     warn(message);
   // `neighbor_structure = "AUTO"` is resolved for the system before
-  // anything is built from it (D[neighbor-auto]).
+  // anything is built from it (D261).
   resolveNeighborStructure(*control, *system);
 
   InputPaths inputPaths = getManifestInputs(controlFile, *control, *system);
@@ -1302,7 +1302,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  "coordinates\n");
   for (const std::string &note : notes)
     output.log.print("MDIR: note: %s\n", note.c_str());
-  // The structure that `AUTO` took, and why (D[neighbor-auto]); a
+  // The structure that `AUTO` took, and why (D261); a
   // structure that was given is not repeated.
   if (control->neighborStructureRequested == NeighborStructure::Auto) {
     if (control->neighborStructure == NeighborStructure::Groups)

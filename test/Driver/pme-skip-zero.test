@@ -1,5 +1,5 @@
 # The reciprocal sums of PME over the particles whose coefficient can be
-# nonzero (D[pme-skip-zero]): the dipeptide in OPC, whose oxygens carry no
+# nonzero (D262): the dipeptide in OPC, whose oxygens carry no
 # charge and whose hydrogens and virtual sites have no coefficient of the
 # dispersion. The program lists them in a field of the particles, which
 # the builder makes from the topology and md_exec.nonzero makes again where

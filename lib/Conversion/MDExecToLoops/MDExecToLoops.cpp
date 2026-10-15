@@ -460,7 +460,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
            << "cannot parse the template of particle mesh Ewald";
   // The functions of the potential at the particles (the fourth result of
   // md.reciprocal), and those of a list of the particles
-  // (D[pme-skip-zero]), only where a sum asks for them, so
+  // (D262), only where a sum asks for them, so
   // that a module without one is what it was; they may come after the
   // others, for a sum of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
@@ -493,7 +493,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   };
   Type position = elementOf(positions), charge = elementOf(charges),
        force = elementOf(forces);
-  // The listed particles alone (D[pme-skip-zero]).
+  // The listed particles alone (D262).
   Value listed = op.getListed();
   if (failed(addPMETemplates(position, charge, force, op.getOrder(),
                              op.getPotential(), static_cast<bool>(listed))))
@@ -962,7 +962,7 @@ void Lowering::lowerPermute(md_exec::PermuteOp op) {
 
 /// The places of the particles whose value is not zero, in ascending
 /// order, then −1 − the place of each of the others, in ascending order
-/// (D[pme-skip-zero]): a pass that writes the entries of the
+/// (D262): a pass that writes the entries of the
 /// listed particles and counts them, and one that writes the others after
 /// them.
 void Lowering::lowerNonzero(md_exec::NonzeroOp op) {

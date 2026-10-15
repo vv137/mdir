@@ -278,7 +278,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   if (!std::isfinite(s.prunedDistance) || s.prunedDistance < 0)
     return input("System.pruned_distance must be positive, or 0 for one list");
   c.prunedDistance = s.prunedDistance / driver::units::length;
-  // As the keys of the control file, given or not (D[neighbor-auto]).
+  // As the keys of the control file, given or not (D261).
   c.pairlistDistanceGiven = s.pairlistDistance.has_value();
   c.prunedDistanceGiven = s.prunedDistance != 0.0;
   if (c.prunedDistance != 0.0 &&
@@ -649,7 +649,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
         c.observedTunables.push_back({entry.term, entry.parameter});
       }
   // `NeighborStructure.Auto` is resolved for the system, as `mdir run`
-  // resolves it (D[neighbor-auto]).
+  // resolves it (D261).
   driver::resolveNeighborStructure(c, *prepared);
   return PreparedModel{execution, std::move(c), std::move(*prepared), std::move(*tunables)};
 }

@@ -1194,7 +1194,7 @@ func.func private @mdrt.pme_potential_triclinic(%x: memref<?x3x!pme_pos>, %q: me
   return
 }
 
-// The number of the listed particles of `list` (D[pme-skip-zero]):
+// The number of the listed particles of `list` (D262):
 // its entries before the first negative one.
 func.func private @mdrt.pme_count_listed(%list: memref<?xi32>) -> index {
   %c0 = arith.constant 0 : index
@@ -1212,7 +1212,7 @@ func.func private @mdrt.pme_count_listed(%list: memref<?xi32>) -> index {
 }
 
 // Spreads the charges of the listed particles to `grid`, as
-// @mdrt.pme_spread spreads those of all (D[pme-skip-zero]): `list` holds
+// @mdrt.pme_spread spreads those of all (D262): `list` holds
 // their places, then −1 − the place of each of the others.
 func.func private @mdrt.pme_spread_listed(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
@@ -1288,7 +1288,7 @@ func.func private @mdrt.pme_spread_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
 }
 
 // The forces on the listed particles, as @mdrt.pme_gather gives them, and
-// a force of zero on the others (D[pme-skip-zero]).
+// a force of zero on the others (D262).
 func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
                                    %phi: memref<?xf64>, %box: vector<3xf64>,
@@ -1319,7 +1319,7 @@ func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
 }
 
 // Spreads the charges of the listed particles to `grid`, as
-// @mdrt.pme_spread_triclinic spreads those of all (D[pme-skip-zero]): `list` holds
+// @mdrt.pme_spread_triclinic spreads those of all (D262): `list` holds
 // their places, then −1 − the place of each of the others.
 func.func private @mdrt.pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
@@ -1427,7 +1427,7 @@ func.func private @mdrt.pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos>, %q
 }
 
 // The forces on the listed particles, as @mdrt.pme_gather_triclinic gives them, and
-// a force of zero on the others (D[pme-skip-zero]).
+// a force of zero on the others (D262).
 func.func private @mdrt.pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
                                    %phi: memref<?xf64>, %box: vector<6xf64>,

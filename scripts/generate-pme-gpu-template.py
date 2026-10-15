@@ -264,7 +264,7 @@ def pick(body, p, array, index):
 
 def listed_prologue(body, slot):
     """The particle of the entry `slot` of the list of the particles
-    (D[pme-skip-zero]): `%i`, and `%is_listed`, false where the
+    (D262): `%i`, and `%is_listed`, false where the
     entry is that of a particle whose coefficient is zero, -1 - its place,
     after the listed places. Opens an `scf.if` that close_listed closes."""
     body(f"""\
@@ -382,7 +382,7 @@ memref.store %none, %grid[%item] : memref<?x{"i64" if fixed else "!pme_real"}, 1
     grid_type = "i64" if fixed else "!pme_real"
     if listed:
         name += "_listed"
-        what += (",\n// of the listed particles (D[pme-skip-zero]): `list` holds their places,\n"
+        what += (",\n// of the listed particles (D262): `list` holds their places,\n"
                  "// then -1 - the place of each of the others")
     return f"""
 // Spreads the charges to `grid`, {what}.
@@ -1328,7 +1328,7 @@ scf.for %h = %h0 to %h2 step %h1 {
   %brick_points = arith.muli %b123, %c16 : index
 """
     tag = "_listed" if listed else ""
-    bricks_note = " (the listed particles, D[pme-skip-zero])" if listed else ""
+    bricks_note = " (the listed particles, D262)" if listed else ""
     bricks_list = ("\n                                              %list: memref<?xi32, 1>,"
                    if listed else "")
     weights_function = "" if listed else f"""
@@ -1370,7 +1370,7 @@ memref.store %none, %grid[%item] : memref<?x!pme_real, 1>""")
 
 
 # The particle of a thread of a gathering over the list of the listed
-# particles (D[pme-skip-zero]); `%warp_listed` is that of the
+# particles (D262); `%warp_listed` is that of the
 # first thread of its warp (gather_launch).
 LISTED_PRE = """\
 %lanes = arith.constant PME_LANES : index
@@ -1480,7 +1480,7 @@ def gather(potential=False, listed=False):
         comment = comment[:-1] + """\
 // With `list`, the places of the listed particles, then -1 - the place of
 // each of the others, the threads take its entries in place of the
-// particles (D[pme-skip-zero]): a warp past the last listed
+// particles (D262): a warp past the last listed
 // place skips the gathering, and stores the forces of zero of the others.
 """
     return comment + f"""\
@@ -1902,7 +1902,7 @@ def triclinic():
 
 def listed_kernels(bricks):
     """The kernels of the spreading and the gathering over a list of the
-    particles whose coefficient can be nonzero (D[pme-skip-zero]),
+    particles whose coefficient can be nonzero (D262),
     after all the others, so that the kernels of a module without a list
     are those of before; the compiler adds them where a sum has a list.
     The weights of order 4 are those of every particle, at its place (the

@@ -183,7 +183,7 @@ points numbered in i32, it takes 90 µs (D102); pmemd.cuda gathers in 79
 | Mixed precision | The positions, the charges, and the forces as they are stored. On the host the B-splines, the grid, and the FFT are in f64; on a device they are in the type of the forces, f32 in the mixed and single modes, with the fractions of the positions along the cell (the position times one over the edge, less its floor) and the edges of the cell in f64, and the point of the grid and the fraction within it in the type of the forces (D78, amended). The energy and the virial are summed in f64 across blocks (below) |
 | The sums of a device | A thread for each point of the transform; a block of 128 threads adds up its energy and virial by a tree (`gpu.all_reduce`) in the type of the grid and stores them in f64, and one block adds up the blocks in f64; the host copies seven numbers (D104). The order of every sum depends on the size of the grid alone, so the energy and the virial do not depend on the order of the threads either |
 
-### 3.1 The particles without a coefficient (D[pme-skip-zero])
+### 3.1 The particles without a coefficient (D262)
 
 A particle with $q_i = 0$ adds nothing to the grid, and its force,
 $-q_i\sum_k\phi(k)\nabla_i\theta_i(k)$, is zero; the energy and the virial

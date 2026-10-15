@@ -475,7 +475,7 @@ LogicalResult Converter::convert(Operation *op) {
           reciprocal.getCharges(), reciprocal.getCell(),
           reciprocal.getModuli(), /*out=*/Value(), /*scratch=*/ValueRange(),
           // The potential at the particles is gathered at every particle,
-          // since it is not zero where the charge is (D[pme-skip-zero]).
+          // since it is not zero where the charge is (D262).
           yieldsPotential ? Value() : reciprocal.getListed(),
           reciprocal.getGridAttr(), reciprocal.getOrderAttr(),
           reciprocal.getBetaAttr(), reciprocal.getCoulombAttr(),

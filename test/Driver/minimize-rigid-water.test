@@ -22,7 +22,7 @@
 # RUN: %python %S/Inputs/check_bonds.py %t/three.prmtop %t/double.dcd | FileCheck %s --check-prefix=BONDS
 
 # The first trial, of 2 Å, is not taken, and the next steps grow to the
-# cap of 0.1 Å (D[minimize-step-cap]); the energy at step 50 is -16.1559 in
+# cap of 0.1 Å (D260); the energy at step 50 is -16.1559 in
 # double precision, -16.1556 in mixed precision on the CPU, and from
 # -16.1568 to -16.1631 on a GPU, where the atomics move the steps near the
 # end from run to run (a failure in 20 runs with -16.15 checked).

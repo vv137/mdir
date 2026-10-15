@@ -3405,7 +3405,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
               "kernels";
   // The functions of the potential at the particles (the fourth result of
   // md.reciprocal), and those of a list of the particles
-  // (D[pme-skip-zero]), only where a sum asks for them, so
+  // (D262), only where a sum asks for them, so
   // that a module without one is what it was; they may come after the
   // others, for a sum of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
@@ -3441,7 +3441,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // A triclinic cell takes the kernels of its own where they depend on the
   // cell (docs/triclinic-m2.md).
   bool tilted = isTriclinic(op.getCellMutable().get());
-  // The listed particles alone (D[pme-skip-zero]); the
+  // The listed particles alone (D262); the
   // potential at the particles takes every particle.
   Value listed = op.getPotential() ? Value() : op.getListed();
   if (failed(addPMETemplates(position, charge, force, op.getOrder(), tilted,
@@ -3586,7 +3586,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // where it has them (D102). With a list, it takes the listed particles,
   // or with `gather_all` every particle, as without a list: there most
   // particles are listed, and the others share the points of the grid of
-  // their neighbors in a warp (D[pme-skip-zero]).
+  // their neighbors in a warp (D262).
   if (op.getGatherAll())
     listed = Value();
   if (listed && usesWeights)
@@ -4672,7 +4672,7 @@ void Lowering::lowerPermute(md_exec::PermuteOp op) {
 
 /// The places of the particles whose value is not zero, in ascending
 /// order, then −1 − the place of each of the others, in ascending order
-/// (D[pme-skip-zero]), in integers: a thread counts the
+/// (D262), in integers: a thread counts the
 /// listed particles of each chunk of 256 places, one thread sums the counts
 /// of the chunks before each and of all, and a thread writes the entries
 /// of each chunk from there. It runs where the particles take a new order,

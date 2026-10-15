@@ -174,7 +174,7 @@ llvm::Expected<System> prepareTopologySystem(const Control &control,
 llvm::Error recollectPairTails(const Control &control, System &system);
 
 /// The least number of particles for which `neighbor_structure = "AUTO"`
-/// takes the groups on a device (D[neighbor-auto]).
+/// takes the groups on a device (D261).
 constexpr size_t autoGroupsParticles = 23000;
 
 /// Resolves `neighbor_structure = "AUTO"` of `control` for `system`: the
@@ -182,7 +182,7 @@ constexpr size_t autoGroupsParticles = 23000;
 /// where every loop over pairs takes them and the system has at least
 /// `autoGroupsParticles` particles; the matrix otherwise. The groups take
 /// the reaches `cutoff + 3` Å and, inner, `cutoff + 0.6` Å at 2 fs, for
-/// those not given (D[neighbor-auto]). Records why in
+/// those not given (D261). Records why in
 /// `control.neighborStructureReason`. A structure that was given is kept.
 void resolveNeighborStructure(Control &control, const System &system);
 

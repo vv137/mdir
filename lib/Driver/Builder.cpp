@@ -218,7 +218,7 @@ private:
   llvm::Error collectPME();
   /// The field `name` of the places of the particles whose `values` are not
   /// zero, then −1 − the place of each of the others
-  /// (D[pme-skip-zero]), which the reciprocal
+  /// (D262), which the reciprocal
   /// sum of PME spreads and gathers alone; none where every value is
   /// nonzero, or where a tunable of one of `kinds` may change the values.
   void collectListed(llvm::StringRef name, llvm::ArrayRef<double> values,
@@ -233,7 +233,7 @@ private:
   /// collectListed: a device then gathers every particle (`gather_all`),
   /// as the gathering over the list costs more than the others where they
   /// are few and share the points of the grid of their neighbors
-  /// (D[pme-skip-zero]).
+  /// (D262).
   bool gathersAll(llvm::StringRef name) const {
     for (const Program::Field &field : program.fields)
       if (field.name == name) {
@@ -1159,7 +1159,7 @@ void Builder::emitReorder(StringRef indent, StringRef from,
   permute("%m" + otherTo, "%m" + from, "!real");
   for (const Program::Field &field : program.fields) {
     // A list of the places of particles is made again from the permuted
-    // field that it lists (D[pme-skip-zero]), which comes
+    // field that it lists (D262), which comes
     // before it.
     StringRef name = field.name;
     if (name == "pme_listed" || name == "ljpme_listed") {
@@ -4935,7 +4935,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       charges = "%q_scaled";
     }
     // The particles of a charge that can be nonzero alone
-    // (D[pme-skip-zero]).
+    // (D262).
     bool listed = hasField("pme_listed");
     os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
        << charges << ", %cell, %t_pme_moduli"
@@ -9129,7 +9129,7 @@ void Builder::emitMinimization(StringRef velocities) {
   if (!control.segments)
     os << "  %h0 = arith.constant "
        << formatReal(control.minimizeStep * units::length) << " : f64\n";
-  // A step grows to at most 0.1 Å (D[minimize-step-cap]): longer ones turn
+  // A step grows to at most 0.1 Å (D260): longer ones turn
   // rigid groups beyond what the constraints take back, and are not taken
   // (D259); on 103,292 OPC waters the largest force fell
   // below 5 kcal/mol/Å in 500 steps rather than 3300 with a cap of 1 Å.
@@ -10545,7 +10545,7 @@ void Builder::setSchedule() {
 
 llvm::Error Builder::build() {
   // Every front end resolves `AUTO` for its system first
-  // (resolveNeighborStructure, D[neighbor-auto]).
+  // (resolveNeighborStructure, D261).
   if (control.neighborStructure == NeighborStructure::Auto)
     return makeError("the neighbor structure 'AUTO' was not resolved; this "
                      "is a defect of mdir");

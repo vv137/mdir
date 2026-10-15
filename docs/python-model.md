@@ -196,7 +196,7 @@ Python simulation had the neighbor matrix alone, and the rates of
 
 | Python | Control file | Values |
 |---|---|---|
-| `Execution.neighbor_structure` | `[execution] neighbor_structure` | `mdir.NeighborStructure.Auto` (the default, D[neighbor-auto]), `mdir.NeighborStructure.Matrix`, `mdir.NeighborStructure.Groups` |
+| `Execution.neighbor_structure` | `[execution] neighbor_structure` | `mdir.NeighborStructure.Auto` (the default, D261), `mdir.NeighborStructure.Matrix`, `mdir.NeighborStructure.Groups` |
 | `System.pruned_distance` | `[energy] pruned_distance` | a length in nm or a unit quantity (D200), between `System.cutoff` and `System.pairlist_distance`; `0`, the default, keeps one list, and under `Auto` is the key not given: groups that `Auto` takes have the inner reach of the control file |
 
 Each is where the control file has it: `neighbor_structure` is a key of
@@ -235,7 +235,7 @@ that it leaves as matrices
 
 `Program.plan["neighbor_structure"]` is `"matrix"` or `"groups"`, the
 structure that the program builds (`Auto` resolved for the system;
-D[neighbor-auto]), `Program.plan["neighbor_structure_requested"]` what was
+D261), `Program.plan["neighbor_structure_requested"]` what was
 asked (`"auto"`, `"matrix"`, or `"groups"`, the
 `neighbor_structure_requested` of a manifest of `mdir run`),
 `Program.plan["neighbor_structure_reason"]` why (`"given"`, or the words of
@@ -339,7 +339,7 @@ the timing resolves, and a step of energy every 100 steps 0.002 to 0.005
 ms a step in either front end. The default stayed the matrix here: on the
 dipeptide the groups are the slower structure. The choice by the size of
 the system (G3 of the roadmap) is `NeighborStructure.Auto`, the default
-since D[neighbor-auto], which `prepare` resolves with the function of `mdir
+since D261, which `prepare` resolves with the function of `mdir
 run`.
 ## The influence function and the order of PME, and the analytic bonds
 

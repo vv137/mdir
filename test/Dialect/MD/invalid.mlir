@@ -322,7 +322,7 @@ func.func @f(%v: !md.field<@atoms, 3 x f32>) -> f64 {
 
 // -----
 
-// The list of a reciprocal sum (D[pme-skip-zero]) is a field of i32.
+// The list of a reciprocal sum (D262) is a field of i32.
 md.particle_set @atoms
 
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %q: !md.field<@atoms, f64>,

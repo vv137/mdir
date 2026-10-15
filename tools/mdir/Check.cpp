@@ -370,7 +370,7 @@ static void describeRun(const Control &control, const System &system,
     std::printf("threads:            %lld\n",
                 static_cast<long long>(control.threads));
   // The structure that the run builds, as `AUTO` resolves it for this
-  // system, and why (D[neighbor-auto]).
+  // system, and why (D261).
   std::printf("neighbors:          %s, reach %g Å",
               control.neighborStructure == NeighborStructure::Groups
                   ? "groups of 16"
@@ -551,7 +551,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
   auto system = readSystem(*control);
   if (!system)
     return fail(system.takeError(), json);
-  // As `mdir run` resolves it (D[neighbor-auto]).
+  // As `mdir run` resolves it (D261).
   resolveNeighborStructure(*control, *system);
   if (llvm::Error error = checkManifestPath(control->manifestFile,
           getManifestInputs(controlFile, *control, *system),

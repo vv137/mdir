@@ -1,4 +1,4 @@
-# `neighbor_structure = "AUTO"`, the default (D[neighbor-auto]): `mdir
+# `neighbor_structure = "AUTO"`, the default (D261): `mdir
 # check` states the structure that a run builds and why. On a GPU, outside
 # the deterministic mode, a system of at least the threshold takes the
 # groups of 16 with a dual list, 3 Å and 0.6 Å beyond the cutoff at 2 fs,

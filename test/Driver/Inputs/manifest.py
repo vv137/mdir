@@ -123,7 +123,7 @@ assert a["compile_seconds"] >= 0
 assert a["effective"]["seed"] == "314159"
 assert a["effective"]["trajectory_format"] == "XTC"
 assert a["effective"]["neighbor_structures"] == ["matrix"]
-# AUTO, the default, resolved for this small system (D[neighbor-auto]).
+# AUTO, the default, resolved for this small system (D261).
 assert a["effective"]["neighbor_structure_requested"] == "auto"
 assert a["effective"]["neighbor_structure"] == "matrix"
 assert re.fullmatch(r"the target is the CPU" if mode == "cpu" else

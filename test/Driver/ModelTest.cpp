@@ -26,7 +26,7 @@ int main(int argc, char **argv) {
           "expected a control file and optional --arrays, --drawn, or --selections");
   auto c = take(driver::readControl(argv[1]));
   auto fileSystem = take(driver::readSystem(c));
-  // As `mdir run` does before it builds (D[neighbor-auto]).
+  // As `mdir run` does before it builds (D261).
   driver::resolveNeighborStructure(c, fileSystem);
   if (argc == 3 && llvm::StringRef(argv[2]) == "--selections") {
     // The particles, from 0, that the masks of this control file select as

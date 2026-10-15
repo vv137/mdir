@@ -1,7 +1,7 @@
 # `[minimize] force_tolerance` (D219): the minimization of
 # the dipeptide in water stops at the first row of the log whose largest
 # force is below 15 kcal/mol/Å, step 90 (34.9 at step 80; the cap of the
-# step of D[minimize-step-cap]), and takes no
+# step of D260), and takes no
 # step after it; with 1 kcal/mol/Å it takes its 20 steps and says that it
 # did not converge. Inputs/python_minimize_tolerance.py checks the stop
 # against a NumPy reference, on the CPU and a GPU.

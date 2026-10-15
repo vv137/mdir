@@ -11,7 +11,7 @@
 # The steps of double precision to within the rounding of the forces,
 # whose terms take the positions in f32 (D79): after 50 steps the energy is
 # within 0.5 kcal/mol of that in double precision, -6602.2 with the cap of
-# the step of D[minimize-step-cap] (from -6602.7 to -6601.7; -6602.21 on an
+# the step of D260 (from -6602.7 to -6601.7; -6602.21 on an
 # RTX 4090; the floating-point atomics move it by about 0.1 from run to
 # run).
 #

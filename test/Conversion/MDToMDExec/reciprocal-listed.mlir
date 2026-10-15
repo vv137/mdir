@@ -2,7 +2,7 @@
 // RUN: mdir-opt %s | mdir-opt | FileCheck %s --check-prefix=ROUND
 
 // A reciprocal sum over a list of the particles whose charge can be
-// nonzero (D[pme-skip-zero]): the sum of md_exec that gives the forces
+// nonzero (D262): the sum of md_exec that gives the forces
 // takes the list; the one that gives the potential at the particles takes
 // none, since that potential is not zero where the charge is.
 

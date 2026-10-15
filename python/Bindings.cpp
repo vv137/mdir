@@ -728,7 +728,7 @@ PYBIND11_MODULE(_core, m) {
       d["neighbor_capacity"] = c.program.neighborWidth;
       // The structure that the program builds, `Auto` resolved, what was
       // asked and why it was resolved so, as the manifest of `mdir run`
-      // has them (D[neighbor-auto]), and the reaches in nm, the inner one
+      // has them (D261), and the reaches in nm, the inner one
       // of a dual list 0 without one (D245).
       const driver::Control &resolved = p.prepared->control;
       d["neighbor_structure"] = driver::getNeighborStructureName(resolved.neighborStructure);

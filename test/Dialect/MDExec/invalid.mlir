@@ -465,7 +465,7 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
 
 // -----
 
-// The list of the particles whose value is not zero (D[pme-skip-zero]).
+// The list of the particles whose value is not zero (D262).
 md.function @f(%x: !md.field<@atoms, 3 x f64>) {
   // expected-error@+1 {{expected a field of one number for each particle}}
   %l = md_exec.nonzero %x : !md.field<@atoms, 3 x f64> -> !md.field<@atoms, i32>

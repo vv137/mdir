@@ -124,7 +124,7 @@ enum class Integrator { VelocityVerlet, Leapfrog, Brownian };
 enum class Target { CPU, GPU };
 enum class Precision { Single, Mixed, Double };
 /// `AUTO` is resolved to one of the other two before a program is built
-/// (`resolveNeighborStructure`, D[neighbor-auto]).
+/// (`resolveNeighborStructure`, D261).
 enum class NeighborStructure { Matrix, Groups, Auto };
 /// "matrix", "groups", or "auto", as a manifest names them.
 inline const char *getNeighborStructureName(NeighborStructure structure) {
@@ -328,7 +328,7 @@ struct Control {
   /// particle, or groups of 16 that share a list, each pair once, where the
   /// loops allow it (D89). `Auto` until `resolveNeighborStructure` chooses
   /// one of the two by the target, the mode, and the size of the system
-  /// (D[neighbor-auto]); every program is built from a resolved one.
+  /// (D261); every program is built from a resolved one.
   NeighborStructure neighborStructure = NeighborStructure::Auto;
   /// What the control file or the model asked for, `neighborStructure`
   /// before it was resolved, and why it was resolved so: words for the

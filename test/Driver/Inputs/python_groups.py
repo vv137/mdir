@@ -96,7 +96,7 @@ def inputs(structure="Matrix", pairlist=1.0, pruned=0.0, kind="NVE", target="GPU
     if capacity:
         execution.neighbor_capacity = capacity
     # Given always: the default, Auto, would choose by the size
-    # (D[neighbor-auto]).
+    # (D261).
     execution.neighbor_structure = getattr(mdir.NeighborStructure, structure)
     return system, state, integrator, ensemble, execution
 
@@ -233,7 +233,7 @@ def refusals():
     assert plan["neighbor_structure_requested"] == "matrix", plan
     assert plan["neighbor_structure_reason"] == "given", plan
     # Auto, the default, on the CPU: the matrix and its reach as given
-    # (D[neighbor-auto]); a dual list is refused there, as in the control
+    # (D261); a dual list is refused there, as in the control
     # file.
     plan = make(structure="Auto", target="CPU").plan
     assert plan["neighbor_structure"] == "matrix", plan
@@ -248,7 +248,7 @@ def refusals():
 
 
 def energies():
-    # Auto on the GPU (D[neighbor-auto]): the dipeptide, 1,168 particles, is
+    # Auto on the GPU (D261): the dipeptide, 1,168 particles, is
     # below the size of the groups; a dual list given is not used.
     plan = make(structure="Auto").plan
     assert plan["neighbor_structure"] == "matrix", plan

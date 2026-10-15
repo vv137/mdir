@@ -1286,7 +1286,7 @@ void mdir::driver::resolveNeighborStructure(Control &control,
   // not go with it.
   if (control.rebuildPeriod > 0)
     return matrix("'rebuild_interval' is given");
-  // Measured on two kinds of device (D[neighbor-auto]): below this size the
+  // Measured on two kinds of device (D261): below this size the
   // matrix is the faster structure.
   if (count < autoGroupsParticles)
     return matrix(llvm::formatv("{0} particles, fewer than {1}", count,
@@ -1294,7 +1294,7 @@ void mdir::driver::resolveNeighborStructure(Control &control,
                       .str());
   // The groups' own reaches, where they are not given: 3 Å beyond the
   // cutoff, and the inner list 0.6 Å beyond it at 2 fs, wider in
-  // proportion to a longer step (D[neighbor-auto], D114).
+  // proportion to a longer step (D261, D114).
   double outer = control.pairlistDistanceGiven
                      ? control.pairlistDistance
                      : control.cutoffDistance + 3.0;

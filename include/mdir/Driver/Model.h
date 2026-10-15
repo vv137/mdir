@@ -129,7 +129,7 @@ struct System {
   /// (Execution::neighborStructure), as in the control file
   /// (D245). Under `NeighborStructure.Auto`, 0 is a key not given: groups
   /// that are chosen take their own reaches for this and an absent
-  /// `pairlistDistance` (D[neighbor-auto]).
+  /// `pairlistDistance` (D261).
   double prunedDistance = 0.0;
   /// A plain cutoff, as the control file without `lennard_jones_modifier`
   /// (D248).
@@ -285,7 +285,7 @@ struct Execution {
   /// that share a list, each pair once, for the loops that allow them
   /// (D89); on a device, and not in the deterministic mode
   /// (D245). `Auto`, the default, chooses by the target, the mode, and the
-  /// size of the system as the control file does (D[neighbor-auto]).
+  /// size of the system as the control file does (D261).
   driver::NeighborStructure neighborStructure = driver::NeighborStructure::Auto;
 };
 /// A temporary fixed schedule for shared-builder parity. No runtime ownership,

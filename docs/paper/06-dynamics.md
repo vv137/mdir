@@ -917,7 +917,7 @@ constraints applied from $\mathbf x$, and the sites placed again. Since
 $\lVert\mathbf g\rVert_{16} \ge \max_i\lVert\mathbf g_i\rVert$, no particle
 moves farther than $\ell$, and no reduction to a maximum is needed. A trial
 that lowers the energy is taken and $\ell$ grows by a factor 1.2, to at most
-0.1 Å (D[minimize-step-cap]); otherwise $\mathbf x$ stays and $\ell$ shrinks by a factor 0.2. The
+0.1 Å (D260); otherwise $\mathbf x$ stays and $\ell$ shrinks by a factor 0.2. The
 choice is a select of each particle, so each field keeps its own storage.
 A step is one `dyn.step @descend`, which evaluates the energy and the
 forces once.
@@ -925,7 +925,7 @@ forces once.
 **A trial that the constraints do not take back** (D259).
 The direction is tangent to the surface of the constraints, so $C$ moves
 a trial by a change of second order in $\ell$; but with $\ell$ near 1 Å,
-the cap before D[minimize-step-cap], or a long first step, a group with a large $\lVert\mathbf g_i\rVert$ turns by tens of
+the cap before D260, or a long first step, a group with a large $\lVert\mathbf g_i\rVert$ turns by tens of
 degrees, beyond what SETTLE and M-SHAKE solve. For one bond of length
 $d_k$ moved across itself, the projection along the old bond of Section
 6.2 has a solution only if the move is no longer than $d_k$, 0.87 Å for
@@ -952,7 +952,7 @@ the energy. Steepest descent with constraints by GROMACS likewise counts a
 step whose constraints fail as one that is not taken
 [[Abraham2015]](references.md#abraham2015).
 
-**The cap of the step** (D[minimize-step-cap]). With the test above a long
+**The cap of the step** (D260). With the test above a long
 trial is safe but wasted: near a cap of 1 Å many trials fail it, and each
 failure shrinks $\ell$ by 0.2. The cap is therefore 0.1 Å. On the boxes of
 103,292 and 31,808 OPC waters on a GPU in mixed precision, the largest

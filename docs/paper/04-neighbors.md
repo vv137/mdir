@@ -505,7 +505,7 @@ energy in mixed precision on one RTX 3090: 0.205 ms a step from
 `mdir run` and 0.206 from a Python simulation with the dual list, 0.258
 and 0.259 with the matrix).
 
-**Which structure by default** (D[neighbor-auto]). The time per step of
+**Which structure by default** (D261). The time per step of
 either structure is roughly a fixed cost plus a cost per particle.
 
 - The groups have the larger fixed cost: more kernels a step, the

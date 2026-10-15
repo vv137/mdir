@@ -209,7 +209,7 @@ $$
 with $\phi$ the grid after the product with $BC$ and the backward
 transform, is zero; the energy and the virial are functions of $\hat Q$
 alone. The sums of the mesh therefore run over $\mathcal J_q$ and
-$\mathcal J_c$ (D[pme-skip-zero]): the oxygen of a
+$\mathcal J_c$ (D262): the oxygen of a
 four-site water (OPC, TIP4P-Ew) has no charge, and the hydrogens and the
 virtual site of a water no coefficient of the dispersion. Under
 `[free_energy]` the charges are $q_j(1 - a_j\lambda_\text{C})$ (Section

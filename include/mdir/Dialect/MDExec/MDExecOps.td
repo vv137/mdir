@@ -202,7 +202,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
 
     With `listed`, the field of the places of the particles whose charge
     can be nonzero that `md.reciprocal` takes (`md_exec.nonzero`,
-    D[pme-skip-zero]), the spreading and the gathering
+    D262), the spreading and the gathering
     take those particles only, and the others take a force of zero. A sum
     with `potential` takes no list. With `gather_all` (that of
     `md.reciprocal`), a device gathers every particle, as without a list.
@@ -258,7 +258,7 @@ def MDExec_NonzeroOp : MDExec_Op<"nonzero", [
     whose other entries are −1 − the place of each of the others, in
     ascending order. A value that is not a number is not zero.
     The reciprocal sum of PME spreads and gathers the particles of such a
-    list only (D[pme-skip-zero]); where the particles are
+    list only (D262); where the particles are
     put in a new order, the list is made again from the permuted field.
 
     ```mlir

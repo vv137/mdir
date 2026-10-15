@@ -1,4 +1,4 @@
-# `neighbor_structure = "AUTO"`, the default, on a GPU (D[neighbor-auto]):
+# `neighbor_structure = "AUTO"`, the default, on a GPU (D261):
 # a run without the keys of the structure builds what `mdir check` states.
 # Argon on a lattice: 64,000 atoms take the groups with the dual list of
 # 12 / 9.6 Å at a cutoff of 9 Å, and their log in double precision is that

@@ -393,7 +393,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     the particles whose charge can be nonzero, in ascending order, and
     whose other entries are −1 − the place of each of the others
     (`md_exec.nonzero`), the sum spreads and gathers those particles only
-    (D[pme-skip-zero]): the others have a charge of zero, add
+    (D262): the others have a charge of zero, add
     nothing to the grid, and take a force of zero. The potential at the
     particles is still gathered at every particle. With `gather_all` as
     well, a device spreads the listed particles and gathers every one, as

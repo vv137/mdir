@@ -414,7 +414,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **The step of steepest descent grows to at most 0.1 Å, not 1 Å**
-  (D[minimize-step-cap], #351; the maintainer's ruling on PR #348). Near a
+  (D260, #351; the maintainer's ruling on PR #348). Near a
   cap of 1 Å many trials turned rigid waters further than the constraints
   can take back and were not taken (D259). On 103,292
   OPC waters the largest force falls below 5 kcal/mol/Å by step 500
@@ -424,7 +424,7 @@ format, or the outputs; every such change is listed under **Changed** or
   `minimize-tolerance.test` stops at step 90 rather than 100.
 
 - **The default neighbor structure is `neighbor_structure = "AUTO"`**
-  (D[neighbor-auto], #350, stage G3 of `docs/groups-m1.md`). On a GPU,
+  (D261, #350, stage G3 of `docs/groups-m1.md`). On a GPU,
   outside the deterministic mode, a system of at least 23,000 particles
   whose loops over pairs all take each pair once runs on the groups of 16
   with a dual list, `pairlist_distance` 3 Å and `pruned_distance` 0.6 Å

@@ -1846,7 +1846,7 @@ Error Reader::readEnergy(const toml::table &table) {
           readPositive(table, "pairlist_distance", control.pairlistDistance))
     return error;
   // Under `AUTO` the groups take reaches of their own where these are not
-  // given (D[neighbor-auto]).
+  // given (D261).
   control.pairlistDistanceGiven = table.contains("pairlist_distance");
   control.prunedDistanceGiven = table.contains("pruned_distance");
 
@@ -2813,7 +2813,7 @@ Error Reader::readExecution(const toml::table &table) {
   // Groups of 16 that share a list of neighbors, each pair once, where the
   // loops allow them (D89): on a device, and not yet in the deterministic
   // mode. `AUTO`, the default, chooses by the target, the mode, and the
-  // size of the system when the program is built (D[neighbor-auto]).
+  // size of the system when the program is built (D261).
   if (Error error = readChoice<NeighborStructure>(
           table, "neighbor_structure", control.neighborStructure,
           {{"AUTO", NeighborStructure::Auto},
@@ -3046,7 +3046,7 @@ Error Reader::read(const toml::table &root) {
 llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
   // Under `AUTO` a dual list is kept where the groups are chosen, which
   // they never are on the CPU or in the deterministic mode
-  // (D[neighbor-auto]).
+  // (D261).
   if (control.prunedDistance != 0.0 &&
       (control.neighborStructure == NeighborStructure::Matrix ||
        (control.neighborStructure == NeighborStructure::Auto &&

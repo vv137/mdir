@@ -4011,7 +4011,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
 
 // Spreads the charges to `grid`, in fixed point, so that the sum does not depend on the order of
 // the threads (D70; the deterministic mode, D84),
-// of the listed particles (D[pme-skip-zero]): `list` holds their places,
+// of the listed particles (D262): `list` holds their places,
 // then -1 - the place of each of the others.
 func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %list: memref<?xi32, 1>, %box: vector<6xf64>, %grid: memref<?xi64, 1>,
@@ -4481,7 +4481,7 @@ func.func private @mdrt_gpu_pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos,
 
 // Spreads the charges to `grid`, in !pme_real, with floating-point atomics, whose sum depends on
 // the order of the threads (the default mode, D84),
-// of the listed particles (D[pme-skip-zero]): `list` holds their places,
+// of the listed particles (D262): `list` holds their places,
 // then -1 - the place of each of the others.
 func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %list: memref<?xi32, 1>, %box: vector<6xf64>, %grid: memref<?x!pme_real, 1>,
@@ -4960,7 +4960,7 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
 // block, so the threads beyond the last particle compute too, from the
 // last particle, and do not store.// With `list`, the places of the listed particles, then -1 - the place of
 // each of the others, the threads take its entries in place of the
-// particles (D[pme-skip-zero]): a warp past the last listed
+// particles (D262): a warp past the last listed
 // place skips the gathering, and stores the forces of zero of the others.
 func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
                                        %list: memref<?xi32, 1>,

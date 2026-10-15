@@ -2,7 +2,7 @@
 
 Status: accepted (2026-10-01), D89; G1 done, G2 under way (the loop in
 the default mode is in MDIR, behind `neighbor_structure = "GROUPS"`); G3
-done (D[neighbor-auto]): `neighbor_structure = "AUTO"`, the default,
+done (D261): `neighbor_structure = "AUTO"`, the default,
 takes the groups with a dual list on a GPU from 23,000 particles (Section
 6.3). It
 replaces the
@@ -404,7 +404,7 @@ the outer list into the same block: the inner list kept the blocks of the
 outer one, partly filled, and the loop took 1320 µs; a pruning read the
 positions in f64 and took 933 µs.
 
-## 6.3 The default: `AUTO` (D[neighbor-auto])
+## 6.3 The default: `AUTO` (D261)
 
 `neighbor_structure = "AUTO"`, the default, takes the groups with a dual
 list where they are faster and the matrix elsewhere. One function,
@@ -512,7 +512,7 @@ drift of 1.9 kcal/mol/ns, against fluctuations of 1.9 kcal/mol.
 | G0 | The build prototyped standalone (`scripts/experiments/neighbor-structures`) against the build of the matrix | Its time on Cellulose and JAC, before it is written as a template |
 | G1, done but the matrix in the compact order | The compact order of the places (for the matrix as well); the structure and its build on a device; the exchange contracts on `md_exec.pair_for` | The pairs of the list within the cutoff are those of the matrix, on JAC and Cellulose; the matrix in the compact order against the order of cells |
 | G2, under way: the default mode and the erfc of D90 done; the deterministic mode to come | The loop over groups, each pair once, both modes; the cheaper erfc of the direct sum under `fast_math`, with the accuracy of the force near the cutoff checked (it is what lets the loop over groups gain, Section 1) | Forces, energies, and virials against the matrix (to the rounding; to the bit in the deterministic mode, where the matrix sums in fixed point too); conservation over runs |
-| G3, done (D[neighbor-auto]) | Groups by default on a device for the loops that allow them: `neighbor_structure = "AUTO"`, the groups with a dual list from 23,000 particles, measured against the matrix on two kinds of device (Section 6.3) | The rates of the matrix and the groups across sizes; a run without the keys at the rate of `GROUPS` given |
+| G3, done (D261) | Groups by default on a device for the loops that allow them: `neighbor_structure = "AUTO"`, the groups with a dual list from 23,000 particles, measured against the matrix on two kinds of device (Section 6.3) | The rates of the matrix and the groups across sizes; a run without the keys at the rate of `GROUPS` given |
 | G4 | The reach of the list: a skin of 1 Å, once builds are cheap | Rates and intervals between builds |
 | G5, under way: the table of D94 and the frames of D95 done | The arithmetic of the kernel (a table for the erfc, no minimum image, the order of the entries) | The prototype first |
 
