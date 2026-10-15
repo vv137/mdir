@@ -25,7 +25,10 @@ import numpy as np
 REFERENCES = {
     'reference': ['tolerance = 1e-13', 'max_spacing = 0.33', 'order = 8'],
     'reference-loose': ['tolerance = 1e-11', 'max_spacing = 0.5', 'order = 8'],
-    'reference-prolate': ['kernel = "PROLATE"', 'tolerance = 1e-9', 'order = 8'],
+    # its automatic grid is refused at 1e-9 with 8 points (the aliasing
+    # estimate stays above half the tolerance): 0.15 A gives 420³ on JAC
+    'reference-prolate': ['kernel = "PROLATE"', 'tolerance = 1e-9', 'order = 8',
+                          'max_spacing = 0.15'],
 }
 # (tolerance, points of the window); each at the spacings below.
 PROLATE = [(1e-3, 5), (1e-3, 6), (1e-4, 5), (1e-4, 6), (1e-4, 7),

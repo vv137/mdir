@@ -624,7 +624,7 @@ $$
 The last term decays as $1/\kappa$ where the paper's window has the jump's
 own $1/\kappa$ tail; the two cancel in leading order, and $\phi_1$, whose
 first discontinuity is in its slope, has the faster decay $1/\kappa^2$.
-The change costs nothing measurable at the default and 12% of $\Delta$ at
+The change costs 2% of $\Delta$ at the default and 12% at
 $\eta = 10^{-3}$ (JAC: $1.02$ to $1.04\times10^{-5}$ at 50³ and $6.2$ to
 $6.9\times10^{-4}$ at 24³), and over 2 ns the drift falls to 5.1
 kcal/mol/ns at $10^{-3}$, the slopes of its halves 2.7 and 6.3 (the
@@ -698,11 +698,14 @@ excluded pairs take $\Phi(x)/(xr_c)$ within the cutoff and $1/r$ beyond it.
 
 **On a device.** The kernels are generated from those of the dispersion
 (Section 5.5) and the bricks of D108. The coefficients of the window are
-converted once a sum into the type of the grid, term by term, so that the
-lanes of a term read adjacent words: in a prototype, the same coefficients
-read from constant memory at addresses that differ across the lanes of a
-warp made the gathering 1.5 to 2.8 times slower for an odd number of
-terms (PR #337, P0). The spreading and the gathering run a warp a particle;
+converted once a sum into the type of the grid, term by term, and read
+through the global (read-only) path rather than the constant path, so that
+the lanes of a term read adjacent words: in a prototype, the same
+coefficients in constant memory, read at addresses that differ across the
+lanes of a warp, made the gathering 1.5 to 2.8 times slower for an odd
+number of terms, which the code generated for it (twice the loads from the
+constant bank for an odd number) and the timings point to; there were no
+counters of the hardware to confirm the cause (PR #337, P0). The spreading and the gathering run a warp a particle;
 lanes $0$ to $3P - 1$ evaluate each weight once and the others take them by
 shuffles. The deterministic mode adds the grid in fixed point (D70).
 

@@ -285,7 +285,7 @@ and $\hat\phi_1$ (with it the factors $B$) follows from the same
 quadrature, $\hat\phi_1(\kappa) = \hat\phi_1^\text{paper}(\kappa) -
 2\psi_0^{c_1}(1)\sin(\kappa P/2)/\kappa$ (white paper, Section 5.6). This
 is MDIR's own: the paper truncates without it, and we know of no source
-that takes the value off in this way. It costs nothing measurable in
+that takes the value off in this way. It costs 2% of
 $\Delta$ at the default and 12% at ε = 10⁻³ (JAC: 1.02 → 1.04 × 10⁻⁵ at
 50³, 6.2 → 6.9 × 10⁻⁴ at 24³; Cellulose: 1.20 → 1.21 × 10⁻⁵ and 8.9 →
 9.95 × 10⁻⁴). The aliasing estimate below keeps the paper's window, with
@@ -392,10 +392,11 @@ falls only to 6.4 × 10⁻¹⁰ on 500³). STMV takes 180³ at the default.
 
 **The whole step at the same $\Delta$.** MDIR's step in mixed precision
 (JAC NVE 2 fs, Cellulose NVE 2 fs, STMV NPT 4 fs; the settings of the
-Amber suite but `[pme]`), ms/step, the mean of 4 to 5 rounds alternated in
-one job after the first, each column on one device kind. $\Delta$ is that
+Amber suite but `[pme]`), ms/step, the mean of the rounds alternated in
+one job after the first (5 on JAC and Cellulose; 4 or 5 on STMV, whose
+jobs reached their time limit; the spread of the rounds is 0.1 to 0.5%), each column on one device kind. $\Delta$ is that
 of the kernel in double at the grid that ran; on STMV it is not measured
-(its grids follow by the spacing of JAC). The binary is that of b449357f, the head of the branch before
+(its grids follow by the spacing of JAC). The binary is that of b449357f (5506216c after the rebase on `main`), the head of the branch before
 the grid rule and the window were changed, with the grids given by their
 spacing (the window's change costs no time). "Points" is the size of the grid, the data that the transposes of a
 distributed transform move.
@@ -424,16 +425,16 @@ distributed transform move.
 | Cellulose | ≈ 10⁻⁵ | **Prolate 10⁻⁵, P = 6** | 210×108×100 | 2,268,000 | 1.06 × 10⁻⁵ | 2.155 | 1.765 |
 | Cellulose | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 168×84×80 | 1,128,960 | 8.0 × 10⁻⁶ | 2.695 | 2.010 |
 | Cellulose | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 150×80×72 | 864,000 | 8.0 × 10⁻⁶ | 2.914 | 2.141 |
-| STMV | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 192³ | 7,077,888 | — | 4.490 | 3.432 |
-| STMV | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 224×224×240 | 12,042,240 | — | 4.838 | 3.654 |
-| STMV | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 90³ | 729,000 | — | 5.716 | 4.631 |
-| STMV | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 6.191 | 4.409 |
-| STMV | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 120³ | 1,728,000 | — | 6.430 | 5.055 |
-| STMV | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 320×324×336 | 34,836,480 | — | 8.065 | 5.555 |
-| STMV | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 7.575 | 5.276 |
-| STMV | ≈ 10⁻⁵ | **Prolate default, P = 6** | 180³ | 5,832,000 | — | 6.441 | 5.280 |
-| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 144×144×150 | 3,110,400 | — | 7.590 | 5.689 |
-| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 128×140×140 | 2,508,800 | — | 8.268 | 5.965 |
+| STMV | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 192³ | 7,077,888 | — | 4.489 | 3.432 |
+| STMV | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 224×224×240 | 12,042,240 | — | 4.836 | 3.656 |
+| STMV | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 90³ | 729,000 | — | 5.714 | 4.644 |
+| STMV | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 6.191 | 4.437 |
+| STMV | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 120³ | 1,728,000 | — | 6.424 | 5.060 |
+| STMV | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 320×324×336 | 34,836,480 | — | 8.062 | 5.572 |
+| STMV | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 7.572 | 5.278 |
+| STMV | ≈ 10⁻⁵ | **Prolate default, P = 6** | 180³ | 5,832,000 | — | 6.439 | 5.279 |
+| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 144×144×150 | 3,110,400 | — | 7.592 | 5.689 |
+| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 128×140×140 | 2,508,800 | — | 8.267 | 5.973 |
 
 **The grid points at the same $\Delta$.** The prolate kernel has 7.1
 (JAC), 5.8 (Cellulose; 6.6 at its automatic 210×98×96), and 6.0 (STMV)
