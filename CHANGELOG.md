@@ -413,6 +413,27 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The default neighbor structure is `neighbor_structure = "AUTO"`**
+  (D[neighbor-auto], #350, stage G3 of `docs/groups-m1.md`). On a GPU,
+  outside the deterministic mode, a system of at least 23,000 particles
+  whose loops over pairs all take each pair once runs on the groups of 16
+  with a dual list, `pairlist_distance` 3 Å and `pruned_distance` 0.6 Å
+  beyond the cutoff at 2 fs (wider in proportion to a longer step), for
+  the reaches not given; every other run keeps the matrix and its reach of
+  1.5 Å beyond the cutoff, as before. A large system that gave no
+  structure runs about 1.6 to 2 times as fast (a TIP3P box of 103,292
+  waters, RTX 4090: 1971 to 1140 µs a step). The log (`MDIR: neighbor
+  structure: ...`), `mdir check` (`neighbors:`, and `run.neighbors` with
+  `--json`), the manifest (`neighbor_structure`,
+  `neighbor_structure_reason`, `pairlist_distance_angstrom`,
+  `pruned_distance_angstrom`; `neighbor_structure_requested` may be
+  `"auto"`), and `Program.plan` state the structure and why.
+  `MATRIX` and `GROUPS` given are unchanged. In Python,
+  `Execution.neighbor_structure` defaults to `NeighborStructure.Auto`.
+  To keep the old default, set `neighbor_structure = "MATRIX"`.
+  `pruned_distance` under `AUTO` is refused only on the CPU and in the
+  deterministic mode, and is left unused, with a note, where the size
+  takes the matrix.
 - **`FrameEvaluator.evaluate` takes `gradients=` in place of `gradient=`**
   (D252, #313; the maintainer's ruling on PR #314). The
   argument `gradient=True` or `False`, whether the derivative in the

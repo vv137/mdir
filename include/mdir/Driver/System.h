@@ -175,7 +175,7 @@ llvm::Error recollectPairTails(const Control &control, System &system);
 
 /// The least number of particles for which `neighbor_structure = "AUTO"`
 /// takes the groups on a device (D[neighbor-auto]).
-constexpr size_t autoGroupsParticles = 20000;
+constexpr size_t autoGroupsParticles = 23000;
 
 /// Resolves `neighbor_structure = "AUTO"` of `control` for `system`: the
 /// groups of 16 with a dual list on a GPU, outside the deterministic mode,
