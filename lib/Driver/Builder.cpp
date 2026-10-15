@@ -4400,6 +4400,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     // the field it reads, to time the loop over pairs with one term.
     const char *experiment = std::getenv("MDIR_EXP_PAIR_TERMS");
     std::string only = experiment ? experiment : "";
+    if (!(terms & LennardJones) || !(terms & Coulomb))
+      only.clear();
     bool lj = (terms & LennardJones) && only != "coulomb";
     bool coulomb = (terms & Coulomb) && only != "lj";
     // [free_energy] (D161): a pair with one particle in the selection,
