@@ -32,6 +32,9 @@ format, or the outputs; every such change is listed under **Changed** or
   Gaussian stays the default: on one GPU the prolate kernel's step takes
   1.2 to 1.4 times as long at MDIR's default accuracy and about as long at
   a force error of 10⁻⁵, where its grid has 6 to 7 times fewer points.
+- The control-file reference recommends `coulomb_modifier =
+  "POTENTIAL_SHIFT"` at a PME tolerance looser than the default for runs at
+  constant energy (#346); `NONE` stays the default, as in Amber.
 
 - The gradients of the energy of a frame in the positions and in the
   strain, from the frame evaluator (D252, #313):
