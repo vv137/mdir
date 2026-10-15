@@ -21,13 +21,45 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 BASE = open(os.path.join(HERE, '..', 'lib', 'Runtime', 'Templates', 'PMEGPU.mlir')).read()
+TRICLINIC = open(os.path.join(HERE, '..', 'lib', 'Runtime', 'Templates', 'PMEGPUTriclinic.mlir')).read()
 
 
-def function(name):
-    """The text of a function of PMEGPU.mlir, with the comment above it."""
-    start = BASE.index('func.func private @' + name + '(')
-    end = BASE.index('\n}\n', start) + 3
-    return BASE[start:end]
+def function(name, text=None):
+    """The text of a function of PMEGPU.mlir, or of `text`."""
+    text = BASE if text is None else text
+    start = text.index('func.func private @' + name + '(')
+    end = text.index('\n}\n', start) + 3
+    return text[start:end]
+
+
+# The inverse of the lower-triangular cell, H⁻¹, from the box (a_x, b_y,
+# c_z, b_x, c_x, c_y), as the kernels of a triclinic cell compute it.
+INVERSE = '''  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
+  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
+  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
+  %hunit = arith.constant 1.0 : f64
+  %h00 = arith.divf %hunit, %lx : f64
+  %h11 = arith.divf %hunit, %ly : f64
+  %h22 = arith.divf %hunit, %lz : f64
+  %h10a = arith.mulf %tbx, %h00 : f64
+  %h10b = arith.mulf %h10a, %h11 : f64
+  %h10 = arith.negf %h10b : f64
+  %h21a = arith.mulf %tcy, %h11 : f64
+  %h21b = arith.mulf %h21a, %h22 : f64
+  %h21 = arith.negf %h21b : f64
+  %h20a = arith.mulf %tbx, %tcy : f64
+  %h20b = arith.mulf %ly, %tcx : f64
+  %h20c = arith.subf %h20a, %h20b : f64
+  %h20d = arith.mulf %h20c, %h00 : f64
+  %h20e = arith.mulf %h20d, %h11 : f64
+  %h20 = arith.mulf %h20e, %h22 : f64
+  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
+  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
+  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
+  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
+  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
+  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
+'''
 
 
 HEADER = '''// The reciprocal sum of particle mesh Ewald with the prolate kernel on a
@@ -138,14 +170,11 @@ func.func private @mdrt_gpu_pme_prolate_coefficients(%moduli: memref<?x?xf64, 1>
 '''
 
 
-def place(axis, k, il):
-    """The first point and the fraction of the window along an edge."""
+def place(axis, k):
+    """The first point and the fraction of the window along an edge, from
+    the fractional coordinate %{a}_s."""
     a = 'xyz'[axis]
-    return f'''      %{a}c = arith.constant {axis} : index
-      %{a}s = memref.load %x[%i, %{a}c] : memref<?x3x!pme_pos, 1>
-      %{a}p = PME_EXTEND_POS %{a}s : !pme_pos to f64
-      %{a}_s = arith.mulf %{a}p, {il} : f64
-      %{a}_fs = math.floor %{a}_s : f64
+    return f'''      %{a}_fs = math.floor %{a}_s : f64
       %{a}_frac = arith.subf %{a}_s, %{a}_fs : f64
       %{a}_ki = arith.index_cast {k} : index to i32
       %{a}_kf = arith.sitofp %{a}_ki : i32 to !pme_real
@@ -176,26 +205,31 @@ def place(axis, k, il):
 '''
 
 
-def places():
-    return '''// The places of the particles, six values each, as the kernel of the
+def places(triclinic):
+    suffix = '_triclinic' if triclinic else ''
+    width = 6 if triclinic else 3
+    text = f'''// The places of the particles, six values each, as the kernel of the
 // weights of order 4 writes them (D109): the first point of the window
 // along each edge and the fraction of u − h, h = 1/2 for an odd number of
-// points and 0 otherwise (prolate::Window).
-func.func private @mdrt_gpu_pme_prolate_places(%x: memref<?x3x!pme_pos, 1>, %box: vector<3xf64>,
+// points and 0 otherwise (prolate::Window){'; in a triclinic cell from the fractional coordinates s = x H⁻¹' if triclinic else ''}.
+func.func private @mdrt_gpu_pme_prolate_places{suffix}(%x: memref<?x3x!pme_pos, 1>, %box: vector<{width}xf64>,
                                              %places: memref<?x!pme_real, 1>,
-                                             %k1: index, %k2: index, %k3: index) {
+                                             %k1: index, %k2: index, %k3: index) {{
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c128 = arith.constant 128 : index
   %n_all = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %lx = vector.extract %box[0] : f64 from vector<3xf64>
-  %ly = vector.extract %box[1] : f64 from vector<3xf64>
-  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %lx = vector.extract %box[0] : f64 from vector<{width}xf64>
+  %ly = vector.extract %box[1] : f64 from vector<{width}xf64>
+  %lz = vector.extract %box[2] : f64 from vector<{width}xf64>
   %unit = arith.constant 1.0 : f64
   %ilx = arith.divf %unit, %lx : f64
   %ily = arith.divf %unit, %ly : f64
   %ilz = arith.divf %unit, %lz : f64
-  %blocks = func.call @mdrt_gpu_pme_prolate_blocks(%n_all) : (index) -> index
+'''
+    if triclinic:
+        text += INVERSE
+    text += '''  %blocks = func.call @mdrt_gpu_pme_prolate_blocks(%n_all) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
     %base = arith.muli %bx, %c128 : index
@@ -212,13 +246,37 @@ func.func private @mdrt_gpu_pme_prolate_places(%x: memref<?x3x!pme_pos, 1>, %box
       %zeror = arith.constant 0.0 : !pme_real
       %shift = arith.select %odd1, %zeror, %halfr : !pme_real
       %below_one = arith.constant -1.0 : !pme_real
-''' + place(0, '%k1', '%ilx') + place(1, '%k2', '%ily') + place(2, '%k3', '%ilz') + '''    }
+'''
+    for axis in range(3):
+        a = 'xyz'[axis]
+        text += f'''      %{a}c = arith.constant {axis} : index
+      %{a}s = memref.load %x[%i, %{a}c] : memref<?x3x!pme_pos, 1>
+      %{a}p = PME_EXTEND_POS %{a}s : !pme_pos to f64
+'''
+    if triclinic:
+        text += '''      %z_s = arith.mulf %zp, %h22 : f64
+      %y_t1 = arith.mulf %yp, %h11 : f64
+      %y_t2 = arith.mulf %zp, %h21 : f64
+      %y_s = arith.addf %y_t1, %y_t2 : f64
+      %x_t1 = arith.mulf %xp, %h00 : f64
+      %x_t2 = arith.mulf %yp, %h10 : f64
+      %x_t3 = arith.mulf %zp, %h20 : f64
+      %x_t12 = arith.addf %x_t1, %x_t2 : f64
+      %x_s = arith.addf %x_t12, %x_t3 : f64
+'''
+    else:
+        text += '''      %x_s = arith.mulf %xp, %ilx : f64
+      %y_s = arith.mulf %yp, %ily : f64
+      %z_s = arith.mulf %zp, %ilz : f64
+'''
+    text += place(0, '%k1') + place(1, '%k2') + place(2, '%k3') + '''    }
     gpu.terminator
   }
   return
 }
 
 '''
+    return text
 
 
 def clenshaw(prefix, base, t, out):
@@ -492,18 +550,19 @@ def spread(fixed):
     return particle_warp(name, args, body)
 
 
-def gather(potential):
+def gather(potential, triclinic=False):
     """The forces, F = −q (K/L) Σ φ ∂θ, or the potential Σ φ θ (D231), a warp
     a particle: lanes 0 .. 3P − 1 evaluate the weights and slopes once, the
     lanes of a pass take a row (a, b) each and sum along z."""
-    name = 'mdrt_gpu_pme_prolate_potential' if potential else 'mdrt_gpu_pme_prolate_gather'
+    name = ('mdrt_gpu_pme_prolate_potential' if potential else 'mdrt_gpu_pme_prolate_gather') + ('_triclinic' if triclinic else '')
+    width = 6 if triclinic else 3
     out = '%f: memref<?x!pme_frc, 1>' if potential else '%f: memref<?x3x!pme_frc, 1>'
     args = ('%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>, '
-            '%phi: memref<?x!pme_real, 1>, %box: vector<3xf64>, %k1: index, %k2: index, %k3: index, ' + out)
-    body = '''  %lx = vector.extract %box[0] : f64 from vector<3xf64>
-  %ly = vector.extract %box[1] : f64 from vector<3xf64>
-  %lz = vector.extract %box[2] : f64 from vector<3xf64>
-  %k1i = arith.index_cast %k1 : index to i64
+            f'%phi: memref<?x!pme_real, 1>, %box: vector<{width}xf64>, %k1: index, %k2: index, %k3: index, ' + out)
+    body = f'''  %lx = vector.extract %box[0] : f64 from vector<{width}xf64>
+  %ly = vector.extract %box[1] : f64 from vector<{width}xf64>
+  %lz = vector.extract %box[2] : f64 from vector<{width}xf64>
+''' + (INVERSE if triclinic else '') + '''  %k1i = arith.index_cast %k1 : index to i64
   %k2i = arith.index_cast %k2 : index to i64
   %k3i = arith.index_cast %k3 : index to i64
   %k1f = arith.sitofp %k1i : i64 to f64
@@ -643,6 +702,39 @@ def gather(potential):
         inner += f'''        %stored = PME_REAL_TO_FRC {names[0]} : !pme_real to !pme_frc
         memref.store %stored, %f[%i] : memref<?x!pme_frc, 1>
 '''
+    elif triclinic:
+        # F = −q H⁻ᵀ (K ∘ g), as the gathering of a triclinic cell.
+        inner += f'''        %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
+        %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+        %mq = arith.negf %qi : !pme_real
+        %k1fr0 = arith.sitofp %k1t : i32 to !pme_real
+        %k2fr0 = arith.sitofp %k2t : i32 to !pme_real
+        %k3fr0 = arith.sitofp %k3t : i32 to !pme_real
+        %ka1 = arith.mulf %k1fr0, {names[0]} : !pme_real
+        %ka2 = arith.mulf %k2fr0, {names[1]} : !pme_real
+        %ka3 = arith.mulf %k3fr0, {names[2]} : !pme_real
+        %fxh = arith.mulf %h00r, %ka1 : !pme_real
+        %fyh1 = arith.mulf %h10r, %ka1 : !pme_real
+        %fyh2 = arith.mulf %h11r, %ka2 : !pme_real
+        %fyh = arith.addf %fyh1, %fyh2 : !pme_real
+        %fzh1 = arith.mulf %h20r, %ka1 : !pme_real
+        %fzh2 = arith.mulf %h21r, %ka2 : !pme_real
+        %fzh3 = arith.mulf %h22r, %ka3 : !pme_real
+        %fzh12 = arith.addf %fzh1, %fzh2 : !pme_real
+        %fzh = arith.addf %fzh12, %fzh3 : !pme_real
+        %fxv = arith.mulf %mq, %fxh : !pme_real
+        %fyv = arith.mulf %mq, %fyh : !pme_real
+        %fzv = arith.mulf %mq, %fzh : !pme_real
+        %fxs = PME_REAL_TO_FRC %fxv : !pme_real to !pme_frc
+        %fys = PME_REAL_TO_FRC %fyv : !pme_real to !pme_frc
+        %fzs = PME_REAL_TO_FRC %fzv : !pme_real to !pme_frc
+        %i0 = arith.constant 0 : index
+        %i1 = arith.constant 1 : index
+        %i2 = arith.constant 2 : index
+        memref.store %fxs, %f[%i, %i0] : memref<?x3x!pme_frc, 1>
+        memref.store %fys, %f[%i, %i1] : memref<?x3x!pme_frc, 1>
+        memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
+'''
     else:
         inner += f'''        %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
         %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
@@ -731,8 +823,8 @@ INFLUENCE = '''        %pmeta_n = memref.load %tables[%pe] : memref<?x!pme_real,
 '''
 
 
-def influence_function(source, target):
-    text = function(source)
+def influence_function(source, target, base=None):
+    text = function(source, base)
     text = text.replace('@' + source + '(', '@' + target + '(', 1)
     # The block of F(b) of the dispersion, from |m| to the factor of the
     # virial.
@@ -760,12 +852,13 @@ def check_names(text):
         assert name in text, name
 
 
-def tables():
+def tables(triclinic=False):
     """The factors of the edges: m, m², and 1/φ̂₁² along each edge, the
     first times f / (π V) (as tables_dispersion, with the prefactor of the
     Coulomb sum)."""
-    text = function('mdrt_gpu_pme_tables_dispersion')
-    text = text.replace('@mdrt_gpu_pme_tables_dispersion(', '@mdrt_gpu_pme_prolate_tables(', 1)
+    suffix = '_triclinic' if triclinic else ''
+    text = function('mdrt_gpu_pme_tables_dispersion' + suffix, TRICLINIC if triclinic else None)
+    text = text.replace('@mdrt_gpu_pme_tables_dispersion' + suffix + '(', '@mdrt_gpu_pme_prolate_tables' + suffix + '(', 1)
     old = '''  %pi32 = arith.constant 5.568327996831708 : f64
   %beta3 = arith.mulf %beta2, %beta : f64
   %pb3 = arith.mulf %pi32, %beta3 : f64
@@ -782,16 +875,23 @@ def tables():
 
 
 def main():
-    out = HEADER + coefficients() + places() + spread(fixed=False) + spread(fixed=True)
-    out += gather(potential=False) + gather(potential=True) + tables()
-    convolve = influence_function('mdrt_gpu_pme_convolve_dispersion', 'mdrt_gpu_pme_prolate_convolve')
-    scale = influence_function('mdrt_gpu_pme_scale_dispersion', 'mdrt_gpu_pme_prolate_scale')
-    check_names(convolve)
-    check_names(scale)
-    out += '// The product with the influence function of the prolate kernel, with the\n'
-    out += '// energy and the virial (convolve_dispersion with χ̂ in place of F).\n' + convolve + '\n'
-    out += '// The product alone (scale_dispersion with χ̂ in place of F).\n' + scale
-    sys.stdout.write(out.replace('@mdrt_gpu_pme_blocks(', '@mdrt_gpu_pme_prolate_blocks('))
+    out = HEADER + coefficients() + places(False) + places(True) + spread(fixed=False) + spread(fixed=True)
+    out += gather(potential=False) + gather(potential=True)
+    out += gather(potential=False, triclinic=True) + gather(potential=True, triclinic=True)
+    out += tables() + tables(triclinic=True)
+    for suffix, base in (('', None), ('_triclinic', TRICLINIC)):
+        convolve = influence_function('mdrt_gpu_pme_convolve_dispersion' + suffix,
+                                      'mdrt_gpu_pme_prolate_convolve' + suffix, base)
+        scale = influence_function('mdrt_gpu_pme_scale_dispersion' + suffix,
+                                   'mdrt_gpu_pme_prolate_scale' + suffix, base)
+        check_names(convolve)
+        check_names(scale)
+        out += '// The product with the influence function of the prolate kernel, with the\n'
+        out += '// energy and the virial (convolve_dispersion with χ̂ in place of F).\n' + convolve + '\n'
+        out += '// The product alone (scale_dispersion with χ̂ in place of F).\n' + scale + '\n'
+    out = out.replace('@mdrt_gpu_pme_blocks(', '@mdrt_gpu_pme_prolate_blocks(')
+    out = out.replace('@mdrt_gpu_pme_blocks_triclinic(', '@mdrt_gpu_pme_prolate_blocks(')
+    sys.stdout.write(out)
 
 
 main()

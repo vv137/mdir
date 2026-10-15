@@ -3629,14 +3629,21 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         ValueRange());
   // The prolate kernel has kernels of its own (D[prolate-ewald]).
   if (op.getProlate()) {
-    if (tilted)
-      return op->emitOpError()
-             << "the prolate kernel in a triclinic cell is not implemented "
-                "on a device yet";
     if (failed(addProlateTemplates(position, charge, force, op.getOrder())))
       return failure();
+    // A triclinic cell takes its own places, gathering, and influence;
+    // the coefficients and the spreading do not depend on the cell.
+    auto prolateInstance = [&](StringRef name) {
+      bool own = tilted && name != "mdrt_gpu_pme_real" &&
+                 name != "mdrt_gpu_pme_prolate_coefficients" &&
+                 !name.starts_with("mdrt_gpu_pme_prolate_spread");
+      std::string full = own ? (name + "_triclinic").str() : name.str();
+      return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+          module,
+          getPMEInstanceName(full, position, charge, force, op.getOrder())));
+    };
     if (failed(lowerProlate(
-            op, builder, instance,
+            op, builder, prolateInstance,
             [&](StringRef name, FunctionType type) {
               return getOrDeclare(name, type);
             },

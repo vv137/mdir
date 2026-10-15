@@ -2905,11 +2905,6 @@ llvm::Error Builder::collectProlate() {
   program.pmeSelfFactor = psi.value(0.0) / psi.halfIntegral() / (2.0 * rc);
   program.pmeBackgroundFactor = rc * rc * psi.secondMoment();
 
-  if (control.target == Target::GPU && isTriclinic())
-    return llvm::createStringError(
-        llvm::inconvertibleErrorCode(),
-        "kernel = \"PROLATE\" of [pme] in a triclinic cell is not "
-        "implemented yet on a GPU (D[prolate-ewald])");
   return llvm::Error::success();
 }
 
