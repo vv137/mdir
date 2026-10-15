@@ -15,10 +15,10 @@
 # RUN: mdir run %t/tight.toml > %t/tight.log
 # RUN: %python %S/Inputs/check_coulomb_total.py %t/tight.log -3963.615657 1e-8 | FileCheck %s --check-prefix=TOTAL
 
-# The default, ε = 1e-5 and 6 points: within 1.8e-7 of the sum; ε = 1e-9
+# The default, ε = 1e-5 and 6 points: within 4.3e-8 of the sum; ε = 1e-9
 # and 8 points: within 2.5e-10.
 #
-# CHECK: MDIR: the prolate kernel of PME: c = 14.4712, c1 = 15.2026, 6 points of the window, a grid of 18 x 18 x 18
+# CHECK: MDIR: the prolate kernel of PME: c = 14.4712, c1 = 15.2026, 6 points of the window, a grid of 20 x 20 x 20
 # TOTAL: ok
 
 #--- run.toml

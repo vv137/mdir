@@ -2813,10 +2813,15 @@ llvm::Error Builder::collectProlate() {
   }
   // The grid: given; or from the largest spacing given; or the modes of
   // eq. 15 of [Liang2026], n_f = ⌈c L / (π r_c)⌉, raised until the
-  // aliasing estimate of its eq. 10, relative to the sum it perturbs, is
-  // at most ε. On JAC that estimate is above the relative force error of
-  // eq. 16 by a factor of 1.2 to 3 at every grid and order measured
-  // (issue #334), so the default grid meets the tolerance as a force error.
+  // aliasing estimate of its eq. 10, relative to the sum it perturbs, is at
+  // most ε/2 (D[prolate-ewald], as ruled on issue #334). The factor 1/2 is
+  // calibrated against the relative force error Δ of its eq. 16 over the
+  // Coulomb forces of the topology (with its exclusions), measured on JAC and
+  // Cellulose against the Gaussian at erfc 1e-13 on 0.33 Å
+  // (scripts/benchmarks/prolate-ewald/grid_sweep.py): there the estimate is
+  // 2.5 to 3 times below Δ, Δ of a fine grid is 0.6 to 0.9 ε, and ε/2 puts
+  // every ε and P measured within 1.3 times that floor; ε alone left P = 5
+  // and 7 at 2.7 to 2.9 times it.
   int64_t grid[3];
   for (int k = 0; k != 3; ++k) {
     grid[k] = control.pmeGrid[k];
@@ -2830,18 +2835,24 @@ llvm::Error Builder::collectProlate() {
   }
   bool automatic = control.pmeGrid[0] == 0 && control.pmeMaxSpacing == 0.0;
   double aliasing = prolate::getAliasing(psi, window, edges, grid, rc);
-  for (int round = 0; automatic && aliasing > epsilon; ++round) {
+  double bound = 0.5 * epsilon;
+  for (int round = 0; automatic && aliasing > bound; ++round) {
     if (round == 64)
       return llvm::createStringError(
           llvm::inconvertibleErrorCode(),
-          "the grid of the prolate kernel does not reach the tolerance %g "
-          "of [pme] by its aliasing estimate (%g at %lld × %lld × %lld "
+          "the grid of the prolate kernel does not reach half the tolerance "
+          "%g of [pme] by its aliasing estimate (%g at %lld × %lld × %lld "
           "points); give 'grid', or more points of the window in 'order'",
           epsilon, aliasing, static_cast<long long>(grid[0]),
           static_cast<long long>(grid[1]), static_cast<long long>(grid[2]));
-    // Every axis a step finer, in proportion to its edge.
+    // One spacing for the three axes, made finer by the least that adds a
+    // point to some axis, so that the grid stays in proportion to the edges.
+    double spacing = 0.0;
     for (int k = 0; k != 3; ++k)
-      grid[k] = getSmoothSize(grid[k] + 1);
+      spacing = std::max(spacing, edges[k] / static_cast<double>(grid[k] + 1));
+    for (int k = 0; k != 3; ++k)
+      grid[k] = getSmoothSize(
+          static_cast<int64_t>(std::ceil(edges[k] / spacing - 1e-9)));
     aliasing = prolate::getAliasing(psi, window, edges, grid, rc);
   }
   for (int k = 0; k != 3; ++k)
