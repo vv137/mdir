@@ -5754,8 +5754,11 @@ void Builder::emitPrograms() {
          << "    %vs_sum = arith.addf %vs_v, %vs_dv : vector<3xf64>\n"
          << "    md.yield %vs_sum : vector<3xf64>\n"
          << "  } : !vec\n";
-      std::string moved = project("%xgc", "%vga", "%vgb", "").first;
-      emitLangevin("  ", moved, "%vgo");
+      // The projection of the A at the new positions and that after O are
+      // one: the projection is linear at fixed positions, so that of
+      // c v + σ R is c times that of v plus that of σ R, and the projection
+      // after O alone gives what both give.
+      emitLangevin("  ", "%vga", "%vgo");
       std::string thermal = project("%xgc", "%vgo", "%vgp", "").first;
       reference = "%xgc";
       drifting = thermal;
