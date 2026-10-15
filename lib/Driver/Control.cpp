@@ -1845,6 +1845,10 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error =
           readPositive(table, "pairlist_distance", control.pairlistDistance))
     return error;
+  // Under `AUTO` the groups take reaches of their own where these are not
+  // given (D[neighbor-auto]).
+  control.pairlistDistanceGiven = table.contains("pairlist_distance");
+  control.prunedDistanceGiven = table.contains("pruned_distance");
 
   // Opt-in, not a default: a structure rebuilt at a fixed interval may miss
   // pairs within the cutoff (D88). The run warns.
@@ -2808,10 +2812,12 @@ Error Reader::readExecution(const toml::table &table) {
     return error;
   // Groups of 16 that share a list of neighbors, each pair once, where the
   // loops allow them (D89): on a device, and not yet in the deterministic
-  // mode.
+  // mode. `AUTO`, the default, chooses by the target, the mode, and the
+  // size of the system when the program is built (D[neighbor-auto]).
   if (Error error = readChoice<NeighborStructure>(
           table, "neighbor_structure", control.neighborStructure,
-          {{"MATRIX", NeighborStructure::Matrix},
+          {{"AUTO", NeighborStructure::Auto},
+           {"MATRIX", NeighborStructure::Matrix},
            {"GROUPS", NeighborStructure::Groups}}))
     return error;
   if (control.neighborStructure == NeighborStructure::Groups &&
@@ -3038,13 +3044,20 @@ Error Reader::read(const toml::table &root) {
 }
 
 llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
+  // Under `AUTO` a dual list is kept where the groups are chosen, which
+  // they never are on the CPU or in the deterministic mode
+  // (D[neighbor-auto]).
   if (control.prunedDistance != 0.0 &&
-      control.neighborStructure != NeighborStructure::Groups)
+      (control.neighborStructure == NeighborStructure::Matrix ||
+       (control.neighborStructure == NeighborStructure::Auto &&
+        (control.target != Target::GPU || control.deterministic))))
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),
         "%s: 'pruned_distance' keeps a dual list, which needs "
-        "'neighbor_structure = \"GROUPS\"'",
+        "'neighbor_structure = \"GROUPS\"', or \"AUTO\" on a GPU and not "
+        "'deterministic'",
         path.str().c_str());
+  control.neighborStructureRequested = control.neighborStructure;
   if (control.checkpointPeriod != 0 && control.restartOutput.empty())
     return llvm::createStringError(
         llvm::inconvertibleErrorCode(),

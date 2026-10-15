@@ -10451,6 +10451,11 @@ void Builder::setSchedule() {
 }
 
 llvm::Error Builder::build() {
+  // Every front end resolves `AUTO` for its system first
+  // (resolveNeighborStructure, D[neighbor-auto]).
+  if (control.neighborStructure == NeighborStructure::Auto)
+    return makeError("the neighbor structure 'AUTO' was not resolved; this "
+                     "is a defect of mdir");
   // The neighbor matrix of a triclinic cell holds every pair that has an
   // image within its reach, whatever the reach: its build tests the images
   // beyond that of the one pass where the reach is more than half of the
