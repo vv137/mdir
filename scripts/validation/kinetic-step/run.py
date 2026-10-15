@@ -191,8 +191,8 @@ def main():
                 name = f'{thermostat}-{step}fs-{ensemble}'
                 npt = ensemble == 'npt'
                 steps = int(round(args.ns * 1000.0 / dt))
-                # A row every 20 fs, or every step above.
-                interval = max(1, int(round(0.02 / dt)))
+                # A row every 20 fs, a multiple of the interval of coupling.
+                interval = 10 * max(1, int(round(0.02 / dt / 10)))
                 files[name] = (
                     head(name, 'eq', interval, steps) +
                     dynamics(dt, steps, args.seed + 1 + k, npt) +
