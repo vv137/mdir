@@ -4952,201 +4952,6 @@ func.func private @mdrt_gpu_pme_spread_float_listed_triclinic(%x: memref<?x3x!pm
   return
 }
 
-// The weights of the particles for the spreading and the gathering of
-// order 4, of the listed
-// particles (D[pme-skip-zero]), at the entries of the list: see weights_kernels in the script.
-func.func private @mdrt_gpu_pme_weights_listed_triclinic(%x: memref<?x3x!pme_pos, 1>, %list: memref<?xi32, 1>, %box: vector<6xf64>,
-                                        %weights: memref<?x!pme_real, 1>,
-                                        %k1: index, %k2: index, %k3: index) {
-  %c0 = arith.constant 0 : index
-  %c1 = arith.constant 1 : index
-  %c3 = arith.constant 3 : index
-  %c4 = arith.constant 4 : index
-  %c16 = arith.constant 16 : index
-  %c32 = arith.constant 32 : index
-  %c128 = arith.constant 128 : index
-  %n_all = memref.dim %x, %c0 : memref<?x3x!pme_pos, 1>
-  %k1u = arith.addi %k1, %c3 : index
-  %b1 = arith.divui %k1u, %c4 : index
-  %k2u = arith.addi %k2, %c3 : index
-  %b2 = arith.divui %k2u, %c4 : index
-  %b12 = arith.muli %b1, %b2 : index
-  %b123 = arith.muli %b12, %k3 : index
-  %brick_points = arith.muli %b123, %c16 : index
-  %lx = vector.extract %box[0] : f64 from vector<6xf64>
-  %ly = vector.extract %box[1] : f64 from vector<6xf64>
-  %lz = vector.extract %box[2] : f64 from vector<6xf64>
-  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
-  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
-  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
-  %hunit = arith.constant 1.0 : f64
-  %h00 = arith.divf %hunit, %lx : f64
-  %h11 = arith.divf %hunit, %ly : f64
-  %h22 = arith.divf %hunit, %lz : f64
-  %h10a = arith.mulf %tbx, %h00 : f64
-  %h10b = arith.mulf %h10a, %h11 : f64
-  %h10 = arith.negf %h10b : f64
-  %h21a = arith.mulf %tcy, %h11 : f64
-  %h21b = arith.mulf %h21a, %h22 : f64
-  %h21 = arith.negf %h21b : f64
-  %h20a = arith.mulf %tbx, %tcy : f64
-  %h20b = arith.mulf %ly, %tcx : f64
-  %h20c = arith.subf %h20a, %h20b : f64
-  %h20d = arith.mulf %h20c, %h00 : f64
-  %h20e = arith.mulf %h20d, %h11 : f64
-  %h20 = arith.mulf %h20e, %h22 : f64
-  %h00r = PME_F64_TO_REAL %h00 : f64 to !pme_real
-  %h10r = PME_F64_TO_REAL %h10 : f64 to !pme_real
-  %h11r = PME_F64_TO_REAL %h11 : f64 to !pme_real
-  %h20r = PME_F64_TO_REAL %h20 : f64 to !pme_real
-  %h21r = PME_F64_TO_REAL %h21 : f64 to !pme_real
-  %h22r = PME_F64_TO_REAL %h22 : f64 to !pme_real
-  %unit = arith.constant 1.0 : f64
-  %ilx = arith.divf %unit, %lx : f64
-  %ily = arith.divf %unit, %ly : f64
-  %ilz = arith.divf %unit, %lz : f64
-  %blocks_n_all = func.call @mdrt_gpu_pme_blocks_triclinic(%n_all) : (index) -> index
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_n_all, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %c128 : index
-    %item = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %item, %n_all : index
-    scf.if %inside {
-      %listed = memref.load %list[%item] : memref<?xi32, 1>
-      %listed_none = arith.constant 0 : i32
-      %is_listed = arith.cmpi sge, %listed, %listed_none : i32
-      scf.if %is_listed {
-      %i = arith.index_cast %listed : i32 to index
-      %i0 = arith.constant 0 : index
-      %i1 = arith.constant 1 : index
-      %i2 = arith.constant 2 : index
-      %order = arith.constant 4 : index
-      %xc = arith.constant 0 : index
-      %xs = memref.load %x[%i, %xc] : memref<?x3x!pme_pos, 1>
-      %xp = PME_EXTEND_POS %xs : !pme_pos to f64
-      %yc = arith.constant 1 : index
-      %ys = memref.load %x[%i, %yc] : memref<?x3x!pme_pos, 1>
-      %yp = PME_EXTEND_POS %ys : !pme_pos to f64
-      %zc = arith.constant 2 : index
-      %zs = memref.load %x[%i, %zc] : memref<?x3x!pme_pos, 1>
-      %zp = PME_EXTEND_POS %zs : !pme_pos to f64
-      %fr_one = arith.constant 1.0 : f64
-      %fr_z = arith.mulf %zp, %h22 : f64
-      %fr_y1 = arith.mulf %yp, %h11 : f64
-      %fr_y2 = arith.mulf %zp, %h21 : f64
-      %fr_y = arith.addf %fr_y1, %fr_y2 : f64
-      %fr_x1 = arith.mulf %xp, %h00 : f64
-      %fr_x2 = arith.mulf %yp, %h10 : f64
-      %fr_x3 = arith.mulf %zp, %h20 : f64
-      %fr_x12 = arith.addf %fr_x1, %fr_x2 : f64
-      %fr_x = arith.addf %fr_x12, %fr_x3 : f64
-      %px_s = arith.mulf %fr_x, %fr_one : f64
-      %px_fs = math.floor %px_s : f64
-      %px_frac = arith.subf %px_s, %px_fs : f64
-      %px_ki = arith.index_cast %k1 : index to i32
-      %px_kf = arith.sitofp %px_ki : i32 to !pme_real
-      %px_fracr = PME_F64_TO_REAL %px_frac : f64 to !pme_real
-      %px_u = arith.mulf %px_fracr, %px_kf : !pme_real
-      %px_fu0 = math.floor %px_u : !pme_real
-      // A coordinate that is not a number takes the point 0, so that the
-      // conversion to an integer is defined and every point is in the grid
-      // (#168); the fraction is in [0, 1] otherwise, and so is this.
-      %px_nil = arith.constant 0.0 : !pme_real
-      %px_fu = arith.maxnumf %px_fu0, %px_nil : !pme_real
-      %px_w = arith.subf %px_u, %px_fu : !pme_real
-      %px_bi32 = arith.fptosi %px_fu : !pme_real to i32
-      %px_bi = arith.extsi %px_bi32 : i32 to i64
-      %px_b = arith.index_cast %px_bi : i64 to index
-      %px_bk = arith.addi %px_b, %k1 : index
-      %px_bkn = arith.subi %px_bk, %order : index
-      %px_c1p = arith.constant 1 : index
-      %px_start0 = arith.addi %px_bkn, %px_c1p : index
-      // The first point within the grid, so that the points of the particle need
-      // one subtraction at most to wrap around.
-      %px_start = arith.remui %px_start0, %k1 : index
-      %xfc = arith.constant 3 : index
-      %xfn = arith.muli %n_all, %xfc : index
-      %xfat = arith.addi %xfn, %item : index
-      memref.store %px_w, %weights[%xfat] : memref<?x!pme_real, 1>
-      %xstart_i = arith.index_cast %px_start : index to i32
-      %xstart_r = arith.sitofp %xstart_i : i32 to !pme_real
-      %xsn = arith.muli %n_all, %xc : index
-      %xsat = arith.addi %xsn, %item : index
-      memref.store %xstart_r, %weights[%xsat] : memref<?x!pme_real, 1>
-      %py_s = arith.mulf %fr_y, %fr_one : f64
-      %py_fs = math.floor %py_s : f64
-      %py_frac = arith.subf %py_s, %py_fs : f64
-      %py_ki = arith.index_cast %k2 : index to i32
-      %py_kf = arith.sitofp %py_ki : i32 to !pme_real
-      %py_fracr = PME_F64_TO_REAL %py_frac : f64 to !pme_real
-      %py_u = arith.mulf %py_fracr, %py_kf : !pme_real
-      %py_fu0 = math.floor %py_u : !pme_real
-      // A coordinate that is not a number takes the point 0, so that the
-      // conversion to an integer is defined and every point is in the grid
-      // (#168); the fraction is in [0, 1] otherwise, and so is this.
-      %py_nil = arith.constant 0.0 : !pme_real
-      %py_fu = arith.maxnumf %py_fu0, %py_nil : !pme_real
-      %py_w = arith.subf %py_u, %py_fu : !pme_real
-      %py_bi32 = arith.fptosi %py_fu : !pme_real to i32
-      %py_bi = arith.extsi %py_bi32 : i32 to i64
-      %py_b = arith.index_cast %py_bi : i64 to index
-      %py_bk = arith.addi %py_b, %k2 : index
-      %py_bkn = arith.subi %py_bk, %order : index
-      %py_c1p = arith.constant 1 : index
-      %py_start0 = arith.addi %py_bkn, %py_c1p : index
-      // The first point within the grid, so that the points of the particle need
-      // one subtraction at most to wrap around.
-      %py_start = arith.remui %py_start0, %k2 : index
-      %yfc = arith.constant 4 : index
-      %yfn = arith.muli %n_all, %yfc : index
-      %yfat = arith.addi %yfn, %item : index
-      memref.store %py_w, %weights[%yfat] : memref<?x!pme_real, 1>
-      %ystart_i = arith.index_cast %py_start : index to i32
-      %ystart_r = arith.sitofp %ystart_i : i32 to !pme_real
-      %ysn = arith.muli %n_all, %yc : index
-      %ysat = arith.addi %ysn, %item : index
-      memref.store %ystart_r, %weights[%ysat] : memref<?x!pme_real, 1>
-      %pz_s = arith.mulf %fr_z, %fr_one : f64
-      %pz_fs = math.floor %pz_s : f64
-      %pz_frac = arith.subf %pz_s, %pz_fs : f64
-      %pz_ki = arith.index_cast %k3 : index to i32
-      %pz_kf = arith.sitofp %pz_ki : i32 to !pme_real
-      %pz_fracr = PME_F64_TO_REAL %pz_frac : f64 to !pme_real
-      %pz_u = arith.mulf %pz_fracr, %pz_kf : !pme_real
-      %pz_fu0 = math.floor %pz_u : !pme_real
-      // A coordinate that is not a number takes the point 0, so that the
-      // conversion to an integer is defined and every point is in the grid
-      // (#168); the fraction is in [0, 1] otherwise, and so is this.
-      %pz_nil = arith.constant 0.0 : !pme_real
-      %pz_fu = arith.maxnumf %pz_fu0, %pz_nil : !pme_real
-      %pz_w = arith.subf %pz_u, %pz_fu : !pme_real
-      %pz_bi32 = arith.fptosi %pz_fu : !pme_real to i32
-      %pz_bi = arith.extsi %pz_bi32 : i32 to i64
-      %pz_b = arith.index_cast %pz_bi : i64 to index
-      %pz_bk = arith.addi %pz_b, %k3 : index
-      %pz_bkn = arith.subi %pz_bk, %order : index
-      %pz_c1p = arith.constant 1 : index
-      %pz_start0 = arith.addi %pz_bkn, %pz_c1p : index
-      // The first point within the grid, so that the points of the particle need
-      // one subtraction at most to wrap around.
-      %pz_start = arith.remui %pz_start0, %k3 : index
-      %zfc = arith.constant 5 : index
-      %zfn = arith.muli %n_all, %zfc : index
-      %zfat = arith.addi %zfn, %item : index
-      memref.store %pz_w, %weights[%zfat] : memref<?x!pme_real, 1>
-      %zstart_i = arith.index_cast %pz_start : index to i32
-      %zstart_r = arith.sitofp %zstart_i : i32 to !pme_real
-      %zsn = arith.muli %n_all, %zc : index
-      %zsat = arith.addi %zsn, %item : index
-      memref.store %zstart_r, %weights[%zsat] : memref<?x!pme_real, 1>
-      }
-    }
-    gpu.terminator
-  }
-  return
-}
-
-
 // The forces, as @mdrt.pme_gather gives them: for each particle, a thread
 // for each point of its splines along z (PME_LANES threads, the least power
 // of 2 not below the order; those beyond it add zeros), and the first
@@ -5228,6 +5033,12 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
+    %lanes = arith.constant PME_LANES : index
+    %slot = arith.divui %item, %lanes : index
+    %j3 = arith.remui %item, %lanes : index
+    %listed = memref.load %list[%slot] : memref<?xi32, 1>
+    %listed_none = arith.constant 0 : i32
+    %is_listed = arith.cmpi sge, %listed, %listed_none : i32
     %c32w = arith.constant 32 : index
     %lane32 = arith.remui %item0, %c32w : index
     %wfirst = arith.subi %item0, %lane32 : index
@@ -5239,18 +5050,10 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
     %wlisted = arith.cmpi sge, %warp_listed, %wnone : i32
     %warp_active = arith.andi %wslot_in, %wlisted : i1
     scf.if %warp_active {
-      %lanes = arith.constant PME_LANES : index
-      %slot = arith.divui %item, %lanes : index
-      %j3 = arith.remui %item, %lanes : index
-      %listed = memref.load %list[%slot] : memref<?xi32, 1>
-      %listed_none = arith.constant 0 : i32
-      %is_listed = arith.cmpi sge, %listed, %listed_none : i32
       // A thread past the last listed place computes for the first particle of
       // its warp, which is listed, and does not store.
       %listed_or = arith.select %is_listed, %listed, %warp_listed : i32
       %i = arith.index_cast %listed_or : i32 to index
-      // The entry of that particle, at which the weights are stored.
-      %entry = arith.select %is_listed, %slot, %wslot_c : index
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
@@ -5741,17 +5544,14 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
         memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
       }
     }
-    %zslot0 = arith.divui %item0, %lanes_l : index
-    %zslot = arith.select %inside, %zslot0, %c0 : index
-    %zentry = memref.load %list[%zslot] : memref<?xi32, 1>
-    %znone = arith.constant 0 : i32
-    %zunlisted = arith.cmpi slt, %zentry, %znone : i32
+    %ztrue = arith.constant true
+    %zunlisted = arith.xori %is_listed, %ztrue : i1
     %zfirst = arith.cmpi eq, %lane_of, %c0 : index
     %zin = arith.andi %inside, %zfirst : i1
     %zstores = arith.andi %zin, %zunlisted : i1
     scf.if %zstores {
       %zminus = arith.constant -1 : i32
-      %zplace32 = arith.subi %zminus, %zentry : i32
+      %zplace32 = arith.subi %zminus, %listed : i32
       %zplace = arith.index_cast %zplace32 : i32 to index
       %zc1 = arith.constant 1 : index
       %zc2 = arith.constant 2 : index
@@ -5835,6 +5635,12 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
+    %lanes = arith.constant PME_LANES : index
+    %slot = arith.divui %item, %lanes : index
+    %j3 = arith.remui %item, %lanes : index
+    %listed = memref.load %list[%slot] : memref<?xi32, 1>
+    %listed_none = arith.constant 0 : i32
+    %is_listed = arith.cmpi sge, %listed, %listed_none : i32
     %c32w = arith.constant 32 : index
     %lane32 = arith.remui %item0, %c32w : index
     %wfirst = arith.subi %item0, %lane32 : index
@@ -5846,18 +5652,10 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
     %wlisted = arith.cmpi sge, %warp_listed, %wnone : i32
     %warp_active = arith.andi %wslot_in, %wlisted : i1
     scf.if %warp_active {
-      %lanes = arith.constant PME_LANES : index
-      %slot = arith.divui %item, %lanes : index
-      %j3 = arith.remui %item, %lanes : index
-      %listed = memref.load %list[%slot] : memref<?xi32, 1>
-      %listed_none = arith.constant 0 : i32
-      %is_listed = arith.cmpi sge, %listed, %listed_none : i32
       // A thread past the last listed place computes for the first particle of
       // its warp, which is listed, and does not store.
       %listed_or = arith.select %is_listed, %listed, %warp_listed : i32
       %i = arith.index_cast %listed_or : i32 to index
-      // The entry of that particle, at which the weights are stored.
-      %entry = arith.select %is_listed, %slot, %wslot_c : index
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
@@ -5872,12 +5670,12 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
       %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
       %xsc = arith.constant 0 : index
       %xsn = arith.muli %count, %xsc : index
-      %xsat = arith.addi %xsn, %entry : index
+      %xsat = arith.addi %xsn, %i : index
       %xstart_r = memref.load %weights[%xsat] : memref<?x!pme_real, 1>
       %xstart = arith.fptosi %xstart_r : !pme_real to i32
       %xfc = arith.constant 3 : index
       %xfn = arith.muli %count, %xfc : index
-      %xfat = arith.addi %xfn, %entry : index
+      %xfat = arith.addi %xfn, %i : index
       %xfrac = memref.load %weights[%xfat] : memref<?x!pme_real, 1>
       %bx_c0 = arith.constant 0 : index
       %bx_c1 = arith.constant 1 : index
@@ -5970,12 +5768,12 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
       memref.store %bx_f_bottom, %wx[%bx_c0] : memref<8x!pme_real>
       %ysc = arith.constant 1 : index
       %ysn = arith.muli %count, %ysc : index
-      %ysat = arith.addi %ysn, %entry : index
+      %ysat = arith.addi %ysn, %i : index
       %ystart_r = memref.load %weights[%ysat] : memref<?x!pme_real, 1>
       %ystart = arith.fptosi %ystart_r : !pme_real to i32
       %yfc = arith.constant 4 : index
       %yfn = arith.muli %count, %yfc : index
-      %yfat = arith.addi %yfn, %entry : index
+      %yfat = arith.addi %yfn, %i : index
       %yfrac = memref.load %weights[%yfat] : memref<?x!pme_real, 1>
       %by_c0 = arith.constant 0 : index
       %by_c1 = arith.constant 1 : index
@@ -6068,12 +5866,12 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
       memref.store %by_f_bottom, %wy[%by_c0] : memref<8x!pme_real>
       %zsc = arith.constant 2 : index
       %zsn = arith.muli %count, %zsc : index
-      %zsat = arith.addi %zsn, %entry : index
+      %zsat = arith.addi %zsn, %i : index
       %zstart_r = memref.load %weights[%zsat] : memref<?x!pme_real, 1>
       %zstart = arith.fptosi %zstart_r : !pme_real to i32
       %zfc = arith.constant 5 : index
       %zfn = arith.muli %count, %zfc : index
-      %zfat = arith.addi %zfn, %entry : index
+      %zfat = arith.addi %zfn, %i : index
       %zfrac = memref.load %weights[%zfat] : memref<?x!pme_real, 1>
       %bz_c0 = arith.constant 0 : index
       %bz_c1 = arith.constant 1 : index
@@ -6292,17 +6090,14 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
         memref.store %fzs, %f[%i, %i2] : memref<?x3x!pme_frc, 1>
       }
     }
-    %zslot0 = arith.divui %item0, %lanes_l : index
-    %zslot = arith.select %inside, %zslot0, %c0 : index
-    %zentry = memref.load %list[%zslot] : memref<?xi32, 1>
-    %znone = arith.constant 0 : i32
-    %zunlisted = arith.cmpi slt, %zentry, %znone : i32
+    %ztrue = arith.constant true
+    %zunlisted = arith.xori %is_listed, %ztrue : i1
     %zfirst = arith.cmpi eq, %lane_of, %c0 : index
     %zin = arith.andi %inside, %zfirst : i1
     %zstores = arith.andi %zin, %zunlisted : i1
     scf.if %zstores {
       %zminus = arith.constant -1 : i32
-      %zplace32 = arith.subi %zminus, %zentry : i32
+      %zplace32 = arith.subi %zminus, %listed : i32
       %zplace = arith.index_cast %zplace32 : i32 to index
       %zc1 = arith.constant 1 : index
       %zc2 = arith.constant 2 : index

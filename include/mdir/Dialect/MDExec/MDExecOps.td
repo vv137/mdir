@@ -204,7 +204,8 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     can be nonzero that `md.reciprocal` takes (`md_exec.nonzero`,
     D[pme-skip-zero]), the spreading and the gathering
     take those particles only, and the others take a force of zero. A sum
-    with `potential` takes no list.
+    with `potential` takes no list. With `gather_all` (that of
+    `md.reciprocal`), a device gathers every particle, as without a list.
   }];
   let arguments = (ins
     MDExec_FieldOrBuffer:$positions,
@@ -219,7 +220,8 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     F64Attr:$beta,
     F64Attr:$coulomb,
     UnitAttr:$dispersion,
-    UnitAttr:$potential
+    UnitAttr:$potential,
+    UnitAttr:$gather_all
   );
   let results = (outs
     F64:$energy,
@@ -234,6 +236,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
     (`potential` $potential^)?
     (`listed` `(` $listed^ `:` qualified(type($listed)) `)`)?
+    (`gather_all` $gather_all^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) `->` type($energy) `,` type($virial)
     (`,` qualified(type($forces))^)?

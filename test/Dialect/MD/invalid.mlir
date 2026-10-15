@@ -335,3 +335,17 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %q: !md.field<@atoms, f64>,
       -> f64, !md.field<@atoms, 3 x f64>, vector<9xf64>
   md.return %u : f64
 }
+
+// -----
+
+md.particle_set @atoms
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %q: !md.field<@atoms, f64>,
+               %cell: !md.cell, %moduli: !md.table<2, f64>) -> f64 {
+  // expected-error@+1 {{expected a list of the particles with 'gather_all'}}
+  %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli
+      grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.9) gather_all
+      : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>, !md.table<2, f64>
+      -> f64, !md.field<@atoms, 3 x f64>, vector<9xf64>
+  md.return %u : f64
+}

@@ -230,11 +230,15 @@ $j$; it is made from the
 topology and made again, by counting in chunks of 256 places and a prefix
 sum, wherever the particles take a new order (at the start and at each
 segment), so that it follows the order of the particles. A kernel takes
-an entry of the set where it took a particle; the weights of order 4 are
-stored at the entry, so that they are read in order. In the gathering a
-warp whose first entry is past the last member skips the sum and stores
-the forces of zero of the particles it holds: the gathering writes every
-force. A model with no such
+an entry of the set where it took a particle. In the gathering a warp
+whose first entry is past the last member skips the sum and stores the
+forces of zero of the particles it holds: the gathering writes every
+force. Where a set holds more than half the particles, a device gathers
+every particle instead, as without a set: the oxygen of a four-site water
+sits beside its virtual site in the order of the particles, and a warp
+reads the points of the grid of both at once, so that the oxygen costs
+almost nothing there, while a warp of the set reads those of more
+waters. A model with no such
 particle, or with tunable parameters that could move a coefficient across
 zero, has no set, and its kernels are those of before.
 

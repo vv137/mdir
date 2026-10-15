@@ -29,13 +29,27 @@ md.function @forces(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
   md.return %u, %f : f64, !vec
 }
 
+// ROUND-LABEL: md.function @all(
+// ROUND: coulomb(1.389000e+02) gather_all :
+// CHECK-LABEL: md.function @all(
+// CHECK: md_exec.reciprocal
+// CHECK-SAME: listed(
+// CHECK-SAME: gather_all
+md.function @all(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid,
+                 %l: !ids) -> (f64, !vec) {
+  %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli listed(%l)
+      grid([8, 8, 8]) order(4) beta(3.0) coulomb(138.9) gather_all
+      : !vec, !real, !grid, !ids -> f64, !vec, vector<9xf64>
+  md.return %u, %f : f64, !vec
+}
+
 // CHECK-LABEL: md.function @both(
 // CHECK: md_exec.reciprocal
 // CHECK-SAME: listed(
 // CHECK-SAME: -> f64, vector<9xf64>, !md.field<@atoms, 3 x f64>
 // CHECK: md_exec.reciprocal
-// CHECK-NOT: listed(
 // CHECK-SAME: potential
+// CHECK-NOT: listed(
 md.function @both(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid,
                   %l: !ids) -> (f64, !vec, !real) {
   %u, %f, %w, %p = md.reciprocal %x, %q, %cell, %moduli listed(%l)

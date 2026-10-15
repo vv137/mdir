@@ -480,7 +480,8 @@ LogicalResult Converter::convert(Operation *op) {
           reciprocal.getGridAttr(), reciprocal.getOrderAttr(),
           reciprocal.getBetaAttr(), reciprocal.getCoulombAttr(),
           reciprocal.getDispersionAttr(),
-          yieldsPotential ? builder.getUnitAttr() : UnitAttr());
+          yieldsPotential ? builder.getUnitAttr() : UnitAttr(),
+          yieldsPotential ? UnitAttr() : reciprocal.getGatherAllAttr());
     };
     if (takesForces) {
       auto converted = create(reciprocal.getForces().getType(), false);

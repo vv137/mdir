@@ -394,8 +394,13 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     whose other entries are −1 − the place of each of the others
     (`md_exec.nonzero`), the sum spreads and gathers those particles only
     (D[pme-skip-zero]): the others have a charge of zero, add
-    nothing to the grid, and take a force of zero. The potential at the particles is still gathered at
-    every particle.
+    nothing to the grid, and take a force of zero. The potential at the
+    particles is still gathered at every particle. With `gather_all` as
+    well, a device spreads the listed particles and gathers every one, as
+    without a list, which gives the others their force of zero by the
+    product with their charge: where most particles are listed, the
+    others share the points of the grid of their neighbors in a warp, and
+    gathering them costs less than the list does.
 
     ```mlir
     %u, %f, %w = md.reciprocal %x, %q, %cell, %moduli listed(%l)
@@ -415,7 +420,8 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     I64Attr:$order,
     F64Attr:$beta,
     F64Attr:$coulomb,
-    UnitAttr:$dispersion
+    UnitAttr:$dispersion,
+    UnitAttr:$gather_all
   );
   let results = (outs
     F64:$energy,
@@ -428,6 +434,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     (`listed` `(` $listed^ `)`)?
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
+    (`gather_all` $gather_all^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) (`,` qualified(type($listed))^)?
     `->` type($energy) `,`

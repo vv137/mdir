@@ -3505,9 +3505,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
                          ValueRange{fixed, real});
   } else if (listed && usesWeights) {
-    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights_listed"),
-                         ValueRange{positions, listed, box, weights, k1, k2,
-                                    k3});
+    // The weights of every particle, for a gathering of every particle as
+    // well as of the listed ones.
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
+                         ValueRange{positions, box, weights, k1, k2, k3});
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_spread_bricks_listed"),
                          ValueRange{positions, charges, listed, weights,
@@ -3582,7 +3583,12 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
   // The gathering takes the places of the particles from the weights
-  // where it has them (D102).
+  // where it has them (D102). With a list, it takes the listed particles,
+  // or with `gather_all` every particle, as without a list: there most
+  // particles are listed, and the others share the points of the grid of
+  // their neighbors in a warp (D[pme-skip-zero]).
+  if (op.getGatherAll())
+    listed = Value();
   if (listed && usesWeights)
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_gather_weights_listed"),

@@ -229,6 +229,20 @@ private:
       return field.name == name;
     });
   }
+  /// Whether more than half the particles are in the list `name` of
+  /// collectListed: a device then gathers every particle (`gather_all`),
+  /// as the gathering over the list costs more than the others where they
+  /// are few and share the points of the grid of their neighbors
+  /// (D[pme-skip-zero]).
+  bool gathersAll(llvm::StringRef name) const {
+    for (const Program::Field &field : program.fields)
+      if (field.name == name) {
+        size_t listed = llvm::count_if(field.values.get(),
+                                       [](double v) { return v >= 0.0; });
+        return 2 * listed > field.values.size();
+      }
+    return false;
+  }
   /// The grid of particle mesh Ewald: given, or from the largest spacing in
   /// Å; and the table `name` of the factors of its influence function along
   /// each edge.
@@ -4899,7 +4913,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "      grid([" << program.ljpmeGrid[0] << ", "
        << program.ljpmeGrid[1] << ", " << program.ljpmeGrid[2]
        << "]) order(" << control.ljpmeOrder << ") beta("
-       << formatReal(program.ljpmeBeta) << ") coulomb(1.0) dispersion\n"
+       << formatReal(program.ljpmeBeta) << ") coulomb(1.0) dispersion"
+       << (listed && gathersAll("ljpme_listed") ? " gather_all" : "") << "\n"
        << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
        << " -> f64, !vec, vector<9xf64>\n";
     add("lj_reciprocal");
@@ -4928,7 +4943,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
        << ", " << program.pmeGrid[2] << "]) order(" << control.pmeOrder
        << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
-       << formatReal(coulombInternal) << ")\n"
+       << formatReal(coulombInternal) << ")"
+       << (listed && gathersAll("pme_listed") ? " gather_all" : "") << "\n"
        << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
        << " -> f64, !vec, vector<9xf64>\n";
     add("reciprocal");
