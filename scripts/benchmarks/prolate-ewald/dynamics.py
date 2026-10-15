@@ -7,7 +7,8 @@ dynamics.py run MDIR DIR                                      on the GPU, in tur
 dynamics.py report DIR                                        the table
 
 The drift is the slope of a straight line fitted to the total energy of the
-rows of the energy file, in kcal/mol/ns and per particle; the
+rows of the energy file, in kcal/mol/ns and per particle, and the slopes of
+its two halves, which show how much a slope varies by itself; the
 volume is the mean of the second half of the NPT run, with the standard
 error of the mean of 10 blocks.
 """
@@ -118,7 +119,10 @@ elif mode == 'report':
             total = rows[:, col['total']]
             count = int(re.search(r'MDIR: (\d+) particles', log)[1])
             slope = np.polyfit(time, total, 1)[0]
-            print(f'{case}: {len(rows)} rows, {time[-1]:.2f} ns, drift {slope:.3f} kcal/mol/ns, '
+            half = len(time) // 2
+            halves = [np.polyfit(time[a:b], total[a:b], 1)[0] for a, b in ((0, half), (half, None))]
+            print(f'{case}: {len(rows)} rows, {time[-1]:.2f} ns, drift {slope:.3f} kcal/mol/ns '
+                  f'(halves {halves[0]:.2f}, {halves[1]:.2f}), '
                   f'{slope / count:.2e} kcal/mol/ns per particle, fluctuation {np.std(total):.2f} '
                   f'kcal/mol' + (f', grid {grid[1]}' if grid else ''))
         else:
