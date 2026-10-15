@@ -233,6 +233,12 @@ private:
   /// Emits `@descend`, one step of steepest descent that moves no particle
   /// farther than `%h`, and the loops of a minimization in the entry.
   void emitDescend();
+  /// Emits `result`, an f64: the number of constrained lengths of SETTLE
+  /// and SHAKE at the positions `x` whose square is off its target by more
+  /// than a tolerance of the precision, or is not a number
+  /// (D[minimize-large-opc]).
+  void emitConstraintFailures(StringRef indent, StringRef x,
+                              StringRef result);
   /// Emits `result`, the forces `f` over the masses, 0 for particles
   /// without mass, without their parts along the constraints at the
   /// positions `x`: the direction of steepest descent in the metric of the
@@ -8742,6 +8748,97 @@ std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
   return current;
 }
 
+void Builder::emitConstraintFailures(StringRef indent, StringRef x,
+                                     StringRef result) {
+  // A length fails if |r²/d² − 1| is above the tolerance or is not a
+  // number (an unordered comparison). Below double precision the lengths of
+  // intact waters of a box of 150 Å, stored in f32, are off by up to
+  // 4·10⁻⁷ (measured, #343), and a water that the constraints did not take
+  // back to its shape by 10⁻¹ or more: 10⁻⁴ lies between them. In double
+  // precision SETTLE and SHAKE meet them to the rounding of f64.
+  double tolerance = control.precision == Precision::Double ? 1.0e-8 : 1.0e-4;
+  struct Group {
+    std::string set;
+    unsigned arity;
+    std::vector<ConstrainedBond> bonds;
+    std::vector<std::string> fields;
+  };
+  std::vector<Group> groups;
+  if (hasSettles())
+    groups.push_back({"settles",
+                      3,
+                      {{0, 1, "%vs_doh"}, {0, 2, "%vs_doh"}, {1, 2, "%vs_dhh"}},
+                      {"%f_settles_doh", "%f_settles_dhh"}});
+  for (const Program::TupleSet *set : getShakeSets()) {
+    Group group{set->name, set->arity, {}, {}};
+    for (unsigned k = 1; k < set->arity; ++k) {
+      group.bonds.push_back({0, k, "%vs_d" + std::to_string(k)});
+      group.fields.push_back("%f_" + set->name + "_d" + std::to_string(k));
+    }
+    groups.push_back(std::move(group));
+  }
+  std::string current;
+  for (auto [index, group] : llvm::enumerate(groups)) {
+    std::string coordinates, arguments, fieldTypes, fieldList;
+    for (auto [k, bond] : llvm::enumerate(group.bonds)) {
+      coordinates += (k == 0 ? "" : ", ") +
+                     ("displacement(" + std::to_string(bond.second) + ", " +
+                      std::to_string(bond.first) + ")");
+      arguments += "%vs_r" + std::to_string(k) + ": vector<3xf64>, ";
+    }
+    for (auto [k, field] : llvm::enumerate(group.fields)) {
+      fieldList += (k == 0 ? "" : ", ") + field;
+      fieldTypes += (k == 0 ? "" : ", ") + ("!of_" + group.set);
+    }
+    std::vector<std::string> lengths;
+    for (const ConstrainedBond &bond : group.bonds)
+      if (!llvm::is_contained(lengths, bond.length))
+        lengths.push_back(bond.length);
+    for (auto [k, name] : llvm::enumerate(lengths))
+      arguments += name + ": f64" + (k + 1 == lengths.size() ? "" : ", ");
+    std::string sum = (result + "_" + group.set).str();
+    std::string inner = (indent + "  ").str();
+    os << indent << sum << " = md.sum_tuples %r_" << group.set << ", " << x
+       << ", %cell\n"
+       << indent << "    coordinates(" << coordinates << ")\n"
+       << indent << "    tuple(" << fieldList << " : " << fieldTypes
+       << ") {\n"
+       << indent << "^bb0(" << arguments << "):\n";
+    SiteKernel k(os, inner);
+    std::string one = k.constant(1.0), zero = k.constant(0.0),
+                limit = k.constant(tolerance);
+    std::string count;
+    for (auto [i, bond] : llvm::enumerate(group.bonds)) {
+      std::string r = "%vs_r" + std::to_string(i);
+      std::string d2 = k.real("mulf", bond.length, bond.length);
+      std::string off = k.real("subf", k.real("divf", k.dot(r, r), d2), one);
+      std::string n = std::to_string(i);
+      os << inner << "%vs_abs" << n << " = math.absf " << off << " : f64\n"
+         << inner << "%vs_bad" << n << " = arith.cmpf ugt, %vs_abs" << n
+         << ", " << limit << " : f64\n"
+         << inner << "%vs_one" << n << " = arith.select %vs_bad" << n << ", "
+         << one << ", " << zero << " : f64\n";
+      std::string failed = "%vs_one" + n;
+      count = count.empty() ? failed : k.real("addf", count, failed);
+    }
+    os << inner << "md.yield " << count << " : f64\n"
+       << indent << "} : !rel_" << group.set << ", !vec -> f64\n";
+    if (index == 0) {
+      current = sum;
+    } else {
+      std::string next = (result + "_" + std::to_string(index)).str();
+      os << indent << next << " = arith.addf " << current << ", " << sum
+         << " : f64\n";
+      current = next;
+    }
+  }
+  if (current.empty())
+    os << indent << result << " = arith.constant 0.0 : f64\n";
+  else
+    os << indent << result << " = arith.addf " << current
+       << ", %zero : f64\n";
+}
+
 void Builder::emitDescend() {
   // The step moves each particle along g, its force over its mass without
   // the parts along the constraints, by `%h` times g over the 16-norm of
@@ -8805,7 +8902,7 @@ void Builder::emitDescend() {
   // atoms put them.
   if (constraints) {
     std::string current = "%x1d";
-    std::string constrained = sites ? "%x1s" : "%x1";
+    std::string constrained = "%x1k";
     unsigned steps = (settles ? 1 : 0) + shakeSets.size(), step = 0;
     auto next = [&]() {
       ++step;
@@ -8821,6 +8918,25 @@ void Builder::emitDescend() {
       emitShakePositions("  ", "%x", current, *set, result);
       current = result;
     }
+    // A trial whose groups the constraints did not take back to their
+    // shapes, a step too long for SETTLE or M-SHAKE, is not taken: the
+    // energy is evaluated where the step began, so that no position that
+    // is not a number reaches the neighbor structure, and is returned as
+    // +inf, so that the step shrinks. Taken, it would leave the surface of
+    // the constraints, and every later trial would hold the change that
+    // takes the group back, which does not shrink with the step
+    // (D[minimize-large-opc], #343).
+    emitConstraintFailures("  ", "%x1k", "%broken");
+    os << "  %intact = arith.cmpf oeq, %broken, %zero : f64\n"
+       << "  " << (sites ? "%x1s" : "%x1")
+       << " = md.map_particles gather(%x1k, %x : !vec, !vec) {\n"
+       << "  ^bb0(%new_i: vector<3xf64>, %old_i: vector<3xf64>):\n"
+       << "    %zero_i = arith.constant 0.0 : f64\n"
+       << "    %intact_i = arith.cmpf oeq, %broken, %zero_i : f64\n"
+       << "    %chosen = arith.select %intact_i, %new_i, %old_i "
+          ": vector<3xf64>\n"
+       << "    md.yield %chosen : vector<3xf64>\n"
+       << "  } : !vec\n";
   }
   if (sites)
     emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
@@ -8836,7 +8952,13 @@ void Builder::emitDescend() {
     emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1", "%u1p", "%u1", "%w1z",
                    "%w1r");
   }
-  os << "  dyn.return %x1, %f1, %u1 : !vec, !vec, f64\n}\n\n";
+  std::string energy = "%u1";
+  if (constraints) {
+    os << "  %never = arith.constant 0x7FF0000000000000 : f64\n"
+       << "  %u1c = arith.select %intact, %u1, %never : f64\n";
+    energy = "%u1c";
+  }
+  os << "  dyn.return %x1, %f1, " << energy << " : !vec, !vec, f64\n}\n\n";
 }
 
 void Builder::emitMinimization(StringRef velocities) {
