@@ -252,13 +252,17 @@ Window mdir::prolate::getWindow(double c1, int64_t points) {
   // evaluate the same window, so that the factor B of the transform is
   // that of what they spread.
   std::vector<std::vector<double>> values, slopes;
+  // The window less its value at the edge of its support, continuous there
+  // (Prolate.h).
+  double edge = psi.value(1.0);
+  window.edge = edge;
   size_t degree = 1;
   for (int64_t j = 0; j != points; ++j) {
     double offset = shift + static_cast<double>(below - 1 - j);
     auto at = [&](double t) {
       double d = 0.5 * (t + 1.0) + offset;
       double x = d / half;
-      return std::fabs(x) <= 1.0 ? psi.value(x) : 0.0;
+      return std::fabs(x) <= 1.0 ? psi.value(x) - edge : 0.0;
     };
     auto slope = [&](double t) {
       double d = 0.5 * (t + 1.0) + offset;
@@ -285,13 +289,13 @@ Window mdir::prolate::getWindow(double c1, int64_t points) {
     window.slopes.insert(window.slopes.end(), slopes[j].begin(),
                          slopes[j].end());
   }
-  // φ̂₁(κ) = (P/2) ∫₋₁¹ ψ(t) cos(κ P t / 2) dt.
+  // φ̂₁(κ) = (P/2) ∫₋₁¹ (ψ(t) − ψ(1)) cos(κ P t / 2) dt.
   int count = std::max(200, static_cast<int>(4 * c1) + 100);
   std::vector<double> x, w;
   gaussLegendre(count, x, w);
   for (int i = 0; i != count; ++i) {
     window.transformNodes.push_back(x[i] * half);
-    window.transformWeights.push_back(w[i] * psi.value(x[i]) * half);
+    window.transformWeights.push_back(w[i] * (psi.value(x[i]) - edge) * half);
   }
   return window;
 }
@@ -301,6 +305,13 @@ double Window::transform(double kappa) const {
   for (size_t i = 0; i != transformNodes.size(); ++i)
     sum += transformWeights[i] * std::cos(kappa * transformNodes[i]);
   return sum;
+}
+
+double Window::paperTransform(double kappa) const {
+  // (P/2) ∫₋₁¹ ψ(1) cos(κ P t / 2) dt = 2 ψ(1) sin(κ P / 2) / κ.
+  double half = 0.5 * static_cast<double>(points);
+  double box = kappa == 0.0 ? 2.0 * half : 2.0 * std::sin(kappa * half) / kappa;
+  return transform(kappa) + edge * box;
 }
 
 Influence mdir::prolate::getInfluence(const Function &psi) {
@@ -332,8 +343,8 @@ double mdir::prolate::getAliasing(const Function &psi, const Window &window,
     for (int64_t k = -reach[a]; k <= reach[a]; ++k) {
       double kappa = 2.0 * M_PI * k / grid[a];
       double alias = 2.0 * M_PI * (k + grid[a]) / grid[a];
-      ratio[a].push_back(
-          std::fabs(window.transform(alias) / window.transform(kappa)));
+      ratio[a].push_back(std::fabs(window.paperTransform(alias) /
+                                   window.paperTransform(kappa)));
     }
   }
   double total = 0.0, aliased[3] = {0.0, 0.0, 0.0};

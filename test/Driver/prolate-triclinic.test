@@ -11,12 +11,14 @@
 # RUN: mdir run %t/run.toml > %t/run.log
 # RUN: FileCheck %s < %t/run.log
 # RUN: %python %S/Inputs/check_coulomb_total.py %t/run.log -3963.615657 1e-6 | FileCheck %s --check-prefix=TOTAL
-# RUN: sed 's/^kernel = "PROLATE"$/kernel = "PROLATE"\ntolerance = 1e-9\norder = 8/' %t/run.toml > %t/tight.toml
+# RUN: sed 's/^kernel = "PROLATE"$/kernel = "PROLATE"\ntolerance = 1e-9\norder = 8\ngrid = [64, 64, 64]/' %t/run.toml > %t/tight.toml
 # RUN: mdir run %t/tight.toml > %t/tight.log
 # RUN: %python %S/Inputs/check_coulomb_total.py %t/tight.log -3963.615657 1e-8 | FileCheck %s --check-prefix=TOTAL
 
-# The default, ε = 1e-5 and 6 points: within 4.3e-8 of the sum; ε = 1e-9
-# and 8 points: within 2.5e-10.
+# The default, ε = 1e-5 and 6 points: within 1.0e-8 of the sum; ε = 1e-9
+# and 8 points on 64³: within 1.3e-9. At 1e-9 the aliasing estimate of 8
+# points stays above ε/2 on every grid (6.4e-10 on 500³), so the automatic
+# grid is refused there and the grid is given.
 #
 # CHECK: MDIR: the prolate kernel of PME: c = 14.4712, c1 = 15.2026, 6 points of the window, a grid of 20 x 20 x 20
 # TOTAL: ok

@@ -98,8 +98,11 @@ int main() {
           t0 = t1;
           t1 = t2;
         }
-        double d = 0.5 * (t + 1.0) + 2.0 - j;
-        worst = std::max(worst, std::fabs(sum - window1.value(d / 3.0)));
+        // The window less its value at the edge of its support.
+        double x = (0.5 * (t + 1.0) + 2.0 - j) / 3.0;
+        double expected =
+            std::fabs(x) <= 1.0 ? window1.value(x) - window1.value(1.0) : 0.0;
+        worst = std::max(worst, std::fabs(sum - expected));
       }
     bool ok = worst <= 1e-14 * window1.value(0.0) && window.degree <= 20;
     failures += !ok;

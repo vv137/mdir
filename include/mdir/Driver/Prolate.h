@@ -64,8 +64,14 @@ std::vector<double>
 getChebyshevSeries(const std::function<double(double)> &f, double tolerance,
                    double scale = 0.0);
 
-/// The window of the spreading, φ₁(d) = ψ₀^{c₁}(2d / P) for |d| ≤ P/2 in
-/// points of the grid [Liang2026, eq. 14], as the kernels evaluate it: a
+/// The window of the spreading, φ₁(d) = ψ₀^{c₁}(2d / P) − ψ₀^{c₁}(1) for
+/// |d| ≤ P/2 in points of the grid: the window of [Liang2026, eq. 14] less
+/// its value at the edge of its support, so that it is continuous there. A
+/// particle that crosses a plane of the grid moves the point of its edge
+/// from one end of its P points to the other; with the window of the paper
+/// that moves a weight of ψ(1) ≈ ε/2, the energy of the mesh jumps, and
+/// the total energy of a run drifts (#334: 75 kcal/mol/ns on JAC at
+/// ε = 1e-3). As the kernels evaluate it: a
 /// particle at the scaled coordinate u adds to the P points first + j,
 /// first = ⌊u − h⌋ − ⌊P/2⌋ + 1 with h = ½ for odd P and 0 for even P, with
 /// the weight φ₁(s + h + ⌊P/2⌋ − 1 − j) where s = u − h − ⌊u − h⌋. Each
@@ -79,7 +85,11 @@ struct Window {
   std::vector<double> values, slopes;
   /// φ̂₁(κ) = ∫ φ₁(d) e^{−iκd} dd, of κ in radians a point.
   double transform(double kappa) const;
-  double c1 = 0.0;
+  /// The same of the window of the paper, ψ₀^{c₁}(2d / P) without the
+  /// value at the edge taken off: what the aliasing estimate of eq. 10 is
+  /// calibrated with (getAliasing).
+  double paperTransform(double kappa) const;
+  double c1 = 0.0, edge = 0.0;
   std::vector<double> transformNodes, transformWeights;
 };
 Window getWindow(double c1, int64_t points);
@@ -108,7 +118,7 @@ double getSplitting(const Function &psi, Part part, double x);
 /// The aliasing error of the spreading relative to the spectral sum that
 /// it perturbs, the estimate of eq. 10 of [Liang2026] divided by the same
 /// sum without the factor of the alias: for each axis a,
-/// 6 Σ_k w(k) |φ̂₁(2π(k_a + K_a)/K_a) / φ̂₁(2πk_a/K_a)| / Σ_k w(k), with
+/// 6 Σ_k w(k) |φ̂₁(2π(k_a + K_a)/K_a) / φ̂₁(2πk_a/K_a)| / Σ_k w(k) of the paper's window (Window::paperTransform), with
 /// w(k) = χ̂(2π r_c |m|) / |m|² over the wave vectors m = k/L within the
 /// band of χ̂; the largest of the three. Lengths in any one unit.
 double getAliasing(const Function &psi, const Window &window,
