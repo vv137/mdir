@@ -19,7 +19,7 @@ stochastic cell rescaling (D119).
 | 4 | `4-md.toml` | 30 ns at 1 bar without restraints, a frame every 20 ps; the area per lipid settles over the first 10 ns |
 
 Each stage begins from the checkpoint of the one before. All use PME with
-$\operatorname{erfc}(\beta r_c) = 10^{-5}$ and a cutoff of 10 Å with the
+$\mathrm{erfc}(\beta r_c) = 10^{-5}$ and a cutoff of 10 Å with the
 correction for the dispersion, SETTLE on the waters, SHAKE and RATTLE on
 the bonds of hydrogen, and a GPU in mixed precision; stages 2 to 4 take
 the groups of 16 with a dual list (outer 13 Å, inner 10.6 Å), and the

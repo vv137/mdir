@@ -81,7 +81,7 @@ and the background of PME, the correction for the dispersion, the tails of
 pair terms, the estimates of the shift). Central differences of `g.energy`
 in an entry of a tunable converge to the entry of the derivative, which is
 how the tests check it. On the dipeptide with PME at
-$\operatorname{erfc}(\beta r_c) = 10^{-5}$ and a switch of the
+$\mathrm{erfc}(\beta r_c) = 10^{-5}$ and a switch of the
 Lennard-Jones, `g.energy` is 0.128 kJ/mol above the reported energy, the
 shift of the direct sum.
 
@@ -318,7 +318,7 @@ k)$, with the weights in place of their gradient and without the charge.
   $\partial E_\text{bg}/\partial q_i = -f\pi Q/(V\beta^2)$, the second
   proportional to $1/V$.
 - The direct sum (shifted to 0 at the cutoff, D210), the excluded pairs
-  $-fq_iq_j\operatorname{erf}(\beta r)/r$, and the 1-4 pairs are sums that
+  $-fq_iq_j\mathrm{erf}(\beta r)/r$, and the 1-4 pairs are sums that
   gather the charges, with the rules above.
 
 D161 took the derivative of the reciprocal sum in a scalar from two more
@@ -420,7 +420,7 @@ The reference energy is torch-pme's Ewald sum (the direct sum over the
 pairs within the cutoff that the topology does not exclude, the sum of the
 mesh, the self term, the background) with three sums written in torch
 around it: less the shift of the direct sum to 0 at the cutoff, less
-$fq_iq_j\operatorname{erf}(\beta r)/r$ of the excluded pairs, plus the 1-4
+$fq_iq_j\mathrm{erf}(\beta r)/r$ of the excluded pairs, plus the 1-4
 pairs. torch-pme interpolates with Lagrange polynomials and an influence
 function of its own, MDIR with B-splines of order 4 and the factors of
 smooth PME, so the two agree as their grids are refined, not to rounding:

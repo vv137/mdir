@@ -18,7 +18,7 @@ tutorial rather than kept here.
 | 4 | `4-md.toml` | 10 ns at 1 bar without restraints, a frame every 10 ps |
 
 Each stage begins from the checkpoint of the one before. All use PME with
-$\operatorname{erfc}(\beta r_c) = 10^{-5}$ and a cutoff of 9 Å, SETTLE on
+$\mathrm{erfc}(\beta r_c) = 10^{-5}$ and a cutoff of 9 Å, SETTLE on
 the waters, SHAKE and RATTLE on the bonds of hydrogen, a step of 2 fs, and
 a GPU in mixed precision; stages 2 to 4 take the groups of 16 with a dual
 list (outer 12 Å, inner 9.6 Å), which only a GPU has. To run on the host,

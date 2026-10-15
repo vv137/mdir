@@ -534,7 +534,7 @@ because both factors change sign.
 **Sign convention (B8).** $\mathsf W$ is the MDIR virial [[Louwerse2006]](references.md#louwerse2006). $\mathbf K(i, j)$ is the force on
 $i$ due to $j$, so $\mathsf W$ is positive for repulsion. The pressure is
 
-$$P = \frac{2 E_\text{kin} + \operatorname{tr}\mathsf W}{3V}.$$
+$$P = \frac{2 E_\text{kin} + \mathrm{tr}\,\mathsf W}{3V}.$$
 
 Other packages use other conventions. The GROMACS virial is $-\mathsf W / 2$
 [[GromacsManual2025]](references.md#gromacsmanual2025).

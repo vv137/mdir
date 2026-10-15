@@ -183,7 +183,7 @@ after their rounding, a range along the axis $a$ of length $L_a$ is
 | Reach | The integers of the range |
 |---|---|
 | $R \le \tfrac12 L_a$ | 0 alone: the image of the pass |
-| $\tfrac12 L_a < R \le L_a$ | 0, and $\operatorname{sign}(r_a)$ where $L_a - \lvert r_a\rvert < R$: the image on the other side |
+| $\tfrac12 L_a < R \le L_a$ | 0, and $\mathrm{sign}(r_a)$ where $L_a - \lvert r_a\rvert < R$: the image on the other side |
 | $R > L_a$ | one more a side for each further $L_a$ |
 
 With $R \le \tfrac12 \min(a_x, b_y, c_z)$ the image of the pass is the

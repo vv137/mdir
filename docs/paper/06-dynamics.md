@@ -420,7 +420,7 @@ pressure $P_0$ every $N_P$ steps; $N_P = N_T$, and a barostat requires the
 thermostat. The internal pressure for the strain is
 
 $$
-P = c\,\frac{2K_t + \operatorname{tr}\mathsf W + C/V}{3V},
+P = c\,\frac{2K_t + \mathrm{tr}\,\mathsf W + C/V}{3V},
 $$
 
 with $c = 16.6053906717$ bar nm³ mol/kJ, $K_t$ the kinetic energy of the
@@ -568,7 +568,7 @@ from the virial of an evaluation and the places within each group,
 
 $$
 \sum_g\mathbf X_g\cdot\mathbf F_g
-= \operatorname{tr}\mathsf W_\text{eval} - \sum_g\sum_{j\in g}(\mathbf x_j - \mathbf X_g)\cdot\mathbf F_j ,
+= \mathrm{tr}\,\mathsf W_\text{eval} - \sum_g\sum_{j\in g}(\mathbf x_j - \mathbf X_g)\cdot\mathbf F_j ,
 $$
 
 with the forces after the virtual sites have given theirs to their atoms
@@ -586,7 +586,7 @@ $$
 and the left side is half the second derivative of the moment of inertia
 about the center, zero for a rigid group, so $-\sum_j(\mathbf x_j -
 \mathbf X)\cdot\mathbf F_j = 2K_\text{int}$ with $\mathbf F_j$ the forces
-with those of the constraints, and $\mathcal W = \operatorname{tr}\mathsf
+with those of the constraints, and $\mathcal W = \mathrm{tr}\,\mathsf
 W + 2K_\text{int} + C/V$. MDIR counted so first, and the count was biased
 with rigid groups: the identity needs the forces of the constraints of
 one configuration, and in the step that scales, the constraints of the
@@ -653,7 +653,7 @@ follows the cell as the positions do (the options `com` and `all` of
 `refcoord-scaling` in GROMACS
 [[GromacsManual2025]](references.md#gromacsmanual2025)). The virial is the
 derivative of the energy when the positions and the centers scale,
-$\operatorname{diag}\sum -2k\,\mathbf d \odot (\mathbf d + \mathbf o)$
+$\mathrm{diag}\,\sum -2k\,\mathbf d \odot (\mathbf d + \mathbf o)$
 with $\mathbf d = \mathbf x - \mathbf x^\text{ref}$, as the next paragraphs
 derive. Scaling every
 reference about the origin shrank those of ubiquitin with a cell that had
@@ -746,8 +746,8 @@ and members of rigid groups take $\mathbf X_g$ in place of $\mathbf x_i$.*
 | Frame of the term | Moves with the cell | $\mathsf W$ | In MDIR | `refcoord-scaling` of GROMACS |
 |---|---|---|---|---|
 | Fixed in space | Nothing | $\sum_i\mathbf x_i\otimes\mathbf F_i$, about the origin | `[[energy.external]]`, `scaling = "NONE"` | `no` |
-| A center scales, offsets do not | The center $\mathbf x^\text{c}$ | $\operatorname{diag}\sum_i(\mathbf x_i - \mathbf m_0\odot\mathbf x^\text{c})\odot\mathbf F_i$ | restraints, `reference_scaling = "CENTER"` | `com` |
-| Each reference scales | Every reference | $\operatorname{diag}\sum_i\mathbf d_i\odot\mathbf F_i$ | restraints, `reference_scaling = "ALL"` | `all` |
+| A center scales, offsets do not | The center $\mathbf x^\text{c}$ | $\mathrm{diag}\,\sum_i(\mathbf x_i - \mathbf m_0\odot\mathbf x^\text{c})\odot\mathbf F_i$ | restraints, `reference_scaling = "CENTER"` | `com` |
+| Each reference scales | Every reference | $\mathrm{diag}\,\sum_i\mathbf d_i\odot\mathbf F_i$ | restraints, `reference_scaling = "ALL"` | `all` |
 | The whole frame scales | $\mathbf x\odot\mathbf L_0\oslash\mathbf L$ | $0$ | `[[energy.external]]`, `scaling = "CELL"` | — |
 
 Differentiation computes the two parts from the IR: the derivative of a
@@ -799,7 +799,7 @@ over the rows: the check of the hot-solvent/cold-solute problem
 $$
 T = \frac{2K_T}{N_fk_B},
 \qquad
-P = \frac{2K_P + \operatorname{tr}\mathsf W}{3V},
+P = \frac{2K_P + \mathrm{tr}\,\mathsf W}{3V},
 \qquad
 \mathsf W = \sum\mathbf d\otimes\mathbf K + \mathsf W_\text{tuples} + \mathsf W_\text{rec} + \mathsf W_c + \dots,
 $$
@@ -1184,13 +1184,13 @@ vacuum. Under particle mesh Ewald (Section 5) every part takes its share:
 
 | Part | With $\lambda_\text{C}$ |
 |---|---|
-| Direct sum of a pair | $(1 - c_{ij}\lambda_\text{C})\,f q_iq_j\operatorname{erfc}(\beta r)/r$ |
+| Direct sum of a pair | $(1 - c_{ij}\lambda_\text{C})\,f q_iq_j\mathrm{erfc}(\beta r)/r$ |
 | Reciprocal sum | of the charges $q_i(\lambda_\text{C})$ |
-| Excluded pairs | $-f q_i(\lambda_\text{C})\,q_j(\lambda_\text{C})\operatorname{erf}(\beta r)/r$ |
-| Pairs within the selection that are not excluded | $+\big(1 - (1 - \lambda_\text{C})^2\big)\,f q_iq_j\operatorname{erf}(\beta r)/r$ |
+| Excluded pairs | $-f q_i(\lambda_\text{C})\,q_j(\lambda_\text{C})\mathrm{erf}(\beta r)/r$ |
+| Pairs within the selection that are not excluded | $+\big(1 - (1 - \lambda_\text{C})^2\big)\,f q_iq_j\mathrm{erf}(\beta r)/r$ |
 | Self term, background | of the charges $q_i(\lambda_\text{C})$ and their sum |
 
-A pair within the selection thus has $f q_iq_j\big(\operatorname{erfc}(\beta r)[r < r_c] + \operatorname{erf}(\beta r)\big)/r$
+A pair within the selection thus has $f q_iq_j\big(\mathrm{erfc}(\beta r)[r < r_c] + \mathrm{erf}(\beta r)\big)/r$
 at every $\lambda_\text{C}$, its Coulomb energy within the cutoff, and its
 images in the reciprocal sum vanish with the charges. With the reaction
 field or a plain cutoff only the decoupled pairs scale. The correction for

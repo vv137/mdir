@@ -311,7 +311,7 @@ shifts and adds no image of its own.
 Before D242 the orthorhombic images kernel took, along each
 axis, the nearest image or the one on the other side of the boundary, 8
 combinations: the images with $\lvert r_a\rvert \le L_a$ on the side of
-$-\operatorname{sign}(r_a)$ only, complete while $h_a + R \le L_a$, which
+$-\mathrm{sign}(r_a)$ only, complete while $h_a + R \le L_a$, which
 nothing asked (#263). The triclinic kernel had the 27 codes, with a bound
 of half of the least of $a_x, b_y, c_z$ on the reach, which the proof
 above replaces by the whole of it.

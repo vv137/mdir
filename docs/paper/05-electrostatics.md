@@ -17,7 +17,7 @@ from those programs' by these factors (Section 9.1).
 The Coulomb energy of the charges of the cell and their periodic images,
 less the pairs that the force field excludes (bonded neighbors, 1–2, 1–3,
 and 1–4, whose 1–4 interaction is a scaled term of its own), is split with
-$1/r = \operatorname{erfc}(\beta r)/r + \operatorname{erf}(\beta r)/r$
+$1/r = \mathrm{erfc}(\beta r)/r + \mathrm{erf}(\beta r)/r$
 [[Ewald1921]](references.md#ewald1921):
 
 $$
@@ -28,8 +28,8 @@ $$
 
 | Term | As implemented | Where it runs |
 |---|---|---|
-| $E_\text{dir}$ | $f\sum_{i<j,\ r_{ij}<r_c}' q_iq_j\big[\operatorname{erfc}(\beta r_{ij})/r_{ij} - s\big]$, $s = \operatorname{erfc}(\beta r_c)/r_c$ under `coulomb_modifier = "POTENTIAL_SHIFT"`, otherwise 0; the prime omits excluded pairs | The loop over pairs, with Lennard–Jones |
-| $E_\text{excl}$ | $-f\sum_{(i,j)\ \text{excluded}} q_iq_j\operatorname{erf}(\beta r_{ij})/r_{ij}$, over every excluded pair, without a cutoff | A loop over the tuples of the excluded pairs |
+| $E_\text{dir}$ | $f\sum_{i<j,\ r_{ij}<r_c}' q_iq_j\big[\mathrm{erfc}(\beta r_{ij})/r_{ij} - s\big]$, $s = \mathrm{erfc}(\beta r_c)/r_c$ under `coulomb_modifier = "POTENTIAL_SHIFT"`, otherwise 0; the prime omits excluded pairs | The loop over pairs, with Lennard–Jones |
+| $E_\text{excl}$ | $-f\sum_{(i,j)\ \text{excluded}} q_iq_j\mathrm{erf}(\beta r_{ij})/r_{ij}$, over every excluded pair, without a cutoff | A loop over the tuples of the excluded pairs |
 | $E_\text{self}$ | $-f\frac{\beta}{\sqrt\pi}\sum_i q_i^2$ | A constant of the host |
 | $E_Q$ | $-f\frac{\pi Q^2}{2V\beta^2}$, $Q = \sum_i q_i$ [[Hub2014]](references.md#hub2014) | A constant of the host, scaled with $1/V$ |
 | $E_\text{rec}$ | Section 5.2 | `md.reciprocal` |
@@ -37,7 +37,7 @@ $$
 The force of the direct sum follows from Section 3.3 with
 
 $$
--\frac{u'(r)}{r} = f q_iq_j\Big[\frac{\operatorname{erfc}(\beta r)}{r^3}
+-\frac{u'(r)}{r} = f q_iq_j\Big[\frac{\mathrm{erfc}(\beta r)}{r^3}
 + \frac{2\beta}{\sqrt\pi}\frac{e^{-\beta^2r^2}}{r^2}\Big],
 $$
 
@@ -45,7 +45,7 @@ and that of an excluded pair with
 
 $$
 -\frac{u'(r)}{r} = f q_iq_j\Big[\frac{2\beta}{\sqrt\pi}\frac{e^{-\beta^2r^2}}{r^2}
-- \frac{\operatorname{erf}(\beta r)}{r^3}\Big] .
+- \frac{\mathrm{erf}(\beta r)}{r^3}\Big] .
 $$
 
 The term $E_Q$ removes the
@@ -54,9 +54,9 @@ virial is $3E_Q$, which makes its pressure $E_Q/V$, and its value at the
 volume of the step is $E_Q(V_0)\,V_0/V$.
 
 **Parameters** (D71). $\beta$ is given, or found by bisection such that
-$\operatorname{erfc}(\beta r_c)$ equals a tolerance, $10^{-5}$ by default:
+$\mathrm{erfc}(\beta r_c)$ equals a tolerance, $10^{-5}$ by default:
 100 halvings of $[0, h]$, $h$ doubled from 1 nm⁻¹ until
-$\operatorname{erfc}(h r_c)$ is below the tolerance. The grid has $K_a$
+$\mathrm{erfc}(h r_c)$ is below the tolerance. The grid has $K_a$
 points along axis $a$, the smallest even number of at least
 $L_a/h_\text{max}$ whose prime factors are 2, 3, 5, and 7, with
 $h_\text{max} = 1.2$ Å; or it is given. The order $n$ of the B-splines is
@@ -148,7 +148,7 @@ $\mathsf W = -\partial E/\partial\varepsilon$,
 $$
 W_{ab} = \sum_{\mathbf m\neq 0} E_\mathbf m\Big[\delta_{ab} - 2\Big(\frac{1}{m^2} + \frac{\pi^2}{\beta^2}\Big)m_am_b\Big],
 \qquad
-\operatorname{tr}\mathsf W = \sum_{\mathbf m\neq0}E_\mathbf m\Big(1 - \frac{2\pi^2m^2}{\beta^2}\Big).
+\mathrm{tr}\,\mathsf W = \sum_{\mathbf m\neq0}E_\mathbf m\Big(1 - \frac{2\pi^2m^2}{\beta^2}\Big).
 $$
 
 The isotropic barostat and the log use the trace, the semi-isotropic
@@ -215,7 +215,7 @@ E_\text{disp} = \frac{N}{2}\,\frac{N}{V}\int_{r_c}^\infty 4\pi r^2\Big(-\frac{\l
 $$
 
 and the missing virial, from $\mathbf d\otimes\mathbf K$ over the same
-pairs, is $\operatorname{tr}\mathsf W_\text{disp} = 6E_\text{disp}$, a
+pairs, is $\mathrm{tr}\,\mathsf W_\text{disp} = 6E_\text{disp}$, a
 pressure of $2E_\text{disp}/V$. The repulsion is left out.
 
 **Why the virial is $6E_\text{disp}$, not $3E_\text{disp}$.** As
@@ -230,7 +230,7 @@ changes by $\tfrac{2\pi N^2}{V}\tfrac{\langle C_6\rangle}{r_c^3}\,d\ln\mu =
 -3E_\text{disp}\,d\ln\mu$ beyond its virial. With the tail's own change,
 the energy outside the virial of the truncated sum changes by
 $-6E_\text{disp}\,d\ln\mu$, which is what
-$\operatorname{tr}\mathsf W_\text{disp} = 6E_\text{disp}$ counts. The
+$\mathrm{tr}\,\mathsf W_\text{disp} = 6E_\text{disp}$ counts. The
 counts of the work of the barostat that take the virial (Section 6.4) are
 therefore consistent with the energy of the log, while the exact count,
 which evaluates the truncated energy at the scaled positions and so sees
@@ -272,13 +272,13 @@ $-\nu(4\pi/V)\sum\int_{r_c}^\infty r^3u'_{ij}\,dr$, which by parts,
 as $r^3u_{ij}\to0$, is
 
 $$
-\operatorname{tr}\mathsf W_\text{tail} = \nu\,\frac{4\pi}{V}\sum_{\{i,j\}}\big(3I_{ij} + r_c^3u_{ij}(r_c)\big).
+\mathrm{tr}\,\mathsf W_\text{tail} = \nu\,\frac{4\pi}{V}\sum_{\{i,j\}}\big(3I_{ij} + r_c^3u_{ij}(r_c)\big).
 $$
 
 The term $3I_{ij}$ is the tail's own change, $-dE_\text{tail}/d\ln\mu$, and
 $r_c^3u_{ij}(r_c)$ the shell of pairs that a scaling carries across the
 cutoff, as derived above; for $-C_6/r^6$, $r_c^3u(r_c) = 3I$ and
-$\operatorname{tr}\mathsf W_\text{tail} = 6E_\text{tail}$. The tail is
+$\mathrm{tr}\,\mathsf W_\text{tail} = 6E_\text{tail}$. The tail is
 part of the potential energy as a function of the constants of the term,
 $\xi$ and $\boldsymbol\lambda$, and of $V$: $U = U_{r<r_c}(\mathbf x;\xi) +
 E_\text{tail}(V;\xi)$. So $\partial F/\partial\xi =
@@ -327,7 +327,7 @@ refused when the control file asks for the correction; `dispersion_correction
 removes $E_\text{tail}(V;\xi)$ of that term from $U$: the sampled
 potential is then its energy within $r_c$ alone, and the pressure,
 $-\partial F/\partial V$, loses that term's
-$\operatorname{tr}\mathsf W_\text{tail}/3V$, while the energy, forces,
+$\mathrm{tr}\,\mathsf W_\text{tail}/3V$, while the energy, forces,
 and virial of its pairs within $r_c$ are unchanged. A term that
 decays as $r^{-3}$ or more slowly, such as $1/r$, has no such limit at a
 uniform density and needs a lattice sum instead. The Python model takes
@@ -337,7 +337,7 @@ given, and a term's own `None_` its opt-out, except that under a
 switch its default correction is off with a warning rather than an error,
 so that its default system, which switches, compiles; the difference of the
 default and the opt-out of a term $-c_8/r^8 - ae^{-r/l}/r^4$ is its
-$E_\text{tail}$ and $\operatorname{tr}\mathsf W_\text{tail}$ to
+$E_\text{tail}$ and $\mathrm{tr}\,\mathsf W_\text{tail}$ to
 $4\times10^{-13}$ relative, against a quadrature in $\ln r$ of its own.
 The derivatives in $\xi$ and $\lambda$ are central differences of the
 integral, extrapolated to a zero step (Richardson), on the host.
@@ -427,7 +427,7 @@ r))\,r^{-6}\,d^3r = \tfrac{\pi^{3/2}\beta^3}{3}F(b)$ with $b =
 \pi\lvert\mathbf m\rvert/\beta$ and
 
 $$
-F(b) = (1 - 2b^2)\,e^{-b^2} + 2\sqrt\pi\,b^3\operatorname{erfc}(b),
+F(b) = (1 - 2b^2)\,e^{-b^2} + 2\sqrt\pi\,b^3\mathrm{erfc}(b),
 \qquad F(0) = 1,
 $$
 
@@ -498,18 +498,18 @@ $10^{-10}$ of the sum, and the closed form above $y = 1$.
 strain, and $E^\text{d}_\mathbf m = h\,B\,C^\text{d}\lvert\hat Q\rvert^2$
 depends on it through $1/V$ and through $b$, with $\partial
 b/\partial\varepsilon_{ab} = -b\,m_am_b/m^2$. With $F'(b) = 6b\,(\sqrt\pi
-\,b\operatorname{erfc}(b) - e^{-b^2})$ and $b^2/m^2 = \pi^2/\beta^2$,
+\,b\mathrm{erfc}(b) - e^{-b^2})$ and $b^2/m^2 = \pi^2/\beta^2$,
 
 $$
 W^\text{d}_{ab} = \sum_{\mathbf m}\Big[E^\text{d}_\mathbf m\,\delta_{ab}
 + h\,B\,\lvert\hat Q\rvert^2\,\frac{\pi^{3/2}\beta^3}{3V}\,
-\frac{6\pi^2}{\beta^2}\big(e^{-b^2} - \sqrt\pi\,b\operatorname{erfc}(b)\big)\,m_am_b\Big].
+\frac{6\pi^2}{\beta^2}\big(e^{-b^2} - \sqrt\pi\,b\mathrm{erfc}(b)\big)\,m_am_b\Big].
 $$
 
 The term $\mathbf m = 0$ contributes $E^\text{d}_0\,\delta_{ab}$, the
 virial of a constant over the volume, and the self term none. The direct
 and excluded terms are differentiated as every pair term is
-(Section 3.3). $\operatorname{tr}\mathsf W$ of three OPC waters agrees
+(Section 3.3). $\mathrm{tr}\,\mathsf W$ of three OPC waters agrees
 with $-dU/d\lambda$ to $2\times10^{-7}$.
 
 **On a device.** The kernels of Table 5.2 run twice, once for each sum.

@@ -14,10 +14,10 @@ parameter $\beta$, in the units of MDIR with $f$ the Coulomb constant
 $$
 \begin{aligned}
 E &= E_\text{dir} + E_\text{rec} + E_\text{self} + E_\text{excl} + E_Q, \\
-E_\text{dir} &= f \sum_{i < j,\ \text{not excluded},\ r_{ij} < r_c} q_i q_j \Big(\frac{\operatorname{erfc}(\beta r_{ij})}{r_{ij}} - s\Big), \\
+E_\text{dir} &= f \sum_{i < j,\ \text{not excluded},\ r_{ij} < r_c} q_i q_j \Big(\frac{\mathrm{erfc}(\beta r_{ij})}{r_{ij}} - s\Big), \\
 E_\text{rec} &= \frac{f}{2\pi V} \sum_{\mathbf m \ne 0} \frac{\exp(-\pi^2 m^2/\beta^2)}{m^2}\, \lvert S(\mathbf m)\rvert^2, \\
 E_\text{self} &= -\frac{f\beta}{\sqrt\pi} \sum_i q_i^2, \\
-E_\text{excl} &= -f \sum_{(i,j)\ \text{excluded}} q_i q_j \frac{\operatorname{erf}(\beta r_{ij})}{r_{ij}}, \\
+E_\text{excl} &= -f \sum_{(i,j)\ \text{excluded}} q_i q_j \frac{\mathrm{erf}(\beta r_{ij})}{r_{ij}}, \\
 E_Q &= -\frac{f\pi Q^2}{2V\beta^2}.
 \end{aligned}
 $$
@@ -26,7 +26,7 @@ $$
 |---|---|
 | $\mathbf m$ | A vector of the reciprocal lattice, $(k_x / L_x, k_y / L_y, k_z / L_z)$ with whole $k$, in nm⁻¹; $m = \lVert\mathbf m\rVert$ |
 | $S(\mathbf m)$ | The structure factor $\sum_i q_i \exp(2\pi i\, \mathbf m \cdot \mathbf x_i)$ |
-| $s$ | The shift of the direct sum: $\operatorname{erfc}(\beta r_c) / r_c$, or $0$ |
+| $s$ | The shift of the direct sum: $\mathrm{erfc}(\beta r_c) / r_c$, or $0$ |
 | excluded | The pairs of the relation `excluded` of the topology: one, two, and three bonds apart, with the sites of Section 19 of design-m1.md. The pairs three bonds apart are among them; their scaled Coulomb is the term `pairs14`, as before, and $E_\text{excl}$ takes their share of $E_\text{rec}$ out again. |
 | $Q$ | The net charge $\sum_i q_i$; $E_Q$ is the energy of the uniform background that neutralizes it [[Hub2014]](references.md#hub2014) |
 
@@ -80,7 +80,7 @@ even grids they agree. MDIR chooses even grids itself.
 
 The virial of the reciprocal sum, in the convention of
 [conventions.md](conventions.md) ($\mathsf W = \sum \mathbf d \otimes \mathbf F$, the pressure
-$(2K + \operatorname{tr}\mathsf W) / (3V)$), is the derivative under a strain of the cell:
+$(2K + \mathrm{tr}\,\mathsf W) / (3V)$), is the derivative under a strain of the cell:
 
 $$\mathsf W_{ab} = \sum_{\mathbf m \ne 0} E_\mathbf m \Big(\delta_{ab} - 2\Big(\frac{1}{m^2} + \frac{\pi^2}{\beta^2}\Big) m_a m_b\Big),$$
 
@@ -92,7 +92,7 @@ pairs does.
 
 | Part | Where |
 |---|---|
-| $E_\text{dir}$ | The pair term of the topology, $f q_i q_j \big(\operatorname{erfc}(\beta r) / r - s\big)$: no new op. `math.erfc` has a derivative. |
+| $E_\text{dir}$ | The pair term of the topology, $f q_i q_j \big(\mathrm{erfc}(\beta r) / r - s\big)$: no new op. `math.erfc` has a derivative. |
 | $E_\text{excl}$ | An `md.sum_tuples` over the relation `excluded` with `distance(0, 1)` and the charges gathered: no new op |
 | $E_\text{self}$, $E_Q$ | Numbers from the driver |
 | $E_\text{rec}$ | One new op, `md.reciprocal %x, %q, %cell, %moduli`, with the grid, the order, $\beta$, and the Coulomb constant as attributes, that yields the energy, the forces, and the virial at once, all from the grid. Differentiation takes the forces and the virial from it; it is not differentiated through. |
@@ -190,7 +190,7 @@ points numbered in i32, it takes 90 µs (D102); pmemd.cuda gathers in 79
 | `electrostatics = "PME"` in `[energy]` | Particle mesh Ewald, with the cutoff `cutoff` for the direct sum | |
 | `coulomb_modifier` in `[energy]` | `"POTENTIAL_SHIFT"` shifts the direct sum to 0 at the cutoff, as GROMACS does by default; `"NONE"` does not, as sander | `"NONE"` |
 | `beta` in `[pme]` | $\beta$, in Å⁻¹ | From `tolerance` |
-| `tolerance` in `[pme]` | $\beta$ such that $\operatorname{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it; less than 1 | 10⁻⁵ |
+| `tolerance` in `[pme]` | $\beta$ such that $\mathrm{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it; less than 1 | 10⁻⁵ |
 | `grid` in `[pme]` | The numbers of points of the grid along the three edges, `[nx, ny, nz]`, each 8 or more | From `max_spacing` |
 | `max_spacing` in `[pme]` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
 | `order` in `[pme]` | The order of the B-splines: 4, 6, or 8 | 4 |
@@ -199,8 +199,8 @@ points numbered in i32, it takes 90 µs (D102); pmemd.cuda gathers in 79
 The table `[pme]` is for `electrostatics = "PME"` only, and a grid needs at
 least twice the order of points along each edge.
 
-The tolerance of sander, `dsum_tol`, is $\operatorname{erfc}(\beta r_c) / r_c$ with $r_c$ in Å,
-not $\operatorname{erfc}(\beta r_c)$: its default of 10⁻⁵ gives a larger $\beta$ than
+The tolerance of sander, `dsum_tol`, is $\mathrm{erfc}(\beta r_c) / r_c$ with $r_c$ in Å,
+not $\mathrm{erfc}(\beta r_c)$: its default of 10⁻⁵ gives a larger $\beta$ than
 `tolerance` of 10⁻⁵ does. A comparison gives $\beta$ itself.
 
 $\beta$, the grid, and the order can each be given, so that a run can take those

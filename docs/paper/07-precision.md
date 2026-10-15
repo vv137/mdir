@@ -137,7 +137,7 @@ with a stated bound, not a library flag:
    takes more than roots and powers becomes a product of those factors
    and a function $g(r^2)$, outlined into a function in f64. For the
    direct sum of Ewald that is
-   $g(s) = f\operatorname{erfc}(\beta\sqrt s)/\sqrt s$ for the energy and
+   $g(s) = f\mathrm{erfc}(\beta\sqrt s)/\sqrt s$ for the energy and
    another such function for the force. In an f32 kernel $g$ becomes a
    table over $s\in[2^{-10} r_c^2, r_c^2]$ (`md-exec-expand-radial`):
    the intervals are named by the bits of $s$ as an f32 number, $2^b$ for
@@ -190,15 +190,15 @@ with a stated bound, not a library flag:
    $1.9\times10^{-12}$.
 3. **The complementary error function**, where it remains in an f32
    kernel after the tables, as in a pair term written over a tuple set.
-   $\operatorname{erfc}(c\sqrt y)$ with a positive constant $c$ is
+   $\mathrm{erfc}(c\sqrt y)$ with a positive constant $c$ is
    rewritten as
 
    $$
-   \operatorname{erfc}(x) \approx e^{-x^2}\, P(t), \qquad t = \frac{1}{1 + x/2},
+   \mathrm{erfc}(x) \approx e^{-x^2}\, P(t), \qquad t = \frac{1}{1 + x/2},
    $$
 
    with $P$ of degree 9 fitted by least squares, weighted by
-   $1/(\operatorname{erfc}(x)e^{x^2})$, to $\operatorname{erfc}(x)\,e^{x^2}$
+   $1/(\mathrm{erfc}(x)e^{x^2})$, to $\mathrm{erfc}(x)\,e^{x^2}$
    on $[0, 6]$ (`scripts/fit-erfc.py`) and evaluated by Horner's rule with
    fused multiply–adds, $P(t) = \sum_{k=0}^{9} p_k t^k$ with
 
@@ -217,9 +217,9 @@ with a stated bound, not a library flag:
    (`test/Integration/erfc-approximation.mlir` checks $5\times10^{-7}$),
    and $4.8\times10^{-6}$ when the argument of the exponential is rounded
    to f32 as well, as in a kernel; beyond $x = 6$,
-   $\operatorname{erfc}(x) < 2.2\times 10^{-17}$. The exponential is the
+   $\mathrm{erfc}(x) < 2.2\times 10^{-17}$. The exponential is the
    one the derivative computes anyway,
-   $\frac{d}{dx}\operatorname{erfc}(x) = -\tfrac{2}{\sqrt\pi} e^{-x^2}$:
+   $\frac{d}{dx}\mathrm{erfc}(x) = -\tfrac{2}{\sqrt\pi} e^{-x^2}$:
    the pass reuses an $\exp(ky)$ of the kernel whose $k$ is within 4 ulp of
    $-c^2$, so the approximation costs a polynomial and shares the
    transcendental. The direct sum of Ewald took this form from D90 until
