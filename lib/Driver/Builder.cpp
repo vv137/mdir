@@ -15,6 +15,11 @@
 
 using namespace mdir::driver;
 namespace prolate = mdir::prolate;
+
+/// The cells and the terms of the tables of the splitting of the prolate
+/// kernel (D[prolate-ewald]); within 1e-14 (mdir-prolate-test).
+static constexpr int64_t prolateCells = 64, prolateTerms = 10;
+
 using llvm::StringRef;
 
 static StringRef getName(Element element) {
@@ -2875,6 +2880,18 @@ llvm::Error Builder::collectProlate() {
   std::copy(influence.slope.begin(), influence.slope.end(),
             row + 4 + influence.terms);
   program.tables.push_back(std::move(table));
+  // The parts of the splitting that the pair terms take.
+  for (auto [name, part] :
+       {std::pair{"pme_far", prolate::Part::Far},
+        std::pair{"pme_near", prolate::Part::Near}}) {
+    Program::Table split;
+    split.name = name;
+    split.count = prolateCells;
+    split.columns = prolateTerms;
+    split.values =
+        prolate::getSplittingTable(psi, part, prolateCells, prolateTerms);
+    program.tables.push_back(std::move(split));
+  }
 
   program.pmeProlate = true;
   program.pmeBandwidth = c;
@@ -4189,6 +4206,46 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
   add("external_" + term.name);
 }
 
+/// A part of the splitting of the prolate kernel at `x` = r / r_c, from the
+/// table `table` (prolate::getSplittingTable): the polynomial of the cell
+/// of x in t = 2 (x cells − k) − 1, the cell clamped to the table. The
+/// place in the cell carries the derivative; the index and the lookups do
+/// not, as in a tabulated function of the control file (D138).
+static std::string emitProlateSplitting(llvm::raw_ostream &os,
+                                        StringRef table, StringRef x,
+                                        StringRef p) {
+  os << "    " << p << "cells = arith.constant "
+     << formatReal(static_cast<double>(prolateCells)) << " : f64\n"
+     << "    " << p << "top = arith.constant "
+     << formatReal(static_cast<double>(prolateCells - 1)) << " : f64\n"
+     << "    " << p << "nil = arith.constant 0.0 : f64\n"
+     << "    " << p << "one = arith.constant 1.0 : f64\n"
+     << "    " << p << "two = arith.constant 2.0 : f64\n"
+     << "    " << p << "u = arith.mulf " << x << ", " << p << "cells : f64\n"
+     << "    " << p << "floor = math.floor " << p << "u : f64\n"
+     << "    " << p << "low = arith.maximumf " << p << "floor, " << p
+     << "nil : f64\n"
+     << "    " << p << "place = arith.minimumf " << p << "low, " << p
+     << "top : f64\n"
+     << "    " << p << "s = arith.subf " << p << "u, " << p << "place : f64\n"
+     << "    " << p << "s2 = arith.mulf " << p << "two, " << p << "s : f64\n"
+     << "    " << p << "t = arith.subf " << p << "s2, " << p << "one : f64\n"
+     << "    " << p << "row = arith.fptosi " << p << "place : f64 to i32\n";
+  for (int64_t j = 0; j != prolateTerms; ++j)
+    os << "    " << p << "col" << j << " = arith.constant " << j << " : i32\n"
+       << "    " << p << "a" << j << " = md.lookup %t_" << table << "[" << p
+       << "row, " << p << "col" << j << "] : !grid, i32, i32 -> f64\n";
+  std::string value = (p + "a" + llvm::Twine(prolateTerms - 1)).str();
+  for (int64_t j = prolateTerms - 2; j >= 0; --j) {
+    os << "    " << p << "m" << j << " = arith.mulf " << value << ", " << p
+       << "t : f64\n"
+       << "    " << p << "h" << j << " = arith.addf " << p << "m" << j << ", "
+       << p << "a" << j << " : f64\n";
+    value = (p + "h" + llvm::Twine(j)).str();
+  }
+  return value;
+}
+
 void Builder::emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm, int pairTerm,
                                     int externalTerm) {
@@ -4756,7 +4813,16 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
            << "    %rq = arith.maximumf %r, %rq_least : f64\n";
         rq = "%rq";
       }
-      if (program.pme) {
+      if (program.pme && program.pmeProlate) {
+        // The direct sum of the prolate kernel, f q q (1 − Φ(r/r_c)) / r
+        // [Liang2026, eq. 3]; Φ(1) = 1, so a shift at the cutoff is 0.
+        os << "    %rc_inverse = arith.constant "
+           << formatReal(1.0 / cutoff) << " : f64\n"
+           << "    %xr = arith.mulf " << rq << ", %rc_inverse : f64\n";
+        std::string far = emitProlateSplitting(os, "pme_far", "%xr", "%pf_");
+        os << "    %screened = arith.divf " << far << ", " << rq << " : f64\n"
+           << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
+      } else if (program.pme) {
         // The direct sum of particle mesh Ewald, f q q erfc(β r) / r,
         // shifted to 0 at the cutoff if the control file asks.
         double beta = program.pmeBeta;
@@ -4812,6 +4878,26 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     add("nonbonded");
   }
 
+  // %shielded, the share of 1/r that the reciprocal sum holds at %r:
+  // erf(β r)/r, or of the prolate kernel Φ(r/r_c)/r, which is Φ(x)/x / r_c
+  // within the cutoff and 1/r beyond it (D[prolate-ewald]).
+  auto emitShielded = [&](llvm::raw_ostream &os) {
+    if (!program.pmeProlate) {
+      os << "    %br = arith.mulf %beta, %r : f64\n"
+         << "    %erf = math.erf %br : f64\n"
+         << "    %shielded = arith.divf %erf, %r : f64\n";
+      return;
+    }
+    os << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
+       << " : f64\n"
+       << "    %xr = arith.mulf %r, %rc_inverse : f64\n";
+    std::string near = emitProlateSplitting(os, "pme_near", "%xr", "%pn_");
+    os << "    %near = arith.mulf " << near << ", %rc_inverse : f64\n"
+       << "    %r_one = arith.constant 1.0 : f64\n"
+       << "    %r_inverse = arith.divf %r_one, %r : f64\n"
+       << "    %r_inside = arith.cmpf olt, %xr, %r_one : f64\n"
+       << "    %shielded = arith.select %r_inside, %near, %r_inverse : f64\n";
+  };
   if (program.pme && (terms & CoulombExcluded) && has("excluded")) {
     // The excluded pairs take their share of the reciprocal sum out again:
     // −f q_i q_j erf(β r) / r, with the charges that the reciprocal sum
@@ -4839,11 +4925,9 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << "    %qq = arith.mulf %qq0, %al_s : f64\n";
       qq = "%qq";
     }
-    os << "    %fqq = arith.mulf %f, " << qq << " : f64\n"
-       << "    %br = arith.mulf %beta, %r : f64\n"
-       << "    %erf = math.erf %br : f64\n"
-       << "    %shielded = arith.divf %erf, %r : f64\n"
-       << "    %e = arith.mulf %fqq, %shielded : f64\n";
+    os << "    %fqq = arith.mulf %f, " << qq << " : f64\n";
+    emitShielded(os);
+    os << "    %e = arith.mulf %fqq, %shielded : f64\n";
     std::string e = "%e";
     if (alchemicalOnly) {
       // Only the pairs within the selection depend on λ.
@@ -4874,11 +4958,9 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "    %w = arith.subf %one, %s2 : f64\n"
        << "    %qq = arith.mulf %q_i, %q_j : f64\n"
        << "    %fqq = arith.mulf %f, %qq : f64\n"
-       << "    %fw = arith.mulf %fqq, %w : f64\n"
-       << "    %br = arith.mulf %beta, %r : f64\n"
-       << "    %erf = math.erf %br : f64\n"
-       << "    %shielded = arith.divf %erf, %r : f64\n"
-       << "    %e = arith.mulf %fw, %shielded : f64\n"
+       << "    %fw = arith.mulf %fqq, %w : f64\n";
+    emitShielded(os);
+    os << "    %e = arith.mulf %fw, %shielded : f64\n"
        << "    md.yield %e : f64\n"
        << "  } : !rel_alchemical_pairs, !vec -> f64\n";
     add("within");

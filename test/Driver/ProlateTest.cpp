@@ -115,6 +115,35 @@ int main() {
     std::printf("aliasing %.3g at 48, %.3g at 36 %s\n", a48, a36,
                 ok ? "ok" : "FAIL");
   }
+  // The tables of the splitting, 64 cells of 10 terms, against the
+  // functions at 1000 points; Φ by quadrature against the Legendre
+  // integral.
+  {
+    using mdir::prolate::Part;
+    Function psi(mdir::prolate::bandwidthForTolerance(1e-5));
+    double phi = 0.5 * mdir::prolate::getSplitting(psi, Part::Near, 0.5);
+    check("Phi(0.5)", psi.bandwidth(), phi,
+          psi.integral(0.5) / psi.halfIntegral(), 1.0);
+    for (Part part : {Part::Far, Part::Near}) {
+      std::vector<double> table =
+          mdir::prolate::getSplittingTable(psi, part, 64, 10);
+      double worst = 0.0;
+      for (int i = 0; i != 1000; ++i) {
+        double x = (i + 0.37) / 1000.0, u = x * 64;
+        int k = static_cast<int>(u);
+        double t = 2 * (u - k) - 1, p = 0.0;
+        for (int j = 9; j >= 0; --j)
+          p = p * t + table[k * 10 + j];
+        worst = std::max(worst,
+                         std::fabs(p - mdir::prolate::getSplitting(psi, part, x)));
+      }
+      bool ok = worst <= 1e-14 * (part == Part::Far ? 1.0 : 3.0);
+      failures += !ok;
+      std::printf("table of %s: largest difference %.1e %s\n",
+                  part == Part::Far ? "1 - Phi" : "Phi/x", worst,
+                  ok ? "ok" : "FAIL");
+    }
+  }
   std::printf("%d failures\n", failures);
   return failures ? 1 : 0;
 }

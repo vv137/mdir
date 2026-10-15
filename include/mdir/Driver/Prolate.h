@@ -93,6 +93,18 @@ struct Influence {
 };
 Influence getInfluence(const Function &psi);
 
+/// The parts of the splitting that the pair terms take, as functions of
+/// x = r / r_c on [0, 1] (1 beyond): `Far`, 1 − Φ(x), which multiplies
+/// f q q / r in the direct sum; `Near`, Φ(x)/x = ∫₀¹ χ(xτ) dτ, which
+/// multiplies f q q / r_c in the excluded pairs. Each a table of `cells`
+/// rows, the polynomial of the cell [k, k + 1)/cells in t = 2(x cells − k)
+/// − 1 with `terms` coefficients of t⁰ upwards, within 1e-14 of the
+/// largest value.
+enum class Part { Far, Near };
+std::vector<double> getSplittingTable(const Function &psi, Part part,
+                                      int64_t cells, int64_t terms);
+double getSplitting(const Function &psi, Part part, double x);
+
 /// The aliasing error of the spreading relative to the spectral sum that
 /// it perturbs, the estimate of eq. 10 of [Liang2026] divided by the same
 /// sum without the factor of the alias: for each axis a,

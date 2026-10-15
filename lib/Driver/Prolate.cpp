@@ -355,3 +355,54 @@ double mdir::prolate::getAliasing(const Function &psi, const Window &window,
     return 0.0;
   return 6.0 * std::max({aliased[0], aliased[1], aliased[2]}) / total;
 }
+
+double mdir::prolate::getSplitting(const Function &psi, Part part, double x) {
+  x = std::min(std::fabs(x), 1.0);
+  // Φ(x)/x = (1/C₀) ∫₀¹ ψ(xτ) dτ, by Gauss–Legendre in τ, which has no
+  // cancellation at small x.
+  static thread_local std::vector<double> nodes, weights;
+  if (nodes.empty())
+    gaussLegendre(48, nodes, weights);
+  double sum = 0.0;
+  for (size_t i = 0; i != nodes.size(); ++i)
+    sum += 0.5 * weights[i] * psi.value(0.5 * x * (nodes[i] + 1.0));
+  double near = sum / psi.halfIntegral();
+  return part == Part::Near ? near : 1.0 - x * near;
+}
+
+std::vector<double> mdir::prolate::getSplittingTable(const Function &psi,
+                                                     Part part, int64_t cells,
+                                                     int64_t terms) {
+  std::vector<double> table(cells * terms, 0.0);
+  for (int64_t k = 0; k != cells; ++k) {
+    // The Chebyshev series of the cell, then its monomials in t.
+    std::vector<double> a = getChebyshevSeries(
+        [&](double t) {
+          return getSplitting(psi, part,
+                              (static_cast<double>(k) + 0.5 * (t + 1.0)) /
+                                  static_cast<double>(cells));
+        },
+        0.0);
+    a.resize(terms, 0.0);
+    // T_j as monomials: T_0 = 1, T_1 = t, T_{j+1} = 2t T_j − T_{j−1}.
+    std::vector<double> previous(terms, 0.0), current(terms, 0.0);
+    previous[0] = 1.0;
+    if (terms > 1)
+      current[1] = 1.0;
+    for (int64_t j = 0; j != terms; ++j) {
+      const std::vector<double> &tj = j == 0 ? previous : current;
+      for (int64_t i = 0; i != terms; ++i)
+        table[k * terms + i] += a[j] * tj[i];
+      if (j >= 1) {
+        std::vector<double> next(terms, 0.0);
+        for (int64_t i = 0; i + 1 < terms; ++i)
+          next[i + 1] += 2.0 * current[i];
+        for (int64_t i = 0; i != terms; ++i)
+          next[i] -= previous[i];
+        previous = current;
+        current = next;
+      }
+    }
+  }
+  return table;
+}
