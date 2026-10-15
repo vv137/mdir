@@ -9386,16 +9386,24 @@ void Builder::emitEntry() {
      << state << ">,\n";
   if (program.takesForces)
     os << "    %forces: memref<?x3x" << force << ">,\n";
-  os << "    %masses: memref<?x" << mass << ">";
+  // The buffers of the model are read and never written
+  // (D[start-arguments]): `md-exec-assign-storage` takes none of them for
+  // another field or for a copy back from a device, and
+  // `check-read-only-arguments` fails the compile where the lowered entry
+  // could write one. A simulation hands them to every start without a copy.
+  StringRef readOnly = " {mdrt.read_only}";
+  os << "    %masses: memref<?x" << mass << ">" << readOnly;
   for (const Program::Field &field : program.fields)
     os << ", %b_" << field.name << ": memref<?x"
-       << (field.isInteger ? StringRef("i32") : parameter) << ">";
+       << (field.isInteger ? StringRef("i32") : parameter) << ">" << readOnly;
   for (const Program::Table &table : program.tables)
-    os << ", %bt_" << table.name << ": memref<?x?xf64>";
+    os << ", %bt_" << table.name << ": memref<?x?xf64>" << readOnly;
   for (const Program::TupleSet &set : program.tupleSets) {
-    os << ",\n    %br_" << set.name << ": memref<?x" << set.arity << "xi32>";
+    os << ",\n    %br_" << set.name << ": memref<?x" << set.arity << "xi32>"
+       << readOnly;
     for (const Program::Field &field : set.fields)
-      os << ", %bf_" << set.name << "_" << field.name << ": memref<?xf64>";
+      os << ", %bf_" << set.name << "_" << field.name << ": memref<?xf64>"
+         << readOnly;
   }
   os << ",\n    %identities: memref<?xi32>,\n"
      << "    %lx: f64, %ly: f64, %lz: f64, %dt: f64, %start: i64";

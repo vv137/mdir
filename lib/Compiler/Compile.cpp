@@ -152,6 +152,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
        << "device-tuples=true "
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
+       // The code of the host writes no buffer of the model that the entry
+       // takes (D[start-arguments]): proven here, or no compile.
+       << "check-read-only-arguments,"
        << "mdir-gpu-lower-to-nvvm{";
     // The kernels become cubins for the device's architecture, which the
     // driver loads without compiling them; for a device that cannot be
@@ -169,6 +172,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // activations of the entry of an embedding front end (D253) and across
   // the segments of `mdir run` (#316).
   os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true}"
+     // The code writes no buffer of the model that the entry takes
+     // (D[start-arguments]): proven here, or no compile.
+     << ",check-read-only-arguments"
      << ",fixed-order-reductions,";
   bool threaded = control.threads > 1;
   if (threaded)

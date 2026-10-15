@@ -198,6 +198,13 @@ private:
   llvm::MapVector<std::pair<Type, Attribute>, SmallVector<Value, 2>>
       hostBuffers;
 
+  /// The arguments of the function that its signature declares read-only
+  /// (`mdrt.read_only`, D[start-arguments]): the caller may hand
+  /// them without a copy. The pass never takes one for another field
+  /// (it does not own it) or for a copy back from a device (it is not among
+  /// `hostBuffers`); `check-read-only-arguments` checks the lowered code.
+  llvm::DenseSet<Value> readOnly;
+
   /// Values other than fields: the value in the new code.
   IRMapping mapping;
   /// Fields: the buffer that holds the field.
@@ -1341,9 +1348,13 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     bool givenAnew = &scope != root &&
                      from.getBuffer().getDefiningOp<func::CallOp>() &&
                      from.getBuffer().getParentBlock() == op->getBlock();
+    bool isReadOnly = readOnly.contains(buffer);
     if (!onDevice && !givenAnew) {
       bind(from.getResult(), buffer, scope);
-      scope.owned.insert(buffer);
+      // A buffer that the function may not write is read where it is, and
+      // no loop takes it for what it writes.
+      if (!isReadOnly)
+        scope.owned.insert(buffer);
       return success();
     }
 
@@ -1371,7 +1382,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
         scope.request(getStorageType(field), sizes[set], set, op->getLoc());
     createTransfer(builder, op->getLoc(), device, buffer);
     buffers[from.getResult()] = device;
-    if (!givenAnew)
+    if (!givenAnew && !isReadOnly)
       hostBuffers[{buffer.getType(), set}].push_back(buffer);
     return success();
   }
@@ -1747,6 +1758,9 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
       func::FuncOp::create(function.getLoc(), function.getName(),
                            FunctionType::get(context, inputs, results));
   converted.setSymVisibilityAttr(function.getSymVisibilityAttr());
+  // The attributes of the arguments, among them which are read-only.
+  if (ArrayAttr attributes = function.getArgAttrsAttr())
+    converted.setArgAttrsAttr(attributes);
   module.getBody()->getOperations().insert(function->getIterator(),
                                            converted);
 
@@ -1762,13 +1776,17 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
 
     sizes.clear();
     hostBuffers.clear();
+    readOnly.clear();
     Block &oldEntry = function.getBody().front();
     for (unsigned i = 0, e = oldEntry.getNumArguments(); i != e; ++i) {
       Value oldArgument = oldEntry.getArgument(i);
       Value newArgument = entry->getArgument(i);
+      if (function.getArgAttr(i, mdrt::getReadOnlyAttrName()))
+        readOnly.insert(newArgument);
       if (isField(oldArgument.getType())) {
         bind(oldArgument, newArgument, scope);
-        scope.owned.insert(newArgument);
+        if (!readOnly.contains(newArgument))
+          scope.owned.insert(newArgument);
       } else {
         mapping.map(oldArgument, newArgument);
       }

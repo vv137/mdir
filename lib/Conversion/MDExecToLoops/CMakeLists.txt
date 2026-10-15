@@ -15,6 +15,7 @@ configure_file(
   @ONLY)
 
 add_mlir_conversion_library(MDIRMDExecToLoops
+  CheckReadOnly.cpp
   FixedOrderReductions.cpp
   HoistAllocas.cpp
   MDExecToLoops.cpp
@@ -41,5 +42,8 @@ add_mlir_conversion_library(MDIRMDExecToLoops
   MLIRParser
   MLIRPass
   MLIRSCFDialect
+  MLIRCallInterfaces
+  MLIRSideEffectInterfaces
+  MLIRViewLikeInterface
   MLIRVectorDialect
   )
