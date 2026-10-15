@@ -547,7 +547,7 @@ stage begins.
 | Virial | The mean of those of the forces of the constraints over the two halves of the step: $\mathbf G_i = 2 m_i \Delta\mathbf x_i / \Delta t^2$ of the positions, with the bonds before the drift for arms, and $\mathbf G_i = 2 m_i \Delta\mathbf v_i / \Delta t$ of the velocities, with the bonds after it; $\sum (\mathbf x_i - \mathbf x_O) \otimes \mathbf G_i$ of each. The mean is that of the pressure (D45). |
 | At the start | The drawn velocities have their parts along the bonds removed before they are scaled to the temperature. The positions are not constrained, as sander does not. |
 | Degrees of freedom | Three fewer for each water |
-| Temperature of the log | The optimal estimate, with the kinetic energies of the half steps measured from the velocities after the constraints of the positions (D45; D203) |
+| Temperature of the log | The optimal estimate, with the kinetic energies of the half steps measured from the velocities after the constraints of the positions (D45; D203), which the thermostats control (D[thermostat-kopt]) |
 | In the IR | An `md.gather_tuples` over a tuple set `settles` of arity 3, the oxygen first, for each of the two halves, in the program of the step; the virial an `md.sum_tuples` |
 | Which waters | Those of `[ settles ]` of GROMACS; from Amber the residues of `water_residues`, `["WAT"]` by default, which are an oxygen and two hydrogens with at most virtual sites after them. Their bonds and angles are dropped. |
 
@@ -566,9 +566,9 @@ Three consequences reach other stages, and are recorded now:
 
 | Consequence | Where |
 |---|---|
-| The forces of the constraints add to the virial | The pressure, and the barostat (Section 11) |
+| The forces of the constraints add to the atomic virial | Not the pressure: the log and the barostat take that of the rigid groups by their centers, to which the forces of the constraints add nothing (D[barostat-group-pressure], Section 11) |
 | Every constraint removes a degree of freedom: `f = 3N − N_c − 3` | The temperature, and the thermostat |
-| The kinetic energies at the half steps (D45) must be measured from constrained velocities, not computed from the forces | The log (D203); the thermostat and the barostat take the kinetic energy of the velocities they scale |
+| The kinetic energies at the half steps (D45) must be measured from constrained velocities, not computed from the forces | The temperature of the log (D203) and of the thermostats, which control it (D[thermostat-kopt]): the steps of the rows and those that close a period of coupling measure them. The centers of the rigid groups need no measurement: their forces give them (D[barostat-group-pressure]) |
 
 ## 10. Removal of the motion of the center of mass
 
@@ -594,7 +594,7 @@ every `center_of_mass_interval` steps.
 | | Proposal | Reason |
 |---|---|---|
 | Thermostat | Stochastic velocity rescaling (Bussi, Donadio, and Parrinello 2007 [[Bussi2007]](references.md#bussi2007)) | It samples the canonical distribution, and it takes the kinetic energy and a few random numbers for each step, not one for each particle. |
-| Thermostat, the other | Langevin dynamics by the middle scheme ([[Zhang2019]](references.md#zhang2019); BAOAB of [[Leimkuhler2013]](references.md#leimkuhler2013)), `method = "LANGEVIN"` (D135, Section 11.6) | The thermostat of most runs of Amber and OpenMM; it acts on each particle in every step, with three random numbers for each. |
+| Thermostat, the other | Langevin dynamics by the middle scheme ([[Zhang2019]](references.md#zhang2019); BAOAB of [[Leimkuhler2013]](references.md#leimkuhler2013)), with constraints g-BAOAB ([[Leimkuhler2016]](references.md#leimkuhler2016), D[langevin-gbaoab]), `method = "LANGEVIN"` (D135, Section 11.6) | The thermostat of most runs of Amber and OpenMM; it acts on each particle in every step, with three random numbers for each. |
 | Barostat | Stochastic cell rescaling (Bernetti and Bussi 2020 [[Bernetti2020]](references.md#bernetti2020)), isotropic; semi-isotropic, with the pressure in a plane apart from that along its normal, as an option | It samples the distribution at constant pressure and is of first order: it has no momentum of the cell to store. |
 
 Both carry the statement that they preserve the target distribution
@@ -668,7 +668,7 @@ Verlet and leapfrog (D72, D76, D77, D119):
 | Item | Rule |
 |---|---|
 | When | At the end of the step that completes a period of coupling, after the removal of the motion of the center of mass and the thermostat; `interval` equals `interval`. The last step of a period computes the virial for it. |
-| The pressure | $P = (2K + \mathrm{tr}\,\mathsf W) / (3V)$, with $K$ the kinetic energy of the velocities of the step without that of the center of mass, $\mathsf W$ the virial of the step with those of the constraints (the mean of the two halves, Section 9.1), of the correction for the dispersion, and of the background of a net charge at the volume $V$ of the cell before the scaling. No term $k_B T / V$. |
+| The pressure | That of the groups that the scaling moves by their centers (D[barostat-group-pressure], [[Jung2020]](references.md#jung2020)): $P_a = (2K_{\text{half},g,a} + W_{g,aa} + C/(3V)) / V$ on axis $a$, with $\mathsf W_g = \sum_g \mathbf R_g\otimes\mathbf F_g$ the virial of the groups (the rigid groups by their centers, every other particle alone), $K_{\text{half},g} = K_g + \tfrac{\Delta t^2}{8}\sum_g F_{g,a}^2/M_g$ the kinetic energy of the centers at the half steps without that of the center of mass, exact from the forces since those of the constraints cancel within a group, and $C/V$ the virials of the correction for the dispersion and of the background of a net charge at the volume $V$ of the cell before the scaling. No term $k_B T / V$. |
 | The change of the volume | One step of Euler and Maruyama over the period $\Delta t_p$ of the equation for $\lambda = \sqrt V$, eq. (7) and eq. (S7) of [[Bernetti2020]](references.md#bernetti2020): $\lambda' = \lambda - \tfrac12 f\lambda\, \big(P_0 - P - k_B T c/(2V)\big) + \sqrt{k_B T f c/2}\, R$, $\Delta\varepsilon = 2 \ln(\lambda'/\lambda)$, $f = \beta_T \Delta t_p / \tau_p$. Its noise does not depend on the volume, which the paper's reversible integrators need; to first order it is the step of $d\varepsilon = -(\beta_T/\tau_p)(P_0 - P)\, dt + \sqrt{2 k_B T \beta_T / (V \tau_p)}\, dW$, eq. (5), which GROMACS takes. Pressures in bar, $c = 16.6053906717$ bar nm³ mol/kJ, $T$ that of the bath. $R$ is the normal number of stream 1 of the step (A13), drawn on the host (`mdrtBarostatStrain`). |
 | Scaling | The positions of every particle and the edges of the cell by $\mu = \exp(\Delta\varepsilon/3)$, the velocities by $1/\mu$; a group that the constraints keep rigid (a water of SETTLE, a group of SHAKE) moves with its center of mass and keeps its shape, since stretched bonds would be taken back by the constraints of the next step with a change of the velocities that heats the system. Virtual sites are placed again in the next step |
 | The cell | Kept in memory on the host, where each iteration of a loop takes it, and the steps that follow a loop of periods in the same iteration take it again; the neighbor structures, whose test of validity compares the cell, are built again; the influence function of PME follows (pme-m1.md); the log and the trajectory take the new edges (`mdrtSetBox`) and, for a triclinic cell, the tilts (`mdrtSetTilt`); a checkpoint keeps them, and a restart takes them. A triclinic cell scales as $H\,\mathrm{diag}(\boldsymbol\mu)$: each tilt with the column it is in, $b_x$ and $c_x$ by $\mu_x$, $c_y$ by $\mu_y$ (D127). A run stops if an edge becomes shorter than twice the cutoff, below which the minimum image misses pairs; a run that begins so is rejected |
@@ -755,9 +755,9 @@ as well. Without constraints the atomic pressure serves.
 ### 11.6 Langevin dynamics
 
 `method = "LANGEVIN"` of `[thermostat]`, with `friction` $\gamma$ in 1/ps
-(D135). Each step is that of velocity Verlet with the friction and the
-noise between the two halves of its drift, the middle scheme
-[[Zhang2019]](references.md#zhang2019), BAOAB in the terms of
+(D135). Without constraints each step is that of velocity Verlet with the
+friction and the noise between the two halves of its drift, the middle
+scheme [[Zhang2019]](references.md#zhang2019), BAOAB in the terms of
 [[Leimkuhler2013]](references.md#leimkuhler2013):
 
 $$
@@ -770,26 +770,31 @@ $$
 $$
 
 with $c = e^{-\gamma\Delta t}$ and $\mathbf R$ three normal numbers of the
-particle (Section 11.3), then the constraints of the positions, the
-velocities that take the atoms there over the step, the evaluation, the
-second half kick, and RATTLE, as in a step without it. With constraints
-the noise has a part along them, which the constraints of the positions
-and the velocities of the change remove, as the middle scheme of OpenMM
-does; [[Leimkuhler2016]](references.md#leimkuhler2016) projects after
-each part instead. Leapfrog takes the same step, whose stored velocities
-are those of its middle: with constraints every program of its step
-starts, as velocity Verlet does, from the projected velocities of the time
-of the positions, since the friction would act on what a kick of a whole
-step leaves along the constraints (Section 23). A particle of mass 0 keeps
-its velocity.
+particle (Section 11.3), then the evaluation and the second half kick.
+With constraints the step is g-BAOAB, the step of the Appendix of
+[[Leimkuhler2016]](references.md#leimkuhler2016) with one drift in each A
+(D[langevin-gbaoab]): B, the half kick and the projection of the
+velocities on the constraints (RATTLE, SETTLE); A, a drift of
+$\Delta t/2$, the constraints of the positions with the positions before
+that drift as the reference, the velocities of the displacement, and
+their projection at the new positions; O, the friction and the noise and
+the projection; A again; the evaluation; B. The middle scheme that it
+replaces let the noise and the friction act on velocities with a part
+along the constraints, removed only by one constraint of the positions
+over the whole step: on rigid water at 2 fs its state was 1.4 K above the
+target and at 4 fs 4.8 K, against −0.2 and −0.4 K for g-BAOAB (#268).
+Leapfrog takes the same step, whose stored velocities are those of the
+second drift: with constraints every program of its step starts, as
+velocity Verlet does, from the projected velocities of the time of the
+positions (Section 23). A particle of mass 0 keeps its velocity.
 
 | Item | Rule |
 |---|---|
-| Where | In every program of a step: `step`, `step_energy`, `step_virial`, and `step_trotter`, which scales the cell after the friction and the noise, so that the kinetic energy of the count of its work is that of the velocities it scales |
+| Where | In every program of a step: `step`, `step_energy`, `step_virial`, and `step_trotter`, which scales the cell after the friction and the noise (with constraints after their projection, between the two A), so that the kinetic energy of the count of its work is that of the velocities it scales |
 | The key | The seed; the number of the step, from a counter on the host that every step advances from the first step of the run (D129), so that a continued run takes the numbers of one that does not stop; the number of the particle in the input, so that the order of the positions does not change them |
 | The momentum | Not kept: the degrees of freedom are $3N - N_c$, less 3 only if `center_of_mass_interval` removes the motion of the center of mass |
 | `interval` | Paces the removal of the motion of the center of mass and the barostat, which act at the end of a period; 10 by default with a barostat, otherwise none |
-| The log | No conserved energy: the run does not count the energy that the friction and the noise exchange with the bath (the roadmap) |
+| The log | No conserved energy: the run does not count the energy that the friction and the noise exchange with the bath (the roadmap). The temperature is the optimal estimate; with constraints the steps of the rows measure $K_\text{half}$ from the chord velocities of the second A of the step and of the first A of the next without its noise (D[langevin-gbaoab]) |
 | The virial of the constraints | That of the forces that keep the bonds at their lengths at the end of the step, solved from its positions, velocities, and forces, $\mathbf e\cdot(\mathbf a_q - \mathbf a_p) = -\lvert\mathbf v_q - \mathbf v_p\rvert^2/d$, with the matrix of RATTLE; the changes of SHAKE and RATTLE within the step hold the friction and would give a pressure higher by $\gamma\Delta t/2$ of the virial of the constraints, 39 bar per 1/ps for water at 2 fs |
 
 **Measured.** The noise of one step from velocities of 0 against Philox
