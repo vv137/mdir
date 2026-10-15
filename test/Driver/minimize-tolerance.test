@@ -1,6 +1,7 @@
 # `[minimize] force_tolerance` (D219): the minimization of
 # the dipeptide in water stops at the first row of the log whose largest
-# force is below 15 kcal/mol/Å, step 100 (60.9 at step 90), and takes no
+# force is below 15 kcal/mol/Å, step 90 (34.9 at step 80; the cap of the
+# step of D[minimize-step-cap]), and takes no
 # step after it; with 1 kcal/mol/Å it takes its 20 steps and says that it
 # did not converge. Inputs/python_minimize_tolerance.py checks the stop
 # against a NumPy reference, on the CPU and a GPU.
@@ -13,10 +14,10 @@
 
 # STOP:      MDIR: 1168 particles, at most 400 steps of steepest descent, until the largest force is below 15 kcal/mol/Å
 # STOP:      INFO:         0 {{.*}}
-# STOP:      INFO:        90 {{ *}}{{-[0-9.]+}} {{ *}}{{[0-9.]+}} {{ *}}60.9
-# STOP-NEXT: INFO:       100 {{ *}}{{-[0-9.]+}} {{ *}}{{[0-9.]+}} {{ *}}9.6
-# STOP-NOT:  INFO:       110
-# STOP:      MDIR: converged at step 100: the largest force, 9.6{{[0-9]+}} kcal/mol/Å, is below 15
+# STOP:      INFO:        80 {{ *}}{{-[0-9.]+}} {{ *}}{{[0-9.]+}} {{ *}}34.9
+# STOP-NEXT: INFO:        90 {{ *}}{{-[0-9.]+}} {{ *}}{{[0-9.]+}} {{ *}}13.2
+# STOP-NOT:  INFO:       100
+# STOP:      MDIR: converged at step 90: the largest force, 13.2{{[0-9]+}} kcal/mol/Å, is below 15
 
 # MORE:      INFO:        20
 # MORE:      MDIR: not converged in 20 steps: the largest force, {{[0-9.]+}} kcal/mol/Å, is not below 1

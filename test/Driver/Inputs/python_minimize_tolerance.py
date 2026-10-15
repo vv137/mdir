@@ -24,8 +24,9 @@ target = getattr(mdir.Target, target_name)
 STEPS = 400
 ENERGY = 10
 # kcal/mol/A. The largest force of the rows every ENERGY steps falls below
-# it first at step 100 (9.6 kcal/mol/A there; 60.9 at step 90 and at least
-# 25 at every row before), in either precision, on the CPU and a GPU.
+# it first at step 90 (13.3 kcal/mol/A there; 34.9 at step 80 and at least
+# 25 at every row before, with the cap of the step of 0.1 A of
+# D[minimize-step-cap]), in either precision, on the CPU and a GPU.
 TOLERANCE = 15.0
 KCAL_A = 41.84  # kJ/mol/nm per kcal/mol/A
 KCAL_A2 = 4.184 / (0.1 * 0.1)
@@ -104,7 +105,7 @@ label = f"{target_name} {precision}"
 # mdir run: the reference, the criterion, and a run that stops.
 _, reference, _, _ = cli_run("reference", STEPS)
 stop = first_below(reference, TOLERANCE)
-assert stop == 100, stop
+assert stop == 90, stop
 log, rows, step, positions = cli_run("tolerance", STEPS, TOLERANCE)
 assert max(rows) == stop and step == stop, (max(rows), step)
 assert rows == {s: r for s, r in reference.items() if s <= stop}
