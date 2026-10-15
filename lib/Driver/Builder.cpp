@@ -9042,7 +9042,7 @@ void Builder::emitMinimization(StringRef velocities) {
        << formatReal(control.minimizeStep * units::length) << " : f64\n";
   // A step grows to at most 0.1 Å (D[minimize-step-cap]): longer ones turn
   // rigid groups beyond what the constraints take back, and are not taken
-  // (D[minimize-large-opc]); on 103,292 OPC waters the largest force fell
+  // (D259); on 103,292 OPC waters the largest force fell
   // below 5 kcal/mol/Å in 500 steps rather than 3300 with a cap of 1 Å.
   os << "  %h_most = arith.constant " << formatReal(0.1 * units::length)
      << " : f64\n"
