@@ -183,6 +183,29 @@ points numbered in i32, it takes 90 µs (D102); pmemd.cuda gathers in 79
 | Mixed precision | The positions, the charges, and the forces as they are stored. On the host the B-splines, the grid, and the FFT are in f64; on a device they are in the type of the forces, f32 in the mixed and single modes, with the fractions of the positions along the cell (the position times one over the edge, less its floor) and the edges of the cell in f64, and the point of the grid and the fraction within it in the type of the forces (D78, amended). The energy and the virial are summed in f64 across blocks (below) |
 | The sums of a device | A thread for each point of the transform; a block of 128 threads adds up its energy and virial by a tree (`gpu.all_reduce`) in the type of the grid and stores them in f64, and one block adds up the blocks in f64; the host copies seven numbers (D104). The order of every sum depends on the size of the grid alone, so the energy and the virial do not depend on the order of the threads either |
 
+### 3.1 The particles without a coefficient (D[pme-skip-zero])
+
+A particle with $q_i = 0$ adds nothing to the grid, and its force,
+$-q_i\sum_k\phi(k)\nabla_i\theta_i(k)$, is zero; the energy and the virial
+come from the grid alone. The oxygen of a four-site water (OPC,
+TIP4P-Ew) carries no charge, and the hydrogens and the virtual site of a
+water have $c_i = 0$ on the grid of the dispersion (D162). The reciprocal
+sums spread and gather only the particles whose coefficient can be
+nonzero, from a list of their places, rather than with a test of each
+particle in the kernels: the oxygen is one site in four, so a test would
+leave every warp at work.
+
+| Item | Value |
+|---|---|
+| The list | A field of the particles of `i32`, `pme_listed` for the charges and `ljpme_listed` for the coefficients $c_i$: the places of the listed particles in ascending order, then −1. The builder makes it from the topology (`collectListed`); where the particles take a new order (`emitReorder`: at the start, and at each segment of checkpoints with `spatial_order`), `md_exec.nonzero` makes it again from the permuted field, in place of a permutation. `md.reciprocal ... listed(%l)` takes it |
+| `md_exec.nonzero` | On the host one loop that counts; on a device a kernel that fills the list with −1, a thread for each chunk of 256 places that counts its listed particles, one thread that sums the counts of the chunks before each, and a thread for each chunk that writes its places from there. All in integers, so the list is the same in every mode. It runs where the order changes, not at every step |
+| `[free_energy]` | The test is on the charge of the topology, never on $q_i(1 - a_i\lambda)$ (D161): a charge of zero is zero at every $\lambda$, and its share of $\partial U/\partial\lambda$ is zero too. A particle that $\lambda = 1$ decouples stays listed, since $\lambda$ changes during a run |
+| Kernels on a device | The listed kernels (`_listed` in `PMEGPU.mlir` and `PMEGPUTriclinic.mlir`, after the others, from `scripts/generate-pme-gpu-template.py`) take an entry of the list where the others take a particle: a thread and a point along z in the spreading, a thread in the weights, a warp in the bricks, the lanes of a particle in the gathering. The items past the last listed place do nothing; in the gathering, a warp whose first entry is past it leaves as a whole, before its shuffles, and the threads past it in the warp that holds the last entry compute for the first particle of their warp and do not store |
+| The forces of the others | The first kernel of the spreading (the spreading itself, or the weights of order 4 in `f32`), which runs over every place, stores a force of zero at each; the gathering then stores the forces of the listed particles. On the host the gathering stores the zeros first |
+| The potential at the particles | $\partial E/\partial q_i$ (D231) is not zero where $q_i$ is: a sum with `potential` takes no list |
+| When a program has a list | Where the topology has a coefficient of zero, and no tunable may change it: a tunable charge for the list of the charges, a tunable $\sigma$ or $\epsilon$ (of a type or of a pair) for that of the dispersion. An update of the tunables keeps the text of the program, and a charge moved across zero would change it. A tunable of another kind leaves the list. Without a list the module is that of before, so a system with no such particle (JAC, Factor IX, STMV of the Amber suite) runs the same kernels |
+| Determinism | The grid in fixed point is the same sum of integers, and each force the same product: in the deterministic mode, and on the host, the run is the same to the bit as without the list (checked against `main` ae971477 on the dipeptide in OPC, [`pme-skip-zero.test`](../test/Driver/pme-skip-zero.test)) |
+
 ## 4. Parameters (D71)
 
 | Keyword | Meaning | Default |
