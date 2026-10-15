@@ -859,6 +859,16 @@ the first half of the next as that step will, without changing the state
 (D203). Under g-BAOAB the two half steps are the drifts of the A around
 the end of the step, each of $\Delta t/2$: that of the step, and that of
 the next without its noise, which comes after it (D[langevin-gbaoab]).
+Under Langevin dynamics the log's temperature is that of $K_\text{half}$
+rather than of $K_T$: the friction and the noise act on the velocities of
+the middle of the step, between the drifts, and BAOAB samples those at
+the temperature of the bath where it samples the configurations
+[[Leimkuhler2013]](references.md#leimkuhler2013), while $K$ of the end of
+the step reads low by the term of the harmonic argument of Section 6.3.
+On the bilayer of `examples/popc-bilayer` at 303 K, $T_\text{half}$ of the
+lipids and of the water was 303.1 and 302.9 K at 2 fs, and 303.7 and
+302.9 K at 4 fs with repartitioned hydrogen masses, where $T_T$ read 299.2
+and 302.3 K, and 293.4 and 300.5 K.
 The estimate is accurate as an equilibrium mean,
 with constraints when the half-step velocities include the corrections of
 the constraints of the positions. The row of step 0 with constraints takes

@@ -470,7 +470,10 @@ next step, a kick, a drift, and the constraints of the positions, and the
 mean of the kinetic energies of the velocities of the two drifts after
 their constraints (D203); under Langevin dynamics, by g-BAOAB, the two
 drifts of half a step around the end of the step, that of the next
-without its noise (D[langevin-gbaoab]). The row of step 0 has no step
+without its noise (D[langevin-gbaoab]). Under Langevin dynamics the
+temperature takes $K_\text{half}$ in place of $K_T$: the friction and the
+noise act on the velocities between the drifts, which the step samples at
+the temperature of the bath. The row of step 0 has no step
 before it and takes $K$ there. The thermostats control $K_T$: the steps
 that close a period of coupling measure $K_\text{half}$ as the rows do
 (D[thermostat-kopt]). The pressure takes the kinetic energy of the centers
