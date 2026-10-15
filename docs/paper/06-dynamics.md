@@ -271,11 +271,40 @@ K' = K_t + (1 - c)\Big(\frac{\bar K(R_1^2 + S)}{N_f} - K_t\Big)
 $$
 
 which is the exact solution over the period of the stochastic
-differential equation of [[Bussi2007]](references.md#bussi2007) for $K$. $S$ is drawn as
+differential equation of [[Bussi2007]](references.md#bussi2007) for $K$. $K_t$
+here is not the kinetic energy of the velocities of the step but that of
+the optimal temperature of Section 6.5, $K_T = K + \tfrac23(K_\text{half} -
+K)$ without the center of mass (D[thermostat-kopt]); the factor $\alpha$
+scales every velocity, which keeps the constraints of the velocities.
+The reason is the configurational distribution. For one harmonic mode of
+frequency $\omega$ the positions of velocity Verlet obey $x_{n+1} - 2x_n +
+x_{n-1} = -\omega^2\Delta t^2x_n$, and in a stationary state
+$\langle x_nx_{n+1}\rangle = (1 - \omega^2\Delta t^2/2)\langle x^2\rangle$.
+The chord velocity $(x_{n+1} - x_n)/\Delta t$ of a half step then has
+$m\langle v_{n+\frac12}^2\rangle = m\omega^2\langle x^2\rangle$ exactly, at
+any stable step, while the velocity of the step, $(x_{n+1} -
+x_{n-1})/2\Delta t$, has $m\langle v_n^2\rangle = m\omega^2\langle
+x^2\rangle(1 - \omega^2\Delta t^2/4)$. The positions are canonical at the
+temperature $T_c$ with $k_BT_c = m\omega^2\langle x^2\rangle$; $K_\text{half}$
+measures $T_c$, $K$ reads it low by $\omega^2\Delta t^2/4$, and $K_T$ by
+$\omega^2\Delta t^2/12$. A thermostat that holds $K$ at $\tfrac12N_fk_BT_0$
+therefore holds the configurations of the fast modes above $T_0$. With
+rigid water, whose rotations are the fast modes, the potential energy at a
+fixed volume put the state 1.7 to 1.8 K above the target at 2 fs when the
+thermostat held $K$, and 0.3 to 0.5 K above it when it held $K_T$ (7.3
+and 2.0 K at 4 fs; #268), the distribution of the controlled $K_T$ being
+canonical by a test of Kolmogorov and Smirnov. $K_T$ is not a homogeneous
+quadratic function of the momenta, so the scaling by $\alpha$ gives it
+$\alpha^2K_T$ only to the order of $K_\text{half} - K$, about 0.6% at 2 fs;
+the variance of the controlled $K_T$ was within its error of the
+canonical one at 2 fs and 2% below it at 4 fs. With constraints the step
+that closes each period measures $K_\text{half}$ as the rows of the log do
+(Section 6.5). $S$ is drawn as
 $2\,\Gamma(\tfrac{N_f-1}{2}, 1)$ by the method of [[Marsaglia2000]](references.md#marsaglia2000), so
 $N_f$ need not be an integer. One loop over particles applies
 $\mathbf v \leftarrow \alpha(\mathbf v - \mathbf V_\text{cm})$, and the
-bath takes $K_\text{cm} + (1 - \alpha^2)K_t$, which keeps the conserved
+bath takes $K_\text{cm} + (1 - \alpha^2)K$, the change of the kinetic
+energy of the velocities scaled, which keeps the conserved
 energy, the total plus the bath, flat when the dynamics conserve the
 total. The velocity rescaled is that of time $n+1$ for velocity Verlet and
 for leapfrog with a barostat, and the stored $\mathbf v_{n+\frac12}$ for
@@ -283,9 +312,9 @@ leapfrog alone. Without a thermostat the center of mass is removed only
 if `center_of_mass_interval` asks.
 
 **Langevin dynamics** (`method = "LANGEVIN"`, D135) acts in every step
-instead, between the two halves of the drift: the middle scheme of
-[[Zhang2019]](references.md#zhang2019), BAOAB in the terms of
-[[Leimkuhler2013]](references.md#leimkuhler2013),
+instead, between the two halves of the drift: without constraints the
+middle scheme of [[Zhang2019]](references.md#zhang2019), BAOAB in the
+terms of [[Leimkuhler2013]](references.md#leimkuhler2013),
 
 $$
 \mathbf v \leftarrow \mathbf v + \tfrac{\Delta t}{2}\frac{\mathbf F}{m},\quad
@@ -295,20 +324,34 @@ $$
 $$
 
 with $c = e^{-\gamma\Delta t}$ for the friction $\gamma$ and three normal
-numbers $\mathbf R$ of the particle, then the constraints, the evaluation,
-and the second half kick of Section 6.1. The constraints of the positions
-and the velocities of the change remove the part of the noise along the
-constraints, and the step that scales the cell (Section 6.4) scales after
-the noise. The momentum of the center of mass is not kept, so
+numbers $\mathbf R$ of the particle, then the evaluation and the second
+half kick of Section 6.1. For a harmonic mode BAOAB samples the positions
+exactly at any stable step [[Leimkuhler2013]](references.md#leimkuhler2013):
+the friction and the noise act on the momenta of the middle, which a
+symmetric drift around them leaves canonical. With constraints the
+momenta live on the cotangent space of the constraint surface, and the
+step is g-BAOAB, that of the Appendix of
+[[Leimkuhler2016]](references.md#leimkuhler2016) with one drift in each A
+(D[langevin-gbaoab]): B is the half kick followed by the projection
+$\Pi_{\mathbf x}$ of the velocities on the constraints at $\mathbf x$
+(RATTLE, SETTLE); A a drift of $\Delta t/2$, the constraints of the
+positions along those before the drift (SHAKE, SETTLE), the velocities of
+the displacement, and their projection at the new positions; O the
+friction and the noise followed by $\Pi$; then A, the evaluation, and B.
+Each part then preserves the constraint surface and its cotangent space,
+as the splitting of [[Leimkuhler2016]](references.md#leimkuhler2016)
+requires, and O draws the noise on that space. The middle scheme it
+replaces, with one constraint of the positions after the whole drift,
+let the friction and the noise act on velocities with a part along the
+constraints: on 451 rigid TIP3P waters its state, from $\langle U\rangle$
+at a fixed volume, was 1.4 K above the target at 2 fs and 4.8 K at 4 fs,
+against −0.2 and −0.4 K for g-BAOAB (#268). The step that scales the cell
+(Section 6.4) scales after O, between the two A. The momentum of the
+center of mass is not kept, so
 $N_f = 3N - N_c$ unless its motion is removed, and the log has no conserved
 energy: the run does not count the energy that the friction and the noise
-exchange with the bath. With constraints, the virial of their forces is
-that of the forces that keep the bonds at their lengths at the end of the
-step, $\mathbf e\cdot(\mathbf a_q - \mathbf a_p) = -\lvert\mathbf v_q -
-\mathbf v_p\rvert^2/d$, solved with the matrix of RATTLE, rather than the
-mean of the changes of SHAKE and RATTLE within the step, which the
-friction makes smaller by $\gamma\Delta t/2$: those raised the pressure of
-water at one volume by 39 bar per 1/ps of friction at 2 fs. An ideal gas of 256 particles warmed from 10 K by a
+exchange with the bath. The pressure does not take the forces of the
+constraints at all (Section 6.4). An ideal gas of 256 particles warmed from 10 K by a
 bath of 300 K with $\gamma$ = 5/ps relaxes its kinetic energy at 9.6 ± 0.3/ps,
 against $2\gamma$ = 10/ps.
 
@@ -402,9 +445,16 @@ a change of it: a run that it does not stop moves as before.
 Beyond the stability of the parts, a chain
 acting once a period follows a period $\tau_T$ shorter than about 20
 periods of coupling poorly, which the run warns of. The chain is a few numbers, moved on the host,
-which returns $\alpha$ for the loop over particles; the bath takes the
-change of the energy of the chain, the last three terms of $H'$, so the
-log's conserved energy is $H'$ less its value at the start of the run.
+which returns $\alpha$ for the loop over particles. The chain is driven by
+$K_T$ in place of $K$ in $G_1$, as velocity rescaling is
+(D[thermostat-kopt]), while its friction scales $K$; $H'$ is then no
+longer a constant of the motion (the investigation of #268 measured it
+drifting by $9\times10^{-3}$ of its value over 5 ns at 2 fs). The bath
+therefore takes what the scaling takes from the particles,
+$(1 - \alpha^2)K$, exactly, as under velocity rescaling, and the log's
+conserved energy is the effective energy of
+[[Bussi2007]](references.md#bussi2007), which measures the error of the
+integration of the particles alone.
 The checkpoints keep the chain. On the mixture of 256 particles of
 `thermostat.test` at 150 K ($N_f = 765$, $\tau_T$ = 1 ps, $N_T = 10$,
 $\Delta t$ = 4 fs, 400 ps after 80 of equilibration), the mean kinetic
@@ -417,17 +467,38 @@ $H'$ drifts by $1.9\times10^{-4}\,k_BT_0$ per particle per ns.
 
 Stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020) couples the cell to a
 pressure $P_0$ every $N_P$ steps; $N_P = N_T$, and a barostat requires the
-thermostat. The internal pressure for the strain is
+thermostat. The scaling moves each group $g$ that the constraints keep
+rigid by its center $\mathbf X_g$, and every other particle alone, so the
+pressure conjugate to it is that of the groups
+(D[barostat-group-pressure], [[Jung2020]](references.md#jung2020)). The
+virial theorem for the centers, $\tfrac{d}{dt}\langle\sum_g\mathbf
+X_g\cdot\mathbf P_g\rangle = 0$, gives $3PV = \langle2K_g +
+\mathrm{tr}\,\mathsf W_g\rangle$, and the forces of the constraints, which
+sum to zero within a group, are not in $\mathbf F_g$. Under velocity
+Verlet with constraints a center moves by its force alone,
+$\mathbf P_g(t\pm\tfrac{\Delta t}{2}) = \mathbf P_g(t) \pm
+\tfrac{\Delta t}{2}\mathbf F_g(t)$, so the mean of the kinetic energies of
+the centers at the half steps is $K_{\text{half},g} = K_g +
+\tfrac{\Delta t^2}{8}\sum_g\lVert\mathbf F_g\rVert^2/M_g$ exactly
+[[Jung2020]](references.md#jung2020), eq. 42, under Langevin dynamics as
+well, whose noise acts away from the half kicks. The kinetic energy that
+satisfies the discrete virial theorem is that of the half steps (the
+argument above, applied to the centers; [[Jung2018]](references.md#jung2018)).
+The internal pressure for the strain is
 
 $$
-P = c\,\frac{2K_t + \mathrm{tr}\,\mathsf W + C/V}{3V},
+P = c\,\frac{2K_{\text{half},g} + \mathrm{tr}\,\mathsf W_g + C/V}{3V},
 $$
 
-with $c = 16.6053906717$ bar nm³ mol/kJ, $K_t$ the kinetic energy of the
-step without the center of mass before the thermostat, $\mathsf W$ the
-virial with that of the constraints, and $C/V$ the virials of the
+with $c = 16.6053906717$ bar nm³ mol/kJ, $K_{\text{half},g}$ without the
+center of mass, before the thermostat, and $C/V$ the virials of the
 dispersion correction and of the neutralizing background at the current
-volume (Section 5). With $\lambda = \sqrt V$, which makes the noise
+volume (Section 5). Neither a measured half step nor a virial of the
+constraints enters: with the kinetic energy of the atoms, the rotational
+kinetic energy of the rigid waters and the centripetal part of their
+constraint virial cancel only if both are taken from the same velocities,
+which the step of Langevin dynamics does not offer. Without constraints
+the pressure is the $P_\text{half}$ of the log of D203, unchanged. With $\lambda = \sqrt V$, which makes the noise
 additive, and $f = \beta_T N_P\Delta t/\tau_P$ (compressibility $\beta_T$,
 time constant $\tau_P$), one step of Euler and Maruyama of eq. (S7) of
 [[Bernetti2020]](references.md#bernetti2020) is
@@ -487,7 +558,8 @@ a triclinic cell by $H\,\mathrm{diag}(\boldsymbol\mu)$, each tilt with
 its column, so that the particles keep their lattice coordinates and the
 cell stays lower triangular and reduced (D127); and
 the work of a scaling below is a sum over the axes, with $K_a$ and the
-diagonal of the virial of the groups in place of $K$ and the trace.
+diagonal of the virial of the groups in place of $K$ and the trace; the
+pressure of axis $a$ takes $K_{\text{half},g,a}$ and $W_{g,aa}$.
 
 The log and the file of energies report the cell area beside its volume
 for every barostat coupling (D170), labeled `AREA_XY` in the
@@ -773,7 +845,9 @@ log corrects the estimates of the temperature and the pressure for the
 velocity of the integer step [[Jung2018]](references.md#jung2018)
 [[Jung2019]](references.md#jung2019): $K_T = \tfrac13K +
 \tfrac23K_\text{half}$, the optimal estimate of [[Jung2019]](references.md#jung2019),
-$N_fk_BT = \tfrac43K_\text{half} + \tfrac23K$, and $K_P = K_\text{half}$.
+$N_fk_BT = \tfrac43K_\text{half} + \tfrac23K$, which the thermostats
+control (Section 6.3), and $K_P = K_{\text{half},g}$, that of the centers
+of the groups of Section 6.4.
 Without constraints velocity Verlet gives $K_\text{half} = K +
 \tfrac{\Delta t^2}{8}\sum_i\lVert\mathbf F_i\rVert^2/m_i$ exactly. With
 constraints the two halves of a step receive different impulses of the
@@ -782,15 +856,23 @@ chord velocities $(\mathbf x_{n+2} - \mathbf x_{n+1})/\Delta t$ and
 $(\mathbf x_{n+1} - \mathbf x_n)/\Delta t$, the velocities after the
 constraints of the positions: after its second half kick, the step takes
 the first half of the next as that step will, without changing the state
-(D203). The estimate is accurate as an equilibrium mean,
+(D203). Under g-BAOAB the two half steps are the drifts of the A around
+the end of the step, each of $\Delta t/2$: that of the step, and that of
+the next without its noise, which comes after it (D[langevin-gbaoab]).
+Under Langevin dynamics the log's temperature is that of $K_\text{half}$
+rather than of $K_T$: the friction and the noise act on the velocities of
+the middle of the step, between the drifts, and BAOAB samples those at
+the temperature of the bath where it samples the configurations
+[[Leimkuhler2013]](references.md#leimkuhler2013), while $K$ of the end of
+the step reads low by the term of the harmonic argument of Section 6.3.
+On the bilayer of `examples/popc-bilayer` at 303 K, $T_\text{half}$ of the
+lipids and of the water was 303.1 and 302.9 K at 2 fs, and 303.7 and
+302.9 K at 4 fs with repartitioned hydrogen masses, where the optimal estimate read 299.2
+and 302.3 K, and 293.4 and 300.5 K.
+The estimate is accurate as an equilibrium mean,
 with constraints when the half-step velocities include the corrections of
-the constraints of the positions. The row of step 0 with constraints, and
-Langevin dynamics with constraints, take $K$. The couplings take the
-kinetic energy of the velocities they scale (Sections 6.3 and 6.4):
-$K_T$ is not a homogeneous quadratic function of the momenta, so a
-rescaling would not produce the value it draws, and at a finite step the
-couplings sample the physical distribution up to the error of the
-integrator. With rigid waters, a run ends with $T$ of the solvent, the
+the constraints of the positions. The row of step 0 with constraints takes
+$K$ for the temperature; the pressure needs no measurement there. With rigid waters, a run ends with $T$ of the solvent, the
 waters of SETTLE with 6 degrees of freedom each, and of the solute, the
 rest, each with its share of the three of the center of mass, as means
 over the rows: the check of the hot-solvent/cold-solute problem
@@ -799,14 +881,17 @@ over the rows: the check of the hot-solvent/cold-solute problem
 $$
 T = \frac{2K_T}{N_fk_B},
 \qquad
-P = \frac{2K_P + \mathrm{tr}\,\mathsf W}{3V},
+P = \frac{2K_P + \mathrm{tr}\,\mathsf W_g}{3V},
 \qquad
 \mathsf W = \sum\mathbf d\otimes\mathbf K + \mathsf W_\text{tuples} + \mathsf W_\text{rec} + \mathsf W_c + \dots,
 $$
 
-with the sign of $\mathsf W$ that of $\sum_i\mathbf x_i\otimes\mathbf F_i$:
+with $\mathsf W_g$ the virial $\mathsf W$ of the forces less
+$\sum_g\sum_{i\in g}(\mathbf x_i - \mathbf X_g)\otimes\mathbf F_i$ over
+the rigid groups, which the log's column `VIRIAL` reports, and the sign of
+$\mathsf W$ that of $\sum_i\mathbf x_i\otimes\mathbf F_i$:
 positive for repulsion. $\mathsf W$ includes the virials of the
-constraints, of the virtual sites, of the restraints and the terms of
+virtual sites, of the restraints and the terms of
 the absolute positions (Section 6.4), of the dispersion
 correction ($6E_\text{disp}$), and of the neutralizing background
 ($3E_Q$). The total energy is $U + K$; the conserved energy is the total

@@ -21,4 +21,4 @@
 
 # CHECK: 7 rows, the last at step 60;
 # CHECK: within 0.001 kcal/mol: yes
-# ERR: mdir: at step 60 the Nose-Hoover chain no longer follows its factorization in 11 parts: a part moved it by |s v_j| = 3.29, above 3
+# ERR: mdir: at step 60 the Nose-Hoover chain no longer follows its factorization in 11 parts: a part moved it by |s v_j| = 3, above 3

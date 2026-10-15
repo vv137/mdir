@@ -100,7 +100,7 @@ as the length of a run that `mdir run --continue` carries over as many jobs
 as it takes, stops on a signal or a limit of time that fall on a checkpoint,
 outputs that form one system and continue with the run (D129 to D132,
 D149), and an optional manifest of provenance (D168). Dynamics: Langevin
-dynamics by the middle scheme (D135), Nosé–Hoover chains, Brownian
+dynamics by the middle scheme, with constraints g-BAOAB (D135, D[langevin-gbaoab]), Nosé–Hoover chains, Brownian
 dynamics, and anisotropic cell rescaling (D163). Terms given by expressions
 over tuples, the pairs of a topology, the centers of groups, and single
 particles, with parameters of each particle, tabulated functions, and

@@ -24,8 +24,8 @@
 # MODULE:      dyn.return %x1, %v1, %f1 : !vec, !vec, !vec
 # MODULE:      dyn.program @step_energy(
 # MODULE:      %v2 = dyn.kick %v1, %f1, %m, %half : !vec
-# MODULE-NEXT: dyn.return %x1, %v1, %f1, %u1, %w1, %v2
-# MODULE:      %xl, %vl, %fl, %u, %w, %vn = dyn.step @step_energy(
+# MODULE-NEXT: dyn.return %x1, %v1, %f1, %u1, %w1, %gd1, %v2
+# MODULE:      %xl, %vl, %fl, %u, %w, %gwl, %vn = dyn.step @step_energy(
 # MODULE:      %k = md.sum_particles gather(%vn, %m : !vec, !real)
 # MODULE:      %kexg{{.*}} = md.sum_particles gather(%fl, %m : !vec, !real)
 # MODULE:      %g = vector.reduction <add>, %kex

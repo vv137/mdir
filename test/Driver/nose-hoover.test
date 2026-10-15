@@ -1,6 +1,8 @@
 # A Nose-Hoover chain (D163a) on the mixture of thermostat.test: the chain
-# acts at the end of each period of 10 steps, and its energy with that of
-# the system is conserved. A run that continues from a checkpoint takes the
+# acts at the end of each period of 10 steps, driven by the kinetic energy
+# of the optimal temperature (D[thermostat-kopt]), and the energy of the
+# system with what the scaling took from it, the effective energy, is
+# conserved. A run that continues from a checkpoint takes the
 # chain from it and ends in the state of one that does not stop.
 #
 # REQUIRES: hdf5
@@ -19,13 +21,14 @@
 # CHECK:      MDIR: the conserved energy changed by {{[0-9.]+}}e-0{{[5-9]}} of its value
 
 # The host moves the chain and returns the factor of the velocities; the
-# bath takes the change of the energy of the chain there, not the change of
-# the kinetic energy.
+# bath takes the change of the kinetic energy that the scaling makes, as
+# under velocity rescaling.
 #
 # MODULE:      func.func private @mdrtNoseHooverFactor(i64, f64) -> f64
 # MODULE-NOT:  @mdrtBussiFactor
-# MODULE:      %alpha1 = func.call @mdrtNoseHooverFactor(%{{[a-z0-9_]+}}, %kt1) : (i64, f64) -> f64
-# MODULE:      func.call @mdrtAddBath(%kcm1) : (f64) -> ()
+# MODULE:      %alpha1 = func.call @mdrtNoseHooverFactor(%{{[a-z0-9_]+}}, %kot1) : (i64, f64) -> f64
+# MODULE:      %heat1 = arith.subf %kc1, %kn1 : f64
+# MODULE:      func.call @mdrtAddBath(%heat1) : (f64) -> ()
 
 # CHECK-TOOL: thermostat:         NOSE-HOOVER
 

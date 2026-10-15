@@ -623,7 +623,6 @@ double mdrtNoseHooverFactor(int64_t step, double kinetic) {
   size_t m = output.chainMasses.size();
   if (m == 0 || !(kinetic > 0.0))
     return 1.0;
-  double before = output.getChainEnergy();
   // The action is that of the canonical scheme in a fixed number of parts,
   // chainSubsteps, chosen before the run. A part of length s with a
   // negative weight turns the damping exp(-s v_{j+1} / 4) into a growth,
@@ -674,10 +673,11 @@ double mdrtNoseHooverFactor(int64_t step, double kinetic) {
     return 1.0;
   }
   chain = std::move(moved);
-  // The conserved energy is that of the system with the energy of the
-  // chain; what the scaling takes from the particles is in the chain, so
-  // the bath counts the change of the chain's energy.
-  output.bath += output.getChainEnergy() - before;
+  // The chain is driven by the kinetic energy of the optimal temperature
+  // while its scaling acts on the velocities (D[thermostat-kopt]), so the
+  // energy of the system and of the chain is not conserved: the bath counts
+  // what the scaling takes from the particles, exactly, in the program, as
+  // under velocity rescaling.
   output.checkpoint.thermostatState = chain;
   return scale;
 }
@@ -784,7 +784,7 @@ void _mlir_ciface_mdrtSetTilt(double bx, double cx, double cy) {
 
 void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double excess,
-                                    double virial) {
+                                    double virial, double pressureKinetic) {
   Output &output = *current;
   // A step of energy that is not a row of the log keeps no temperatures of
   // the solvent and the solute, as for `mdir run`; an embedded program
@@ -810,12 +810,21 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // The mean of the kinetic energies half a step before and after,
   // K_half, exceeds `kinetic` by `excess`: (dt^2 / 8) sum F^2 / m without
   // constraints, measured from the velocities of the half steps with them.
-  // The pressure takes K_half, and the temperature the optimal estimate
-  // (2 K_half + K) / 3 (D45, D203). See Jung et al., J.
-  // Chem. Phys. 148, 164109 (2018), and J. Chem. Theory Comput. 15, 84
-  // (2019).
-  double half = kinetic + excess;
-  double optimal = kinetic + 2.0 * excess / 3.0;
+  // The temperature takes the optimal estimate (2 K_half + K) / 3 (D45,
+  // D203), which the thermostats control (D[thermostat-kopt]); the
+  // pressure takes the kinetic energy of the centers of the groups at the
+  // half steps, `pressureKinetic`, with the virial of the groups
+  // (D[barostat-group-pressure]). See Jung et al., J. Chem. Phys. 148,
+  // 164109 (2018), J. Chem. Theory Comput. 15, 84 (2019), and Jung and
+  // Sugita, J. Chem. Phys. 153, 234115 (2020).
+  double half = pressureKinetic;
+  // Under Langevin dynamics the friction and the noise act on the
+  // velocities of the middle of the step, between its drifts, which sample
+  // the temperature of the bath where the configurations do (BAOAB
+  // [Leimkuhler2013]; g-BAOAB [Leimkuhler2016]): the temperature takes the
+  // kinetic energy of the half steps, K_half (D[langevin-gbaoab]).
+  double optimal = output.halfTemperature ? kinetic + excess
+                                          : kinetic + 2.0 * excess / 3.0;
   double temperature =
       2.0 * optimal / (output.degreesOfFreedom * units::boltzmann);
   // The temperatures of the solvent, the rigid waters, and of the solute,
@@ -825,8 +834,9 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     output.hasSolvent = false;
     double solvent = output.solventFreedom;
     double solute = output.degreesOfFreedom - solvent;
-    auto get = [](double k, double h, double freedom) {
-      double estimate = (k + 2.0 * h) / 3.0;
+    bool halfOnly = output.halfTemperature;
+    auto get = [halfOnly](double k, double h, double freedom) {
+      double estimate = halfOnly ? h : (k + 2.0 * h) / 3.0;
       return 2.0 * estimate / (freedom * units::boltzmann);
     };
     double k = output.solventKinetic, h = output.solventHalf;
@@ -835,8 +845,8 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
       output.solventFull.add(2.0 * k / (solvent * units::boltzmann));
     }
     if (solute > 0.5) {
-      output.soluteOptimal.add(
-          get(kinetic - k, kinetic + excess - h, solute));
+      double atomicHalf = kinetic + excess;
+      output.soluteOptimal.add(get(kinetic - k, atomicHalf - h, solute));
       output.soluteFull.add(2.0 * (kinetic - k) /
                                   (solute * units::boltzmann));
     }

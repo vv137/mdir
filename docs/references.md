@@ -526,7 +526,21 @@ Comput.* **15**, 84–94 (2019).
 Used for: the optimal temperature, from the kinetic energies at the step
 and at the half steps, which the log reports and the thermostats control,
 with the half steps measured under constraints (D45,
-D203).
+D203, D[thermostat-kopt]).
+
+### Jung2020
+
+J. Jung, Y. Sugita, "Group-based evaluation of temperature and pressure
+for molecular dynamics simulation with a large time step," *J. Chem.
+Phys.* **153**, 234115 (2020).
+[doi:10.1063/5.0027873](https://doi.org/10.1063/5.0027873)
+
+Used for: the pressure of the groups that the barostat scales, the
+waters of SETTLE and the clusters of SHAKE by their centers, with the
+kinetic energy of the centers at the half steps from their forces alone
+(its eqs. 32–42), which the barostat and the log take
+(D[barostat-group-pressure]); its density of water and area per lipid
+against the time step as the yardsticks of #268.
 
 ### Jung2026
 
@@ -617,7 +631,9 @@ integration and solvent–solute splitting," *Proc. R. Soc. A* **472**,
 [doi:10.1098/rspa.2016.0138](https://doi.org/10.1098/rspa.2016.0138)
 
 Used for: BAOAB with holonomic constraints, the projection of the
-velocities after each part of the step (F1).
+velocities after each part of the step (F1): g-BAOAB, the step of Langevin
+dynamics with constraints, from its Appendix with one drift in each A
+(D[langevin-gbaoab]).
 
 ### Lekien2005
 
