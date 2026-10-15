@@ -191,7 +191,7 @@ points numbered in i32, it takes 90 µs (D102); pmemd.cuda gathers in 79
 | `coulomb_modifier` in `[energy]` | `"POTENTIAL_SHIFT"` shifts the direct sum to 0 at the cutoff, as GROMACS does by default; `"NONE"` does not, as sander. **At a tolerance looser than the default, take `POTENTIAL_SHIFT` for a run at constant energy or one whose conserved energy is watched** (#346): unshifted, each pair that crosses the cutoff changes the energy by $fq_iq_j\,\mathrm{erfc}(\beta r_c)/r_c$, and the total energy of JAC (NVE, mixed precision, 2 fs, 2 ns) drifts by 281 kcal/mol/ns at `tolerance = 1e-3` (the slopes of the two halves 247 and 288) and 2.9 at `1e-4` (1.7 and 6.0); at the default $10^{-5}$ it is −0.01 (0.13 and 0.86), within the scatter of a slope. The shift changes the energy the log reports, not the forces. `NONE` stays the default, as in Amber, so that energies compare with sander's and pmemd's. The prolate kernel (`kernel = "PROLATE"`) needs no shift: its direct term $1 - \Phi(r/r_c)$ is 0 at the cutoff, and the modifier changes nothing there. | `"NONE"` |
 | `kernel` in `[pme]` | `"GAUSSIAN"`: the Gaussian splitting with B-splines; `"PROLATE"`: the prolate spheroidal wave function for both, Ewald summation with prolates (Section 7, D[prolate-ewald]) | `"GAUSSIAN"` |
 | `beta` in `[pme]` | $\beta$, in Å⁻¹; refused with `kernel = "PROLATE"` | From `tolerance` |
-| `tolerance` in `[pme]` | The size of the tail of the splitting kernel at the cutoff. Gaussian: $\beta$ such that $\mathrm{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it. Prolate: the bandwidth $c$ such that $\psi_0^c(1) = \texttt{tolerance}$. **The same number gives very different force errors with the two kernels**: the Gaussian default of 10⁻⁵ gives a relative force error $\Delta = 1.4\times10^{-3}$ (JAC and Cellulose, with its default grid; $\Delta$ over the Coulomb forces of the topology, Section 7), the prolate 10⁻⁵ gives 1.0 to 1.2 × 10⁻⁵, in double precision; mixed precision adds about 10⁻⁴ with either kernel. Looser than the default, the Gaussian's unshifted direct sum makes the energy of a run drift (JAC: 281 kcal/mol/ns at 10⁻³, 2.9 at 10⁻⁴): take `coulomb_modifier = "POTENTIAL_SHIFT"` for a run at constant energy (#346). Less than 1 | 10⁻⁵ |
+| `tolerance` in `[pme]` | The size of the tail of the splitting kernel at the cutoff. Gaussian: $\beta$ such that $\mathrm{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it. Prolate: the bandwidth $c$ such that $\psi_0^c(1) = \texttt{tolerance}$. **The same number gives very different force errors with the two kernels**: the Gaussian default of 10⁻⁵ gives a relative force error $\Delta = 1.4\times10^{-3}$ (JAC and Cellulose, with its default grid; $\Delta$ over the Coulomb forces of the topology, Section 7), the prolate 10⁻⁵ gives 1.0 to 1.2 × 10⁻⁵, in double precision; mixed precision adds about 10⁻⁴ with either kernel. The Gaussian's tolerance truncates the direct sum alone, as pmemd's `dsum_tol` and GROMACS's `ewald-rtol` do (both 10⁻⁵ by default), and the mesh sets $\Delta$: order 4 at about 1 Å (pmemd, MDIR) or 1.2 Å (GROMACS) gives $\Delta \approx 10^{-3}$ at the standard settings of all three. The prolate tolerance, with its grid rule, sets $\Delta$ itself: its default is about a hundred times the force accuracy of the standard settings. Looser than the default, the Gaussian's unshifted direct sum makes the energy of a run drift (JAC: 281 kcal/mol/ns at 10⁻³, 2.9 at 10⁻⁴): take `coulomb_modifier = "POTENTIAL_SHIFT"` for a run at constant energy (#346). Less than 1 | 10⁻⁵ |
 | `bandwidth` in `[pme]` | Prolate only: $c$, instead of the tolerance | From `tolerance` |
 | `window_bandwidth` in `[pme]` | Prolate only: $c_1$ of the window of the spreading | $c(\texttt{tolerance}/2)$ |
 | `grid` in `[pme]` | The numbers of points of the grid along the three edges, `[nx, ny, nz]`, each 8 or more | From `max_spacing` |
@@ -379,7 +379,7 @@ falls only to 6.4 × 10⁻¹⁰ on 500³). STMV takes 180³ at the default.
   | Prolate, default (10⁻⁵, 50³) | −0.06 | 0.87, 0.29 |
   | Gaussian, 10⁻⁴ | 2.9 | 1.7, 6.0 |
   | Prolate, 10⁻⁴ (32³) | 2.9 | 0.06, 3.8 |
-  | Gaussian, 10⁻³ | 281 | 247, 288 |
+  | Gaussian, 10⁻³ (a loose direct-sum tolerance, not a standard setting) | 281 | 247, 288 |
   | Prolate, 10⁻³ (24³) | 5.1 | 2.7, 6.3 |
   | Prolate, 10⁻³, the paper's window (1 ns) | 75 | 84, 78 |
 
@@ -400,40 +400,40 @@ the grid rule and the window were changed, with the grids given by their
 spacing (the window's change costs no time). "Points" is the size of the grid, the data that the transposes of a
 distributed transform move.
 
-| System | Δ tier | Kernel | Grid | Points | Δ | RTX 4090 | RTX PRO 6000 |
+| System | Tier (measured Δ) | Kernel, tolerance | Grid | Points | Δ | RTX 4090 | RTX PRO 6000 |
 |---|---|---|---|---|---|---|---|
-| JAC | 10⁻³ | Gaussian default | 54³ | 157,464 | 1.4 × 10⁻³ | 0.132 | 0.114 |
-| JAC | 10⁻³ | Gaussian, suite | 64³ | 262,144 | 7.3 × 10⁻⁴ | 0.133 | 0.114 |
-| JAC | 10⁻³ | Prolate 10⁻³, P = 5 | 28³ | 21,952 | 7.4 × 10⁻⁴ | 0.160 | 0.144 |
-| JAC | 10⁻⁴ | Gaussian, order 4 | 98³ | 941,192 | 1.1 × 10⁻⁴ | 0.175 | 0.143 |
-| JAC | 10⁻⁴ | Gaussian, order 6 | 70³ | 343,000 | 6.7 × 10⁻⁵ | 0.166 | 0.133 |
-| JAC | 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 32³ | 32,768 | 7.8 × 10⁻⁵ | 0.189 | 0.161 |
-| JAC | 10⁻⁵ | Gaussian, order 6 | 96³ | 884,736 | 8.5 × 10⁻⁶ | 0.182 | 0.147 |
-| JAC | 10⁻⁵ | Gaussian, order 8 | 70³ | 343,000 | 1.1 × 10⁻⁵ | 0.197 | 0.152 |
-| JAC | 10⁻⁵ | **Prolate default, P = 6** | 50³ | 125,000 | 1.04 × 10⁻⁵ | 0.177 | 0.152 |
-| JAC | 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 42³ | 74,088 | 7.2 × 10⁻⁶ | 0.200 | 0.163 |
-| JAC | 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 40³ | 64,000 | 7.1 × 10⁻⁶ | 0.225 | 0.182 |
-| Cellulose | 10⁻³ | Gaussian default | 224×108×108 | 2,612,736 | 1.5 × 10⁻³ | 1.449 | 1.105 |
-| Cellulose | 10⁻³ | Gaussian, suite | 256×128×128 | 4,194,304 | 7.9 × 10⁻⁴ | 1.478 | 1.107 |
-| Cellulose | 10⁻³ | Prolate 10⁻³, P = 5 | 100×50×48 | 240,000 | 9.7 × 10⁻⁴ | 1.939 | 1.558 |
-| Cellulose | 10⁻⁴ | Gaussian, order 4 | 400×196×192 | 15,052,800 | 1.2 × 10⁻⁴ | 2.258 | 1.475 |
-| Cellulose | 10⁻⁴ | Gaussian, order 6 | 294×144×140 | 5,927,040 | 6.1 × 10⁻⁵ | 2.072 | 1.495 |
-| Cellulose | 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 126×64×60 | 483,840 | 9.0 × 10⁻⁵ | 2.193 | 1.688 |
-| Cellulose | 10⁻⁵ | Gaussian, order 6 | 378×192×180 | 13,063,680 | 1.05 × 10⁻⁵ | 2.282 | 1.651 |
-| Cellulose | 10⁻⁵ | Gaussian, order 8 | 294×144×140 | 5,927,040 | 1.0 × 10⁻⁵ | 2.621 | 1.817 |
-| Cellulose | 10⁻⁵ | **Prolate 10⁻⁵, P = 6** | 210×108×100 | 2,268,000 | 1.06 × 10⁻⁵ | 2.155 | 1.765 |
-| Cellulose | 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 168×84×80 | 1,128,960 | 8.0 × 10⁻⁶ | 2.695 | 2.010 |
-| Cellulose | 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 150×80×72 | 864,000 | 8.0 × 10⁻⁶ | 2.914 | 2.141 |
-| STMV | 10⁻³ | Gaussian default | 192³ | 7,077,888 | — | 4.490 | 3.432 |
-| STMV | 10⁻³ | Gaussian, suite | 224×224×240 | 12,042,240 | — | 4.838 | 3.654 |
-| STMV | 10⁻³ | Prolate 10⁻³, P = 5 | 90³ | 729,000 | — | 5.716 | 4.631 |
-| STMV | 10⁻⁴ | Gaussian, order 6 | 250×252×256 | 16,128,000 | — | 6.191 | 4.409 |
-| STMV | 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 120³ | 1,728,000 | — | 6.430 | 5.055 |
-| STMV | 10⁻⁵ | Gaussian, order 6 | 320×324×336 | 34,836,480 | — | 8.065 | 5.555 |
-| STMV | 10⁻⁵ | Gaussian, order 8 | 250×252×256 | 16,128,000 | — | 7.575 | 5.276 |
-| STMV | 10⁻⁵ | **Prolate default, P = 6** | 180³ | 5,832,000 | — | 6.441 | 5.280 |
-| STMV | 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 144×144×150 | 3,110,400 | — | 7.590 | 5.689 |
-| STMV | 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 128×140×140 | 2,508,800 | — | 8.268 | 5.965 |
+| JAC | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 54³ | 157,464 | 1.4 × 10⁻³ | 0.132 | 0.114 |
+| JAC | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 64³ | 262,144 | 7.3 × 10⁻⁴ | 0.133 | 0.114 |
+| JAC | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 28³ | 21,952 | 7.4 × 10⁻⁴ | 0.160 | 0.144 |
+| JAC | ≈ 10⁻⁴ | Gaussian order 4, erfc 10⁻⁵ | 98³ | 941,192 | 1.1 × 10⁻⁴ | 0.175 | 0.143 |
+| JAC | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 70³ | 343,000 | 6.7 × 10⁻⁵ | 0.166 | 0.133 |
+| JAC | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 32³ | 32,768 | 7.8 × 10⁻⁵ | 0.189 | 0.161 |
+| JAC | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 96³ | 884,736 | 8.5 × 10⁻⁶ | 0.182 | 0.147 |
+| JAC | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 70³ | 343,000 | 1.1 × 10⁻⁵ | 0.197 | 0.152 |
+| JAC | ≈ 10⁻⁵ | **Prolate default, P = 6** | 50³ | 125,000 | 1.04 × 10⁻⁵ | 0.177 | 0.152 |
+| JAC | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 42³ | 74,088 | 7.2 × 10⁻⁶ | 0.200 | 0.163 |
+| JAC | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 40³ | 64,000 | 7.1 × 10⁻⁶ | 0.225 | 0.182 |
+| Cellulose | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 224×108×108 | 2,612,736 | 1.5 × 10⁻³ | 1.449 | 1.105 |
+| Cellulose | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 256×128×128 | 4,194,304 | 7.9 × 10⁻⁴ | 1.478 | 1.107 |
+| Cellulose | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 100×50×48 | 240,000 | 9.7 × 10⁻⁴ | 1.939 | 1.558 |
+| Cellulose | ≈ 10⁻⁴ | Gaussian order 4, erfc 10⁻⁵ | 400×196×192 | 15,052,800 | 1.2 × 10⁻⁴ | 2.258 | 1.475 |
+| Cellulose | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 294×144×140 | 5,927,040 | 6.1 × 10⁻⁵ | 2.072 | 1.495 |
+| Cellulose | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 126×64×60 | 483,840 | 9.0 × 10⁻⁵ | 2.193 | 1.688 |
+| Cellulose | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 378×192×180 | 13,063,680 | 1.05 × 10⁻⁵ | 2.282 | 1.651 |
+| Cellulose | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 294×144×140 | 5,927,040 | 1.0 × 10⁻⁵ | 2.621 | 1.817 |
+| Cellulose | ≈ 10⁻⁵ | **Prolate 10⁻⁵, P = 6** | 210×108×100 | 2,268,000 | 1.06 × 10⁻⁵ | 2.155 | 1.765 |
+| Cellulose | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 168×84×80 | 1,128,960 | 8.0 × 10⁻⁶ | 2.695 | 2.010 |
+| Cellulose | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 150×80×72 | 864,000 | 8.0 × 10⁻⁶ | 2.914 | 2.141 |
+| STMV | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 192³ | 7,077,888 | — | 4.490 | 3.432 |
+| STMV | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 224×224×240 | 12,042,240 | — | 4.838 | 3.654 |
+| STMV | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 90³ | 729,000 | — | 5.716 | 4.631 |
+| STMV | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 6.191 | 4.409 |
+| STMV | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 120³ | 1,728,000 | — | 6.430 | 5.055 |
+| STMV | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 320×324×336 | 34,836,480 | — | 8.065 | 5.555 |
+| STMV | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 7.575 | 5.276 |
+| STMV | ≈ 10⁻⁵ | **Prolate default, P = 6** | 180³ | 5,832,000 | — | 6.441 | 5.280 |
+| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 144×144×150 | 3,110,400 | — | 7.590 | 5.689 |
+| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 128×140×140 | 2,508,800 | — | 8.268 | 5.965 |
 
 **The grid points at the same $\Delta$.** The prolate kernel has 7.1
 (JAC), 5.8 (Cellulose; 6.6 at its automatic 210×98×96), and 6.0 (STMV)
@@ -446,8 +446,10 @@ kernel was meant to pay [[Liang2026]](references.md#liang2026). The
 spreading reaches $P - 1$ layers of the grid beyond a domain on each side:
 5 for $P = 6$, as many as the B-splines of order 6, two more than order 4.
 
-**Reading.** On one device the prolate kernel is 1.2 to 1.4 times slower
-than the Gaussian at the accuracy of MDIR's default, 1.04 to 1.2 times
+**Reading.** The standard production settings of pmemd, GROMACS, and
+MDIR all lie in the tier $\Delta \approx 10^{-3}$, where the prolate
+kernel's step is 21 to 41% slower on one device than the Gaussian's; it is
+1.04 to 1.2 times
 slower at $10^{-4}$ (against order 6), and from 15% faster (STMV, RTX 4090)
 to 7% slower (Cellulose, RTX PRO 6000) at $10^{-5}$ against the faster of
 orders 6 and 8. $P$ = 7 and 8, on their smaller grids, are slower than
