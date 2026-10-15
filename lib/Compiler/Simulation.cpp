@@ -754,16 +754,21 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
         std::make_unique<HostBuffer<2>>(values, element, count));
     args.vectors.back()->addTo(args.pointers);
   };
+  // The arguments by kind, for the measurements (#326).
+  HostMark kind("start.arguments.state");
   vector(system.positions, p.state);
   if (engine.control.frames)
     a->framePositions =
         std::make_unique<HostBuffer<2>>(system.positions, p.state, count);
   vector(system.velocities, p.state);
+  kind.next("start.arguments.forces");
   if (p.takesForces)
     vector(hasRun ? forces : std::vector<double>(3 * count, 0.0), p.force);
+  kind.next("start.arguments.masses");
   args.reals.push_back(
       std::make_unique<HostBuffer<1>>(engine.masses, p.mass, count));
   args.reals.back()->addTo(args.pointers);
+  kind.next("start.arguments.fields");
   for (const Program::Field &field : p.fields) {
     if (!field.isInteger) {
       args.reals.push_back(
@@ -780,6 +785,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
     addDescriptor(args.pointers, *d);
     args.integerFields.push_back(std::move(d));
   }
+  kind.next("start.arguments.tables");
   for (const Program::Table &table : p.tables) {
     args.doubles.push_back(table.values);
     auto d = std::make_unique<StridedMemRefType<double, 2>>();
@@ -792,9 +798,11 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
     addDescriptor(args.pointers, *d);
     args.tables.push_back(std::move(d));
   }
+  kind.end();
   // Moving a vector keeps its storage, so the descriptors stay valid as
   // the lists grow.
   for (const Program::TupleSet &set : p.tupleSets) {
+    HostMark tupleKind("start.arguments.members");
     args.integers.push_back(set.members);
     auto m = std::make_unique<StridedMemRefType<int32_t, 2>>();
     m->basePtr = m->data = args.integers.back().data();
@@ -805,6 +813,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
     m->strides[1] = 1;
     addDescriptor(args.pointers, *m);
     args.members.push_back(std::move(m));
+    tupleKind.next("start.arguments.tuple-fields");
     for (const Program::Field &field : set.fields) {
       args.doubles.push_back(field.values);
       auto v = std::make_unique<StridedMemRefType<double, 1>>();
@@ -816,6 +825,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
       args.tupleFields.push_back(std::move(v));
     }
   }
+  kind.next("start.arguments.identities");
   args.integers.emplace_back(count);
   std::vector<int32_t> &numbers = args.integers.back();
   for (size_t i = 0; i != count; ++i)
@@ -825,6 +835,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   args.identities.sizes[0] = count;
   args.identities.strides[0] = 1;
   addDescriptor(args.pointers, args.identities);
+  kind.end();
   for (int k = 0; k != 3; ++k)
     a->box[k] = output->box[k];
   a->timestep = engine.control.timestep;
