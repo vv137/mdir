@@ -10,10 +10,10 @@
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/argon_lattice.py 20 %t/small.pdb
 # RUN: %python %S/Inputs/argon_lattice.py 40 %t/big.pdb
-# RUN: %python %S/Inputs/argon_lattice.py 28 %t/dense.pdb 1.0
+# RUN: %python %S/Inputs/argon_lattice.py 29 %t/dense.pdb 1.0
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/big.toml
 # RUN: sed -e 's|big.pdb|small.pdb|' -e 's|152.0|76.0|g' %t/big.toml > %t/small.toml
-# RUN: sed -e 's|big.pdb|dense.pdb|' -e 's|152.0|28.0|g' -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 28.0|' %t/big.toml > %t/dense.toml
+# RUN: sed -e 's|big.pdb|dense.pdb|' -e 's|152.0|29.0|g' -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 29.0|' %t/big.toml > %t/dense.toml
 # RUN: sed -e 's|^target = "GPU"|target = "CPU"|' %t/big.toml > %t/cpu.toml
 # RUN: sed -e 's|^target = "GPU"|target = "GPU"\ndeterministic = true|' %t/big.toml > %t/deterministic.toml
 # RUN: sed -e 's|^time_step = 0.002|time_step = 0.004|' %t/big.toml > %t/long-step.toml
@@ -45,7 +45,7 @@
 
 # BIG: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles, at least {{[0-9]+}}, on a GPU)
 # SMALL: neighbors: matrix, reach 10.5 Å (AUTO: 8000 particles, fewer than {{[0-9]+}})
-# DENSE: neighbors: matrix, reach 28 Å (AUTO: the reach of the groups, 28 Å, exceeds 0.999 of the least edge of the cell, 27.97 Å)
+# DENSE: neighbors: matrix, reach 29 Å (AUTO: the reach of the groups, 29 Å, exceeds 0.999 of the least edge of the cell, 28.97 Å)
 # CPU: neighbors: matrix, reach 10.5 Å (AUTO: the target is the CPU)
 # DETERMINISTIC: neighbors: matrix, reach 10.5 Å (AUTO: the deterministic mode)
 # LONG: neighbors: groups of 16, reach 12 Å, pruned to 10.2 Å (AUTO:
