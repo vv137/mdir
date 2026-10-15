@@ -17,8 +17,14 @@ using namespace mdir::driver;
 namespace prolate = mdir::prolate;
 
 /// The cells and the terms of the tables of the splitting of the prolate
-/// kernel (D[prolate-ewald]); within 1e-14 (mdir-prolate-test).
-static constexpr int64_t prolateCells = 64, prolateTerms = 10;
+/// kernel (D[prolate-ewald]): within 1e-14 for kernels in f64
+/// (mdir-prolate-test), within 4e-10 for those in f32 with 4 terms, which
+/// the loop over pairs reads with fewer loads.
+static std::pair<int64_t, int64_t> getProlateTableShape(Precision precision) {
+  if (precision == Precision::Double)
+    return {64, 10};
+  return {128, 4};
+}
 
 using llvm::StringRef;
 
@@ -2886,10 +2892,10 @@ llvm::Error Builder::collectProlate() {
         std::pair{"pme_near", prolate::Part::Near}}) {
     Program::Table split;
     split.name = name;
-    split.count = prolateCells;
-    split.columns = prolateTerms;
-    split.values =
-        prolate::getSplittingTable(psi, part, prolateCells, prolateTerms);
+    auto [cells, terms] = getProlateTableShape(control.precision);
+    split.count = cells;
+    split.columns = terms;
+    split.values = prolate::getSplittingTable(psi, part, cells, terms);
     program.tables.push_back(std::move(split));
   }
 
@@ -4210,7 +4216,8 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
 /// not, as in a tabulated function of the control file (D138).
 static std::string emitProlateSplitting(llvm::raw_ostream &os,
                                         StringRef table, StringRef x,
-                                        StringRef p) {
+                                        StringRef p, Precision precision) {
+  auto [prolateCells, prolateTerms] = getProlateTableShape(precision);
   os << "    " << p << "cells = arith.constant "
      << formatReal(static_cast<double>(prolateCells)) << " : f64\n"
      << "    " << p << "top = arith.constant "
@@ -4816,7 +4823,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         os << "    %rc_inverse = arith.constant "
            << formatReal(1.0 / cutoff) << " : f64\n"
            << "    %xr = arith.mulf " << rq << ", %rc_inverse : f64\n";
-        std::string far = emitProlateSplitting(os, "pme_far", "%xr", "%pf_");
+        std::string far = emitProlateSplitting(os, "pme_far", "%xr", "%pf_", control.precision);
         os << "    %screened = arith.divf " << far << ", " << rq << " : f64\n"
            << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
       } else if (program.pme) {
@@ -4888,7 +4895,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     os << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
        << " : f64\n"
        << "    %xr = arith.mulf %r, %rc_inverse : f64\n";
-    std::string near = emitProlateSplitting(os, "pme_near", "%xr", "%pn_");
+    std::string near = emitProlateSplitting(os, "pme_near", "%xr", "%pn_", control.precision);
     os << "    %near = arith.mulf " << near << ", %rc_inverse : f64\n"
        << "    %r_one = arith.constant 1.0 : f64\n"
        << "    %r_inverse = arith.divf %r_one, %r : f64\n"
