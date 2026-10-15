@@ -6,6 +6,7 @@ D[thermostat-kopt], D[barostat-group-pressure], D[langevin-gbaoab]).
         [--system ethanol|water] [--ns 5] [--steps 0.5,1,2,4]
         [--thermostats vr,nh,lg] [--ensembles nvt,npt]
         [--precision MIXED|DOUBLE] [--target GPU|CPU] [--seed 20261016]
+        [--deterministic]
         [--tleap TLEAP] [--write-only] [--parallel 4] [--only NAME,...]
 
 WORK receives the system and the control files:
@@ -115,7 +116,7 @@ type = "PERIODIC"
 [execution]
 target    = "{target}"
 precision = "{precision}"
-"""
+{deterministic}"""
 
 
 def main():
@@ -132,6 +133,7 @@ def main():
     parser.add_argument('--precision', default='MIXED')
     parser.add_argument('--target', default='GPU')
     parser.add_argument('--seed', type=int, default=20261016)
+    parser.add_argument('--deterministic', action='store_true')
     parser.add_argument('--tleap', default='tleap')
     parser.add_argument('--write-only', action='store_true')
     parser.add_argument('--parallel', type=int, default=4)
@@ -155,7 +157,9 @@ def main():
                 file.write(LEAP)
             run([args.tleap, '-f', 'box.leap'], work, 'tleap.log')
 
-    tail = TAIL.format(target=args.target, precision=args.precision)
+    tail = TAIL.format(target=args.target, precision=args.precision,
+                       deterministic='deterministic = true\n'
+                       if args.deterministic else '')
 
     def head(name, checkpoint, energy_interval, steps):
         return HEAD.format(

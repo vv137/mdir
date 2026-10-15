@@ -367,6 +367,11 @@ struct Output {
   /// Maxwellian.
   bool overdamped = false;
   double bathKinetic = 0.0;
+  /// Langevin dynamics (D[langevin-gbaoab]): the temperature takes K_half,
+  /// the kinetic energy of the velocities of the drifts around the step,
+  /// between which the friction and the noise act, rather than the optimal
+  /// estimate.
+  bool halfTemperature = false;
   /// Whether the run minimizes the energy, whose log has the forces in
   /// place of the kinetic energy (mdrtWriteMinimization).
   bool minimizes = false;

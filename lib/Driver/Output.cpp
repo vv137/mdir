@@ -818,7 +818,13 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
   // 164109 (2018), J. Chem. Theory Comput. 15, 84 (2019), and Jung and
   // Sugita, J. Chem. Phys. 153, 234115 (2020).
   double half = pressureKinetic;
-  double optimal = kinetic + 2.0 * excess / 3.0;
+  // Under Langevin dynamics the friction and the noise act on the
+  // velocities of the middle of the step, between its drifts, which sample
+  // the temperature of the bath where the configurations do (BAOAB
+  // [Leimkuhler2013]; g-BAOAB [Leimkuhler2016]): the temperature takes the
+  // kinetic energy of the half steps, K_half (D[langevin-gbaoab]).
+  double optimal = output.halfTemperature ? kinetic + excess
+                                          : kinetic + 2.0 * excess / 3.0;
   double temperature =
       2.0 * optimal / (output.degreesOfFreedom * units::boltzmann);
   // The temperatures of the solvent, the rigid waters, and of the solute,
@@ -828,8 +834,9 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     output.hasSolvent = false;
     double solvent = output.solventFreedom;
     double solute = output.degreesOfFreedom - solvent;
-    auto get = [](double k, double h, double freedom) {
-      double estimate = (k + 2.0 * h) / 3.0;
+    bool halfOnly = output.halfTemperature;
+    auto get = [halfOnly](double k, double h, double freedom) {
+      double estimate = halfOnly ? h : (k + 2.0 * h) / 3.0;
       return 2.0 * estimate / (freedom * units::boltzmann);
     };
     double k = output.solventKinetic, h = output.solventHalf;

@@ -770,6 +770,7 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   // Brownian dynamics has no momenta (D163b), and a Nose-Hoover chain
   // begins at rest (D163a), as in `mdir run` (D249).
   output->overdamped = control.isBrownian();
+  output->halfTemperature = control.isLangevin();
   output->setChain(control, system);
   output->bathKinetic = 0.5 * system.getDegreesOfFreedom() *
                         units::boltzmann * control.temperature;
