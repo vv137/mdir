@@ -9,7 +9,9 @@
 // the fractions.  The weights are polynomials in t = 2s - 1 by Horner.
 //
 // The tiled layouts (tiled4, tiled8) bin the particles by their first point
-// each step and add into a tile of (B + P - 1)^3 points in block memory.
+// each step and add into a tile of (B + P - 1)^3 points in block memory,
+// the binned, blocked spreading of cuFINUFFT (Shih et al., IPDPSW 2021,
+// doi:10.1109/IPDPSW52791.2021.00105).
 // The ESP window and splitting follow Liang et al., Nat. Commun. 17, 6681
 // (2026), eqs. 3 to 16; written for this measurement, not copied.
 //

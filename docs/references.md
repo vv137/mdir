@@ -1105,6 +1105,19 @@ generalized workflow for membrane-protein–lipid-bilayer system building,"
 
 Used for: the input of PACKMOL for the POPC bilayer of D119.
 
+### Shih2021
+
+Y.-H. Shih, G. Wright, J. Andén, J. Blaschke, A. H. Barnett, "cuFINUFFT: a
+load-balanced GPU library for general-purpose nonuniform FFTs," in *2021
+IEEE International Parallel and Distributed Processing Symposium Workshops
+(IPDPSW)*, 688–697 (2021).
+[doi:10.1109/IPDPSW52791.2021.00105](https://doi.org/10.1109/IPDPSW52791.2021.00105)
+
+Used for: the binning of the particles by the points they spread to and
+the spreading into blocks of the grid in shared memory, which the tiled
+spreading of the prolate kernel on a device takes (issue #334,
+D[prolate-ewald]; issue #336).
+
 ### Shirts2007
 
 M. R. Shirts, D. L. Mobley, J. D. Chodera, V. S. Pande, "Accurate and
