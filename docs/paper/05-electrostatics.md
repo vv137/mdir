@@ -238,7 +238,10 @@ every particle instead, as without a set: the oxygen of a four-site water
 sits beside its virtual site in the order of the particles, and a warp
 reads the points of the grid of both at once, so that the oxygen costs
 almost nothing there, while a warp of the set reads those of more
-waters. A model with no such
+waters. On 103,292 OPC waters (RTX 4090, mixed precision) the
+reciprocal sum takes 241 µs a step where it took 274, against 225 for as
+many TIP3P waters; with the mesh of the dispersion as well, on 31,808 OPC
+waters the two sums take 163 µs where they took 203. A model with no such
 particle, or with tunable parameters that could move a coefficient across
 zero, has no set, and its kernels are those of before.
 
