@@ -251,6 +251,11 @@ PYBIND11_MODULE(_core, m) {
   py::enum_<model::PMEInfluence>(m, "PMEInfluence")
     .value("SPME", model::PMEInfluence::SPME)
     .value("Optimal", model::PMEInfluence::Optimal);
+  // The kernel of PME: the Gaussian, or the prolate spheroidal wave
+  // function of Ewald summation with prolates (D[prolate-ewald]).
+  py::enum_<driver::PMEKernel>(m, "PMEKernel")
+    .value("Gaussian", driver::PMEKernel::Gaussian)
+    .value("Prolate", driver::PMEKernel::Prolate);
   // `[barostat] coupling` and `work` (D247).
   py::enum_<model::BarostatCoupling>(m, "BarostatCoupling")
     .value("Isotropic", model::BarostatCoupling::Isotropic)
@@ -452,6 +457,9 @@ PYBIND11_MODULE(_core, m) {
   property(system, "pme_grid", &model::System::pmeGrid);
   property(system, "pme_order", &model::System::pmeOrder);
   property(system, "pme_influence", &model::System::pmeInfluence);
+  property(system, "pme_kernel", &model::System::pmeKernel);
+  property(system, "pme_bandwidth", &model::System::pmeBandwidth, units::none);
+  property(system, "pme_window_bandwidth", &model::System::pmeWindowBandwidth, units::none);
   property(system, "analytic_bonds", &model::System::analyticBonds);
   property(system, "rigid_hydrogen_bonds", &model::System::rigidHydrogenBonds);
   property(system, "rigid_water", &model::System::rigidWater);
@@ -807,6 +815,10 @@ PYBIND11_MODULE(_core, m) {
       throw InputError("compile inputs must not be None");
     // Keep the GIL while copying and building: concurrent mutation cannot
     // race version capture. GIL release belongs to persistent execution.
+    // The prolate kernel's own defaults of the order and the spacing, where
+    // they were not set (D[prolate-ewald]).
+    system->value.pmeOrderGiven = system->given.count("pme_order") != 0;
+    system->value.pmeSpacingGiven = system->given.count("pme_spacing") != 0;
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,
                                           ensemble->value, execution->value, schedule->value));
     // A restraint that selects nothing restrains nothing: the control file

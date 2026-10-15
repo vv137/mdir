@@ -254,7 +254,21 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
                      dispersion != driver::DispersionCorrection::None))
     return input("PME, pressure coupling and dispersion correction require periodic boundaries");
   // The orders of the control file, with its words.
-  if (s.pmeOrder != 4 && s.pmeOrder != 6 && s.pmeOrder != 8)
+  // What belongs to the other kernel is refused, with the words of the
+  // control file (D[prolate-ewald]).
+  bool prolate = s.pmeKernel == driver::PMEKernel::Prolate;
+  if (prolate && s.pmeAlpha != 0)
+    return input("'beta' is for kernel = \"GAUSSIAN\"; the prolate kernel takes 'bandwidth' and 'window_bandwidth'");
+  if (prolate && s.pmeInfluence != PMEInfluence::SPME)
+    return input("'influence' is for kernel = \"GAUSSIAN\"; the prolate kernel takes 'bandwidth' and 'window_bandwidth'");
+  if (!prolate && (s.pmeBandwidth != 0 || s.pmeWindowBandwidth != 0))
+    return input("'bandwidth' and 'window_bandwidth' are for kernel = \"PROLATE\"");
+  if (!(s.pmeBandwidth >= 0) || !(s.pmeWindowBandwidth >= 0))
+    return input("invalid PME settings");
+  int64_t order = prolate && !s.pmeOrderGiven ? 6 : s.pmeOrder;
+  if (prolate && (order < 5 || order > 8))
+    return input("expected 5, 6, 7, or 8 points of the window for 'order' with kernel = \"PROLATE\"");
+  if (!prolate && s.pmeOrder != 4 && s.pmeOrder != 6 && s.pmeOrder != 8)
     return input("model: expected 4, 6, or 8 for 'order'");
   if (s.pmeInfluence != PMEInfluence::SPME && s.pmeInfluence != PMEInfluence::Optimal)
     return unsupported("unsupported influence function of PME");
@@ -297,7 +311,11 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pmeAlpha = s.pmeAlpha * driver::units::length;
   c.pmeAlphaTolerance = s.pmeTolerance;
   c.pmeMaxSpacing = s.pmeSpacing / driver::units::length;
-  c.pmeOrder = s.pmeOrder;
+  c.pmeOrder = order;
+  c.pmeKernel = s.pmeKernel;
+  c.pmeBandwidth = s.pmeBandwidth;
+  c.pmeWindowBandwidth = s.pmeWindowBandwidth;
+  if (prolate && !s.pmeSpacingGiven) c.pmeMaxSpacing = 0.0;
   c.pmeOptimal = s.pmeInfluence == PMEInfluence::Optimal;
   c.analyticBonds = s.analyticBonds;
   for (int k = 0; k != 3; ++k) c.pmeGrid[k] = s.pmeGrid[k];
