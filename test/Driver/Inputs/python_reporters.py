@@ -128,6 +128,12 @@ for kind in ("NVE", "NVT"):
             for a, b, d in zip(mine, theirs, double_rows):
                 a, b, d = (np.array([float(x) for x in r.split()]) for r in (a, b, d))
                 bound = 1e-6 + 3 * np.abs(b - d)
+                # The virial (column 6) is that of the groups, the virial of
+                # the forces less that within the rigid groups
+                # (D[barostat-group-pressure]): a difference of sums larger
+                # than it, whose rounding in mixed precision the two
+                # programs make apart, up to 1e-4 of it.
+                bound[6] += 1e-4 * abs(b[6])
                 assert np.all(np.abs(a - b) <= bound), (a, b, d)
                 worst = max(worst, float(np.max(np.abs(a - b) / np.maximum(np.abs(b), 1e-300))))
             if fmt == "dcd":
