@@ -13,6 +13,10 @@ extern const char *const pmeGPUTriclinicTemplate;
 const char *const pmeGPUTriclinicTemplate = R"MDIRTEMPLATE(
 @PME_GPU_TRICLINIC_TEMPLATE@
 )MDIRTEMPLATE";
+extern const char *const pmeGPUProlateTemplate;
+const char *const pmeGPUProlateTemplate = R"MDIRTEMPLATE(
+@PME_GPU_PROLATE_TEMPLATE@
+)MDIRTEMPLATE";
 extern const char *const neighborsGroupsGPUTemplate;
 const char *const neighborsGroupsGPUTemplate = R"MDIRTEMPLATE(
 @NEIGHBORS_GROUPS_GPU_TEMPLATE@
