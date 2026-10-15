@@ -4395,6 +4395,13 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
           !(alchemicalOnly && !usesLambda(term.expression)))
         emitExternalTerm(index, term, add);
   if (lj || coulomb) {
+    // EXPERIMENT (#340, not for merging): MDIR_EXP_PAIR_TERMS=lj or
+    // coulomb keeps one term of the nonbonded relation and gathers only
+    // the field it reads, to time the loop over pairs with one term.
+    const char *experiment = std::getenv("MDIR_EXP_PAIR_TERMS");
+    std::string only = experiment ? experiment : "";
+    bool lj = (terms & LennardJones) && only != "coulomb";
+    bool coulomb = (terms & Coulomb) && only != "lj";
     // [free_energy] (D161): a pair with one particle in the selection,
     // `%al_x` = 1, is decoupled. Its Lennard-Jones is that of the
     // soft-core distance r_A, r_A^6 = alpha sigma^6 lambda^p + r^6, times
@@ -4414,6 +4421,14 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
       seedArguments += ", %tgd" + std::to_string(c) + "_i: f64, %tgd" +
                        std::to_string(c) + "_j: f64";
     }
+    if (!only.empty() && !flags && !seeds) {
+      os << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather("
+         << (lj ? "%p_type : !ids" : "%p_q : !real") << ")\n"
+         << "      exchange(symmetric) {\n"
+         << "  ^bb0(%r: f64, %d: vector<3xf64>, "
+         << (lj ? "%type_i: i32, %type_j: i32" : "%q_i: f64, %q_j: f64")
+         << "):\n";
+    } else
     os << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather(%p_type, "
           "%p_q"
        << (flags ? ", %p_alch" : "") << seedFields << " : !ids, !real"
