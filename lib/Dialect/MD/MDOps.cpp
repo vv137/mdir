@@ -526,6 +526,13 @@ LogicalResult ReciprocalOp::verify() {
   if (getPotential() && getPotential().getType() != getCharges().getType())
     return emitOpError() << "expected the potential at the particles to be "
                             "of the type of the charges";
+  if (Value listed = getListed()) {
+    auto list = cast<FieldType>(listed.getType());
+    if (list.getParticleSet() != charges.getParticleSet() ||
+        !list.getElementType().isInteger(32) || list.getNumComponents() != 1)
+      return emitOpError() << "expected the listed particles as a field of "
+                              "one i32 for each particle of the charges";
+  }
   if (getGrid().size() != 3 ||
       llvm::any_of(getGrid(), [](int64_t points) { return points < 2; }))
     return emitOpError() << "expected three numbers of points of at least 2";

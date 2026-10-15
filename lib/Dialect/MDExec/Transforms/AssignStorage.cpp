@@ -804,6 +804,9 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   if (failed(getBuffer(op.getPositions(), scope, positions)) ||
       failed(getBuffer(op.getCharges(), scope, charges)))
     return failure();
+  Value listed;
+  if (op.getListed() && failed(getBuffer(op.getListed(), scope, listed)))
+    return failure();
   Value moduli = mapping.lookupOrNull(op.getModuli());
   if (!moduli)
     return op->emitOpError() << "the table has no buffer";
@@ -905,7 +908,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   auto created = ReciprocalOp::create(
       scope.builder, loc, op.getEnergy().getType(), op.getVirial().getType(),
       /*forces=*/Type(), positions, charges, mapping.lookup(op.getCell()),
-      moduli, out, scratch, op.getGridAttr(), op.getOrderAttr(),
+      moduli, out, scratch, listed, op.getGridAttr(), op.getOrderAttr(),
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
       op.getPotentialAttr());
   mapping.map(op.getEnergy(), created.getEnergy());
@@ -1506,6 +1509,21 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                            mapping.lookup(order.getCell()), ids, buffer,
                            order.getWidthAttr());
     orders[order.getResult()] = buffer;
+    scope.owned.insert(buffer);
+    return success();
+  }
+  if (auto nonzero = dyn_cast<NonzeroOp>(op)) {
+    if (nonzero.isStorageForm())
+      return op->emitOpError() << "is in the storage form already";
+    Value field, size;
+    if (failed(getBuffer(nonzero.getField(), scope, field)) ||
+        failed(getSize(op, nonzero.getResult().getType(), size)))
+      return failure();
+    Type result = nonzero.getResult().getType();
+    Value buffer = scope.request(getStorageType(result), size,
+                                 getStorageSet(result), op->getLoc());
+    NonzeroOp::create(builder, op->getLoc(), Type(), field, buffer);
+    buffers[nonzero.getResult()] = buffer;
     scope.owned.insert(buffer);
     return success();
   }

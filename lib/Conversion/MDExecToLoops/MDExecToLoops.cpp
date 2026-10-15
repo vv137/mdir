@@ -94,6 +94,7 @@ private:
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
   LogicalResult lowerSpatialOrder(md_exec::SpatialOrderOp op);
   void lowerPermute(md_exec::PermuteOp op);
+  void lowerNonzero(md_exec::NonzeroOp op);
   LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op);
   void lowerParticleFor(md_exec::ParticleForOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
@@ -125,9 +126,9 @@ private:
   /// Adds the templates of particle mesh Ewald for the types of the
   /// positions, the charges, and the forces.
   /// With `potential`, the functions of the potential at the particles
-  /// as well.
+  /// as well; with `listed`, those of a list of the particles.
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
-                                int64_t order, bool potential);
+                                int64_t order, bool potential, bool listed);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
   /// The rows of the neighbor matrix `handle`, as they are where `builder`
@@ -440,14 +441,15 @@ LogicalResult Lowering::addTemplates(Type real) {
 
 LogicalResult Lowering::addPMETemplates(Type position, Type charge,
                                         Type force, int64_t order,
-                                        bool potential) {
-  if (SymbolTable::lookupSymbolIn(
-          module, getPMEInstanceName("mdrt.pme_spread", position, charge,
-                                     force, order)) &&
-      (!potential ||
-       SymbolTable::lookupSymbolIn(
-           module, getPMEInstanceName("mdrt.pme_potential", position, charge,
-                                      force, order))))
+                                        bool potential, bool listed) {
+  auto has = [&](StringRef name) {
+    return SymbolTable::lookupSymbolIn(
+               module,
+               getPMEInstanceName(name, position, charge, force, order)) !=
+           nullptr;
+  };
+  if (has("mdrt.pme_spread") && (!potential || has("mdrt.pme_potential")) &&
+      (!listed || has("mdrt.pme_spread_listed")))
     return success();
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
@@ -457,14 +459,16 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald";
   // The functions of the potential at the particles (the fourth result of
-  // md.reciprocal) only where a sum asks for them, so that a module
-  // without one is what it was; they may come after the others, for a sum
-  // of the same types that was lowered before.
+  // md.reciprocal), and those of a list of the particles
+  // (D[pme-skip-zero]), only where a sum asks for them, so
+  // that a module without one is what it was; they may come after the
+  // others, for a sum of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
     bool isPotential =
         function && function.getSymName().contains("pme_potential");
-    if ((isPotential && !potential) ||
+    bool isListed = function && function.getSymName().contains("_listed");
+    if ((isPotential && !potential) || (isListed && !listed) ||
         (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
       op.erase();
       continue;
@@ -489,8 +493,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   };
   Type position = elementOf(positions), charge = elementOf(charges),
        force = elementOf(forces);
+  // The listed particles alone (D[pme-skip-zero]).
+  Value listed = op.getListed();
   if (failed(addPMETemplates(position, charge, force, op.getOrder(),
-                             op.getPotential())))
+                             op.getPotential(), static_cast<bool>(listed))))
     return failure();
   // A triclinic cell takes the functions of its own (docs/triclinic-m2.md).
   bool tilted = isTriclinic(op.getCellMutable().get());
@@ -521,9 +527,14 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Value fixed = op.getScratch()[0], real = op.getScratch()[1],
         complex = op.getScratch()[2];
 
-  func::CallOp::create(builder, loc, instance("mdrt.pme_spread"),
-                       ValueRange{positions, charges, box, fixed, k1, k2, k3,
-                                  order});
+  if (listed)
+    func::CallOp::create(builder, loc, instance("mdrt.pme_spread_listed"),
+                         ValueRange{positions, charges, listed, box, fixed, k1,
+                                    k2, k3, order});
+  else
+    func::CallOp::create(builder, loc, instance("mdrt.pme_spread"),
+                         ValueRange{positions, charges, box, fixed, k1, k2, k3,
+                                    order});
   func::CallOp::create(builder, loc, instance("mdrt.pme_real"),
                        ValueRange{fixed, real});
   // The transforms of the runtime take the numbers of points as i64.
@@ -548,11 +559,16 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
   // The forces, or the potential at the particles in their place.
-  func::CallOp::create(builder, loc,
-                       instance(op.getPotential() ? "mdrt.pme_potential"
-                                                  : "mdrt.pme_gather"),
-                       ValueRange{positions, charges, real, box, k1, k2, k3,
-                                  order, forces});
+  if (listed && !op.getPotential())
+    func::CallOp::create(builder, loc, instance("mdrt.pme_gather_listed"),
+                         ValueRange{positions, charges, listed, real, box, k1,
+                                    k2, k3, order, forces});
+  else
+    func::CallOp::create(builder, loc,
+                         instance(op.getPotential() ? "mdrt.pme_potential"
+                                                    : "mdrt.pme_gather"),
+                         ValueRange{positions, charges, real, box, k1, k2, k3,
+                                    order, forces});
   op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
   op.getVirial().replaceAllUsesWith(convolve.getResult(1));
   return success();
@@ -944,6 +960,47 @@ void Lowering::lowerPermute(md_exec::PermuteOp op) {
       });
 }
 
+/// The places of the particles whose value is not zero, in ascending
+/// order, then −1 (D[pme-skip-zero]): one pass that counts.
+void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Value field = op.getField(), out = op.getOut();
+  Value size = createSize(builder, loc, field);
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  Type element = cast<MemRefType>(field.getType()).getElementType();
+  Type i32 = builder.getI32Type();
+  auto listed = scf::ForOp::create(
+      builder, loc, zero, size, one, ValueRange{zero},
+      [&](OpBuilder &body, Location, Value i, ValueRange args) {
+        Value value = memref::LoadOp::create(body, loc, field, ValueRange{i});
+        Value none = arith::ConstantOp::create(
+            body, loc, body.getFloatAttr(element, 0.0));
+        // Unordered or not equal: a value that is not a number is listed.
+        Value nonzero = arith::CmpFOp::create(
+            body, loc, arith::CmpFPredicate::UNE, value, none);
+        Value count = args[0];
+        scf::IfOp::create(body, loc, nonzero, [&](OpBuilder &then, Location) {
+          Value place = arith::IndexCastOp::create(then, loc, i32, i);
+          memref::StoreOp::create(then, loc, place, out, ValueRange{count});
+          scf::YieldOp::create(then, loc);
+        });
+        Value more = arith::AddIOp::create(body, loc, count, one);
+        Value next = arith::SelectOp::create(body, loc, nonzero, more, count);
+        scf::YieldOp::create(body, loc, ValueRange{next});
+      });
+  Value end = arith::ConstantOp::create(builder, loc,
+                                        builder.getI32IntegerAttr(-1));
+  scf::ForOp::create(builder, loc, listed.getResult(0), size, one,
+                     ValueRange(),
+                     [&](OpBuilder &body, Location, Value k, ValueRange) {
+                       memref::StoreOp::create(body, loc, end, out,
+                                               ValueRange{k});
+                       scf::YieldOp::create(body, loc);
+                     });
+}
+
 //===----------------------------------------------------------------------===//
 // Ops and functions
 //===----------------------------------------------------------------------===//
@@ -989,6 +1046,8 @@ LogicalResult Lowering::lowerOp(Operation *op) {
       return failure();
   } else if (auto permute = dyn_cast<md_exec::PermuteOp>(op)) {
     lowerPermute(permute);
+  } else if (auto nonzero = dyn_cast<md_exec::NonzeroOp>(op)) {
+    lowerNonzero(nonzero);
   } else if (auto cell = dyn_cast<md_exec::ReferenceCellOp>(op)) {
     // The cell that the structure was built in, as the vector of its
     // edges that cells have become.

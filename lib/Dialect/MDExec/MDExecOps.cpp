@@ -341,12 +341,56 @@ void ReciprocalOp::getEffects(
   addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
   addEffect<MemoryEffects::Read>(effects, getChargesMutable());
   addEffect<MemoryEffects::Read>(effects, getModuliMutable());
+  for (OpOperand &operand : getListedMutable())
+    addEffect<MemoryEffects::Read>(effects, operand);
   for (OpOperand &operand : getOutMutable())
     addEffect<MemoryEffects::Write>(effects, operand);
   for (OpOperand &operand : getScratchMutable()) {
     addEffect<MemoryEffects::Read>(effects, operand);
     addEffect<MemoryEffects::Write>(effects, operand);
   }
+}
+
+LogicalResult NonzeroOp::verify() {
+  bool isStorage = isStorageForm();
+  if (static_cast<bool>(getOut()) != isStorage ||
+      static_cast<bool>(getResult()) == isStorage)
+    return emitOpError() << "expected a result in the value form, and a "
+                            "buffer in 'outs' in the storage form";
+  if (isStorage) {
+    auto field = cast<MemRefType>(getField().getType());
+    if (field.getRank() != 1 || !isa<FloatType>(field.getElementType()))
+      return emitOpError() << "expected a buffer of one number for each "
+                              "particle, got "
+                           << field;
+    if (!isIndexBuffer(getOut().getType()))
+      return emitOpError() << "expected the buffer in 'outs' to hold one "
+                              "i32 per particle, got "
+                           << getOut().getType();
+    return success();
+  }
+  auto field = cast<FieldType>(getField().getType());
+  if (field.getNumComponents() != 1 ||
+      !isa<FloatType>(field.getElementType()))
+    return emitOpError() << "expected a field of one number for each "
+                            "particle, got "
+                         << field;
+  auto result = cast<FieldType>(getResult().getType());
+  if (result.getParticleSet() != field.getParticleSet() ||
+      !isIdsType(result))
+    return emitOpError() << "expected the result to be a field of i32 of "
+                         << field.getParticleSet() << ", got " << result;
+  return success();
+}
+
+void NonzeroOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getFieldMutable());
+  for (OpOperand &operand : getOutMutable())
+    addEffect<MemoryEffects::Write>(effects, operand);
 }
 
 void PermuteOp::getEffects(

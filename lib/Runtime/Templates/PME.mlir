@@ -1193,3 +1193,266 @@ func.func private @mdrt.pme_potential_triclinic(%x: memref<?x3x!pme_pos>, %q: me
   }
   return
 }
+
+// The number of the listed particles of `list` (D[pme-skip-zero]):
+// its entries before the first −1.
+func.func private @mdrt.pme_count_listed(%list: memref<?xi32>) -> index {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %none = arith.constant 0 : i32
+  %size = memref.dim %list, %c0 : memref<?xi32>
+  %count = scf.for %k = %c0 to %size step %c1 iter_args(%n = %c0) -> (index) {
+    %entry = memref.load %list[%k] : memref<?xi32>
+    %listed = arith.cmpi sge, %entry, %none : i32
+    %more = arith.addi %n, %c1 : index
+    %next = arith.select %listed, %more, %n : index
+    scf.yield %next : index
+  }
+  return %count : index
+}
+
+// Spreads the charges of the listed particles to `grid`, as
+// @mdrt.pme_spread spreads those of all (D[pme-skip-zero]): `list` holds
+// their places, then −1.
+func.func private @mdrt.pme_spread_listed(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
+                                   %list: memref<?xi32>,
+                                   %box: vector<3xf64>, %grid: memref<?xi64>,
+                                   %k1: index, %k2: index, %k3: index, %n: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %none = arith.constant 0 : i64
+  %scale = arith.constant 1099511627776.0 : f64
+  %points = memref.dim %grid, %c0 : memref<?xi64>
+  scf.for %p = %c0 to %points step %c1 {
+    memref.store %none, %grid[%p] : memref<?xi64>
+  }
+  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %ly = vector.extract %box[1] : f64 from vector<3xf64>
+  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %wx = memref.alloca() : memref<8xf64>
+  %wy = memref.alloca() : memref<8xf64>
+  %wz = memref.alloca() : memref<8xf64>
+  %dx = memref.alloca() : memref<8xf64>
+  %dy = memref.alloca() : memref<8xf64>
+  %dz = memref.alloca() : memref<8xf64>
+  %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
+  %listed_count = func.call @mdrt.pme_count_listed(%list) : (memref<?xi32>) -> index
+  scf.for %k = %c0 to %listed_count step %c1 {
+    %listed = memref.load %list[%k] : memref<?xi32>
+    %i = arith.index_cast %listed : i32 to index
+    %xs = memref.load %x[%i, %c0] : memref<?x3x!pme_pos>
+    %ys = memref.load %x[%i, %c1] : memref<?x3x!pme_pos>
+    %zs = memref.load %x[%i, %c2] : memref<?x3x!pme_pos>
+    %qs = memref.load %q[%i] : memref<?x!pme_chg>
+    %xi = PME_EXTEND_POS %xs : !pme_pos to f64
+    %yi = PME_EXTEND_POS %ys : !pme_pos to f64
+    %zi = PME_EXTEND_POS %zs : !pme_pos to f64
+    %qi = PME_EXTEND_CHG %qs : !pme_chg to f64
+    %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n) : (f64, f64, index, index) -> (index, f64)
+    %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n) : (f64, f64, index, index) -> (index, f64)
+    %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n) : (f64, f64, index, index) -> (index, f64)
+    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    %qscaled = arith.mulf %qi, %scale : f64
+    scf.for %j1 = %c0 to %n step %c1 {
+      %g1s = arith.addi %sx, %j1 : index
+      %g1 = arith.remui %g1s, %k1 : index
+      %w1 = memref.load %wx[%j1] : memref<8xf64>
+      %q1 = arith.mulf %qscaled, %w1 : f64
+      scf.for %j2 = %c0 to %n step %c1 {
+        %g2s = arith.addi %sy, %j2 : index
+        %g2 = arith.remui %g2s, %k2 : index
+        %w2 = memref.load %wy[%j2] : memref<8xf64>
+        %q12 = arith.mulf %q1, %w2 : f64
+        %row1 = arith.muli %g1, %k2 : index
+        %row = arith.addi %row1, %g2 : index
+        %base = arith.muli %row, %k3 : index
+        scf.for %j3 = %c0 to %n step %c1 {
+          %g3s = arith.addi %sz, %j3 : index
+          %g3 = arith.remui %g3s, %k3 : index
+          %w3 = memref.load %wz[%j3] : memref<8xf64>
+          %value = arith.mulf %q12, %w3 : f64
+          %rounded = math.roundeven %value : f64
+          %fixed = arith.fptosi %rounded : f64 to i64
+          %at = arith.addi %base, %g3 : index
+          %old = memref.load %grid[%at] : memref<?xi64>
+          %new = arith.addi %old, %fixed : i64
+          memref.store %new, %grid[%at] : memref<?xi64>
+        }
+      }
+    }
+  }
+  return
+}
+
+// The forces on the listed particles, as @mdrt.pme_gather gives them, and
+// a force of zero on the others (D[pme-skip-zero]).
+func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
+                                   %list: memref<?xi32>,
+                                   %phi: memref<?xf64>, %box: vector<3xf64>,
+                                   %k1: index, %k2: index, %k3: index, %n: index,
+                                   %f: memref<?x3x!pme_frc>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
+  %zero = arith.constant 0.0 : f64
+  %none = PME_NARROW_FRC %zero : f64 to !pme_frc
+  scf.parallel (%i) = (%c0) to (%count) step (%c1) {
+    scf.for %c = %c0 to %c3 step %c1 {
+      memref.store %none, %f[%i, %c] : memref<?x3x!pme_frc>
+    }
+    scf.reduce
+  }
+  %listed_count = func.call @mdrt.pme_count_listed(%list) : (memref<?xi32>) -> index
+  scf.parallel (%k) = (%c0) to (%listed_count) step (%c1) {
+    %listed = memref.load %list[%k] : memref<?xi32>
+    %i = arith.index_cast %listed : i32 to index
+    func.call @mdrt.pme_gather_one(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+        : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<3xf64>,
+           index, index, index, index, memref<?x3x!pme_frc>, index) -> ()
+    scf.reduce
+  }
+  return
+}
+
+// Spreads the charges of the listed particles to `grid`, as
+// @mdrt.pme_spread_triclinic spreads those of all (D[pme-skip-zero]): `list` holds
+// their places, then −1.
+func.func private @mdrt.pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
+                                   %list: memref<?xi32>,
+                                   %box: vector<6xf64>, %grid: memref<?xi64>,
+                                   %k1: index, %k2: index, %k3: index, %n: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c2 = arith.constant 2 : index
+  %none = arith.constant 0 : i64
+  %scale = arith.constant 1099511627776.0 : f64
+  %points = memref.dim %grid, %c0 : memref<?xi64>
+  scf.for %p = %c0 to %points step %c1 {
+    memref.store %none, %grid[%p] : memref<?xi64>
+  }
+  %lx = vector.extract %box[0] : f64 from vector<6xf64>
+  %ly = vector.extract %box[1] : f64 from vector<6xf64>
+  %lz = vector.extract %box[2] : f64 from vector<6xf64>
+  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
+  %tcx = vector.extract %box[4] : f64 from vector<6xf64>
+  %tcy = vector.extract %box[5] : f64 from vector<6xf64>
+  %unit = arith.constant 1.0 : f64
+  // The rows of H⁻¹: h00 = 1/a_x; h10 = −b_x/(a_x b_y), h11 = 1/b_y;
+  // h20 = (b_x c_y − b_y c_x)/(a_x b_y c_z), h21 = −c_y/(b_y c_z),
+  // h22 = 1/c_z.
+  %h00 = arith.divf %unit, %lx : f64
+  %h11 = arith.divf %unit, %ly : f64
+  %h22 = arith.divf %unit, %lz : f64
+  %bx_h00 = arith.mulf %tbx, %h00 : f64
+  %bx_h00_h11 = arith.mulf %bx_h00, %h11 : f64
+  %h10 = arith.negf %bx_h00_h11 : f64
+  %cy_h11 = arith.mulf %tcy, %h11 : f64
+  %cy_h11_h22 = arith.mulf %cy_h11, %h22 : f64
+  %h21 = arith.negf %cy_h11_h22 : f64
+  %bxcy = arith.mulf %tbx, %tcy : f64
+  %bycx = arith.mulf %ly, %tcx : f64
+  %h20n = arith.subf %bxcy, %bycx : f64
+  %h20a = arith.mulf %h20n, %h00 : f64
+  %h20b = arith.mulf %h20a, %h11 : f64
+  %h20 = arith.mulf %h20b, %h22 : f64
+  %wx = memref.alloca() : memref<8xf64>
+  %wy = memref.alloca() : memref<8xf64>
+  %wz = memref.alloca() : memref<8xf64>
+  %dx = memref.alloca() : memref<8xf64>
+  %dy = memref.alloca() : memref<8xf64>
+  %dz = memref.alloca() : memref<8xf64>
+  %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
+  %listed_count = func.call @mdrt.pme_count_listed(%list) : (memref<?xi32>) -> index
+  scf.for %k = %c0 to %listed_count step %c1 {
+    %listed = memref.load %list[%k] : memref<?xi32>
+    %i = arith.index_cast %listed : i32 to index
+    %xs = memref.load %x[%i, %c0] : memref<?x3x!pme_pos>
+    %ys = memref.load %x[%i, %c1] : memref<?x3x!pme_pos>
+    %zs = memref.load %x[%i, %c2] : memref<?x3x!pme_pos>
+    %qs = memref.load %q[%i] : memref<?x!pme_chg>
+    %xi = PME_EXTEND_POS %xs : !pme_pos to f64
+    %yi = PME_EXTEND_POS %ys : !pme_pos to f64
+    %zi = PME_EXTEND_POS %zs : !pme_pos to f64
+    %qi = PME_EXTEND_CHG %qs : !pme_chg to f64
+    // s = x H⁻¹.
+    %s3 = arith.mulf %zi, %h22 : f64
+    %s2y = arith.mulf %yi, %h11 : f64
+    %s2z = arith.mulf %zi, %h21 : f64
+    %s2 = arith.addf %s2y, %s2z : f64
+    %s1x = arith.mulf %xi, %h00 : f64
+    %s1y = arith.mulf %yi, %h10 : f64
+    %s1z = arith.mulf %zi, %h20 : f64
+    %s1xy = arith.addf %s1x, %s1y : f64
+    %s1 = arith.addf %s1xy, %s1z : f64
+    %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n) : (f64, f64, index, index) -> (index, f64)
+    %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n) : (f64, f64, index, index) -> (index, f64)
+    %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n) : (f64, f64, index, index) -> (index, f64)
+    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    %qscaled = arith.mulf %qi, %scale : f64
+    scf.for %j1 = %c0 to %n step %c1 {
+      %g1s = arith.addi %sx, %j1 : index
+      %g1 = arith.remui %g1s, %k1 : index
+      %w1 = memref.load %wx[%j1] : memref<8xf64>
+      %q1 = arith.mulf %qscaled, %w1 : f64
+      scf.for %j2 = %c0 to %n step %c1 {
+        %g2s = arith.addi %sy, %j2 : index
+        %g2 = arith.remui %g2s, %k2 : index
+        %w2 = memref.load %wy[%j2] : memref<8xf64>
+        %q12 = arith.mulf %q1, %w2 : f64
+        %row1 = arith.muli %g1, %k2 : index
+        %row = arith.addi %row1, %g2 : index
+        %base = arith.muli %row, %k3 : index
+        scf.for %j3 = %c0 to %n step %c1 {
+          %g3s = arith.addi %sz, %j3 : index
+          %g3 = arith.remui %g3s, %k3 : index
+          %w3 = memref.load %wz[%j3] : memref<8xf64>
+          %value = arith.mulf %q12, %w3 : f64
+          %rounded = math.roundeven %value : f64
+          %fixed = arith.fptosi %rounded : f64 to i64
+          %at = arith.addi %base, %g3 : index
+          %old = memref.load %grid[%at] : memref<?xi64>
+          %new = arith.addi %old, %fixed : i64
+          memref.store %new, %grid[%at] : memref<?xi64>
+        }
+      }
+    }
+  }
+  return
+}
+
+// The forces on the listed particles, as @mdrt.pme_gather_triclinic gives them, and
+// a force of zero on the others (D[pme-skip-zero]).
+func.func private @mdrt.pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
+                                   %list: memref<?xi32>,
+                                   %phi: memref<?xf64>, %box: vector<6xf64>,
+                                   %k1: index, %k2: index, %k3: index, %n: index,
+                                   %f: memref<?x3x!pme_frc>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
+  %zero = arith.constant 0.0 : f64
+  %none = PME_NARROW_FRC %zero : f64 to !pme_frc
+  scf.parallel (%i) = (%c0) to (%count) step (%c1) {
+    scf.for %c = %c0 to %c3 step %c1 {
+      memref.store %none, %f[%i, %c] : memref<?x3x!pme_frc>
+    }
+    scf.reduce
+  }
+  %listed_count = func.call @mdrt.pme_count_listed(%list) : (memref<?xi32>) -> index
+  scf.parallel (%k) = (%c0) to (%listed_count) step (%c1) {
+    %listed = memref.load %list[%k] : memref<?xi32>
+    %i = arith.index_cast %listed : i32 to index
+    func.call @mdrt.pme_gather_one_triclinic(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+        : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<6xf64>,
+           index, index, index, index, memref<?x3x!pme_frc>, index) -> ()
+    scf.reduce
+  }
+  return
+}

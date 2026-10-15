@@ -395,6 +395,14 @@ LogicalResult Assigner::collect(Operation *op) {
     find(reciprocal.getForces());
     return success();
   }
+  if (auto nonzero = dyn_cast<NonzeroOp>(op)) {
+    if (nonzero.isStorageForm())
+      return op->emitOpError() << "is in the storage form; precision is "
+                                  "assigned before storage";
+    // The list is of integers; the field is read as it is stored.
+    find(nonzero.getField());
+    return success();
+  }
   if (auto permute = dyn_cast<PermuteOp>(op)) {
     if (permute.isStorageForm())
       return op->emitOpError() << "is in the storage form; precision is "
