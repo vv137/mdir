@@ -1,0 +1,115 @@
+# The reciprocal sums of PME over the particles whose coefficient can be
+# nonzero (D[pme-skip-zero]): the dipeptide in OPC, whose oxygens carry no
+# charge and whose hydrogens and virtual sites have no coefficient of the
+# dispersion. The program lists them in a field of the particles, which
+# the builder makes from the topology and md_exec.nonzero makes again where
+# the particles take a new order, at the start and at each segment of
+# checkpoints. The energies of the rows, at the start and after two
+# segments, are those of main ae971477 to the digits of the log, as the
+# states are to the bit (the run is on the CPU, deterministic); a TIP3P
+# system, all of whose charges are nonzero, has no list for the charges.
+#
+# RUN: rm -rf %t && split-file %s %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: cp %S/Inputs/fep/eth_wat.prmtop %S/Inputs/fep/eth_wat.inpcrd %t
+# RUN: cd %t && mdir emit run.toml --stage=module > module.mlir
+# RUN: FileCheck %s --check-prefix=MODULE < %t/module.mlir
+# RUN: FileCheck %s --check-prefix=NONZERO < %t/module.mlir
+# RUN: cd %t && mdir run run.toml | FileCheck %s
+# RUN: sed -e 's|^spatial_order = true|spatial_order = false|' %t/run.toml > %t/fixed.toml
+# RUN: cd %t && mdir emit fixed.toml --stage=module | FileCheck %s --check-prefix=FIXED
+# RUN: cd %t && mdir emit tip3p.toml --stage=module | FileCheck %s --check-prefix=TIP3P
+
+# The lists of the charges and of the coefficients, made at the start and
+# in the loop over segments.
+# NONZERO-COUNT-4: md_exec.nonzero
+# NONZERO-NOT: md_exec.nonzero
+
+# MODULE: md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli listed(%p_ljpme_listed)
+# MODULE: md.reciprocal %x, %p_q, %cell, %t_pme_moduli listed(%p_pme_listed)
+
+# FIXED-NOT: md_exec.nonzero
+# FIXED: listed(%p_ljpme_listed)
+# FIXED: listed(%p_pme_listed)
+
+# TIP3P: md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli listed(%p_ljpme_listed)
+# TIP3P-NOT: pme_listed
+# TIP3P: md.reciprocal %x, %p_q, %cell, %t_pme_moduli{{$}}
+
+# CHECK: INFO: {{ *}}0 {{ *}}0.0000 {{ *}}-2815.0592 {{ *}}-3522.4045 {{ *}}707.3454 {{ *}}300.0000 {{ *}}-822.6468 {{ *}}683.0496 {{ *}}-2815.0592 {{ *}}19810.9175
+# CHECK: INFO: {{ *}}20 {{ *}}0.0400 {{ *}}-2824.1941 {{ *}}-3674.2893 {{ *}}850.0952 {{ *}}362.4464 {{ *}}-2138.1130 {{ *}}-490.3132 {{ *}}-2815.7840 {{ *}}19786.4035
+# CHECK: INFO: {{ *}}40 {{ *}}0.0800 {{ *}}-2825.6170 {{ *}}-3750.8073 {{ *}}925.1904 {{ *}}394.2597 {{ *}}-2903.2521 {{ *}}-1203.4875 {{ *}}-2816.8326 {{ *}}19744.8848
+
+#--- run.toml
+[input]
+topology    = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[output]
+checkpoint          = "run.h5"
+energy_interval     = 20
+checkpoint_interval = 20
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+coulomb_modifier  = "POTENTIAL_SHIFT"
+lennard_jones     = "PME"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 40
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 1.0
+
+[thermostat]
+method        = "V-RESCALE"
+time_constant = 0.5
+interval      = 10
+
+[barostat]
+method        = "C-RESCALE"
+time_constant = 2.0
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target        = "CPU"
+threads       = 4
+spatial_order = true
+#--- tip3p.toml
+[input]
+topology    = "eth_wat.prmtop"
+coordinates = "eth_wat.inpcrd"
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+lennard_jones     = "PME"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+#--- end
