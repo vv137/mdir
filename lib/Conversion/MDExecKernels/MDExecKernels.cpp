@@ -987,10 +987,13 @@ SmallVector<Value> kernels::emitGroupPairKernel(
         carried.append(acc.begin(), acc.end());
         // The counter in i32: an index is 64 bits on the device, two
         // additions and two comparisons a step.
-        auto steps = scf::ForOp::create(
-            b, loc, constant32(b, 0), constant32(b, 16), constant32(b, 1),
-            carried,
-            [&](OpBuilder &s, Location, Value, ValueRange state) {
+        // EXPERIMENT: MDIR_EXP_PAIR_LOOP=unrollU puts U steps in one
+        // iteration of the loop of steps.
+        int64_t unroll = 1;
+        if (experiment.starts_with("unroll"))
+          experiment.drop_front(6).getAsInteger(10, unroll);
+        auto stepBody = [&](OpBuilder &s, ValueRange state)
+            -> SmallVector<Value> {
               Value otherPosition = state[0];
               Value bits = state[1];
               ValueRange otherValues = state.slice(2, numIns);
@@ -1098,7 +1101,16 @@ SmallVector<Value> kernels::emitGroupPairKernel(
               for (Value value : nextReceived)
                 next.push_back(shuffle(s, value));
               next.append(nextOwn.begin(), nextOwn.end());
-              scf::YieldOp::create(s, loc, next);
+              return next;
+            };
+        auto steps = scf::ForOp::create(
+            b, loc, constant32(b, 0), constant32(b, 16), constant32(b, unroll),
+            carried,
+            [&](OpBuilder &s, Location, Value, ValueRange state) {
+              SmallVector<Value> current(state.begin(), state.end());
+              for (int64_t u = 0; u != unroll; ++u)
+                current = stepBody(s, current);
+              scf::YieldOp::create(s, loc, current);
             });
         // After 16 steps each entry is back at its lane: its values go to
         // its particle.

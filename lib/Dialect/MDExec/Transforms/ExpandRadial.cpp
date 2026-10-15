@@ -20,6 +20,7 @@
 #include "mlir/IR/SymbolTable.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -465,6 +466,31 @@ public:
       // derivatives (the factor exp(sigma / (r - a sigma)) of the
       // Stillinger-Weber form), is evaluated as itself in f64 (D159).
       bool asItself = !op.getType().isF32();
+      // EXPERIMENT (#345, not for merging): MDIR_EXP_RADIAL=f32 evaluates
+      // the function itself in f32 (libdevice's erfcf and expf) in place
+      // of the table, to time a loop without the table's load.
+      if (!asItself && std::getenv("MDIR_EXP_RADIAL") &&
+          op->getParentOfType<PairForOp>()) {
+        IRMapping values;
+        Block &body = function.getBody().front();
+        Type f32 = builder.getF32Type();
+        values.map(body.getArgument(0), op.getR2());
+        for (Operation &nested : body.without_terminator()) {
+          Operation *copy = builder.clone(nested, values);
+          if (auto constant = dyn_cast<arith::ConstantOp>(copy))
+            if (auto real = dyn_cast<FloatAttr>(constant.getValue()))
+              if (real.getType().isF64())
+                constant.setValueAttr(
+                    builder.getF32FloatAttr(real.getValueAsDouble()));
+          for (Value result : copy->getResults())
+            if (result.getType().isF64())
+              result.setType(f32);
+        }
+        Value result = values.lookup(body.getTerminator()->getOperand(0));
+        op.replaceAllUsesWith(result);
+        op.erase();
+        continue;
+      }
       if (!asItself)
         if (auto loop = op->getParentOfType<PairForOp>())
           asItself = !canTabulate(function, loop.getCutoff().convertToDouble(),
