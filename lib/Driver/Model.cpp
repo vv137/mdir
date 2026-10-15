@@ -278,6 +278,9 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   if (!std::isfinite(s.prunedDistance) || s.prunedDistance < 0)
     return input("System.pruned_distance must be positive, or 0 for one list");
   c.prunedDistance = s.prunedDistance / driver::units::length;
+  // As the keys of the control file, given or not (D[neighbor-auto]).
+  c.pairlistDistanceGiven = s.pairlistDistance.has_value();
+  c.prunedDistanceGiven = s.prunedDistance != 0.0;
   if (c.prunedDistance != 0.0 &&
       !(c.prunedDistance > c.cutoffDistance && c.prunedDistance < c.pairlistDistance))
     return input("model: 'pruned_distance' is not between 'cutoff' and "
@@ -461,7 +464,8 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // The groups, with the refusal and the words of the control file
   // (Reader::readExecution; D89, D245).
   if (execution.neighborStructure != driver::NeighborStructure::Matrix &&
-      execution.neighborStructure != driver::NeighborStructure::Groups)
+      execution.neighborStructure != driver::NeighborStructure::Groups &&
+      execution.neighborStructure != driver::NeighborStructure::Auto)
     return unsupported("unsupported neighbor structure");
   c.neighborStructure = execution.neighborStructure;
   if (c.neighborStructure == driver::NeighborStructure::Groups &&
@@ -644,6 +648,9 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
                        "'] (System.tunable_gradient), of the same potential");
         c.observedTunables.push_back({entry.term, entry.parameter});
       }
+  // `NeighborStructure.Auto` is resolved for the system, as `mdir run`
+  // resolves it (D[neighbor-auto]).
+  driver::resolveNeighborStructure(c, *prepared);
   return PreparedModel{execution, std::move(c), std::move(*prepared), std::move(*tunables)};
 }
 llvm::Expected<InitialState> mdir::model::drawVelocities(
@@ -657,8 +664,8 @@ llvm::Expected<InitialState> mdir::model::drawVelocities(
   ensemble.temperature = temperature;
   ensemble.seed = seed;
   // The draw does not read the neighbor structures: the system is prepared
-  // for the default execution, which has the matrix, so without the dual
-  // list, which is of the groups (D245). A value that
+  // for the default execution, on the CPU, where `Auto` is the matrix, so
+  // without the dual list, which is of the groups (D245). A value that
   // `compile` would refuse is refused there. The copy of the system is
   // the price of preparing it as `prepare` does.
   System physics = s;

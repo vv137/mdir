@@ -1,7 +1,10 @@
 # Groups of Neighbors for M1: Design
 
 Status: accepted (2026-10-01), D89; G1 done, G2 under way (the loop in
-the default mode is in MDIR, behind `neighbor_structure = "GROUPS"`). It
+the default mode is in MDIR, behind `neighbor_structure = "GROUPS"`); G3
+done (D[neighbor-auto]): `neighbor_structure = "AUTO"`, the default,
+takes the groups with a dual list on a GPU from 23,000 particles (Section
+6.3). It
 replaces the
 tile structure of D82 ([tiles-m1.md](tiles-m1.md)), whose prototype did not
 beat the neighbor matrix. The keys in brackets are those of
@@ -401,6 +404,107 @@ the outer list into the same block: the inner list kept the blocks of the
 outer one, partly filled, and the loop took 1320 µs; a pruning read the
 positions in f64 and took 933 µs.
 
+## 6.3 The default: `AUTO` (D[neighbor-auto])
+
+`neighbor_structure = "AUTO"`, the default, takes the groups with a dual
+list where they are faster and the matrix elsewhere. One function,
+`resolveNeighborStructure`, resolves it once the system is read, for
+`mdir run`, `mdir check`, and the Python model. It takes the groups when
+every one of the following holds, and the matrix otherwise:
+
+- the target is a GPU, outside the deterministic mode;
+- no loop lacks an exchange contract: no implicit solvent, no derivative
+  in the tunables;
+- no `rebuild_interval`;
+- at least 23,000 particles, virtual sites counted;
+- the reach of the groups at most 0.999 of the least edge of the cell.
+
+The groups take `pairlist_distance` = cutoff + 3 Å and
+`pruned_distance` = cutoff + 0.6 Å × max(1, Δt / 2 fs) where those keys
+are not given. The matrix keeps cutoff + 1.5 Å.
+
+**The size.** The matrix at its default reach is set against the groups
+at these reaches, in mixed precision, µs a step: 6 rounds alternated in
+one job, the first dropped. The standard errors are 0.0 to 0.5 µs on the
+RTX 4090 and up to 30 µs on the RTX PRO 6000 Blackwell, which other jobs
+shared. The setup:
+
+- 9 Å: PME at a tolerance of $10^{-5}$ with a spacing of at most 1 Å,
+  SHAKE and SETTLE, NPT (V-rescale and C-rescale every 25 steps) from an
+  equilibrated state;
+- 8 Å: the Amber suite's control files, PME on their grids, at constant
+  energy, except STMV at constant pressure.
+
+| System | Particles | Cutoff (Å) | RTX 4090: matrix | groups | ratio | RTX PRO 6000: matrix | groups | ratio |
+|---|---|---|---|---|---|---|---|---|
+| Dipeptide in TIP3P | 1,168 | 9 | 75.2 | 88.0 | 1.170 | 91.6 | 102.6 | 1.120 |
+| TIP3P box | 1,431 | 9 | 67.2 | 81.8 | 1.217 | 71.6 | 84.4 | 1.179 |
+| TIP3P box | 2,841 | 9 | 71.6 | 98.8 | 1.380 | 71.2 | 96.4 | 1.354 |
+| Ala3 in OPC (examples/ala3) | 4,905 | 9 | 105.0 | 109.4 | 1.042 | 122.2 | 150.4 | 1.231 |
+| TIP3P box | 5,880 | 9 | 81.6 | 88.8 | 1.088 | 81.0 | 85.4 | 1.054 |
+| TIP3P box | 8,922 | 9 | 90.2 | 100.4 | 1.113 | 88.2 | 90.6 | 1.027 |
+| TIP3P box | 13,899 | 9 | 115.0 | 118.0 | 1.026 | 105.0 | 104.0 | 0.990 |
+| TIP3P box | 16,767 | 9 | 121.0 | 122.8 | 1.015 | 113.6 | 107.0 | 0.942 |
+| TIP3P box | 20,931 | 9 | 136.6 | 138.6 | 1.015 | 132.8 | 114.0 | 0.858 |
+| JAC | 23,558 | 8 | 137.0 | 135.2 | 0.987 | 127.8 | 113.8 | 0.890 |
+| JAC, 4 fs | 23,558 | 8 | 148.0 | 146.0 | 0.986 | 136.0 | 123.0 | 0.904 |
+| TIP3P box | 23,598 | 9 | 150.0 | 145.2 | 0.968 | 152.0 | 128.2 | 0.843 |
+| TIP3P box | 25,860 | 9 | 162.0 | 151.2 | 0.933 | 153.2 | 128.6 | 0.839 |
+| Ubiquitin in OPC | 26,031 | 9 | 253.0 | 190.4 | 0.753 | 196.0 | 161.8 | 0.826 |
+| TIP3P box | 27,234 | 9 | 171.0 | 157.0 | 0.918 | 162.4 | 136.6 | 0.841 |
+| TIP3P box | 52,686 | 9 | 394.2 | 244.0 | 0.619 | 283.4 | 204.2 | 0.721 |
+| OPC box | 61,324 | 9 | 575.2 | 291.6 | 0.507 | 419.2 | 225.6 | 0.538 |
+| Factor IX | 90,906 | 8 | 538.8 | 329.2 | 0.611 | 410.8 | 241.6 | 0.588 |
+| TIP3P box | 103,158 | 9 | 710.8 | 411.2 | 0.579 | 549.8 | 308.6 | 0.561 |
+| TIP3P box | 203,490 | 9 | 1320.0 | 775.6 | 0.588 | 1108.8 | 624.4 | 0.563 |
+| TIP3P box | 309,876 | 9 | 1970.8 | 1140.4 | 0.579 | 1679.4 | 985.0 | 0.587 |
+| Cellulose | 408,609 | 8 | 2394.4 | 1490.0 | 0.622 | 1821.8 | 1116.0 | 0.613 |
+| OPC box | 413,168 | 9 | 3350.2 | 1634.4 | 0.488 | 2729.2 | 1426.0 | 0.522 |
+| STMV, 4 fs | 1,067,095 | 8 | 7500.2 | 4916.4 | 0.656 | 6216.4 | 3641.0 | 0.586 |
+
+The groups win from 23,558 particles on the RTX 4090, and from 13,899 on
+the RTX PRO 6000; why the crossover moves with the device is not
+analyzed here. The threshold is set by the device
+where the groups win later, so that no system runs slower than on the
+matrix. On the RTX PRO 6000, systems between about 14,000 and 23,000
+particles therefore keep the matrix, which is 1 to 14% slower there. At
+the same size, OPC favors the groups more than TIP3P.
+
+**The reaches.** The data below, on top of the measurements of #345,
+support cutoff + 3 Å and cutoff + 0.6 Å at 2 fs. The inner skin grows in
+proportion to the step, the rule of the Amber suite's script.
+
+| System | RTX 4090 | RTX PRO 6000 |
+|---|---|---|
+| TIP3P, 103,158 sites, 9 Å | 12 / 9.6 Å 411.2; 11 / 9.6 Å 418.6; 13 / 9.6 Å 414.6; 12 / 10 Å 418.8 | 308.6; 322.0; 310.4; 314.6 |
+| JAC, 8 Å, 2 fs | 11 / 8.6 Å 135.2; 11 / 9.0 Å 136.0; 10 / 8.6 Å 141.4; 12 / 8.6 Å 133.8 | 113.8; 113.0; 121.0; 111.4 |
+| Factor IX, 8 Å, 2 fs | 11 / 8.6 Å 329.2; 11 / 9.0 Å 334.6; 10 / 8.6 Å 340.4; 12 / 8.6 Å 330.4 | 241.6; 245.6; 247.8; 240.0 |
+| JAC, 4 fs | 11 / 8.6 Å 146.0, pruned every 1.9 steps; 11 / 9.2 Å 145.0, every 3.5 | 123.0; 119.6 |
+| STMV, 4 fs | 11 / 8.6 Å 4916.4, pruned every 1.0 step; 11 / 9.2 Å 4807.6, every 2.1 | 3641.0; 3527.6 |
+
+At 8 Å an outer reach of 12 Å is 1 to 2% faster than 11 Å on JAC, and
+on Factor IX 0.4% slower on the RTX 4090 and 0.7% faster on the RTX PRO
+6000. The default keeps cutoff + 3 Å, the reach of the
+suite and of #345, which is within 2% of the best on every system
+measured.
+
+**The validation.** A run without the keys, on an RTX 4090, against
+`GROUPS` given at these reaches and against the matrix:
+
+| System | Particles | Without the keys | `GROUPS` given | `MATRIX` |
+|---|---|---|---|---|
+| TIP3P box | 309,876 | 1140.8 | 1130.2 | 1970.4 |
+| Cellulose | 408,609 | 1489.2 | 1488.4 | 2395.6 |
+| STMV, 4 fs | 1,067,095 | 4766.8 (11 / 9.2 Å) | 4860.0 (11 / 8.6 Å) | 7474.2 |
+| JAC | 23,558 | 132.2 | 132.6 | 134.2 |
+| Dipeptide | 1,168 | 72.4 | 85.0 | 72.6 |
+| TIP3P box | 13,899 | 114.2 | 116.6 | 114.0 |
+| TIP3P box | 20,931 | 136.2 | 137.0 | 136.2 |
+
+On JAC, without the keys and at constant energy over 1 ns (11 / 8.6 Å),
+the total energy changed by $1.7\times10^{-5}$ of its value: a fitted
+drift of 1.9 kcal/mol/ns, against fluctuations of 1.9 kcal/mol.
+
 ## 7. Stages
 
 | Stage | What | Checked by |
@@ -408,7 +512,7 @@ positions in f64 and took 933 µs.
 | G0 | The build prototyped standalone (`scripts/experiments/neighbor-structures`) against the build of the matrix | Its time on Cellulose and JAC, before it is written as a template |
 | G1, done but the matrix in the compact order | The compact order of the places (for the matrix as well); the structure and its build on a device; the exchange contracts on `md_exec.pair_for` | The pairs of the list within the cutoff are those of the matrix, on JAC and Cellulose; the matrix in the compact order against the order of cells |
 | G2, under way: the default mode and the erfc of D90 done; the deterministic mode to come | The loop over groups, each pair once, both modes; the cheaper erfc of the direct sum under `fast_math`, with the accuracy of the force near the cutoff checked (it is what lets the loop over groups gain, Section 1) | Forces, energies, and virials against the matrix (to the rounding; to the bit in the deterministic mode, where the matrix sums in fixed point too); conservation over runs |
-| G3 | Groups by default on a device for the loops that allow them | The Amber suite against pmemd.cuda and GROMACS |
+| G3, done (D[neighbor-auto]) | Groups by default on a device for the loops that allow them: `neighbor_structure = "AUTO"`, the groups with a dual list from 23,000 particles, measured against the matrix on two kinds of device (Section 6.3) | The rates of the matrix and the groups across sizes; a run without the keys at the rate of `GROUPS` given |
 | G4 | The reach of the list: a skin of 1 Å, once builds are cheap | Rates and intervals between builds |
 | G5, under way: the table of D94 and the frames of D95 done | The arithmetic of the kernel (a table for the erfc, no minimum image, the order of the entries) | The prototype first |
 

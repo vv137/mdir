@@ -156,8 +156,28 @@
             },
             "neighbor_structure_requested": {
               "enum": [
+                "auto",
                 "matrix",
                 "groups"
+              ]
+            },
+            "neighbor_structure": {
+              "enum": [
+                "matrix",
+                "groups"
+              ]
+            },
+            "neighbor_structure_reason": {
+              "type": "string"
+            },
+            "pairlist_distance_angstrom": {
+              "type": "number",
+              "exclusiveMinimum": 0
+            },
+            "pruned_distance_angstrom": {
+              "type": [
+                "number",
+                "null"
               ]
             },
             "neighbor_structures": {
@@ -246,6 +266,10 @@
             "time_step_ps",
             "trajectory_format",
             "neighbor_structure_requested",
+            "neighbor_structure",
+            "neighbor_structure_reason",
+            "pairlist_distance_angstrom",
+            "pruned_distance_angstrom",
             "neighbor_structures",
             "buffer_precision",
             "pme"

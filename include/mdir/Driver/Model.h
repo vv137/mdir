@@ -127,7 +127,9 @@ struct System {
   /// (D114), in nm, between the cutoff and the pairlist distance; 0, the
   /// default, keeps one list. It needs the groups
   /// (Execution::neighborStructure), as in the control file
-  /// (D245).
+  /// (D245). Under `NeighborStructure.Auto`, 0 is a key not given: groups
+  /// that are chosen take their own reaches for this and an absent
+  /// `pairlistDistance` (D[neighbor-auto]).
   double prunedDistance = 0.0;
   /// A plain cutoff, as the control file without `lennard_jones_modifier`
   /// (D248).
@@ -282,8 +284,9 @@ struct Execution {
   /// `[execution] neighbor_structure`: the neighbor matrix, or groups of 16
   /// that share a list, each pair once, for the loops that allow them
   /// (D89); on a device, and not in the deterministic mode
-  /// (D245).
-  driver::NeighborStructure neighborStructure = driver::NeighborStructure::Matrix;
+  /// (D245). `Auto`, the default, chooses by the target, the mode, and the
+  /// size of the system as the control file does (D[neighbor-auto]).
+  driver::NeighborStructure neighborStructure = driver::NeighborStructure::Auto;
 };
 /// A temporary fixed schedule for shared-builder parity. No runtime ownership,
 /// JIT, output writers or public Python simulation is implemented here.

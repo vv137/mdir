@@ -9,6 +9,8 @@
 #include <algorithm>
 
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/Format.h"
+#include "llvm/Support/FormatVariadic.h"
 #include "llvm/Support/MemoryBuffer.h"
 
 #include <array>
@@ -1247,6 +1249,79 @@ static void constrainVelocities(
       v(p, k) -= impulse[c] * unit[c][k] * inverseMass(p);
     }
   }
+}
+
+void mdir::driver::resolveNeighborStructure(Control &control,
+                                           const System &system) {
+  if (control.neighborStructure != NeighborStructure::Auto) {
+    if (control.neighborStructureReason.empty())
+      control.neighborStructureReason = "given";
+    return;
+  }
+  size_t count = system.getNumParticles();
+  auto matrix = [&](std::string why) {
+    control.neighborStructure = NeighborStructure::Matrix;
+    // A dual list given under AUTO is of the groups alone.
+    if (control.prunedDistance != 0.0) {
+      control.prunedDistance = 0.0;
+      why += "; 'pruned_distance' is not used";
+    }
+    control.neighborStructureReason = std::move(why);
+  };
+  // The groups are built on a device alone, and the deterministic mode does
+  // not take them (D89).
+  if (control.target != Target::GPU)
+    return matrix("the target is the CPU");
+  if (control.deterministic)
+    return matrix("the deterministic mode");
+  // Loops over pairs without an exchange contract, which cannot take each
+  // pair once and would keep a matrix beside the groups.
+  if (control.implicitSolvent != Control::ImplicitSolvent::None)
+    return matrix("the integral of the Born radii is not computed once a "
+                  "pair");
+  if (control.tunableGradient)
+    return matrix("the derivative in the tunables is not computed once a "
+                  "pair");
+  // The dual list is tested at every step; a rebuild at an interval does
+  // not go with it.
+  if (control.rebuildPeriod > 0)
+    return matrix("'rebuild_interval' is given");
+  // Measured on two kinds of device (D[neighbor-auto]): below this size the
+  // matrix is the faster structure.
+  if (count < autoGroupsParticles)
+    return matrix(llvm::formatv("{0} particles, fewer than {1}", count,
+                                autoGroupsParticles)
+                      .str());
+  // The groups' own reaches, where they are not given: 3 Å beyond the
+  // cutoff, and the inner list 0.6 Å beyond it at 2 fs, wider in
+  // proportion to a longer step (D[neighbor-auto], D114).
+  double outer = control.pairlistDistanceGiven
+                     ? control.pairlistDistance
+                     : control.cutoffDistance + 3.0;
+  double inner =
+      control.prunedDistanceGiven
+          ? control.prunedDistance
+          : control.cutoffDistance +
+                0.6 * std::max(1.0, control.timestep / 0.002);
+  // The reach of the groups is less than the least edge of the cell
+  // (Builder::build, D242).
+  if (control.periodic) {
+    double least = std::min({system.box[0], system.box[1], system.box[2]});
+    if (outer * units::length > 0.999 * least)
+      return matrix((llvm::Twine("the reach of the groups, ") +
+                     llvm::formatv("{0}", llvm::format("%g", outer)) +
+                     " Å, exceeds 0.999 of the least edge of the cell, " +
+                     llvm::formatv("{0:f2}", 0.999 * least / units::length) +
+                     " Å")
+                        .str());
+  }
+  control.neighborStructure = NeighborStructure::Groups;
+  control.pairlistDistance = outer;
+  control.prunedDistance = inner < outer ? inner : 0.0;
+  control.neighborStructureReason =
+      llvm::formatv("{0} particles, at least {1}, on a GPU", count,
+                    autoGroupsParticles)
+          .str();
 }
 
 void mdir::driver::assignVelocities(const Control &control, System &system) {

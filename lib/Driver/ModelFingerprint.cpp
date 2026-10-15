@@ -393,10 +393,12 @@ Fingerprint mdir::model::getFingerprint(const System &s,
         number(s.prunedDistance / length));
   if (has(given.execution, "neighbor_structure"))
     add("execution", "[execution] neighbor_structure",
-        getFingerprintString(execution.neighborStructure ==
-                                     driver::NeighborStructure::Groups
-                                 ? "GROUPS"
-                                 : "MATRIX"));
+        getFingerprintString(
+            execution.neighborStructure == driver::NeighborStructure::Groups
+                ? "GROUPS"
+            : execution.neighborStructure == driver::NeighborStructure::Auto
+                ? "AUTO"
+                : "MATRIX"));
   if (has(given.execution, "target"))
     add("execution", "[execution] target",
         getFingerprintString(execution.target == driver::Target::GPU ? "GPU"

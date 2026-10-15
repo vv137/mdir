@@ -91,8 +91,8 @@ uses in the expression. This check does not change keys or file formats.
 | | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, which stays as `<checkpoint>.prev` (D132), and at the end of a minimization. `mdir run --continue` continues the run from it (A.3). |
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints. The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
-| | `pairlist_distance` | The reach of the neighbor structures; the skin is `pairlist_distance − cutoff`. |
-| | `pruned_distance` | A dual list (D114): the loops over pairs take an inner list, pruned from the structure of `pairlist_distance` with this reach, between `cutoff` and `pairlist_distance`, whenever a particle has moved too far for it. Needs `neighbor_structure = "GROUPS"`; not with `rebuild_interval`. The default, none, keeps one list. In Python, `System.pruned_distance` in nm (D245). |
+| | `pairlist_distance` | The reach of the neighbor structures; the skin is `pairlist_distance − cutoff`. The default is `cutoff` + 1.5 Å, and `cutoff` + 3 Å where `neighbor_structure = "AUTO"` takes the groups (D[neighbor-auto]). |
+| | `pruned_distance` | A dual list (D114): the loops over pairs take an inner list, pruned from the structure of `pairlist_distance` with this reach, between `cutoff` and `pairlist_distance`, whenever a particle has moved too far for it. Needs `neighbor_structure = "GROUPS"`, or `"AUTO"` on a GPU and not `deterministic`; not with `rebuild_interval`. The default, none, keeps one list, except where `AUTO` takes the groups: there `cutoff` + 0.6 Å × max(1, Δt / 2 fs), one list if that is not below `pairlist_distance`. Given under `AUTO` where the size takes the matrix, it is not used, and `mdir check` and the log say so. In Python, `System.pruned_distance` in nm (D245). |
 | | `rebuild_interval` | **Opt-in, not a default.** 0 (the default): a structure is rebuilt when a particle has moved half the skin, tested at every step. `n`: rebuilt every `n` steps and not tested in between, so it may miss pairs within the cutoff (D88). The run warns at the start, on the standard error and in the log, and reports at the end how many rebuilds found a structure no longer valid, with a warning if any did. |
 | | `switch_distance` | For terms in the control file, `truncation(switch, from = ...)`; equal to `cutoff`: no switching. With a topology, where the selected force or potential switch begins. |
 | | `lennard_jones_modifier` | `NONE`, `POTENTIAL_SHIFT` (`truncation(shift)`), `FORCE_SWITCH` (`truncation(force_switch, from = switch_distance)`), or, with a topology only, `POWER_FORCE_SWITCH`, the force switch of Steinbach and Brooks that CHARMM force fields take. With a topology the modifier applies to the Lennard-Jones only (D121); a switch needs `dispersion_correction = "NONE"`, and `POTENTIAL_SHIFT` takes the correction, which then adds the estimate of the shift (D210). Under `NONE` the free-energy and observables files take the potential shifted to 0 at the cutoff, as under `POTENTIAL_SHIFT` (D210). `SQUARED_DISTANCE_SWITCH` (topology only, D175) selects the cubic potential switch in squared distance of CHARMM VSWITCH [[Brooks1983]](references.md#brooks1983), including 1-4 pairs; it requires `0 < switch_distance < cutoff` and refuses custom pair additions and LJPME. The plain-cutoff dispersion correction is refused because it omits the contribution removed inside the switching interval; use `dispersion_correction = "NONE"`. |
@@ -133,7 +133,7 @@ uses in the expression. This check does not change keys or file formats.
 | | `neighbor_capacity` | Neighbors that a neighbor structure holds per particle at first; a build that finds more makes room, so the value does not change the results. Absent: estimated from the configuration, half as many again as the most neighbors of a particle at the start plus 16, rounded up to four significant bits (D227). In Python, `Execution.neighbor_capacity`. |
 | | `fast_math` | Whether kernels are rewritten in ways that change rounding: the distance in powers of its square, fused multiply-adds, and in f32 approximate divisions and an approximation of erfc within 3.3e-7 (D90). The default is `true`. |
 | | `spatial_order` | Whether the run keeps the particles in the order of their positions (D44). The default is `true`. The files of the run are in the order of the input either way. A particle takes the place of its anchor, the oxygen of its water or the center of its group of SHAKE, so that the members of a group of the constraints stay next to each other (D110). |
-| | `neighbor_structure` | `MATRIX` (the default): a row of neighbors for each particle, each pair computed for both. `GROUPS`: groups of 16 particles that share a list, each pair computed once, for the loops whose values all have an exchange contract (D89); on a device, not in the deterministic mode. In Python, `Execution.neighbor_structure` (`NeighborStructure.Matrix`, `Groups`; D245). |
+| | `neighbor_structure` | `AUTO` (the default): the groups with a dual list on a GPU, outside the deterministic mode, for a system of at least 23,000 particles (virtual sites counted) whose loops over pairs all take each pair once (not with implicit solvent or the derivative in the tunables), without `rebuild_interval`, and whose cell is wider than the reach of the groups over 0.999; the matrix otherwise (D[neighbor-auto]). The log, `mdir check`, and the manifest state the choice and why. `MATRIX`: a row of neighbors for each particle, each pair computed for both. `GROUPS`: groups of 16 particles that share a list, each pair computed once, for the loops whose values all have an exchange contract (D89); on a device, not in the deterministic mode; one list and the reach of 1.5 Å beyond the cutoff unless the keys say otherwise. In Python, `Execution.neighbor_structure` (`NeighborStructure.Auto`, the default, `Matrix`, `Groups`; D245). |
 | | `deterministic` | Whether every sum is added in an order that the threads do not decide, so that a run gives the same bits from run to run on the same binary and hardware (D84). A step that writes energies then moves the particles as one that does not, and in mixed precision the forces that the steps carry, and those of the checkpoints, are stored in f64; on a device a sum with a product as an operand is a fused multiply-add by the formula alone, and on the CPU a sine and a cosine of one argument are two calls of the C library, not one of `sincos` (D201, D204). The default is `false`: a device then adds the charges of PME with floating-point atomics. On the CPU every sum has a fixed order in either mode, independent of `threads` (D171). |
 
 **File-backed grids (D178).** The last argument varies
@@ -185,9 +185,12 @@ checkpoint_interval = 50000     # steps between checkpoints
 
 [energy]
 cutoff            = 9.0         # of the direct terms (Å)
-pairlist_distance = 10.0        # reach of the neighbor structures (Å)
+# pairlist_distance = 10.5      # reach of the neighbor structures (Å);
+                                # the cutoff + 1.5, + 3 for the groups
+                                # that AUTO takes
 # pruned_distance = 0           # reach of the inner list of a dual list,
-                                # pruned from the structure; needs GROUPS (Å)
+                                # pruned from the structure; needs GROUPS
+                                # or AUTO (Å)
 # rebuild_interval = 0          # 0: rebuild when a particle has moved half
                                 # the skin (default); N: every N steps, not
                                 # tested between; may miss pairs (opt-in)
@@ -288,8 +291,10 @@ type = "PERIODIC"               # the box is that of the coordinates;
 target    = "GPU"               # CPU, GPU
 precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 # threads = 1                   # for the target CPU
-# neighbor_structure = "MATRIX"  # MATRIX, GROUPS: groups of 16 that share
-                                # a list, each pair once
+# neighbor_structure = "AUTO"   # AUTO: the groups on a GPU for large
+                                # systems, else the matrix; MATRIX;
+                                # GROUPS: groups of 16 that share a
+                                # list, each pair once
 
 # A minimization instead of dynamics: steepest descent.
 # [minimize]
