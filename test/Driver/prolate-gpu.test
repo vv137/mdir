@@ -1,0 +1,44 @@
+# REQUIRES: cuda
+# The prolate kernel of particle mesh Ewald on a device (D[prolate-ewald]):
+# the three OPC waters of prolate.test against the Ewald sum of
+# Inputs/ewald_reference.py (−14.326815489 kcal/mol) in double and mixed
+# precision and in the deterministic mode, which gives the same bits in
+# two runs; and the rhombic dodecahedron of prolate-triclinic.test against
+# its Gaussian reference (−3963.615657 kcal/mol). In double precision the
+# terms are those of the CPU to their printed digits.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/prolate.test | sed '1d;$d' > %t/cpu.toml
+# RUN: cp %t/cpu.toml %t/double.toml
+# RUN: printf '\n[execution]\ntarget = "GPU"\nprecision = "DOUBLE"\n' >> %t/double.toml
+# RUN: cp %t/cpu.toml %t/mixed.toml
+# RUN: printf '\n[execution]\ntarget = "GPU"\nprecision = "MIXED"\n' >> %t/mixed.toml
+# RUN: sed 's/^steps .*/steps = 20/; s/^energy_interval = 1000/energy_interval = 20\ncheckpoint = "det.h5"\ncheckpoint_interval = 20/' %t/cpu.toml > %t/det-base.toml
+# RUN: cp %t/det-base.toml %t/det.toml
+# RUN: printf '\n[execution]\ntarget = "GPU"\nprecision = "MIXED"\ndeterministic = true\n' >> %t/det.toml
+# RUN: mdir run %t/cpu.toml > %t/cpu.log
+# RUN: mdir run %t/double.toml > %t/double.log
+# RUN: mdir run %t/mixed.toml > %t/mixed.log
+# RUN: grep "Coulomb" %t/cpu.log > %t/cpu.terms
+# RUN: grep "Coulomb" %t/double.log > %t/double.terms
+# RUN: diff %t/cpu.terms %t/double.terms
+# RUN: %python %S/Inputs/check_coulomb_total.py %t/double.log -14.326815489 3e-6 | FileCheck %s
+# RUN: %python %S/Inputs/check_coulomb_total.py %t/mixed.log -14.326815489 3e-6 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=DRIFT < %t/mixed.log
+# RUN: cd %t && mdir run det.toml > det-a.log && mv det.h5 det-a.h5
+# RUN: cd %t && mdir run det.toml > det-b.log && mv det.h5 det-b.h5
+# RUN: mdir checkpoint %t/det-a.h5 %t/det-b.h5 | FileCheck %s --check-prefix=SAME
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/prolate-triclinic.test | sed '1d;$d' | sed 's/^target    = "CPU"/target    = "GPU"/' > %t/tric-double.toml
+# RUN: sed 's/^precision = "DOUBLE"/precision = "MIXED"/' %t/tric-double.toml > %t/tric-mixed.toml
+# RUN: mdir run %t/tric-double.toml > %t/tric-double.log
+# RUN: mdir run %t/tric-mixed.toml > %t/tric-mixed.log
+# RUN: %python %S/Inputs/check_coulomb_total.py %t/tric-double.log -3963.615657 1e-6 | FileCheck %s
+# RUN: %python %S/Inputs/check_coulomb_total.py %t/tric-mixed.log -3963.615657 1e-6 | FileCheck %s
+
+# Double precision: the CPU's terms (the diff); both within 1.9e-6 of the
+# Ewald sum at ε = 1e-5, mixed precision within 2e-6; the dodecahedron
+# within 1.8e-7 (double) and 2e-7 (mixed).
+# CHECK: ok
+# DRIFT: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+# SAME: the states are identical
