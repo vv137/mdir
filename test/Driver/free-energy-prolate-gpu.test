@@ -1,0 +1,18 @@
+# REQUIRES: cuda
+# [free_energy] (D161) with the prolate kernel of PME (D[prolate-ewald]) on
+# a device, scenario prolate of Inputs/check_free_energy.py: ethanol
+# decoupled from TIP3P (Inputs/fep). dH/dλ of the Coulomb, the
+# Lennard-Jones, and a component of expressions against central differences
+# of the energies of the states beside it; the energies of the other states
+# against runs at those states; and λ = 0 against the run without
+# [free_energy], in double and mixed precision.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/check_free_energy.py %t GPU DOUBLE mdir prolate | FileCheck %s
+# RUN: rm -rf %t-mixed && mkdir -p %t-mixed
+# RUN: %python %S/Inputs/check_free_energy.py %t-mixed GPU MIXED mdir prolate | FileCheck %s
+#
+# CHECK: dH/dl against central differences: ok
+# CHECK: the energies of the other states: ok
+# CHECK: lambda = 0 against no [free_energy]: ok
+# CHECK: free energy prolate passed

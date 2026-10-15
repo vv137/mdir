@@ -42,8 +42,9 @@
 # with g = d ln χ̂ / d ln |m|, to 2.2e-6; and each diagonal component
 # against −dU/dε_aa under a strain of axis a alone (Inputs/
 # check_virial_axes.py), which holds the terms m_a m_a / m² that a uniform
-# scaling sums away, to 6.6e-6 of the largest. The off-diagonal components
-# are not checked here.
+# scaling sums away, to 6.6e-6 of the largest. The components off the
+# diagonal are checked against −dU/dε_ab in a sheared cell by
+# python-frame-gradients-prolate.test.
 #
 # VIRIAL: {{virial( of the axes)? ok}}
 

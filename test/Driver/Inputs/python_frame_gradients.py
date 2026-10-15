@@ -18,6 +18,10 @@ Scenarios:
              diagonal with the deformed cell rotated back to the
              lower-triangular form); the trace of S against the virial; G
              against the forces of the sampler's state
+  prolate    `finite` with the prolate kernel of PME (D[prolate-ewald]):
+             its reciprocal virial, whose off-diagonal components the
+             other tests of the kernel do not reach, against central
+             differences of the energy under each component of the strain
   special    with the correction for the dispersion under a plain cutoff
              and a net charge (what the host adds at the volume of the
              frame); with a wall, which no rotation leaves unchanged (the
@@ -109,6 +113,8 @@ def dipeptide(kind="plain"):
     system, state = loaded.make_system(), loaded.make_state()
     system.cutoff, system.pairlist_distance = 0.8, 0.9
     system.electrostatics = mdir.Electrostatics.PME
+    if scenario == "prolate":
+        system.pme_kernel = mdir.PMEKernel.Prolate
     if kind == "tail":
         system.truncation = mdir.Truncation.None_
         system.dispersion = mdir.DispersionCorrection.EnergyPressure
@@ -154,6 +160,8 @@ def water(kind="plain"):
     system.dispersion = mdir.DispersionCorrection.None_
     system.electrostatics = mdir.Electrostatics.PME
     system.pme_grid = [28] * 3
+    if scenario == "prolate":
+        system.pme_kernel = mdir.PMEKernel.Prolate
     if kind == "wall":
         wall = mdir.ExternalTerm()
         wall.name, wall.expression = "wall", "0.5*k*max(0, z - z0)^2 + 0.3*k*x*z"
@@ -316,7 +324,7 @@ def run_finite():
     print(f"{mode}: the virial plus the trace of S, triclinic: {trace:.1e} kJ/mol of "
           f"{out.virial[0]:.3f}")
     assert trace < 1e-9 * abs(out.virial[0])
-    print("finite passed")
+    print(f"{scenario} passed")
 
 
 def run_special():
@@ -1060,7 +1068,7 @@ def run_torch():
     print("torch passed")
 
 
-if scenario == "finite":
+if scenario in ("finite", "prolate"):
     run_finite()
 elif scenario == "torch":
     run_torch()

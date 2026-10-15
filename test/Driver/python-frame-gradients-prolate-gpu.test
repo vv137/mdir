@@ -1,0 +1,18 @@
+# REQUIRES: python-api, cuda
+# The gradient of the energy of a frame in the strain with the prolate
+# kernel of PME (D252, D[prolate-ewald]) on the GPU, in double and mixed
+# precision: scenario prolate of Inputs/python_frame_gradients.py, the checks
+# of its scenario finite with the prolate kernel. S = dU/d(epsilon), whose
+# components off the diagonal are those of the virial of the kernel that the
+# axes of prolate.test do not reach, against central differences of the
+# energy, in an orthorhombic cell and in a sheared rhombic dodecahedron (the
+# nine components); G against central differences and the sampler's forces.
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide prolate GPU Double | FileCheck %s -DMODE="GPU Double"
+# RUN: %mdir_python %S/Inputs/python_frame_gradients.py %S/Inputs/dipeptide prolate GPU Mixed | FileCheck %s -DMODE="GPU Mixed"
+# CHECK: [[MODE]]: G, 102 components of the solute and of 12 atoms of the water, against central differences of the energy
+# CHECK: [[MODE]]: S, its diagonal in an orthorhombic cell, against central differences of the energy
+# CHECK: [[MODE]]: S less its transpose
+# CHECK: [[MODE]]: S of water in a triclinic cell, on and above the diagonal, against central differences of the energy
+# CHECK: [[MODE]]: S of the same, below the diagonal, the deformed cell rotated back
+# CHECK: [[MODE]]: the virial plus the trace of S, triclinic
+# CHECK: prolate passed

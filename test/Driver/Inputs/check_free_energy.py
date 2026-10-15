@@ -27,7 +27,10 @@ run side by side:
   states;
 - `identity`: at λ = 0, the potential energy against that of the run
   without [free_energy], with each electrostatics and each modifier of the
-  Lennard-Jones that [free_energy] takes.
+  Lennard-Jones that [free_energy] takes;
+- `prolate`: `differences` and `identity` with the prolate kernel of PME
+  (D[prolate-ewald]), whose direct, excluded, and decoupled pairs take
+  1 − Φ(r/r_c) and Φ(r/r_c) in place of erfc and erf.
 """
 
 import math
@@ -39,7 +42,7 @@ import sys
 
 here = os.path.dirname(os.path.abspath(__file__))
 directory, target, precision, mdir, scenario = sys.argv[1:6]
-NAMES = ('openmm', 'differences', 'identity')
+NAMES = ('openmm', 'differences', 'identity', 'prolate')
 if scenario not in NAMES:
     sys.exit(f"unknown scenario '{scenario}'; expected one of "
              f"{', '.join(NAMES)}")
@@ -118,6 +121,8 @@ ELECTROSTATICS = {
     'RF': 'electrostatics = "REACTION_FIELD"\nreaction_field_dielectric = 78.3\n',
     'PME': 'electrostatics = "PME"\n[pme]\nbeta = 0.32\ngrid = [32, 32, 32]\n'
            'influence = "SPME"\n',
+    'PROLATE': 'electrostatics = "PME"\n[pme]\nkernel = "PROLATE"\n'
+               'grid = [32, 32, 32]\n',
     'RF_SHIFT': 'electrostatics = "REACTION_FIELD"\n'
                 'reaction_field_dielectric = 78.3\n'
                 'lennard_jones_modifier = "POTENTIAL_SHIFT"\n',
@@ -217,7 +222,7 @@ def against_openmm():
                    1e-5 if mixed else 3e-6)
 
 
-def differences():
+def differences(electrostatics='PME'):
     """Central differences (the Coulomb is quadratic in λ, the rest smooth),
     and the energies of the other states against runs at those states."""
     h = 1e-2
@@ -243,7 +248,7 @@ expression = "lambda_restraint * k * (z - 10.0)^2"
 k = 0.5
 '''
     components = f'restraint = {restraint}'
-    runs = {k: control(f'central{k}', k, coulomb, vdw, 'PME', extra,
+    runs = {k: control(f'central{k}', k, coulomb, vdw, electrostatics, extra,
                        components)
             for k in (0, 3, 7)}
     first, second = runs[0], runs[3]
@@ -283,6 +288,7 @@ switch_distance = 9.0
 pairlist_distance = 10.0
 {electrostatics}
 {modifier}
+{pme}
 [dynamics]
 integrator = "VELOCITY_VERLET"
 time_step = 0.001
@@ -305,10 +311,10 @@ vdw = [0.0, 1.0]
 """
 
 
-def potentials(name, free, electrostatics, modifier):
+def potentials(name, free, electrostatics, modifier, pme=''):
     text = IDENTITY.format(name=name, free=free, target=target,
                            precision=precision, modifier=modifier,
-                           electrostatics=electrostatics)
+                           electrostatics=electrostatics, pme=pme)
     with open(os.path.join(directory, name + '.toml'), 'w') as file:
         file.write(text)
     result = subprocess.run([mdir, 'run', name + '.toml'], cwd=directory,
@@ -323,17 +329,16 @@ def potentials(name, free, electrostatics, modifier):
         return [float(line.split()[column]) for line in file]
 
 
-def identity():
+def identity(cases=(('cutoff', 'electrostatics = "CUTOFF"', ''),
+                    ('pme', 'electrostatics = "PME"', ''),
+                    ('rf', ELECTROSTATICS['RF'], ''))):
     worst = 0.0
-    for label, electrostatics in (
-            ('cutoff', 'electrostatics = "CUTOFF"'),
-            ('pme', 'electrostatics = "PME"'),
-            ('rf', ELECTROSTATICS['RF'])):
+    for label, electrostatics, pme in cases:
         for modifier in ('', 'lennard_jones_modifier = "POTENTIAL_SHIFT"\n'
                              'dispersion_correction = "NONE"'):
             name = f'identity_{label}_{"shift" if modifier else "none"}'
-            plain = potentials(name + '_plain', '', electrostatics, modifier)
-            free = potentials(name + '_free', FREE, electrostatics, modifier)
+            plain = potentials(name + '_plain', '', electrostatics, modifier, pme)
+            free = potentials(name + '_free', FREE, electrostatics, modifier, pme)
             if len(plain) != len(free):
                 worst = float('inf')
                 continue
@@ -352,6 +357,9 @@ SCENARIOS = {
     'openmm': against_openmm,
     'differences': differences,
     'identity': identity,
+    'prolate': lambda: (differences('PROLATE'),
+                        identity((('prolate', 'electrostatics = "PME"',
+                                   '[pme]\nkernel = "PROLATE"\n'),))),
 }
 assert tuple(SCENARIOS) == NAMES
 SCENARIOS[scenario]()

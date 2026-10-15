@@ -34,6 +34,7 @@ Scenarios:
             sum, the potential of the grid at the particles, the self term,
             the background, the excluded and the 1-4 pairs) against central
             differences of the energy
+  prolate   the same with the prolate kernel of PME (D[prolate-ewald])
   torchpme  the charges with particle mesh Ewald, every particle an entry of
             its own, against torch-pme, an independent differentiable PME
             (Loche et al., J. Chem. Phys. 162, 142501 (2025)), at the same
@@ -457,9 +458,13 @@ def charge_model(pme, net=0.0):
     return system, state, charge_map
 
 
-def run_pme(target, precision):
+def run_pme(target, precision, prolate=False):
     double = precision == "Double"
     system, state, charge_map = charge_model(pme=True, net=0.5)
+    kernel = "with particle mesh Ewald"
+    if prolate:
+        system.pme_kernel = mdir.PMEKernel.Prolate
+        kernel = "with the prolate kernel of PME"
     sim = simulation(compile_(system, state, target, precision))
     sim.run(6)
     g = sim.tunables.gradient()
@@ -467,7 +472,7 @@ def run_pme(target, precision):
     assert abs(net - 0.5) < 1e-9, net
     worst = differences(sim, g, 1e-3 if double else 5e-2)
     tolerance = 1e-7 if double else 5e-4
-    print(f"{target} {precision}: the charges with particle mesh Ewald, {len(g['q'])} entries "
+    print(f"{target} {precision}: the charges {kernel}, {len(g['q'])} entries "
           f"for {len(charge_map)} particles, a net charge of {net:.1f} e, against central "
           f"differences of the energy, {worst:.1e} (tolerance {tolerance:.0e})")
     assert worst < tolerance, worst
@@ -486,6 +491,8 @@ def run_pme(target, precision):
     system.dispersion = mdir.DispersionCorrection.None_
     system.electrostatics = mdir.Electrostatics.PME
     system.pme_grid = [28] * 3
+    if prolate:
+        system.pme_kernel = mdir.PMEKernel.Prolate
     names = system.topology.atom_names
     water_map = np.array([i if i < 9 else 9 + (name != "OW") for i, name in enumerate(names)])
     system.tunables = [mdir.Tunable("q", "charge", map=water_map)]
@@ -924,6 +931,8 @@ elif scenario == "checkpoint":
     run_checkpoint(sys.argv[3], sys.argv[4], sys.argv[5])
 elif scenario == "pme":
     run_pme(sys.argv[3], sys.argv[4])
+elif scenario == "prolate":
+    run_pme(sys.argv[3], sys.argv[4], prolate=True)
 elif scenario == "torchpme":
     run_torchpme(sys.argv[3], sys.argv[4])
 elif scenario == "charges":
