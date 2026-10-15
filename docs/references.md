@@ -83,6 +83,18 @@ properties of water-like models," *Mol. Phys.* **26**, 789–792 (1973).
 Used for: the reaction field of a dielectric continuum beyond the cutoff
 (D140).
 
+### Barnett2019
+
+A. H. Barnett, J. Magland, L. af Klinteberg, "A parallel nonuniform fast
+Fourier transform library based on an "exponential of semicircle" kernel,"
+*SIAM J. Sci. Comput.* **41**, C479–C504 (2019).
+[doi:10.1137/18M120885X](https://doi.org/10.1137/18M120885X)
+
+Used for: the "exponential of semicircle" kernel
+$e^{c(\sqrt{1-x^2}-1)}$, a closed form close to the prolate spheroidal wave
+function, named as the alternative to the PSWF for the spreading of ESP and
+not measured (issue #334, D[prolate-ewald]).
+
 ### Berendsen1984
 
 H. J. C. Berendsen, J. P. M. Postma, W. F. van Gunsteren, A. DiNola,
@@ -636,6 +648,19 @@ interaction in the nonbonded model of ions," *J. Chem. Theory Comput.*
 
 Used for: the 12-6-4 model of ions, which the readers of M1 reject.
 
+### Liang2026
+
+J. Liang, L. Lu, A. Barnett, L. Greengard, S. Jiang, "Accelerating
+molecular dynamics simulations using fast Ewald summation with prolates,"
+*Nat. Commun.* **17**, 6681 (2026).
+[doi:10.1038/s41467-026-73232-8](https://doi.org/10.1038/s41467-026-73232-8)
+
+Used for: Ewald summation with prolates (ESP), the prolate spheroidal wave
+function of order zero as the splitting and the spreading kernel of
+particle mesh Ewald, its parameters from a tolerance (Table 2), and the
+relative force error of eq. 16 (issue #334, D[prolate-ewald]). Its code
+(doi:10.5281/zenodo.19547608) served as an oracle of normalizations only.
+
 ### Lingenheil2008
 
 M. Lingenheil, R. Denschlag, R. Reichold, P. Tavan, "The
@@ -886,6 +911,16 @@ model," *Proteins* **55**, 383–394 (2004).
 Used for: the Born radii of OBC from the integral of the descreening, and
 its parameters α, β, γ (D143).
 
+### Osipov2013
+
+A. Osipov, V. Rokhlin, H. Xiao, *Prolate Spheroidal Wave Functions of
+Order Zero*, Applied Mathematical Sciences **187** (Springer, New York,
+2013).
+[doi:10.1007/978-1-4614-8259-8](https://doi.org/10.1007/978-1-4614-8259-8)
+
+Used for: the properties of $\psi_0^c$ that ESP rests on, its eigenvalue
+and its expansion in Legendre polynomials (issue #334, D[prolate-ewald]).
+
 ### Pall2013
 
 S. Páll, B. Hess, "A flexible algorithm for calculating pair interactions
@@ -1109,6 +1144,17 @@ portable library for particle-based simulations," *J. Open Source Softw.*
 
 Used for: identifying Cabana, a model for the runtime.
 
+### Slepian1961
+
+D. Slepian, H. O. Pollak, "Prolate spheroidal wave functions, Fourier
+analysis and uncertainty — I," *Bell Syst. Tech. J.* **40**, 43–63
+(1961).
+[doi:10.1002/j.1538-7305.1961.tb03976.x](https://doi.org/10.1002/j.1538-7305.1961.tb03976.x)
+
+Used for: the prolate spheroidal wave functions as the functions of a
+given band limit most concentrated on an interval, the property that ESP
+uses (issue #334, D[prolate-ewald]).
+
 ### Srinivasan1999
 
 J. Srinivasan, M. W. Trevathan, P. Beroza, D. A. Case, "Application of a
@@ -1329,6 +1375,16 @@ Used for: particle mesh Ewald for the dispersion with force fields whose
 pairs do not follow the geometric rule (D162): the grid sums the geometric
 C6, and the direct terms give each pair within the cutoff its own
 Lennard-Jones.
+
+### Xiao2001
+
+H. Xiao, V. Rokhlin, N. Yarvin, "Prolate spheroidal wavefunctions,
+quadrature and interpolation," *Inverse Problems* **17**, 805–838 (2001).
+[doi:10.1088/0266-5611/17/4/315](https://doi.org/10.1088/0266-5611/17/4/315)
+
+Used for: $\psi_0^c$ as a series of normalized Legendre polynomials whose
+coefficients are the eigenvector of a symmetric tridiagonal matrix, and
+its eigenvalue from the integral equation (issue #334, D[prolate-ewald]).
 
 ### Zhang2019
 
