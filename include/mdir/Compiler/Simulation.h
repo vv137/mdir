@@ -263,6 +263,22 @@ public:
   /// activation on.
   void setKeepsTuples(bool keeps) { keepsTuples = keeps; }
   bool getKeepsTuples() const { return keepsTuples; }
+  /// What the starts of the activations have given the entry of the arrays
+  /// of the program (D[start-arguments]): how many were handed
+  /// without a copy, how many conversions into the type of the entry were
+  /// taken as the simulation kept them, and how many were made. For the
+  /// tests and the measurements.
+  std::array<int64_t, 3> getStartArguments() const;
+  /// Whether a start hands the entry the arrays of the program and the
+  /// conversions that the simulation keeps (the default), or copies and
+  /// converts every one anew, as before D[start-arguments]: for the tests,
+  /// which compare the two. It holds from the next start on.
+  void setKeepsStartArguments(bool keeps) { keepsStartArguments = keeps; }
+  bool getKeepsStartArguments() const { return keepsStartArguments; }
+  /// Adds 1 to the first byte of the first buffer that the activation took
+  /// without a copy, as a write of the entry would: for the test of the
+  /// check of MDRT_CHECK_KEPT_TUPLES. False without an activation.
+  bool spoilStartArgument();
   const std::vector<std::pair<int64_t, int64_t>> &getTunablesHistory() const {
     return tunablesHistory;
   }
@@ -554,6 +570,11 @@ private:
   void *keptTuples = nullptr;
   bool keptTuplesOnDevice = false;
   bool keepsTuples = true;
+  /// The buffers of the arguments of the starts, kept from one start to the
+  /// next (D[start-arguments]).
+  struct StartArguments;
+  std::unique_ptr<StartArguments> startArguments;
+  bool keepsStartArguments = true;
   mutable driver::HostProfile hostTimes;
   /// Whether `system` and `forces` hold the state of the activation, or of
   /// the simulation if there is none.

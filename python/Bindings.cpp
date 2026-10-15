@@ -1499,6 +1499,25 @@ PYBIND11_MODULE(_core, m) {
     // Adds 1 to a number of an array that the updates keep, as a defect
     // would. Private, for the test of the comparison.
     .def("_spoil_kept_array", [](PySimulation &s) { return s.simulation->spoilKeptArray(); })
+    // (handed, kept, made): the arrays of the program that the starts of
+    // the activations handed the entry without a copy, and the conversions
+    // into the type of the entry that they took as the simulation kept them
+    // and that they made (D[start-arguments]). Private, for
+    // the tests and the measurements: it may change or go.
+    .def_property_readonly("_start_arguments", [](const PySimulation &s) {
+      auto counts = s.simulation->getStartArguments();
+      return py::make_tuple(counts[0], counts[1], counts[2]);
+    })
+    // False: every start from the next on copies and converts the arrays
+    // of the program anew, as a simulation that keeps nothing for its
+    // starts. Private, for the tests, which compare the two.
+    .def_property("_keep_start_arguments",
+                  [](const PySimulation &s) { return s.simulation->getKeepsStartArguments(); },
+                  [](PySimulation &s, bool keeps) { s.simulation->setKeepsStartArguments(keeps); })
+    // Adds 1 to the first byte of the first buffer that the activation
+    // took without a copy, as a write of its entry would. Private, for the
+    // test of the check of MDRT_CHECK_KEPT_TUPLES.
+    .def("_spoil_start_argument", [](PySimulation &s) { return s.simulation->spoilStartArgument(); })
     // False: every update of the tunables builds its program from a copy of
     // the model of the compile. Private, for the tests and the
     // measurements, which compare the two.
