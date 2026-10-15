@@ -199,6 +199,13 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
                      !md.table<2, f64>
                    -> f64, vector<9xf64>, !md.field<@atoms, f64>
     ```
+
+    With `listed`, the field of the places of the particles whose charge
+    can be nonzero that `md.reciprocal` takes (`md_exec.nonzero`,
+    D[pme-skip-zero]), the spreading and the gathering
+    take those particles only, and the others take a force of zero. A sum
+    with `potential` takes no list. With `gather_all` (that of
+    `md.reciprocal`), a device gathers every particle, as without a list.
   }];
   let arguments = (ins
     MDExec_FieldOrBuffer:$positions,
@@ -207,12 +214,14 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     AnyType:$moduli,
     Optional<MDExec_Buffer>:$out,
     Variadic<MDExec_Buffer>:$scratch,
+    Optional<MDExec_FieldOrBuffer>:$listed,
     DenseI64ArrayAttr:$grid,
     I64Attr:$order,
     F64Attr:$beta,
     F64Attr:$coulomb,
     UnitAttr:$dispersion,
-    UnitAttr:$potential
+    UnitAttr:$potential,
+    UnitAttr:$gather_all
   );
   let results = (outs
     F64:$energy,
@@ -226,6 +235,8 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
     (`potential` $potential^)?
+    (`listed` `(` $listed^ `:` qualified(type($listed)) `)`)?
+    (`gather_all` $gather_all^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) `->` type($energy) `,` type($virial)
     (`,` qualified(type($forces))^)?
@@ -235,6 +246,49 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
       return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
     }
   }];
+}
+
+def MDExec_NonzeroOp : MDExec_Op<"nonzero", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "The places of the particles whose value is not zero";
+  let description = [{
+    Returns a field of `i32` whose first entries are the places of the
+    particles whose value in `field` is not zero, in ascending order, and
+    whose other entries are −1 − the place of each of the others, in
+    ascending order. A value that is not a number is not zero.
+    The reciprocal sum of PME spreads and gathers the particles of such a
+    list only (D[pme-skip-zero]); where the particles are
+    put in a new order, the list is made again from the permuted field.
+
+    ```mlir
+    %listed = md_exec.nonzero %q : !md.field<@atoms, f64>
+                -> !md.field<@atoms, i32>
+    ```
+
+    In the storage form the field is a buffer, and the list is written to
+    the buffer in `outs`, which holds one `i32` per particle. The entries
+    are counted in integers, so the list is the same in every mode.
+
+    ```mlir
+    md_exec.nonzero %q outs(%listed : memref<?xi32>) : memref<?xf64>
+    ```
+  }];
+  let arguments = (ins
+    MDExec_FieldOrBuffer:$field,
+    Optional<MDExec_Buffer>:$out
+  );
+  let results = (outs Optional<MD_FieldType>:$result);
+  let assemblyFormat = [{
+    $field (`outs` `(` $out^ `:` type($out) `)`)? attr-dict
+    `:` qualified(type($field)) (`->` qualified(type($result))^)?
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getField().getType());
+    }
+  }];
+  let hasVerifier = 1;
 }
 
 def MDExec_PermuteOp : MDExec_Op<"permute", [

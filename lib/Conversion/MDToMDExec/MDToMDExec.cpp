@@ -474,10 +474,14 @@ LogicalResult Converter::convert(Operation *op) {
           reciprocal.getVirial().getType(), field, reciprocal.getPositions(),
           reciprocal.getCharges(), reciprocal.getCell(),
           reciprocal.getModuli(), /*out=*/Value(), /*scratch=*/ValueRange(),
+          // The potential at the particles is gathered at every particle,
+          // since it is not zero where the charge is (D[pme-skip-zero]).
+          yieldsPotential ? Value() : reciprocal.getListed(),
           reciprocal.getGridAttr(), reciprocal.getOrderAttr(),
           reciprocal.getBetaAttr(), reciprocal.getCoulombAttr(),
           reciprocal.getDispersionAttr(),
-          yieldsPotential ? builder.getUnitAttr() : UnitAttr());
+          yieldsPotential ? builder.getUnitAttr() : UnitAttr(),
+          yieldsPotential ? UnitAttr() : reciprocal.getGatherAllAttr());
     };
     if (takesForces) {
       auto converted = create(reciprocal.getForces().getType(), false);

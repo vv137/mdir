@@ -216,6 +216,33 @@ private:
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
+  /// The field `name` of the places of the particles whose `values` are not
+  /// zero, then −1 − the place of each of the others
+  /// (D[pme-skip-zero]), which the reciprocal
+  /// sum of PME spreads and gathers alone; none where every value is
+  /// nonzero, or where a tunable of one of `kinds` may change the values.
+  void collectListed(llvm::StringRef name, llvm::ArrayRef<double> values,
+                     llvm::ArrayRef<Control::TunableKind> kinds);
+  /// Whether the program has the field `name`.
+  bool hasField(llvm::StringRef name) const {
+    return llvm::any_of(program.fields, [&](const Program::Field &field) {
+      return field.name == name;
+    });
+  }
+  /// Whether more than half the particles are in the list `name` of
+  /// collectListed: a device then gathers every particle (`gather_all`),
+  /// as the gathering over the list costs more than the others where they
+  /// are few and share the points of the grid of their neighbors
+  /// (D[pme-skip-zero]).
+  bool gathersAll(llvm::StringRef name) const {
+    for (const Program::Field &field : program.fields)
+      if (field.name == name) {
+        size_t listed = llvm::count_if(field.values.get(),
+                                       [](double v) { return v >= 0.0; });
+        return 2 * listed > field.values.size();
+      }
+    return false;
+  }
   /// The grid of particle mesh Ewald: given, or from the largest spacing in
   /// Å; and the table `name` of the factors of its influence function along
   /// each edge.
@@ -1130,9 +1157,20 @@ void Builder::emitReorder(StringRef indent, StringRef from,
       permute(forcesTo, "%f" + from, "!vec");
   }
   permute("%m" + otherTo, "%m" + from, "!real");
-  for (const Program::Field &field : program.fields)
+  for (const Program::Field &field : program.fields) {
+    // A list of the places of particles is made again from the permuted
+    // field that it lists (D[pme-skip-zero]), which comes
+    // before it.
+    StringRef name = field.name;
+    if (name == "pme_listed" || name == "ljpme_listed") {
+      StringRef source = name == "pme_listed" ? "q" : "ljpme_c";
+      os << indent << "%p" << otherTo << "_" << name << " = md_exec.nonzero %p"
+         << otherTo << "_" << source << " : !real -> !ids\n";
+      continue;
+    }
     permute("%p" + otherTo + "_" + field.name,
             "%p" + from + "_" + field.name, getFieldType(field));
+  }
   permute("%id" + otherTo, "%id" + from, "!ids");
   emitRenumber(indent, "%id" + otherTo, "%r" + otherTo + "_");
 }
@@ -2752,7 +2790,39 @@ llvm::Error Builder::collectPME() {
   program.pmeBeta = beta;
   for (int k = 0; k != 3; ++k)
     program.pmeGrid[k] = grid[k];
+  // The particles of a charge that can be nonzero: the test is on the
+  // charge of the topology, which [free_energy] scales by 1 − a λ, so that
+  // a charge of zero is zero at every λ (D161).
+  collectListed("pme_listed", topology.charges, {Control::TunableKind::Charge});
   return llvm::Error::success();
+}
+
+void Builder::collectListed(StringRef name, llvm::ArrayRef<double> values,
+                            llvm::ArrayRef<Control::TunableKind> kinds) {
+  // A tunable may move a value across zero, and the text of the program,
+  // which an update keeps, says whether it has the list. Without the
+  // declarations of the tunables, any may.
+  if (control.tunables &&
+      (control.tunableDeclarations.empty() ||
+       llvm::any_of(control.tunableDeclarations,
+                    [&](const Control::TunableDeclaration &declaration) {
+                      return llvm::is_contained(kinds, declaration.kind);
+                    })))
+    return;
+  Program::Field field;
+  field.name = name.str();
+  field.isInteger = true;
+  for (auto [place, value] : llvm::enumerate(values))
+    if (value != 0.0)
+      field.values.push_back(static_cast<double>(place));
+  if (field.values.size() == values.size())
+    return;
+  // Then −1 − the place of each of the others, whose forces of zero the
+  // gathering stores.
+  for (auto [place, value] : llvm::enumerate(values))
+    if (value == 0.0)
+      field.values.push_back(-1.0 - static_cast<double>(place));
+  program.fields.push_back(std::move(field));
 }
 
 llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
@@ -2863,7 +2933,16 @@ llvm::Error Builder::collectLJPME() {
     field.values.push_back(coefficients[type]);
     squares += coefficients[type] * coefficients[type];
   }
+  std::vector<double> perParticle;
+  for (unsigned type : topology.types)
+    perParticle.push_back(coefficients[type]);
   program.fields.push_back(std::move(field));
+  // The particles of a coefficient that is not zero, which the grid of the
+  // dispersion spreads and gathers alone.
+  collectListed("ljpme_listed", perParticle,
+                {Control::TunableKind::Sigma, Control::TunableKind::Epsilon,
+                 Control::TunableKind::SigmaPair,
+                 Control::TunableKind::EpsilonPair});
   std::vector<double> products(numTypes * numTypes);
   for (unsigned a = 0; a != numTypes; ++a)
     for (unsigned b = 0; b != numTypes; ++b)
@@ -4827,13 +4906,17 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   }
   if (program.ljpme && (terms & LennardJonesReciprocal)) {
     // The grid of the dispersion (D162), of the coefficients c_i.
+    bool listed = hasField("ljpme_listed");
     os << "  %u_lj_reciprocal, %f_lj_reciprocal, %w_lj_reciprocal = "
-          "md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli\n"
+          "md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli"
+       << (listed ? " listed(%p_ljpme_listed)" : "") << "\n"
        << "      grid([" << program.ljpmeGrid[0] << ", "
        << program.ljpmeGrid[1] << ", " << program.ljpmeGrid[2]
        << "]) order(" << control.ljpmeOrder << ") beta("
-       << formatReal(program.ljpmeBeta) << ") coulomb(1.0) dispersion\n"
-       << "      : !vec, !real, !grid -> f64, !vec, vector<9xf64>\n";
+       << formatReal(program.ljpmeBeta) << ") coulomb(1.0) dispersion"
+       << (listed && gathersAll("ljpme_listed") ? " gather_all" : "") << "\n"
+       << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
+       << " -> f64, !vec, vector<9xf64>\n";
     add("lj_reciprocal");
   }
   if (program.pme && (terms & CoulombReciprocal)) {
@@ -4851,13 +4934,19 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << "  } : !real\n";
       charges = "%q_scaled";
     }
+    // The particles of a charge that can be nonzero alone
+    // (D[pme-skip-zero]).
+    bool listed = hasField("pme_listed");
     os << "  %u_reciprocal, %f_reciprocal, %w_reciprocal = md.reciprocal %x, "
-       << charges << ", %cell, %t_pme_moduli\n"
+       << charges << ", %cell, %t_pme_moduli"
+       << (listed ? " listed(%p_pme_listed)" : "") << "\n"
        << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
        << ", " << program.pmeGrid[2] << "]) order(" << control.pmeOrder
        << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
-       << formatReal(coulombInternal) << ")\n"
-       << "      : !vec, !real, !grid -> f64, !vec, vector<9xf64>\n";
+       << formatReal(coulombInternal) << ")"
+       << (listed && gathersAll("pme_listed") ? " gather_all" : "") << "\n"
+       << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
+       << " -> f64, !vec, vector<9xf64>\n";
     add("reciprocal");
   }
   if ((terms & Bonds) && has("bonds")) {

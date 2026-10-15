@@ -262,6 +262,23 @@ def pick(body, p, array, index):
     return f"%{p}value"
 
 
+def listed_prologue(body, slot):
+    """The particle of the entry `slot` of the list of the particles
+    (D[pme-skip-zero]): `%i`, and `%is_listed`, false where the
+    entry is that of a particle whose coefficient is zero, -1 - its place,
+    after the listed places. Opens an `scf.if` that close_listed closes."""
+    body(f"""\
+%listed = memref.load %list[{slot}] : memref<?xi32, 1>
+%listed_none = arith.constant 0 : i32
+%is_listed = arith.cmpi sge, %listed, %listed_none : i32
+scf.if %is_listed {{
+%i = arith.index_cast %listed : i32 to index""")
+
+
+def close_listed(body):
+    body("}")
+
+
 def launch(body_text, count):
     return f"""\
   %blocks_{count[1:]} = func.call @mdrt_gpu_pme_blocks({count}) : (index) -> index
@@ -277,12 +294,19 @@ def launch(body_text, count):
 """
 
 
-def spread(fixed=True):
+def spread(fixed=True, listed=False):
     body = Body("      ")
     # A thread for each particle and point of its splines along z, so that
     # the threads of a particle add to neighboring points of the grid at
     # once, as those of GROMACS do.
-    body("""\
+    if listed:
+        body("""\
+%lanes = arith.constant PME_ORDER : index
+%slot = arith.divui %item, %lanes : index
+%j3 = arith.remui %item, %lanes : index""")
+        listed_prologue(body, "%slot")
+    else:
+        body("""\
 %lanes = arith.constant PME_ORDER : index
 %i = arith.divui %item, %lanes : index
 %j3 = arith.remui %item, %lanes : index""")
@@ -343,6 +367,8 @@ scf.for %j1 = %j0 to %order step %j1c {{
 {atomic_line}
   }}
 }}""")
+    if listed:
+        close_listed(body)
 
     zero = Body("      ")
     zero(f"""\
@@ -354,10 +380,14 @@ memref.store %none, %grid[%item] : memref<?x{"i64" if fixed else "!pme_real"}, 1
             "in !pme_real, with floating-point atomics, whose sum depends on\n"
             "// the order of the threads (the default mode, D84)")
     grid_type = "i64" if fixed else "!pme_real"
+    if listed:
+        name += "_listed"
+        what += (",\n// of the listed particles (D[pme-skip-zero]): `list` holds their places,\n"
+                 "// then -1 - the place of each of the others")
     return f"""
 // Spreads the charges to `grid`, {what}.
 func.func private @mdrt_gpu_pme_{name}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
-                                       %box: vector<3xf64>, %grid: memref<?x{grid_type}, 1>,
+                                       {"%list: memref<?xi32, 1>, " if listed else ""}%box: vector<3xf64>, %grid: memref<?x{grid_type}, 1>,
                                        %k1: index, %k2: index, %k3: index, %n: index) {{
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
@@ -988,7 +1018,7 @@ func.func private @mdrt_gpu_pme_scale(%c: memref<?x!pme_real, 1>, %tables: memre
 COMPONENTS = 6  # the first points (3), the fractions (3)
 
 
-def weights_kernels():
+def weights_kernels(listed=False):
     """The spreading of order 4 from the places of the particles, as
     scripts/experiments/neighbor-structures/spread.cu measured it: a kernel
     places each particle, a thread a particle, into arrays by component
@@ -1044,9 +1074,18 @@ memref.store %{t}start_r, %weights[%{t}sat] : memref<?x!pme_real, 1>""")
     # point, and a brick of the grid are numbered in 32 bits, and the
     # address in bytes in 64.
     a = Body("      ")
-    a("""\
+    if listed:
+        # A warp an entry of the list: the warps past the last listed place
+        # leave at once.
+        a("""\
 %c32i = arith.constant 32 : index
-%i = arith.divui %item, %c32i : index
+%slot = arith.divui %item, %c32i : index""")
+        listed_prologue(a, "%slot")
+    else:
+        a("""\
+%c32i = arith.constant 32 : index
+%i = arith.divui %item, %c32i : index""")
+    a(f"""\
 %item32 = arith.index_cast %item : index to i32
 %n32 = arith.index_cast %n_all : index to i32
 %i32 = arith.index_cast %i : index to i32
@@ -1166,6 +1205,8 @@ scf.for %h = %h0 to %h2 step %h1 {
   %value = arith.mulf %qxy, %wz : !pme_real
   PME_ATOMIC_ADD %pointer, %value
 }""")
+    if listed:
+        close_listed(a)
 
     # The copy of the bricks into the grid of the transform, which leaves
     # them zero for the next spreading (D108): a block takes a brick and 32
@@ -1286,7 +1327,11 @@ scf.for %h = %h0 to %h2 step %h1 {
   %b123 = arith.muli %b12, %k3 : index
   %brick_points = arith.muli %b123, %c16 : index
 """
-    return f"""
+    tag = "_listed" if listed else ""
+    bricks_note = " (the listed particles, D[pme-skip-zero])" if listed else ""
+    bricks_list = ("\n                                              %list: memref<?xi32, 1>,"
+                   if listed else "")
+    weights_function = "" if listed else f"""
 // The weights of the particles for the spreading and the gathering of
 // order 4: see weights_kernels in the script.
 func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vector<3xf64>,
@@ -1301,11 +1346,12 @@ func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vecto
   %ilz = arith.divf %unit, %lz : f64
 {launch(w.text(), "%n_all")}  return
 }}
-
+"""
+    return weights_function + f"""
 // Adds the charges to `bricks`, which are zero, from the weights, and
 // copies the bricks into `real`, the grid of the transform, leaving them
-// zero again (D108; the buffer is zero when it is allocated).
-func.func private @mdrt_gpu_pme_spread_bricks(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
+// zero again (D108; the buffer is zero when it is allocated){bricks_note}.
+func.func private @mdrt_gpu_pme_spread_bricks{tag}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,{bricks_list}
                                               %weights: memref<?x!pme_real, 1>,
                                               %bricks: memref<?x!pme_real, 1>, %real: memref<?x!pme_real, 1>,
                                               %k1: index, %k2: index, %k3: index) {{
@@ -1323,7 +1369,24 @@ memref.store %none, %grid[%item] : memref<?x!pme_real, 1>""")
     return zero.text()
 
 
-def gather(potential=False):
+# The particle of a thread of a gathering over the list of the listed
+# particles (D[pme-skip-zero]); `%warp_listed` is that of the
+# first thread of its warp (gather_launch).
+LISTED_PRE = """\
+%lanes = arith.constant PME_LANES : index
+%slot = arith.divui %item, %lanes : index
+%j3 = arith.remui %item, %lanes : index
+%listed = memref.load %list[%slot] : memref<?xi32, 1>
+%listed_none = arith.constant 0 : i32
+%is_listed = arith.cmpi sge, %listed, %listed_none : i32"""
+LISTED_PROLOGUE = """\
+// A thread past the last listed place computes for the first particle of
+// its warp, which is listed, and does not store.
+%listed_or = arith.select %is_listed, %listed, %warp_listed : i32
+%i = arith.index_cast %listed_or : i32 to index"""
+
+
+def gather(potential=False, listed=False):
     """The forces; with `potential`, the potential of the grid at the
     particles in their place (the fourth result of md.reciprocal,
     D231): the sum along x takes the weights of the
@@ -1333,10 +1396,14 @@ def gather(potential=False):
     # A thread for each particle and point of its splines along z, as the
     # spreading has them: the threads of a particle read neighboring points
     # of the grid at once, and their sums are added with shuffles.
+    pre = Body("    ")
+    if listed:
+        pre(LISTED_PRE)
     body("""\
+{}""".format(LISTED_PROLOGUE if listed else """\
 %lanes = arith.constant PME_LANES : index
 %i = arith.divui %item, %lanes : index
-%j3 = arith.remui %item, %lanes : index""")
+%j3 = arith.remui %item, %lanes : index"""))
     sx, sy, sz = particle_prologue(body, slopes=True)
     w3 = pick(body, "w3p_", "%wz", "%j3")
     d3 = pick(body, "d3p_", "%dz", "%j3")
@@ -1406,8 +1473,18 @@ def gather(potential=False):
 """
     name = "potential" if potential else "gather"
     shape = "?" if potential else "?x3"
+    list_arg = ("\n                                       %list: memref<?xi32, 1>,"
+                if listed else "")
+    if listed:
+        name += "_listed"
+        comment = comment[:-1] + """\
+// With `list`, the places of the listed particles, then -1 - the place of
+// each of the others, the threads take its entries in place of the
+// particles (D[pme-skip-zero]): a warp past the last listed
+// place skips the gathering, and stores the forces of zero of the others.
+"""
     return comment + f"""\
-func.func private @mdrt_gpu_pme_{name}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
+func.func private @mdrt_gpu_pme_{name}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,{list_arg}
                                        %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
                                        %f: memref<{shape}x!pme_frc, 1>) {{
@@ -1437,12 +1514,12 @@ func.func private @mdrt_gpu_pme_{name}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?
   %lanes_all = arith.constant PME_LANES : index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
-{gather_launch(body.text(), potential)}  return
+{gather_launch(body.text(), potential, listed, pre.text() if listed else "")}  return
 }}
 """
 
 
-def gather_weights():
+def gather_weights(listed=False):
     """The gathering of order 4 where the weights kernel has placed the
     particles: the first points and the fractions are read from the
     weights (components 0 to 2 and 3 to 5, D109), the splines and their slopes
@@ -1450,10 +1527,13 @@ def gather_weights():
     i32 (D102). The fractions are those that the spreading took, so the
     forces are those of the same splines."""
     body = Body("      ")
-    body("""\
+    pre = Body("    ")
+    if listed:
+        pre(LISTED_PRE)
+    body((LISTED_PROLOGUE if listed else """\
 %lanes = arith.constant PME_LANES : index
 %i = arith.divui %item, %lanes : index
-%j3 = arith.remui %item, %lanes : index
+%j3 = arith.remui %item, %lanes : index""") + """
 %i0 = arith.constant 0 : index
 %i1 = arith.constant 1 : index
 %i2 = arith.constant 2 : index
@@ -1536,10 +1616,13 @@ def gather_weights():
   }}
   scf.yield %bx2, %by2, %bz2 : !pme_real, !pme_real, !pme_real
 }}""")
+    tag = "_listed" if listed else ""
+    list_arg = ("\n                                               %list: memref<?xi32, 1>,"
+                if listed else "")
     return f"""
-// The forces from the weights of the particles, as @mdrt_gpu_pme_gather
+// The forces from the weights of the particles, as @mdrt_gpu_pme_gather{tag}
 // gives them, of order 4: see gather_weights in the script.
-func.func private @mdrt_gpu_pme_gather_weights(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,
+func.func private @mdrt_gpu_pme_gather_weights{tag}(%x: memref<?x3x!pme_pos, 1>, %q: memref<?x!pme_chg, 1>,{list_arg}
                                                %phi: memref<?x!pme_real, 1>, %box: vector<3xf64>,
                                                %weights: memref<?x!pme_real, 1>,
                                                %k1: index, %k2: index, %k3: index,
@@ -1566,7 +1649,7 @@ func.func private @mdrt_gpu_pme_gather_weights(%x: memref<?x3x!pme_pos, 1>, %q: 
   %lanes_all = arith.constant PME_LANES : index
   %points = arith.muli %count, %lanes_all : index
   %last = arith.subi %count, %c1 : index
-{gather_launch(body.text())}  return
+{gather_launch(body.text(), listed=listed, pre_text=pre.text() if listed else "")}  return
 }}
 """
 
@@ -1623,10 +1706,58 @@ def gather_store(potential):
 """
 
 
-def gather_launch(body_text, potential=False):
+def gather_launch(body_text, potential=False, listed=False, pre_text=""):
     """The launch of the gather: every thread of a block takes part in the
     shuffles, so the threads beyond the last point compute for the last
-    particle."""
+    particle. With `listed`, a warp whose first entry of the list is past
+    the last listed place skips the gathering: the listed places come
+    first, so every entry after it is past too, and the warp skips as a
+    whole, before its shuffles. The entries past the last listed place
+    hold the places of the other particles, -1 - each, whose forces of
+    zero their first threads store."""
+    if listed:
+        enter = """\
+    %c32w = arith.constant 32 : index
+    %lane32 = arith.remui %item0, %c32w : index
+    %wfirst = arith.subi %item0, %lane32 : index
+    %wslot = arith.divui %wfirst, %lanes_l : index
+    %wslot_in = arith.cmpi ult, %wslot, %count : index
+    %wslot_c = arith.select %wslot_in, %wslot, %c0 : index
+    %warp_listed = memref.load %list[%wslot_c] : memref<?xi32, 1>
+    %wnone = arith.constant 0 : i32
+    %wlisted = arith.cmpi sge, %warp_listed, %wnone : i32
+    %warp_active = arith.andi %wslot_in, %wlisted : i1
+    scf.if %warp_active {
+"""
+        # The first thread of the entry of a particle without a coefficient
+        # stores its force of zero, in the warps that leave as in the one
+        # that holds the last listed entry.
+        leave = """\
+    }
+    %ztrue = arith.constant true
+    %zunlisted = arith.xori %is_listed, %ztrue : i1
+    %zfirst = arith.cmpi eq, %lane_of, %c0 : index
+    %zin = arith.andi %inside, %zfirst : i1
+    %zstores = arith.andi %zin, %zunlisted : i1
+    scf.if %zstores {
+      %zminus = arith.constant -1 : i32
+      %zplace32 = arith.subi %zminus, %listed : i32
+      %zplace = arith.index_cast %zplace32 : i32 to index
+      %zc1 = arith.constant 1 : index
+      %zc2 = arith.constant 2 : index
+      %zero_f = arith.constant 0.0 : !pme_frc
+      memref.store %zero_f, %f[%zplace, %c0] : memref<?x3x!pme_frc, 1>
+      memref.store %zero_f, %f[%zplace, %zc1] : memref<?x3x!pme_frc, 1>
+      memref.store %zero_f, %f[%zplace, %zc2] : memref<?x3x!pme_frc, 1>
+    }
+"""
+        stores = """\
+      %stores_any = arith.andi %inside, %first : i1
+      %stores = arith.andi %stores_any, %is_listed : i1"""
+    else:
+        enter = leave = ""
+        stores = """\
+      %stores = arith.andi %inside, %first : i1"""
     return f"""\
   %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
@@ -1640,7 +1771,7 @@ def gather_launch(body_text, potential=False):
     %last_first = arith.muli %last, %lanes_l : index
     %last_item = arith.addi %last_first, %lane_of : index
     %item = arith.select %inside, %item0, %last_item : index
-{body_text}\
+{pre_text}{enter}{body_text}\
       %width = arith.constant 32 : i32
       %one32 = arith.constant 1 : i32
       %two32 = arith.constant 2 : i32
@@ -1671,10 +1802,10 @@ def gather_launch(body_text, potential=False):
       %ally = arith.addf %uy, %hy : !pme_real
       %allz = arith.addf %uz, %hz : !pme_real
       %first = arith.cmpi eq, %j3, %c0 : index
-      %stores = arith.andi %inside, %first : i1
+{stores}
       scf.if %stores {{
 {gather_store(potential)}      }}
-    gpu.terminator
+{leave}    gpu.terminator
   }}
 """
 
@@ -1750,7 +1881,8 @@ def triclinic():
     weights = weights_kernels()
     weights = weights[:weights.index("\n// Adds the charges to `bricks`")] + "\n"
     text = (spread() + spread(fixed=False) + weights + tables() + convolve() + scale() +
-            dispersion() + gather() + gather_weights() + gather(potential=True))
+            dispersion() + gather() + gather_weights() + gather(potential=True) +
+            listed_kernels(""))
     TILTED = False
     text = re.sub(r"func\.func private @mdrt_gpu_pme_(\w+)\(",
                   r"func.func private @mdrt_gpu_pme_\1_triclinic(", text)
@@ -1766,6 +1898,18 @@ def triclinic():
   %k3fr = PME_F64_TO_REAL %k3f : f64 to !pme_real
 """)
     return HEADER_TRICLINIC + text
+
+
+def listed_kernels(bricks):
+    """The kernels of the spreading and the gathering over a list of the
+    particles whose coefficient can be nonzero (D[pme-skip-zero]),
+    after all the others, so that the kernels of a module without a list
+    are those of before; the compiler adds them where a sum has a list.
+    The weights of order 4 are those of every particle, at its place (the
+    kernel without a list); the spreading into bricks, which does not
+    depend on the cell, is in PMEGPU.mlir alone."""
+    return (spread(listed=True) + spread(fixed=False, listed=True) + bricks +
+            gather(listed=True) + gather_weights(listed=True))
 
 
 def dispersion():
@@ -1790,7 +1934,8 @@ def main():
     with open(os.path.join(templates, "PMEGPU.mlir"), "w") as file:
         file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
                    tables() + convolve() + scale() + dispersion() + gather() +
-                   gather_weights() + gather(potential=True))
+                   gather_weights() + gather(potential=True) +
+                   listed_kernels(weights_kernels(listed=True)))
     with open(os.path.join(templates, "PMEGPUTriclinic.mlir"), "w") as file:
         file.write(triclinic())
 

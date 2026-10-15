@@ -40,6 +40,7 @@ element.
 | $\beta$ | Ewald splitting parameter; $\mathrm{erfc}(\beta r_c)$ is the tolerance of the direct sum |
 | $q_i$ | Partial charge; $f = 1/(4\pi\varepsilon_0)$ the Coulomb constant in the units of the run |
 | $c_i,\ \gamma(x)$ | Coefficient of the dispersion of particle $i$, $2\sqrt{\varepsilon}\,\sigma^3$ of its type, so that $C_{6,ij} = c_ic_j$; and $\gamma(x) = e^{-x^2}(1 + x^2 + x^4/2)$, the share of $-c_ic_j/r^6$ at $x = \beta r$ that the direct terms of the mesh of the dispersion keep (Section 5.5) |
+| $\mathcal J_q,\ \mathcal J_c$ | In Section 5.3, the particles that the meshes spread and gather: those of a nonzero charge, $\{j : q_j \ne 0\}$, and of a nonzero coefficient of the dispersion, $\{j : c_j \ne 0\}$ |
 | $K_a$ | In Section 5, the number of grid points of PME along axis $a$; $n$ the order of the B-splines (4) |
 | $\mathsf W$ | Virial tensor; $\mathsf W_{aa} = -\partial U/\partial\varepsilon_a$ along the scaling of positions and cell (Sections 6.4 and 6.5) |
 | $\boldsymbol\varepsilon$ | In Section 3.6, a strain as a matrix, under which $\mathbf x_i \to (\mathsf 1 + \boldsymbol\varepsilon)\mathbf x_i$ and each cell vector, a row of $H$, alike, so that $\varepsilon_{aa}$ is a change of $\varepsilon_a$ and $\partial U/\partial\varepsilon_{ab} = -\mathsf W_{ba}$; $\mathbf K$ there is the force on the second end of a displacement $\mathbf d$ |

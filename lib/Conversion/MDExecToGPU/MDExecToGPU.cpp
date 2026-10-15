@@ -226,6 +226,7 @@ private:
   void lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op);
   LogicalResult lowerSpatialOrder(md_exec::SpatialOrderOp op);
   void lowerPermute(md_exec::PermuteOp op);
+  void lowerNonzero(md_exec::NonzeroOp op);
   LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op);
   LogicalResult lowerParticleFor(md_exec::ParticleForOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
@@ -458,9 +459,11 @@ private:
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
   /// Adds the template of particle mesh Ewald for these types, with
   /// `tilted` the kernels of a triclinic cell as well, and with
-  /// `potential` the kernel of the potential at the particles.
+  /// `potential` the kernel of the potential at the particles, and with
+  /// `listed` the kernels of a list of the particles.
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
-                                int64_t order, bool tilted, bool potential);
+                                int64_t order, bool tilted, bool potential,
+                                bool listed);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
 
   ModuleOp module;
@@ -3347,22 +3350,24 @@ static void unrollSmallLoops(Operation *root, int64_t limit) {
 
 LogicalResult Lowering::addPMETemplates(Type position, Type charge,
                                         Type force, int64_t order,
-                                        bool tilted, bool potential) {
+                                        bool tilted, bool potential,
+                                        bool listed) {
   // A triclinic cell takes the kernels of its own as well, which only it
-  // parses and specializes (docs/triclinic-m2.md).
+  // parses and specializes (docs/triclinic-m2.md); the spreading into
+  // bricks, of its list too.
   if (tilted && failed(addPMETemplates(position, charge, force, order,
-                                       /*tilted=*/false, /*potential=*/false)))
+                                       /*tilted=*/false, /*potential=*/false,
+                                       listed)))
     return failure();
-  if (SymbolTable::lookupSymbolIn(
-          module, getPMEInstanceName(tilted ? "mdrt_gpu_pme_spread_triclinic"
-                                            : "mdrt_gpu_pme_spread",
-                                     position, charge, force, order)) &&
-      (!potential ||
-       SymbolTable::lookupSymbolIn(
-           module,
-           getPMEInstanceName(tilted ? "mdrt_gpu_pme_potential_triclinic"
-                                     : "mdrt_gpu_pme_potential",
-                              position, charge, force, order))))
+  auto has = [&](StringRef name) {
+    std::string full = tilted ? (name + "_triclinic").str() : name.str();
+    return SymbolTable::lookupSymbolIn(
+               module, getPMEInstanceName(full, position, charge, force,
+                                          order)) != nullptr;
+  };
+  if (has("mdrt_gpu_pme_spread") &&
+      (!potential || has("mdrt_gpu_pme_potential")) &&
+      (!listed || has("mdrt_gpu_pme_spread_listed")))
     return success();
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
@@ -3399,14 +3404,16 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
            << "cannot sink the constants of particle mesh Ewald into its "
               "kernels";
   // The functions of the potential at the particles (the fourth result of
-  // md.reciprocal) only where a sum asks for them, so that a module
-  // without one is what it was; they may come after the others, for a sum
-  // of the same types that was lowered before.
+  // md.reciprocal), and those of a list of the particles
+  // (D[pme-skip-zero]), only where a sum asks for them, so
+  // that a module without one is what it was; they may come after the
+  // others, for a sum of the same types that was lowered before.
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
     bool isPotential =
         function && function.getSymName().contains("pme_potential");
-    if ((isPotential && !potential) ||
+    bool isListed = function && function.getSymName().contains("_listed");
+    if ((isPotential && !potential) || (isListed && !listed) ||
         (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
       op.erase();
       continue;
@@ -3434,12 +3441,16 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // A triclinic cell takes the kernels of its own where they depend on the
   // cell (docs/triclinic-m2.md).
   bool tilted = isTriclinic(op.getCellMutable().get());
+  // The listed particles alone (D[pme-skip-zero]); the
+  // potential at the particles takes every particle.
+  Value listed = op.getPotential() ? Value() : op.getListed();
   if (failed(addPMETemplates(position, charge, force, op.getOrder(), tilted,
-                             op.getPotential())))
+                             op.getPotential(), static_cast<bool>(listed))))
     return failure();
   auto instance = [&](StringRef name) {
     bool own = tilted && name != "mdrt_gpu_pme_real" &&
-               name != "mdrt_gpu_pme_spread_bricks";
+               name != "mdrt_gpu_pme_spread_bricks" &&
+               name != "mdrt_gpu_pme_spread_bricks_listed";
     std::string full = own ? (name + "_triclinic").str() : name.str();
     return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
         module,
@@ -3485,7 +3496,29 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         ValueRange());
   // The charges in fixed point in the deterministic mode, then converted;
   // by default with floating-point atomics, straight to the grid (D84).
-  if (deterministic) {
+  // With a list, the gathering stores the forces of the listed particles
+  // and a force of zero at each of the others.
+  if (listed && deterministic) {
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_listed"),
+                         ValueRange{positions, charges, listed, box, fixed, k1,
+                                    k2, k3, order});
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
+                         ValueRange{fixed, real});
+  } else if (listed && usesWeights) {
+    // The weights of every particle, for a gathering of every particle as
+    // well as of the listed ones.
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
+                         ValueRange{positions, box, weights, k1, k2, k3});
+    func::CallOp::create(builder, loc,
+                         instance("mdrt_gpu_pme_spread_bricks_listed"),
+                         ValueRange{positions, charges, listed, weights,
+                                    bricks, real, k1, k2, k3});
+  } else if (listed) {
+    func::CallOp::create(builder, loc,
+                         instance("mdrt_gpu_pme_spread_float_listed"),
+                         ValueRange{positions, charges, listed, box, real, k1,
+                                    k2, k3, order});
+  } else if (deterministic) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread"),
                          ValueRange{positions, charges, box, fixed, k1, k2,
                                     k3, order});
@@ -3550,8 +3583,22 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
   // The gathering takes the places of the particles from the weights
-  // where it has them (D102).
-  if (usesWeights)
+  // where it has them (D102). With a list, it takes the listed particles,
+  // or with `gather_all` every particle, as without a list: there most
+  // particles are listed, and the others share the points of the grid of
+  // their neighbors in a warp (D[pme-skip-zero]).
+  if (op.getGatherAll())
+    listed = Value();
+  if (listed && usesWeights)
+    func::CallOp::create(builder, loc,
+                         instance("mdrt_gpu_pme_gather_weights_listed"),
+                         ValueRange{positions, charges, listed, real, box,
+                                    weights, k1, k2, k3, forces});
+  else if (listed)
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather_listed"),
+                         ValueRange{positions, charges, listed, real, box, k1,
+                                    k2, k3, order, forces});
+  else if (usesWeights)
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_gather_weights"),
                          ValueRange{positions, charges, real, box, weights,
                                     k1, k2, k3, forces});
@@ -4623,6 +4670,115 @@ void Lowering::lowerPermute(md_exec::PermuteOp op) {
   });
 }
 
+/// The places of the particles whose value is not zero, in ascending
+/// order, then −1 − the place of each of the others, in ascending order
+/// (D[pme-skip-zero]), in integers: a thread counts the
+/// listed particles of each chunk of 256 places, one thread sums the counts
+/// of the chunks before each and of all, and a thread writes the entries
+/// of each chunk from there. It runs where the particles take a new order,
+/// not at every step.
+void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  Value field = op.getField(), out = op.getOut();
+  Value size = createSize(builder, loc, field);
+  Value one = createIndex(builder, loc, 1);
+  const int64_t width = 256;
+  Value chunk = createIndex(builder, loc, width);
+  Value chunks = createGroups(builder, loc, size, width);
+  Type i32 = builder.getI32Type();
+  Type element = cast<MemRefType>(field.getType()).getElementType();
+  // The counts of the chunks, and after them that of all.
+  Value counts = createDeviceBuffer(
+      builder, loc, getDeviceType({ShapedType::kDynamic}, i32),
+      ValueRange{arith::AddIOp::create(builder, loc, chunks, one)});
+
+  // The places of chunk `c`, and whether particle `i` is listed: a value
+  // that is not a number is.
+  auto bounds = [&](OpBuilder &body, Value c) {
+    Value from = arith::MulIOp::create(body, loc, c, chunk);
+    Value to = arith::MinUIOp::create(
+        body, loc, arith::AddIOp::create(body, loc, from, chunk), size);
+    return std::make_pair(from, to);
+  };
+  auto isListed = [&](OpBuilder &body, Value i) -> Value {
+    Value value = memref::LoadOp::create(body, loc, field, ValueRange{i});
+    Value none = arith::ConstantOp::create(body, loc,
+                                           body.getFloatAttr(element, 0.0));
+    return arith::CmpFOp::create(body, loc, arith::CmpFPredicate::UNE, value,
+                                 none);
+  };
+  auto constant = [&](OpBuilder &body, int32_t value) -> Value {
+    return arith::ConstantOp::create(body, loc, body.getI32IntegerAttr(value));
+  };
+  launchOver(builder, loc, chunks, [&](OpBuilder &body, Value c) {
+    auto [from, to] = bounds(body, c);
+    Value add = constant(body, 1);
+    auto loop = scf::ForOp::create(
+        body, loc, from, to, createIndex(body, loc, 1),
+        ValueRange{constant(body, 0)},
+        [&](OpBuilder &inner, Location, Value i, ValueRange args) {
+          Value more = arith::AddIOp::create(inner, loc, args[0], add);
+          Value next = arith::SelectOp::create(inner, loc, isListed(inner, i),
+                                               more, args[0]);
+          scf::YieldOp::create(inner, loc, ValueRange{next});
+        });
+    memref::StoreOp::create(body, loc, loop.getResult(0), counts,
+                            ValueRange{c});
+  });
+  launchOver(builder, loc, one, [&](OpBuilder &body, Value) {
+    auto loop = scf::ForOp::create(
+        body, loc, createIndex(body, loc, 0), chunks, createIndex(body, loc, 1),
+        ValueRange{constant(body, 0)},
+        [&](OpBuilder &inner, Location, Value c, ValueRange args) {
+          Value count =
+              memref::LoadOp::create(inner, loc, counts, ValueRange{c});
+          memref::StoreOp::create(inner, loc, args[0], counts, ValueRange{c});
+          Value next = arith::AddIOp::create(inner, loc, args[0], count);
+          scf::YieldOp::create(inner, loc, ValueRange{next});
+        });
+    memref::StoreOp::create(body, loc, loop.getResult(0), counts,
+                            ValueRange{chunks});
+  });
+  launchOver(builder, loc, chunks, [&](OpBuilder &body, Value c) {
+    auto [from, to] = bounds(body, c);
+    // The listed particles of the chunk from the count of those before it,
+    // the others from the count of all and of the others before it.
+    Value listedFirst =
+        memref::LoadOp::create(body, loc, counts, ValueRange{c});
+    Value all = memref::LoadOp::create(body, loc, counts, ValueRange{chunks});
+    Value from32 = arith::IndexCastOp::create(body, loc, i32, from);
+    Value othersFirst = arith::AddIOp::create(
+        body, loc, all, arith::SubIOp::create(body, loc, from32, listedFirst));
+    Value add = constant(body, 1);
+    Value minusOne = constant(body, -1);
+    scf::ForOp::create(
+        body, loc, from, to, createIndex(body, loc, 1),
+        ValueRange{listedFirst, othersFirst},
+        [&](OpBuilder &inner, Location, Value i, ValueRange args) {
+          Value listed = isListed(inner, i);
+          Value place = arith::IndexCastOp::create(inner, loc, i32, i);
+          Value other = arith::SubIOp::create(inner, loc, minusOne, place);
+          Value at32 =
+              arith::SelectOp::create(inner, loc, listed, args[0], args[1]);
+          Value entry =
+              arith::SelectOp::create(inner, loc, listed, place, other);
+          Value at = arith::IndexCastOp::create(inner, loc,
+                                                inner.getIndexType(), at32);
+          memref::StoreOp::create(inner, loc, entry, out, ValueRange{at});
+          Value nextListed = arith::SelectOp::create(
+              inner, loc, listed,
+              arith::AddIOp::create(inner, loc, args[0], add), args[0]);
+          Value nextOthers = arith::SelectOp::create(
+              inner, loc, listed, args[1],
+              arith::AddIOp::create(inner, loc, args[1], add));
+          scf::YieldOp::create(inner, loc,
+                               ValueRange{nextListed, nextOthers});
+        });
+  });
+  freeDeviceAtEndOfBlock(op, counts);
+}
+
 //===----------------------------------------------------------------------===//
 // Ops and functions
 //===----------------------------------------------------------------------===//
@@ -4666,6 +4822,8 @@ LogicalResult Lowering::lowerOp(Operation *op) {
       return failure();
   } else if (auto permute = dyn_cast<md_exec::PermuteOp>(op)) {
     lowerPermute(permute);
+  } else if (auto nonzero = dyn_cast<md_exec::NonzeroOp>(op)) {
+    lowerNonzero(nonzero);
   } else if (auto cell = dyn_cast<md_exec::ReferenceCellOp>(op)) {
     // The cell that the structure was built in, or its inner list pruned
     // in (D114), as the vector of its edges that cells have become.

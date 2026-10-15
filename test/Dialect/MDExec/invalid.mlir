@@ -462,3 +462,28 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
   } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> f64
   return %u : f64
 }
+
+// -----
+
+// The list of the particles whose value is not zero (D[pme-skip-zero]).
+md.function @f(%x: !md.field<@atoms, 3 x f64>) {
+  // expected-error@+1 {{expected a field of one number for each particle}}
+  %l = md_exec.nonzero %x : !md.field<@atoms, 3 x f64> -> !md.field<@atoms, i32>
+  md.return
+}
+
+// -----
+
+md.function @f(%q: !md.field<@atoms, f64>) {
+  // expected-error@+1 {{expected the result to be a field of i32 of @atoms}}
+  %l = md_exec.nonzero %q : !md.field<@atoms, f64> -> !md.field<@ions, i32>
+  md.return
+}
+
+// -----
+
+func.func @f(%q: memref<?xf64>, %l: memref<?xf64>) {
+  // expected-error@+1 {{expected the buffer in 'outs' to hold one i32 per particle}}
+  md_exec.nonzero %q outs(%l : memref<?xf64>) : memref<?xf64>
+  return
+}
