@@ -867,7 +867,7 @@ the temperature of the bath where it samples the configurations
 the step reads low by the term of the harmonic argument of Section 6.3.
 On the bilayer of `examples/popc-bilayer` at 303 K, $T_\text{half}$ of the
 lipids and of the water was 303.1 and 302.9 K at 2 fs, and 303.7 and
-302.9 K at 4 fs with repartitioned hydrogen masses, where $T_T$ read 299.2
+302.9 K at 4 fs with repartitioned hydrogen masses, where the optimal estimate read 299.2
 and 302.3 K, and 293.4 and 300.5 K.
 The estimate is accurate as an equilibrium mean,
 with constraints when the half-step velocities include the corrections of
