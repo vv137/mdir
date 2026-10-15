@@ -8832,11 +8832,12 @@ void Builder::emitConstraintFailures(StringRef indent, StringRef x,
       current = next;
     }
   }
+  std::string none = (result + "_none").str();
+  os << indent << none << " = arith.constant 0.0 : f64\n";
   if (current.empty())
-    os << indent << result << " = arith.constant 0.0 : f64\n";
-  else
-    os << indent << result << " = arith.addf " << current
-       << ", %zero : f64\n";
+    current = none;
+  os << indent << result << " = arith.addf " << current << ", " << none
+     << " : f64\n";
 }
 
 void Builder::emitDescend() {

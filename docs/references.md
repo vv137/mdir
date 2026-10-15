@@ -32,7 +32,9 @@ multi-level parallelism from laptops to supercomputers," *SoftwareX*
 [doi:10.1016/j.softx.2015.06.001](https://doi.org/10.1016/j.softx.2015.06.001)
 
 Used for: identifying GROMACS, a reference engine for validation and a
-system discussed in [prior-art.md](prior-art.md).
+system discussed in [prior-art.md](prior-art.md); the steepest descent of GROMACS,
+which gives a step whose constraints fail an infinite energy
+(D[minimize-large-opc]).
 
 ### AllenTildesley2017
 
