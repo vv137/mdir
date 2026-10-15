@@ -401,6 +401,9 @@ Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
   func::FuncOp callee = getOrDeclare(
       name, builder.getFunctionType({wide, other.getType()}, {wide}));
   callee->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  // The runtime copies the members it is given and compares them, and
+  // never writes them (runtime/mdrt_tuples.h, D[start-arguments]).
+  callee.setArgAttr(0, mdrt::getReadOnlyAttrName(), builder.getUnitAttr());
   Value given =
       func::CallOp::create(builder, loc, callee, ValueRange{members, other})
           .getResult(0);

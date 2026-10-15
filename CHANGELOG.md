@@ -587,6 +587,38 @@ format, or the outputs; every such change is listed under **Changed** or
   once and kept in the compile cache. `MDRT_CHECK_KEPT_TUPLES` now also
   compares every structure built on the device with the host's build, and
   `MDRT_PROFILE` reports the bytes that the store keeps on the device.
+- **A start of an activation hands the entry the arrays of the program
+  instead of copies** (D[start-arguments], #326). Every
+  start of a Python simulation (an update of the tunables has two, and a
+  frame evaluator one at every update) copied the state and the whole
+  model into new memory of the host for the entry, one number at a time:
+  0.44, 1.76, and 11.5 ms of a start on JAC, Factor IX, and Cellulose of
+  the Amber suite. The entry now declares the buffers of the model
+  read-only (the masses, the fields of the particles, the tables, and the
+  members and fields of the tuple sets), `md-exec-assign-storage` takes
+  none of them for another field or for a copy back from a device, and a
+  new pass, `check-read-only-arguments`, fails the compile wherever the
+  lowered code could write one. A start hands those arrays as they are,
+  keeps their conversions into the type of the entry (the fields in f32
+  in mixed precision) where it is given the same array, and keeps the
+  buffers of the state, written anew at each start. On one RTX 4090 in
+  mixed precision `gradient()` again takes 1.63, 4.25, and 20.8 ms where
+  it took 2.02, 5.97, and 30.2 ms; an update with its evaluation 3.62,
+  8.92, and 42.8 ms where it took 4.38, 12.4, and 62.0 ms; and a start in
+  a new order 1.51, 3.46, and 15.7 ms where it took 1.91, 5.19, and 25.3
+  ms. A step is unchanged. Nothing of the interface changes and no number:
+  the update sequence of D254 and a sequence of starts equal those of
+  `main` to the bit on the CPU and a GPU, in double and mixed precision.
+  The module text of every program gains the attribute `mdrt.read_only`
+  on these arguments, so every entry of the compile cache is compiled
+  anew once. The code of `mdir run` is that of before but for one buffer:
+  on the CPU the identities in a new order go to a buffer of their own (4
+  bytes a particle, 1.6 MB on Cellulose), where they were written into
+  the buffer of the types of the particles, and on a GPU their copy at the
+  end of the run goes to their own buffer; a step does what it did. With `MDRT_CHECK_KEPT_TUPLES` every conversion that a start
+  takes as kept is made anew and compared, and every buffer handed
+  without a copy is compared at the end of its activation
+  ([docs/jit-invariants.md](docs/jit-invariants.md#what-a-start-gives-the-entry-dstart-arguments)).
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on

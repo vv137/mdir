@@ -158,7 +158,16 @@ it took 8.4, 31, and 204 ms, and 8.1, 22, and 112 ms where it took 121,
 arrays of the program that no value of a tunable enters, which a build
 from the model with every tunable site set to not-a-number makes the same
 to the bit, are kept since D256: an update with its
-evaluation then takes 4.6, 13, and 65 ms, about its two starts.
+evaluation then takes 4.6, 13, and 65 ms, about its two starts. Each start
+copied the state and the whole model into new memory for the arguments of
+the entry, one number at a time: 0.44, 1.76, and 11.5 ms of a start of
+2.0, 6.0, and 30 ms. Since D[start-arguments] the compile
+proves that the entry writes no buffer of the model (Section 3.6), a start
+hands it the arrays of the program as they are, and the buffers of the
+state are kept and written anew: the arguments take 0.06, 0.18, and 1.9
+ms, a start at which the particles have not moved 1.63, 4.25, and 20.8 ms,
+and an update with its evaluation 3.62, 8.92, and 42.8 ms on one RTX 4090,
+with the steps unchanged.
 
 The segments of `mdir run` begin in a new order each (Section 3.6), so
 they cannot take what is kept, but they build in the kept memory

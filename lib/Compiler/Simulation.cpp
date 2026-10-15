@@ -49,17 +49,26 @@ namespace {
 /// A buffer of the host in the type that the program takes, as the buffers
 /// of `mdir run` are (tools/mdir/Run.cpp).
 template <unsigned Rank> struct HostBuffer {
+  HostBuffer() = default;
   HostBuffer(const std::vector<double> &values, Element element, size_t count) {
+    fill(values.data(), values.size(), element, count);
+  }
+  /// Gives the buffer `size` values in its type, `count` rows, in the
+  /// storage it has if that is of the size needed: one copy where the type
+  /// is f64 (#326).
+  void fill(const double *values, size_t size, Element element, size_t count) {
     size_t width = element == Element::F32 ? sizeof(float) : sizeof(double);
-    storage.resize(values.size() * width);
-    for (size_t i = 0, e = values.size(); i != e; ++i) {
-      if (element == Element::F32) {
-        float value = static_cast<float>(values[i]);
-        std::memcpy(&storage[i * width], &value, width);
-      } else {
-        std::memcpy(&storage[i * width], &values[i], width);
-      }
-    }
+    storage.resize(size * width);
+    assign(values, size, element);
+    describe(count);
+  }
+  /// The same with `size` zeros.
+  void fillZeros(size_t size, Element element, size_t count) {
+    size_t width = element == Element::F32 ? sizeof(float) : sizeof(double);
+    storage.assign(size * width, 0);
+    describe(count);
+  }
+  void describe(size_t count) {
     descriptor.basePtr = descriptor.data = storage.data();
     descriptor.offset = 0;
     descriptor.sizes[0] = count;
@@ -81,7 +90,8 @@ template <unsigned Rank> struct HostBuffer {
   /// Fills the buffer with `size` values, in its type.
   void assign(const double *values, size_t size, Element element) {
     if (element != Element::F32) {
-      std::memcpy(storage.data(), values, size * sizeof(double));
+      if (size)
+        std::memcpy(storage.data(), values, size * sizeof(double));
       return;
     }
     float *narrow = reinterpret_cast<float *>(storage.data());
@@ -227,28 +237,77 @@ struct Simulation::Engine {
   compiler::CompileStats stats;
   /// The volume that the constants of the program are for.
   double volume = 0.0;
-  /// The masses of the particles, in the order of the input.
-  std::vector<double> masses;
+  /// The masses of the particles, in the order of the input; shared, so
+  /// that a start can tell that a conversion of them is current
+  /// (D[start-arguments]).
+  SharedArray<double> masses;
 };
 
 namespace {
-/// The buffers that a call of an entry takes, made anew for each call: on a
-/// device the entry may write what it copies back into the buffers of the
-/// host that it was given (AssignStorage), which `mdir run` gives it once.
+/// A buffer that the entry takes without a copy, read-only
+/// (D[start-arguments]): where it is, for the check of
+/// MDRT_CHECK_KEPT_TUPLES, which copies it at the start and compares it at
+/// the end of the activation.
+struct HandedBuffer {
+  std::string name;
+  const char *data = nullptr;
+  size_t bytes = 0;
+  std::vector<char> atStart;
+};
+
+/// What a call of an entry takes (D[start-arguments], #326): the
+/// descriptors, made for each start, of buffers that the simulation keeps
+/// from one start to the next (the state, the identities, and the
+/// conversions of the arrays of the program that are not in the type of
+/// the program) and of the arrays of the program itself, which the entry
+/// is proven never to write (`check-read-only-arguments`). The arrays that
+/// are handed are held here, so that they live as long as the activation.
 struct Arguments {
-  std::vector<std::unique_ptr<HostBuffer<2>>> vectors;
-  std::vector<std::unique_ptr<HostBuffer<1>>> reals;
-  std::vector<std::vector<int32_t>> integers;
-  std::vector<std::vector<double>> doubles;
-  // (Their storage outlives the call; a moved vector keeps it.)
+  std::vector<std::unique_ptr<StridedMemRefType<char, 1>>> reals;
   std::vector<std::unique_ptr<StridedMemRefType<int32_t, 1>>> integerFields;
   std::vector<std::unique_ptr<StridedMemRefType<double, 2>>> tables;
   std::vector<std::unique_ptr<StridedMemRefType<int32_t, 2>>> members;
   std::vector<std::unique_ptr<StridedMemRefType<double, 1>>> tupleFields;
   StridedMemRefType<int32_t, 1> identities;
+  std::vector<SharedArray<double>> heldReals;
+  std::vector<SharedArray<int32_t>> heldMembers;
+  std::vector<HandedBuffer> handed;
+  /// Copies of the arrays, made for this start, in a simulation that keeps
+  /// nothing for its starts (`Simulation::setKeepsStartArguments`).
+  std::vector<std::vector<char>> copies;
   std::vector<void *> pointers;
 };
 } // namespace
+
+/// The buffers of the arguments of the starts that a simulation keeps from
+/// one start to the next (D[start-arguments]).
+///
+/// - The state (positions, velocities, forces) and the identities, which
+///   the entry may write (on the CPU it works in them): every start writes
+///   every number of them, in the memory of the last start.
+/// - A conversion of an array of the program into the type that the entry
+///   takes (the masses and the fields of the particles in f32, the types
+///   of the particles in i32), with the array it was made from. Programs
+///   share an array and never write one that is shared (SharedArray,
+///   D256), and this holds a share: so the array that a later start
+///   is given is the one converted if it is the same array, which the
+///   start compares (`shares`), and the conversion is that of its numbers.
+///   The entry never writes the conversion: it is a read-only argument.
+struct Simulation::StartArguments {
+  HostBuffer<2> positions, velocities, forces;
+  std::vector<int32_t> identities;
+  struct Converted {
+    SharedArray<double> source;
+    Element element = Element::F64;
+    bool integer = false;
+    std::vector<char> storage;
+  };
+  /// By slot: the masses, then the fields of the particles in their order.
+  std::vector<Converted> converted;
+  /// The arrays handed without a copy, the conversions taken as they were
+  /// kept, and those made (or made anew), over the starts.
+  std::array<int64_t, 3> counts{};
+};
 
 /// The activation of the entry of a program of segments that runs the parts
 /// of a simulation (D215). The entry runs on a stack of its
@@ -397,6 +456,20 @@ std::tuple<int64_t, int64_t, double> Simulation::getKeptTuples() const {
       seconds = read(keptTuples);
   }
   return {counts[0], counts[1], seconds};
+}
+
+std::array<int64_t, 3> Simulation::getStartArguments() const {
+  return startArguments ? startArguments->counts : std::array<int64_t, 3>{};
+}
+
+bool Simulation::spoilStartArgument() {
+  if (!activation || activation->arguments.handed.empty())
+    return false;
+  const HandedBuffer &handed = activation->arguments.handed.front();
+  if (!handed.bytes)
+    return false;
+  ++*const_cast<char *>(handed.data);
+  return true;
 }
 
 std::array<int64_t, 5> Simulation::getTunableBuilds() const {
@@ -749,41 +822,151 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   // the host. The first call begins the run and ignores the forces that it
   // is given (D211); a later one continues those given.
   Arguments &args = a->arguments;
-  auto vector = [&](const std::vector<double> &values, Element element) {
-    args.vectors.push_back(
-        std::make_unique<HostBuffer<2>>(values, element, count));
-    args.vectors.back()->addTo(args.pointers);
+  if (!startArguments)
+    startArguments = std::make_unique<StartArguments>();
+  StartArguments &kept = *startArguments;
+  // With MDRT_CHECK_KEPT_TUPLES, each conversion that is taken as it was
+  // kept is made anew and compared, and each buffer that the entry takes
+  // without a copy is copied here and compared when the activation ends
+  // (D[start-arguments]).
+  bool checks = std::getenv("MDRT_CHECK_KEPT_TUPLES") != nullptr;
+  auto handOver = [&](std::string name, const void *data, size_t bytes) {
+    HandedBuffer handed;
+    handed.name = std::move(name);
+    handed.data = static_cast<const char *>(data);
+    handed.bytes = bytes;
+    if (checks && bytes)
+      handed.atStart.assign(handed.data, handed.data + bytes);
+    args.handed.push_back(std::move(handed));
   };
-  vector(system.positions, p.state);
+  // An array of the program in the type of the entry: handed as it is, or,
+  // in a simulation that keeps nothing for its starts, copied.
+  auto hand = [&](std::string name, const void *data, size_t bytes) -> void * {
+    if (!keepsStartArguments) {
+      const char *from = static_cast<const char *>(data);
+      args.copies.emplace_back(from, from + bytes);
+      ++kept.counts[2];
+      return args.copies.back().data();
+    }
+    handOver(std::move(name), data, bytes);
+    ++kept.counts[0];
+    return const_cast<void *>(data);
+  };
+  // An array of the program that the entry takes in its own type is handed
+  // as it is; one in another type, as the conversion that the simulation
+  // keeps for its slot if that was made from the same array.
+  kept.converted.resize(1 + p.fields.size());
+  auto readOnly = [&](size_t slot, const SharedArray<double> &source,
+                      Element element, bool integer,
+                      const std::string &name) -> void * {
+    if (!integer && element == Element::F64) {
+      args.heldReals.push_back(source);
+      return hand(name, source.data(), source.size() * sizeof(double));
+    }
+    StartArguments::Converted &c = kept.converted[slot];
+    size_t width = integer ? sizeof(int32_t)
+                           : (element == Element::F32 ? sizeof(float)
+                                                      : sizeof(double));
+    auto convert = [&](std::vector<char> &to) {
+      to.resize(source.size() * width);
+      const double *from = source.data();
+      for (size_t i = 0, e = source.size(); i != e; ++i) {
+        if (integer) {
+          int32_t value = static_cast<int32_t>(from[i]);
+          std::memcpy(&to[i * width], &value, width);
+        } else {
+          float value = static_cast<float>(from[i]);
+          std::memcpy(&to[i * width], &value, width);
+        }
+      }
+    };
+    if (!keepsStartArguments) {
+      args.copies.emplace_back();
+      convert(args.copies.back());
+      ++kept.counts[2];
+      return args.copies.back().data();
+    }
+    bool current = c.source.shares(source) && c.element == element &&
+                   c.integer == integer &&
+                   c.storage.size() == source.size() * width;
+    if (current) {
+      ++kept.counts[1];
+      if (checks) {
+        std::vector<char> anew;
+        convert(anew);
+        if (anew != c.storage) {
+          llvm::errs() << "mdir: the conversion of " << name
+                       << " that was kept from an earlier start differs "
+                          "from the one made anew; this is a defect of "
+                          "mdir\n";
+          std::abort();
+        }
+      }
+    } else {
+      ++kept.counts[2];
+      convert(c.storage);
+      c.source = source;
+      c.element = element;
+      c.integer = integer;
+    }
+    handOver("the conversion of " + name, c.storage.data(), c.storage.size());
+    return c.storage.data();
+  };
+  auto real = [&](void *data) {
+    auto d = std::make_unique<StridedMemRefType<char, 1>>();
+    d->basePtr = d->data = static_cast<char *>(data);
+    d->offset = 0;
+    d->sizes[0] = count;
+    d->strides[0] = 1;
+    addDescriptor(args.pointers, *d);
+    args.reals.push_back(std::move(d));
+  };
+  // The arguments by kind, for the measurements (#326).
+  HostMark kind("start.arguments.state");
+  kept.positions.fill(system.positions.data(), system.positions.size(),
+                      p.state, count);
+  kept.positions.addTo(args.pointers);
   if (engine.control.frames)
     a->framePositions =
         std::make_unique<HostBuffer<2>>(system.positions, p.state, count);
-  vector(system.velocities, p.state);
-  if (p.takesForces)
-    vector(hasRun ? forces : std::vector<double>(3 * count, 0.0), p.force);
-  args.reals.push_back(
-      std::make_unique<HostBuffer<1>>(engine.masses, p.mass, count));
-  args.reals.back()->addTo(args.pointers);
-  for (const Program::Field &field : p.fields) {
+  kept.velocities.fill(system.velocities.data(), system.velocities.size(),
+                       p.state, count);
+  kept.velocities.addTo(args.pointers);
+  kind.next("start.arguments.forces");
+  if (p.takesForces) {
+    if (hasRun)
+      kept.forces.fill(forces.data(), forces.size(), p.force, count);
+    else
+      kept.forces.fillZeros(3 * count, p.force, count);
+    kept.forces.addTo(args.pointers);
+  }
+  kind.next("start.arguments.masses");
+  real(readOnly(0, engine.masses, p.mass, false, "the masses"));
+  kind.next("start.arguments.fields");
+  for (size_t k = 0; k != p.fields.size(); ++k) {
+    const Program::Field &field = p.fields[k];
+    void *data = readOnly(1 + k, field.values, p.parameter, field.isInteger,
+                          "the field '" + field.name + "' of the particles");
     if (!field.isInteger) {
-      args.reals.push_back(
-          std::make_unique<HostBuffer<1>>(field.values, p.parameter, count));
-      args.reals.back()->addTo(args.pointers);
+      real(data);
       continue;
     }
-    args.integers.emplace_back(field.values.begin(), field.values.end());
     auto d = std::make_unique<StridedMemRefType<int32_t, 1>>();
-    d->basePtr = d->data = args.integers.back().data();
+    d->basePtr = d->data = static_cast<int32_t *>(data);
     d->offset = 0;
     d->sizes[0] = count;
     d->strides[0] = 1;
     addDescriptor(args.pointers, *d);
     args.integerFields.push_back(std::move(d));
   }
+  // The tables are those of the program of the engine, which an update
+  // replaces only after the activation has ended.
+  kind.next("start.arguments.tables");
   for (const Program::Table &table : p.tables) {
-    args.doubles.push_back(table.values);
     auto d = std::make_unique<StridedMemRefType<double, 2>>();
-    d->basePtr = d->data = args.doubles.back().data();
+    d->basePtr = d->data = static_cast<double *>(
+        hand("the table '" + table.name + "'", table.values.data(),
+             table.values.size() * sizeof(double)));
     d->offset = 0;
     d->sizes[0] = table.count;
     d->sizes[1] = table.getColumns();
@@ -792,12 +975,14 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
     addDescriptor(args.pointers, *d);
     args.tables.push_back(std::move(d));
   }
-  // Moving a vector keeps its storage, so the descriptors stay valid as
-  // the lists grow.
+  kind.end();
   for (const Program::TupleSet &set : p.tupleSets) {
-    args.integers.push_back(set.members);
+    HostMark tupleKind("start.arguments.members");
+    args.heldMembers.push_back(set.members);
     auto m = std::make_unique<StridedMemRefType<int32_t, 2>>();
-    m->basePtr = m->data = args.integers.back().data();
+    m->basePtr = m->data = static_cast<int32_t *>(
+        hand("the members of the tuple set '" + set.name + "'",
+             set.members.data(), set.members.size() * sizeof(int32_t)));
     m->offset = 0;
     m->sizes[0] = set.size();
     m->sizes[1] = set.arity;
@@ -805,10 +990,14 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
     m->strides[1] = 1;
     addDescriptor(args.pointers, *m);
     args.members.push_back(std::move(m));
+    tupleKind.next("start.arguments.tuple-fields");
     for (const Program::Field &field : set.fields) {
-      args.doubles.push_back(field.values);
+      args.heldReals.push_back(field.values);
       auto v = std::make_unique<StridedMemRefType<double, 1>>();
-      v->basePtr = v->data = args.doubles.back().data();
+      v->basePtr = v->data = static_cast<double *>(
+          hand("the field '" + field.name + "' of the tuple set '" +
+                   set.name + "'",
+               field.values.data(), field.values.size() * sizeof(double)));
       v->offset = 0;
       v->sizes[0] = set.size();
       v->strides[0] = 1;
@@ -816,15 +1005,16 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
       args.tupleFields.push_back(std::move(v));
     }
   }
-  args.integers.emplace_back(count);
-  std::vector<int32_t> &numbers = args.integers.back();
-  for (size_t i = 0; i != count; ++i)
-    numbers[i] = static_cast<int32_t>(i);
-  args.identities.basePtr = args.identities.data = numbers.data();
+  // The identities, which the entry may write, are written anew.
+  kind.next("start.arguments.identities");
+  kept.identities.resize(count);
+  std::iota(kept.identities.begin(), kept.identities.end(), 0);
+  args.identities.basePtr = args.identities.data = kept.identities.data();
   args.identities.offset = 0;
   args.identities.sizes[0] = count;
   args.identities.strides[0] = 1;
   addDescriptor(args.pointers, args.identities);
+  kind.end();
   for (int k = 0; k != 3; ++k)
     a->box[k] = output->box[k];
   a->timestep = engine.control.timestep;
@@ -950,6 +1140,20 @@ void Simulation::endActivation(Ended reason) {
   Activation &a = *activation;
   waitForConsumers();
   ++generation;
+  // The buffers that the entry took without a copy are those it was given
+  // (D[start-arguments]): checked where they were copied at the start.
+  for (const HandedBuffer &handed : a.arguments.handed) {
+    if (handed.atStart.size() != handed.bytes || !handed.bytes)
+      continue;
+    if (std::memcmp(handed.atStart.data(), handed.data, handed.bytes) != 0) {
+      llvm::errs() << "mdir: " << handed.name
+                   << ", which the entry of the program takes without a "
+                      "copy and never writes, differs at the end of the "
+                      "activation from what it was given; this is a defect "
+                      "of mdir\n";
+      std::abort();
+    }
+  }
   // Its code waits at a boundary and never runs again. What it allocated
   // is freed: its blocks of the device return to the pool of the runtime
   // (#110).

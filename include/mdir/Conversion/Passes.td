@@ -174,6 +174,41 @@ def HoistStaticAllocas : Pass<"hoist-static-allocas", "::mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::LLVM::LLVMDialect"];
 }
 
+def CheckReadOnlyArguments
+    : Pass<"check-read-only-arguments", "::mlir::ModuleOp"> {
+  let summary = "Proves that a function writes none of the buffers that it "
+                "declares read-only";
+  let description = [{
+    The entry of a program declares the buffers of the model that it takes
+    (the masses, the fields of the particles, the tables, and the members
+    and fields of the tuple sets) read-only with the attribute
+    `mdrt.read_only` on its arguments, so that the caller may hand the same
+    buffers to every call without a copy (D[start-arguments]).
+    The pass runs where the lowering to loops or to a device ends and
+    follows every use of each such argument, through the views of it
+    (casts, subviews, and other ops of `ViewLikeOpInterface`) and into the
+    functions of the module that it is passed to. It accepts:
+
+    - an op whose memory effects on the buffer are reads alone
+      (`memref.load`, the source of `memref.copy` or of `gpu.memcpy`, and
+      the like) or that has none and returns no buffer (`memref.dim`);
+    - a call of a function of the module, whose argument it then follows;
+    - a call of a declared function (of the runtime) whose parameter has
+      `mdrt.read_only` too: what the runtime does with it is the runtime's
+      declaration, which the lowering that declares the function makes.
+
+    Any other use fails the pass, with an error that names the argument and
+    the op: a write, a release, a buffer carried by a loop or returned, a
+    pointer taken out of it, a call of a function that does not declare the
+    parameter read-only, and an op whose effects are not known. So a module
+    that the pass accepts is one whose code provably writes none of these
+    buffers, and one that it cannot prove so does not compile; there is no
+    third outcome.
+  }];
+  let dependentDialects = ["::mlir::func::FuncDialect",
+                           "::mlir::memref::MemRefDialect"];
+}
+
 def SeparateSinCos : Pass<"separate-sin-cos", "::mlir::ModuleOp"> {
   let summary = "Makes every sine and cosine a call of its own to the C "
                 "library";

@@ -388,7 +388,8 @@ follow, in the order of the pipeline that `tools/mdir/Run.cpp` builds:
 | `md-exec-choose-neighbors` | On a device, chooses groups of 16 and each pair once where the contracts allow it (D89) |
 | `md-exec-assign-precision` | Assigns a type to every field and kernel by its role (below) |
 | `md-exec-approximate`, `md-exec-expand-radial` | Approximations of f32 kernels of terms, with stated bounds (Section 7.2) |
-| `md-exec-assign-storage` | Turns the value form into the storage form: every field gets a buffer, loops update buffers in place, scratch comes from a pool; never copies a field, and fails with the reason where it would have to |
+| `md-exec-assign-storage` | Turns the value form into the storage form: every field gets a buffer, loops update buffers in place, scratch comes from a pool; never copies a field, and fails with the reason where it would have to; never takes a buffer that the entry declares read-only |
+| `check-read-only-arguments` | Where the lowering to loops or to a device ends, proves that the code writes no buffer that the entry declares read-only, the model, or fails the compile naming the use (D[start-arguments]) |
 | `md-exec-assign-streams` | Optionally moves an op to a second stream where an independence proof holds (D87; off by default) |
 
 The fused loop of the kick, the drift, and the test of validity of the
@@ -548,6 +549,20 @@ update of the tunables, an evaluation, a commit of velocities or
 parameters, the start after a checkpoint), which then uploads nothing of
 the topology; a start in another order builds the structures in the
 memory of the last.
+
+What a start gives the entry is the model and the state
+(D[start-arguments]). The entry declares the buffers of the
+model read-only: the masses, the fields of the particles, the tables, and
+the members and fields of the tuple sets. `md-exec-assign-storage` takes
+none of them for another field or for a copy back from a device, and
+where the lowering ends `check-read-only-arguments` follows every use of
+each and fails the compile on any that it cannot prove a read. A program
+that compiles is thus one that writes none of them, and a start hands it
+the arrays of the program where they are, in place of copies; a conversion
+into the type of the entry is kept and taken only where the start is given
+the same array, which programs share and never write (D256). The state,
+in which the program on the CPU works, is written anew at every start into
+buffers that the simulation keeps.
 
 `mdir run` uses the same store for its one call of the entry
 (D255). Its program orders the particles where the run

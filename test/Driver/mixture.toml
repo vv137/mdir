@@ -34,7 +34,7 @@
 # MODULE:          %sum_sigma = arith.addf %sigma_i, %sigma_j : f64
 # MODULE:        func.func @mdir_run(
 # MODULE-NEXT:       %positions: memref<?x3xf64>, %velocities: memref<?x3xf64>,
-# MODULE-NEXT:       %masses: memref<?xf64>, %b_epsilon: memref<?xf64>, %b_sigma: memref<?xf64>,
+# MODULE-NEXT:       %masses: memref<?xf64> {mdrt.read_only}, %b_epsilon: memref<?xf64> {mdrt.read_only}, %b_sigma: memref<?xf64> {mdrt.read_only},
 
 [input]
 coordinates = "Inputs/mixture.pdb"
