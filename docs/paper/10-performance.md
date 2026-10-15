@@ -161,7 +161,7 @@ to the bit, are kept since D256: an update with its
 evaluation then takes 4.6, 13, and 65 ms, about its two starts. Each start
 copied the state and the whole model into new memory for the arguments of
 the entry, one number at a time: 0.44, 1.76, and 11.5 ms of a start of
-2.0, 6.0, and 30 ms. Since D[start-arguments] the compile
+2.0, 6.0, and 30 ms. Since D258 the compile
 proves that the entry writes no buffer of the model (Section 3.6), a start
 hands it the arrays of the program as they are, and the buffers of the
 state are kept and written anew: the arguments take 0.06, 0.18, and 1.9

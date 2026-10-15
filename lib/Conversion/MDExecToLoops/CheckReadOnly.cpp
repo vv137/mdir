@@ -1,5 +1,5 @@
 // Proves that a function writes none of the buffers that it declares
-// read-only (D[start-arguments], #326).
+// read-only (D258, #326).
 //
 // The entry of a program declares the buffers of the model read-only, and
 // a Python simulation hands it the same buffers at every start of an

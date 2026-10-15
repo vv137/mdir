@@ -264,14 +264,14 @@ public:
   void setKeepsTuples(bool keeps) { keepsTuples = keeps; }
   bool getKeepsTuples() const { return keepsTuples; }
   /// What the starts of the activations have given the entry of the arrays
-  /// of the program (D[start-arguments]): how many were handed
+  /// of the program (D258): how many were handed
   /// without a copy, how many conversions into the type of the entry were
   /// taken as the simulation kept them, and how many were made. For the
   /// tests and the measurements.
   std::array<int64_t, 3> getStartArguments() const;
   /// Whether a start hands the entry the arrays of the program and the
   /// conversions that the simulation keeps (the default), or copies and
-  /// converts every one anew, as before D[start-arguments]: for the tests,
+  /// converts every one anew, as before D258: for the tests,
   /// which compare the two. It holds from the next start on.
   void setKeepsStartArguments(bool keeps) { keepsStartArguments = keeps; }
   bool getKeepsStartArguments() const { return keepsStartArguments; }
@@ -571,7 +571,7 @@ private:
   bool keptTuplesOnDevice = false;
   bool keepsTuples = true;
   /// The buffers of the arguments of the starts, kept from one start to the
-  /// next (D[start-arguments]).
+  /// next (D258).
   struct StartArguments;
   std::unique_ptr<StartArguments> startArguments;
   bool keepsStartArguments = true;

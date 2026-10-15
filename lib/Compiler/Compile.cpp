@@ -153,7 +153,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        // The code of the host writes no buffer of the model that the entry
-       // takes (D[start-arguments]): proven here, or no compile.
+       // takes (D258): proven here, or no compile.
        << "check-read-only-arguments,"
        << "mdir-gpu-lower-to-nvvm{";
     // The kernels become cubins for the device's architecture, which the
@@ -173,7 +173,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // the segments of `mdir run` (#316).
   os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true}"
      // The code writes no buffer of the model that the entry takes
-     // (D[start-arguments]): proven here, or no compile.
+     // (D258): proven here, or no compile.
      << ",check-read-only-arguments"
      << ",fixed-order-reductions,";
   bool threaded = control.threads > 1;

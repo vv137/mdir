@@ -389,7 +389,7 @@ follow, in the order of the pipeline that `tools/mdir/Run.cpp` builds:
 | `md-exec-assign-precision` | Assigns a type to every field and kernel by its role (below) |
 | `md-exec-approximate`, `md-exec-expand-radial` | Approximations of f32 kernels of terms, with stated bounds (Section 7.2) |
 | `md-exec-assign-storage` | Turns the value form into the storage form: every field gets a buffer, loops update buffers in place, scratch comes from a pool; never copies a field, and fails with the reason where it would have to; never takes a buffer that the entry declares read-only |
-| `check-read-only-arguments` | Where the lowering to loops or to a device ends, proves that the code writes no buffer that the entry declares read-only, the model, or fails the compile naming the use (D[start-arguments]) |
+| `check-read-only-arguments` | Where the lowering to loops or to a device ends, proves that the code writes no buffer that the entry declares read-only, the model, or fails the compile naming the use (D258) |
 | `md-exec-assign-streams` | Optionally moves an op to a second stream where an independence proof holds (D87; off by default) |
 
 The fused loop of the kick, the drift, and the test of validity of the
@@ -551,7 +551,7 @@ the topology; a start in another order builds the structures in the
 memory of the last.
 
 What a start gives the entry is the model and the state
-(D[start-arguments]). The entry declares the buffers of the
+(D258). The entry declares the buffers of the
 model read-only: the masses, the fields of the particles, the tables, and
 the members and fields of the tuple sets. `md-exec-assign-storage` takes
 none of them for another field or for a copy back from a device, and

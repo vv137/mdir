@@ -2924,7 +2924,7 @@ Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
       getOrDeclare(name, builder.getFunctionType(types, {given}));
   callee->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   // The runtime copies the members it is given and compares them, and
-  // never writes them (`mdrtTuplesMembersOf`, D[start-arguments]).
+  // never writes them (`mdrtTuplesMembersOf`, D258).
   callee.setArgAttr(0, mdrt::getReadOnlyAttrName(), builder.getUnitAttr());
   Value taken =
       func::CallOp::create(builder, loc, callee, arguments).getResult(0);
@@ -3021,7 +3021,7 @@ Lowering::DeviceTuples Lowering::takeOnDevice(Operation *op, Value members,
   tuples.handle = callRuntime(builder, loc, "mdrtDeviceTuplesTake",
                               {given, count, ordered}, wide64, true);
   // The runtime copies the members and compares them, and never writes
-  // them (`mdrtTuplesMembersOf`, D[start-arguments]).
+  // them (`mdrtTuplesMembersOf`, D258).
   cast<func::FuncOp>(SymbolTable::lookupSymbolIn(module, "mdrtDeviceTuplesTake"))
       .setArgAttr(0, mdrt::getReadOnlyAttrName(), builder.getUnitAttr());
   Value build = callRuntime(builder, loc, "mdrtDeviceTuplesBuild",

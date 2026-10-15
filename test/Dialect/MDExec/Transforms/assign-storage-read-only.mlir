@@ -7,7 +7,7 @@
 
 md.particle_set @atoms
 
-// A buffer that the function declares read-only (D[start-arguments])
+// A buffer that the function declares read-only (D258)
 // is never taken for another field: on the host a loop that could write in
 // place writes to a buffer of its own, and on a device the copy back goes
 // to a buffer of the host of its own. Without the declaration the pass takes

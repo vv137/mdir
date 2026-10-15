@@ -1502,7 +1502,7 @@ PYBIND11_MODULE(_core, m) {
     // (handed, kept, made): the arrays of the program that the starts of
     // the activations handed the entry without a copy, and the conversions
     // into the type of the entry that they took as the simulation kept them
-    // and that they made (D[start-arguments]). Private, for
+    // and that they made (D258). Private, for
     // the tests and the measurements: it may change or go.
     .def_property_readonly("_start_arguments", [](const PySimulation &s) {
       auto counts = s.simulation->getStartArguments();

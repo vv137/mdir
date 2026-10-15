@@ -45,7 +45,7 @@ inline llvm::StringRef getSegmentAttrName() { return "mdrt.segment"; }
 inline llvm::StringRef getFreshAttrName() { return "mdrt.fresh"; }
 
 /// The attribute of an argument of a function that the function never
-/// writes (D[start-arguments]): on an argument of the entry of a
+/// writes (D258): on an argument of the entry of a
 /// program, a buffer of the model that the caller hands without a copy; on
 /// an argument of a declared function of the runtime, a buffer that the
 /// runtime only reads. `check-read-only-arguments` proves the first by the

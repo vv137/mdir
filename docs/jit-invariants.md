@@ -458,7 +458,7 @@ from 25.0 to 2.5 ms (below).
   update, as before.
 
 **Not kept here.** The arguments of the entry: what a start gives the
-entry is the next section's (D[start-arguments], #326).
+entry is the next section's (D258, #326).
 
 **Tests.** `python-update-cost.test` and `-gpu.test`: a sequence on the
 dipeptide in water with every kind of tunable (updates of each alone, of
@@ -479,7 +479,7 @@ finds and names; and a number of a kept array written over
 the variable and is said once on the standard error without it, the
 results being those of a simulation that was not spoiled.
 
-## What a start gives the entry (D[start-arguments])
+## What a start gives the entry (D258)
 
 A start of an activation (D215) gives the entry its arguments: the state,
 the masses, the fields of the particles, the tables, the members and the

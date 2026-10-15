@@ -199,7 +199,7 @@ private:
       hostBuffers;
 
   /// The arguments of the function that its signature declares read-only
-  /// (`mdrt.read_only`, D[start-arguments]): the caller may hand
+  /// (`mdrt.read_only`, D258): the caller may hand
   /// them without a copy. The pass never takes one for another field
   /// (it does not own it) or for a copy back from a device (it is not among
   /// `hostBuffers`); `check-read-only-arguments` checks the lowered code.

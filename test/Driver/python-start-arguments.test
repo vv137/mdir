@@ -1,5 +1,5 @@
 # REQUIRES: python-api
-# What a start of an activation gives the entry (D[start-arguments], #326),
+# What a start of an activation gives the entry (D258, #326),
 # Inputs/python_start_arguments.py, on the CPU: a sequence of starts against
 # a simulation whose starts copy and convert every array anew, in double and
 # mixed precision, with every conversion that is taken as kept made anew and

@@ -1537,7 +1537,7 @@ each loop inside it. A region **owns** the buffers that it may overwrite.
 | Body of a loop | The buffers that the loop carries |
 
 An argument with `mdrt.read_only` (the buffers of the model that the
-entry of a program takes, D[start-arguments]) is read where it
+entry of a program takes, D258) is read where it
 is and never owned; on a device it is not kept for what is copied back
 (Section 10.8), which then goes to a buffer of the host of its own.
 `check-read-only-arguments`, where the lowering ends, proves that the

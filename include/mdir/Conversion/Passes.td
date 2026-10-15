@@ -183,7 +183,7 @@ def CheckReadOnlyArguments
     (the masses, the fields of the particles, the tables, and the members
     and fields of the tuple sets) read-only with the attribute
     `mdrt.read_only` on its arguments, so that the caller may hand the same
-    buffers to every call without a copy (D[start-arguments]).
+    buffers to every call without a copy (D258).
     The pass runs where the lowering to loops or to a device ends and
     follows every use of each such argument, through the views of it
     (casts, subviews, and other ops of `ViewLikeOpInterface`) and into the

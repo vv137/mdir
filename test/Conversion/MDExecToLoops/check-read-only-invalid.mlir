@@ -2,7 +2,7 @@
 
 // A buffer that a function declares read-only and that its code may write,
 // or that the pass cannot prove it does not, fails the compile with an error
-// that names the argument and the op (D[start-arguments]).
+// that names the argument and the op (D258).
 
 func.func @store(%field: memref<?xf32> {mdrt.read_only}, %x: f32) {
   %c0 = arith.constant 0 : index

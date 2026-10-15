@@ -239,13 +239,13 @@ struct Simulation::Engine {
   double volume = 0.0;
   /// The masses of the particles, in the order of the input; shared, so
   /// that a start can tell that a conversion of them is current
-  /// (D[start-arguments]).
+  /// (D258).
   SharedArray<double> masses;
 };
 
 namespace {
 /// A buffer that the entry takes without a copy, read-only
-/// (D[start-arguments]): where it is, for the check of
+/// (D258): where it is, for the check of
 /// MDRT_CHECK_KEPT_TUPLES, which copies it at the start and compares it at
 /// the end of the activation.
 struct HandedBuffer {
@@ -255,7 +255,7 @@ struct HandedBuffer {
   std::vector<char> atStart;
 };
 
-/// What a call of an entry takes (D[start-arguments], #326): the
+/// What a call of an entry takes (D258, #326): the
 /// descriptors, made for each start, of buffers that the simulation keeps
 /// from one start to the next (the state, the identities, and the
 /// conversions of the arrays of the program that are not in the type of
@@ -280,7 +280,7 @@ struct Arguments {
 } // namespace
 
 /// The buffers of the arguments of the starts that a simulation keeps from
-/// one start to the next (D[start-arguments]).
+/// one start to the next (D258).
 ///
 /// - The state (positions, velocities, forces) and the identities, which
 ///   the entry may write (on the CPU it works in them): every start writes
@@ -828,7 +828,7 @@ llvm::Error Simulation::startActivation(int64_t firstCall) {
   // With MDRT_CHECK_KEPT_TUPLES, each conversion that is taken as it was
   // kept is made anew and compared, and each buffer that the entry takes
   // without a copy is copied here and compared when the activation ends
-  // (D[start-arguments]).
+  // (D258).
   bool checks = std::getenv("MDRT_CHECK_KEPT_TUPLES") != nullptr;
   auto handOver = [&](std::string name, const void *data, size_t bytes) {
     HandedBuffer handed;
@@ -1141,7 +1141,7 @@ void Simulation::endActivation(Ended reason) {
   waitForConsumers();
   ++generation;
   // The buffers that the entry took without a copy are those it was given
-  // (D[start-arguments]): checked where they were copied at the start.
+  // (D258): checked where they were copied at the start.
   for (const HandedBuffer &handed : a.arguments.handed) {
     if (handed.atStart.size() != handed.bytes || !handed.bytes)
       continue;

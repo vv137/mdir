@@ -588,7 +588,7 @@ format, or the outputs; every such change is listed under **Changed** or
   compares every structure built on the device with the host's build, and
   `MDRT_PROFILE` reports the bytes that the store keeps on the device.
 - **A start of an activation hands the entry the arrays of the program
-  instead of copies** (D[start-arguments], #326). Every
+  instead of copies** (D258, #326). Every
   start of a Python simulation (an update of the tunables has two, and a
   frame evaluator one at every update) copied the state and the whole
   model into new memory of the host for the entry, one number at a time:
@@ -618,7 +618,7 @@ format, or the outputs; every such change is listed under **Changed** or
   end of the run goes to their own buffer; a step does what it did. With `MDRT_CHECK_KEPT_TUPLES` every conversion that a start
   takes as kept is made anew and compared, and every buffer handed
   without a copy is compared at the end of its activation
-  ([docs/jit-invariants.md](docs/jit-invariants.md#what-a-start-gives-the-entry-dstart-arguments)).
+  ([docs/jit-invariants.md](docs/jit-invariants.md#what-a-start-gives-the-entry-d258)).
 - Leapfrog under Langevin dynamics with constraints is faster on a GPU
   (D250, #287): 2.4% on JAC of the Amber suite
   (1166 to 1194 ns/day on an RTX 4090 in mixed precision) and 1.2% on

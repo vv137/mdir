@@ -1,4 +1,4 @@
-"""What a start of an activation gives the entry (D[start-arguments],
+"""What a start of an activation gives the entry (D258,
 #326, docs/jit-invariants.md): the arrays of the program, which the entry
 never writes, without a copy, and the conversions of them into the type of
 the entry and the buffers of the state, kept from one start to the next.
@@ -25,7 +25,7 @@ Scenarios:
         a copy, took as kept, and made (`Simulation._start_arguments`,
         private) are as they must be. With `--write FILE` the records are
         written, and with `--compare FILE` compared with those that another
-        build wrote (a build before D[start-arguments] has neither the
+        build wrote (a build before D258 has neither the
         switch nor the counts, and writes the records alone).
   spoil ROOT TARGET
         A byte of a buffer that the entry took without a copy, written over

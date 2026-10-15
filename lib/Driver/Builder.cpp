@@ -9387,7 +9387,7 @@ void Builder::emitEntry() {
   if (program.takesForces)
     os << "    %forces: memref<?x3x" << force << ">,\n";
   // The buffers of the model are read and never written
-  // (D[start-arguments]): `md-exec-assign-storage` takes none of them for
+  // (D258): `md-exec-assign-storage` takes none of them for
   // another field or for a copy back from a device, and
   // `check-read-only-arguments` fails the compile where the lowered entry
   // could write one. A simulation hands them to every start without a copy.

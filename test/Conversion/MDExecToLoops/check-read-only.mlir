@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --check-read-only-arguments | FileCheck %s
 
 // What `check-read-only-arguments` accepts of a buffer that a function
-// declares read-only (D[start-arguments]): loads, the shape, the
+// declares read-only (D258): loads, the shape, the
 // source of a copy to the host or to a device, a view of it, a call of a
 // function of the module that reads it, and a call of a declared function
 // that declares its parameter read-only. The module passes as it is.

@@ -88,7 +88,7 @@ private:
 /// one f64 each, in their order. The entry never writes the buffers of the
 /// masses, of the fields, of the tables, and of the members and fields of
 /// the tuple sets, which it declares `mdrt.read_only` and the compile proves
-/// so (D[start-arguments]): a caller may hand it the arrays below.
+/// so (D258): a caller may hand it the arrays below.
 struct Program {
   /// The module, as text.
   std::string module;
