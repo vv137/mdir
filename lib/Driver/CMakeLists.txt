@@ -51,6 +51,7 @@ add_mlir_library(MDIRDriver
   ModelFingerprint.cpp
   Tunables.cpp
   Output.cpp
+  Prolate.cpp
   Selection.cpp
   System.cpp
   Trajectory.cpp

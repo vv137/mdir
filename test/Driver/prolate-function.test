@@ -1,0 +1,11 @@
+# The prolate spheroidal wave function of order zero on the host (D[prolate-ewald]):
+# psi, its eigenvalue, C0 = int_0^1 psi, and chi_hat against the eigenfunction
+# of the integral operator by Gauss-Legendre in mpmath at 40 digits
+# (scripts/benchmarks/prolate-ewald/pswf_reference.py), to 1e-12 of psi(0);
+# the bandwidths of Table 2 of Liang et al. (2026) to their printed digits.
+# RUN: mdir-prolate-test | FileCheck %s
+# CHECK-NOT: FAIL
+# CHECK: c 9.5392 lambda
+# CHECK: c 14.4712 lambda
+# CHECK: epsilon 1e-05 bandwidth 14.471
+# CHECK: 0 failures
