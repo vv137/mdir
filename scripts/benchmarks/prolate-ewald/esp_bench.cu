@@ -197,6 +197,38 @@ __device__ __forceinline__ void gatherSum(int lane, R t1, R t2, R t3, RowF rowf,
   }
 }
 
+// Pitches of the shared tile of the tiled gathering (P0 of #337): the row
+// pitch S1 and the plane pitch S2 of the tile, index a S2 + b S1 + c, chosen
+// at compile time to minimize the largest number of the 32 lanes of a warp
+// of one particle (lanes ab = a P + b, a pass a 32 lanes) that fall on one
+// bank of the 32; T and T^2 unpadded.
+__host__ __device__ constexpr int bankConflict(int P, int S1, int S2) {
+  int worst = 0;
+  for (int base = 0; base < P * P; base += 32) {
+    int count[32] = {};
+    for (int ab = base; ab < P * P && ab < base + 32; ++ab) {
+      int bank = ((ab / P) * S2 + (ab % P) * S1) % 32;
+      if (++count[bank] > worst) worst = count[bank];
+    }
+  }
+  return worst;
+}
+__host__ __device__ constexpr int tilePitch(int P, int B, bool pad, bool plane) {
+  int T = B + P - 1;
+  if (!pad) return plane ? T * T : T;
+  int best1 = T, best2 = T * T, bestC = 1 << 30, bestSize = 1 << 30;
+  for (int s1 = T; s1 <= T + 8; ++s1)
+    for (int s2 = T * s1; s2 <= T * s1 + 40; ++s2) {
+      int c = bankConflict(P, s1, s2), size = (T - 1) * s2 + (T - 1) * s1 + T;
+      if (c < bestC || (c == bestC && size < bestSize)) { bestC = c; bestSize = size; best1 = s1; best2 = s2; }
+    }
+  return plane ? best2 : best1;
+}
+__host__ __device__ constexpr int tileWords(int P, int B, bool pad) {
+  int T = B + P - 1;
+  return (T - 1) * tilePitch(P, B, pad, true) + (T - 1) * tilePitch(P, B, pad, false) + T;
+}
+
 // Tiled spreading and gathering: the particles are binned by their first
 // point into bins of B^3 points (a counting sort each step); a block takes a
 // bin and adds into a tile of (B + P - 1)^3 points in block memory, then adds
@@ -262,10 +294,11 @@ __global__ void spreadTiled(int N, const R *q, const int *first, const R *s, con
   }
 }
 
-template <typename R, int P, int D, int B, int G>
+template <typename R, int P, int D, int B, int G, bool PAD = false>
 __global__ void gatherTiled(int N, const R *q, const int *first, const R *s, const int *start, const int *count, const int *list,
                             const R *grid, R *force, int K1, int K2, int K3, int nb2, int nb3, R kx, R ky, R kz) {
   constexpr int T = B + P - 1, T3 = T * T * T;
+  constexpr int S1 = tilePitch(P, B, PAD, false), S2 = tilePitch(P, B, PAD, true);
   extern __shared__ unsigned char smraw[];
   R *tile = reinterpret_cast<R *>(smraw);
   int bin = blockIdx.x;
@@ -278,7 +311,7 @@ __global__ void gatherTiled(int N, const R *q, const int *first, const R *s, con
     int g1 = o1 + a; if (g1 >= K1) g1 -= K1;
     int g2 = o2 + b; if (g2 >= K2) g2 -= K2;
     int g3 = o3 + c; if (g3 >= K3) g3 -= K3;
-    tile[t] = grid[((size_t)g1 * K2 + g2) * K3 + g3];
+    tile[a * S2 + b * S1 + c] = grid[((size_t)g1 * K2 + g2) * K3 + g3];
   }
   __syncthreads();
   int s0 = start[bin];
@@ -291,7 +324,7 @@ __global__ void gatherTiled(int N, const R *q, const int *first, const R *s, con
     R t1 = 2 * s[i] - 1, t2 = 2 * s[N + i] - 1, t3 = 2 * s[2 * N + i] - 1;
     int l1 = first[i] - o1, l2 = first[N + i] - o2, l3 = first[2 * N + i] - o3;
     R gx = 0, gy = 0, gz = 0;
-    gatherSum<R, P, D, G>(lane, t1, t2, t3, [&](int a, int b) { return tile + ((l1 + a) * T + (l2 + b)) * T + l3; }, 0, T, gx, gy, gz);
+    gatherSum<R, P, D, G>(lane, t1, t2, t3, [&](int a, int b) { return tile + (l1 + a) * S2 + (l2 + b) * S1 + l3; }, 0, T, gx, gy, gz);
 #pragma unroll
     for (int o = G / 2; o; o >>= 1) {
       gx += __shfl_down_sync(0xffffffffu, gx, o, G);
@@ -419,6 +452,105 @@ __global__ void gather(int N, const R *q, const int *first, const R *s, const R 
   if (live && lane == 0) {
     R qi = q[i];
     force[3 * i] = -qi * kx * gx; force[3 * i + 1] = -qi * ky * gy; force[3 * i + 2] = -qi * kz * gz;
+  }
+}
+
+// The measurement P0 of #337: the gathering with the weights and slopes of
+// each particle precomputed in memory, so that it does only the P^3
+// accumulation. w[((a * 2 + d) * P + j) * N + i]: axis a, value (d = 0) or
+// slope (d = 1), point j, particle i.
+template <typename R, int P, int D>
+__global__ void precompute(int N, const R *s, R *w) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= N) return;
+#pragma unroll
+  for (int a = 0; a < 3; ++a) {
+    R t = 2 * s[a * N + i] - 1;
+#pragma unroll
+    for (int j = 0; j < P; ++j) {
+      w[((a * 2 + 0) * P + j) * (size_t)N + i] = horner<R, D>(Co<R>::W(), j, t);
+      w[((a * 2 + 1) * P + j) * (size_t)N + i] = horner<R, D>(Co<R>::DW(), j, t);
+    }
+  }
+}
+
+// G lanes a particle over the rows (a, b); each grid value is read once
+// and gives the three components (sz for x and y, sd for z).
+template <typename R, int P, int G, typename RowF>
+__device__ __forceinline__ void gatherSumPre(int lane, int i, int N, const R *w, RowF rowf, int c0, int wrap,
+                                             R &gx, R &gy, R &gz) {
+  R wz[P], dz[P];
+#pragma unroll
+  for (int c = 0; c < P; ++c) { wz[c] = w[((4) * P + c) * (size_t)N + i]; dz[c] = w[((5) * P + c) * (size_t)N + i]; }
+  for (int ab = lane; ab < P * P; ab += G) {
+    int a = ab / P, b = ab - a * P;
+    R wx = w[((0) * P + a) * (size_t)N + i], dx = w[((1) * P + a) * (size_t)N + i];
+    R wy = w[((2) * P + b) * (size_t)N + i], dy = w[((3) * P + b) * (size_t)N + i];
+    const R *row = rowf(a, b);
+    R sz = 0, sd = 0;
+#pragma unroll
+    for (int c = 0; c < P; ++c) { int g3 = c0 + c; if (g3 >= wrap) g3 -= wrap; R v = row[g3]; sz = fma(v, wz[c], sz); sd = fma(v, dz[c], sd); }
+    gx = fma(dx * wy, sz, gx); gy = fma(wx * dy, sz, gy); gz = fma(wx * wy, sd, gz);
+  }
+}
+
+template <typename R, int P, int G>
+__global__ void gatherPre(int N, const R *q, const int *first, const R *w, const R *grid, R *force, int K1, int K2, int K3, R kx, R ky, R kz) {
+  int item = blockIdx.x * blockDim.x + threadIdx.x;
+  int i = item / G, lane = item - i * G;
+  bool live = i < N;
+  int ii = live ? i : N - 1;
+  int f1 = first[ii], f2 = first[N + ii], f3 = first[2 * N + ii];
+  R gx = 0, gy = 0, gz = 0;
+  gatherSumPre<R, P, G>(lane, ii, N, w, [&](int a, int b) {
+    int g1 = f1 + a; if (g1 >= K1) g1 -= K1;
+    int g2 = f2 + b; if (g2 >= K2) g2 -= K2;
+    return grid + ((size_t)g1 * K2 + g2) * K3; }, f3, K3, gx, gy, gz);
+#pragma unroll
+  for (int o = G / 2; o; o >>= 1) {
+    gx += __shfl_down_sync(0xffffffffu, gx, o, G);
+    gy += __shfl_down_sync(0xffffffffu, gy, o, G);
+    gz += __shfl_down_sync(0xffffffffu, gz, o, G);
+  }
+  if (live && lane == 0) { R qi = q[i]; force[3 * i] = -qi * kx * gx; force[3 * i + 1] = -qi * ky * gy; force[3 * i + 2] = -qi * kz * gz; }
+}
+
+template <typename R, int P, int B, int G, bool PAD = false>
+__global__ void gatherPreTiled(int N, const R *q, const int *first, const R *w, const int *start, const int *count, const int *list,
+                               const R *grid, R *force, int K1, int K2, int K3, int nb2, int nb3, R kx, R ky, R kz) {
+  constexpr int T = B + P - 1, T3 = T * T * T;
+  constexpr int S1 = tilePitch(P, B, PAD, false), S2 = tilePitch(P, B, PAD, true);
+  extern __shared__ unsigned char smraw[];
+  R *tile = reinterpret_cast<R *>(smraw);
+  int bin = blockIdx.x;
+  int bz = bin % nb3, by = (bin / nb3) % nb2, bx = bin / (nb3 * nb2);
+  int o1 = bx * B, o2 = by * B, o3 = bz * B;
+  int n = count[bin];
+  if (n == 0) return;
+  for (int t = threadIdx.x; t < T3; t += blockDim.x) {
+    int c = t % T, b = (t / T) % T, a = t / (T * T);
+    int g1 = o1 + a; if (g1 >= K1) g1 -= K1;
+    int g2 = o2 + b; if (g2 >= K2) g2 -= K2;
+    int g3 = o3 + c; if (g3 >= K3) g3 -= K3;
+    tile[a * S2 + b * S1 + c] = grid[((size_t)g1 * K2 + g2) * K3 + g3];
+  }
+  __syncthreads();
+  int s0 = start[bin];
+  int groups = blockDim.x / G, gid = threadIdx.x / G, lane = threadIdx.x - gid * G;
+  for (int r = 0; r < (n + groups - 1) / groups; ++r) {
+    int k = r * groups + gid;
+    bool live = k < n;
+    int i = list[s0 + (live ? k : n - 1)];
+    int l1 = first[i] - o1, l2 = first[N + i] - o2, l3 = first[2 * N + i] - o3;
+    R gx = 0, gy = 0, gz = 0;
+    gatherSumPre<R, P, G>(lane, i, N, w, [&](int a, int b) { return tile + (l1 + a) * S2 + (l2 + b) * S1 + l3; }, 0, T, gx, gy, gz);
+#pragma unroll
+    for (int o = G / 2; o; o >>= 1) {
+      gx += __shfl_down_sync(0xffffffffu, gx, o, G);
+      gy += __shfl_down_sync(0xffffffffu, gy, o, G);
+      gz += __shfl_down_sync(0xffffffffu, gz, o, G);
+    }
+    if (live && lane == 0) { R qi = q[i]; force[3 * i] = -qi * kx * gx; force[3 * i + 1] = -qi * ky * gy; force[3 * i + 2] = -qi * kz * gz; }
   }
 }
 
@@ -578,7 +710,50 @@ void run(Case &c, Opts o) {
   CK(cudaDeviceSynchronize());
   double acc[8];
   CK(cudaMemcpy(acc, dacc, 64, cudaMemcpyDeviceToHost));
-  printf("{\"N\": %d, \"K\": [%d, %d, %d], \"P\": %d, \"D\": %d, \"kind\": %d, \"prec\": \"%s\", \"layout\": \"%s\", \"glanes\": %d, \"order\": \"%s\"",
+  // P0 (#337): the gathering alone, the grid as the last step left it,
+  // with the weights computed in the kernel and precomputed in memory,
+  // from the grid in global memory and from tiles in block memory (the
+  // bins of the step, B = o.tiled). Medians of o.reps launches.
+  double p0[7] = {0, 0, 0, 0, 0, 0, 0};
+  if (getenv("ESP_P0") && o.tiled) {
+    R *dw;
+    CK(cudaMalloc(&dw, sizeof(R) * 6 * P * (size_t)N));
+    R kx = (R)(K1 / c.L[0]), ky = (R)(K2 / c.L[1]), kz = (R)(K3 / c.L[2]);
+    int G = o.glanes;
+    size_t padded = sizeof(R) * tileWords(P, 4, true);
+    int gGP = (int)(((size_t)N * G + T - 1) / T);
+    auto timeIt = [&](auto launch) {
+      std::vector<float> v;
+      for (int r = 0; r < 10; ++r) launch();
+      for (int r = 0; r < o.reps; ++r) {
+        CK(cudaEventRecord(a0)); launch(); CK(cudaEventRecord(a1)); CK(cudaEventSynchronize(a1));
+        float ms; CK(cudaEventElapsedTime(&ms, a0, a1)); v.push_back(ms * 1000);
+      }
+      std::sort(v.begin(), v.end());
+      return (double)v[v.size() / 2];
+    };
+    p0[0] = timeIt([&] { launchGather(); });
+    p0[1] = timeIt([&] { gatherT(); });
+    p0[2] = timeIt([&] { precompute<R, P, D><<<gN, T>>>(N, ds, dw); });
+#define PRE(GG) \
+    p0[3] = timeIt([&] { gatherPre<R, P, GG><<<gGP, T>>>(N, dq, dfirst, dw, dgrid, dforce, K1, K2, K3, kx, ky, kz); }); \
+    CK(cudaFuncSetAttribute(gatherPreTiled<R, P, 4, GG>, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem)); \
+    p0[4] = timeIt([&] { gatherPreTiled<R, P, 4, GG><<<nb, 256, smem>>>(N, dq, dfirst, dw, dstart, dcount, dlist, dgrid, dforce, K1, K2, K3, nb2, nb3, kx, ky, kz); }); \
+    CK(cudaFuncSetAttribute(gatherPreTiled<R, P, 4, GG, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)padded)); \
+    p0[6] = timeIt([&] { gatherPreTiled<R, P, 4, GG, true><<<nb, 256, padded>>>(N, dq, dfirst, dw, dstart, dcount, dlist, dgrid, dforce, K1, K2, K3, nb2, nb3, kx, ky, kz); }); \
+    CK(cudaFuncSetAttribute(gatherTiled<R, P, D, 4, GG, true>, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)padded)); \
+    p0[5] = timeIt([&] { gatherTiled<R, P, D, 4, GG, true><<<nb, 256, padded>>>(N, dq, dfirst, ds, dstart, dcount, dlist, dgrid, dforce, K1, K2, K3, nb2, nb3, kx, ky, kz); });
+    if (o.tiled == 4) {
+      if (G == 4) { PRE(4) } else if (G == 8) { PRE(8) } else if (G == 16) { PRE(16) } else { PRE(32) }
+    }
+#undef PRE
+    CK(cudaFree(dw));
+  }
+  printf("{\"p0_gather_us\": %.2f, \"p0_gather_tiled_us\": %.2f, \"p0_precompute_us\": %.2f, \"p0_gather_pre_us\": %.2f, \"p0_gather_pre_tiled_us\": %.2f, "
+         "\"p0_gather_tiled_padded_us\": %.2f, \"p0_gather_pre_tiled_padded_us\": %.2f, \"p0_pitches\": [%d, %d], \"p0_conflicts\": [%d, %d], ",
+         p0[0], p0[1], p0[2], p0[3], p0[4], p0[5], p0[6], tilePitch(P, 4, true, false), tilePitch(P, 4, true, true),
+         bankConflict(P, P + 3, (P + 3) * (P + 3)), bankConflict(P, tilePitch(P, 4, true, false), tilePitch(P, 4, true, true)));
+  printf("\"N\": %d, \"K\": [%d, %d, %d], \"P\": %d, \"D\": %d, \"kind\": %d, \"prec\": \"%s\", \"layout\": \"%s\", \"glanes\": %d, \"order\": \"%s\"",
          N, K1, K2, K3, P, D, c.kind, sizeof(R) == 4 ? "f32" : "f64", o.tiled ? (o.tiled == 4 ? "tiled4" : "tiled8") : o.brick ? "brick" : "direct", o.glanes, o.sorted ? "sorted" : "input");
   for (int k = 0; k <= E_N; ++k) {
     auto v = times[k];
@@ -603,7 +778,7 @@ template <typename R, int P>
 void runD(Case &c, Opts o) {
   switch (c.D) {
 #define DC(d) case d: run<R, P, d>(c, o); break;
-    DC(4) DC(6) DC(8) DC(9) DC(10)
+    DC(4) DC(5) DC(6) DC(7) DC(8) DC(9) DC(10) DC(11) DC(12)
     default: fprintf(stderr, "degree %d\n", c.D); exit(1);
   }
 }
