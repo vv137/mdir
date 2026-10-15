@@ -14,13 +14,14 @@
 
 # The first trial, of 2 Å, is not taken, and the next steps grow to the
 # cap of 0.1 Å (D[minimize-step-cap]); the energy at step 50 is -16.1559 in
-# double precision, -16.1556 in mixed precision on the CPU, and -16.1568
-# on a GPU.
+# double precision, -16.1556 in mixed precision on the CPU, and from
+# -16.1568 to -16.1631 on a GPU, where the atomics move the steps near the
+# end from run to run (a failure in 20 runs with -16.15 checked).
 #
 # CHECK:      MDIR: 12 particles, 50 steps of steepest descent
 # CHECK:      INFO:         0 {{ *}}-11.78{{[0-9]+}} {{.*}} 2.000000
 # CHECK-NEXT: INFO:         5 {{ *}}-14.75{{[0-9]+}} {{.*}} 0.100000
-# CHECK:      INFO:        50 {{ *}}-16.15{{[0-9]+}} {{.*}} {{[0-9.]+}}
+# CHECK:      INFO:        50 {{ *}}-16.1{{[0-9]+}} {{.*}} {{[0-9.]+}}
 
 # BONDS: bonds ok
 
