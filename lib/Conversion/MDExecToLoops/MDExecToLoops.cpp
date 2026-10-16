@@ -78,8 +78,9 @@ struct Neighbors {
 
 class Lowering {
 public:
-  explicit Lowering(ModuleOp module, bool keptTuples)
-      : keptTuples(keptTuples), module(module), context(module.getContext()) {
+  explicit Lowering(ModuleOp module, bool keptTuples, bool atomicGrid)
+      : keptTuples(keptTuples), atomicGrid(atomicGrid), module(module),
+        context(module.getContext()) {
     // A module with a triclinic cell lowers every cell to the vector of six,
     // a_x, b_y, c_z, b_x, c_x, c_y; one without, to the three edges.
     module.walk([&](md::TriclinicCellOp) { triclinic = true; });
@@ -147,6 +148,9 @@ private:
   /// Whether the renumbered members and the incidence structures are taken
   /// from the runtime.
   bool keptTuples;
+  /// Whether the spreading of PME adds to its grid with atomics: the
+  /// program runs its parallel loops on several threads.
+  bool atomicGrid;
   /// The members that the runtime has renumbered.
   llvm::DenseSet<Value> runtimeMembers;
 
@@ -458,6 +462,23 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald";
+  // On one thread the spreading adds to the fixed-point grid without
+  // atomics: an integer sum is the same in any order, and a locked addition
+  // costs about 20 cycles where nothing else writes (D[cpu-pme-parallel]).
+  if (!atomicGrid)
+    templates->walk([](memref::AtomicRMWOp atomic) {
+      if (atomic.getKind() != arith::AtomicRMWKind::addi)
+        return;
+      OpBuilder builder(atomic);
+      Location loc = atomic.getLoc();
+      Value old = memref::LoadOp::create(builder, loc, atomic.getMemref(),
+                                         atomic.getIndices());
+      Value sum = arith::AddIOp::create(builder, loc, old, atomic.getValue());
+      memref::StoreOp::create(builder, loc, sum, atomic.getMemref(),
+                              atomic.getIndices());
+      atomic.replaceAllUsesWith(old);
+      atomic.erase();
+    });
   // The functions of the potential at the particles (the fourth result of
   // md.reciprocal), and those of a list of the particles
   // (D262), only where a sum asks for them, so
@@ -1319,7 +1340,7 @@ public:
       ConvertMDExecToLoops>::ConvertMDExecToLoopsBase;
 
   void runOnOperation() final {
-    Lowering lowering(getOperation(), keptTuples);
+    Lowering lowering(getOperation(), keptTuples, atomicGrid);
     if (failed(lowering.run()))
       signalPassFailure();
   }

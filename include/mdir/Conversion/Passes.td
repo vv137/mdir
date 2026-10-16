@@ -83,6 +83,11 @@ def ConvertMDExecToLoops
            "structures are taken from the runtime, which keeps them across "
            "the activations of an embedding program and the segments of "
            "mdir run">,
+    Option<"atomicGrid", "atomic-grid", "bool", /*default=*/"true",
+           "Whether the spreading of particle mesh Ewald adds to the "
+           "fixed-point grid with atomics, for a program whose parallel "
+           "loops run on several threads; on one thread a plain addition "
+           "gives the same integers (D[cpu-pme-parallel])">,
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

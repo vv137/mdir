@@ -9,7 +9,9 @@
 # steps are identical with 1, 4, and 7 threads, and from run to run.
 #
 # A step that writes neither the energy nor the virial only scales the
-# transform (pme_scale), as on a device; the others take pme_convolve.
+# transform (pme_scale), as on a device; the others take pme_convolve. On
+# one thread the spreading adds to the grid without atomics, which gives the
+# same integers.
 #
 # REQUIRES: hdf5
 #
@@ -39,6 +41,8 @@
 #
 # The parallel parts in the program of 4 threads.
 # RUN: mdir emit mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=LOWERED
+# RUN: mdir emit mixed-1.toml --stage=pipeline | FileCheck %s --check-prefix=ONE
+# RUN: mdir emit mixed-1.toml --stage=lowered | FileCheck %s --check-prefix=PLAIN
 
 # CHECK: the states are identical
 
@@ -47,6 +51,9 @@
 # LOWERED-DAG: llvm.call @mdrt.pme_convolve_p64c{{[0-9]+}}f32o4(
 # LOWERED-DAG: llvm.call @_mlir_ciface_mdrtFFT32Columns(
 # LOWERED-DAG: omp.wsloop
+
+# ONE: convert-md-exec-to-loops{kept-tuples=true atomic-grid=false}
+# PLAIN-NOT: llvm.atomicrmw
 
 #--- run.toml
 [input]
