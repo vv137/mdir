@@ -658,7 +658,7 @@ def MDExec_CellNumbersOp : MDExec_Op<"cell_numbers", [Pure]> {
     The six numbers of a cell: the diagonal l_x, l_y, l_z and the tilts
     b_x, c_x, c_y of a triclinic cell (docs/triclinic-m2.md), with tilts of
     zero for an orthorhombic one. A function of the host that reads the
-    cell takes these (D[metatomic-plugin]).
+    cell takes these (D270).
 
     ```mlir
     %numbers = md_exec.cell_numbers %cell : vector<6xf64>

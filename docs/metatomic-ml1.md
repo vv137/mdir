@@ -1,6 +1,6 @@
 # ML1: an Allegro model through an optional metatomic adapter
 
-Design of `D[metatomic-plugin]` (issue #137) for the first deliverable of
+Design of `D270` (issue #137) for the first deliverable of
 M3, ML1 ([roadmap](roadmap.md#7-learned-potentials-m3-and-distributed-execution-m4),
 D166, D167, D169): one existing Allegro artifact evaluated through an
 optional metatomic adapter, with energy, per-particle forces, and virial on
@@ -493,7 +493,7 @@ particles with mass in the model, no classical terms required beside it
 
 As ruled (Section 1, item 9):
 
-1. **First PR (`D[metatomic-plugin]`), GPU only:** the CMake option, the
+1. **First PR (`D270`), GPU only:** the CMake option, the
    C++20 plugin with the C ABI (the TorchScript backend through metatomic
    only), `[[energy.model]]` in `mdir run` and its counterpart in the
    Python model (`mdir.System.models`, in the manner of D245 and D246),
@@ -509,7 +509,7 @@ As ruled (Section 1, item 9):
 4. ML4's stages. NPT with a model term, the CPU target, and ML/MM
    selection fit between these steps.
 
-## 9. What the first PR built (D[metatomic-plugin])
+## 9. What the first PR built (D270)
 
 ### 9.1 The pieces
 

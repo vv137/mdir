@@ -379,7 +379,7 @@ analytic bonds, the orders 6 and 8, and the suite's two settings together.
 | The potential at step 0 or the positions after 20 steps | the run without the setting | differ, each case: the field acts | more than 0 |
 ## Learned potentials
 
-D[metatomic-plugin] (#137, [metatomic-ml1.md](metatomic-ml1.md)). A
+D270 (#137, [metatomic-ml1.md](metatomic-ml1.md)). A
 learned potential is a term of the Python model as it is of the control
 file, through the same plugin and its C boundary:
 

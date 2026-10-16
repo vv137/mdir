@@ -1234,7 +1234,7 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
 }
 
 /*===----------------------------------------------------------------------===
- * Work of a plugin of learned potentials (D[metatomic-plugin])
+ * Work of a plugin of learned potentials (D270)
  *===----------------------------------------------------------------------===*/
 
 /* The stream of the kernels, for a plugin that issues work there itself (a

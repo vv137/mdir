@@ -171,7 +171,7 @@ if "cuda" in config.available_features and lit_config.params.get("sanitize"):
         config.available_features.add("compute-sanitizer")
         config.substitutions.append(("%compute_sanitizer", sanitizer))
 
-# The plugin of learned potentials (D[metatomic-plugin]): "metatomic" where
+# The plugin of learned potentials (D270): "metatomic" where
 # it is built; "mlip-python" where the Python of the environment that it was
 # built against (MDIR_MLIP_PYTHON of the build, or -Dmlip_python=) imports
 # torch, metatomic, and NequIP; and "allegro-package" where the model package

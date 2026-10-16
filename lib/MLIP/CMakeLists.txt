@@ -1,4 +1,4 @@
-# The plugin of learned potentials (D[metatomic-plugin],
+# The plugin of learned potentials (D270,
 # docs/metatomic-ml1.md, Section 6.1): C++20 with RTTI and exceptions, which
 # the headers of libtorch need, linking libtorch, metatomic-torch, and
 # metatensor-torch. Their CMake packages come from the Python environment

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks the model term of D[metatomic-plugin] (docs/metatomic-ml1.md,
+"""Checks the model term of D270 (docs/metatomic-ml1.md,
 Section 7) through MDIR's Python model on a GPU: the energy, the forces, and
 the virial tensor of a metatomic artifact evaluated by a Python simulation
 against a reference (that of NequIP's calculator, written by water-box.py

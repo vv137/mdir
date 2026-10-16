@@ -1,4 +1,4 @@
-"""Compares an evaluation of the model term (D[metatomic-plugin]) with the
+"""Compares an evaluation of the model term (D270) with the
 reference of NequIP's calculator, within the tolerances of
 docs/metatomic-ml1.md, Section 7 (float64 inputs; ten times them for
 float32), in kJ/mol and nm.

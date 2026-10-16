@@ -1,6 +1,6 @@
 //===- ModelTerm.h - Learned potentials through the plugin ------*- C++ -*-===//
 //
-// The terms of [[energy.model]] (D[metatomic-plugin], docs/metatomic-ml1.md):
+// The terms of [[energy.model]] (D270, docs/metatomic-ml1.md):
 // the core's side of the plugin of include/mdir/MLIP/Plugin.h, which it loads
 // with dlopen when a run has such a term. The core neither includes the
 // headers of the framework nor links it.
@@ -91,7 +91,7 @@ private:
 } // namespace mdir
 
 /// The functions that the program of a run with a model term calls
-/// (D[metatomic-plugin]): model `index` at the positions, the atomic
+/// (D270): model `index` at the positions, the atomic
 /// numbers, and the cell (its diagonal and tilts b_x, c_x, c_y), its forces
 /// added to `forces`; with `Energy`, its energy and virial written to
 /// `energy` (1) and `virial` (9).

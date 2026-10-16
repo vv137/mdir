@@ -75,7 +75,7 @@ private:
   /// [[energy.external]]: a term of the absolute positions (D148).
   Error readExternal(const toml::table &table);
   /// [[energy.model]]: a learned potential through the plugin of
-  /// D[metatomic-plugin].
+  /// D270.
   Error readModel(const toml::table &table);
   /// [[energy.parameter]]: a parameter of each particle (D165).
   Error readParticleParameter(const toml::table &table);
@@ -3188,7 +3188,7 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
         "%s: the terms over triplets of [[energy.triplet]] run on the CPU "
         "only yet (D160); give 'target = \"CPU\"'",
         path.str().c_str());
-  // A learned potential (D[metatomic-plugin]) is evaluated by the external
+  // A learned potential (D270) is evaluated by the external
   // framework, which gives its energy and its derivatives: in ML1 on one
   // GPU, in a fixed cell, outside the deterministic mode, and with no
   // derivative or observation that MDIR would take of the term itself

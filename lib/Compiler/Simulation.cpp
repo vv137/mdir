@@ -812,7 +812,7 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   output->volume = system.box[0] * system.box[1] * system.box[2];
   output->endStep = 0;
   output->tunablesVersion = prepared.tunables.empty() ? -1 : 0;
-  // The learned potentials (D[metatomic-plugin]) on the device that the
+  // The learned potentials (D270) on the device that the
   // simulation's runtime uses. In Python the module has imported torch
   // and checked its version against the plugin's before.
   if (!control.models.empty()) {

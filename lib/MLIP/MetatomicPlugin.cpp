@@ -1,6 +1,6 @@
 //===- MetatomicPlugin.cpp - A metatomic model behind MDIR's C boundary ---===//
 //
-// The plugin of D[metatomic-plugin] (docs/metatomic-ml1.md): a TorchScript
+// The plugin of D270 (docs/metatomic-ml1.md): a TorchScript
 // artifact of metatomic [metatomic], evaluated on MDIR's device buffers and
 // stream, with forces and virial from torch's autograd. C++20 with RTTI and
 // exceptions, linking libtorch; MDIR's core reaches it through

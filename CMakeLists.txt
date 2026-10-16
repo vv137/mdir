@@ -42,7 +42,7 @@ add_subdirectory(include)
 add_subdirectory(lib)
 add_subdirectory(runtime)
 add_subdirectory(lib/Compiler)
-# The plugin of learned potentials (D[metatomic-plugin]): a C++20 library that
+# The plugin of learned potentials (D270): a C++20 library that
 # links libtorch and metatomic, which MDIR's core loads with dlopen through
 # include/mdir/MLIP/Plugin.h. The core never links it.
 option(MDIR_ENABLE_METATOMIC

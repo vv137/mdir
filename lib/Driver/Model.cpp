@@ -588,7 +588,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     if (llvm::Error e = observe(term.name, term.observed, term.observe)) return std::move(e);
     c.externalTerms.push_back(std::move(term));
   }
-  // The learned potentials (D[metatomic-plugin]), checked as the reader of
+  // The learned potentials (D270), checked as the reader of
   // the control file checks [[energy.model]]; validateControl refuses what
   // ML1 does not reach.
   for (const driver::Control::ModelTerm &term : s.models) {

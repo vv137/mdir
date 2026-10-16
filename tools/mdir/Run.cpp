@@ -799,7 +799,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     (void)scheduler->addOccurrence(0, "pre-RA-sched", "default");
   if (!function)
     return fail(function.takeError());
-  // The learned potentials (D[metatomic-plugin]): the plugin beside the
+  // The learned potentials (D270): the plugin beside the
   // runtime, or at MDIR_MLIP_PLUGIN, on the device of the runtime, which
   // the program has loaded.
   if (!control->models.empty()) {

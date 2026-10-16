@@ -1,7 +1,7 @@
 /*===- Plugin.h - The C boundary of a plugin of learned potentials -------===*
  *
  * The functions that MDIR's core calls in an optional plugin that evaluates a
- * learned potential (D[metatomic-plugin], docs/metatomic-ml1.md, Section 6.1).
+ * learned potential (D270, docs/metatomic-ml1.md, Section 6.1).
  * The core is C++17 without RTTI and exceptions and never links an external
  * framework; the plugin (C++20, libtorch) is loaded with dlopen and reached
  * through these functions alone. No exception crosses them: a function

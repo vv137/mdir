@@ -1,4 +1,4 @@
-"""A frame evaluator refuses a model term (D[metatomic-plugin]): its forces
+"""A frame evaluator refuses a model term (D270): its forces
 and virial come from evaluations that do not take the model. It needs
 tunables, which a model term refuses first; the builder refuses the frame
 evaluator as well.

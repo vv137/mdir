@@ -1,4 +1,4 @@
-# [[energy.model]] (D[metatomic-plugin]): what the reader and the checks of
+# [[energy.model]] (D270): what the reader and the checks of
 # the control file refuse before any plugin is loaded, and what `mdir check`
 # says of a term that it takes. ML1 runs a model on a GPU, in a fixed cell,
 # outside the deterministic mode, without derivatives that MDIR would take

@@ -1483,7 +1483,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     }
 
     // The fields that the function adds to continue in their buffers,
-    // which it is given where they are (D[metatomic-plugin]).
+    // which it is given where they are (D270).
     SmallVector<Value> outs;
     for (Value destination : call.getOuts()) {
       Value buffer;

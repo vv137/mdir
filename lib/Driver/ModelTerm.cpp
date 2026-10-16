@@ -1,6 +1,6 @@
 //===- ModelTerm.cpp - Learned potentials through the plugin --------------===//
 //
-// The core's side of D[metatomic-plugin] (docs/metatomic-ml1.md, Section 6):
+// The core's side of D270 (docs/metatomic-ml1.md, Section 6):
 // the plugin is loaded with dlopen (RTLD_LOCAL) the first time a run has a
 // term of [[energy.model]], and stays loaded: libtorch is not unloaded. Its
 // work goes to the stream of the kernels of MDIR's runtime, whose functions
@@ -318,7 +318,7 @@ std::vector<std::string> ModelTerms::getNames() const {
 //===----------------------------------------------------------------------===//
 
 namespace {
-/// Evaluates model `index` for the program (D[metatomic-plugin]); with
+/// Evaluates model `index` for the program (D270); with
 /// `energy` and `virial`, writes its energy and its virial there.
 void evaluateModel(int64_t index, void *given, void *atomic, double lx,
                    double ly, double lz, double bx, double cx, double cy,

@@ -181,7 +181,7 @@ struct System {
   /// follows the cell (D154).
   std::vector<driver::ExternalTerm> externalTerms;
   /// Learned potentials, `[[energy.model]]` of the control file
-  /// (D[metatomic-plugin]): evaluated by the external framework through
+  /// (D270): evaluated by the external framework through
   /// the optional plugin, on a GPU; the path is taken as given, relative
   /// to the working directory.
   std::vector<driver::Control::ModelTerm> models;

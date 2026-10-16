@@ -669,7 +669,7 @@ private:
                       StringRef uResult = "", StringRef w = "",
                       StringRef wResult = "");
   /// Emits the learned potentials of [[energy.model]] at the positions `x`
-  /// in the cell `cell` (D[metatomic-plugin]): `fResult` is the forces `f`
+  /// in the cell `cell` (D270): `fResult` is the forces `f`
   /// with theirs added and, if `u` is given, `uResult` the energy `u` with
   /// theirs added; returns the name of the virial `w` with theirs added, or
   /// `w` if it is empty. The host evaluates each model on the stream of the
@@ -1773,7 +1773,7 @@ void Builder::collectTopologyArrays() {
     types.values.push_back(type);
   program.fields.push_back(std::move(types));
   // The atomic numbers that a learned potential takes
-  // (D[metatomic-plugin]), in the order of the particles that the program
+  // (D270), in the order of the particles that the program
   // keeps, as the other fields.
   if (!control.models.empty()) {
     Program::Field numbers;
@@ -6269,7 +6269,7 @@ void Builder::emitPrograms() {
     std::string raw = sites ? "e" : "";
     // With a learned potential the forces and the energy of the evaluation
     // are `%f1c` and `%u1c`, and those of the model are added to give `%f1`
-    // and `%u1` (D[metatomic-plugin]).
+    // and `%u1` (D270).
     bool models = !control.models.empty();
     std::string modelled = !models || !held.empty() ? "" : "c";
     if (withEnergy)
@@ -10287,7 +10287,7 @@ void Builder::emitEntry() {
     os << "func.func private @mdrtFinish(memref<?x3x" << state
        << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
        << "    attributes {llvm.emit_c_interface}\n";
-  // A learned potential (D[metatomic-plugin]): the host evaluates it at the
+  // A learned potential (D270): the host evaluates it at the
   // positions where they are, in the cell of the step, and adds its forces
   // to those of the program where they are; with `Energy`, it gives its
   // energy and its virial as well.
@@ -10643,7 +10643,7 @@ void Builder::emitEntry() {
     StringRef raw = hasSites() ? "e" : "";
     std::string held = hasRestraints() ? "p" : "";
     // With a learned potential, `%f0c` and `%u0c` before its terms
-    // (D[metatomic-plugin]).
+    // (D270).
     bool models = !control.models.empty();
     std::string modelled = !models || !held.empty() ? "" : "c";
     os << "  %u0" << held << modelled << ", %f0" << held << raw << modelled

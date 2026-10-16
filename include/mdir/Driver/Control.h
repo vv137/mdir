@@ -358,7 +358,7 @@ struct Control {
   /// expressions (D148): [[energy.external]].
   std::vector<ExternalTerm> externalTerms;
   /// A learned potential evaluated by an external framework through the
-  /// optional plugin of D[metatomic-plugin] (docs/metatomic-ml1.md):
+  /// optional plugin of D270 (docs/metatomic-ml1.md):
   /// [[energy.model]]. Its energy, forces, and virial are the model's own
   /// derivatives; MDIR does not differentiate the term.
   struct ModelTerm {

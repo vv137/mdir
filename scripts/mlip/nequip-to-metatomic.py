@@ -1,5 +1,5 @@
 """Turns a NequIP or Allegro model package (`.nequip.zip`) into a metatomic
-artifact (TorchScript) that MDIR's metatomic adapter can load (D[metatomic-plugin],
+artifact (TorchScript) that MDIR's metatomic adapter can load (D270,
 docs/metatomic-ml1.md).
 
 An example of bringing a model without an official metatomic export into

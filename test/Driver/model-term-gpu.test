@@ -1,4 +1,4 @@
-# A learned potential through the plugin of D[metatomic-plugin]
+# A learned potential through the plugin of D270
 # (docs/metatomic-ml1.md): Allegro-OAM-L 0.1, wrapped as a metatomic
 # artifact by scripts/mlip/nequip-to-metatomic.py from the package that
 # lit is given (MDIR_ALLEGRO_PACKAGE or -Dallegro_package=; never in the

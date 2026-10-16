@@ -132,7 +132,7 @@ def MDRT_HostCallOp : MDRT_Op<"host_call", [
     `memref<kxf64>`) that it is given after those of the fields, and the
     host waits for the call. A learned potential adds its forces to those
     of the other terms this way, and gives its energy and its virial
-    (D[metatomic-plugin]).
+    (D270).
 
     ```mlir
     func.func private @model(memref<?x3xf64>, memref<?x3xf32>,

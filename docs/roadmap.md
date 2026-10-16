@@ -11,7 +11,7 @@ follows are in [principles.md](principles.md).
 | M1 | An all-atom protein in water with an Amber force field, on one node, CPU and GPU; at least the rate of pmemd.cuda on every system of the Amber suite | Done (D114, 2026-10-02); release in preparation |
 | M2a | The Python API (Section 6) | Items 1 to 8 of [python-m2.md](python-m2.md), Section 4, are done: item 8, `observe` in the Python model (#188, D232), was the last |
 | M2b | Differentiable simulation: parameters as tunable buffers, a frame evaluator with derivative rules, PyTorch then JAX adapters, and trajectory reweighting [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) (Section 6.1) | Under way beside the last item of M2a (maintainer, 2026-10-08): the derivative of the energy in the tunables is the first step (#203) |
-| M3 | Learned potentials on one GPU: ML1, then the single-GPU stage of ML4 (Section 7) | In progress: the first step of ML1, TorchScript through the metatomic plugin with chunks, from the control file and Python (D[metatomic-plugin]) |
+| M3 | Learned potentials on one GPU: ML1, then the single-GPU stage of ML4 (Section 7) | In progress: the first step of ML1, TorchScript through the metatomic plugin with chunks, from the control file and Python (D270) |
 | M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | Planned |
 
 Features of classical MD (Section 5) continue between milestones.
@@ -464,7 +464,7 @@ tensor operations. See the [layer and model plan](future-architecture-plan.md#ex
 | ML4 | PaiNN with an opaque path and declared stages/differentiable communication, then MACE using the same contracts; external AD generates backward; semantic import is optional | Communication adjoint checks and same-model comparison of enlarged coordinate halos and per-layer feature exchange, including reverse derivatives and saved-value lifetimes; energy/force/virial agreement and measurements of bytes, messages, redundant work, memory, and full-step time |
 | ML5 | Bounded legal-plan selection and measured overlap | Fixed-plan baselines and tuning cost reported; one/two/four-GPU strong and weak scaling; multiple nodes before a cluster claim; checked preconditions and an off switch for each optimization |
 
-ML1's first step is built (D[metatomic-plugin], [metatomic-ml1.md](metatomic-ml1.md#9-what-the-first-pr-built-dmetatomic-plugin)): the TorchScript backend with chunks of centers, from `[[energy.model]]` and `mdir.System.models`, validated against NequIP's calculator in `mixed` and `double`. The AOTInductor backend, the pair list from MDIR's structures, and the CPU target follow.
+ML1's first step is built (D270, [metatomic-ml1.md](metatomic-ml1.md#9-what-the-first-pr-built-dmetatomic-plugin)): the TorchScript backend with chunks of centers, from `[[energy.model]]` and `mdir.System.models`, validated against NequIP's calculator in `mixed` and `double`. The AOTInductor backend, the pair list from MDIR's structures, and the CPU target follow.
 
 A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
 not required to complete that first deliverable, nor is support for all

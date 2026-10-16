@@ -256,7 +256,7 @@ struct Output {
   /// state takes the energies of every step of energy, rows or not
   /// (D207).
   bool embedded = false;
-  /// The terms of [[energy.model]] (D[metatomic-plugin]), which the
+  /// The terms of [[energy.model]] (D270), which the
   /// program calls; the terms at the start show the energy of each.
   std::shared_ptr<ModelTerms> models;
   /// A simulation with tunable parameters (D213): the version

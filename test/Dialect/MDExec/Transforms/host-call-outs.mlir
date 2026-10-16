@@ -3,7 +3,7 @@
 // RUN: mdir-opt %s --md-exec-fuse-loops --md-exec-assign-storage | FileCheck %s --check-prefix=HOST
 
 // A function of the host that adds to the forces, as a learned potential
-// does (D[metatomic-plugin]): it takes them in `outs` and yields the forces
+// does (D270): it takes them in `outs` and yields the forces
 // with its own added. The kick reads that result, so it can neither move
 // before the call nor fuse with the loop that computes the other forces,
 // and the call is given the buffer of those forces where it is.

@@ -342,7 +342,7 @@ static void describeRun(const Control &control, const System &system,
   }
   std::printf("cutoff:             %g Å\n", control.cutoffDistance);
   std::printf("electrostatics:     %s\n", getElectrostatics(control));
-  // The learned potentials (D[metatomic-plugin]), which the plugin loads
+  // The learned potentials (D270), which the plugin loads
   // when the run starts.
   for (const Control::ModelTerm &term : control.models) {
     std::printf("model:              %s, %s, '%s'", term.name.c_str(),

@@ -386,7 +386,7 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
     output.log.print("MDIR:   %-22s %16.6f\n", name.c_str(),
                  value / units::energy);
   }
-  // A learned potential (D[metatomic-plugin]), evaluated with the forces of
+  // A learned potential (D270), evaluated with the forces of
   // the start; ML1 takes one.
   if (output.models) {
     double energy;

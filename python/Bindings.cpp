@@ -383,7 +383,7 @@ PYBIND11_MODULE(_core, m) {
     })
     .def_property("observe", [](const driver::ExternalTerm &t) { return observeOf(t); },
                   [](driver::ExternalTerm &t, py::object value) { setObserve(t, value, "ExternalTerm"); });
-  // Learned potentials, `[[energy.model]]` (D[metatomic-plugin]): a
+  // Learned potentials, `[[energy.model]]` (D270): a
   // metatomic artifact evaluated through the optional plugin, on a GPU.
   py::class_<driver::Control::ModelTerm>(m, "ModelTerm")
     .def(py::init([](std::string name, std::string path, std::string backend,
@@ -1458,7 +1458,7 @@ PYBIND11_MODULE(_core, m) {
       if (checkpoint) {
         taken = readCheckpointFile(*checkpoint);
       }
-      // A learned potential (D[metatomic-plugin]): torch is imported before
+      // A learned potential (D270): torch is imported before
       // the plugin loads, so that the plugin takes the libtorch of the
       // imported module, whose version must be that of the plugin's build;
       // a process never holds two.
@@ -1797,7 +1797,7 @@ PYBIND11_MODULE(_core, m) {
     }, py::arg("steps") = py::none(), py::arg("tolerance") = py::none())
     .def("request_stop", [](PySimulation &s) { s.simulation->requestStop(); })
     .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
-    // The learned potentials (D[metatomic-plugin]) at their last evaluation,
+    // The learned potentials (D270) at their last evaluation,
     // that of the last step: their energy (kJ/mol) and their virial tensor
     // W = -dE/d(strain) (kJ/mol); None without a model term.
     .def("model_energies", [](PySimulation &s) -> py::object {

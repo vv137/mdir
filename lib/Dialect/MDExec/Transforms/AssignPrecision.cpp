@@ -274,7 +274,7 @@ LogicalResult Assigner::collect(Operation *op) {
       if (isRealField(operand.getType()))
         markBoundary(operand, cast<MemRefType>(type).getElementType(), op);
     // A field that the function adds to is stored with its result, in the
-    // type that the function declares (D[metatomic-plugin]).
+    // type that the function declares (D270).
     ArrayRef<Type> outTypes =
         callee.getArgumentTypes().slice(call.getInputs().size());
     for (auto [index, destination] : llvm::enumerate(call.getOuts())) {

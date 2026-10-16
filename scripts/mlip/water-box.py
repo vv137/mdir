@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Writes a box of water for the tests and the validation of the model term of
-D[metatomic-plugin] (docs/metatomic-ml1.md, Section 7): a GROMACS topology of
+D270 (docs/metatomic-ml1.md, Section 7): a GROMACS topology of
 flexible waters without classical terms (no bonds, no charges, and Lennard-Jones
 of zero), with the elements in [ atomtypes ], and its coordinates, so that the
 potential of a run is the model's alone.

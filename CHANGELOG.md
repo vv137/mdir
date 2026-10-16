@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - ML1, a learned potential through an optional metatomic plugin
-  (D[metatomic-plugin], #137, [docs/metatomic-ml1.md](docs/metatomic-ml1.md)):
+  (D270, #137, [docs/metatomic-ml1.md](docs/metatomic-ml1.md)):
   `-DMDIR_ENABLE_METATOMIC=ON` builds `libmdir_metatomic`, a C++20 library
   linking libtorch and metatomic that MDIR loads through the C header
   `include/mdir/MLIP/Plugin.h` (or `MDIR_MLIP_PLUGIN`); the classical build
