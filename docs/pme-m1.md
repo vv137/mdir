@@ -500,3 +500,205 @@ within 1% on every system and device. The loop over pairs takes 44.2 µs on
 JAC (RTX 4090) against 42.4 µs with the Gaussian, since its tables read 4
 coefficients a pair in f32. Tiled spreading (#336), which would serve both
 kernels, is the next step; the kernels are then to be compared again.
+
+**On the CPU target (issue #371).** With PME on the host in parallel
+(D271), the comparison was repeated on the CPU target. The runs are
+`mdir run` in mixed precision, inside Slurm jobs of 16 cores (AMD EPYC 7543
+or 9354; the CPU of each job is in the third table). The cutoff is 9 Å for
+the Coulomb and Lennard-Jones sums of every system, so JAC differs from the
+GPU table above and from D271, which took the suite's 8 Å. The systems are
+JAC (23,558 sites), boxes of 34,386 and 103,292 TIP3P waters (103,158 and
+309,876 sites, the states of D267 equilibrated at 1 bar), and Cellulose
+(408,609 sites). $\Delta$ is measured anew at 9 Å as above (one step on the
+CPU in double against the Gaussian at erfc $10^{-13}$, 0.33 Å, order 8),
+since both kernels' grids follow the cutoff.
+
+- **Tiers.** The prolate kernel at its automatic grid for ε = 10⁻³, 10⁻⁴,
+  and 10⁻⁵, with $P$ = 5, 6, and 7 ($P = 5$ is refused at 10⁻⁵). For each
+  Gaussian order 4, 6, and 8, the grid of fewest points, over
+  $\mathrm{erfc}(\beta r_c)$ from 10⁻⁴ to 10⁻⁷, whose $\Delta$ is at most
+  1.1 times that of the prolate default at that ε. Order 4 so matched is
+  the paper's kind of baseline, its grid raised to the accuracy; the
+  fastest order at 16 threads is the fair one. At 10⁻³ it is order 4 on
+  every system (erfc 10⁻⁴), at 10⁻⁴ and 10⁻⁵ order 6 but on JAC at 10⁻⁴,
+  where orders 4 and 6 take the same time. At 9 Å the Gaussian default
+  (erfc 10⁻⁵, 1.2 Å) has $\Delta$ = 6.7 to 7.5 × 10⁻⁴, and erfc 10⁻⁵ alone
+  leaves a floor of 4.4 × 10⁻⁵ on JAC.
+- **Mixed precision** adds the same error to every case of a system:
+  $\Delta$ in mixed precision is 1.0 × 10⁻⁴ (JAC), 1.6 and 2.1 × 10⁻⁴ (the
+  waters), and 2.9 × 10⁻⁴ (Cellulose) at 10⁻⁵, about that at 10⁻⁴, and
+  within 12% of the double at 10⁻³. As above, the tiers are labeled by the
+  kernel's $\Delta$ in double.
+- **Timing.** One job per system and tier, from a frozen copy of the
+  program, alternates the runs in 6 rounds and drops the first; each run
+  takes about 20 s of steps (at least 50). Every case runs at 16 threads,
+  and the prolate default and the three Gaussian orders also at 4 and at
+  1 thread. Everything but `[pme]` is the control of
+  `scripts/benchmarks/cpu-breakdown/bench.py` (D267). The standard
+  deviation of the rounds is mostly under 1% of the mean, and up to 7% in
+  the jobs on the login node, which other jobs shared.
+- **Parts** come from one further run of each case under the sampler of
+  D267: the share of the wall clock of the main thread, times the mean
+  step. "Rest" is the builds of the list, the bonded terms, the
+  constraints, and the integration. Two sampled runs hung in the sampler
+  and were repeated (#384, PR #385).
+
+The scripts are `cpu_cases.py`, `cpu_job.py`, and `cpu_table.py --doc` in
+`scripts/benchmarks/prolate-ewald/`. The whole step, ms (the fastest
+prolate $P$ where it is not 6):
+
+| System | ε | Kernel | Grid | Points | Δ | 16 threads | 4 threads | 1 thread |
+|---|---|---|---|---|---|---|---|---|
+| JAC | 10⁻³ | Prolate, P = 6 | 24×24×24 | 13,824 | 5.6 × 10⁻⁴ | 21.4 | 72.2 | 274.0 |
+| JAC | 10⁻³ | Prolate, P = 5 (fastest) | 24×24×24 | 13,824 | 6.0 × 10⁻⁴ | 20.2 | — | — |
+| JAC | 10⁻³ | Gaussian, order 4 | 50×50×50 | 125,000 | 6.2 × 10⁻⁴ | 12.5 | 43.1 | 159.2 |
+| JAC | 10⁻⁴ | Prolate, P = 6 | 28×28×28 | 21,952 | 7.1 × 10⁻⁵ | 21.1 | 72.2 | 275.3 |
+| JAC | 10⁻⁴ | Prolate, P = 5 (fastest) | 40×40×40 | 64,000 | 6.9 × 10⁻⁵ | 20.0 | — | — |
+| JAC | 10⁻⁴ | Gaussian, order 4 | 96×96×96 | 884,736 | 7.2 × 10⁻⁵ | 13.9 | 46.3 | 171.3 |
+| JAC | 10⁻⁵ | Prolate, P = 6 | 48×48×48 | 110,592 | 8.0 × 10⁻⁶ | 21.0 | 73.7 | 283.8 |
+| JAC | 10⁻⁵ | Gaussian, order 4 | 210×210×210 | 9,261,000 | 8.0 × 10⁻⁶ | 31.8 | 98.2 | 381.1 |
+| JAC | 10⁻⁵ | Gaussian, order 6 (fastest) | 90×90×90 | 729,000 | 6.0 × 10⁻⁶ | 15.2 | 49.4 | 180.3 |
+| TIP3P 34k | 10⁻³ | Prolate, P = 6 | 36×36×36 | 46,656 | 5.5 × 10⁻⁴ | 75.0 | 294.9 | 1127.1 |
+| TIP3P 34k | 10⁻³ | Prolate, P = 5 (fastest) | 36×36×36 | 46,656 | 5.9 × 10⁻⁴ | 71.1 | — | — |
+| TIP3P 34k | 10⁻³ | Gaussian, order 4 | 84×84×84 | 592,704 | 5.7 × 10⁻⁴ | 43.8 | 168.8 | 696.4 |
+| TIP3P 34k | 10⁻⁴ | Prolate, P = 6 | 48×48×48 | 110,592 | 6.7 × 10⁻⁵ | 88.6 | 332.4 | 1262.8 |
+| TIP3P 34k | 10⁻⁴ | Prolate, P = 5 (fastest) | 64×64×64 | 262,144 | 7.2 × 10⁻⁵ | 85.1 | — | — |
+| TIP3P 34k | 10⁻⁴ | Gaussian, order 4 | 160×160×160 | 4,096,000 | 6.7 × 10⁻⁵ | 62.8 | 212.0 | 819.1 |
+| TIP3P 34k | 10⁻⁴ | Gaussian, order 6 (fastest) | 90×90×90 | 729,000 | 6.3 × 10⁻⁵ | 55.9 | 207.8 | 794.5 |
+| TIP3P 34k | 10⁻⁵ | Prolate, P = 6 | 80×80×80 | 512,000 | 8.0 × 10⁻⁶ | 75.9 | 303.8 | 1164.3 |
+| TIP3P 34k | 10⁻⁵ | Gaussian, order 4 | 350×350×350 | 42,875,000 | 7.4 × 10⁻⁶ | 133.8 | 421.6 | 1538.7 |
+| TIP3P 34k | 10⁻⁵ | Gaussian, order 6 (fastest) | 140×140×140 | 2,744,000 | 6.7 × 10⁻⁶ | 52.8 | 202.6 | 776.8 |
+| TIP3P 103k | 10⁻³ | Prolate, P = 6 | 54×54×54 | 157,464 | 5.6 × 10⁻⁴ | 222.5 | 856.8 | 3300.6 |
+| TIP3P 103k | 10⁻³ | Prolate, P = 5 (fastest) | 54×54×54 | 157,464 | 6.1 × 10⁻⁴ | 213.2 | — | — |
+| TIP3P 103k | 10⁻³ | Gaussian, order 4 | 120×120×120 | 1,728,000 | 5.8 × 10⁻⁴ | 133.3 | 505.9 | 1994.0 |
+| TIP3P 103k | 10⁻⁴ | Prolate, P = 6 | 70×70×70 | 343,000 | 6.8 × 10⁻⁵ | 224.3 | 872.2 | 3348.9 |
+| TIP3P 103k | 10⁻⁴ | Prolate, P = 5 (fastest) | 90×90×90 | 729,000 | 7.7 × 10⁻⁵ | 218.3 | — | — |
+| TIP3P 103k | 10⁻⁴ | Gaussian, order 4 | 240×240×240 | 13,824,000 | 6.3 × 10⁻⁵ | 158.3 | 587.0 | 2243.3 |
+| TIP3P 103k | 10⁻⁴ | Gaussian, order 6 (fastest) | 126×126×126 | 2,000,376 | 7.1 × 10⁻⁵ | 149.0 | 557.9 | 2137.9 |
+| TIP3P 103k | 10⁻⁵ | Prolate, P = 6 | 108×108×108 | 1,259,712 | 8.5 × 10⁻⁶ | 257.3 | 948.4 | 3701.4 |
+| TIP3P 103k | 10⁻⁵ | Gaussian, order 4 | 480×480×480 | 110,592,000 | 8.2 × 10⁻⁶ | 387.6 | 1155.6 | 4345.6 |
+| TIP3P 103k | 10⁻⁵ | Gaussian, order 6 (fastest) | 192×192×192 | 7,077,888 | 8.0 × 10⁻⁶ | 175.6 | 620.2 | 2328.7 |
+| Cellulose | 10⁻³ | Prolate, P = 6 | 90×48×42 | 181,440 | 5.8 × 10⁻⁴ | 394.7 | 1387.1 | 5017.7 |
+| Cellulose | 10⁻³ | Prolate, P = 5 (fastest) | 90×48×42 | 181,440 | 6.6 × 10⁻⁴ | 388.7 | — | — |
+| Cellulose | 10⁻³ | Gaussian, order 4 | 210×100×100 | 2,100,000 | 6.1 × 10⁻⁴ | 244.4 | 848.0 | 3080.7 |
+| Cellulose | 10⁻⁴ | Prolate, P = 6 | 120×56×56 | 376,320 | 7.1 × 10⁻⁵ | 397.7 | 1407.7 | 5142.5 |
+| Cellulose | 10⁻⁴ | Prolate, P = 5 (fastest) | 150×72×72 | 777,600 | 9.6 × 10⁻⁵ | 389.4 | — | — |
+| Cellulose | 10⁻⁴ | Gaussian, order 4 | 384×192×192 | 14,155,776 | 7.7 × 10⁻⁵ | 296.0 | 962.4 | 3409.3 |
+| Cellulose | 10⁻⁴ | Gaussian, order 6 (fastest) | 224×108×108 | 2,612,736 | 7.0 × 10⁻⁵ | 260.6 | 923.4 | 3294.2 |
+| Cellulose | 10⁻⁵ | Prolate, P = 6 | 180×90×90 | 1,458,000 | 1.0 × 10⁻⁵ | 360.5 | 1404.4 | 5545.2 |
+| Cellulose | 10⁻⁵ | Prolate, P = 7 (fastest) | 140×70×70 | 686,000 | 7.8 × 10⁻⁶ | 359.1 | — | — |
+| Cellulose | 10⁻⁵ | Gaussian, order 4 | 840×392×392 | 129,077,760 | 9.8 × 10⁻⁶ | 513.5 | 2261.1 | 5719.2 |
+| Cellulose | 10⁻⁵ | Gaussian, order 6 (fastest) | 336×160×160 | 8,601,600 | 9.0 × 10⁻⁶ | 304.4 | 921.4 | 3196.7 |
+
+Parts at 16 threads, ms a step:
+
+| System | ε | Kernel | Spreading | Window or B-splines | FFT | Product | Gathering | Pairs | Rest | Step |
+|---|---|---|---|---|---|---|---|---|---|---|
+| JAC | 10⁻³ | Prolate, P = 6 | 2.54 | 1.26 | 0.05 | 0.03 | 0.40 | 13.53 | 3.56 | 21.37 |
+| JAC | 10⁻³ | Prolate, P = 5 | 1.51 | 1.18 | 0.05 | 0.03 | 0.26 | 13.56 | 3.61 | 20.19 |
+| JAC | 10⁻³ | Gaussian, order 4 | 0.66 | 0.11 | 0.17 | 0.02 | 0.19 | 7.82 | 3.57 | 12.52 |
+| JAC | 10⁻⁴ | Prolate, P = 6 | 2.24 | 1.36 | 0.06 | 0.04 | 0.43 | 13.49 | 3.52 | 21.14 |
+| JAC | 10⁻⁴ | Prolate, P = 5 | 1.08 | 1.28 | 0.10 | 0.14 | 0.34 | 13.45 | 3.58 | 19.97 |
+| JAC | 10⁻⁴ | Gaussian, order 4 | 1.03 | 0.08 | 0.84 | 0.11 | 0.34 | 7.81 | 3.73 | 13.95 |
+| JAC | 10⁻⁵ | Prolate, P = 6 | 1.71 | 1.47 | 0.14 | 0.23 | 0.46 | 13.48 | 3.54 | 21.03 |
+| JAC | 10⁻⁵ | Gaussian, order 4 | 6.82 | 0.09 | 11.46 | 1.10 | 0.95 | 7.69 | 3.69 | 31.80 |
+| JAC | 10⁻⁵ | Gaussian, order 6 | 2.03 | 0.20 | 0.81 | 0.08 | 0.67 | 7.83 | 3.61 | 15.23 |
+| TIP3P 34k | 10⁻³ | Prolate, P = 6 | 5.38 | 5.04 | 0.10 | 0.05 | 1.48 | 51.81 | 11.19 | 75.05 |
+| TIP3P 34k | 10⁻³ | Prolate, P = 5 | 2.96 | 4.64 | 0.08 | 0.08 | 0.91 | 51.80 | 10.59 | 71.07 |
+| TIP3P 34k | 10⁻³ | Gaussian, order 4 | 1.64 | 0.45 | 0.66 | 0.05 | 0.78 | 29.35 | 10.86 | 43.79 |
+| TIP3P 34k | 10⁻⁴ | Prolate, P = 6 | 4.17 | 6.23 | 0.15 | 0.25 | 1.88 | 63.99 | 11.89 | 88.56 |
+| TIP3P 34k | 10⁻⁴ | Prolate, P = 5 | 3.29 | 5.72 | 0.29 | 0.52 | 1.17 | 62.32 | 11.77 | 85.07 |
+| TIP3P 34k | 10⁻⁴ | Gaussian, order 4 | 5.86 | 0.44 | 4.52 | 0.60 | 1.51 | 37.10 | 12.73 | 62.75 |
+| TIP3P 34k | 10⁻⁴ | Gaussian, order 6 | 5.06 | 0.94 | 0.87 | 0.12 | 2.12 | 34.65 | 12.15 | 55.92 |
+| TIP3P 34k | 10⁻⁵ | Prolate, P = 6 | 3.71 | 6.14 | 0.50 | 0.79 | 1.53 | 52.01 | 11.19 | 75.87 |
+| TIP3P 34k | 10⁻⁵ | Gaussian, order 4 | 27.03 | 0.41 | 55.18 | 4.96 | 4.25 | 30.70 | 11.30 | 133.83 |
+| TIP3P 34k | 10⁻⁵ | Gaussian, order 6 | 5.69 | 0.79 | 2.95 | 0.14 | 2.19 | 29.85 | 11.16 | 52.77 |
+| TIP3P 103k | 10⁻³ | Prolate, P = 6 | 13.68 | 14.75 | 0.23 | 0.24 | 4.76 | 157.39 | 31.50 | 222.55 |
+| TIP3P 103k | 10⁻³ | Prolate, P = 5 | 7.41 | 13.13 | 0.26 | 0.26 | 3.19 | 157.39 | 31.60 | 213.24 |
+| TIP3P 103k | 10⁻³ | Gaussian, order 4 | 4.54 | 1.14 | 1.78 | 0.16 | 2.37 | 88.45 | 34.85 | 133.30 |
+| TIP3P 103k | 10⁻⁴ | Prolate, P = 6 | 10.64 | 16.12 | 0.55 | 0.51 | 4.59 | 159.70 | 32.19 | 224.29 |
+| TIP3P 103k | 10⁻⁴ | Prolate, P = 5 | 6.29 | 14.75 | 0.76 | 1.04 | 3.30 | 160.05 | 32.09 | 218.29 |
+| TIP3P 103k | 10⁻⁴ | Gaussian, order 4 | 12.91 | 1.05 | 13.20 | 1.10 | 3.27 | 90.81 | 35.99 | 158.34 |
+| TIP3P 103k | 10⁻⁴ | Gaussian, order 6 | 12.39 | 2.55 | 2.15 | 0.15 | 5.23 | 90.45 | 36.09 | 149.02 |
+| TIP3P 103k | 10⁻⁵ | Prolate, P = 6 | 11.52 | 20.70 | 1.40 | 2.49 | 5.15 | 181.83 | 34.20 | 257.28 |
+| TIP3P 103k | 10⁻⁵ | Gaussian, order 4 | 78.25 | 1.29 | 151.38 | 19.45 | 12.42 | 91.38 | 33.42 | 387.59 |
+| TIP3P 103k | 10⁻⁵ | Gaussian, order 6 | 20.93 | 2.86 | 6.92 | 0.73 | 6.41 | 99.02 | 38.69 | 175.56 |
+| Cellulose | 10⁻³ | Prolate, P = 6 | 16.70 | 20.53 | 0.24 | 0.37 | 6.09 | 269.05 | 81.76 | 394.73 |
+| Cellulose | 10⁻³ | Prolate, P = 5 | 9.38 | 18.91 | 0.27 | 0.34 | 4.54 | 270.91 | 84.39 | 388.73 |
+| Cellulose | 10⁻³ | Gaussian, order 4 | 7.41 | 1.51 | 2.27 | 0.22 | 3.20 | 149.75 | 80.10 | 244.44 |
+| Cellulose | 10⁻⁴ | Prolate, P = 6 | 15.92 | 22.83 | 0.49 | 0.74 | 6.49 | 268.57 | 82.64 | 397.67 |
+| Cellulose | 10⁻⁴ | Prolate, P = 5 | 10.19 | 20.35 | 0.87 | 1.44 | 4.20 | 269.31 | 83.04 | 389.40 |
+| Cellulose | 10⁻⁴ | Gaussian, order 4 | 21.74 | 1.92 | 16.32 | 2.05 | 5.32 | 161.37 | 87.25 | 295.97 |
+| Cellulose | 10⁻⁴ | Gaussian, order 6 | 16.20 | 3.29 | 2.61 | 0.38 | 7.26 | 151.22 | 79.68 | 260.64 |
+| Cellulose | 10⁻⁵ | Prolate, P = 6 | 13.22 | 21.62 | 1.32 | 2.12 | 5.87 | 232.87 | 83.45 | 360.47 |
+| Cellulose | 10⁻⁵ | Prolate, P = 7 | 19.74 | 19.98 | 0.69 | 1.02 | 8.08 | 229.03 | 80.56 | 359.10 |
+| Cellulose | 10⁻⁵ | Gaussian, order 4 | 85.62 | 1.37 | 177.02 | 15.82 | 15.36 | 135.76 | 82.60 | 513.54 |
+| Cellulose | 10⁻⁵ | Gaussian, order 6 | 23.96 | 3.20 | 8.83 | 0.64 | 8.18 | 161.33 | 98.30 | 304.43 |
+
+The prolate default's step over the Gaussian's, and over the fastest
+Gaussian with a Coulomb-only cutoff of 7 and 6 Å, estimated from the parts
+at 16 threads. The estimate scales the loop over pairs and the builds of
+the list with the cube of the reach (cutoff + 1.5 Å), the points of the
+grid with the inverse cube of the cutoff for both kernels (the Gaussian's
+spacing follows $1/\beta \propto r_c$ at a fixed erfc, the prolate
+kernel's follows $r_c$ by eq. 15), the FFT with $M \log M$, and the
+product with $M$; the spreading, the window or B-splines, the gathering,
+and the rest stay. That is the paper's setting without the Lennard-Jones;
+in MDIR the cutoff is shared with it, and a shorter Coulomb cutoff alone
+would leave the loop over pairs as it is and only enlarge the grid.
+
+| System | CPU | ε | / order 4, 16 / 4 / 1 threads | / fastest, 16 / 4 / 1 threads | / fastest, 7 Å | / fastest, 6 Å |
+|---|---|---|---|---|---|---|
+| JAC | AMD EPYC 7543 | 10⁻³ | 1.71 / 1.67 / 1.72 | 1.71 / 1.67 / 1.72 | 1.73 | 1.71 |
+| JAC | AMD EPYC 7543 | 10⁻⁴ | 1.52 / 1.56 / 1.61 | 1.52 / 1.56 / 1.63 | 1.44 | 1.37 |
+| JAC | AMD EPYC 7543 | 10⁻⁵ | 0.66 / 0.75 / 0.74 | 1.38 / 1.49 / 1.57 | 1.21 | 1.07 |
+| TIP3P 34k | AMD EPYC 9354 | 10⁻³ | 1.71 / 1.75 / 1.62 | 1.71 / 1.75 / 1.62 | 1.73 | 1.69 |
+| TIP3P 34k | AMD EPYC 7543 | 10⁻⁴ | 1.41 / 1.57 / 1.54 | 1.58 / 1.60 / 1.59 | 1.49 | 1.40 |
+| TIP3P 34k | AMD EPYC 9354 | 10⁻⁵ | 0.57 / 0.72 / 0.76 | 1.44 / 1.50 / 1.50 | 1.27 | 1.15 |
+| TIP3P 103k | AMD EPYC 9354 | 10⁻³ | 1.67 / 1.69 / 1.66 | 1.67 / 1.69 / 1.66 | 1.68 | 1.64 |
+| TIP3P 103k | AMD EPYC 9354 | 10⁻⁴ | 1.42 / 1.49 / 1.49 | 1.51 / 1.56 / 1.57 | 1.44 | 1.37 |
+| TIP3P 103k | AMD EPYC 7543 | 10⁻⁵ | 0.66 / 0.82 / 0.85 | 1.47 / 1.53 / 1.59 | 1.32 | 1.20 |
+| Cellulose | AMD EPYC 7543 | 10⁻³ | 1.61 / 1.64 / 1.63 | 1.61 / 1.64 / 1.63 | 1.58 | 1.52 |
+| Cellulose | AMD EPYC 7543 | 10⁻⁴ | 1.34 / 1.46 / 1.51 | 1.53 / 1.52 / 1.56 | 1.45 | 1.38 |
+| Cellulose | AMD EPYC 9354 | 10⁻⁵ | 0.70 / 0.62 / 0.97 | 1.18 / 1.52 / 1.73 | 1.08 | 0.99 |
+
+**Reading (CPU).**
+- **Against the fastest Gaussian order**, the prolate default's step is
+  longer at every tier, on every system, and at every number of threads
+  measured. The ratio is 1.6 to 1.75 at 10⁻³, 1.5 to 1.6 at 10⁻⁴, and
+  1.2 to 1.5 at 10⁻⁵ at 16 threads (1.5 to 1.7 at 1 thread). The fastest
+  prolate $P$ changes these by about 5% at most.
+- **Against order 4 with its grid raised**, the paper's kind of baseline,
+  the ratio is 1.3 to 1.75 at 10⁻³ and 10⁻⁴, and 0.57 to 0.70 at 10⁻⁵
+  at 16 threads (0.62 to 0.97 at 4 and 1). At 10⁻⁵ order 4 needs 9.3
+  to 129 million points, 84 to 89 times those of the prolate kernel, and
+  its FFT is 34 to 41% of its step.
+- **The FFT is a small part of the step on one node.** In the fastest
+  Gaussian at 16 threads it is 0.9 to 1.6% of the step at 10⁻³ and 10⁻⁴
+  (6% for order 4 on JAC at 10⁻⁴, as fast as order 6 there) and 2.9 to
+  5.6% at 10⁻⁵, and about the same share at 1 thread. The prolate kernel's 5 to 7 times fewer points
+  than order 6 at 10⁻⁵ save at most that share.
+- **The loop over pairs is the largest part**, 50 to 70% of the step, and
+  the prolate kernel's takes 1.7 to 1.85 times the Gaussian's at the same
+  cutoff and list (1.4 to 1.7 on Cellulose at 10⁻⁵, whose sampled runs
+  vary more). Its direct term is a
+  polynomial of $x = r/r_c$ in a cell (a square root, a floor, and Horner's
+  rule for the value and the slope), where the Gaussian's is one table of
+  $r^2$ in f32 (D94); #380. The difference, 5.7 ms on JAC to 70 to 120 ms
+  on Cellulose, is larger than the whole mesh of the fastest Gaussian.
+- **The mesh alone** (spreading, window or B-splines, FFT, product,
+  gathering) of the prolate default takes 0.99 to 1.09 times that of
+  order 6 at 10⁻⁵ at 16 threads. Its window, by Clenshaw's recurrence,
+  costs 1.3 to 23 ms against 0.1 to 3.3 for the B-splines, the largest
+  part of its mesh on the three larger systems.
+- **Threads.** From 16 threads to 1 the ratio to the fastest Gaussian
+  grows by 0 to 0.2 (by 0.55 on Cellulose at 10⁻⁵): on one core the FFT
+  is no larger a share of the step at these sizes.
+- **A shorter, Coulomb-only cutoff** (estimated) brings the ratio to the
+  fastest Gaussian at 10⁻⁵ to 1.08 to 1.32 at 7 Å and 0.99 to 1.20 at 6 Å;
+  at 10⁻³ and 10⁻⁴ it stays 1.4 to 1.7.
+
+On the CPU target of one node, therefore, the prolate kernel takes less
+time than order 4 with its grid raised at 10⁻⁵ only, and than the fastest
+Gaussian order at none of the three accuracies measured; the loop over
+pairs (#380) and the window, not the FFT, set the difference.

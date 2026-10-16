@@ -12,6 +12,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The prolate kernel (D266) measured against the Gaussian on the CPU
+  target after D271 (#371, [docs/pme-m1.md §7](docs/pme-m1.md#7-the-prolate-kernel-d266)):
+  `scripts/benchmarks/prolate-ewald/cpu_cases.py`, `cpu_job.py`, and
+  `cpu_table.py` match the kernels by the measured force error at a
+  cutoff of 9 Å and time them at 16, 4, and 1 threads with the parts of
+  the step; `cpu-breakdown/prof.py` labels the prolate kernel's loop over
+  pairs. MDIR's behavior does not change.
 - `[minimize]` and stochastic cell rescaling with a term of
   `[[energy.model]]` (D272, #367): the model's energy,
   forces, and virial enter the steepest descent and the pressure of every
