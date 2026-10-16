@@ -27,6 +27,14 @@ the path), and `mdir::archs` lists them; without it, for the device that
 compiles alone, as `nequip-compile` does. The plugin refuses a package that
 has no kernels for its device.
 
+The package also holds host code, which AOTInductor compiles for the
+compiling host's processor (`-march=native`); on a processor without its
+instructions (AVX-512 on a host of AVX2) it stops with an illegal
+instruction when it is loaded. This script compiles the host code for
+x86-64-v3 (AVX2) by default (`--cpu`), so that a package runs on any host of
+the last decade; the plugin refuses a package whose `AOTI_CPU_ISA` the host
+lacks.
+
 Tested with (2026-10-16): mir-group/Allegro-OAM-L:0.1 (Zenodo,
 doi:10.5281/zenodo.16980200, CC-BY-4.0), torch 2.14.1, nequip 0.19.1,
 nequip-allegro 0.8.3. Neither the model nor the package is part of MDIR.
@@ -59,7 +67,14 @@ def main():
     p.add_argument("--units", nargs=2, default=["angstrom", "eV"],
                    metavar=("LENGTH", "ENERGY"))
     p.add_argument("--device", default="cuda")
+    p.add_argument("--cpu", default="x86-64-v3",
+                   help="the processor that the host code is compiled for (-march), "
+                   "'native' for the compiling host's")
     a = p.parse_args()
+    if a.cpu != "native":
+        # x86-64-v3 is AVX2: the inductor's vector code and -march agree.
+        os.environ.setdefault("ATEN_CPU_CAPABILITY",
+                              "avx2" if a.cpu == "x86-64-v3" else "default")
     if not a.output.endswith(".nequip.pt2"):
         raise SystemExit("the output must end with .nequip.pt2")
 
@@ -106,6 +121,8 @@ def main():
     metadata[NEQUIP_AOTI_INPUTS_KEY] = serialize_aoti_keys(target["input"])
     metadata[NEQUIP_AOTI_OUTPUTS_KEY] = serialize_aoti_keys(target["output"])
     configs = {"aot_inductor.metadata": {k: str(v) for k, v in metadata.items()}}
+    if a.cpu != "native":
+        configs["cpp.march"] = a.cpu
     major, minor = torch.cuda.get_device_capability(device)
     if a.arch:
         os.environ["TORCH_CUDA_ARCH_LIST"] = ";".join(a.arch)

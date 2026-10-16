@@ -27,7 +27,10 @@
 #include "mdir/MLIP/Plugin.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -129,6 +132,12 @@ struct mdir_mlip_model {
   double lengthFactor = 1.0, energyFactor = 1.0;
   /// Whether the package gives no units, and Angstrom and eV are taken.
   bool unitsAssumed = false;
+  /// With MDIR_MLIP_TIMING set: the seconds of the pair search and of the
+  /// rest of the evaluations after the first, which the plugin then waits
+  /// for (docs/environment.md).
+  bool timing = false;
+  int64_t timed = 0;
+  double searchSeconds = 0.0, modelSeconds = 0.0;
   torch::Dict<std::string, mta::ModelOutput> outputs;
 };
 
@@ -281,6 +290,28 @@ void loadPackage(mdir_mlip_model &m, const mdir_mlip_load_options &options) {
         "scripts/mlip/nequip-to-aoti.py --arch");
   }
 
+  // The host code of the package is compiled for the instructions of the
+  // compiling host's processor (-march=native unless the compiler was told
+  // otherwise); on a processor without them it stops with an illegal
+  // instruction when it is loaded.
+  for (const std::string &isa : words(get("AOTI_CPU_ISA"))) {
+    bool supported = true;
+    if (isa == "AVX2")
+      supported = __builtin_cpu_supports("avx2");
+    else if (isa == "AVX512")
+      supported = __builtin_cpu_supports("avx512f");
+    else if (isa == "AVX512_VNNI")
+      supported = __builtin_cpu_supports("avx512vnni");
+    else if (isa == "AVX512_BF16")
+      supported = __builtin_cpu_supports("avx512bf16");
+    if (!supported)
+      throw std::runtime_error(
+          "the package '" + path + "' was compiled for a processor with " +
+          get("AOTI_CPU_ISA") + ", which this host's lacks (" + isa +
+          "); compile it with scripts/mlip/nequip-to-aoti.py, which compiles "
+          "for AVX2 by default, or on a host of this kind");
+  }
+
   m.modelDtype = require("model_dtype");
   std::string lengthUnit = get("mdir::length_unit");
   std::string energyUnit = get("mdir::energy_unit");
@@ -414,6 +445,8 @@ int mdir_mlip_load(const mdir_mlip_load_options *options,
     auto m = std::make_unique<mdir_mlip_model>();
     m->backend = backend;
     m->device = torch::Device(torch::kCUDA, options->device);
+    const char *timing = std::getenv("MDIR_MLIP_TIMING");
+    m->timing = timing && *timing && std::string(timing) != "0";
     if (backend == "AOTI") {
       loadPackage(*m, *options);
       *result = m.release();
@@ -537,12 +570,34 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
                       torch::kBool)
             .to(m->device);
 
+    // The time of the pair search and of the model, with MDIR_MLIP_TIMING:
+    // the device is waited for before, between, and after.
+    using clock = std::chrono::steady_clock;
+    clock::time_point start, searched;
+    if (m->timing) {
+      stream.synchronize();
+      start = clock::now();
+    }
+    auto finish = [&] {
+      if (!m->timing)
+        return;
+      stream.synchronize();
+      if (m->timed++ == 0)
+        return; // the first evaluation loads and warms up
+      m->searchSeconds += std::chrono::duration<double>(searched - start).count();
+      m->modelSeconds += std::chrono::duration<double>(clock::now() - searched).count();
+    };
+
     torch::Tensor pairs, shifts;
     {
       torch::NoGradGuard noGrad;
       findPairs(positions, cell, in->cell, m->cutoff, pairs, shifts);
     }
     int64_t p = pairs.size(0);
+    if (m->timing) {
+      stream.synchronize();
+      searched = clock::now();
+    }
 
     if (m->backend == "AOTI") {
       torch::NoGradGuard noGrad;
@@ -553,6 +608,7 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
       energy.copy_(e);
       virial.copy_(w);
       out->pairs = p;
+      finish();
       return;
     }
 
@@ -638,6 +694,7 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
       virial.zero_();
     out->pairs = p;
     out->calls = calls;
+    finish();
   });
 }
 
@@ -657,6 +714,20 @@ int mdir_mlip_memory_stats(mdir_mlip_model *m, int32_t reset,
   });
 }
 
-void mdir_mlip_free(mdir_mlip_model *model) { delete model; }
+void mdir_mlip_free(mdir_mlip_model *model) {
+  if (model && model->timing && model->timed > 1) {
+    double count = static_cast<double>(model->timed - 1);
+    std::fprintf(stderr,
+                 "MDIR: model '%s' (MDIR_MLIP_TIMING): %lld evaluations "
+                 "after the first, %.1f us of pair search and %.1f us of the "
+                 "model per evaluation, the search %.1f%% of both\n",
+                 model->name.c_str(), static_cast<long long>(model->timed - 1),
+                 1e6 * model->searchSeconds / count,
+                 1e6 * model->modelSeconds / count,
+                 100.0 * model->searchSeconds /
+                     (model->searchSeconds + model->modelSeconds));
+  }
+  delete model;
+}
 
 } // extern "C"
