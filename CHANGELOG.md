@@ -462,7 +462,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **Steepest descent ends once its step has shrunk below a floor**
-  (D[minimize-zero-step], #369): $10^{-7}$ Å below double precision and
+  (D274, #369): $10^{-7}$ Å below double precision and
   $10^{-11}$ Å in double, checked at each row of the log, rather than
   evaluating the energy at the same positions until `steps` ends. Where
   trials no longer lower the energy by more than its rounding or noise

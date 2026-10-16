@@ -4,7 +4,7 @@
 #
 # Steepest descent ends at the first row of the log whose next step has
 # shrunk below the floor, 1e-6 of the cap of 0.1 Å below double precision
-# and 1e-10 of it in double (D[minimize-zero-step], #369), rather than
+# and 1e-10 of it in double (D274, #369), rather than
 # evaluating the energy at the same positions until its last step. Two
 # argon atoms reach their minimum to the rounding of the energy, where a
 # trial no longer lowers it, and every trial then shrinks the step by 0.2.

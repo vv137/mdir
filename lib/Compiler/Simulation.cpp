@@ -1708,7 +1708,7 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
     minimizationConverged.reset();
   }
   // A step shrunk below the floor ends the minimization at the row of the
-  // end of a part (D[minimize-zero-step]), as at a row of `mdir run`;
+  // end of a part (D274), as at a row of `mdir run`;
   // without a tolerance the parts end at other steps than its rows.
   auto stalled = [&]() {
     return row.step == step && driver::isMinimizationStalled(*output,

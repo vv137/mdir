@@ -302,7 +302,7 @@ private:
   /// Whether the minimization of `mdir run` can end at a row of the
   /// energies before its last step: at the first whose largest force is
   /// below a tolerance (D219), or whose step has shrunk below
-  /// the floor (D[minimize-zero-step]). A Python simulation checks both
+  /// the floor (D274). A Python simulation checks both
   /// between its parts, on the host, and its program is that without them.
   bool stopsMinimization() const {
     return control.minimize && !control.segments;
@@ -9917,7 +9917,7 @@ void Builder::emitMinimization(StringRef velocities) {
      << "      : (i64, f64, f64, !vec, !ids)\n";
   // The host compares the largest force of each row with the tolerance
   // (D219), and the length of the next step with the floor
-  // (D[minimize-zero-step]), and keeps, in a buffer of its own, whether a
+  // (D274), and keeps, in a buffer of its own, whether a
   // row met either and the step of that row (the last step otherwise).
   // The loops read it where an iteration begins: the steps and the rows
   // after that row are loops of no iteration. A row is where the host

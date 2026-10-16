@@ -1628,7 +1628,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                    output.lastTotal / units::energy);
     // Whether the largest force fell below the tolerance
     // (D219), at a row of the energies, or the step below its
-    // floor (D[minimize-zero-step]).
+    // floor (D274).
     double largest = output.lastMinimization.maxForce /
                      (units::energy / units::length);
     if (output.stalledStep >= 0) {

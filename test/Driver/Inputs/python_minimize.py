@@ -296,7 +296,7 @@ def cutoff_refusals():
 def stalled():
     # The cutoff without constraints in double precision: its energy is not
     # continuous, and once the trials no longer lower it the step shrinks
-    # below the floor, 1e-11 Å in double (D[minimize-zero-step], #369).
+    # below the floor, 1e-11 Å in double (D274, #369).
     # `mdir run` ends at that row; a simulation that checks every step
     # (a tolerance it cannot reach, energy_period 1) ends there too, with
     # the same row, `stalled` true and `converged` false, and takes no

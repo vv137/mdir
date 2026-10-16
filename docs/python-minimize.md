@@ -81,7 +81,7 @@ for a call without one.
 
 A minimization also ends, as `mdir run` does, once its step has shrunk
 below a floor, $10^{-7}$ Å below double precision and $10^{-11}$ Å in
-double (D[minimize-zero-step]): the host checks the row at the end of
+double (D274): the host checks the row at the end of
 each part, so with a tolerance at the step where `mdir run` with the same
 energy interval ends, and without one at the end of the part. The row then
 has `stalled` true, `minimize()` returns the steps taken, fewer than asked,

@@ -1,7 +1,7 @@
 # REQUIRES: python-api, hdf5, cuda
 # Minimization in a Python simulation on a GPU (D202), scenario stalled of
 # Inputs/python_minimize.py: the end at a step shrunk below the floor
-# (D[minimize-zero-step]), against `mdir run`.
+# (D274), against `mdir run`.
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %mdir_python %S/Inputs/python_minimize.py %S/Inputs/dipeptide GPU mdir %t stalled | FileCheck %s
 # CHECK: GPU Double, cutoff: mdir run and the simulation stop at step

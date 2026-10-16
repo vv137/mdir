@@ -388,7 +388,7 @@ struct Output {
   int64_t convergedStep = -1;
   /// The length below which a step of the minimization that has shrunk
   /// ends it, in nm, and the first step's length; the step of the row at
-  /// which it ended so (-1: none) (D[minimize-zero-step]).
+  /// which it ended so (-1: none) (D274).
   double minimizeStepFloor = 0.0;
   double minimizeFirstStep = 0.0;
   int64_t stalledStep = -1;
@@ -461,7 +461,7 @@ void checkParticleSpread(const Output &output, const std::vector<double> &x,
 
 /// Whether a row of a minimization whose next step is `stepSize` long, in
 /// nm, ends it: the step has shrunk below the floor of `output`, and below
-/// the first step (D[minimize-zero-step]).
+/// the first step (D274).
 bool isMinimizationStalled(const Output &output, double stepSize);
 
 /// The signal that has asked the run to stop, or 0. A handler of SIGTERM

@@ -1120,7 +1120,7 @@ precision on the CPU and the GPU, the step at which the criterion applied
 in NumPy to the rows of a run without the key first holds, and the run
 writes the same files as one of 100 steps without the key.
 
-**The floor of the step** (D[minimize-zero-step]). The rule of
+**The floor of the step** (D274). The rule of
 $\ell$ is a walk: a trial that lowers the energy multiplies $\ell$ by
 1.2 and one that does not by 0.2. Where the decrease of a trial, about
 $\ell$ times the force along the step, falls to the rounding of the

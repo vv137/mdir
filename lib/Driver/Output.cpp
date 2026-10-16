@@ -1035,7 +1035,7 @@ void _mlir_ciface_mdrtCheckMinimization(void *state) {
     output.convergedStep = output.lastMinimizationStep;
     return;
   }
-  // A step that has shrunk below the floor (D[minimize-zero-step]): the
+  // A step that has shrunk below the floor (D274): the
   // trials no longer lower the energy by more than its rounding, or its
   // noise, and are taken or not at random, each rejection shrinking the
   // step by 0.2 against 1.2 for an acceptance, until it is 0 (#369). A
