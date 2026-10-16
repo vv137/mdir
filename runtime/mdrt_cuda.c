@@ -902,9 +902,9 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
    number within the list (`blockOf`, a group's row as wide as the longest
    list takes blocks; its length is set by `mdrtGroupsReserveBlockOf` at
    each build), the units of work that hold entries of the inner list and
-   their number (the active units, in the order of the groups), the blocks
-   that each group keeps and their sums over 32 groups (on the way to the
-   active units), and the positions of the places in the frames of their
+   their number (the active units, in the order of the blocks), their
+   counts in runs of 32 and of 1024 blocks (on the way to the active
+   units), and the positions of the places in the frames of their
    groups in f32 (`mdrtGroupsPlaced`, three numbers a place). Compiled code
    takes a buffer where it uses it (`mdrtGroupsBuffer`), so a buffer that
    grew is the one it takes. */
@@ -922,8 +922,8 @@ enum {
   GROUPS_BLOCK_OF,
   GROUPS_ACTIVE_UNITS,
   GROUPS_ACTIVE_COUNT,
-  GROUPS_KEPT_BLOCKS,
-  GROUPS_KEPT_SUMS,
+  GROUPS_ACTIVE_RUNS,
+  GROUPS_ACTIVE_WIDE_RUNS,
   GROUPS_PLACED,
   GROUPS_BUFFERS
 };
@@ -953,10 +953,10 @@ static int64_t getGroupsLength(const struct Groups *groups, int which) {
     return groups->blockOf > 0 ? groups->blockOf : 1;
   case GROUPS_ACTIVE_COUNT:
     return 1;
-  case GROUPS_KEPT_BLOCKS:
-    return groups->places / 16;
-  case GROUPS_KEPT_SUMS:
-    return groups->places / 16 / 32 + 1;
+  case GROUPS_ACTIVE_RUNS:
+    return groups->blocks / 32 + 1;
+  case GROUPS_ACTIVE_WIDE_RUNS:
+    return groups->blocks / 1024 + 1;
   case GROUPS_PLACED:
     return groups->places * 3;
   default:
