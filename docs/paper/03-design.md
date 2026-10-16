@@ -462,7 +462,7 @@ triclinic variant is parsed only into a module whose cell is triclinic.
 `mdir run` compiles before it runs. It builds the module, parses it, runs
 the pipeline, and hands the result to MLIR's `ExecutionEngine`, which
 runs LLVM's module pipeline at O3 on the host code, inlining the helpers
-of the templates and keeping their arrays in registers (D[host-opt]), and
+of the templates and keeping their arrays in registers (D269), and
 then its code generator at the default level
 (the most aggressive level measured no faster on the Amber suite,
 D197), with the fast list scheduler, whose time does not grow

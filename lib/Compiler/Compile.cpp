@@ -448,7 +448,7 @@ compiler::createHostMachine() {
 // hoisting out of loops (#359, D267). The pipeline keeps the
 // floating-point semantics of the module: it neither contracts nor
 // reassociates what the module does not allow. O3 took 11 to 16% less time
-// a step on the CPU than O2 for 4 to 5% more compile time (D[host-opt]).
+// a step on the CPU than O2 for 4 to 5% more compile time (D269).
 static constexpr llvm::OptimizationLevel hostLevel = llvm::OptimizationLevel::O3;
 
 llvm::StringRef compiler::hostOptimization() {

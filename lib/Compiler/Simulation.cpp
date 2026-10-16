@@ -534,7 +534,7 @@ compileEngine(const Control &control, const System &system,
     return targetMachine.takeError();
   llvm::cl::Option *scheduler = getSchedulerOption();
   // The level of the module pipeline of the host code is part of the key
-  // (D[host-opt]).
+  // (D269).
   std::string codegen = (scheduler ? "pre-RA-sched=fast " : "") +
                         ("host-opt=" + compiler::hostOptimization()).str();
   std::string key;

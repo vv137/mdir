@@ -734,7 +734,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (!hostMachine)
     return fail(hostMachine.takeError());
   // LLVM's module pipeline on the host code before the code generator, as
-  // a simulation runs it (D[host-opt]). The options hold a reference to the
+  // a simulation runs it (D269). The options hold a reference to the
   // transformer, which lives until the engine is made.
   llvm::TargetMachine *machine = hostMachine->get();
   std::function<llvm::Error(llvm::Module *)> optimize =

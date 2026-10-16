@@ -109,7 +109,7 @@ lowerModule(mlir::MLIRContext &context, const driver::Control &,
 /// one code-generation level of both front ends (#90).
 llvm::Expected<std::unique_ptr<llvm::TargetMachine>> createHostMachine();
 /// The level of LLVM's module pipeline that the host code of a program
-/// takes before the code generator, in both front ends (D[host-opt]): "O2"
+/// takes before the code generator, in both front ends (D269): "O2"
 /// or "O3". It is part of the key of the compile cache.
 llvm::StringRef hostOptimization();
 /// Runs LLVM's module pipeline at `hostOptimization()` on the host code of

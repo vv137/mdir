@@ -15,7 +15,7 @@ using namespace llvm;
 using namespace llvm::orc;
 using namespace mdir::compiler;
 namespace {
-/// LLVM's module pipeline and then the code generator (D[host-opt]), as
+/// LLVM's module pipeline and then the code generator (D269), as
 /// `mdir run` compiles. The cache is asked first, for the module as the
 /// lowering made it: its key is the bitcode before the pipeline, so that a
 /// hit costs neither the pipeline nor the code generation, and its
