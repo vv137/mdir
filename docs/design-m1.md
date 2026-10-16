@@ -865,6 +865,16 @@ GROMACS needs: `defaults`, `atomtypes`, `nonbond_params`, `pairtypes`,
 `bonds`, `pairs`, `angles`, `dihedrals`, `exclusions`, `settles`,
 `system`, `molecules`.
 
+A `.gro` file is read in fixed columns, as GROMACS reads it: the name
+fields take 20 columns, and the distance between the decimal points of
+the first atom's x and y sets the width of every field after them, of
+the three coordinates and of the three velocities, which GROMACS writes
+in fields as wide as the coordinates with one more decimal (`%8.3f` and
+`%8.4f` by default). A line has either three velocities that read in such
+fields or none, and every line alike; anything else, such as velocities
+wider than the coordinates, is an error that names the line, where
+GROMACS takes a field that does not read as 0 (#365).
+
 A dihedral without parameters takes those of the first entry of
 `[ dihedraltypes ]` of its function with the most types that are not
 wildcards, matched to its atoms in the order of the file or the reverse;
