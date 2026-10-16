@@ -79,6 +79,14 @@ finite, and the program's `energy_period` positive.
 below the tolerance of the call that wrote it, `False` if not, and `None`
 for a call without one.
 
+A minimization also ends, as `mdir run` does, once its step has shrunk
+below a floor, $10^{-7}$ Å below double precision and $10^{-11}$ Å in
+double (D[minimize-zero-step]): the host checks the row at the end of
+each part, so with a tolerance at the step where `mdir run` with the same
+energy interval ends, and without one at the end of the part. The row then
+has `stalled` true, `minimize()` returns the steps taken, fewer than asked,
+and a later call takes no step.
+
 GROMACS's `emtol` is likewise a tolerance on the largest force
 [[GromacsManual2025]](references.md#gromacsmanual2025). OpenMM 8.6's
 `LocalEnergyMinimizer.minimize(tolerance=...)` is on the root mean square

@@ -948,6 +948,7 @@ PYBIND11_MODULE(_core, m) {
       d["energy"] = m.energy; d["rms_force"] = m.rmsForce; d["max_force"] = m.maxForce;
       d["max_force_particle"] = m.maxForceParticle; d["step_size"] = m.stepSize;
       d["converged"] = m.converged ? py::cast(*m.converged) : py::none();
+      d["stalled"] = m.stalled;
       return d;
     })
     .def_property_readonly("cell", [](const compiler::SimulationState &s) {

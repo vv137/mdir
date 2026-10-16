@@ -461,6 +461,17 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **Steepest descent ends once its step has shrunk below a floor**
+  (D[minimize-zero-step], #369): $10^{-7}$ Å below double precision and
+  $10^{-11}$ Å in double, checked at each row of the log, rather than
+  evaluating the energy at the same positions until `steps` ends. Where
+  trials no longer lower the energy by more than its rounding or noise
+  (a learned potential's, in #369), the step fell to 0 and stayed there.
+  The run ends as at `force_tolerance`, with the checkpoint at that row,
+  exit status 0, and a line `MDIR: stopped at step N: the step has shrunk
+  to ...` that gives the step, the floor, and the largest force. A Python
+  minimization ends there as well, and `state().minimization` has
+  `stalled`. A run that reached such a step now ends before `steps`.
 - **The loop over the inner list of a dual list of groups takes only the
   blocks that hold entries** (D268, #357; the maintainer's
   ruling on PR #360). Each pruning lists them, the index of the blocks of

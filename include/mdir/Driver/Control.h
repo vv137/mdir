@@ -537,6 +537,18 @@ struct Control {
   bool minimize = false;
   double minimizeStep = 0.1;
   double minimizeTolerance = 0.0;
+  /// The longest step of steepest descent, in Å (D260).
+  static constexpr double minimizeStepCap = 0.1;
+  /// The shortest, in Å: a step that has shrunk below it, at a row of the
+  /// energies, ends the minimization (D[minimize-zero-step]): 10⁻⁶ of the
+  /// cap below double precision, 10⁻⁷ Å, under the spacing of f32 at 1 Å
+  /// (1.2 × 10⁻⁷ Å) in which the terms take the positions, and 10⁻¹⁰ in
+  /// double, 10⁻¹¹ Å, below the shortest step of a trial still taken on
+  /// the dipeptide of D65 with a plain cutoff, 1.8 × 10⁻¹⁰ Å (the
+  /// measurements are in decisions.md).
+  double getMinimizeStepFloor() const {
+    return minimizeStepCap * (precision == Precision::Double ? 1e-10 : 1e-6);
+  }
 
   // [dynamics]
   Integrator integrator = Integrator::VelocityVerlet;

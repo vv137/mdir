@@ -299,13 +299,13 @@ private:
   /// Sets `levels`, the loops of the schedule of a run of dynamics.
   void setSchedule();
   void emitMinimization(StringRef velocities);
-  /// Whether the minimization of `mdir run` ends at the first row of the
-  /// energies whose largest force is below a tolerance
-  /// (D219). A Python simulation checks it between its
-  /// parts, on the host, and its program is that without a tolerance.
+  /// Whether the minimization of `mdir run` can end at a row of the
+  /// energies before its last step: at the first whose largest force is
+  /// below a tolerance (D219), or whose step has shrunk below
+  /// the floor (D[minimize-zero-step]). A Python simulation checks both
+  /// between its parts, on the host, and its program is that without them.
   bool stopsMinimization() const {
-    return control.minimize && !control.segments &&
-           control.minimizeTolerance > 0.0;
+    return control.minimize && !control.segments;
   }
   /// A frame at `step` if a reporter's frame is due (programs of segments).
   void emitFrameIfDue(StringRef indent, StringRef step, StringRef positions,
@@ -9887,7 +9887,8 @@ void Builder::emitMinimization(StringRef velocities) {
   // rigid groups beyond what the constraints take back, and are not taken
   // (D259); on 103,292 OPC waters the largest force fell
   // below 5 kcal/mol/Å in 500 steps rather than 3300 with a cap of 1 Å.
-  os << "  %h_most = arith.constant " << formatReal(0.1 * units::length)
+  os << "  %h_most = arith.constant "
+     << formatReal(Control::minimizeStepCap * units::length)
      << " : f64\n"
      << "  %grow = arith.constant 1.2 : f64\n"
      << "  %shrink = arith.constant 0.2 : f64\n"
@@ -9914,9 +9915,10 @@ void Builder::emitMinimization(StringRef velocities) {
   os << "  mdrt.host_call @mdrtWriteMinimization(%start, %u0, " << h0 << ", "
      << reported << ", %id)\n"
      << "      : (i64, f64, f64, !vec, !ids)\n";
-  // With a tolerance (D219), the host compares the largest
-  // force of each row with it and keeps, in a buffer of its own, whether
-  // one was below it and the step of that row (the last step otherwise).
+  // The host compares the largest force of each row with the tolerance
+  // (D219), and the length of the next step with the floor
+  // (D[minimize-zero-step]), and keeps, in a buffer of its own, whether a
+  // row met either and the step of that row (the last step otherwise).
   // The loops read it where an iteration begins: the steps and the rows
   // after that row are loops of no iteration. A row is where the host
   // waits for the device anyway, so the check takes no wait of its own.

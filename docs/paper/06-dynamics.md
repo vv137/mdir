@@ -1111,8 +1111,7 @@ the device to write the row, so the check costs no synchronization of its
 own; it keeps whether a row was below $F_\text{tol}$ and its step in a
 buffer of the host, and every loop of steps, rows, and frames after that
 row has no iteration (a select of the trip count). The checkpoint is
-written at that step. Without the key the program is the same text as
-before. A Python simulation (D202) checks between its parts, which end at
+written at that step. A Python simulation (D202) checks between its parts, which end at
 the same steps, and stops where `mdir run` does, since a part continues the
 last to the bit (D215). On the dipeptide in water with PME, SHAKE, SETTLE,
 and a restraint, rows every 10 steps and $F_\text{tol} = 15$ kcal/mol/Å,
@@ -1120,6 +1119,33 @@ and a restraint, rows every 10 steps and $F_\text{tol} = 15$ kcal/mol/Å,
 precision on the CPU and the GPU, the step at which the criterion applied
 in NumPy to the rows of a run without the key first holds, and the run
 writes the same files as one of 100 steps without the key.
+
+**The floor of the step** (D[minimize-zero-step]). The rule of
+$\ell$ is a walk: a trial that lowers the energy multiplies $\ell$ by
+1.2 and one that does not by 0.2. Where the decrease of a trial, about
+$\ell$ times the force along the step, falls to the rounding of the
+energy, or to the noise of a learned potential, trials are taken or not
+at random; with probability $\tfrac12$ each, $\ln\ell$ changes by
+$\tfrac12\ln1.2 + \tfrac12\ln0.2 \approx -0.7$ a trial, and $\ell$
+goes to 0, after which every evaluation is at the same positions. On 81
+flexible waters with an Allegro model (D272) the decrease along the stiff
+O–H stretch, about $10^{-3}$ kcal/mol, met the model's spread of
+$2\times10^{-4}$, and $\ell$ was 0 for the last 27,000 of 40,000 steps
+(#369). The host therefore ends the minimization at the first row at
+which $\ell$ has shrunk below a floor $\ell_\text{min}$ (and below its
+first length), as at convergence: $\ell_\text{min} = 10^{-7}$ Å below
+double precision, under the spacing of f32 at 1 Å ($1.2\times10^{-7}$
+Å), in which the terms take the positions, and $10^{-11}$ Å in double,
+where GROMACS ends its steepest descent from a first step of the same
+0.1 Å [[Abraham2015]](references.md#abraham2015). A floor too high would
+end a run that still descends; one lower costs only the trials of the
+walk, about three per factor of 10. On the dipeptide with PME the least
+$\ell$ of 1000 steps is $6.6\times10^{-3}$ Å in either precision; with a
+plain cutoff, whose energy jumps where a pair crosses it, $\ell$ falls
+below the floor at step 26 in mixed and 40 in double precision, and the
+next 274 and 260 steps lower the energy by $4.3\times10^{-4}$ and 0
+kcal/mol. The program has the buffer of the check whether or not
+`force_tolerance` is given.
 
 ## 6.8 Alchemical free energy
 
