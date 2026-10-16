@@ -1183,4 +1183,121 @@ within $1.8 \times 10^{-4}$, $3.0 \times 10^{-3}$, and $1.3 \times 10^{-3}$.
 minimization with this backend beyond the test of `mdir run` (D272's
 validation holds for any backend, since the plugin's outputs are the same).
 
+## 12. The pair list from MDIR's neighbor structures (D[mlip-pairlist])
 
+The third step of Section 8 (issue #378), the common prerequisite of the
+staged models (#377) and of ML3. Until this step the plugin searched its
+pair list itself at every evaluation, by brute force over every image
+(Section 9.1): $O(N^2)$ times the images, 9 to 17% of an AOTI evaluation at
+12,288 to 24,576 atoms (Section 11.11), and a wait of the host at its
+`nonzero()`; the chunks of AOTI found their boundaries with
+`searchsorted(...).cpu()`, a second wait.
+
+### 12.1 What the IR states
+
+The list is a value of the program, derived from a neighborhood at the
+model's cutoff $r_c$ (the plugin's `cutoff`, read before the program is
+built, 12.6):
+
+```mlir
+%mn = md.neighborhood %x1, %cell cutoff(0.7) : !vec -> !pairs
+%me = md.edges %mn, %x1, %cell cutoff(0.7)
+        : !pairs, !vec -> !md.edges<@atoms>
+%f1 = mdrt.host_call @mdrtModelEvaluate(%mi, %x1, %p_model_z, %me, ...)
+        outs(%f1c : !vec) {in_place} : (...) -> (!vec)
+```
+
+`!md.edges<@atoms>` is the set of directed pairs of images within the
+cutoff, the list a local model takes,
+$E = \{(i, j, \mathbf s) : (j, \mathbf s) \ne (i, \mathbf 0),\ \lvert \mathbf x_j - \mathbf x_i + \mathbf s\,\mathsf H \rvert < r_c\}$,
+with $\mathbf s \in \mathbb Z^3$ the shift in cells, grouped by the
+center $i$ in the order of the particles. Each pair is in it in both
+directions, and every image: the cell may be narrower than $2 r_c$, or than
+$r_c$. The neighborhood is lowered as any other (D86): a neighbor matrix
+built with the skin of the run, refreshed when a particle has moved half of
+it (D80 under a barostat), in the matrix kind, which `md-exec-choose-neighbors`
+keeps for the edges as it keeps it for the triplets (D160): its rows hold
+every candidate of a particle. `md.edges` becomes `md_exec.build_edges`,
+whose storage form gives the buffers of 12.3, and the host call takes them in
+place. The staged models of #377 lower over the same value.
+
+### 12.2 Images and small cells: no ghosts
+
+A row of the matrix holds a particle $j$ once if its nearest image is within
+the reach $R = r_c + \text{skin}$ at the build: the minimum image in an
+orthorhombic cell, whatever its edges (the search spans
+$\min(n, 2 \cdot \text{range} + 1)$ cells of each axis, so no cell is
+visited twice), and in a triclinic one the build that tests every image
+where the reach exceeds half the least of $a_x$, $b_y$, $c_z$
+([triclinic-m2.md](triclinic-m2.md), Section 2). A pair with any image
+within $R$ is therefore in the row, and `build_edges` enumerates, for each
+entry, every image $\mathbf s$ within $R$ (the ranges of $s_c$, then $s_b$,
+then $s_a$, of the lower-triangular cell); the images of a particle itself,
+$\lvert \mathbf s\,\mathsf H \rvert < R$ with $\mathbf s \ne \mathbf 0$,
+are added to its row. No ghost particles are made: the 6.2 Å cell of the
+tests, narrower than the cutoff of 7 Å, takes every image this way.
+
+### 12.3 Slots fixed at each build, the strict list each step
+
+- **At each build** of the matrix, `build_edges` counts for each center $i$
+  the candidates $(j, \mathbf s)$ with $\lvert \mathbf r \rvert < R$ at the
+  positions of the build (the structure's reference positions, f64): $C_i$.
+  The build already waits for the host (the longest row); the counts are
+  read with it, and their prefix sums $O_i$ give each center its slots
+  $[O_i, O_{i+1})$, $C = \sum_i C_i$ in all.
+- **Each step**, a kernel takes the same candidates (decided at the
+  reference positions, so the same $C_i$) and writes into the slots of $i$
+  first those with $\lvert \mathbf r \rvert < r_c$ at the current
+  positions, in f64, then the others; the number of the first, $E_i$, stays
+  on the device. A pair within $r_c$ now was within $R$ at the build, since
+  no particle has moved more than half the skin (the condition of the
+  refresh), so it has a slot: $E_i \le C_i$.
+- **The order** is by center by construction, $i$ ascending, which the
+  chunks of AOTI rely on (Section 11.5).
+- The slots are (i, j, $s_a$, $s_b$, $s_c$) in int32, held by the runtime
+  and grown at a build that needs more, as the rows of the matrix are.
+
+### 12.4 How the plugin takes the list
+
+The model's tensors are shaped on the host, so a list whose length is known
+only on the device either is read (a wait) or is passed at a bound. Both are
+built, behind `MDIR_MLIP_PAIRS`:
+
+- **`padded`**: the model takes all $C$ slots as they are. The slots after
+  the strict ones are real pairs of $r_c \le \lvert \mathbf r \rvert < R$,
+  each once, on which a model whose cutoff function vanishes from $r_c$ on
+  (Allegro's polynomial envelope, zero for $r \ge r_{\max}$) adds nothing.
+  The boundaries of the chunks are $O_i$ at multiples of the chunk, read by
+  the plugin once per build (12.5). Nothing waits; the model takes about
+  $(R / r_c)^3$ times the pairs.
+- **`exact`**: one copy of the strict counts of the chunks ($\lceil n / c
+  \rceil$ numbers, or one for the whole system) per evaluation, then the
+  strict slots gathered on the device, $E = \sum_i E_i$ pairs.
+- **`search`**: the plugin's own search of D270, the comparison of
+  principle 3; the program then builds no list.
+
+Measured on the four test boxes (AOTI, RTX 4090): a call with the strict
+list and the same call with inert edges added (each particle with its own
+image beyond the cutoff), 20% and 100% more, differ by at most $4.1 \times
+10^{-6}$ eV/Å in the forces and $1.6 \times 10^{-5}$ eV of 366 eV in the
+energy, against a spread of $3.3 \times 10^{-6}$ eV/Å and $9.3 \times
+10^{-6}$ eV between five calls of the strict list: the float32 sums of the
+model in another order.
+
+### 12.5 The C boundary, version 2
+
+`mdir_mlip_inputs` gains the list: the slots (device, $C \times 5$ int32),
+$C$, the strict counts $E_i$ and the offsets $O_i$ (device, $n$ and $n + 1$
+int32), the number of builds of the structure (host, which tells the plugin
+when $O$ changed), and the mode. A null list makes the plugin search
+itself. `mdir_mlip_cutoff` (new) gives the model's cutoff from its file
+without a device. `MDIR_MLIP_ABI_VERSION` is 2; a plugin of version 1 is
+refused.
+
+### 12.6 The cutoff before the program
+
+The cutoff is an attribute of the IR, so the program needs it when it is
+built, before the model is loaded on the device: `mdir run`, `mdir emit`,
+and a Python simulation ask the plugin (`mdir_mlip_cutoff`): AOTI reads
+`r_max` and the units from the package's metadata, METATOMIC loads the
+TorchScript archive on the host and keeps it for the load.
