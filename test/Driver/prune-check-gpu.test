@@ -1,0 +1,43 @@
+# The pruning of the inner list of a dual list (D114) misses no pair within
+# the cutoff, and the loop over pairs reaches every unit that holds one
+# (D[rolling-prune]). With MDIR_CHECK_PRUNING each step counts, at its own
+# positions, the pairs within the cutoff in the outer list and in the inner
+# one, the inner one through the active units that the loop takes; the
+# runtime stops the run if the two differ, and reports the steps it checked.
+# The run of pme-settle.test with an inner list of 9.3 Å pruned from an
+# outer one of 11 Å, over several prunings between builds, in mixed and in
+# double precision, and the mixture of argon and krypton of barostat.test
+# under its barostat, whose cell changes at every step.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %S/Inputs/mixture.pdb %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme-settle.test | sed '1d;$d' \
+# RUN:     | sed -e 's|energy_interval = 50|energy_interval = 100|' -e 's|^steps *= 100|steps = 300|' \
+# RUN:           -e 's|^pairlist_distance = 10.0|pairlist_distance = 11.0\npruned_distance = 9.3|' \
+# RUN:           -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "mixed"\nneighbor_structure = "GROUPS"|' > %t/mixed.toml
+# RUN: sed -e 's|^precision = "mixed"|precision = "double"|' %t/mixed.toml > %t/double.toml
+# RUN: cd %t && env MDIR_CHECK_PRUNING=1 MDIR_COMPILE_CACHE=off mdir run mixed.toml > mixed.out 2> mixed.err
+# RUN: FileCheck %s --check-prefix=PRUNED < %t/mixed.out
+# RUN: FileCheck %s < %t/mixed.err
+# RUN: cd %t && env MDIR_CHECK_PRUNING=1 MDIR_COMPILE_CACHE=off mdir run double.toml > double.out 2> double.err
+# RUN: FileCheck %s --check-prefix=PRUNED < %t/double.out
+# RUN: FileCheck %s < %t/double.err
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/barostat.test | sed '1d;$d' \
+# RUN:     | sed -e 's|energy_interval = 1000|energy_interval = 100|' -e 's|^steps *= 2000|steps = 300|' \
+# RUN:           -e 's|^pairlist_distance = 10.0|pairlist_distance = 10.6\npruned_distance = 9.3|' > %t/npt.toml
+# RUN: printf '[execution]\ntarget = "gpu"\nprecision = "mixed"\nneighbor_structure = "GROUPS"\n' >> %t/npt.toml
+# RUN: cd %t && env MDIR_CHECK_PRUNING=1 MDIR_COMPILE_CACHE=off mdir run npt.toml > npt.out 2> npt.err
+# RUN: FileCheck %s --check-prefix=PRUNED < %t/npt.out
+# RUN: FileCheck %s < %t/npt.err
+# Without the variable the run checks nothing.
+# RUN: cd %t && env MDIR_COMPILE_CACHE=off mdir run mixed.toml > plain.out 2>&1
+# RUN: FileCheck %s --check-prefix=PLAIN < %t/plain.out
+
+# PRUNED:    MDIR: the inner lists were pruned {{[0-9]+}} times
+
+# CHECK:     mdrt: the inner lists were checked at 30{{[01]}} steps: {{[1-9][0-9]+}} pairs within the cutoff, none missed
+
+# PLAIN:     MDIR: the inner lists were pruned
+# PLAIN-NOT: mdrt: the inner lists were checked
