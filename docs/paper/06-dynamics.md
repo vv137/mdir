@@ -274,13 +274,17 @@ $10^{-8}$ in double precision and $10^{-4}$ below it for one of its bonds,
 or is not a number. A failure stops the run with the step and the set,
 as positions that are not numbers do (Section 4). The test is a loop over
 the tuples of the set whose result, of the type `i1`, tells whether its
-kernel is true for some tuple: on a device each loop sets a flag of its
-own in memory of the host (Section 8), which the host reads after the
-evaluation of the step, by which time it has waited for a later flag of
-the neighbor structure, so that the test adds a kernel per set and no
-wait. Where SETTLE leaves positions that are not numbers, the build of the
-neighbor structure in that evaluation stops the run first, at the same
-step.
+kernel is true for some tuple: on a device the loops of the sets are one
+kernel, each with a flag of its own in memory of the host (Section 8) and
+one event for all, which the host reads after the evaluation of the step,
+by which time it has waited for a later flag of the neighbor structure,
+so that the test adds one kernel and no wait. A failed set leaves its
+positions off the surface, or, where SETTLE has no solution, not numbers,
+which the build of the neighbor structure in that evaluation finds. In a
+step with constraints that build therefore records its stop and the step
+runs to its end, which the guards of Section 4 make safe: the failed set
+is what the run reports, and the recorded stop ends the run after the
+tests only if every set passed.
 
 ## 6.3 The thermostat
 

@@ -500,7 +500,11 @@ format, or the outputs; every such change is listed under **Changed** or
   $10^{-8}$ in double, or not a number) ends `mdir run` with a message
   naming the step and the set (`settles`, `shake1`, `shake2`, `shake3`),
   and fails a part of a Python simulation. Before, such a run went on with
-  distorted groups. No key changes.
+  distorted groups. In a run with constraints this message takes precedence
+  over that of positions that are not numbers in the same step (the
+  maintainer's ruling on PR #381). The test is one kernel a step: on one
+  RTX 4090 the Amber suite runs 2.4% (Cellulose) to 5.7% (JAC) slower.
+  No key changes.
 
 - **The loop over the inner list of a dual list of groups takes only the
   blocks that hold entries** (D268, #357; the maintainer's
