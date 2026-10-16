@@ -441,11 +441,15 @@ images), $G^\mathsf T$, an all-reduce, migration, and redistribution. An
 implementation provides all of them; the IR does not change with the
 transport.
 
+The order, as ruled on PR #379 (2026-10-16):
+
 | Order | Transport | Purpose |
 |---|---|---|
 | 1 | In-process, on the host | The oracle (this PR) |
-| 2 | MPI, CPU ranks | Separate address spaces, real messages; #35 and #38 on CPU |
-| 3 | GPUs | One domain per GPU; ML3 |
+| 2 | MPI, CPU ranks | Separate address spaces, real messages; #35 and #38 on CPU. An optional build (a CMake option), whose tests are unsupported without it; MDIR's compiler links the C ABI of the MPI library |
+| 3 | One process driving two GPUs, with peer copies | One domain per GPU; the short path to ML3, with no communication library |
+| 4 | NCCL | Several processes and nodes |
+| 5 | NVSHMEM | Fine-grained overlap |
 
 Directed and staged-forwarding exchanges (the six exchanges of a
 Cartesian grid that forward edges and corners, [[Saunders2018]](references.md#saunders2018))
@@ -500,22 +504,75 @@ the backward's communication is the AD's transpose of the forward's.
 
 ## 12. What the first PR builds
 
-To be filled in as the parts land:
+1. **The dialect `md_dist`** (Section 4;
+   `include/mdir/Dialect/MDDist`, `lib/Dialect/MDDist`): the types and
+   ops above, with the provenance of Section 4.8 (`layoutOf`, `haloOf`)
+   and the verifiers V1 to V9. The exchange proof of `md-check-exchange`
+   is shared (`md::proveExchange`), and it now also follows components and
+   lanes of vectors (`vector.extract`, `vector.from_elements`,
+   `vector.shuffle`), so that the outer product $\mathbf d\otimes\mathbf d$ of
+   a virial is proven symmetric (`check-exchange.mlir`).
+2. **The in-process reference executor** (Section 6):
+   `--convert-md-dist-to-loops` and `runtime/mdrt_dist.c` (partition,
+   halo, $G$, $G^\mathsf T$, and the trace `MDRT_DIST_TRACE`). It runs one
+   decomposition per function, the ops of `md_dist` in one block, an
+   orthorhombic cell, and `f64`.
+3. **Lennard-Jones on several domains against one**
+   (`test/Integration/dist-lj.mlir`): 64 particles in a cube of edge 4.8,
+   $r_c = 2.0$, halo reach $2.0$ (the edge of coverage), on the grids
+   $1\times1\times1$ (one domain whose ghosts are its own images, 271 of
+   them), $2\times1\times1$, $3\times2\times1$ (uneven: 6 to 15 owned
+   rows), and $16\times1\times1$ (domains of width 0.3, narrower than the
+   cutoff; 8 of the 16 own no particle; ghosts from domains that are not
+   neighbors), each on the directed and the unique traversal. The
+   reference is the same potential on one domain through `md.evaluate`,
+   `md-differentiate`, and `md_exec`'s neighbor structures, whose energy
+   agrees with `Inputs/lj_reference.py` without its switch
+   ($-226.88590520072805$). The largest differences, over all four grids,
+   `double`, on the CPU:
 
-1. The dialect `md_dist` (Section 4): types, ops, verifiers V1 to V9.
-2. The in-process reference executor (Section 6) and `runtime/mdrt_dist.c`.
-3. Two-domain Lennard-Jones: energy, forces, and virial against one
-   domain through the existing pipeline, on the directed and the unique
-   traversal, with grids of 1, 2, and uneven and empty domains.
-4. Negative tests of V1 to V9, among them a missing transfer and a stale
-   halo.
-5. The adjoint identity $\langle G\mathbf a, \mathbf b\rangle = \langle\mathbf a, G^\mathsf T\mathbf b\rangle$.
+   | Quantity | Scale | Directed | Unique | Tolerance of the test |
+   |---|---|---|---|---|
+   | Energy | $\lvert U\rvert = 226.886$ | $8.5\times10^{-14}$ | $8.5\times10^{-14}$ | $10^{-10}\lvert U\rvert$ |
+   | Force component | $\max\lvert F\rvert = 16.997$ | $5.2\times10^{-14}$ | $5.1\times10^{-14}$ | $10^{-10}\max\lvert F\rvert$ |
+   | Virial component | $\lvert\mathrm{tr}\,\mathsf W\rvert = 660.908$ | $2.0\times10^{-13}$ | (not computed) | $10^{-10}\lvert\mathrm{tr}\,\mathsf W\rvert$ |
+
+   A virial of the wrong sign fails the test (by 469). The same runs give
+   the adjoint identity
+   $\langle G\mathbf a, \mathbf b\rangle = \langle\mathbf a, G^\mathsf T\mathbf b\rangle$,
+   with $\mathbf a$ the owned positions and $\mathbf b$ the ghost positions
+   with their images (271 ghosts of 64 particles on one domain), to a relative $4\times10^{-16}$ or less (tolerance
+   $10^{-12}$).
+4. **Negative tests** of V1 to V9 (`test/Dialect/MDDist/invalid.mlir`):
+   a missing transfer of the positions and of a gathered field, a stale
+   halo of the positions and of an intermediate field (as EAM's
+   embedding derivative), a copy through another halo, ghost positions
+   without images, a reach below the cutoff, a field of another layout,
+   contributions lost, counted twice, mixed between two traversals, or
+   read before their completion, a unique traversal without or with a
+   false exchange contract, a directed sum of an asymmetric kernel, an
+   unreduced partial sum, and a relation traversed at other positions.
 
 Next parts of stage 1, each with its own tests: `md-distribute` and the
 rules of the AD (Section 11), EAM, the schedule print and trace, the
 `md_exec` path (Section 7.2), migration and `covered` with a trajectory
 (Section 8), MPI on CPU ranks, then GPUs.
 
-## 13. Questions for the maintainer
+## 13. What has been ruled (the maintainer on PR #379, 2026-10-16)
 
-See the PR. The IR and the in-process executor depend on none of them.
+1. **Control file.** A table `[distribute]`: `domains`, an integer (the
+   grid chosen from the cell) or `[gx, gy, gz]`; `transport`, `"local"`,
+   `"mpi"`, and later `"nccl"`; `traversal`, `"directed"` (the default) or
+   `"unique"`. Without the table a run is one domain. The halo's reach
+   comes from the cutoff and the skin. The keys arrive with the first part
+   that runs a distributed trajectory.
+2. **Python.** `mdir.compile(..., distribute=mdir.Distribute(domains=...,
+   transport=..., traversal=...))`. State arrays stay in the order of the
+   particle set.
+3. **Communication**, in the order of Section 9.
+4. **Outputs and checkpoints** stay in the order of the particle set,
+   independent of the number of domains; the grid and the transport go in
+   the run manifest (D168). Results are the same to the bit for a fixed
+   grid, not across grids.
+
+The order of the passes of Section 11 stands as designed.
