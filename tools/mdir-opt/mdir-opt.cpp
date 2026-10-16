@@ -6,6 +6,7 @@
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
+#include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
@@ -36,7 +37,8 @@ int main(int argc, char **argv) {
   mlir::registerAllExtensions(registry);
   mdir::md::registerDerivativeInterfaces(registry);
   registry.insert<mdir::dyn::DynDialect, mdir::md::MDDialect,
-                  mdir::md_exec::MDExecDialect, mdir::mdrt::MDRTDialect>();
+                  mdir::md_exec::MDExecDialect, mdir::mdrt::MDRTDialect,
+                  mdir::md_dist::MDDistDialect>();
 
   return mlir::asMainReturnCode(
       mlir::MlirOptMain(argc, argv, "MDIR optimizer driver\n", registry));

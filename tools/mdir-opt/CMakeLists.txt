@@ -1,12 +1,14 @@
 set(LIBS
   MDIRDyn
   MDIRMD
+  MDIRMDDist
   MDIRMDExec
   MDIRMDExecTransforms
   MDIRMDRT
   MDIRMDExecToGPU
   MDIRGPUToBinary
   MDIRMDExecToLoops
+  MDIRMDDistToLoops
   MDIRMDToMDExec
   MLIRMemRefDialect
   MDIRMDTransforms

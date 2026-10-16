@@ -100,3 +100,52 @@ md.function @wrong_sign(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell)
       -> !md.field<@atoms, 3 x f64>
   md.return %f : !md.field<@atoms, 3 x f64>
 }
+
+// -----
+
+!vec   = !md.field<@atoms, 3 x f64>
+!pairs = !md.relation<@atoms, 2, unordered>
+
+md.particle_set @atoms
+
+// Components and lanes of the displacement (D[ml2-core]): a component is
+// antisymmetric, the outer product d ⊗ d of a virial symmetric.
+md.function @components(%x: !vec, %cell: !md.cell) -> (f64, vector<9xf64>) {
+  %n = md.neighborhood %x, %cell cutoff(1.0) : !vec -> !pairs
+  %u = md.sum_relation %n, %x, %cell exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %dx = vector.extract %d[0] : f64 from vector<3xf64>
+    %k = arith.mulf %dx, %dx : f64
+    md.yield %k : f64
+  } : !pairs, !vec -> f64
+  %w = md.sum_relation %n, %x, %cell exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %l = vector.shuffle %d, %d [0, 0, 0, 1, 1, 1, 2, 2, 2] : vector<3xf64>, vector<3xf64>
+    %m = vector.shuffle %d, %d [0, 1, 2, 0, 1, 2, 0, 1, 2] : vector<3xf64>, vector<3xf64>
+    %k = arith.mulf %l, %m : vector<9xf64>
+    md.yield %k : vector<9xf64>
+  } : !pairs, !vec -> vector<9xf64>
+  md.return %u, %w : f64, vector<9xf64>
+}
+
+// -----
+
+!vec   = !md.field<@atoms, 3 x f64>
+!pairs = !md.relation<@atoms, 2, unordered>
+
+md.particle_set @atoms
+
+// A vector of a component and the distance has no sign under exchange.
+md.function @mixed_lanes(%x: !vec, %cell: !md.cell) -> f64 {
+  %n = md.neighborhood %x, %cell cutoff(1.0) : !vec -> !pairs
+  // expected-error@+2 {{cannot prove that the kernel is symmetric under exchange of the two particles}}
+  // expected-note@+1 {{if the contract holds, state it as 'exchange(symmetric, asserted)'}}
+  %u = md.sum_relation %n, %x, %cell exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %dx = vector.extract %d[0] : f64 from vector<3xf64>
+    %v = vector.from_elements %dx, %r : vector<2xf64>
+    %k = vector.reduction <add>, %v : vector<2xf64> into f64
+    md.yield %k : f64
+  } : !pairs, !vec -> f64
+  md.return %u : f64
+}
