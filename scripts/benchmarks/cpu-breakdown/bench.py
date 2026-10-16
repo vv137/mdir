@@ -15,8 +15,7 @@ C-rescale every 25 steps.
 VARIANT:
   m<T>         MDIR, target CPU, T threads, the default list (cutoff + 1.5 A)
   m<T>r<D>     the same with pairlist_distance D (A)
-  o<T>         m<T> with MDIR_EXP_HOST_O3 set (the build $MDIR_O3)
-  ms<T>, os<T> one run of m<T> or o<T> under the sampler (sampler.c), not timed
+  ms<T>        one run of m<T> under the sampler (sampler.c), not timed
   g<T>         GROMACS -nb cpu -pme cpu, T OpenMP threads, its default list policy
   x<T>         GROMACS with an exact buffer: verlet-buffer-tolerance -1,
                rlist = cutoff + 3 A, nstlist 10
@@ -25,7 +24,7 @@ GROMACS with -resethway. Writes $CPU_BENCH_DIR/SYSTEM/runs/TAG/<variant>-r<round
 and appends a JSON line per run to runs/TAG/results.jsonl; summarize.py
 reads them. Round 0 is to be dropped; the order alternates from round to round.
 
-The environment: CPU_BENCH_DIR (required); MDIR, MDIR_O3, GMX (programs;
+The environment: CPU_BENCH_DIR (required); MDIR, GMX (programs;
 by default the bare names); SAMPLER (the library built from sampler.c).
 """
 import json
@@ -40,7 +39,6 @@ if not os.environ.get("CPU_BENCH_DIR"):
     sys.exit("bench.py: CPU_BENCH_DIR, the directory of the systems, is not set")
 S = os.environ["CPU_BENCH_DIR"]
 MDIR = os.environ.get("MDIR", "mdir")
-O3 = os.environ.get("MDIR_O3", MDIR)
 GMX = os.environ.get("GMX", "gmx")
 SAMPLER = os.environ.get("SAMPLER", "")
 
@@ -147,20 +145,17 @@ def mdir_control(threads, steps, reach=None):
 
 
 def run_mdir(variant, d):
-    o3 = variant.startswith("o")
     sampled = variant[1] == "s"
-    m = re.match(r"[mo]s?(\d+)(?:r([0-9.]+))?$", variant)
+    m = re.match(r"ms?(\d+)(?:r([0-9.]+))?$", variant)
     threads, reach = int(m.group(1)), m.group(2)
     steps = steps_for(threads, "m")
     open(d + "/mdir.toml", "w").write(mdir_control(threads, steps, reach))
     env = dict(os.environ, MDIR_COMPILE_CACHE="off", OMP_PROC_BIND="close", OMP_PLACES="cores")
-    if o3:
-        env["MDIR_EXP_HOST_O3"] = "1"
     if sampled:
         os.makedirs(d + "/prof", exist_ok=True)
         env.update(LD_PRELOAD=SAMPLER, SAMPLER_OUT=d + "/prof")
     t0 = time.time()
-    out = subprocess.run([O3 if o3 else MDIR, "run", "mdir.toml"], cwd=d, capture_output=True, text=True,
+    out = subprocess.run([MDIR, "run", "mdir.toml"], cwd=d, capture_output=True, text=True,
                          env=env)
     log = out.stdout + out.stderr
     open(d + "/run.log", "w").write(log)
@@ -203,7 +198,7 @@ def run(variant, r):
     d = f"{OUT}/{variant}-r{r}"
     shutil.rmtree(d, ignore_errors=True)
     os.makedirs(d)
-    res = run_mdir(variant, d) if variant[0] in "mo" else run_gmx(variant, d)
+    res = run_mdir(variant, d) if variant[0] == "m" else run_gmx(variant, d)
     res.update(system=system, sites=natoms, variant=variant, round=r, dir=d, tag=tag,
                host=os.uname().nodename, cpu=MODEL, grid=GRID)
     with open(f"{OUT}/results.jsonl", "a") as f:
