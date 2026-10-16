@@ -131,6 +131,30 @@ void mdrtStopNotNumbers(int64_t count) {
   exit(1);
 }
 
+/* The constraints of a set, SETTLE (`set` 0) or the groups of SHAKE of `set`
+   hydrogens, left a length off its target or not a number in the step
+   `step`: the run has failed (D[constraint-failure-stop]). */
+void mdrtStopConstraintFailure(int64_t step, int64_t set) {
+  char name[32];
+  if (set == 0)
+    snprintf(name, sizeof name, "settles");
+  else
+    snprintf(name, sizeof name, "shake%lld", (long long)set);
+  char message[320];
+  snprintf(message, sizeof message,
+           "the constraints of the set '%s' failed at step %lld: a "
+           "constrained length is off its target or is not a number; the run "
+           "has failed (a time step too long, a bad contact, or a defect of "
+           "mdir)",
+           name, (long long)step);
+  if (stopHandler) {
+    stopHandler(message);
+    return;
+  }
+  fprintf(stderr, "mdir: %s\n", message);
+  exit(1);
+}
+
 int64_t mdrtGetGroupsBlocks(void) { return groupsBlocks; }
 int64_t mdrtGetGroupsCapacity(void) { return groupsCapacity; }
 int64_t mdrtGetGroupsLongest(void) { return groupsLongest; }

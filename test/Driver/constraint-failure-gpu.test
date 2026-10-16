@@ -1,0 +1,23 @@
+# The runs of constraint-failure.test on a GPU, in single, mixed, and
+# double precision: each stops at step 1 with its set, which a flag of the
+# loop that tests the set tells the host (D[constraint-failure-stop]).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: cp %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %t
+# RUN: %python %S/Inputs/kick_atom.py %t/three.inpcrd %t/three.rst7 2 1000 0 0
+# RUN: %python %S/Inputs/kick_atom.py %t/vacuum.inpcrd %t/vacuum.rst7 8 1000 0 0
+# RUN: sed -n '/^#--- water.toml/,/^#--- end/p' %S/constraint-failure.test | sed '1d;$d' | sed 's/"CPU"/"GPU"/' > %t/water.toml
+# RUN: sed -n '/^#--- peptide.toml/,/^#--- end/p' %S/constraint-failure.test | sed '1d;$d' | sed 's/"CPU"/"GPU"/' > %t/peptide.toml
+# RUN: sed 's/DOUBLE/SINGLE/' %t/water.toml > %t/water-single.toml
+# RUN: sed 's/DOUBLE/MIXED/' %t/water.toml > %t/water-mixed.toml
+# RUN: sed 's/DOUBLE/SINGLE/' %t/peptide.toml > %t/peptide-single.toml
+# RUN: sed 's/DOUBLE/MIXED/' %t/peptide.toml > %t/peptide-mixed.toml
+# RUN: not mdir run %t/water.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
+# RUN: not mdir run %t/water-single.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
+# RUN: not mdir run %t/water-mixed.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
+# RUN: not mdir run %t/peptide.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
+# RUN: not mdir run %t/peptide-single.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
+# RUN: not mdir run %t/peptide-mixed.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE

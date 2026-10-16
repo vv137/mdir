@@ -281,6 +281,22 @@ private:
   /// (D259).
   void emitConstraintFailures(StringRef indent, StringRef x,
                               StringRef result);
+  /// Emits, for each set of constraints (SETTLE, then each set of SHAKE), a
+  /// test of its lengths at the positions `x` by the tolerance of
+  /// `emitConstraintFailures`: the number of lengths that fail, an f64, or,
+  /// with `flag`, whether one fails, an i1 (D[constraint-failure-stop]).
+  /// The value of a set is named `prefix` and the set's name. Returns, for
+  /// each set, its number for `mdrtStopConstraintFailure` (0 for SETTLE, k
+  /// for the set of SHAKE of k hydrogens) and the name of its value.
+  std::vector<std::pair<int, std::string>>
+  emitConstraintTests(StringRef indent, StringRef x, StringRef prefix,
+                      bool flag);
+  /// Emits, after the evaluation of a step, the stop of the run at the
+  /// step `%noise_step` for each set whose test `failures` of
+  /// `emitConstraintTests` failed (D[constraint-failure-stop]).
+  void emitConstraintStops(
+      StringRef indent,
+      const std::vector<std::pair<int, std::string>> &failures);
   /// Emits `result`, the forces `f` over the masses, 0 for particles
   /// without mass, without their parts along the constraints at the
   /// positions `x`: the direction of steepest descent in the metric of the
@@ -375,9 +391,12 @@ private:
     return needsStepNumber() ? ", i64, !ids" : "";
   }
   /// Whether the programs of the steps take the number of the step: for the
-  /// noise of Langevin dynamics, and for the time of terms that take it.
+  /// noise of Langevin dynamics, for the time of terms that take it, and
+  /// for the stop of a run whose constraints failed
+  /// (D[constraint-failure-stop]).
   bool needsStepNumber() const {
-    return control.isLangevin() || control.isBrownian() || control.usesTime;
+    return control.isLangevin() || control.isBrownian() || control.usesTime ||
+           (hasConstraints() && !control.minimize);
   }
   /// Terms whose expressions take the time `t` (D145): the potentials take
   /// it in ps as their last argument. A program of a step computes it from
@@ -6264,6 +6283,15 @@ void Builder::emitPrograms() {
         }
       }
     }
+    // Each set of constraints tested at the positions it gave, by a loop of
+    // its own, after the loops that update the velocities from them, so
+    // that the run of the constraints stays one kernel with those loops
+    // (D110); the flags are read after the evaluation
+    // (D[constraint-failure-stop]).
+    std::vector<std::pair<int, std::string>> failures;
+    if (constraints)
+      failures = emitConstraintTests("  ", sites ? "%x1s" : "%x1",
+                                     "%broken", /*flag=*/true);
     if (sites)
       emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
     std::string raw = sites ? "e" : "";
@@ -6301,6 +6329,7 @@ void Builder::emitPrograms() {
       virial = emitModelTerms("  ", "%x1", "%cell", "%p_", "%f1c", "%f1",
                               withEnergy ? "%u1c" : "", "%u1",
                               withVirial ? virial : "", "1");
+    emitConstraintStops("  ", failures);
     std::string groups;
     if (molecular) {
       emitDiagonal(os, "%gd1", virial, "  ");
@@ -9580,6 +9609,45 @@ std::string Builder::emitStartConstraintTrace(StringRef x, StringRef f,
 
 void Builder::emitConstraintFailures(StringRef indent, StringRef x,
                                      StringRef result) {
+  std::vector<std::pair<int, std::string>> counts =
+      emitConstraintTests(indent, x, result, /*flag=*/false);
+  std::string current;
+  for (auto [index, count] : llvm::enumerate(counts)) {
+    if (index == 0) {
+      current = count.second;
+    } else {
+      std::string next = (result + "_" + std::to_string(index)).str();
+      os << indent << next << " = arith.addf " << current << ", "
+         << count.second << " : f64\n";
+      current = next;
+    }
+  }
+  std::string none = (result + "_none").str();
+  os << indent << none << " = arith.constant 0.0 : f64\n";
+  if (current.empty())
+    current = none;
+  os << indent << result << " = arith.addf " << current << ", " << none
+     << " : f64\n";
+}
+
+void Builder::emitConstraintStops(
+    StringRef indent,
+    const std::vector<std::pair<int, std::string>> &failures) {
+  // The flags are read here, after the evaluation of the step: the host
+  // has waited by then for the flag of the neighbor structure, which the
+  // stream sets after the tests, and the read adds no wait (D118).
+  for (const auto &[set, failed] : failures)
+    os << indent << "scf.if " << failed << " {\n"
+       << indent << "  " << failed << "_set = arith.constant " << set
+       << " : i64\n"
+       << indent << "  func.call @mdrtStopConstraintFailure(%noise_step, "
+       << failed << "_set) : (i64, i64) -> ()\n"
+       << indent << "}\n";
+}
+
+std::vector<std::pair<int, std::string>>
+Builder::emitConstraintTests(StringRef indent, StringRef x, StringRef prefix,
+                             bool flag) {
   // A length fails if |r²/d² − 1| is above the tolerance or is not a
   // number (an unordered comparison). Below double precision the lengths of
   // intact waters of a box of 150 Å, stored in f32, are off by up to
@@ -9592,23 +9660,28 @@ void Builder::emitConstraintFailures(StringRef indent, StringRef x,
     unsigned arity;
     std::vector<ConstrainedBond> bonds;
     std::vector<std::string> fields;
+    int number;
   };
   std::vector<Group> groups;
   if (hasSettles())
     groups.push_back({"settles",
                       3,
                       {{0, 1, "%vs_doh"}, {0, 2, "%vs_doh"}, {1, 2, "%vs_dhh"}},
-                      {"%f_settles_doh", "%f_settles_dhh"}});
+                      {"%f_settles_doh", "%f_settles_dhh"},
+                      0});
   for (const Program::TupleSet *set : getShakeSets()) {
-    Group group{set->name, set->arity, {}, {}};
+    // The set of the groups of k hydrogens is `shake<k>`.
+    Group group{set->name, set->arity, {}, {},
+                static_cast<int>(set->arity) - 1};
     for (unsigned k = 1; k < set->arity; ++k) {
       group.bonds.push_back({0, k, "%vs_d" + std::to_string(k)});
       group.fields.push_back("%f_" + set->name + "_d" + std::to_string(k));
     }
     groups.push_back(std::move(group));
   }
-  std::string current;
-  for (auto [index, group] : llvm::enumerate(groups)) {
+  std::string type = flag ? "i1" : "f64";
+  std::vector<std::pair<int, std::string>> results;
+  for (const Group &group : groups) {
     std::string coordinates, arguments, fieldTypes, fieldList;
     for (auto [k, bond] : llvm::enumerate(group.bonds)) {
       coordinates += (k == 0 ? "" : ", ") +
@@ -9626,7 +9699,7 @@ void Builder::emitConstraintFailures(StringRef indent, StringRef x,
         lengths.push_back(bond.length);
     for (auto [k, name] : llvm::enumerate(lengths))
       arguments += name + ": f64" + (k + 1 == lengths.size() ? "" : ", ");
-    std::string sum = (result + "_" + group.set).str();
+    std::string sum = (prefix + "_" + group.set).str();
     std::string inner = (indent + "  ").str();
     os << indent << sum << " = md.sum_tuples %r_" << group.set << ", " << x
        << ", %cell\n"
@@ -9645,29 +9718,27 @@ void Builder::emitConstraintFailures(StringRef indent, StringRef x,
       std::string n = std::to_string(i);
       os << inner << "%vs_abs" << n << " = math.absf " << off << " : f64\n"
          << inner << "%vs_bad" << n << " = arith.cmpf ugt, %vs_abs" << n
-         << ", " << limit << " : f64\n"
-         << inner << "%vs_one" << n << " = arith.select %vs_bad" << n << ", "
+         << ", " << limit << " : f64\n";
+      std::string failed = "%vs_bad" + n;
+      if (flag) {
+        if (!count.empty()) {
+          os << inner << "%vs_any" << n << " = arith.ori " << count << ", "
+             << failed << " : i1\n";
+          failed = "%vs_any" + n;
+        }
+        count = failed;
+        continue;
+      }
+      os << inner << "%vs_one" << n << " = arith.select %vs_bad" << n << ", "
          << one << ", " << zero << " : f64\n";
-      std::string failed = "%vs_one" + n;
+      failed = "%vs_one" + n;
       count = count.empty() ? failed : k.real("addf", count, failed);
     }
-    os << inner << "md.yield " << count << " : f64\n"
-       << indent << "} : !rel_" << group.set << ", !vec -> f64\n";
-    if (index == 0) {
-      current = sum;
-    } else {
-      std::string next = (result + "_" + std::to_string(index)).str();
-      os << indent << next << " = arith.addf " << current << ", " << sum
-         << " : f64\n";
-      current = next;
-    }
+    os << inner << "md.yield " << count << " : " << type << "\n"
+       << indent << "} : !rel_" << group.set << ", !vec -> " << type << "\n";
+    results.push_back({group.number, sum});
   }
-  std::string none = (result + "_none").str();
-  os << indent << none << " = arith.constant 0.0 : f64\n";
-  if (current.empty())
-    current = none;
-  os << indent << result << " = arith.addf " << current << ", " << none
-     << " : f64\n";
+  return results;
 }
 
 void Builder::emitDescend() {
@@ -10335,6 +10406,8 @@ void Builder::emitEntry() {
        << "    attributes {llvm.emit_c_interface}\n";
   if (reportsSolvent())
     os << "func.func private @mdrtWriteSolvent(f64, f64)\n";
+  if (hasConstraints() && !control.minimize)
+    os << "func.func private @mdrtStopConstraintFailure(i64, i64)\n";
   if (rescalesVelocities() && control.isNoseHoover())
     os << "func.func private @mdrtNoseHooverFactor(i64, f64) -> f64\n";
   else if (rescalesVelocities())
