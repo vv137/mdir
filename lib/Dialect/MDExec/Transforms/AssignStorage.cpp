@@ -842,14 +842,18 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     return memref::AllocOp::create(root->builder, loc, type,
                                    ValueRange{length});
   };
-  // On a device the grid and its transform are in the type of the forces,
-  // which the kernels compute in; the host computes them in f64.
-  Type gridType = Float64Type::get(context);
-  if (onDevice)
-    gridType = cast<MemRefType>(out.getType()).getElementType();
+  // The grid and its transform are in the type of the forces, which the
+  // kernels of a device and the templates of the host compute in: f32 in
+  // the mixed mode (D[cpu-pme-parallel]).
+  Type gridType = cast<MemRefType>(out.getType()).getElementType();
   SmallVector<Value> scratch = {
       allocate(IntegerType::get(context, 64), points),
       allocate(gridType, points), allocate(gridType, 2 * half)};
+  // On the host, the factors of the influence function along the edges,
+  // three for each point of each edge (D104), after the transform.
+  if (!onDevice)
+    scratch.push_back(
+        allocate(gridType, 3 * (grid[0] + grid[1] + grid[2])));
   if (onDevice) {
     scratch.push_back(
         allocate(Float64Type::get(context), grid[0] * grid[1] * 10));
