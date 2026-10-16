@@ -12,6 +12,11 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- The design of ML1, a learned potential through an optional metatomic
+  plugin (D[metatomic-plugin], #137, [docs/metatomic-ml1.md](docs/metatomic-ml1.md)),
+  with its feasibility measurements, and `scripts/mlip/nequip-to-metatomic.py`,
+  which turns a NequIP or Allegro package into a metatomic artifact. No
+  change to the control file yet.
 - Ewald summation with prolates, a second kernel of particle mesh Ewald
   (D266, #334): `[pme] kernel = "PROLATE"` takes the prolate
   spheroidal wave function of order zero as the splitting and as the
