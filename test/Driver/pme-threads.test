@@ -1,0 +1,96 @@
+# Particle mesh Ewald on the CPU runs in parallel loops and gives the same
+# bits for any number of threads, in the mixed and the double mode
+# (D[cpu-pme-parallel]): the spreading adds integers to the fixed-point
+# grid with atomics (D70), each line of the FFT is transformed by the same
+# code whatever thread takes it, the energy and the virial of the product
+# are summed in the fixed order of D171, and the gathering takes a particle
+# an iteration. The dipeptide in OPC of pme-settle.test under NPT, whose
+# barostat reads the virial of the reciprocal sum: the states after 50
+# steps are identical with 1, 4, and 7 threads, and from run to run.
+#
+# A step that writes neither the energy nor the virial only scales the
+# transform (pme_scale), as on a device; the others take pme_convolve.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t
+# RUN: sed -e "s|PRECISION|mixed|" -e "s|THREADS|1|" -e "s|OUT|mixed-1.h5|" run.toml > mixed-1.toml
+# RUN: mdir run mixed-1.toml > /dev/null
+# RUN: sed -e "s|PRECISION|mixed|" -e "s|THREADS|4|" -e "s|OUT|mixed-4.h5|" run.toml > mixed-4.toml
+# RUN: mdir run mixed-4.toml > /dev/null
+# RUN: sed -e "s|PRECISION|mixed|" -e "s|THREADS|7|" -e "s|OUT|mixed-7.h5|" run.toml > mixed-7.toml
+# RUN: mdir run mixed-7.toml > /dev/null
+# RUN: sed -e "s|PRECISION|double|" -e "s|THREADS|1|" -e "s|OUT|double-1.h5|" run.toml > double-1.toml
+# RUN: mdir run double-1.toml > /dev/null
+# RUN: sed -e "s|PRECISION|double|" -e "s|THREADS|4|" -e "s|OUT|double-4.h5|" run.toml > double-4.toml
+# RUN: mdir run double-4.toml > /dev/null
+# RUN: sed -e "s|PRECISION|double|" -e "s|THREADS|7|" -e "s|OUT|double-7.h5|" run.toml > double-7.toml
+# RUN: mdir run double-7.toml > /dev/null
+# RUN: sed -e "s|PRECISION|mixed|" -e "s|THREADS|4|" -e "s|OUT|mixed-4b.h5|" run.toml > mixed-4b.toml
+# RUN: mdir run mixed-4b.toml > /dev/null
+# RUN: mdir checkpoint mixed-1.h5 mixed-4.h5 | FileCheck %s
+# RUN: mdir checkpoint mixed-1.h5 mixed-7.h5 | FileCheck %s
+# RUN: mdir checkpoint mixed-4.h5 mixed-4b.h5 | FileCheck %s
+# RUN: mdir checkpoint double-1.h5 double-4.h5 | FileCheck %s
+# RUN: mdir checkpoint double-1.h5 double-7.h5 | FileCheck %s
+#
+# The parallel parts in the program of 4 threads.
+# RUN: mdir emit mixed-4.toml --stage=lowered | FileCheck %s --check-prefix=LOWERED
+
+# CHECK: the states are identical
+
+# LOWERED-DAG: llvm.atomicrmw add
+# LOWERED-DAG: llvm.call @mdrt.pme_scale_p64c{{[0-9]+}}f32o4(
+# LOWERED-DAG: llvm.call @mdrt.pme_convolve_p64c{{[0-9]+}}f32o4(
+# LOWERED-DAG: llvm.call @_mlir_ciface_mdrtFFT32Columns(
+# LOWERED-DAG: omp.wsloop
+
+#--- run.toml
+[input]
+topology   = "opc.prmtop"
+coordinates = "opc.inpcrd"
+
+[output]
+energy_interval     = 25
+checkpoint          = "OUT"
+checkpoint_interval = 50
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+coulomb_modifier  = "POTENTIAL_SHIFT"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 50
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 1.0
+
+[thermostat]
+method        = "V-RESCALE"
+interval      = 5
+time_constant = 0.5
+
+[barostat]
+method        = "C-RESCALE"
+time_constant = 1.0
+
+[constraints]
+rigid_water    = true
+hydrogen_bonds = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+threads   = THREADS
+precision = "PRECISION"
+#--- end
