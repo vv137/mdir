@@ -186,11 +186,19 @@ in f32 would lose the digits that place it within a point: the product
 with $K$ in f32 resolves a point to $K\,2^{-24}$, $1.6\times10^{-5}$ of a
 point for $K = 270$ (D78, amended).
 
-On the host every step is f64: the charges are added in fixed point by a
-serial loop, the FFT is pocketfft [[Reinecke2019]](references.md#reinecke2019) (serial, real-to-complex
-along $z$ and complex along $y$ and $x$, with cached plans), and the
-product and gathering are loops over the grid and the particles, the
-gathering parallel under OpenMP.
+On the host every step is a parallel loop under OpenMP, in the type of
+the forces as on a device (f32 in the mixed mode), and its result does not
+depend on the number of threads (D[cpu-pme-parallel]). The charges are
+added in fixed point by integer atomics from a loop over the particles,
+whose sum does not depend on their order. The FFT is pocketfft
+[[Reinecke2019]](references.md#reinecke2019) (real-to-complex along $z$
+and complex along $y$ and $x$, with cached plans), called for blocks of
+lines from a loop over the lines of each pass; each line is transformed by
+the same code whatever thread takes it, in f64. The product is a loop over
+the rows of the grid, the Gaussian influence of a rectangular cell from the
+factors of its edges as on a device, its energy and virial added over the
+rows in the fixed order of the CPU's reductions (D171), and only on the
+steps that write them. The gathering is a loop over the particles.
 
 **Cost.** On Cellulose (408,609 atoms, a grid of 270 × 126 × 126) the
 places take 27 µs a step, the additions 214, the copy and the clearing 63

@@ -449,6 +449,16 @@ format, or the outputs; every such change is listed under **Changed** or
   `MDIR_CHECK_PRUNING` set counts, at every step, the pairs within the
   cutoff in the outer and the inner lists and stops if they differ.
 
+- **Particle mesh Ewald on the CPU runs in parallel** (D[cpu-pme-parallel],
+  #359, step 2 of D267). The spreading adds the charges to the fixed-point
+  grid with integer atomics from a loop over the particles, the FFT
+  transforms the lines of each pass in parallel, and the product with the
+  influence function is a loop over the rows of the grid that sums the
+  energy and the virial only on the steps that write them. The result is
+  the same to the bit for any number of threads. In the mixed mode the
+  B-splines, the grid, its transform, and the gathering are in f32, as on a
+  GPU, so the reciprocal energy, forces, and virial of the CPU in that mode
+  change at the rounding of f32. No key of the control file changes.
 - **The step of steepest descent grows to at most 0.1 Å, not 1 Å**
   (D260, #351; the maintainer's ruling on PR #348). Near a
   cap of 1 Å many trials turned rigid waters further than the constraints

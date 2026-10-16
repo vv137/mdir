@@ -60,7 +60,7 @@ def ConvertMDExecToLoops
     | The global sums of a loop | `scf.reduce` of the `scf.parallel`, which `convert-scf-to-openmp` makes a reduction of OpenMP when the run has more than one thread |
     | `md_exec.empty_neighbors` | The buffers of a neighbor matrix |
     | `md_exec.refresh_neighbors` | The test of validity and a call to the neighbor build template, which the pass adds to the module |
-    | `md_exec.reciprocal` | The templates of particle mesh Ewald for the host, in f64, and the transforms of pocketfft (`mdrtFFTForward3D`, `mdrtFFTBackward3D`) |
+    | `md_exec.reciprocal` | The templates of particle mesh Ewald for the host, in parallel loops, the grid in the type of the forces, and the transforms of pocketfft for blocks of lines (`mdrtFFT64RowsForward` and the others of `runtime/mdrt_fft.c`); `pme_scale` where the energy and the virial have no use (D[cpu-pme-parallel]) |
     | `md_exec.rebuild_count` | A load |
     | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 
