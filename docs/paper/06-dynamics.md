@@ -253,6 +253,35 @@ energy of the motion within the group.
 $N_c = 3N_\text{water} + \sum_\text{groups} n_\text{H}$; the three of the
 center of mass are always subtracted.
 
+**A failure of the constraints** (D[constraint-failure-stop]). The
+constrained dynamics samples the surface $g_k(\mathbf x) = 0$ and the
+velocities tangent to it: the count $N_f$ above, the virial
+$\mathsf W_c$, and the temperature and the pressure of the log all assume
+that every constraint holds after every step. Neither solver can always
+make it hold. The projection of M-SHAKE along the old bond has a solution
+only if the bond moved by less than its length (Section 6.7), its six
+iterations converge only near that solution, and SETTLE in double
+precision takes square roots that become those of negative numbers. A
+step that leaves a group off the surface is not a step of the constrained
+system: the group's bonds, which have no energy of their own, carry the
+error into the following steps, and the kinetic energy of its motion
+along the bonds counts toward a temperature whose $N_f$ leaves it out.
+After the constraints of the positions, each set (SETTLE, then each set
+of SHAKE) is therefore tested at the positions it gave, by the test of
+Section 6.7: a group fails if
+$\big\lvert\lVert\mathbf r_k\rVert^2/d_k^2 - 1\big\rvert$ is above
+$10^{-8}$ in double precision and $10^{-4}$ below it for one of its bonds,
+or is not a number. A failure stops the run with the step and the set,
+as positions that are not numbers do (Section 4). The test is a loop over
+the tuples of the set whose result, of the type `i1`, tells whether its
+kernel is true for some tuple: on a device each loop sets a flag of its
+own in memory of the host (Section 8), which the host reads after the
+evaluation of the step, by which time it has waited for a later flag of
+the neighbor structure, so that the test adds a kernel per set and no
+wait. Where SETTLE leaves positions that are not numbers, the build of the
+neighbor structure in that evaluation stops the run first, at the same
+step.
+
 ## 6.3 The thermostat
 
 Velocity rescaling with a stochastic term [[Bussi2007]](references.md#bussi2007) acts at the end
