@@ -1,6 +1,6 @@
 # The runtime is plain C, so that it builds without the C++ standard library
 # and loads into any host process.
-add_library(mdrt SHARED mdrt.c mdrt_fft.c
+add_library(mdrt SHARED mdrt.c mdrt_dist.c mdrt_fft.c
   ${PROJECT_SOURCE_DIR}/third_party/pocketfft/pocketfft.c)
 target_include_directories(mdrt PRIVATE
   ${PROJECT_SOURCE_DIR}/third_party/pocketfft)

@@ -9,7 +9,7 @@ add_mlir_library(MDIRCompiler Compile.cpp
   PARTIAL_SOURCES_INTENDED
   LINK_COMPONENTS OrcJIT Passes
   LINK_LIBS PUBLIC
-  MDIRDriver MDIRDyn MDIRMD MDIRMDExec MDIRMDExecToGPU MDIRGPUToBinary MDIRMDExecToLoops
+  MDIRDriver MDIRDyn MDIRMD MDIRMDExec MDIRMDExecToGPU MDIRGPUToBinary MDIRMDExecToLoops MDIRMDDistToLoops
   MDIRMDExecTransforms MDIRMDRT MDIRMDToMDExec MDIRMDTransforms
   MLIRRegisterAllDialects MLIRRegisterAllExtensions MLIRRegisterAllPasses
   MLIRToLLVMIRTranslationRegistration
