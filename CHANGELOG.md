@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - `[minimize]` and stochastic cell rescaling with a term of
-  `[[energy.model]]` (D[metatomic-npt-min], #367): the model's energy,
+  `[[energy.model]]` (D272, #367): the model's energy,
   forces, and virial enter the steepest descent and the pressure of every
   coupling and count of the work, and its pair list follows the cell of each
   evaluation. `scripts/mlip/virial-strain.py` checks the virial against the
@@ -473,7 +473,7 @@ format, or the outputs; every such change is listed under **Changed** or
   `MDIR_CHECK_PRUNING` set counts, at every step, the pairs within the
   cutoff in the outer and the inner lists and stops if they differ.
 
-- **Particle mesh Ewald on the CPU runs in parallel** (D[cpu-pme-parallel],
+- **Particle mesh Ewald on the CPU runs in parallel** (D271,
   #359, step 2 of D267). The spreading adds the charges to the fixed-point
   grid with integer atomics from a loop over the particles, the FFT
   transforms the lines of each pass in parallel, and the product with the

@@ -715,7 +715,7 @@ from the model; the order of the input (the program reorders the particles
 by their positions at every rebuild, which the runs above cross); the CPU
 target, which ML1 refuses.
 
-## 10. Minimization and constant pressure (D[metatomic-npt-min])
+## 10. Minimization and constant pressure (D272)
 
 The maintainer's rulings of 2026-10-16 (#367): `[minimize]` and a barostat
 take a model term. Since the model's call yields its energy and virial as

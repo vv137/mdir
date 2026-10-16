@@ -464,7 +464,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
            << "cannot parse the template of particle mesh Ewald";
   // On one thread the spreading adds to the fixed-point grid without
   // atomics: an integer sum is the same in any order, and a locked addition
-  // costs about 20 cycles where nothing else writes (D[cpu-pme-parallel]).
+  // costs about 20 cycles where nothing else writes (D271).
   if (!atomicGrid)
     templates->walk([](memref::AtomicRMWOp atomic) {
       if (atomic.getKind() != arith::AtomicRMWKind::addi)
@@ -563,7 +563,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   func::CallOp::create(builder, loc, instance("mdrt.pme_real"),
                        ValueRange{fixed, real});
   // The transforms in parallel over the lines of each pass
-  // (D[cpu-pme-parallel]).
+  // (D271).
   func::CallOp::create(builder, loc, instance("mdrt.pme_fft_forward"),
                        ValueRange{real, complex, k1, k2, k3});
   // A step that writes neither the energy nor the virial only scales the

@@ -188,7 +188,7 @@ point for $K = 270$ (D78, amended).
 
 On the host every step is a parallel loop under OpenMP, in the type of
 the forces as on a device (f32 in the mixed mode), and its result does not
-depend on the number of threads (D[cpu-pme-parallel]). The charges are
+depend on the number of threads (D271). The charges are
 added in fixed point by integer atomics from a loop over the particles,
 whose sum does not depend on their order. The FFT is pocketfft
 [[Reinecke2019]](references.md#reinecke2019) (real-to-complex along $z$

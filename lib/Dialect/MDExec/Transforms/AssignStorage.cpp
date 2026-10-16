@@ -845,7 +845,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   };
   // The grid and its transform are in the type of the forces, which the
   // kernels of a device and the templates of the host compute in: f32 in
-  // the mixed mode (D[cpu-pme-parallel]).
+  // the mixed mode (D271).
   Type gridType = cast<MemRefType>(out.getType()).getElementType();
   SmallVector<Value> scratch = {
       allocate(IntegerType::get(context, 64), points),

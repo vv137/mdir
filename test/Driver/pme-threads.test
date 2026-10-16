@@ -1,6 +1,6 @@
 # Particle mesh Ewald on the CPU runs in parallel loops and gives the same
 # bits for any number of threads, in the mixed and the double mode
-# (D[cpu-pme-parallel]): the spreading adds integers to the fixed-point
+# (D271): the spreading adds integers to the fixed-point
 # grid with atomics (D70), each line of the FFT is transformed by the same
 # code whatever thread takes it, the energy and the virial of the product
 # are summed in the fixed order of D171, and the gathering takes a particle

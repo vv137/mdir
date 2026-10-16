@@ -3,7 +3,7 @@
 
    Compiled code calls these functions for blocks of the lines of a grid,
    from a parallel loop over the blocks of each of the three passes of a
-   transform (D[cpu-pme-parallel]): the real lines along z, then the complex
+   transform (D271): the real lines along z, then the complex
    lines along y and along x (backward, in the reverse order). Each line is
    transformed by the same code whatever thread takes it, and nothing is
    summed across lines, so the result does not depend on the number of

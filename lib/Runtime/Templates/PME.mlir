@@ -14,7 +14,7 @@
 // template for devices (PMEGPU.mlir): the weights of the B-splines, the
 // grid and its transform, the factors of the influence function, the
 // product, and the sums of the gathering are in it, so in f32 in the mixed
-// mode, where the mixed mode of a device takes f32 (D[cpu-pme-parallel]).
+// mode, where the mixed mode of a device takes f32 (D271).
 // The places of the particles, the cell, and the sums over the rows of the
 // grid are in f64.
 //
@@ -31,7 +31,7 @@
 // not depend on the number of threads: the spreading adds integers with
 // atomics, the FFT transforms each line by the same code whatever thread
 // takes it, and the energy and the virial are reduced in a fixed order
-// (D[cpu-pme-parallel]). The arrays of a particle live on the stack of a
+// (D271). The arrays of a particle live on the stack of a
 // function of its own, which each iteration calls.
 
 !pme_pos = f64

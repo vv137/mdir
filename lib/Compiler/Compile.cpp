@@ -178,7 +178,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // the segments of `mdir run` (#316).
   bool threaded = control.threads > 1;
   // On one thread the spreading of PME adds to its grid without atomics
-  // (D[cpu-pme-parallel]).
+  // (D271).
   os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true"
      << (threaded ? "" : " atomic-grid=false") << "}"
      // The code writes no buffer of the model that the entry takes
