@@ -472,8 +472,11 @@ parallel with M3 (the ruling on #377): its stage 1 is the dialect
 `md_dist` (layouts, halos, $G$ and $G^\mathsf T$ as adjoint ops, and the
 verifier of missing transfers, stale halos, coverage, and exactly-once
 sums) with an in-process executor of several domains as the oracle, and
-Lennard-Jones on two domains against one. `md-distribute` with the rules
-of the AD, EAM, the path through `md_exec`, migration, MPI on CPU ranks,
+Lennard-Jones on two domains against one. Its second part
+(D[ml2-distribute]) derives that program from the global potential:
+`md-distribute`, the transposes of $G$ and $G^\mathsf T$ declared to
+`md-differentiate`, and `md-dist-owner-computes` for the directed
+traversal. EAM, the path through `md_exec`, migration, MPI on CPU ranks,
 and GPUs follow, then the classical track of #31 (topology, PME,
 ensembles, the Amber suite on several GPUs).
 

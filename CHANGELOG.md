@@ -12,6 +12,18 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- ML2, stage 1, part 2 (D[ml2-distribute], #31,
+  [docs/distributed-ml2.md](docs/distributed-ml2.md), Section 14):
+  `md-distribute` rewrites a global potential to run on a grid of domains
+  (`grid`, `traversal`), and `md-differentiate` derives its forces and
+  virial through the declared transposes of the transfers
+  (`AdjointOpInterface`: $G$ and $G^\mathsf T$, distribution and
+  collection, all-reduce); `md-dist-owner-computes` turns the derivative's
+  form on the directed traversal into the computation at the owners. The
+  dialect gains `md_dist.map_particles` and a two-ended `gather_pairs` over
+  a directed relation. The proof of exchange contracts moves to the library
+  of `md` (`mdir/Dialect/MD/MDExchange.h`). No control-file key or output
+  changes.
 - ML2, stage 1 of distributed execution, the core (D[ml2-core], #31,
   [docs/distributed-ml2.md](docs/distributed-ml2.md)): the dialect
   `md_dist`, with layouts (ownership), halos, the owner-to-ghost copy and
