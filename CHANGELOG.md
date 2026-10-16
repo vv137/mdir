@@ -12,6 +12,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- `[minimize]` and stochastic cell rescaling with a term of
+  `[[energy.model]]` (D[metatomic-npt-min], #367): the model's energy,
+  forces, and virial enter the steepest descent and the pressure of every
+  coupling and count of the work, and its pair list follows the cell of each
+  evaluation. `scripts/mlip/virial-strain.py` checks the virial against the
+  energy under strain.
 - ML1, a learned potential through an optional metatomic plugin
   (D[metatomic-plugin], #137, [docs/metatomic-ml1.md](docs/metatomic-ml1.md)):
   `-DMDIR_ENABLE_METATOMIC=ON` builds `libmdir_metatomic`, a C++20 library

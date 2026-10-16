@@ -586,8 +586,9 @@ As ruled (Section 1, item 9):
 - **Python**: `mdir.System.models` and `mdir.ModelTerm`
   ([python-model.md](python-model.md#learned-potentials));
   `Simulation.model_energies()` gives the energy and the virial tensor.
-- **Refused** with a model term: the CPU target, the deterministic mode, a
-  barostat, `[minimize]`, `[free_energy]`, `observe`, tunables, the frame
+- **Refused** with a model term: the CPU target, the deterministic mode,
+  (in this first PR; Section 10 lifts them) a barostat and `[minimize]`,
+  `[free_energy]`, `observe`, tunables, the frame
   evaluator, more than one model, a cell that is not periodic, `single`
   precision, constraints, virtual sites, and a particle without an element
   or mass or with an element that the model does not take. A run needs a
@@ -713,3 +714,115 @@ later).
 from the model; the order of the input (the program reorders the particles
 by their positions at every rebuild, which the runs above cross); the CPU
 target, which ML1 refuses.
+
+## 10. Minimization and constant pressure (D[metatomic-npt-min])
+
+The maintainer's rulings of 2026-10-16 (#367): `[minimize]` and a barostat
+take a model term. Since the model's call yields its energy and virial as
+values of the program (Section 9.1), the minimizer and the barostat take
+them as those of any other term; no key is added.
+
+### 10.1 What changed
+
+- **Minimization.** Steepest descent (D73, with the rejection of a trial
+  whose constraints fail, D259, and the step of at most 0.1 Å, D260) takes
+  the model's energy and forces at the start and in every trial
+  (`@descend`): the call follows the evaluation and the restraints there as
+  in a step.
+- **Constant pressure.** Stochastic cell rescaling (D72, D77) takes the
+  virial of the step, the model's included, in every coupling (isotropic,
+  semi-isotropic, anisotropic) and every count of the work. With
+  `work = "EXACT"` the energy and forces at the scaled positions are
+  evaluated with the model in the scaled cell (`%bcell`), and a continued
+  run that scales every step evaluates the model at its start. The pressure
+  of the barostat is that of the groups of D264; a model term takes no
+  constraints, so every particle is a group of one and the pressure is the
+  atomic one, $P = (2K + \mathrm{tr}\,\mathsf W)/3V$ with the kinetic energy
+  of the half steps.
+- **The pair list follows the cell.** The call passes the cell of the step,
+  its diagonal and tilts, at every evaluation, and the plugin builds its
+  pair list anew from the positions and that cell each time (every image
+  within the cutoff, no skin, Section 9.1). A cell that the barostat
+  changes is therefore followed at the next evaluation, with nothing kept
+  from the cell before; the plugin no longer holds the cell of the input.
+
+### 10.2 Validation
+
+RTX 4090, the float64 artifact, the `nequip` package's ASE calculator
+(`NequIPCalculator`) evaluating the same Allegro model as the reference.
+
+**The virial against the energy under strain**
+(`scripts/mlip/virial-strain.py`): the 81-atom triclinic box of Section 3.2
+(edges 15 Å, tilts 1.5, -2.25, 3 Å), strained by $x' = x(\mathsf I +
+\epsilon)$, $\mathsf H' = \mathsf H(\mathsf I + \epsilon)$ in each of the
+nine components, rotated back to MDIR's lower-triangular frame (which leaves
+the energy), and evaluated by MDIR's Python model; $W_{ab} = -\partial
+E/\partial\epsilon_{ab}$ by central differences at $h = 5 \times 10^{-3}$
+and $2.5 \times 10^{-3}$ combined by Richardson's extrapolation. The largest
+difference over the nine components from the virial that the run reports is
+0.43 kJ/mol in `double` and 0.37 kJ/mol in `mixed`, against components up
+to 2,627 kJ/mol ($1.6 \times 10^{-4}$ and $1.4 \times 10^{-4}$ of it); the
+differences at the two $h$ alone are 1.6 and 0.39 kJ/mol, a factor of four,
+the error of order $h^2$. The remainder is the energy's own resolution:
+MDIR's evaluations of one configuration spread by $2 \times 10^{-4}$
+kcal/mol (Section 6.8), which divided by $2h$ is 0.1 kJ/mol. The trace of
+the program's virial, which the pressure takes, equals that of the model's
+to the last digit printed.
+
+**The pressure of the barostat** (D264): in the runs below, the pressure of
+the log against $(2K + \mathrm{tr}\,\mathsf W)/3V$ from its own columns of the
+kinetic energy at the step, the virial, and the volume: correlation
+0.9999997, root-mean-square difference 25 atm against a spread of 5,583 atm,
+the difference being the kinetic energy of the half steps that D264 takes.
+
+**Constant pressure**: 24 waters (72 atoms) at liquid density (Section 4.1),
+`mixed`, velocity Verlet, 0.5 fs, V-RESCALE (0.1 ps, every 10 steps),
+C-RESCALE (isotropic, 1 ps, 1 atm, Trotter), four runs of 10 ps from the
+same start with seeds 1 to 4. The volume falls from 718 Å³ and its mean
+over the four runs is 804, 794, 768, 750, 757, and 772 Å³ in the windows
+0-1, 2-3, 3-4, 4-6, 6-8, and 8-10 ps (each $\pm$ 3 to 15 Å³). Over 4-10 ps:
+$V = 760 \pm 6$ Å³ (standard error over the four runs), a density of
+$0.946 \pm 0.007$ g/cm³; the pressure $176 \pm 360$ atm against 1 atm,
+with an instantaneous spread of 5,600 atm, which this box and length do not
+resolve better; the temperature 302.7 K. 197 ms per step. A continued run
+that begins to scale every step from a checkpoint of a run that did not,
+and one with `work = "EXACT"` (`model-term-gpu.test`), run with a conserved
+energy within 0.1 kcal/mol over 20 to 40 steps.
+
+**Minimization from the unminimized lattice** (the 81-atom cubic box of
+Section 3.2, -35,384 kJ/mol), with the tolerance of ASE's default, a
+largest force of 0.01 eV/Å (0.2306 kcal/mol/Å), in both:
+
+| | Steps | Energy (kJ/mol) | Largest force (kcal/mol/Å) |
+|---|---|---|---|
+| ASE's FIRE, the `nequip` package's calculator | 4,251 | -37,881.41 | 0.2306 |
+| MDIR, steepest descent, `double` | 20,000 | -37,697.08 | 1.88 |
+| MDIR, the same continued | 33,000 | -37,771.1 | 0.79 (the step fell to zero at 13,000) |
+| MDIR, `mixed` | 20,000 | -37,696.8 | 2.09 |
+| MDIR from FIRE's minimum | 0 | -37,881.41 | 0.2305 (stops at the first row) |
+
+The surfaces are the same: at FIRE's minimum MDIR's energy is FIRE's to
+0.01 kJ/mol and its largest force is below the tolerance, and at MDIR's
+minimum after 20,000 steps the `nequip` package's calculator gives
+-37,697.079 kJ/mol and the same largest force. The minima differ: FIRE's
+trace has the force spikes of rearrangements (8.6 and 19.7 kcal/mol/Å at
+steps 3,000 and 3,500) as its energy falls past MDIR's, which a descent does
+not cross. Steepest descent also stalls short of the tolerance: its
+direction is the force over the mass (D73), which the hydrogens dominate
+along the stiff O-H stretch. Along it, at MDIR's minimum, the calculator's
+energy falls by $1.2 \times 10^{-3}$ kcal/mol at 0.001 Å where the slope
+predicts $2.3 \times 10^{-3}$, by $3.7 \times 10^{-4}$ at 0.003 Å, and rises
+by 0.046 at 0.01 Å; the best decrease of a trial, about $10^{-3}$ kcal/mol,
+approaches the resolution of the model's energy ($2 \times 10^{-4}$
+kcal/mol between evaluations of one configuration, and as much between
+configurations $10^{-5}$ Å apart), so trials are rejected at random and the
+step shrinks to zero. A minimization with a model therefore stops where the
+energy no longer resolves the step; FIRE, with inertia, does not depend on
+single trials.
+
+**Constant energy from MDIR's own minimum** (20,000 steps of steepest
+descent), velocities of 300 K, 2 ps of 0.5 fs: in `double` the total energy
+drifts by $-0.042$ kJ/mol/ps ($-0.52$ kJ/mol/ns per atom) with a fluctuation
+of 0.14 kJ/mol about the fit, mean temperature 266 K; in `mixed` $-0.099$
+kJ/mol/ps ($-1.2$ kJ/mol/ns per atom) and 0.15 kJ/mol, 262 K.
+
