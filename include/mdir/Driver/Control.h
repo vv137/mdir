@@ -541,8 +541,9 @@ struct Control {
   /// energies, ends the minimization (D[minimize-zero-step]): 10⁻⁶ of the
   /// cap below double precision, 10⁻⁷ Å, under the spacing of f32 at 1 Å
   /// (1.2 × 10⁻⁷ Å) in which the terms take the positions, and 10⁻¹⁰ in
-  /// double, 10⁻¹¹ Å, where GROMACS stops its steepest descent in double
-  /// (10⁻¹² nm).
+  /// double, 10⁻¹¹ Å, below the shortest step of a trial still taken on
+  /// the dipeptide of D65 with a plain cutoff, 1.8 × 10⁻¹⁰ Å (the
+  /// measurements are in decisions.md).
   double getMinimizeStepFloor() const {
     return minimizeStepCap * (precision == Precision::Double ? 1e-10 : 1e-6);
   }
