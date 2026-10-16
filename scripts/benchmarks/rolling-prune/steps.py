@@ -1,10 +1,10 @@
-"""Whole steps and the pruning per step, variants against main (#357).
+"""Whole steps and the pruning per step, the branch against main (#357).
 
     steps.py SYSTEM VARIANTS [ROUNDS]
 
-Real dynamics of the system's settings (groups, dual list), the variants
-alternated round by round, round 0 dropped; µs per step from the log
-("from step ... ms per step"). Then each variant once under nsys: the
+Real dynamics of the system's settings (groups, dual list), main and the
+branch (VARIANTS: main,new) alternated round by round, round 0 dropped;
+µs per step from the log ("from step ... ms per step"). Then each variant once under nsys: the
 kernels of the refreshes (prunings; builds apart) per step.
 """
 import csv
@@ -17,18 +17,14 @@ import subprocess
 import sys
 
 # The directory of the inputs (in/SYSTEM/m96.toml or bench.toml) and the
-# frozen binaries; NSYS the profiler.
+# frozen binaries of main and of the branch; NSYS the profiler.
 S = os.environ.get("ROLLING_PRUNE_DIR", os.getcwd())
 NSYS = os.environ.get("NSYS", "nsys")
 MAIN = os.environ.get("MAIN_BIN", S + "/frozen-main/bin/mdir")
-EXP = os.environ.get("EXP_BIN", S + "/frozen-exp6/bin/mdir")
+NEW = os.environ.get("NEW_BIN", S + "/frozen-new/bin/mdir")
 TABLE = {
     "main": (MAIN, {}),
-    "skip": (EXP, {"MDIR_EXP_LOOP_SKIP": "1"}),
-    "rolling": (EXP, {"MDIR_EXP_ROLLING": "1"}),
-    "rollskip": (EXP, {"MDIR_EXP_ROLLING": "1", "MDIR_EXP_LOOP_SKIP": "1"}),
-    "lanes2": (EXP, {"MDIR_EXP_PRUNE_LANES": "2"}),
-    "lanes4": (EXP, {"MDIR_EXP_PRUNE_LANES": "4"}),
+    "new": (NEW, {}),
 }
 STEPS = {"tip3p": 2000, "opc": 2000, "jac": 10000, "ubq": 5000, "stmv": 1000}
 name = sys.argv[1]
