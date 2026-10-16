@@ -171,6 +171,29 @@ if "cuda" in config.available_features and lit_config.params.get("sanitize"):
         config.available_features.add("compute-sanitizer")
         config.substitutions.append(("%compute_sanitizer", sanitizer))
 
+# The plugin of learned potentials (D[metatomic-plugin]): "metatomic" where
+# it is built; "mlip-python" where the Python of the environment that it was
+# built against (MDIR_MLIP_PYTHON of the build, or -Dmlip_python=) imports
+# torch, metatomic, and NequIP; and "allegro-package" where the model package
+# of the tests, Allegro-OAM-L-0.1.nequip.zip (docs/metatomic-ml1.md,
+# Section 2; never in the repository), is given by MDIR_ALLEGRO_PACKAGE or
+# -Dallegro_package=. The tests build their artifact from it.
+if config.mdir_metatomic:
+    import subprocess
+
+    config.available_features.add("metatomic")
+    mlip_python = lit_config.params.get("mlip_python", config.mdir_mlip_python)
+    if mlip_python and config.mdir_python and subprocess.run(
+            [mlip_python, "-c", "import torch, metatomic.torch, nequip, ase"],
+            capture_output=True).returncode == 0:
+        config.available_features.add("mlip-python")
+        config.substitutions.append(("%mlip_python", mlip_python))
+    package = lit_config.params.get("allegro_package",
+                                    os.environ.get("MDIR_ALLEGRO_PACKAGE", ""))
+    if package and os.path.exists(package):
+        config.available_features.add("allegro-package")
+        config.substitutions.append(("%allegro_package", package))
+
 # The tests that a release adds to the default suite: the whole matrix of
 # a test whose default form runs a part of its cases, on every target and
 # in every precision. They are named *-release.test and

@@ -180,6 +180,11 @@ struct System {
   /// indices, with constants only; under a barostat each says how it
   /// follows the cell (D154).
   std::vector<driver::ExternalTerm> externalTerms;
+  /// Learned potentials, `[[energy.model]]` of the control file
+  /// (D[metatomic-plugin]): evaluated by the external framework through
+  /// the optional plugin, on a GPU; the path is taken as given, relative
+  /// to the working directory.
+  std::vector<driver::Control::ModelTerm> models;
   /// One `[[restraints]]` table (D74, D124), with its constant in
   /// kJ/mol/nm^2 (D198).
   struct Restraint {

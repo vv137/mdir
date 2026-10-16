@@ -261,6 +261,13 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     add("physics", "[python] external_terms",
         driver::getFingerprintHash(text));
   }
+  if (!s.models.empty()) {
+    std::string text;
+    for (const driver::Control::ModelTerm &term : s.models)
+      text += term.name + " " + term.backend + " " + term.path + " " +
+              std::to_string(term.centersPerCall) + "\n";
+    add("physics", "[python] models", driver::getFingerprintHash(text));
+  }
   if (!prepared.tunables.empty()) {
     // The declarations and the values the model begins with; a
     // continuation takes the values of the checkpoint.

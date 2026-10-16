@@ -342,6 +342,16 @@ static void describeRun(const Control &control, const System &system,
   }
   std::printf("cutoff:             %g Å\n", control.cutoffDistance);
   std::printf("electrostatics:     %s\n", getElectrostatics(control));
+  // The learned potentials (D[metatomic-plugin]), which the plugin loads
+  // when the run starts.
+  for (const Control::ModelTerm &term : control.models) {
+    std::printf("model:              %s, %s, '%s'", term.name.c_str(),
+                term.backend.c_str(), term.path.c_str());
+    if (term.centersPerCall > 0)
+      std::printf(", %lld centers per call",
+                  static_cast<long long>(term.centersPerCall));
+    std::printf("\n");
+  }
   if (control.pme) {
     if (control.pmeGrid[0] > 0)
       std::printf("PME grid:           %lld %lld %lld, order %lld\n",

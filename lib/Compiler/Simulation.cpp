@@ -226,6 +226,16 @@ llvm::cl::Option *getSchedulerOption() {
 }
 } // namespace
 
+std::string compiler::getRuntimeDirectory() { return findRuntimeDirectory(); }
+
+bool compiler::Simulation::readModelTerms(double &energy,
+                                          std::array<double, 9> &virial) const {
+  if (!output || !output->models)
+    return false;
+  output->models->read(energy, virial);
+  return true;
+}
+
 /// A compiled program of segments and what its entry takes besides the state.
 struct Simulation::Engine {
   Control control;
