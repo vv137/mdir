@@ -8,7 +8,7 @@
 #include "mlir/IR/OwningOpRef.h"
 #include "llvm/Target/TargetMachine.h"
 #include <memory>
-namespace llvm { class ThreadPoolInterface; }
+namespace llvm { class Module; class ThreadPoolInterface; }
 namespace mdir { namespace compiler {
 class CompileError : public llvm::ErrorInfo<CompileError> {
 public:
@@ -108,5 +108,12 @@ lowerModule(mlir::MLIRContext &context, const driver::Control &,
 /// The machine that compiles the host code of a program for the JIT, at the
 /// one code-generation level of both front ends (#90).
 llvm::Expected<std::unique_ptr<llvm::TargetMachine>> createHostMachine();
+/// The level of LLVM's module pipeline that the host code of a program
+/// takes before the code generator, in both front ends (D[host-opt]): "O2"
+/// or "O3". It is part of the key of the compile cache.
+llvm::StringRef hostOptimization();
+/// Runs LLVM's module pipeline at `hostOptimization()` on the host code of
+/// a program, for `machine`.
+void optimizeHostModule(llvm::Module &module, llvm::TargetMachine &machine);
 } }
 #endif

@@ -533,7 +533,10 @@ compileEngine(const Control &control, const System &system,
   if (!targetMachine)
     return targetMachine.takeError();
   llvm::cl::Option *scheduler = getSchedulerOption();
-  llvm::StringRef codegen = scheduler ? "pre-RA-sched=fast" : "";
+  // The level of the module pipeline of the host code is part of the key
+  // (D[host-opt]).
+  std::string codegen = (scheduler ? "pre-RA-sched=fast " : "") +
+                        ("host-opt=" + compiler::hostOptimization()).str();
   std::string key;
   std::shared_ptr<const compiler::KeptCode> kept;
   if (!cache)

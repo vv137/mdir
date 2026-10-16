@@ -1,5 +1,6 @@
 #include "JITEngine.h"
 #include "JITMemory.h"
+#include "mdir/Compiler/Compile.h"
 #include "llvm/ExecutionEngine/JITEventListener.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/ExecutionEngine/Orc/CompileUtils.h"
@@ -14,6 +15,34 @@ using namespace llvm;
 using namespace llvm::orc;
 using namespace mdir::compiler;
 namespace {
+/// LLVM's module pipeline and then the code generator (D[host-opt]), as
+/// `mdir run` compiles. The cache is asked first, for the module as the
+/// lowering made it: its key is the bitcode before the pipeline, so that a
+/// hit costs neither the pipeline nor the code generation, and its
+/// description of the machine names the level (`hostOptimization`).
+class OptimizingCompiler : public IRCompileLayer::IRCompiler {
+public:
+  OptimizingCompiler(std::unique_ptr<TargetMachine> machine, ObjectCache *cache)
+      : IRCompiler(irManglingOptionsFromTargetOptions(machine->Options)),
+        machine(std::move(machine)), cache(cache) {}
+
+  Expected<std::unique_ptr<MemoryBuffer>> operator()(Module &module) override {
+    if (cache)
+      if (auto object = cache->getObject(&module))
+        return std::move(object);
+    optimizeHostModule(module, *machine);
+    SimpleCompiler compile(*machine);
+    auto object = compile(module);
+    if (object && cache)
+      cache->notifyObjectCompiled(&module, (*object)->getMemBufferRef());
+    return object;
+  }
+
+private:
+  std::unique_ptr<TargetMachine> machine;
+  ObjectCache *cache;
+};
+
 Error ownedError(Error error) {
   if (!error)
     return Error::success();
@@ -102,8 +131,8 @@ Expected<std::unique_ptr<JITEngine>> JITEngine::create(
       .setDataLayout(layout)
       .setCompileFunctionCreator([&](JITTargetMachineBuilder)
           -> Expected<std::unique_ptr<IRCompileLayer::IRCompiler>> {
-        return std::make_unique<TMOwningSimpleCompiler>(std::move(target),
-                                                        engine->cache.get());
+        return std::make_unique<OptimizingCompiler>(std::move(target),
+                                                    engine->cache.get());
       })
       .setObjectLinkingLayerCreator([triple, &engine](ExecutionSession &session,
                                             jitlink::JITLinkMemoryManager &)
