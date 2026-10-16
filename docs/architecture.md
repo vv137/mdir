@@ -487,6 +487,13 @@ computation, replica communicators.
 
 `md_dist` ops take and return field values (Section 8.3).
 
+The sketch above predates the design of D[ml2-core]
+([distributed-ml2.md](distributed-ml2.md)), which replaces it: a layout
+and a halo are values, `forward_halo` is `halo_copy` ($G$),
+`reverse_accumulate` is `halo_sum` ($\mathbf a + G^\mathsf T\mathbf b$), and the
+two are declared adjoints; interior and boundary work are a later
+optimization of the loops of one domain.
+
 The first halo scheme is a full shell: each domain holds ghost copies of
 every particle within the halo distance (P2).
 

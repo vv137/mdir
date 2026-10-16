@@ -467,6 +467,16 @@ tensor operations. See the [layer and model plan](future-architecture-plan.md#ex
 
 ML1's first step is built (D270, [metatomic-ml1.md](metatomic-ml1.md#9-what-the-first-pr-built-d270)): the TorchScript backend with chunks of centers, from `[[energy.model]]` and `mdir.System.models`, validated against the `nequip` package's calculator in `mixed` and `double`; a minimization and stochastic cell rescaling take the model (D272, [metatomic-ml1.md](metatomic-ml1.md#10-minimization-and-constant-pressure-d272)). The AOTInductor backend, the pair list from MDIR's structures, and the CPU target follow.
 
+ML2 has begun (D[ml2-core], [distributed-ml2.md](distributed-ml2.md)), in
+parallel with M3 (the ruling on #377): its stage 1 is the dialect
+`md_dist` (layouts, halos, $G$ and $G^\mathsf T$ as adjoint ops, and the
+verifier of missing transfers, stale halos, coverage, and exactly-once
+sums) with an in-process executor of several domains as the oracle, and
+Lennard-Jones on two domains against one. `md-distribute` with the rules
+of the AD, EAM, the path through `md_exec`, migration, MPI on CPU ranks,
+and GPUs follow, then the classical track of #31 (topology, PME,
+ensembles, the Amber suite on several GPUs).
+
 A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
 not required to complete that first deliverable, nor is support for all
 three architectures. ML5 can begin with the first validated staged model.

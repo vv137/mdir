@@ -182,10 +182,22 @@ the virial and of observed terms in the parameters, which a fit to the
 pressure needs; and the JAX adapter.
 
 *M3 and M4.* Learned potentials behind a versioned interface, one model on
-one GPU first. The distributed work begins with a graph of the
-dependencies of the `md` ops, ownership and freshness of fields, and a
-verifier of two domains, in which the disjoint union of the constraints is
-the unit of ownership (D83).
+one GPU first. The distributed work has begun beside it (D[ml2-core]),
+with ownership and halos as IR. A domain $d$ owns particles $O_d$ and holds
+ghosts $\Gamma_d$, images of particles within a reach of its region. The
+copy $G$ of owned values to ghosts and its transpose $G^\mathsf T$, which
+sums at each owner what its ghosts received, are ops, and $G^\mathsf T$ is
+the adjoint of $G$ for the inner products of owned and ghost rows:
+$\langle G\mathbf a, \mathbf b\rangle = \sum_g \mathbf a_{s(g)}\cdot\mathbf b_g =
+\langle\mathbf a, G^\mathsf T\mathbf b\rangle$. The derivative of an energy
+$U = \sum_d U_d(\mathbf x_{O_d}, G\mathbf x)$ is therefore
+$\partial_O U + G^\mathsf T\partial_\Gamma U$, a forward copy and a reverse sum
+that the semantic differentiation derives rather than a runtime supplies,
+which a message-passing model distributed by layers needs. The version of
+a field is its SSA value, so a ghost copy of an earlier version, or a
+field read at ghosts without a copy, is an error of the verifier, not of a
+run. Topology across domains follows, with the disjoint union of the
+constraints as the unit of ownership (D83).
 
 *Between milestones.* Coarse-grained models (tabulated potentials,
 Martini, DPD); native collective variables and biases; terms over triplets

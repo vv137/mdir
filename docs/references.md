@@ -1008,6 +1008,18 @@ Used for: the adaptive Gauss–Kronrod quadrature of 7 and 15 points that
 integrates the tail of a pair term beyond the cutoff in the correction for
 the dispersion (D209).
 
+### Plimpton1995
+
+S. Plimpton, "Fast parallel algorithms for short-range molecular
+dynamics," *J. Comput. Phys.* **117**, 1–19 (1995).
+[doi:10.1006/jcph.1995.1039](https://doi.org/10.1006/jcph.1995.1039)
+
+Used for: the spatial decomposition of a periodic cell into domains, with
+ghost copies of the particles near each domain, and the choice between
+computing each pair at both owners and computing it once with the force
+on the ghost returned to its owner (D[ml2-core],
+[distributed-ml2.md](distributed-ml2.md)).
+
 ### Press2007
 
 W. H. Press, S. A. Teukolsky, W. T. Vetterling, B. P. Flannery,
