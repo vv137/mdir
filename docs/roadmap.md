@@ -238,7 +238,8 @@ quantities, converted at the boundary. D202 (#91,
 [minimization](python-minimize.md)) runs the minimizer of `mdir run` in a
 Python simulation, `Simulation.minimize(steps)`, and
 D219 (#106) stops it, and `mdir run`'s, at a tolerance on
-the largest force. D207 (#109,
+the largest force, and D[minimize-zero-step] (#369) once its step has
+shrunk below a floor. D207 (#109,
 [reporters](python-reporters.md)) writes `mdir run`'s energy file and
 trajectory inside the parts of a run and calls Python functions at their
 steps. `examples/ala3/run.py` (#82) runs the four stages of the
