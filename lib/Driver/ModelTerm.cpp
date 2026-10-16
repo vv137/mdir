@@ -251,7 +251,7 @@ ModelTerms::load(const Control &control, const System &system,
     added.description = llvm::formatv(
         "MDIR: model '{0}' ({1}, {2}): {12}, {3}; cutoff {4} nm, "
         "{5} pair list; inputs of {6} bits; units {7} and {8}, "
-        "factors {9} and {10} to nm and kJ/mol; {11}\n",
+        "factors {9} and {10} to nm and kJ/mol; {11}; {13}\n",
         term.name, d.name, term.path, d.framework, d.cutoff,
         d.full_list ? "full" : "half", d.dtype_bits, d.length_unit,
         d.energy_unit, d.length_factor, d.energy_factor,
@@ -262,7 +262,14 @@ ModelTerms::load(const Control &control, const System &system,
             ? std::string("not declared local: the whole system in one "
                           "call, whatever 'centers_per_call' asks")
             : std::string("the whole system in one call"),
-        term.backend == "AOTI" ? "AOTInductor package" : "metatomic");
+        term.backend == "AOTI" ? "AOTInductor package" : "metatomic",
+        // How the model takes its pair list (D[mlip-pairlist]).
+        terms->pairsMode == MDIR_MLIP_PAIRS_EXACT
+            ? "the pair list MDIR's, its pairs within the cutoff"
+        : terms->pairsMode == MDIR_MLIP_PAIRS_PADDED
+            ? "the pair list MDIR's, every slot within the cutoff and the "
+              "skin (MDIR_MLIP_PAIRS=padded)"
+            : "the plugin's own pair search (MDIR_MLIP_PAIRS=search)");
 
     added.results = static_cast<double *>(allocate(sizeof(double) * 10));
   }

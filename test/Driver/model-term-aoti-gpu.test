@@ -44,7 +44,7 @@
 # RUN: cd %t && env TMPDIR=%t mdir run run.toml > %t/run.log
 # RUN: FileCheck %s --check-prefix=LOG < %t/run.log
 # RUN: %mlip_python %S/Inputs/model-term/compare.py log %t/reference.npz < %t/run.log | FileCheck %s --check-prefix=START
-# LOG: MDIR: model 'allegro' (allegro.nequip.pt2, {{.*}}): AOTInductor package, torch {{.*}}, model float32; cutoff 0.70 nm, full pair list; inputs of 64 bits; units angstrom and eV, factors 0.10 and 96.49 to nm and kJ/mol; 4 centers per call
+# LOG: MDIR: model 'allegro' (allegro.nequip.pt2, {{.*}}): AOTInductor package, torch {{.*}}, model float32; cutoff 0.70 nm, full pair list; inputs of 64 bits; units angstrom and eV, factors 0.10 and 96.49 to nm and kJ/mol; 4 centers per call; the pair list MDIR's, its pairs within the cutoff
 # LOG: MDIR: MODEL allegro
 # LOG: MDIR: model 'allegro': 3 evaluations, {{[0-9]+}} pairs and 6 calls in the last
 # START: mdir run energy ok
