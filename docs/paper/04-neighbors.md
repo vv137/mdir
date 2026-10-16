@@ -571,7 +571,7 @@ The pruning now runs a warp per group (`emitGroupsPrune`,
    (the same arithmetic as the loop), and copies the positions, as they
    are stored, to $\mathbf x^p$. The indices of each group's outer blocks
    in the order of its list are written once per build, not per pruning
-   (D[rolling-prune]).
+   (D268).
 2. The warp of group $g$ holds the 16 positions of the group in registers
    (loaded by lanes 0–15 and broadcast once by shuffles).
 3. It reads the outer entries of the group in their order, 32 at a time,
@@ -594,7 +594,7 @@ The pruning now runs a warp per group (`emitGroupsPrune`,
    pruning counts them in runs of 32 and 1024 blocks, and a warp for each
    run of 32 places its active blocks after those counted before it and
    ranks them within the run by a ballot. The loop over pairs takes only
-   the active units (D[rolling-prune]). After a pruning about 40% of the
+   the active units (D268). After a pruning about 40% of the
    outer blocks are empty; before, the loop launched a warp for each, which
    loaded its group before it found nothing to do.
 

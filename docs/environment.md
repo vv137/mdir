@@ -46,7 +46,7 @@ These are described in [debugging.md](debugging.md). They act on `mdir run`.
 | Variable | Read by | Effect |
 |---|---|---|
 | `MDIR_BENCH_DIR=<dir>` | `test/Scale`, `scripts/benchmarks/amber` | The prepared Amber benchmark suite. Without it, those tests are unsupported ([debugging.md](debugging.md)). |
-| `MDIR_CHECK_PRUNING` (set) | every lowering of a GPU program (`mdir run`, `mdir.compile`, a Python simulation) | Each refresh of a dual list of groups counts, at the positions of its step, the pairs within the cutoff in the outer list and in the inner list through its active units, and the runtime stops the run if the two differ; at its end the run reports the steps it checked and the pairs it counted ([groups-m1.md](groups-m1.md), Section 6.2; D[rolling-prune]). A step then costs more, and waits for the counts. The generated code differs, so the compile cache keys it apart. |
+| `MDIR_CHECK_PRUNING` (set) | every lowering of a GPU program (`mdir run`, `mdir.compile`, a Python simulation) | Each refresh of a dual list of groups counts, at the positions of its step, the pairs within the cutoff in the outer list and in the inner list through its active units, and the runtime stops the run if the two differ; at its end the run reports the steps it checked and the pairs it counted ([groups-m1.md](groups-m1.md), Section 6.2; D268). A step then costs more, and waits for the counts. The generated code differs, so the compile cache keys it apart. |
 | `CHARMM_TOPPAR=<dir>` | `scripts/validation/charmm/run.py` | The CHARMM topology and parameter files of the validation against CHARMM ([charmm-m1.md](charmm-m1.md)). |
 
 ## Scripts

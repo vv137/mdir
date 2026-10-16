@@ -5,7 +5,7 @@
 # two particles that are not bonded, on top of one another, with PME, with
 # the matrix (deterministic), with the default structure, and with groups
 # and a dual list, whose prunings after a build that placed no particle
-# leave no active unit (D[rolling-prune]). In double and mixed precision
+# leave no active unit (D268). In double and mixed precision
 # the simulation keeps the state it began from, and another simulation runs
 # on the device.
 # RUN: %mdir_python %S/Inputs/python_position_guard.py %S/Inputs/dipeptide GPU overlap | FileCheck %s

@@ -438,7 +438,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **The loop over the inner list of a dual list of groups takes only the
-  blocks that hold entries** (D[rolling-prune], #357; the maintainer's
+  blocks that hold entries** (D268, #357; the maintainer's
   ruling on PR #360). Each pruning lists them, the index of the blocks of
   the groups is made at each build instead of each pruning, the pruning's
   kernel of the frames copies its configuration, and a loop that follows a

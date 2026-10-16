@@ -328,7 +328,7 @@ def ConvertMDExecToGPU
            "within the cutoff in its outer list and in its inner list, "
            "through the active units, at the positions of the step, and "
            "the runtime stops the run if the counts differ "
-           "(MDIR_CHECK_PRUNING, D[rolling-prune])">
+           "(MDIR_CHECK_PRUNING, D268)">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

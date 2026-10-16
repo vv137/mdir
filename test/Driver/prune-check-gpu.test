@@ -1,6 +1,6 @@
 # The pruning of the inner list of a dual list (D114) misses no pair within
 # the cutoff, and the loop over pairs reaches every unit that holds one
-# (D[rolling-prune]). With MDIR_CHECK_PRUNING each step counts, at its own
+# (D268). With MDIR_CHECK_PRUNING each step counts, at its own
 # positions, the pairs within the cutoff in the outer list and in the inner
 # one, the inner one through the active units that the loop takes; the
 # runtime stops the run if the two differ, and reports the steps it checked.

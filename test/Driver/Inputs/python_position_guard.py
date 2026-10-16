@@ -44,7 +44,7 @@ def compile_program(precision, kind="NVE", pressure=1.0, cutoff=0.8, restraint=N
     execution.target, execution.precision = target, getattr(mdir.Precision, precision)
     execution.deterministic = deterministic
     if dual:
-        # The groups with a dual list (D114, D[rolling-prune]), whatever
+        # The groups with a dual list (D114, D268), whatever
         # the size.
         execution.neighbor_structure = mdir.NeighborStructure.Groups
         system.pairlist_distance, system.pruned_distance = cutoff + 0.3, cutoff + 0.06

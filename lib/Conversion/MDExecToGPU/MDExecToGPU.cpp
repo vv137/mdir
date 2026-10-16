@@ -142,7 +142,7 @@ struct Neighbors {
   /// Whether the last refresh of a dual list pruned it, on the host: the
   /// frames of the positions that the pruning left (mdrtGroupsPlaced) are
   /// then those of a loop over pairs that follows it at the same positions
-  /// (D[rolling-prune]).
+  /// (D268).
   Value prunedNow;
 };
 
@@ -159,7 +159,7 @@ struct GroupBuffers {
 };
 
 /// What the pruning of a dual list keeps besides the inner list
-/// (D[rolling-prune]): the block of each group's list by its number in the
+/// (D268): the block of each group's list by its number in the
 /// list, a row of the blocks of the longest list for each group, made at
 /// each build; the units of work that hold entries of the inner list (the
 /// active units), in the order of the blocks, and their number; and the
@@ -215,7 +215,7 @@ public:
   /// Whether each refresh of a dual list counts the pairs within the cutoff
   /// in its outer and inner lists and hands the counts to the runtime,
   /// which stops the run if they differ (`check-pruning`,
-  /// D[rolling-prune]).
+  /// D268).
   bool checkPruning = false;
 
 private:
@@ -269,7 +269,7 @@ private:
   Value getGroupsBuffer(OpBuilder &builder, Location loc, Value handle,
                         int64_t which);
   /// The buffers of the pruning of the dual list `handle` besides the inner
-  /// list (D[rolling-prune]).
+  /// list (D268).
   PruneBuffers getPruneBuffers(OpBuilder &builder, Location loc,
                                Value handle);
   /// The positions of the places of `handle` in the frames of their groups
@@ -281,7 +281,7 @@ private:
                                          const Neighbors &structure);
   /// Makes the block of each group's list by its number in the list, after
   /// a build of the structure of groups `structure`, for the prunings of a
-  /// dual list (D[rolling-prune]).
+  /// dual list (D268).
   void emitGroupsBlockIndex(OpBuilder &builder, Location loc,
                             const Neighbors &structure);
   /// Writes the positions `positions` of the `places` places of `buffers`
@@ -297,7 +297,7 @@ private:
   /// Counts the pairs within `cutoff` in the outer list of the dual list
   /// `structure` and in its inner list through its active units, at the
   /// positions `positions`, and hands them to the runtime, which stops the
-  /// run if they differ (`check-pruning`, D[rolling-prune]).
+  /// run if they differ (`check-pruning`, D268).
   void emitPruneCheck(OpBuilder &builder, Location loc,
                       const Neighbors &structure, Value positions, Value box,
                       double cutoff);
@@ -580,7 +580,7 @@ private:
   SmallVector<Operation *> lowered;
   /// The loops over pairs of groups that follow a refresh of their dual
   /// list at the same positions and in the same cell, with nothing between
-  /// that may write the positions (findSharedFrames, D[rolling-prune]).
+  /// that may write the positions (findSharedFrames, D268).
   llvm::DenseSet<Operation *> sharesPrunedFrames;
   void findSharedFrames(func::FuncOp function, md_exec::BufferAliases &aliases);
 };
@@ -2619,7 +2619,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   // and in the same cell (sharesPrunedFrames), and computes in f32, a
   // pruning of that refresh has left the positions in the frames as the
   // loop takes them, to the bit: the loop takes them as they are then
-  // (D[rolling-prune]).
+  // (D268).
   Value sharedFrames, pruned;
   {
     auto stored = cast<MemRefType>(positions.getType());
@@ -2730,7 +2730,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   kernels::GroupLists lists{buffers.entries, buffers.masks, buffers.counts,
                             buffers.units, buffers.ordinals, buffers.order};
   // A dual list: the inner list, in the blocks of the outer one (D114),
-  // through the units that hold entries of it (D[rolling-prune]).
+  // through the units that hold entries of it (D268).
   Value activeUnits, activeCount;
   if (structure.dual) {
     InnerLists inner = getInnerLists(builder, loc, structure.handle);
@@ -4231,7 +4231,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                reach)))
       return failure();
     // The block of each group's list by its number, for the prunings of a
-    // dual list until the next build (D[rolling-prune]); a build by a
+    // dual list until the next build (D268); a build by a
     // refresh that does not prune can precede the first pruning.
     emitGroupsBlockIndex(builder, loc, structure);
     return finishBuild(builder, loc, structure, positions, box);
@@ -4498,7 +4498,7 @@ void Lowering::emitFramePositions(
     count = arith::MaxUIOp::create(builder, loc, count, length);
   launchOver(builder, loc, count, [&](OpBuilder &b, Value item) {
     // The positions as they are stored, particle by particle, in their
-    // order: the configuration of a pruning (D[rolling-prune]).
+    // order: the configuration of a pruning (D268).
     if (reference)
       when(b,
            arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult, item,
@@ -4818,7 +4818,7 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
               memref::StoreOp::create(c, loc, held, inner.counts,
                                       ValueRange{toIndex(c, block)});
               // A block that holds entries is an active unit: it counts in
-              // its runs of 32 and 1024 blocks (D[rolling-prune]).
+              // its runs of 32 and 1024 blocks (D268).
               scf::IfOp::create(
                   c, loc,
                   arith::CmpIOp::create(c, loc, arith::CmpIPredicate::sgt,
@@ -4841,7 +4841,7 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
             });
       });
 
-  // The active units (D[rolling-prune]): the blocks that hold entries of
+  // The active units (D268): the blocks that hold entries of
   // the inner list, in the order of the blocks, as the loop over pairs took
   // all blocks before, so that it launches no work for a block that the
   // pruning left empty. A warp for each run of 32 blocks: an active block
@@ -5411,7 +5411,7 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
                                  "its inner list ('stale')";
     double inner =
         op.getCutoff().convertToDouble() + prune->convertToDouble();
-    // A pruning below says that it pruned (D[rolling-prune]).
+    // A pruning below says that it pruned (D268).
     memref::StoreOp::create(
         builder, loc,
         arith::ConstantOp::create(builder, loc, builder.getI1Type(),

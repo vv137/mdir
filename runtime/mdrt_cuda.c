@@ -898,7 +898,7 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
    each block of the outer list pruned into the same block, and the number
    of entries that each block keeps; they are allocated where compiled code
    first asks for them. The pruning of a dual list adds, also where first
-   asked for (D[rolling-prune]): the block of each group's list by its
+   asked for (D268): the block of each group's list by its
    number within the list (`blockOf`, a group's row as wide as the longest
    list takes blocks; its length is set by `mdrtGroupsReserveBlockOf` at
    each build), the units of work that hold entries of the inner list and

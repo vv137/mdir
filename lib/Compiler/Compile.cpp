@@ -151,7 +151,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // (D257).
        << "device-tuples=true "
        // A check of the pruning of the dual lists, for tests
-       // (D[rolling-prune]).
+       // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
