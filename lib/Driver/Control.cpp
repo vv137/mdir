@@ -478,13 +478,15 @@ Error Reader::readModel(const toml::table &table) {
     if (other.name == term.name)
       return fail(*table.get("name"),
                   "another model has the name '" + term.name + "'");
-  // The loader. A TorchScript artifact of metatomic is the first; an
-  // AOTInductor package follows (docs/metatomic-ml1.md, Section 5.3).
+  // The loader: a TorchScript artifact of metatomic, or an AOTInductor
+  // package of the `nequip` package (docs/metatomic-ml1.md, Sections 5.3
+  // and 11).
   if (const toml::node *node = table.get("backend")) {
     std::optional<std::string> value = node->value<std::string>();
-    if (!value || *value != "METATOMIC")
+    if (!value || (*value != "METATOMIC" && *value != "AOTI"))
       return fail(*node, "expected 'backend' as \"METATOMIC\", a "
-                         "TorchScript artifact of metatomic");
+                         "TorchScript artifact of metatomic, or \"AOTI\", an "
+                         "AOTInductor package of the `nequip` package");
     term.backend = *value;
   }
   if (Error error = readPath(table, "path", term.path))

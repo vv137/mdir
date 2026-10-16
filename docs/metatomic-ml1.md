@@ -980,10 +980,9 @@ an RTX 4090 with SASS for 8.9 and 12.0 runs on the RTX PRO 6000 and agrees
 with one compiled there; its kernels were tuned on the RTX 4090, and it took
 2.80 µs per pair against 2.64 for the package compiled there (13,606 pairs).
 
-*Proposed*: one `path`, refused where the package has no kernels for the
-device; the user makes one package per kind of device, or one with `--arch`
-for several. *Asked* (11.11): whether `path` should also take a list of
-packages, of which the plugin picks the one for its device.
+*Ruled* (the maintainer on PR #374, 2026-10-16): one `path`, refused where
+the package has no kernels for the device; the user makes one package per
+kind of device, or one for several with `--arch`.
 
 ### 11.7 Units
 
@@ -992,9 +991,9 @@ training data, and the package's ASE calculator assumes Å and eV unless it
 is told otherwise. MDIR's script writes `mdir::length_unit` and
 `mdir::energy_unit` (`--units`, Å and eV by default); the plugin converts
 with the table that metatomic uses for METATOMIC
-(`metatomic_torch::unit_conversion_factor`). *Proposed*: a package without
-the keys is taken as Å and eV, and the log says so. *Asked* (11.11):
-whether it should be refused instead.
+(`metatomic_torch::unit_conversion_factor`). *Ruled* (the maintainer on PR
+#374, 2026-10-16): a package without the keys is taken as Å and eV, and the
+log says so.
 
 ### 11.8 Making the package
 
@@ -1054,12 +1053,4 @@ and `double` (float64 inputs only, 11.4):
 - the rate in atom-steps per second, and ns/day at 0.5 fs, on the largest
   sizes that fit, with and without chunks.
 
-### 11.11 Questions to the maintainer
-
-1. **One package per kind of device.** Is one `path`, refused where the
-   package has no kernels for the device (and one package for several
-   architectures with `--arch`), enough, or should `path` take a list from
-   which the plugin picks the package of its device?
-2. **Units of a package without them.** Take Å and eV, as the `nequip`
-   package's calculator does, and say so in the log, or refuse?
 

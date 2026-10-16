@@ -193,7 +193,7 @@ ModelTerms::load(const Control &control, const System &system,
     }
 
     added.description = llvm::formatv(
-        "MDIR: model '{0}' ({1}, {2}): metatomic, {3}; cutoff {4} nm, "
+        "MDIR: model '{0}' ({1}, {2}): {12}, {3}; cutoff {4} nm, "
         "{5} pair list; inputs of {6} bits; units {7} and {8}, "
         "factors {9} and {10} to nm and kJ/mol; {11}\n",
         term.name, d.name, term.path, d.framework, d.cutoff,
@@ -205,7 +205,8 @@ ModelTerms::load(const Control &control, const System &system,
         : term.centersPerCall > 0
             ? std::string("not declared local: the whole system in one "
                           "call, whatever 'centers_per_call' asks")
-            : std::string("the whole system in one call"));
+            : std::string("the whole system in one call"),
+        term.backend == "AOTI" ? "AOTInductor package" : "metatomic");
 
     added.results = static_cast<double *>(allocate(sizeof(double) * 10));
   }

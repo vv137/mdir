@@ -387,7 +387,7 @@ file, through the same plugin and its C boundary:
 |---|---|---|
 | `System.models` | `[[energy.model]]` | a list of `mdir.ModelTerm(name, path, backend="METATOMIC", centers_per_call=0)` |
 | `ModelTerm.path` | `path` | the artifact; a relative path is taken relative to the working directory when the program is compiled |
-| `ModelTerm.backend` | `backend` | `"METATOMIC"`, a TorchScript artifact of metatomic |
+| `ModelTerm.backend` | `backend` | `"METATOMIC"`, a TorchScript artifact of metatomic; `"AOTI"`, an AOTInductor package of the `nequip` package (D[mlip-aoti], [metatomic-ml1.md](metatomic-ml1.md#11-the-aotinductor-backend-dmlip-aoti)) |
 | `ModelTerm.centers_per_call` | `centers_per_call` | 0 (the whole system in one call), or the centers of one call, for a model that declares that it is local |
 
 A `Simulation` of a program with a model term imports `torch` before the

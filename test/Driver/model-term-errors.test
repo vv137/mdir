@@ -12,9 +12,14 @@
 # RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=CHECK-OK
 # CHECK-OK: model: allegro, METATOMIC, '{{.*}}allegro.pt', 16 centers per call
 
+# An AOTInductor package of the `nequip` package (D[mlip-aoti]).
+# RUN: sed -e 's/"METATOMIC"/"AOTI"/' -e 's/allegro.pt/allegro.nequip.pt2/' %t/run.toml > %t/aoti.toml
+# RUN: mdir check %t/aoti.toml | FileCheck %s --check-prefix=CHECK-AOTI
+# CHECK-AOTI: model: allegro, AOTI, '{{.*}}allegro.nequip.pt2', 16 centers per call
+
 # RUN: sed 's/"METATOMIC"/"TORCHSCRIPT"/' %t/run.toml > %t/backend.toml
 # RUN: not mdir check %t/backend.toml 2>&1 | FileCheck %s --check-prefix=BACKEND
-# BACKEND: expected 'backend' as "METATOMIC", a TorchScript artifact of metatomic
+# BACKEND: expected 'backend' as "METATOMIC", a TorchScript artifact of metatomic, or "AOTI", an AOTInductor package of the `nequip` package
 
 # RUN: sed '/^path/d' %t/run.toml > %t/nopath.toml
 # RUN: not mdir check %t/nopath.toml 2>&1 | FileCheck %s --check-prefix=NOPATH

@@ -1,0 +1,82 @@
+# The AOTInductor backend of the model term, D[mlip-aoti]
+# (docs/metatomic-ml1.md, Section 11): Allegro-OAM-L 0.1, compiled into an
+# AOTInductor package of the `nequip` package's target 'ase' by
+# scripts/mlip/nequip-to-aoti.py on the test's own device, from the package
+# that lit is given (MDIR_ALLEGRO_PACKAGE or -Dallegro_package=; never in
+# the repository), against the `nequip` package's ASE calculator on 8 waters
+# in a cell of 6.2 Å, narrower than twice the cutoff of 7 Å.
+#
+# REQUIRES: cuda, metatomic, mlip-python, allegro-package
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: env TMPDIR=%t %mlip_python %S/../../scripts/mlip/nequip-to-aoti.py %allegro_package %t/allegro.nequip.pt2 2>&1 | FileCheck %s --check-prefix=COMPILE
+# COMPILE: saved {{.*}}allegro.nequip.pt2 in {{[0-9]+}} s: r_max 7.0, model float32, compiled on sm_{{[0-9]+}}, local centers
+# RUN: %mlip_python %S/../../scripts/mlip/water-box.py %t --n 2 --spacing 3.1 --seed 2 --reference %allegro_package
+
+# The Python model, in double and mixed precision, and chunks of 5 and of 1
+# center: energy, forces, and the virial tensor, within the tolerances of
+# float64 inputs, which the package takes.
+# RUN: env TMPDIR=%t %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --precision Double | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: env TMPDIR=%t %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --precision Mixed | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: env TMPDIR=%t %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --centers-per-call 5 | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: env TMPDIR=%t %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --centers-per-call 1 | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# CHECK: energy ok
+# CHECK: forces ok
+# CHECK: virial ok
+
+# mdir run: the term in the log, its energy at the start, and chunks.
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t && env TMPDIR=%t mdir run run.toml > %t/run.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/run.log
+# RUN: %mlip_python %S/Inputs/model-term/compare.py log %t/reference.npz < %t/run.log | FileCheck %s --check-prefix=START
+# LOG: MDIR: model 'allegro' (allegro.nequip.pt2, {{.*}}): AOTInductor package, torch {{.*}}, model float32; cutoff 0.70 nm, full pair list; inputs of 64 bits; units angstrom and eV, factors 0.10 and 96.49 to nm and kJ/mol; 4 centers per call
+# LOG: MDIR: MODEL allegro
+# LOG: MDIR: model 'allegro': 3 evaluations, {{[0-9]+}} pairs and 6 calls in the last
+# START: mdir run energy ok
+
+# A package on a device it has no kernels for is refused (the package is
+# told that it was compiled for sm_10).
+# RUN: %mlip_python -c "import zipfile, sys; z = zipfile.ZipFile(sys.argv[1]); o = zipfile.ZipFile(sys.argv[2], 'w'); [o.writestr(i, z.read(i).replace(b'\"AOTI_COMPUTE_CAPABILITY\": \"', b'\"AOTI_COMPUTE_CAPABILITY\": \"10') if i.filename.endswith('metadata.json') else z.read(i)) for i in z.infolist()]" %t/allegro.nequip.pt2 %t/other.nequip.pt2
+# RUN: sed 's/allegro.nequip.pt2/other.nequip.pt2/' %t/run.toml > %t/other.toml
+# RUN: cd %t && not env TMPDIR=%t mdir run other.toml 2>&1 | FileCheck %s --check-prefix=ARCH
+# ARCH: has kernels for sm_10{{[0-9]+}}, and the device 0 ({{.*}}) is sm_{{[0-9]+}}; compile the package on this kind of device
+
+#--- run.toml
+[input]
+topology    = "system.top"
+coordinates = "system.gro"
+
+[output]
+energy_interval = 1
+
+[energy]
+cutoff = 2.0
+pairlist_distance = 2.5
+electrostatics = "CUTOFF"
+
+[[energy.model]]
+name = "allegro"
+backend = "AOTI"
+path = "allegro.nequip.pt2"
+centers_per_call = 4
+
+[constraints]
+hydrogen_bonds = false
+rigid_water = false
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 2
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "GPU"
+precision = "MIXED"
+#--- end
