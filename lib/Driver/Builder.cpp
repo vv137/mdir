@@ -668,6 +668,19 @@ private:
                       StringRef f, StringRef fResult, StringRef u = "",
                       StringRef uResult = "", StringRef w = "",
                       StringRef wResult = "");
+  /// Emits the learned potentials of [[energy.model]] at the positions `x`
+  /// (D[metatomic-plugin]): `fResult` is the forces `f` with theirs added.
+  /// The host evaluates each model at the positions where they are, on the
+  /// stream of the kernels, and returns a buffer of the device with its
+  /// forces, which a loop over the particles adds; the field of that
+  /// buffer comes from the call, so that nothing that reads `fResult` can
+  /// move before the evaluation. The energy and the virial of the model
+  /// stay on the device until the log reads them. Outside a loop (`inLoop`
+  /// false) the evaluation is a loop of one iteration, in which the buffer
+  /// is given anew and is never taken for a buffer of the host.
+  void emitModelForces(StringRef indent, StringRef x, StringRef prefix,
+                       StringRef f, StringRef fResult, StringRef tag,
+                       bool inLoop);
 
   /// Whether the topology has virtual sites.
   bool hasSites() const { return !getSiteSets().empty(); }
@@ -1759,6 +1772,19 @@ void Builder::collectTopologyArrays() {
   for (unsigned type : topology.types)
     types.values.push_back(type);
   program.fields.push_back(std::move(types));
+  // The atomic numbers that a learned potential takes
+  // (D[metatomic-plugin]), in the order of the particles that the program
+  // keeps, as the other fields.
+  if (!control.models.empty()) {
+    Program::Field numbers;
+    numbers.name = "model_z";
+    numbers.isInteger = true;
+    for (size_t i = 0; i != count; ++i)
+      numbers.values.push_back(i < topology.atomicNumbers.size()
+                                   ? topology.atomicNumbers[i]
+                                   : 0);
+    program.fields.push_back(std::move(numbers));
+  }
   // Generalized Born (D144): the radius less its offset, 0.009 nm, the
   // radius that screens the others, that times the scale of the particle,
   // and the radius itself, in nm.
@@ -6241,17 +6267,21 @@ void Builder::emitPrograms() {
     if (sites)
       emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
     std::string raw = sites ? "e" : "";
+    // With a learned potential the forces of the evaluation are `%f1c`, and
+    // those of the model are added to give `%f1` (D[metatomic-plugin]).
+    std::string modelled = control.models.empty() || !held.empty() ? "" : "c";
     if (withEnergy)
-      os << "  %u1" << held << ", %f1" << held << raw << ", %w1" << held
-         << raw << " = " << evaluate
+      os << "  %u1" << held << ", %f1" << held << raw << modelled << ", %w1"
+         << held << raw << " = " << evaluate
          << "\n      request [energy, forces, virial]\n"
          << "      : " << signature << " -> (f64, !vec, vector<9xf64>)\n";
     else if (withVirial)
-      os << "  %f1" << held << raw << ", %w1" << held << raw << " = "
-         << evaluate << "\n      request [forces, virial]\n"
+      os << "  %f1" << held << raw << modelled << ", %w1" << held << raw
+         << " = " << evaluate << "\n      request [forces, virial]\n"
          << "      : " << signature << " -> (!vec, vector<9xf64>)\n";
     else
-      os << "  %f1" << held << raw << " = " << evaluate << " request [forces]\n"
+      os << "  %f1" << held << raw << modelled << " = " << evaluate
+         << " request [forces]\n"
          << "      : " << signature << " -> !vec\n";
     std::string virial = "%w1" + held;
     if (sites)
@@ -6259,11 +6289,15 @@ void Builder::emitPrograms() {
                                "%r_", withVirial ? "%w1" + held + "e" : "",
                                "%w1" + held);
     if (hasRestraints()) {
-      emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1",
+      emitRestraints("  ", "%x1", "%p_", "%f1p",
+                     control.models.empty() ? "%f1" : "%f1c",
                      withEnergy ? "%u1p" : "", withEnergy ? "%u1" : "",
                      withVirial ? virial : "", withVirial ? "%w1" : "");
       virial = "%w1";
     }
+    if (!control.models.empty())
+      emitModelForces("  ", "%x1", "%p_", "%f1c", "%f1", "1",
+                      /*inLoop=*/true);
     std::string groups;
     if (molecular) {
       emitDiagonal(os, "%gd1", virial, "  ");
@@ -9255,6 +9289,47 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   return {newPositions, "%vc" + t, newForces};
 }
 
+void Builder::emitModelForces(StringRef indent, StringRef x,
+                              StringRef prefix, StringRef f,
+                              StringRef fResult, StringRef tag, bool inLoop) {
+  std::string inner = indent.str();
+  std::string current = f.str();
+  std::string t = ("_m" + tag).str();
+  if (!inLoop) {
+    os << indent << fResult << " = scf.for %mloop" << t
+       << " = %c0 to %c1 step %c1 iter_args(%mfa" << t << " = " << f
+       << ") -> (!vec) {\n";
+    inner += "  ";
+    current = "%mfa" + t;
+  }
+  int bits = program.state == Element::F64 ? 64 : 32;
+  for (size_t index = 0; index != control.models.size(); ++index) {
+    std::string k = t + "_" + std::to_string(index);
+    os << inner << "%mi" << k << " = arith.constant " << index << " : i64\n"
+       << inner << "%mbits" << k << " = arith.constant " << bits
+       << " : i64\n"
+       << inner << "mdrt.host_call @mdrtModelEvaluate(%mi" << k << ", " << x
+       << ", " << prefix << "model_z, %mbits" << k << ") {in_place}\n"
+       << inner << "    : (i64, !vec, !ids, i64)\n"
+       << inner << "%mfb" << k << " = func.call @mdrtModelForces(%mi" << k
+       << ") : (i64) -> memref<?x3xf64>\n"
+       << inner << "%mf" << k << " = mdrt.from_buffer %mfb" << k
+       << " : memref<?x3xf64> to !vec\n";
+    bool last = index + 1 == control.models.size();
+    std::string sum = last && inLoop ? fResult.str() : "%ms" + k;
+    os << inner << sum << " = md.map_particles gather(" << current << ", %mf"
+       << k << " : !vec, !vec) {\n"
+       << inner << "^bb0(%mf_a: vector<3xf64>, %mf_b: vector<3xf64>):\n"
+       << inner << "  %mf_s = arith.addf %mf_a, %mf_b : vector<3xf64>\n"
+       << inner << "  md.yield %mf_s : vector<3xf64>\n"
+       << inner << "} : !vec\n";
+    current = sum;
+  }
+  if (!inLoop)
+    os << inner << "scf.yield " << current << " : !vec\n"
+       << indent << "}\n";
+}
+
 void Builder::emitRestraints(StringRef indent, StringRef x,
                              StringRef prefix, StringRef f,
                              StringRef fResult, StringRef u,
@@ -10196,6 +10271,15 @@ void Builder::emitEntry() {
     os << "func.func private @mdrtFinish(memref<?x3x" << state
        << ">, memref<?x3x" << state << ">, memref<?xi32>)\n"
        << "    attributes {llvm.emit_c_interface}\n";
+  // A learned potential (D[metatomic-plugin]): the host evaluates it at the
+  // positions where they are, and hands over its forces in a buffer of the
+  // device that the program adds.
+  if (!control.models.empty())
+    os << "func.func private @mdrtModelEvaluate(i64, memref<?x3x" << state
+       << "> {mdrt.read_only}, memref<?xi32> {mdrt.read_only}, i64)\n"
+       << "    attributes {llvm.emit_c_interface}\n"
+       << "func.func private @mdrtModelForces(i64) -> memref<?x3xf64>\n"
+       << "    attributes {llvm.emit_c_interface}\n";
   if (control.minimize)
     os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
        << force << ">, memref<?xi32>)\n"
@@ -10535,7 +10619,9 @@ void Builder::emitEntry() {
   auto emitStartForces = [&]() -> std::string {
     StringRef raw = hasSites() ? "e" : "";
     std::string held = hasRestraints() ? "p" : "";
-    os << "  %u0" << held << ", %f0" << held << raw << ", %w0" << held << raw
+    std::string modelled = control.models.empty() || !held.empty() ? "" : "c";
+    os << "  %u0" << held << ", %f0" << held << raw << modelled << ", %w0"
+       << held << raw
        << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
        << getTimeValue("%time0") << ")\n"
        << "      request [energy, forces, virial]\n"
@@ -10546,10 +10632,14 @@ void Builder::emitEntry() {
       virial = emitSpreadSites("  ", "%x0", "%f0" + held + "e", "%f0" + held,
                                "%r_", "%w0" + held + "e", "%w0" + held);
     if (hasRestraints()) {
-      emitRestraints("  ", "%x0", "%p_", "%f0p", "%f0", "%u0p", "%u0",
+      emitRestraints("  ", "%x0", "%p_", "%f0p",
+                     control.models.empty() ? "%f0" : "%f0c", "%u0p", "%u0",
                      virial, "%w0");
       virial = "%w0";
     }
+    if (!control.models.empty())
+      emitModelForces("  ", "%x0", "%p_", "%f0c", "%f0", "0",
+                      /*inLoop=*/false);
     return virial;
   };
 
@@ -11385,6 +11475,23 @@ llvm::Error Builder::build() {
       return error;
   } else if (llvm::Error error = collectParameters()) {
     return error;
+  }
+  // A learned potential takes every particle with its element, and ML1 has
+  // no constraints and no virtual sites beside it
+  // (docs/metatomic-ml1.md, Section 6.9).
+  if (!control.models.empty()) {
+    if (!system.topology)
+      return makeError("a term of [[energy.model]] needs a topology, which "
+                       "gives the elements of the particles");
+    if (hasConstraints())
+      return makeError("a term of [[energy.model]] takes no constraints "
+                       "yet: give a flexible model (no SETTLE or SHAKE)");
+    if (hasSites() || !system.topology->virtualSites.empty())
+      return makeError("a term of [[energy.model]] takes no virtual sites "
+                       "yet");
+    if (control.precision == Precision::Single)
+      return makeError("a term of [[energy.model]] takes the mixed or the "
+                       "double precision");
   }
   // A build of the arrays alone ends with them.
   if (capture)

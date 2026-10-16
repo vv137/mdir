@@ -22,6 +22,7 @@
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Fingerprint.h"
+#include "mdir/Driver/ModelTerm.h"
 #include "mdir/Driver/Output.h"
 #include "mdir/Driver/System.h"
 
@@ -751,6 +752,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         (void *)&_mlir_ciface_mdrtCheckSpread);
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
+    add("_mlir_ciface_mdrtModelEvaluate",
+        (void *)&_mlir_ciface_mdrtModelEvaluate);
+    add("_mlir_ciface_mdrtModelForces", (void *)&_mlir_ciface_mdrtModelForces);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
     add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);
@@ -784,6 +788,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     (void)scheduler->addOccurrence(0, "pre-RA-sched", "default");
   if (!function)
     return fail(function.takeError());
+  // The learned potentials (D[metatomic-plugin]): the plugin beside the
+  // runtime, or at MDIR_MLIP_PLUGIN, on the device of the runtime, which
+  // the program has loaded.
+  if (!control->models.empty()) {
+    auto models = ModelTerms::load(*control, *system, libraries);
+    if (!models)
+      return fail(models.takeError());
+    output.models = std::move(*models);
+  }
   double compileTime = std::chrono::duration<double>(
                            std::chrono::steady_clock::now() - begin)
                            .count();
@@ -1337,6 +1350,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                      control->neighborStructureReason.c_str());
   }
   output.log.print("MDIR: compiled in %.2f s\n", compileTime);
+  if (output.models)
+    output.log.print("%s", output.models->describe().c_str());
   writeLogHeader(output);
 
   // SIGTERM and SIGINT ask the run to stop at its next checkpoint (D131).
@@ -1404,6 +1419,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  simulated * 86400.0 / runTime);
   }
   output.log.print("\n");
+  if (output.models)
+    output.log.print("%s", output.models->describeUse().c_str());
   // The rate past the start: from the first output of the energies at or
   // after half the steps to the last, which wait for the device.
   if (!control->minimize && output.numEnergyTimes >= 2) {

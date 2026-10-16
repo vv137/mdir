@@ -74,6 +74,9 @@ private:
   Error readFunctionFile(const toml::table &table, TabulatedFunction &function);
   /// [[energy.external]]: a term of the absolute positions (D148).
   Error readExternal(const toml::table &table);
+  /// [[energy.model]]: a learned potential through the plugin of
+  /// D[metatomic-plugin].
+  Error readModel(const toml::table &table);
   /// [[energy.parameter]]: a parameter of each particle (D165).
   Error readParticleParameter(const toml::table &table);
   /// The name of the parameter of each particle that `name` takes at one
@@ -454,6 +457,45 @@ Error Reader::readObserve(const toml::table &table, StringRef term) {
         return fail(element, "'" + *name + "' is observed twice");
     control.observables.push_back({term.str(), *name, line});
   }
+  return Error::success();
+}
+
+Error Reader::readModel(const toml::table &table) {
+  if (Error error = checkKeywords(table, "[energy.model]",
+                                  {"name", "backend", "path",
+                                   "centers_per_call"}))
+    return error;
+  Control::ModelTerm term;
+  if (Error error = readString(table, "name", term.name))
+    return error;
+  if (term.name.empty())
+    return fail(table, "expected a 'name' in [[energy.model]]");
+  if (!llvm::all_of(term.name,
+                    [](char c) { return llvm::isAlnum(c) || c == '_'; }))
+    return fail(*table.get("name"), "a name of letters, digits, and '_', "
+                                    "not '" + term.name + "'");
+  for (const Control::ModelTerm &other : control.models)
+    if (other.name == term.name)
+      return fail(*table.get("name"),
+                  "another model has the name '" + term.name + "'");
+  // The loader. A TorchScript artifact of metatomic is the first; an
+  // AOTInductor package follows (docs/metatomic-ml1.md, Section 5.3).
+  if (const toml::node *node = table.get("backend")) {
+    std::optional<std::string> value = node->value<std::string>();
+    if (!value || *value != "METATOMIC")
+      return fail(*node, "expected 'backend' as \"METATOMIC\", a "
+                         "TorchScript artifact of metatomic");
+    term.backend = *value;
+  }
+  if (Error error = readPath(table, "path", term.path))
+    return error;
+  if (term.path.empty())
+    return fail(table, "expected a 'path' in [[energy.model]], the file of "
+                       "the model");
+  if (Error error = readCount(table, "centers_per_call", term.centersPerCall,
+                              0))
+    return error;
+  control.models.push_back(std::move(term));
   return Error::success();
 }
 
@@ -1829,7 +1871,7 @@ Error Reader::readEnergy(const toml::table &table) {
   if (Error error = checkKeywords(
           table, "energy",
           {"cutoff", "switch_distance", "pairlist_distance",
-           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "salt_concentration", "born_radius_cutoff", "born_radii", "pair", "bond", "angle", "dihedral", "external", "function", "type",
+           "pruned_distance", "rebuild_interval", "lennard_jones_modifier", "coulomb_modifier", "reaction_field_dielectric", "implicit_solvent", "solvent_dielectric", "solute_dielectric", "surface_area_energy", "salt_concentration", "born_radius_cutoff", "born_radii", "pair", "bond", "angle", "dihedral", "external", "model", "function", "type",
            "parameter", "compound", "triplet", "pair_override", "dispersion_correction", "electrostatics",
            "lennard_jones"},
           {}))
@@ -1954,6 +1996,13 @@ Error Reader::readEnergy(const toml::table &table) {
     return error;
   if (Error error = readArray("external", &Reader::readExternal))
     return error;
+  if (Error error = readArray("model", &Reader::readModel))
+    return error;
+  // The model takes the elements of the particles, which a topology gives.
+  if (!control.models.empty() && !control.hasTopology())
+    return fail(*table.get("model"),
+                "a term of [[energy.model]] needs a topology, which gives "
+                "the elements of the particles");
   if (!control.externalTerms.empty() && !control.hasTopology())
     return fail(*table.get("external"),
                 "terms of the positions need a topology, whose particles "
@@ -3139,6 +3188,45 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
         "%s: the terms over triplets of [[energy.triplet]] run on the CPU "
         "only yet (D160); give 'target = \"CPU\"'",
         path.str().c_str());
+  // A learned potential (D[metatomic-plugin]) is evaluated by the external
+  // framework, which gives its energy and its derivatives: in ML1 on one
+  // GPU, in a fixed cell, outside the deterministic mode, and with no
+  // derivative or observation that MDIR would take of the term itself
+  // (docs/metatomic-ml1.md, Sections 6.7 to 6.9).
+  if (!control.models.empty()) {
+    const std::string &name = control.models.front().name;
+    auto refuse = [&](const char *what) {
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: the model '%s' of [[energy.model]] %s",
+          path.str().c_str(), name.c_str(), what);
+    };
+    if (control.target != Target::GPU)
+      return refuse("runs on a GPU only yet; give 'target = \"GPU\"'");
+    if (control.deterministic)
+      return refuse("is not deterministic: its framework adds with atomics "
+                    "in an order that the threads decide, and the "
+                    "deterministic mode refuses it");
+    if (control.barostat)
+      return refuse("takes a fixed cell yet: a barostat is refused until "
+                    "the virial of the model is validated in a run");
+    if (control.minimize)
+      return refuse("takes no minimization yet: [minimize] is refused");
+    if (control.hasFreeEnergy)
+      return refuse("has no derivative in lambda: [free_energy] is refused");
+    if (!control.observables.empty())
+      return refuse("cannot be observed, and no other term can be beside "
+                    "it yet: 'observe' is refused");
+    if (control.tunables || control.tunableGradient)
+      return refuse("has no derivative in a tunable parameter: tunables "
+                    "are refused");
+    if (control.frames)
+      return refuse("is not evaluated by the frame evaluator yet");
+    if (control.models.size() > 1)
+      return refuse("is one of several models; ML1 takes one");
+    if (!control.periodic)
+      return refuse("takes a periodic cell");
+  }
   // Under a barostat a term of the absolute positions says whether it
   // stays fixed in space or scales with the cell, which its virial follows
   // (D154).

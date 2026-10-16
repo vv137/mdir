@@ -1,0 +1,351 @@
+//===- ModelTerm.cpp - Learned potentials through the plugin --------------===//
+//
+// The core's side of D[metatomic-plugin] (docs/metatomic-ml1.md, Section 6):
+// the plugin is loaded with dlopen (RTLD_LOCAL) the first time a run has a
+// term of [[energy.model]], and stays loaded: libtorch is not unloaded. Its
+// work goes to the stream of the kernels of MDIR's runtime, whose functions
+// are found among the libraries that the program of the run has loaded.
+//
+//===----------------------------------------------------------------------===//
+
+#include "mdir/Driver/ModelTerm.h"
+
+#include "mdir/Driver/Output.h"
+#include "mdir/MLIP/Plugin.h"
+#include "mlir/ExecutionEngine/CRunnerUtils.h"
+#include "llvm/Support/DynamicLibrary.h"
+#include "llvm/Support/FormatVariadic.h"
+#include "llvm/Support/Path.h"
+
+#include <cstdlib>
+#include <dlfcn.h>
+#include <mutex>
+
+using namespace mdir;
+using namespace mdir::driver;
+
+namespace {
+
+/// The functions of the plugin, found once for the process.
+struct Plugin {
+  std::string path;
+  void *library = nullptr;
+  int32_t (*abiVersion)(void) = nullptr;
+  const char *(*buildVersions)(void) = nullptr;
+  const char *(*torchVersion)(void) = nullptr;
+  const char *(*lastError)(void) = nullptr;
+  int (*load)(const mdir_mlip_load_options *, mdir_mlip_model **) = nullptr;
+  int (*describe)(const mdir_mlip_model *, mdir_mlip_description *) = nullptr;
+  int (*evaluate)(mdir_mlip_model *, const mdir_mlip_inputs *,
+                  mdir_mlip_outputs *) = nullptr;
+  int (*memoryStats)(mdir_mlip_model *, int32_t, mdir_mlip_memory *) = nullptr;
+  void (*free)(mdir_mlip_model *) = nullptr;
+};
+
+std::mutex pluginMutex;
+Plugin *loadedPlugin = nullptr;
+
+llvm::Error makeError(const llvm::Twine &message) {
+  return llvm::createStringError(llvm::inconvertibleErrorCode(),
+                                 message.str());
+}
+
+llvm::Expected<Plugin *> openPlugin(llvm::StringRef path) {
+  std::lock_guard<std::mutex> lock(pluginMutex);
+  if (loadedPlugin) {
+    if (loadedPlugin->path != path)
+      return makeError("the plugin '" + loadedPlugin->path +
+                       "' is loaded in this process already; '" + path +
+                       "' cannot be loaded beside it");
+    return loadedPlugin;
+  }
+  // torch's allocator splits its segments where they can grow, unless the
+  // user configured it (Section 6.5 of the design); it reads the variable
+  // when it first allocates.
+  setenv("PYTORCH_CUDA_ALLOC_CONF", "expandable_segments:True", 0);
+  void *library = dlopen(path.str().c_str(), RTLD_NOW | RTLD_LOCAL);
+  if (!library)
+    return makeError("cannot load the plugin of learned potentials '" + path +
+                     "': " + dlerror() +
+                     "; build MDIR with -DMDIR_ENABLE_METATOMIC=ON, or set "
+                     "MDIR_MLIP_PLUGIN");
+  auto plugin = std::make_unique<Plugin>();
+  plugin->path = path.str();
+  plugin->library = library;
+  bool missing = false;
+  auto find = [&](auto &function, const char *name) {
+    function = reinterpret_cast<std::remove_reference_t<decltype(function)>>(
+        dlsym(library, name));
+    missing |= !function;
+  };
+  find(plugin->abiVersion, "mdir_mlip_abi_version");
+  find(plugin->buildVersions, "mdir_mlip_build_versions");
+  find(plugin->torchVersion, "mdir_mlip_torch_version");
+  find(plugin->lastError, "mdir_mlip_last_error");
+  find(plugin->load, "mdir_mlip_load");
+  find(plugin->describe, "mdir_mlip_describe");
+  find(plugin->evaluate, "mdir_mlip_evaluate");
+  find(plugin->memoryStats, "mdir_mlip_memory_stats");
+  find(plugin->free, "mdir_mlip_free");
+  if (missing)
+    return makeError("'" + path + "' is not a plugin of learned potentials "
+                     "of MDIR: a function of include/mdir/MLIP/Plugin.h is "
+                     "missing");
+  if (plugin->abiVersion() != MDIR_MLIP_ABI_VERSION)
+    return makeError(llvm::formatv("the plugin '{0}' has the boundary of "
+                                   "version {1}; this MDIR takes {2}",
+                                   path, plugin->abiVersion(),
+                                   MDIR_MLIP_ABI_VERSION)
+                         .str());
+  loadedPlugin = plugin.release();
+  return loadedPlugin;
+}
+
+/// A function of MDIR's runtime for NVIDIA GPUs, which the run has loaded.
+template <typename T> T findRuntime(const char *name) {
+  return reinterpret_cast<T>(
+      llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(name));
+}
+
+/// The models of the simulation that is running.
+ModelTerms *getRunning() {
+  Output *output = getOutput();
+  return output ? output->models.get() : nullptr;
+}
+
+} // namespace
+
+std::string mdir::driver::getPluginPath(llvm::StringRef directory) {
+  if (const char *given = std::getenv("MDIR_MLIP_PLUGIN"); given && *given)
+    return given;
+  llvm::SmallString<256> path(directory);
+  llvm::sys::path::append(path, "libmdir_metatomic.so");
+  return std::string(path);
+}
+
+llvm::Expected<std::string>
+mdir::driver::getPluginTorchVersion(llvm::StringRef path) {
+  llvm::Expected<Plugin *> plugin = openPlugin(path);
+  if (!plugin)
+    return plugin.takeError();
+  return std::string((*plugin)->torchVersion());
+}
+
+llvm::Expected<std::unique_ptr<ModelTerms>>
+ModelTerms::load(const Control &control, const System &system,
+                 llvm::StringRef directory) {
+  std::string path = getPluginPath(directory);
+  if (!system.topology)
+    return makeError("a term of [[energy.model]] needs a topology, which "
+                     "gives the elements of the particles");
+  const Topology &topology = *system.topology;
+  llvm::Expected<Plugin *> opened = openPlugin(path);
+  if (!opened)
+    return opened.takeError();
+  Plugin &plugin = **opened;
+  auto allocate = findRuntime<void *(*)(uint64_t)>("mdrtDeviceAllocateRecorded");
+  auto ordinal = findRuntime<int32_t (*)(void)>("mdrtDeviceOrdinal");
+  if (!allocate || !ordinal)
+    return makeError("a term of [[energy.model]] runs on a GPU, and the "
+                     "runtime for NVIDIA GPUs is not loaded");
+
+  int device = ordinal();
+  std::unique_ptr<ModelTerms> terms(new ModelTerms());
+  terms->count = static_cast<int64_t>(topology.getNumParticles());
+  const double *box = system.box, *tilt = system.tilt;
+  double cell[9] = {box[0], 0.0, 0.0, tilt[0], box[1], 0.0,
+                    tilt[1], tilt[2], box[2]};
+  std::copy(cell, cell + 9, terms->cell);
+
+  for (const Control::ModelTerm &term : control.models) {
+    Model model;
+    model.name = term.name;
+    mdir_mlip_load_options options{term.path.c_str(), term.backend.c_str(),
+                                   device, term.centersPerCall};
+    if (plugin.load(&options, &model.handle) != MDIR_MLIP_OK)
+      return makeError("cannot load the model '" + term.name + "' from '" +
+                       term.path + "': " + plugin.lastError());
+    terms->models.push_back(model);
+    Model &added = terms->models.back();
+    mdir_mlip_description d;
+    if (plugin.describe(added.handle, &d) != MDIR_MLIP_OK)
+      return makeError("cannot describe the model '" + term.name +
+                       "': " + plugin.lastError());
+
+    // Every particle with mass is the model's, with an element it takes
+    // (Section 6.3 of the design).
+    std::vector<int64_t> known(d.types, d.types + d.num_types);
+    if (topology.atomicNumbers.size() != topology.getNumParticles())
+      return makeError("the topology gives no elements, which the model '" +
+                       term.name + "' takes");
+    for (size_t i = 0; i != topology.getNumParticles(); ++i) {
+      int number = topology.atomicNumbers[i];
+      if (topology.masses[i] <= 0.0)
+        return makeError(llvm::formatv(
+            "particle {0} has no mass; the model '{1}' takes every particle, "
+            "and ML1 has no particle without mass beside it",
+            i + 1, term.name));
+      if (number <= 0)
+        return makeError(llvm::formatv(
+            "particle {0} has no element, which the model '{1}' takes",
+            i + 1, term.name));
+      if (!llvm::is_contained(known, number))
+        return makeError(llvm::formatv(
+            "particle {0} is of the element {1}, which the model '{2}' does "
+            "not take",
+            i + 1, number, term.name));
+    }
+
+    added.description = llvm::formatv(
+        "MDIR: model '{0}' ({1}, {2}): metatomic, {3}; cutoff {4} nm, "
+        "{5} pair list; inputs of {6} bits; units {7} and {8}, "
+        "factors {9} and {10} to nm and kJ/mol; {11}\n",
+        term.name, d.name, term.path, d.framework, d.cutoff,
+        d.full_list ? "full" : "half", d.dtype_bits, d.length_unit,
+        d.energy_unit, d.length_factor, d.energy_factor,
+        d.centers_per_call > 0
+            ? llvm::formatv("{0} centers per call", d.centers_per_call).str()
+        : d.local_centers ? std::string("local, the whole system in one call")
+        : term.centersPerCall > 0
+            ? std::string("not declared local: the whole system in one "
+                          "call, whatever 'centers_per_call' asks")
+            : std::string("the whole system in one call"));
+
+    added.forces = static_cast<double *>(
+        allocate(sizeof(double) * 3 * static_cast<uint64_t>(terms->count)));
+    added.results = static_cast<double *>(allocate(sizeof(double) * 10));
+  }
+  return std::move(terms);
+}
+
+ModelTerms::~ModelTerms() {
+  auto release = findRuntime<void (*)(void *)>("mdrtDeviceFreeRecorded");
+  for (Model &model : models) {
+    if (release) {
+      release(model.forces);
+      release(model.results);
+    }
+    if (loadedPlugin && model.handle)
+      loadedPlugin->free(model.handle);
+  }
+}
+
+std::string ModelTerms::evaluate(int64_t index, const void *positions,
+                                 int bits, const int32_t *numbers,
+                                 int64_t n) {
+  static auto stream = findRuntime<void *(*)(void)>("mdrtDeviceExternalStream");
+  static auto zero = findRuntime<void (*)(void *, uint64_t)>("mdrtDeviceZero");
+  if (!stream || !zero)
+    return "the runtime for NVIDIA GPUs is not loaded";
+  Model &model = models[index];
+  if (n != count)
+    return llvm::formatv("the model '{0}' is given {1} particles, not {2}",
+                         model.name, n, count)
+        .str();
+  mdir_mlip_inputs inputs{};
+  inputs.count = n;
+  inputs.positions = positions;
+  inputs.position_bits = bits;
+  inputs.numbers = numbers;
+  std::copy(cell, cell + 9, inputs.cell);
+  inputs.periodic[0] = inputs.periodic[1] = inputs.periodic[2] = 1;
+  inputs.stream = stream();
+  // The plugin adds its forces; the buffer begins at 0.
+  zero(model.forces, 2 * 3 * static_cast<uint64_t>(n));
+  mdir_mlip_outputs outputs{};
+  outputs.forces = model.forces;
+  outputs.energy = model.results;
+  outputs.virial = model.results + 1;
+  if (loadedPlugin->evaluate(model.handle, &inputs, &outputs) != MDIR_MLIP_OK)
+    return "the model '" + model.name +
+           "' failed: " + loadedPlugin->lastError();
+  model.pairs = outputs.pairs;
+  model.calls = outputs.calls;
+  ++model.evaluations;
+  return std::string();
+}
+
+double *ModelTerms::getForces(int64_t index) const {
+  return models[index].forces;
+}
+
+void ModelTerms::read(double &energy, std::array<double, 9> &virial) const {
+  static auto copy =
+      findRuntime<void (*)(void *, const void *, uint64_t)>("mdrtDeviceCopyToHost");
+  energy = 0.0;
+  virial.fill(0.0);
+  for (const Model &model : models) {
+    double results[10] = {};
+    if (copy && model.evaluations > 0)
+      copy(results, model.results, sizeof results);
+    energy += results[0];
+    for (int k = 0; k != 9; ++k)
+      virial[k] += results[1 + k];
+  }
+}
+
+std::string ModelTerms::describe() const {
+  std::string text;
+  for (const Model &model : models)
+    text += model.description;
+  return text;
+}
+
+std::string ModelTerms::describeUse() const {
+  std::string text;
+  for (const Model &model : models) {
+    mdir_mlip_memory memory{};
+    if (loadedPlugin->memoryStats(model.handle, 0, &memory) != MDIR_MLIP_OK)
+      continue;
+    text += llvm::formatv(
+        "MDIR: model '{0}': {1} evaluations, {2} pairs and {3} calls in the "
+        "last; the plugin's allocator held at most {4:F1} MiB allocated, "
+        "{5:F1} MiB reserved\n",
+        model.name, model.evaluations, model.pairs, model.calls,
+        memory.peak_allocated / 1048576.0, memory.peak_reserved / 1048576.0);
+  }
+  return text;
+}
+
+std::vector<std::string> ModelTerms::getNames() const {
+  std::vector<std::string> names;
+  for (const Model &model : models)
+    names.push_back(model.name);
+  return names;
+}
+
+//===----------------------------------------------------------------------===//
+// The functions that the program calls
+//===----------------------------------------------------------------------===//
+
+/// Evaluates model `index` at the positions of the program, its forces to
+/// the buffer that mdrtModelForces returns (D[metatomic-plugin]).
+extern "C" void _mlir_ciface_mdrtModelEvaluate(int64_t index, void *given,
+                                               void *atomic, int64_t bits) {
+  auto *positions = static_cast<StridedMemRefType<char, 2> *>(given);
+  auto *numbers = static_cast<StridedMemRefType<int32_t, 1> *>(atomic);
+  ModelTerms *models = getRunning();
+  std::string failure =
+      models ? models->evaluate(
+                   index,
+                   positions->data + positions->offset * (bits / 8),
+                   static_cast<int>(bits), numbers->data + numbers->offset,
+                   positions->sizes[0])
+             : std::string("a model term is evaluated, but no model is loaded");
+  if (!failure.empty())
+    stopRun(failure);
+}
+
+extern "C" void _mlir_ciface_mdrtModelForces(void *buffer, int64_t index) {
+  auto *result = static_cast<StridedMemRefType<double, 2> *>(buffer);
+  ModelTerms *models = getRunning();
+  double *forces = models ? models->getForces(index) : nullptr;
+  int64_t count = models ? models->getCount() : 0;
+  result->basePtr = forces;
+  result->data = forces;
+  result->offset = 0;
+  result->sizes[0] = count;
+  result->sizes[1] = 3;
+  result->strides[0] = 3;
+  result->strides[1] = 1;
+}

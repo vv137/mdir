@@ -4,6 +4,7 @@
 #include "mdir/Driver/Output.h"
 
 #include "mdir/Driver/H5MD.h"
+#include "mdir/Driver/ModelTerm.h"
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 
@@ -215,6 +216,17 @@ static void stopOnFailure(const Output &output, const std::string &message) {
   std::exit(1);
 }
 
+Output *mdir::driver::getOutput() { return current; }
+
+void mdir::driver::stopRun(const std::string &message) {
+  if (current) {
+    stopOnFailure(*current, message);
+    return;
+  }
+  std::fprintf(stderr, "mdir: %s\n", message.c_str());
+  std::exit(1);
+}
+
 void mdir::driver::writeLogHeader(Output &output) {
   if (output.minimizes) {
     output.log.print("INFO: %9s %14s %14s %14s %9s %14s\n", "STEP",
@@ -277,6 +289,14 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz) {
   // of a net charge are isotropic: a third of each on each axis.
   double constant =
       (output.getDispersionVirial() + output.getCoulombConstantVirial()) / 3.0;
+  if (output.models) {
+    double energy;
+    std::array<double, 9> tensor;
+    output.models->read(energy, tensor);
+    xx += tensor[0];
+    yy += tensor[4];
+    zz += tensor[8];
+  }
   output.log.print(
                "MDIR: the diagonal of the virial at the start, without the "
                "constraints, in kcal/mol:\nMDIR:   %16.6f %16.6f %16.6f\n",
@@ -373,6 +393,17 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
     total += value;
     output.log.print("MDIR:   %-22s %16.6f\n", name.c_str(),
                  value / units::energy);
+  }
+  // A learned potential (D[metatomic-plugin]), evaluated with the forces of
+  // the start; ML1 takes one.
+  if (output.models) {
+    double energy;
+    std::array<double, 9> tensor;
+    output.models->read(energy, tensor);
+    std::string name = "MODEL " + output.models->getNames().front();
+    total += energy;
+    output.log.print("MDIR:   %-22s %16.6f\n", name.c_str(),
+                     energy / units::energy);
   }
   if (output.pme || output.reactionField)
     output.log.print("MDIR:   %-22s %16.6f\n", "Coulomb self",
@@ -798,6 +829,15 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     output.hasSolvent = false;
     if (!output.embedded)
       return;
+  }
+  // The learned potentials (D[metatomic-plugin]) keep the energy and the
+  // virial of their last evaluation, that of this step, on the device.
+  if (output.models) {
+    double energy;
+    std::array<double, 9> tensor;
+    output.models->read(energy, tensor);
+    potential += energy;
+    virial += tensor[0] + tensor[4] + tensor[8];
   }
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
