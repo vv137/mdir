@@ -337,7 +337,7 @@ func.func @unique_without_exchange(%x: !vec, %cell: !md.cell) {
   %xg = md_dist.halo_copy %xo, %h image(%cell) : !own, !halo -> !gho
   %n = md_dist.neighborhood %xo, %xg, %h cutoff(2.0)
          : !own, !gho, !halo -> !md_dist.relation<@dd, unique>
-  // expected-error @+1 {{over a unique relation each pair is computed once}}
+  // expected-error @+1 {{the contributions at the second particle of a pair come from the exchange contract}}
   %fo, %fg = md_dist.gather_pairs %n, %xo, %xg exchange(none) {
   ^bb0(%r: f64, %d: vector<3xf64>):
     md_dist.yield %d : vector<3xf64>
@@ -478,3 +478,124 @@ func.func @other_set(%x: !vec, %cell: !md.cell) {
 md.particle_set @atoms
 // expected-error @+1 {{expected divisions of at least 1, got 0}}
 md_dist.decomposition @dd on(@atoms) grid([2, 0, 1])
+
+// -----
+
+!vec  = !md.field<@atoms, 3 x f64>
+!own  = !md_dist.field<@dd, owned, 3 x f64>
+!gho  = !md_dist.field<@dd, ghost, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.0>
+!op   = !md_dist.field<@dd, owned, partial, 3 x f64>
+!gp   = !md_dist.field<@dd, ghost, partial, 3 x f64>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+
+// The two-ended gather over a directed relation (D[ml2-distribute]) adds
+// half of each pair at its second particle from the exchange contract, too.
+func.func @directed_two_ended_without_exchange(%x: !vec, %cell: !md.cell) {
+  %l = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>
+  %xo = md_dist.distribute %x, %l image(%cell) : !vec -> !own
+  %h = md_dist.halo %l, %xo, %cell : !own -> !halo
+  %xg = md_dist.halo_copy %xo, %h image(%cell) : !own, !halo -> !gho
+  %n = md_dist.neighborhood %xo, %xg, %h cutoff(2.0)
+         : !own, !gho, !halo -> !md_dist.relation<@dd, directed>
+  // expected-error @+1 {{the contributions at the second particle of a pair come from the exchange contract}}
+  %fo, %fg = md_dist.gather_pairs %n, %xo, %xg exchange(none) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    md_dist.yield %d : vector<3xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !op, !gp
+  %f = md_dist.halo_sum %fo, %fg, %h : !op, !gp, !halo -> !own
+  return
+}
+
+// -----
+
+!vec  = !md.field<@atoms, 3 x f64>
+!own  = !md_dist.field<@dd, owned, 3 x f64>
+!gho  = !md_dist.field<@dd, ghost, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.0>
+!op   = !md_dist.field<@dd, owned, partial, 3 x f64>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+
+// One result over a directed relation is the complete field of owned rows,
+// not values at the ghosts.
+func.func @directed_one_ghost(%x: !vec, %cell: !md.cell) {
+  %l = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>
+  %xo = md_dist.distribute %x, %l image(%cell) : !vec -> !own
+  %h = md_dist.halo %l, %xo, %cell : !own -> !halo
+  %xg = md_dist.halo_copy %xo, %h image(%cell) : !own, !halo -> !gho
+  %n = md_dist.neighborhood %xo, %xg, %h cutoff(2.0)
+         : !own, !gho, !halo -> !md_dist.relation<@dd, directed>
+  // expected-error @+1 {{over a directed relation every pair of a particle is at its owner: expected one complete field of owned rows, or two partial fields of owned and of ghost rows}}
+  %fo = md_dist.gather_pairs %n, %xo, %xg exchange(antisymmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    md_dist.yield %d : vector<3xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !gho
+  return
+}
+
+// -----
+
+!vec  = !md.field<@atoms, 3 x f64>
+!own  = !md_dist.field<@dd, owned, 3 x f64>
+!gho  = !md_dist.field<@dd, ghost, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.0>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+
+// A map over owned and ghost rows at once: the rows are not the same.
+func.func @map_two_roles(%x: !vec, %cell: !md.cell) {
+  %l = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>
+  %xo = md_dist.distribute %x, %l image(%cell) : !vec -> !own
+  %h = md_dist.halo %l, %xo, %cell : !own -> !halo
+  %xg = md_dist.halo_copy %xo, %h image(%cell) : !own, !halo -> !gho
+  // expected-error @+1 {{expected fields of one role}}
+  %m = md_dist.map_particles gather(%xo, %xg : !own, !gho) {
+  ^bb0(%a: vector<3xf64>, %b: vector<3xf64>):
+    %s = arith.addf %a, %b : vector<3xf64>
+    md_dist.yield %s : vector<3xf64>
+  } : !own
+  return
+}
+
+// -----
+
+!vec  = !md.field<@atoms, 3 x f64>
+!own  = !md_dist.field<@dd, owned, 3 x f64>
+!gho  = !md_dist.field<@dd, ghost, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.0>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+
+// A map gives values of the rows it reads.
+func.func @map_other_rows(%x: !vec, %cell: !md.cell) {
+  %l = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>
+  %xo = md_dist.distribute %x, %l image(%cell) : !vec -> !own
+  // expected-error @+1 {{expected a complete field of the rows of the fields it reads}}
+  %m = md_dist.map_particles gather(%xo : !own) {
+  ^bb0(%a: vector<3xf64>):
+    md_dist.yield %a : vector<3xf64>
+  } : !gho
+  return
+}
+
+// -----
+
+!vec  = !md.field<@atoms, 3 x f64>
+!own  = !md_dist.field<@dd, owned, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.0>
+!op   = !md_dist.field<@dd, owned, partial, 3 x f64>
+!gp   = !md_dist.field<@dd, ghost, partial, 3 x f64>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+
+// V6: a map does not read a partial field.
+func.func @map_partial(%x: !vec, %cell: !md.cell, %p: !op) {
+  // expected-error @+1 {{a partial field cannot be read}}
+  %m = md_dist.map_particles gather(%p : !op) {
+  ^bb0(%a: vector<3xf64>):
+    md_dist.yield %a : vector<3xf64>
+  } : !own
+  return
+}

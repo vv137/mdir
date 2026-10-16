@@ -8,7 +8,7 @@
 #include "mdir/Dialect/MDDist/MDDistTypes.h"
 
 #include "mdir/Dialect/MD/MDTypes.h"
-#include "mdir/Dialect/MD/Transforms/Exchange.h"
+#include "mdir/Dialect/MD/MDExchange.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
@@ -190,6 +190,12 @@ Value mdir::md_dist::haloOf(Value value) {
     FieldType type = getFieldType(value);
     return type && type.isGhost() ? haloOf(op.getRelation()) : Value();
   }
+  if (auto op = dyn_cast<MapParticlesOp>(def)) {
+    FieldType type = getFieldType(value);
+    return type && type.isGhost() && !op.getGathered().empty()
+               ? haloOf(op.getGathered()[0])
+               : Value();
+  }
   return {};
 }
 
@@ -217,6 +223,8 @@ Value mdir::md_dist::layoutOf(Value value) {
     return layoutOf(op.getRows());
   if (auto op = dyn_cast<GatherPairsOp>(def))
     return layoutOf(op.getRelation());
+  if (auto op = dyn_cast<MapParticlesOp>(def))
+    return op.getGathered().empty() ? Value() : layoutOf(op.getGathered()[0]);
   return {};
 }
 
@@ -534,16 +542,22 @@ LogicalResult NeighborhoodOp::verify() {
     return failure();
   if (getPositions().getType().getNumComponents() != 3)
     return emitOpError() << "expected positions with 3 components";
+  return verifyCoverage(*this, *this);
+}
+
+LogicalResult mdir::md_dist::verifyCoverage(Operation *op,
+                                            NeighborhoodOp neighborhood) {
   // V4: every pair within the cutoff is within the rows of its owners
   // (docs/distributed-ml2.md, Section 4.3).
-  double cutoff = getCutoff().convertToDouble();
-  double reach = halo.getReach().convertToDouble();
+  double cutoff = neighborhood.getCutoff().convertToDouble();
+  double reach =
+      neighborhood.getHalo().getType().getReach().convertToDouble();
   if (!(cutoff > 0.0))
-    return emitOpError() << "expected a positive cutoff";
+    return op->emitOpError() << "expected a positive cutoff";
   if (reach < cutoff)
-    return emitOpError() << "the reach of the halo, " << reach
-                         << ", is less than the cutoff, " << cutoff
-                         << ": the ghosts do not cover the pairs";
+    return op->emitOpError() << "the reach of the halo, " << reach
+                             << ", is less than the cutoff, " << cutoff
+                             << ": the ghosts do not cover the pairs";
   return success();
 }
 
@@ -609,8 +623,8 @@ static LogicalResult verifyPairKernel(OpTy op, Type &yielded) {
   return success();
 }
 
-static LogicalResult proveContract(Operation *op, Block &kernel,
-                                   md::Exchange exchange) {
+LogicalResult mdir::md_dist::proveContract(Operation *op, Block &kernel,
+                                           md::Exchange exchange) {
   if (exchange == md::Exchange::None)
     return success();
   Value value = cast<YieldOp>(kernel.getTerminator()).getValues()[0];
@@ -656,25 +670,29 @@ LogicalResult GatherPairsOp::verify() {
                                                getResults()[0].getType());
   if (!first)
     return emitOpError() << "expected a field as the result";
-  if (traversal == Traversal::Directed) {
-    if (getResults().size() != 1 || !first.isOwned() || first.getPartial())
+  if (traversal == Traversal::Directed && getResults().size() == 1) {
+    if (!first.isOwned() || first.getPartial())
       return emitOpError()
              << "over a directed relation every pair of a particle is at "
-                "its owner: expected one complete field of owned rows";
+                "its owner: expected one complete field of owned rows, or "
+                "two partial fields of owned and of ghost rows";
     return success();
   }
   if (getResults().size() != 2 ||
       first != first.with(Role::Owned, true) ||
       getResults()[1].getType() != first.with(Role::Ghost, true))
     return emitOpError()
-           << "over a unique relation the contributions are at owned and at "
-              "ghost rows: expected two partial fields, of owned and of "
-              "ghost rows";
+           << (traversal == Traversal::Unique
+                   ? "over a unique relation the contributions are at owned "
+                     "and at ghost rows: expected two partial fields, of "
+                     "owned and of ghost rows"
+                   : "over a directed relation expected one complete field "
+                     "of owned rows, or two partial fields of owned and of "
+                     "ghost rows");
   if (getExchange() == md::Exchange::None)
     return emitOpError()
-           << "over a unique relation each pair is computed once, and the "
-              "value at the second particle comes from the exchange "
-              "contract: expected 'exchange(symmetric)' or "
+           << "the contributions at the second particle of a pair come "
+              "from the exchange contract: expected 'exchange(symmetric)' or "
               "'exchange(antisymmetric)'";
   return success();
 }
@@ -695,25 +713,11 @@ LogicalResult GatherPairsOp::verifyRegions() {
 // SumParticlesOp, AllReduceOp
 //===----------------------------------------------------------------------===//
 
+static LogicalResult verifyParticleFields(Operation *op, ValueRange fields);
+
 LogicalResult SumParticlesOp::verify() {
-  if (getGathered().empty())
-    return emitOpError() << "expected at least one field";
-  auto first = cast<FieldType>(getGathered()[0].getType());
-  Value rows = first.isOwned() ? layoutOf(getGathered()[0])
-                               : haloOf(getGathered()[0]);
-  for (Value field : getGathered()) {
-    auto type = cast<FieldType>(field.getType());
-    if (type.getRole() != first.getRole())
-      return emitOpError() << "expected fields of one role";
-    if (type.getPartial())
-      return emitOpError() << "a partial field cannot be read";
-    Value own = first.isOwned() ? layoutOf(field) : haloOf(field);
-    if (!own || own != rows)
-      return emitOpError()
-             << "expected fields of one "
-             << (first.isOwned() ? "layout" : "halo")
-             << ", shown by the ops that give them";
-  }
+  if (failed(verifyParticleFields(*this, getGathered())))
+    return failure();
   return verifyPartialUses(*this);
 }
 
@@ -730,6 +734,57 @@ LogicalResult SumParticlesOp::verifyRegions() {
       yield.getValues()[0].getType() != getResult().getType().getValueType())
     return emitOpError() << "expected the kernel to yield one value of "
                          << getResult().getType().getValueType();
+  return success();
+}
+
+/// The checks of md_dist.sum_particles and md_dist.map_particles on their
+/// fields: complete, of one role, and of one layout or halo.
+static LogicalResult verifyParticleFields(Operation *op, ValueRange fields) {
+  if (fields.empty())
+    return op->emitOpError() << "expected at least one field";
+  auto first = cast<FieldType>(fields[0].getType());
+  Value rows = first.isOwned() ? layoutOf(fields[0]) : haloOf(fields[0]);
+  for (Value field : fields) {
+    auto type = cast<FieldType>(field.getType());
+    if (type.getRole() != first.getRole())
+      return op->emitOpError() << "expected fields of one role";
+    if (type.getPartial())
+      return op->emitOpError() << "a partial field cannot be read";
+    Value own = first.isOwned() ? layoutOf(field) : haloOf(field);
+    if (!own || own != rows)
+      return op->emitOpError()
+             << "expected fields of one "
+             << (first.isOwned() ? "layout" : "halo")
+             << ", shown by the ops that give them";
+  }
+  return success();
+}
+
+LogicalResult MapParticlesOp::verify() {
+  if (failed(verifyParticleFields(*this, getGathered())))
+    return failure();
+  FieldType result = getResult().getType();
+  auto first = cast<FieldType>(getGathered()[0].getType());
+  if (result.getPartial() || result.getRole() != first.getRole() ||
+      result.getDecomposition() != first.getDecomposition())
+    return emitOpError() << "expected a complete field of the rows of the "
+                            "fields it reads";
+  return success();
+}
+
+LogicalResult MapParticlesOp::verifyRegions() {
+  Block &kernel = getKernel().front();
+  SmallVector<Type> expected;
+  for (Value field : getGathered())
+    expected.push_back(cast<FieldType>(field.getType()).getKernelValueType());
+  if (kernel.getArgumentTypes() != ArrayRef<Type>(expected))
+    return emitOpError() << "expected the kernel to take one value of each "
+                            "field";
+  auto yield = cast<YieldOp>(kernel.getTerminator());
+  Type value = getResult().getType().getKernelValueType();
+  if (yield.getValues().size() != 1 || yield.getValues()[0].getType() != value)
+    return emitOpError() << "expected the kernel to yield one value of "
+                         << value;
   return success();
 }
 

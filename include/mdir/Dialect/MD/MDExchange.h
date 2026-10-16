@@ -1,7 +1,7 @@
 // The proof of exchange contracts of pair kernels.
 
-#ifndef MDIR_DIALECT_MD_TRANSFORMS_EXCHANGE_H
-#define MDIR_DIALECT_MD_TRANSFORMS_EXCHANGE_H
+#ifndef MDIR_DIALECT_MD_MDEXCHANGE_H
+#define MDIR_DIALECT_MD_MDEXCHANGE_H
 
 #include "mlir/IR/Block.h"
 #include "mlir/IR/Value.h"
@@ -21,4 +21,4 @@ int proveExchange(mlir::Block &kernel, mlir::Value value);
 } // namespace md
 } // namespace mdir
 
-#endif // MDIR_DIALECT_MD_TRANSFORMS_EXCHANGE_H
+#endif // MDIR_DIALECT_MD_MDEXCHANGE_H

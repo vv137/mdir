@@ -52,6 +52,20 @@ mlir::LogicalResult verifyGhostCopy(mlir::Operation *op, llvm::StringRef what,
 /// number.
 mlir::LogicalResult verifyPartialUses(mlir::Operation *op);
 
+/// Checks V4 for the relation of `neighborhood`: the reach of its halo is
+/// at least its cutoff, so that every pair within the cutoff is in the
+/// rows of the owner of each of its particles (docs/distributed-ml2.md,
+/// Section 4.3). Diagnoses on `op`. The verifier of md_dist.neighborhood
+/// and md-dist-owner-computes share it (D[ml2-distribute]).
+mlir::LogicalResult verifyCoverage(mlir::Operation *op,
+                                   NeighborhoodOp neighborhood);
+
+/// Proves that the value that the pair kernel `kernel` yields has the
+/// exchange contract `exchange` (V8), or diagnoses on `op`. The verifiers
+/// of the pair ops and md-dist-owner-computes share it.
+mlir::LogicalResult proveContract(mlir::Operation *op, mlir::Block &kernel,
+                                  mdir::md::Exchange exchange);
+
 } // namespace md_dist
 } // namespace mdir
 
