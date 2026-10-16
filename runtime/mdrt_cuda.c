@@ -1121,6 +1121,79 @@ void mdrtMatrixGrow(int64_t handle, int64_t width) {
 }
 
 /*===----------------------------------------------------------------------===
+ * The slots of the pairs of images of a learned potential
+ *===----------------------------------------------------------------------===*/
+
+/* The candidates of the pairs of images that each build of a neighbor
+   matrix gives its particles, a row (j, s_a, s_b, s_c) for each, and the
+   slots that each step writes them into, a row (i, j, s_a, s_b, s_c) for
+   each (D[mlip-pairlist], docs/metatomic-ml1.md, Section 12).
+   A build sets their number, `length`; the buffers grow, a quarter more
+   than asked, when a build needs more. What they held is lost: the build
+   writes the candidates anew. Compiled code takes a buffer where it uses it
+   (`mdrtEdgesBuffer`). */
+struct Edges {
+  void *candidates;
+  void *slots;
+  int64_t capacity;
+  int64_t length;
+};
+
+static void allocateEdges(struct Edges *edges) {
+  edges->candidates = mgpuMemAlloc(
+      (uint64_t)edges->capacity * 4 * sizeof(int32_t), NULL, false);
+  edges->slots = mgpuMemAlloc(
+      (uint64_t)edges->capacity * 5 * sizeof(int32_t), NULL, false);
+}
+
+int64_t mdrtEdgesCreate(void) {
+  struct Edges *edges = calloc(1, sizeof(struct Edges));
+  if (!edges) {
+    fprintf(stderr, "mdrt: out of memory of the host\n");
+    abort();
+  }
+  edges->capacity = 1;
+  allocateEdges(edges);
+  recordCallHandle(edges);
+  return (int64_t)(intptr_t)edges;
+}
+
+/* Makes the buffers hold `length` rows, and sets their number. */
+void mdrtEdgesReserve(int64_t handle, int64_t length) {
+  struct Edges *edges = (struct Edges *)(intptr_t)handle;
+  if (length < 0) {
+    fprintf(stderr, "mdrt: a build counted %lld pairs of images\n",
+            (long long)length);
+    abort();
+  }
+  if (length > edges->capacity) {
+    enter();
+    check(cuCtxSynchronize(), "cuCtxSynchronize");
+    mgpuMemFree(edges->candidates, NULL);
+    mgpuMemFree(edges->slots, NULL);
+    edges->capacity = length + length / 4;
+    allocateEdges(edges);
+  }
+  edges->length = length;
+}
+
+/* The candidates (`which` 0, four numbers a row) or the slots (1, five),
+   as many rows as the last build set. */
+void _mlir_ciface_mdrtEdgesBuffer(struct Buffer2 *result, int64_t handle,
+                                  int64_t which) {
+  struct Edges *edges = (struct Edges *)(intptr_t)handle;
+  int64_t columns = which == 0 ? 4 : 5;
+  void *data = which == 0 ? edges->candidates : edges->slots;
+  result->allocated = data;
+  result->aligned = data;
+  result->offset = 0;
+  result->sizes[0] = edges->length;
+  result->sizes[1] = columns;
+  result->strides[0] = columns;
+  result->strides[1] = 1;
+}
+
+/*===----------------------------------------------------------------------===
  * Calls of an entry by an embedding program
  *===----------------------------------------------------------------------===*/
 

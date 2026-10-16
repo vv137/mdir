@@ -156,8 +156,9 @@ BufferAliases::getRoots(Value value) {
             }
             continue;
           }
-          if (!isa<PairForOp, BuildTripletsOp, ReferencePositionsOp,
-                   ReferenceCellOp, RebuildCountOp>(user)) {
+          if (!isa<PairForOp, BuildTripletsOp, BuildEdgesOp,
+                   ReferencePositionsOp, ReferenceCellOp, RebuildCountOp>(
+                  user)) {
             computed.reset();
             break;
           }

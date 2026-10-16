@@ -1167,6 +1167,10 @@ LogicalResult Lowering::lowerOp(Operation *op) {
   } else if (auto triplets = dyn_cast<md_exec::BuildTripletsOp>(op)) {
     if (failed(lowerBuildTriplets(triplets)))
       return failure();
+  } else if (isa<md_exec::BuildEdgesOp>(op)) {
+    // The pairs of images of a learned potential are found on a device
+    // (D[mlip-pairlist]).
+    return op->emitOpError() << "is lowered for a device only";
   } else if (auto build = dyn_cast<md_exec::BuildIncidenceOp>(op)) {
     if (!build.isStorageForm())
       return op->emitOpError()

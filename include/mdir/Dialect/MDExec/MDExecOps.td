@@ -1123,6 +1123,66 @@ def MDExec_BuildTripletsOp : MDExec_Op<"build_triplets", [
   let hasVerifier = 1;
 }
 
+def MDExec_BuildEdgesOp : MDExec_Op<"build_edges", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Finds the pairs of images within a cutoff";
+  let description = [{
+    The pairs of `md.edges` at the positions `positions` in the cell
+    `cell` (D[mlip-pairlist], docs/metatomic-ml1.md, Section 12):
+    for each particle `i`, every image `s` of each particle `j` of its row
+    in `neighbors`, and of `i` itself, with `|x_j − x_i + s H| < cutoff`.
+
+    ```mlir
+    %e = md_exec.build_edges %nl, %x, %cell cutoff(0.7)
+           : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
+             -> !md.edges<@atoms>
+    ```
+
+    The structure must be a matrix: its rows hold every neighbor of a
+    particle, by its nearest image. Each build of the structure gives each
+    particle `i` slots for its candidates, the images within the reach of
+    the structure at the positions of the build, `C_i` of them at the
+    offsets `O_i`; the op writes into the slots of `i` the candidates
+    within `cutoff` at `positions` first, then the others, and counts the
+    first. A candidate within the cutoff now was within the reach at the
+    build while the structure is valid, so every pair of `md.edges` has a
+    slot.
+
+    In the storage form the op takes the buffer of the positions and
+    returns, on the device, the slots, one row `(i, j, s_a, s_b, s_c)` for
+    each, in the order of `i`; the number of pairs within the cutoff of each
+    particle; the offsets `O_i`, one more than the particles; and, on the
+    host, the number of builds of the structure, which changes where the
+    slots do. The buffers are those of the structure: a build replaces what
+    they hold.
+
+    ```mlir
+    %slots, %counts, %offsets, %builds = md_exec.build_edges %nl, %x, %cell
+        cutoff(0.7) : !mdrt.neighbors<@atoms>, memref<?x3xf64, 1>
+        -> memref<?x5xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, i64
+    ```
+  }];
+  let arguments = (ins
+    MDRT_NeighborsType:$neighbors,
+    MDExec_FieldOrBuffer:$positions,
+    MD_CellType:$cell,
+    F64Attr:$cutoff
+  );
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $neighbors `,` $positions `,` $cell `cutoff` `(` $cutoff `)` attr-dict
+    `:` qualified(type($neighbors)) `,` qualified(type($positions))
+    `->` type($results)
+  }];
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
+    }
+  }];
+  let hasVerifier = 1;
+}
+
 def MDExec_RenumberOp : MDExec_Op<"renumber", [
     AllTypesMatch<["members", "result"]>,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>

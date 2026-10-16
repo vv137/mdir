@@ -299,6 +299,49 @@ def MD_TripletsOp : MD_Op<"triplets", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MD_EdgesOp : MD_Op<"edges", [Pure]> {
+  let summary = "Derives the pairs of images within a cutoff from pairs";
+  let description = [{
+    ```text
+    E(N, x, h) = { (i, j, s) : (j, s) ≠ (i, 0), |x_j − x_i + s H| < r_c }
+    ```
+
+    The list that a local learned potential takes (D[mlip-pairlist],
+    docs/metatomic-ml1.md, Section 12): every image of every particle
+    within the cutoff of each particle, the particle's own images
+    included, in both directions, grouped by `i` in the order of the
+    particles. The neighborhood gives the candidates: a particle with any
+    image within the cutoff of `i` is a neighbor of `i` in it, by its
+    nearest image; the images are enumerated from there, so the cell may be
+    narrower than twice the cutoff, or than the cutoff.
+
+    ```mlir
+    %n = md.neighborhood %x, %cell cutoff(0.7)
+           : !md.field<@atoms, 3 x f64> -> !md.relation<@atoms, 2, unordered>
+    %e = md.edges %n, %x, %cell cutoff(0.7)
+           : !md.relation<@atoms, 2, unordered>, !md.field<@atoms, 3 x f64>
+             -> !md.edges<@atoms>
+    ```
+
+    The cutoff is at most that of the neighborhood, and the positions are
+    those of the neighborhood. The result is not differentiated: a host
+    call that takes it differentiates the model itself (D167).
+  }];
+  let arguments = (ins
+    MD_RelationType:$neighbors,
+    MD_ReferenceFieldType:$positions,
+    MD_CellType:$cell,
+    F64Attr:$cutoff
+  );
+  let results = (outs MD_EdgesType:$result);
+  let assemblyFormat = [{
+    $neighbors `,` $positions `,` $cell `cutoff` `(` $cutoff `)` attr-dict
+    `:` qualified(type($neighbors)) `,` qualified(type($positions))
+    `->` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
 def MD_LookupOp : MD_Op<"lookup", [Pure]> {
   let summary = "Reads a value of a table";
   let description = [{
