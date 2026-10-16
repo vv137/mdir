@@ -173,7 +173,8 @@ def main():
                 fast, bestp = min(gs, key=gs.get), min(ps, key=ps.get)
                 doc.append(dict(name=name, tier=tier, cpu=', '.join(sorted({c for _, c in hosts})),
                                 threads=threads, stat=stat, first=first, parts=parts16, est=estimates,
-                                show=list(dict.fromkeys(['prolate-p6', bestp, 'gaussian-o4', fast])),
+                                show=list(dict.fromkeys(['prolate-p6', bestp, 'gaussian-o4', fast]
+                                                        + [k for k in keys if k == 'gaussian-default'])),
                                 fast=fast, bestp=bestp))
                 continue
             if parts16:
@@ -221,7 +222,7 @@ def main():
 NAMES = {'jac': 'JAC', 'tip3p-32k': 'TIP3P 34k', 'tip3p-103k': 'TIP3P 103k', 'cel': 'Cellulose'}
 SHORT = {'prolate-p5': 'Prolate, P = 5', 'prolate-p6': 'Prolate, P = 6', 'prolate-p7': 'Prolate, P = 7',
          'gaussian-o4': 'Gaussian, order 4', 'gaussian-o6': 'Gaussian, order 6',
-         'gaussian-o8': 'Gaussian, order 8'}
+         'gaussian-o8': 'Gaussian, order 8', 'gaussian-default': "Gaussian, MDIR's default"}
 
 
 def print_doc(doc, cutoffs):

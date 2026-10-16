@@ -545,13 +545,14 @@ since both kernels' grids follow the cutoff.
 
 The scripts are `cpu_cases.py`, `cpu_job.py`, and `cpu_table.py --doc` in
 `scripts/benchmarks/prolate-ewald/`. The whole step, ms (the fastest
-prolate $P$ where it is not 6):
+prolate $P$ where it is not 6, and at 10⁻³ MDIR's default):
 
 | System | ε | Kernel | Grid | Points | Δ | 16 threads | 4 threads | 1 thread |
 |---|---|---|---|---|---|---|---|---|
 | JAC | 10⁻³ | Prolate, P = 6 | 24×24×24 | 13,824 | 5.6 × 10⁻⁴ | 21.4 | 72.2 | 274.0 |
 | JAC | 10⁻³ | Prolate, P = 5 (fastest) | 24×24×24 | 13,824 | 6.0 × 10⁻⁴ | 20.2 | — | — |
 | JAC | 10⁻³ | Gaussian, order 4 | 50×50×50 | 125,000 | 6.2 × 10⁻⁴ | 12.5 | 43.1 | 159.2 |
+| JAC | 10⁻³ | Gaussian, MDIR's default | 54×54×54 | 157,464 | 7.3 × 10⁻⁴ | 12.7 | — | — |
 | JAC | 10⁻⁴ | Prolate, P = 6 | 28×28×28 | 21,952 | 7.1 × 10⁻⁵ | 21.1 | 72.2 | 275.3 |
 | JAC | 10⁻⁴ | Prolate, P = 5 (fastest) | 40×40×40 | 64,000 | 6.9 × 10⁻⁵ | 20.0 | — | — |
 | JAC | 10⁻⁴ | Gaussian, order 4 | 96×96×96 | 884,736 | 7.2 × 10⁻⁵ | 13.9 | 46.3 | 171.3 |
@@ -561,6 +562,7 @@ prolate $P$ where it is not 6):
 | TIP3P 34k | 10⁻³ | Prolate, P = 6 | 36×36×36 | 46,656 | 5.5 × 10⁻⁴ | 75.0 | 294.9 | 1127.1 |
 | TIP3P 34k | 10⁻³ | Prolate, P = 5 (fastest) | 36×36×36 | 46,656 | 5.9 × 10⁻⁴ | 71.1 | — | — |
 | TIP3P 34k | 10⁻³ | Gaussian, order 4 | 84×84×84 | 592,704 | 5.7 × 10⁻⁴ | 43.8 | 168.8 | 696.4 |
+| TIP3P 34k | 10⁻³ | Gaussian, MDIR's default | 90×90×90 | 729,000 | 6.7 × 10⁻⁴ | 44.6 | — | — |
 | TIP3P 34k | 10⁻⁴ | Prolate, P = 6 | 48×48×48 | 110,592 | 6.7 × 10⁻⁵ | 88.6 | 332.4 | 1262.8 |
 | TIP3P 34k | 10⁻⁴ | Prolate, P = 5 (fastest) | 64×64×64 | 262,144 | 7.2 × 10⁻⁵ | 85.1 | — | — |
 | TIP3P 34k | 10⁻⁴ | Gaussian, order 4 | 160×160×160 | 4,096,000 | 6.7 × 10⁻⁵ | 62.8 | 212.0 | 819.1 |
@@ -571,6 +573,7 @@ prolate $P$ where it is not 6):
 | TIP3P 103k | 10⁻³ | Prolate, P = 6 | 54×54×54 | 157,464 | 5.6 × 10⁻⁴ | 222.5 | 856.8 | 3300.6 |
 | TIP3P 103k | 10⁻³ | Prolate, P = 5 (fastest) | 54×54×54 | 157,464 | 6.1 × 10⁻⁴ | 213.2 | — | — |
 | TIP3P 103k | 10⁻³ | Gaussian, order 4 | 120×120×120 | 1,728,000 | 5.8 × 10⁻⁴ | 133.3 | 505.9 | 1994.0 |
+| TIP3P 103k | 10⁻³ | Gaussian, MDIR's default | 126×126×126 | 2,000,376 | 7.0 × 10⁻⁴ | 136.2 | — | — |
 | TIP3P 103k | 10⁻⁴ | Prolate, P = 6 | 70×70×70 | 343,000 | 6.8 × 10⁻⁵ | 224.3 | 872.2 | 3348.9 |
 | TIP3P 103k | 10⁻⁴ | Prolate, P = 5 (fastest) | 90×90×90 | 729,000 | 7.7 × 10⁻⁵ | 218.3 | — | — |
 | TIP3P 103k | 10⁻⁴ | Gaussian, order 4 | 240×240×240 | 13,824,000 | 6.3 × 10⁻⁵ | 158.3 | 587.0 | 2243.3 |
@@ -581,6 +584,7 @@ prolate $P$ where it is not 6):
 | Cellulose | 10⁻³ | Prolate, P = 6 | 90×48×42 | 181,440 | 5.8 × 10⁻⁴ | 394.7 | 1387.1 | 5017.7 |
 | Cellulose | 10⁻³ | Prolate, P = 5 (fastest) | 90×48×42 | 181,440 | 6.6 × 10⁻⁴ | 388.7 | — | — |
 | Cellulose | 10⁻³ | Gaussian, order 4 | 210×100×100 | 2,100,000 | 6.1 × 10⁻⁴ | 244.4 | 848.0 | 3080.7 |
+| Cellulose | 10⁻³ | Gaussian, MDIR's default | 224×108×108 | 2,612,736 | 7.5 × 10⁻⁴ | 250.1 | — | — |
 | Cellulose | 10⁻⁴ | Prolate, P = 6 | 120×56×56 | 376,320 | 7.1 × 10⁻⁵ | 397.7 | 1407.7 | 5142.5 |
 | Cellulose | 10⁻⁴ | Prolate, P = 5 (fastest) | 150×72×72 | 777,600 | 9.6 × 10⁻⁵ | 389.4 | — | — |
 | Cellulose | 10⁻⁴ | Gaussian, order 4 | 384×192×192 | 14,155,776 | 7.7 × 10⁻⁵ | 296.0 | 962.4 | 3409.3 |
@@ -597,6 +601,7 @@ Parts at 16 threads, ms a step:
 | JAC | 10⁻³ | Prolate, P = 6 | 2.54 | 1.26 | 0.05 | 0.03 | 0.40 | 13.53 | 3.56 | 21.37 |
 | JAC | 10⁻³ | Prolate, P = 5 | 1.51 | 1.18 | 0.05 | 0.03 | 0.26 | 13.56 | 3.61 | 20.19 |
 | JAC | 10⁻³ | Gaussian, order 4 | 0.66 | 0.11 | 0.17 | 0.02 | 0.19 | 7.82 | 3.57 | 12.52 |
+| JAC | 10⁻³ | Gaussian, MDIR's default | 0.65 | 0.11 | 0.18 | 0.03 | 0.21 | 7.88 | 3.60 | 12.66 |
 | JAC | 10⁻⁴ | Prolate, P = 6 | 2.24 | 1.36 | 0.06 | 0.04 | 0.43 | 13.49 | 3.52 | 21.14 |
 | JAC | 10⁻⁴ | Prolate, P = 5 | 1.08 | 1.28 | 0.10 | 0.14 | 0.34 | 13.45 | 3.58 | 19.97 |
 | JAC | 10⁻⁴ | Gaussian, order 4 | 1.03 | 0.08 | 0.84 | 0.11 | 0.34 | 7.81 | 3.73 | 13.95 |
@@ -606,6 +611,7 @@ Parts at 16 threads, ms a step:
 | TIP3P 34k | 10⁻³ | Prolate, P = 6 | 5.38 | 5.04 | 0.10 | 0.05 | 1.48 | 51.81 | 11.19 | 75.05 |
 | TIP3P 34k | 10⁻³ | Prolate, P = 5 | 2.96 | 4.64 | 0.08 | 0.08 | 0.91 | 51.80 | 10.59 | 71.07 |
 | TIP3P 34k | 10⁻³ | Gaussian, order 4 | 1.64 | 0.45 | 0.66 | 0.05 | 0.78 | 29.35 | 10.86 | 43.79 |
+| TIP3P 34k | 10⁻³ | Gaussian, MDIR's default | 1.78 | 0.40 | 0.80 | 0.04 | 0.87 | 29.52 | 11.17 | 44.58 |
 | TIP3P 34k | 10⁻⁴ | Prolate, P = 6 | 4.17 | 6.23 | 0.15 | 0.25 | 1.88 | 63.99 | 11.89 | 88.56 |
 | TIP3P 34k | 10⁻⁴ | Prolate, P = 5 | 3.29 | 5.72 | 0.29 | 0.52 | 1.17 | 62.32 | 11.77 | 85.07 |
 | TIP3P 34k | 10⁻⁴ | Gaussian, order 4 | 5.86 | 0.44 | 4.52 | 0.60 | 1.51 | 37.10 | 12.73 | 62.75 |
@@ -616,6 +622,7 @@ Parts at 16 threads, ms a step:
 | TIP3P 103k | 10⁻³ | Prolate, P = 6 | 13.68 | 14.75 | 0.23 | 0.24 | 4.76 | 157.39 | 31.50 | 222.55 |
 | TIP3P 103k | 10⁻³ | Prolate, P = 5 | 7.41 | 13.13 | 0.26 | 0.26 | 3.19 | 157.39 | 31.60 | 213.24 |
 | TIP3P 103k | 10⁻³ | Gaussian, order 4 | 4.54 | 1.14 | 1.78 | 0.16 | 2.37 | 88.45 | 34.85 | 133.30 |
+| TIP3P 103k | 10⁻³ | Gaussian, MDIR's default | 5.52 | 1.22 | 2.12 | 0.16 | 2.34 | 89.03 | 35.86 | 136.25 |
 | TIP3P 103k | 10⁻⁴ | Prolate, P = 6 | 10.64 | 16.12 | 0.55 | 0.51 | 4.59 | 159.70 | 32.19 | 224.29 |
 | TIP3P 103k | 10⁻⁴ | Prolate, P = 5 | 6.29 | 14.75 | 0.76 | 1.04 | 3.30 | 160.05 | 32.09 | 218.29 |
 | TIP3P 103k | 10⁻⁴ | Gaussian, order 4 | 12.91 | 1.05 | 13.20 | 1.10 | 3.27 | 90.81 | 35.99 | 158.34 |
@@ -626,6 +633,7 @@ Parts at 16 threads, ms a step:
 | Cellulose | 10⁻³ | Prolate, P = 6 | 16.70 | 20.53 | 0.24 | 0.37 | 6.09 | 269.05 | 81.76 | 394.73 |
 | Cellulose | 10⁻³ | Prolate, P = 5 | 9.38 | 18.91 | 0.27 | 0.34 | 4.54 | 270.91 | 84.39 | 388.73 |
 | Cellulose | 10⁻³ | Gaussian, order 4 | 7.41 | 1.51 | 2.27 | 0.22 | 3.20 | 149.75 | 80.10 | 244.44 |
+| Cellulose | 10⁻³ | Gaussian, MDIR's default | 8.40 | 1.33 | 2.81 | 0.26 | 3.41 | 152.61 | 81.28 | 250.10 |
 | Cellulose | 10⁻⁴ | Prolate, P = 6 | 15.92 | 22.83 | 0.49 | 0.74 | 6.49 | 268.57 | 82.64 | 397.67 |
 | Cellulose | 10⁻⁴ | Prolate, P = 5 | 10.19 | 20.35 | 0.87 | 1.44 | 4.20 | 269.31 | 83.04 | 389.40 |
 | Cellulose | 10⁻⁴ | Gaussian, order 4 | 21.74 | 1.92 | 16.32 | 2.05 | 5.32 | 161.37 | 87.25 | 295.97 |
@@ -665,7 +673,9 @@ would leave the loop over pairs as it is and only enlarge the grid.
 **Reading (CPU).**
 - **Against the fastest Gaussian order**, the prolate default's step is
   longer at every tier, on every system, and at every number of threads
-  measured. The ratio is 1.6 to 1.75 at 10⁻³, 1.5 to 1.6 at 10⁻⁴, and
+  measured. The ratio is 1.6 to 1.75 at 10⁻³ (where order 4 at erfc 10⁻⁴
+  takes the time of MDIR's default within 2.3%, so that the ratio to the
+  default is 1.6 to 1.7), 1.5 to 1.6 at 10⁻⁴, and
   1.2 to 1.5 at 10⁻⁵ at 16 threads (1.5 to 1.7 at 1 thread). The fastest
   prolate $P$ changes these by about 5% at most.
 - **Against order 4 with its grid raised**, the paper's kind of baseline,
@@ -692,7 +702,7 @@ would leave the loop over pairs as it is and only enlarge the grid.
   costs 1.3 to 23 ms against 0.1 to 3.3 for the B-splines, the largest
   part of its mesh on the three larger systems.
 - **Threads.** From 16 threads to 1 the ratio to the fastest Gaussian
-  grows by 0 to 0.2 (by 0.55 on Cellulose at 10⁻⁵): on one core the FFT
+  changes by at most 0.2 (0.55 on Cellulose at 10⁻⁵): on one core the FFT
   is no larger a share of the step at these sizes.
 - **A shorter, Coulomb-only cutoff** (estimated) brings the ratio to the
   fastest Gaussian at 10⁻⁵ to 1.08 to 1.32 at 7 Å and 0.99 to 1.20 at 6 Å;
