@@ -36,6 +36,39 @@ void mdrtCountPrune(void) { ++numPrunes; }
 
 int64_t mdrtGetPruneCount(void) { return numPrunes; }
 
+/* The check of the pruning (MDIR_CHECK_PRUNING, D[rolling-prune]): at each
+   step, compiled code counts the pairs within the cutoff in the outer list
+   and in the inner one, through its active units, at that step's
+   positions. The inner list is a part of the outer one, so the two counts
+   differ only if it misses a pair, and the run stops. */
+static int64_t numPruneChecks = 0, numPruneCheckedPairs = 0;
+static int pruneCheckFailed = 0;
+
+static void reportPruneChecks(void) {
+  if (pruneCheckFailed)
+    return;
+  fprintf(stderr,
+          "mdrt: the inner lists were checked at %lld steps: %lld pairs "
+          "within the cutoff, none missed\n",
+          (long long)numPruneChecks, (long long)numPruneCheckedPairs);
+}
+
+void mdrtCheckPruned(int64_t outer, int64_t inner) {
+  if (outer != inner) {
+    fprintf(stderr,
+            "mdrt: the inner list holds %lld pairs within the cutoff, and "
+            "the outer list %lld, at the check %lld (MDIR_CHECK_PRUNING)\n",
+            (long long)inner, (long long)outer,
+            (long long)numPruneChecks + 1);
+    fflush(stderr);
+    pruneCheckFailed = 1;
+    exit(1);
+  }
+  if (numPruneChecks++ == 0)
+    atexit(reportPruneChecks);
+  numPruneCheckedPairs += outer;
+}
+
 /* The number of builds at a fixed interval that found the structure no
    longer valid: between the build before and this one, pairs within the
    cutoff may have been left out (the opt-in policy `interval`, D88). */
