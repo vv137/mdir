@@ -20,8 +20,10 @@ format, or the outputs; every such change is listed under **Changed** or
   is unchanged. `[[energy.model]]` (`name`, `backend = "METATOMIC"`, `path`,
   `centers_per_call`) and `mdir.System.models` (`mdir.ModelTerm`) add a
   TorchScript artifact of metatomic to the potential on a GPU: its own pair
-  list with every image, its forces added to MDIR's, its energy and virial in
-  the log and the pressure, and chunks of centers for a model that declares
+  list with every image, its forces added into MDIR's buffer of forces by a
+  host call that declares the write (`mdrt.host_call` takes fields in `outs`
+  and yields them, and numbers of the host), its energy and virial in the
+  potential, the log, and the pressure, and chunks of centers for a model that declares
   itself local. `scripts/mlip/nequip-to-metatomic.py` turns a NequIP or
   Allegro package into such an artifact; `water-box.py` and
   `check-model-term.py` there make the systems and the checks of the

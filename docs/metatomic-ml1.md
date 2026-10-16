@@ -520,7 +520,10 @@ As ruled (Section 1, item 9):
   environment (`CMAKE_PREFIX_PATH`; torch's package needs the CUDA compiler,
   `CMAKE_CUDA_COMPILER`). Its C boundary is `include/mdir/MLIP/Plugin.h`,
   version 1: `load`, `describe`, `evaluate`, `memory_stats`, `free`,
-  `last_error`, and the versions of its build. The core loads it with
+  `last_error`, and the versions of its build. `evaluate` adds the
+  model's forces to the engine's own buffer of forces, of `force_bits`
+  (64 or 32), and writes the energy and the virial to buffers of the
+  device. The core loads it with
   `dlopen` (`RTLD_LOCAL`) from the directory of the runtime or from
   `MDIR_MLIP_PLUGIN`, and sets `PYTORCH_CUDA_ALLOC_CONF` to
   `expandable_segments:True` unless it is set.
@@ -541,25 +544,39 @@ As ruled (Section 1, item 9):
   pair list each time, and accumulates the gradients of each backward; a
   model without the declaration takes the whole system, and the log says so.
 - **The step.** After every evaluation of the forces (the start, every
-  kind of step) the program calls the host in place
-  (`mdrt.host_call @mdrtModelEvaluate {in_place}`) with the positions and
+  kind of step) the program calls the host in place with the positions,
   the atomic numbers (a field of the program, `model_z`, which follows the
-  order of the particles), then takes the model's forces from a buffer of
-  the device that `func.call @mdrtModelForces` returns
-  (`mdrt.from_buffer`), and adds them in a loop over the particles. The
-  forces are a value that the call gives, so no pass can move what reads
-  them before the evaluation; the copy from the buffer is one of the device,
-  which waits for nothing. At the start the evaluation is a loop of one
-  iteration, so that the buffer is given anew and never taken as a buffer of
-  the host. The plugin's work goes to the stream of the kernels
-  (`mdrtDeviceExternalStream`), and its buffers are recorded by the runtime
-  (`mdrtDeviceAllocateRecorded`), so that copies from them do not wait.
-- **Energy and virial** stay on the device until the log reads them:
-  `mdrtWriteEnergies` adds the model's energy to the potential and the trace
-  of its virial to that of the pressure, `mdrtWriteVirial` its diagonal,
-  and the terms at the start show `MODEL <name>`. The molecular virial of
-  the pressure (D264) takes the model's forces in its correction, which is
-  linear in the forces, so the sum is that of the whole potential.
+  order of the particles), and the cell of the step, its diagonal and tilts
+  (`md_exec.cell_numbers`), and gives it the forces of the other terms as a
+  destination:
+
+  ```mlir
+  %f1, %mu, %mw = mdrt.host_call @mdrtModelEvaluateEnergy(%i, %x1, %p_model_z,
+                      %lx, %ly, %lz, %bx, %cx, %cy, %bits, %force_bits)
+                      outs(%f1c : !vec) {in_place}
+                      : (...) -> (!vec, f64, vector<9xf64>)
+  ```
+
+  The call declares what it writes as the loops of md_exec do: it takes
+  `%f1c` in `outs` and yields `%f1`, the forces with the model's added, so
+  the kick and every other reader of the forces read a value that only the
+  call produces, and no pass can schedule or fuse them before it
+  (`test/Dialect/MDExec/Transforms/host-call-outs.mlir`). Storage
+  assignment gives the call the buffer of `%f1c` itself, on the device, in
+  the type that the forces are stored in (f32 in `mixed`, f64 in `double`),
+  and the plugin adds its forces there on the stream of the kernels
+  (`mdrtDeviceExternalStream`): no buffer of the model's forces and no loop
+  that adds them. The op also declares that it reads and writes the state of
+  the host (MLIR's memory effects), so that it is never removed or
+  reordered with other calls.
+- **Energy and virial** are numbers that the call yields in a step that asks
+  for them (`@mdrtModelEvaluateEnergy`, steps of energy and the start): the
+  host waits for the device, reads them into buffers of the host, and the
+  program adds them to the potential energy and the virial of the other
+  terms (`%u1 = %u1c + %mu`, `%w1 = %w1c + %mw`). The log, the pressure, the
+  molecular virial (D264), and a Python simulation's energies take them from
+  there; a step without energies (`@mdrtModelEvaluate`) does not wait. The
+  terms at the start show `MODEL <name>`, the energy of the last evaluation.
 - **Python**: `mdir.System.models` and `mdir.ModelTerm`
   ([python-model.md](python-model.md#learned-potentials));
   `Simulation.model_energies()` gives the energy and the virial tensor.
@@ -586,33 +603,37 @@ times.
 
 | Case | Mode | Inputs | $\lvert\Delta E\rvert$ | max $\lvert\Delta F\rvert$ | max $\lvert\Delta W\rvert$ |
 |---|---|---|---|---|---|
-| 81 atoms, cubic (E = -35,384, max F 549, max W 2,340) | double | float64 | $1.3 \times 10^{-4}$ | $2.4 \times 10^{-3}$ | $1.4 \times 10^{-3}$ |
-| | mixed | float64 | $3.2 \times 10^{-6}$ | $2.9 \times 10^{-3}$ | $9.0 \times 10^{-4}$ |
-| | double | float32 | $1.9 \times 10^{-3}$ | $8.7 \times 10^{-3}$ | $6.5 \times 10^{-3}$ |
-| | mixed | float32 | $1.9 \times 10^{-3}$ | $8.3 \times 10^{-3}$ | $6.7 \times 10^{-3}$ |
-| 81 atoms, triclinic (E = -35,285) | double | float64 | $6.0 \times 10^{-5}$ | $2.7 \times 10^{-3}$ | $1.4 \times 10^{-3}$ |
-| | mixed | float64 | $2.3 \times 10^{-4}$ | $2.7 \times 10^{-3}$ | $9.4 \times 10^{-4}$ |
-| | double | float32 | $1.3 \times 10^{-3}$ | $6.8 \times 10^{-3}$ | $3.9 \times 10^{-3}$ |
-| | mixed | float32 | $1.3 \times 10^{-3}$ | $6.5 \times 10^{-3}$ | $7.3 \times 10^{-3}$ |
-| 24 atoms, 6.2 Å box (E = -10,989) | double | float64 | $3.8 \times 10^{-4}$ | $1.9 \times 10^{-3}$ | $5.5 \times 10^{-4}$ |
-| | mixed | float64 | $4.6 \times 10^{-4}$ | $1.3 \times 10^{-3}$ | $3.8 \times 10^{-4}$ |
-| | double | float32 | $6.6 \times 10^{-4}$ | $7.5 \times 10^{-3}$ | $4.2 \times 10^{-3}$ |
-| | mixed | float32 | $6.6 \times 10^{-4}$ | $7.1 \times 10^{-3}$ | $3.7 \times 10^{-3}$ |
-| 72 atoms, liquid (E = -32,825) | double | float64 | $1.6 \times 10^{-4}$ | $1.7 \times 10^{-3}$ | $1.2 \times 10^{-3}$ |
-| | mixed | float64 | $6.4 \times 10^{-4}$ | $2.0 \times 10^{-3}$ | $1.0 \times 10^{-3}$ |
-| | double | float32 | $1.1 \times 10^{-3}$ | $7.5 \times 10^{-3}$ | $3.4 \times 10^{-3}$ |
-| | mixed | float32 | $2.8 \times 10^{-3}$ | $6.7 \times 10^{-3}$ | $5.4 \times 10^{-3}$ |
+| 81 atoms, cubic (E = -35,384, max F 549, max W 2,340) | double | float64 | $2.9 \times 10^{-4}$ | $3.1 \times 10^{-3}$ | $9.0 \times 10^{-4}$ |
+| | mixed | float64 | $3.6 \times 10^{-4}$ | $2.6 \times 10^{-3}$ | $1.4 \times 10^{-3}$ |
+| | double | float32 | $1.9 \times 10^{-3}$ | $8.1 \times 10^{-3}$ | $5.5 \times 10^{-3}$ |
+| | mixed | float32 | $1.9 \times 10^{-3}$ | $7.6 \times 10^{-3}$ | $7.2 \times 10^{-3}$ |
+| 81 atoms, triclinic (E = -35,285) | double | float64 | $1.6 \times 10^{-4}$ | $2.8 \times 10^{-3}$ | $1.7 \times 10^{-3}$ |
+| | mixed | float64 | $6.5 \times 10^{-5}$ | $3.2 \times 10^{-3}$ | $1.3 \times 10^{-3}$ |
+| | double | float32 | $1.3 \times 10^{-3}$ | $6.7 \times 10^{-3}$ | $6.0 \times 10^{-3}$ |
+| | mixed | float32 | $1.3 \times 10^{-3}$ | $6.8 \times 10^{-3}$ | $5.0 \times 10^{-3}$ |
+| 24 atoms, 6.2 Å box (E = -10,989) | double | float64 | $2.6 \times 10^{-4}$ | $1.1 \times 10^{-3}$ | $2.7 \times 10^{-4}$ |
+| | mixed | float64 | $4.0 \times 10^{-4}$ | $1.3 \times 10^{-3}$ | $4.7 \times 10^{-4}$ |
+| | double | float32 | $6.6 \times 10^{-4}$ | $8.1 \times 10^{-3}$ | $2.5 \times 10^{-3}$ |
+| | mixed | float32 | $1.6 \times 10^{-3}$ | $8.0 \times 10^{-3}$ | $4.0 \times 10^{-3}$ |
+| 72 atoms, liquid (E = -32,825) | double | float64 | $2.3 \times 10^{-5}$ | $2.2 \times 10^{-3}$ | $5.8 \times 10^{-4}$ |
+| | mixed | float64 | $6.4 \times 10^{-4}$ | $1.7 \times 10^{-3}$ | $9.2 \times 10^{-4}$ |
+| | double | float32 | $1.1 \times 10^{-3}$ | $8.2 \times 10^{-3}$ | $4.5 \times 10^{-3}$ |
+| | mixed | float32 | $2.8 \times 10^{-3}$ | $7.6 \times 10^{-3}$ | $4.8 \times 10^{-3}$ |
 
 Every difference is within its tolerance, the float64 ones by a factor of 3
-or more. The float64 force differences, $1.3$ to $2.9 \times 10^{-3}$
-kJ/mol/nm ($1.4$ to $3.0 \times 10^{-6}$ eV/Å), are the run-to-run spread
-of the reference (Section 3.2).
+or more. The float64 force differences, $1.1$ to $3.2 \times 10^{-3}$
+kJ/mol/nm ($1.1$ to $3.3 \times 10^{-6}$ eV/Å), are the run-to-run spread
+of the reference (Section 3.2). These are the numbers of the call that
+declares its write of the forces (Section 9.1), measured again on
+2026-10-16; in `mixed` the model's forces are now added into the forces of
+f32 where they were added by a loop before, and the differences stay where
+they were.
 
 **Chunks** (liquid, 72 atoms, double, float64 inputs), against NequIP:
-1 center per call $\lvert\Delta E\rvert = 1.8 \times 10^{-3}$, max
-$\lvert\Delta F\rvert = 2.6 \times 10^{-3}$, max $\lvert\Delta W\rvert = 1.3
-\times 10^{-3}$; 16 centers $1.9 \times 10^{-3}$, $2.1 \times 10^{-3}$, $2.9
-\times 10^{-4}$; 64 centers $8.0 \times 10^{-4}$, $2.2 \times 10^{-3}$, $4.8
+1 center per call $\lvert\Delta E\rvert = 1.5 \times 10^{-3}$, max
+$\lvert\Delta F\rvert = 2.7 \times 10^{-3}$, max $\lvert\Delta W\rvert = 1.6
+\times 10^{-3}$; 16 centers $1.8 \times 10^{-3}$, $2.3 \times 10^{-3}$, $2.8
+\times 10^{-4}$; 64 centers $2.7 \times 10^{-4}$, $2.2 \times 10^{-3}$, $7.8
 \times 10^{-4}$. The energy of the chunks differs from that of one call by
 up to $2 \times 10^{-3}$ of $3.3 \times 10^4$ kJ/mol: the float32 network's
 sums in another order.
@@ -620,17 +641,19 @@ sums in another order.
 **`mdir run` against the Python model**, 81 atoms minimized with ASE's FIRE
 on NequIP's calculator (`water-box.py --minimize`), velocities of 300 K, 20
 steps of 0.5 fs, both from the same files: the total energy of every step
-agrees within $1.6 \times 10^{-4}$ kcal/mol in `double` and $1.4 \times
-10^{-4}$ in `mixed`, the four decimals that the log prints, and the energy
-at the start within $2 \times 10^{-4}$ kJ/mol. Not to the bit: the model's
-own sums are not deterministic (Section 6.8).
+agrees within $2.1 \times 10^{-4}$ kcal/mol in `double` and $2.5 \times
+10^{-4}$ in `mixed`, about the four decimals that the log prints, and the
+energy at the start within $2 \times 10^{-4}$ kJ/mol. Not to the bit: the
+model's own sums are not deterministic (Section 6.8).
 
 **Constant energy**, the same system, 4,000 steps of 0.5 fs (2 ps), velocity
-Verlet, mean temperature 212 K: in `double` the total energy drifts by
-$-0.093$ kJ/mol/ps ($-1.2$ kJ/mol/ns per atom) and fluctuates by 0.14
+Verlet, mean temperature 211 K: in `double` the total energy drifts by
+$-0.070$ kJ/mol/ps ($-0.87$ kJ/mol/ns per atom) and fluctuates by 0.13
 kJ/mol (standard deviation about the fit) against 35 kJ/mol of the
-potential energy; in `mixed` $-0.041$ kJ/mol/ps ($-0.5$ kJ/mol/ns per atom)
-and 0.13 kJ/mol. From the unminimized lattice (Section 3.2) the change of
+potential energy; in `mixed` $-0.068$ kJ/mol/ps ($-0.84$ kJ/mol/ns per atom)
+and 0.13 kJ/mol. (Before the call declared its write, with the loop that
+added the model's forces: $-0.093$ and $-0.041$ kJ/mol/ps, 0.14 and 0.13
+kJ/mol; the step took 86.3 ms then and now.) From the unminimized lattice (Section 3.2) the change of
 the total energy after 0.02 ps follows $\Delta t^2$: 0.435, 0.107, and 0.026
 kcal/mol with steps of 0.5, 0.25, and 0.125 fs.
 
