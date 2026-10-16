@@ -1395,6 +1395,17 @@ chunks of 5 centers, the float32 sums of the package in another order
 the model more pairs, whose zero contributions change the order of its
 float32 sums: its differences are those of the others.
 
+The first runs of the padded list in chunks over several activations of a
+Python simulation (`check-model-term.py --steps`, one activation a step)
+drifted by $-0.099$ kJ/mol over 20 steps where every other way drifted by
+$-0.112$: the plugin kept the offsets of a build of an earlier activation,
+whose count of builds starts again at each. The slots now carry a number
+of their build that no other build in the process has
+(`mdrtEdgesReserve`), the check (`MDIR_MLIP_CHECK_PAIRS`) compares the
+plugin's offsets with the engine's, and the same runs drift by $-0.112$
+(`model-term-aoti-gpu.test` runs this case). The differences at the start
+in the table above, the first evaluation of each run, are not affected.
+
 **Time and memory** (liquid water, AOTI, `mixed`, `mdir run`, the skin of
 the tests, 0.5 Å; whole systems up to 1,152 atoms, chunks of 512 centers
 from 3,072): the plugin's part of the list with `MDIR_MLIP_TIMING=1`;

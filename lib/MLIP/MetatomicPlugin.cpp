@@ -550,11 +550,29 @@ void comparePairs(mdir_mlip_model &m, const mdir_mlip_pairs &list,
   torch::Tensor own, ownShifts;
   findPairs(positions, cell, host, m.cutoff, own, ownShifts);
   torch::Tensor given = pairs, givenShifts = shifts;
+  // The padded list's chunks begin at the offsets that the plugin read at
+  // the build that the number of the slots names: they must be the
+  // engine's now.
+  int64_t chunk = m.centersPerCall;
+  if (list.mode == MDIR_MLIP_PAIRS_PADDED && chunk > 0 && chunk < n) {
+    torch::Tensor offsets =
+        torch::from_blob(const_cast<int32_t *>(list.offsets), {n + 1},
+                         torch::TensorOptions().device(m.device).dtype(
+                             torch::kInt32))
+            .cpu();
+    if (m.hostOffsets.size() != static_cast<size_t>(n + 1) ||
+        !std::equal(m.hostOffsets.begin(), m.hostOffsets.end(),
+                    offsets.data_ptr<int32_t>()))
+      throw std::runtime_error(
+          "MDIR_MLIP_CHECK_PAIRS: the offsets of the slots that the plugin "
+          "read at build " + std::to_string(m.offsetsBuild) +
+          " are not the engine's now (build " + std::to_string(list.builds) +
+          ")");
+  }
   if (list.mode == MDIR_MLIP_PAIRS_PADDED) {
     mdir_mlip_pairs exact = list;
     exact.mode = MDIR_MLIP_PAIRS_EXACT;
     std::vector<int64_t> unused;
-    int64_t chunk = m.centersPerCall;
     m.centersPerCall = 0;
     takePairs(m, exact, n, given, givenShifts, unused);
     m.centersPerCall = chunk;

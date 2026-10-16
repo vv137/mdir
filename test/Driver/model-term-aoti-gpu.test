@@ -34,6 +34,10 @@
 # RUN: env TMPDIR=%t MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=padded %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --precision Mixed --steps 4 2>%t/padded.err | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
 # RUN: FileCheck %s --check-prefix=AGREE < %t/padded.err
 # RUN: env TMPDIR=%t MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=padded %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --centers-per-call 1 | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# Chunks of the padded list over several activations of a Python
+# simulation, each of which builds its structure anew: the plugin reads the
+# offsets of every build (the check compares them with the engine's).
+# RUN: env TMPDIR=%t MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=padded %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --centers-per-call 5 --steps 4 | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
 # RUN: env TMPDIR=%t MDIR_MLIP_PAIRS=search %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --centers-per-call 5 | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
 # AGREE: (MDIR_MLIP_CHECK_PAIRS): the engine's pair list and the plugin's search agree, {{[0-9]+}} pairs
 # RUN: not env TMPDIR=%t MDIR_MLIP_PAIRS=fast %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 2>&1 | FileCheck %s --check-prefix=MODE
