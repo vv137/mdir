@@ -1168,9 +1168,16 @@ wait of the host at its count, Section 9.1), with `MDIR_MLIP_TIMING=1`:
 It grows as $N^2$ (four times per doubling from 3,072 atoms) while the
 model grows as $N$: below 1% of the evaluation for METATOMIC at every size
 (36 ms of 9.5 s at 3,072 atoms), it reaches 9 to 17% with AOTI at 12,288
-to 24,576 atoms and would pass the model's time near 100,000 atoms. The
+to 24,576 atoms and would pass the model's time between about 100,000 and
+200,000 atoms, depending on the package and the device. The
 next step (the pair list from MDIR's structures, with a skin and without
 the wait) starts from these numbers; this PR does not change the search.
+
+**A package of `nequip-compile` itself** (no MDIR keys, RTX PRO 6000,
+liquid, `centers_per_call = 16` asked): the log says that the units are
+taken as Å and eV and that the package is not declared local, the whole
+system goes in one call, and the Python model agrees with the reference
+within $1.8 \times 10^{-4}$, $3.0 \times 10^{-3}$, and $1.3 \times 10^{-3}$.
 
 **Not measured in this PR**: the CPU target, which ML1 refuses; NPT and
 minimization with this backend beyond the test of `mdir run` (D272's
