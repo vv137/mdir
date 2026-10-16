@@ -12,6 +12,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- ML2, stage 1, part 3 (D[ml2-eam], #31,
+  [docs/distributed-ml2.md](docs/distributed-ml2.md), Section 15):
+  `md-differentiate` derives the forces and the virial of a potential on
+  domains through the fields it computes from the positions, such as the
+  density and the embedding of EAM: the adjoint of the density is copied
+  to the ghosts between the two passes, and the forces of its gather
+  return to the owners by $G^\mathsf T$, or are computed at the owners by
+  `md-dist-owner-computes`. No control-file key or output changes.
 - ML2, stage 1, part 2 (D[ml2-distribute], #31,
   [docs/distributed-ml2.md](docs/distributed-ml2.md), Section 14):
   `md-distribute` rewrites a global potential to run on a grid of domains
