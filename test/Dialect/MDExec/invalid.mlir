@@ -309,6 +309,32 @@ func.func @f(%x: !md.field<@atoms, 3 x f64>, %step: i64) {
 
 // -----
 
+md.particle_set @atoms
+
+func.func private @model(memref<?x3xf64>, memref<?x3xf64>)
+
+func.func @f(%x: !md.field<@atoms, 3 x f64>, %f: !md.field<@atoms, 3 x f64>) {
+  // expected-error@+1 {{expected result 0 to have the type of the field in 'outs', '!md.field<@atoms, 3 x f64>'}}
+  %r = mdrt.host_call @model(%x) outs(%f : !md.field<@atoms, 3 x f64>)
+      : (!md.field<@atoms, 3 x f64>) -> (!md.field<@atoms, f64>)
+  return
+}
+
+// -----
+
+md.particle_set @atoms
+
+func.func private @model(memref<?x3xf64>, memref<?x3xf64>, memref<1xf64>)
+
+func.func @f(%x: !md.field<@atoms, 3 x f64>, %f: !md.field<@atoms, 3 x f64>) {
+  // expected-error@+1 {{argument 2 of 'model' has type 'memref<1xf64>', which does not take the result 'vector<9xf64>'}}
+  %r, %w = mdrt.host_call @model(%x) outs(%f : !md.field<@atoms, 3 x f64>)
+      : (!md.field<@atoms, 3 x f64>) -> (!md.field<@atoms, 3 x f64>, vector<9xf64>)
+  return
+}
+
+// -----
+
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
                %nl: !mdrt.neighbors<@atoms>, %moved: i1) {
   // expected-error@+1 {{'moved' belongs to the policy 'check': with the policy 'always' the structure is built whatever has moved}}

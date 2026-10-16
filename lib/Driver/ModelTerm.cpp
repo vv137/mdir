@@ -152,10 +152,6 @@ ModelTerms::load(const Control &control, const System &system,
   int device = ordinal();
   std::unique_ptr<ModelTerms> terms(new ModelTerms());
   terms->count = static_cast<int64_t>(topology.getNumParticles());
-  const double *box = system.box, *tilt = system.tilt;
-  double cell[9] = {box[0], 0.0, 0.0, tilt[0], box[1], 0.0,
-                    tilt[1], tilt[2], box[2]};
-  std::copy(cell, cell + 9, terms->cell);
 
   for (const Control::ModelTerm &term : control.models) {
     Model model;
@@ -211,8 +207,6 @@ ModelTerms::load(const Control &control, const System &system,
                           "call, whatever 'centers_per_call' asks")
             : std::string("the whole system in one call"));
 
-    added.forces = static_cast<double *>(
-        allocate(sizeof(double) * 3 * static_cast<uint64_t>(terms->count)));
     added.results = static_cast<double *>(allocate(sizeof(double) * 10));
   }
   return std::move(terms);
@@ -221,21 +215,19 @@ ModelTerms::load(const Control &control, const System &system,
 ModelTerms::~ModelTerms() {
   auto release = findRuntime<void (*)(void *)>("mdrtDeviceFreeRecorded");
   for (Model &model : models) {
-    if (release) {
-      release(model.forces);
+    if (release)
       release(model.results);
-    }
     if (loadedPlugin && model.handle)
       loadedPlugin->free(model.handle);
   }
 }
 
 std::string ModelTerms::evaluate(int64_t index, const void *positions,
-                                 int bits, const int32_t *numbers,
-                                 int64_t n) {
+                                 int bits, const int32_t *numbers, int64_t n,
+                                 const double cell[9], void *forces,
+                                 int forceBits) {
   static auto stream = findRuntime<void *(*)(void)>("mdrtDeviceExternalStream");
-  static auto zero = findRuntime<void (*)(void *, uint64_t)>("mdrtDeviceZero");
-  if (!stream || !zero)
+  if (!stream)
     return "the runtime for NVIDIA GPUs is not loaded";
   Model &model = models[index];
   if (n != count)
@@ -250,10 +242,10 @@ std::string ModelTerms::evaluate(int64_t index, const void *positions,
   std::copy(cell, cell + 9, inputs.cell);
   inputs.periodic[0] = inputs.periodic[1] = inputs.periodic[2] = 1;
   inputs.stream = stream();
-  // The plugin adds its forces; the buffer begins at 0.
-  zero(model.forces, 2 * 3 * static_cast<uint64_t>(n));
+  // The plugin adds its forces to those of the program, where they are.
   mdir_mlip_outputs outputs{};
-  outputs.forces = model.forces;
+  outputs.forces = forces;
+  outputs.force_bits = forceBits;
   outputs.energy = model.results;
   outputs.virial = model.results + 1;
   if (loadedPlugin->evaluate(model.handle, &inputs, &outputs) != MDIR_MLIP_OK)
@@ -265,8 +257,15 @@ std::string ModelTerms::evaluate(int64_t index, const void *positions,
   return std::string();
 }
 
-double *ModelTerms::getForces(int64_t index) const {
-  return models[index].forces;
+void ModelTerms::readLast(int64_t index, double &energy,
+                          double virial[9]) const {
+  static auto copy =
+      findRuntime<void (*)(void *, const void *, uint64_t)>("mdrtDeviceCopyToHost");
+  double results[10] = {};
+  if (copy && models[index].evaluations > 0)
+    copy(results, models[index].results, sizeof results);
+  energy = results[0];
+  std::copy(results + 1, results + 10, virial);
 }
 
 void ModelTerms::read(double &energy, std::array<double, 9> &virial) const {
@@ -318,34 +317,53 @@ std::vector<std::string> ModelTerms::getNames() const {
 // The functions that the program calls
 //===----------------------------------------------------------------------===//
 
-/// Evaluates model `index` at the positions of the program, its forces to
-/// the buffer that mdrtModelForces returns (D[metatomic-plugin]).
-extern "C" void _mlir_ciface_mdrtModelEvaluate(int64_t index, void *given,
-                                               void *atomic, int64_t bits) {
+namespace {
+/// Evaluates model `index` for the program (D[metatomic-plugin]); with
+/// `energy` and `virial`, writes its energy and its virial there.
+void evaluateModel(int64_t index, void *given, void *atomic, double lx,
+                   double ly, double lz, double bx, double cx, double cy,
+                   int64_t bits, int64_t forceBits, void *added,
+                   void *energy, void *virial) {
   auto *positions = static_cast<StridedMemRefType<char, 2> *>(given);
   auto *numbers = static_cast<StridedMemRefType<int32_t, 1> *>(atomic);
+  auto *forces = static_cast<StridedMemRefType<char, 2> *>(added);
+  // The edge vectors a = (l_x, 0, 0), b = (b_x, l_y, 0), c = (c_x, c_y, l_z),
+  // row by row.
+  double cell[9] = {lx, 0.0, 0.0, bx, ly, 0.0, cx, cy, lz};
   ModelTerms *models = getRunning();
   std::string failure =
       models ? models->evaluate(
-                   index,
-                   positions->data + positions->offset * (bits / 8),
+                   index, positions->data + positions->offset * (bits / 8),
                    static_cast<int>(bits), numbers->data + numbers->offset,
-                   positions->sizes[0])
+                   positions->sizes[0], cell,
+                   forces->data + forces->offset * (forceBits / 8),
+                   static_cast<int>(forceBits))
              : std::string("a model term is evaluated, but no model is loaded");
   if (!failure.empty())
     stopRun(failure);
+  if (!energy)
+    return;
+  auto *u = static_cast<StridedMemRefType<double, 1> *>(energy);
+  auto *w = static_cast<StridedMemRefType<double, 1> *>(virial);
+  double tensor[9];
+  models->readLast(index, u->data[u->offset], tensor);
+  for (int k = 0; k != 9; ++k)
+    w->data[w->offset + k * w->strides[0]] = tensor[k];
+}
+} // namespace
+
+extern "C" void _mlir_ciface_mdrtModelEvaluate(
+    int64_t index, void *positions, void *numbers, double lx, double ly,
+    double lz, double bx, double cx, double cy, int64_t bits,
+    int64_t forceBits, void *forces) {
+  evaluateModel(index, positions, numbers, lx, ly, lz, bx, cx, cy, bits,
+                forceBits, forces, nullptr, nullptr);
 }
 
-extern "C" void _mlir_ciface_mdrtModelForces(void *buffer, int64_t index) {
-  auto *result = static_cast<StridedMemRefType<double, 2> *>(buffer);
-  ModelTerms *models = getRunning();
-  double *forces = models ? models->getForces(index) : nullptr;
-  int64_t count = models ? models->getCount() : 0;
-  result->basePtr = forces;
-  result->data = forces;
-  result->offset = 0;
-  result->sizes[0] = count;
-  result->sizes[1] = 3;
-  result->strides[0] = 3;
-  result->strides[1] = 1;
+extern "C" void _mlir_ciface_mdrtModelEvaluateEnergy(
+    int64_t index, void *positions, void *numbers, double lx, double ly,
+    double lz, double bx, double cx, double cy, int64_t bits,
+    int64_t forceBits, void *forces, void *energy, void *virial) {
+  evaluateModel(index, positions, numbers, lx, ly, lz, bx, cx, cy, bits,
+                forceBits, forces, energy, virial);
 }

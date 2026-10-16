@@ -270,9 +270,20 @@ LogicalResult Assigner::collect(Operation *op) {
     if (!callee)
       return op->emitOpError() << "calls a function that is not declared";
     for (auto [operand, type] :
-         llvm::zip(call.getOperands(), callee.getArgumentTypes()))
+         llvm::zip(call.getInputs(), callee.getArgumentTypes()))
       if (isRealField(operand.getType()))
         markBoundary(operand, cast<MemRefType>(type).getElementType(), op);
+    // A field that the function adds to is stored with its result, in the
+    // type that the function declares (D[metatomic-plugin]).
+    ArrayRef<Type> outTypes =
+        callee.getArgumentTypes().slice(call.getInputs().size());
+    for (auto [index, destination] : llvm::enumerate(call.getOuts())) {
+      if (!isRealField(destination.getType()))
+        continue;
+      unite(call.getResult(index), destination);
+      markBoundary(destination,
+                   cast<MemRefType>(outTypes[index]).getElementType(), op);
+    }
     return success();
   }
   if (auto to = dyn_cast<mdrt::ToBufferOp>(op)) {

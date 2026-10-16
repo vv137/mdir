@@ -629,7 +629,8 @@ compileEngine(const Control &control, const System &system,
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
     add("_mlir_ciface_mdrtModelEvaluate",
         (void *)&_mlir_ciface_mdrtModelEvaluate);
-    add("_mlir_ciface_mdrtModelForces", (void *)&_mlir_ciface_mdrtModelForces);
+    add("_mlir_ciface_mdrtModelEvaluateEnergy",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEnergy);
     add("_mlir_ciface_mdrtWriteFrameForces",
         (void *)&_mlir_ciface_mdrtWriteFrameForces);
     add("_mlir_ciface_mdrtWriteFrameVirial",

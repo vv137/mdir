@@ -25,6 +25,11 @@ mlir::MemRefType getBufferType(md::FieldType field);
 /// types: the buffer then states the type that the field is stored in.
 bool canHold(mlir::Type buffer, md::FieldType field);
 
+/// The type of the buffer of the host that takes `number`, a number that
+/// mdrt.host_call yields: memref<1xf64> for an f64, memref<kxf64> for a
+/// vector of k f64; null for another type.
+mlir::MemRefType getHostNumberType(mlir::Type number);
+
 /// The type of the buffer that holds the members of the tuples of
 /// `relation`, the relation of a tuple set: `memref<?xkxi32>` for tuples of
 /// `k` members.

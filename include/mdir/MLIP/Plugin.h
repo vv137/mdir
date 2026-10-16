@@ -95,10 +95,12 @@ typedef struct mdir_mlip_inputs {
 } mdir_mlip_inputs;
 
 typedef struct mdir_mlip_outputs {
-  /* On the device: the forces, n x 3, 64 bits, which the model's forces are
-     added to; the energy (1) and the virial W = -dE/d(strain) (9, row by
-     row), 64 bits, which are written. */
-  double *forces;
+  /* On the device: the forces, n x 3, of `force_bits` bits (64 or 32), the
+     engine's own buffer of the forces of its other terms, which the model's
+     forces are added to; the energy (1) and the virial W = -dE/d(strain)
+     (9, row by row), 64 bits, which are written. */
+  void *forces;
+  int32_t force_bits;
   double *energy;
   double *virial;
   /* On the host, written: the pairs of the list and the calls of the
@@ -128,7 +130,8 @@ int mdir_mlip_describe(const mdir_mlip_model *model,
                        mdir_mlip_description *description);
 /* Builds the pair list on the device, calls the model (in chunks of centers
    where it is local and the engine asks for them), differentiates, and adds
-   the forces. Waits for the device only for the number of pairs. */
+   the forces to the engine's. Waits for the device only for the number of
+   pairs. */
 int mdir_mlip_evaluate(mdir_mlip_model *model, const mdir_mlip_inputs *inputs,
                        mdir_mlip_outputs *outputs);
 /* The memory of the plugin's allocator; `reset` starts the peaks anew. */

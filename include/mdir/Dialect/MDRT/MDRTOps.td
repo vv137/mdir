@@ -86,7 +86,9 @@ def MDRT_ToBufferOp : MDRT_Op<"to_buffer", [Pure]> {
 }
 
 def MDRT_HostCallOp : MDRT_Op<"host_call", [
-    DeclareOpInterfaceMethods<SymbolUserOpInterface>
+    AttrSizedOperandSegments,
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>,
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {
   let summary = "Calls a function of the host that reads fields";
   let description = [{
@@ -117,16 +119,52 @@ def MDRT_HostCallOp : MDRT_Op<"host_call", [
     ```mlir
     mdrt.host_call @end_part(%x) {in_place} : (!md.field<@atoms, 3 x f64>)
     ```
+
+    A function that writes fields takes them in `outs`, as the loops of
+    md_exec take their destinations: it adds to what the buffer of each
+    holds, and the op yields the field that the buffer holds after the
+    call, one result for each field in `outs`. A loop that reads these
+    forces reads the result, so no pass can move it, or fuse it, before
+    the call. A field of `outs` must be dead after the call; its buffer
+    becomes that of the result. The numbers that the function computes
+    (`f64`, or a vector of `f64`) follow the fields among the results: the
+    function writes each to a buffer of the host (`memref<1xf64>`, or
+    `memref<kxf64>`) that it is given after those of the fields, and the
+    host waits for the call. A learned potential adds its forces to those
+    of the other terms this way, and gives its energy and its virial
+    (D[metatomic-plugin]).
+
+    ```mlir
+    func.func private @model(memref<?x3xf64>, memref<?x3xf32>,
+                             memref<1xf64>, memref<9xf64>)
+
+    %f, %u, %w = mdrt.host_call @model(%x) outs(%fc : !vec) {in_place}
+        : (!vec) -> (!vec, f64, vector<9xf64>)
+    ```
+
+    The op reads and writes the state of the host, which the compiler does
+    not see: it is never removed or reordered with other such ops.
   }];
   let arguments = (ins
     FlatSymbolRefAttr:$callee,
-    Variadic<AnyType>:$operands,
+    Variadic<AnyType>:$inputs,
+    Variadic<MD_FieldType>:$outs,
     UnitAttr:$in_place
   );
+  let results = (outs Variadic<AnyType>:$results);
   let assemblyFormat = [{
-    $callee `(` $operands `)` attr-dict
-    `:` `(` qualified(type($operands)) `)`
+    $callee `(` $inputs `)`
+    (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)? attr-dict
+    `:` `(` qualified(type($inputs)) `)`
+    (`->` `(` qualified(type($results))^ `)`)?
   }];
+  let extraClassDeclaration = [{
+    /// The numbers among the results, after the fields of `outs`.
+    ::mlir::ResultRange getNumbers() {
+      return getResults().drop_front(getOuts().size());
+    }
+  }];
+  let hasVerifier = 1;
 }
 
 #endif // MDIR_DIALECT_MDRT_MDRTOPS_TD

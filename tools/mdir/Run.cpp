@@ -754,7 +754,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
     add("_mlir_ciface_mdrtModelEvaluate",
         (void *)&_mlir_ciface_mdrtModelEvaluate);
-    add("_mlir_ciface_mdrtModelForces", (void *)&_mlir_ciface_mdrtModelForces);
+    add("_mlir_ciface_mdrtModelEvaluateEnergy",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEnergy);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
     add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);

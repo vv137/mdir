@@ -33,9 +33,9 @@ std::string getPluginPath(llvm::StringRef directory);
 llvm::Expected<std::string> getPluginTorchVersion(llvm::StringRef path);
 
 /// The models of one simulation, loaded on its device. A step evaluates
-/// each with evaluate(), whose forces the program adds from forces(); the
-/// energy and the virial of the last evaluation stay on the device until
-/// the log reads them (read()).
+/// each with evaluate(), which adds its forces to those of the program; the
+/// energy and the virial of the last evaluation stay on the device until the
+/// program or the log reads them (readLast(), read()).
 class ModelTerms {
 public:
   /// Loads the plugin (getPluginPath(`directory`)) and the models of
@@ -49,12 +49,16 @@ public:
 
   /// Evaluates model `index` on the positions (device, n x 3, of `bits`
   /// bits) and atomic numbers (device, n) of the particles in the order of
-  /// the program, on the stream of its kernels. Returns an empty string or
-  /// what failed.
+  /// the program, in the cell `cell` (9 numbers, the edge vectors row by
+  /// row), on the stream of its kernels, and adds its forces to `forces`
+  /// (device, n x 3, of `forceBits` bits). Returns an empty string or what
+  /// failed.
   std::string evaluate(int64_t index, const void *positions, int bits,
-                       const int32_t *numbers, int64_t count);
-  /// The forces of the last evaluation of `index` (device, n x 3, f64).
-  double *getForces(int64_t index) const;
+                       const int32_t *numbers, int64_t count,
+                       const double cell[9], void *forces, int forceBits);
+  /// The energy and the virial (row by row) of the last evaluation of
+  /// `index`, read from the device, which the host waits for.
+  void readLast(int64_t index, double &energy, double virial[9]) const;
   int64_t getCount() const { return count; }
 
   /// The energy and the virial tensor (row by row) of the last evaluations
@@ -75,24 +79,32 @@ private:
     std::string name;
     mdir_mlip_model *handle = nullptr;
     std::string description;
-    /// Device: n x 3 forces, and the energy and the virial (10).
-    double *forces = nullptr;
+    /// Device: the energy and the virial (10).
     double *results = nullptr;
     int64_t pairs = 0, calls = 0, evaluations = 0;
   };
   std::vector<Model> models;
   int64_t count = 0;
-  double cell[9] = {};
 };
 
 } // namespace driver
 } // namespace mdir
 
-/// The functions that the program of a run with a model term calls.
+/// The functions that the program of a run with a model term calls
+/// (D[metatomic-plugin]): model `index` at the positions, the atomic
+/// numbers, and the cell (its diagonal and tilts b_x, c_x, c_y), its forces
+/// added to `forces`; with `Energy`, its energy and virial written to
+/// `energy` (1) and `virial` (9).
 extern "C" {
 void _mlir_ciface_mdrtModelEvaluate(int64_t index, void *positions,
-                                    void *numbers, int64_t bits);
-void _mlir_ciface_mdrtModelForces(void *result, int64_t index);
+                                    void *numbers, double lx, double ly,
+                                    double lz, double bx, double cx,
+                                    double cy, int64_t bits,
+                                    int64_t forceBits, void *forces);
+void _mlir_ciface_mdrtModelEvaluateEnergy(
+    int64_t index, void *positions, void *numbers, double lx, double ly,
+    double lz, double bx, double cx, double cy, int64_t bits,
+    int64_t forceBits, void *forces, void *energy, void *virial);
 }
 
 #endif // MDIR_DRIVER_MODELTERM_H

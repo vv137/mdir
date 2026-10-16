@@ -289,14 +289,6 @@ void _mlir_ciface_mdrtWriteVirial(double xx, double yy, double zz) {
   // of a net charge are isotropic: a third of each on each axis.
   double constant =
       (output.getDispersionVirial() + output.getCoulombConstantVirial()) / 3.0;
-  if (output.models) {
-    double energy;
-    std::array<double, 9> tensor;
-    output.models->read(energy, tensor);
-    xx += tensor[0];
-    yy += tensor[4];
-    zz += tensor[8];
-  }
   output.log.print(
                "MDIR: the diagonal of the virial at the start, without the "
                "constraints, in kcal/mol:\nMDIR:   %16.6f %16.6f %16.6f\n",
@@ -829,15 +821,6 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     output.hasSolvent = false;
     if (!output.embedded)
       return;
-  }
-  // The learned potentials (D[metatomic-plugin]) keep the energy and the
-  // virial of their last evaluation, that of this step, on the device.
-  if (output.models) {
-    double energy;
-    std::array<double, 9> tensor;
-    output.models->read(energy, tensor);
-    potential += energy;
-    virial += tensor[0] + tensor[4] + tensor[8];
   }
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.

@@ -296,8 +296,9 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
             .to(torch::kFloat64);
     torch::Tensor numbers = torch::from_blob(
         const_cast<int32_t *>(in->numbers), {n}, dev.dtype(torch::kInt32));
-    torch::Tensor forces =
-        torch::from_blob(out->forces, {n, 3}, dev.dtype(torch::kFloat64));
+    torch::Tensor forces = torch::from_blob(
+        out->forces, {n, 3},
+        dev.dtype(out->force_bits == 64 ? torch::kFloat64 : torch::kFloat32));
     torch::Tensor energy =
         torch::from_blob(out->energy, {1}, dev.dtype(torch::kFloat64));
     torch::Tensor virial =
@@ -389,8 +390,9 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
         break;
     }
 
-    // Added to MDIR's forces and written to its energy and virial, on its
-    // stream: nothing waits.
+    // Added to MDIR's forces, in the buffer of its other terms and in its
+    // type, and written to the energy and the virial, on its stream:
+    // nothing waits.
     if (n > 0 && x.grad().defined())
       forces.sub_(x.grad());
     energy.copy_(total);
