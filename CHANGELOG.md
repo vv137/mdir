@@ -437,6 +437,18 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The loop over the inner list of a dual list of groups takes only the
+  blocks that hold entries** (D[rolling-prune], #357; the maintainer's
+  ruling on PR #360). Each pruning lists them, the index of the blocks of
+  the groups is made at each build instead of each pruning, the pruning's
+  kernel of the frames copies its configuration, and a loop that follows a
+  pruning at the same positions in mixed precision takes its frames. The
+  pruning stays global and exact. On an RTX 4090 a step takes 12 µs less
+  on 103,292 TIP3P waters (1130 to 1118), 20 on as many OPC waters, and 47
+  on STMV. No key, format, or default changes. A run with
+  `MDIR_CHECK_PRUNING` set counts, at every step, the pairs within the
+  cutoff in the outer and the inner lists and stops if they differ.
+
 - **The step of steepest descent grows to at most 0.1 Å, not 1 Å**
   (D260, #351; the maintainer's ruling on PR #348). Near a
   cap of 1 Å many trials turned rigid waters further than the constraints

@@ -382,8 +382,12 @@ the derivative in the tunables of a Python model are such loops).
 | The refresh | Where the outer list is not valid, it is built and the inner list pruned from it; where only the inner one is not, the inner one is pruned again. A pruning sets the configuration and the cell of the inner list only; those of the outer list change at a build only. Before the first pruning the cell of the inner list is not a number, so its test fails |
 | The pruning | Always from the outer list: the bits of an entry are those of the outer mask whose pairs are within $R_\text{in}$ now, `inner = outer & (r^2 <= R_in^2)`, so that a pair dropped once comes back when it is near again. The outer entries and masks are kept as the build left them |
 | The distances | In f32, from positions moved into the frames of their groups as the loop takes them (D95), against $R_\text{in}$ widened by $3 \times 10^{-6}$ of the sum of the edges of the cell, as the build widens $R$: the rounding can keep a pair beyond $R_\text{in}$, never drop one within it |
-| The layout | A warp for each group takes the entries of the outer list of the group in their order, 32 at a time, and writes those with a bit left to the front of the blocks of the group, in their order (a ballot and a count of the bits below each lane), across the boundaries of the blocks; each block holds its number of entries. The inner list thus fills its blocks as a list built with $R_\text{in}$ would. A block that the inner list leaves empty writes nothing in the loop |
-| The order | The pruning keeps the order of the outer list and adds no order of its own. The order of the outer list, the blocks that the build takes with an atomic addition, and the atomic additions of the loop are as without a dual list: the sums still depend on the order of the threads, and the deterministic mode does not take groups |
+| The layout | A warp for each group takes the entries of the outer list of the group in their order, 32 at a time, and writes those with a bit left to the front of the blocks of the group, in their order (a ballot and a count of the bits below each lane), across the boundaries of the blocks; each block holds its number of entries. The inner list thus fills its blocks as a list built with $R_\text{in}$ would. A block that the inner list leaves empty is not an active unit (below), and the loop takes no work for it. The block of each group's list by its number in the list (`blockOf`, a row of the blocks of the longest list for each group) is made at each build of the groups, not at each pruning (D[rolling-prune]): on the 103k TIP3P box, 7.6 µs every 2.4 steps become as much every 13.6 |
+| The active units | Each pruning also lists the blocks that hold entries of the inner list, the first $\lceil k_g / 64 \rceil$ of each group $g$ that keeps $k_g$ entries, in the order of the blocks, with their number on the device (D[rolling-prune]). The pruning counts the active blocks in runs of 32 and of 1024 blocks (atomic additions of integers, whose sums do not depend on the order), and a kernel with a warp for each run of 32 places each active block after those of the runs of 1024 before its own, of the runs of 32 before its own in that run of 1024, and of the blocks before it in its run (a ballot). The loop over pairs takes these units: its grid is that of all units, as the host knows no more, and a warp past their number does nothing. After a pruning about 40% of the units of the outer list hold no entry of the inner list. In the order of the groups instead, the warps of the blocks of one group ran together, and the loop took 576 µs a step on the 103k TIP3P box against 526 for all units in the order of the blocks. Each pruning clears the number first: a build that places no particle (D107; a run that has failed goes on to the end of its part) leaves no block, and no kernel counts them |
+| The configuration | The kernel of the pruning that moves the positions into the frames of the groups also copies the positions, particle by particle in their order, to the configuration of the pruning, in place of a copy of the buffer (D[rolling-prune]): 13.0 µs on the 103k TIP3P box against 7.3 and 8.7 for the two apart. Written by place, where each particle's position is read anyway, the scattered writes took 20.9 µs, and in the main kernel 17 µs more |
+| The frames | The positions in the frames of the groups, in f32, are kept with the structure. A loop over pairs that follows the refresh at the same positions and in the same cell, with no op between that may write the positions (by the memory effects of the ops and the aliases of the buffers, `findSharedFrames`), and that computes in f32, takes them as they are when the refresh pruned: they are the loop's own, to the bit (the same shift in f64, added in f64, rounded to f32). Otherwise, and in double precision, the loop moves the positions itself (D[rolling-prune]) |
+| The order | The pruning keeps the order of the outer list and adds no order of its own. The order of the outer list, the blocks that the build takes with an atomic addition, and the atomic additions of the loop are as without a dual list: the sums still depend on the order of the threads, and the deterministic mode does not take groups. The loop takes the active units in the order of the blocks, as it took all units before; a warp takes other units than before, and its sums are added in another order |
+| The check | With `MDIR_CHECK_PRUNING` set, each refresh counts, at the positions of its step, the pairs within the cutoff in the outer list and in the inner list through the active units, in f32 on the frames of that step; the inner list is a part of the outer one, so the two differ only where it misses a pair, and the runtime stops the run. At its end the run reports the steps it checked (`test/Driver/prune-check-gpu.test`; the option `check-pruning` of `convert-md-exec-to-gpu`) |
 | The log | `the inner lists were pruned N times, every k steps on average`, the prunings that follow a build included |
 
 Measured (RTX 3090 at 300 W, mixed precision, one run each, ns/day):
@@ -403,6 +407,36 @@ blocks, every 3.5 steps; the loop over the inner list takes 1060 µs, against
 the outer list into the same block: the inner list kept the blocks of the
 outer one, partly filled, and the loop took 1320 µs; a pruning read the
 positions in f64 and took 933 µs.
+
+The active units, the index of the blocks made at the build, the copy of
+the configuration in the kernel of the frames, and the frames shared with
+the loop (D[rolling-prune], #357), against main at the same commit, RTX
+4090, mixed precision, the settings of
+[scripts/benchmarks/rolling-prune](../scripts/benchmarks/rolling-prune)
+(`steps.py`: frozen binaries, 6 rounds alternated in one job a system,
+the first dropped; mean ± standard deviation of 5), µs a step:
+
+| System | main | D[rolling-prune] | Difference |
+|---|---|---|---|
+| TIP3P, 103,292 waters (12 / 9.6 Å) | 1130.4 ± 1.5 | 1118.2 ± 1.9 | −12.2 |
+| OPC, 103,292 waters (12 / 9.6 Å) | 1633.0 ± 2.1 | 1612.8 ± 2.2 | −20.2 |
+| JAC (11 / 8.6 Å) | 137.0 ± 0.0 | 135.4 ± 0.5 | −1.6 |
+| Ubiquitin in OPC (12 / 9.6 Å) | 182.2 ± 0.4 | 180.4 ± 0.5 | −1.8 |
+| STMV, 4 fs (11 / 9.2 Å) | 4784.2 ± 8.9 | 4737.0 ± 12.6 | −47.2 |
+
+On TIP3P (nsys, µs a step) the loops over pairs fall from 543.8 to 529.7
+and the copies on the device from 4.3 to 1.0; a pruning takes 222 µs
+against 224 (the frames and the configuration 13.0, the main kernel 206.0,
+the active units 3.0, against 7.6 for the index of the blocks, 7.3 for
+the frames, 200.6, and a copy of 8.7). The proposal expected about 25 µs
+a step on TIP3P; the copy fused with the frames saves 3 µs of its 8.7,
+and the counts of the active units cost about as much as the index of the
+blocks saved. Counting the runs of 1024 blocks in a kernel of their own,
+rather than with atomic additions in the main kernel, changed nothing
+(206.0 µs). The forces at the start differ from main's no more than two
+runs of main differ from each other (`forces.py`; on TIP3P at most
+9.8 × 10⁻⁴ kJ/mol/nm against 1.1 × 10⁻³, in double on JAC 1.4 × 10⁻¹²
+against 1.4 × 10⁻¹²).
 
 ## 6.3 The default: `AUTO` (D261)
 
