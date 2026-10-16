@@ -1692,9 +1692,14 @@ llvm::Error mdir::driver::readGromacsCoordinates(StringRef path,
     return fail(path, 3, "the decimal points of x, y, and z are not evenly "
                          "spaced");
 
+  // The velocities are in fields as wide as the coordinates, with one more
+  // decimal, as GROMACS writes them (%8.4f after %8.3f) and reads them for
+  // any precision. A line has either no velocities or three that read, and
+  // every line the same (#365): a velocity field that does not read, such as
+  // one wider than the coordinates, is refused instead of taken as 0.
   topology.positions.clear();
   std::vector<double> velocities;
-  bool hasVelocities = false;
+  long firstWithout = -1, firstWith = -1;
   for (long i = 0; i != count; ++i) {
     StringRef line = lines[2 + i];
     unsigned number = 3 + i;
@@ -1707,16 +1712,38 @@ llvm::Error mdir::driver::readGromacsCoordinates(StringRef path,
                                       "'");
       topology.positions.push_back(value);
     }
+    StringRef rest = line.substr(20 + 3 * width).rtrim();
+    if (rest.empty()) {
+      if (firstWithout < 0)
+        firstWithout = number;
+      velocities.insert(velocities.end(), 3, 0.0);
+      continue;
+    }
+    if (firstWith < 0)
+      firstWith = number;
+    if (rest.size() > 3 * width)
+      return fail(path, number,
+                  "the velocities take more than 3 fields of " +
+                      llvm::Twine(width) +
+                      " columns, the width of the coordinates; a .gro file "
+                      "has its velocities in fields as wide as its "
+                      "coordinates");
     for (int k = 0; k != 3; ++k) {
-      double value = 0.0;
-      StringRef field = line.substr(20 + (3 + k) * width, width).trim();
-      if (!field.empty() && readReal(field, value))
-        hasVelocities = true;
-      else
-        value = 0.0;
+      double value;
+      if (!readReal(rest.substr(k * width, width), value))
+        return fail(path, number,
+                    "cannot read the velocity " + llvm::Twine(k + 1) +
+                        " in a field of " + llvm::Twine(width) +
+                        " columns, the width of the coordinates, in '" +
+                        line + "'");
       velocities.push_back(value);
     }
   }
+  bool hasVelocities = firstWith >= 0;
+  if (hasVelocities && firstWithout >= 0)
+    return fail(path, static_cast<unsigned>(firstWithout),
+                "no velocities on this line, and velocities on line " +
+                    llvm::Twine(firstWith));
   topology.velocities.clear();
   if (hasVelocities)
     topology.velocities = std::move(velocities);

@@ -1,0 +1,95 @@
+# The velocities of a .gro file are in fields as wide as its coordinates,
+# with one more decimal, at any precision, as GROMACS writes and reads them.
+# A velocity field that does not read is refused, never taken as 0 (#365):
+# velocities wider than the coordinates (%12.7f, then %13.8f) lost two of
+# their three components without an error.
+#
+# RUN: rm -rf %t && mkdir -p %t && split-file %s %t
+# RUN: sed 's/COORDINATES/default.gro/' %t/base.toml > %t/default.toml
+# RUN: sed 's/COORDINATES/precise.gro/' %t/base.toml > %t/precise.toml
+# RUN: sed 's/COORDINATES/wider.gro/' %t/base.toml > %t/wider.toml
+# RUN: sed 's/COORDINATES/partial.gro/' %t/base.toml > %t/partial.toml
+# RUN: sed 's/COORDINATES/mixed.gro/' %t/base.toml > %t/mixed.toml
+# RUN: mdir run %t/default.toml | FileCheck %s --check-prefix=KINETIC
+# RUN: mdir run %t/precise.toml | FileCheck %s --check-prefix=KINETIC
+# RUN: not mdir check %t/wider.toml 2>&1 | FileCheck %s --check-prefix=WIDER
+# RUN: not mdir check %t/partial.toml 2>&1 | FileCheck %s --check-prefix=PARTIAL
+# RUN: not mdir check %t/mixed.toml 2>&1 | FileCheck %s --check-prefix=MIXED
+
+# Both argon atoms move at |v|^2 = 0.1764 nm^2/ps^2: a kinetic energy of
+# 39.948 * 0.1764 kJ/mol = 1.8108 kcal/mol, with every component read.
+#
+# KINETIC: INFO: 0 0.0000 1.8108 0.0000 1.8108
+
+# WIDER: wider.gro:3: the velocities take more than 3 fields of 12 columns, the width of the coordinates; a .gro file has its velocities in fields as wide as its coordinates
+# PARTIAL: partial.gro:4: cannot read the velocity 3 in a field of 8 columns, the width of the coordinates, in '
+# MIXED: mixed.gro:4: no velocities on this line, and velocities on line 3
+
+#--- base.toml
+[input]
+topology    = "argon.top"
+coordinates = "COORDINATES"
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 0
+
+[ensemble]
+ensemble = "NVE"
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "CPU"
+
+[output]
+energy_interval = 1
+#--- argon.top
+[ defaults ]
+1 2 no 1.0 1.0
+[ atomtypes ]
+AR 18 39.948 0.0 A 0.34 0.0
+[ moleculetype ]
+AR 1
+[ atoms ]
+1 AR 1 AR AR 1 0.0 39.948
+[ system ]
+Two argon atoms
+[ molecules ]
+AR 2
+#--- default.gro
+Two argon atoms
+    2
+    1AR      AR    1   0.600   0.600   0.600  0.1234 -0.2345  0.3456
+    2AR      AR    2   1.200   1.200   1.200 -0.1234  0.2345 -0.3456
+   2.40000   2.40000   2.40000
+#--- precise.gro
+Two argon atoms
+    2
+    1AR      AR    1   0.6000000   0.6000000   0.6000000  0.12340000 -0.23450000  0.34560000
+    2AR      AR    2   1.2000000   1.2000000   1.2000000 -0.12340000  0.23450000 -0.34560000
+   2.40000   2.40000   2.40000
+#--- wider.gro
+Two argon atoms
+    2
+    1AR      AR    1   0.6000000   0.6000000   0.6000000   0.12340000  -0.23450000   0.34560000
+    2AR      AR    2   1.2000000   1.2000000   1.2000000  -0.12340000   0.23450000  -0.34560000
+   2.40000   2.40000   2.40000
+#--- partial.gro
+Two argon atoms
+    2
+    1AR      AR    1   0.600   0.600   0.600  0.1234 -0.2345  0.3456
+    2AR      AR    2   1.200   1.200   1.200 -0.1234  0.2345
+   2.40000   2.40000   2.40000
+#--- mixed.gro
+Two argon atoms
+    2
+    1AR      AR    1   0.600   0.600   0.600  0.1234 -0.2345  0.3456
+    2AR      AR    2   1.200   1.200   1.200
+   2.40000   2.40000   2.40000

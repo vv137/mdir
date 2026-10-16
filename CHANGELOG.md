@@ -1139,6 +1139,15 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A `.gro` file whose velocities do not read in fields as wide as its
+  coordinates is refused, with the line, instead of read with the
+  velocities that do not read taken as 0 (#365). Velocities written one
+  column wider than the coordinates (`%12.7f`, then `%13.8f`) kept the
+  first component, cut to the width, and lost the other two: 81 waters
+  written at 300 K started at 89 K. The velocities of a `.gro` file are in
+  fields as wide as its coordinates, with one more decimal, as GROMACS
+  writes and reads them at any precision; a line has three of them or
+  none, and every line alike.
 - Steepest descent stalled with a step of 0, or failed, on rigid water
   (D259, #343). A trial longer than SETTLE or M-SHAKE can
   take back, which the step reaches as it grows toward its cap of 1 Å,
