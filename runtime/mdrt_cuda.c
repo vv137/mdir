@@ -402,6 +402,15 @@ struct Buffer1 {
   int64_t stride;
 };
 
+/* A memref of rank 2 as the C interface of MLIR passes it. */
+struct Buffer2 {
+  void *allocated;
+  void *aligned;
+  int64_t offset;
+  int64_t sizes[2];
+  int64_t strides[2];
+};
+
 /* Reads of flags of the device that do not wait for the work issued after
    them (D113): mdrtFlagStart copies the flag into memory of the host that
    the device writes while the host goes on, and marks the copy with an
@@ -888,8 +897,17 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
    A dual list (D114) adds the entries and the masks of the inner list,
    each block of the outer list pruned into the same block, and the number
    of entries that each block keeps; they are allocated where compiled code
-   first asks for them. Compiled code takes a buffer where it uses it
-   (`mdrtGroupsBuffer`), so a buffer that grew is the one it takes. */
+   first asks for them. The pruning of a dual list adds, also where first
+   asked for (D[rolling-prune]): the block of each group's list by its
+   number within the list (`blockOf`, a group's row as wide as the longest
+   list takes blocks; its length is set by `mdrtGroupsReserveBlockOf` at
+   each build), the units of work that hold entries of the inner list and
+   their number (the active units, in the order of the blocks), their
+   counts in runs of 32 and of 1024 blocks (on the way to the active
+   units), and the positions of the places in the frames of their
+   groups in f32 (`mdrtGroupsPlaced`, three numbers a place). Compiled code
+   takes a buffer where it uses it (`mdrtGroupsBuffer`), so a buffer that
+   grew is the one it takes. */
 enum {
   GROUPS_ORDER,
   GROUPS_COUNTS,
@@ -901,6 +919,12 @@ enum {
   GROUPS_INNER_ENTRIES,
   GROUPS_INNER_MASKS,
   GROUPS_INNER_COUNTS,
+  GROUPS_BLOCK_OF,
+  GROUPS_ACTIVE_UNITS,
+  GROUPS_ACTIVE_COUNT,
+  GROUPS_ACTIVE_RUNS,
+  GROUPS_ACTIVE_WIDE_RUNS,
+  GROUPS_PLACED,
   GROUPS_BUFFERS
 };
 
@@ -908,6 +932,8 @@ struct Groups {
   void *data[GROUPS_BUFFERS];
   int64_t places;
   int64_t blocks;
+  /* The length of `blockOf`. */
+  int64_t blockOf;
 };
 
 /* A memref of rank 1 as the C interface of MLIR passes it. */
@@ -923,6 +949,16 @@ static int64_t getGroupsLength(const struct Groups *groups, int which) {
   case GROUPS_INNER_ENTRIES:
   case GROUPS_INNER_MASKS:
     return groups->blocks * 64;
+  case GROUPS_BLOCK_OF:
+    return groups->blockOf > 0 ? groups->blockOf : 1;
+  case GROUPS_ACTIVE_COUNT:
+    return 1;
+  case GROUPS_ACTIVE_RUNS:
+    return groups->blocks / 32 + 1;
+  case GROUPS_ACTIVE_WIDE_RUNS:
+    return groups->blocks / 1024 + 1;
+  case GROUPS_PLACED:
+    return groups->places * 3;
   default:
     return groups->blocks;
   }
@@ -994,6 +1030,39 @@ void mdrtGroupsGrow(int64_t handle, int64_t places, int64_t blocks) {
   allocateGroups(groups);
 }
 
+/* Makes room for `length` entries of `blockOf`, a quarter more than asked,
+   if it has less. What it held is lost: the caller fills it again. */
+void mdrtGroupsReserveBlockOf(int64_t handle, int64_t length) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  if (length <= groups->blockOf && groups->data[GROUPS_BLOCK_OF])
+    return;
+  if (length > groups->blockOf)
+    groups->blockOf = length + length / 4;
+  if (groups->data[GROUPS_BLOCK_OF]) {
+    /* No kernel may still use the buffer that is freed. */
+    enter();
+    check(cuCtxSynchronize(), "cuCtxSynchronize");
+    mgpuMemFree(groups->data[GROUPS_BLOCK_OF], NULL);
+    groups->data[GROUPS_BLOCK_OF] = NULL;
+  }
+  allocateGroup(groups, GROUPS_BLOCK_OF);
+}
+
+/* The positions of the places in the frames of their groups, f32 and three
+   a place, as the C interface of MLIR passes a memref of rank 2. */
+void _mlir_ciface_mdrtGroupsPlaced(struct Buffer2 *result, int64_t handle) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  if (!groups->data[GROUPS_PLACED])
+    allocateGroup(groups, GROUPS_PLACED);
+  result->allocated = groups->data[GROUPS_PLACED];
+  result->aligned = groups->data[GROUPS_PLACED];
+  result->offset = 0;
+  result->sizes[0] = groups->places;
+  result->sizes[1] = 3;
+  result->strides[0] = 3;
+  result->strides[1] = 1;
+}
+
 /*===----------------------------------------------------------------------===
  * The rows of a neighbor matrix
  *===----------------------------------------------------------------------===*/
@@ -1006,15 +1075,6 @@ struct Matrix {
   void *data;
   int64_t rows;
   int64_t width;
-};
-
-/* A memref of rank 2 as the C interface of MLIR passes it. */
-struct Buffer2 {
-  void *allocated;
-  void *aligned;
-  int64_t offset;
-  int64_t sizes[2];
-  int64_t strides[2];
 };
 
 static void allocateMatrix(struct Matrix *matrix) {

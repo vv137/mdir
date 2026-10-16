@@ -568,8 +568,10 @@ The pruning now runs a warp per group (`emitGroupsPrune`,
 `lib/Conversion/MDExecToGPU/MDExecToGPU.cpp`):
 
 1. A kernel gathers the positions of all places into their frames, in f32
-   (the same arithmetic as the loop), and another writes, for each group,
-   the indices of its outer blocks in the order of the list.
+   (the same arithmetic as the loop), and copies the positions, as they
+   are stored, to $\mathbf x^p$. The indices of each group's outer blocks
+   in the order of its list are written once per build, not per pruning
+   (D[rolling-prune]).
 2. The warp of group $g$ holds the 16 positions of the group in registers
    (loaded by lanes 0–15 and broadcast once by shuffles).
 3. It reads the outer entries of the group in their order, 32 at a time,
@@ -586,14 +588,26 @@ The pruning now runs a warp per group (`emitGroupsPrune`,
 4. The stream fills the group's blocks in order, across their boundaries:
    if three outer blocks keep 37, 19, and 42 entries, the inner list fills
    one block with 64 and the next with 34. Each block records how many
-   entries it holds; a block that the inner list leaves empty is skipped by
-   the loop, which writes nothing for it.
+   entries it holds.
+5. The blocks that hold entries, the *active units*, are listed in the
+   order of the blocks with their number, which stays on the device: the
+   pruning counts them in runs of 32 and 1024 blocks, and a warp for each
+   run of 32 places its active blocks after those counted before it and
+   ranks them within the run by a ballot. The loop over pairs takes only
+   the active units (D[rolling-prune]). After a pruning about 40% of the
+   outer blocks are empty; before, the loop launched a warp for each, which
+   loaded its group before it found nothing to do.
 
 The ranks come from a ballot and a population count, so the order of the
 inner list is the order of the outer list: the pruning adds no order of
 its own. (The outer list's blocks come from an atomic pool, and the loop
 adds with atomics, so the sums depend on the order of the threads as
-before; the deterministic mode does not use groups.) Positions in f32 can
+before; the deterministic mode does not use groups.) A loop over pairs
+that follows the refresh at the same positions, in f32, takes the frames
+of step 1 as they are when the refresh pruned: they are its own, to the
+bit. With the active units and the shared frames a step of 103,292 TIP3P
+waters takes 1118 µs against 1130 on an RTX 4090, and one of STMV 4737
+against 4784 (`docs/groups-m1.md`, Section 6.2). Positions in f32 can
 only keep a pair beyond $R_\text{in}$, never drop one within it, for the
 reason given for the build: the reach is widened by the same $\varepsilon$.
 

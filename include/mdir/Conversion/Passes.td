@@ -322,7 +322,13 @@ def ConvertMDExecToGPU
            "With kept-tuples: whether the renumbered members and the "
            "incidence structures are built on the device by kernels of the "
            "module, in memory of the runtime's store, where it does not "
-           "take them as kept (D257)">
+           "take them as kept (D257)">,
+    Option<"checkPruning", "check-pruning", "bool", /*default=*/"false",
+           "Whether each refresh of a dual list of groups counts the pairs "
+           "within the cutoff in its outer list and in its inner list, "
+           "through the active units, at the positions of the step, and "
+           "the runtime stops the run if the counts differ "
+           "(MDIR_CHECK_PRUNING, D[rolling-prune])">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

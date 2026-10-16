@@ -150,6 +150,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // ... and builds them on the device where it does not take them
        // (D257).
        << "device-tuples=true "
+       // A check of the pruning of the dual lists, for tests
+       // (D[rolling-prune]).
+       << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        // The code of the host writes no buffer of the model that the entry

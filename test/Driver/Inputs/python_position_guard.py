@@ -22,7 +22,7 @@ root, target, scenario = sys.argv[1], getattr(mdir.Target, sys.argv[2]), sys.arg
 
 
 def compile_program(precision, kind="NVE", pressure=1.0, cutoff=0.8, restraint=None,
-                    overlap=False, deterministic=True):
+                    overlap=False, deterministic=True, dual=False):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
     # The defaults of before D248, with which this was written.
@@ -43,6 +43,11 @@ def compile_program(precision, kind="NVE", pressure=1.0, cutoff=0.8, restraint=N
     ensemble.pressure, ensemble.tau_p = pressure, 0.1
     execution.target, execution.precision = target, getattr(mdir.Precision, precision)
     execution.deterministic = deterministic
+    if dual:
+        # The groups with a dual list (D114, D[rolling-prune]), whatever
+        # the size.
+        execution.neighbor_structure = mdir.NeighborStructure.Groups
+        system.pairlist_distance, system.pruned_distance = cutoff + 0.3, cutoff + 0.06
     return mdir.compile(system, state, integrator, ensemble, execution, mdir.Schedule())
 
 
@@ -91,10 +96,12 @@ def restraint(precision):
           ("far outside the cell", "not numbers"), f"restraint {precision}")
 
 
-def overlap(precision, deterministic=True):
-    fails(compile_program(precision, overlap=True, deterministic=deterministic), precision, 1,
-          ("far outside the cell", "not numbers"),
-          f"overlap {precision}{'' if deterministic else ' groups'}")
+def overlap(precision, deterministic=True, dual=False):
+    # With the dual list, a part of 10 steps runs on after the failure until
+    # no position is a number and a build places no particle.
+    fails(compile_program(precision, overlap=True, deterministic=deterministic, dual=dual),
+          precision, 10 if dual else 1, ("far outside the cell", "not numbers"),
+          f"overlap {precision}{'' if deterministic else ' dual' if dual else ' groups'}")
 
 
 def barostat(precision):
@@ -111,6 +118,7 @@ elif scenario == "overlap":
         overlap(precision)
         if target == mdir.Target.GPU:
             overlap(precision, deterministic=False)
+            overlap(precision, deterministic=False, dual=True)
 elif scenario == "barostat":
     for precision in ("Double", "Mixed"):
         barostat(precision)
