@@ -564,7 +564,7 @@ the backward's communication is the AD's transpose of the forward's.
    unreduced partial sum, and a relation traversed at other positions.
 
 Next parts of stage 1, each with its own tests: `md-distribute` and the
-rules of the AD (Section 11; built, Section 14), EAM, the schedule print and trace, the
+rules of the AD (Section 11; built, Section 14), EAM (built, Section 15), the schedule print and trace, the
 `md_exec` path (Section 7.2), migration and `covered` with a trajectory
 (Section 8), MPI on CPU ranks, then GPUs.
 
@@ -706,8 +706,9 @@ the cell.
 
 Not yet differentiated, each refused with a diagnostic: a pair sum that
 gathers a field computed from the positions, and a derivative through a
-`gather_pairs` or `map_particles` of the positions (the next part, EAM);
-and derivatives in a parameter or a field (`derivative(n)`).
+`gather_pairs` or `map_particles` of the positions (built in the next
+part, EAM, Section 15); and derivatives in a parameter or a field
+(`derivative(n)`).
 
 The derived kernels of `md_dist` must pass the proof of their exchange
 contract (V8), where those of `md` carry the basis `derived` and are not
@@ -787,7 +788,8 @@ sum over particles with a field argument, and a pair sum that reads the map
 at both particles through its copy to the ghosts), on the grids
 $2\times1\times1$, $3\times2\times1$, and $16\times1\times1$ and both
 traversals, against one domain: $U = 1896.65$ within $2.4\times10^{-16}$
-relative (tolerance $10^{-10}$). Its derivative is the next part.
+relative (tolerance $10^{-10}$). Its derivative is the next part
+(Section 15).
 
 IR tests: `test/Dialect/MD/Transforms/distribute.mlir` (the rewrite of
 Lennard-Jones with a truncation, and of a many-body term with a gather, a
@@ -953,29 +955,81 @@ Finnis and Sinclair [[Finnis1984]](references.md#finnis1984), with
 parameters for the 64 particles of Section 12 in reduced units,
 
 $$
-f(r) = (r - d)^2,\quad F(\rho) = -A\sqrt\rho,\quad
-\phi(r) = (r - c)^2(c_0 + c_1 r + c_2 r^2)
+f(r) = (r - 2)^2,\quad F(\rho) = -\sqrt\rho,\quad
+\phi(r) = (r - 2)^2(3 - 2r + 0.4r^2)
 $$
 
-for $r < d = c = 2$ (each zero with its slope at the cutoff), distributed by
-`md-distribute` and differentiated by `md-differentiate`, on the grids
-$1\times1\times1$, $2\times1\times1$, $3\times2\times1$ (uneven), and
-$16\times1\times1$ (empty domains), with the unique traversal, the directed
-traversal in the derivative's form, and the directed traversal after
-`md-dist-owner-computes`: energy, forces, and virial against the same
-potential on one domain through `md_exec`, which agrees with a NumPy
-reference (`test/Integration/Inputs/eam_reference.py`), and the forces and
-the virial against central differences of the distributed energy in the
-positions and in the three stretches of the cell. The many-body energy of
-Section 14.5 is differentiated on the directed traversal against one
-domain.
+for $r < 2$ (each zero with its slope at the cutoff), distributed by
+`md-distribute` and differentiated by `md-differentiate`. It runs on the
+grids $1\times1\times1$, $2\times1\times1$, $3\times2\times1$ (uneven), and
+$16\times1\times1$ (half of the domains empty), each with the unique
+traversal, the directed traversal in the derivative's form, and the
+directed traversal after `md-dist-owner-computes` (12 runs). The reference
+is the same potential on one domain through `md_exec`, which agrees with a
+Python reference written from the definitions and their closed-form
+derivatives (`test/Integration/Inputs/eam_reference.py`). The largest
+relative differences over the 12 runs, `double`, on the CPU:
 
-Negative tests: a stale copy of $\bar\rho$ in the EAM program written in
-`md_dist`; the refusal of a pair sum that reads a field computed from the
-positions on the unique traversal; a density whose kernel uses the
-displacement or reads a field computed from the positions.
+| Quantity | Reference | Largest difference | Tolerance |
+|---|---|---|---|
+| Energy, $U = 31.8605$ | `eam_reference.py` (one domain) | $3.6\times10^{-15}$ | $10^{-10}$ |
+| A force component, of $\max\lvert F\rvert = 2.2406$ | `eam_reference.py` (one domain) | $2.5\times10^{-17}$ | $10^{-10}$ |
+| $\mathrm{tr}\,\mathsf W = 584.824$ | `eam_reference.py` (one domain) | $0$ | $10^{-10}$ |
+| Energy | One domain | $1.8\times10^{-15}$ | $10^{-10}$ |
+| Force component, of $\max\lvert F\rvert$ | One domain | $3.1\times10^{-15}$ | $10^{-10}$ |
+| Virial component, of $\lvert\mathrm{tr}\,\mathsf W\rvert$ | One domain | $4.4\times10^{-16}$ | $10^{-10}$ |
+| Six force components, of $\max\lvert F\rvert$ | Central differences of the distributed energy, step $10^{-6}$ | $2.0\times10^{-8}$ | $10^{-7}$ |
+| The diagonal of the virial, of $\lvert\mathrm{tr}\,\mathsf W\rvert$ | Central differences in the three stretches of the cell, step $10^{-6}$ | $1.1\times10^{-10}$ | $10^{-7}$ |
+| $\langle\mathbf F, \mathbf v\rangle$ of $U = \langle\mathbf c, \rho\rangle$ | $-\langle\mathbf c, J\mathbf v\rangle$, summed directly | $6.9\times10^{-15}$ | $10^{-12}$ |
 
-### 15.6 What is left
+The differences from central differences are those of the differences
+themselves, the rounding of $U$ over $2h$. The last row is the adjoint
+identity of the density: for $U = \langle\mathbf c, \rho(\mathbf x)\rangle$
+with a field $\mathbf c$ and $J = \partial\rho/\partial\mathbf x$, the forces
+on domains are $-J^\mathsf T\mathbf c$, carried back through the copy of
+$\bar\rho = \mathbf c$ to the ghosts and $G^\mathsf T$, and their product with
+a field $\mathbf v$ is compared with
+$-\langle\mathbf c, J\mathbf v\rangle = -\sum_i c_i\sum_{j\ne i} f'(r_{ij})\,\mathbf d_{ij}\cdot(\mathbf v_i - \mathbf v_j)/r_{ij}$,
+summed in the test over all pairs in the minimum image, with no relation,
+no domains, and no derivative.
+
+`test/Integration/dist-many-body-forces.mlir`: the many-body energy of
+Section 14.5, whose pair sum reads $\psi = \sqrt\rho$ at both particles, on
+the directed traversal (Section 15.4) on the grids $2\times1\times1$,
+$3\times2\times1$, and $16\times1\times1$, in the derivative's form and
+after `md-dist-owner-computes` (6 runs), against one domain: energy within
+$2.4\times10^{-16}$, force components within $2.1\times10^{-15}$, virial
+components within $5.2\times10^{-17}$ (tolerance $10^{-10}$); three force
+components and the stretch along $x$ against central differences within
+$2.6\times10^{-8}$ and $1.6\times10^{-11}$ (tolerance $10^{-7}$).
+
+IR tests: `test/Dialect/MD/Transforms/differentiate-eam.mlir` (the copy of
+$\bar\rho$ to the ghosts and the force gather that reads it, on both
+traversals; $G^\mathsf T$ in the derivative's form and its absence after
+owner-computes, with the copy kept; the gather at the owners of the adjoint
+of $\psi$). Negative tests: a stale copy of $F'(\rho)$, and none, in an EAM
+program written in `md_dist` (`test/Dialect/MDDist/eam-invalid.mlir`, V2
+and V1); a pair sum that reads a field computed from the positions on the
+unique traversal, and densities whose kernel uses the displacement or reads
+a field computed from the positions
+(`test/Dialect/MD/Transforms/differentiate-eam-invalid.mlir`).
+
+### 15.6 What changed in the code
+
+- `md-differentiate` (`lib/Dialect/MD/Transforms/Differentiate.cpp`) walks
+  the body of a potential on domains once, in reverse, keeping the negated
+  adjoints of its values on domains and of the positions as lists of terms
+  (complete, or the two partial results of a traversal); the transfers are
+  transposed by `AdjointOpInterface` as in Section 14.3, with the complete
+  terms of a value added before its transpose, so that the density's
+  `halo_sum` yields one $\bar\rho$ and one copy.
+- No change to the dialect, the executor, or `md-dist-owner-computes`: the
+  force gather of a density is the two-ended gather of Section 4.6 with a
+  proven contract, and the adjoint of a field read by a pair sum is a
+  gather with one complete result over a directed relation.
+- No control-file key, Python API, or output changes.
+
+### 15.7 What is left
 
 - The derivative through a pair sum that reads a field computed from the
   positions on the unique traversal (15.4).
