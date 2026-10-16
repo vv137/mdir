@@ -1275,7 +1275,7 @@ LogicalResult DerivativeBuilder::buildDistributedForces(Value &forces) {
         return sum.emitOpError()
                << "cannot differentiate a sum over pairs on domains that "
                   "gathers a field computed from the positions; that is the "
-                  "next part, D[ml2-eam]";
+                  "next part, EAM";
     // K(i, k) = −weight · u'(r) · d / r at i, and its value under exchange,
     // −K, at k.
     Operation *gather = createDistributedPairOp(sum, /*gather=*/true,
@@ -1322,7 +1322,7 @@ LogicalResult DerivativeBuilder::buildDistributedForces(Value &forces) {
                        [&](Value result) { return terms.count(result); }))
         return op->emitOpError()
                << "cannot differentiate through a field on domains computed "
-                  "from the positions; that is the next part, D[ml2-eam]";
+                  "from the positions; that is the next part, EAM";
       continue;
     }
     auto transfer = dyn_cast<AdjointOpInterface>(op);
@@ -1393,7 +1393,7 @@ LogicalResult DerivativeBuilder::buildDistributedVirial(Value &virial) {
       return op->emitOpError()
              << "cannot compute the virial through a field on domains "
                 "computed from the positions; that is the next part, "
-                "D[ml2-eam]";
+                "EAM";
   Value total;
   for (md_dist::SumPairsOp sum : pairSums) {
     Value weight;

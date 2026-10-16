@@ -315,7 +315,7 @@ the verifiers and the lowering, and each has a negative test
 | V5 | Owned values, halos, and relations are of one layout | Stale layout (a field of another epoch) |
 | V6 | A partial value is consumed only by `halo_sum` (fields) or `all_reduce` (numbers) | A nonlinear read of a partial sum; a contribution collected as if complete |
 | V7 | A partial value has exactly one use, and the two partial operands of `halo_sum` are the two results of one traversal | Contributions lost or counted twice |
-| V8 | A unique traversal states an exchange contract that the kernel satisfies | A pair computed once whose other half is unknown |
+| V8 | A unique traversal, or the two-ended gather over a directed one, states an exchange contract that the kernel satisfies | A pair computed once whose other half is unknown |
 | V9 | The relation's positions are those of the op that traverses it | A relation of another configuration without a coverage witness |
 
 Where a check cannot be decided (a value through a block argument whose
@@ -705,8 +705,15 @@ the cell.
 
 Not yet differentiated, each refused with a diagnostic: a pair sum that
 gathers a field computed from the positions, and a derivative through a
-`gather_pairs` or `map_particles` of the positions (the next part, EAM,
-D[ml2-eam]); and derivatives in a parameter or a field (`derivative(n)`).
+`gather_pairs` or `map_particles` of the positions (the next part, EAM);
+and derivatives in a parameter or a field (`derivative(n)`).
+
+The derived kernels of `md_dist` must pass the proof of their exchange
+contract (V8), where those of `md` carry the basis `derived` and are not
+proven again. Every kernel derived here is proven (Lennard-Jones, its
+truncations, the many-body kernels of the tests); a potential whose
+derivative the proof cannot follow fails at the verifier after
+`md-differentiate`, with the error on the generated op.
 
 ### 14.4 `md-dist-owner-computes`
 

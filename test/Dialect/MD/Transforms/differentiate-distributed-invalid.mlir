@@ -32,7 +32,7 @@ func.func @f(%x: !vec, %cell: !md.cell, %eps: f64) -> f64 {
 md.particle_set @atoms
 
 // A pair sum that reads a field computed from the positions: the next part,
-// D[ml2-eam].
+// EAM.
 md.potential @many_body(%x: !vec, %cell: !md.cell) -> f64 {
   %n = md.neighborhood %x, %cell cutoff(2.0) : !vec -> !pairs
   %rho = md.gather_relation %n, %x, %cell exchange(symmetric) {
@@ -63,7 +63,7 @@ func.func @f(%x: !vec, %cell: !md.cell) -> !vec {
 !pairs = !md.relation<@atoms, 2, unordered>
 md.particle_set @atoms
 
-// The embedding of a density: the next part, D[ml2-eam].
+// The embedding of a density: the next part, EAM.
 md.potential @embedding(%x: !vec, %cell: !md.cell) -> f64 {
   %n = md.neighborhood %x, %cell cutoff(2.0) : !vec -> !pairs
   // expected-error @+1 {{cannot differentiate through a field on domains computed from the positions}}
