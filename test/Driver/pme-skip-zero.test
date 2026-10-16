@@ -7,8 +7,10 @@
 # checkpoints. On a device, where more than half the particles are
 # listed, the spreading takes the list and the gathering every particle
 # (gather_all). The energies of the rows, at the start and after two
-# segments, are those of main ae971477 to the digits of the log, as the
-# states are to the bit (the run is on the CPU, deterministic); a TIP3P
+# segments, were those of main ae971477 to the digits of the log, as the
+# states were to the bit; the rows below are re-pinned after D263 and D264,
+# which change the thermostat's kinetic energy and the virial and pressure
+# columns, not the reciprocal sums (the run is on the CPU, deterministic); a TIP3P
 # system, all of whose charges are nonzero, has no list for the charges.
 #
 # RUN: rm -rf %t && split-file %s %t
@@ -43,9 +45,9 @@
 # TIP3P-NOT: pme_listed
 # TIP3P: md.reciprocal %x, %p_q, %cell, %t_pme_moduli{{$}}
 
-# CHECK: INFO: {{ *}}0 {{ *}}0.0000 {{ *}}-2815.0592 {{ *}}-3522.4045 {{ *}}707.3454 {{ *}}300.0000 {{ *}}-822.6468 {{ *}}683.0496 {{ *}}-2815.0592 {{ *}}19810.9175
-# CHECK: INFO: {{ *}}20 {{ *}}0.0400 {{ *}}-2824.1941 {{ *}}-3674.2893 {{ *}}850.0952 {{ *}}362.4464 {{ *}}-2138.1130 {{ *}}-490.3132 {{ *}}-2815.7840 {{ *}}19786.4035
-# CHECK: INFO: {{ *}}40 {{ *}}0.0800 {{ *}}-2825.6170 {{ *}}-3750.8073 {{ *}}925.1904 {{ *}}394.2597 {{ *}}-2903.2521 {{ *}}-1203.4875 {{ *}}-2816.8326 {{ *}}19744.8848
+# CHECK: INFO: {{ *}}0 {{ *}}0.0000 {{ *}}-2815.0592 {{ *}}-3522.4045 {{ *}}707.3454 {{ *}}300.0000 {{ *}}-101.7588 {{ *}}685.7587 {{ *}}-2815.0592 {{ *}}19810.9175
+# CHECK: INFO: {{ *}}20 {{ *}}0.0400 {{ *}}-2824.3441 {{ *}}-3674.3254 {{ *}}849.9813 {{ *}}362.3977 {{ *}}-1189.8576 {{ *}}-488.2131 {{ *}}-2815.7859 {{ *}}19787.0778
+# CHECK: INFO: {{ *}}40 {{ *}}0.0800 {{ *}}-2826.0722 {{ *}}-3750.9414 {{ *}}924.8692 {{ *}}394.1229 {{ *}}-1896.6624 {{ *}}-1209.2868 {{ *}}-2816.8306 {{ *}}19745.6709
 
 #--- run.toml
 [input]

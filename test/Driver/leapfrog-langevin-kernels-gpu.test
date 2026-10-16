@@ -1,16 +1,16 @@
 # The kernels of a leapfrog step under Langevin dynamics with constraints
-# (#287, D250). The step projects the velocities
-# after its first half kick and constrains the positions after its drift:
-# two runs of loops over the tuples of the constraints. On a device each
+# (#287, D250). The step is g-BAOAB (D265): it projects the
+# velocities after its first half kick, constrains the positions after the
+# first drift, projects after the friction and the noise, constrains the
+# positions after the second drift, and projects after the last half kick:
+# five runs of loops over the tuples of the constraints. On a device each
 # is one integration kernel with the loop over particles before it and
 # the one after it, and a second kernel for the tuples across warps
 # (D110), because `md-exec-fuse-loops` leaves apart the loop that closes
-# the first run and the one that opens the second. Fused, the one loop
-# was the loop after of the first run, and the constraints of the
-# positions and the loop after them were kernels of their own. The 19
-# plain steps of the run launch four integration kernels each; without
-# the option of the pass, two. The state at the end is the same to the
-# bit, in double and in mixed precision.
+# one run and the one that opens the next. The 19 plain steps of the run
+# launch ten integration kernels each; without the option of the pass,
+# six. The state at the end is the same to the bit, in double and in
+# mixed precision.
 #
 # REQUIRES: hdf5, cuda
 #
@@ -39,9 +39,9 @@
 # RUN: mdir checkpoint %t/mixed/run.h5 %t/mixed/fused.h5 | FileCheck %s
 
 # PIPELINE: md-exec-fuse-loops{integration-runs=true},
-# APART-COUNT-4: mdir_run_particle_for_l{{[0-9]+}}_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
+# APART-COUNT-10: mdir_run_particle_for_l{{[0-9]+}}_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
 # APART-NOT: _integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
-# FUSED-COUNT-2: mdir_run_particle_for_l{{[0-9]+}}_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
+# FUSED-COUNT-6: mdir_run_particle_for_l{{[0-9]+}}_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
 # FUSED-NOT: _integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
 # CHECK: the states are identical
 

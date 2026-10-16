@@ -296,7 +296,10 @@ beside its rate.
   that of velocity rescaling, the slope of two pressures within 0.9 and
   that of two temperatures within 2.0 standard errors. The kinetic energy
   of the end of the step is 0.13% below $N_fk_BT/2$, so its distribution
-  fails the test of Kolmogorov and Smirnov: the middle scheme samples the
+  fails the test of Kolmogorov and Smirnov (these runs predate g-BAOAB,
+  D265, and the control of the optimal temperature,
+  D263; the measurements of #268 against the time step are
+  in Section 6.3): the middle scheme samples the
   velocities of the middle of the step, not those of its end. Before the
   forces of the constraints were taken at the end of the step, their
   virial raised the pressure by 39 bar per 1/ps of friction and the

@@ -1,8 +1,8 @@
 # The optimal temperature of the log (D203). 125 atoms
 # of argon, each in a harmonic well of its own, under velocity Verlet at
-# omega dt = 0.5 with velocity rescaling at 150 K, which holds the kinetic
-# energy of the velocities of the steps at the target. The log's
-# temperature, (K + 2 K_half) / 3 over N_f k_B / 2, is above it: that of
+# omega dt = 0.5 with velocity rescaling at 150 K, which holds the log's
+# temperature, (K + 2 K_half) / 3 over N_f k_B / 2, at the target
+# (D263): that of
 # the steps is (1 - w/4) / (1 - w/12) of it, w = (omega dt)^2, and that of
 # the configurations 1 / (1 - w/12) of it (with N_f = 3N - 3 against the 3N
 # of the wells), the closed forms of an orbit of velocity Verlet.
@@ -14,7 +14,7 @@
 # RUN: cd %t && mdir run run.toml > run.log
 # RUN: %python %S/Inputs/optimal_temperature.py %t/run.log 125 0.50002 150 | FileCheck %s
 
-# CHECK: temperature of the steps {{.*}}: agrees
+# CHECK: temperature of the log {{.*}}: agrees
 # CHECK: full / optimal {{.*}}: agrees
 # CHECK: configurations / optimal {{.*}}: agrees
 

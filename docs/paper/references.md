@@ -246,6 +246,13 @@ molecular dynamics simulations with a large time step," *J. Chem. Theory
 Comput.* **15**, 84–94 (2019).
 [doi:10.1021/acs.jctc.8b00874](https://doi.org/10.1021/acs.jctc.8b00874)
 
+### Jung2020
+
+J. Jung, Y. Sugita, "Group-based evaluation of temperature and pressure
+for molecular dynamics simulation with a large time step," *J. Chem.
+Phys.* **153**, 234115 (2020).
+[doi:10.1063/5.0027873](https://doi.org/10.1063/5.0027873)
+
 ### Jung2026
 
 J. Jung, D. Ugarte La Torre, C. Kobayashi, K. Ozaki, Y. Sugita,
@@ -295,6 +302,13 @@ B. Leimkuhler, C. Matthews, "Rational construction of stochastic numerical
 methods for molecular sampling," *Appl. Math. Res. Express* **2013**(1), 34
 (2013).
 [doi:10.1093/amrx/abs010](https://doi.org/10.1093/amrx/abs010)
+
+### Leimkuhler2016
+
+B. Leimkuhler, C. Matthews, "Efficient molecular dynamics using geodesic
+integration and solvent–solute splitting," *Proc. R. Soc. A* **472**,
+20160138 (2016).
+[doi:10.1098/rspa.2016.0138](https://doi.org/10.1098/rspa.2016.0138)
 
 ### Lekien2005
 

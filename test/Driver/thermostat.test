@@ -41,9 +41,10 @@
 # MODULE-NEXT: %n1 = arith.constant 99 : index
 # MODULE-NEXT: %n2 = arith.constant 9 : index
 # MODULE:      %freedom = arith.constant 7.65{{0*}}e+02 : f64
-# MODULE:      %alpha1 = func.call @mdrtBussiFactor(%seed, %step1, %kt1, %target_kinetic, %freedom, %decay)
+# MODULE:      %ko{{.*}} = arith.addf %ko{{.*}}k, %ko{{.*}}e : f64
+# MODULE:      %alpha1 = func.call @mdrtBussiFactor(%seed, %step1, %kot1, %target_kinetic, %freedom, %decay)
 # MODULE:      %vc1 = md.map_particles gather(%vk1 : !vec) {
-# MODULE:      %alpha0 = func.call @mdrtBussiFactor(%seed, %step0, %kt0, %target_kinetic, %freedom, %decay)
+# MODULE:      %alpha0 = func.call @mdrtBussiFactor(%seed, %step0, %kot0, %target_kinetic, %freedom, %decay)
 
 #--- run.toml
 [input]

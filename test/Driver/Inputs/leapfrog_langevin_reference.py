@@ -1,21 +1,22 @@
-"""A NumPy reference of one leapfrog step of Langevin dynamics by the middle
-scheme with constraints, against the plain step and the step of energy of
-a Python simulation (#285).
+"""A NumPy reference of one leapfrog step of Langevin dynamics with
+constraints, g-BAOAB, against the plain step and the step of energy of a
+Python simulation (#285, D265).
 
     leapfrog_langevin_reference.py INPUTS LIBMDRT TARGET PRECISION
 
-The documented step (design-m1.md, Sections 11.6 and 23; [Zhang2019],
-BAOAB of [Leimkuhler2013]) is that of velocity Verlet, of which leapfrog
-stores the velocities of the middle. From the positions x, the stored
-velocities v of the half step before, and the forces F, with h = dt/2,
-a = F/m, c = exp(-gamma dt), and P_x the projection that leaves no
-velocity along the constraints at x (the second half of RATTLE
-[Andersen1983]):
+The documented step (design-m1.md, Sections 11.6 and 23) is g-BAOAB of
+[Leimkuhler2016] (its Appendix, one drift in each A) in the form of
+velocity Verlet, of which leapfrog stores the velocities of the drift of
+the second A. From the positions x, the stored velocities v, and the
+forces F, with h = dt/2, a = F/m, c = exp(-gamma dt), P_x the projection
+that leaves no velocity along the constraints at x (the second half of
+RATTLE [Andersen1983]), and SHAKE(y; x) the positions y with the bonds at
+their lengths, moved along the bonds of x [Ryckaert1977]:
 
-    u  = P_x(v + h a) + h a
-    x' = x + h u;  u' = c u + sqrt((1 - c^2) k_B T / m) R;  x' = x' + h u'
-    x1 = SHAKE(x'), along the bonds at x [Ryckaert1977]
-    v1 = u' + (x1 - x') / dt
+    B:  u  = P_x(P_x(v + h a) + h a)
+    A:  y  = x + h u;   xa = SHAKE(y; x);    u = P_xa(u + (xa - y) / h)
+    O:  u  = P_xa(c u + sqrt((1 - c^2) k_B T / m) R)
+    A:  y  = xa + h u;  x1 = SHAKE(y; xa);   v1 = u + (x1 - y) / h
 
 The reference has a SHAKE and a RATTLE of its own, iterated bond by bond
 to 1e-14, over every bond with a hydrogen of the topology, which holds the
@@ -27,11 +28,10 @@ stream 2), as check_langevin_noise.py does.
 The dipeptide in water (1,168 particles, PME, 2 fs, 1/ps): step 2 from the
 state of step 1, as a plain step (no row of energies) and as a step of
 energy (a row at every step). Both must be the documented step within
-`TOLERANCE`. The reference also takes the step whose kick is that of a
-whole step without the projection, u = v + dt a, which the plain step was:
-its stored velocities differ from the documented ones by (1 - c)/2 of the
-part of the kick along the constraints, about 1e-3 nm/ps here, which the
-test must tell apart.
+`TOLERANCE`. The reference also takes the middle scheme that the step was
+before (D135: one drift of the whole step from x, the noise unprojected
+between its halves, one SHAKE at the end), whose velocities differ from
+g-BAOAB's by more than 1e-3 nm/ps here, which the test must tell apart.
 """
 import ctypes
 import math
@@ -122,15 +122,24 @@ def rattle(x, v, w):
     raise AssertionError("RATTLE of the reference did not converge")
 
 
-def step(x, v, f, m, R, projected):
+def step(x, v, f, m, R, geodesic):
     w = 1.0 / m
     a, h = f * w[:, None], 0.5 * DT
-    u = rattle(x, v + h * a, w) + h * a if projected else v + DT * a
+    u = rattle(x, rattle(x, v + h * a, w) + h * a, w)
     c = math.exp(-FRICTION * DT)
-    middle = c * u + np.sqrt((1 - c * c) * KT * w)[:, None] * R
-    drifted = x + h * u + h * middle
-    x1 = shake(x, drifted, w)
-    return x1, middle + (x1 - drifted) / DT
+    spread = np.sqrt((1 - c * c) * KT * w)[:, None]
+    if not geodesic:
+        middle = c * u + spread * R
+        drifted = x + h * u + h * middle
+        x1 = shake(x, drifted, w)
+        return x1, middle + (x1 - drifted) / DT
+    y = x + h * u
+    xa = shake(x, y, w)
+    u = rattle(xa, u + (xa - y) / h, w)
+    u = rattle(xa, c * u + spread * R, w)
+    y = xa + h * u
+    x1 = shake(xa, y, w)
+    return x1, u + (x1 - y) / h
 
 
 def states(period):
@@ -169,14 +178,14 @@ failed = False
 for period, name in ((4, "plain step"), (1, "step of energy")):
     masses, ((x, v, f), (x2, v2, _)) = states(period)
     R = normals(2, len(masses))
-    documented = step(x, v, f, masses, R, projected=True)
-    whole = step(x, v, f, masses, R, projected=False)
+    documented = step(x, v, f, masses, R, geodesic=True)
+    whole = step(x, v, f, masses, R, geodesic=False)
     dx, dv = np.abs(x2 - documented[0]).max(), np.abs(v2 - documented[1]).max()
     apart = np.abs(whole[1] - documented[1]).max()
     ok = dx < TOLERANCE[0] and dv < TOLERANCE[1] and apart > 10 * TOLERANCE[1]
     failed |= not ok
     print(f"{target} {precision} {name}: positions within {dx:.1e} nm and velocities within "
-          f"{dv:.1e} nm/ps of the documented step; the kick of a whole step is "
+          f"{dv:.1e} nm/ps of the documented step; the middle scheme of D135 is "
           f"{apart:.1e} nm/ps away, {np.abs(v2 - whole[1]).max():.1e} from this step: "
           f"{'ok' if ok else 'FAILED'}", flush=True)
 sys.exit(1 if failed else 0)

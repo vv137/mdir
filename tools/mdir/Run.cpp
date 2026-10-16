@@ -1026,6 +1026,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.couples = control->getCouplingPeriod() > 0 && !control->isLangevin();
   output.changesCell = control->barostat;
   output.overdamped = control->isBrownian();
+  output.halfTemperature = control->isLangevin();
   output.bathKinetic = 0.5 * system->getDegreesOfFreedom() *
                        units::boltzmann * control->temperature;
   output.minimizes = control->minimize;

@@ -28,10 +28,15 @@
 
 # The groups of the constraints share no atom (D83): the loops over them
 # read the positions and velocities before the updates of the other groups,
-# and run as one kernel.
+# and run as one kernel with the loops over particles around them, an
+# integration kernel (D110). (This checked before for kernels of runs of
+# rows: the loops of the virial of the constraints at the start, which the
+# pressure of the groups no longer takes, D264, and
+# a run in the step of energy, which no longer forms; neither is a loop of
+# the constraints of the step.)
 #
 # MODULE: md.disjoint_union @constraints on(@atoms) of [@settles, @shake1
-# KERNELS: tuple_for_l{{[0-9]+}}_run{{[2-9]}}
+# KERNELS: particle_for_l{{[0-9]+}}_integration{{[2-9]}}
 
 #--- run.toml
 [input]
