@@ -1,0 +1,64 @@
+# The prolate kernel in a triclinic cell on the CPU (D[prolate-ewald]): the
+# 403 waters in a rhombic dodecahedron of triclinic.test. The reference is
+# the Gaussian kernel in double precision at a tight setting (r_c = 9 Å,
+# erfc(β r_c) = 1e-10, a spacing of 0.25 Å, order 8), whose Coulomb terms
+# sum to −3963.615657 kcal/mol; at erfc 1e-12 and 0.4 Å it gives
+# −3963.615802, so the reference holds about 4e-8 of the sum.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro %t/
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/run.toml > %t/run.log
+# RUN: FileCheck %s < %t/run.log
+# RUN: %python %S/Inputs/check_coulomb_total.py %t/run.log -3963.615657 1e-6 | FileCheck %s --check-prefix=TOTAL
+# RUN: sed 's/^kernel = "PROLATE"$/kernel = "PROLATE"\ntolerance = 1e-9\norder = 8\ngrid = [64, 64, 64]/' %t/run.toml > %t/tight.toml
+# RUN: mdir run %t/tight.toml > %t/tight.log
+# RUN: %python %S/Inputs/check_coulomb_total.py %t/tight.log -3963.615657 1e-8 | FileCheck %s --check-prefix=TOTAL
+
+# The default, ε = 1e-5 and 6 points: within 1.0e-8 of the sum; ε = 1e-9
+# and 8 points on 64³: within 1.3e-9. At 1e-9 the aliasing estimate of 8
+# points stays above ε/2 (8.4e-8 on twice the grid of eq. 15, 6.4e-10 on
+# 500³), so the automatic grid is refused there (prolate-control.test) and
+# the grid is given.
+#
+# CHECK: MDIR: the prolate kernel of PME: c = 14.4712, c1 = 15.2026, 6 points of the window, a grid of 20 x 20 x 20
+# TOTAL: ok
+
+#--- run.toml
+[input]
+topology    = "water.top"
+coordinates = "dodecahedron.gro"
+format      = "GROMACS"
+defines     = ["FLEXIBLE"]
+
+[output]
+energy_interval = 0
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+
+[pme]
+kernel = "PROLATE"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 0
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+
+[constraints]
+hydrogen_bonds = false
+rigid_water    = false
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end

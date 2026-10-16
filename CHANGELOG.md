@@ -12,6 +12,30 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- Ewald summation with prolates, a second kernel of particle mesh Ewald
+  (D[prolate-ewald], #334): `[pme] kernel = "PROLATE"` takes the prolate
+  spheroidal wave function of order zero as the splitting and as the
+  window of the spreading, on the CPU and a GPU, in orthorhombic and
+  triclinic cells, in `mixed` and `double` and the deterministic mode. Its
+  `tolerance` is $\psi_0^c(1)$, 10⁻⁵ by default, which gives a relative
+  force error of 1.0 to 1.2 × 10⁻⁵ over the Coulomb forces where the
+  Gaussian's 10⁻⁵ gives 1.4 × 10⁻³;
+  `bandwidth` and `window_bandwidth` give $c$ and $c_1$, `order` the points
+  of the window (5 to 8, 6 by default), and the grid follows from eq. 15 of
+  Liang et al. (2026), refined until its aliasing estimate is at most half
+  the tolerance, unless `grid` or `max_spacing` is given; the window is the
+  paper's less its value at the edge of its support, so that the energy is
+  continuous when a particle crosses a plane of the grid; `beta` and `influence` are refused with it, and
+  `bandwidth` and `window_bandwidth` without it. The Python model has
+  `System.pme_kernel` (`mdir.PMEKernel`), `pme_bandwidth`, and
+  `pme_window_bandwidth`; the manifest of a run names the kernel. The
+  Gaussian stays the default: on one GPU the prolate kernel's step takes
+  1.2 to 1.4 times as long at MDIR's default accuracy and about as long at
+  a force error of 10⁻⁵, where its grid has 6 to 7 times fewer points.
+- The control-file reference recommends `coulomb_modifier =
+  "POTENTIAL_SHIFT"` at a PME tolerance looser than the default for runs at
+  constant energy (#346); `NONE` stays the default, as in Amber.
+
 - The gradients of the energy of a frame in the positions and in the
   strain, from the frame evaluator (D252, #313):
   `evaluator.evaluate(frames, gradients=("tunables", "positions",

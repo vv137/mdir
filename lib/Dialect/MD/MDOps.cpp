@@ -541,8 +541,12 @@ LogicalResult ReciprocalOp::verify() {
     return emitOpError() << "expected three numbers of points of at least 2";
   if (getOrder() < 3 || getOrder() > 8)
     return emitOpError() << "expected an order from 3 to 8";
-  if (!(getBeta().convertToDouble() > 0.0))
+  if (!getProlate() && !(getBeta().convertToDouble() > 0.0))
     return emitOpError() << "expected a positive beta";
+  if (getProlate() && getDispersion())
+    return emitOpError() << "the prolate kernel is for the Coulomb sum alone";
+  if (getProlate() && (getOrder() < 5 || getOrder() > 8))
+    return emitOpError() << "expected 5 to 8 points of the prolate window";
   if (cast<TableType>(getModuli().getType()).getRank() != 2)
     return emitOpError() << "expected a table of rank 2";
   return success();

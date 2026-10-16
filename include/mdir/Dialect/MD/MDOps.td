@@ -360,6 +360,18 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
 
     with the term m = 0, F(0) = 1, included.
 
+    With `prolate`, the splitting and the spreading take the prolate
+    spheroidal wave function of order zero (D[prolate-ewald],
+    [Liang2026]): `order` is the number P of points of the window,
+    `beta` is not used, and `moduli` has five rows: the factors
+    1/φ̂₁(2πk/K)² of each edge, the Chebyshev series of the weights of
+    the window and of their slopes, and the scalars and series of the
+    influence (Builder::collectProlate):
+
+    ```text
+    E = f / (2π V) Σ_{m ≠ 0} χ̂(2π r_c |m|) / m² · |S(m)|²
+    ```
+
     The op yields the energy, the forces, and the virial `Σ d ⊗ F` of the
     sum. Differentiation takes the forces and the virial from the op; it
     does not differentiate through it.
@@ -421,6 +433,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     F64Attr:$beta,
     F64Attr:$coulomb,
     UnitAttr:$dispersion,
+    UnitAttr:$prolate,
     UnitAttr:$gather_all
   );
   let results = (outs
@@ -434,6 +447,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     (`listed` `(` $listed^ `)`)?
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
+    (`prolate` $prolate^)?
     (`gather_all` $gather_all^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) (`,` qualified(type($listed))^)?

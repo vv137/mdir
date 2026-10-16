@@ -481,6 +481,7 @@ LogicalResult Converter::convert(Operation *op) {
           reciprocal.getBetaAttr(), reciprocal.getCoulombAttr(),
           reciprocal.getDispersionAttr(),
           yieldsPotential ? builder.getUnitAttr() : UnitAttr(),
+          reciprocal.getProlateAttr(),
           yieldsPotential ? UnitAttr() : reciprocal.getGatherAllAttr());
     };
     if (takesForces) {

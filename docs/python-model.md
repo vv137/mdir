@@ -353,6 +353,9 @@ alone.
 | `System.pme_influence` | `[pme] influence` | `mdir.PMEInfluence.SPME` (the default), `mdir.PMEInfluence.Optimal` (D134) |
 | `System.analytic_bonds` | `[constraints] analytic_bonds` | `False` (the default), `True`: a group of SHAKE of one bond is projected in closed form |
 | `System.pme_order` | `[pme] order` | 4 (the default), 6, or 8; before, 4 alone |
+| `System.pme_kernel` | `[pme] kernel` | `mdir.PMEKernel.Gaussian` (the default), `mdir.PMEKernel.Prolate` (D[prolate-ewald]); with `Prolate`, `pme_order` takes 5 to 8 and is 6 unless set, and `pme_spacing` follows the bandwidth unless set, as the control file |
+| `System.pme_bandwidth` | `[pme] bandwidth` | 0 (from `pme_tolerance`); prolate only |
+| `System.pme_window_bandwidth` | `[pme] window_bandwidth` | 0 ($c(\varepsilon/2)$); prolate only |
 
 Another order is an `InputError` with the words of the control file,
 `model: expected 4, 6, or 8 for 'order'`; a value of `pme_influence` that

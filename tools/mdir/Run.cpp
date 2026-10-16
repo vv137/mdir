@@ -961,7 +961,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       pme = llvm::json::Object{{"beta_inverse_angstrom", program->pmeBeta * units::length},
           {"grid", llvm::json::Array{program->pmeGrid[0], program->pmeGrid[1],
                                     program->pmeGrid[2]}},
-          {"order", control->pmeOrder}};
+          {"order", program->pmeOrder},
+          {"kernel", program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
+    // The prolate kernel's own parameters (D[prolate-ewald]).
+    if (program->pme && program->pmeProlate) {
+      llvm::json::Object &object = *pme.getAsObject();
+      object["bandwidth"] = program->pmeBandwidth;
+      object["window_bandwidth"] = program->pmeWindowBandwidth;
+      object["aliasing_estimate"] = program->pmeAliasing;
+    }
     llvm::json::Object effective{
         {"seed", std::to_string(control->seed)}, {"time_step_ps", control->timestep},
         {"trajectory_format", control->framePeriod == 0 ? llvm::json::Value(nullptr) :
@@ -1268,6 +1276,17 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
+  // The parameters that the prolate kernel derives (D[prolate-ewald]).
+  if (program->pmeProlate)
+    output.log.print("MDIR: the prolate kernel of PME: c = %.6g, c1 = %.6g, "
+                     "%lld points of the window, a grid of %lld x %lld x "
+                     "%lld, the aliasing estimate %.2g\n",
+                     program->pmeBandwidth, program->pmeWindowBandwidth,
+                     static_cast<long long>(program->pmeOrder),
+                     static_cast<long long>(program->pmeGrid[0]),
+                     static_cast<long long>(program->pmeGrid[1]),
+                     static_cast<long long>(program->pmeGrid[2]),
+                     program->pmeAliasing);
   if (!control->periodic)
     output.log.print(
                  "MDIR: no periodic cell; the particles are in a cell of "

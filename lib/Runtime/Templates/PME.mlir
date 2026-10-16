@@ -71,7 +71,85 @@ func.func private @mdrt.pme_raise(%w: f64, %k: index, %a: memref<8xf64>) {
 // The weights `values` of the B-spline of order `n` at the fraction `w`,
 // and their derivatives `slopes` with respect to the fractional coordinate.
 func.func private @mdrt.pme_bspline(%w: f64, %n: index, %values: memref<8xf64>,
-                                    %slopes: memref<8xf64>) {
+                                    %slopes: memref<8xf64>, %moduli: memref<?x?xf64>) {
+  // The table of the prolate kernel has five rows (D[prolate-ewald]).
+  %r0 = arith.constant 0 : index
+  %r5 = arith.constant 5 : index
+  %rows = memref.dim %moduli, %r0 : memref<?x?xf64>
+  %prolate = arith.cmpi eq, %rows, %r5 : index
+  scf.if %prolate {
+    func.call @mdrt.pme_window(%w, %n, %values, %slopes, %moduli)
+        : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+  } else {
+    func.call @mdrt.pme_spline(%w, %n, %values, %slopes)
+        : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  }
+  return
+}
+
+// The weights of the window of the prolate kernel at the fraction `w`
+// of the place (Builder::collectProlate, D[prolate-ewald]): weight j is the
+// Chebyshev series of row 3 of `moduli`, at offset j D, in t = 2w − 1,
+// and its slope in the scaled coordinate the series at offset (n + j) D,
+// by Clenshaw's recurrence [Liang2026, eq. 14].
+func.func private @mdrt.pme_window(%w: f64, %n: index, %values: memref<8xf64>,
+                                   %slopes: memref<8xf64>, %moduli: memref<?x?xf64>) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %c4 = arith.constant 4 : index
+  %zero = arith.constant 0.0 : f64
+  %one = arith.constant 1.0 : f64
+  %two = arith.constant 2.0 : f64
+  %df = memref.load %moduli[%c4, %c0] : memref<?x?xf64>
+  %di = arith.fptosi %df : f64 to i64
+  %d = arith.index_cast %di : i64 to index
+  %tw = arith.mulf %two, %w : f64
+  %t = arith.subf %tw, %one : f64
+  %t2 = arith.mulf %two, %t : f64
+  %nd = arith.muli %n, %d : index
+  scf.for %j = %c0 to %n step %c1 {
+    %jd = arith.muli %j, %d : index
+    %sd = arith.addi %nd, %jd : index
+    %v = func.call @mdrt.pme_clenshaw(%moduli, %c3, %jd, %d, %t2, %t)
+        : (memref<?x?xf64>, index, index, index, f64, f64) -> f64
+    %sl = func.call @mdrt.pme_clenshaw(%moduli, %c3, %sd, %d, %t2, %t)
+        : (memref<?x?xf64>, index, index, index, f64, f64) -> f64
+    memref.store %v, %values[%j] : memref<8xf64>
+    memref.store %sl, %slopes[%j] : memref<8xf64>
+  }
+  return
+}
+
+// Σ_k a_k T_k(t) of the `count` coefficients from `moduli`[row, at], by
+// Clenshaw's recurrence; `t2` = 2t.
+func.func private @mdrt.pme_clenshaw(%moduli: memref<?x?xf64>, %row: index, %at: index,
+                                     %count: index, %t2: f64, %t: f64) -> f64 {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %zero = arith.constant 0.0 : f64
+  %b1, %b2 = scf.for %i = %c1 to %count step %c1
+      iter_args(%p1 = %zero, %p2 = %zero) -> (f64, f64) {
+    // k = count − i, from count − 1 down to 1.
+    %k = arith.subi %count, %i : index
+    %ak = arith.addi %at, %k : index
+    %a = memref.load %moduli[%row, %ak] : memref<?x?xf64>
+    %m = arith.mulf %t2, %p1 : f64
+    %s = arith.subf %m, %p2 : f64
+    %b = arith.addf %s, %a : f64
+    scf.yield %b, %p1 : f64, f64
+  }
+  %a0 = memref.load %moduli[%row, %at] : memref<?x?xf64>
+  %m0 = arith.mulf %t, %b1 : f64
+  %s0 = arith.subf %m0, %b2 : f64
+  %v = arith.addf %s0, %a0 : f64
+  return %v : f64
+}
+
+// The weights of the B-spline, as pme_bspline gives them for a table of
+// the Gaussian kernel.
+func.func private @mdrt.pme_spline(%w: f64, %n: index, %values: memref<8xf64>,
+                                   %slopes: memref<8xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -106,8 +184,13 @@ func.func private @mdrt.pme_bspline(%w: f64, %n: index, %values: memref<8xf64>,
 // The first point of the grid that a particle at `x` along an edge of the
 // length `length` with `k` points adds to, plus k so that it is not
 // negative, and the fraction of its coordinate.
-func.func private @mdrt.pme_place(%x: f64, %length: f64, %k: index, %n: index)
-    -> (index, f64) {
+func.func private @mdrt.pme_place(%x: f64, %length: f64, %k: index, %n: index,
+                                  %moduli: memref<?x?xf64>) -> (index, f64) {
+  %r0 = arith.constant 0 : index
+  %r2 = arith.constant 2 : index
+  %r5 = arith.constant 5 : index
+  %rows = memref.dim %moduli, %r0 : memref<?x?xf64>
+  %prolate = arith.cmpi eq, %rows, %r5 : index
   %c1 = arith.constant 1 : index
   %s = arith.divf %x, %length : f64
   %fs = math.floor %s : f64
@@ -128,13 +211,32 @@ func.func private @mdrt.pme_place(%x: f64, %length: f64, %k: index, %n: index)
   %bk = arith.addi %b, %k : index
   %bkn = arith.subi %bk, %n : index
   %start = arith.addi %bkn, %c1 : index
-  return %start, %w : index, f64
+  // The window of the prolate kernel (D[prolate-ewald]): the P points from
+  // floor(u − h) − floor(P/2) + 1, with h = 1/2 for odd P and 0 otherwise,
+  // and the fraction of u − h; u + k − h is positive.
+  %nodd = arith.remui %n, %r2 : index
+  %odd = arith.cmpi ne, %nodd, %r0 : index
+  %halfp = arith.constant 0.5 : f64
+  %h = arith.select %odd, %halfp, %nil : f64
+  %uk = arith.addf %u, %kf : f64
+  %uh = arith.subf %uk, %h : f64
+  %fp0 = math.floor %uh : f64
+  %fp = arith.maxnumf %fp0, %nil : f64
+  %wp = arith.subf %uh, %fp : f64
+  %pi = arith.fptosi %fp : f64 to i64
+  %pb = arith.index_cast %pi : i64 to index
+  %below = arith.divui %n, %r2 : index
+  %pbn = arith.subi %pb, %below : index
+  %pstart = arith.addi %pbn, %c1 : index
+  %first = arith.select %prolate, %pstart, %start : index
+  %fraction = arith.select %prolate, %wp, %w : f64
+  return %first, %fraction : index, f64
 }
 
 // Spreads the charges to `grid`, in fixed point.
 func.func private @mdrt.pme_spread(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %box: vector<3xf64>, %grid: memref<?xi64>,
-                                   %k1: index, %k2: index, %k3: index, %n: index) {
+                                   %k1: index, %k2: index, %k3: index, %n: index, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -163,12 +265,12 @@ func.func private @mdrt.pme_spread(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_c
     %yi = PME_EXTEND_POS %ys : !pme_pos to f64
     %zi = PME_EXTEND_POS %zs : !pme_pos to f64
     %qi = PME_EXTEND_CHG %qs : !pme_chg to f64
-    %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n) : (f64, f64, index, index) -> (index, f64)
-    %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n) : (f64, f64, index, index) -> (index, f64)
-    %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n) : (f64, f64, index, index) -> (index, f64)
-    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
     %qscaled = arith.mulf %qi, %scale : f64
     scf.for %j1 = %c0 to %n step %c1 {
       %g1s = arith.addi %sx, %j1 : index
@@ -316,7 +418,7 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>
         //   F(b) = (1 − 2b²) exp(−b²) + 2 √π b³ erfc(b)
         // [Essmann1995], m = 0 included. `factor` and `vd` are the parts
         // of the virial: E_m (δ − factor m m) − ½ w vd |G|² m m.
-        %bc, %factor, %vd = scf.if %dispersion -> (f64, f64, f64) {
+        %bcg, %factorg, %vdg = scf.if %dispersion -> (f64, f64, f64) {
           %mods = arith.mulf %mod12, %mod3 : f64
           %mabs = math.sqrt %msq : f64
           %bd = arith.mulf %pib, %mabs : f64
@@ -352,6 +454,54 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>
           %factor0 = arith.mulf %two, %sum : f64
           %factorc = arith.select %origin, %zero, %factor0 : f64
           scf.yield %bcc, %factorc, %zero : f64, f64, f64
+        }
+        // The prolate kernel (D[prolate-ewald]): B · f/(πV) · χ̂(2π r_c |m|)
+        // / m², with χ̂ and k χ̂'(k) the Chebyshev series of row 4 of the
+        // table in y = 2x² − 1, x = 2π r_c |m| / c, and nothing at m = 0 or
+        // beyond x = 1 [Liang2026, eq. 5]. The virial of a point is
+        // E_m (δ − (2 − g) m m / m²) with g = d ln χ̂ / d ln |m|: factor
+        // 2/m², and vd = −B f/(πV) k χ̂'(k) / m⁴.
+        %p_r0 = arith.constant 0 : index
+        %p_r4 = arith.constant 4 : index
+        %p_r5 = arith.constant 5 : index
+        %p_rows = memref.dim %moduli, %p_r0 : memref<?x?xf64>
+        %prolate = arith.cmpi eq, %p_rows, %p_r5 : index
+        %bc, %factor, %vd = scf.if %prolate -> (f64, f64, f64) {
+          %p_c2 = arith.constant 2 : index
+          %p_c3 = arith.constant 3 : index
+          %p_tf = memref.load %moduli[%p_r4, %p_c2] : memref<?x?xf64>
+          %p_ti = arith.fptosi %p_tf : f64 to i64
+          %p_terms = arith.index_cast %p_ti : i64 to index
+          %p_scale = memref.load %moduli[%p_r4, %p_c3] : memref<?x?xf64>
+          %p_mabs = math.sqrt %msq : f64
+          %p_x = arith.mulf %p_scale, %p_mabs : f64
+          %p_x2 = arith.mulf %p_x, %p_x : f64
+          %p_2x2 = arith.mulf %two, %p_x2 : f64
+          %p_y = arith.subf %p_2x2, %one : f64
+          %p_y2 = arith.mulf %two, %p_y : f64
+          %p_at = arith.addi %p_r4, %p_terms : index
+          %p_ch = func.call @mdrt.pme_clenshaw(%moduli, %p_r4, %p_r4, %p_terms, %p_y2, %p_y)
+              : (memref<?x?xf64>, index, index, index, f64, f64) -> f64
+          %p_gch = func.call @mdrt.pme_clenshaw(%moduli, %p_r4, %p_at, %p_terms, %p_y2, %p_y)
+              : (memref<?x?xf64>, index, index, index, f64, f64) -> f64
+          %p_mods = arith.mulf %mod12, %mod3 : f64
+          %p_pm = arith.mulf %prefactor, %p_mods : f64
+          %p_pmi = arith.mulf %p_pm, %inverse : f64
+          %p_bc0 = arith.mulf %p_pmi, %p_ch : f64
+          %p_f0 = arith.mulf %two, %inverse : f64
+          %p_vd1 = arith.mulf %p_pmi, %inverse : f64
+          %p_vd2 = arith.mulf %p_vd1, %p_gch : f64
+          %p_vd0 = arith.negf %p_vd2 : f64
+          %p_band = arith.cmpf olt, %p_x, %one : f64
+          %p_true = arith.constant true
+          %p_nonzero = arith.xori %origin, %p_true : i1
+          %p_in = arith.andi %p_band, %p_nonzero : i1
+          %p_bc = arith.select %p_in, %p_bc0, %zero : f64
+          %p_f = arith.select %p_in, %p_f0, %zero : f64
+          %p_vd = arith.select %p_in, %p_vd0, %zero : f64
+          scf.yield %p_bc, %p_f, %p_vd : f64, f64, f64
+        } else {
+          scf.yield %bcg, %factorg, %vdg : f64, f64, f64
         }
         %base1 = arith.muli %row, %h1 : index
         %base2 = arith.addi %base1, %z : index
@@ -408,7 +558,7 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>
 func.func private @mdrt.pme_gather_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                        %phi: memref<?xf64>, %box: vector<3xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
-                                       %f: memref<?x3x!pme_frc>, %i: index) {
+                                       %f: memref<?x3x!pme_frc>, %i: index, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -439,12 +589,12 @@ func.func private @mdrt.pme_gather_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!p
   %yi = PME_EXTEND_POS %ys : !pme_pos to f64
   %zi = PME_EXTEND_POS %zs : !pme_pos to f64
   %qi = PME_EXTEND_CHG %qs : !pme_chg to f64
-  %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n) : (f64, f64, index, index) -> (index, f64)
-  %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n) : (f64, f64, index, index) -> (index, f64)
-  %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n) : (f64, f64, index, index) -> (index, f64)
-  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
   %gx, %gy, %gz = scf.for %j1 = %c0 to %n step %c1
       iter_args(%ax = %zero, %ay = %zero, %az = %zero) -> (f64, f64, f64) {
     %g1s = arith.addi %sx, %j1 : index
@@ -506,14 +656,14 @@ func.func private @mdrt.pme_gather_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!p
 func.func private @mdrt.pme_gather(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %phi: memref<?xf64>, %box: vector<3xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x3x!pme_frc>) {
+                                   %f: memref<?x3x!pme_frc>, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
   scf.parallel (%i) = (%c0) to (%count) step (%c1) {
-    func.call @mdrt.pme_gather_one(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+    func.call @mdrt.pme_gather_one(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i, %moduli)
         : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<3xf64>,
-           index, index, index, index, memref<?x3x!pme_frc>, index) -> ()
+           index, index, index, index, memref<?x3x!pme_frc>, index, memref<?x?xf64>) -> ()
     scf.reduce
   }
   return
@@ -527,7 +677,7 @@ func.func private @mdrt.pme_gather(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_c
 func.func private @mdrt.pme_potential_one(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                        %phi: memref<?xf64>, %box: vector<3xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
-                                       %f: memref<?x!pme_frc>, %i: index) {
+                                       %f: memref<?x!pme_frc>, %i: index, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -556,12 +706,12 @@ func.func private @mdrt.pme_potential_one(%x: memref<?x3x!pme_pos>, %q: memref<?
   %xi = PME_EXTEND_POS %xs : !pme_pos to f64
   %yi = PME_EXTEND_POS %ys : !pme_pos to f64
   %zi = PME_EXTEND_POS %zs : !pme_pos to f64
-  %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n) : (f64, f64, index, index) -> (index, f64)
-  %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n) : (f64, f64, index, index) -> (index, f64)
-  %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n) : (f64, f64, index, index) -> (index, f64)
-  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
   %g = scf.for %j1 = %c0 to %n step %c1 iter_args(%a = %zero) -> (f64) {
     %g1s = arith.addi %sx, %j1 : index
     %g1 = arith.remui %g1s, %k1 : index
@@ -598,14 +748,14 @@ func.func private @mdrt.pme_potential_one(%x: memref<?x3x!pme_pos>, %q: memref<?
 func.func private @mdrt.pme_potential(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %phi: memref<?xf64>, %box: vector<3xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x!pme_frc>) {
+                                   %f: memref<?x!pme_frc>, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
   scf.parallel (%i) = (%c0) to (%count) step (%c1) {
-    func.call @mdrt.pme_potential_one(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+    func.call @mdrt.pme_potential_one(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i, %moduli)
         : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<3xf64>,
-           index, index, index, index, memref<?x!pme_frc>, index) -> ()
+           index, index, index, index, memref<?x!pme_frc>, index, memref<?x?xf64>) -> ()
     scf.reduce
   }
   return
@@ -615,7 +765,7 @@ func.func private @mdrt.pme_potential(%x: memref<?x3x!pme_pos>, %q: memref<?x!pm
 // c_z, b_x, c_x, c_y), from the fractional coordinates s = x H⁻¹.
 func.func private @mdrt.pme_spread_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %box: vector<6xf64>, %grid: memref<?xi64>,
-                                   %k1: index, %k2: index, %k3: index, %n: index) {
+                                   %k1: index, %k2: index, %k3: index, %n: index, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -676,12 +826,12 @@ func.func private @mdrt.pme_spread_triclinic(%x: memref<?x3x!pme_pos>, %q: memre
     %s1z = arith.mulf %zi, %h20 : f64
     %s1xy = arith.addf %s1x, %s1y : f64
     %s1 = arith.addf %s1xy, %s1z : f64
-    %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n) : (f64, f64, index, index) -> (index, f64)
-    %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n) : (f64, f64, index, index) -> (index, f64)
-    %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n) : (f64, f64, index, index) -> (index, f64)
-    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
     %qscaled = arith.mulf %qi, %scale : f64
     scf.for %j1 = %c0 to %n step %c1 {
       %g1s = arith.addi %sx, %j1 : index
@@ -830,7 +980,7 @@ func.func private @mdrt.pme_convolve_triclinic(%c: memref<?xf64>, %moduli: memre
         //   F(b) = (1 − 2b²) exp(−b²) + 2 √π b³ erfc(b)
         // [Essmann1995], m = 0 included. `factor` and `vd` are the parts
         // of the virial: E_m (δ − factor m m) − ½ w vd |G|² m m.
-        %bc, %factor, %vd = scf.if %dispersion -> (f64, f64, f64) {
+        %bcg, %factorg, %vdg = scf.if %dispersion -> (f64, f64, f64) {
           %mods = arith.mulf %mod12, %mod3 : f64
           %mabs = math.sqrt %msq : f64
           %bd = arith.mulf %pib, %mabs : f64
@@ -866,6 +1016,54 @@ func.func private @mdrt.pme_convolve_triclinic(%c: memref<?xf64>, %moduli: memre
           %factor0 = arith.mulf %two, %sum : f64
           %factorc = arith.select %origin, %zero, %factor0 : f64
           scf.yield %bcc, %factorc, %zero : f64, f64, f64
+        }
+        // The prolate kernel (D[prolate-ewald]): B · f/(πV) · χ̂(2π r_c |m|)
+        // / m², with χ̂ and k χ̂'(k) the Chebyshev series of row 4 of the
+        // table in y = 2x² − 1, x = 2π r_c |m| / c, and nothing at m = 0 or
+        // beyond x = 1 [Liang2026, eq. 5]. The virial of a point is
+        // E_m (δ − (2 − g) m m / m²) with g = d ln χ̂ / d ln |m|: factor
+        // 2/m², and vd = −B f/(πV) k χ̂'(k) / m⁴.
+        %p_r0 = arith.constant 0 : index
+        %p_r4 = arith.constant 4 : index
+        %p_r5 = arith.constant 5 : index
+        %p_rows = memref.dim %moduli, %p_r0 : memref<?x?xf64>
+        %prolate = arith.cmpi eq, %p_rows, %p_r5 : index
+        %bc, %factor, %vd = scf.if %prolate -> (f64, f64, f64) {
+          %p_c2 = arith.constant 2 : index
+          %p_c3 = arith.constant 3 : index
+          %p_tf = memref.load %moduli[%p_r4, %p_c2] : memref<?x?xf64>
+          %p_ti = arith.fptosi %p_tf : f64 to i64
+          %p_terms = arith.index_cast %p_ti : i64 to index
+          %p_scale = memref.load %moduli[%p_r4, %p_c3] : memref<?x?xf64>
+          %p_mabs = math.sqrt %msq : f64
+          %p_x = arith.mulf %p_scale, %p_mabs : f64
+          %p_x2 = arith.mulf %p_x, %p_x : f64
+          %p_2x2 = arith.mulf %two, %p_x2 : f64
+          %p_y = arith.subf %p_2x2, %one : f64
+          %p_y2 = arith.mulf %two, %p_y : f64
+          %p_at = arith.addi %p_r4, %p_terms : index
+          %p_ch = func.call @mdrt.pme_clenshaw(%moduli, %p_r4, %p_r4, %p_terms, %p_y2, %p_y)
+              : (memref<?x?xf64>, index, index, index, f64, f64) -> f64
+          %p_gch = func.call @mdrt.pme_clenshaw(%moduli, %p_r4, %p_at, %p_terms, %p_y2, %p_y)
+              : (memref<?x?xf64>, index, index, index, f64, f64) -> f64
+          %p_mods = arith.mulf %mod12, %mod3 : f64
+          %p_pm = arith.mulf %prefactor, %p_mods : f64
+          %p_pmi = arith.mulf %p_pm, %inverse : f64
+          %p_bc0 = arith.mulf %p_pmi, %p_ch : f64
+          %p_f0 = arith.mulf %two, %inverse : f64
+          %p_vd1 = arith.mulf %p_pmi, %inverse : f64
+          %p_vd2 = arith.mulf %p_vd1, %p_gch : f64
+          %p_vd0 = arith.negf %p_vd2 : f64
+          %p_band = arith.cmpf olt, %p_x, %one : f64
+          %p_true = arith.constant true
+          %p_nonzero = arith.xori %origin, %p_true : i1
+          %p_in = arith.andi %p_band, %p_nonzero : i1
+          %p_bc = arith.select %p_in, %p_bc0, %zero : f64
+          %p_f = arith.select %p_in, %p_f0, %zero : f64
+          %p_vd = arith.select %p_in, %p_vd0, %zero : f64
+          scf.yield %p_bc, %p_f, %p_vd : f64, f64, f64
+        } else {
+          scf.yield %bcg, %factorg, %vdg : f64, f64, f64
         }
         %base1 = arith.muli %row, %h1 : index
         %base2 = arith.addi %base1, %z : index
@@ -923,7 +1121,7 @@ func.func private @mdrt.pme_convolve_triclinic(%c: memref<?xf64>, %moduli: memre
 func.func private @mdrt.pme_gather_one_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                        %phi: memref<?xf64>, %box: vector<6xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
-                                       %f: memref<?x3x!pme_frc>, %i: index) {
+                                       %f: memref<?x3x!pme_frc>, %i: index, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -983,12 +1181,12 @@ func.func private @mdrt.pme_gather_one_triclinic(%x: memref<?x3x!pme_pos>, %q: m
   %s1z = arith.mulf %zi, %h20 : f64
   %s1xy = arith.addf %s1x, %s1y : f64
   %s1 = arith.addf %s1xy, %s1z : f64
-  %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n) : (f64, f64, index, index) -> (index, f64)
-  %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n) : (f64, f64, index, index) -> (index, f64)
-  %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n) : (f64, f64, index, index) -> (index, f64)
-  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
   %gx, %gy, %gz = scf.for %j1 = %c0 to %n step %c1
       iter_args(%ax = %zero, %ay = %zero, %az = %zero) -> (f64, f64, f64) {
     %g1s = arith.addi %sx, %j1 : index
@@ -1060,14 +1258,14 @@ func.func private @mdrt.pme_gather_one_triclinic(%x: memref<?x3x!pme_pos>, %q: m
 func.func private @mdrt.pme_gather_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %phi: memref<?xf64>, %box: vector<6xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x3x!pme_frc>) {
+                                   %f: memref<?x3x!pme_frc>, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
   scf.parallel (%i) = (%c0) to (%count) step (%c1) {
-    func.call @mdrt.pme_gather_one_triclinic(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+    func.call @mdrt.pme_gather_one_triclinic(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i, %moduli)
         : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<6xf64>,
-           index, index, index, index, memref<?x3x!pme_frc>, index) -> ()
+           index, index, index, index, memref<?x3x!pme_frc>, index, memref<?x?xf64>) -> ()
     scf.reduce
   }
   return
@@ -1081,7 +1279,7 @@ func.func private @mdrt.pme_gather_triclinic(%x: memref<?x3x!pme_pos>, %q: memre
 func.func private @mdrt.pme_potential_one_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                        %phi: memref<?xf64>, %box: vector<6xf64>,
                                        %k1: index, %k2: index, %k3: index, %n: index,
-                                       %f: memref<?x!pme_frc>, %i: index) {
+                                       %f: memref<?x!pme_frc>, %i: index, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -1139,12 +1337,12 @@ func.func private @mdrt.pme_potential_one_triclinic(%x: memref<?x3x!pme_pos>, %q
   %s1z = arith.mulf %zi, %h20 : f64
   %s1xy = arith.addf %s1x, %s1y : f64
   %s1 = arith.addf %s1xy, %s1z : f64
-  %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n) : (f64, f64, index, index) -> (index, f64)
-  %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n) : (f64, f64, index, index) -> (index, f64)
-  %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n) : (f64, f64, index, index) -> (index, f64)
-  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+  %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+  func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+  func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
   %g = scf.for %j1 = %c0 to %n step %c1 iter_args(%a = %zero) -> (f64) {
     %g1s = arith.addi %sx, %j1 : index
     %g1 = arith.remui %g1s, %k1 : index
@@ -1181,14 +1379,14 @@ func.func private @mdrt.pme_potential_one_triclinic(%x: memref<?x3x!pme_pos>, %q
 func.func private @mdrt.pme_potential_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %phi: memref<?xf64>, %box: vector<6xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x!pme_frc>) {
+                                   %f: memref<?x!pme_frc>, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %count = memref.dim %x, %c0 : memref<?x3x!pme_pos>
   scf.parallel (%i) = (%c0) to (%count) step (%c1) {
-    func.call @mdrt.pme_potential_one_triclinic(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+    func.call @mdrt.pme_potential_one_triclinic(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i, %moduli)
         : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<6xf64>,
-           index, index, index, index, memref<?x!pme_frc>, index) -> ()
+           index, index, index, index, memref<?x!pme_frc>, index, memref<?x?xf64>) -> ()
     scf.reduce
   }
   return
@@ -1217,7 +1415,7 @@ func.func private @mdrt.pme_count_listed(%list: memref<?xi32>) -> index {
 func.func private @mdrt.pme_spread_listed(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
                                    %box: vector<3xf64>, %grid: memref<?xi64>,
-                                   %k1: index, %k2: index, %k3: index, %n: index) {
+                                   %k1: index, %k2: index, %k3: index, %n: index, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -1249,12 +1447,12 @@ func.func private @mdrt.pme_spread_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
     %yi = PME_EXTEND_POS %ys : !pme_pos to f64
     %zi = PME_EXTEND_POS %zs : !pme_pos to f64
     %qi = PME_EXTEND_CHG %qs : !pme_chg to f64
-    %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n) : (f64, f64, index, index) -> (index, f64)
-    %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n) : (f64, f64, index, index) -> (index, f64)
-    %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n) : (f64, f64, index, index) -> (index, f64)
-    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    %sx, %fx = func.call @mdrt.pme_place(%xi, %lx, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    %sy, %fy = func.call @mdrt.pme_place(%yi, %ly, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    %sz, %fz = func.call @mdrt.pme_place(%zi, %lz, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
     %qscaled = arith.mulf %qi, %scale : f64
     scf.for %j1 = %c0 to %n step %c1 {
       %g1s = arith.addi %sx, %j1 : index
@@ -1293,7 +1491,7 @@ func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
                                    %list: memref<?xi32>,
                                    %phi: memref<?xf64>, %box: vector<3xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x3x!pme_frc>) {
+                                   %f: memref<?x3x!pme_frc>, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
@@ -1310,9 +1508,9 @@ func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
   scf.parallel (%k) = (%c0) to (%listed_count) step (%c1) {
     %listed = memref.load %list[%k] : memref<?xi32>
     %i = arith.index_cast %listed : i32 to index
-    func.call @mdrt.pme_gather_one(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+    func.call @mdrt.pme_gather_one(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i, %moduli)
         : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<3xf64>,
-           index, index, index, index, memref<?x3x!pme_frc>, index) -> ()
+           index, index, index, index, memref<?x3x!pme_frc>, index, memref<?x?xf64>) -> ()
     scf.reduce
   }
   return
@@ -1324,7 +1522,7 @@ func.func private @mdrt.pme_gather_listed(%x: memref<?x3x!pme_pos>, %q: memref<?
 func.func private @mdrt.pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos>, %q: memref<?x!pme_chg>,
                                    %list: memref<?xi32>,
                                    %box: vector<6xf64>, %grid: memref<?xi64>,
-                                   %k1: index, %k2: index, %k3: index, %n: index) {
+                                   %k1: index, %k2: index, %k3: index, %n: index, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -1388,12 +1586,12 @@ func.func private @mdrt.pme_spread_listed_triclinic(%x: memref<?x3x!pme_pos>, %q
     %s1z = arith.mulf %zi, %h20 : f64
     %s1xy = arith.addf %s1x, %s1y : f64
     %s1 = arith.addf %s1xy, %s1z : f64
-    %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n) : (f64, f64, index, index) -> (index, f64)
-    %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n) : (f64, f64, index, index) -> (index, f64)
-    %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n) : (f64, f64, index, index) -> (index, f64)
-    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
-    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz) : (f64, index, memref<8xf64>, memref<8xf64>) -> ()
+    %sx, %fx = func.call @mdrt.pme_place(%s1, %unit, %k1, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    %sy, %fy = func.call @mdrt.pme_place(%s2, %unit, %k2, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    %sz, %fz = func.call @mdrt.pme_place(%s3, %unit, %k3, %n, %moduli) : (f64, f64, index, index, memref<?x?xf64>) -> (index, f64)
+    func.call @mdrt.pme_bspline(%fx, %n, %wx, %dx, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fy, %n, %wy, %dy, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
+    func.call @mdrt.pme_bspline(%fz, %n, %wz, %dz, %moduli) : (f64, index, memref<8xf64>, memref<8xf64>, memref<?x?xf64>) -> ()
     %qscaled = arith.mulf %qi, %scale : f64
     scf.for %j1 = %c0 to %n step %c1 {
       %g1s = arith.addi %sx, %j1 : index
@@ -1432,7 +1630,7 @@ func.func private @mdrt.pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos>, %q
                                    %list: memref<?xi32>,
                                    %phi: memref<?xf64>, %box: vector<6xf64>,
                                    %k1: index, %k2: index, %k3: index, %n: index,
-                                   %f: memref<?x3x!pme_frc>) {
+                                   %f: memref<?x3x!pme_frc>, %moduli: memref<?x?xf64>) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
@@ -1449,9 +1647,9 @@ func.func private @mdrt.pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos>, %q
   scf.parallel (%k) = (%c0) to (%listed_count) step (%c1) {
     %listed = memref.load %list[%k] : memref<?xi32>
     %i = arith.index_cast %listed : i32 to index
-    func.call @mdrt.pme_gather_one_triclinic(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i)
+    func.call @mdrt.pme_gather_one_triclinic(%x, %q, %phi, %box, %k1, %k2, %k3, %n, %f, %i, %moduli)
         : (memref<?x3x!pme_pos>, memref<?x!pme_chg>, memref<?xf64>, vector<6xf64>,
-           index, index, index, index, memref<?x3x!pme_frc>, index) -> ()
+           index, index, index, index, memref<?x3x!pme_frc>, index, memref<?x?xf64>) -> ()
     scf.reduce
   }
   return

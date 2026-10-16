@@ -1,0 +1,78 @@
+# The prolate kernel of particle mesh Ewald on the CPU (D[prolate-ewald]),
+# on the three OPC waters of pme.test, against the Ewald sum of
+# Inputs/ewald_reference.py over the wave vectors (β = 0.347 Å⁻¹, r_c = 9 Å),
+# whose terms sum to −14.326815489 kcal/mol. The terms of the two
+# splittings differ; their sum does not.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir run %t/run.toml > %t/run.log
+# RUN: FileCheck %s < %t/run.log
+# RUN: %python %S/Inputs/check_coulomb_total.py %t/run.log -14.326815489 3e-6 \
+# RUN: | FileCheck %s --check-prefix=TOTAL
+# RUN: sed 's/^kernel = "PROLATE"$/kernel = "PROLATE"\ntolerance = 1e-7\norder = 8/; s/^steps .*/steps = 0/' %t/run.toml > %t/tight.toml
+# RUN: mdir run %t/tight.toml > %t/tight.log
+# RUN: FileCheck %s --check-prefix=TIGHT < %t/tight.log
+# RUN: %python %S/Inputs/check_coulomb_total.py %t/tight.log -14.326815489 2e-7 \
+# RUN: | FileCheck %s --check-prefix=TOTAL
+# RUN: %python %S/Inputs/check_virial.py mdir %t/run.toml %t/three.inpcrd 8e-3 3e-5 \
+# RUN: | FileCheck %s --check-prefix=VIRIAL
+# RUN: sed 's/^kernel = "PROLATE"$/kernel = "PROLATE"\ngrid = [28, 28, 28]/' %t/run.toml > %t/axes.toml
+# RUN: %python %S/Inputs/check_virial_axes.py mdir %t/axes.toml %t/three.inpcrd 8e-3 3e-5 \
+# RUN: | FileCheck %s --check-prefix=VIRIAL
+
+# The defaults: ε = 1e-5 gives c = 14.4712 (Table 2 of Liang et al. 2026),
+# c1 = c(ε/2), 6 points, and the grid of eq. 15 raised until the aliasing
+# estimate of eq. 10 is at most ε/2. The sum is within 1.6e-6 of the Ewald
+# sum;
+# with ε = 1e-7 and 8 points it agrees to the printed precision (3.6e-8, the
+# six decimals of the terms of the log).
+#
+# CHECK: MDIR: the prolate kernel of PME: c = 14.4712, c1 = 15.2026, 6 points of the window, a grid of 28 x 28 x 28, the aliasing estimate {{[0-9.]+}}e-06
+# TIGHT: MDIR: the prolate kernel of PME: c = 19.2989, c1 = 20.0203, 8 points of the window, a grid of 36 x 36 x 36
+# TOTAL: ok
+
+# The forces are the derivatives of the energy: the total energy changes as
+# the square of the time step.
+#
+# CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+
+# The trace of the virial against −dU/dλ under a uniform scaling, which
+# holds the reciprocal virial of the kernel, Σ E_m (δ − (2 − g) m m / m²)
+# with g = d ln χ̂ / d ln |m|, to 2.2e-6; and each diagonal component
+# against −dU/dε_aa under a strain of axis a alone (Inputs/
+# check_virial_axes.py), which holds the terms m_a m_a / m² that a uniform
+# scaling sums away, to 6.6e-6 of the largest. The components off the
+# diagonal are checked against −dU/dε_ab in a sheared cell by
+# python-frame-gradients-prolate.test.
+#
+# VIRIAL: {{virial( of the axes)? ok}}
+
+#--- run.toml
+[input]
+topology   = "three.prmtop"
+coordinates = "three.inpcrd"
+
+[output]
+energy_interval = 1000
+[energy]
+cutoff        = 9.0
+pairlist_distance = 10.0
+electrostatics = "PME"
+
+[pme]
+kernel = "PROLATE"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.0001
+steps         = 1000
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+#--- end

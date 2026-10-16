@@ -151,6 +151,15 @@ struct System {
   int64_t pmeOrder = 4;
   /// `[pme] influence` (D134; D246).
   PMEInfluence pmeInfluence = PMEInfluence::SPME;
+  /// `[pme] kernel`, `bandwidth`, and `window_bandwidth` (D[prolate-ewald]):
+  /// the Gaussian or the prolate kernel, and c and c₁ of the prolate one,
+  /// 0 to take them from the tolerance. `pmeOrderGiven` and
+  /// `pmeSpacingGiven` say whether `pme_order` and `pme_spacing` were
+  /// set: the prolate kernel takes 6 points and the spacing of its
+  /// bandwidth where they were not, as the control file does.
+  driver::PMEKernel pmeKernel = driver::PMEKernel::Gaussian;
+  double pmeBandwidth = 0, pmeWindowBandwidth = 0;
+  bool pmeOrderGiven = false, pmeSpacingGiven = false;
   /// `[constraints] analytic_bonds`: a group of SHAKE of one bond is
   /// projected in closed form (D246).
   bool analyticBonds = false;

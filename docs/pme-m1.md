@@ -204,6 +204,7 @@ leave every warp at work.
 | The forces of the others | The entries past the last listed place hold −1 − the place of each of the others, and the first thread of each such entry in the gathering stores its force of zero: the gathering writes every force, the listed ones and the zeros, and nothing else does. On the host the gathering stores the zeros first, then the forces of the listed particles |
 | `gather_all` | Where more than half the particles are listed, the builder marks the sum `gather_all`, and a device spreads the listed particles and gathers every particle with the kernel without a list, whose force on a particle of charge zero is the product with zero. The gathering reads the grid around each particle; in the order of the particles the oxygen of a four-site water sits beside its virtual site, a warp reads the points of both at once, and the oxygen costs almost nothing, while the gathering over the list reads the points of more waters in a warp: on the 31,808 waters of OPC (RTX 4090, mixed precision) the gathering over the list took 10.9 µs a step against 10.1 over every particle. Where few particles are listed (the grid of the dispersion, the oxygen alone) the list pays: 8.5 µs against 10.1. The host always gathers over the list, where a particle costs what it costs |
 | The potential at the particles | $\partial E/\partial q_i$ (D231) is not zero where $q_i$ is: a sum with `potential` takes no list |
+| The prolate kernel | `md.reciprocal ... prolate` (Section 7, D[prolate-ewald]) takes the same list and `gather_all` by the same rule. On the host the listed functions of `PME.mlir` take the table of the op, as the others do, and place and weigh by the window. On a device `PMEGPUProlate.mlir` has `_listed` kernels after the others (from `scripts/generate-pme-prolate-gpu-template.py`): the spreading into bricks and in fixed point and the gathering (orthorhombic and triclinic), a warp an entry of the list where the others take a warp a particle; a warp whose entry is past the last listed place spreads nothing and, in the gathering, stores the force of zero of its particle from its first lane. The places are those of every particle. Checked on examples/ala3 in OPC with the prolate kernel ([`prolate-skip-zero.test`](../test/Driver/prolate-skip-zero.test)) |
 | When a program has a list | Where the topology has a coefficient of zero, and no tunable may change it: a tunable charge for the list of the charges, a tunable $\sigma$ or $\epsilon$ (of a type or of a pair) for that of the dispersion. An update of the tunables keeps the text of the program, and a charge moved across zero would change it. A tunable of another kind leaves the list. Without a list the module is that of before, so a system with no such particle (JAC, Factor IX, STMV of the Amber suite) runs the same kernels |
 | Determinism | The grid in fixed point is the same sum of integers, and each force the same product: in the deterministic mode, and on the host, the run is the same to the bit as without the list (checked against `main` ae971477 on the dipeptide in OPC, [`pme-skip-zero.test`](../test/Driver/pme-skip-zero.test)) |
 
@@ -212,13 +213,24 @@ leave every warp at work.
 | Keyword | Meaning | Default |
 |---|---|---|
 | `electrostatics = "PME"` in `[energy]` | Particle mesh Ewald, with the cutoff `cutoff` for the direct sum | |
-| `coulomb_modifier` in `[energy]` | `"POTENTIAL_SHIFT"` shifts the direct sum to 0 at the cutoff, as GROMACS does by default; `"NONE"` does not, as sander | `"NONE"` |
-| `beta` in `[pme]` | $\beta$, in Å⁻¹ | From `tolerance` |
-| `tolerance` in `[pme]` | $\beta$ such that $\mathrm{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it; less than 1 | 10⁻⁵ |
+| `coulomb_modifier` in `[energy]` | `"POTENTIAL_SHIFT"` shifts the direct sum to 0 at the cutoff, as GROMACS does by default; `"NONE"` does not, as sander. **At a tolerance looser than the default, take `POTENTIAL_SHIFT` for a run at constant energy or one whose conserved energy is watched** (#346): unshifted, each pair that crosses the cutoff changes the energy by $fq_iq_j\,\mathrm{erfc}(\beta r_c)/r_c$, and the total energy of JAC (NVE, mixed precision, 2 fs, 2 ns) drifts by 281 kcal/mol/ns at `tolerance = 1e-3` (the slopes of the two halves 247 and 288) and 2.9 at `1e-4` (1.7 and 6.0); at the default $10^{-5}$ it is −0.01 (0.13 and 0.86), within the scatter of a slope. The shift changes the energy the log reports, not the forces. `NONE` stays the default, as in Amber, so that energies compare with sander's and pmemd's. The prolate kernel (`kernel = "PROLATE"`) needs no shift: its direct term $1 - \Phi(r/r_c)$ is 0 at the cutoff, and the modifier changes nothing there. | `"NONE"` |
+| `kernel` in `[pme]` | `"GAUSSIAN"`: the Gaussian splitting with B-splines; `"PROLATE"`: the prolate spheroidal wave function for both, Ewald summation with prolates (Section 7, D[prolate-ewald]) | `"GAUSSIAN"` |
+| `beta` in `[pme]` | $\beta$, in Å⁻¹; refused with `kernel = "PROLATE"` | From `tolerance` |
+| `tolerance` in `[pme]` | The size of the tail of the splitting kernel at the cutoff. Gaussian: $\beta$ such that $\mathrm{erfc}(\beta r_c) = \texttt{tolerance}$, by bisection, as both engines find it. Prolate: the bandwidth $c$ such that $\psi_0^c(1) = \texttt{tolerance}$. **The same number gives very different force errors with the two kernels**: the Gaussian default of 10⁻⁵ gives a relative force error $\Delta = 1.4\times10^{-3}$ (JAC and Cellulose, with its default grid; $\Delta$ over the Coulomb forces of the topology, Section 7), the prolate 10⁻⁵ gives 1.0 to 1.2 × 10⁻⁵, in double precision; mixed precision adds about 10⁻⁴ with either kernel. The Gaussian's tolerance truncates the direct sum alone, as pmemd's `dsum_tol` and GROMACS's `ewald-rtol` do (both 10⁻⁵ by default), and the mesh sets $\Delta$: order 4 at about 1 Å (pmemd, MDIR) or 1.2 Å (GROMACS) gives $\Delta \approx 10^{-3}$ at the standard settings of all three. The prolate tolerance, with its grid rule, sets $\Delta$ itself: its default is about a hundred times the force accuracy of the standard settings. Looser than the default, the Gaussian's unshifted direct sum makes the energy of a run drift (JAC: 281 kcal/mol/ns at 10⁻³, 2.9 at 10⁻⁴): take `coulomb_modifier = "POTENTIAL_SHIFT"` for a run at constant energy (#346). Less than 1 | 10⁻⁵ |
+| `bandwidth` in `[pme]` | Prolate only: $c$, instead of the tolerance | From `tolerance` |
+| `window_bandwidth` in `[pme]` | Prolate only: $c_1$ of the window of the spreading | $c(\texttt{tolerance}/2)$ |
 | `grid` in `[pme]` | The numbers of points of the grid along the three edges, `[nx, ny, nz]`, each 8 or more | From `max_spacing` |
 | `max_spacing` in `[pme]` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
-| `order` in `[pme]` | The order of the B-splines: 4, 6, or 8 | 4 |
-| `influence` in `[pme]` | `"SPME"` or `"OPTIMAL"` (Section 1.1) | `"SPME"` |
+| `order` in `[pme]` | The order of the B-splines: 4, 6, or 8; prolate: the points $P$ of the window, 5 to 8 | 4; prolate 6 |
+| `influence` in `[pme]` | `"SPME"` or `"OPTIMAL"` (Section 1.1); refused with `kernel = "PROLATE"` | `"SPME"` |
+
+With `kernel = "PROLATE"` and neither `grid` nor `max_spacing` given, the
+grid has the modes of eq. 15 of [[Liang2026]](references.md#liang2026),
+$n_f = \lceil c L / (\pi r_c)\rceil$ along each edge, raised until the aliasing
+estimate of its eq. 10, relative to the sum it perturbs, is at most the
+tolerance; the log names $c$, $c_1$, $P$, the grid, and the estimate. On JAC
+the estimate lies above the relative force error by 1.2 to 3 at every grid
+and order measured (issue #334).
 
 The table `[pme]` is for `electrostatics = "PME"` only, and a grid needs at
 least twice the order of points along each edge.
@@ -262,3 +274,214 @@ Results (2026-09-30):
 | The virial of each term | Against its analytic value, and the reciprocal sum against $\sum_{\mathbf m} E_\mathbf m (1 - 2\pi^2 m^2/\beta^2)$ of a script: to 10⁻⁵ |
 | Dipeptide in OPC against sander, `"OPTIMAL"`, 30 × 30 × 24 points (`test/Driver/amber-pme.test`) | The electrostatic energy agrees to 2 × 10⁻⁵ kcal/mol, the precision of sander's log |
 | The same with rigid water and the shift, 0.5 ps at constant energy (`test/Driver/pme-settle.test`, `pme-gpu.test`) | The total energy stays within 0.3 kcal/mol; its largest change is 5.9 × 10⁻⁵ of it at 1 fs and 7.8 × 10⁻⁶ at 0.5 fs. A GPU in double gives the energies of the CPU to the digits of the log, and the same from run to run. |
+
+## 7. The prolate kernel (D[prolate-ewald])
+
+`kernel = "PROLATE"` replaces both the Gaussian of the splitting and the
+B-splines of the spreading by the prolate spheroidal wave function of order
+zero, $\psi_0^c$, the eigenfunction of largest eigenvalue of
+$\varphi \mapsto \int_{-1}^{1} e^{icxt}\varphi(t)\,dt$ [[Slepian1961]](references.md#slepian1961):
+"Ewald summation with prolates" (ESP) [[Liang2026]](references.md#liang2026).
+The white paper derives the terms (Section 5.6); this section says where
+they are.
+
+| Part | Where |
+|---|---|
+| $\psi_0^c$, $\lambda_0$, $C_0 = \int_0^1\psi_0^c$, $\langle x^2\rangle$, the transform | `lib/Driver/Prolate.cpp`: a series of Legendre polynomials of even degree from the eigenvector of the tridiagonal matrix of the prolate operator [[Xiao2001]](references.md#xiao2001), normalized to $\int_{-1}^{1}\psi^2 = 1$; $c$ solves $\psi_0^c(1) = \varepsilon$, which gives Table 2 of the paper at 10⁻³, 10⁻⁴, and 10⁻⁵. Against the eigenfunction of the integral operator by Gauss–Legendre in mpmath at 40 digits to 1–4 × 10⁻¹⁶ (`test/Driver/prolate-function.test`) |
+| $c$, $c_1$, $P$, the grid, the self term and the background | `Builder::collectProlate`: $c_1 = c(\varepsilon/2)$ as the paper's code takes it; $P = 6$; the grid by eq. 15, refined at one spacing for the three edges until the aliasing estimate of eq. 10 is at most ε/2 (below), and refused, with what to do, where twice that grid leaves it above; self $-f\,\chi(0)/(2r_c)\sum q^2$; background $-f\pi Q^2 r_c^2\langle x^2\rangle/V$ |
+| The table of `md.reciprocal` (`prolate`) | Rows 0 to 2 the factors $1/\hat\phi_1(2\pi k/K)^2$ of each edge; row 3 the weights and slopes of the window $\psi_0^{c_1}(2d/P) - \psi_0^{c_1}(1)$ (below), a Chebyshev series in the fraction of the place for each of the $P$ points, to 10⁻¹⁴ of $\psi(0)$; row 4 the series of $\hat\chi$ and of $k\hat\chi'(k)$ in $2x^2 - 1$ |
+| The direct, excluded, and alchemical pairs | $1 - \Phi(x)$ and $\Phi(x)/x$, $x = r/r_c$, as tables of cells of polynomials (`pme_far`, `pme_near`): 64 cells of 10 terms within 10⁻¹⁴ for kernels in f64, 128 cells of 4 terms within 4 × 10⁻¹⁰ for kernels in f32 |
+| The host | `PME.mlir`: the window by Clenshaw's recurrence where the B-splines were, chosen by the five rows of the table; the influence and its virial in the product |
+| A device | `PMEGPUProlate.mlir`, generated by `scripts/generate-pme-prolate-gpu-template.py`: the coefficients converted once a sum into the type of the grid, term by term (a buffer, not constant memory: issue #337, P0); the places; the spreading a warp a particle, the lanes $0$ to $3P-1$ evaluating each weight once and the others taking them by shuffles, into the bricks of D108 or, in the deterministic mode and in f64, in fixed point (D70); the influence of the product as the dispersion's tables are (D104, D162) with $\hat\chi$ in place of $F$; the gathering a warp a particle, every value of the grid read once for the three components. Triclinic cells have their places, gathering, and influence |
+
+LJ-PME (D162) stays Gaussian and can be combined with it. The derivative
+in the charges (D231) takes `pme_prolate_potential`.
+
+**The window at the edge of its support.** The paper's window (its eq. 14)
+is $\psi_0^{c_1}(2d/P)$, whose value at $\lvert d\rvert = P/2$ is
+$\psi_0^{c_1}(1) \approx \varepsilon/2$, not 0. When a particle crosses a
+plane of the grid, its point at $d = -P/2$ leaves with that weight, and a
+point at $d = +P/2$ enters with it: the charge on the grid and the energy
+of the mesh jump, and the forces, the derivative between the crossings,
+have no impulse for it. On JAC in NVE (mixed precision, 24³, ε = 10⁻³) the
+energy drifted by 75 kcal/mol/ns. MDIR takes the value off,
+$\phi_1(d) = \psi_0^{c_1}(2d/P) - \psi_0^{c_1}(1)$, continuous on the line,
+and $\hat\phi_1$ (with it the factors $B$) follows from the same
+quadrature, $\hat\phi_1(\kappa) = \hat\phi_1^\text{paper}(\kappa) -
+2\psi_0^{c_1}(1)\sin(\kappa P/2)/\kappa$ (white paper, Section 5.6). This
+is MDIR's own: the paper truncates without it, and we know of no source
+that takes the value off in this way. It costs 2% of
+$\Delta$ at the default and 12% at ε = 10⁻³ (JAC: 1.02 → 1.04 × 10⁻⁵ at
+50³, 6.2 → 6.9 × 10⁻⁴ at 24³; Cellulose: 1.20 → 1.21 × 10⁻⁵ and 8.9 →
+9.95 × 10⁻⁴). The aliasing estimate below keeps the paper's window, with
+which it was calibrated.
+
+**The grid.** The force error $\Delta$ (eq. 16 of the paper) is measured
+over the Coulomb forces of the topology, its exclusions and 1-4 scaling
+included: the forces of the system less those of the same system with
+every charge zero, against the Gaussian kernel in double at
+$\mathrm{erfc}(\beta r_c) = 10^{-13}$, 0.33 Å, and order 8, which agrees
+with the prolate kernel at ε = 10⁻⁹ and 8 points (an independent
+splitting) to 1.3 × 10⁻⁷
+(`scripts/benchmarks/prolate-ewald/grid_sweep.py`; one step on the CPU in
+double at explicit grids). Over the Coulomb forces of all pairs without
+exclusions, as the paper measures it, the same errors read about 4.5 times
+smaller: the bonded pairs inflate the norm. On a fine grid $\Delta$ is
+0.6 to 0.9 ε, the floor of the tails of $\chi$ and $\phi_1$; the estimate
+of eq. 10 lies 2.5 to 3 times *below* $\Delta$ near that floor, and with
+the paper's bound, estimate ≤ ε, the grids of $P$ = 5 and 7 fell at 2.7 to
+2.9 times the floor (ε = 10⁻⁴, 36³; ε = 10⁻⁵, 36³) while $P = 6$ fell at
+1.3 to 1.5. The grid is therefore the smallest at one spacing whose
+estimate is at most ε/2 (ruled on PR #337). The automatic grids and their
+$\Delta$, CPU in double, with the window of MDIR:
+
+| ε | $P$ | JAC grid | $\Delta$ | Cellulose grid | $\Delta$ |
+|---|---|---|---|---|---|
+| 10⁻³ | 5 | 24³ | 6.9 × 10⁻⁴ | 100×48×48 | 9.95 × 10⁻⁴ |
+| 10⁻³ | 6 | 24³ | 6.4 × 10⁻⁴ | 100×48×48 | 6.7 × 10⁻⁴ |
+| 10⁻⁴ | 5 | 42³ | 9.5 × 10⁻⁵ | 180×84×84 | 9.5 × 10⁻⁵ |
+| 10⁻⁴ | 6 | 32³ | 7.8 × 10⁻⁵ | 128×64×64 | 8.5 × 10⁻⁵ |
+| 10⁻⁴ | 7 | 30³ | 7.2 × 10⁻⁵ | 126×60×60 | 7.6 × 10⁻⁵ |
+| **10⁻⁵** | **6** | **50³** | **1.04 × 10⁻⁵** | **210×98×96** | **1.21 × 10⁻⁵** |
+| 10⁻⁵ | 7 | 40³ | 7.8 × 10⁻⁶ | 160×80×80 | 1.0 × 10⁻⁵ |
+| 10⁻⁵ | 8 | 36³ | 7.8 × 10⁻⁶ | 150×72×72 | 8.2 × 10⁻⁶ |
+| 10⁻⁶ | 7 | 56³ | 1.5 × 10⁻⁶ | 240×112×112 | 1.5 × 10⁻⁶ |
+| 10⁻⁶ | 8 | 48³ | 9.0 × 10⁻⁷ | 192×90×90 | 1.7 × 10⁻⁶ |
+
+From 10⁻³ to 10⁻⁵ every case lands within 1.3 times the floor of its ε
+and $P$ (measured with the paper's window, which differs from MDIR's by
+less than 2% of $\Delta$ at 10⁻⁴ and 10⁻⁵), so that
+$\Delta \le 1.21\,\varepsilon$; at 10⁻⁶, within 2 times
+($\Delta \le 1.7\,\varepsilon$), the case where Cellulose differs from
+JAC. The rule of the paper gave 48³ on JAC and
+192×98×98 on Cellulose at the default ($\Delta$ = 1.3 and 1.5 × 10⁻⁵).
+Where twice the grid of eq. 15 still leaves the estimate above ε/2, the
+window is too short for the tolerance, and the automatic grid is refused
+with the estimate there and what to do: more points of the window, a
+looser `tolerance`, or `grid` (with 8 points at ε = 10⁻⁹ the estimate
+falls only to 6.4 × 10⁻¹⁰ on 500³). STMV takes 180³ at the default.
+
+**Validation.**
+- Three OPC waters against the Ewald sum over the wave vectors
+  (`test/Driver/prolate.test`, `prolate-gpu.test`): the Coulomb terms sum
+  to within 1.6 × 10⁻⁶ of it at the default, and to the printed precision
+  at ε = 10⁻⁷ with 8 points; the trace of the virial against
+  $-dU/d\lambda$ to 2.2 × 10⁻⁶ and each diagonal component against
+  $-dU/d\varepsilon_{aa}$ to 6.6 × 10⁻⁶; a GPU in double gives the terms
+  of the CPU to the digits of the log, and the deterministic mode the same
+  bits in two runs.
+- The dodecahedron of `triclinic.test` against the Gaussian kernel at a
+  tight setting: 1.0 × 10⁻⁸ at the default, 1.3 × 10⁻⁹ at ε = 10⁻⁹ with
+  8 points on 64³ (`prolate-triclinic.test`).
+- The off-diagonal virial: the nine components of
+  $\partial U/\partial\boldsymbol\varepsilon$ of a frame (D252) in a sheared
+  rhombic dodecahedron against central differences of the energy, the
+  deformed cell rotated back below the diagonal: 1.5 × 10⁻⁸ relative in
+  double, 7.8 × 10⁻⁶ in mixed precision, on the CPU and a GPU
+  (`python-frame-gradients-prolate.test`, `-gpu`).
+- [free_energy]: $\partial H/\partial\lambda$ of the Coulomb, the
+  Lennard-Jones, and a restraint of ethanol decoupled from TIP3P against
+  central differences of the energies of the states beside it, 2.9 × 10⁻⁵
+  kcal/mol in double and 4.9 × 10⁻⁵ in mixed precision; λ = 0 equal to the
+  run without [free_energy] (`free-energy-prolate.test`, `-gpu`).
+- The derivative in the charges (D231): 25 entries on the dipeptide with a
+  net charge and 11 in a triclinic cell against central differences of the
+  energy, 7.6 × 10⁻¹¹ relative in double and 3.7 × 10⁻⁶ in mixed precision
+  (`python-tunable-gradient-prolate.test`, `-gpu`).
+- JAC, $\Delta$ as above: 1.04 × 10⁻⁵ at the default on the CPU and on a
+  GPU in double. Mixed precision adds about 1.0 × 10⁻⁴ with either kernel:
+  1.02 × 10⁻⁴ for the prolate default and for the Gaussian of orders 6 and
+  8 at 1.1 × 10⁻⁵ alike; at the Gaussian default it is lost in 1.4 × 10⁻³.
+  Below 10⁻⁴ the accuracy of a run in mixed precision is that of the
+  precision, not of the kernel.
+- JAC dynamics, mixed precision, 2 fs, the slope of a straight line fitted
+  to the total energy over 2 ns of NVE, with the slopes of its two halves
+  (`scripts/benchmarks/prolate-ewald/dynamics.py`):
+
+  | Run | Drift (kcal/mol/ns) | Halves |
+  |---|---|---|
+  | Gaussian, default (10⁻⁵) | −0.01 | 0.13, 0.86 |
+  | Prolate, default (10⁻⁵, 50³) | −0.06 | 0.87, 0.29 |
+  | Gaussian, 10⁻⁴ | 2.9 | 1.7, 6.0 |
+  | Prolate, 10⁻⁴ (32³) | 2.9 | 0.06, 3.8 |
+  | Gaussian, 10⁻³ (a loose direct-sum tolerance, not a standard setting) | 281 | 247, 288 |
+  | Prolate, 10⁻³ (24³) | 5.1 | 2.7, 6.3 |
+  | Prolate, 10⁻³, the paper's window (1 ns) | 75 | 84, 78 |
+
+  At the default the two are alike, within the scatter of a slope; at
+  looser tolerances the Gaussian's unshifted direct sum dominates (#346).
+  NPT at 1 bar over 1 ns, the mean volume of the second half with the
+  standard error of 10 blocks: 234,301 ± 113 Å³ (prolate default) against
+  234,470 ± 101 (Gaussian default), 1.1 combined standard errors apart, and
+  234,422 ± 114 at 10⁻³.
+
+**The whole step at the same $\Delta$.** MDIR's step in mixed precision
+(JAC NVE 2 fs, Cellulose NVE 2 fs, STMV NPT 4 fs; the settings of the
+Amber suite but `[pme]`), ms/step, the mean of the rounds alternated in
+one job after the first (5 on JAC and Cellulose; 4 or 5 on STMV, whose
+jobs reached their time limit; the spread of the rounds is 0.1 to 0.5%), each column on one device kind. $\Delta$ is that
+of the kernel in double at the grid that ran; on STMV it is not measured
+(its grids follow by the spacing of JAC). The binary is that of b449357f (5506216c after the rebase on `main`), the head of the branch before
+the grid rule and the window were changed, with the grids given by their
+spacing (the window's change costs no time). "Points" is the size of the grid, the data that the transposes of a
+distributed transform move.
+
+| System | Tier (measured Δ) | Kernel, tolerance | Grid | Points | Δ | RTX 4090 | RTX PRO 6000 |
+|---|---|---|---|---|---|---|---|
+| JAC | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 54³ | 157,464 | 1.4 × 10⁻³ | 0.132 | 0.114 |
+| JAC | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 64³ | 262,144 | 7.3 × 10⁻⁴ | 0.133 | 0.114 |
+| JAC | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 28³ | 21,952 | 7.4 × 10⁻⁴ | 0.160 | 0.144 |
+| JAC | ≈ 10⁻⁴ | Gaussian order 4, erfc 10⁻⁵ | 98³ | 941,192 | 1.1 × 10⁻⁴ | 0.175 | 0.143 |
+| JAC | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 70³ | 343,000 | 6.7 × 10⁻⁵ | 0.166 | 0.133 |
+| JAC | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 32³ | 32,768 | 7.8 × 10⁻⁵ | 0.189 | 0.161 |
+| JAC | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 96³ | 884,736 | 8.5 × 10⁻⁶ | 0.182 | 0.147 |
+| JAC | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 70³ | 343,000 | 1.1 × 10⁻⁵ | 0.197 | 0.152 |
+| JAC | ≈ 10⁻⁵ | **Prolate default, P = 6** | 50³ | 125,000 | 1.04 × 10⁻⁵ | 0.177 | 0.152 |
+| JAC | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 42³ | 74,088 | 7.2 × 10⁻⁶ | 0.200 | 0.163 |
+| JAC | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 40³ | 64,000 | 7.1 × 10⁻⁶ | 0.225 | 0.182 |
+| Cellulose | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 224×108×108 | 2,612,736 | 1.5 × 10⁻³ | 1.449 | 1.105 |
+| Cellulose | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 256×128×128 | 4,194,304 | 7.9 × 10⁻⁴ | 1.478 | 1.107 |
+| Cellulose | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 100×50×48 | 240,000 | 9.7 × 10⁻⁴ | 1.939 | 1.558 |
+| Cellulose | ≈ 10⁻⁴ | Gaussian order 4, erfc 10⁻⁵ | 400×196×192 | 15,052,800 | 1.2 × 10⁻⁴ | 2.258 | 1.475 |
+| Cellulose | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 294×144×140 | 5,927,040 | 6.1 × 10⁻⁵ | 2.072 | 1.495 |
+| Cellulose | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 126×64×60 | 483,840 | 9.0 × 10⁻⁵ | 2.193 | 1.688 |
+| Cellulose | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 378×192×180 | 13,063,680 | 1.05 × 10⁻⁵ | 2.282 | 1.651 |
+| Cellulose | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 294×144×140 | 5,927,040 | 1.0 × 10⁻⁵ | 2.621 | 1.817 |
+| Cellulose | ≈ 10⁻⁵ | **Prolate 10⁻⁵, P = 6** | 210×108×100 | 2,268,000 | 1.06 × 10⁻⁵ | 2.155 | 1.765 |
+| Cellulose | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 168×84×80 | 1,128,960 | 8.0 × 10⁻⁶ | 2.695 | 2.010 |
+| Cellulose | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 150×80×72 | 864,000 | 8.0 × 10⁻⁶ | 2.914 | 2.141 |
+| STMV | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 192³ | 7,077,888 | — | 4.489 | 3.432 |
+| STMV | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 224×224×240 | 12,042,240 | — | 4.836 | 3.656 |
+| STMV | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 90³ | 729,000 | — | 5.714 | 4.644 |
+| STMV | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 6.191 | 4.437 |
+| STMV | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 120³ | 1,728,000 | — | 6.424 | 5.060 |
+| STMV | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 320×324×336 | 34,836,480 | — | 8.062 | 5.572 |
+| STMV | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 7.572 | 5.278 |
+| STMV | ≈ 10⁻⁵ | **Prolate default, P = 6** | 180³ | 5,832,000 | — | 6.439 | 5.279 |
+| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 144×144×150 | 3,110,400 | — | 7.592 | 5.689 |
+| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 128×140×140 | 2,508,800 | — | 8.267 | 5.973 |
+
+**The grid points at the same $\Delta$.** The prolate kernel has 7.1
+(JAC), 5.8 (Cellulose; 6.6 at its automatic 210×98×96), and 6.0 (STMV)
+times fewer points than the Gaussian of order 6 at $\Delta \approx 10^{-5}$,
+and 2.6 to 2.8 times fewer than order 8; at $10^{-4}$, 10.5, 12.2, and 9.3
+times fewer than order 6; at the accuracy of the default, 7 to 11 times
+fewer than the Gaussian default. In a distributed run the transposes of
+the 3D transform move data in proportion to the points, which is where the
+kernel was meant to pay [[Liang2026]](references.md#liang2026). The
+spreading reaches $P - 1$ layers of the grid beyond a domain on each side:
+5 for $P = 6$, as many as the B-splines of order 6, two more than order 4.
+
+**Reading.** The standard production settings of pmemd, GROMACS, and
+MDIR all lie in the tier $\Delta \approx 10^{-3}$, where the prolate
+kernel's step is 21 to 41% slower on one device than the Gaussian's; it is
+1.04 to 1.2 times
+slower at $10^{-4}$ (against order 6), and from 15% faster (STMV, RTX 4090)
+to 7% slower (Cellulose, RTX PRO 6000) at $10^{-5}$ against the faster of
+orders 6 and 8. $P$ = 7 and 8, on their smaller grids, are slower than
+$P = 6$ everywhere, which stays the default. The order-4 path is unchanged:
+the Gaussian default and the suite's settings take the time of `main`
+within 1% on every system and device. The loop over pairs takes 44.2 µs on
+JAC (RTX 4090) against 42.4 µs with the Gaussian, since its tables read 4
+coefficients a pair in f32. Tiled spreading (#336), which would serve both
+kernels, is the next step; the kernels are then to be compared again.

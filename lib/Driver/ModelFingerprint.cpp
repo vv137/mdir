@@ -201,6 +201,15 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   if (has(given.system, "pme_influence"))
     add("physics", "[pme] influence",
         getFingerprintString(s.pmeInfluence == PMEInfluence::Optimal ? "OPTIMAL" : "SPME"));
+  // The kernel and its bandwidths, as the control file's keys
+  // (D[prolate-ewald]).
+  if (has(given.system, "pme_kernel"))
+    add("physics", "[pme] kernel",
+        getFingerprintString(s.pmeKernel == driver::PMEKernel::Prolate ? "PROLATE" : "GAUSSIAN"));
+  if (has(given.system, "pme_bandwidth"))
+    add("physics", "[pme] bandwidth", number(s.pmeBandwidth));
+  if (has(given.system, "pme_window_bandwidth"))
+    add("physics", "[pme] window_bandwidth", number(s.pmeWindowBandwidth));
   if (has(given.system, "analytic_bonds"))
     add("physics", "[constraints] analytic_bonds", flag(s.analyticBonds));
   if (has(given.system, "rigid_hydrogen_bonds"))

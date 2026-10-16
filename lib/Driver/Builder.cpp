@@ -4,6 +4,7 @@
 
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Profile.h"
+#include "mdir/Driver/Prolate.h"
 #include "llvm/ADT/StringExtras.h"
 #include "llvm/Support/raw_ostream.h"
 
@@ -13,6 +14,18 @@
 #include <map>
 
 using namespace mdir::driver;
+namespace prolate = mdir::prolate;
+
+/// The cells and the terms of the tables of the splitting of the prolate
+/// kernel (D[prolate-ewald]): within 1e-14 for kernels in f64
+/// (mdir-prolate-test), within 4e-10 for those in f32 with 4 terms, which
+/// the loop over pairs reads with fewer loads.
+static std::pair<int64_t, int64_t> getProlateTableShape(Precision precision) {
+  if (precision == Precision::Double)
+    return {64, 10};
+  return {128, 4};
+}
+
 using llvm::StringRef;
 
 static StringRef getName(Element element) {
@@ -216,6 +229,8 @@ private:
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
+  /// The parameters and tables of the prolate kernel (D[prolate-ewald]).
+  llvm::Error collectProlate();
   /// The field `name` of the places of the particles whose `values` are not
   /// zero, then −1 − the place of each of the others
   /// (D262), which the reciprocal
@@ -2617,11 +2632,12 @@ std::pair<double, double> Builder::getPMEConstants(double lambda) const {
     squares += q * q;
     net += q;
   }
-  double beta = program.pmeBeta;
-  double self = -coulombInternal * beta / std::sqrt(M_PI) * squares;
+  // −f s Σ q² and −f π Q² b / V; for the Gaussian s = β/√π and
+  // b = 1/(2β²) (D[prolate-ewald]).
+  double self = -coulombInternal * program.pmeSelfFactor * squares;
   double volume = system.box[0] * system.box[1] * system.box[2];
-  double background =
-      -coulombInternal * M_PI * net * net / (2.0 * volume * beta * beta);
+  double background = -coulombInternal * M_PI * net * net *
+                      program.pmeBackgroundFactor / volume;
   return {self, background};
 }
 
@@ -2776,9 +2792,16 @@ llvm::Error Builder::collectPME() {
   const Topology &topology = *system.topology;
   double rc = control.cutoffDistance * units::length;
 
+  if (control.pmeKernel == PMEKernel::Prolate) {
+    if (llvm::Error error = collectProlate())
+      return error;
+  }
+
   // β: given, or such that erfc(β rc) is the tolerance, by bisection.
   double beta = control.pmeAlpha / units::length;
-  if (beta == 0.0) {
+  if (program.pmeProlate) {
+    beta = 0.0;
+  } else if (beta == 0.0) {
     double low = 0.0, high = 1.0;
     while (std::erfc(high * rc) > control.pmeAlphaTolerance)
       high *= 2.0;
@@ -2793,10 +2816,19 @@ llvm::Error Builder::collectPME() {
   }
 
   int64_t grid[3];
-  if (llvm::Error error =
-          collectMesh("pme_moduli", control.pmeGrid, control.pmeMaxSpacing,
-                      control.pmeOrder, control.pmeOptimal, grid))
-    return error;
+  if (program.pmeProlate) {
+    for (int k = 0; k != 3; ++k)
+      grid[k] = program.pmeGrid[k];
+  } else {
+    if (llvm::Error error = collectMesh("pme_moduli", control.pmeGrid,
+                                        control.pmeMaxSpacing,
+                                        control.pmeOrder, control.pmeOptimal,
+                                        grid))
+      return error;
+    program.pmeOrder = control.pmeOrder;
+    program.pmeSelfFactor = beta / std::sqrt(M_PI);
+    program.pmeBackgroundFactor = 1.0 / (2.0 * beta * beta);
+  }
 
   // The grid holds charges in fixed point at the scale 2^40, up to about
   // 8e6 e at a point (D70); a charge beyond 100 e is not of a molecule.
@@ -2824,6 +2856,168 @@ llvm::Error Builder::collectPME() {
   // charge of the topology, which [free_energy] scales by 1 − a λ, so that
   // a charge of zero is zero at every λ (D161).
   collectListed("pme_listed", topology.charges, {Control::TunableKind::Charge});
+  return llvm::Error::success();
+}
+
+llvm::Error Builder::collectProlate() {
+  // Ewald summation with prolates [Liang2026]: the splitting
+  // 1/r = (1 − Φ(r/r_c))/r + Φ(r/r_c)/r with Φ(y) = ∫₀ʸ χ, χ = ψ₀ᶜ/C₀, and
+  // the spreading by the window φ₁(d) = ψ₀^{c₁}(2d/P) on P points.
+  double rc = control.cutoffDistance * units::length;
+  double epsilon = control.pmeAlphaTolerance;
+  double c = control.pmeBandwidth > 0.0
+                 ? control.pmeBandwidth
+                 : prolate::bandwidthForTolerance(epsilon);
+  // c₁ "slightly larger" than c [Liang2026]; c(ε/2) as the paper's code.
+  double c1 = control.pmeWindowBandwidth > 0.0
+                  ? control.pmeWindowBandwidth
+                  : prolate::bandwidthForTolerance(0.5 * epsilon);
+  int64_t points = control.pmeOrder;
+  prolate::Function psi(c);
+  prolate::Window window = prolate::getWindow(c1, points);
+  prolate::Influence influence = prolate::getInfluence(psi);
+
+  // The edges along which the grid is spaced, as collectMesh takes them.
+  double edges[3];
+  for (int k = 0; k != 3; ++k) {
+    double edge = system.inputBox[k] > 0.0 ? system.inputBox[k] : system.box[k];
+    if (isTriclinic())
+      edge = k == 0 ? system.box[0]
+             : k == 1 ? std::hypot(system.tilt[0], system.box[1])
+                      : std::sqrt(system.tilt[1] * system.tilt[1] +
+                                  system.tilt[2] * system.tilt[2] +
+                                  system.box[2] * system.box[2]);
+    edges[k] = edge;
+  }
+  // The grid: given; or from the largest spacing given; or the modes of
+  // eq. 15 of [Liang2026], n_f = ⌈c L / (π r_c)⌉, raised until the
+  // aliasing estimate of its eq. 10, relative to the sum it perturbs, is at
+  // most ε/2 (D[prolate-ewald], as ruled on issue #334). The factor 1/2 is
+  // calibrated against the relative force error Δ of its eq. 16 over the
+  // Coulomb forces of the topology (with its exclusions), measured on JAC and
+  // Cellulose against the Gaussian at erfc 1e-13 on 0.33 Å
+  // (scripts/benchmarks/prolate-ewald/grid_sweep.py): there the estimate is
+  // 2.5 to 3 times below Δ, Δ of a fine grid is 0.6 to 0.9 ε, and ε/2 puts
+  // every ε and P measured within 1.3 times that floor; ε alone left P = 5
+  // and 7 at 2.7 to 2.9 times it.
+  int64_t grid[3];
+  for (int k = 0; k != 3; ++k) {
+    grid[k] = control.pmeGrid[k];
+    if (grid[k] == 0) {
+      double spacing = control.pmeMaxSpacing > 0.0
+                           ? control.pmeMaxSpacing * units::length
+                           : M_PI * rc / c;
+      grid[k] = getSmoothSize(
+          static_cast<int64_t>(std::ceil(edges[k] / spacing - 1e-9)));
+    }
+  }
+  bool automatic = control.pmeGrid[0] == 0 && control.pmeMaxSpacing == 0.0;
+  double aliasing = prolate::getAliasing(psi, window, edges, grid, rc);
+  double bound = 0.5 * epsilon;
+  int64_t start[3] = {grid[0], grid[1], grid[2]};
+  double spacing = 0.0;
+  for (int k = 0; k != 3; ++k)
+    spacing = std::max(spacing, edges[k] / static_cast<double>(grid[k]));
+  while (automatic && aliasing > bound) {
+    // Twice the grid of eq. 15 on every axis and still above: the estimate
+    // is near the floor that the tail of the window sets, which a finer
+    // grid lowers only slowly (at ε = 1e-9 with 8 points: 8.4e-8 at twice
+    // the grid, 6.4e-10 at ten times, against 5e-10).
+    if (grid[0] >= 2 * start[0] && grid[1] >= 2 * start[1] &&
+        grid[2] >= 2 * start[2])
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the aliasing estimate of the prolate kernel with %lld points of "
+          "the window stays above half the tolerance %g of [pme] on every "
+          "grid: it is %g at %lld × %lld × %lld points, twice the grid of "
+          "eq. 15, and falls only slowly beyond it, toward the floor that "
+          "the tail of the window sets; %s",
+          static_cast<long long>(points), epsilon, aliasing,
+          static_cast<long long>(grid[0]), static_cast<long long>(grid[1]),
+          static_cast<long long>(grid[2]),
+          points < 8 ? "give more points of the window in 'order' (up to 8), "
+                       "a looser 'tolerance', or 'grid'"
+                     : "8 points are the most; give a looser 'tolerance', or "
+                       "the grid in 'grid'");
+    // One spacing for the three axes, made finer by the least that adds a
+    // point to some axis, and by at least 2%, so that the grid stays in
+    // proportion to the edges.
+    double finer = 0.0;
+    for (int k = 0; k != 3; ++k)
+      finer = std::max(finer, edges[k] / static_cast<double>(grid[k] + 1));
+    spacing = std::min(finer, 0.98 * spacing);
+    for (int k = 0; k != 3; ++k)
+      grid[k] = getSmoothSize(
+          static_cast<int64_t>(std::ceil(edges[k] / spacing - 1e-9)));
+    aliasing = prolate::getAliasing(psi, window, edges, grid, rc);
+  }
+  for (int k = 0; k != 3; ++k)
+    if (grid[k] < 2 * points)
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "the grid of particle mesh Ewald has %lld points along an edge, "
+          "fewer than twice the %lld points of the window",
+          static_cast<long long>(grid[k]), static_cast<long long>(points));
+
+  // The table of the op: rows 0 to 2 the factor B_a(k) = 1/φ̂₁(2πk/K_a)² of
+  // each edge [Liang2026, eq. 9]; row 3 the Chebyshev series of the
+  // weights of the window and then of their slopes in u; row 4 the number
+  // of terms D of a weight, the number of them that f32 takes, the number
+  // of terms n of χ̂, the scale x/|m| =
+  // 2π r_c / c, then the series of χ̂ and of k χ̂'(k) in 2x² − 1.
+  int64_t longest = std::max({grid[0], grid[1], grid[2]});
+  int64_t columns = std::max({longest, 2 * points * window.degree,
+                              4 + 2 * influence.terms});
+  Program::Table table;
+  table.name = "pme_moduli";
+  table.count = 5;
+  table.columns = columns;
+  table.values.assign(5 * columns, 0.0);
+  for (int k = 0; k != 3; ++k)
+    for (int64_t i = 0; i != grid[k]; ++i) {
+      int64_t m = i <= grid[k] / 2 ? i : i - grid[k];
+      double hat = window.transform(2.0 * M_PI * static_cast<double>(m) /
+                                    static_cast<double>(grid[k]));
+      table.values[k * columns + i] = 1.0 / (hat * hat);
+    }
+  std::copy(window.values.begin(), window.values.end(),
+            table.values.begin() + 3 * columns);
+  std::copy(window.slopes.begin(), window.slopes.end(),
+            table.values.begin() + 3 * columns + points * window.degree);
+  double *row = table.values.data() + 4 * columns;
+  row[0] = static_cast<double>(window.degree);
+  row[1] = static_cast<double>(window.degreeSingle);
+  row[2] = static_cast<double>(influence.terms);
+  row[3] = 2.0 * M_PI * rc / c;
+  std::copy(influence.value.begin(), influence.value.end(), row + 4);
+  std::copy(influence.slope.begin(), influence.slope.end(),
+            row + 4 + influence.terms);
+  program.tables.push_back(std::move(table));
+  // The parts of the splitting that the pair terms take.
+  for (auto [name, part] :
+       {std::pair{"pme_far", prolate::Part::Far},
+        std::pair{"pme_near", prolate::Part::Near}}) {
+    Program::Table split;
+    split.name = name;
+    auto [cells, terms] = getProlateTableShape(control.precision);
+    split.count = cells;
+    split.columns = terms;
+    split.values = prolate::getSplittingTable(psi, part, cells, terms);
+    program.tables.push_back(std::move(split));
+  }
+
+  program.pmeProlate = true;
+  program.pmeBandwidth = c;
+  program.pmeWindowBandwidth = c1;
+  program.pmeAliasing = aliasing;
+  program.pmeOrder = points;
+  for (int k = 0; k != 3; ++k)
+    program.pmeGrid[k] = grid[k];
+  // −f χ(0)/(2 r_c) Σ q², from Φ(r/r_c)/r → χ(0)/r_c, and the background
+  // −f π Q² r_c² ⟨x²⟩ / V, from χ̂(k) = 1 − k² ⟨x²⟩ / 2 + O(k⁴).
+  program.pmeSelfFactor = psi.value(0.0) / psi.halfIntegral() / (2.0 * rc);
+  program.pmeBackgroundFactor = rc * rc * psi.secondMoment();
+
   return llvm::Error::success();
 }
 
@@ -3645,15 +3839,17 @@ llvm::Error Builder::collectTunableGradient() {
       program.gradientChargeFixed.assign(charges.size(), 0.0);
       program.gradientChargeVolume.assign(charges.size(), 0.0);
       if (program.pme) {
-        double beta = program.pmeBeta, net = 0.0;
+        // −2 f s q_i and −2 f π Q b / V, with s and b of the kernel.
+        double net = 0.0;
         for (double q : charges)
           net += q;
         double volume = system.box[0] * system.box[1] * system.box[2];
         for (size_t i = 0; i != charges.size(); ++i) {
           program.gradientChargeFixed[i] =
-              -2.0 * coulombInternal * beta / std::sqrt(M_PI) * charges[i];
-          program.gradientChargeVolume[i] =
-              -coulombInternal * M_PI * net / (volume * beta * beta);
+              -2.0 * coulombInternal * program.pmeSelfFactor * charges[i];
+          program.gradientChargeVolume[i] = -2.0 * coulombInternal * M_PI *
+                                            net * program.pmeBackgroundFactor /
+                                            volume;
         }
       }
       outcome = Program::GradientOutcome::Rule;
@@ -4155,6 +4351,47 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
      << "    md.yield " << prefix << "k : f64\n"
      << "  } : f64\n";
   add("external_" + term.name);
+}
+
+/// A part of the splitting of the prolate kernel at `x` = r / r_c, from the
+/// table `table` (prolate::getSplittingTable): the polynomial of the cell
+/// of x in t = 2 (x cells − k) − 1, the cell clamped to the table. The
+/// place in the cell carries the derivative; the index and the lookups do
+/// not, as in a tabulated function of the control file (D138).
+static std::string emitProlateSplitting(llvm::raw_ostream &os,
+                                        StringRef table, StringRef x,
+                                        StringRef p, Precision precision) {
+  auto [prolateCells, prolateTerms] = getProlateTableShape(precision);
+  os << "    " << p << "cells = arith.constant "
+     << formatReal(static_cast<double>(prolateCells)) << " : f64\n"
+     << "    " << p << "top = arith.constant "
+     << formatReal(static_cast<double>(prolateCells - 1)) << " : f64\n"
+     << "    " << p << "nil = arith.constant 0.0 : f64\n"
+     << "    " << p << "one = arith.constant 1.0 : f64\n"
+     << "    " << p << "two = arith.constant 2.0 : f64\n"
+     << "    " << p << "u = arith.mulf " << x << ", " << p << "cells : f64\n"
+     << "    " << p << "floor = math.floor " << p << "u : f64\n"
+     << "    " << p << "low = arith.maximumf " << p << "floor, " << p
+     << "nil : f64\n"
+     << "    " << p << "place = arith.minimumf " << p << "low, " << p
+     << "top : f64\n"
+     << "    " << p << "s = arith.subf " << p << "u, " << p << "place : f64\n"
+     << "    " << p << "s2 = arith.mulf " << p << "two, " << p << "s : f64\n"
+     << "    " << p << "t = arith.subf " << p << "s2, " << p << "one : f64\n"
+     << "    " << p << "row = arith.fptosi " << p << "place : f64 to i32\n";
+  for (int64_t j = 0; j != prolateTerms; ++j)
+    os << "    " << p << "col" << j << " = arith.constant " << j << " : i32\n"
+       << "    " << p << "a" << j << " = md.lookup %t_" << table << "[" << p
+       << "row, " << p << "col" << j << "] : !grid, i32, i32 -> f64\n";
+  std::string value = (p + "a" + llvm::Twine(prolateTerms - 1)).str();
+  for (int64_t j = prolateTerms - 2; j >= 0; --j) {
+    os << "    " << p << "m" << j << " = arith.mulf " << value << ", " << p
+       << "t : f64\n"
+       << "    " << p << "h" << j << " = arith.addf " << p << "m" << j << ", "
+       << p << "a" << j << " : f64\n";
+    value = (p + "h" + llvm::Twine(j)).str();
+  }
+  return value;
 }
 
 void Builder::emitTopologyPotential(StringRef name, unsigned terms,
@@ -4724,7 +4961,16 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
            << "    %rq = arith.maximumf %r, %rq_least : f64\n";
         rq = "%rq";
       }
-      if (program.pme) {
+      if (program.pme && program.pmeProlate) {
+        // The direct sum of the prolate kernel, f q q (1 − Φ(r/r_c)) / r
+        // [Liang2026, eq. 3]; Φ(1) = 1, so a shift at the cutoff is 0.
+        os << "    %rc_inverse = arith.constant "
+           << formatReal(1.0 / cutoff) << " : f64\n"
+           << "    %xr = arith.mulf " << rq << ", %rc_inverse : f64\n";
+        std::string far = emitProlateSplitting(os, "pme_far", "%xr", "%pf_", control.precision);
+        os << "    %screened = arith.divf " << far << ", " << rq << " : f64\n"
+           << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
+      } else if (program.pme) {
         // The direct sum of particle mesh Ewald, f q q erfc(β r) / r,
         // shifted to 0 at the cutoff if the control file asks.
         double beta = program.pmeBeta;
@@ -4780,6 +5026,26 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     add("nonbonded");
   }
 
+  // %shielded, the share of 1/r that the reciprocal sum holds at %r:
+  // erf(β r)/r, or of the prolate kernel Φ(r/r_c)/r, which is Φ(x)/x / r_c
+  // within the cutoff and 1/r beyond it (D[prolate-ewald]).
+  auto emitShielded = [&](llvm::raw_ostream &os) {
+    if (!program.pmeProlate) {
+      os << "    %br = arith.mulf %beta, %r : f64\n"
+         << "    %erf = math.erf %br : f64\n"
+         << "    %shielded = arith.divf %erf, %r : f64\n";
+      return;
+    }
+    os << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
+       << " : f64\n"
+       << "    %xr = arith.mulf %r, %rc_inverse : f64\n";
+    std::string near = emitProlateSplitting(os, "pme_near", "%xr", "%pn_", control.precision);
+    os << "    %near = arith.mulf " << near << ", %rc_inverse : f64\n"
+       << "    %r_one = arith.constant 1.0 : f64\n"
+       << "    %r_inverse = arith.divf %r_one, %r : f64\n"
+       << "    %r_inside = arith.cmpf olt, %xr, %r_one : f64\n"
+       << "    %shielded = arith.select %r_inside, %near, %r_inverse : f64\n";
+  };
   if (program.pme && (terms & CoulombExcluded) && has("excluded")) {
     // The excluded pairs take their share of the reciprocal sum out again:
     // −f q_i q_j erf(β r) / r, with the charges that the reciprocal sum
@@ -4807,11 +5073,9 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
          << "    %qq = arith.mulf %qq0, %al_s : f64\n";
       qq = "%qq";
     }
-    os << "    %fqq = arith.mulf %f, " << qq << " : f64\n"
-       << "    %br = arith.mulf %beta, %r : f64\n"
-       << "    %erf = math.erf %br : f64\n"
-       << "    %shielded = arith.divf %erf, %r : f64\n"
-       << "    %e = arith.mulf %fqq, %shielded : f64\n";
+    os << "    %fqq = arith.mulf %f, " << qq << " : f64\n";
+    emitShielded(os);
+    os << "    %e = arith.mulf %fqq, %shielded : f64\n";
     std::string e = "%e";
     if (alchemicalOnly) {
       // Only the pairs within the selection depend on λ.
@@ -4842,11 +5106,9 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "    %w = arith.subf %one, %s2 : f64\n"
        << "    %qq = arith.mulf %q_i, %q_j : f64\n"
        << "    %fqq = arith.mulf %f, %qq : f64\n"
-       << "    %fw = arith.mulf %fqq, %w : f64\n"
-       << "    %br = arith.mulf %beta, %r : f64\n"
-       << "    %erf = math.erf %br : f64\n"
-       << "    %shielded = arith.divf %erf, %r : f64\n"
-       << "    %e = arith.mulf %fw, %shielded : f64\n"
+       << "    %fw = arith.mulf %fqq, %w : f64\n";
+    emitShielded(os);
+    os << "    %e = arith.mulf %fw, %shielded : f64\n"
        << "    md.yield %e : f64\n"
        << "  } : !rel_alchemical_pairs, !vec -> f64\n";
     add("within");
@@ -4971,9 +5233,10 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << charges << ", %cell, %t_pme_moduli"
        << (listed ? " listed(%p_pme_listed)" : "") << "\n"
        << "      grid([" << program.pmeGrid[0] << ", " << program.pmeGrid[1]
-       << ", " << program.pmeGrid[2] << "]) order(" << control.pmeOrder
+       << ", " << program.pmeGrid[2] << "]) order(" << program.pmeOrder
        << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
        << formatReal(coulombInternal) << ")"
+       << (program.pmeProlate ? " prolate" : "")
        << (listed && gathersAll("pme_listed") ? " gather_all" : "") << "\n"
        << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
        << " -> f64, !vec, vector<9xf64>\n";

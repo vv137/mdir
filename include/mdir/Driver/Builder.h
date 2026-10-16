@@ -296,6 +296,15 @@ struct Program {
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;
   int64_t pmeGrid[3] = {0, 0, 0};
+  /// The prolate kernel (D[prolate-ewald]): its bandwidths c and c₁, the
+  /// points P of the window, and the aliasing estimate of the grid.
+  bool pmeProlate = false;
+  double pmeBandwidth = 0.0, pmeWindowBandwidth = 0.0, pmeAliasing = 0.0;
+  int64_t pmeOrder = 4;
+  /// The self term is −f s Σ q² and the background of a net charge Q
+  /// −f π Q² b / V: s = β/√π and b = 1/(2β²) for the Gaussian, s = χ(0)/
+  /// (2 r_c) and b = r_c² ⟨x²⟩_χ for the prolate kernel, in nm⁻¹ and nm².
+  double pmeSelfFactor = 0.0, pmeBackgroundFactor = 0.0;
   /// Particle mesh Ewald of the dispersion (D162): whether the program has
   /// it, its self term in kJ/mol, which does not depend on the volume and
   /// which the program does not compute, and β in nm⁻¹ and the grid.

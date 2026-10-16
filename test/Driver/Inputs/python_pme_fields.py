@@ -37,6 +37,12 @@ CASES = (
     ("order 8", "order = 8\n", "", {"pme_order": 8}),
     ("the suite's settings", 'influence = "OPTIMAL"\n', "analytic_bonds = true\n",
      {"pme_influence": mdir.PMEInfluence.Optimal, "analytic_bonds": True}),
+    # The prolate kernel (D[prolate-ewald]): its default of 6 points, and
+    # 8 points with the bandwidths given.
+    ("kernel PROLATE", 'kernel = "PROLATE"\n', "", {"pme_kernel": mdir.PMEKernel.Prolate}),
+    ("kernel PROLATE order 8", 'kernel = "PROLATE"\norder = 8\nbandwidth = 14.0\nwindow_bandwidth = 16.0\n', "",
+     {"pme_kernel": mdir.PMEKernel.Prolate, "pme_order": 8, "pme_bandwidth": 14.0,
+      "pme_window_bandwidth": 16.0}),
 )
 
 
@@ -87,6 +93,17 @@ def refusals():
     for order in (5, 2, 10, 0):
         expect(mdir.InputError, lambda: model({"pme_order": order}),
                "model: expected 4, 6, or 8 for 'order'")
+    # The prolate kernel: its fields, and what belongs to the other kernel.
+    assert system.pme_kernel == mdir.PMEKernel.Gaussian
+    assert system.pme_bandwidth == 0.0 and system.pme_window_bandwidth == 0.0
+    prolate = {"pme_kernel": mdir.PMEKernel.Prolate}
+    expect(mdir.InputError, lambda: model(prolate | {"pme_order": 4}),
+           "expected 5, 6, 7, or 8 points of the window for 'order'")
+    expect(mdir.InputError, lambda: model(prolate | {"pme_influence": mdir.PMEInfluence.Optimal}),
+           "'influence' is for kernel")
+    expect(mdir.InputError, lambda: model(prolate | {"pme_alpha": 3.0}), "'beta' is for kernel")
+    expect(mdir.InputError, lambda: model({"pme_bandwidth": 12.0}),
+           "'bandwidth' and 'window_bandwidth' are for kernel")
     print("pme fields refusals passed")
 
 

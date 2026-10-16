@@ -50,6 +50,8 @@ extern const char *const neighborsMatrixGPUTemplate;
 extern const char *const pmeGPUTemplate;
 /// The text of its kernels for a triclinic cell.
 extern const char *const pmeGPUTriclinicTemplate;
+/// The text of its kernels for the prolate kernel (D[prolate-ewald]).
+extern const char *const pmeGPUProlateTemplate;
 extern const char *const neighborsGroupsGPUTemplate;
 extern const char *const neighborsGroupsGPUTriclinicTemplate;
 } // namespace mdir
@@ -464,6 +466,11 @@ private:
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
                                 int64_t order, bool tilted, bool potential,
                                 bool listed);
+  /// Adds the kernels of the prolate kernel (D[prolate-ewald]) for these
+  /// types and points of the window, and with `listed` those of a list of
+  /// the particles.
+  LogicalResult addProlateTemplates(Type position, Type charge, Type force,
+                                    int64_t order, bool listed);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
 
   ModuleOp module;
@@ -3424,6 +3431,171 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   return success();
 }
 
+LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
+                                            Type force, int64_t order,
+                                            bool listed) {
+  auto has = [&](StringRef name) {
+    return SymbolTable::lookupSymbolIn(
+               module,
+               getPMEInstanceName(name, position, charge, force, order)) !=
+           nullptr;
+  };
+  if (has("mdrt_gpu_pme_prolate_gather") &&
+      (!listed || has("mdrt_gpu_pme_prolate_gather_listed")))
+    return success();
+  ParserConfig config(context);
+  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
+      instantiatePMETemplates(pmeGPUProlateTemplate, position, charge, force,
+                              order),
+      config);
+  if (!templates)
+    return module.emitError()
+           << "cannot parse the template of the prolate kernel for devices";
+  // As addPMETemplates: the loops over the points unroll, and the
+  // constants go back into the kernels.
+  unrollSmallLoops(templates->getOperation(), /*limit=*/8);
+  PassManager promote(context);
+  promote.addPass(createCanonicalizerPass());
+  if (failed(promote.run(*templates)))
+    return module.emitError()
+           << "cannot canonicalize the kernels of the prolate kernel";
+  WalkResult sunk = templates->walk([](gpu::LaunchOp launch) {
+    return failed(sinkOperationsIntoLaunchOp(
+               launch, [](Operation *op) {
+                 return isa<arith::ConstantOp>(op);
+               }))
+               ? WalkResult::interrupt()
+               : WalkResult::advance();
+  });
+  if (sunk.wasInterrupted())
+    return module.emitError()
+           << "cannot sink the constants of the prolate kernel into its "
+              "kernels";
+  // The kernels of a list of the particles (D262) only where a sum asks
+  // for them, as addPMETemplates.
+  for (Operation &op : llvm::make_early_inc_range(*templates)) {
+    auto function = dyn_cast<func::FuncOp>(&op);
+    bool isListed = function && function.getSymName().contains("_listed");
+    if ((isListed && !listed) ||
+        (function &&
+         SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
+      op.erase();
+      continue;
+    }
+    op.remove();
+    module.push_back(&op);
+  }
+  return success();
+}
+
+/// The reciprocal sum of the prolate kernel on a device (D[prolate-ewald]):
+/// the coefficients of the table into the type of the grid, the places, the
+/// spreading (into bricks, or in fixed point in the deterministic mode and
+/// in f64), the transforms, the factors of the edges and the product with
+/// the influence function, and the gathering or the potential. With
+/// `listed`, the spreading takes the listed particles alone, and so does
+/// the gathering unless `gather_all` (D262); the places are those of every
+/// particle.
+static LogicalResult lowerProlate(
+    md_exec::ReciprocalOp op, Value listed, OpBuilder &builder,
+    llvm::function_ref<func::FuncOp(StringRef)> instance,
+    llvm::function_ref<func::FuncOp(StringRef, FunctionType)> declare,
+    bool deterministic) {
+  Location loc = op.getLoc();
+  ArrayRef<int64_t> grid = op.getGrid();
+  auto index = [&](int64_t v) {
+    return arith::ConstantIndexOp::create(builder, loc, v).getResult();
+  };
+  Value k1 = index(grid[0]), k2 = index(grid[1]), k3 = index(grid[2]);
+  Value beta = arith::ConstantOp::create(builder, loc,
+                                         builder.getF64FloatAttr(0.0));
+  Value coulomb = arith::ConstantOp::create(
+      builder, loc,
+      builder.getF64FloatAttr(op.getCoulomb().convertToDouble()));
+  Value box = op.getCellMutable().get();
+  Value positions = op.getPositions(), charges = op.getCharges();
+  Value fixed = op.getScratch()[0], real = op.getScratch()[1],
+        complex = op.getScratch()[2], rows = op.getScratch()[3];
+  if (op.getScratch().size() <= 5)
+    return op->emitOpError()
+           << "expected buffers for the places and the tables";
+  Value places = op.getScratch()[4], tables = op.getScratch()[5];
+  Value bricks = op.getScratch().size() > 6 ? op.getScratch()[6] : Value();
+  func::CallOp::create(builder, loc,
+                       instance("mdrt_gpu_pme_prolate_coefficients"),
+                       ValueRange{op.getModuli(), tables, k1, k2, k3});
+  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_prolate_places"),
+                       ValueRange{positions, box, places, k1, k2, k3});
+  // The list follows the charges in the kernels that take it.
+  auto withList = [&](ValueRange values) {
+    SmallVector<Value> operands(values);
+    if (listed)
+      operands.insert(operands.begin() + 1, listed);
+    return operands;
+  };
+  std::string spreadTag = listed ? "_listed" : "";
+  if (deterministic || !bricks) {
+    func::CallOp::create(
+        builder, loc,
+        instance("mdrt_gpu_pme_prolate_spread_fixed" + spreadTag),
+        withList({charges, places, tables, fixed, k1, k2, k3}));
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_real"),
+                         ValueRange{fixed, real});
+  } else {
+    func::CallOp::create(
+        builder, loc,
+        instance("mdrt_gpu_pme_prolate_spread_bricks" + spreadTag),
+        withList({charges, places, tables, bricks, real, k1, k2, k3}));
+  }
+  Type wide = builder.getI64Type();
+  SmallVector<Value> sizes;
+  for (int64_t points : grid)
+    sizes.push_back(arith::ConstantOp::create(
+        builder, loc, wide, builder.getI64IntegerAttr(points)));
+  Type buffer = real.getType();
+  FunctionType transform =
+      builder.getFunctionType({buffer, buffer, wide, wide, wide}, {});
+  bool narrow = cast<MemRefType>(buffer).getElementType().isF32();
+  func::FuncOp forward = declare(
+      narrow ? "mdrtCudaFFTForward3DF32" : "mdrtCudaFFTForward3D", transform);
+  func::FuncOp backward = declare(
+      narrow ? "mdrtCudaFFTBackward3DF32" : "mdrtCudaFFTBackward3D",
+      transform);
+  for (func::FuncOp function : {forward, backward})
+    function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  func::CallOp::create(builder, loc, forward,
+                       ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
+  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_prolate_tables"),
+                       ValueRange{op.getModuli(), tables, box, beta, coulomb,
+                                  k1, k2, k3});
+  func::CallOp convolve;
+  if (op.getEnergy().use_empty() && op.getVirial().use_empty())
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_prolate_scale"),
+                         ValueRange{complex, tables, box, beta, coulomb, k1,
+                                    k2, k3});
+  else
+    convolve = func::CallOp::create(
+        builder, loc, instance("mdrt_gpu_pme_prolate_convolve"),
+        ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
+  func::CallOp::create(builder, loc, backward,
+                       ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
+  // With `gather_all`, every particle is gathered, as without a list
+  // (D262).
+  if (op.getGatherAll())
+    listed = Value();
+  func::CallOp::create(
+      builder, loc,
+      instance(op.getPotential() ? "mdrt_gpu_pme_prolate_potential"
+               : listed          ? "mdrt_gpu_pme_prolate_gather_listed"
+                                 : "mdrt_gpu_pme_prolate_gather"),
+      withList({charges, places, tables, real, box, k1, k2, k3, op.getOut()}));
+  if (convolve) {
+    op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
+    op.getVirial().replaceAllUsesWith(convolve.getResult(1));
+  }
+  return success();
+}
+
 LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (!op.isStorageForm() || !isDeviceType(op.getPositions().getType()))
     return op->emitOpError()
@@ -3494,6 +3666,42 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         builder, loc,
         getOrDeclare("mdrtSideBegin", builder.getFunctionType({}, {})),
         ValueRange());
+  // The prolate kernel has kernels of its own (D[prolate-ewald]).
+  if (op.getProlate()) {
+    if (failed(addProlateTemplates(position, charge, force, op.getOrder(),
+                                   static_cast<bool>(listed))))
+      return failure();
+    // A triclinic cell takes its own places, gathering, and influence;
+    // the coefficients and the spreading do not depend on the cell.
+    auto prolateInstance = [&](StringRef name) {
+      bool own = tilted && name != "mdrt_gpu_pme_real" &&
+                 name != "mdrt_gpu_pme_prolate_coefficients" &&
+                 !name.starts_with("mdrt_gpu_pme_prolate_spread");
+      std::string full = own ? (name + "_triclinic").str() : name.str();
+      return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
+          module,
+          getPMEInstanceName(full, position, charge, force, op.getOrder())));
+    };
+    if (failed(lowerProlate(
+            op, listed, builder, prolateInstance,
+            [&](StringRef name, FunctionType type) {
+              return getOrDeclare(name, type);
+            },
+            deterministic)))
+      return failure();
+    if (side) {
+      auto end = func::CallOp::create(
+          builder, loc,
+          getOrDeclare("mdrtSideEnd", builder.getFunctionType({}, {})),
+          ValueRange());
+      for (Operation *issued = begin->getNextNode(); issued != end;
+           issued = issued->getNextNode())
+        if (allocates(issued))
+          return op->emitOpError()
+                 << "allocates or frees memory on a second stream";
+    }
+    return success();
+  }
   // The charges in fixed point in the deterministic mode, then converted;
   // by default with floating-point atomics, straight to the grid (D84).
   // With a list, the gathering stores the forces of the listed particles

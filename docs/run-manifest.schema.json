@@ -249,9 +249,25 @@
                     "order": {
                       "type": "integer",
                       "minimum": 1
+                    },
+                    "kernel": {
+                      "enum": ["GAUSSIAN", "PROLATE"]
+                    },
+                    "bandwidth": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "window_bandwidth": {
+                      "type": "number",
+                      "minimum": 0
+                    },
+                    "aliasing_estimate": {
+                      "type": "number",
+                      "minimum": 0
                     }
                   },
                   "required": [
+                    "kernel",
                     "beta_inverse_angstrom",
                     "grid",
                     "order"
