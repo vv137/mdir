@@ -11,9 +11,13 @@
 // requests, whose vectors the engine registers with autograd
 // (register_autograd_neighbors). Forces and virial are the derivatives of the
 // energy in the positions and in a strain of positions and cell, the
-// approach of metatomic's own ASE calculator. The plugin builds the pair list
-// itself on the device, with every image within the cutoff and no skin
-// (Section 6.4 of the design).
+// approach of metatomic's own ASE calculator. The pair list is MDIR's
+// (D[mlip-pairlist], Section 12 of the design): slots of every pair of
+// images within the cutoff and the skin, built by the engine from its
+// neighbor matrix, those within the cutoff first for each particle; the
+// plugin takes every slot, or gathers the pairs within the cutoff. With
+// MDIR_MLIP_PAIRS=search it builds its own on the device instead, with every
+// image within the cutoff and no skin (Section 9.1).
 //
 // The backend "AOTI" (D273, Section 11 of the design) loads instead
 // an AOTInductor package of the `nequip` package's `ase` target with
@@ -34,6 +38,7 @@
 #include <cstring>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
 #include <string>
@@ -132,12 +137,22 @@ struct mdir_mlip_model {
   double lengthFactor = 1.0, energyFactor = 1.0;
   /// Whether the package gives no units, and Angstrom and eV are taken.
   bool unitsAssumed = false;
-  /// With MDIR_MLIP_TIMING set: the seconds of the pair search and of the
-  /// rest of the evaluations after the first, which the plugin then waits
-  /// for (docs/environment.md).
+  /// With MDIR_MLIP_TIMING set: the seconds of the plugin's part of the
+  /// pair list (its search, or the taking of MDIR's) and of the rest of the
+  /// evaluations after the first, which the plugin then waits for
+  /// (docs/environment.md); and how it took the list.
   bool timing = false;
+  /// With MDIR_MLIP_CHECK_PAIRS set: every evaluation that takes MDIR's
+  /// pair list also searches its own and compares the two as sets
+  /// (docs/environment.md).
+  bool checkPairs = false;
   int64_t timed = 0;
   double searchSeconds = 0.0, modelSeconds = 0.0;
+  int32_t pairsMode = MDIR_MLIP_PAIRS_SEARCH;
+  /// The offsets of the slots of MDIR's pair list on the host, from the
+  /// build that `offsetsBuild` counts (D[mlip-pairlist]).
+  std::vector<int32_t> hostOffsets;
+  int64_t offsetsBuild = -1;
   torch::Dict<std::string, mta::ModelOutput> outputs;
 };
 
@@ -355,13 +370,16 @@ void loadPackage(mdir_mlip_model &m, const mdir_mlip_load_options &options) {
 /// Evaluates the package of `m` on the positions (n x 3, f64, nm) with the
 /// pair list, once or per chunk of centers; returns the forces (n x 3,
 /// kJ/mol/nm), the energy (1, kJ/mol), and the virial (9, kJ/mol), all f64
-/// on the device, and the calls made.
+/// on the device, and the calls made. `bounds`, where given, holds for each
+/// chunk of `m.centersPerCall` centers but the last the place in the list
+/// where the next chunk begins (on the host); without it the boundaries are
+/// searched in the list, which waits for the device.
 int64_t evaluatePackage(mdir_mlip_model &m, const torch::Tensor &positions,
                         const torch::Tensor &numbers, const torch::Tensor &cell,
                         const double host[9], const torch::Tensor &pairs,
                         const torch::Tensor &shifts, torch::Tensor &forces,
                         torch::Tensor &energy, torch::Tensor &virial,
-                        void *stream) {
+                        void *stream, const std::vector<int64_t> *bounds) {
   int64_t n = positions.size(0), p = pairs.size(0);
   if (n < 2 || p < 2)
     throw std::runtime_error(
@@ -386,13 +404,19 @@ int64_t evaluatePackage(mdir_mlip_model &m, const torch::Tensor &positions,
   std::vector<int64_t> starts{0}, firsts{0};
   int64_t chunk = m.centersPerCall > 0 && m.centersPerCall < n ? m.centersPerCall : n;
   if (chunk < n) {
-    torch::Tensor bounds = torch::arange(chunk, n, chunk, edges.options());
-    torch::Tensor at = torch::searchsorted(edges[0].contiguous(), bounds).cpu();
-    auto atHost = at.accessor<int64_t, 1>();
-    for (int64_t k = 0; k != at.size(0); ++k)
+    std::vector<int64_t> atHost;
+    if (bounds) {
+      atHost = *bounds;
+    } else {
+      torch::Tensor first = torch::arange(chunk, n, chunk, edges.options());
+      torch::Tensor at =
+          torch::searchsorted(edges[0].contiguous(), first).cpu();
+      atHost.assign(at.data_ptr<int64_t>(), at.data_ptr<int64_t>() + at.size(0));
+    }
+    for (size_t k = 0; k != atHost.size(); ++k)
       if (atHost[k] - starts.back() >= 2 && p - atHost[k] >= 2) {
         starts.push_back(atHost[k]);
-        firsts.push_back((k + 1) * chunk);
+        firsts.push_back(static_cast<int64_t>(k + 1) * chunk);
       }
   }
   starts.push_back(p);
@@ -422,6 +446,146 @@ int64_t evaluatePackage(mdir_mlip_model &m, const torch::Tensor &positions,
   return static_cast<int64_t>(starts.size() - 1);
 }
 
+/// The pairs of MDIR's list (D[mlip-pairlist], Section 12 of the
+/// design) for an evaluation of `n` particles: every slot (padded), or the
+/// pairs within the cutoff gathered on the device (exact); and, for chunks
+/// of `m.centersPerCall` centers, the place in the list where each chunk
+/// but the first begins. The slots are grouped by center in ascending
+/// order, so a chunk's pairs are a range of the list.
+void takePairs(mdir_mlip_model &m, const mdir_mlip_pairs &list, int64_t n,
+               torch::Tensor &pairs, torch::Tensor &shifts,
+               std::vector<int64_t> &bounds) {
+  auto narrow = torch::TensorOptions().device(m.device).dtype(torch::kInt32);
+  int64_t c = list.num_slots;
+  if (c < 0 || (c > 0 && !list.slots) || !list.counts || !list.offsets)
+    throw std::runtime_error("the engine gives a pair list without its "
+                             "buffers");
+  torch::Tensor slots =
+      c > 0 ? torch::from_blob(const_cast<int32_t *>(list.slots), {c, 5},
+                               narrow)
+            : torch::zeros({0, 5}, narrow);
+  int64_t chunk =
+      m.centersPerCall > 0 && m.centersPerCall < n ? m.centersPerCall : n;
+  bounds.clear();
+  if (list.mode == MDIR_MLIP_PAIRS_PADDED) {
+    // The offsets change only where the structure was built anew: they are
+    // read then, and the chunks begin at them.
+    if (chunk < n && list.builds != m.offsetsBuild) {
+      torch::Tensor offsets =
+          torch::from_blob(const_cast<int32_t *>(list.offsets), {n + 1},
+                           narrow)
+              .cpu();
+      m.hostOffsets.assign(offsets.data_ptr<int32_t>(),
+                           offsets.data_ptr<int32_t>() + n + 1);
+      m.offsetsBuild = list.builds;
+    }
+    if (chunk < n)
+      for (int64_t first = chunk; first < n; first += chunk)
+        bounds.push_back(m.hostOffsets[first]);
+    pairs = slots.slice(1, 0, 2).contiguous();
+    shifts = slots.slice(1, 2, 5).contiguous();
+    return;
+  }
+  if (list.mode != MDIR_MLIP_PAIRS_EXACT)
+    throw std::runtime_error("the engine asks for the pair list in mode " +
+                             std::to_string(list.mode) +
+                             ", which this plugin does not know");
+  // The pairs before each chunk and in all: one copy of a number for each
+  // chunk, which the host waits for.
+  torch::Tensor counts =
+      torch::from_blob(const_cast<int32_t *>(list.counts), {n}, narrow)
+          .to(torch::kLong);
+  torch::Tensor offsets =
+      torch::from_blob(const_cast<int32_t *>(list.offsets), {n + 1}, narrow)
+          .to(torch::kLong);
+  torch::Tensor ends = counts.cumsum(0);
+  std::vector<int64_t> last;
+  for (int64_t first = chunk; first < n; first += chunk)
+    last.push_back(first - 1);
+  last.push_back(n - 1);
+  torch::Tensor picked =
+      n > 0 ? ends.index_select(
+                      0, torch::tensor(last, torch::kLong).to(m.device))
+                  .cpu()
+            : torch::zeros({1}, torch::kLong);
+  const int64_t *before = picked.data_ptr<int64_t>();
+  int64_t e = before[picked.size(0) - 1];
+  bounds.assign(before, before + picked.size(0) - 1);
+  // A slot is within the cutoff where it is among the first of its
+  // center's; the indices of nonzero_static are ascending, so the pairs
+  // keep the order of the slots.
+  torch::Tensor centers = slots.select(1, 0).to(torch::kLong);
+  torch::Tensor rank =
+      torch::arange(c, offsets.options()) - offsets.index_select(0, centers);
+  torch::Tensor within = rank < counts.index_select(0, centers);
+  torch::Tensor chosen = slots.index_select(
+      0, at::nonzero_static(within, e, -1).reshape({e}));
+  pairs = chosen.slice(1, 0, 2).contiguous();
+  shifts = chosen.slice(1, 2, 5).contiguous();
+}
+
+/// The pairs (p x 2) and shifts (p x 3) as rows (i, j, s_a, s_b, s_c) in
+/// ascending order, int64.
+torch::Tensor sortedPairs(const torch::Tensor &pairs,
+                          const torch::Tensor &shifts) {
+  torch::Tensor rows = torch::cat({pairs, shifts}, 1).to(torch::kLong);
+  // Sorted by the last column first, then stably by each before it.
+  torch::Tensor order = torch::arange(rows.size(0), rows.options());
+  for (int64_t c = 4; c >= 0; --c) {
+    torch::Tensor key = rows.select(1, c).index_select(0, order);
+    order = order.index_select(
+        0, std::get<1>(torch::sort(key, /*stable=*/true, 0, false)));
+  }
+  return rows.index_select(0, order);
+}
+
+/// MDIR_MLIP_CHECK_PAIRS: the pairs within the cutoff of MDIR's list
+/// against those of the plugin's own search, as sets (D[mlip-pairlist]);
+/// with the padded list, its pairs within the cutoff alone. Waits for the
+/// device, and throws where they differ.
+void comparePairs(mdir_mlip_model &m, const mdir_mlip_pairs &list,
+                  const torch::Tensor &positions, const torch::Tensor &cell,
+                  const double host[9], int64_t n, const torch::Tensor &pairs,
+                  const torch::Tensor &shifts) {
+  torch::Tensor own, ownShifts;
+  findPairs(positions, cell, host, m.cutoff, own, ownShifts);
+  torch::Tensor given = pairs, givenShifts = shifts;
+  if (list.mode == MDIR_MLIP_PAIRS_PADDED) {
+    mdir_mlip_pairs exact = list;
+    exact.mode = MDIR_MLIP_PAIRS_EXACT;
+    std::vector<int64_t> unused;
+    int64_t chunk = m.centersPerCall;
+    m.centersPerCall = 0;
+    takePairs(m, exact, n, given, givenShifts, unused);
+    m.centersPerCall = chunk;
+  }
+  torch::Tensor a = sortedPairs(given, givenShifts);
+  torch::Tensor b = sortedPairs(own, ownShifts);
+  if (a.size(0) != b.size(0) || !torch::equal(a, b)) {
+    int64_t common = 0;
+    if (a.size(0) == b.size(0))
+      common = (a == b).all(1).sum().item<int64_t>();
+    throw std::runtime_error(
+        "MDIR_MLIP_CHECK_PAIRS: the engine's pair list has " +
+        std::to_string(a.size(0)) + " pairs within the cutoff and the "
+        "plugin's search " + std::to_string(b.size(0)) +
+        (a.size(0) == b.size(0)
+             ? ", of which " + std::to_string(common) + " rows agree"
+             : std::string()));
+  }
+  static int64_t compared = 0;
+  if (compared++ == 0)
+    std::fprintf(stderr,
+                 "MDIR: model '%s' (MDIR_MLIP_CHECK_PAIRS): the engine's "
+                 "pair list and the plugin's search agree, %lld pairs\n",
+                 m.name.c_str(), static_cast<long long>(a.size(0)));
+}
+
+/// The TorchScript modules that mdir_mlip_cutoff has loaded on the host,
+/// by path, which a load takes.
+std::mutex modulesMutex;
+std::unordered_map<std::string, torch::jit::Module> loadedModules;
+
 } // namespace
 
 extern "C" {
@@ -447,13 +611,26 @@ int mdir_mlip_load(const mdir_mlip_load_options *options,
     m->device = torch::Device(torch::kCUDA, options->device);
     const char *timing = std::getenv("MDIR_MLIP_TIMING");
     m->timing = timing && *timing && std::string(timing) != "0";
+    const char *check = std::getenv("MDIR_MLIP_CHECK_PAIRS");
+    m->checkPairs = check && *check && std::string(check) != "0";
     if (backend == "AOTI") {
       loadPackage(*m, *options);
       *result = m.release();
       return;
     }
     m->framework = buildVersions;
-    m->module = mta::load_atomistic_model(options->path);
+    bool loaded = false;
+    {
+      std::lock_guard<std::mutex> lock(modulesMutex);
+      auto found = loadedModules.find(options->path);
+      if (found != loadedModules.end()) {
+        m->module = found->second;
+        loadedModules.erase(found);
+        loaded = true;
+      }
+    }
+    if (!loaded)
+      m->module = mta::load_atomistic_model(options->path);
     m->module.to(m->device);
     m->module.eval();
 
@@ -511,6 +688,49 @@ int mdir_mlip_load(const mdir_mlip_load_options *options,
                                     "energy", "kJ/mol", "system",
                                     std::vector<std::string>{}, ""));
     *result = m.release();
+  });
+}
+
+int mdir_mlip_cutoff(const mdir_mlip_load_options *options, double *cutoff) {
+  return guarded([&] {
+    std::string backend = options->backend;
+    std::string path = options->path;
+    if (backend == "AOTI") {
+      auto metadata =
+          torch::inductor::AOTIModelPackageLoader::load_metadata_from_package(
+              path, "model");
+      auto get = [&](const std::string &key) -> std::string {
+        auto found = metadata.find(key);
+        return found == metadata.end() ? std::string() : found->second;
+      };
+      std::string rMax = get("r_max");
+      if (rMax.empty())
+        throw std::runtime_error("the package '" + path + "' has no metadata "
+                                 "'r_max'; it is not a package of the "
+                                 "`nequip` package");
+      std::string unit = get("mdir::length_unit");
+      *cutoff = std::stod(rMax) *
+                mta::unit_conversion_factor(unit.empty() ? "angstrom" : unit,
+                                            "nm");
+    } else if (backend == "METATOMIC") {
+      torch::jit::Module module = mta::load_atomistic_model(path);
+      auto requests = module.run_method("requested_neighbor_lists").toList();
+      if (requests.size() != 1)
+        throw std::runtime_error(
+            "the model asks for " + std::to_string(requests.size()) +
+            " pair lists; the plugin gives one");
+      *cutoff = requests.get(0)
+                    .toCustomClass<mta::NeighborListOptionsHolder>()
+                    ->engine_cutoff("nm");
+      std::lock_guard<std::mutex> lock(modulesMutex);
+      loadedModules.insert_or_assign(path, module);
+    } else {
+      throw std::runtime_error("this plugin loads the backends \"METATOMIC\" "
+                               "and \"AOTI\", not \"" + backend + "\"");
+    }
+    if (!(*cutoff > 0.0) || !std::isfinite(*cutoff))
+      throw std::runtime_error("the model '" + path + "' has no finite "
+                               "cutoff");
   });
 }
 
@@ -588,10 +808,20 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
       m->modelSeconds += std::chrono::duration<double>(clock::now() - searched).count();
     };
 
+    // MDIR's pair list (D[mlip-pairlist]), or the plugin's own search.
     torch::Tensor pairs, shifts;
+    std::vector<int64_t> bounds;
+    bool search = in->pairs.mode == MDIR_MLIP_PAIRS_SEARCH;
+    m->pairsMode = in->pairs.mode;
     {
       torch::NoGradGuard noGrad;
-      findPairs(positions, cell, in->cell, m->cutoff, pairs, shifts);
+      if (search)
+        findPairs(positions, cell, in->cell, m->cutoff, pairs, shifts);
+      else
+        takePairs(*m, in->pairs, n, pairs, shifts, bounds);
+      if (!search && m->checkPairs)
+        comparePairs(*m, in->pairs, positions, cell, in->cell, n, pairs,
+                     shifts);
     }
     int64_t p = pairs.size(0);
     if (m->timing) {
@@ -603,7 +833,8 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
       torch::NoGradGuard noGrad;
       torch::Tensor f, e, w;
       out->calls = evaluatePackage(*m, positions, numbers, cell, in->cell, pairs,
-                                   shifts, f, e, w, stream.stream());
+                                   shifts, f, e, w, stream.stream(),
+                                   search ? nullptr : &bounds);
       forces.add_(f);
       energy.copy_(e);
       virial.copy_(w);
@@ -717,12 +948,17 @@ int mdir_mlip_memory_stats(mdir_mlip_model *m, int32_t reset,
 void mdir_mlip_free(mdir_mlip_model *model) {
   if (model && model->timing && model->timed > 1) {
     double count = static_cast<double>(model->timed - 1);
+    const char *mode = model->pairsMode == MDIR_MLIP_PAIRS_EXACT ? "exact"
+                       : model->pairsMode == MDIR_MLIP_PAIRS_PADDED
+                           ? "padded"
+                           : "search";
     std::fprintf(stderr,
                  "MDIR: model '%s' (MDIR_MLIP_TIMING): %lld evaluations "
-                 "after the first, %.1f us of pair search and %.1f us of the "
-                 "model per evaluation, the search %.1f%% of both\n",
+                 "after the first, %.1f us of the pair list (%s) and %.1f us "
+                 "of the model per evaluation, the pair list %.1f%% of "
+                 "both\n",
                  model->name.c_str(), static_cast<long long>(model->timed - 1),
-                 1e6 * model->searchSeconds / count,
+                 1e6 * model->searchSeconds / count, mode,
                  1e6 * model->modelSeconds / count,
                  100.0 * model->searchSeconds /
                      (model->searchSeconds + model->modelSeconds));

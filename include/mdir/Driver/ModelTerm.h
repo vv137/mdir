@@ -32,6 +32,23 @@ std::string getPluginPath(llvm::StringRef directory);
 /// which loads it.
 llvm::Expected<std::string> getPluginTorchVersion(llvm::StringRef path);
 
+/// The directory of the runtime libraries, where the plugin is unless
+/// `MDIR_MLIP_PLUGIN` names it, for getModelCutoff: set by `mdir run` and
+/// by the compiler of a Python simulation before they build a program.
+void setPluginDirectory(llvm::StringRef directory);
+
+/// The cutoff of the pair list of the model of `term`, in nm, which the
+/// plugin reads from the model's file without a device (D[mlip-pairlist]):
+/// the program of a run with the term is built with it.
+llvm::Expected<double> getModelCutoff(const Control::ModelTerm &term);
+
+/// How the plugin takes the pair list (`MDIR_MLIP_PAIRS`, D[mlip-pairlist],
+/// docs/environment.md): MDIR's list of the pairs within the cutoff
+/// ("exact", the default), every slot of MDIR's list ("padded"), or the
+/// plugin's own search ("search"), as the constants MDIR_MLIP_PAIRS_* of
+/// include/mdir/MLIP/Plugin.h. An unknown value is an error.
+llvm::Expected<int> getPairsMode();
+
 /// The models of one simulation, loaded on its device. A step evaluates
 /// each with evaluate(), which adds its forces to those of the program; the
 /// energy and the virial of the last evaluation stay on the device until the
@@ -53,9 +70,15 @@ public:
   /// row), on the stream of its kernels, and adds its forces to `forces`
   /// (device, n x 3, of `forceBits` bits). Returns an empty string or what
   /// failed.
+  /// `slots`, `pairCounts`, and `pairOffsets` (device) are MDIR's pair
+  /// list (D[mlip-pairlist]) of `numSlots` slots from the build that
+  /// `builds` counts, or null where the plugin searches its own.
   std::string evaluate(int64_t index, const void *positions, int bits,
                        const int32_t *numbers, int64_t count,
-                       const double cell[9], void *forces, int forceBits);
+                       const double cell[9], void *forces, int forceBits,
+                       const int32_t *slots, int64_t numSlots,
+                       const int32_t *pairCounts, const int32_t *pairOffsets,
+                       int64_t builds);
   /// The energy and the virial (row by row) of the last evaluation of
   /// `index`, read from the device, which the host waits for.
   void readLast(int64_t index, double &energy, double virial[9]) const;
@@ -85,6 +108,8 @@ private:
   };
   std::vector<Model> models;
   int64_t count = 0;
+  /// How the plugin takes the pair list (getPairsMode).
+  int pairsMode = 0;
 };
 
 } // namespace driver
@@ -94,8 +119,20 @@ private:
 /// (D270): model `index` at the positions, the atomic
 /// numbers, and the cell (its diagonal and tilts b_x, c_x, c_y), its forces
 /// added to `forces`; with `Energy`, its energy and virial written to
-/// `energy` (1) and `virial` (9).
+/// `energy` (1) and `virial` (9). With `Edges`, it takes MDIR's pair list
+/// (D[mlip-pairlist]): the slots, the counts, the offsets, and the
+/// number of builds of `md_exec.build_edges`.
 extern "C" {
+void _mlir_ciface_mdrtModelEvaluateEdges(
+    int64_t index, void *positions, void *numbers, void *slots, void *counts,
+    void *offsets, int64_t builds, double lx, double ly, double lz,
+    double bx, double cx, double cy, int64_t bits, int64_t forceBits,
+    void *forces);
+void _mlir_ciface_mdrtModelEvaluateEdgesEnergy(
+    int64_t index, void *positions, void *numbers, void *slots, void *counts,
+    void *offsets, int64_t builds, double lx, double ly, double lz,
+    double bx, double cx, double cy, int64_t bits, int64_t forceBits,
+    void *forces, void *energy, void *virial);
 void _mlir_ciface_mdrtModelEvaluate(int64_t index, void *positions,
                                     void *numbers, double lx, double ly,
                                     double lz, double bx, double cx,

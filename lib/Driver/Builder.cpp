@@ -3,6 +3,8 @@
 #include "mdir/Driver/Builder.h"
 
 #include "mdir/Driver/Expression.h"
+#include "mdir/Driver/ModelTerm.h"
+#include "mdir/MLIP/Plugin.h"
 #include "mdir/Driver/Profile.h"
 #include "mdir/Driver/Prolate.h"
 #include "llvm/ADT/StringExtras.h"
@@ -1045,6 +1047,13 @@ struct Coupled {
   const System &system;
   Program &program;
   llvm::raw_string_ostream os;
+
+  /// The cutoffs of the pair lists of the models of [[energy.model]], in
+  /// nm, which the plugin reads from their files, and whether the program
+  /// builds their pair lists (D[mlip-pairlist]): not where the plugin
+  /// searches its own (`MDIR_MLIP_PAIRS=search`).
+  std::vector<double> modelCutoffs;
+  bool modelEdges = false;
 
   /// The names of the masses, of the fields of the parameters, and of the
   /// numbers of the particles, where the code is that is being emitted.
@@ -9323,18 +9332,33 @@ std::string Builder::emitModelTerms(StringRef indent, StringRef x,
     std::string k = t + "_" + std::to_string(index);
     bool last = index + 1 == control.models.size();
     std::string next = last ? fResult.str() : "%mf" + k;
+    // The model's pair list (D[mlip-pairlist]): the pairs of images
+    // within its cutoff, from a neighborhood at that cutoff, which the
+    // program refreshes with the skin of the run.
+    if (modelEdges) {
+      std::string cutoff = formatReal(modelCutoffs[index]);
+      os << indent << "%mn" << k << " = md.neighborhood " << x << ", " << cell
+         << " cutoff(" << cutoff << ") : !vec -> !pairs\n"
+         << indent << "%me" << k << " = md.edges %mn" << k << ", " << x
+         << ", " << cell << " cutoff(" << cutoff
+         << ") : !pairs, !vec -> !md.edges<@atoms>\n";
+    }
     os << indent << "%mi" << k << " = arith.constant " << index << " : i64\n"
        << indent << next;
     if (numbers)
       os << ", %mu" << k << ", %mw" << k;
-    os << " = mdrt.host_call @mdrtModelEvaluate" << (numbers ? "Energy" : "")
-       << "(%mi" << k << ", " << x << ", " << prefix << "model_z";
+    os << " = mdrt.host_call @mdrtModelEvaluate" << (modelEdges ? "Edges" : "")
+       << (numbers ? "Energy" : "") << "(%mi" << k << ", " << x << ", "
+       << prefix << "model_z";
+    if (modelEdges)
+      os << ", %me" << k;
     for (int c = 0; c != 6; ++c)
       os << ", %mcell" << t << "_" << c;
     os << ", %mbits" << t << ", %mfbits" << t << ")\n"
        << indent << "    outs(" << forces << " : !vec) {in_place}\n"
-       << indent << "    : (i64, !vec, !ids, f64, f64, f64, f64, f64, f64, "
-                    "i64, i64)\n"
+       << indent << "    : (i64, !vec, !ids, "
+       << (modelEdges ? "!md.edges<@atoms>, " : "")
+       << "f64, f64, f64, f64, f64, f64, i64, i64)\n"
        << indent << "    -> (!vec" << (numbers ? ", f64, vector<9xf64>" : "")
        << ")\n";
     forces = next;
@@ -10315,14 +10339,22 @@ void Builder::emitEntry() {
   // to those of the program where they are; with `Energy`, it gives its
   // energy and its virial as well.
   if (!control.models.empty()) {
+    // With the pair list of the program, its slots, counts, offsets, and
+    // the number of builds (D[mlip-pairlist]).
+    std::string edges =
+        modelEdges ? "memref<?x5xi32> {mdrt.read_only}, memref<?xi32> "
+                     "{mdrt.read_only}, memref<?xi32> {mdrt.read_only}, i64, "
+                   : "";
     std::string arguments =
         (llvm::Twine("i64, memref<?x3x") + state +
-         "> {mdrt.read_only}, memref<?xi32> {mdrt.read_only}, f64, f64, f64, "
-         "f64, f64, f64, i64, i64, memref<?x3x" + force + ">")
+         "> {mdrt.read_only}, memref<?xi32> {mdrt.read_only}, " + edges +
+         "f64, f64, f64, f64, f64, f64, i64, i64, memref<?x3x" + force + ">")
             .str();
-    os << "func.func private @mdrtModelEvaluate(" << arguments << ")\n"
+    std::string name = modelEdges ? "@mdrtModelEvaluateEdges"
+                                  : "@mdrtModelEvaluate";
+    os << "func.func private " << name << "(" << arguments << ")\n"
        << "    attributes {llvm.emit_c_interface}\n"
-       << "func.func private @mdrtModelEvaluateEnergy(" << arguments
+       << "func.func private " << name << "Energy(" << arguments
        << ", memref<1xf64>, memref<9xf64>)\n"
        << "    attributes {llvm.emit_c_interface}\n";
   }
@@ -11557,6 +11589,19 @@ llvm::Error Builder::build() {
     if (control.tunables || control.tunableGradient)
       return makeError("a term of [[energy.model]] has no derivative in a "
                        "tunable parameter: tunables are refused");
+    // The pair list is a value of the program, at the model's cutoff
+    // (D[mlip-pairlist]).
+    llvm::Expected<int> mode = getPairsMode();
+    if (!mode)
+      return mode.takeError();
+    modelEdges = *mode != MDIR_MLIP_PAIRS_SEARCH;
+    if (modelEdges)
+      for (const Control::ModelTerm &term : control.models) {
+        llvm::Expected<double> cutoff = getModelCutoff(term);
+        if (!cutoff)
+          return cutoff.takeError();
+        modelCutoffs.push_back(*cutoff);
+      }
   }
   // A build of the arrays alone ends with them.
   if (capture)

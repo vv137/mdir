@@ -511,6 +511,9 @@ compileEngine(const Control &control, const System &system,
               compiler::CodeStore *store) {
   auto engine = std::make_unique<Simulation::Engine>();
   engine->control = control;
+  // The program of a model term asks the plugin for its cutoff
+  // (D[mlip-pairlist]).
+  driver::setPluginDirectory(findRuntimeDirectory());
   auto program = buildProgram(control, system);
   if (!program)
     return program.takeError();
@@ -634,6 +637,10 @@ compileEngine(const Control &control, const System &system,
         (void *)&_mlir_ciface_mdrtModelEvaluate);
     add("_mlir_ciface_mdrtModelEvaluateEnergy",
         (void *)&_mlir_ciface_mdrtModelEvaluateEnergy);
+    add("_mlir_ciface_mdrtModelEvaluateEdges",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEdges);
+    add("_mlir_ciface_mdrtModelEvaluateEdgesEnergy",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEdgesEnergy);
     add("_mlir_ciface_mdrtWriteFrameForces",
         (void *)&_mlir_ciface_mdrtWriteFrameForces);
     add("_mlir_ciface_mdrtWriteFrameVirial",

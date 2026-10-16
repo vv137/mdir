@@ -25,8 +25,11 @@
 extern "C" {
 #endif
 
-/* The version of this boundary; a plugin of another version is refused. */
-#define MDIR_MLIP_ABI_VERSION 1
+/* The version of this boundary; a plugin of another version is refused.
+   Version 2 gives the plugin MDIR's pair list (D[mlip-pairlist],
+   docs/metatomic-ml1.md, Section 12) and asks it for the cutoff of a model
+   before the program is built. */
+#define MDIR_MLIP_ABI_VERSION 2
 
 #define MDIR_MLIP_OK 0
 #define MDIR_MLIP_ERROR 1
@@ -77,6 +80,29 @@ typedef struct mdir_mlip_description {
   const char *framework;
 } mdir_mlip_description;
 
+/* How the plugin takes the pair list. */
+#define MDIR_MLIP_PAIRS_SEARCH 0 /* it searches its own (D270) */
+#define MDIR_MLIP_PAIRS_EXACT 1  /* the pairs within the cutoff, counted */
+#define MDIR_MLIP_PAIRS_PADDED 2 /* every slot, without a wait */
+
+/* MDIR's pair list (D[mlip-pairlist]): on the device, `num_slots` slots,
+   rows (i, j, s_a, s_b, s_c) of int32, the pair vector of a row being
+   x_j - x_i + s H, grouped by i in ascending order; particle i has the slots
+   [offsets[i], offsets[i + 1]) (`offsets`, n + 1), and the first counts[i]
+   of them (`counts`, n) are its pairs within the cutoff, every one; the
+   others are pairs within the cutoff and the skin of the last build. Every
+   pair of images is in it once. `builds` counts the builds of the
+   structure that gave the slots: the offsets change only where it does.
+   With the mode MDIR_MLIP_PAIRS_SEARCH the rest is unused. */
+typedef struct mdir_mlip_pairs {
+  int32_t mode;
+  const int32_t *slots;
+  int64_t num_slots;
+  const int32_t *counts;
+  const int32_t *offsets;
+  int64_t builds;
+} mdir_mlip_pairs;
+
 /* One evaluation. */
 typedef struct mdir_mlip_inputs {
   /* The number of particles, and on the device: their positions (n x 3, nm,
@@ -92,6 +118,8 @@ typedef struct mdir_mlip_inputs {
   int32_t periodic[3];
   /* The CUstream that the work goes to. */
   void *stream;
+  /* The pair list, or the mode MDIR_MLIP_PAIRS_SEARCH. */
+  mdir_mlip_pairs pairs;
 } mdir_mlip_inputs;
 
 typedef struct mdir_mlip_outputs {
@@ -126,12 +154,19 @@ const char *mdir_mlip_last_error(void);
 
 int mdir_mlip_load(const mdir_mlip_load_options *options,
                    mdir_mlip_model **model);
+/* The cutoff of the pair list that the model of `options` asks for, in nm,
+   from its file and without a device (`device` is not used), so that the
+   engine can build its program before it loads the model. */
+int mdir_mlip_cutoff(const mdir_mlip_load_options *options, double *cutoff);
 int mdir_mlip_describe(const mdir_mlip_model *model,
                        mdir_mlip_description *description);
-/* Builds the pair list on the device, calls the model (in chunks of centers
-   where it is local and the engine asks for them), differentiates, and adds
-   the forces to the engine's. Waits for the device only for the number of
-   pairs. */
+/* Takes the engine's pair list, or builds its own on the device, calls the
+   model (in chunks of centers where it is local and the engine asks for
+   them), differentiates, and adds the forces to the engine's. With
+   MDIR_MLIP_PAIRS_PADDED it does not wait for the device, but where the
+   structure was built anew, for its offsets; with MDIR_MLIP_PAIRS_EXACT it
+   waits for the numbers of pairs of the chunks; with its own search, for
+   the numbers of pairs that it finds. */
 int mdir_mlip_evaluate(mdir_mlip_model *model, const mdir_mlip_inputs *inputs,
                        mdir_mlip_outputs *outputs);
 /* The memory of the plugin's allocator; `reset` starts the peaks anew. */

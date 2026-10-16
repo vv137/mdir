@@ -35,6 +35,7 @@ struct Plugin {
   const char *(*torchVersion)(void) = nullptr;
   const char *(*lastError)(void) = nullptr;
   int (*load)(const mdir_mlip_load_options *, mdir_mlip_model **) = nullptr;
+  int (*cutoff)(const mdir_mlip_load_options *, double *) = nullptr;
   int (*describe)(const mdir_mlip_model *, mdir_mlip_description *) = nullptr;
   int (*evaluate)(mdir_mlip_model *, const mdir_mlip_inputs *,
                   mdir_mlip_outputs *) = nullptr;
@@ -83,20 +84,23 @@ llvm::Expected<Plugin *> openPlugin(llvm::StringRef path) {
   find(plugin->torchVersion, "mdir_mlip_torch_version");
   find(plugin->lastError, "mdir_mlip_last_error");
   find(plugin->load, "mdir_mlip_load");
+  find(plugin->cutoff, "mdir_mlip_cutoff");
   find(plugin->describe, "mdir_mlip_describe");
   find(plugin->evaluate, "mdir_mlip_evaluate");
   find(plugin->memoryStats, "mdir_mlip_memory_stats");
   find(plugin->free, "mdir_mlip_free");
-  if (missing)
-    return makeError("'" + path + "' is not a plugin of learned potentials "
-                     "of MDIR: a function of include/mdir/MLIP/Plugin.h is "
-                     "missing");
-  if (plugin->abiVersion() != MDIR_MLIP_ABI_VERSION)
+  // The version first: a plugin of another version may lack functions of
+  // this one.
+  if (plugin->abiVersion && plugin->abiVersion() != MDIR_MLIP_ABI_VERSION)
     return makeError(llvm::formatv("the plugin '{0}' has the boundary of "
                                    "version {1}; this MDIR takes {2}",
                                    path, plugin->abiVersion(),
                                    MDIR_MLIP_ABI_VERSION)
                          .str());
+  if (missing)
+    return makeError("'" + path + "' is not a plugin of learned potentials "
+                     "of MDIR: a function of include/mdir/MLIP/Plugin.h is "
+                     "missing");
   loadedPlugin = plugin.release();
   return loadedPlugin;
 }
@@ -114,6 +118,54 @@ ModelTerms *getRunning() {
 }
 
 } // namespace
+
+namespace {
+/// The directory of the runtime libraries (setPluginDirectory).
+std::string pluginDirectory;
+} // namespace
+
+void mdir::driver::setPluginDirectory(llvm::StringRef directory) {
+  std::lock_guard<std::mutex> lock(pluginMutex);
+  pluginDirectory = directory.str();
+}
+
+llvm::Expected<double>
+mdir::driver::getModelCutoff(const Control::ModelTerm &term) {
+  std::string directory;
+  {
+    std::lock_guard<std::mutex> lock(pluginMutex);
+    directory = pluginDirectory;
+  }
+  const char *given = std::getenv("MDIR_MLIP_PLUGIN");
+  if (directory.empty() && !(given && *given))
+    return makeError("the plugin of learned potentials is not found: the "
+                     "directory of the runtime libraries is not known; set "
+                     "MDIR_MLIP_PLUGIN");
+  llvm::Expected<Plugin *> opened = openPlugin(getPluginPath(directory));
+  if (!opened)
+    return opened.takeError();
+  mdir_mlip_load_options options{term.path.c_str(), term.backend.c_str(), -1,
+                                 term.centersPerCall};
+  double cutoff = 0.0;
+  if ((*opened)->cutoff(&options, &cutoff) != MDIR_MLIP_OK)
+    return makeError("cannot read the cutoff of the model '" + term.name +
+                     "' from '" + term.path + "': " +
+                     (*opened)->lastError());
+  return cutoff;
+}
+
+llvm::Expected<int> mdir::driver::getPairsMode() {
+  const char *given = std::getenv("MDIR_MLIP_PAIRS");
+  llvm::StringRef mode = given ? given : "";
+  if (mode.empty() || mode == "exact")
+    return MDIR_MLIP_PAIRS_EXACT;
+  if (mode == "padded")
+    return MDIR_MLIP_PAIRS_PADDED;
+  if (mode == "search")
+    return MDIR_MLIP_PAIRS_SEARCH;
+  return makeError("MDIR_MLIP_PAIRS is '" + mode +
+                   "'; it takes 'exact', 'padded', or 'search'");
+}
 
 std::string mdir::driver::getPluginPath(llvm::StringRef directory) {
   if (const char *given = std::getenv("MDIR_MLIP_PLUGIN"); given && *given)
@@ -152,6 +204,10 @@ ModelTerms::load(const Control &control, const System &system,
   int device = ordinal();
   std::unique_ptr<ModelTerms> terms(new ModelTerms());
   terms->count = static_cast<int64_t>(topology.getNumParticles());
+  llvm::Expected<int> mode = getPairsMode();
+  if (!mode)
+    return mode.takeError();
+  terms->pairsMode = *mode;
 
   for (const Control::ModelTerm &term : control.models) {
     Model model;
@@ -226,7 +282,9 @@ ModelTerms::~ModelTerms() {
 std::string ModelTerms::evaluate(int64_t index, const void *positions,
                                  int bits, const int32_t *numbers, int64_t n,
                                  const double cell[9], void *forces,
-                                 int forceBits) {
+                                 int forceBits, const int32_t *slots,
+                                 int64_t numSlots, const int32_t *pairCounts,
+                                 const int32_t *pairOffsets, int64_t builds) {
   static auto stream = findRuntime<void *(*)(void)>("mdrtDeviceExternalStream");
   if (!stream)
     return "the runtime for NVIDIA GPUs is not loaded";
@@ -243,6 +301,17 @@ std::string ModelTerms::evaluate(int64_t index, const void *positions,
   std::copy(cell, cell + 9, inputs.cell);
   inputs.periodic[0] = inputs.periodic[1] = inputs.periodic[2] = 1;
   inputs.stream = stream();
+  // MDIR's pair list (D[mlip-pairlist]), where the program built it.
+  if (pairCounts) {
+    inputs.pairs.mode = pairsMode;
+    inputs.pairs.slots = slots;
+    inputs.pairs.num_slots = numSlots;
+    inputs.pairs.counts = pairCounts;
+    inputs.pairs.offsets = pairOffsets;
+    inputs.pairs.builds = builds;
+  } else {
+    inputs.pairs.mode = MDIR_MLIP_PAIRS_SEARCH;
+  }
   // The plugin adds its forces to those of the program, where they are.
   mdir_mlip_outputs outputs{};
   outputs.forces = forces;
@@ -324,8 +393,23 @@ namespace {
 void evaluateModel(int64_t index, void *given, void *atomic, double lx,
                    double ly, double lz, double bx, double cx, double cy,
                    int64_t bits, int64_t forceBits, void *added,
-                   void *energy, void *virial) {
+                   void *energy, void *virial, void *slotsGiven = nullptr,
+                   void *countsGiven = nullptr, void *offsetsGiven = nullptr,
+                   int64_t builds = 0) {
   auto *positions = static_cast<StridedMemRefType<char, 2> *>(given);
+  // MDIR's pair list (D[mlip-pairlist]): buffers of the device.
+  const int32_t *slots = nullptr, *pairCounts = nullptr,
+                *pairOffsets = nullptr;
+  int64_t numSlots = 0;
+  if (countsGiven) {
+    auto *s = static_cast<StridedMemRefType<int32_t, 2> *>(slotsGiven);
+    auto *c = static_cast<StridedMemRefType<int32_t, 1> *>(countsGiven);
+    auto *o = static_cast<StridedMemRefType<int32_t, 1> *>(offsetsGiven);
+    slots = s->data + s->offset;
+    numSlots = s->sizes[0];
+    pairCounts = c->data + c->offset;
+    pairOffsets = o->data + o->offset;
+  }
   auto *numbers = static_cast<StridedMemRefType<int32_t, 1> *>(atomic);
   auto *forces = static_cast<StridedMemRefType<char, 2> *>(added);
   // The edge vectors a = (l_x, 0, 0), b = (b_x, l_y, 0), c = (c_x, c_y, l_z),
@@ -338,7 +422,8 @@ void evaluateModel(int64_t index, void *given, void *atomic, double lx,
                    static_cast<int>(bits), numbers->data + numbers->offset,
                    positions->sizes[0], cell,
                    forces->data + forces->offset * (forceBits / 8),
-                   static_cast<int>(forceBits))
+                   static_cast<int>(forceBits), slots, numSlots, pairCounts,
+                   pairOffsets, builds)
              : std::string("a model term is evaluated, but no model is loaded");
   if (!failure.empty())
     stopRun(failure);
@@ -367,4 +452,24 @@ extern "C" void _mlir_ciface_mdrtModelEvaluateEnergy(
     int64_t forceBits, void *forces, void *energy, void *virial) {
   evaluateModel(index, positions, numbers, lx, ly, lz, bx, cx, cy, bits,
                 forceBits, forces, energy, virial);
+}
+
+extern "C" void _mlir_ciface_mdrtModelEvaluateEdges(
+    int64_t index, void *positions, void *numbers, void *slots, void *counts,
+    void *offsets, int64_t builds, double lx, double ly, double lz,
+    double bx, double cx, double cy, int64_t bits, int64_t forceBits,
+    void *forces) {
+  evaluateModel(index, positions, numbers, lx, ly, lz, bx, cx, cy, bits,
+                forceBits, forces, nullptr, nullptr, slots, counts, offsets,
+                builds);
+}
+
+extern "C" void _mlir_ciface_mdrtModelEvaluateEdgesEnergy(
+    int64_t index, void *positions, void *numbers, void *slots, void *counts,
+    void *offsets, int64_t builds, double lx, double ly, double lz,
+    double bx, double cx, double cy, int64_t bits, int64_t forceBits,
+    void *forces, void *energy, void *virial) {
+  evaluateModel(index, positions, numbers, lx, ly, lz, bx, cx, cy, bits,
+                forceBits, forces, energy, virial, slots, counts, offsets,
+                builds);
 }

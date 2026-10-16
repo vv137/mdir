@@ -537,6 +537,17 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       return fail(std::move(error));
   }
 
+  // The program of a model term asks the plugin for its cutoff
+  // (D[mlip-pairlist]); the plugin is beside the runtime libraries,
+  // <prefix>/lib.
+  {
+    std::string executable =
+        llvm::sys::fs::getMainExecutable(argv0, (void *)(intptr_t)&anchor);
+    llvm::SmallString<256> directory(llvm::sys::path::parent_path(
+        llvm::sys::path::parent_path(executable)));
+    llvm::sys::path::append(directory, "lib");
+    setPluginDirectory(directory);
+  }
   auto program = buildProgram(*control, *system);
   if (!program)
     return fail(program.takeError());
@@ -766,6 +777,10 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         (void *)&_mlir_ciface_mdrtModelEvaluate);
     add("_mlir_ciface_mdrtModelEvaluateEnergy",
         (void *)&_mlir_ciface_mdrtModelEvaluateEnergy);
+    add("_mlir_ciface_mdrtModelEvaluateEdges",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEdges);
+    add("_mlir_ciface_mdrtModelEvaluateEdgesEnergy",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEdgesEnergy);
     add("_mlir_ciface_mdrtAddBath", (void *)&_mlir_ciface_mdrtAddBath);
     add("mdrtNoseHooverFactor", (void *)&mdrtNoseHooverFactor);
     add("mdrtWriteSolvent", (void *)&mdrtWriteSolvent);
