@@ -67,7 +67,7 @@ def classify(ll):
 
 if program:
     import subprocess
-    lowered = subprocess.run([os.environ.get("MDIR", "mdir"), "emit", program, "--stage=lowered"],
+    lowered = subprocess.run([os.environ.get("MDIR", "mdir"), "emit", os.path.abspath(program), "--stage=lowered"],
                              cwd=os.path.dirname(os.path.abspath(program)), capture_output=True, text=True,
                              check=True).stdout
     ll = subprocess.run([os.environ.get("MLIR_TRANSLATE", "mlir-translate"), "--mlir-to-llvmir"],
