@@ -3190,7 +3190,7 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
         path.str().c_str());
   // A learned potential (D[metatomic-plugin]) is evaluated by the external
   // framework, which gives its energy and its derivatives: in ML1 on one
-  // GPU, in a fixed cell, outside the deterministic mode, and with no
+  // GPU, outside the deterministic mode, and with no
   // derivative or observation that MDIR would take of the term itself
   // (docs/metatomic-ml1.md, Sections 6.7 to 6.9).
   if (!control.models.empty()) {
@@ -3207,11 +3207,6 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
       return refuse("is not deterministic: its framework adds with atomics "
                     "in an order that the threads decide, and the "
                     "deterministic mode refuses it");
-    if (control.barostat)
-      return refuse("takes a fixed cell yet: a barostat is refused until "
-                    "the virial of the model is validated in a run");
-    if (control.minimize)
-      return refuse("takes no minimization yet: [minimize] is refused");
     if (control.hasFreeEnergy)
       return refuse("has no derivative in lambda: [free_energy] is refused");
     if (!control.observables.empty())

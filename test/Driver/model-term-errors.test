@@ -1,7 +1,7 @@
 # [[energy.model]] (D[metatomic-plugin]): what the reader and the checks of
 # the control file refuse before any plugin is loaded, and what `mdir check`
-# says of a term that it takes. ML1 runs a model on a GPU, in a fixed cell,
-# outside the deterministic mode, without derivatives that MDIR would take
+# says of a term that it takes. ML1 runs a model on a GPU, outside the
+# deterministic mode, without derivatives that MDIR would take
 # of the term (docs/metatomic-ml1.md, Sections 6.7 to 6.9).
 #
 # REQUIRES: python-api
@@ -37,8 +37,13 @@
 # DETERMINISTIC: is not deterministic
 
 # RUN: sed -e 's/^\[dynamics\]/[minimize]/' -e '/^integrator/d' -e '/^time_step/d' %t/run.toml > %t/minimize.toml
-# RUN: not mdir check %t/minimize.toml 2>&1 | FileCheck %s --check-prefix=MINIMIZE
-# MINIMIZE: takes no minimization yet
+# RUN: mdir check %t/minimize.toml | FileCheck %s --check-prefix=CHECK-OK
+
+# A minimization and a barostat take the model's energy, forces, and virial
+# (#367).
+# RUN: sed -e 's/"NVE"/"NPT"\npressure = 1.0/' %t/run.toml > %t/npt.toml
+# RUN: sed -n '/^#--- npt/,/^#--- end/p' %s | sed '1d;$d' >> %t/npt.toml
+# RUN: mdir check %t/npt.toml | FileCheck %s --check-prefix=CHECK-OK
 
 # RUN: sed -n '/^#--- second/,/^#--- end/p' %s | sed '1d;$d' >> %t/run.toml
 # RUN: not mdir check %t/run.toml 2>&1 | FileCheck %s --check-prefix=SECOND
@@ -78,6 +83,16 @@ type = "PERIODIC"
 [execution]
 target = "GPU"
 precision = "DOUBLE"
+#--- end
+
+#--- npt
+[thermostat]
+method = "V-RESCALE"
+time_constant = 0.1
+
+[barostat]
+method = "C-RESCALE"
+time_constant = 1.0
 #--- end
 
 #--- second
