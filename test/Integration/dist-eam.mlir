@@ -121,7 +121,7 @@
 // Each check prints 1 if it holds: energies to a relative 1e-10, every
 // force component to 1e-10 of the largest component, every virial
 // component to 1e-10 of the trace; central differences, with a step of
-// 1e-6, of the distributed energy in six position components and in the
+// 1e-5, of the distributed energy in six position components and in the
 // three stretches of the cell against the distributed forces and the
 // diagonal of the virial, to 1e-7 of the largest force component and of
 // the trace; and the adjoint identity of the density, to a relative 1e-12.
@@ -532,8 +532,8 @@ func.func @energy(%xb: !buf, %edge: f64, %sx: f64, %sy: f64, %sz: f64) -> f64 {
 func.func @check_difference(%xb: !buf, %edge: f64, %i: index, %c: index,
                             %f: !buf, %scale: f64) {
   %one = arith.constant 1.0 : f64
-  %h = arith.constant 1.0e-6 : f64
-  %two_h = arith.constant 2.0e-6 : f64
+  %h = arith.constant 1.0e-5 : f64
+  %two_h = arith.constant 2.0e-5 : f64
   %tolerance = arith.constant 1.0e-7 : f64
   %v = memref.load %xb[%i, %c] : !buf
   %plus = arith.addf %v, %h : f64
@@ -556,7 +556,7 @@ func.func @check_difference(%xb: !buf, %edge: f64, %i: index, %c: index,
 // by 1 + ε), by central differences, is within 1e-7 * scale of W_aa.
 func.func @check_stretch(%xb: !buf, %edge: f64, %sp: vector<3xf64>,
                          %sm: vector<3xf64>, %w: f64, %scale: f64) {
-  %two_h = arith.constant 2.0e-6 : f64
+  %two_h = arith.constant 2.0e-5 : f64
   %tolerance = arith.constant 1.0e-7 : f64
   %px = vector.extract %sp[0] : f64 from vector<3xf64>
   %py = vector.extract %sp[1] : f64 from vector<3xf64>
@@ -648,8 +648,8 @@ func.func @main() {
   // CHECK-NEXT: 1
   // CHECK-NEXT: 1
   %one = arith.constant 1.0 : f64
-  %p = arith.constant 1.000001 : f64
-  %m = arith.constant 0.999999 : f64
+  %p = arith.constant 1.00001 : f64
+  %m = arith.constant 0.99999 : f64
   %wxx = vector.extract %wd[0] : f64 from vector<9xf64>
   %wyy = vector.extract %wd[4] : f64 from vector<9xf64>
   %wzz = vector.extract %wd[8] : f64 from vector<9xf64>

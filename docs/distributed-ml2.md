@@ -978,8 +978,8 @@ relative differences over the 12 runs, `double`, on the CPU:
 | Energy | One domain | $1.8\times10^{-15}$ | $10^{-10}$ |
 | Force component, of $\max\lvert F\rvert$ | One domain | $3.1\times10^{-15}$ | $10^{-10}$ |
 | Virial component, of $\lvert\mathrm{tr}\,\mathsf W\rvert$ | One domain | $4.4\times10^{-16}$ | $10^{-10}$ |
-| Six force components, of $\max\lvert F\rvert$ | Central differences of the distributed energy, step $10^{-6}$ | $2.0\times10^{-8}$ | $10^{-7}$ |
-| The diagonal of the virial, of $\lvert\mathrm{tr}\,\mathsf W\rvert$ | Central differences in the three stretches of the cell, step $10^{-6}$ | $1.1\times10^{-10}$ | $10^{-7}$ |
+| Six force components, of $\max\lvert F\rvert$ | Central differences of the distributed energy, step $10^{-5}$ | $2.3\times10^{-9}$ | $10^{-7}$ |
+| The diagonal of the virial, of $\lvert\mathrm{tr}\,\mathsf W\rvert$ | Central differences in the three stretches of the cell, step $10^{-5}$ | $6.0\times10^{-11}$ | $10^{-7}$ |
 | $\langle\mathbf F, \mathbf v\rangle$ of $U = \langle\mathbf c, \rho\rangle$ | $-\langle\mathbf c, J\mathbf v\rangle$, summed directly | $6.9\times10^{-15}$ | $10^{-12}$ |
 
 The differences from central differences are those of the differences
@@ -1000,8 +1000,8 @@ $3\times2\times1$, and $16\times1\times1$, in the derivative's form and
 after `md-dist-owner-computes` (6 runs), against one domain: energy within
 $2.4\times10^{-16}$, force components within $2.1\times10^{-15}$, virial
 components within $5.2\times10^{-17}$ (tolerance $10^{-10}$); three force
-components and the stretch along $x$ against central differences within
-$2.6\times10^{-8}$ and $1.6\times10^{-11}$ (tolerance $10^{-7}$).
+components and the stretch along $x$ against central differences (step
+$10^{-5}$) within $2.5\times10^{-9}$ and $7.1\times10^{-12}$ (tolerance $10^{-7}$).
 
 IR tests: `test/Dialect/MD/Transforms/differentiate-eam.mlir` (the copy of
 $\bar\rho$ to the ghosts and the force gather that reads it, on both
@@ -1019,7 +1019,9 @@ a field computed from the positions
 - `md-differentiate` (`lib/Dialect/MD/Transforms/Differentiate.cpp`) walks
   the body of a potential on domains once, in reverse, keeping the negated
   adjoints of its values on domains and of the positions as lists of terms
-  (complete, or the two partial results of a traversal); the transfers are
+  (complete, or the two partial results of a traversal): the map of the
+  density's adjoint yields $-\bar\rho$, the force on the density, and the
+  force kernel is written for it. The transfers are
   transposed by `AdjointOpInterface` as in Section 14.3, with the complete
   terms of a value added before its transpose, so that the density's
   `halo_sum` yields one $\bar\rho$ and one copy.
@@ -1032,6 +1034,12 @@ a field computed from the positions
 ### 15.7 What is left
 
 - The derivative through a pair sum that reads a field computed from the
-  positions on the unique traversal (15.4).
+  positions on the unique traversal (15.4). The same missing form, a
+  two-ended gather that evaluates the kernel at both particles, means that
+  on the directed traversal the adjoint of such a field is emitted directly
+  as the gather at the owners: a checked optimization (V4, V8, the proof
+  of 15.4) without a switch, so that no derivative's form with $G^\mathsf T$
+  is compared with it, as principle 3 asks. That form, and the comparison,
+  come with the new gather.
 - Derivatives in parameters or fields on domains; the `mixed` mode and
   GPUs; the path through `md_exec` (Section 7.2); migration; MPI.
