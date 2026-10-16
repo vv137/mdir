@@ -772,6 +772,15 @@ $\langle\mathbf c, \mathbf F\rangle_O = -\langle G\mathbf c, G\mathbf c\rangle_\
 whose right side is computed directly: to $2.4\times10^{-15}$ relative or
 less on the four grids (tolerance $10^{-12}$).
 
+`test/Integration/dist-many-body.mlir`: the rewrite of a many-body energy,
+$U = \sum_i q_i\psi_i + \sum_{i<j}\psi_i\psi_j/r_{ij}$ with
+$\psi_i = \sqrt{\rho_i}$ and $\rho_i = \sum_j e^{-r_{ij}}$ (a gather, a map, a
+sum over particles with a field argument, and a pair sum that reads the map
+at both particles through its copy to the ghosts), on the grids
+$2\times1\times1$, $3\times2\times1$, and $16\times1\times1$ and both
+traversals, against one domain: $U = 1896.65$ within $2.4\times10^{-16}$
+relative (tolerance $10^{-10}$). Its derivative is the next part.
+
 IR tests: `test/Dialect/MD/Transforms/distribute.mlir` (the rewrite of
 Lennard-Jones with a truncation, and of a many-body term with a gather, a
 map, a sum over particles, a field argument, and a field read at
