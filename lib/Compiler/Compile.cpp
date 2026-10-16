@@ -176,12 +176,15 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // The structures of the tuples are the runtime's to keep, across the
   // activations of the entry of an embedding front end (D253) and across
   // the segments of `mdir run` (#316).
-  os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true}"
+  bool threaded = control.threads > 1;
+  // On one thread the spreading of PME adds to its grid without atomics
+  // (D[cpu-pme-parallel]).
+  os << "md-exec-assign-storage,convert-md-exec-to-loops{kept-tuples=true"
+     << (threaded ? "" : " atomic-grid=false") << "}"
      // The code writes no buffer of the model that the entry takes
      // (D258): proven here, or no compile.
      << ",check-read-only-arguments"
      << ",fixed-order-reductions,";
-  bool threaded = control.threads > 1;
   if (threaded)
     os << "convert-scf-to-openmp,hoist-static-allocas,canonicalize,";
   // In the deterministic mode a sine does not depend on what else its

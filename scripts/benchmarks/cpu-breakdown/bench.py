@@ -16,13 +16,15 @@ VARIANT:
   m<T>         MDIR, target CPU, T threads, the default list (cutoff + 1.5 A)
   m<T>r<D>     the same with pairlist_distance D (A)
   ms<T>        one run of m<T> under the sampler (sampler.c), not timed
+  m<T>@NAME    (and ms<T>@NAME) the same with the program NAME of --builds
   g<T>         GROMACS -nb cpu -pme cpu, T OpenMP threads, its default list policy
   x<T>         GROMACS with an exact buffer: verlet-buffer-tolerance -1,
                rlist = cutoff + 3 A, nstlist 10
 The rate of MDIR is that of the second half of its run ("from step"), that of
 GROMACS with -resethway. Writes $CPU_BENCH_DIR/SYSTEM/runs/TAG/<variant>-r<round>/
 and appends a JSON line per run to runs/TAG/results.jsonl; summarize.py
-reads them. Round 0 is to be dropped; the order alternates from round to round.
+reads them. --builds NAME=PATH,NAME=PATH names programs of MDIR (frozen
+copies of builds), so that builds are compared in one job. Round 0 is to be dropped; the order alternates from round to round.
 
 The environment: CPU_BENCH_DIR (required); MDIR, GMX (programs;
 by default the bare names); SAMPLER (the library built from sampler.c).
@@ -46,11 +48,14 @@ system = sys.argv[1]
 rounds = int(sys.argv[2])
 variants = sys.argv[3].split(",")
 scale = 1.0
+BUILDS = {}
 tag = "t" + time.strftime("%m%d-%H%M%S")
 args = sys.argv[4:]
 while args:
     if args[0] == "--steps-scale":
         scale = float(args[1]); args = args[2:]
+    elif args[0] == "--builds":
+        BUILDS = dict(b.split("=", 1) for b in args[1].split(",")); args = args[2:]
     elif args[0] == "--tag":
         tag = args[1]; args = args[2:]
     else:
@@ -146,8 +151,9 @@ def mdir_control(threads, steps, reach=None):
 
 def run_mdir(variant, d):
     sampled = variant[1] == "s"
-    m = re.match(r"ms?(\d+)(?:r([0-9.]+))?$", variant)
+    m = re.match(r"ms?(\d+)(?:r([0-9.]+))?(?:@(\w+))?$", variant)
     threads, reach = int(m.group(1)), m.group(2)
+    program = BUILDS[m.group(3)] if m.group(3) else MDIR
     steps = steps_for(threads, "m")
     open(d + "/mdir.toml", "w").write(mdir_control(threads, steps, reach))
     env = dict(os.environ, MDIR_COMPILE_CACHE="off", OMP_PROC_BIND="close", OMP_PLACES="cores")
@@ -155,13 +161,14 @@ def run_mdir(variant, d):
         os.makedirs(d + "/prof", exist_ok=True)
         env.update(LD_PRELOAD=SAMPLER, SAMPLER_OUT=d + "/prof")
     t0 = time.time()
-    out = subprocess.run([MDIR, "run", "mdir.toml"], cwd=d, capture_output=True, text=True,
+    out = subprocess.run([program, "run", "mdir.toml"], cwd=d, capture_output=True, text=True,
                          env=env)
     log = out.stdout + out.stderr
     open(d + "/run.log", "w").write(log)
     rate = re.search(r"from step [0-9]+ to step [0-9]+, ([0-9.]+) ms per step", log)
     b = re.search(r"built (\d+) times, every ([0-9.]+) steps", log)
     return dict(rate_ms=float(rate.group(1)) if rate else None, steps=steps, threads=threads, reach=reach,
+                program=program,
                 builds=int(b.group(1)) if b else None, build_interval=float(b.group(2)) if b else None,
                 wall_s=time.time() - t0, ok=out.returncode == 0)
 

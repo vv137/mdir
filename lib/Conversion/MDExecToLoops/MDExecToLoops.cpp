@@ -78,8 +78,9 @@ struct Neighbors {
 
 class Lowering {
 public:
-  explicit Lowering(ModuleOp module, bool keptTuples)
-      : keptTuples(keptTuples), module(module), context(module.getContext()) {
+  explicit Lowering(ModuleOp module, bool keptTuples, bool atomicGrid)
+      : keptTuples(keptTuples), atomicGrid(atomicGrid), module(module),
+        context(module.getContext()) {
     // A module with a triclinic cell lowers every cell to the vector of six,
     // a_x, b_y, c_z, b_x, c_x, c_y; one without, to the three edges.
     module.walk([&](md::TriclinicCellOp) { triclinic = true; });
@@ -147,6 +148,9 @@ private:
   /// Whether the renumbered members and the incidence structures are taken
   /// from the runtime.
   bool keptTuples;
+  /// Whether the spreading of PME adds to its grid with atomics: the
+  /// program runs its parallel loops on several threads.
+  bool atomicGrid;
   /// The members that the runtime has renumbered.
   llvm::DenseSet<Value> runtimeMembers;
 
@@ -458,6 +462,23 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald";
+  // On one thread the spreading adds to the fixed-point grid without
+  // atomics: an integer sum is the same in any order, and a locked addition
+  // costs about 20 cycles where nothing else writes (D[cpu-pme-parallel]).
+  if (!atomicGrid)
+    templates->walk([](memref::AtomicRMWOp atomic) {
+      if (atomic.getKind() != arith::AtomicRMWKind::addi)
+        return;
+      OpBuilder builder(atomic);
+      Location loc = atomic.getLoc();
+      Value old = memref::LoadOp::create(builder, loc, atomic.getMemref(),
+                                         atomic.getIndices());
+      Value sum = arith::AddIOp::create(builder, loc, old, atomic.getValue());
+      memref::StoreOp::create(builder, loc, sum, atomic.getMemref(),
+                              atomic.getIndices());
+      atomic.replaceAllUsesWith(old);
+      atomic.erase();
+    });
   // The functions of the potential at the particles (the fourth result of
   // md.reciprocal), and those of a list of the particles
   // (D262), only where a sum asks for them, so
@@ -501,9 +522,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // A triclinic cell takes the functions of its own (docs/triclinic-m2.md).
   bool tilted = isTriclinic(op.getCellMutable().get());
   auto instance = [&](StringRef name) {
-    std::string full = tilted && name != "mdrt.pme_real"
-                           ? (name + "_triclinic").str()
-                           : name.str();
+    bool shared = name == "mdrt.pme_real" || name == "mdrt.pme_fft_forward" ||
+                  name == "mdrt.pme_fft_backward";
+    std::string full =
+        tilted && !shared ? (name + "_triclinic").str() : name.str();
     return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
         module, getPMEInstanceName(full, position, charge, force,
                                    op.getOrder())));
@@ -524,8 +546,11 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
       builder, loc, builder.getBoolAttr(op.getDispersion()));
   // The cell is the vector of its edge lengths by now.
   Value box = op.getCellMutable().get();
+  if (op.getScratch().size() < 4)
+    return op->emitOpError()
+           << "expected a buffer for the factors of the influence function";
   Value fixed = op.getScratch()[0], real = op.getScratch()[1],
-        complex = op.getScratch()[2];
+        complex = op.getScratch()[2], tables = op.getScratch()[3];
 
   if (listed)
     func::CallOp::create(builder, loc, instance("mdrt.pme_spread_listed"),
@@ -537,27 +562,24 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                                     order, op.getModuli()});
   func::CallOp::create(builder, loc, instance("mdrt.pme_real"),
                        ValueRange{fixed, real});
-  // The transforms of the runtime take the numbers of points as i64.
-  Type wide = builder.getI64Type();
-  SmallVector<Value> sizes;
-  for (int64_t points : grid)
-    sizes.push_back(arith::ConstantOp::create(builder, loc, wide,
-                                              builder.getI64IntegerAttr(points)));
-  Type buffer = real.getType();
-  FunctionType transform =
-      builder.getFunctionType({buffer, buffer, wide, wide, wide}, {});
-  func::FuncOp forward = getOrDeclare("mdrtFFTForward3D", transform);
-  func::FuncOp backward = getOrDeclare("mdrtFFTBackward3D", transform);
-  for (func::FuncOp function : {forward, backward})
-    function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
-  func::CallOp::create(builder, loc, forward,
-                       ValueRange{real, complex, sizes[0], sizes[1], sizes[2]});
-  auto convolve = func::CallOp::create(
-      builder, loc, instance("mdrt.pme_convolve"),
-      ValueRange{complex, op.getModuli(), box, beta, coulomb,
-                 dispersion, k1, k2, k3});
-  func::CallOp::create(builder, loc, backward,
-                       ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});
+  // The transforms in parallel over the lines of each pass
+  // (D[cpu-pme-parallel]).
+  func::CallOp::create(builder, loc, instance("mdrt.pme_fft_forward"),
+                       ValueRange{real, complex, k1, k2, k3});
+  // A step that writes neither the energy nor the virial only scales the
+  // transform, as on a device.
+  SmallVector<Value> convolveOperands = {complex, op.getModuli(), tables, box,
+                                         beta, coulomb, dispersion, k1, k2,
+                                         k3};
+  func::CallOp convolve;
+  if (op.getEnergy().use_empty() && op.getVirial().use_empty())
+    func::CallOp::create(builder, loc, instance("mdrt.pme_scale"),
+                         convolveOperands);
+  else
+    convolve = func::CallOp::create(
+        builder, loc, instance("mdrt.pme_convolve"), convolveOperands);
+  func::CallOp::create(builder, loc, instance("mdrt.pme_fft_backward"),
+                       ValueRange{complex, real, k1, k2, k3});
   // The forces, or the potential at the particles in their place.
   if (listed && !op.getPotential())
     func::CallOp::create(builder, loc, instance("mdrt.pme_gather_listed"),
@@ -569,8 +591,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                                                     : "mdrt.pme_gather"),
                          ValueRange{positions, charges, real, box, k1, k2, k3,
                                     order, forces, op.getModuli()});
-  op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
-  op.getVirial().replaceAllUsesWith(convolve.getResult(1));
+  if (convolve) {
+    op.getEnergy().replaceAllUsesWith(convolve.getResult(0));
+    op.getVirial().replaceAllUsesWith(convolve.getResult(1));
+  }
   return success();
 }
 
@@ -1334,7 +1358,7 @@ public:
       ConvertMDExecToLoops>::ConvertMDExecToLoopsBase;
 
   void runOnOperation() final {
-    Lowering lowering(getOperation(), keptTuples);
+    Lowering lowering(getOperation(), keptTuples, atomicGrid);
     if (failed(lowering.run()))
       signalPassFailure();
   }

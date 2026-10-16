@@ -2422,6 +2422,10 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
         instance += "llvm.inline_asm has_side_effects "
                     "\"red.relaxed.gpu.global.add.f32 [$0], $1;\", \"l,f\" "
                     "%pointer, %value : (!llvm.ptr<1>, f32) -> ()";
+    } else if (text.consume_front("PME_FFT")) {
+      // The transforms of the runtime of the host for a grid in
+      // `!pme_real` (runtime/mdrt_fft.c).
+      instance += force.isF64() ? "mdrtFFT64" : "mdrtFFT32";
     } else if (text.consume_front("PME_REAL_BYTES")) {
       // The bytes of a value of `!pme_real`, the type of the forces.
       instance += force.isF64() ? "8" : "4";
