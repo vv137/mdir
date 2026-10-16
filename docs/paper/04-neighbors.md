@@ -717,6 +717,12 @@ derivatives. The second costs the model about $(R/r_c)^3$ times the pairs.
 
 **Checks.** With `MDIR_MLIP_CHECK_PAIRS` every evaluation compares the
 pairs within $r_c$ with those of the plugin's search of every image (D270)
-as sets; they are the same at every evaluation on the four boxes of the
-tests, the 6.2 Å one included, under NVE and under a barostat
-(`test/Driver/model-term-aoti-gpu.test`).
+as sets. They are the same at every evaluation on the four water boxes of
+the tests (the 6.2 Å cell among them), on two tilted cells narrower than
+$2r_c$ (6.2 and 10.5 Å), where a pair has several images along tilted
+lattice vectors, and on liquid water of 3,072 and 12,288 atoms under NVE
+and under stochastic cell rescaling, through the builds that these cause
+(`test/Driver/model-term-aoti-gpu.test` runs the 6.2 Å cell with the
+barostat). With the exact list the step of 12,288 atoms on an RTX 4090
+takes 6.10 s against 6.70 s with the search; MDIR's list costs about 1 ms a
+step at every size measured (`docs/metatomic-ml1.md`, Section 12.8).

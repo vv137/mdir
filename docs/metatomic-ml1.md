@@ -1311,3 +1311,115 @@ built, before the model is loaded on the device: `mdir run`, `mdir emit`,
 and a Python simulation ask the plugin (`mdir_mlip_cutoff`): AOTI reads
 `r_max` and the units from the package's metadata, METATOMIC loads the
 TorchScript archive on the host and keeps it for the load.
+
+### 12.7 What was built
+
+- **The IR.** `!md.edges<@atoms>` and `md.edges` (MD dialect), verified:
+  the cutoff at most the neighborhood's, the positions and the cell of
+  the neighborhood, no excluded pairs. `md_exec.build_edges`, whose
+  storage form gives the slots, the counts, the offsets, and the number of
+  their build (`memref<?x5xi32, 1>`, `memref<?xi32, 1>` twice, `i64`),
+  f64 positions required. `convert-md-to-md-exec` makes one from the
+  other as it does the triplets; `md-exec-choose-neighbors` keeps the
+  structure of the edges a matrix while the classical terms may take
+  groups; `md-exec-assign-storage` refuses it on the host. An
+  `mdrt.host_call` takes an `!md.edges` in place only, as four arguments of
+  its callee (`mdrt::getHostArgumentCount`).
+- **The lowering** (`MDExecToGPU`): an `md_exec.empty_neighbors` whose
+  structure reaches a `build_edges` keeps the slots (runtime,
+  `mdrtEdgesCreate`), the counts and the offsets (device), and their copies
+  on the host (freed where the function ends); every build of its matrix
+  then counts the candidates, reads the counts, reserves the slots
+  (`mdrtEdgesReserve`, which numbers the build in the process), copies the
+  offsets back, and writes the candidates (12.3); `build_edges` is the
+  kernel of each step. The CPU lowering refuses the op.
+- **The driver.** `Builder::emitModelTerms` emits the neighborhood and the
+  edges at the model's cutoff and calls `@mdrtModelEvaluateEdges` (or
+  `...EdgesEnergy`) with them; with `MDIR_MLIP_PAIRS=search` it emits the
+  calls of D270 and no list. The cutoff comes from the plugin
+  (`driver::getModelCutoff`, `mdir_mlip_cutoff`) in the directory that
+  `mdir run` and the Python module set (`driver::setPluginDirectory`). The
+  log's line of the model says how the list is taken; its count of the
+  builds of neighbor structures now counts the model's structure too.
+- **The plugin** takes the slots (`takePairs`): every slot, with the
+  chunks at the offsets, which it reads where the number of the build
+  changed; or the pairs within the cutoff, from the counts of the chunks
+  (one copy) and `nonzero_static` on the device, so the order of the slots
+  is kept. `MDIR_MLIP_CHECK_PAIRS` compares the pairs within the cutoff
+  with its own search (`comparePairs`) at every evaluation.
+- **The C boundary**, version 2 (12.5); the core refuses a plugin of
+  version 1 before it looks for the functions of version 2.
+
+### 12.8 Validation
+
+RTX 4090 (`MDIR_GPU=RTX4090`) unless said; torch 2.14.1, nequip 0.19.1;
+the AOTI package made by `nequip-to-aoti.py --arch 8.9 12.0` on an RTX
+4090, the METATOMIC artifact with float64 inputs; the boxes and references
+of Section 9.2; tolerances of float64 inputs there.
+
+**The same pairs.** With `MDIR_MLIP_CHECK_PAIRS=1` the pairs within the
+cutoff of MDIR's list are the plugin's search as a set at every
+evaluation, in every run below: the four boxes of Section 9.2 (the 6.2 Å
+cell, narrower than the cutoff, included) in `exact` and `padded`, AOTI
+and METATOMIC, `mixed` and `double`, whole and in chunks of 5, 21
+evaluations each (20 steps of NVE from the lattice); two tilted cells
+narrower than $2r_c$ (8 waters in 6.2 Å, tilts 0.15, -0.25, 0.2 of the
+edge; 27 waters in 10.5 Å, tilts 0.1, -0.15, 0.2), where a pair has
+several images along tilted lattice vectors; liquid water of 3,072 and
+12,288 atoms (wide cells, the matrix's minimum image) in chunks of 512,
+under NVE and under NPT with stochastic cell rescaling, through the
+builds that the moving particles and the scaled cell cause; and 3,072
+atoms with the classical terms in groups beside the model's matrix
+(`neighbor_structure = "GROUPS"`). `model-term-aoti-gpu.test` and
+`model-term-gpu.test` run the check on the 6.2 Å cell, the former under
+the barostat too.
+
+**Against the `nequip` package's calculator** (largest differences over
+the components and the cases; 84 cases on the four boxes, 24 on the two
+tilted ones):
+
+| Pair list | Backend | $\lvert\Delta E\rvert$ | max $\lvert\Delta F\rvert$ | max $\lvert\Delta W\rvert$ |
+|---|---|---|---|---|
+| exact | AOTI | $3.2 \times 10^{-3}$ | $3.3 \times 10^{-3}$ | $2.9 \times 10^{-3}$ |
+| exact | METATOMIC | $8.3 \times 10^{-4}$ | $3.5 \times 10^{-3}$ | $1.3 \times 10^{-3}$ |
+| padded | AOTI | $2.9 \times 10^{-3}$ | $4.0 \times 10^{-3}$ | $3.2 \times 10^{-3}$ |
+| padded | METATOMIC | $2.4 \times 10^{-3}$ | $3.7 \times 10^{-3}$ | $3.0 \times 10^{-3}$ |
+| search (D270) | AOTI | $3.2 \times 10^{-3}$ | $3.5 \times 10^{-3}$ | $2.6 \times 10^{-3}$ |
+| search (D270) | METATOMIC | $5.4 \times 10^{-4}$ | $3.3 \times 10^{-3}$ | $1.5 \times 10^{-3}$ |
+| all, tilted cells | AOTI | $2.7 \times 10^{-3}$ | $3.1 \times 10^{-3}$ | $7.3 \times 10^{-4}$ |
+
+Every difference is within its tolerance ($4.8 \times 10^{-3}$, $1.9
+\times 10^{-2}$, $4.8 \times 10^{-3}$); the largest energies are those of
+chunks of 5 centers, the float32 sums of the package in another order
+(Section 11.11), in every way of taking the list. The padded list gives
+the model more pairs, whose zero contributions change the order of its
+float32 sums: its differences are those of the others.
+
+**Time and memory** (liquid water, AOTI, `mixed`, `mdir run`, the skin of
+the tests, 0.5 Å; whole systems up to 1,152 atoms, chunks of 512 centers
+from 3,072): the plugin's part of the list with `MDIR_MLIP_TIMING=1`;
+MDIR's kernels of the list with `MDRT_PROFILE=1 MDRT_WAIT=1`, the kernel of
+each step and the two kernels of each build per step (a build every 2 to 5
+steps here); the step the mean of the second half of a run without
+timing; the peak of the plugin's allocator.
+
+| Atoms | Pairs | Search (ms) | Exact, plugin (ms) | MDIR's kernels per step (ms) | Step, search (ms) | Step, exact | Step, padded | Peak, search and exact (GiB) | Peak, padded |
+|---|---|---|---|---|---|---|---|---|---|
+| 96 | 13,660 | 0.51 | 0.19 | 0.13 + 0.26 | 47.7 | 47.8 | 59.4 | 1.71 | 2.09 |
+| 384 | 55,628 | 0.91 | 0.21 | 0.16 + 0.26 | 192 | 192 | 230 | 6.88 | 8.27 |
+| 1,152 | 171,782 | 5.6 | 0.26 | 0.16 + 0.29 | 595 | 590 | out of memory | 21.2 | |
+| 3,072 | 456,554 | 37 | 0.31 | 0.17 + 0.37 | 1,610 | 1,572 | 1,889 | 9.6 | 11.6 |
+| 6,144 | 900,448 | 147 | 0.36 | 0.20 + 0.36 | 3,253 | 3,109 | 3,878 | 9.5 | 11.9 |
+| 12,288 | 1,766,834 | 587 | 0.47 | 0.35 + 0.35 | 6,695 | 6,095 | 7,680 | 9.4 | 11.9 |
+
+MDIR's list costs about 1 ms a step whatever the size here, against a
+search that grows as $N^2$: at 12,288 atoms the step is 9% shorter. Its
+kernels have a thread for each particle, so below a few thousand
+particles they take the time of one thread's candidates (0.6 ms a build),
+not of the system's. The peak of the plugin's allocator is the same with
+the exact list; MDIR's slots and candidates add 36 bytes a slot (80 MB at
+12,288 atoms, 1.26 times the pairs), and the plugin no longer takes the
+search's block of up to 256 MiB. The padded list gives the model 1.23 to 1.26
+times the pairs with this skin: 20 to 26% more time and peak memory, and
+the whole system of 1,152 atoms, which fits on 24 GB with the exact list,
+asks for 12.6 GiB more and fails.
