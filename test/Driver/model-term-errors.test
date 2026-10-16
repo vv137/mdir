@@ -12,7 +12,7 @@
 # RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=CHECK-OK
 # CHECK-OK: model: allegro, METATOMIC, '{{.*}}allegro.pt', 16 centers per call
 
-# An AOTInductor package of the `nequip` package (D[mlip-aoti]).
+# An AOTInductor package of the `nequip` package (D273).
 # RUN: sed -e 's/"METATOMIC"/"AOTI"/' -e 's/allegro.pt/allegro.nequip.pt2/' %t/run.toml > %t/aoti.toml
 # RUN: mdir check %t/aoti.toml | FileCheck %s --check-prefix=CHECK-AOTI
 # CHECK-AOTI: model: allegro, AOTI, '{{.*}}allegro.nequip.pt2', 16 centers per call

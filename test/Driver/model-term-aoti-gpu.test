@@ -1,4 +1,4 @@
-# The AOTInductor backend of the model term, D[mlip-aoti]
+# The AOTInductor backend of the model term, D273
 # (docs/metatomic-ml1.md, Section 11): Allegro-OAM-L 0.1, compiled into an
 # AOTInductor package of the `nequip` package's target 'ase' by
 # scripts/mlip/nequip-to-aoti.py on the test's own device, from the package

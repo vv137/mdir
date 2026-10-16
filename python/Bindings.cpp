@@ -384,7 +384,7 @@ PYBIND11_MODULE(_core, m) {
     .def_property("observe", [](const driver::ExternalTerm &t) { return observeOf(t); },
                   [](driver::ExternalTerm &t, py::object value) { setObserve(t, value, "ExternalTerm"); });
   // Learned potentials, `[[energy.model]]` (D270): a
-  // metatomic artifact or an AOTInductor package (D[mlip-aoti]) evaluated
+  // metatomic artifact or an AOTInductor package (D273) evaluated
   // through the optional plugin, on a GPU.
   py::class_<driver::Control::ModelTerm>(m, "ModelTerm")
     .def(py::init([](std::string name, std::string path, std::string backend,

@@ -15,7 +15,7 @@
 // itself on the device, with every image within the cutoff and no skin
 // (Section 6.4 of the design).
 //
-// The backend "AOTI" (D[mlip-aoti], Section 11 of the design) loads instead
+// The backend "AOTI" (D273, Section 11 of the design) loads instead
 // an AOTInductor package of the `nequip` package's `ase` target with
 // torch::inductor::AOTIModelPackageLoader and gives it the same pair list as
 // edges and cell shifts; its forces and stress are the derivatives that the

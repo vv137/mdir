@@ -2,7 +2,7 @@
 """Checks the model term of D270 (docs/metatomic-ml1.md,
 Section 7) through MDIR's Python model on a GPU: the energy, the forces, and
 the virial tensor of a metatomic artifact, or an AOTInductor package of the
-`nequip` package (`.nequip.pt2`, D[mlip-aoti]), evaluated by a Python simulation
+`nequip` package (`.nequip.pt2`, D273), evaluated by a Python simulation
 against a reference (that of the `nequip` package's ASE calculator, written by water-box.py
 --reference), and optionally a short run of constant energy.
 

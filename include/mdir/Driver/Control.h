@@ -365,7 +365,7 @@ struct Control {
     std::string name;
     /// The loader: "METATOMIC", a TorchScript artifact of metatomic, or
     /// "AOTI", an AOTInductor package of the `nequip` package
-    /// (D[mlip-aoti]).
+    /// (D273).
     std::string backend = "METATOMIC";
     /// The artifact, relative to the control file where read from one.
     std::string path;

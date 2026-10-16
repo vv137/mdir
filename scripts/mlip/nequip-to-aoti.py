@@ -1,6 +1,6 @@
 """Compiles a model package of the `nequip` package (`.nequip.zip`) into an
 AOTInductor package (`.nequip.pt2`) for the `AOTI` backend of MDIR's plugin
-of learned potentials (D[mlip-aoti], docs/metatomic-ml1.md, Section 11).
+of learned potentials (D273, docs/metatomic-ml1.md, Section 11).
 
 The package is the one that `nequip-compile --mode aotinductor --target ase`
 writes, which the plugin loads as it is: the inputs `pos`, `edge_index`,

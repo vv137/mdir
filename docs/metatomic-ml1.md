@@ -8,7 +8,7 @@ one GPU agreeing with the original backend. Sections 1 to 8 are the design
 and the feasibility study, measured outside the repository with the wrapper
 `scripts/mlip/nequip-to-metatomic.py`; Section 9 is what the first PR built
 and its validation, Section 10 minimization and constant pressure (D272),
-and Section 11 the AOTInductor backend (`D[mlip-aoti]`).
+and Section 11 the AOTInductor backend (`D273`).
 
 ## 1. What has been ruled (the maintainer, 2026-10-16)
 
@@ -827,7 +827,7 @@ drifts by $-0.042$ kJ/mol/ps ($-0.52$ kJ/mol/ns per atom) with a fluctuation
 of 0.14 kJ/mol about the fit, mean temperature 266 K; in `mixed` $-0.099$
 kJ/mol/ps ($-1.2$ kJ/mol/ns per atom) and 0.15 kJ/mol, 262 K.
 
-## 11. The AOTInductor backend (D[mlip-aoti])
+## 11. The AOTInductor backend (D273)
 
 The second step of Section 8 (issue #373): `backend = "AOTI"` loads an
 AOTInductor package of the `nequip` package (`.nequip.pt2`) in the same
