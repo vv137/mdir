@@ -34,6 +34,19 @@
 # LOG: MDIR: model 'allegro': 3 evaluations, {{[0-9]+}} pairs and 6 calls in the last
 # START: mdir run energy ok
 
+# A minimization and a run at constant pressure with the exact work, as
+# for METATOMIC (D272).
+# RUN: sed -e 's/^\[dynamics\]/[minimize]/' -e '/^integrator/d' -e '/^time_step/d' -e 's/^steps .*/steps = 20/' %t/run.toml > %t/min.toml
+# RUN: cd %t && env TMPDIR=%t mdir run min.toml > %t/min.log
+# RUN: %mlip_python -c "import re, sys; e = [float(l.split()[2]) for l in open(sys.argv[1]) if re.match(r'INFO:\s+\d', l)]; print('descends' if e[-1] < e[0] else 'rises', len(e))" %t/min.log | FileCheck %s --check-prefix=MIN
+# MIN: descends 21
+# RUN: sed -e 's/"NVE"/"NPT"\npressure = 1.0/' -e 's/^steps .*/steps = 20/' -e 's/^energy_interval.*/energy_interval = 5/' %t/run.toml > %t/npt.toml
+# RUN: printf '[thermostat]\nmethod = "V-RESCALE"\ninterval = 5\ntime_constant = 0.1\n\n[barostat]\nmethod = "C-RESCALE"\ntime_constant = 1.0\nwork = "EXACT"\n' >> %t/npt.toml
+# RUN: cd %t && env TMPDIR=%t mdir run npt.toml > %t/npt.log
+# RUN: FileCheck %s --check-prefix=NPT < %t/npt.log
+# NPT: MDIR:   MODEL allegro
+# NPT: MDIR: model 'allegro': {{[0-9]+}} evaluations
+
 # A package on a device it has no kernels for is refused (the package is
 # told that it was compiled for sm_10).
 # RUN: %mlip_python -c "import zipfile, sys; z = zipfile.ZipFile(sys.argv[1]); o = zipfile.ZipFile(sys.argv[2], 'w'); [o.writestr(i, z.read(i).replace(b'\"AOTI_COMPUTE_CAPABILITY\": \"', b'\"AOTI_COMPUTE_CAPABILITY\": \"10') if i.filename.endswith('metadata.json') else z.read(i)) for i in z.infolist()]" %t/allegro.nequip.pt2 %t/other.nequip.pt2

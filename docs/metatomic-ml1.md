@@ -1037,20 +1037,143 @@ nequip-compile Allegro-OAM-L-0.1.nequip.zip allegro.nequip.pt2 \
   checks of the backend accept `AOTI`. The refusals of Section 9.1 apply
   unchanged.
 
-### 11.10 Validation
+- **The host's processor.** The package also holds host code, which
+  AOTInductor compiles with `-march=native`: a package compiled on a host
+  with AVX-512 stopped with an illegal instruction when it was loaded on a
+  host with AVX2 alone (two kinds of node of the same cluster). The plugin
+  compares the package's `AOTI_CPU_ISA` with the host's processor and
+  refuses a mismatch, and `nequip-to-aoti.py` compiles the host code for
+  x86-64-v3 (AVX2) by default (`--cpu native` for the compiling host's).
 
-As for D270 (Section 9.2), on RTX 4090s and the RTX PRO 6000, in `mixed`
-and `double` (float64 inputs only, 11.4):
+### 11.10 What the backend is and is not
 
-- energy, forces, and virial against the `nequip` package's ASE calculator
-  evaluating the Allegro model (`NequIPCalculator`, eager), on the boxes of
-  Section 3.2 and liquid water, within the tolerances of float64 inputs
-  (Section 7);
-- AOTI against METATOMIC on the same systems, and chunks against one call;
-- NVE from a minimized configuration, its drift and fluctuation;
-- peak device memory against pairs on both devices, with and without the
-  Triton kernel, and the largest system that fits whole and in chunks;
-- the rate in atom-steps per second, and ns/day at 0.5 fs, on the largest
-  sizes that fit, with and without chunks.
+An AOTInductor package has no standard calling convention: its inputs and
+outputs are whatever its exporter chose. The backend `AOTI` takes the
+`nequip` package's convention alone (`nequip-compile --target ase`, the
+inputs and outputs that its metadata names, 11.2), whatever the
+architecture, NequIP or Allegro, and refuses any other. Another framework's
+export (MACE's, for example) would take a thin adapter of its own for the
+names and shapes of its inputs and outputs, while the parts of the plugin
+that do not depend on the model stay shared: the pair list, the buffers,
+the stream, the units, and the declared effects of the call of the host. In
+the long run, if metatomic gains `torch.export` and AOTInductor, the
+backend `METATOMIC` should take such packages under one standard; ML4's
+staged execution (Section 5.4) makes MDIR depend less on any framework's
+convention.
+
+### 11.11 Validation
+
+RTX 4090s (`MDIR_GPU=RTX4090`, `sm_89`) and an RTX PRO 6000 Blackwell
+(`MDIR_GPU=RTX6000`, `sm_120`); torch 2.14.1, nequip 0.19.1, nequip-allegro
+0.8.3; packages made by `nequip-to-aoti.py` on each kind of device; the
+systems and references of Section 9.2 (`water-box.py`, `check-model-term.py`,
+`mdir run`), in kJ/mol and nm, with the tolerances of float64 inputs there
+($\lvert\Delta E\rvert \le 4.8 \times 10^{-3}$, $\lvert\Delta F\rvert \le
+1.9 \times 10^{-2}$, $\lvert\Delta W\rvert \le 4.8 \times 10^{-3}$).
+
+**Against the `nequip` package's calculator** (the eager model in Python,
+on an RTX 4090), largest differences over the components:
+
+| Case | Device | Mode | $\lvert\Delta E\rvert$ | max $\lvert\Delta F\rvert$ | max $\lvert\Delta W\rvert$ |
+|---|---|---|---|---|---|
+| 81 atoms, cubic | RTX 4090 | double | $2.6 \times 10^{-4}$ | $2.6 \times 10^{-3}$ | $5.1 \times 10^{-4}$ |
+| | | mixed | $2.4 \times 10^{-4}$ | $2.0 \times 10^{-3}$ | $4.2 \times 10^{-4}$ |
+| | RTX PRO 6000 | double | $5.6 \times 10^{-5}$ | $2.8 \times 10^{-3}$ | $1.9 \times 10^{-3}$ |
+| | | mixed | $6.0 \times 10^{-4}$ | $3.2 \times 10^{-3}$ | $1.4 \times 10^{-3}$ |
+| 81 atoms, triclinic | RTX 4090 | double | $3.3 \times 10^{-4}$ | $2.1 \times 10^{-3}$ | $1.2 \times 10^{-3}$ |
+| | | mixed | $8.4 \times 10^{-5}$ | $2.5 \times 10^{-3}$ | $1.5 \times 10^{-3}$ |
+| | RTX PRO 6000 | double | $1.1 \times 10^{-3}$ | $3.5 \times 10^{-3}$ | $3.3 \times 10^{-3}$ |
+| | | mixed | $3.9 \times 10^{-4}$ | $3.7 \times 10^{-3}$ | $2.5 \times 10^{-3}$ |
+| 24 atoms, 6.2 Å box | RTX 4090 | double | $1.1 \times 10^{-3}$ | $7.8 \times 10^{-4}$ | $4.7 \times 10^{-4}$ |
+| | | mixed | $3.1 \times 10^{-4}$ | $1.0 \times 10^{-3}$ | $1.2 \times 10^{-4}$ |
+| | RTX PRO 6000 | double | $5.3 \times 10^{-4}$ | $1.6 \times 10^{-3}$ | $2.2 \times 10^{-4}$ |
+| | | mixed | $7.5 \times 10^{-4}$ | $1.7 \times 10^{-3}$ | $4.0 \times 10^{-4}$ |
+| 72 atoms, liquid | RTX 4090 | double | $3.2 \times 10^{-4}$ | $1.3 \times 10^{-3}$ | $6.5 \times 10^{-4}$ |
+| | | mixed | $3.7 \times 10^{-4}$ | $1.5 \times 10^{-3}$ | $6.8 \times 10^{-4}$ |
+| | RTX PRO 6000 | double | $3.7 \times 10^{-4}$ | $3.4 \times 10^{-3}$ | $1.4 \times 10^{-3}$ |
+| | | mixed | $9.8 \times 10^{-4}$ | $3.7 \times 10^{-3}$ | $1.2 \times 10^{-3}$ |
+
+Every difference is within its tolerance, by a factor of 4 or more, and at
+the level of the METATOMIC backend on the same systems and devices (largest
+$1.5 \times 10^{-3}$, $5.2 \times 10^{-3}$, and $3.4 \times 10^{-3}$). The
+package of the RTX 4090 with kernels for both (`--arch 8.9 12.0`) gives on
+the RTX PRO 6000 at most $1.3 \times 10^{-3}$, $3.7 \times 10^{-3}$, and
+$3.2 \times 10^{-3}$. **AOTI against METATOMIC** (RTX 4090, double, the
+same four systems): at most $5.4 \times 10^{-4}$ in the energy, $4.2 \times
+10^{-3}$ in the forces, and $1.5 \times 10^{-3}$ in the virial, the spread
+of either against the reference. **Chunks** (liquid, double) of 1, 16, and
+64 centers: at most $1.3 \times 10^{-3}$, $3.2 \times 10^{-3}$, and $1.3
+\times 10^{-3}$ against the reference on both devices.
+
+**Constant energy**, the 81-atom system of Section 9.2 minimized with ASE's
+FIRE, velocities of 300 K, 4,000 steps of 0.5 fs, velocity Verlet, RTX
+4090: in `double` the total energy drifts by $-0.065$ kJ/mol/ps ($-0.80$
+kJ/mol/ns per atom) with a fluctuation of 0.15 kJ/mol about the fit,
+against 36 kJ/mol of the potential energy, mean temperature 213 K; in
+`mixed` $-0.110$ kJ/mol/ps ($-1.35$ kJ/mol/ns per atom) and 0.15 kJ/mol.
+METATOMIC gave $-0.070$ and $-0.068$ kJ/mol/ps and 0.13 kJ/mol (Section
+9.2). The step took 15.4 ms against 86 ms with METATOMIC.
+
+**Memory and rate against pairs** (liquid water, `mixed`, `mdir run`; the
+peak of the plugin's allocator over the run; the time of an evaluation
+with `MDIR_MLIP_TIMING=1`, its pair search apart, the mean over the
+evaluations after the first; the rest of the step, without classical terms
+here, is not counted). The model's time per pair is flat from 13,566 pairs
+up, so a rate holds across sizes:
+
+| Package | Device | Per pair (whole system) | µs per pair | Atom-steps per s | Largest whole system | Largest tried in chunks |
+|---|---|---|---|---|---|---|
+| METATOMIC (Section 9.2) | RTX 4090 | 1.22 MB | 20.7 | 300 to 350 | 96 atoms, 13,598 pairs | 3,072 atoms, 64 centers: 11.6 GiB |
+| AOTI | RTX 4090 | 132 kB | 3.4 | 1,840 to 2,030 | 1,152 atoms, 171,636 pairs: 21.2 GiB | 12,288 atoms, 1,766,340 pairs, 512 centers: 9.4 GiB |
+| AOTI, Triton | RTX 4090 | 85 kB | 2.2 | 2,580 to 3,120 | 1,920 atoms, 282,006 pairs: 22.3 GiB | 12,288 atoms, 1,024 centers: 11.9 GiB |
+| AOTI | RTX PRO 6000 | 132 kB | 3.0 | 1,980 to 2,420 | 4,608 atoms, 677,284 pairs: 83.4 GiB | 24,576 atoms, 3,611,214 pairs, 2,048 centers: 38.3 GiB |
+| AOTI, Triton | RTX PRO 6000 | 85 kB | 2.0 | 2,830 to 3,680 | 7,680 atoms, 1,125,480 pairs: 89.0 GiB | 24,576 atoms, 4,096 centers: 48.7 GiB |
+
+The next size tried failed for lack of memory on the RTX 4090 (1,344 atoms
+without Triton, 2,304 with it: one allocation of the model's of up to 13.5
+GiB); on the RTX PRO 6000 the largest whole systems were the largest tried.
+In chunks the memory follows the chunk (512 centers: 9.4 to 9.8 GiB from
+3,072 to 12,288 atoms), and the time per pair stays that of the whole
+system.
+
+Time per step and ns/day at 0.5 fs (whole systems; the largest in chunks):
+
+| Atoms | RTX 4090 | RTX 4090, Triton | RTX PRO 6000 | RTX PRO 6000, Triton |
+|---|---|---|---|---|
+| 96 | 48 ms, 0.89 ns/day | 32 ms, 1.36 | 40 ms, 1.09 | 26 ms, 1.66 |
+| 384 | 189 ms, 0.23 | 123 ms, 0.35 | 165 ms, 0.26 | 110 ms, 0.39 |
+| 1,152 | 593 ms, 0.073 | 387 ms, 0.11 | 518 ms, 0.083 | 347 ms, 0.12 |
+| 3,072 | 1.60 s (512 centers), 0.027 | | 1.41 s, 0.031 | 0.97 s, 0.045 |
+| 12,288 | 6.67 s (512 centers), 0.0065 | 4.52 s (1,024 centers), 0.0096 | 5.70 s (2,048 centers), 0.0076 | |
+| 24,576 | | | 12.4 s (2,048 centers), 0.0035 | 8.69 s (4,096 centers), 0.0050 |
+
+Against METATOMIC on the same device, AOTI takes 9 times less memory per
+pair and 6 times less time (14 and 9 times with Triton), as the study of
+Section 4.1 found in Python. What MD with this model can do on one GPU is
+thus about 2,000 to 3,700 atom-steps per second: a nanosecond a day for
+about 100 atoms at 0.5 fs, a tenth of one for about 1,000.
+
+**The pair search** (the plugin's brute force over every image, with a
+wait of the host at its count, Section 9.1), with `MDIR_MLIP_TIMING=1`:
+
+| Atoms | Search, RTX 4090 | Share, AOTI | Share, Triton | Search, RTX PRO 6000 | Share, AOTI | Share, Triton |
+|---|---|---|---|---|---|---|
+| 96 | 0.5 ms | 1.1% | 1.7% | 0.5 ms | 1.4% | 2.1% |
+| 1,152 | 5.6 ms | 0.9% | 1.4% | 3.7 ms | 0.7% | 1.1% |
+| 3,072 | 37 ms | 2.3% | | 23 ms | 1.6% | 2.4% |
+| 6,144 | 141 to 148 ms | 4.5% | 6.5% | 88 ms | | 4.4% |
+| 12,288 | 559 to 590 ms | 8.9% | 12.4% | 355 ms | 6.2% | |
+| 24,576 | | | | 1.40 to 1.44 s | 11.3% | 16.6% |
+
+It grows as $N^2$ (four times per doubling from 3,072 atoms) while the
+model grows as $N$: below 1% of the evaluation for METATOMIC at every size
+(36 ms of 9.5 s at 3,072 atoms), it reaches 9 to 17% with AOTI at 12,288
+to 24,576 atoms and would pass the model's time near 100,000 atoms. The
+next step (the pair list from MDIR's structures, with a skin and without
+the wait) starts from these numbers; this PR does not change the search.
+
+**Not measured in this PR**: the CPU target, which ML1 refuses; NPT and
+minimization with this backend beyond the test of `mdir run` (D272's
+validation holds for any backend, since the plugin's outputs are the same).
 
 
