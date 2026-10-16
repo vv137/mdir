@@ -148,6 +148,9 @@ def main():
         description="Energy network of a NequIP/Allegro package behind metatomic's "
         "interface, by MDIR's scripts/mlip/nequip-to-metatomic.py",
         references={"architecture": ["https://doi.org/10.1038/s41467-023-36329-y"]},
+        # Read by MDIR's plugin: with selected_atoms the model drops the edges
+        # of the other centers, so an engine may evaluate it in chunks.
+        extra={"mdir::local_centers": "true"},
     )
     model = AtomisticModel(NequIPMetatomic(net, type_of_z, r_max).eval(), metadata, capabilities)
     model.save(a.output)

@@ -28,6 +28,27 @@ the wrapper it used is `scripts/mlip/nequip-to-metatomic.py`.
    accelerated one without changing the control file.
 5. **The plugin is a C++20 target behind a C ABI** (Section 6.1).
 
+On the questions of this design (the maintainer on PR #364, 2026-10-16):
+
+6. `[[energy.model]]` with `backend`, `path`, and `centers_per_call`, as
+   proposed in Section 6.3.
+7. The first PR has the plugin build its own pair list on the device, with
+   images and no skin; the conversion from MDIR's structures comes later.
+8. The inputs follow the model's dtype whatever `[execution] precision`
+   says, and the wrapper defaults to float64 inputs.
+9. The order: (1) TorchScript with chunks, from the control file **and from
+   Python** in the first PR, both through the plugin and its C ABI, the
+   plugin using the libtorch of the imported `torch` in Python; (2)
+   AOTInductor; (3) the pair list from MDIR's structures; (4) ML4's stages.
+10. The deterministic mode refuses a model term;
+    `torch.use_deterministic_algorithms` is not forced.
+11. The first PR is GPU only; the CPU target follows.
+
+Peak device memory against pairs stays a headline result of every step,
+against the eager baseline of 1.22 MB per pair. The split between torch's
+allocator and MDIR's (`expandable_segments`) is left to the implementation,
+with measurements.
+
 ## 2. The model and the versions
 
 | Item | Value |
@@ -153,9 +174,11 @@ evaluations after a warm-up:
 | NequIP AOTInductor (`nequip-compile --mode aotinductor`) | 132 kB | 3.5 µs | 172,044 pairs (1,152 atoms): 21.2 GiB | 456,424 pairs: 56.1 GiB |
 | NequIP AOTInductor with `enable_TritonContracter` | 85 kB | 2.4 µs | 220,724 pairs (1,536 atoms): 17.5 GiB | 456,424 pairs: 36.1 GiB, 0.96 s |
 
-Each larger size failed for lack of memory (13,556 pairs for the eager
-paths on 24 GB, 55,674 on 96 GB; 220,724 for AOTInductor and 342,762 with
-Triton on 24 GB). The RTX PRO 6000 takes 0.67 (eager) to 0.91
+The next larger size failed for lack of memory where the table gives a
+limit (13,556 pairs for the eager paths on 24 GB, 55,674 on 96 GB; 220,724
+for AOTInductor and 342,762 with Triton on 24 GB); 456,424 pairs was the
+largest size tried, not a limit, for the chunks and for AOTInductor on 96
+GB. The RTX PRO 6000 takes 0.67 (eager) to 0.91
 (AOTInductor) of the RTX 4090's time. All paths agree with the reference, or with the 64-center chunks
 where the reference ran out of memory: the forces within $5 \times 10^{-6}$
 eV/Å at every size, the energy within $5 \times 10^{-4}$ eV of $1.4 \times
@@ -257,7 +280,8 @@ later backend changes neither:
 - **Chunking.** A key bounds the centers per call (Section 4.2). The
   plugin honors it only for a model that declares that it is local (a
   finite interaction range and the selection of centers dropping the
-  others' edges). The wrapper declares this in its metadata; any other
+  others' edges). The wrapper declares this in its metadata
+  (`extra["mdir::local_centers"] = "true"`); any other
   model takes the whole system, and the log says so.
 - **Buffers and completion.** MDIR owns every buffer it hands over and the
   stream; the plugin owns its allocator's memory and its model's
@@ -462,15 +486,20 @@ particles with mass in the model, no classical terms required beside it
 
 ## 8. The first implementation PR and what follows
 
-1. **First PR (`D[metatomic-plugin]`):** the CMake option, the C++20
-   plugin with the C ABI (backend `METATOMIC` only), `[[energy.model]]` in
-   `mdir run` with every particle, the model's own pair list with images,
-   the host call, energy, forces, and virial into the log, chunking, the
-   refusals of Sections 6.7 to 6.9, the wrapper's test (built from the
-   package by script when present), and the validation of Section 7.
-2. The Python surface (`mdir.System.models`), with the libtorch check.
-3. The AOTInductor backend (`backend = "AOTI"`), against the same
+As ruled (Section 1, item 9):
+
+1. **First PR (`D[metatomic-plugin]`), GPU only:** the CMake option, the
+   C++20 plugin with the C ABI (the TorchScript backend through metatomic
+   only), `[[energy.model]]` in `mdir run` and its counterpart in the
+   Python model (`mdir.System.models`, in the manner of D245 and D246),
+   with the libtorch check; every particle with mass; the plugin's own
+   device pair list with images; the host call; energy, forces, and virial
+   into MDIR's sums, the log, and the pressure; chunking; the refusals of
+   Sections 6.7 to 6.9; `MDIR_MLIP_PLUGIN` in
+   [environment.md](environment.md); the wrapper's test (built from the
+   package by script when present); and the validation of Section 7.
+2. The AOTInductor backend (`backend = "AOTI"`), against the same
    reference, with the memory of Section 4.1.
-4. The pair list from MDIR's matrix where the cell allows it.
-5. NPT with a model term; then ML/MM selection and the M3 single-GPU part
-   of ML4 (PaiNN, MACE).
+3. The pair list from MDIR's matrix where the cell allows it.
+4. ML4's stages. NPT with a model term, the CPU target, and ML/MM
+   selection fit between these steps.
