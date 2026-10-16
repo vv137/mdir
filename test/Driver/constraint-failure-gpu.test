@@ -1,6 +1,12 @@
 # The runs of constraint-failure.test on a GPU, in single, mixed, and
 # double precision: each stops at step 1 with its set, which a flag of the
-# loop that tests the set tells the host (D[constraint-failure-stop]).
+# loop that tests the set tells the host (D[constraint-failure-stop]). In
+# double precision SETTLE, which has no solution for the kicked water,
+# leaves its positions not numbers, and the build of the neighbor structure
+# in the evaluation of the same step stops the run first, with its own
+# message (D107): the flags are read after the evaluation, so that the read
+# adds no wait. Below double precision the waters take M-SHAKE, which
+# leaves finite lengths.
 #
 # REQUIRES: cuda
 #
@@ -15,9 +21,13 @@
 # RUN: sed 's/DOUBLE/MIXED/' %t/water.toml > %t/water-mixed.toml
 # RUN: sed 's/DOUBLE/SINGLE/' %t/peptide.toml > %t/peptide-single.toml
 # RUN: sed 's/DOUBLE/MIXED/' %t/peptide.toml > %t/peptide-mixed.toml
-# RUN: not mdir run %t/water.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
+# RUN: not mdir run %t/water.toml 2>&1 | FileCheck %s --check-prefix=DOUBLE
 # RUN: not mdir run %t/water-single.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
 # RUN: not mdir run %t/water-mixed.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
 # RUN: not mdir run %t/peptide.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
 # RUN: not mdir run %t/peptide-single.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
 # RUN: not mdir run %t/peptide-mixed.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
+
+# DOUBLE: INFO: 0 0.0000
+# DOUBLE-NOT: INFO: 1 0.0020
+# DOUBLE: mdir: 4 positions are not numbers or are far outside the cell at a build of the neighbor structure; the run has failed

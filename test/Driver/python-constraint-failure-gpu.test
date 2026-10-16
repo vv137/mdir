@@ -1,0 +1,4 @@
+# REQUIRES: python-api, cuda
+# The test of python-constraint-failure.test on a GPU: the flag of the loop
+# that tests the group of SHAKE fails the part (D[constraint-failure-stop]).
+# RUN: %mdir_python %S/Inputs/python_position_guard.py %S/Inputs/dipeptide GPU constraints | FileCheck %S/python-constraint-failure.test

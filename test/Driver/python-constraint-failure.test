@@ -1,0 +1,12 @@
+# REQUIRES: python-api
+# A part of a Python simulation whose constraints fail raises SimulationError
+# with the step and the set, keeps the state from before the part, and
+# leaves the process able to run another simulation
+# (D[constraint-failure-stop]), scenario constraints of
+# Inputs/python_position_guard.py: the hydrogen of the first amide of the
+# dipeptide starts at 100 nm/ps, and its group of SHAKE fails in the first
+# step, in double and mixed precision.
+# RUN: %mdir_python %S/Inputs/python_position_guard.py %S/Inputs/dipeptide CPU constraints | FileCheck %s
+# CHECK: constraints Double: fails after step 0 and keeps its state; another simulation runs: the constraints of the set 'shake1' failed at step 1: a constrained length is off its target or is not a number
+# CHECK: constraints Mixed: fails after step 0 and keeps its state; another simulation runs: the constraints of the set 'shake1' failed at step 1
+# CHECK: position guard constraints passed

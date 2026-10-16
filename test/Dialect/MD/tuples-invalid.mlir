@@ -278,3 +278,17 @@ md.particle_set @beads
 md.tuple_set @pairs on(@atoms) arity(2) orientation(unordered) disjoint
 // expected-error@+1 {{expected the tuple set 'pairs' on 'beads', got 'atoms'}}
 md.disjoint_union @groups on(@beads) of [@pairs]
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %b: !md.relation<@atoms, 2, unordered, @bonds>) -> i32 {
+  // expected-error@+1 {{expected the result to be f64, a fixed-size vector of f64, or i1, got 'i32'}}
+  %u = md.sum_tuples %b, %x, %cell coordinates(distance(0, 1)) {
+  ^bb0(%r: f64):
+    %n = arith.fptosi %r : f64 to i32
+    md.yield %n : i32
+  } : !md.relation<@atoms, 2, unordered, @bonds>, !md.field<@atoms, 3 x f64>
+      -> i32
+  md.return %u : i32
+}

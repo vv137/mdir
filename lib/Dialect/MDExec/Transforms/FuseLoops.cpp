@@ -268,13 +268,23 @@ static bool isOfIntegrationRun(Operation *op) {
   return loop && loop.getDisjoint() && loop.getReduce().empty();
 }
 
+/// Returns true if `loop` tells in a value of `reduce` whether its kernel
+/// yields true for some tuple.
+static bool hasFlags(TupleForOp loop) {
+  return llvm::any_of(loop.getReduce(), [](Value value) {
+    return value.getType().isInteger(1);
+  });
+}
+
 /// Returns true if a loop over the tuples of a disjoint set uses a result
-/// of `loop`, as a field of its members or as its positions.
+/// of `loop`, as a field of its members or as its positions. A loop with a
+/// flag, the test of the constraints, writes nothing and is a kernel of its
+/// own on a device, of no run (D[constraint-failure-stop]).
 static bool feedsDisjointTuples(ParticleForOp loop) {
   for (Value result : loop->getResults())
     for (Operation *user : result.getUsers())
       if (auto tuples = dyn_cast<TupleForOp>(user))
-        if (tuples.getDisjoint())
+        if (tuples.getDisjoint() && !hasFlags(tuples))
           return true;
   return false;
 }
@@ -282,12 +292,14 @@ static bool feedsDisjointTuples(ParticleForOp loop) {
 /// Returns true if a loop over the tuples of a disjoint set with global
 /// sums reads a result of `loop`: the run that `loop` is before then holds
 /// a loop that no kernel of a run takes, as the projection of the
-/// velocities does where it sums the virial.
+/// velocities does where it sums the virial. A loop with a flag is of no
+/// run.
 static bool feedsDisjointSums(ParticleForOp loop) {
   for (Value result : loop->getResults())
     for (Operation *user : result.getUsers())
       if (auto tuples = dyn_cast<TupleForOp>(user))
-        if (tuples.getDisjoint() && !tuples.getReduce().empty())
+        if (tuples.getDisjoint() && !tuples.getReduce().empty() &&
+            !hasFlags(tuples))
           return true;
   return false;
 }
@@ -546,14 +558,6 @@ static bool canMoveAfter(Operation *second, Operation *first,
 //===----------------------------------------------------------------------===//
 // Loops over tuples
 //===----------------------------------------------------------------------===//
-
-/// Returns true if `loop` tells in a value of `reduce` whether its kernel
-/// yields true for some tuple.
-static bool hasFlags(TupleForOp loop) {
-  return llvm::any_of(loop.getReduce(), [](Value value) {
-    return value.getType().isInteger(1);
-  });
-}
 
 /// Returns true if `a` and `b` run over the same tuples in the same way.
 /// A loop with a flag, the test of the constraints

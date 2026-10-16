@@ -1,6 +1,8 @@
 # A run whose positions are no longer numbers stops with a word, on a
 # device, with either neighbor structure (D107): a time step of 0.5 ps
-# sends the particles beyond any cell within a few steps.
+# sends the particles beyond any cell within a few steps. The run has no
+# constraints: with them, their test stops it at the first step
+# (D[constraint-failure-stop], constraint-failure-gpu.test).
 #
 # REQUIRES: cuda
 #
@@ -34,10 +36,6 @@ steps             = 100
 [ensemble]
 ensemble    = "NVE"
 temperature = 300.0
-
-[constraints]
-hydrogen_bonds = true
-rigid_water = true
 
 [boundary]
 type = "PERIODIC"

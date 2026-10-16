@@ -10,6 +10,10 @@ Scenarios, each in double and mixed precision:
   overlap    two particles that are not bonded, on top of one another
   barostat   a barostat at 5e4 bar with a cutoff of 0.4 nm, whose pressure
              blows up and whose coupling scales the cell by about 1e10
+  constraints the bonds of hydrogen and the waters rigid, a step of 2 fs,
+             and the hydrogen of the first amide starting at 100 nm/ps: the
+             constraints of its group (SHAKE, one hydrogen) fail in the
+             first step (D[constraint-failure-stop])
   sanitize   one short case of each, in mixed precision, for
              compute-sanitizer
 """
@@ -22,9 +26,14 @@ root, target, scenario = sys.argv[1], getattr(mdir.Target, sys.argv[2]), sys.arg
 
 
 def compile_program(precision, kind="NVE", pressure=1.0, cutoff=0.8, restraint=None,
-                    overlap=False, deterministic=True, dual=False):
+                    overlap=False, deterministic=True, dual=False, kick=False):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
+    if kick:
+        system.rigid_hydrogen_bonds = system.rigid_water = True
+        velocities = np.zeros_like(state.positions)
+        velocities[7] = [100.0, 0.0, 0.0]
+        state.velocities = velocities
     # The defaults of before D248, with which this was written.
     system.truncation = mdir.Truncation.Switch
     system.cutoff, system.pairlist_distance = cutoff, cutoff + 0.1
@@ -37,6 +46,8 @@ def compile_program(precision, kind="NVE", pressure=1.0, cutoff=0.8, restraint=N
         positions[1000] = positions[0]
         state.positions = positions
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()
+    if kick:
+        integrator.timestep = 0.002
     ensemble.com_period = 0  # the default of before D248
     ensemble.kind = getattr(mdir.EnsembleKind, kind)
     ensemble.temperature, ensemble.coupling_period = 300, 10
@@ -110,7 +121,16 @@ def barostat(precision):
           f"barostat {precision}")
 
 
-if scenario == "restraint":
+def constraints(precision):
+    fails(compile_program(precision, kick=True), precision, 1,
+          ("the constraints of the set 'shake1' failed at step 1",),
+          f"constraints {precision}")
+
+
+if scenario == "constraints":
+    for precision in ("Double", "Mixed"):
+        constraints(precision)
+elif scenario == "restraint":
     for precision in ("Double", "Mixed"):
         restraint(precision)
 elif scenario == "overlap":
