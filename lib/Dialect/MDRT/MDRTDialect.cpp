@@ -153,7 +153,7 @@ HostCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // The operands, the buffers of the fields of `outs`, and the buffers of
   // the host that take the numbers. The pairs of images of
   // `md_exec.build_edges` are four arguments: its slots, counts, and
-  // offsets, and the number of builds (D[mlip-pairlist]).
+  // offsets, and the number of their build (D[mlip-pairlist]).
   ArrayRef<Type> expected = callee.getArgumentTypes();
   MLIRContext *context = getContext();
   Type narrow = IntegerType::get(context, 32);

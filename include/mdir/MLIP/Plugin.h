@@ -91,8 +91,9 @@ typedef struct mdir_mlip_description {
    [offsets[i], offsets[i + 1]) (`offsets`, n + 1), and the first counts[i]
    of them (`counts`, n) are its pairs within the cutoff, every one; the
    others are pairs within the cutoff and the skin of the last build. Every
-   pair of images is in it once. `builds` counts the builds of the
-   structure that gave the slots: the offsets change only where it does.
+   pair of images is in it once. `builds` numbers the build of the slots,
+   which no other build in the process has: the offsets change only where
+   it does.
    With the mode MDIR_MLIP_PAIRS_SEARCH the rest is unused. */
 typedef struct mdir_mlip_pairs {
   int32_t mode;

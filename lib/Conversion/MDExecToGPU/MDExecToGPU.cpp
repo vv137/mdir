@@ -160,6 +160,9 @@ struct Neighbors {
   Value edgesHandle;
   Value edgeCounts, edgeOffsets;
   Value hostEdgeCounts, hostEdgeOffsets;
+  /// The number that the runtime gave the last build of the slots, on the
+  /// host: no two builds in a process have the same.
+  Value edgeSerial;
 };
 
 /// The inner list of a dual list of groups (D114), as the runtime holds it:
@@ -4283,6 +4286,18 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     structure.hostEdgeOffsets = memref::AllocOp::create(
         builder, loc, MemRefType::get({ShapedType::kDynamic}, narrow),
         ValueRange{more});
+    // The copies on the host are freed where the function ends; the
+    // buffers of the device go back to the pool with the activation.
+    structure.edgeSerial = memref::AllocOp::create(
+        builder, loc, MemRefType::get({}, builder.getI64Type()));
+    memref::StoreOp::create(
+        builder, loc,
+        arith::ConstantOp::create(builder, loc, builder.getI64Type(),
+                                  builder.getI64IntegerAttr(-1)),
+        structure.edgeSerial, ValueRange{});
+    freeAtEndOfBlock(op, structure.hostEdgeCounts);
+    freeAtEndOfBlock(op, structure.hostEdgeOffsets);
+    freeAtEndOfBlock(op, structure.edgeSerial);
   }
   structure.excluded = op.getExcluded();
   neighbors[op.getResult()] = structure;
@@ -4753,11 +4768,15 @@ void Lowering::emitEdgeSlots(OpBuilder &builder, Location loc,
       arith::ConstantOp::create(builder, loc, wide,
                                 builder.getI64IntegerAttr(-1)),
       length);
-  func::CallOp::create(
-      builder, loc,
-      getOrDeclare(reserveEdgesName,
-                   builder.getFunctionType({wide, wide}, {})),
-      ValueRange{structure.edgesHandle, reserved});
+  Value serial =
+      func::CallOp::create(
+          builder, loc,
+          getOrDeclare(reserveEdgesName,
+                       builder.getFunctionType({wide, wide}, {wide})),
+          ValueRange{structure.edgesHandle, reserved})
+          .getResult(0);
+  memref::StoreOp::create(builder, loc, serial, structure.edgeSerial,
+                          ValueRange{});
   createTransfer(builder, loc, edgeOffsets, hostOffsets);
 
   // The candidates in their slots, in the same order.
@@ -4893,7 +4912,7 @@ LogicalResult Lowering::lowerBuildEdges(md_exec::BuildEdgesOp op) {
   op.getResult(1).replaceAllUsesWith(counts);
   op.getResult(2).replaceAllUsesWith(offsets);
   op.getResult(3).replaceAllUsesWith(
-      memref::LoadOp::create(builder, loc, structure.builds, ValueRange{}));
+      memref::LoadOp::create(builder, loc, structure.edgeSerial, ValueRange{}));
   return success();
 }
 

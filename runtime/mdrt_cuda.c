@@ -1158,8 +1158,13 @@ int64_t mdrtEdgesCreate(void) {
   return (int64_t)(intptr_t)edges;
 }
 
-/* Makes the buffers hold `length` rows, and sets their number. */
-void mdrtEdgesReserve(int64_t handle, int64_t length) {
+/* The builds of slots in the process, which numbers each. */
+static int64_t edgeBuilds = 0;
+
+/* Makes the buffers hold `length` rows, and sets their number. Returns the
+   number of this build in the process, which no other build has, so that a
+   reader can tell that the slots changed. */
+int64_t mdrtEdgesReserve(int64_t handle, int64_t length) {
   struct Edges *edges = (struct Edges *)(intptr_t)handle;
   if (length < 0) {
     fprintf(stderr, "mdrt: a build counted %lld pairs of images\n",
@@ -1175,6 +1180,7 @@ void mdrtEdgesReserve(int64_t handle, int64_t length) {
     allocateEdges(edges);
   }
   edges->length = length;
+  return ++edgeBuilds;
 }
 
 /* The candidates (`which` 0, four numbers a row) or the slots (1, five),

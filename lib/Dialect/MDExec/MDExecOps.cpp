@@ -967,7 +967,7 @@ LogicalResult BuildEdgesOp::verify() {
       return emitOpError()
              << "expected the slots, the counts, and the offsets on the "
                 "device (memref<?x5xi32>, memref<?xi32>, memref<?xi32> in a "
-                "memory space) and the number of builds (i64)";
+                "memory space) and the number of their build (i64)";
     if (!cast<MemRefType>(getPositions().getType()).getElementType().isF64())
       return emitOpError() << "expected the positions in f64: the cutoff is "
                               "tested in f64";

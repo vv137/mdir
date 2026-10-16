@@ -1297,8 +1297,9 @@ model in another order.
 
 `mdir_mlip_inputs` gains the list: the slots (device, $C \times 5$ int32),
 $C$, the strict counts $E_i$ and the offsets $O_i$ (device, $n$ and $n + 1$
-int32), the number of builds of the structure (host, which tells the plugin
-when $O$ changed), and the mode. A null list makes the plugin search
+int32), the number of the build of the slots (host, which no other build
+in the process has, so that it tells the plugin when $O$ changed, across
+the activations of a Python simulation too), and the mode. A null list makes the plugin search
 itself. `mdir_mlip_cutoff` (new) gives the model's cutoff from its file
 without a device. `MDIR_MLIP_ABI_VERSION` is 2; a plugin of version 1 is
 refused.

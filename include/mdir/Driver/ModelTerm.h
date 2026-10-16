@@ -121,7 +121,7 @@ private:
 /// added to `forces`; with `Energy`, its energy and virial written to
 /// `energy` (1) and `virial` (9). With `Edges`, it takes MDIR's pair list
 /// (D[mlip-pairlist]): the slots, the counts, the offsets, and the
-/// number of builds of `md_exec.build_edges`.
+/// number of the build of the slots of `md_exec.build_edges`.
 extern "C" {
 void _mlir_ciface_mdrtModelEvaluateEdges(
     int64_t index, void *positions, void *numbers, void *slots, void *counts,

@@ -10340,7 +10340,7 @@ void Builder::emitEntry() {
   // energy and its virial as well.
   if (!control.models.empty()) {
     // With the pair list of the program, its slots, counts, offsets, and
-    // the number of builds (D[mlip-pairlist]).
+    // the number of their build (D[mlip-pairlist]).
     std::string edges =
         modelEdges ? "memref<?x5xi32> {mdrt.read_only}, memref<?xi32> "
                      "{mdrt.read_only}, memref<?xi32> {mdrt.read_only}, i64, "

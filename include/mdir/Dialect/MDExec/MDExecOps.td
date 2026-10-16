@@ -1153,9 +1153,10 @@ def MDExec_BuildEdgesOp : MDExec_Op<"build_edges", [
     returns, on the device, the slots, one row `(i, j, s_a, s_b, s_c)` for
     each, in the order of `i`; the number of pairs within the cutoff of each
     particle; the offsets `O_i`, one more than the particles; and, on the
-    host, the number of builds of the structure, which changes where the
-    slots do. The buffers are those of the structure: a build replaces what
-    they hold.
+    host, the number that the runtime gave the last build of the slots,
+    which no other build in the process has, so that a reader can tell
+    where the slots and the offsets changed. The buffers are those of the
+    structure: a build replaces what they hold.
 
     ```mlir
     %slots, %counts, %offsets, %builds = md_exec.build_edges %nl, %x, %cell
