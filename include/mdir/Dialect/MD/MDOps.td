@@ -361,7 +361,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     with the term m = 0, F(0) = 1, included.
 
     With `prolate`, the splitting and the spreading take the prolate
-    spheroidal wave function of order zero (D[prolate-ewald],
+    spheroidal wave function of order zero (D266,
     [Liang2026]): `order` is the number P of points of the window,
     `beta` is not used, and `moduli` has five rows: the factors
     1/φ̂₁(2πk/K)² of each edge, the Chebyshev series of the weights of

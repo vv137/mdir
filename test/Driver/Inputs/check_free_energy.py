@@ -29,7 +29,7 @@ run side by side:
   without [free_energy], with each electrostatics and each modifier of the
   Lennard-Jones that [free_energy] takes;
 - `prolate`: `differences` and `identity` with the prolate kernel of PME
-  (D[prolate-ewald]), whose direct, excluded, and decoupled pairs take
+  (D266), whose direct, excluded, and decoupled pairs take
   1 − Φ(r/r_c) and Φ(r/r_c) in place of erfc and erf.
 """
 

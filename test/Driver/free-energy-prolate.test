@@ -1,4 +1,4 @@
-# [free_energy] (D161) with the prolate kernel of PME (D[prolate-ewald]) on
+# [free_energy] (D161) with the prolate kernel of PME (D266) on
 # the CPU, scenario prolate of Inputs/check_free_energy.py: ethanol
 # decoupled from TIP3P (Inputs/fep). dH/dλ of the Coulomb, the
 # Lennard-Jones, and a component of expressions against central differences

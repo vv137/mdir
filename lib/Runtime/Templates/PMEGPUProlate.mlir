@@ -1,5 +1,5 @@
 // The reciprocal sum of particle mesh Ewald with the prolate kernel on a
-// device, "Ewald summation with prolates" [Liang2026] (D[prolate-ewald]):
+// device, "Ewald summation with prolates" [Liang2026] (D266):
 // the window φ₁(d) = ψ₀^{c₁}(2d/P) on P points along each edge
 // (PME_ORDER), whose weights and slopes are Chebyshev series in the
 // fraction of the place, and the influence function χ̂(2π r_c |m|) / m²

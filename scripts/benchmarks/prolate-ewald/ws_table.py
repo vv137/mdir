@@ -1,4 +1,4 @@
-"""The whole step from the logs of mdir_job.py (D[prolate-ewald], #334):
+"""The whole step from the logs of mdir_job.py (D266, #334):
 the mean and spread of ms/step of each run over the rounds after the
 first, from the lines `round K TAG MS`, so that a job that ran out of time
 before its profiled runs still counts the rounds it finished.

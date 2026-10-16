@@ -50,7 +50,7 @@ extern const char *const neighborsMatrixGPUTemplate;
 extern const char *const pmeGPUTemplate;
 /// The text of its kernels for a triclinic cell.
 extern const char *const pmeGPUTriclinicTemplate;
-/// The text of its kernels for the prolate kernel (D[prolate-ewald]).
+/// The text of its kernels for the prolate kernel (D266).
 extern const char *const pmeGPUProlateTemplate;
 extern const char *const neighborsGroupsGPUTemplate;
 extern const char *const neighborsGroupsGPUTriclinicTemplate;
@@ -466,7 +466,7 @@ private:
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
                                 int64_t order, bool tilted, bool potential,
                                 bool listed);
-  /// Adds the kernels of the prolate kernel (D[prolate-ewald]) for these
+  /// Adds the kernels of the prolate kernel (D266) for these
   /// types and points of the window, and with `listed` those of a list of
   /// the particles.
   LogicalResult addProlateTemplates(Type position, Type charge, Type force,
@@ -3488,7 +3488,7 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
   return success();
 }
 
-/// The reciprocal sum of the prolate kernel on a device (D[prolate-ewald]):
+/// The reciprocal sum of the prolate kernel on a device (D266):
 /// the coefficients of the table into the type of the grid, the places, the
 /// spreading (into bricks, or in fixed point in the deterministic mode and
 /// in f64), the transforms, the factors of the edges and the product with
@@ -3666,7 +3666,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         builder, loc,
         getOrDeclare("mdrtSideBegin", builder.getFunctionType({}, {})),
         ValueRange());
-  // The prolate kernel has kernels of its own (D[prolate-ewald]).
+  // The prolate kernel has kernels of its own (D266).
   if (op.getProlate()) {
     if (failed(addProlateTemplates(position, charge, force, op.getOrder(),
                                    static_cast<bool>(listed))))

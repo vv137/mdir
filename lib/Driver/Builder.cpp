@@ -17,7 +17,7 @@ using namespace mdir::driver;
 namespace prolate = mdir::prolate;
 
 /// The cells and the terms of the tables of the splitting of the prolate
-/// kernel (D[prolate-ewald]): within 1e-14 for kernels in f64
+/// kernel (D266): within 1e-14 for kernels in f64
 /// (mdir-prolate-test), within 4e-10 for those in f32 with 4 terms, which
 /// the loop over pairs reads with fewer loads.
 static std::pair<int64_t, int64_t> getProlateTableShape(Precision precision) {
@@ -229,7 +229,7 @@ private:
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme-m1.md).
   llvm::Error collectPME();
-  /// The parameters and tables of the prolate kernel (D[prolate-ewald]).
+  /// The parameters and tables of the prolate kernel (D266).
   llvm::Error collectProlate();
   /// The field `name` of the places of the particles whose `values` are not
   /// zero, then −1 − the place of each of the others
@@ -2633,7 +2633,7 @@ std::pair<double, double> Builder::getPMEConstants(double lambda) const {
     net += q;
   }
   // −f s Σ q² and −f π Q² b / V; for the Gaussian s = β/√π and
-  // b = 1/(2β²) (D[prolate-ewald]).
+  // b = 1/(2β²) (D266).
   double self = -coulombInternal * program.pmeSelfFactor * squares;
   double volume = system.box[0] * system.box[1] * system.box[2];
   double background = -coulombInternal * M_PI * net * net *
@@ -2892,7 +2892,7 @@ llvm::Error Builder::collectProlate() {
   // The grid: given; or from the largest spacing given; or the modes of
   // eq. 15 of [Liang2026], n_f = ⌈c L / (π r_c)⌉, raised until the
   // aliasing estimate of its eq. 10, relative to the sum it perturbs, is at
-  // most ε/2 (D[prolate-ewald], as ruled on issue #334). The factor 1/2 is
+  // most ε/2 (D266, as ruled on issue #334). The factor 1/2 is
   // calibrated against the relative force error Δ of its eq. 16 over the
   // Coulomb forces of the topology (with its exclusions), measured on JAC and
   // Cellulose against the Gaussian at erfc 1e-13 on 0.33 Å
@@ -5028,7 +5028,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
 
   // %shielded, the share of 1/r that the reciprocal sum holds at %r:
   // erf(β r)/r, or of the prolate kernel Φ(r/r_c)/r, which is Φ(x)/x / r_c
-  // within the cutoff and 1/r beyond it (D[prolate-ewald]).
+  // within the cutoff and 1/r beyond it (D266).
   auto emitShielded = [&](llvm::raw_ostream &os) {
     if (!program.pmeProlate) {
       os << "    %br = arith.mulf %beta, %r : f64\n"

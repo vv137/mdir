@@ -2,7 +2,7 @@
 prints at the start (the direct sum, the excluded pairs, the reciprocal
 sum, the self term, and the background of a net charge) and compares the
 sum with a reference, which no single term equals when the splitting
-changes (D[prolate-ewald]).
+changes (D266).
 
     check_coulomb_total.py LOG REFERENCE TOLERANCE
 

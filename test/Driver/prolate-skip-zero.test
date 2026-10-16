@@ -1,4 +1,4 @@
-# The prolate kernel of particle mesh Ewald (D[prolate-ewald]) over the
+# The prolate kernel of particle mesh Ewald (D266) over the
 # particles of a nonzero charge (D262), on the host:
 # - tri-alanine in 1,218 OPC waters (examples/ala3), whose oxygens carry no
 #   charge: three quarters of the particles are listed, and a device

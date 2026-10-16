@@ -1,5 +1,5 @@
 # REQUIRES: cuda
-# prolate-skip-zero.test on a device (D[prolate-ewald], D262): the spreading
+# prolate-skip-zero.test on a device (D266, D262): the spreading
 # over the list of the particles of a nonzero charge, in bricks and in fixed
 # point, the gathering of every particle (gather_all, examples/ala3 in OPC),
 # and the gathering over the list (every other water uncharged, in the

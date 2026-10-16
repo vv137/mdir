@@ -963,7 +963,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                                     program->pmeGrid[2]}},
           {"order", program->pmeOrder},
           {"kernel", program->pmeProlate ? "PROLATE" : "GAUSSIAN"}};
-    // The prolate kernel's own parameters (D[prolate-ewald]).
+    // The prolate kernel's own parameters (D266).
     if (program->pme && program->pmeProlate) {
       llvm::json::Object &object = *pme.getAsObject();
       object["bandwidth"] = program->pmeBandwidth;
@@ -1276,7 +1276,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print("MDIR: %zu particles, %lld steps of %g ps\n",
                  count, static_cast<long long>(control->numSteps),
                  control->timestep);
-  // The parameters that the prolate kernel derives (D[prolate-ewald]).
+  // The parameters that the prolate kernel derives (D266).
   if (program->pmeProlate)
     output.log.print("MDIR: the prolate kernel of PME: c = %.6g, c1 = %.6g, "
                      "%lld points of the window, a grid of %lld x %lld x "

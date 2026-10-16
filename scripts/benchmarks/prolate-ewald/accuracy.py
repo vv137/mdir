@@ -243,10 +243,10 @@ class Rec:
             flat = (ix[:, :, None, None] * K[1] + iy[:, None, :, None]) * K[2] + iz[:, None, None, :]
             ph = phif[flat]
             W = [st[a][1][ii] for a in range(3)]
-            D = [st[a][2][ii] for a in range(3)]
-            gx = np.einsum('nabc,na,nb,nc->n', ph, D[0], W[1], W[2])
-            gy = np.einsum('nabc,na,nb,nc->n', ph, W[0], D[1], W[2])
-            gz = np.einsum('nabc,na,nb,nc->n', ph, W[0], W[1], D[2])
+            S = [st[a][2][ii] for a in range(3)]
+            gx = np.einsum('nabc,na,nb,nc->n', ph, S[0], W[1], W[2])
+            gy = np.einsum('nabc,na,nb,nc->n', ph, W[0], S[1], W[2])
+            gz = np.einsum('nabc,na,nb,nc->n', ph, W[0], W[1], S[2])
             Fo[s0:s0 + len(ii)] = -q[ii, None] * np.stack([gx, gy, gz], 1) * (K / L)[None, :]
         return E, Fo
 

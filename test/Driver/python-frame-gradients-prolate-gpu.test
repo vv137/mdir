@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # The gradient of the energy of a frame in the strain with the prolate
-# kernel of PME (D252, D[prolate-ewald]) on the GPU, in double and mixed
+# kernel of PME (D252, D266) on the GPU, in double and mixed
 # precision: scenario prolate of Inputs/python_frame_gradients.py, the checks
 # of its scenario finite with the prolate kernel. S = dU/d(epsilon), whose
 # components off the diagonal are those of the virial of the kernel that the

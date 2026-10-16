@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Writes lib/Runtime/Templates/PMEGPUProlate.mlir, the kernels of the
 reciprocal sum of particle mesh Ewald with the prolate kernel on a device
-(D[prolate-ewald]): Ewald summation with prolates [Liang2026].
+(D266): Ewald summation with prolates [Liang2026].
 
     python3 scripts/generate-pme-prolate-gpu-template.py > lib/Runtime/Templates/PMEGPUProlate.mlir
 
@@ -63,7 +63,7 @@ INVERSE = '''  %tbx = vector.extract %box[3] : f64 from vector<6xf64>
 
 
 HEADER = '''// The reciprocal sum of particle mesh Ewald with the prolate kernel on a
-// device, "Ewald summation with prolates" [Liang2026] (D[prolate-ewald]):
+// device, "Ewald summation with prolates" [Liang2026] (D266):
 // the window φ₁(d) = ψ₀^{c₁}(2d/P) on P points along each edge
 // (PME_ORDER), whose weights and slopes are Chebyshev series in the
 // fraction of the place, and the influence function χ̂(2π r_c |m|) / m²

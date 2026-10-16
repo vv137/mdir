@@ -1,5 +1,5 @@
 """The grid of the prolate kernel against the measured force error
-(D[prolate-ewald], issue #334): mdir run on the CPU in double precision, one
+(D266, issue #334): mdir run on the CPU in double precision, one
 step of a tiny time step from the coordinates, at explicit grids, against a
 reference of the Gaussian kernel at a tight tolerance on a fine grid.
 

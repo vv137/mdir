@@ -72,7 +72,7 @@ func.func private @mdrt.pme_raise(%w: f64, %k: index, %a: memref<8xf64>) {
 // and their derivatives `slopes` with respect to the fractional coordinate.
 func.func private @mdrt.pme_bspline(%w: f64, %n: index, %values: memref<8xf64>,
                                     %slopes: memref<8xf64>, %moduli: memref<?x?xf64>) {
-  // The table of the prolate kernel has five rows (D[prolate-ewald]).
+  // The table of the prolate kernel has five rows (D266).
   %r0 = arith.constant 0 : index
   %r5 = arith.constant 5 : index
   %rows = memref.dim %moduli, %r0 : memref<?x?xf64>
@@ -88,7 +88,7 @@ func.func private @mdrt.pme_bspline(%w: f64, %n: index, %values: memref<8xf64>,
 }
 
 // The weights of the window of the prolate kernel at the fraction `w`
-// of the place (Builder::collectProlate, D[prolate-ewald]): weight j is the
+// of the place (Builder::collectProlate, D266): weight j is the
 // Chebyshev series of row 3 of `moduli`, at offset j D, in t = 2w − 1,
 // and its slope in the scaled coordinate the series at offset (n + j) D,
 // by Clenshaw's recurrence [Liang2026, eq. 14].
@@ -211,7 +211,7 @@ func.func private @mdrt.pme_place(%x: f64, %length: f64, %k: index, %n: index,
   %bk = arith.addi %b, %k : index
   %bkn = arith.subi %bk, %n : index
   %start = arith.addi %bkn, %c1 : index
-  // The window of the prolate kernel (D[prolate-ewald]): the P points from
+  // The window of the prolate kernel (D266): the P points from
   // floor(u − h) − floor(P/2) + 1, with h = 1/2 for odd P and 0 otherwise,
   // and the fraction of u − h; u + k − h is positive.
   %nodd = arith.remui %n, %r2 : index
@@ -455,7 +455,7 @@ func.func private @mdrt.pme_convolve(%c: memref<?xf64>, %moduli: memref<?x?xf64>
           %factorc = arith.select %origin, %zero, %factor0 : f64
           scf.yield %bcc, %factorc, %zero : f64, f64, f64
         }
-        // The prolate kernel (D[prolate-ewald]): B · f/(πV) · χ̂(2π r_c |m|)
+        // The prolate kernel (D266): B · f/(πV) · χ̂(2π r_c |m|)
         // / m², with χ̂ and k χ̂'(k) the Chebyshev series of row 4 of the
         // table in y = 2x² − 1, x = 2π r_c |m| / c, and nothing at m = 0 or
         // beyond x = 1 [Liang2026, eq. 5]. The virial of a point is
@@ -1017,7 +1017,7 @@ func.func private @mdrt.pme_convolve_triclinic(%c: memref<?xf64>, %moduli: memre
           %factorc = arith.select %origin, %zero, %factor0 : f64
           scf.yield %bcc, %factorc, %zero : f64, f64, f64
         }
-        // The prolate kernel (D[prolate-ewald]): B · f/(πV) · χ̂(2π r_c |m|)
+        // The prolate kernel (D266): B · f/(πV) · χ̂(2π r_c |m|)
         // / m², with χ̂ and k χ̂'(k) the Chebyshev series of row 4 of the
         // table in y = 2x² − 1, x = 2π r_c |m| / c, and nothing at m = 0 or
         // beyond x = 1 [Liang2026, eq. 5]. The virial of a point is

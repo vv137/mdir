@@ -95,7 +95,7 @@ Fourier transform library based on an "exponential of semicircle" kernel,"
 Used for: the "exponential of semicircle" kernel
 $e^{c(\sqrt{1-x^2}-1)}$, a closed form close to the prolate spheroidal wave
 function, named as the alternative to the PSWF for the spreading of ESP and
-not measured (issue #334, D[prolate-ewald]).
+not measured (issue #334, D266).
 
 ### Berendsen1984
 
@@ -676,7 +676,7 @@ molecular dynamics simulations using fast Ewald summation with prolates,"
 Used for: Ewald summation with prolates (ESP), the prolate spheroidal wave
 function of order zero as the splitting and the spreading kernel of
 particle mesh Ewald, its parameters from a tolerance (Table 2), and the
-relative force error of eq. 16 (issue #334, D[prolate-ewald]). Its code
+relative force error of eq. 16 (issue #334, D266). Its code
 (doi:10.5281/zenodo.19547608) served as an oracle of normalizations only.
 
 ### Lingenheil2008
@@ -937,7 +937,7 @@ Order Zero*, Applied Mathematical Sciences **187** (Springer, New York,
 [doi:10.1007/978-1-4614-8259-8](https://doi.org/10.1007/978-1-4614-8259-8)
 
 Used for: the properties of $\psi_0^c$ that ESP rests on, its eigenvalue
-and its expansion in Legendre polynomials (issue #334, D[prolate-ewald]).
+and its expansion in Legendre polynomials (issue #334, D266).
 
 ### Pall2013
 
@@ -1134,7 +1134,7 @@ IEEE International Parallel and Distributed Processing Symposium Workshops
 Used for: the binning of the particles by the points they spread to and
 the spreading into blocks of the grid in shared memory, which the tiled
 spreading of the prolate kernel on a device takes (issue #334,
-D[prolate-ewald]; issue #336).
+D266; issue #336).
 
 ### Shirts2007
 
@@ -1184,7 +1184,7 @@ analysis and uncertainty — I," *Bell Syst. Tech. J.* **40**, 43–63
 
 Used for: the prolate spheroidal wave functions as the functions of a
 given band limit most concentrated on an interval, the property that ESP
-uses (issue #334, D[prolate-ewald]).
+uses (issue #334, D266).
 
 ### Srinivasan1999
 
@@ -1415,7 +1415,7 @@ quadrature and interpolation," *Inverse Problems* **17**, 805–838 (2001).
 
 Used for: $\psi_0^c$ as a series of normalized Legendre polynomials whose
 coefficients are the eigenvector of a symmetric tridiagonal matrix, and
-its eigenvalue from the integral equation (issue #334, D[prolate-ewald]).
+its eigenvalue from the integral equation (issue #334, D266).
 
 ### Zhang2019
 

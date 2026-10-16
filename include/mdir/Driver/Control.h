@@ -38,7 +38,7 @@ enum class Mixing { Arithmetic, Geometric, Product };
 enum class DispersionCorrection { None, EnergyPressure };
 /// The kernel of the splitting and the spreading of particle mesh Ewald:
 /// the Gaussian with B-splines, or the prolate spheroidal wave function
-/// (D[prolate-ewald]).
+/// (D266).
 enum class PMEKernel { Gaussian, Prolate };
 
 /// A term of the potential energy over pairs, given by an expression in the
@@ -441,7 +441,7 @@ struct Control {
   /// or that of Essmann et al. alone, as GROMACS has it
   /// (docs/pme-m1.md, Section 1.1).
   bool pmeOptimal = false;
-  /// The kernel of the splitting and the spreading (D[prolate-ewald]): the
+  /// The kernel of the splitting and the spreading (D266): the
   /// Gaussian with B-splines, or the prolate spheroidal wave function of
   /// order zero for both, "Ewald summation with prolates" [Liang2026]. For
   /// the prolate kernel `pmeAlphaTolerance` is ε with ψ₀ᶜ(1) = ε; the

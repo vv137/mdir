@@ -37,7 +37,7 @@ CASES = (
     ("order 8", "order = 8\n", "", {"pme_order": 8}),
     ("the suite's settings", 'influence = "OPTIMAL"\n', "analytic_bonds = true\n",
      {"pme_influence": mdir.PMEInfluence.Optimal, "analytic_bonds": True}),
-    # The prolate kernel (D[prolate-ewald]): its default of 6 points, and
+    # The prolate kernel (D266): its default of 6 points, and
     # 8 points with the bandwidths given.
     ("kernel PROLATE", 'kernel = "PROLATE"\n', "", {"pme_kernel": mdir.PMEKernel.Prolate}),
     ("kernel PROLATE order 8", 'kernel = "PROLATE"\norder = 8\nbandwidth = 14.0\nwindow_bandwidth = 16.0\n', "",

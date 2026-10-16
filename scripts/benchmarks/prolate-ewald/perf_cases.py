@@ -1,6 +1,6 @@
 """Control files of mdir run for the step of the prolate kernel against the
 Gaussian kernel on the systems of the Amber suite, with the suite's
-settings but [pme] (D[prolate-ewald]).  perf_cases.py NAME STEPS OUTDIR [MAIN]
+settings but [pme] (D266).  perf_cases.py NAME STEPS OUTDIR [MAIN]
 
 The cases are matched by the force error Δ measured on JAC by
 grid_sweep.py (eq. 16 over the Coulomb forces of the topology), each grid

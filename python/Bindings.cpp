@@ -253,7 +253,7 @@ PYBIND11_MODULE(_core, m) {
     .value("SPME", model::PMEInfluence::SPME)
     .value("Optimal", model::PMEInfluence::Optimal);
   // The kernel of PME: the Gaussian, or the prolate spheroidal wave
-  // function of Ewald summation with prolates (D[prolate-ewald]).
+  // function of Ewald summation with prolates (D266).
   py::enum_<driver::PMEKernel>(m, "PMEKernel")
     .value("Gaussian", driver::PMEKernel::Gaussian)
     .value("Prolate", driver::PMEKernel::Prolate);
@@ -822,7 +822,7 @@ PYBIND11_MODULE(_core, m) {
     // Keep the GIL while copying and building: concurrent mutation cannot
     // race version capture. GIL release belongs to persistent execution.
     // The prolate kernel's own defaults of the order and the spacing, where
-    // they were not set (D[prolate-ewald]).
+    // they were not set (D266).
     system->value.pmeOrderGiven = system->given.count("pme_order") != 0;
     system->value.pmeSpacingGiven = system->given.count("pme_spacing") != 0;
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,

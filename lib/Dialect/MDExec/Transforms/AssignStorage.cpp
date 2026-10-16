@@ -871,7 +871,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // The factors of the influence function along the edges, three for
     // each point of each edge (D104).
     // The prolate kernel keeps its coefficients after them: at most
-    // 3 + 2 * 64 + 2 * 8 * 64 (D[prolate-ewald]).
+    // 3 + 2 * 64 + 2 * 8 * 64 (D266).
     Value entries = arith::ConstantIndexOp::create(
         root->builder, loc,
         3 * (grid[0] + grid[1] + grid[2]) + (op.getProlate() ? 1280 : 0));

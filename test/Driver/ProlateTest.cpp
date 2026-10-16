@@ -5,7 +5,7 @@
 // (scripts/benchmarks/prolate-ewald/pswf_reference.py), a method other than
 // the Legendre series of the host. Prints each quantity, its reference, and
 // its difference, and "FAIL" where the difference exceeds 1e-12 relative to
-// the largest value of ψ (D[prolate-ewald]).
+// the largest value of ψ (D266).
 //
 //===----------------------------------------------------------------------===//
 

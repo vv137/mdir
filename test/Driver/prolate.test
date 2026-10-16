@@ -1,4 +1,4 @@
-# The prolate kernel of particle mesh Ewald on the CPU (D[prolate-ewald]),
+# The prolate kernel of particle mesh Ewald on the CPU (D266),
 # on the three OPC waters of pme.test, against the Ewald sum of
 # Inputs/ewald_reference.py over the wave vectors (β = 0.347 Å⁻¹, r_c = 9 Å),
 # whose terms sum to −14.326815489 kcal/mol. The terms of the two

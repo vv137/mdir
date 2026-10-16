@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # The derivative of the energy in the charges with the prolate kernel of
-# PME (D231, D[prolate-ewald]) on the CPU, in double and mixed precision: the
+# PME (D231, D266) on the CPU, in double and mixed precision: the
 # checks of python-tunable-gradient-pme.test (25 entries tied by a map on
 # the dipeptide in water with a net charge, and 11 in a triclinic cell)
 # against central differences of the energy.

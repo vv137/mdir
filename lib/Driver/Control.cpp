@@ -2300,7 +2300,7 @@ Error Reader::readPME(const toml::table &table) {
     return error;
   bool prolate = control.pmeKernel == PMEKernel::Prolate;
   // What belongs to the other kernel is refused, not ignored
-  // (D[prolate-ewald]).
+  // (D266).
   if (prolate)
     for (StringRef key : {"beta", "influence"})
       if (const toml::node *node = table.get(std::string_view(key)))

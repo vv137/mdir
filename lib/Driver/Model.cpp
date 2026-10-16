@@ -255,7 +255,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     return input("PME, pressure coupling and dispersion correction require periodic boundaries");
   // The orders of the control file, with its words.
   // What belongs to the other kernel is refused, with the words of the
-  // control file (D[prolate-ewald]).
+  // control file (D266).
   bool prolate = s.pmeKernel == driver::PMEKernel::Prolate;
   if (prolate && s.pmeAlpha != 0)
     return input("'beta' is for kernel = \"GAUSSIAN\"; the prolate kernel takes 'bandwidth' and 'window_bandwidth'");

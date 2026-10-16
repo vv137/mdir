@@ -4,7 +4,7 @@ alone, x_a → (1 + ε) x_a with the cell's edge a: W_aa = −dU/dε_aa at
 ε = 0, with virtual sites placed from their strained atoms. The
 anisotropic counterpart of check_virial.py: it holds the terms m_a m_a / m²
 of a reciprocal virial, which a uniform scaling sums away
-(D[prolate-ewald]).
+(D266).
 
     check_virial_axes.py mdir run.toml coordinates.inpcrd [step tolerance]
 

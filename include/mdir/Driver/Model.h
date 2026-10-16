@@ -151,7 +151,7 @@ struct System {
   int64_t pmeOrder = 4;
   /// `[pme] influence` (D134; D246).
   PMEInfluence pmeInfluence = PMEInfluence::SPME;
-  /// `[pme] kernel`, `bandwidth`, and `window_bandwidth` (D[prolate-ewald]):
+  /// `[pme] kernel`, `bandwidth`, and `window_bandwidth` (D266):
   /// the Gaussian or the prolate kernel, and c and c₁ of the prolate one,
   /// 0 to take them from the tolerance. `pmeOrderGiven` and
   /// `pmeSpacingGiven` say whether `pme_order` and `pme_spacing` were

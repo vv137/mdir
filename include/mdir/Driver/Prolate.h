@@ -2,7 +2,7 @@
 //
 // ψ₀ᶜ on [−1, 1], the eigenfunction of largest eigenvalue of
 // φ ↦ ∫₋₁¹ e^{icxt} φ(t) dt [Slepian1961], for the splitting and the
-// spreading of Ewald summation with prolates [Liang2026] (D[prolate-ewald]).
+// spreading of Ewald summation with prolates [Liang2026] (D266).
 // It is a series of Legendre polynomials of even degree whose coefficients
 // are the eigenvector of smallest eigenvalue of the symmetric tridiagonal
 // matrix of the prolate differential operator in the normalized Legendre

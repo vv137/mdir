@@ -1,6 +1,6 @@
 # Measuring Ewald summation with prolates against MDIR's PME
 
-The scripts of this directory measure, for issue #334 (D[prolate-ewald]),
+The scripts of this directory measure, for issue #334 (D266),
 whether the prolate spheroidal wave function of order zero (PSWF) as the
 splitting and spreading kernel of particle mesh Ewald, "Ewald summation
 with prolates" (ESP) [[Liang2026]](../../../docs/references.md#liang2026),

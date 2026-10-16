@@ -296,7 +296,7 @@ struct Program {
   /// β in nm⁻¹ and the numbers of points of the grid, for the log.
   double pmeBeta = 0.0;
   int64_t pmeGrid[3] = {0, 0, 0};
-  /// The prolate kernel (D[prolate-ewald]): its bandwidths c and c₁, the
+  /// The prolate kernel (D266): its bandwidths c and c₁, the
   /// points P of the window, and the aliasing estimate of the grid.
   bool pmeProlate = false;
   double pmeBandwidth = 0.0, pmeWindowBandwidth = 0.0, pmeAliasing = 0.0;

@@ -1,5 +1,5 @@
 """Dynamics of JAC with the prolate kernel against the Gaussian kernel
-(D[prolate-ewald], issue #334): the drift of the total energy in NVE and the
+(D266, issue #334): the drift of the total energy in NVE and the
 mean volume in NPT, mixed precision on a GPU.
 
 dynamics.py make DIR TOPOLOGY COORDINATES NVE_STEPS NPT_STEPS   control files

@@ -1,5 +1,5 @@
 # REQUIRES: cuda
-# The prolate kernel of particle mesh Ewald on a device (D[prolate-ewald]):
+# The prolate kernel of particle mesh Ewald on a device (D266):
 # the three OPC waters of prolate.test against the Ewald sum of
 # Inputs/ewald_reference.py (−14.326815489 kcal/mol) in double and mixed
 # precision and in the deterministic mode, which gives the same bits in

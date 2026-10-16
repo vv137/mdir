@@ -585,7 +585,7 @@ in the same way, and `[pme] kernel = "PROLATE"` takes the one that
 concentrates the most of itself in a given band limit, the prolate
 spheroidal wave function of order zero [[Slepian1961]](references.md#slepian1961),
 as both the splitting and the window of the spreading: Ewald summation with
-prolates (ESP) [[Liang2026]](references.md#liang2026) (D[prolate-ewald]).
+prolates (ESP) [[Liang2026]](references.md#liang2026) (D266).
 
 **The splitting.** With $\Phi(y) = \int_0^y\chi$ and $x = r/r_c$,
 

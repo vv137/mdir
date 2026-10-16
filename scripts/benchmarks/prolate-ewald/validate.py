@@ -1,4 +1,4 @@
-"""Validation of the prolate kernel in mdir run (D[prolate-ewald]): the
+"""Validation of the prolate kernel in mdir run (D266): the
 forces of one step of a tiny time step, from a checkpoint, against a
 reference of the Gaussian kernel in double precision on the CPU at a tight
 tolerance (erfc 1e-13, 0.33 A, order 8: erfc 1e-11 at 0.5 A was itself off

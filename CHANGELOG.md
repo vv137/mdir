@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - Ewald summation with prolates, a second kernel of particle mesh Ewald
-  (D[prolate-ewald], #334): `[pme] kernel = "PROLATE"` takes the prolate
+  (D266, #334): `[pme] kernel = "PROLATE"` takes the prolate
   spheroidal wave function of order zero as the splitting and as the
   window of the spreading, on the CPU and a GPU, in orthorhombic and
   triclinic cells, in `mixed` and `double` and the deterministic mode. Its

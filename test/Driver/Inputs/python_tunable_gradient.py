@@ -34,7 +34,7 @@ Scenarios:
             sum, the potential of the grid at the particles, the self term,
             the background, the excluded and the 1-4 pairs) against central
             differences of the energy
-  prolate   the same with the prolate kernel of PME (D[prolate-ewald])
+  prolate   the same with the prolate kernel of PME (D266)
   torchpme  the charges with particle mesh Ewald, every particle an entry of
             its own, against torch-pme, an independent differentiable PME
             (Loche et al., J. Chem. Phys. 162, 142501 (2025)), at the same

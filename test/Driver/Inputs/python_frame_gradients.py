@@ -18,7 +18,7 @@ Scenarios:
              diagonal with the deformed cell rotated back to the
              lower-triangular form); the trace of S against the virial; G
              against the forces of the sampler's state
-  prolate    `finite` with the prolate kernel of PME (D[prolate-ewald]):
+  prolate    `finite` with the prolate kernel of PME (D266):
              its reciprocal virial, whose off-diagonal components the
              other tests of the kernel do not reach, against central
              differences of the energy under each component of the strain
