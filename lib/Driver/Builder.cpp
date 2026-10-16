@@ -293,7 +293,9 @@ private:
                       bool flag);
   /// Emits, after the evaluation of a step, the stop of the run at the
   /// step `%noise_step` for each set whose test `failures` of
-  /// `emitConstraintTests` failed (D[constraint-failure-stop]).
+  /// `emitConstraintTests` failed, then the stop that a build of the
+  /// neighbor structure of the step recorded, if any
+  /// (D[constraint-failure-stop]).
   void emitConstraintStops(
       StringRef indent,
       const std::vector<std::pair<int, std::string>> &failures);
@@ -6070,6 +6072,13 @@ void Builder::emitPrograms() {
                     : "provides = [\"symplectic\", \"time_reversible\"]} {\n")
        << "  %c = arith.constant 5.0e-01 : f64\n"
        << "  %half = arith.mulf %c, %dt : f64\n";
+    // With constraints, a build of the neighbor structure in the step that
+    // finds positions that are not numbers records its stop, and the step
+    // runs to its end: a failed set of constraints then stops the run with
+    // its own message, and the recorded stop follows the tests otherwise
+    // (D[constraint-failure-stop], the maintainer's ruling on PR #381).
+    if (constraints)
+      os << "  func.call @mdrtDeferStops() : () -> ()\n";
     // The time at the end of the step, at which its forces are evaluated
     // (D145).
     if (control.usesTime)
@@ -9643,6 +9652,9 @@ void Builder::emitConstraintStops(
        << indent << "  func.call @mdrtStopConstraintFailure(%noise_step, "
        << failed << "_set) : (i64, i64) -> ()\n"
        << indent << "}\n";
+  // A stop that a build of the step recorded, if no set failed.
+  if (!failures.empty())
+    os << indent << "func.call @mdrtStopPending() : () -> ()\n";
 }
 
 std::vector<std::pair<int, std::string>>
@@ -10407,7 +10419,9 @@ void Builder::emitEntry() {
   if (reportsSolvent())
     os << "func.func private @mdrtWriteSolvent(f64, f64)\n";
   if (hasConstraints() && !control.minimize)
-    os << "func.func private @mdrtStopConstraintFailure(i64, i64)\n";
+    os << "func.func private @mdrtStopConstraintFailure(i64, i64)\n"
+       << "func.func private @mdrtDeferStops()\n"
+       << "func.func private @mdrtStopPending()\n";
   if (rescalesVelocities() && control.isNoseHoover())
     os << "func.func private @mdrtNoseHooverFactor(i64, f64) -> f64\n";
   else if (rescalesVelocities())

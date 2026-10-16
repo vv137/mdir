@@ -13,7 +13,9 @@ Scenarios, each in double and mixed precision:
   constraints the bonds of hydrogen and the waters rigid, a step of 2 fs,
              and the hydrogen of the first amide starting at 100 nm/ps: the
              constraints of its group (SHAKE, one hydrogen) fail in the
-             first step (D[constraint-failure-stop])
+             first step (D[constraint-failure-stop]); on a GPU also the
+             restraint with the waters rigid, whose build records its stop
+             until the waters, intact, are tested, and then fails the part
   sanitize   one short case of each, in mixed precision, for
              compute-sanitizer
 """
@@ -26,9 +28,12 @@ root, target, scenario = sys.argv[1], getattr(mdir.Target, sys.argv[2]), sys.arg
 
 
 def compile_program(precision, kind="NVE", pressure=1.0, cutoff=0.8, restraint=None,
-                    overlap=False, deterministic=True, dual=False, kick=False):
+                    overlap=False, deterministic=True, dual=False, kick=False,
+                    rigid=False):
     loaded = mdir.load_amber(root + "/dipeptide.prmtop", root + "/dipeptide.inpcrd")
     system, state = loaded.make_system(), loaded.make_state()
+    if rigid:
+        system.rigid_water = True
     if kick:
         system.rigid_hydrogen_bonds = system.rigid_water = True
         velocities = np.zeros_like(state.positions)
@@ -127,9 +132,16 @@ def constraints(precision):
           f"constraints {precision}")
 
 
+def restraint_rigid(precision):
+    fails(compile_program(precision, restraint=1e300, rigid=True), precision, 1,
+          ("far outside the cell", "not numbers"), f"restraint rigid {precision}")
+
+
 if scenario == "constraints":
     for precision in ("Double", "Mixed"):
         constraints(precision)
+        if target == mdir.Target.GPU:
+            restraint_rigid(precision)
 elif scenario == "restraint":
     for precision in ("Double", "Mixed"):
         restraint(precision)

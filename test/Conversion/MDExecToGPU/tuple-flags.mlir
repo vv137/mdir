@@ -9,8 +9,10 @@
 md.particle_set @atoms
 
 // Two loops over the disjoint tuples of two sets, the test of SETTLE and
-// that of a set of SHAKE: a kernel and a flag for each, read after the work
-// between them is issued.
+// that of a set of SHAKE, one after the other: one kernel, a flag for each,
+// and one event for both, waited for before the first op that uses one of
+// them, after the work between them is issued; the other flag is then read
+// as it is.
 //
 // CHECK-LABEL: func.func @two_sets(
 // The flags are taken where the function begins, each before the ones
@@ -18,21 +20,18 @@ md.particle_set @atoms
 //
 // CHECK:         %[[FLAG1:[0-9]+]] = call @mdrtFlagMemory(
 // CHECK:         %[[FLAG0:[0-9]+]] = call @mdrtFlagMemory(
-// CHECK:         gpu.launch
-// CHECK:           scf.if
+// CHECK:         gpu.launch {{.*}} function(@two_sets_tuple_for_l{{[0-9]+}}_run2_{{[0-9]+}})
 // CHECK:             memref.store %{{[a-z0-9_]+}}, %[[FLAG0]][
-// CHECK:         memref.extract_aligned_pointer_as_index %[[FLAG0]]
-// CHECK:         %[[SLOT0:[0-9]+]] = call @mdrtFlagStart(
-// CHECK:         gpu.launch
-// CHECK:           scf.if
 // CHECK:             memref.store %{{[a-z0-9_]+}}, %[[FLAG1]][
-// CHECK:         memref.extract_aligned_pointer_as_index %[[FLAG1]]
-// CHECK:         %[[SLOT1:[0-9]+]] = call @mdrtFlagStart(
+// CHECK:         memref.extract_aligned_pointer_as_index %[[FLAG0]]
+// CHECK:         %[[SLOT:[0-9]+]] = call @mdrtFlagStart(
+// CHECK-NOT:     call @mdrtFlagStart(
 // CHECK:         gpu.launch
-// CHECK:         call @mdrtFlagFinish(%[[SLOT0]])
+// CHECK:         call @mdrtFlagFinish(%[[SLOT]])
+// CHECK:         memref.extract_aligned_pointer_as_index %[[FLAG1]]
+// CHECK:         call @mdrtFlagTake(
 // CHECK:         scf.if
 // CHECK:           call @stop(
-// CHECK:         call @mdrtFlagFinish(%[[SLOT1]])
 // CHECK:         scf.if
 // CHECK:           call @stop(
 // CHECK-NOT:     md_exec
@@ -79,3 +78,29 @@ func.func @two_sets(%waters: memref<?x?xi32, 1>, %groups: memref<?x?xi32, 1>,
   return
 }
 
+
+// A loop with a flag alone: a kernel and a flag of its own, and an event
+// for it.
+//
+// CHECK-LABEL: func.func @one_set(
+// CHECK:         %[[FLAG:[0-9]+]] = call @mdrtFlagMemory(
+// CHECK:         gpu.launch
+// CHECK:             memref.store %{{[a-z0-9_]+}}, %[[FLAG]][
+// CHECK:         %[[SLOT:[0-9]+]] = call @mdrtFlagStart(
+// CHECK:         call @mdrtFlagFinish(%[[SLOT]])
+// CHECK-NOT:     call @mdrtFlagTake(
+// CHECK:         return
+func.func @one_set(%groups: memref<?x?xi32, 1>, %x: memref<?x3xf64, 1>,
+                   %cell: !md.cell) -> i1 {
+  %no = arith.constant false
+  %limit = arith.constant 1.0 : f64
+  %shake = md_exec.tuple_for %groups, %x, %cell
+      coordinates(displacement(1, 0)) reduce(%no : i1) arity(2) disjoint {
+  ^bb0(%d: vector<3xf64>):
+    %sq = arith.mulf %d, %d : vector<3xf64>
+    %r2 = vector.reduction <add>, %sq : vector<3xf64> into f64
+    %far = arith.cmpf ugt, %r2, %limit : f64
+    md_exec.yield %far : i1
+  } : memref<?x?xi32, 1>, memref<?x3xf64, 1> -> i1
+  return %shake : i1
+}

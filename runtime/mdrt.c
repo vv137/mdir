@@ -106,6 +106,34 @@ void mdrtSetStopHandler(void (*handler)(const char *)) {
   stopHandler = handler;
 }
 
+/* Delivers a failure: to the handler of an embedding program, or to the
+   standard error, ending the process. */
+static void stopWith(const char *message) {
+  if (stopHandler) {
+    stopHandler(message);
+    return;
+  }
+  fprintf(stderr, "mdir: %s\n", message);
+  exit(1);
+}
+
+/* In a step of a run with constraints, the stop of a build whose positions
+   are not numbers is recorded and the step runs to its end, which D225
+   makes safe: the tests of the constraints are read after the evaluation,
+   and a failed set stops the run with its own message, naming the step and
+   the set; otherwise mdrtStopPending delivers the recorded stop after the
+   tests (D[constraint-failure-stop], the maintainer's ruling on PR #381). */
+static int deferringStops = 0, hasPendingStop = 0;
+static char pendingStop[256];
+void mdrtDeferStops(void) { deferringStops = 1; }
+void mdrtStopPending(void) {
+  deferringStops = 0;
+  if (!hasPendingStop)
+    return;
+  hasPendingStop = 0;
+  stopWith(pendingStop);
+}
+
 /* A build of a neighbor structure found positions that are not numbers,
    or are numbers far outside the cell (beyond 1e100, or whose wrap does not
    land in the cell, D176): the run has failed, whatever produced them
@@ -123,12 +151,14 @@ void mdrtStopNotNumbers(int64_t count) {
              "a build of the neighbor structure; the run has failed (a time "
              "step too long, a bad contact, or a defect of mdir)",
              (long long)count);
-  if (stopHandler) {
-    stopHandler(message);
+  if (deferringStops) {
+    if (!hasPendingStop) {
+      snprintf(pendingStop, sizeof pendingStop, "%s", message);
+      hasPendingStop = 1;
+    }
     return;
   }
-  fprintf(stderr, "mdir: %s\n", message);
-  exit(1);
+  stopWith(message);
 }
 
 /* The constraints of a set, SETTLE (`set` 0) or the groups of SHAKE of `set`
@@ -147,12 +177,10 @@ void mdrtStopConstraintFailure(int64_t step, int64_t set) {
            "has failed (a time step too long, a bad contact, or a defect of "
            "mdir)",
            name, (long long)step);
-  if (stopHandler) {
-    stopHandler(message);
-    return;
-  }
-  fprintf(stderr, "mdir: %s\n", message);
-  exit(1);
+  /* The failure of the constraints, not the positions that are not numbers
+     that it left, is what the run reports. */
+  hasPendingStop = 0;
+  stopWith(message);
 }
 
 int64_t mdrtGetGroupsBlocks(void) { return groupsBlocks; }
