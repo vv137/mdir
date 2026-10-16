@@ -1056,6 +1056,8 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   output.minimizes = control->minimize;
   output.minimizeTolerance =
       control->minimizeTolerance * units::energy / units::length;
+  output.minimizeStepFloor = control->getMinimizeStepFloor() * units::length;
+  output.minimizeFirstStep = control->minimizeStep * units::length;
   output.leastEdge = 2.0 * control->cutoffDistance * units::length;
   output.leastReachEdge =
       control->neighborStructure == driver::NeighborStructure::Groups
@@ -1625,10 +1627,25 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                    output.firstTotal / units::energy,
                    output.lastTotal / units::energy);
     // Whether the largest force fell below the tolerance
-    // (D219), at a row of the energies.
-    if (control->minimizeTolerance > 0.0) {
-      double largest = output.lastMinimization.maxForce /
-                       (units::energy / units::length);
+    // (D219), at a row of the energies, or the step below its
+    // floor (D[minimize-zero-step]).
+    double largest = output.lastMinimization.maxForce /
+                     (units::energy / units::length);
+    if (output.stalledStep >= 0) {
+      output.log.print(
+          "MDIR: stopped at step %lld: the step has shrunk to %.3e Å, "
+          "below %.0e Å (%.0e of its cap of %g Å), where a trial no longer "
+          "lowers the energy by more than its rounding; the largest force "
+          "is %.4f kcal/mol/Å",
+          static_cast<long long>(output.stalledStep),
+          output.lastMinimization.stepSize / units::length,
+          control->getMinimizeStepFloor(),
+          control->getMinimizeStepFloor() / Control::minimizeStepCap,
+          Control::minimizeStepCap, largest);
+      if (control->minimizeTolerance > 0.0)
+        output.log.print(", not below %g", control->minimizeTolerance);
+      output.log.print("\n");
+    } else if (control->minimizeTolerance > 0.0) {
       if (output.convergedStep >= 0)
         output.log.print("MDIR: converged at step %lld: the largest force, "
                          "%.4f kcal/mol/Å, is below %g\n",

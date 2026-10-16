@@ -1,0 +1,70 @@
+# minimize-stalled.test on a GPU.
+#
+# REQUIRES: cuda
+#
+# Steepest descent ends at the first row of the log whose next step has
+# shrunk below the floor, 1e-6 of the cap of 0.1 Å below double precision
+# and 1e-10 of it in double (D[minimize-zero-step], #369), rather than
+# evaluating the energy at the same positions until its last step. Two
+# argon atoms reach their minimum to the rounding of the energy, where a
+# trial no longer lowers it, and every trial then shrinks the step by 0.2.
+# A first step below the floor that grows, 1e-12 Å in double, does not end
+# the run.
+#
+# RUN: rm -rf %t && mkdir -p %t && split-file %s %t
+# RUN: sed -e 's/@PRECISION@/MIXED/' -e 's/@STEP@/0.1/' %t/base.toml > %t/mixed.toml
+# RUN: sed -e 's/@PRECISION@/DOUBLE/' -e 's/@STEP@/0.1/' %t/base.toml > %t/double.toml
+# RUN: sed -e 's/@PRECISION@/DOUBLE/' -e 's/@STEP@/1e-12/' -e 's/^steps = 2000/steps = 20/' %t/base.toml > %t/small.toml
+# RUN: cd %t && mdir run mixed.toml | FileCheck %s --check-prefix=MIXED
+# RUN: cd %t && mdir run double.toml | FileCheck %s --check-prefix=DOUBLE
+# RUN: cd %t && mdir run small.toml | FileCheck %s --check-prefix=SMALL
+
+# MIXED: MDIR: stopped at step {{[0-9]+}}: the step has shrunk to {{.*}} Å, below 1e-07 Å (1e-06 of its cap of 0.1 Å), where a trial no longer lowers the energy by more than its rounding; the largest force is {{[0-9.]+}} kcal/mol/Å
+
+# DOUBLE: MDIR: stopped at step {{[0-9]+}}: the step has shrunk to {{.*}} Å, below 1e-11 Å (1e-10 of its cap of 0.1 Å), where a trial no longer lowers the energy by more than its rounding; the largest force is {{[0-9.]+}} kcal/mol/Å
+
+# SMALL:     INFO: 20
+# SMALL-NOT: MDIR: stopped
+
+#--- base.toml
+[input]
+topology    = "argon.top"
+coordinates = "argon.gro"
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+
+[minimize]
+method       = "STEEPEST_DESCENT"
+steps = 2000
+initial_step = @STEP@
+
+[output]
+energy_interval = 10
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"
+precision = "@PRECISION@"
+#--- argon.top
+[ defaults ]
+1 2 no 1.0 1.0
+[ atomtypes ]
+AR 18 39.948 0.0 A 0.34 0.996
+[ moleculetype ]
+AR 1
+[ atoms ]
+1 AR 1 AR AR 1 0.0 39.948
+[ system ]
+Two argon atoms
+[ molecules ]
+AR 2
+#--- argon.gro
+Two argon atoms
+    2
+    1AR      AR    1   1.000   1.000   1.000
+    2AR      AR    2   1.400   1.000   1.000
+   3.00000   3.00000   3.00000

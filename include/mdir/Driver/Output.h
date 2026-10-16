@@ -386,6 +386,12 @@ struct Output {
   /// (-1: none yet) (D219).
   double minimizeTolerance = 0.0;
   int64_t convergedStep = -1;
+  /// The length below which a step of the minimization that has shrunk
+  /// ends it, in nm, and the first step's length; the step of the row at
+  /// which it ended so (-1: none) (D[minimize-zero-step]).
+  double minimizeStepFloor = 0.0;
+  double minimizeFirstStep = 0.0;
+  int64_t stalledStep = -1;
   /// The shortest edge of the cell that the cutoff allows, twice it; a run
   /// whose barostat takes the cell below it stops.
   double leastEdge = 0.0;
@@ -452,6 +458,11 @@ void stopRun(const std::string &message);
 /// its end (mdrtFinish).
 void checkParticleSpread(const Output &output, const std::vector<double> &x,
                          int64_t step);
+
+/// Whether a row of a minimization whose next step is `stepSize` long, in
+/// nm, ends it: the step has shrunk below the floor of `output`, and below
+/// the first step (D[minimize-zero-step]).
+bool isMinimizationStalled(const Output &output, double stepSize);
 
 /// The signal that has asked the run to stop, or 0. A handler of SIGTERM
 /// and SIGINT sets it; the run stops at its next checkpoint (D131).

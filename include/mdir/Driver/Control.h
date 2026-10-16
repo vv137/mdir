@@ -535,6 +535,17 @@ struct Control {
   bool minimize = false;
   double minimizeStep = 0.1;
   double minimizeTolerance = 0.0;
+  /// The longest step of steepest descent, in Å (D260).
+  static constexpr double minimizeStepCap = 0.1;
+  /// The shortest, in Å: a step that has shrunk below it, at a row of the
+  /// energies, ends the minimization (D[minimize-zero-step]): 10⁻⁶ of the
+  /// cap below double precision, 10⁻⁷ Å, under the spacing of f32 at 1 Å
+  /// (1.2 × 10⁻⁷ Å) in which the terms take the positions, and 10⁻¹⁰ in
+  /// double, 10⁻¹¹ Å, where GROMACS stops its steepest descent in double
+  /// (10⁻¹² nm).
+  double getMinimizeStepFloor() const {
+    return minimizeStepCap * (precision == Precision::Double ? 1e-10 : 1e-6);
+  }
 
   // [dynamics]
   Integrator integrator = Integrator::VelocityVerlet;

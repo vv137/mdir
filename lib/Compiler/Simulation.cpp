@@ -812,6 +812,8 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   output->volume = system.box[0] * system.box[1] * system.box[2];
   output->endStep = 0;
   output->tunablesVersion = prepared.tunables.empty() ? -1 : 0;
+  output->minimizeStepFloor = control.getMinimizeStepFloor() * units::length;
+  output->minimizeFirstStep = simulation->minimizationSize;
   // The learned potentials (D270) on the device that the
   // simulation's runtime uses. In Python the module has imported torch
   // and checked its version against the plugin's before.
@@ -1705,6 +1707,17 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
   } else {
     minimizationConverged.reset();
   }
+  // A step shrunk below the floor ends the minimization at the row of the
+  // end of a part (D[minimize-zero-step]), as at a row of `mdir run`;
+  // without a tolerance the parts end at other steps than its rows.
+  auto stalled = [&]() {
+    return row.step == step && driver::isMinimizationStalled(*output,
+                                                             row.stepSize);
+  };
+  if (hasRun && stalled()) {
+    minimizationStalledStep = step;
+    return 0;
+  }
   // Parts as those of run: the program of the parts after the first takes
   // the positions and the length of the step that the last left.
   int64_t taken = 0;
@@ -1735,6 +1748,10 @@ llvm::Expected<int64_t> Simulation::minimize(std::optional<int64_t> count,
         minimizationConverged = true;
         break;
       }
+    }
+    if (stalled()) {
+      minimizationStalledStep = step;
+      break;
     }
   }
   return taken;
@@ -2513,7 +2530,8 @@ llvm::Expected<SimulationState> Simulation::getState() const {
                                least.stepSize, least.maxForceParticle,
                                minimizationCheckedStep == step
                                    ? minimizationConverged
-                                   : std::nullopt};
+                                   : std::nullopt,
+                               minimizationStalledStep == step};
   state.tunablesVersion = tunablesVersion;
   const auto &row = output->lastEnergies;
   if (hasRun && !prepared.control.minimize && row.step == step)

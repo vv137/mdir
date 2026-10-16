@@ -969,6 +969,12 @@ static std::vector<double> readVectors(void *descriptor, void *ids,
   return values;
 }
 
+bool mdir::driver::isMinimizationStalled(const Output &output,
+                                         double stepSize) {
+  return stepSize < output.minimizeStepFloor &&
+         stepSize < output.minimizeFirstStep;
+}
+
 void _mlir_ciface_mdrtWriteMinimization(int64_t step, double energy,
                                         double size, void *forces,
                                         void *ids) {
@@ -1019,12 +1025,25 @@ void _mlir_ciface_mdrtCheckMinimization(void *state) {
   Output &output = *current;
   auto *flags = static_cast<StridedMemRefType<int64_t, 1> *>(state);
   int64_t *values = flags->data + flags->offset;
-  if (values[0] != 0 || output.minimizeTolerance <= 0.0)
+  if (values[0] != 0)
     return;
-  if (output.lastMinimization.maxForce < output.minimizeTolerance) {
+  const Output::MinimizationRow &row = output.lastMinimization;
+  if (output.minimizeTolerance > 0.0 &&
+      row.maxForce < output.minimizeTolerance) {
     values[0] = 1;
     values[1] = output.lastMinimizationStep;
     output.convergedStep = output.lastMinimizationStep;
+    return;
+  }
+  // A step that has shrunk below the floor (D[minimize-zero-step]): the
+  // trials no longer lower the energy by more than its rounding, or its
+  // noise, and are taken or not at random, each rejection shrinking the
+  // step by 0.2 against 1.2 for an acceptance, until it is 0 (#369). A
+  // first step below the floor ends the run only once it has shrunk.
+  if (isMinimizationStalled(output, row.stepSize)) {
+    values[0] = 1;
+    values[1] = output.lastMinimizationStep;
+    output.stalledStep = output.lastMinimizationStep;
   }
 }
 

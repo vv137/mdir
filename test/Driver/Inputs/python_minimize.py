@@ -6,7 +6,8 @@ minimized positions against `mdir run` from its checkpoint; refusals.
 Usage: python_minimize.py ROOT TARGET MDIR WORK SCENARIO. Each scenario is
 one test file (SCENARIOS at the end), so that the files run side by side:
 `double` and `mixed` compare with `mdir run` in that precision, and
-`cutoff-refusals` takes the cutoff in mixed precision and the refusals."""
+`cutoff-refusals` takes the cutoff in mixed precision and the refusals, and
+`stalled` the end of a minimization whose step has shrunk below the floor."""
 import pathlib
 import subprocess
 import sys
@@ -20,7 +21,7 @@ target = getattr(mdir.Target, target_name)
 cli = sys.argv[3]
 work = pathlib.Path(sys.argv[4])
 scenario = sys.argv[5]
-NAMES = ("double", "mixed", "cutoff-refusals")
+NAMES = ("double", "mixed", "cutoff-refusals", "stalled")
 if scenario not in NAMES:
     raise SystemExit(f"unknown scenario '{scenario}'; expected one of {', '.join(NAMES)}")
 SEED = 271828
@@ -292,10 +293,42 @@ def cutoff_refusals():
     print("minimization refusals passed")
 
 
+def stalled():
+    # The cutoff without constraints in double precision: its energy is not
+    # continuous, and once the trials no longer lower it the step shrinks
+    # below the floor, 1e-11 Å in double (D[minimize-zero-step], #369).
+    # `mdir run` ends at that row; a simulation that checks every step
+    # (a tolerance it cannot reach, energy_period 1) ends there too, with
+    # the same row, `stalled` true and `converged` false, and takes no
+    # step after it. Without a tolerance the row at the end of the part
+    # is checked.
+    rows, _ = cli_run("stalled-Double", "Double", "min", FIRST, "CUTOFF", False)
+    last = max(rows)
+    assert 0 < last < FIRST, last
+    system, state = model("CUTOFF", False)
+    integrator, schedule = mdir.Integrator(), mdir.Schedule()
+    integrator.minimize, schedule.steps, schedule.energy_period = True, FIRST, 1
+    simulation = mdir.Simulation(mdir.compile(system, state, integrator, mdir.Ensemble(),
+                                              execution("Double"), schedule))
+    taken = simulation.minimize(tolerance=1e-6)
+    row = simulation.state().minimization
+    assert taken == last, (taken, last)
+    assert row["stalled"] and row["converged"] is False, row
+    compare("stalled", row_text(row), rows[last], None)
+    assert simulation.minimize() == 0 and simulation.state().minimization["stalled"]
+    _, whole = minimization("Double", FIRST, "CUTOFF", False)
+    assert whole.minimize() == FIRST and whole.state().minimization["stalled"]
+    _, short = minimization("Double", 10, "CUTOFF", False)
+    assert short.minimize() == 10 and not short.state().minimization["stalled"]
+    print(f"{target_name} Double, cutoff: mdir run and the simulation stop at step {last}, "
+          f"step size {row['step_size']:.3e} nm")
+
+
 SCENARIOS = {
     "double": lambda: against_cli("Double"),
     "mixed": lambda: against_cli("Mixed"),
     "cutoff-refusals": cutoff_refusals,
+    "stalled": stalled,
 }
 assert tuple(SCENARIOS) == NAMES
 SCENARIOS[scenario]()

@@ -57,6 +57,9 @@ struct SimulationMinimization {
   /// that wrote the row; none if that call had no tolerance
   /// (D219).
   std::optional<bool> converged;
+  /// Whether the minimization ended at this row because its step had
+  /// shrunk below the floor (D[minimize-zero-step]).
+  bool stalled = false;
 };
 
 /// The state of a simulation, in the order of the input and in MD units.
@@ -614,6 +617,9 @@ private:
   /// of the call that wrote it; none without a tolerance.
   std::optional<bool> minimizationConverged;
   int64_t minimizationCheckedStep = -1;
+  /// The step of the row at which a minimization ended because its step
+  /// had shrunk below the floor (D[minimize-zero-step]); -1 if none.
+  int64_t minimizationStalledStep = -1;
   bool hasRun = false;
   bool failed = false;
   /// Why there is no activation, while there is none.
