@@ -4,9 +4,12 @@ add_mlir_dialect_library(MDIRMDTransforms
   CheckDerivatives.cpp
   CheckDerivativeCoverage.cpp
   Activity.cpp
+  Adjoints.cpp
   Differentiate.cpp
+  Distribute.cpp
   ExpandTruncation.cpp
   Inline.cpp
+  OwnerComputes.cpp
   ScalarDerivative.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -15,10 +18,12 @@ add_mlir_dialect_library(MDIRMDTransforms
   DEPENDS
   MDIRMDPassIncGen
   MDIRDerivativeInterfaceIncGen
+  MDIRAdjointInterfaceIncGen
 
   LINK_LIBS PUBLIC
   MDIRDyn
   MDIRMD
+  MDIRMDDist
   MDIRMDRT
   MLIRFuncDialect
   MLIRMemRefDialect
