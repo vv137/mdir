@@ -1239,23 +1239,32 @@ tests, narrower than the cutoff of 7 Å, takes every image this way.
 
 ### 12.3 Slots fixed at each build, the strict list each step
 
-- **At each build** of the matrix, `build_edges` counts for each center $i$
-  the candidates $(j, \mathbf s)$ with $\lvert \mathbf r \rvert < R$ at the
-  positions of the build (the structure's reference positions, f64): $C_i$.
-  The build already waits for the host (the longest row); the counts are
-  read with it, and their prefix sums $O_i$ give each center its slots
-  $[O_i, O_{i+1})$, $C = \sum_i C_i$ in all.
-- **Each step**, a kernel takes the same candidates (decided at the
-  reference positions, so the same $C_i$) and writes into the slots of $i$
-  first those with $\lvert \mathbf r \rvert < r_c$ at the current
-  positions, in f64, then the others; the number of the first, $E_i$, stays
-  on the device. A pair within $r_c$ now was within $R$ at the build, since
-  no particle has moved more than half the skin (the condition of the
-  refresh), so it has a slot: $E_i \le C_i$.
+- **At each build** of the matrix (the refresh that builds it), a kernel
+  counts for each center $i$ the candidates $(j, \mathbf s)$ with
+  $\lvert \mathbf r \rvert < R\,(1 + 10^{-6})$ at the positions of the
+  build (f64; the margin covers the rounding of the test of validity):
+  $C_i$. The build waits for the host anyway (for the longest row); the
+  counts are copied to it, their prefix sums $O_i$ give each center its
+  slots $[O_i, O_{i+1})$, $C = \sum_i C_i$ in all, and a second kernel
+  writes the candidates, $(j, s_a, s_b, s_c)$ in int32, into the slots in
+  the same order. The candidates are decided once, so the count and the
+  candidates written are the same set.
+- **Each step**, `build_edges` has one thread for each particle read its
+  candidates, compute $\mathbf x_j - \mathbf x_i + \mathbf s\,\mathsf H$ in f64
+  at the positions and the cell of the step, and write the rows (i, j,
+  $s_a$, $s_b$, $s_c$) of those within $r_c$ to the front of its slots and
+  the others to the back; the number of the first, $E_i$, stays on the
+  device. A pair within $r_c$ now was within $R$ at the build while the
+  structure is valid (each particle within half the skin of its scaled
+  reference, D80), so it is a candidate; the white paper proves it
+  (Section 4.6).
 - **The order** is by center by construction, $i$ ascending, which the
   chunks of AOTI rely on (Section 11.5).
-- The slots are (i, j, $s_a$, $s_b$, $s_c$) in int32, held by the runtime
-  and grown at a build that needs more, as the rows of the matrix are.
+- The candidates and the slots are held by the runtime
+  (`mdrtEdgesCreate`, `mdrtEdgesReserve`, `mdrtEdgesBuffer`), 36 bytes a
+  slot, and grow by a quarter more than asked at a build that needs more,
+  as the rows of the matrix do; the counts and the offsets are buffers of
+  the structure. The plugin's own search took a block of up to 256 MiB.
 
 ### 12.4 How the plugin takes the list
 

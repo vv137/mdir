@@ -644,3 +644,79 @@ been amplified by the chaos of the dynamics.
 schedule and sizes its buffers from an estimate of the drift of the
 energy, while MDIR prunes when an exact condition fails, and keeps no pair
 out that could be within the cutoff.
+
+## 4.6 The pairs of images of a learned potential
+
+A local learned potential, such as Allegro
+[[Musaelian2023]](references.md#musaelian2023), takes its pairs as a list
+of edges: every pair in both directions, every image of each, the images
+of a particle itself included, and nothing beyond its cutoff,
+
+$$
+\mathcal E = \{(i, j, \mathbf n) : (j, \mathbf n) \ne (i, \mathbf 0),\
+\lVert \mathbf x_j - \mathbf x_i + \mathbf n H \rVert < r_c\} .
+$$
+
+The cell may be narrower than $2r_c$, or than $r_c$: the 6.2 Å water box
+of the tests is narrower than the 7 Å cutoff of the model. The model's
+energy is a sum over centers of functions of their edges alone, so the
+list must hold each element of $\mathcal E$ exactly once. MDIR's program
+derives it from a neighborhood at the model's cutoff (`md.edges`,
+D[mlip-pairlist]), and the opaque call of the model (D270) takes it.
+
+**Candidates.** A row of the matrix holds $j$ once if its nearest image is
+within $R$ at the build (Section 4.3; the build of a triclinic cell tests
+every image where the reach exceeds half of the least of $a_x, b_y, c_z$).
+If some image of $j$ is within $R$, its nearest is, so the row holds every
+$j$ with an image within $R$. For each entry, and for $i$ itself, the
+images within $R$ are enumerated along $\mathbf c$, then $\mathbf b$, then
+$\mathbf a$: since $H$ is lower triangular, the $z$ component of
+$\mathbf d + \mathbf n H$ depends on $n_c$ alone, the $y$ component on $n_c$
+and $n_b$, and the $x$ component on all three, so each range is an interval
+given by the ones before. These are the candidates of $i$, $C_i$ of them,
+counted and written at each build at $\mathbf x^\text{ref}$ in the cell of
+the build; their prefix sums $O_i$ give each particle its slots.
+
+**Proposition.** While the structure is valid (Section 4.1), every
+element of $\mathcal E$ at $\mathbf x$ in the cell $H$ is a candidate.
+
+*Proof.* Let $\lVert \mathbf x_j - \mathbf x_i + \mathbf n H \rVert <
+r_c$. The scaling of the cell since the build maps the image $\mathbf n$ of
+the old lattice onto the image $\mathbf n$ of the new one and stretches
+its displacement by at least $\min(\mathbf m)$, and each particle is
+within $d$ of its scaled reference, so
+
+$$
+\min(\mathbf m)\,\lVert \mathbf x^\text{ref}_j - \mathbf x^\text{ref}_i
++ \mathbf n H^\text{ref} \rVert \le
+\lVert \mathbf x_j - \mathbf x_i + \mathbf n H \rVert + 2d <
+r_c + \min(\mathbf m)\,R - r_c ,
+$$
+
+and the image was within $R$ at the build. $\blacksquare$
+
+The candidates are decided once, at the build, so the count $C_i$ and the
+candidates written are the same set; the test there takes $R(1 +
+10^{-6})$, which covers the rounding of the test of validity.
+
+**Each step.** One thread for each particle reads its $C_i$ candidates,
+computes $\mathbf x_j - \mathbf x_i + \mathbf n H$ in f64 at the positions
+and the cell of the step, and writes those within $r_c$ to the front of its
+slots and the others to the back, keeping $E_i$, the number of the first,
+on the device. The list is ordered by center by construction, which the
+chunks of the model take (a chunk of centers is a range of it), and its
+length $\sum_i C_i$ is known on the host from the build.
+
+**Taking it without a wait.** The model's tensors are shaped on the host,
+while $\sum_i E_i$ is on the device. The call either reads the counts (one
+copy per call) and gathers the pairs within $r_c$ on the device, or takes
+every slot: a candidate beyond $r_c$ is a pair at $r_c \le r < R$, on which
+a cutoff function that vanishes from $r_c$ on, such as Allegro's
+polynomial envelope, adds nothing to the energy and nothing to its
+derivatives. The second costs the model about $(R/r_c)^3$ times the pairs.
+
+**Checks.** With `MDIR_MLIP_CHECK_PAIRS` every evaluation compares the
+pairs within $r_c$ with those of the plugin's search of every image (D270)
+as sets; they are the same at every evaluation on the four boxes of the
+tests, the 6.2 Å one included, under NVE and under a barostat
+(`test/Driver/model-term-aoti-gpu.test`).

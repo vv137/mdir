@@ -32,6 +32,14 @@ format, or the outputs; every such change is listed under **Changed** or
   cutoff of 9 Å and time them at 16, 4, and 1 threads with the parts of
   the step; `cpu-breakdown/prof.py` labels the prolate kernel's loop over
   pairs. MDIR's behavior does not change.
+- The pair list of a term of `[[energy.model]]` is MDIR's (D[mlip-pairlist],
+  #378): `md.edges` of an `md.neighborhood` at the model's cutoff, every
+  image of each pair within it from the rows of the neighbor matrix (cells
+  narrower than the cutoff included), built on the device in slots fixed at
+  each build of the structure, the pairs within the cutoff first. The plugin
+  takes it through version 2 of its C boundary (a plugin of version 1 is
+  refused), exactly or padded (`MDIR_MLIP_PAIRS`), and searches its own with
+  `MDIR_MLIP_PAIRS=search`; `MDIR_MLIP_CHECK_PAIRS=1` compares the two.
 - `[minimize]` and stochastic cell rescaling with a term of
   `[[energy.model]]` (D272, #367): the model's energy,
   forces, and virial enter the steepest descent and the pressure of every

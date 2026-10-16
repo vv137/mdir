@@ -25,6 +25,13 @@
 # CHECK: forces ok
 # CHECK: virial ok
 
+# MDIR's pair list (D[mlip-pairlist]), padded, compared at every
+# evaluation with the plugin's own search; and that search alone.
+# RUN: env MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=padded %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.pt --centers-per-call 5 --steps 2 2>%t/padded.err | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=AGREE < %t/padded.err
+# AGREE: (MDIR_MLIP_CHECK_PAIRS): the engine's pair list and the plugin's search agree, {{[0-9]+}} pairs
+# RUN: env MDIR_MLIP_PAIRS=search %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.pt --precision Mixed | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+
 # A frame evaluator refuses the term (it needs tunables, which a model term
 # refuses; the builder refuses the frame evaluator itself as well).
 # RUN: %mlip_python %S/Inputs/model-term/frames.py %t %t/allegro.pt | FileCheck %s --check-prefix=FRAMES
