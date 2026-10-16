@@ -182,10 +182,15 @@ jit_times = [r[2] for r in recs if r[0] == 1 and any(name(pc)[1] == "jit" for pc
 lo_t = (jit_times[0] + jit_times[-1]) / 2 if jit_times else 0
 hi_t = jit_times[-1] if jit_times else 1 << 63
 PATTERNS = [
-    (r"^mdrt\.pme_(spread|bspline|raise|place)", "PME spread"),
-    (r"^mdrt\.pme_convolve", "PME convolution"),
-    (r"^mdrt\.pme_(gather|potential)", "PME gather"),
-    (r"^mdrt\.pme_real", "PME spread"),
+    # The parallel regions of the templates (mdrt.pme_spread_..omp_par.N)
+    # are named after the function they are outlined from.
+    (r"^mdrt\.pme_(spread|zero|real)", "PME spread"),
+    (r"^mdrt\.pme_(convolve|scale|tables|influence|point_sums)", "PME convolution"),
+    (r"^mdrt\.pme_(gather|potential|splines)", "PME gather"),
+    (r"^mdrt\.pme_fft", "PME FFT"),
+    # The B-splines and places, where the frame of their caller is not
+    # seen: those of the spreading and the gathering together.
+    (r"^mdrt\.pme_(bspline|raise|place|spline|window|clenshaw|inverse_cell)", "PME splines"),
     (r"^(_mlir_ciface_)?mdrtFFT|^(pass|rad[fb]|cfft|rfft|pass_all|copy_and_norm|cfftp|rfftp)", "PME FFT"),
     (r"^mdrt\.(build_neighbors|spatial_order|minimum_image|cell_|wrap)|^(_mlir_ciface_)?mdrtHostMatrix|^mdrtCountBuild",
      "list builds"),
@@ -194,13 +199,21 @@ PATTERNS = [
 
 
 def part_of(frames):
-    """The part of a stack (leaf first): the innermost frame that names one."""
+    """The part of a stack (leaf first): the innermost frame that names one,
+    the B-splines and places taking the part of their caller where it is
+    seen."""
+    shared = None
     for n, o in frames:
         if n in regions:
             return regions[n]
         for pat, part in PATTERNS:
             if re.search(pat, n):
-                return part
+                if part != "PME splines":
+                    return part
+                shared = shared or part
+                break
+    if shared:
+        return shared
     for n, o in frames:
         if o == "jit":
             return "serial code of the entry" if n == "mdir_run" else "other: " + n
