@@ -634,6 +634,14 @@ and 0.13 kJ/mol. From the unminimized lattice (Section 3.2) the change of
 the total energy after 0.02 ps follows $\Delta t^2$: 0.435, 0.107, and 0.026
 kcal/mol with steps of 0.5, 0.25, and 0.125 fs.
 
+**Constant temperature**, the same system in `mixed`, 400 steps of 0.5 fs
+toward 300 K: with stochastic velocity rescaling (`V-RESCALE`, every 10
+steps, 0.1 ps) the temperature rises from 172 to 216 to 227 K over 0.2 ps
+and the conserved energy stays within 0.33 kcal/mol of its start; with
+Langevin dynamics (5 /ps) it rises to 229 K. Both run at 72 ms per step. A
+thermostat changes nothing of the term; these runs check only that it runs
+under one.
+
 **Memory against pairs** (liquid water, double, float64 inputs; the peak
 of the plugin's allocator over the run, `torch`'s count):
 

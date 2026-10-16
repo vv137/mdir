@@ -11492,6 +11492,15 @@ llvm::Error Builder::build() {
     if (control.precision == Precision::Single)
       return makeError("a term of [[energy.model]] takes the mixed or the "
                        "double precision");
+    // A frame evaluator is chosen when a Python simulation is made, after
+    // the checks of the control: its forces and virial come from
+    // evaluations of their own, which do not take the model.
+    if (control.frames)
+      return makeError("a term of [[energy.model]] is not evaluated by the "
+                       "frame evaluator yet");
+    if (control.tunables || control.tunableGradient)
+      return makeError("a term of [[energy.model]] has no derivative in a "
+                       "tunable parameter: tunables are refused");
   }
   // A build of the arrays alone ends with them.
   if (capture)

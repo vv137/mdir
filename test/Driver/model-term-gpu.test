@@ -25,6 +25,11 @@
 # CHECK: forces ok
 # CHECK: virial ok
 
+# A frame evaluator refuses the term (it needs tunables, which a model term
+# refuses; the builder refuses the frame evaluator itself as well).
+# RUN: %mlip_python %S/Inputs/model-term/frames.py %t %t/allegro.pt | FileCheck %s --check-prefix=FRAMES
+# FRAMES: refused:
+
 # mdir run: the term in the log, and its energy at the start.
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: cd %t && mdir run run.toml > %t/run.log
