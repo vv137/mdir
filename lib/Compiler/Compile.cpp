@@ -18,6 +18,8 @@
 #include "mlir/Pass/PassRegistry.h"
 #include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
+#include "llvm/IR/Module.h"
+#include "llvm/Passes/PassBuilder.h"
 #include "llvm/Support/ThreadPool.h"
 #include "llvm/Support/FileSystem.h"
 #include "llvm/Support/Path.h"
@@ -435,4 +437,32 @@ compiler::createHostMachine() {
     return builder.takeError();
   builder->setCodeGenOptLevel(llvm::CodeGenOptLevel::Default);
   return builder->createTargetMachine();
+}
+
+// Without it the code generator alone compiled the host code: no inlining
+// of the helpers of the templates (the minimum image of a search, the
+// B-splines of PME), no promotion of their arrays to registers, no
+// hoisting out of loops (#359, D267). The pipeline keeps the
+// floating-point semantics of the module: it neither contracts nor
+// reassociates what the module does not allow. O3 took 11 to 16% less time
+// a step on the CPU than O2 for 4 to 5% more compile time (D[host-opt]).
+static constexpr llvm::OptimizationLevel hostLevel = llvm::OptimizationLevel::O3;
+
+llvm::StringRef compiler::hostOptimization() {
+  return hostLevel == llvm::OptimizationLevel::O3 ? "O3" : "O2";
+}
+
+void compiler::optimizeHostModule(llvm::Module &module,
+                                  llvm::TargetMachine &machine) {
+  llvm::LoopAnalysisManager loops;
+  llvm::FunctionAnalysisManager functions;
+  llvm::CGSCCAnalysisManager sccs;
+  llvm::ModuleAnalysisManager modules;
+  llvm::PassBuilder builder(&machine);
+  builder.registerModuleAnalyses(modules);
+  builder.registerCGSCCAnalyses(sccs);
+  builder.registerFunctionAnalyses(functions);
+  builder.registerLoopAnalyses(loops);
+  builder.crossRegisterProxies(loops, functions, sccs, modules);
+  builder.buildPerModuleDefaultPipeline(hostLevel).run(module, modules);
 }

@@ -177,12 +177,14 @@ Nodes that differ:
 The host object is a function of the LLVM module and of the code generator
 alone, so its key holds these and nothing of the MDIR build:
 
-- a BLAKE3 hash of the module's bitcode, taken before code generation
-  (which changes the module);
+- a BLAKE3 hash of the module's bitcode, taken before LLVM's module
+  pipeline and code generation (which change the module), so that a hit
+  costs neither (D[host-opt]);
 - the LLVM version, the target triple, the CPU name and its features, the
   level of code generation (D197), the code and relocation models, the
   data layout, the target options that change generated code, and the
-  pre-RA scheduler that the simulation selects (D150);
+  pre-RA scheduler that the simulation selects (D150), and the level of the
+  module pipeline of the host code (`host-opt=O3`, D[host-opt]);
 - a format tag.
 
 The PTX of the kernels is a global of the module, so a change of device

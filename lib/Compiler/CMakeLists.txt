@@ -7,7 +7,7 @@ add_mlir_library(MDIRCompileCache CompileCache.cpp
 
 add_mlir_library(MDIRCompiler Compile.cpp
   PARTIAL_SOURCES_INTENDED
-  LINK_COMPONENTS OrcJIT
+  LINK_COMPONENTS OrcJIT Passes
   LINK_LIBS PUBLIC
   MDIRDriver MDIRDyn MDIRMD MDIRMDExec MDIRMDExecToGPU MDIRGPUToBinary MDIRMDExecToLoops
   MDIRMDExecTransforms MDIRMDRT MDIRMDToMDExec MDIRMDTransforms
