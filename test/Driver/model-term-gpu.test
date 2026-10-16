@@ -1,0 +1,79 @@
+# A learned potential through the plugin of D[metatomic-plugin]
+# (docs/metatomic-ml1.md): Allegro-OAM-L 0.1, wrapped as a metatomic
+# artifact by scripts/mlip/nequip-to-metatomic.py from the package that
+# lit is given (MDIR_ALLEGRO_PACKAGE or -Dallegro_package=; never in the
+# repository), against NequIP's own calculator on 8 waters in a cell of
+# 6.2 Å, narrower than twice the cutoff of 7 Å, so that the pair list takes
+# several images of each particle.
+#
+# REQUIRES: cuda, metatomic, mlip-python, allegro-package
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mlip_python %S/../../scripts/mlip/nequip-to-metatomic.py %allegro_package %t/allegro.pt 2>&1 | FileCheck %s --check-prefix=WRAP
+# RUN: %mlip_python %S/../../scripts/mlip/nequip-to-metatomic.py %allegro_package %t/allegro32.pt --dtype float32 2>&1 | FileCheck %s --check-prefix=WRAP32
+# WRAP: 89 types, r_max 7.0 A, inputs float64
+# WRAP32: 89 types, r_max 7.0 A, inputs float32
+# RUN: %mlip_python %S/../../scripts/mlip/water-box.py %t --n 2 --spacing 3.1 --seed 2 --reference %allegro_package
+
+# The Python model, in double and mixed precision, the float32 artifact,
+# and chunks of 5 centers: energy, forces, and the virial tensor.
+# RUN: %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.pt --precision Double | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.pt --precision Mixed | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro32.pt --precision Double | %mlip_python %S/Inputs/model-term/compare.py json 10 | FileCheck %s
+# RUN: %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.pt --centers-per-call 5 | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# CHECK: energy ok
+# CHECK: forces ok
+# CHECK: virial ok
+
+# A frame evaluator refuses the term (it needs tunables, which a model term
+# refuses; the builder refuses the frame evaluator itself as well).
+# RUN: %mlip_python %S/Inputs/model-term/frames.py %t %t/allegro.pt | FileCheck %s --check-prefix=FRAMES
+# FRAMES: refused:
+
+# mdir run: the term in the log, and its energy at the start.
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t && mdir run run.toml > %t/run.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/run.log
+# RUN: %mlip_python %S/Inputs/model-term/compare.py log %t/reference.npz < %t/run.log | FileCheck %s --check-prefix=START
+# LOG: MDIR: model 'allegro' ({{.*}}): metatomic, torch {{.*}}; cutoff 0.70 nm, full pair list; inputs of 64 bits
+# LOG: MDIR: MODEL allegro
+# LOG: MDIR: model 'allegro': 3 evaluations
+# START: mdir run energy ok
+
+#--- run.toml
+[input]
+topology    = "system.top"
+coordinates = "system.gro"
+
+[output]
+energy_interval = 1
+
+[energy]
+cutoff = 2.0
+pairlist_distance = 2.5
+electrostatics = "CUTOFF"
+
+[[energy.model]]
+name = "allegro"
+path = "allegro.pt"
+
+[constraints]
+hydrogen_bonds = false
+rigid_water = false
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 2
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "GPU"
+precision = "DOUBLE"
+#--- end

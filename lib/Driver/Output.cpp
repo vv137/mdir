@@ -4,6 +4,7 @@
 #include "mdir/Driver/Output.h"
 
 #include "mdir/Driver/H5MD.h"
+#include "mdir/Driver/ModelTerm.h"
 
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
 
@@ -215,6 +216,17 @@ static void stopOnFailure(const Output &output, const std::string &message) {
   std::exit(1);
 }
 
+Output *mdir::driver::getOutput() { return current; }
+
+void mdir::driver::stopRun(const std::string &message) {
+  if (current) {
+    stopOnFailure(*current, message);
+    return;
+  }
+  std::fprintf(stderr, "mdir: %s\n", message.c_str());
+  std::exit(1);
+}
+
 void mdir::driver::writeLogHeader(Output &output) {
   if (output.minimizes) {
     output.log.print("INFO: %9s %14s %14s %14s %9s %14s\n", "STEP",
@@ -373,6 +385,17 @@ void _mlir_ciface_mdrtWriteTerms(void *terms) {
     total += value;
     output.log.print("MDIR:   %-22s %16.6f\n", name.c_str(),
                  value / units::energy);
+  }
+  // A learned potential (D[metatomic-plugin]), evaluated with the forces of
+  // the start; ML1 takes one.
+  if (output.models) {
+    double energy;
+    std::array<double, 9> tensor;
+    output.models->read(energy, tensor);
+    std::string name = "MODEL " + output.models->getNames().front();
+    total += energy;
+    output.log.print("MDIR:   %-22s %16.6f\n", name.c_str(),
+                     energy / units::energy);
   }
   if (output.pme || output.reactionField)
     output.log.print("MDIR:   %-22s %16.6f\n", "Coulomb self",

@@ -12,6 +12,16 @@ else()
   set(MDIR_TEST_CUDA 0)
 endif()
 
+# The plugin of learned potentials and the interpreter of its Python
+# environment (torch, metatomic, NequIP), which builds the test's artifact.
+if(MDIR_ENABLE_METATOMIC)
+  set(MDIR_TEST_METATOMIC 1)
+else()
+  set(MDIR_TEST_METATOMIC 0)
+endif()
+set(MDIR_MLIP_PYTHON "" CACHE FILEPATH
+  "The Python of the environment that the plugin was built against")
+
 get_property(MDIR_HDF5_FOUND GLOBAL PROPERTY MDIR_HDF5_FOUND)
 if(MDIR_HDF5_FOUND)
   set(MDIR_TEST_HDF5 1)

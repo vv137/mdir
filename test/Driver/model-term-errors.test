@@ -1,0 +1,87 @@
+# [[energy.model]] (D[metatomic-plugin]): what the reader and the checks of
+# the control file refuse before any plugin is loaded, and what `mdir check`
+# says of a term that it takes. ML1 runs a model on a GPU, in a fixed cell,
+# outside the deterministic mode, without derivatives that MDIR would take
+# of the term (docs/metatomic-ml1.md, Sections 6.7 to 6.9).
+#
+# REQUIRES: python-api
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/../../scripts/mlip/water-box.py %t --n 2 --spacing 4.0
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=CHECK-OK
+# CHECK-OK: model: allegro, METATOMIC, '{{.*}}allegro.pt', 16 centers per call
+
+# RUN: sed 's/"METATOMIC"/"TORCHSCRIPT"/' %t/run.toml > %t/backend.toml
+# RUN: not mdir check %t/backend.toml 2>&1 | FileCheck %s --check-prefix=BACKEND
+# BACKEND: expected 'backend' as "METATOMIC", a TorchScript artifact of metatomic
+
+# RUN: sed '/^path/d' %t/run.toml > %t/nopath.toml
+# RUN: not mdir check %t/nopath.toml 2>&1 | FileCheck %s --check-prefix=NOPATH
+# NOPATH: expected a 'path' in {{\[\[}}energy.model{{\]\]}}
+
+# RUN: sed 's/^centers_per_call.*/centers_per_call = -1/' %t/run.toml > %t/negative.toml
+# RUN: not mdir check %t/negative.toml 2>&1 | FileCheck %s --check-prefix=NEGATIVE
+# NEGATIVE: centers_per_call
+
+# RUN: sed 's/^centers_per_call.*/selection = "@O"/' %t/run.toml > %t/unknown.toml
+# RUN: not mdir check %t/unknown.toml 2>&1 | FileCheck %s --check-prefix=UNKNOWN
+# UNKNOWN: 'selection'
+
+# RUN: sed 's/target = "GPU"/target = "CPU"/' %t/run.toml > %t/cpu.toml
+# RUN: not mdir check %t/cpu.toml 2>&1 | FileCheck %s --check-prefix=CPU
+# CPU: the model 'allegro' of {{.*}} runs on a GPU only yet
+
+# RUN: sed 's/^precision = .*/&\ndeterministic = true/' %t/run.toml > %t/deterministic.toml
+# RUN: not mdir check %t/deterministic.toml 2>&1 | FileCheck %s --check-prefix=DETERMINISTIC
+# DETERMINISTIC: is not deterministic
+
+# RUN: sed -e 's/^\[dynamics\]/[minimize]/' -e '/^integrator/d' -e '/^time_step/d' %t/run.toml > %t/minimize.toml
+# RUN: not mdir check %t/minimize.toml 2>&1 | FileCheck %s --check-prefix=MINIMIZE
+# MINIMIZE: takes no minimization yet
+
+# RUN: sed -n '/^#--- second/,/^#--- end/p' %s | sed '1d;$d' >> %t/run.toml
+# RUN: not mdir check %t/run.toml 2>&1 | FileCheck %s --check-prefix=SECOND
+# SECOND: another model has the name 'allegro'
+
+#--- run.toml
+[input]
+topology    = "system.top"
+coordinates = "system.gro"
+
+[energy]
+cutoff = 3.0
+electrostatics = "CUTOFF"
+
+[[energy.model]]
+name = "allegro"
+backend = "METATOMIC"
+path = "allegro.pt"
+centers_per_call = 16
+
+[constraints]
+hydrogen_bonds = false
+rigid_water = false
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "GPU"
+precision = "DOUBLE"
+#--- end
+
+#--- second
+[[energy.model]]
+name = "allegro"
+path = "other.pt"
+#--- end

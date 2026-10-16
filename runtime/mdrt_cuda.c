@@ -1234,6 +1234,50 @@ void mdrtDeviceCopyToHost(void *destination, const void *source,
 }
 
 /*===----------------------------------------------------------------------===
+ * Work of a plugin of learned potentials (D[metatomic-plugin])
+ *===----------------------------------------------------------------------===*/
+
+/* The stream of the kernels, for a plugin that issues work there itself (a
+   learned potential, docs/metatomic-ml1.md): that work runs in order with
+   the kernels, and the library counts it as issued, so that the host waits
+   for it before it reads what the device computed. */
+void *mdrtDeviceExternalStream(void) {
+  mgpuStreamCreate();
+  isPending = 1;
+  return (void *)sharedStream;
+}
+
+/* Memory of the device that the library records as its own, outside any
+   activation: a copy from or to it does not wait for the device, and an
+   activation that closes does not take it back. A plugin's outputs, which
+   live as long as the plugin's model. */
+void *mdrtDeviceAllocateRecorded(uint64_t size) {
+  enter();
+  CUdeviceptr pointer = 0;
+  if (!size)
+    return NULL;
+  check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+  if (numLive < MAX_BLOCKS)
+    liveBlocks[numLive++] = (struct Block){pointer, size, NULL};
+  else
+    untracked = 1;
+  return (void *)pointer;
+}
+
+void mdrtDeviceFreeRecorded(void *pointer) {
+  if (!pointer || isDriverGone())
+    return;
+  CUdeviceptr address = (CUdeviceptr)pointer;
+  for (int i = numLive; i-- != 0;)
+    if (liveBlocks[i].pointer == address) {
+      liveBlocks[i] = liveBlocks[--numLive];
+      break;
+    }
+  finish();
+  check(cuMemFree(address), "cuMemFree");
+}
+
+/*===----------------------------------------------------------------------===
  * Views of the buffers of an embedding program (D220)
  *===----------------------------------------------------------------------===*/
 

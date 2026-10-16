@@ -18,6 +18,9 @@
 #include <vector>
 namespace mdir { namespace driver { struct Output; } }
 namespace mdir { namespace compiler {
+/// The directory of MDIR's runtime libraries, where the plugin of learned
+/// potentials is looked for beside them (D[metatomic-plugin]).
+std::string getRuntimeDirectory();
 /// The activation of the entry that runs the parts of a simulation
 /// (D215).
 struct Activation;
@@ -440,6 +443,10 @@ public:
   /// borrow may write (D238).
   bool hasTriclinicCell() const;
   bool isPeriodic() const { return prepared.control.periodic; }
+  /// The energy (kJ/mol) and the virial tensor (kJ/mol, row by row) of the
+  /// last evaluation of the learned potentials (D[metatomic-plugin]); false
+  /// without one.
+  bool readModelTerms(double &energy, std::array<double, 9> &virial) const;
   /// The number of commits that changed the positions, the velocities, and
   /// the cell from the host (P16), and for each commit that changed
   /// anything the step and the names of its fields.

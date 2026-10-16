@@ -1,0 +1,8 @@
+torch==2.14.1
+metatomic-torch
+metatomic-ase
+metatensor-torch
+nequip
+nequip-allegro
+ase
+vesin

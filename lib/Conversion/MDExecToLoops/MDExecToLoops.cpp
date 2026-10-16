@@ -1077,6 +1077,24 @@ LogicalResult Lowering::lowerOp(Operation *op) {
           ValueRange{createIndex(builder, loc, c)}));
     cell->getResult(0).replaceAllUsesWith(vector::FromElementsOp::create(
         builder, loc, VectorType::get({count}, builder.getF64Type()), edges));
+  } else if (auto numbers = dyn_cast<md_exec::CellNumbersOp>(op)) {
+    // The cell is the vector of its edges by now, or of its diagonal and
+    // tilts; an orthorhombic one takes tilts of zero.
+    OpBuilder builder(op);
+    Location loc = op->getLoc();
+    Value cell = numbers->getOperand(0);
+    Value result = cell;
+    if (cast<VectorType>(cell.getType()).getDimSize(0) != 6) {
+      Value zero = arith::ConstantOp::create(builder, loc,
+                                             builder.getF64FloatAttr(0.0));
+      SmallVector<Value, 6> values;
+      for (int64_t k = 0; k != 3; ++k)
+        values.push_back(vector::ExtractOp::create(builder, loc, cell, k));
+      values.append(3, zero);
+      result = vector::FromElementsOp::create(
+          builder, loc, VectorType::get({6}, builder.getF64Type()), values);
+    }
+    numbers.getResult().replaceAllUsesWith(result);
   } else if (auto edges = dyn_cast<md_exec::CellEdgesOp>(op)) {
     // The cell is the vector of its edges by now, or of its diagonal and
     // tilts.

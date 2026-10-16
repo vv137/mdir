@@ -2,6 +2,7 @@
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Compiler/Simulation.h"
 #include "mdir/Driver/H5MD.h"
+#include "mdir/Driver/ModelTerm.h"
 #include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <memory>
@@ -382,6 +383,28 @@ PYBIND11_MODULE(_core, m) {
     })
     .def_property("observe", [](const driver::ExternalTerm &t) { return observeOf(t); },
                   [](driver::ExternalTerm &t, py::object value) { setObserve(t, value, "ExternalTerm"); });
+  // Learned potentials, `[[energy.model]]` (D[metatomic-plugin]): a
+  // metatomic artifact evaluated through the optional plugin, on a GPU.
+  py::class_<driver::Control::ModelTerm>(m, "ModelTerm")
+    .def(py::init([](std::string name, std::string path, std::string backend,
+                     int64_t centersPerCall) {
+           driver::Control::ModelTerm term;
+           term.name = std::move(name);
+           term.path = std::move(path);
+           term.backend = std::move(backend);
+           term.centersPerCall = centersPerCall;
+           return term;
+         }),
+         py::arg("name"), py::arg("path"), py::arg("backend") = "METATOMIC",
+         py::arg("centers_per_call") = 0)
+    .def_readwrite("name", &driver::Control::ModelTerm::name)
+    .def_readwrite("path", &driver::Control::ModelTerm::path)
+    .def_readwrite("backend", &driver::Control::ModelTerm::backend)
+    .def_readwrite("centers_per_call", &driver::Control::ModelTerm::centersPerCall)
+    .def("__repr__", [](const driver::Control::ModelTerm &t) {
+      return "ModelTerm(name='" + t.name + "', path='" + t.path + "', backend='" +
+             t.backend + "', centers_per_call=" + std::to_string(t.centersPerCall) + ")";
+    });
   // Tunable parameters (D213).
   tunables::bindTunable(m);
   // Read-only topology views (D221).
@@ -469,6 +492,7 @@ PYBIND11_MODULE(_core, m) {
   property(system, "pair_terms", &model::System::pairTerms);
   property(system, "tuple_terms", &model::System::tupleTerms);
   property(system, "external_terms", &model::System::externalTerms);
+  property(system, "models", &model::System::models);
   property(system, "restraints", &model::System::restraints);
   property(system, "tunables", &model::System::tunables);
   // Whether the program carries the derivative of the energy in the
@@ -1434,6 +1458,29 @@ PYBIND11_MODULE(_core, m) {
       if (checkpoint) {
         taken = readCheckpointFile(*checkpoint);
       }
+      // A learned potential (D[metatomic-plugin]): torch is imported before
+      // the plugin loads, so that the plugin takes the libtorch of the
+      // imported module, whose version must be that of the plugin's build;
+      // a process never holds two.
+      if (!program->prepared->control.models.empty()) {
+        py::object torch;
+        try {
+          torch = py::module_::import("torch");
+        } catch (py::error_already_set &e) {
+          throw UnsupportedError(std::string("a model term needs PyTorch, the libtorch "
+                                             "of the plugin: ") + e.what());
+        }
+        std::string imported = py::str(torch.attr("__version__"));
+        imported = imported.substr(0, imported.find('+'));
+        auto built = driver::getPluginTorchVersion(
+            driver::getPluginPath(compiler::getRuntimeDirectory()));
+        if (!built) throw UnsupportedError(llvm::toString(built.takeError()));
+        if (*built != imported)
+          throw UnsupportedError("the plugin of learned potentials was built against "
+                                 "torch " + *built + ", and this process imported torch " +
+                                 imported + "; build the plugin against the torch of this "
+                                 "Python");
+      }
       // The program's choice unless one is given (D217).
       bool useCache = cache.value_or(program->cache);
       auto prepared = program->prepared;
@@ -1750,6 +1797,18 @@ PYBIND11_MODULE(_core, m) {
     }, py::arg("steps") = py::none(), py::arg("tolerance") = py::none())
     .def("request_stop", [](PySimulation &s) { s.simulation->requestStop(); })
     .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
+    // The learned potentials (D[metatomic-plugin]) at their last evaluation,
+    // that of the last step: their energy (kJ/mol) and their virial tensor
+    // W = -dE/d(strain) (kJ/mol); None without a model term.
+    .def("model_energies", [](PySimulation &s) -> py::object {
+      double energy = 0.0;
+      std::array<double, 9> virial;
+      if (!s.simulation->readModelTerms(energy, virial)) return py::none();
+      py::dict d;
+      d["energy"] = energy;
+      d["virial"] = host::copy(virial.data(), 9, {3, 3});
+      return d;
+    })
     // Read-only DLPack views of the buffers (D220).
     .def("view", [](PySimulation &s) { return views::take(s.simulation); })
     // Writable borrows with a commit (D229).

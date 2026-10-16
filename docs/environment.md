@@ -12,6 +12,9 @@ and for tests.
 |---|---|---|
 | `CUDA_VISIBLE_DEVICES` | the CUDA driver; the test suite; the compiler of a GPU program | The GPUs that a process may use. An empty value hides every GPU, and the suite then skips the tests that need one ([README](../README.md#testing)). The compiler asks NVML for the architecture of the device it selects (D214). |
 | `CUDA_CACHE_PATH=<dir>` | the CUDA driver; the test suite forwards it | Where the driver keeps the kernels that it compiles from PTX (its default is in the home directory). Set it for a suite whose home directory is on a network file system; the suite hands it to its tests (#223). Temporary files of the tests are in a directory that lit makes for the run under the `TMPDIR` that lit was given. |
+| `MDIR_MLIP_PLUGIN=<path>` | `mdir run` and a Python simulation with a term of `[[energy.model]]` | The plugin of learned potentials to load (D[metatomic-plugin], [metatomic-ml1.md](metatomic-ml1.md)); by default `libmdir_metatomic.so` in the directory of the runtime libraries, where `-DMDIR_ENABLE_METATOMIC=ON` builds it. |
+| `PYTORCH_CUDA_ALLOC_CONF` | PyTorch's allocator, in the plugin of learned potentials | MDIR sets it to `expandable_segments:True` before it loads the plugin, unless it is set already (D[metatomic-plugin], [metatomic-ml1.md](metatomic-ml1.md#65-sharing-the-device)). |
+| `MDIR_ALLEGRO_PACKAGE=<path>` | the test suite | The model package `Allegro-OAM-L-0.1.nequip.zip` that the tests of the model term build their artifact from (feature `allegro-package`); without it they are unsupported. |
 | `MDRT_DEVICE=<n>` | the device runtime (`runtime/mdrt_cuda.c`); the compiler of a GPU program | The device, among the visible ones, that a run uses; the first by default ([mdrt-m0.md](mdrt-m0.md)). The kernels are compiled for its architecture (D214). |
 | `CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH` | the compiler of a GPU program | The CUDA toolkit whose libdevice the kernels take their math functions from, and whose `ptxas` compiles them to cubins, the first of the three that is set; otherwise the toolkit of the build ([mdrt-m0.md](mdrt-m0.md), [compile-cache.md](compile-cache.md#cubins-for-the-device)). The three are also part of the key of the code that a `Program` keeps for its simulations on a GPU (D236). |
 | `MDIR_RUNTIME_DIR=<dir>` | a Python simulation | The directory of the runtime libraries (`libmdrt`, `libmdrt_cuda`); otherwise `lib` next to the Python module, as a build tree and an installation place it ([python-segments.md](python-segments.md)). |
@@ -115,6 +118,7 @@ The suite also takes lit parameters, given as `-D<name>=<value>` in
 - `compile_cache=off` runs the suite without its compile cache.
 - `torch_python=<interpreter>` runs the tests that need PyTorch with it (the feature `torch`), and those that need torch-pme if it imports `torchpme` as well (the feature `torchpme`, D231).
 - `h5md_python=<interpreter>` runs the tests that read a trajectory with h5py with it (the feature `h5py`).
+- `mlip_python=<interpreter>` runs the tests of the model term with the Python of the environment that the plugin was built against (the feature `mlip-python`; `MDIR_MLIP_PYTHON` of the build by default), and `allegro_package=<path>` gives them the model package as `MDIR_ALLEGRO_PACKAGE` does.
 - `release=1` enables the tests of a release ([workflow.md](workflow.md#releases)).
 
 A change that adds or reads an environment variable adds its row here.

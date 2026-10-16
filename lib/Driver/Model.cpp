@@ -1,6 +1,7 @@
 #include "mdir/Driver/Model.h"
 #include "mdir/Driver/Fingerprint.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/FileSystem.h"
 #include "llvm/Support/MemoryBuffer.h"
 #include <cmath>
 #include <limits>
@@ -587,6 +588,30 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     if (llvm::Error e = observe(term.name, term.observed, term.observe)) return std::move(e);
     c.externalTerms.push_back(std::move(term));
   }
+  // The learned potentials (D[metatomic-plugin]), checked as the reader of
+  // the control file checks [[energy.model]]; validateControl refuses what
+  // ML1 does not reach.
+  for (const driver::Control::ModelTerm &term : s.models) {
+    if (term.name.empty() ||
+        !llvm::all_of(term.name, [](char ch) { return llvm::isAlnum(ch) || ch == '_'; }))
+      return input("a model term needs a name of letters, digits, and '_'");
+    if (!termNames.insert(term.name).second) return input("duplicate model term name '" + term.name + "'");
+    if (term.backend != "METATOMIC")
+      return input("the model term '" + term.name + "': backend takes \"METATOMIC\", a "
+                   "TorchScript artifact of metatomic");
+    if (term.path.empty()) return input("the model term '" + term.name + "' needs a path");
+    if (term.centersPerCall < 0)
+      return input("the model term '" + term.name + "': centers_per_call is 0 or more");
+    driver::Control::ModelTerm copy = term;
+    llvm::SmallString<256> full(term.path);
+    if (std::error_code ec = llvm::sys::fs::make_absolute(full))
+      return input("the model term '" + term.name + "': " + ec.message());
+    copy.path = std::string(full);
+    c.models.push_back(std::move(copy));
+  }
+  if (!c.models.empty() && s.topology.atomicNumbers.size() != s.topology.getNumParticles())
+    return input("a model term needs the elements of the particles, which the topology does "
+                 "not give");
   // The restraints become those of the control structure, whose constants
   // are in kJ/mol/nm^2, and are prepared by the same code (D74, D124).
   for (const auto &r : s.restraints) {

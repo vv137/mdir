@@ -719,7 +719,8 @@ def AssignStorage : Pass<"md-exec-assign-storage", "::mlir::ModuleOp"> {
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect",
                            "::mlir::gpu::GPUDialect",
-                           "::mlir::memref::MemRefDialect"];
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::vector::VectorDialect"];
 }
 
 #endif // MDIR_DIALECT_MDEXEC_TRANSFORMS_PASSES_TD

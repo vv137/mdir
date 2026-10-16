@@ -357,6 +357,21 @@ struct Control {
   /// Terms of the absolute positions of single particles given by
   /// expressions (D148): [[energy.external]].
   std::vector<ExternalTerm> externalTerms;
+  /// A learned potential evaluated by an external framework through the
+  /// optional plugin of D[metatomic-plugin] (docs/metatomic-ml1.md):
+  /// [[energy.model]]. Its energy, forces, and virial are the model's own
+  /// derivatives; MDIR does not differentiate the term.
+  struct ModelTerm {
+    std::string name;
+    /// The loader: "METATOMIC", a TorchScript artifact of metatomic.
+    std::string backend = "METATOMIC";
+    /// The artifact, relative to the control file where read from one.
+    std::string path;
+    /// The centers per call of the model, 0 for the whole system in one
+    /// call; honored only for a model that declares that it is local.
+    int64_t centersPerCall = 0;
+  };
+  std::vector<ModelTerm> models;
   /// Whether an expression of a term of the topology takes the time `t`
   /// in ps (D145).
   bool usesTime = false;

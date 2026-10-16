@@ -11,6 +11,7 @@
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Fingerprint.h"
 #include "mdir/Driver/H5MD.h"
+#include "mdir/Driver/ModelTerm.h"
 #include "mdir/Driver/Output.h"
 #include "mdir/Driver/Profile.h"
 #include "mlir/ExecutionEngine/CRunnerUtils.h"
@@ -224,6 +225,16 @@ llvm::cl::Option *getSchedulerOption() {
   return option == options.end() ? nullptr : option->second;
 }
 } // namespace
+
+std::string compiler::getRuntimeDirectory() { return findRuntimeDirectory(); }
+
+bool compiler::Simulation::readModelTerms(double &energy,
+                                          std::array<double, 9> &virial) const {
+  if (!output || !output->models)
+    return false;
+  output->models->read(energy, virial);
+  return true;
+}
 
 /// A compiled program of segments and what its entry takes besides the state.
 struct Simulation::Engine {
@@ -619,6 +630,10 @@ compileEngine(const Control &control, const System &system,
     add("_mlir_ciface_mdrtCheckSpread", (void *)&_mlir_ciface_mdrtCheckSpread);
     add("_mlir_ciface_mdrtWriteTerms", (void *)&_mlir_ciface_mdrtWriteTerms);
     add("_mlir_ciface_mdrtWriteVirial", (void *)&_mlir_ciface_mdrtWriteVirial);
+    add("_mlir_ciface_mdrtModelEvaluate",
+        (void *)&_mlir_ciface_mdrtModelEvaluate);
+    add("_mlir_ciface_mdrtModelEvaluateEnergy",
+        (void *)&_mlir_ciface_mdrtModelEvaluateEnergy);
     add("_mlir_ciface_mdrtWriteFrameForces",
         (void *)&_mlir_ciface_mdrtWriteFrameForces);
     add("_mlir_ciface_mdrtWriteFrameVirial",
@@ -797,6 +812,19 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   output->volume = system.box[0] * system.box[1] * system.box[2];
   output->endStep = 0;
   output->tunablesVersion = prepared.tunables.empty() ? -1 : 0;
+  // The learned potentials (D[metatomic-plugin]) on the device that the
+  // simulation's runtime uses. In Python the module has imported torch
+  // and checked its version against the plugin's before.
+  if (!control.models.empty()) {
+    auto models = driver::ModelTerms::load(control, system,
+                                           findRuntimeDirectory());
+    if (!models) {
+      lock.unlock();
+      return llvm::make_error<compiler::CompileError>(
+          llvm::toString(models.takeError()));
+    }
+    output->models = std::move(*models);
+  }
   simulation->output = std::move(output);
   lock.unlock();
   return std::move(simulation);

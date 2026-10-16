@@ -17,6 +17,7 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
@@ -1437,7 +1438,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     // The buffers of the host that this call has taken, by type.
     llvm::DenseMap<std::pair<Type, Attribute>, unsigned> taken;
     for (auto [operand, type] :
-         llvm::zip(call.getOperands(), callee.getArgumentTypes())) {
+         llvm::zip(call.getInputs(), callee.getArgumentTypes())) {
       if (!isField(operand.getType())) {
         arguments.push_back(mapping.lookup(operand));
         continue;
@@ -1480,7 +1481,62 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
       createTransfer(builder, op->getLoc(), host, buffer);
       arguments.push_back(host);
     }
+
+    // The fields that the function adds to continue in their buffers,
+    // which it is given where they are (D[metatomic-plugin]).
+    SmallVector<Value> outs;
+    for (Value destination : call.getOuts()) {
+      Value buffer;
+      bool accumulates;
+      if (failed(chooseDestination(op, destination, call.getInputs(),
+                                   /*inPlace=*/true, scope, position, buffer,
+                                   accumulates)))
+        return failure();
+      if (!accumulates)
+        return op->emitOpError()
+               << "expected a field in 'outs' that holds a value";
+      outs.push_back(buffer);
+      if (!onDevice) {
+        arguments.push_back(buffer);
+        continue;
+      }
+      if (!call.getInPlace())
+        return op->emitOpError()
+               << "writes fields on a device, which it takes only in place";
+      auto device = cast<MemRefType>(buffer.getType());
+      arguments.push_back(memref::MemorySpaceCastOp::create(
+          builder, op->getLoc(),
+          MemRefType::get(device.getShape(), device.getElementType()),
+          buffer));
+    }
+    // The numbers that it computes, in buffers of the host.
+    SmallVector<Value> numbers;
+    for (Value number : call.getNumbers()) {
+      Value buffer = memref::AllocaOp::create(
+          builder, op->getLoc(), mdrt::getHostNumberType(number.getType()));
+      numbers.push_back(buffer);
+      arguments.push_back(buffer);
+    }
     func::CallOp::create(builder, op->getLoc(), callee, arguments);
+
+    for (auto [index, buffer] : llvm::enumerate(outs)) {
+      buffers[call.getResult(index)] = buffer;
+      scope.owned.insert(buffer);
+    }
+    for (auto [number, buffer] : llvm::zip(call.getNumbers(), numbers)) {
+      auto type = cast<MemRefType>(buffer.getType());
+      SmallVector<Value, 9> loaded;
+      for (int64_t k = 0, e = type.getDimSize(0); k != e; ++k)
+        loaded.push_back(memref::LoadOp::create(
+            builder, op->getLoc(), buffer,
+            ValueRange{arith::ConstantIndexOp::create(builder, op->getLoc(),
+                                                      k)}));
+      Value value = loaded.front();
+      if (auto vector = dyn_cast<VectorType>(number.getType()))
+        value = vector::FromElementsOp::create(builder, op->getLoc(), vector,
+                                               loaded);
+      mapping.map(number, value);
+    }
     return success();
   }
 
@@ -1646,7 +1702,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   }
 
   // Ops on cells hold no fields, and are copied as they are.
-  bool isCell = isa<md::OrthorhombicCellOp, md::TriclinicCellOp, CellEdgesOp>(op);
+  bool isCell = isa<md::OrthorhombicCellOp, md::TriclinicCellOp, CellEdgesOp,
+                    CellNumbersOp>(op);
   if (!isCell && (isa<md::MDDialect>(op->getDialect()) ||
                   isa<MDExecDialect>(op->getDialect()) ||
                   op->getName().getDialectNamespace() == "dyn"))

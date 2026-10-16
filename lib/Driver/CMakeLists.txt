@@ -48,6 +48,7 @@ add_mlir_library(MDIRDriver
   H5MD.cpp
   HDF5.cpp
   Model.cpp
+  ModelTerm.cpp
   ModelFingerprint.cpp
   Tunables.cpp
   Output.cpp

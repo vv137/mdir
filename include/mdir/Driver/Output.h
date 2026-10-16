@@ -15,6 +15,7 @@
 
 #include <algorithm>
 #include <array>
+#include <memory>
 #include <chrono>
 #include <cmath>
 #include <csignal>
@@ -27,6 +28,8 @@
 
 namespace mdir {
 namespace driver {
+
+class ModelTerms;
 
 /// The log of a run: every line goes to the standard output and, once
 /// `open` has named a file, to that file as well. What was printed before
@@ -253,6 +256,9 @@ struct Output {
   /// state takes the energies of every step of energy, rows or not
   /// (D207).
   bool embedded = false;
+  /// The terms of [[energy.model]] (D[metatomic-plugin]), which the
+  /// program calls; the terms at the start show the energy of each.
+  std::shared_ptr<ModelTerms> models;
   /// A simulation with tunable parameters (D213): the version
   /// of their values, which the energy file takes as its last column, or
   /// -1 for none; and a step at which the energies are evaluated anew after
@@ -434,6 +440,11 @@ struct Output {
 
 /// Sets the output that the functions below write to.
 void setOutput(Output *output);
+/// The output of the run under way, or null.
+Output *getOutput();
+/// Ends the run on a failure that a function of the host meets: the process
+/// exits, or an embedding program is told (D196).
+void stopRun(const std::string &message);
 
 /// Without a periodic cell (D142), fails the run of `output` if the
 /// positions `x` of the step `step`, in the order of the input, have spread
