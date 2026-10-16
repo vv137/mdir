@@ -24,8 +24,8 @@ format, or the outputs; every such change is listed under **Changed** or
   host call that declares the write (`mdrt.host_call` takes fields in `outs`
   and yields them, and numbers of the host), its energy and virial in the
   potential, the log, and the pressure, and chunks of centers for a model that declares
-  itself local. `scripts/mlip/nequip-to-metatomic.py` turns a NequIP or
-  Allegro package into such an artifact; `water-box.py` and
+  itself local. `scripts/mlip/nequip-to-metatomic.py` turns a model package of
+  the `nequip` package (NequIP or Allegro) into such an artifact; `water-box.py` and
   `check-model-term.py` there make the systems and the checks of the
   validation. ML1 refuses the deterministic mode, the CPU, a barostat,
   `[minimize]`, `[free_energy]`, `observe`, tunables, constraints, and

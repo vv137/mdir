@@ -12,14 +12,19 @@ and its validation.
 ## 1. What has been ruled (the maintainer, 2026-10-16)
 
 1. **Allegro stays the first model, through a wrapper of the upstream
-   checkpoint.** No Allegro model has an official metatomic export (NequIP
-   0.19.1 integrates with ASE, TorchSim, and LAMMPS ML-IAP; metatrain has
+   checkpoint.** No Allegro model has an official metatomic export (the
+   `nequip` package 0.19.1 integrates with ASE, TorchSim, and LAMMPS ML-IAP; metatrain has
    no Allegro architecture). A wrapper of a few dozen lines turns the
-   NequIP package into a metatomic artifact. It lives in the repository as
+   model package of the `nequip` package into a metatomic artifact. It lives in the repository as
    an example of bringing a model without an official export
    (`scripts/mlip/nequip-to-metatomic.py`). Model files are never
    committed; tests build the artifact or are skipped.
-2. **ML1's reference is NequIP's own calculator** (`NequIPCalculator`).
+2. **ML1's reference is the `nequip` package's ASE calculator
+   (`NequIPCalculator`), evaluating the Allegro model**
+   ([Musaelian2023](references.md#musaelian2023); the `nequip` package also
+   implements the NequIP architecture, [Batzner2022](references.md#batzner2022),
+   which ML1 does not use). "The `nequip` package" below is the software;
+   "NequIP" is the architecture only.
 3. **Memory is a primary result of ML1**, not a later concern: MDIR began
    because learned potentials use too much device memory. The eager
    baseline in bytes per pair (Section 4) is the number every later step
@@ -55,7 +60,7 @@ with measurements.
 | Item | Value |
 |---|---|
 | Model | `mir-group/Allegro-OAM-L:0.1`, Zenodo [doi:10.5281/zenodo.16980200](https://doi.org/10.5281/zenodo.16980200), file `Allegro-OAM-L-0.1.nequip.zip` (md5 `0db7f9b3c3a62e74d78b3fcf2973c462`, SHA-256 `3f0d3ca7bb136d4c2ee76278170fcbe756436f037e16c673a86e2c57d271c64e`, 80.7 MB) |
-| License | CC-BY-4.0 (the model files); NequIP and Allegro MIT; metatomic and metatensor BSD-3-Clause |
+| License | CC-BY-4.0 (the model files); the `nequip` and `allegro` packages MIT; metatomic and metatensor BSD-3-Clause |
 | Architecture | Allegro, strictly local, $r_\mathrm{max}$ = 7 Å, 4 layers, 64 tensor channels, 9.7 million parameters, float32 weights; 89 elements, H to Pu |
 | Training | OMat24, fine-tuned on sAlex and MPTrj (PBE); a model for inorganic solids. Its water is not validated physics: ML1 checks the interface, not the science (D166) |
 | Packaged with | nequip 0.14.0, allegro 0.7.1, torch 2.7.0 (the package carries its code) |
@@ -73,16 +78,17 @@ index of PyTorch for CUDA 13.0: `uv pip sync requirements.lock
 ### 3.1 The wrapper
 
 `nequip-to-metatomic.py` loads the package, takes its energy network (the
-module inside NequIP's `ForceStressOutput`), and wraps it as a metatomic
+module inside the `nequip` package's `ForceStressOutput`), and wraps it as a metatomic
 model that asks for one pair list, full and strict at 7 Å. The engine's
-pair vectors become NequIP's `edge_vectors`, which NequIP uses as given;
+pair vectors become the `nequip` package's `edge_vectors`, which it uses
+as given;
 the engine registers them with autograd (`register_autograd_neighbors`),
 so forces and virial come from the engine's backward. The weights are
 untouched. `torch.jit.script` still compiles the model under torch 2.14,
 with a deprecation warning; `nequip-compile --mode torchscript` itself
 refuses torch 2.10 and later, which the wrapper does not use. `--dtype`
 sets the type of the inputs that the engine hands over: float64 (as
-NequIP's calculator does) or float32.
+the `nequip` package's calculator does) or float32.
 
 With `selected_atoms` the wrapper keeps only the edges whose first atom is
 selected and returns the energy of those centers. Allegro is strictly
@@ -90,14 +96,14 @@ local [[Musaelian2023]](references.md#musaelian2023), so this gives the
 exact energy of the selection. An engine can therefore evaluate a system in
 chunks of centers (Section 4.2).
 
-### 3.2 Agreement with NequIP's calculator
+### 3.2 Agreement with the `nequip` package's calculator
 
 Water boxes (water is chosen for MDIR's later work; this model was not
 trained for it): 27 waters 5 Å apart in a cubic and in a triclinic 15 Å
 cell (81 atoms, 2,830 and 2,968 directed pairs within 7 Å; $L \ge 2 r_c$),
 and 8 waters at liquid density in a 6.2 Å box (24 atoms, 3,448 pairs; $L <
 2 r_c$, several images of each atom). Metatomic's ASE calculator against
-NequIP's, one RTX 4090:
+the `nequip` package's, one RTX 4090:
 
 | Case | Inputs | $\lvert\Delta E\rvert$ (eV) | max $\lvert\Delta F\rvert$ (eV/Å) | max $\lvert\Delta W\rvert$ (eV) |
 |---|---|---|---|---|
@@ -120,7 +126,7 @@ Central differences of the energy agree with the autograd forces within
 $10^{-3}$ eV/Å (steps 0.01 and 0.005 Å) and with the virial within
 $10^{-2}$ eV of 25 eV (strains $2 \times 10^{-3}$ and $10^{-3}$). The
 float32 network makes the energy noisy at about $10^{-5}$ eV, which bounds
-this check; the agreement with NequIP's own autograd above is the stronger
+this check; the agreement with the `nequip` package's own autograd above is the stronger
 one.
 
 A short NVE run through metatomic's ASE calculator (float64 inputs; 81
@@ -142,7 +148,7 @@ buffers with `torch::from_blob` (no copies), runs torch on the host's stream
 metatomic `System` and the pair list (pairs, cell shifts, vectors), asks
 metatomic for nm and kJ/mol (metatomic converts its units), differentiates
 in the positions and a strain, and writes the forces into the host's
-buffer. Against NequIP's calculator on the three cases:
+buffer. Against the `nequip` package's calculator on the three cases:
 
 | Inputs | $\lvert\Delta E\rvert$ (kJ/mol) | max $\lvert\Delta F\rvert$ (kJ/mol/nm) | max $\lvert\Delta W\rvert$ (kJ/mol) |
 |---|---|---|---|
@@ -171,12 +177,12 @@ evaluations after a warm-up:
 
 | Path | Bytes per pair | Time per pair, RTX 4090 | Largest that ran on 24 GB | Largest on 96 GB |
 |---|---|---|---|---|
-| NequIP calculator, eager (reference) | 1.41 MB | 20.2 µs | 10,546 pairs (72 atoms): 13.9 GiB, driver 22.9 GiB | 42,652 pairs (288 atoms): 56.1 GiB |
+| `nequip` package's calculator, eager (reference) | 1.41 MB | 20.2 µs | 10,546 pairs (72 atoms): 13.9 GiB, driver 22.9 GiB | 42,652 pairs (288 atoms): 56.1 GiB |
 | metatomic artifact, TorchScript, whole system | 1.22 MB | 20.3 µs | 10,546 pairs (72 atoms): 12.0 GiB | 42,652 pairs (288 atoms): 48.4 GiB |
 | same, 64 centers per call | flat 10.3 to 11.1 GiB | 22.7 µs | 456,424 pairs (3,072 atoms, the largest tried): 10.4 s | the same: 7.4 s |
 | same, 16 centers per call | flat 2.6 to 2.9 GiB | 31.2 µs | 456,424 pairs: 14.2 s | the same: 10.9 s |
-| NequIP AOTInductor (`nequip-compile --mode aotinductor`) | 132 kB | 3.5 µs | 172,044 pairs (1,152 atoms): 21.2 GiB | 456,424 pairs: 56.1 GiB |
-| NequIP AOTInductor with `enable_TritonContracter` | 85 kB | 2.4 µs | 220,724 pairs (1,536 atoms): 17.5 GiB | 456,424 pairs: 36.1 GiB, 0.96 s |
+| `nequip` package, AOTInductor (`nequip-compile --mode aotinductor`) | 132 kB | 3.5 µs | 172,044 pairs (1,152 atoms): 21.2 GiB | 456,424 pairs: 56.1 GiB |
+| `nequip` package, AOTInductor with `enable_TritonContracter` | 85 kB | 2.4 µs | 220,724 pairs (1,536 atoms): 17.5 GiB | 456,424 pairs: 36.1 GiB, 0.96 s |
 
 The next larger size failed for lack of memory where the table gives a
 limit (13,556 pairs for the eager paths on 24 GB, 55,674 on 96 GB; 220,724
@@ -227,7 +233,7 @@ set `expandable_segments` or bound the allocator.
 
 ## 5. The accelerated path
 
-### 5.1 What NequIP provides today
+### 5.1 What the `nequip` package provides today
 
 `nequip-compile --mode aotinductor` exports the model with `torch.export`
 and compiles it with AOTInductor to a `.pt2` package of kernels for one
@@ -263,7 +269,7 @@ metatomic: the plugin converts MDIR's pair list to the package's inputs
 (`edge_index` and `edge_cell_shift` instead of a metatomic `System`), and
 takes its forces and virial as outputs instead of differentiating. Its
 model description (types, cutoff, units) comes from the package's metadata
-(NequIP writes `r_max`, `type_names`, and the model's dtype). Units are
+(the `nequip` package writes `r_max`, `type_names`, and the model's dtype). Units are
 the plugin's to convert, which metatomic does for its backend.
 
 ### 5.3 The contract, shaped now for both
@@ -273,7 +279,7 @@ later backend changes neither:
 
 - **Backend.** A key selects the loader: `METATOMIC` (a TorchScript
   artifact through metatomic) in the first PR, `AOTI` (an AOTInductor
-  package of NequIP's `ase` target) later. Both take the same pair list
+  package of the `nequip` package's `ase` target) later. Both take the same pair list
   and give the same outputs. The model's file decides nothing that the run
   plan owns (D166, "model artifacts and execution configuration").
 - **Precision.** The type of the inputs that MDIR hands over is the
@@ -314,7 +320,7 @@ on fewer GPUs.
 |---|---|---|
 | Chunking over centers | Yes: `selected_atoms`, for a declared local model | Finer chunks per stage |
 | Recomputation instead of saved activations | Only inside the model (its own checkpointing) | Yes, chosen by MDIR across the step |
-| Fused or accelerated kernels (NequIP's Triton or cuEquivariance, `torch.export`/AOTInductor) | Yes, as a second backend (Section 5.2) | Fusion with MDIR's gathers and classical terms |
+| Fused or accelerated kernels (the `nequip` package's Triton or cuEquivariance, `torch.export`/AOTInductor) | Yes, as a second backend (Section 5.2) | Fusion with MDIR's gathers and classical terms |
 | Memory planning across the step | No | Yes |
 
 **Order.** (1) The TorchScript backend through metatomic, the smallest
@@ -435,7 +441,7 @@ comment, items 2 and 3).
 | `double` | f64 | the same | added into f64 forces |
 
 Energy and virial are accumulated in f64. The f64-input artifact agrees
-with NequIP 10 to 20 times more closely than the f32-input one (Section
+with the `nequip` package 10 to 20 times more closely than the f32-input one (Section
 3.2) at the same cost: the wrapper's default is f64 inputs.
 
 ### 6.7 Outputs and derivative ownership
@@ -467,7 +473,7 @@ particles with mass in the model, no classical terms required beside it
 
 ## 7. Validation
 
-- **Against NequIP's calculator**, on the three boxes of Section 3.2 and
+- **Against the `nequip` package's calculator**, on the three boxes of Section 3.2 and
   one at liquid density: energy, every force component, and the virial, on
   the CPU and a GPU, in `mixed` and `double`. Tolerances from the
   reference's own spread and the input dtype: float64 inputs
@@ -592,14 +598,14 @@ As ruled (Section 1, item 9):
 On RTX 4090s (`MDIR_GPU=RTX4090`), torch 2.14.1, metatomic-torch 0.1.19,
 nequip 0.19.1; the artifacts made by `nequip-to-metatomic.py` from the
 package of Section 2 (`--dtype float64` and `--dtype float32`); the systems
-and NequIP's reference by `scripts/mlip/water-box.py`, the evaluations by
+and the reference of the `nequip` package by `scripts/mlip/water-box.py`, the evaluations by
 `scripts/mlip/check-model-term.py` (Python model) and `mdir run`. Units:
 kJ/mol and nm. The tolerances of Section 7 in these units: float64 inputs
 $\lvert\Delta E\rvert \le 4.8 \times 10^{-3}$, $\lvert\Delta F\rvert \le 1.9
 \times 10^{-2}$, $\lvert\Delta W\rvert \le 4.8 \times 10^{-3}$; float32 ten
 times.
 
-**Against NequIP's calculator** (largest differences over the components):
+**Against the `nequip` package's calculator** (largest differences over the components):
 
 | Case | Mode | Inputs | $\lvert\Delta E\rvert$ | max $\lvert\Delta F\rvert$ | max $\lvert\Delta W\rvert$ |
 |---|---|---|---|---|---|
@@ -629,7 +635,7 @@ declares its write of the forces (Section 9.1), measured again on
 f32 where they were added by a loop before, and the differences stay where
 they were.
 
-**Chunks** (liquid, 72 atoms, double, float64 inputs), against NequIP:
+**Chunks** (liquid, 72 atoms, double, float64 inputs), against the `nequip` package:
 1 center per call $\lvert\Delta E\rvert = 1.5 \times 10^{-3}$, max
 $\lvert\Delta F\rvert = 2.7 \times 10^{-3}$, max $\lvert\Delta W\rvert = 1.6
 \times 10^{-3}$; 16 centers $1.8 \times 10^{-3}$, $2.3 \times 10^{-3}$, $2.8
@@ -639,7 +645,7 @@ up to $2 \times 10^{-3}$ of $3.3 \times 10^4$ kJ/mol: the float32 network's
 sums in another order.
 
 **`mdir run` against the Python model**, 81 atoms minimized with ASE's FIRE
-on NequIP's calculator (`water-box.py --minimize`), velocities of 300 K, 20
+on the `nequip` package's calculator (`water-box.py --minimize`), velocities of 300 K, 20
 steps of 0.5 fs, both from the same files: the total energy of every step
 agrees within $2.1 \times 10^{-4}$ kcal/mol in `double` and $2.5 \times
 10^{-4}$ in `mixed`, about the four decimals that the log prints, and the

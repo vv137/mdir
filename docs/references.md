@@ -97,6 +97,16 @@ $e^{c(\sqrt{1-x^2}-1)}$, a closed form close to the prolate spheroidal wave
 function, named as the alternative to the PSWF for the spreading of ESP and
 not measured (issue #334, D266).
 
+### Batzner2022
+
+S. Batzner, A. Musaelian, L. Sun, et al., "E(3)-equivariant graph neural
+networks for data-efficient and accurate interatomic potentials," *Nat.
+Commun.* **13**, 2453 (2022).
+[doi:10.1038/s41467-022-29939-5](https://doi.org/10.1038/s41467-022-29939-5)
+
+Used for: NequIP, the architecture; the `nequip` package that implements it
+also evaluates the Allegro model of ML1 (docs/metatomic-ml1.md).
+
 ### Berendsen1984
 
 H. J. C. Berendsen, J. P. M. Postma, W. F. van Gunsteren, A. DiNola,
@@ -898,7 +908,9 @@ equivariant representations for large-scale atomistic dynamics," *Nat.
 Commun.* **14**, 579 (2023).
 [doi:10.1038/s41467-023-36329-y](https://doi.org/10.1038/s41467-023-36329-y)
 
-Used for: Allegro, the example of a strictly local learned potential.
+Used for: Allegro, the example of a strictly local learned potential, and
+the model of ML1 (docs/metatomic-ml1.md), which the `nequip` package's ASE
+calculator evaluates as its reference.
 
 ### Nose1984
 

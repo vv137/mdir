@@ -10,13 +10,14 @@ waters on a jittered lattice of spacing a (Angstrom) with random orientations,
 in a cubic cell or a triclinic one of the given tilts; or liquid water at
 29.9 A^3 per molecule (`--liquid`, Section 4.1).
 
-With `--reference` it also evaluates NequIP's own calculator (the oracle of
+With `--reference` it also evaluates the `nequip` package's ASE calculator
+(NequIPCalculator), with the Allegro model of the package given (the oracle of
 ML1, Section 1) on the configuration and writes the energy (kJ/mol), the
 forces (kJ/mol/nm), and the virial W = -dE/d(strain) (kJ/mol) to
 reference.npz. That needs the environment of the plugin (torch, nequip, ase).
 With `--minimize STEPS` the configuration is first relaxed with ASE's FIRE
-on NequIP's calculator, in the fixed cell: ML1 refuses [minimize] with a
-model term, and its runs of constant energy start from such a configuration.
+on that calculator, in the fixed cell, as the reference minimum of the
+validation.
 
 usage: water-box.py OUTDIR [--n 3] [--spacing 5.0] [--tilt bx cx cy]
                            [--liquid N] [--seed 1]

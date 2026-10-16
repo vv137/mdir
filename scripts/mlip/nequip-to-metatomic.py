@@ -1,15 +1,15 @@
-"""Turns a NequIP or Allegro model package (`.nequip.zip`) into a metatomic
-artifact (TorchScript) that MDIR's metatomic adapter can load (D[metatomic-plugin],
-docs/metatomic-ml1.md).
+"""Turns a model package of the `nequip` package (`.nequip.zip`, a NequIP or
+an Allegro model) into a metatomic artifact (TorchScript) that MDIR's
+metatomic adapter can load (D[metatomic-plugin], docs/metatomic-ml1.md).
 
 An example of bringing a model without an official metatomic export into
 MDIR. The weights are not changed. The wrapper hands the energy network of
 the package the pair list that the engine supplies (metatomic
-`NeighborListOptions`, full and strict at the model's `r_max`) as NequIP's
-edge vectors; the engine registers those vectors with autograd
-(`register_autograd_neighbors`), so the forces and the virial are the
-derivatives of the energy in the positions and the strain, as in NequIP's
-own calculator, where they are the derivatives through its edge vectors.
+`NeighborListOptions`, full and strict at the model's `r_max`) as the
+`nequip` package's edge vectors; the engine registers those vectors with
+autograd (`register_autograd_neighbors`), so the forces and the virial are
+the derivatives of the energy in the positions and the strain, as in the
+`nequip` package's own calculator, where they are the derivatives through its edge vectors.
 Allegro is strictly local, so with `selected_atoms` the wrapper keeps only
 the edges of the selected centers and returns their energies: an engine may
 evaluate a large system in chunks of centers, with memory set by the chunk.
@@ -32,7 +32,7 @@ usage: python nequip-to-metatomic.py PACKAGE.nequip.zip OUTPUT.pt
 `--dtype` is the type of the positions, cell, and pair vectors that the
 engine hands over (metatomic's `ModelCapabilities.dtype`). The network keeps
 its own type (float32 for Allegro-OAM-L); float64, the default, is what
-NequIP's calculator hands it.
+the `nequip` package's calculator hands it.
 """
 import argparse
 from typing import Dict, List, Optional
@@ -91,7 +91,7 @@ class NequIPMetatomic(torch.nn.Module):
             data: Dict[str, torch.Tensor] = {
                 "pos": system.positions,
                 "edge_index": torch.stack([first, second], dim=0),
-                "edge_vectors": vec,  # NequIP uses these instead of pos and shifts
+                "edge_vectors": vec,  # the nequip package uses these instead of pos and shifts
                 "atom_types": self.type_of_z[system.types],
                 "batch": torch.zeros(n, dtype=torch.long, device=vec.device),
                 "num_atoms": torch.tensor([n], dtype=torch.long, device=vec.device),
@@ -131,7 +131,7 @@ def main():
     type_of_z = torch.full((max(zs) + 1,), -1, dtype=torch.long)
     for i, z in enumerate(zs):
         type_of_z[z] = i
-    net = m.model.func  # the energy network, inside NequIP's ForceStressOutput
+    net = m.model.func  # the energy network, inside the nequip package's ForceStressOutput
     for q in net.parameters():
         q.requires_grad_(False)
 
