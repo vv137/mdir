@@ -478,6 +478,10 @@ private:
 
   /// Stores the contributions of a particle and returns, for each global
   /// sum of a loop, its result.
+  /// Lowers a loop over tuples with a flag in `reduce`
+  /// (D[constraint-failure-stop]).
+  LogicalResult lowerTupleForWithFlags(md_exec::TupleForOp op);
+
   LogicalResult finishSums(Operation *op, OpBuilder &builder,
                            ValueRange reduce, ValueRange scratch, Value size,
                            std::optional<RowSums> rows = {});
@@ -1210,6 +1214,14 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
 // Loops
 //===----------------------------------------------------------------------===//
 
+/// Returns true if `loop` tells in a value of `reduce` whether its kernel
+/// yields true for some tuple, which takes a flag (D[constraint-failure-stop]).
+static bool hasFlags(md_exec::TupleForOp loop) {
+  return llvm::any_of(loop.getReduce(), [](Value value) {
+    return value.getType().isInteger(1);
+  });
+}
+
 /// Verifies that a loop with global sums has the buffers that it needs.
 static LogicalResult checkScratch(Operation *op, unsigned sums,
                                   unsigned scratch) {
@@ -1248,8 +1260,9 @@ void Lowering::findCenterFusions(func::FuncOp function) {
   if (!fuseCenters)
     return;
   function.walk([&](md_exec::TupleForOp sums) {
-    if (sums.getReduce().empty() || !sums.getOuts().empty() ||
-        !evaluatesOnce(sums) || inRows.contains(sums) ||
+    if (sums.getReduce().empty() || hasFlags(sums) ||
+        !sums.getOuts().empty() || !evaluatesOnce(sums) ||
+        inRows.contains(sums) ||
         sums->hasAttr(md_exec::kSideAttrName))
       return;
     // The sums are numbers in f64, and the kernels of several parts take
@@ -1672,9 +1685,12 @@ void Lowering::findSharedFrames(func::FuncOp function,
 }
 
 void Lowering::findRows(func::FuncOp function) {
+  // A loop over tuples with a flag is lowered alone
+  // (D[constraint-failure-stop]).
   auto isRowLoop = [&](Operation *op) {
     if (auto tuple = dyn_cast<md_exec::TupleForOp>(op))
-      return !tuple.getDisjoint() && !evaluatesOnce(tuple);
+      return !tuple.getDisjoint() && !evaluatesOnce(tuple) &&
+             !hasFlags(tuple);
     // A loop that takes each pair once runs over groups, not rows (D89).
     auto pair = dyn_cast<md_exec::PairForOp>(op);
     return pair && pair.getTraversal() == md_exec::Traversal::Directed;
@@ -1773,7 +1789,7 @@ void Lowering::findRows(func::FuncOp function) {
     DenseSet<Value> written, read, sums;
     for (Operation &op : *block) {
       auto tuple = dyn_cast<md_exec::TupleForOp>(op);
-      if (!tuple || !tuple.getDisjoint()) {
+      if (!tuple || !tuple.getDisjoint() || hasFlags(tuple)) {
         if (isa<arith::ConstantOp>(op))
           continue;
         finishDisjoint(run);
@@ -2928,9 +2944,109 @@ void Lowering::lowerFusedSums(CenterFusion &fusion, Value tupleMembers,
   }
 }
 
+LogicalResult Lowering::lowerTupleForWithFlags(md_exec::TupleForOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+
+  // A value in `reduce` is a sum, which takes two buffers, or tells whether
+  // the kernel yields true for some tuple, which takes a flag of the loop's
+  // own (D118), as in a loop over particles (D[constraint-failure-stop]).
+  SmallVector<int> places;
+  unsigned numSums = 0, numFlags = 0;
+  for (Value value : op.getReduce())
+    places.push_back(value.getType().isInteger(1) ? -int(++numFlags)
+                                                  : int(numSums++));
+  if (failed(checkScratch(op, numSums, op.getScratch().size())))
+    return failure();
+  if (!op.getDisjoint() && !evaluatesOnce(op))
+    return op->emitOpError()
+           << "takes a flag in 'reduce' over tuples that may share "
+              "particles, which a device evaluates once per tuple only "
+              "outside the deterministic mode";
+  SmallVector<Flag, 2> used;
+  for (unsigned i = 0; i != numFlags; ++i)
+    used.push_back(getFlag(flags.size(), loc));
+
+  Value positions = op.getPositions();
+  Value size = createSize(builder, loc, positions);
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  Value inverse = createInverse(builder, loc, box);
+
+  // The contributions of a row: a sum to its buffer, and a flag set by a
+  // thread whose tuples yield true. Every thread that writes the flag
+  // writes the same value, so the threads need not take turns.
+  auto store = [&](OpBuilder &body, ArrayRef<Value> contributions,
+                   Value row) {
+    for (auto [index, value] : llvm::enumerate(contributions)) {
+      int place = places[index];
+      if (place >= 0) {
+        storeElement(body, loc, value, op.getScratch()[2 * place], row);
+        continue;
+      }
+      Value device = used[-place - 1].device;
+      scf::IfOp::create(body, loc, value, [&](OpBuilder &then, Location) {
+        Value set = arith::ConstantOp::create(then, loc, then.getI32Type(),
+                                              then.getI32IntegerAttr(1));
+        memref::StoreOp::create(then, loc, set, device,
+                                ValueRange{createIndex(then, loc, 0)});
+        scf::YieldOp::create(then, loc);
+      });
+    }
+  };
+
+  Value rows = size;
+  if (op.getDisjoint()) {
+    // Each tuple once, by the thread of its member at place 0.
+    launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+      IRMapping local;
+      store(body,
+            emitTupleKernel(body, op, op.getIncidence(), box, inverse,
+                            particle, local),
+            particle);
+    });
+  } else {
+    // Each tuple once, by one of m rows, which takes the tuples r, r + m,
+    // ..., as a loop with global sums does (D103).
+    Value tupleMembers = members.lookup(op.getIncidence());
+    if (!tupleMembers)
+      return op->emitOpError()
+             << "has no members on the device to evaluate each tuple once";
+    Value tuples = createSize(builder, loc, tupleMembers);
+    rows = arith::MinUIOp::create(builder, loc, size, tuples);
+    launchOver(builder, loc, rows, [&](OpBuilder &body, Value row) {
+      store(body,
+            emitTuplesOnceWithSums(body, op, tupleMembers, row, rows, tuples,
+                                   box, inverse),
+            row);
+    });
+  }
+
+  SmallVector<Value> contributions, partials;
+  for (unsigned i = 0; i != numSums; ++i) {
+    contributions.push_back(op.getScratch()[2 * i]);
+    partials.push_back(op.getScratch()[2 * i + 1]);
+  }
+  SmallVector<Value> sums = emitReductions(builder, loc, contributions,
+                                           partials, rows, /*isSum=*/true);
+  for (auto [index, start] : llvm::enumerate(op.getReduce())) {
+    int place = places[index];
+    if (place < 0) {
+      replaceWithFlag(builder, loc, used[-place - 1], start,
+                      op.getResult(index));
+      continue;
+    }
+    Value total = arith::AddFOp::create(builder, loc, start, sums[place]);
+    op.getResult(index).replaceAllUsesWith(total);
+  }
+  return success();
+}
+
 LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
+  if (hasFlags(op))
+    return lowerTupleForWithFlags(op);
   if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
     return failure();
 

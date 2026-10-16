@@ -612,6 +612,9 @@ def MD_SumTuplesOp : MD_TupleOp<"sum_tuples"> {
     S = Σ_{t ∈ T} k(t)
     ```
 
+    A result of the type `i1` tells instead whether the kernel yields true
+    for some tuple (`any_{t ∈ T} k(t)`).
+
     The kernel receives the internal coordinates that the op names, then
     one value for each member of the tuple for each gathered field of the
     particles, then one value for each field of the tuples.

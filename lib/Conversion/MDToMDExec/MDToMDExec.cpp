@@ -50,7 +50,8 @@ private:
   Value getIncidence(Value relation, Location loc);
   LogicalResult convertDrift(dyn::DriftOp op);
 
-  /// A zero of type `type`, which is f64 or a vector of f64.
+  /// A zero of type `type`, which is f64 or a vector of f64, or false for
+  /// i1.
   Value createZero(Location loc, Type type) {
     return arith::ConstantOp::create(builder, loc, type,
                                      cast<TypedAttr>(builder.getZeroAttr(type)));

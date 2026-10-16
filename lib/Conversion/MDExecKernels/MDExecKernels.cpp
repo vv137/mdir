@@ -969,6 +969,16 @@ static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
   }
 }
 
+/// `partial` with `value` added, or, for a value of the type i1 that tells
+/// whether the kernel yields true for some tuple, or-ed
+/// (D[constraint-failure-stop]).
+static Value accumulate(OpBuilder &builder, Location loc, Value partial,
+                        Value value) {
+  if (value.getType().isInteger(1))
+    return arith::OrIOp::create(builder, loc, partial, value);
+  return arith::AddFOp::create(builder, loc, partial, value);
+}
+
 /// The loop of `emitTupleKernel` for a set whose tuples share no particle:
 /// the member at place 0 evaluates the tuple once and writes the values of
 /// all members; a particle in no tuple writes 0 where the loop overwrites.
@@ -1134,7 +1144,7 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
           Value nothing = createZero(b, loc, contribution.getType());
           Value masked =
               arith::SelectOp::create(b, loc, atFirst, contribution, nothing);
-          updated.push_back(arith::AddFOp::create(b, loc, partial[j], masked));
+          updated.push_back(accumulate(b, loc, partial[j], masked));
         }
         scf::YieldOp::create(b, loc, updated);
       });
@@ -1305,8 +1315,7 @@ kernels::emitTuplesOnceWithSums(OpBuilder &builder, md_exec::TupleForOp op,
           Value narrow = getNarrow(i);
           Value contribution =
               inside.lookupOrDefault(narrow ? narrow : yield->getOperand(i));
-          updated.push_back(
-              arith::AddFOp::create(b, loc, partial[j], contribution));
+          updated.push_back(accumulate(b, loc, partial[j], contribution));
         }
         scf::YieldOp::create(b, loc, updated);
       });

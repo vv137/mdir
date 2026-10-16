@@ -298,8 +298,20 @@ void Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
 
+  // A value of the type i1, whether the kernel yields true for some tuple
+  // (D[constraint-failure-stop]), is reduced as an integer of 32 bits, as
+  // in a loop over particles.
+  Type wide = builder.getI32Type();
+  auto widen = [&](OpBuilder &b, Value value) -> Value {
+    if (!value.getType().isInteger(1))
+      return value;
+    return arith::ExtUIOp::create(b, loc, wide, value);
+  };
+
   Value positions = op.getPositions();
-  SmallVector<Value> inits(op.getReduce().begin(), op.getReduce().end());
+  SmallVector<Value> inits;
+  for (Value value : op.getReduce())
+    inits.push_back(widen(builder, value));
   Value size = createSize(builder, loc, positions);
 
   // The cell has become the vector of its edge lengths.
@@ -315,12 +327,21 @@ void Lowering::lowerTupleFor(md_exec::TupleForOp op) {
         IRMapping local;
         SmallVector<Value> contributions = emitTupleKernel(
             body, op, op.getIncidence(), box, inverse, ivs[0], local);
+        for (Value &value : contributions)
+          value = widen(body, value);
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);
       });
 
-  for (unsigned i = 0, e = op.getNumResults(); i != e; ++i)
-    op.getResult(i).replaceAllUsesWith(loop.getResult(i));
+  for (unsigned i = 0, e = op.getNumResults(); i != e; ++i) {
+    Value result = loop.getResult(i);
+    if (op.getResult(i).getType().isInteger(1))
+      result = arith::CmpIOp::create(
+          builder, loc, arith::CmpIPredicate::ne, result,
+          arith::ConstantOp::create(builder, loc, wide,
+                                    builder.getI32IntegerAttr(0)));
+    op.getResult(i).replaceAllUsesWith(result);
+  }
 }
 
 /// The type that the loops over the triplets `triplets` compute in: f32 if

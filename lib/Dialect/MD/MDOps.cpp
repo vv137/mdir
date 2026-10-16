@@ -709,11 +709,14 @@ static LogicalResult verifyTupleKernel(OpTy op, unsigned numYields,
 LogicalResult SumTuplesOp::verify() {
   if (failed(verifyTupleOperands(*this)))
     return failure();
-  if (!isRealOrRealVector(getResult().getType()))
+  // An i1 tells whether the kernel yields true for some tuple
+  // (D[constraint-failure-stop]).
+  Type result = getResult().getType();
+  if (!isRealOrRealVector(result) && !result.isInteger(1))
     return emitOpError()
-           << "expected the result to be f64 or a fixed-size vector of f64, "
-              "got "
-           << getResult().getType();
+           << "expected the result to be f64, a fixed-size vector of f64, "
+              "or i1, got "
+           << result;
   return success();
 }
 
