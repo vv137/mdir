@@ -377,6 +377,32 @@ analytic bonds, the orders 6 and 8, and the suite's two settings together.
 | Positions, velocities, and forces after 20 steps | the checkpoint of `mdir run` | equal to the bit, each case | 0 |
 | The fingerprint of the checkpoint | that of `mdir run` | equal | equal |
 | The potential at step 0 or the positions after 20 steps | the run without the setting | differ, each case: the field acts | more than 0 |
+## Learned potentials
+
+D[metatomic-plugin] (#137, [metatomic-ml1.md](metatomic-ml1.md)). A
+learned potential is a term of the Python model as it is of the control
+file, through the same plugin and its C boundary:
+
+| Python | Control file | Values |
+|---|---|---|
+| `System.models` | `[[energy.model]]` | a list of `mdir.ModelTerm(name, path, backend="METATOMIC", centers_per_call=0)` |
+| `ModelTerm.path` | `path` | the artifact; a relative path is taken relative to the working directory when the program is compiled |
+| `ModelTerm.backend` | `backend` | `"METATOMIC"`, a TorchScript artifact of metatomic |
+| `ModelTerm.centers_per_call` | `centers_per_call` | 0 (the whole system in one call), or the centers of one call, for a model that declares that it is local |
+
+A `Simulation` of a program with a model term imports `torch` before the
+plugin is loaded, so that the plugin takes the libtorch of the imported
+module, and refuses a plugin that was built against another version of torch
+(`mdir.UnsupportedError`): a process never holds two libtorch.
+`Simulation.model_energies()` gives the energy (kJ/mol) and the virial
+tensor $\mathsf W = -\partial E/\partial\boldsymbol\varepsilon$ (kJ/mol, a
+3 × 3 array) of the last evaluation of the models, those of the last step;
+the energy and the trace of the virial are in `State.energies` as well.
+The refusals are those of the control file (the deterministic mode, a
+barostat, a minimization, free energy, `observe`, tunables, the CPU target,
+constraints, virtual sites, more than one model), checked by the same
+`validateControl` and builder. The fingerprint has `[python] models`.
+
 ## The defaults are those of the control file
 
 D248 (#281; the maintainer's decision on the inventory of

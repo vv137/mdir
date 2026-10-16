@@ -12,11 +12,22 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- The design of ML1, a learned potential through an optional metatomic
-  plugin (D[metatomic-plugin], #137, [docs/metatomic-ml1.md](docs/metatomic-ml1.md)),
-  with its feasibility measurements, and `scripts/mlip/nequip-to-metatomic.py`,
-  which turns a NequIP or Allegro package into a metatomic artifact. No
-  change to the control file yet.
+- ML1, a learned potential through an optional metatomic plugin
+  (D[metatomic-plugin], #137, [docs/metatomic-ml1.md](docs/metatomic-ml1.md)):
+  `-DMDIR_ENABLE_METATOMIC=ON` builds `libmdir_metatomic`, a C++20 library
+  linking libtorch and metatomic that MDIR loads through the C header
+  `include/mdir/MLIP/Plugin.h` (or `MDIR_MLIP_PLUGIN`); the classical build
+  is unchanged. `[[energy.model]]` (`name`, `backend = "METATOMIC"`, `path`,
+  `centers_per_call`) and `mdir.System.models` (`mdir.ModelTerm`) add a
+  TorchScript artifact of metatomic to the potential on a GPU: its own pair
+  list with every image, its forces added to MDIR's, its energy and virial in
+  the log and the pressure, and chunks of centers for a model that declares
+  itself local. `scripts/mlip/nequip-to-metatomic.py` turns a NequIP or
+  Allegro package into such an artifact; `water-box.py` and
+  `check-model-term.py` there make the systems and the checks of the
+  validation. ML1 refuses the deterministic mode, the CPU, a barostat,
+  `[minimize]`, `[free_energy]`, `observe`, tunables, constraints, and
+  virtual sites with a model term.
 - Ewald summation with prolates, a second kernel of particle mesh Ewald
   (D266, #334): `[pme] kernel = "PROLATE"` takes the prolate
   spheroidal wave function of order zero as the splitting and as the

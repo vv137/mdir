@@ -33,6 +33,7 @@ def build(directory, artifact, precision, centers, timestep, temperature):
     system.cutoff = 0.2
     system.pairlist_distance = 0.25
     system.models = [mdir.ModelTerm("allegro", artifact, centers_per_call=centers)]
+    # The velocities of the .gro, if it has them, else drawn.
     if temperature > 0:
         state = state.draw_velocities(system, temperature, 7)
     integrator, ensemble, execution = mdir.Integrator(), mdir.Ensemble(), mdir.Execution()

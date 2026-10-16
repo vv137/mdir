@@ -1,12 +1,13 @@
-# ML1: an Allegro model through an optional metatomic adapter (design)
+# ML1: an Allegro model through an optional metatomic adapter
 
 Design of `D[metatomic-plugin]` (issue #137) for the first deliverable of
 M3, ML1 ([roadmap](roadmap.md#7-learned-potentials-m3-and-distributed-execution-m4),
 D166, D167, D169): one existing Allegro artifact evaluated through an
 optional metatomic adapter, with energy, per-particle forces, and virial on
-one GPU agreeing with the original backend. Nothing here is implemented in
-MDIR yet. The feasibility study measured below ran outside the repository;
-the wrapper it used is `scripts/mlip/nequip-to-metatomic.py`.
+one GPU agreeing with the original backend. Sections 1 to 8 are the design
+and the feasibility study, measured outside the repository with the wrapper
+`scripts/mlip/nequip-to-metatomic.py`; Section 9 is what the first PR built
+and its validation.
 
 ## 1. What has been ruled (the maintainer, 2026-10-16)
 
@@ -62,7 +63,10 @@ with measurements.
 | Devices | RTX 4090 (24 GB, driver 595.45) and RTX PRO 6000 Blackwell (96 GB) |
 
 The environment is a uv lock of 80 packages, kept beside the measurements;
-the implementation PR adds it under `scripts/mlip/` with the scripts.
+it is `scripts/mlip/requirements.lock` (from `requirements.in`, with the
+index of PyTorch for CUDA 13.0: `uv pip sync requirements.lock
+--extra-index-url https://download.pytorch.org/whl/cu130
+--index-strategy unsafe-best-match`).
 
 ## 3. Feasibility
 
@@ -378,8 +382,9 @@ centers_per_call = 0          # 0: the whole system in one call
   selection; ML/MM (a `selection` key and `selected_atoms`) is #139.
 - **Output.** The term appears in the log's list of terms at the start, as
   `MODEL <name>`, in the potential energy, and in the virial.
-- **Python.** `mdir.System.models`, a list of `mdir.Model(path,
-  backend=..., centers_per_call=...)`, the same contract; in the second PR.
+- **Python.** `mdir.System.models`, a list of `mdir.ModelTerm(name, path,
+  backend=..., centers_per_call=...)`, the same contract, in the first PR
+  ([python-model.md](python-model.md#learned-potentials)).
 
 ### 6.4 The pair list
 
@@ -503,3 +508,171 @@ As ruled (Section 1, item 9):
 3. The pair list from MDIR's matrix where the cell allows it.
 4. ML4's stages. NPT with a model term, the CPU target, and ML/MM
    selection fit between these steps.
+
+## 9. What the first PR built (D[metatomic-plugin])
+
+### 9.1 The pieces
+
+- **The plugin**, `lib/MLIP/MetatomicPlugin.cpp`, built by
+  `-DMDIR_ENABLE_METATOMIC=ON` as `libmdir_metatomic.so` beside the
+  runtime libraries: C++20 with RTTI and exceptions, against the CMake
+  packages of torch, metatomic-torch, and metatensor-torch of a Python
+  environment (`CMAKE_PREFIX_PATH`; torch's package needs the CUDA compiler,
+  `CMAKE_CUDA_COMPILER`). Its C boundary is `include/mdir/MLIP/Plugin.h`,
+  version 1: `load`, `describe`, `evaluate`, `memory_stats`, `free`,
+  `last_error`, and the versions of its build. The core loads it with
+  `dlopen` (`RTLD_LOCAL`) from the directory of the runtime or from
+  `MDIR_MLIP_PLUGIN`, and sets `PYTORCH_CUDA_ALLOC_CONF` to
+  `expandable_segments:True` unless it is set.
+- **The pair list** is the plugin's, on the device, every step: the
+  particles wrapped into the cell, then every image within the cutoff
+  (along each edge as many cells as the cutoff spans of the distance between
+  the planes of the other two), searched by brute force in blocks of first
+  particles of at most 256 MiB, full and strict, without skin. The number of
+  pairs is the one wait of the host per evaluation (one per block).
+- **Precision.** The plugin takes the positions in f64 (the state of
+  `mixed` and `double`), computes the pair vectors and differentiates in
+  f64, and rounds the positions, the cell, and the vectors to the model's
+  dtype at the boundary of the model (Section 6.6); forces, energy, and
+  virial come back in f64.
+- **Chunks.** With `centers_per_call` > 0 and the metadata
+  `mdir::local_centers = "true"` and a finite interaction range, the plugin
+  calls the model once per chunk of centers with `selected_atoms`, the full
+  pair list each time, and accumulates the gradients of each backward; a
+  model without the declaration takes the whole system, and the log says so.
+- **The step.** After every evaluation of the forces (the start, every
+  kind of step) the program calls the host in place
+  (`mdrt.host_call @mdrtModelEvaluate {in_place}`) with the positions and
+  the atomic numbers (a field of the program, `model_z`, which follows the
+  order of the particles), then takes the model's forces from a buffer of
+  the device that `func.call @mdrtModelForces` returns
+  (`mdrt.from_buffer`), and adds them in a loop over the particles. The
+  forces are a value that the call gives, so no pass can move what reads
+  them before the evaluation; the copy from the buffer is one of the device,
+  which waits for nothing. At the start the evaluation is a loop of one
+  iteration, so that the buffer is given anew and never taken as a buffer of
+  the host. The plugin's work goes to the stream of the kernels
+  (`mdrtDeviceExternalStream`), and its buffers are recorded by the runtime
+  (`mdrtDeviceAllocateRecorded`), so that copies from them do not wait.
+- **Energy and virial** stay on the device until the log reads them:
+  `mdrtWriteEnergies` adds the model's energy to the potential and the trace
+  of its virial to that of the pressure, `mdrtWriteVirial` its diagonal,
+  and the terms at the start show `MODEL <name>`. The molecular virial of
+  the pressure (D264) takes the model's forces in its correction, which is
+  linear in the forces, so the sum is that of the whole potential.
+- **Python**: `mdir.System.models` and `mdir.ModelTerm`
+  ([python-model.md](python-model.md#learned-potentials));
+  `Simulation.model_energies()` gives the energy and the virial tensor.
+- **Refused** with a model term: the CPU target, the deterministic mode, a
+  barostat, `[minimize]`, `[free_energy]`, `observe`, tunables, the frame
+  evaluator, more than one model, a cell that is not periodic, `single`
+  precision, constraints, virtual sites, and a particle without an element
+  or mass or with an element that the model does not take. A run needs a
+  topology, which gives the elements; without one it is refused.
+
+### 9.2 Validation
+
+On RTX 4090s (`MDIR_GPU=RTX4090`), torch 2.14.1, metatomic-torch 0.1.19,
+nequip 0.19.1; the artifacts made by `nequip-to-metatomic.py` from the
+package of Section 2 (`--dtype float64` and `--dtype float32`); the systems
+and NequIP's reference by `scripts/mlip/water-box.py`, the evaluations by
+`scripts/mlip/check-model-term.py` (Python model) and `mdir run`. Units:
+kJ/mol and nm. The tolerances of Section 7 in these units: float64 inputs
+$\lvert\Delta E\rvert \le 4.8 \times 10^{-3}$, $\lvert\Delta F\rvert \le 1.9
+\times 10^{-2}$, $\lvert\Delta W\rvert \le 4.8 \times 10^{-3}$; float32 ten
+times.
+
+**Against NequIP's calculator** (largest differences over the components):
+
+| Case | Mode | Inputs | $\lvert\Delta E\rvert$ | max $\lvert\Delta F\rvert$ | max $\lvert\Delta W\rvert$ |
+|---|---|---|---|---|---|
+| 81 atoms, cubic (E = -35,384, max F 549, max W 2,340) | double | float64 | $1.3 \times 10^{-4}$ | $2.4 \times 10^{-3}$ | $1.4 \times 10^{-3}$ |
+| | mixed | float64 | $3.2 \times 10^{-6}$ | $2.9 \times 10^{-3}$ | $9.0 \times 10^{-4}$ |
+| | double | float32 | $1.9 \times 10^{-3}$ | $8.7 \times 10^{-3}$ | $6.5 \times 10^{-3}$ |
+| | mixed | float32 | $1.9 \times 10^{-3}$ | $8.3 \times 10^{-3}$ | $6.7 \times 10^{-3}$ |
+| 81 atoms, triclinic (E = -35,285) | double | float64 | $6.0 \times 10^{-5}$ | $2.7 \times 10^{-3}$ | $1.4 \times 10^{-3}$ |
+| | mixed | float64 | $2.3 \times 10^{-4}$ | $2.7 \times 10^{-3}$ | $9.4 \times 10^{-4}$ |
+| | double | float32 | $1.3 \times 10^{-3}$ | $6.8 \times 10^{-3}$ | $3.9 \times 10^{-3}$ |
+| | mixed | float32 | $1.3 \times 10^{-3}$ | $6.5 \times 10^{-3}$ | $7.3 \times 10^{-3}$ |
+| 24 atoms, 6.2 Å box (E = -10,989) | double | float64 | $3.8 \times 10^{-4}$ | $1.9 \times 10^{-3}$ | $5.5 \times 10^{-4}$ |
+| | mixed | float64 | $4.6 \times 10^{-4}$ | $1.3 \times 10^{-3}$ | $3.8 \times 10^{-4}$ |
+| | double | float32 | $6.6 \times 10^{-4}$ | $7.5 \times 10^{-3}$ | $4.2 \times 10^{-3}$ |
+| | mixed | float32 | $6.6 \times 10^{-4}$ | $7.1 \times 10^{-3}$ | $3.7 \times 10^{-3}$ |
+| 72 atoms, liquid (E = -32,825) | double | float64 | $1.6 \times 10^{-4}$ | $1.7 \times 10^{-3}$ | $1.2 \times 10^{-3}$ |
+| | mixed | float64 | $6.4 \times 10^{-4}$ | $2.0 \times 10^{-3}$ | $1.0 \times 10^{-3}$ |
+| | double | float32 | $1.1 \times 10^{-3}$ | $7.5 \times 10^{-3}$ | $3.4 \times 10^{-3}$ |
+| | mixed | float32 | $2.8 \times 10^{-3}$ | $6.7 \times 10^{-3}$ | $5.4 \times 10^{-3}$ |
+
+Every difference is within its tolerance, the float64 ones by a factor of 3
+or more. The float64 force differences, $1.3$ to $2.9 \times 10^{-3}$
+kJ/mol/nm ($1.4$ to $3.0 \times 10^{-6}$ eV/Å), are the run-to-run spread
+of the reference (Section 3.2).
+
+**Chunks** (liquid, 72 atoms, double, float64 inputs), against NequIP:
+1 center per call $\lvert\Delta E\rvert = 1.8 \times 10^{-3}$, max
+$\lvert\Delta F\rvert = 2.6 \times 10^{-3}$, max $\lvert\Delta W\rvert = 1.3
+\times 10^{-3}$; 16 centers $1.9 \times 10^{-3}$, $2.1 \times 10^{-3}$, $2.9
+\times 10^{-4}$; 64 centers $8.0 \times 10^{-4}$, $2.2 \times 10^{-3}$, $4.8
+\times 10^{-4}$. The energy of the chunks differs from that of one call by
+up to $2 \times 10^{-3}$ of $3.3 \times 10^4$ kJ/mol: the float32 network's
+sums in another order.
+
+**`mdir run` against the Python model**, 81 atoms minimized with ASE's FIRE
+on NequIP's calculator (`water-box.py --minimize`), velocities of 300 K, 20
+steps of 0.5 fs, both from the same files: the total energy of every step
+agrees within $1.6 \times 10^{-4}$ kcal/mol in `double` and $1.4 \times
+10^{-4}$ in `mixed`, the four decimals that the log prints, and the energy
+at the start within $2 \times 10^{-4}$ kJ/mol. Not to the bit: the model's
+own sums are not deterministic (Section 6.8).
+
+**Constant energy**, the same system, 4,000 steps of 0.5 fs (2 ps), velocity
+Verlet, mean temperature 212 K: in `double` the total energy drifts by
+$-0.093$ kJ/mol/ps ($-1.2$ kJ/mol/ns per atom) and fluctuates by 0.14
+kJ/mol (standard deviation about the fit) against 35 kJ/mol of the
+potential energy; in `mixed` $-0.041$ kJ/mol/ps ($-0.5$ kJ/mol/ns per atom)
+and 0.13 kJ/mol. From the unminimized lattice (Section 3.2) the change of
+the total energy after 0.02 ps follows $\Delta t^2$: 0.435, 0.107, and 0.026
+kcal/mol with steps of 0.5, 0.25, and 0.125 fs.
+
+**Memory against pairs** (liquid water, double, float64 inputs; the peak
+of the plugin's allocator over the run, `torch`'s count):
+
+| Waters (atoms) | Pairs | Centers per call | Peak allocated | Reserved | Per pair |
+|---|---|---|---|---|---|
+| 8 (24) | 3,458 | all | 4.03 GiB | 7.2 GiB | 1.25 MB |
+| 16 (48) | 6,810 | all | 7.82 GiB | 14.1 GiB | 1.23 MB |
+| 24 (72) | 10,576 | all | 12.06 GiB | 21.8 GiB | 1.22 MB |
+| 32 (96) | 13,602 | all | 15.49 GiB | 16.7 GiB | 1.22 MB |
+| 128 (384) | 55,112 | 64 | 10.65 GiB | 19.2 GiB | |
+| 1,024 (3,072) | 456,886 | 64 | 11.59 GiB | 20.9 GiB | |
+| 1,024 (3,072) | 456,632 | 16 | 3.05 GiB | 5.4 GiB | |
+
+The whole system takes 1.22 to 1.25 MB per pair, the eager baseline of
+Section 4.1. With `expandable_segments` the reserved memory stays near the
+allocated at the largest sizes (16.7 GiB for 15.5 GiB at 13,602 pairs),
+where the study's run without it failed at 13,556 pairs on 24 GB; the
+reserved memory of chunks is about twice their allocated peak.
+
+**Rate** (the steps after the first half of the run, `mdir run`, one
+RTX 4090; atom-steps per second):
+
+| Waters (atoms) | Pairs | Centers per call | ms per step | µs per pair | Atom-steps per s |
+|---|---|---|---|---|---|
+| 8 (24) | 3,458 | all | 73.4 | 21.2 | 327 |
+| 24 (72) | 10,576 | all | 214.6 | 20.3 | 335 |
+| 32 (96) | 13,602 | all | 276.2 | 20.3 | 348 |
+| 128 (384) | 55,112 | 64 | 1,146 | 20.8 | 335 |
+| 1,024 (3,072) | 456,886 | 64 | 9,520 | 20.8 | 323 |
+| 1,024 (3,072) | 456,632 | 16 | 10,261 | 22.5 | 299 |
+
+The time per pair is that of the model in Python in Section 4.1 (20.3 µs
+whole, 22.7 µs with 64 centers): the pair list, the copies, and the
+synchronization do not show at these sizes; they were not timed apart. The
+first evaluations are slower while TorchScript's profiling executor
+specializes the model (1.07 s for the first steps of 81 atoms against 61 ms
+later).
+
+**Not measured in this PR**: the RTX PRO 6000; the pair list timed apart
+from the model; the order of the input (the program reorders the particles
+by their positions at every rebuild, which the runs above cross); the CPU
+target, which ML1 refuses.
