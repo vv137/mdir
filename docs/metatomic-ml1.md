@@ -7,7 +7,8 @@ optional metatomic adapter, with energy, per-particle forces, and virial on
 one GPU agreeing with the original backend. Sections 1 to 8 are the design
 and the feasibility study, measured outside the repository with the wrapper
 `scripts/mlip/nequip-to-metatomic.py`; Section 9 is what the first PR built
-and its validation.
+and its validation, Section 10 minimization and constant pressure (D272),
+and Section 11 the AOTInductor backend (`D[mlip-aoti]`).
 
 ## 1. What has been ruled (the maintainer, 2026-10-16)
 
@@ -825,4 +826,361 @@ descent), velocities of 300 K, 2 ps of 0.5 fs: in `double` the total energy
 drifts by $-0.042$ kJ/mol/ps ($-0.52$ kJ/mol/ns per atom) with a fluctuation
 of 0.14 kJ/mol about the fit, mean temperature 266 K; in `mixed` $-0.099$
 kJ/mol/ps ($-1.2$ kJ/mol/ns per atom) and 0.15 kJ/mol, 262 K.
+
+## 11. The AOTInductor backend (D[mlip-aoti])
+
+The second step of Section 8 (issue #373): `backend = "AOTI"` loads an
+AOTInductor package of the `nequip` package (`.nequip.pt2`) in the same
+plugin, `libmdir_metatomic`, behind the same C boundary, with the same
+refusals and the same call of the host that declares its write of the
+forces (Section 9.1). MDIR still owns the pair list, the buffers, and the
+stream. The reason is memory (Section 1, item 3): the eager TorchScript
+path takes 1.22 MB per pair (Section 9.2), the package of the same Allegro
+model 132 kB per pair, in about a sixth of the time (Section 4.1, measured
+again in 11.5).
+
+### 11.1 The package and its loader
+
+`torch::inductor::AOTIModelPackageLoader` (libtorch, C++) opens the package:
+it extracts the archive to the temporary directory (`TMPDIR`), loads the
+compiled wrapper (`*.wrapper.so`, which links libtorch and holds the
+kernels, 42 MB here) with `dlopen`, and loads the weights to the device of
+`device_index`. Its `run(inputs, stream)` takes a CUDA stream: the plugin
+gives it MDIR's stream (`mdrtDeviceExternalStream`), and also makes that
+stream torch's current one (`CUDAStreamGuard`), since the package's
+intermediates come from torch's caching allocator on the current stream. So
+`memory_stats`, `expandable_segments`, and the log of the plugin's memory
+(Section 6.5) hold for this backend unchanged. The wrapper is linked against
+the libtorch it was compiled with; a package of another torch fails when it
+is loaded, and the plugin reports the loader's message.
+
+`get_metadata()` gives, as strings, what the plugin needs to describe the
+model: `r_max` (Å), `type_names`, `model_dtype`, `nequip_aoti_inputs`,
+`nequip_aoti_outputs`, `AOTI_DEVICE_KEY`, and `AOTI_COMPUTE_CAPABILITY`,
+which the `nequip` package writes, and the keys of MDIR's script (11.8).
+
+### 11.2 Inputs and outputs
+
+The plugin takes a package of the `nequip` package's `ase` target (what
+`nequip-compile --target ase` writes and `NequIPCalculator.from_compiled_model`
+reads) and refuses any other inputs or outputs, which the metadata names.
+The compiled wrapper checks every input's type and shape:
+
+| Input | Shape | Type | From MDIR |
+|---|---|---|---|
+| `pos` | (N, 3), N ≥ 2 | float64 | the positions, in Å |
+| `edge_index` | (2, E), E ≥ 2 | int64 | the plugin's pair list (Section 9.1): row 0 the center $i$, row 1 the neighbor $j$ |
+| `atom_types` | (N) | int64 | the index of each particle's element in `type_names` (not the atomic number) |
+| `cell` | (1, 3, 3) | float64 | the cell, rows the edges, in Å |
+| `edge_cell_shift` | (E, 3) | float64 | the shift $\mathbf s$ of each pair in cells |
+
+The package forms the pair vector as $\mathbf r_{ij} = \mathbf x_j -
+\mathbf x_i + \mathbf s\,\mathsf H$, the convention of the plugin's list,
+so the list goes in as it is, its indices widened to int64 and its shifts
+converted to float64. The outputs, all float64:
+
+| Output | Shape | Used as |
+|---|---|---|
+| `atomic_energy` | (N, 1) | the energy of each center, for chunks (11.5) |
+| `total_energy` | (1, 1) | the energy of a call of the whole system |
+| `forces` | (N, 3) | added into MDIR's forces |
+| `stress` | (1, 3, 3) | $\sigma = (\partial E/\partial\boldsymbol\varepsilon)/V$ |
+
+The type names must be element symbols: the plugin maps MDIR's atomic
+numbers to them (a table of the elements in the plugin) and refuses a
+package whose names are not elements; a particle of an element that the
+package lacks is refused before compilation, as for METATOMIC (Section
+6.3).
+
+### 11.3 Forces and the virial
+
+An exported graph cannot be differentiated from outside: the package
+returns tensors without an autograd graph, so there is no backward for the
+plugin to run. The derivatives are those that the `nequip` package's
+`ForceStressOutput` takes inside the compiled graph: the forces
+$-\partial E/\partial\mathbf x$, and the derivative in a symmetric strain
+$\boldsymbol\varepsilon$ of the positions and the cell, returned as the
+stress $\sigma = (\partial E/\partial\boldsymbol\varepsilon)/V$ with $V =
+\lvert\det\mathsf H\rvert$. MDIR's virial (Section 6.7) is therefore
+$\mathsf W = -\partial E/\partial\boldsymbol\varepsilon = -V\sigma$, which
+the plugin forms in f64 on the device; it is symmetric by construction.
+The forces are added to MDIR's buffer of forces in its type (f32 in
+`mixed`, f64 in `double`), and the energy and the virial are written to
+buffers of the device, as for METATOMIC: nothing waits for them.
+
+### 11.4 The type of the inputs
+
+The `nequip` package exports its models with float64 positions, cell, and
+shifts whatever the model's own type (`model_dtype`, float32 for
+Allegro-OAM-L), and rounds the pair vectors to the model's type inside the
+graph. There is no package with float32 inputs. The rule of Section 5.3
+(the inputs follow the model, never `[execution] precision`) holds: the
+plugin describes the inputs as 64 bits and hands over MDIR's f64 positions
+as they are; `mixed` and `double` differ only in the type of the forces
+that the model's are added to. The log shows `model_dtype` beside the
+inputs.
+
+### 11.5 Chunks of centers
+
+The package takes any number of particles and of pairs from 2 up (dynamic
+shapes of `torch.export`), and the pairs need not be all of the system's.
+Allegro's energy is a sum over centers, and the energy of a center depends
+only on the pairs whose first particle it is
+[[Musaelian2023]](references.md#musaelian2023). A call with the positions of
+all N particles and the pairs of a chunk of centers therefore gives:
+
+- the forces and the stress of the energy of that chunk's centers alone: a
+  particle without pairs has the constant energy of its type, which no
+  derivative sees, so the forces and the virial of the chunks add up to
+  those of the system;
+- in `atomic_energy`, the energies of the chunk's centers. The
+  `total_energy` of such a call also counts the constant energies of every
+  other particle, so the plugin sums `atomic_energy` over the chunk's
+  centers instead.
+
+The pairs of a chunk are a contiguous range of the list, which is ordered by
+center. A chunk with fewer than 2 pairs (the package's lower bound) is
+merged into the next one rather than dropped, since its centers still have
+an energy. As for METATOMIC (Section 5.3) the plugin honors
+`centers_per_call` only for a package that declares itself local: the
+metadata `mdir::local_centers = "true"`, which MDIR's script (11.8) writes
+for an Allegro model and not for a NequIP model, whose message passing makes
+a center's energy depend on the pairs of its neighbors. A package without
+the declaration (`nequip-compile`'s own) takes the whole system in one
+call, and the log says so.
+
+Measured with the package in Python (the `nequip` package's pair list; an
+RTX 4090 and an RTX PRO 6000): chunks of 1, 5, and 16 centers against one
+call, on the triclinic 81-atom box and 24 waters at liquid density, give
+the same forces within $5.6 \times 10^{-6}$ eV/Å, the stress within $3.5
+\times 10^{-8}$ eV/Å³, and the energy within $3.3 \times 10^{-5}$ eV of
+366 eV (float32 sums in another order). One call of the whole system took
+132 to 134 kB per pair and 3.3 µs per pair on the RTX 4090 (96 and 384
+atoms, 13,606 and 55,148 pairs), and 2.6 to 2.9 µs on the RTX PRO 6000; 512
+waters (1,536 atoms, about 220,000 pairs) asked the RTX 4090 for one
+allocation of 13.5 GiB and failed, which is where chunks take over.
+
+### 11.6 Devices and the package for each
+
+A package holds compiled kernels (SASS, `.cubin`) for the device that
+compiled it, without PTX: on another architecture it loads and then fails
+at the first call with "no kernel image is available for execution on the
+device" (a package of the RTX 4090, `sm_89`, on the RTX PRO 6000,
+`sm_120`). The plugin reads `AOTI_COMPUTE_CAPABILITY` when it loads the
+package, compares it with the device's, and refuses a mismatch with both
+named, before any step.
+
+One package can serve several architectures: AOTInductor's
+`emit_multi_arch_kernel` builds fat binaries with SASS for each compute
+capability of `TORCH_CUDA_ARCH_LIST` and PTX for the compiling device.
+`AOTI_COMPUTE_CAPABILITY` still names the compiling device alone, so MDIR's
+script writes the list as `mdir::archs` ("89 120"), and the plugin takes a
+package on a device whose capability is in that list. A package compiled on
+an RTX 4090 with SASS for 8.9 and 12.0 runs on the RTX PRO 6000 and agrees
+with one compiled there; its kernels were tuned on the RTX 4090, and it took
+2.80 µs per pair against 2.64 for the package compiled there (13,606 pairs).
+
+*Ruled* (the maintainer on PR #374, 2026-10-16): one `path`, refused where
+the package has no kernels for the device; the user makes one package per
+kind of device, or one for several with `--arch`.
+
+### 11.7 Units
+
+The `nequip` package records no units: a model is in the units of its
+training data, and the package's ASE calculator assumes Å and eV unless it
+is told otherwise. MDIR's script writes `mdir::length_unit` and
+`mdir::energy_unit` (`--units`, Å and eV by default); the plugin converts
+with the table that metatomic uses for METATOMIC
+(`metatomic_torch::unit_conversion_factor`). *Ruled* (the maintainer on PR
+#374, 2026-10-16): a package without the keys is taken as Å and eV, and the
+log says so.
+
+### 11.8 Making the package
+
+`scripts/mlip/nequip-to-aoti.py` runs the export of `nequip-compile --mode
+aotinductor --target ase` (the `nequip` package's `aot_export_model`,
+including its check of the compiled model against the eager one) and adds
+MDIR's metadata (`mdir::local_centers`, `mdir::length_unit`,
+`mdir::energy_unit`, and with `--arch` `mdir::archs`):
+
+```sh
+python scripts/mlip/nequip-to-aoti.py Allegro-OAM-L-0.1.nequip.zip \
+    allegro.nequip.pt2 [--modifiers enable_TritonContracter] [--arch 8.9 12.0]
+```
+
+It runs on a GPU of the kind that the package is for (25 to 50 s for this
+model). `--modifiers` takes the `nequip` package's accelerations
+(`enable_TritonContracter`, Allegro's fused tensor product in Triton,
+Section 5.1); `--arch` needs `nvcc` on the path. A package of
+`nequip-compile` itself also loads, without chunks and with the units
+assumed:
+
+```sh
+nequip-compile Allegro-OAM-L-0.1.nequip.zip allegro.nequip.pt2 \
+    --mode aotinductor --device cuda --target ase
+```
+
+### 11.9 What changes
+
+- **The control file and Python.** `backend` takes `"AOTI"` beside
+  `"METATOMIC"` (`[[energy.model]]`, `mdir.ModelTerm(backend="AOTI")`);
+  `path` names the `.nequip.pt2`; `centers_per_call` as before. No key is
+  added, as Section 5.4 foresaw.
+- **The plugin.** `mdir_mlip_load` dispatches on the backend; the model
+  holds either the TorchScript module or the loader. `describe` gives the
+  cutoff (`r_max`), a full and strict list, 64-bit inputs, the elements of
+  `type_names`, the units and their factors, the locality, and the
+  framework. `evaluate` builds the same pair list, calls the package once
+  or per chunk, adds the forces, and writes the energy and the virial
+  (11.3). The C boundary is unchanged (version 1).
+- **The core.** The log names the backend in the line of the model; the
+  checks of the backend accept `AOTI`. The refusals of Section 9.1 apply
+  unchanged.
+
+- **The host's processor.** The package also holds host code, which
+  AOTInductor compiles with `-march=native`: a package compiled on a host
+  with AVX-512 stopped with an illegal instruction when it was loaded on a
+  host with AVX2 alone (two kinds of node of the same cluster). The plugin
+  compares the package's `AOTI_CPU_ISA` with the host's processor and
+  refuses a mismatch, and `nequip-to-aoti.py` compiles the host code for
+  x86-64-v3 (AVX2) by default (`--cpu native` for the compiling host's).
+
+### 11.10 What the backend is and is not
+
+An AOTInductor package has no standard calling convention: its inputs and
+outputs are whatever its exporter chose. The backend `AOTI` takes the
+`nequip` package's convention alone (`nequip-compile --target ase`, the
+inputs and outputs that its metadata names, 11.2), whatever the
+architecture, NequIP or Allegro, and refuses any other. Another framework's
+export (MACE's, for example) would take a thin adapter of its own for the
+names and shapes of its inputs and outputs, while the parts of the plugin
+that do not depend on the model stay shared: the pair list, the buffers,
+the stream, the units, and the declared effects of the call of the host. In
+the long run, if metatomic gains `torch.export` and AOTInductor, the
+backend `METATOMIC` should take such packages under one standard; ML4's
+staged execution (Section 5.4) makes MDIR depend less on any framework's
+convention.
+
+### 11.11 Validation
+
+RTX 4090s (`MDIR_GPU=RTX4090`, `sm_89`) and an RTX PRO 6000 Blackwell
+(`MDIR_GPU=RTX6000`, `sm_120`); torch 2.14.1, nequip 0.19.1, nequip-allegro
+0.8.3; packages made by `nequip-to-aoti.py` on each kind of device; the
+systems and references of Section 9.2 (`water-box.py`, `check-model-term.py`,
+`mdir run`), in kJ/mol and nm, with the tolerances of float64 inputs there
+($\lvert\Delta E\rvert \le 4.8 \times 10^{-3}$, $\lvert\Delta F\rvert \le
+1.9 \times 10^{-2}$, $\lvert\Delta W\rvert \le 4.8 \times 10^{-3}$).
+
+**Against the `nequip` package's calculator** (the eager model in Python,
+on an RTX 4090), largest differences over the components:
+
+| Case | Device | Mode | $\lvert\Delta E\rvert$ | max $\lvert\Delta F\rvert$ | max $\lvert\Delta W\rvert$ |
+|---|---|---|---|---|---|
+| 81 atoms, cubic | RTX 4090 | double | $2.6 \times 10^{-4}$ | $2.6 \times 10^{-3}$ | $5.1 \times 10^{-4}$ |
+| | | mixed | $2.4 \times 10^{-4}$ | $2.0 \times 10^{-3}$ | $4.2 \times 10^{-4}$ |
+| | RTX PRO 6000 | double | $5.6 \times 10^{-5}$ | $2.8 \times 10^{-3}$ | $1.9 \times 10^{-3}$ |
+| | | mixed | $6.0 \times 10^{-4}$ | $3.2 \times 10^{-3}$ | $1.4 \times 10^{-3}$ |
+| 81 atoms, triclinic | RTX 4090 | double | $3.3 \times 10^{-4}$ | $2.1 \times 10^{-3}$ | $1.2 \times 10^{-3}$ |
+| | | mixed | $8.4 \times 10^{-5}$ | $2.5 \times 10^{-3}$ | $1.5 \times 10^{-3}$ |
+| | RTX PRO 6000 | double | $1.1 \times 10^{-3}$ | $3.5 \times 10^{-3}$ | $3.3 \times 10^{-3}$ |
+| | | mixed | $3.9 \times 10^{-4}$ | $3.7 \times 10^{-3}$ | $2.5 \times 10^{-3}$ |
+| 24 atoms, 6.2 Å box | RTX 4090 | double | $1.1 \times 10^{-3}$ | $7.8 \times 10^{-4}$ | $4.7 \times 10^{-4}$ |
+| | | mixed | $3.1 \times 10^{-4}$ | $1.0 \times 10^{-3}$ | $1.2 \times 10^{-4}$ |
+| | RTX PRO 6000 | double | $5.3 \times 10^{-4}$ | $1.6 \times 10^{-3}$ | $2.2 \times 10^{-4}$ |
+| | | mixed | $7.5 \times 10^{-4}$ | $1.7 \times 10^{-3}$ | $4.0 \times 10^{-4}$ |
+| 72 atoms, liquid | RTX 4090 | double | $3.2 \times 10^{-4}$ | $1.3 \times 10^{-3}$ | $6.5 \times 10^{-4}$ |
+| | | mixed | $3.7 \times 10^{-4}$ | $1.5 \times 10^{-3}$ | $6.8 \times 10^{-4}$ |
+| | RTX PRO 6000 | double | $3.7 \times 10^{-4}$ | $3.4 \times 10^{-3}$ | $1.4 \times 10^{-3}$ |
+| | | mixed | $9.8 \times 10^{-4}$ | $3.7 \times 10^{-3}$ | $1.2 \times 10^{-3}$ |
+
+Every difference is within its tolerance, by a factor of 4 or more, and at
+the level of the METATOMIC backend on the same systems and devices (largest
+$1.5 \times 10^{-3}$, $5.2 \times 10^{-3}$, and $3.4 \times 10^{-3}$). The
+package of the RTX 4090 with kernels for both (`--arch 8.9 12.0`) gives on
+the RTX PRO 6000 at most $1.3 \times 10^{-3}$, $3.7 \times 10^{-3}$, and
+$3.2 \times 10^{-3}$. **AOTI against METATOMIC** (RTX 4090, double, the
+same four systems): at most $5.4 \times 10^{-4}$ in the energy, $4.2 \times
+10^{-3}$ in the forces, and $1.5 \times 10^{-3}$ in the virial, the spread
+of either against the reference. **Chunks** (liquid, double) of 1, 16, and
+64 centers: at most $1.3 \times 10^{-3}$, $3.2 \times 10^{-3}$, and $1.3
+\times 10^{-3}$ against the reference on both devices.
+
+**Constant energy**, the 81-atom system of Section 9.2 minimized with ASE's
+FIRE, velocities of 300 K, 4,000 steps of 0.5 fs, velocity Verlet, RTX
+4090: in `double` the total energy drifts by $-0.065$ kJ/mol/ps ($-0.80$
+kJ/mol/ns per atom) with a fluctuation of 0.15 kJ/mol about the fit,
+against 36 kJ/mol of the potential energy, mean temperature 213 K; in
+`mixed` $-0.110$ kJ/mol/ps ($-1.35$ kJ/mol/ns per atom) and 0.15 kJ/mol.
+METATOMIC gave $-0.070$ and $-0.068$ kJ/mol/ps and 0.13 kJ/mol (Section
+9.2). The step took 15.4 ms against 86 ms with METATOMIC.
+
+**Memory and rate against pairs** (liquid water, `mixed`, `mdir run`; the
+peak of the plugin's allocator over the run; the time of an evaluation
+with `MDIR_MLIP_TIMING=1`, its pair search apart, the mean over the
+evaluations after the first; the rest of the step, without classical terms
+here, is not counted). The model's time per pair is flat from 13,566 pairs
+up, so a rate holds across sizes:
+
+| Package | Device | Per pair (whole system) | µs per pair | Atom-steps per s | Largest whole system | Largest tried in chunks |
+|---|---|---|---|---|---|---|
+| METATOMIC (Section 9.2) | RTX 4090 | 1.22 MB | 20.7 | 300 to 350 | 96 atoms, 13,598 pairs | 3,072 atoms, 64 centers: 11.6 GiB |
+| AOTI | RTX 4090 | 132 kB | 3.4 | 1,840 to 2,030 | 1,152 atoms, 171,636 pairs: 21.2 GiB | 12,288 atoms, 1,766,340 pairs, 512 centers: 9.4 GiB |
+| AOTI, Triton | RTX 4090 | 85 kB | 2.2 | 2,580 to 3,120 | 1,920 atoms, 282,006 pairs: 22.3 GiB | 12,288 atoms, 1,024 centers: 11.9 GiB |
+| AOTI | RTX PRO 6000 | 132 kB | 3.0 | 1,980 to 2,420 | 4,608 atoms, 677,284 pairs: 83.4 GiB | 24,576 atoms, 3,611,214 pairs, 2,048 centers: 38.3 GiB |
+| AOTI, Triton | RTX PRO 6000 | 85 kB | 2.0 | 2,830 to 3,680 | 7,680 atoms, 1,125,480 pairs: 89.0 GiB | 24,576 atoms, 4,096 centers: 48.7 GiB |
+
+The next size tried failed for lack of memory on the RTX 4090 (1,344 atoms
+without Triton, 2,304 with it: one allocation of the model's of up to 13.5
+GiB); on the RTX PRO 6000 the largest whole systems were the largest tried.
+In chunks the memory follows the chunk (512 centers: 9.4 to 9.8 GiB from
+3,072 to 12,288 atoms), and the time per pair stays that of the whole
+system.
+
+Time per step and ns/day at 0.5 fs (whole systems; the largest in chunks):
+
+| Atoms | RTX 4090 | RTX 4090, Triton | RTX PRO 6000 | RTX PRO 6000, Triton |
+|---|---|---|---|---|
+| 96 | 48 ms, 0.89 ns/day | 32 ms, 1.36 | 40 ms, 1.09 | 26 ms, 1.66 |
+| 384 | 189 ms, 0.23 | 123 ms, 0.35 | 165 ms, 0.26 | 110 ms, 0.39 |
+| 1,152 | 593 ms, 0.073 | 387 ms, 0.11 | 518 ms, 0.083 | 347 ms, 0.12 |
+| 3,072 | 1.60 s (512 centers), 0.027 | | 1.41 s, 0.031 | 0.97 s, 0.045 |
+| 12,288 | 6.67 s (512 centers), 0.0065 | 4.52 s (1,024 centers), 0.0096 | 5.70 s (2,048 centers), 0.0076 | |
+| 24,576 | | | 12.4 s (2,048 centers), 0.0035 | 8.69 s (4,096 centers), 0.0050 |
+
+Against METATOMIC on the same device, AOTI takes 9 times less memory per
+pair and 6 times less time (14 and 9 times with Triton), as the study of
+Section 4.1 found in Python. What MD with this model can do on one GPU is
+thus about 2,000 to 3,700 atom-steps per second: a nanosecond a day for
+about 100 atoms at 0.5 fs, a tenth of one for about 1,000.
+
+**The pair search** (the plugin's brute force over every image, with a
+wait of the host at its count, Section 9.1), with `MDIR_MLIP_TIMING=1`:
+
+| Atoms | Search, RTX 4090 | Share, AOTI | Share, Triton | Search, RTX PRO 6000 | Share, AOTI | Share, Triton |
+|---|---|---|---|---|---|---|
+| 96 | 0.5 ms | 1.1% | 1.7% | 0.5 ms | 1.4% | 2.1% |
+| 1,152 | 5.6 ms | 0.9% | 1.4% | 3.7 ms | 0.7% | 1.1% |
+| 3,072 | 37 ms | 2.3% | | 23 ms | 1.6% | 2.4% |
+| 6,144 | 141 to 148 ms | 4.5% | 6.5% | 88 ms | | 4.4% |
+| 12,288 | 559 to 590 ms | 8.9% | 12.4% | 355 ms | 6.2% | |
+| 24,576 | | | | 1.40 to 1.44 s | 11.3% | 16.6% |
+
+It grows as $N^2$ (four times per doubling from 3,072 atoms) while the
+model grows as $N$: below 1% of the evaluation for METATOMIC at every size
+(36 ms of 9.5 s at 3,072 atoms), it reaches 9 to 17% with AOTI at 12,288
+to 24,576 atoms and would pass the model's time between about 100,000 and
+200,000 atoms, depending on the package and the device. The
+next step (the pair list from MDIR's structures, with a skin and without
+the wait) starts from these numbers; this PR does not change the search.
+
+**A package of `nequip-compile` itself** (no MDIR keys, RTX PRO 6000,
+liquid, `centers_per_call = 16` asked): the log says that the units are
+taken as Å and eV and that the package is not declared local, the whole
+system goes in one call, and the Python model agrees with the reference
+within $1.8 \times 10^{-4}$, $3.0 \times 10^{-3}$, and $1.3 \times 10^{-3}$.
+
+**Not measured in this PR**: the CPU target, which ML1 refuses; NPT and
+minimization with this backend beyond the test of `mdir run` (D272's
+validation holds for any backend, since the plugin's outputs are the same).
+
 

@@ -15,20 +15,36 @@
 // itself on the device, with every image within the cutoff and no skin
 // (Section 6.4 of the design).
 //
+// The backend "AOTI" (D[mlip-aoti], Section 11 of the design) loads instead
+// an AOTInductor package of the `nequip` package's `ase` target with
+// torch::inductor::AOTIModelPackageLoader and gives it the same pair list as
+// edges and cell shifts; its forces and stress are the derivatives that the
+// package takes inside its compiled graph (the `nequip` package's
+// ForceStressOutput), and the virial is W = -V sigma.
+//
 //===----------------------------------------------------------------------===//
 
 #include "mdir/MLIP/Plugin.h"
 
+#include <algorithm>
+#include <chrono>
 #include <cmath>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <memory>
+#include <sstream>
 #include <stdexcept>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
+#include <ATen/cuda/CUDAContext.h>
 #include <c10/cuda/CUDACachingAllocator.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/cuda/CUDAStream.h>
+#include <torch/csrc/inductor/aoti_package/model_package_loader.h>
 #include <torch/headeronly/version.h>
 #include <torch/script.h>
 #include <torch/torch.h>
@@ -67,20 +83,61 @@ template <class F> int guarded(F &&f) {
 /// The memory that one block of the brute-force pair search may take.
 constexpr int64_t searchBytes = int64_t(256) << 20;
 
+/// The symbols of the elements, by atomic number.
+const char *const elements[] = {
+    "",   "H",  "He", "Li", "Be", "B",  "C",  "N",  "O",  "F",  "Ne", "Na",
+    "Mg", "Al", "Si", "P",  "S",  "Cl", "Ar", "K",  "Ca", "Sc", "Ti", "V",
+    "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As", "Se", "Br",
+    "Kr", "Rb", "Sr", "Y",  "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag",
+    "Cd", "In", "Sn", "Sb", "Te", "I",  "Xe", "Cs", "Ba", "La", "Ce", "Pr",
+    "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu",
+    "Hf", "Ta", "W",  "Re", "Os", "Ir", "Pt", "Au", "Hg", "Tl", "Pb", "Bi",
+    "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th", "Pa", "U",  "Np", "Pu", "Am",
+    "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh",
+    "Hs", "Mt", "Ds", "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og"};
+constexpr int numElements = sizeof(elements) / sizeof(elements[0]);
+
+/// The inputs and outputs of the `nequip` package's `ase` target, in order.
+constexpr const char *aotiInputs = "pos edge_index atom_types cell edge_cell_shift";
+constexpr const char *aotiOutputs = "atomic_energy total_energy forces stress";
+
+std::vector<std::string> words(const std::string &text) {
+  std::istringstream stream(text);
+  std::vector<std::string> result;
+  for (std::string word; stream >> word;)
+    result.push_back(word);
+  return result;
+}
+
 } // namespace
 
 struct mdir_mlip_model {
+  std::string backend;
   torch::jit::Module module;
+  /// The package of the backend "AOTI", and the index of each atomic number
+  /// in its type names (-1 for an element that it does not take).
+  std::unique_ptr<torch::inductor::AOTIModelPackageLoader> package;
+  torch::Tensor typeOfNumber;
+  std::string modelDtype, framework;
   torch::Device device{torch::kCPU};
   torch::Dtype dtype = torch::kFloat64;
   mta::NeighborListOptions request;
   double cutoff = 0.0;
+  bool fullList = true, strict = true;
   bool local = false;
   int64_t centersPerCall = 0;
   double interactionRange = -1.0;
   std::vector<int64_t> types;
   std::string lengthUnit, energyUnit, name;
   double lengthFactor = 1.0, energyFactor = 1.0;
+  /// Whether the package gives no units, and Angstrom and eV are taken.
+  bool unitsAssumed = false;
+  /// With MDIR_MLIP_TIMING set: the seconds of the pair search and of the
+  /// rest of the evaluations after the first, which the plugin then waits
+  /// for (docs/environment.md).
+  bool timing = false;
+  int64_t timed = 0;
+  double searchSeconds = 0.0, modelSeconds = 0.0;
   torch::Dict<std::string, mta::ModelOutput> outputs;
 };
 
@@ -177,6 +234,194 @@ void findPairs(const torch::Tensor &positions, const torch::Tensor &cell,
   shifts = torch::cat(cells).to(torch::kInt32).contiguous();
 }
 
+/// Loads an AOTInductor package of the `nequip` package's `ase` target
+/// (Section 11 of the design) into `m`, whose device is set.
+void loadPackage(mdir_mlip_model &m, const mdir_mlip_load_options &options) {
+  std::string path = options.path;
+  auto metadata = torch::inductor::AOTIModelPackageLoader::load_metadata_from_package(
+      path, "model");
+  auto get = [&](const std::string &key) -> std::string {
+    auto found = metadata.find(key);
+    return found == metadata.end() ? std::string() : found->second;
+  };
+  auto require = [&](const std::string &key) {
+    std::string value = get(key);
+    if (value.empty())
+      throw std::runtime_error("the package '" + path + "' has no metadata '" +
+                               key + "'; it is not a package of the `nequip` "
+                               "package (nequip-compile --mode aotinductor)");
+    return value;
+  };
+  if (get("AOTI_DEVICE_KEY") != "cuda")
+    throw std::runtime_error("the package '" + path + "' was compiled for the "
+                             "device '" + get("AOTI_DEVICE_KEY") +
+                             "'; the plugin takes a package for CUDA");
+  if (words(require("nequip_aoti_inputs")) != words(aotiInputs) ||
+      words(require("nequip_aoti_outputs")) != words(aotiOutputs))
+    throw std::runtime_error(
+        "the package '" + path + "' takes '" + get("nequip_aoti_inputs") +
+        "' and gives '" + get("nequip_aoti_outputs") + "'; the plugin takes "
+        "the `nequip` package's target 'ase' ('" + aotiInputs + "' and '" +
+        aotiOutputs + "')");
+  if (!get("per_edge_type_cutoff").empty())
+    throw std::runtime_error("the package '" + path + "' has cutoffs per pair "
+                             "of types, which the plugin does not take");
+
+  // The kernels are compiled for some architectures only: the compiling
+  // device's, or those that MDIR's script lists (Section 11.6).
+  const cudaDeviceProp *properties =
+      at::cuda::getDeviceProperties(m.device.index());
+  std::string capability =
+      std::to_string(properties->major) + std::to_string(properties->minor);
+  std::string compiled = require("AOTI_COMPUTE_CAPABILITY");
+  std::vector<std::string> archs = words(get("mdir::archs"));
+  if (archs.empty())
+    archs.push_back(compiled);
+  if (std::find(archs.begin(), archs.end(), capability) == archs.end())
+  {
+    std::string listed;
+    for (const std::string &arch : archs)
+      listed += (listed.empty() ? "sm_" : ", sm_") + arch;
+    throw std::runtime_error(
+        "the package '" + path + "' has kernels for " + listed +
+        ", and the device " + std::to_string(m.device.index()) + " (" +
+        properties->name + ") is sm_" + capability +
+        "; compile the package on this kind of device, or for several with "
+        "scripts/mlip/nequip-to-aoti.py --arch");
+  }
+
+  // The host code of the package is compiled for the instructions of the
+  // compiling host's processor (-march=native unless the compiler was told
+  // otherwise); on a processor without them it stops with an illegal
+  // instruction when it is loaded.
+  for (const std::string &isa : words(get("AOTI_CPU_ISA"))) {
+    bool supported = true;
+    if (isa == "AVX2")
+      supported = __builtin_cpu_supports("avx2");
+    else if (isa == "AVX512")
+      supported = __builtin_cpu_supports("avx512f");
+    else if (isa == "AVX512_VNNI")
+      supported = __builtin_cpu_supports("avx512vnni");
+    else if (isa == "AVX512_BF16")
+      supported = __builtin_cpu_supports("avx512bf16");
+    if (!supported)
+      throw std::runtime_error(
+          "the package '" + path + "' was compiled for a processor with " +
+          get("AOTI_CPU_ISA") + ", which this host's lacks (" + isa +
+          "); compile it with scripts/mlip/nequip-to-aoti.py, which compiles "
+          "for AVX2 by default, or on a host of this kind");
+  }
+
+  m.modelDtype = require("model_dtype");
+  std::string lengthUnit = get("mdir::length_unit");
+  std::string energyUnit = get("mdir::energy_unit");
+  m.unitsAssumed = lengthUnit.empty() || energyUnit.empty();
+  m.lengthUnit = lengthUnit.empty() ? "angstrom" : lengthUnit;
+  m.energyUnit = energyUnit.empty() ? "eV" : energyUnit;
+  m.lengthFactor = mta::unit_conversion_factor(m.lengthUnit, "nm");
+  m.energyFactor = mta::unit_conversion_factor(m.energyUnit, "kJ/mol");
+  m.cutoff = std::stod(require("r_max")) * m.lengthFactor;
+  if (!(m.cutoff > 0.0) || !std::isfinite(m.cutoff))
+    throw std::runtime_error("the package '" + path + "' has no finite r_max");
+  m.interactionRange = m.cutoff;
+
+  // The type names are element symbols; the model takes their atomic
+  // numbers.
+  std::vector<int64_t> index(numElements, -1);
+  std::vector<std::string> names = words(require("type_names"));
+  for (size_t t = 0; t != names.size(); ++t) {
+    int z = 1;
+    while (z < numElements && names[t] != elements[z])
+      ++z;
+    if (z == numElements)
+      throw std::runtime_error("the type '" + names[t] + "' of the package '" +
+                               path + "' is not the symbol of an element");
+    index[z] = static_cast<int64_t>(t);
+    m.types.push_back(z);
+  }
+  m.typeOfNumber = torch::tensor(index, torch::kLong).to(m.device);
+
+  m.local = get("mdir::local_centers") == "true";
+  m.centersPerCall = m.local ? options.centers_per_call : 0;
+  m.name = std::filesystem::path(path).filename().string();
+  m.framework = std::string("torch ") + torchVersion + ", model " + m.modelDtype +
+                (m.unitsAssumed ? "; the package gives no units: angstrom and "
+                                  "eV taken"
+                                : "");
+  m.package = std::make_unique<torch::inductor::AOTIModelPackageLoader>(
+      path, "model", false, 1, m.device.index());
+}
+
+/// Evaluates the package of `m` on the positions (n x 3, f64, nm) with the
+/// pair list, once or per chunk of centers; returns the forces (n x 3,
+/// kJ/mol/nm), the energy (1, kJ/mol), and the virial (9, kJ/mol), all f64
+/// on the device, and the calls made.
+int64_t evaluatePackage(mdir_mlip_model &m, const torch::Tensor &positions,
+                        const torch::Tensor &numbers, const torch::Tensor &cell,
+                        const double host[9], const torch::Tensor &pairs,
+                        const torch::Tensor &shifts, torch::Tensor &forces,
+                        torch::Tensor &energy, torch::Tensor &virial,
+                        void *stream) {
+  int64_t n = positions.size(0), p = pairs.size(0);
+  if (n < 2 || p < 2)
+    throw std::runtime_error(
+        "the package takes at least 2 particles and 2 pairs; it is given " +
+        std::to_string(n) + " particles and " + std::to_string(p) + " pairs");
+  double lf = m.lengthFactor;
+  // The model's units: value in MDIR's = factor * value in the model's.
+  torch::Tensor pos = (positions / lf).contiguous();
+  torch::Tensor box = (cell / lf).reshape({1, 3, 3}).contiguous();
+  torch::Tensor types = m.typeOfNumber.index_select(0, numbers.to(torch::kLong));
+  torch::Tensor edges = pairs.to(torch::kLong).t().contiguous();
+  torch::Tensor cells = shifts.to(torch::kFloat64).contiguous();
+  double a[3] = {host[0], host[1], host[2]}, b[3] = {host[3], host[4], host[5]},
+         c[3] = {host[6], host[7], host[8]};
+  double volume = std::fabs(a[0] * (b[1] * c[2] - b[2] * c[1]) -
+                            a[1] * (b[0] * c[2] - b[2] * c[0]) +
+                            a[2] * (b[0] * c[1] - b[1] * c[0]))
+                  / (lf * lf * lf);
+
+  // The chunks: contiguous ranges of the list, which is ordered by center
+  // (Section 11.5); a chunk of fewer than 2 pairs joins the next.
+  std::vector<int64_t> starts{0}, firsts{0};
+  int64_t chunk = m.centersPerCall > 0 && m.centersPerCall < n ? m.centersPerCall : n;
+  if (chunk < n) {
+    torch::Tensor bounds = torch::arange(chunk, n, chunk, edges.options());
+    torch::Tensor at = torch::searchsorted(edges[0].contiguous(), bounds).cpu();
+    auto atHost = at.accessor<int64_t, 1>();
+    for (int64_t k = 0; k != at.size(0); ++k)
+      if (atHost[k] - starts.back() >= 2 && p - atHost[k] >= 2) {
+        starts.push_back(atHost[k]);
+        firsts.push_back((k + 1) * chunk);
+      }
+  }
+  starts.push_back(p);
+  firsts.push_back(n);
+
+  forces = torch::zeros({n, 3}, pos.options());
+  energy = torch::zeros({1}, pos.options());
+  torch::Tensor stress = torch::zeros({3, 3}, pos.options());
+  for (size_t k = 0; k + 1 != starts.size(); ++k) {
+    std::vector<torch::Tensor> inputs{
+        pos, edges.slice(1, starts[k], starts[k + 1]).contiguous(), types, box,
+        cells.slice(0, starts[k], starts[k + 1]).contiguous()};
+    std::vector<torch::Tensor> out = m.package->run(inputs, stream);
+    // A call with the pairs of some centers gives the energy of those
+    // centers in atomic_energy; total_energy also counts the constant
+    // energies of the particles without pairs.
+    energy += starts.size() == 2
+                  ? out[1].reshape({1})
+                  : out[0].reshape({-1}).slice(0, firsts[k], firsts[k + 1]).sum().reshape({1});
+    forces += out[2];
+    stress += out[3].reshape({3, 3});
+  }
+  double ef = m.energyFactor;
+  forces.mul_(ef / lf);
+  energy.mul_(ef);
+  virial = (stress * (-volume * ef)).reshape({9});
+  return static_cast<int64_t>(starts.size() - 1);
+}
+
 } // namespace
 
 extern "C" {
@@ -193,12 +438,22 @@ int mdir_mlip_load(const mdir_mlip_load_options *options,
                    mdir_mlip_model **result) {
   return guarded([&] {
     *result = nullptr;
-    if (std::string(options->backend) != "METATOMIC")
-      throw std::runtime_error("this plugin loads the backend \"METATOMIC\", "
-                               "not \"" + std::string(options->backend) + "\"");
+    std::string backend = options->backend;
+    if (backend != "METATOMIC" && backend != "AOTI")
+      throw std::runtime_error("this plugin loads the backends \"METATOMIC\" "
+                               "and \"AOTI\", not \"" + backend + "\"");
     auto m = std::make_unique<mdir_mlip_model>();
-    m->module = mta::load_atomistic_model(options->path);
+    m->backend = backend;
     m->device = torch::Device(torch::kCUDA, options->device);
+    const char *timing = std::getenv("MDIR_MLIP_TIMING");
+    m->timing = timing && *timing && std::string(timing) != "0";
+    if (backend == "AOTI") {
+      loadPackage(*m, *options);
+      *result = m.release();
+      return;
+    }
+    m->framework = buildVersions;
+    m->module = mta::load_atomistic_model(options->path);
     m->module.to(m->device);
     m->module.eval();
 
@@ -237,6 +492,8 @@ int mdir_mlip_load(const mdir_mlip_load_options *options,
     if (!m->request->full_list())
       throw std::runtime_error("the model asks for a half pair list; the "
                                "plugin gives a full one");
+    m->fullList = m->request->full_list();
+    m->strict = m->request->strict();
 
     // A model is evaluated in chunks of centers only if it declares that
     // the energy of a selection takes the pairs of the selected centers
@@ -261,8 +518,8 @@ int mdir_mlip_describe(const mdir_mlip_model *m,
                        mdir_mlip_description *d) {
   return guarded([&] {
     d->cutoff = m->cutoff;
-    d->full_list = m->request->full_list();
-    d->strict = m->request->strict();
+    d->full_list = m->fullList;
+    d->strict = m->strict;
     d->dtype_bits = m->dtype == torch::kFloat32 ? 32 : 64;
     d->local_centers = m->local;
     d->centers_per_call = m->centersPerCall;
@@ -275,7 +532,7 @@ int mdir_mlip_describe(const mdir_mlip_model *m,
     d->length_factor = m->lengthFactor;
     d->energy_factor = m->energyFactor;
     d->name = m->name.c_str();
-    d->framework = buildVersions.c_str();
+    d->framework = m->framework.c_str();
   });
 }
 
@@ -313,12 +570,47 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
                       torch::kBool)
             .to(m->device);
 
+    // The time of the pair search and of the model, with MDIR_MLIP_TIMING:
+    // the device is waited for before, between, and after.
+    using clock = std::chrono::steady_clock;
+    clock::time_point start, searched;
+    if (m->timing) {
+      stream.synchronize();
+      start = clock::now();
+    }
+    auto finish = [&] {
+      if (!m->timing)
+        return;
+      stream.synchronize();
+      if (m->timed++ == 0)
+        return; // the first evaluation loads and warms up
+      m->searchSeconds += std::chrono::duration<double>(searched - start).count();
+      m->modelSeconds += std::chrono::duration<double>(clock::now() - searched).count();
+    };
+
     torch::Tensor pairs, shifts;
     {
       torch::NoGradGuard noGrad;
       findPairs(positions, cell, in->cell, m->cutoff, pairs, shifts);
     }
     int64_t p = pairs.size(0);
+    if (m->timing) {
+      stream.synchronize();
+      searched = clock::now();
+    }
+
+    if (m->backend == "AOTI") {
+      torch::NoGradGuard noGrad;
+      torch::Tensor f, e, w;
+      out->calls = evaluatePackage(*m, positions, numbers, cell, in->cell, pairs,
+                                   shifts, f, e, w, stream.stream());
+      forces.add_(f);
+      energy.copy_(e);
+      virial.copy_(w);
+      out->pairs = p;
+      finish();
+      return;
+    }
 
     // The positions and a strain, both of 64 bits, which the derivatives
     // are taken in; the model takes them rounded to its type.
@@ -402,6 +694,7 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
       virial.zero_();
     out->pairs = p;
     out->calls = calls;
+    finish();
   });
 }
 
@@ -421,6 +714,20 @@ int mdir_mlip_memory_stats(mdir_mlip_model *m, int32_t reset,
   });
 }
 
-void mdir_mlip_free(mdir_mlip_model *model) { delete model; }
+void mdir_mlip_free(mdir_mlip_model *model) {
+  if (model && model->timing && model->timed > 1) {
+    double count = static_cast<double>(model->timed - 1);
+    std::fprintf(stderr,
+                 "MDIR: model '%s' (MDIR_MLIP_TIMING): %lld evaluations "
+                 "after the first, %.1f us of pair search and %.1f us of the "
+                 "model per evaluation, the search %.1f%% of both\n",
+                 model->name.c_str(), static_cast<long long>(model->timed - 1),
+                 1e6 * model->searchSeconds / count,
+                 1e6 * model->modelSeconds / count,
+                 100.0 * model->searchSeconds /
+                     (model->searchSeconds + model->modelSeconds));
+  }
+  delete model;
+}
 
 } // extern "C"

@@ -363,7 +363,9 @@ struct Control {
   /// derivatives; MDIR does not differentiate the term.
   struct ModelTerm {
     std::string name;
-    /// The loader: "METATOMIC", a TorchScript artifact of metatomic.
+    /// The loader: "METATOMIC", a TorchScript artifact of metatomic, or
+    /// "AOTI", an AOTInductor package of the `nequip` package
+    /// (D[mlip-aoti]).
     std::string backend = "METATOMIC";
     /// The artifact, relative to the control file where read from one.
     std::string path;

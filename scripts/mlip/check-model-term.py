@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Checks the model term of D270 (docs/metatomic-ml1.md,
 Section 7) through MDIR's Python model on a GPU: the energy, the forces, and
-the virial tensor of a metatomic artifact evaluated by a Python simulation
+the virial tensor of a metatomic artifact, or an AOTInductor package of the
+`nequip` package (`.nequip.pt2`, D[mlip-aoti]), evaluated by a Python simulation
 against a reference (that of the `nequip` package's ASE calculator, written by water-box.py
 --reference), and optionally a short run of constant energy.
 
@@ -10,6 +11,7 @@ Prints one JSON object: the largest differences, the reference's scale, and,
 for `--steps`, the total energy of every step.
 
 usage: check-model-term.py DIR ARTIFACT [--precision Double|Mixed]
+           [--backend METATOMIC|AOTI (by default AOTI for a .pt2)]
            [--centers-per-call N] [--steps N] [--timestep 0.0005]
            [--temperature 300] [--forces OUT.npy]
 """
@@ -24,7 +26,7 @@ import numpy as np
 import mdir
 
 
-def build(directory, artifact, precision, centers, timestep, temperature):
+def build(directory, artifact, backend, precision, centers, timestep, temperature):
     loaded = mdir.load_gromacs(os.path.join(directory, "system.top"),
                                os.path.join(directory, "system.gro"))
     system, state = loaded.make_system(), loaded.make_state()
@@ -32,7 +34,8 @@ def build(directory, artifact, precision, centers, timestep, temperature):
     # Lennard-Jones of zero; the cutoff only has to fit the cell.
     system.cutoff = 0.2
     system.pairlist_distance = 0.25
-    system.models = [mdir.ModelTerm("allegro", artifact, centers_per_call=centers)]
+    system.models = [mdir.ModelTerm("allegro", artifact, backend=backend,
+                                     centers_per_call=centers)]
     # The velocities of the .gro, if it has them, else drawn.
     if temperature > 0:
         state = state.draw_velocities(system, temperature, 7)
@@ -50,6 +53,7 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("directory")
     p.add_argument("artifact")
+    p.add_argument("--backend")
     p.add_argument("--precision", default="Double")
     p.add_argument("--centers-per-call", type=int, default=0)
     p.add_argument("--steps", type=int, default=0)
@@ -58,7 +62,8 @@ def main():
     p.add_argument("--forces")
     a = p.parse_args()
 
-    sim = build(a.directory, a.artifact, a.precision, a.centers_per_call, a.timestep,
+    backend = a.backend or ("AOTI" if a.artifact.endswith(".pt2") else "METATOMIC")
+    sim = build(a.directory, a.artifact, backend, a.precision, a.centers_per_call, a.timestep,
                 a.temperature)
     sim.run(0, energy=True)
     state = sim.state()
