@@ -312,22 +312,31 @@ func.func private @mdrt.pme_zero(%grid: memref<?xi64>) {
 // integer atomics: the threads of the spreading add to the same points, and
 // an integer sum does not depend on their order (D70).
 func.func private @mdrt.pme_spread_point(%grid: memref<?xi64>, %qs: !pme_real,
-                                         %sx: index, %sy: index, %sz: index,
+                                         %placex: index, %placey: index, %placez: index,
                                          %wx: memref<8x!pme_real>, %wy: memref<8x!pme_real>,
                                          %wz: memref<8x!pme_real>,
                                          %k1: index, %k2: index, %k3: index, %n: index) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
+  // The first points within the grid, so that a point needs one
+  // subtraction at most to wrap around, not a division.
+  %sx = arith.remui %placex, %k1 : index
+  %sy = arith.remui %placey, %k2 : index
+  %sz = arith.remui %placez, %k3 : index
   %scale = arith.constant 1099511627776.0 : !pme_real
   %qscaled = arith.mulf %qs, %scale : !pme_real
   scf.for %j1 = %c0 to %n step %c1 {
     %g1s = arith.addi %sx, %j1 : index
-    %g1 = arith.remui %g1s, %k1 : index
+    %g1w = arith.subi %g1s, %k1 : index
+    %g1o = arith.cmpi uge, %g1s, %k1 : index
+    %g1 = arith.select %g1o, %g1w, %g1s : index
     %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
     %q1 = arith.mulf %qscaled, %w1 : !pme_real
     scf.for %j2 = %c0 to %n step %c1 {
       %g2s = arith.addi %sy, %j2 : index
-      %g2 = arith.remui %g2s, %k2 : index
+      %g2w = arith.subi %g2s, %k2 : index
+      %g2o = arith.cmpi uge, %g2s, %k2 : index
+      %g2 = arith.select %g2o, %g2w, %g2s : index
       %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
       %q12 = arith.mulf %q1, %w2 : !pme_real
       %row1 = arith.muli %g1, %k2 : index
@@ -335,7 +344,9 @@ func.func private @mdrt.pme_spread_point(%grid: memref<?xi64>, %qs: !pme_real,
       %base = arith.muli %row, %k3 : index
       scf.for %j3 = %c0 to %n step %c1 {
         %g3s = arith.addi %sz, %j3 : index
-        %g3 = arith.remui %g3s, %k3 : index
+        %g3w = arith.subi %g3s, %k3 : index
+        %g3o = arith.cmpi uge, %g3s, %k3 : index
+        %g3 = arith.select %g3o, %g3w, %g3s : index
         %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
         %value = arith.mulf %q12, %w3 : !pme_real
         %rounded = math.roundeven %value : !pme_real
@@ -1161,7 +1172,7 @@ func.func private @mdrt.pme_scale_triclinic(%c: memref<?x!pme_real>, %moduli: me
 // The sums Σ_k φ(k) ∂θ_i(k)/∂u_a of particle `i` along the three edges,
 // from its first points and its weights and slopes, in !pme_real.
 func.func private @mdrt.pme_gather_sums(%phi: memref<?x!pme_real>,
-                                        %sx: index, %sy: index, %sz: index,
+                                        %placex: index, %placey: index, %placez: index,
                                         %wx: memref<8x!pme_real>, %wy: memref<8x!pme_real>,
                                         %wz: memref<8x!pme_real>, %dx: memref<8x!pme_real>,
                                         %dy: memref<8x!pme_real>, %dz: memref<8x!pme_real>,
@@ -1169,17 +1180,26 @@ func.func private @mdrt.pme_gather_sums(%phi: memref<?x!pme_real>,
     -> (f64, f64, f64) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
+  // The first points within the grid, so that a point needs one
+  // subtraction at most to wrap around, not a division.
+  %sx = arith.remui %placex, %k1 : index
+  %sy = arith.remui %placey, %k2 : index
+  %sz = arith.remui %placez, %k3 : index
   %zero = arith.constant 0.0 : !pme_real
   %gx, %gy, %gz = scf.for %j1 = %c0 to %n step %c1
       iter_args(%ax = %zero, %ay = %zero, %az = %zero) -> (!pme_real, !pme_real, !pme_real) {
     %g1s = arith.addi %sx, %j1 : index
-    %g1 = arith.remui %g1s, %k1 : index
+    %g1w = arith.subi %g1s, %k1 : index
+    %g1o = arith.cmpi uge, %g1s, %k1 : index
+    %g1 = arith.select %g1o, %g1w, %g1s : index
     %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
     %d1 = memref.load %dx[%j1] : memref<8x!pme_real>
     %bx, %by, %bz = scf.for %j2 = %c0 to %n step %c1
         iter_args(%cx = %ax, %cy = %ay, %cz = %az) -> (!pme_real, !pme_real, !pme_real) {
       %g2s = arith.addi %sy, %j2 : index
-      %g2 = arith.remui %g2s, %k2 : index
+      %g2w = arith.subi %g2s, %k2 : index
+      %g2o = arith.cmpi uge, %g2s, %k2 : index
+      %g2 = arith.select %g2o, %g2w, %g2s : index
       %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
       %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
       %row1 = arith.muli %g1, %k2 : index
@@ -1191,7 +1211,9 @@ func.func private @mdrt.pme_gather_sums(%phi: memref<?x!pme_real>,
       %ex, %ey, %ez = scf.for %j3 = %c0 to %n step %c1
           iter_args(%tx = %cx, %ty = %cy, %tz = %cz) -> (!pme_real, !pme_real, !pme_real) {
         %g3s = arith.addi %sz, %j3 : index
-        %g3 = arith.remui %g3s, %k3 : index
+        %g3w = arith.subi %g3s, %k3 : index
+        %g3o = arith.cmpi uge, %g3s, %k3 : index
+        %g3 = arith.select %g3o, %g3w, %g3s : index
         %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
         %d3 = memref.load %dz[%j3] : memref<8x!pme_real>
         %at = arith.addi %base, %g3 : index
@@ -1219,20 +1241,29 @@ func.func private @mdrt.pme_gather_sums(%phi: memref<?x!pme_real>,
 
 // The sum Σ_k φ(k) θ_i(k) of particle `i`, in !pme_real.
 func.func private @mdrt.pme_potential_sum(%phi: memref<?x!pme_real>,
-                                          %sx: index, %sy: index, %sz: index,
+                                          %placex: index, %placey: index, %placez: index,
                                           %wx: memref<8x!pme_real>, %wy: memref<8x!pme_real>,
                                           %wz: memref<8x!pme_real>,
                                           %k1: index, %k2: index, %k3: index, %n: index) -> f64 {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
+  // The first points within the grid, so that a point needs one
+  // subtraction at most to wrap around, not a division.
+  %sx = arith.remui %placex, %k1 : index
+  %sy = arith.remui %placey, %k2 : index
+  %sz = arith.remui %placez, %k3 : index
   %zero = arith.constant 0.0 : !pme_real
   %g = scf.for %j1 = %c0 to %n step %c1 iter_args(%a = %zero) -> (!pme_real) {
     %g1s = arith.addi %sx, %j1 : index
-    %g1 = arith.remui %g1s, %k1 : index
+    %g1w = arith.subi %g1s, %k1 : index
+    %g1o = arith.cmpi uge, %g1s, %k1 : index
+    %g1 = arith.select %g1o, %g1w, %g1s : index
     %w1 = memref.load %wx[%j1] : memref<8x!pme_real>
     %b = scf.for %j2 = %c0 to %n step %c1 iter_args(%c = %a) -> (!pme_real) {
       %g2s = arith.addi %sy, %j2 : index
-      %g2 = arith.remui %g2s, %k2 : index
+      %g2w = arith.subi %g2s, %k2 : index
+      %g2o = arith.cmpi uge, %g2s, %k2 : index
+      %g2 = arith.select %g2o, %g2w, %g2s : index
       %w2 = memref.load %wy[%j2] : memref<8x!pme_real>
       %row1 = arith.muli %g1, %k2 : index
       %row = arith.addi %row1, %g2 : index
@@ -1240,7 +1271,9 @@ func.func private @mdrt.pme_potential_sum(%phi: memref<?x!pme_real>,
       %w1w2 = arith.mulf %w1, %w2 : !pme_real
       %e = scf.for %j3 = %c0 to %n step %c1 iter_args(%t = %c) -> (!pme_real) {
         %g3s = arith.addi %sz, %j3 : index
-        %g3 = arith.remui %g3s, %k3 : index
+        %g3w = arith.subi %g3s, %k3 : index
+        %g3o = arith.cmpi uge, %g3s, %k3 : index
+        %g3 = arith.select %g3o, %g3w, %g3s : index
         %w3 = memref.load %wz[%j3] : memref<8x!pme_real>
         %at = arith.addi %base, %g3 : index
         %p = memref.load %phi[%at] : memref<?x!pme_real>
