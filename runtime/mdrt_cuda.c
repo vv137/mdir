@@ -1277,17 +1277,6 @@ void mdrtDeviceFreeRecorded(void *pointer) {
   check(cuMemFree(address), "cuMemFree");
 }
 
-/* Sets `count` 32-bit words of the device to 0 on the stream of the
-   kernels. */
-void mdrtDeviceZero(void *pointer, uint64_t count) {
-  if (!count)
-    return;
-  mgpuStreamCreate();
-  check(cuMemsetD32Async((CUdeviceptr)pointer, 0, count, sharedStream),
-        "cuMemsetD32Async");
-  isPending = 1;
-}
-
 /*===----------------------------------------------------------------------===
  * Views of the buffers of an embedding program (D220)
  *===----------------------------------------------------------------------===*/
