@@ -3,6 +3,8 @@
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1" | FileCheck %s --check-prefixes=CHECK,DIRECTED
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=unique" | FileCheck %s --check-prefixes=CHECK,UNIQUE
 // RUN: mdir-opt %s --md-distribute="grid=3,2,1 reach=2.5 potentials=lj" | FileCheck %s --check-prefix=NAMED
+// Every op of the result has a rule for the derivative or is semantic.
+// RUN: mdir-opt %s --md-distribute="grid=2,1,1" --md-check-derivative-coverage -o /dev/null
 
 !vec   = !md.field<@atoms, 3 x f64>
 !sca   = !md.field<@atoms, f64>
