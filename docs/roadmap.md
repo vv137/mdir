@@ -464,7 +464,7 @@ tensor operations. See the [layer and model plan](future-architecture-plan.md#ex
 | ML4 | PaiNN with an opaque path and declared stages/differentiable communication, then MACE using the same contracts; external AD generates backward; semantic import is optional | Communication adjoint checks and same-model comparison of enlarged coordinate halos and per-layer feature exchange, including reverse derivatives and saved-value lifetimes; energy/force/virial agreement and measurements of bytes, messages, redundant work, memory, and full-step time |
 | ML5 | Bounded legal-plan selection and measured overlap | Fixed-plan baselines and tuning cost reported; one/two/four-GPU strong and weak scaling; multiple nodes before a cluster claim; checked preconditions and an off switch for each optimization |
 
-ML1's first step is built (D270, [metatomic-ml1.md](metatomic-ml1.md#9-what-the-first-pr-built-dmetatomic-plugin)): the TorchScript backend with chunks of centers, from `[[energy.model]]` and `mdir.System.models`, validated against NequIP's calculator in `mixed` and `double`. The AOTInductor backend, the pair list from MDIR's structures, and the CPU target follow.
+ML1's first step is built (D270, [metatomic-ml1.md](metatomic-ml1.md#9-what-the-first-pr-built-d270)): the TorchScript backend with chunks of centers, from `[[energy.model]]` and `mdir.System.models`, validated against NequIP's calculator in `mixed` and `double`. The AOTInductor backend, the pair list from MDIR's structures, and the CPU target follow.
 
 A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
 not required to complete that first deliverable, nor is support for all
