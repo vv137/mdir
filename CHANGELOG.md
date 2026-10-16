@@ -12,6 +12,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- `[minimize]` and stochastic cell rescaling with a term of
+  `[[energy.model]]` (D[metatomic-npt-min], #367): the model's energy,
+  forces, and virial enter the steepest descent and the pressure of every
+  coupling and count of the work, and its pair list follows the cell of each
+  evaluation. `scripts/mlip/virial-strain.py` checks the virial against the
+  energy under strain.
 - ML1, a learned potential through an optional metatomic plugin
   (D270, #137, [docs/metatomic-ml1.md](docs/metatomic-ml1.md)):
   `-DMDIR_ENABLE_METATOMIC=ON` builds `libmdir_metatomic`, a C++20 library
@@ -24,8 +30,8 @@ format, or the outputs; every such change is listed under **Changed** or
   host call that declares the write (`mdrt.host_call` takes fields in `outs`
   and yields them, and numbers of the host), its energy and virial in the
   potential, the log, and the pressure, and chunks of centers for a model that declares
-  itself local. `scripts/mlip/nequip-to-metatomic.py` turns a NequIP or
-  Allegro package into such an artifact; `water-box.py` and
+  itself local. `scripts/mlip/nequip-to-metatomic.py` turns a model package of
+  the `nequip` package (NequIP or Allegro) into such an artifact; `water-box.py` and
   `check-model-term.py` there make the systems and the checks of the
   validation. ML1 refuses the deterministic mode, the CPU, a barostat,
   `[minimize]`, `[free_energy]`, `observe`, tunables, constraints, and

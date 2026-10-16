@@ -398,8 +398,9 @@ module, and refuses a plugin that was built against another version of torch
 tensor $\mathsf W = -\partial E/\partial\boldsymbol\varepsilon$ (kJ/mol, a
 3 × 3 array) of the last evaluation of the models, those of the last step;
 the energy and the trace of the virial are in `State.energies` as well.
-The refusals are those of the control file (the deterministic mode, a
-barostat, a minimization, free energy, `observe`, tunables, the CPU target,
+A minimization and a barostat take the model (D[metatomic-npt-min]). The
+refusals are those of the control file (the deterministic mode, free
+energy, `observe`, tunables, the CPU target,
 constraints, virtual sites, more than one model), checked by the same
 `validateControl` and builder. The fingerprint has `[python] models`.
 

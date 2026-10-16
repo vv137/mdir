@@ -2,8 +2,8 @@
 # (docs/metatomic-ml1.md): Allegro-OAM-L 0.1, wrapped as a metatomic
 # artifact by scripts/mlip/nequip-to-metatomic.py from the package that
 # lit is given (MDIR_ALLEGRO_PACKAGE or -Dallegro_package=; never in the
-# repository), against NequIP's own calculator on 8 waters in a cell of
-# 6.2 Å, narrower than twice the cutoff of 7 Å, so that the pair list takes
+# repository), against the `nequip` package's ASE calculator on 8 waters in
+# a cell of 6.2 Å, narrower than twice the cutoff of 7 Å, so that the pair list takes
 # several images of each particle.
 #
 # REQUIRES: cuda, metatomic, mlip-python, allegro-package
@@ -39,6 +39,20 @@
 # LOG: MDIR: MODEL allegro
 # LOG: MDIR: model 'allegro': 3 evaluations
 # START: mdir run energy ok
+
+# A minimization and a run at constant pressure take the model (#367): the
+# energy of the steepest descent falls, and stochastic cell rescaling with
+# the exact work, which evaluates the model in the scaled cell, runs.
+# RUN: sed -e 's/^\[dynamics\]/[minimize]/' -e '/^integrator/d' -e '/^time_step/d' -e 's/^steps .*/steps = 20/' %t/run.toml > %t/min.toml
+# RUN: cd %t && mdir run min.toml > %t/min.log
+# RUN: %mlip_python -c "import re, sys; e = [float(l.split()[2]) for l in open(sys.argv[1]) if re.match(r'INFO:\s+\d', l)]; print('descends' if e[-1] < e[0] else 'rises', len(e))" %t/min.log | FileCheck %s --check-prefix=MIN
+# MIN: descends 21
+# RUN: sed -e 's/"NVE"/"NPT"\npressure = 1.0/' -e 's/^steps .*/steps = 20/' -e 's/^energy_interval.*/energy_interval = 5/' %t/run.toml > %t/npt.toml
+# RUN: sed -n '/^#--- npt/,/^#--- end/p' %s | sed '1d;$d' >> %t/npt.toml
+# RUN: cd %t && mdir run npt.toml > %t/npt.log
+# RUN: FileCheck %s --check-prefix=NPT < %t/npt.log
+# NPT: MDIR:   MODEL allegro
+# NPT: MDIR: model 'allegro': {{[0-9]+}} evaluations
 
 #--- run.toml
 [input]
@@ -76,4 +90,16 @@ type = "PERIODIC"
 [execution]
 target = "GPU"
 precision = "DOUBLE"
+#--- end
+
+#--- npt
+[thermostat]
+method = "V-RESCALE"
+interval = 5
+time_constant = 0.1
+
+[barostat]
+method = "C-RESCALE"
+time_constant = 1.0
+work = "EXACT"
 #--- end

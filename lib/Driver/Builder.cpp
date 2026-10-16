@@ -9222,9 +9222,14 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
            << "_steps_i : i64 to f64\n"
            << indent << time << " = arith.mulf " << time << "_steps, %dt"
            << " : f64\n";
-      os << indent << u << held << ", " << f << held << raw
-         << " = md.evaluate @energy(" << newPositions << ", " << cell
-         << getFieldValues(fieldPrefix) << getTimeValue(time) << ")\n"
+      // A learned potential adds its energy and forces in the new cell
+      // (D270).
+      bool models = !control.models.empty();
+      std::string modelled = !models || !held.empty() ? "" : "c";
+      os << indent << u << held << modelled << ", " << f << held << raw
+         << modelled << " = md.evaluate @energy(" << newPositions << ", "
+         << cell << getFieldValues(fieldPrefix) << getTimeValue(time)
+         << ")\n"
          << indent << "    request [energy, forces]\n"
          << indent << "    : (!vec, !md.cell" << getFieldTypes()
          << getTimeType() << ") -> (f64, !vec)\n";
@@ -9232,8 +9237,11 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
         emitSpreadSites(indent, newPositions, f + held + "e", f + held,
                         relations);
       if (hasRestraints())
-        emitRestraints(indent, newPositions, fieldPrefix, f + "p", f,
-                       u + "p", u);
+        emitRestraints(indent, newPositions, fieldPrefix, f + "p",
+                       models ? f + "c" : f, u + "p", models ? u + "c" : u);
+      if (models)
+        emitModelTerms(indent, newPositions, cell, fieldPrefix, f + "c", f,
+                       u + "c", u, "", "b" + t);
       cellName = outerCell;
       scaleName = outerScale;
       newForces = f;
@@ -9765,16 +9773,23 @@ void Builder::emitDescend() {
     emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
   std::string raw = sites ? "e" : "";
   std::string held = hasRestraints() ? "p" : "";
-  os << "  %u1" << held << ", %f1" << held << raw << " = " << evaluate
-     << "\n      request [energy, forces]\n"
+  // A learned potential adds its energy and forces to `%u1c` and `%f1c`
+  // (D270).
+  bool models = !control.models.empty();
+  std::string modelled = !models || !held.empty() ? "" : "c";
+  os << "  %u1" << held << modelled << ", %f1" << held << raw << modelled
+     << " = " << evaluate << "\n      request [energy, forces]\n"
      << "      : " << signature << " -> (f64, !vec)\n";
   if (sites)
     emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held, "%r_");
   if (hasRestraints()) {
     os << "  %w1z = arith.constant dense<0.0> : vector<9xf64>\n";
-    emitRestraints("  ", "%x1", "%p_", "%f1p", "%f1", "%u1p", "%u1", "%w1z",
-                   "%w1r");
+    emitRestraints("  ", "%x1", "%p_", "%f1p", models ? "%f1c" : "%f1",
+                   "%u1p", models ? "%u1c" : "%u1", "%w1z", "%w1r");
   }
+  if (models)
+    emitModelTerms("  ", "%x1", "%cell", "%p_", "%f1c", "%f1", "%u1c", "%u1",
+                   "", "1");
   std::string energy = "%u1";
   if (constraints) {
     os << "  %never = arith.constant 0x7FF0000000000000 : f64\n"
@@ -9831,7 +9846,9 @@ void Builder::emitMinimization(StringRef velocities) {
   // The energy and the forces at the start, and the terms.
   std::string raw = hasSites() ? "e" : "";
   std::string held = hasRestraints() ? "p" : "";
-  os << "  %u0" << held << ", %f0" << held << raw
+  bool models = !control.models.empty();
+  std::string modelled = !models || !held.empty() ? "" : "c";
+  os << "  %u0" << held << modelled << ", %f0" << held << raw << modelled
      << " = md.evaluate @energy(" << x0 << ", %cell" << getFieldValues()
      << getTimeValue("%time0") << ")\n"
      << "      request [energy, forces]\n"
@@ -9841,9 +9858,13 @@ void Builder::emitMinimization(StringRef velocities) {
     emitSpreadSites("  ", x0, "%f0" + held + "e", "%f0" + held, "%r_");
   if (hasRestraints()) {
     os << "  %w0z = arith.constant dense<0.0> : vector<9xf64>\n";
-    emitRestraints("  ", x0, "%p_", "%f0p", "%f0", "%u0p", "%u0", "%w0z",
-                   "%w0r");
+    emitRestraints("  ", x0, "%p_", "%f0p", models ? "%f0c" : "%f0", "%u0p",
+                   models ? "%u0c" : "%u0", "%w0z", "%w0r");
   }
+  // A learned potential (D270).
+  if (models)
+    emitModelTerms("  ", x0, "%cell", "%p_", "%f0c", "%f0", "%u0c", "%u0",
+                   "", "0");
   // The terms at the start, which a continued segment does not log.
   if (branchesStart()) {
     os.flush();
@@ -10908,7 +10929,12 @@ void Builder::emitEntry() {
     // behind those of the time of the positions.
     StringRef raw = hasSites() ? "e" : "";
     std::string held = hasRestraints() ? "p" : "";
-    os << "  %ubs" << held << ", %fbs" << held << raw << ", %wbs" << held << raw
+    // A learned potential adds its terms to `%ubsc`, `%fbsc`, and the virial
+    // (D270).
+    bool models = !control.models.empty();
+    std::string modelled = !models || !held.empty() ? "" : "c";
+    os << "  %ubs" << held << modelled << ", %fbs" << held << raw << modelled
+       << ", %wbs" << held << raw
        << " = md.evaluate @energy(%x0, %cell" << getFieldValues()
        << getTimeValue("%time0") << ")\n"
        << "      request [energy, forces, virial]\n"
@@ -10919,10 +10945,13 @@ void Builder::emitEntry() {
       virial = emitSpreadSites("  ", "%x0", "%fbs" + held + "e", "%fbs" + held,
                                "%r_", "%wbs" + held + "e", "%wbs" + held);
     if (hasRestraints()) {
-      emitRestraints("  ", "%x0", "%p_", "%fbsp", "%fbs", "%ubsp", "%ubs",
-                     virial, "%wbs");
+      emitRestraints("  ", "%x0", "%p_", "%fbsp", models ? "%fbsc" : "%fbs",
+                     "%ubsp", models ? "%ubsc" : "%ubs", virial, "%wbs");
       virial = "%wbs";
     }
+    if (models)
+      virial = emitModelTerms("  ", "%x0", "%cell", "%p_", "%fbsc", "%fbs",
+                              "%ubsc", "%ubs", virial, "bs");
     std::string current = velocities;
     if (isLeapfrog()) {
       os << "  %ahead = arith.constant 5.0e-01 : f64\n"
