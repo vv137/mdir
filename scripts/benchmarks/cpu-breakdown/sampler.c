@@ -197,7 +197,12 @@ __attribute__((constructor)) static void start(void) {
   struct sigaction a;
   memset(&a, 0, sizeof a);
   a.sa_flags = SA_SIGINFO | SA_RESTART;
+  /* Each handler blocks the other signal: backtrace() takes the lock of
+     dl_iterate_phdr, and a wall sample that interrupted a CPU sample's
+     backtrace on the same thread waited for that lock forever. */
   sigemptyset(&a.sa_mask);
+  sigaddset(&a.sa_mask, SIGPROF);
+  sigaddset(&a.sa_mask, SIGRTMIN + 4);
   a.sa_sigaction = onWall;
   sigaction(SIGRTMIN + 4, &a, NULL);
   a.sa_sigaction = onCpu;
