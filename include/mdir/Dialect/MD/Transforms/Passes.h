@@ -7,6 +7,7 @@
 #include <memory>
 
 namespace mdir { namespace mdrt { class MDRTDialect; } }
+namespace mdir { namespace md_dist { class MDDistDialect; } }
 namespace mlir {
 namespace memref { class MemRefDialect; }
 namespace scf { class SCFDialect; }

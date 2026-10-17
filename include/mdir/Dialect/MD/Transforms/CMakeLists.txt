@@ -6,3 +6,8 @@ set(LLVM_TARGET_DEFINITIONS DerivativeInterface.td)
 mlir_tablegen(DerivativeInterface.h.inc -gen-op-interface-decls)
 mlir_tablegen(DerivativeInterface.cpp.inc -gen-op-interface-defs)
 add_public_tablegen_target(MDIRDerivativeInterfaceIncGen)
+
+set(LLVM_TARGET_DEFINITIONS AdjointInterface.td)
+mlir_tablegen(AdjointInterface.h.inc -gen-op-interface-decls)
+mlir_tablegen(AdjointInterface.cpp.inc -gen-op-interface-defs)
+add_public_tablegen_target(MDIRAdjointInterfaceIncGen)

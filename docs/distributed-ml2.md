@@ -7,7 +7,9 @@ GPUs), PaiNN and MACE in stages on two GPUs (#377), distributed particle
 mesh Ewald, and the classical track of #31 (topology across domains,
 ensembles, the Amber suite on several GPUs). Sections 1 to 11 are the
 design; Section 12 is what the first PR builds and its validation;
-Section 13 lists the questions for the maintainer.
+Section 13 records the maintainer's rulings; Section 14 is the second part,
+`md-distribute` and the derivative rules of $G$ and $G^\mathsf T$
+(D[ml2-distribute]).
 
 ## 1. Scope
 
@@ -251,7 +253,14 @@ positions are. The semantics are those of the global ops:
 | `gather_pairs` | $\mathbf a_i = \sum_{k : (i,k) \in D_{o(i)}} k(i,k)$, complete at the owner; any kernel | Owned partial $\mathbf p$ and ghost partial $\mathbf q$ with $\mathbf a = \mathbf p + G^\mathsf T\mathbf q$; the kernel at $k$ is $\sigma\,k(i,k)$, $\sigma = \pm1$ from `exchange` |
 
 In both, $\sum_d S_d$ is the sum of `md.sum_relation` over the global
-relation and $\mathbf a$ the field of `md.gather_relation`. The directed
+relation and $\mathbf a$ the field of `md.gather_relation`.
+
+Over a directed relation, `gather_pairs` may also yield the two partial
+results (D[ml2-distribute]): each pair $(i, k) \in D_d$ adds
+$\tfrac12 k(i,k)$ at $i$ and $\tfrac12\sigma\,k(i,k)$ at $k$, owned or ghost,
+again with $\mathbf a = \mathbf p + G^\mathsf T\mathbf q$. It is the transpose of
+a directed `sum_pairs`, the form the derivative takes (Section 14.3), and
+it needs an exchange contract, as the unique traversal does. The directed
 traversal computes every pair twice and returns nothing; the unique one
 computes each pair once and returns the ghosts' contributions by
 $G^\mathsf T$. The choice is the classic one between full and half lists
@@ -306,7 +315,7 @@ the verifiers and the lowering, and each has a negative test
 | V5 | Owned values, halos, and relations are of one layout | Stale layout (a field of another epoch) |
 | V6 | A partial value is consumed only by `halo_sum` (fields) or `all_reduce` (numbers) | A nonlinear read of a partial sum; a contribution collected as if complete |
 | V7 | A partial value has exactly one use, and the two partial operands of `halo_sum` are the two results of one traversal | Contributions lost or counted twice |
-| V8 | A unique traversal states an exchange contract that the kernel satisfies | A pair computed once whose other half is unknown |
+| V8 | A unique traversal, or the two-ended gather over a directed one, states an exchange contract that the kernel satisfies | A pair computed once whose other half is unknown |
 | V9 | The relation's positions are those of the op that traverses it | A relation of another configuration without a coverage witness |
 
 Where a check cannot be decided (a value through a block argument whose
@@ -338,7 +347,7 @@ adds one transfer between its stages
 
 ```mlir
 %rho = md_dist.gather_pairs %n, %xo, %xg { g(r) }       // directed: complete
-%psi = md_dist.map ... F'(rho)                           // owned
+%psi = md_dist.map_particles gather(%rho) { F'(rho) }      // owned
 %pg  = md_dist.halo_copy %psi, %h                        // transfer 2
 %f   = md_dist.gather_pairs %n, %xo, %xg gather(%psi, %pg) { ... }
 ```
@@ -554,7 +563,7 @@ the backward's communication is the AD's transpose of the forward's.
    unreduced partial sum, and a relation traversed at other positions.
 
 Next parts of stage 1, each with its own tests: `md-distribute` and the
-rules of the AD (Section 11), EAM, the schedule print and trace, the
+rules of the AD (Section 11; built, Section 14), EAM, the schedule print and trace, the
 `md_exec` path (Section 7.2), migration and `covered` with a trajectory
 (Section 8), MPI on CPU ranks, then GPUs.
 
@@ -576,3 +585,226 @@ rules of the AD (Section 11), EAM, the schedule print and trace, the
    grid, not across grids.
 
 The order of the passes of Section 11 stands as designed.
+
+## 14. The second part: `md-distribute` and the rules of $G$ and $G^\mathsf T$
+
+D[ml2-distribute] makes a global potential run on domains through the
+compiler: the program of Section 5 is no longer written by hand but derived
+from the potential of `md`, and its forces and virial from the semantic
+differentiation, with the adjoints of the transfers taken by declared
+rules.
+
+### 14.1 The pipeline
+
+```text
+md-distribute{grid, traversal}    md → md_dist, in the body of md.potential
+md-check-exchange                 unchanged (the contracts of md)
+md-differentiate                  md.evaluate → md.function; adjoints by the rules of 14.3
+md-dist-owner-computes            optional: the derivative's form → the owners (14.4)
+md-expand-truncation, md-inline   unchanged
+convert-md-dist-to-loops          the reference executor (Section 6)
+```
+
+`md-distribute` runs before `md-differentiate`, as ruled (Section 11). The
+potential keeps its signature: it takes the positions and fields of the
+particle set and returns the energy, and the derivative function returns
+forces in the order of the particle set, so that `md.evaluate`, the tests,
+and later the driver see no change but the decomposition.
+
+### 14.2 `md-distribute`
+
+The pass rewrites the body of every `md.potential` (or of those that its
+option `potentials` names) on the grid `grid=gx,gy,gz`, with
+`traversal=directed` (the default, as ruled for the control file) or
+`traversal=unique`. It declares `md_dist.decomposition
+@<potential>.domains` on the particle set of the positions and inserts, at
+the start of the body, the layout, the owned positions wrapped into the
+cell, one halo of reach $R$ (the largest cutoff, or the option `reach` if
+it is larger), and the ghost positions with their images. Then, op by op:
+
+| `md` | `md_dist` |
+|---|---|
+| A field argument | `distribute` of its owned rows (no image) |
+| `md.neighborhood` | `neighborhood` over owned and ghost rows, of the traversal |
+| `md.sum_relation` | `sum_pairs` and `all_reduce`; a truncation is expanded into the kernel first |
+| `md.gather_relation` | `gather_pairs`: complete on `directed`; on `unique`, the two partial results and `halo_sum` |
+| `md.sum_particles` | `sum_particles` over owned rows and `all_reduce` |
+| `md.map_particles` | `map_particles` over owned rows (a new op) |
+| A field read at neighbors | `halo_copy` of its owned rows, once per version |
+
+Every fact the result relies on is checked by the verifier of Section 4.9:
+a field read at neighbors gets the copy of exactly its version (V1, V2),
+the halo covers every cutoff (V4), and every contract is proven (V8). The
+pass refuses, naming the reason, what it cannot distribute:
+
+| Refused | Why |
+|---|---|
+| `exclude(...)`, `md.sum_tuples`, `md.gather_tuples` | Tuples need the topology across domains (stage 2 of #31) |
+| `md.reciprocal` | It needs a decomposition of its grid (stage 3) |
+| A sum or map that reads the positions as a field | The owned positions are wrapped into the cell, so a term of the absolute positions would change |
+| A contract that rests on an assertion and cannot be proven | `md_dist` proves every contract (V8) |
+| A gather without a contract, on `unique` | The value at the second particle comes from the contract |
+| A cell other than the potential's argument; an op of `md` the pass does not know | |
+
+The reference executor further refuses a cell that is not orthorhombic at
+run time and fields that are not of `f64` (Section 6).
+
+### 14.3 The rules of the derivative
+
+The transfers declare their transposes through an op interface,
+`AdjointOpInterface`
+(`include/mdir/Dialect/MD/Transforms/AdjointInterface.td`), as the scalar
+rules of D183 are declared through `DerivativeOpInterface`; the rules are
+attached to the ops of `md_dist` in
+`lib/Dialect/MD/Transforms/Adjoints.cpp`:
+
+| Op | Linear in | Transpose |
+|---|---|---|
+| `halo_copy` ($G$, or $G_{\mathbf x}$ with `image`) | The owned field | $\bar{\mathbf a} = \mathbf p + G^\mathsf T\bar{\mathbf b}$: `halo_sum` |
+| `halo_sum` ($\mathbf a + G^\mathsf T\mathbf b$) | Both operands | $\bar{\mathbf a} = \bar{\mathbf r}$, and $\bar{\mathbf b} = G\bar{\mathbf r}$: `halo_copy` |
+| `distribute` | The field | `collect` |
+| `collect` | The field | `distribute` |
+| `all_reduce` | The partial sum | Each domain's part takes $\bar r$, once |
+
+$G_{\mathbf x}$ is affine in $\mathbf x$, so its transpose in the positions is
+that of $G$; the wrapping of `distribute` is a translation by a lattice
+vector, whose derivative is the identity. Layouts, halos, and relations are
+structure: piecewise constant functions of the configuration (which domain
+owns a particle, which images are ghosts, which pairs are within the
+cutoff), whose derivative is zero almost everywhere, as that of the relation
+of `md.neighborhood` is. The activity analysis (D182) takes them as
+inactive, so that a field distributed by a layout of the positions, a
+charge for one, does not count as depending on the positions.
+
+`md-differentiate` then works as on one domain, with one change of form. A
+sum over pairs gives the forces at both particles of every pair, as a
+`gather_pairs` with two partial results over the same relation, the owned
+and the ghost contributions; a sum over rows gives a map over the same
+rows. The adjoints are carried back through the transfers in the reverse
+order of the body: the ghost contributions of a gather return to the owners
+together with its owned contributions in one `halo_sum` (the rule of
+`halo_copy`, which is where $G^\mathsf T$ comes from), and the owned rows
+return to the particle set by `collect`. A partial adjoint is never added to
+anything else: each term travels on its own, and terms are added where they
+are complete, by `md.map_particles` over the particle set. For
+Lennard-Jones on the unique traversal the result is the program of
+Section 5 with the derived kernel in place of the hand-written one:
+
+```mlir
+%g:2 = md_dist.gather_pairs %n, %xo, %xg exchange(antisymmetric) { −u'(r) d / r }
+%fo  = md_dist.halo_sum %g#0, %g#1, %h          // the rule of halo_copy: G^T
+%f   = md_dist.collect %fo, %l                   // the rule of distribute
+%wp  = md_dist.sum_pairs %n, %xo, %xg exchange(symmetric) { d ⊗ (−u'(r) d / r) }
+%w   = md_dist.all_reduce %wp
+```
+
+The virial is the sum of $\mathbf d\otimes\mathbf K$ over the pairs of the
+traversal, each pair once [[Louwerse2006]](references.md#louwerse2006): the
+ghosts carry their images, so $\mathbf d$ is the displacement of the pair in
+the cell.
+
+Not yet differentiated, each refused with a diagnostic: a pair sum that
+gathers a field computed from the positions, and a derivative through a
+`gather_pairs` or `map_particles` of the positions (the next part, EAM);
+and derivatives in a parameter or a field (`derivative(n)`).
+
+The derived kernels of `md_dist` must pass the proof of their exchange
+contract (V8), where those of `md` carry the basis `derived` and are not
+proven again. Every kernel derived here is proven (Lennard-Jones, its
+truncations, the many-body kernels of the tests); a potential whose
+derivative the proof cannot follow fails at the verifier after
+`md-differentiate`, with the error on the generated op.
+
+### 14.4 `md-dist-owner-computes`
+
+On the directed traversal the derivative's form computes half of every
+pair at each of its two particles and returns the ghosts' halves by
+$G^\mathsf T$. The pass replaces `halo_sum` of a two-ended `gather_pairs` over
+a directed relation by the gather with one complete result: every pair at
+its center, with the weight one, and nothing returned.
+
+*Claim.* For a kernel $k$ with the exchange contract $\sigma$ and a directed
+relation $D$ whose halo covers its cutoff,
+$\mathbf p_i + (G^\mathsf T\mathbf q)_i = \sum_{k : (i,k) \in D_{o(i)}} k(i,k)$.
+
+*Proof.* Let $i \in O_d$ and $j$ any particle with $r_{ij} < r_c$. By
+coverage (Section 4.3) the pair is in $D_d$ as $(i, k)$, $k$ the image of
+$j$ nearest to $i$, and in $D_{o(j)}$ as $(j, k')$, $k'$ the image of $i$
+nearest to $j$. The two-ended gather adds $\tfrac12 k(i,k)$ at $i$ from the
+first and $\tfrac12\sigma\,k(j,k')$ at $k'$ from the second, which
+$G^\mathsf T$ returns to $i$; by the contract $k(j,k') = \sigma\,k(i,k)$, so
+that the two are $\tfrac12 k(i,k)$ each, and their sum is the term of the
+one-ended gather at $i$. $\square$
+
+*Premises*, each checked by the pass with the code of the verifier: the
+relation is directed (its type); the reach covers the cutoff (V4,
+`md_dist::verifyCoverage`); the kernel has the contract (V8,
+`md_dist::proveContract`); `halo_sum` completes the two results of that
+gather through the relation's halo (V7). The pass is the switch: without it
+the derivative's form runs, and the tests run both (principle 3). The two
+agree to the rounding of the sums, not to the bit, since the sums run in
+another order.
+
+### 14.5 Validation
+
+`test/Integration/dist-lj-distribute.mlir`: the Lennard-Jones potential of
+Section 12, distributed by `md-distribute` and differentiated by
+`md-differentiate`, on the grids $1\times1\times1$, $2\times1\times1$,
+$3\times2\times1$, and $16\times1\times1$, each with the unique traversal,
+the directed traversal in the derivative's form, and the directed traversal
+after `md-dist-owner-computes` (12 runs), against the same potential on one
+domain through `md_exec`, against the program of `dist-lj.mlir` written by
+hand, and against central differences of the distributed energy. The
+largest relative differences over the 12 runs, `double`, on the CPU:
+
+| Quantity | Reference | Largest difference | Tolerance |
+|---|---|---|---|
+| Energy, of $\lvert U\rvert = 226.886$ | One domain | $3.8\times10^{-16}$ | $10^{-10}$ |
+| Force component, of $\max\lvert F\rvert = 16.997$ | One domain | $3.0\times10^{-15}$ | $10^{-10}$ |
+| Virial component, of $\lvert\mathrm{tr}\,\mathsf W\rvert = 660.908$ | One domain | $3.0\times10^{-16}$ | $10^{-10}$ |
+| Energy, force, virial | Hand-written, directed | $2.5\times10^{-16}$, $1.0\times10^{-15}$, $1.3\times10^{-16}$ | $10^{-10}$ |
+| Energy, force | Hand-written, unique | $2.5\times10^{-16}$, $1.0\times10^{-15}$ | $10^{-10}$ |
+| Six force components, of $\max\lvert F\rvert$ | Central differences of the distributed energy, step $10^{-6}$ | $2.1\times10^{-9}$ | $10^{-7}$ |
+| The diagonal of the virial, of $\lvert\mathrm{tr}\,\mathsf W\rvert$ | Central differences in the three stretches of the cell, step $10^{-6}$ | $1.4\times10^{-10}$ | $10^{-7}$ |
+
+The differences from central differences are those of the differences
+themselves, the rounding of $U$ over $2h$.
+
+`test/Integration/dist-adjoint.mlir`: the rules of $G$ and of $G^\mathsf T$
+through `md-differentiate`. The potential
+$U(\mathbf x) = \langle\mathbf c, G^\mathsf T G_{\mathbf x}\mathbf x\rangle_O$,
+written in `md_dist`, has the gradient $G^\mathsf T G\mathbf c$, and its
+derived forces satisfy
+$\langle\mathbf c, \mathbf F\rangle_O = -\langle G\mathbf c, G\mathbf c\rangle_\Gamma$,
+whose right side is computed directly: to $2.4\times10^{-15}$ relative or
+less on the four grids (tolerance $10^{-12}$).
+
+`test/Integration/dist-many-body.mlir`: the rewrite of a many-body energy,
+$U = \sum_i q_i\psi_i + \sum_{i<j}\psi_i\psi_j/r_{ij}$ with
+$\psi_i = \sqrt{\rho_i}$ and $\rho_i = \sum_j e^{-r_{ij}}$ (a gather, a map, a
+sum over particles with a field argument, and a pair sum that reads the map
+at both particles through its copy to the ghosts), on the grids
+$2\times1\times1$, $3\times2\times1$, and $16\times1\times1$ and both
+traversals, against one domain: $U = 1896.65$ within $2.4\times10^{-16}$
+relative (tolerance $10^{-10}$). Its derivative is the next part.
+
+IR tests: `test/Dialect/MD/Transforms/distribute.mlir` (the rewrite of
+Lennard-Jones with a truncation, and of a many-body term with a gather, a
+map, a sum over particles, a field argument, and a field read at
+neighbors, on both traversals); `differentiate-distributed.mlir` (the
+derivative's form, with $G^\mathsf T$, on both traversals, and its absence
+after `md-dist-owner-computes`); negative tests of the pass
+(`distribute-invalid.mlir`), of the derivative
+(`differentiate-distributed-invalid.mlir`), and of the new forms of the
+dialect (`test/Dialect/MDDist/invalid.mlir`).
+
+### 14.6 What changed in the code
+
+- The proof of exchange contracts moved from the passes of `md` to the
+  library of the dialect (`include/mdir/Dialect/MD/MDExchange.h`), so that
+  `md_dist` depends on `md` alone, and the passes of `md`, which now create
+  ops of `md_dist`, depend on it.
+- `md_dist.map_particles`; the two-ended `gather_pairs` over a directed
+  relation, which the executor runs with the weight one half.
+- No control-file key, Python API, or output changes: the keys ruled on
+  PR #379 arrive with the first part that runs a distributed trajectory.

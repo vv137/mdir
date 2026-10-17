@@ -196,7 +196,16 @@ that the semantic differentiation derives rather than a runtime supplies,
 which a message-passing model distributed by layers needs. The version of
 a field is its SSA value, so a ghost copy of an earlier version, or a
 field read at ghosts without a copy, is an error of the verifier, not of a
-run. Topology across domains follows, with the disjoint union of the
+run. A pass distributes a global potential before the differentiation
+(D[ml2-distribute]), and the transposes of $G$ and $G^\mathsf T$ are
+declared to it as the scalar rules are, so that the forces with the
+reverse sum are derived, not written. Computing every pair at the owner of
+each of its particles, with nothing returned, is then an optimization of
+$\partial_O U + G^\mathsf T\partial_\Gamma U$: half of the pair's term at each
+particle, the ghost's half returned to its owner, equals the whole term at
+each owner when the pair lies in the rows of both owners and the kernel is
+symmetric or antisymmetric under exchange, two premises the pass checks.
+Topology across domains follows, with the disjoint union of the
 constraints as the unit of ownership (D83).
 
 *Between milestones.* Coarse-grained models (tabulated potentials,

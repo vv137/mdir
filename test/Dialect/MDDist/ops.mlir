@@ -107,3 +107,36 @@ func.func @transpose(%x: !vec, %l: f64) -> (f64, !vec) {
   %c = md_dist.collect %t, %lay : !own -> !vec
   return %s, %c : f64, !vec
 }
+
+// The transpose of a directed sum: half of each pair at each of its
+// particles, completed by G^T; and a map over owned rows
+// (D[ml2-distribute]).
+// CHECK-LABEL: func.func @directed_two_ended
+func.func @directed_two_ended(%x: !vec, %l: f64) -> !vec {
+  %cell = md.orthorhombic_cell %l, %l, %l
+  %lay = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>
+  %xo = md_dist.distribute %x, %lay image(%cell) : !vec -> !own
+  %h = md_dist.halo %lay, %xo, %cell : !own -> !halo
+  %xg = md_dist.halo_copy %xo, %h image(%cell) : !own, !halo -> !gho
+  %n = md_dist.neighborhood %xo, %xg, %h cutoff(2.0)
+         : !own, !gho, !halo -> !md_dist.relation<@dd, directed>
+  // CHECK: md_dist.gather_pairs
+  // CHECK: } : !md_dist.relation<@dd, directed>, {{.*}} -> !md_dist.field<@dd, owned, partial, 3 x f64>, !md_dist.field<@dd, ghost, partial, 3 x f64>
+  %fo, %fg = md_dist.gather_pairs %n, %xo, %xg exchange(antisymmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    md_dist.yield %d : vector<3xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho
+      -> !md_dist.field<@dd, owned, partial, 3 x f64>,
+         !md_dist.field<@dd, ghost, partial, 3 x f64>
+  %f = md_dist.halo_sum %fo, %fg, %h
+         : !md_dist.field<@dd, owned, partial, 3 x f64>,
+           !md_dist.field<@dd, ghost, partial, 3 x f64>, !halo -> !own
+  // CHECK: md_dist.map_particles gather(%{{.*}}, %{{.*}} : !md_dist.field<@dd, owned, 3 x f64>, !md_dist.field<@dd, owned, 3 x f64>)
+  %s = md_dist.map_particles gather(%f, %xo : !own, !own) {
+  ^bb0(%a: vector<3xf64>, %b: vector<3xf64>):
+    %t = arith.addf %a, %b : vector<3xf64>
+    md_dist.yield %t : vector<3xf64>
+  } : !own
+  %c = md_dist.collect %s, %lay : !own -> !vec
+  return %c : !vec
+}

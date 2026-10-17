@@ -3,6 +3,7 @@
 // The derivative rules are those of docs/ops-m0.md, Section 5.4.
 
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
+#include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/Transforms/Activity.h"
 #include "mlir/IR/DialectRegistry.h"
@@ -598,6 +599,8 @@ void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, MDDialect *) {
     attachRules<LookupOp>(context);
   });
+  // The transposes of the transfers of md_dist (D[ml2-distribute]).
+  registerAdjointInterfaces(registry);
 }
 
 //===----------------------------------------------------------------------===//

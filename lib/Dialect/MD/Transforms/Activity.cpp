@@ -1,6 +1,8 @@
 #include "mdir/Dialect/MD/Transforms/Activity.h"
 #include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDDist/MDDistDialect.h"
+#include "mdir/Dialect/MDDist/MDDistOps.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 using namespace mlir;
 using namespace mdir::md;
@@ -26,7 +28,7 @@ static auto combine = [](ActivityResult &into, const ActivityResult &from) {
   // Ops of a kernel whose meaning the pass knows: arithmetic without
   // effects, and the values of tables.
 static auto isKernelOp = [](Operation *op) {
-    if (isa<LookupOp, YieldOp>(op) ||
+    if (isa<LookupOp, YieldOp, mdir::md_dist::YieldOp>(op) ||
         op->getName().getStringRef() == "md_exec.cell_edges")
       return true;
     return isa<DerivativeOpInterface>(op) &&
@@ -35,7 +37,23 @@ static auto isKernelOp = [](Operation *op) {
   // Ops over particles, tuples, or pairs whose kernels the pass knows.
 static auto isSumOp = [](Operation *op) {
     return isa<SumRelationOp, GatherRelationOp, SumTuplesOp, GatherTuplesOp,
-               SumParticlesOp, MapParticlesOp>(op);
+               SumParticlesOp, MapParticlesOp, mdir::md_dist::SumPairsOp,
+               mdir::md_dist::GatherPairsOp, mdir::md_dist::SumParticlesOp,
+               mdir::md_dist::MapParticlesOp>(op);
+  };
+
+  // A value of md_dist that states structure: a layout, a halo, a relation.
+  // Each is a piecewise constant function of the configuration (which
+  // domain owns a particle, which images are ghosts, which pairs are within
+  // the cutoff), whose derivative is zero almost everywhere, as that of the
+  // relation of md.neighborhood is. A value that depends on the variable
+  // only through them is inactive (D[ml2-distribute]).
+static auto isDistributed = [](Operation *op) {
+    return isa_and_nonnull<mdir::md_dist::MDDistDialect>(op->getDialect());
+  };
+static auto isStructural = [](Type type) {
+    return isa<mdir::md_dist::LayoutType, mdir::md_dist::HaloType,
+               mdir::md_dist::RelationType>(type);
   };
 
 ActivityResult ActivityAnalysis::classify(Value value) {
@@ -59,14 +77,19 @@ ActivityResult ActivityAnalysis::classify(Value value) {
         verdict = {Activity::Unknown,
                    "it is an argument of a block whose meaning the pass does "
                    "not know"};
+    } else if (isDistributed(op) && isStructural(value.getType())) {
+      // Inactive: structure, not a value.
     } else {
+      bool distributed = isDistributed(op);
       bool known = isKernelOp(op) || isSumOp(op) ||
-                   (op->getName().getDialectNamespace() == "md" &&
+                   ((op->getName().getDialectNamespace() == "md" ||
+                     distributed) &&
                     op->getNumRegions() == 0 && isMemoryEffectFree(op));
       // An operand that depends on the variable makes the op dependent,
-      // known or not.
+      // known or not; the structure of md_dist does not.
       for (Value operand : op->getOperands())
-        combine(verdict, classify(operand));
+        if (!distributed || !isStructural(operand.getType()))
+          combine(verdict, classify(operand));
       if (!known) {
         combine(verdict,
                 {Activity::Unknown,

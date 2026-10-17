@@ -1,6 +1,7 @@
 add_mlir_dialect_library(MDIRMD
   MDCoordinates.cpp
   MDDialect.cpp
+  MDExchange.cpp
   MDOps.cpp
   MDTypes.cpp
 

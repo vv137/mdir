@@ -9,7 +9,6 @@ add_mlir_dialect_library(MDIRMDDist
 
   LINK_LIBS PUBLIC
   MDIRMD
-  MDIRMDTransforms
   MLIRIR
   MLIRSideEffectInterfaces
   )

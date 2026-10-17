@@ -44,6 +44,77 @@ def Differentiate : Pass<"md-differentiate", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def Distribute : Pass<"md-distribute", "::mlir::ModuleOp"> {
+  let summary = "Rewrites global potentials to run on a grid of domains";
+  let description = [{
+    Rewrites the body of every `md.potential` (or of those that
+    `potentials` names) into `md_dist` (D[ml2-distribute],
+    docs/distributed-ml2.md, Section 14): a decomposition of the particle
+    set into a grid of domains, a layout from the positions, the owned
+    rows of every field, one halo of ghosts with their images, a copy to
+    the ghosts of every field read at neighbors, and the pair ops on the
+    chosen traversal. The potential keeps its signature: it takes and
+    returns the values of the particle set.
+
+    | `md` | `md_dist` |
+    |---|---|
+    | the positions, a field argument | `distribute` (positions with `image`) |
+    | `md.neighborhood` | `neighborhood` over owned and ghost rows |
+    | `md.sum_relation` | `sum_pairs` and `all_reduce` |
+    | `md.gather_relation` | `gather_pairs`; on `unique`, its two partial results and `halo_sum` |
+    | `md.sum_particles` | `sum_particles` over owned rows and `all_reduce` |
+    | `md.map_particles` | `map_particles` over owned rows |
+    | a field read at neighbors | `halo_copy` of its owned rows |
+
+    It runs before `md-differentiate`, so that the derivative carries
+    the transfers' adjoints. It refuses, naming the reason, what it cannot
+    distribute: exclusions, tuples, reciprocal sums, terms of the absolute
+    positions, a cell that is not orthorhombic at run time (checked by
+    the executor), a contract it cannot prove, and ops it does not know.
+  }];
+  let options = [
+    ListOption<"grid", "grid", "int64_t",
+               "The number of domains along each axis of the cell (three)">,
+    Option<"traversal", "traversal", "std::string", /*default=*/"\"directed\"",
+           "The traversal of the pairs: 'directed' (every pair at both of "
+           "its owners) or 'unique' (every pair once, the ghosts' "
+           "contributions returned)">,
+    Option<"reach", "reach", "double", /*default=*/"0.0",
+           "The reach of the halo; 0 takes the largest cutoff">,
+    ListOption<"potentials", "potentials", "std::string",
+               "The potentials to distribute; all if none is named">
+  ];
+  let dependentDialects = ["::mdir::md_dist::MDDistDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
+def DistOwnerComputes
+    : Pass<"md-dist-owner-computes", "::mlir::ModuleOp"> {
+  let summary = "Computes the forces of a directed traversal at the owners";
+  let description = [{
+    The transpose of a directed `md_dist.sum_pairs` is a `gather_pairs`
+    over the same relation with two partial results, completed by
+    `halo_sum`: every pair adds half its kernel at each of its two
+    particles, and the contributions of the ghosts are returned to their
+    owners. Every pair of a directed relation is at the owner of each of
+    its particles, so the same sum is the gather with one complete result,
+    every pair at its center with the weight one, and nothing to return
+    (D[ml2-distribute], docs/distributed-ml2.md, Section 14):
+
+    ```text
+    p_i + (G^T q)_i = ½ Σ_k k(i, k) + ½ σ Σ_{(j, k) : s(k) = i} k(j, k)
+                    = Σ_k k(i, k)
+    ```
+
+    The precondition, checked with the code of the verifier: the relation
+    is directed, its halo covers its cutoff (V4), and the kernel has the
+    exchange contract that gives the value at the second particle (V8).
+    The pass is the switch: without it, the derivative's form runs.
+  }];
+}
+
 def AnalyzeActivity : Pass<"md-analyze-activity", "::mlir::ModuleOp"> {
   let summary = "Report active, proven inactive, or unknown results for a potential argument";
   let options = [Option<"argument", "argument", "int", "2", "Potential argument to analyze">];

@@ -70,6 +70,7 @@ private:
   LogicalResult lowerSumPairs(SumPairsOp op);
   LogicalResult lowerGatherPairs(GatherPairsOp op);
   LogicalResult lowerSumParticles(SumParticlesOp op);
+  LogicalResult lowerMapParticles(MapParticlesOp op);
   LogicalResult lowerAllReduce(AllReduceOp op);
 
   /// The decomposition of a type of md_dist, and its number of domains.
@@ -722,11 +723,17 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
   auto neighborhood = op.getRelation().getDefiningOp<NeighborhoodOp>();
   Storage &halo = storage[neighborhood.getHalo()];
   Storage &layout = storage[layoutOf(neighborhood.getHalo())];
-  bool unique =
-      op.getRelation().getType().getTraversal() == Traversal::Unique;
+  // With two results the contributions of each pair go to both of its
+  // particles; over a directed relation, where every pair is visited at
+  // both of its owners, each with the weight one half (the transpose of a
+  // directed md_dist.sum_pairs, D[ml2-distribute]).
+  bool twoEnded = op.getResults().size() == 2;
+  bool directed =
+      op.getRelation().getType().getTraversal() == Traversal::Directed;
+  double weight = directed && twoEnded ? 0.5 : 1.0;
   Value ownedOut = allocate(b, layout.capacity, k);
   Value ghostOut;
-  if (unique) {
+  if (twoEnded) {
     fillZero(b, ownedOut);
     ghostOut = allocate(b, halo.capacity, k);
     fillZero(b, ghostOut);
@@ -734,6 +741,14 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
   // The value at the second particle of a pair computed once: the
   // kernel's value under exchange, which the verifier proved.
   double sign = op.getExchange() == md::Exchange::Antisymmetric ? -1.0 : 1.0;
+  auto scale = [&](OpBuilder &at, Value value, double factor) -> Value {
+    if (factor == 1.0)
+      return value;
+    Value s = real(at, factor);
+    if (auto vector = dyn_cast<VectorType>(type))
+      s = vector::BroadcastOp::create(at, loc, vector, s);
+    return arith::MulFOp::create(at, loc, value, s);
+  };
   emitPairs(
       op, loc, domains, storage, type,
       [&](OpBuilder &at, Type t) { return zero(at, t); },
@@ -745,11 +760,8 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
       },
       [&](OpBuilder &at, Value value, Value acc, Value d, Value kRow,
           Value isOwned, Value ghostRow) {
-        if (unique) {
-          Value s = real(at, sign);
-          if (auto vector = dyn_cast<VectorType>(type))
-            s = vector::BroadcastOp::create(at, loc, vector, s);
-          Value other = arith::MulFOp::create(at, loc, value, s);
+        if (twoEnded) {
+          Value other = scale(at, value, sign * weight);
           scf::IfOp::create(
               at, loc, isOwned,
               [&](OpBuilder &t, Location) {
@@ -764,14 +776,14 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
         return Value(arith::AddFOp::create(at, loc, acc, value));
       },
       [&](OpBuilder &at, Value sum, Value d, Value i) {
-        if (unique)
-          addValue(at, sum, ownedOut, d, i);
+        if (twoEnded)
+          addValue(at, scale(at, sum, weight), ownedOut, d, i);
         else
           storeValue(at, sum, ownedOut, d, i);
       },
       [&](OpBuilder &, Value, Value) {});
   storage[op.getResults()[0]].buffer = ownedOut;
-  if (unique)
+  if (twoEnded)
     storage[op.getResults()[1]].buffer = ghostOut;
   return success();
 }
@@ -823,6 +835,35 @@ LogicalResult Lowering::lowerSumParticles(SumParticlesOp op) {
   return success();
 }
 
+LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
+  OpBuilder b(op);
+  FieldType resultType = op.getResult().getType();
+  Storage &rows = rowsOf(op.getGathered()[0]);
+  Value result = allocate(b, rows.capacity, resultType.getNumComponents());
+  scf::ForOp::create(
+      b, loc, index(b, 0), index(b, domains), index(b, 1), ValueRange(),
+      [&](OpBuilder &bd, Location, Value d, ValueRange) {
+        Value count = toIndex(
+            bd, memref::LoadOp::create(bd, loc, rows.rows, ValueRange{d}));
+        scf::ForOp::create(
+            bd, loc, index(bd, 0), count, index(bd, 1), ValueRange(),
+            [&](OpBuilder &br, Location, Value r, ValueRange) {
+              SmallVector<Value> arguments;
+              for (Value field : op.getGathered())
+                arguments.push_back(loadValue(
+                    br, storage[field].buffer, d, r,
+                    cast<FieldType>(field.getType()).getKernelValueType()));
+              Value value =
+                  inlineKernel(br, op.getKernel().front(), arguments);
+              storeValue(br, value, result, d, r);
+              scf::YieldOp::create(br, loc);
+            });
+        scf::YieldOp::create(bd, loc);
+      });
+  storage[op.getResult()].buffer = result;
+  return success();
+}
+
 LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
   OpBuilder b(op);
   Type type = op.getResult().getType();
@@ -867,6 +908,7 @@ LogicalResult Lowering::lower(Operation *op) {
       .Case([&](SumPairsOp o) { return lowerSumPairs(o); })
       .Case([&](GatherPairsOp o) { return lowerGatherPairs(o); })
       .Case([&](SumParticlesOp o) { return lowerSumParticles(o); })
+      .Case([&](MapParticlesOp o) { return lowerMapParticles(o); })
       .Case([&](AllReduceOp o) { return lowerAllReduce(o); })
       .Default([&](Operation *other) {
         return other->emitOpError() << "is not run by the reference executor";
@@ -886,7 +928,8 @@ LogicalResult Lowering::run(func::FuncOp function) {
     if (isa<MDDistDialect>(op->getDialect()) && !isa<YieldOp>(op) &&
         !op->getParentOfType<SumPairsOp>() &&
         !op->getParentOfType<GatherPairsOp>() &&
-        !op->getParentOfType<SumParticlesOp>())
+        !op->getParentOfType<SumParticlesOp>() &&
+        !op->getParentOfType<MapParticlesOp>())
       ops.push_back(op);
   });
   if (ops.empty())

@@ -285,7 +285,8 @@ def MDDist_NeighborhoodOp : MDDist_Op<"neighborhood", [Pure]> {
 
 def MDDist_YieldOp : MDDist_Op<"yield", [
     Pure, Terminator, ReturnLike,
-    ParentOneOf<["SumPairsOp", "GatherPairsOp", "SumParticlesOp"]>
+    ParentOneOf<["SumPairsOp", "GatherPairsOp", "SumParticlesOp",
+                 "MapParticlesOp"]>
   ]> {
   let summary = "Yields the value of a kernel";
   let arguments = (ins Variadic<AnyType>:$values);
@@ -351,11 +352,19 @@ def MDDist_GatherPairsOp : MDDist_PairOp<"gather_pairs"> {
     ```
 
     The field of `md.gather_relation` at the owned rows. Over a `directed`
-    relation, every pair of `i` is at its owner, and the one result is
-    complete. Over a `unique` relation, the op yields the contributions at
-    owned rows and at ghost rows, both partial, with `a = p + G^T q`: the
-    kernel is evaluated once per pair, and the value at `k` is the kernel's
-    value under exchange, which `exchange` states and the verifier proves.
+    relation, every pair of `i` is at its owner, and with one result the
+    op is complete there (any kernel). Over a `unique` relation, the op
+    yields the contributions at owned rows and at ghost rows, both partial,
+    with `a = p + G^T q`: the kernel is evaluated once per pair, and the
+    value at `k` is the kernel's value under exchange, which `exchange`
+    states and the verifier proves.
+
+    Over a `directed` relation the op may yield the two partial results as
+    well (D[ml2-distribute]): every pair `(i, k)` of a domain adds
+    `½ k(i, k)` at `i` and `½ σ k(i, k)` at `k`, owned or ghost, again with
+    `a = p + G^T q`. It is the transpose of a directed `md_dist.sum_pairs`,
+    the form `md-differentiate` gives, and `md-dist-owner-computes` turns
+    it into the one complete result.
 
     ```mlir
     %fo, %fg = md_dist.gather_pairs %n, %xo, %xg exchange(antisymmetric) {
@@ -401,6 +410,39 @@ def MDDist_SumParticlesOp : MDDist_Op<"sum_particles", [
   let arguments = (ins Variadic<MDDist_FieldType>:$gathered);
   let regions = (region SizedRegion<1>:$kernel);
   let results = (outs MDDist_PartialType:$result);
+  let assemblyFormat = [{
+    `gather` `(` $gathered `:` qualified(type($gathered)) `)`
+    $kernel attr-dict `:` qualified(type($result))
+  }];
+  let hasVerifier = 1;
+  let hasRegionVerifier = 1;
+}
+
+def MDDist_MapParticlesOp : MDDist_Op<"map_particles", [
+    RecursiveMemoryEffects, SingleBlock
+  ]> {
+  let summary = "Applies a kernel to each row of fields";
+  let description = [{
+    ```text
+    b_i = k(i)
+    ```
+
+    The map of `md.map_particles` over the owned rows of fields of one
+    layout, or over the ghost rows of fields of one halo. The fields are
+    complete; the result is complete, of the same rows
+    (D[ml2-distribute]).
+
+    ```mlir
+    %b = md_dist.map_particles gather(%a : !md_dist.field<@dd, owned, f64>) {
+    ^bb0(%a_i: f64):
+      ...
+      md_dist.yield %b_i : f64
+    } : !md_dist.field<@dd, owned, f64>
+    ```
+  }];
+  let arguments = (ins Variadic<MDDist_FieldType>:$gathered);
+  let regions = (region SizedRegion<1>:$kernel);
+  let results = (outs MDDist_FieldType:$result);
   let assemblyFormat = [{
     `gather` `(` $gathered `:` qualified(type($gathered)) `)`
     $kernel attr-dict `:` qualified(type($result))
