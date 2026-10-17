@@ -630,6 +630,48 @@ within 2% of a list built with 9 Å.
 The settings of the suite (Section 10) are an outer skin of 3 Å and an
 inner skin of 0.6 Å at 2 fs, in proportion to the step.
 
+**The pruning in the loop** (D[fused-prune]). A pruning reads every
+entry of the outer list, gathers its position, tests its 16 bits, and
+stores the inner list; the loop over pairs then reads the inner list back
+and does the arithmetic of each pair. Any exact pruning does the first
+four, so a kernel that prunes and computes at once can remove only the
+read back, a launch, and what it hides. Where the refresh prunes, the
+first loop over pairs that takes its result at the same positions and in
+the same cell prunes instead, in one kernel with a warp for each group:
+the warp prunes its group with the code of the pruning above, waits for
+the stores of its other lanes, and computes the pairs of the entries it
+kept, read back as one stream of the group in rounds of 32. The inner list
+is the pruning's to the bit. On the step itself the warp computes, of the
+entries it kept, the pairs within $r_c$. Since $r_c < R_\text{in}$, an
+entry of the outer list with a pair within $r_c$ at $\mathbf x^p$, the
+configuration of the step, keeps the bit of that pair, so these are the
+pairs of the loop over the fresh inner list, and the theorem above holds
+for the steps that follow. The sums differ from those of the separate
+pruning by the order of their additions only.
+
+With $t_\text{loop}$, $t_\text{prune}$, and $t_\text{fused}$ the times of
+a call of the loop, of a pruning, and of the loop that prunes, a step
+saves $t_\text{loop} + t_\text{prune} - t_\text{fused}$ divided by the
+steps between prunings. Counting only the work removed, $t_\text{fused}
+\approx t_\text{loop} + t_\text{prune}$ less the read back. On an RTX 4090
+the measured $t_\text{fused}$ is instead $t_\text{loop}$ and 0 to 7% more:
+on Cellulose 584.9 µs against $t_\text{loop} = 550.6$ and a main kernel
+of the pruning of 228.6; on STMV 1638.4 against 1654.2 and 575.0. A warp's
+pruning is bound by memory and its computation by the shuffles and the
+arithmetic of the loop, and warps of the two parts share a
+multiprocessor, so the pruning hides under the loop. A step takes 4 to 6%
+less from about 6,400 groups (Cellulose 1465 → 1376 µs, STMV at 4 fs
+4710 → 4458; `docs/groups-m1.md`, Section 6.2). Two costs bound the gain.
+The warps are as many as the groups, where the loop has one for each
+active unit, several a group: with 1,472 groups on JAC they leave the
+device partly idle and a step takes 1.2% more. And the kernel holds 94 to
+96 registers a thread, against 72 for each of the two it replaces. The
+loop therefore prunes from 4096 groups by default, which the host decides
+at each pruning from the groups of the last build. On an RTX PRO 6000
+Blackwell Max-Q, which ran at its cap of 300 W, $t_\text{fused} \approx
+t_\text{loop} + t_\text{prune}$ (Cellulose 591.2 against 415.0 and
+167.5), and the step changes by −1.1 to +1.0% from 6,400 groups.
+
 **Checks.** In double precision `test/Driver/groups-gpu.test` runs a water
 box with a dual list (11/9.3 Å, 37 prunings and 6 builds in 100 steps) and
 the matrix, and the two give the energies of the log to every printed
@@ -643,7 +685,12 @@ been amplified by the chaos of the dynamics.
 [[Pall2020]](references.md#pall2020) in purpose, but differs in its test: GROMACS prunes on a
 schedule and sizes its buffers from an estimate of the drift of the
 energy, while MDIR prunes when an exact condition fails, and keeps no pair
-out that could be within the cutoff.
+out that could be within the cutoff. GROMACS prunes its list at the outer
+cutoff once, the first time a special version of its kernel of forces
+processes it, and prunes to the inner cutoff in a separate kernel, in
+chunks between the steps [[Pall2020]](references.md#pall2020); MDIR prunes
+to the inner reach in the loop over pairs at every pruning of a large
+system.
 
 ## 4.6 The pairs of images of a learned potential
 
