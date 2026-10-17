@@ -23,7 +23,9 @@ the whole suite and then pmemd.cuda, three times
 program. The benchmark script watches the device every two seconds
 during each run and marks the rate as no measurement if another process
 used it; no run of the repeats was marked. The ratio of a system is
-taken within each repeat and then averaged. The table is made by
+taken within each repeat and then averaged; ratios from different nodes
+of the cluster are not mixed, since the same program's rate differs
+between them by up to 3.5% (pmemd.cuda on Cellulose, #405). The table is made by
 `scripts/paper/suite-table.py` and the figure by
 `scripts/paper/plot-suite.py`.
 
