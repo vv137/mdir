@@ -14,7 +14,7 @@ MLIR, compiled at run time (Section 3.6).
 | Over particles (`md_exec.particle_for`) | One a particle | Its own particle; global sums through partials per block, then a reduction in a fixed order |
 | Over pairs, the matrix | 16 lanes a row (`row-lanes`), owner computes | Its own particle, no atomics |
 | Over pairs, groups | A warp a block of 64 entries (Section 4.4) | Atomic additions for the entries, one per block for the group |
-| Over tuples that may share particles (bonds, angles, …) | A thread a particle, the tuples $p, p+n, \dots$ evaluated once each (D103) | Atomic additions to the members; sums of its own tuples |
+| Over tuples that may share particles (bonds, angles, …) | A thread a tuple; with global sums, a thread a particle, the tuples $p, p+n, \dots$ evaluated once each (D103) | Atomic additions to the members; from 100,000 tuples, additions to a table of the particles of the block in block memory, then one atomic addition a particle a block (D[tuple-block-sums]); sums of its own tuples |
 | Over disjoint tuples (constraints) | A thread a particle; the member at place 0 evaluates the tuple (D83) | Every member of its tuple, which no other thread writes |
 
 **Runs.** Consecutive loops that take the same positions and do not read
@@ -27,6 +27,29 @@ forces of a term over centers among them, are launched as one kernel over
 all their tuples, each thread finding its loop by the running totals of the
 tuples (D181); on JAC the five bonded kernels of a step
 become one. A run is lowered where its last loop is.
+
+**The sums of a block** (D[tuple-block-sums]). In that kernel the global
+atomics, three for the force on each member of each tuple, were about
+70% of its time: on Cellulose it took 223 µs a step, and 65 µs with plain
+stores in their place (for timing, wrong forces). The tuples of a block
+of 128, in the order of the files, touch about a quarter as many distinct
+particles as they have members (0.24 on Cellulose, 0.31 on JAC). A block
+therefore keeps a table of its particles in block memory, found by a
+multiplicative hash and the next slots in turn
+[[Knuth1998]](references.md#knuth1998) and claimed by a compare-and-swap;
+a thread adds its values there, and after a barrier each particle of the
+table is added to the forces once. A search gives up after 8 slots and
+adds that value to the forces directly, which bounds a block whose tuples
+share few particles. On an RTX 4090 the kernel takes 84 µs a step on
+Cellulose and 189 on STMV, where it took 221 and 439, and Cellulose runs
+9 to 10% faster. A run of fewer than 100,000 tuples keeps the atomics,
+chosen on the host by the count: with the table JAC's kernel, whose
+blocks the device holds all at once, took 13 µs where it took 12, and
+the suite ran 1.5% slower. The forces differ by the rounding of their sums, as two runs with
+atomics differ: by $10^{-6}$ of the RMS force on the systems of the
+suite. The excluded pairs, half the tuples of Cellulose, stay in this
+kernel: evaluated by the rows of their particles, without atomics, they
+took as long as with them.
 Destinations that the forces of a step add are merged where a loop gives
 two of them by the same contract: the forces of the sums over the centers
 of a term (D150), and those of a term over the pairs of a topology fused

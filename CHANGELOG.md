@@ -509,6 +509,20 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The kernel of the bonded terms, the 1-4 pairs, and the excluded pairs
+  adds the values of a block in block memory first** (D[tuple-block-sums],
+  #408, [docs/device-tuples.md](docs/device-tuples.md), Section 11): on a
+  GPU, outside the deterministic mode, each particle that the tuples of a
+  block touch is added to the forces once a block instead of once a
+  member; a run of fewer than 100,000 tuples (JAC) keeps the atomics. On
+  one RTX 4090 the kernel takes 84 µs a step on Cellulose where it took
+  221, and 189 on STMV where it took 439; in the Amber suite Cellulose
+  runs 9 to 10% faster, Factor IX 2.5%, STMV 3 to 5%, and JAC as before
+  (on an RTX PRO 6000 3.5%, 1%, 2%, and as before). The forces change by
+  the rounding of their sums, as between two runs.
+  `MDIR_TUPLE_SUMS=atomics` keeps the atomics of every value and `=blocks`
+  takes the table at any size, for comparison and tests. No control-file
+  key changes.
 - **Steepest descent ends once its step has shrunk below a floor**
   (D274, #369): $10^{-7}$ Å below double precision and
   $10^{-11}$ Å in double, checked at each row of the log, rather than
