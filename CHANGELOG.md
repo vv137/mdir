@@ -1213,6 +1213,15 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- `md-exec-assign-storage`, `md-exec-fold-tables`,
+  `convert-md-exec-to-loops`, and `convert-md-exec-to-gpu` asserted on an
+  op of no registered dialect, which `--allow-unregistered-dialect` admits
+  (#395): they took an op's dialect with `isa<...Dialect>`, which asserts
+  on the null dialect of such an op. They now use `isa_and_nonnull` and
+  leave the op where it is, as an op of another dialect. The same form is
+  used in `md-exec-simplify-distance`, which an unregistered op does not
+  reach there: only ops whose values it can evaluate reach the check.
+
 - A `.gro` file whose velocities do not read in fields as wide as its
   coordinates is refused, with the line, instead of read with the
   velocities that do not read taken as 0 (#365). Velocities written one

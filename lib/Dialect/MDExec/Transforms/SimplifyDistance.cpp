@@ -313,7 +313,7 @@ bool Rewriter::isCostly(Value value) {
   Operation *def = value.getDefiningOp();
   bool result = false;
   if (def && def->getBlock() == fresh) {
-    result = isa<math::MathDialect>(def->getDialect()) &&
+    result = isa_and_nonnull<math::MathDialect>(def->getDialect()) &&
              !isa<math::SqrtOp, math::FPowIOp, math::AbsFOp>(def);
     for (Value operand : def->getOperands())
       result |= isCostly(operand);
