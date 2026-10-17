@@ -1455,8 +1455,8 @@ from 3,072 atoms, and 24,576 atoms added:
 
 The list again costs about 1 ms a step at every size, and the exact list
 shortens the step by 6% at 12,288 atoms and 11% at 24,576, where the
-search takes 1.4 s. The padded list costs 19 to 26% more time and 23 to
-25% more peak memory; on this device the whole system of 1,152 atoms fits
+search takes 1.4 s. The padded list costs 18 to 27% more time and 20 to
+26% more peak memory; on this device the whole system of 1,152 atoms fits
 with either. The model tests (`model-term-gpu.test`,
 `model-term-aoti-gpu.test`, `model-term-errors.test`) pass on this device
 with the package of several architectures.
