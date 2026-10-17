@@ -5039,15 +5039,15 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
   %of_lists = arith.addi %nbins, %c1 : index
   %lists = arith.muli %nbins, %capacity : index
   %of_overflow = arith.addi %of_lists, %lists : index
-  %c256 = arith.constant 128 : index
+  %cthreads = arith.constant 128 : index
   %blocks_tiles = arith.addi %nbins, %c1 : index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c256, %sy = %c1, %sz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
              workgroup(%tile : memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<512x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<384xi32, #gpu.address_space<workgroup>>) {
     %c3w = arith.constant 3 : index
     %c32w = arith.constant 32 : index
-    %c8w = arith.constant 4 : index
-    %c512w = arith.constant 256 : index
+    %cwarps = arith.constant 4 : index
+    %cthreads2 = arith.constant 256 : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
     %side32 = arith.constant PME_TILE_SIDE_4 : i32
@@ -5079,7 +5079,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
     // A bin without particles adds nothing; the whole block leaves.
     %some = arith.cmpi ugt, %count, %c0 : index
     scf.if %some {
-      scf.for %t = %tx to %volume step %c256 {
+      scf.for %t = %tx to %volume step %cthreads {
         memref.store %zero_r, %tile[%t] : memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>
       }
       %warp = arith.divui %tx, %c32w : index
@@ -5104,7 +5104,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
       %lane_a = arith.select %active, %lane_x, %c0 : index
       %axis_l = arith.divui %lane_a, %pidx : index
       %j_l = arith.remui %lane_a, %pidx : index
-      %axis_at = arith.muli %axis_l, %c256 : index
+      %axis_at = arith.muli %axis_l, %cthreads : index
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
@@ -5112,12 +5112,12 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
       %bytes = arith.constant PME_REAL_BYTES : i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
-      scf.for %round = %c0 to %count step %c256 {
+      scf.for %round = %c0 to %count step %cthreads {
         // The particles of the round into the memory of the block, after
         // the warps of the round before have read theirs.
         gpu.barrier
         %left = arith.subi %count, %round : index
-        %in_round = arith.minui %left, %c256 : index
+        %in_round = arith.minui %left, %cthreads : index
         %stages = arith.cmpi ult, %tx, %in_round : index
         scf.if %stages {
           %entry = arith.addi %round, %tx : index
@@ -5136,18 +5136,18 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
             %at_fn = arith.muli %n_all, %fax : index
             %at_f = arith.addi %at_fn, %i : index
             %frac_g = memref.load %places[%at_f] : memref<?x!pme_real, 1>
-            %slot0 = arith.muli %ax, %c256 : index
+            %slot0 = arith.muli %ax, %cthreads : index
             %slot = arith.addi %slot0, %tx : index
             memref.store %start, %starts[%slot] : memref<384xi32, #gpu.address_space<workgroup>>
-            %fslot = arith.addi %slot, %c256 : index
+            %fslot = arith.addi %slot, %cthreads : index
             memref.store %frac_g, %staged[%fslot] : memref<512x!pme_real, #gpu.address_space<workgroup>>
           }
         }
         gpu.barrier
-        scf.for %k = %warp to %in_round step %c8w {
+        scf.for %k = %warp to %in_round step %cwarps {
           %qk = memref.load %staged[%k] : memref<512x!pme_real, #gpu.address_space<workgroup>>
           %fk0 = arith.addi %axis_at, %k : index
-          %fk = arith.addi %fk0, %c256 : index
+          %fk = arith.addi %fk0, %cthreads : index
           %frac = memref.load %staged[%fk] : memref<512x!pme_real, #gpu.address_space<workgroup>>
           %two_i = arith.constant 2 : index
           %three_i = arith.constant 3 : index
@@ -5195,9 +5195,9 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
           %qv = arith.mulf %wvalue, %qk : !pme_real
           %weight = arith.select %first_axis, %qv, %wvalue : !pme_real
           %xstart = memref.load %starts[%k] : memref<384xi32, #gpu.address_space<workgroup>>
-          %ys_at = arith.addi %k, %c256 : index
+          %ys_at = arith.addi %k, %cthreads : index
           %ystart = memref.load %starts[%ys_at] : memref<384xi32, #gpu.address_space<workgroup>>
-          %zs_at = arith.addi %k, %c512w : index
+          %zs_at = arith.addi %k, %cthreads2 : index
           %zstart = memref.load %starts[%zs_at] : memref<384xi32, #gpu.address_space<workgroup>>
           %l1 = arith.subi %xstart, %o1t : i32
           %l2 = arith.subi %ystart, %o2t : i32
@@ -5264,7 +5264,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
       // The tile into the grid; a point wraps around once at most, since
       // the tile is no longer than the grid along any axis.
       scf.if %bins_block {
-        scf.for %t = %tx to %volume step %c256 {
+        scf.for %t = %tx to %volume step %cthreads {
           %value = memref.load %tile[%t] : memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>
           %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
           scf.if %nonzero {
@@ -5333,15 +5333,15 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
   %of_lists = arith.addi %nbins, %c1 : index
   %lists = arith.muli %nbins, %capacity : index
   %of_overflow = arith.addi %of_lists, %lists : index
-  %c256 = arith.constant 128 : index
+  %cthreads = arith.constant 128 : index
   %blocks_tiles = arith.addi %nbins, %c1 : index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c256, %sy = %c1, %sz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
              workgroup(%tile : memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<512x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<384xi32, #gpu.address_space<workgroup>>) {
     %c3w = arith.constant 3 : index
     %c32w = arith.constant 32 : index
-    %c8w = arith.constant 4 : index
-    %c512w = arith.constant 256 : index
+    %cwarps = arith.constant 4 : index
+    %cthreads2 = arith.constant 256 : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
     %side32 = arith.constant PME_TILE_SIDE_8 : i32
@@ -5373,7 +5373,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
     // A bin without particles adds nothing; the whole block leaves.
     %some = arith.cmpi ugt, %count, %c0 : index
     scf.if %some {
-      scf.for %t = %tx to %volume step %c256 {
+      scf.for %t = %tx to %volume step %cthreads {
         memref.store %zero_r, %tile[%t] : memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>
       }
       %warp = arith.divui %tx, %c32w : index
@@ -5398,7 +5398,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
       %lane_a = arith.select %active, %lane_x, %c0 : index
       %axis_l = arith.divui %lane_a, %pidx : index
       %j_l = arith.remui %lane_a, %pidx : index
-      %axis_at = arith.muli %axis_l, %c256 : index
+      %axis_at = arith.muli %axis_l, %cthreads : index
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
@@ -5406,12 +5406,12 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
       %bytes = arith.constant PME_REAL_BYTES : i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
-      scf.for %round = %c0 to %count step %c256 {
+      scf.for %round = %c0 to %count step %cthreads {
         // The particles of the round into the memory of the block, after
         // the warps of the round before have read theirs.
         gpu.barrier
         %left = arith.subi %count, %round : index
-        %in_round = arith.minui %left, %c256 : index
+        %in_round = arith.minui %left, %cthreads : index
         %stages = arith.cmpi ult, %tx, %in_round : index
         scf.if %stages {
           %entry = arith.addi %round, %tx : index
@@ -5430,18 +5430,18 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
             %at_fn = arith.muli %n_all, %fax : index
             %at_f = arith.addi %at_fn, %i : index
             %frac_g = memref.load %places[%at_f] : memref<?x!pme_real, 1>
-            %slot0 = arith.muli %ax, %c256 : index
+            %slot0 = arith.muli %ax, %cthreads : index
             %slot = arith.addi %slot0, %tx : index
             memref.store %start, %starts[%slot] : memref<384xi32, #gpu.address_space<workgroup>>
-            %fslot = arith.addi %slot, %c256 : index
+            %fslot = arith.addi %slot, %cthreads : index
             memref.store %frac_g, %staged[%fslot] : memref<512x!pme_real, #gpu.address_space<workgroup>>
           }
         }
         gpu.barrier
-        scf.for %k = %warp to %in_round step %c8w {
+        scf.for %k = %warp to %in_round step %cwarps {
           %qk = memref.load %staged[%k] : memref<512x!pme_real, #gpu.address_space<workgroup>>
           %fk0 = arith.addi %axis_at, %k : index
-          %fk = arith.addi %fk0, %c256 : index
+          %fk = arith.addi %fk0, %cthreads : index
           %frac = memref.load %staged[%fk] : memref<512x!pme_real, #gpu.address_space<workgroup>>
           %two_i = arith.constant 2 : index
           %three_i = arith.constant 3 : index
@@ -5489,9 +5489,9 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
           %qv = arith.mulf %wvalue, %qk : !pme_real
           %weight = arith.select %first_axis, %qv, %wvalue : !pme_real
           %xstart = memref.load %starts[%k] : memref<384xi32, #gpu.address_space<workgroup>>
-          %ys_at = arith.addi %k, %c256 : index
+          %ys_at = arith.addi %k, %cthreads : index
           %ystart = memref.load %starts[%ys_at] : memref<384xi32, #gpu.address_space<workgroup>>
-          %zs_at = arith.addi %k, %c512w : index
+          %zs_at = arith.addi %k, %cthreads2 : index
           %zstart = memref.load %starts[%zs_at] : memref<384xi32, #gpu.address_space<workgroup>>
           %l1 = arith.subi %xstart, %o1t : i32
           %l2 = arith.subi %ystart, %o2t : i32
@@ -5558,7 +5558,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
       // The tile into the grid; a point wraps around once at most, since
       // the tile is no longer than the grid along any axis.
       scf.if %bins_block {
-        scf.for %t = %tx to %volume step %c256 {
+        scf.for %t = %tx to %volume step %cthreads {
           %value = memref.load %tile[%t] : memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>
           %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
           scf.if %nonzero {
@@ -5627,15 +5627,15 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
   %of_lists = arith.addi %nbins, %c1 : index
   %lists = arith.muli %nbins, %capacity : index
   %of_overflow = arith.addi %of_lists, %lists : index
-  %c256 = arith.constant 128 : index
+  %cthreads = arith.constant 512 : index
   %blocks_tiles = arith.addi %nbins, %c1 : index
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c256, %sy = %c1, %sz = %c1)
-             workgroup(%tile : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<512x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<384xi32, #gpu.address_space<workgroup>>) {
+             threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
+             workgroup(%tile : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<2048x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<1536xi32, #gpu.address_space<workgroup>>) {
     %c3w = arith.constant 3 : index
     %c32w = arith.constant 32 : index
-    %c8w = arith.constant 4 : index
-    %c512w = arith.constant 256 : index
+    %cwarps = arith.constant 16 : index
+    %cthreads2 = arith.constant 1024 : index
     %zero_r = arith.constant 0.0 : !pme_real
     %true_w = arith.constant true
     %side32 = arith.constant PME_TILE_SIDE_16 : i32
@@ -5667,7 +5667,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
     // A bin without particles adds nothing; the whole block leaves.
     %some = arith.cmpi ugt, %count, %c0 : index
     scf.if %some {
-      scf.for %t = %tx to %volume step %c256 {
+      scf.for %t = %tx to %volume step %cthreads {
         memref.store %zero_r, %tile[%t] : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>
       }
       %warp = arith.divui %tx, %c32w : index
@@ -5692,7 +5692,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
       %lane_a = arith.select %active, %lane_x, %c0 : index
       %axis_l = arith.divui %lane_a, %pidx : index
       %j_l = arith.remui %lane_a, %pidx : index
-      %axis_at = arith.muli %axis_l, %c256 : index
+      %axis_at = arith.muli %axis_l, %cthreads : index
       %k1t = arith.index_cast %k1 : index to i32
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
@@ -5700,12 +5700,12 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
       %bytes = arith.constant PME_REAL_BYTES : i64
       %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
       %gbase = arith.index_cast %gindex : index to i64
-      scf.for %round = %c0 to %count step %c256 {
+      scf.for %round = %c0 to %count step %cthreads {
         // The particles of the round into the memory of the block, after
         // the warps of the round before have read theirs.
         gpu.barrier
         %left = arith.subi %count, %round : index
-        %in_round = arith.minui %left, %c256 : index
+        %in_round = arith.minui %left, %cthreads : index
         %stages = arith.cmpi ult, %tx, %in_round : index
         scf.if %stages {
           %entry = arith.addi %round, %tx : index
@@ -5714,7 +5714,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
           %i = arith.index_cast %particle : i32 to index
           %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
           %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
-          memref.store %qi, %staged[%tx] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          memref.store %qi, %staged[%tx] : memref<2048x!pme_real, #gpu.address_space<workgroup>>
           scf.for %ax = %c0 to %c3w step %c1 {
             %at_n = arith.muli %n_all, %ax : index
             %at_s = arith.addi %at_n, %i : index
@@ -5724,19 +5724,19 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
             %at_fn = arith.muli %n_all, %fax : index
             %at_f = arith.addi %at_fn, %i : index
             %frac_g = memref.load %places[%at_f] : memref<?x!pme_real, 1>
-            %slot0 = arith.muli %ax, %c256 : index
+            %slot0 = arith.muli %ax, %cthreads : index
             %slot = arith.addi %slot0, %tx : index
-            memref.store %start, %starts[%slot] : memref<384xi32, #gpu.address_space<workgroup>>
-            %fslot = arith.addi %slot, %c256 : index
-            memref.store %frac_g, %staged[%fslot] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+            memref.store %start, %starts[%slot] : memref<1536xi32, #gpu.address_space<workgroup>>
+            %fslot = arith.addi %slot, %cthreads : index
+            memref.store %frac_g, %staged[%fslot] : memref<2048x!pme_real, #gpu.address_space<workgroup>>
           }
         }
         gpu.barrier
-        scf.for %k = %warp to %in_round step %c8w {
-          %qk = memref.load %staged[%k] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+        scf.for %k = %warp to %in_round step %cwarps {
+          %qk = memref.load %staged[%k] : memref<2048x!pme_real, #gpu.address_space<workgroup>>
           %fk0 = arith.addi %axis_at, %k : index
-          %fk = arith.addi %fk0, %c256 : index
-          %frac = memref.load %staged[%fk] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          %fk = arith.addi %fk0, %cthreads : index
+          %frac = memref.load %staged[%fk] : memref<2048x!pme_real, #gpu.address_space<workgroup>>
           %two_i = arith.constant 2 : index
           %three_i = arith.constant 3 : index
           %one = arith.constant 1 : index
@@ -5782,11 +5782,11 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
           %first_axis = arith.cmpi eq, %axis_l, %c0 : index
           %qv = arith.mulf %wvalue, %qk : !pme_real
           %weight = arith.select %first_axis, %qv, %wvalue : !pme_real
-          %xstart = memref.load %starts[%k] : memref<384xi32, #gpu.address_space<workgroup>>
-          %ys_at = arith.addi %k, %c256 : index
-          %ystart = memref.load %starts[%ys_at] : memref<384xi32, #gpu.address_space<workgroup>>
-          %zs_at = arith.addi %k, %c512w : index
-          %zstart = memref.load %starts[%zs_at] : memref<384xi32, #gpu.address_space<workgroup>>
+          %xstart = memref.load %starts[%k] : memref<1536xi32, #gpu.address_space<workgroup>>
+          %ys_at = arith.addi %k, %cthreads : index
+          %ystart = memref.load %starts[%ys_at] : memref<1536xi32, #gpu.address_space<workgroup>>
+          %zs_at = arith.addi %k, %cthreads2 : index
+          %zstart = memref.load %starts[%zs_at] : memref<1536xi32, #gpu.address_space<workgroup>>
           %l1 = arith.subi %xstart, %o1t : i32
           %l2 = arith.subi %ystart, %o2t : i32
           %l3 = arith.subi %zstart, %o3t : i32
@@ -5852,7 +5852,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>
       // The tile into the grid; a point wraps around once at most, since
       // the tile is no longer than the grid along any axis.
       scf.if %bins_block {
-        scf.for %t = %tx to %volume step %c256 {
+        scf.for %t = %tx to %volume step %cthreads {
           %value = memref.load %tile[%t] : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>
           %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
           scf.if %nonzero {
