@@ -925,7 +925,7 @@ static bool isDistributedType(Type type) {
 LogicalResult Lowering::run(func::FuncOp function) {
   SmallVector<Operation *> ops;
   function.walk([&](Operation *op) {
-    if (isa<MDDistDialect>(op->getDialect()) && !isa<YieldOp>(op) &&
+    if (isa_and_nonnull<MDDistDialect>(op->getDialect()) && !isa<YieldOp>(op) &&
         !op->getParentOfType<SumPairsOp>() &&
         !op->getParentOfType<GatherPairsOp>() &&
         !op->getParentOfType<SumParticlesOp>() &&
@@ -948,7 +948,7 @@ LogicalResult Lowering::run(func::FuncOp function) {
     for (Value result : op->getResults())
       if (isDistributedType(result.getType()))
         for (Operation *user : result.getUsers())
-          if (!isa<MDDistDialect>(user->getDialect()))
+          if (!isa_and_nonnull<MDDistDialect>(user->getDialect()))
             return user->emitOpError()
                    << "uses a value of md_dist, which the reference "
                       "executor cannot hand to an op of another dialect";
