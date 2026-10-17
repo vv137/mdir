@@ -406,7 +406,9 @@ another order and partly summed in f32 within the block, so the forces
 change by the rounding of their sums, as they change from one run to the
 next with atomics. The deterministic mode has no loops evaluated once and
 is unchanged. The loops with global sums (the steps that write energies)
-and the block of a term over centers (D194) keep their atomics.
+keep their atomics, and so does every loop of a run that holds the forces
+of a term over centers, whose block computes the sums of the centers
+(D194). The compile takes up to 0.2 s longer (5.3 to 11 s on the suite).
 
 **A run of few tuples keeps the atomics.** With the table JAC (55,000
 tuples, 432 blocks) ran 1.5% slower on an RTX 4090 and 3% slower on an

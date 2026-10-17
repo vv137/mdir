@@ -5,8 +5,9 @@
 # smaller than the run that takes it by default) against an atomic for each
 # value (=atomics), both in mixed precision, and each against the double
 # mode. The two ways add the same values in another order, so they agree to
-# the rounding of f32 sums. The default lowering chooses on the host by the
-# count of the tuples.
+# the rounding of f32 sums: two runs with atomics differ by about 1e-6 of
+# the RMS force on the systems of the Amber suite, so the tolerance is 2e-6.
+# The default lowering chooses on the host by the count of the tuples.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
@@ -25,7 +26,7 @@
 # RUN: mdir checkpoint --print=forces %t/blocks.h5 > %t/blocks.forces
 # RUN: mdir checkpoint --print=forces %t/atomics.h5 > %t/atomics.forces
 # RUN: mdir checkpoint --print=forces %t/double.h5 > %t/double.forces
-# RUN: %python %S/Inputs/compare_forces_rms.py %t/blocks.forces %t/atomics.forces 1e-6 "blocks against atomics" | FileCheck %s
+# RUN: %python %S/Inputs/compare_forces_rms.py %t/blocks.forces %t/atomics.forces 2e-6 "blocks against atomics" | FileCheck %s
 # RUN: %python %S/Inputs/compare_forces_rms.py %t/blocks.forces %t/double.forces 1e-4 "blocks against double" | FileCheck %s
 # RUN: %python %S/Inputs/compare_forces_rms.py %t/atomics.forces %t/double.forces 1e-4 "atomics against double" | FileCheck %s
 # CHECK: relative difference {{.*}} ok
