@@ -408,9 +408,30 @@ next with atomics. The deterministic mode has no loops evaluated once and
 is unchanged. The loops with global sums (the steps that write energies)
 and the block of a term over centers (D194) keep their atomics.
 
+**A run of few tuples keeps the atomics.** With the table JAC (55,000
+tuples, 432 blocks) ran 1.5% slower on an RTX 4090 and 3% slower on an
+RTX PRO 6000 in the Amber suite, though its kernel took 1.1 µs more: the
+device holds all its blocks at once, and the table lengthens each, the
+two barriers, the loops that empty and add the table, and the searches.
+Factor IX (165,000 tuples) ran 2.3% and 1% faster. A run of fewer than
+100,000 tuples therefore keeps the atomics: the host compares the count
+of the run's tuples with that number and launches one kernel or the
+other, both of which the lowering emits. The number lies between the two
+measured systems; it is the option `tuple-block-least`.
+
 **The switch.** The option `tuple-block-sums` of `convert-md-exec-to-gpu`,
-on by default; `MDIR_TUPLE_SUMS=atomics` turns it off
-([environment.md](environment.md)).
+on by default; `MDIR_TUPLE_SUMS=atomics` turns it off, and
+`MDIR_TUPLE_SUMS=blocks` takes the table for a run of any size
+(`tuple-block-least=0`), which the tests of small systems use
+([environment.md](environment.md); `tuple-block-sums-gpu.test`, under
+the sanitizer as well).
+
+**Block memory and occupancy.** 8 KB a block for a run with dihedrals and
+forces in f32. The kernel takes 47 registers a thread where it took 44
+(from the profiles); both are allocated as 48, so an SM of the RTX 4090
+holds 10 blocks of 128 threads either way, bound by the registers, and
+their tables take 80 KB of its 100 KB of block memory: the table costs no
+occupancy there.
 
 **Validated** (one RTX 4090, the settings of the Amber suite, one step;
 the same binary with and without the switch; the force differences
@@ -428,16 +449,40 @@ STMV, after 25 steps (its interval of coupling), differs by 4.3 × 10⁻⁴ of
 the RMS force between the two ways and by 4.2 × 10⁻⁴ between two runs
 with atomics: the trajectories part as two runs with atomics do.
 
-**Measured** (one RTX 4090, ada-003, the same binary with and without the
-switch, alternated twice in one job; µs a step of the tuple kernel and ms
-a step):
+**Measured: the kernel** (the same binary with and without the switch,
+alternated twice in one job, before the bound of 100,000 tuples; µs a step
+of the tuple kernel from Nsight Systems, and ms a step):
 
-| System | Tuple kernel, atomics | Block sums | Step, atomics | Block sums |
-|---|---:|---:|---:|---:|
-| JAC NVE | 12.1 | 13.2 | 0.14 | 0.14 |
-| Factor IX NVE | 24.8 | 16.4 | 0.34 | 0.34 |
-| Cellulose NVE | 220.8 | 84.4 | 1.48, 1.50 | 1.37, 1.35 |
-| STMV NPT 4 fs | 439.1 | 189.4 | 5.10, 4.89 | 4.65, 4.64 |
+| System | RTX 4090 (ada-003): atomics | Block sums | Step | RTX PRO 6000 (ada-004): atomics | Block sums | Step |
+|---|---:|---:|---|---:|---:|---|
+| JAC NVE | 12.1 | 13.2 | 0.14 → 0.14 | 6.8 | 6.8 (atomics, below the bound) | 0.12 → 0.12 |
+| Factor IX NVE | 24.8 | 16.4 | 0.34 → 0.34 | 17.0 | 12.3 | 0.25 → 0.25 |
+| Cellulose NVE | 220.8 | 84.4 | 1.49 → 1.36 | 151.5 | 81.0 | 1.19 → 1.15 |
+| STMV NPT 4 fs | 439.1 | 189.4 | 4.89 to 5.10 → 4.65 | 254.1 | 160.3 | 3.88 → 3.82 |
+
+**Measured: the Amber suite** (`scripts/benchmarks/amber/bench.py`, the
+settings of the suite with a dual list of groups, skins 3 and 0.6 Å; `main`
+and this decision alternated system by system in one job, three rounds,
+the median in ns/day):
+
+| System | RTX 4090 (ada-003): `main` | This decision | Ratio | RTX PRO 6000 (ada-004): `main` | This decision | Ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| JAC NVE | 1311.8 | 1311.8 | 1.000 | 1506.8 | 1509.4 | 1.002 |
+| JAC NVE 4 fs | 2451.1 | 2449.7 | 0.999 | 2822.3 | 2822.2 | 1.000 |
+| JAC NPT | 1185.9 | 1185.8 | 1.000 | 1338.3 | 1339.5 | 1.001 |
+| JAC NPT 4 fs | 2286.5 | 2286.1 | 1.000 | 2618.8 | 2618.8 | 1.000 |
+| Factor IX NVE | 528.8 | 543.1 | 1.027 | 713.4 | 721.5 | 1.011 |
+| Factor IX NPT | 495.8 | 508.3 | 1.025 | 660.2 | 669.1 | 1.013 |
+| Cellulose NVE | 120.9 | 133.4 | 1.103 | 158.9 | 164.7 | 1.037 |
+| Cellulose NPT | 116.8 | 127.2 | 1.089 | 152.5 | 157.7 | 1.034 |
+| STMV NPT 4 fs | 74.5 | 76.6 | 1.028 | 99.3 | 101.3 | 1.020 |
+
+STMV on the RTX 4090 varied in that job by 4% from round to round (other
+jobs ran on the node); in a job before the bound, which does not change
+STMV, it ran at 74.6 against 78.4 ns/day in three rounds within 0.3%
+(1.051). On the RTX PRO 6000 the kernel of the tuples took less time than
+on the RTX 4090 before the change (151 against 221 µs on Cellulose), and
+the change gains less there.
 
 **Considered and not done here.**
 
