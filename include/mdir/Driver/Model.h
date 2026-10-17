@@ -131,6 +131,10 @@ struct System {
   /// that are chosen take their own reaches for this and an absent
   /// `pairlistDistance` (D261).
   double prunedDistance = 0.0;
+  /// `mdir.Auto` for `pairlistDistance` or `prunedDistance`, as "AUTO" of
+  /// the control file (D[skin-auto]): the defaults above, or the reaches
+  /// that an earlier run of the same key chose and cached.
+  bool pairlistDistanceAuto = false, prunedDistanceAuto = false;
   /// A plain cutoff, as the control file without `lennard_jones_modifier`
   /// (D248).
   driver::Truncation truncation = driver::Truncation::None;

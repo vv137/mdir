@@ -630,6 +630,66 @@ within 2% of a list built with 9 Å.
 The settings of the suite (Section 10) are an outer skin of 3 Å and an
 inner skin of 0.6 Å at 2 fs, in proportion to the step.
 
+**The choice of the skins** (D[skin-auto]). Because the test of validity
+is exact, every pair of skins $(s, s_\text{in})$ gives the same pairs
+within $r_c$: the skins set the speed alone, and `"AUTO"`, the default,
+lets the run choose them. Per particle a step costs
+
+$$\frac{t_\text{step}}{N} = a + c_1\rho R_\text{in}^3 + \frac{c_2\rho R^3}{n_\text{prune}} + \frac{c_3 + c_4\rho R^3}{n_\text{build}} + \frac{L}{N n_\text{build}},$$
+
+the loop over the inner list, the pruning of the outer one every
+$n_\text{prune}$ steps, and the build every $n_\text{build}$ steps with a
+fixed cost $L$ of its launches. The intervals come from the motion of the
+particles: a list is renewed when the largest displacement since it was
+made reaches half its skin, and in equilibrium each component of a
+velocity is Gaussian with the variance $k_BT/m_i$, so the largest
+displacement over the $N$ particles grows as $v_\text{max}t$ with
+$v_\text{max}$ a few times $\sqrt{k_BT/m}$ of the lightest particles while
+the velocities are correlated, and more slowly, toward $\sqrt{6Dt}$, once
+they are not. The inner skin is crossed within a few steps, in the first
+regime, $n_\text{prune} \approx s_\text{in}/(2v_\text{max}\Delta t)$; its
+optimum then solves $3c_1R_\text{in}^2 = 2c_2R^3v_\text{max}\Delta t /
+s_\text{in}^2$ and grows as $\sqrt{\Delta t}$ for $s_\text{in} \ll r_c$,
+where the setting above grows in proportion to $\Delta t$. The outer skin
+is crossed in tens of steps, between the two regimes, and on the Amber
+suite $n_\text{build} \propto s^{1.57}$. The constants, fitted to 480 runs
+of five systems on an RTX 4090 (a root mean square of 1.0% in the
+relative residuals), only narrow the candidates, since the rate is not a
+smooth function of the skins (on JAC it falls from 4 to 5 Å and rises
+again to 6 Å): a long run on a device measures the setting above, the
+model's two best pairs at least 1 Å apart, and a climb of 0.5 Å in $s$ and
+0.1 Å in $s_\text{in}$ from the fastest, each compiled with its skins as
+constants and run from the state the run begins with for six blocks of
+about 0.5 s, and keeps the fastest unless it is within the noise of the
+setting above. The choice is cached under a key of the system, the device,
+the precision, the step, and the ensemble, which a continuation shares.
+The deterministic mode does not search: the order of a row of the matrix
+follows its cells, so its sums, which agree across skins to the rounding
+($1.8 \times 10^{-9}$ nm in the positions of a water box after 500 steps),
+repeat to the bit only with the same skins. Table 4.3 compares the choice
+with the best point of a grid; [neighbors-m0.md](../neighbors-m0.md),
+Section 6, has the details.
+
+*Table 4.3. The skins of `"AUTO"` against the default of D261 and the
+best point of the grid of #406 (µs per step, RTX 4090, mixed precision,
+the groups, twice the suite's steps, the mean of two rounds in one job;
+outer / inner reach in Å; the search, compilations included, before the
+run). On JAC at 2 fs the first round follows the search on a device it
+heated (1.0% slower), and the round that took the cache was within 0.2%
+of the best.*
+
+| System | Atoms | Default | Grid's best | `"AUTO"` chose | `"AUTO"` | / best | / default | Search |
+|---|---|---|---|---|---|---|---|---|
+| JAC NVE, 2 fs | 23,558 | 136.7 | 131.4 (14 / 8.8) | 14 / 8.8 | 133.0 | 1.012 | 0.972 | 95 s |
+| JAC NVE, 4 fs | 23,558 | 146.4 | 140.5 (14 / 8.9) | 14 / 8.8 | 140.9 | 1.003 | 0.962 | 94 s |
+| JAC NPT, 2 fs | 23,558 | 150.4 | | 13.5 / 8.9 | 147.1 | | 0.978 | 189 s |
+| JAC NPT, 4 fs | 23,558 | 154.9 | | 13.5 / 8.7 | 151.4 | | 0.977 | 186 s |
+| Factor IX NVE | 90,906 | 335.9 | 332.9 (12.5 / 8.6) | 11 / 8.6 | 335.6 | 1.008 | 0.999 | 132 s |
+| Factor IX NPT | 90,906 | 358.9 | | 11 / 8.6 | 358.7 | | 0.999 | 197 s |
+| Cellulose NVE | 408,609 | 1458.8 | 1448.4 (11.5 / 8.45) | 11.5 / 8.65 | 1435.8 | 0.991 | 0.984 | 229 s |
+| Cellulose NPT | 408,609 | 1519.1 | | 11.5 / 8.65 | 1498.7 | | 0.987 | 286 s |
+| STMV NPT, 4 fs | 1,067,095 | 4731.0 | 4565.4 (12.5 / 8.9) | 12 / 8.7 | 4535.5 | 0.993 | 0.959 | 848 s |
+
 **Checks.** In double precision `test/Driver/groups-gpu.test` runs a water
 box with a dual list (11/9.3 Å, 37 prunings and 6 builds in 100 steps) and
 the matrix, and the two give the energies of the log to every printed

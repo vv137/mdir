@@ -98,6 +98,14 @@ void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest,
   groupsOverflow += overflow;
 }
 
+/* Sets the counts of the builds and prunings and the notes of the groups
+   back to none, so that the log of a run counts its own alone after the
+   trial runs of a search of the skins (D[skin-auto]). */
+void mdrtResetCounts(void) {
+  numBuilds = numPrunes = numLateBuilds = 0;
+  groupsBlocks = groupsCapacity = groupsLongest = groupsOverflow = 0;
+}
+
 /* A program that embeds a run may take its failures instead of the process
    exiting (D196). The handler records the failure; the run
    goes on to the end of its segment, whose state the program discards. */

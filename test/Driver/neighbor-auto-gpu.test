@@ -38,8 +38,8 @@
 # BIG: MDIR: the inner lists were pruned {{[0-9]+}} times
 # SMALL: MDIR: neighbor structure: the matrix with the reach 10.5 Å (AUTO: 8000 particles, fewer than {{[0-9]+}})
 # GIVEN: MDIR: the inner lists were pruned {{[0-9]+}} times
-# BIGJSON: {"neighbor_structure": "groups", "neighbor_structure_reason": "64000 particles, at least {{[0-9]+}}, on a GPU", "neighbor_structure_requested": "auto", "neighbor_structures": ["groups"], "pairlist_distance_angstrom": 12, "pruned_distance_angstrom": 9.6}
-# SMALLJSON: {"neighbor_structure": "matrix", "neighbor_structure_reason": "8000 particles, fewer than {{[0-9]+}}", "neighbor_structure_requested": "auto", "neighbor_structures": ["matrix"], "pairlist_distance_angstrom": 10.5, "pruned_distance_angstrom": null}
+# BIGJSON: {"neighbor_structure": "groups", "neighbor_structure_reason": "64000 particles, at least {{[0-9]+}}, on a GPU", "neighbor_structure_requested": "auto", "neighbor_structures": ["groups"], "pairlist_distance_angstrom": 12, "pairlist_distance_source": "default", "pruned_distance_angstrom": 9.6, "pruned_distance_source": "default"}
+# SMALLJSON: {"neighbor_structure": "matrix", "neighbor_structure_reason": "8000 particles, fewer than {{[0-9]+}}", "neighbor_structure_requested": "auto", "neighbor_structures": ["matrix"], "pairlist_distance_angstrom": 10.5, "pairlist_distance_source": "default", "pruned_distance_angstrom": null, "pruned_distance_source": "default"}
 
 #--- run.toml
 [input]

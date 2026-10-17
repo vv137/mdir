@@ -33,6 +33,10 @@ for variable in ("CUDA_CACHE_PATH", "TMPDIR"):
 # the tests run on no device rather than on the first.
 if os.environ.get("CUDA_VISIBLE_DEVICES") == "":
     config.environment["CUDA_VISIBLE_DEVICES"] = ""
+# The cache of the chosen skins (D[skin-auto]) is off, so that no choice of
+# an earlier run under HOME reaches a test; the tests of the cache give
+# their own directory and turn it on.
+config.environment["MDIR_SKIN_CACHE"] = "off"
 llvm_config.use_default_substitutions()
 
 config.mdir_tools_dir = os.path.join(config.mdir_obj_root, "bin")
