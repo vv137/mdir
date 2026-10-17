@@ -75,16 +75,13 @@ public:
       }
       // With `auto`, a grid in f64 keeps the spreading of before, which is
       // faster there on the devices measured (their f64 is slow, and the
-      // atomics of a tile are a loop of compare-and-swap of 64 bits); so do
-      // the bricks of D108 and D109, the B-splines of order 4 in f32, on a
-      // small grid. Every other spreading takes the tiles that fit.
-      if (layout == "auto") {
-        if (!element.isF32())
-          return;
-        bool bricks = !op.getProlate() && op.getOrder() == 4;
-        if (bricks && points < minPoints)
-          return;
-      }
+      // atomics of a tile are a loop of compare-and-swap of 64 bits); so
+      // does a grid of fewer than `min-points` points, whose bins are too
+      // few to occupy the device (on JAC, 512 bins of 8 points, the tiles
+      // were slower on an RTX PRO 6000 at every order). Every other
+      // spreading takes the tiles that fit.
+      if (layout == "auto" && (!element.isF32() || points < minPoints))
+        return;
       op.setTilesAttr(builder.getI64IntegerAttr(edge));
     });
   }

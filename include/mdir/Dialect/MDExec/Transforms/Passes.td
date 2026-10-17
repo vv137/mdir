@@ -111,11 +111,10 @@ def ChooseSpreading
     after the precision is assigned and before the storage.
 
     `layout=global` sets no tiles; `layout=tiles` tiles every sum that can
-    be tiled; `layout=auto`, the default, tiles every sum in f32 that can
-    be tiled but one that would otherwise spread into the bricks (the
-    B-splines of order 4) on a grid of fewer than `min-points` points,
-    where the bricks are faster; a grid in f64 keeps the spreading of
-    before, which is faster there. A sum can be tiled where the run is not in
+    be tiled; `layout=auto`, the default, tiles every sum in f32 whose
+    grid has at least `min-points` points: a smaller grid has too few
+    bins to occupy a device, and a grid in f64 spreads faster as before.
+    A sum can be tiled where the run is not in
     the deterministic mode (whose grid is in fixed point, D70, D84), where
     each edge of the grid has at least $E + P - 1$ points, so that a point
     of a tile wraps around the grid once at most, and where a tile of
@@ -135,9 +134,8 @@ def ChooseSpreading
     Option<"edge", "edge", "int64_t", /*default=*/"8",
            "The points of an edge of a bin of the tiles: 4, 8, or 16">,
     Option<"minPoints", "min-points", "int64_t", /*default=*/"500000",
-           "With layout=auto, the least number of points of a grid whose "
-           "B-splines of order 4 in f32 are tiled rather than spread into "
-           "bricks">,
+           "With layout=auto, the least number of points of a grid that "
+           "is tiled">,
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
            "The deterministic mode, which takes no tiles">
   ];
