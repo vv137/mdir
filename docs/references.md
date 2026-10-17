@@ -231,6 +231,15 @@ parallel tempering simulations," *J. Chem. Theory Comput.* **3**(1),
 
 Used for: the statistical inefficiency by which `scripts/free-energy.py` spaces its samples (D161).
 
+### Clenshaw1955
+
+C. W. Clenshaw, "A note on the summation of Chebyshev series,"
+*Math. Tables Aids Comput.* **9**(51), 118–120 (1955) (the journal is now
+*Mathematics of Computation*).
+[doi:10.1090/S0025-5718-1955-0071856-0](https://doi.org/10.1090/S0025-5718-1955-0071856-0)
+
+Used for: the recurrence by which `md.chebyshev` is evaluated (D[prolate-pair-table]).
+
 ### CurtisPowellReid1974
 
 A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse
