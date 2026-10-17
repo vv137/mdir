@@ -94,6 +94,19 @@ static llvm::StringRef getTupleSumsOptions() {
   return "";
 }
 
+/// The options of the pruning in the loop over pairs (D[fused-prune]):
+/// MDIR_FUSED_PRUNE=on fuses from MDIR_FUSED_PRUNE_GROUPS groups (0 if
+/// unset).
+static std::string getFusedPruningOptions() {
+  const char *fuse = std::getenv("MDIR_FUSED_PRUNE");
+  if (!fuse || llvm::StringRef(fuse) != "on")
+    return "";
+  std::string options = "fuse-pruning=true ";
+  if (const char *groups = std::getenv("MDIR_FUSED_PRUNE_GROUPS"))
+    options += "fuse-pruning-groups=" + std::string(groups) + " ";
+  return options;
+}
+
 std::string mdir::compiler::getPipeline(const Control &control,
                                const Program &program, StringRef gpuOptions) {
   std::string pipeline;
@@ -185,6 +198,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // The sums of a block of the tuples evaluated once, off or for runs
        // of any size, for comparing and for tests (D283).
        << getTupleSumsOptions()
+       // The pruning of a dual list in the loop over pairs that follows
+       // its refresh (D[fused-prune]).
+       << getFusedPruningOptions()
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        // The code of the host writes no buffer of the model that the entry

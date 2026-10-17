@@ -188,6 +188,18 @@ struct PruneBuffers {
   Value blockOf, activeUnits, activeCount, runSums, wideSums;
 };
 
+/// What the kernels of a pruning take, made on the host: the buffers, the
+/// frames of the places, the groups and the blocks of the longest list, the
+/// square of the widened reach and the cell in f32, and the blocks of the
+/// outer list with their runs of 32 and 1024.
+struct PruneContext {
+  GroupBuffers buffers;
+  InnerLists inner;
+  PruneBuffers prune;
+  Value placed, groups, stride, reach2, box32, blocks, runs, wideRuns;
+  bool triclinic = false;
+};
+
 /// Where the global sums and maxima of a loop arrive: numbers on the
 /// device, and the buffer of the host that they are copied to.
 struct Cell {
@@ -246,6 +258,12 @@ public:
   /// fewer keeps the atomics, chosen on the host by the count
   /// (`tuple-block-least`).
   int64_t tupleBlockLeast = 100000;
+  /// Whether the first loop over pairs after a refresh of a dual list, at
+  /// the same positions and in the same cell, prunes the inner list in its
+  /// own kernel, a warp a group, where the refresh prunes, from
+  /// `fusePruningGroups` groups (`fuse-pruning`, D[fused-prune]).
+  bool fusePruning = false;
+  int64_t fusePruningGroups = 0;
 
 private:
   /// An entry of the runtime's store for a tuple set built on the device:
@@ -336,6 +354,34 @@ private:
   void emitGroupsPrune(OpBuilder &builder, Location loc,
                        const Neighbors &structure, Value positions,
                        Value box, double reach);
+  /// The first part of a pruning: remembers the cell, counts the pruning,
+  /// moves the positions into the frames of their groups and copies the
+  /// configuration (emitFramePositions), and clears the counts of the
+  /// active units (D268). The loop over pairs that prunes
+  /// (D[fused-prune]) takes the rest.
+  void emitPruneFrames(OpBuilder &builder, Location loc,
+                       const Neighbors &structure, Value positions,
+                       Value box);
+  /// What the kernels of a pruning with the reach `reach` in the cell `box`
+  /// take, made on the host where `builder` is.
+  PruneContext getPruneContext(OpBuilder &builder, Location loc,
+                               const Neighbors &structure, Value box,
+                               double reach);
+  /// What the warp of group `group` (an index) does in a pruning, `lane`
+  /// (an i32) its lane: it writes the entries of the outer list of the
+  /// group with a pair within the reach to the front of the blocks of the
+  /// group, the number each block holds, and the counts of the active
+  /// units. Returns the number of entries it kept (an i32).
+  Value emitPruneGroup(OpBuilder &b, Location loc, const PruneContext &ctx,
+                       Value group, Value lane);
+  /// Lists the active units after the warps of the groups (D268).
+  void emitActiveUnits(OpBuilder &builder, Location loc,
+                       const PruneContext &ctx);
+  /// Whether a loop over pairs prunes for its refresh, on the host: from
+  /// `fusePruningGroups` groups of the last build of `structure`
+  /// (D[fused-prune]). The refresh and the loop decide by this one test.
+  Value takesFusedPruning(OpBuilder &builder, Location loc,
+                          const Neighbors &structure);
   /// The rows of the neighbor matrix `handle`, as they are where `builder`
   /// is.
   Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle);
@@ -652,6 +698,15 @@ private:
   /// that may write the positions (findSharedFrames, D268).
   llvm::DenseSet<Operation *> sharesPrunedFrames;
   void findSharedFrames(func::FuncOp function, md_exec::BufferAliases &aliases);
+  /// The refreshes of dual lists whose pruning the first loop over pairs
+  /// that takes their result does (D[fused-prune]), with that loop: the
+  /// loops of sharesPrunedFrames that are the first users of the refresh.
+  /// The refresh then moves the positions into their frames, and the loop
+  /// prunes and computes in one kernel where the refresh pruned.
+  llvm::DenseMap<Operation *, Operation *> prunedInLoop;
+  /// The reach of the inner list of each refresh of prunedInLoop.
+  llvm::DenseMap<Operation *, double> prunedInLoopReach;
+  void findPrunedInLoop();
 };
 
 } // namespace
@@ -2061,6 +2116,34 @@ void Lowering::findSharedFrames(func::FuncOp function,
   });
 }
 
+void Lowering::findPrunedInLoop() {
+  // A loop of sharesPrunedFrames follows its refresh at the same positions
+  // and in the same cell, with nothing between that may write the
+  // positions. It prunes for the refresh if it is also the first op that
+  // takes the refresh's result: nothing reads the inner list before the
+  // loop writes it (D[fused-prune]).
+  for (Operation *op : sharesPrunedFrames) {
+    auto pair = cast<md_exec::PairForOp>(op);
+    auto refresh =
+        pair.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
+    if (!refresh.getStale())
+      continue;
+    Value result = refresh.getResult();
+    bool first = true;
+    for (Operation *crossed = refresh->getNextNode(); first && crossed != pair;
+         crossed = crossed->getNextNode())
+      crossed->walk([&](Operation *inner) {
+        first &= !llvm::is_contained(inner->getOperands(), result);
+      });
+    if (!first)
+      continue;
+    prunedInLoop[refresh.getOperation()] = pair.getOperation();
+    prunedInLoopReach[refresh.getOperation()] =
+        refresh.getCutoff().convertToDouble() +
+        refresh.getPruneSkin()->convertToDouble();
+  }
+}
+
 void Lowering::findRows(func::FuncOp function) {
   // A loop over tuples with a flag is lowered alone
   // (D278).
@@ -3214,78 +3297,158 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   // A warp for each unit of work, as many warps as particles at most: the
   // sums of the warps go to the scratch of the particles. A warp takes the
   // units w, w + warps, ...
+  Operation *yield = op.getKernel().front().getTerminator();
+  unsigned numOuts = op.getOuts().size();
+  Value one = createIndex(builder, loc, 1);
+  Value warp32 = createIndex(builder, loc, 32);
+  Value block = createIndex(builder, loc, blockSize);
+  // A loop of `count` units of work, `body` emitting each: returns the
+  // number of warps whose sums are in the scratch.
+  auto emitWarps = [&](OpBuilder &at, Value count,
+                       function_ref<Value(OpBuilder &, Value)> first,
+                       function_ref<SmallVector<Value>(OpBuilder &, Value,
+                                                       Value)>
+                           body) -> Value {
+    Value warps = arith::MaxUIOp::create(
+        at, loc, arith::MinUIOp::create(at, loc, count, size), one);
+    Value threads = arith::MulIOp::create(at, loc, warps, warp32);
+    Value grid = createGroups(at, loc, threads, blockSize);
+    auto launch = gpu::LaunchOp::create(at, loc, grid, one, one, block, one,
+                                        one);
+    OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+    Value thread = arith::AddIOp::create(
+        kernel, loc,
+        arith::MulIOp::create(kernel, loc, launch.getBlockIds().x, block),
+        launch.getThreadIds().x);
+    Value warp = arith::DivUIOp::create(kernel, loc, thread, warp32);
+    Value lane = arith::RemUIOp::create(kernel, loc, thread, warp32);
+    Value valid = arith::CmpIOp::create(kernel, loc,
+                                        arith::CmpIPredicate::ult, warp, warps);
+    Value end = first(kernel, count);
+    Value start = arith::SelectOp::create(kernel, loc, valid, warp, end);
+    SmallVector<Value> initial;
+    for (unsigned i = numOuts, e = yield->getNumOperands(); i != e; ++i)
+      initial.push_back(
+          createZero(kernel, loc, yield->getOperand(i).getType()));
+    auto loop = scf::ForOp::create(
+        kernel, loc, start, end, warps, initial,
+        [&](OpBuilder &b, Location, Value unit, ValueRange sums) {
+          SmallVector<Value> contributions = body(b, unit, lane);
+          SmallVector<Value> next;
+          for (auto [sum, contribution] : llvm::zip(sums, contributions))
+            next.push_back(arith::AddFOp::create(b, loc, sum, contribution));
+          scf::YieldOp::create(b, loc, next);
+        });
+    SmallVector<Value> totals(loop.getResults());
+    for (Value &total : totals)
+      for (int64_t offset = 16; offset >= 1; offset /= 2)
+        total = arith::AddFOp::create(kernel, loc, total,
+                                      shuffleXor(kernel, loc, total, offset));
+    if (!totals.empty()) {
+      Value leader = arith::AndIOp::create(
+          kernel, loc, valid,
+          arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::eq, lane,
+                                createIndex(kernel, loc, 0)));
+      scf::IfOp::create(kernel, loc, leader, [&](OpBuilder &then, Location) {
+        for (auto [index, total] : llvm::enumerate(totals))
+          storeElement(then, loc, total, op.getScratch()[2 * index], warp);
+        scf::YieldOp::create(then, loc);
+      });
+    }
+    gpu::TerminatorOp::create(kernel, loc);
+    bringIn(launch);
+    return warps;
+  };
+
+  // The loop over the units of work: of a dual list, the warps take the
+  // active units, as many as the last pruning left on the device; the grid
+  // is that of all units.
   Value units = arith::IndexCastOp::create(
       builder, loc, builder.getIndexType(),
       memref::LoadOp::create(builder, loc, structure.sizes,
                              ValueRange{createIndex(builder, loc, 2)}));
-  Value one = createIndex(builder, loc, 1);
-  Value warps = arith::MaxUIOp::create(
-      builder, loc, arith::MinUIOp::create(builder, loc, units, size), one);
-  Value warp32 = createIndex(builder, loc, 32);
-  Value threads = arith::MulIOp::create(builder, loc, warps, warp32);
-  Value block = createIndex(builder, loc, blockSize);
-  Value grid = createGroups(builder, loc, threads, blockSize);
-  auto launch =
-      gpu::LaunchOp::create(builder, loc, grid, one, one, block, one, one);
-  OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
-  Value thread = arith::AddIOp::create(
-      kernel, loc,
-      arith::MulIOp::create(kernel, loc, launch.getBlockIds().x, block),
-      launch.getThreadIds().x);
-  Value warp = arith::DivUIOp::create(kernel, loc, thread, warp32);
-  Value lane = arith::RemUIOp::create(kernel, loc, thread, warp32);
-  Value valid = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::ult,
-                                      warp, warps);
-  // Of a dual list, the warps take the active units, as many as the last
-  // pruning left on the device; the grid is that of all units.
-  Value end = units;
-  if (activeCount)
-    end = arith::IndexCastOp::create(
-        kernel, loc, kernel.getIndexType(),
-        memref::LoadOp::create(kernel, loc, activeCount,
-                               ValueRange{createIndex(kernel, loc, 0)}));
-  Value first = arith::SelectOp::create(kernel, loc, valid, warp, end);
+  auto emitLoop = [&](OpBuilder &at) -> Value {
+    return emitWarps(
+        at, units,
+        [&](OpBuilder &kernel, Value count) -> Value {
+          if (!activeCount)
+            return count;
+          return arith::IndexCastOp::create(
+              kernel, loc, kernel.getIndexType(),
+              memref::LoadOp::create(kernel, loc, activeCount,
+                                     ValueRange{createIndex(kernel, loc, 0)}));
+        },
+        [&](OpBuilder &body, Value unit, Value lane) {
+          if (activeUnits)
+            unit = arith::IndexCastOp::create(
+                body, loc, body.getIndexType(),
+                memref::LoadOp::create(body, loc, activeUnits,
+                                       ValueRange{unit}));
+          IRMapping local;
+          return kernels::emitGroupPairKernel(body, op, lists, layout, box,
+                                              inverse, unit, lane, local);
+        });
+  };
 
-  Operation *yield = op.getKernel().front().getTerminator();
-  unsigned numOuts = op.getOuts().size();
-  SmallVector<Value> initial;
-  for (unsigned i = numOuts, e = yield->getNumOperands(); i != e; ++i)
-    initial.push_back(
-        createZero(kernel, loc, yield->getOperand(i).getType()));
-  auto loop = scf::ForOp::create(
-      kernel, loc, first, end, warps, initial,
-      [&](OpBuilder &body, Location, Value unit, ValueRange sums) {
-        if (activeUnits)
-          unit = arith::IndexCastOp::create(
-              body, loc, body.getIndexType(),
-              memref::LoadOp::create(body, loc, activeUnits,
-                                     ValueRange{unit}));
-        IRMapping local;
-        SmallVector<Value> contributions = kernels::emitGroupPairKernel(
-            body, op, lists, layout, box, inverse, unit, lane, local);
-        SmallVector<Value> next;
-        for (auto [sum, contribution] : llvm::zip(sums, contributions))
-          next.push_back(arith::AddFOp::create(body, loc, sum, contribution));
-        scf::YieldOp::create(body, loc, next);
-      });
-  SmallVector<Value> totals(loop.getResults());
-  for (Value &total : totals)
-    for (int64_t offset = 16; offset >= 1; offset /= 2)
-      total = arith::AddFOp::create(kernel, loc, total,
-                                    shuffleXor(kernel, loc, total, offset));
-  if (!totals.empty()) {
-    Value leader = arith::AndIOp::create(
-        kernel, loc, valid,
-        arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::eq, lane,
-                              createIndex(kernel, loc, 0)));
-    scf::IfOp::create(kernel, loc, leader, [&](OpBuilder &then, Location) {
-      for (auto [index, total] : llvm::enumerate(totals))
-        storeElement(then, loc, total, op.getScratch()[2 * index], warp);
-      scf::YieldOp::create(then, loc);
-    });
+  // The loop that prunes for its refresh (D[fused-prune]): where the
+  // refresh pruned, and from `fusePruningGroups` groups, a warp for each
+  // group prunes the inner list of the group from the outer one as the
+  // refresh would (emitPruneGroup) and then computes the pairs of the
+  // entries it kept, read back from the inner list after a barrier of the
+  // warp, as a stream of the group; the active units of the steps that
+  // follow are listed after.
+  auto refresh = op.getNeighbors().getDefiningOp<md_exec::RefreshNeighborsOp>();
+  auto fused = refresh ? prunedInLoop.find(refresh.getOperation())
+                       : prunedInLoop.end();
+  Value warps;
+  if (fused != prunedInLoop.end() && fused->second == op.getOperation()) {
+    Value cell = op.getCellMutable().get();
+    double reach = prunedInLoopReach.lookup(refresh.getOperation());
+    Value now = arith::AndIOp::create(
+        builder, loc,
+        memref::LoadOp::create(builder, loc, structure.prunedNow,
+                               ValueRange{}),
+        takesFusedPruning(builder, loc, structure));
+    auto choice = scf::IfOp::create(builder, loc,
+                                    TypeRange{builder.getIndexType()}, now,
+                                    /*withElseRegion=*/true);
+    {
+      OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
+      PruneContext ctx = getPruneContext(then, loc, structure, cell, reach);
+      Value groupWarps = emitWarps(
+          then, ctx.groups,
+          [&](OpBuilder &, Value count) -> Value { return count; },
+          [&](OpBuilder &body, Value group, Value lane) {
+            Value kept = emitPruneGroup(
+                body, loc, ctx, group,
+                arith::IndexCastOp::create(body, loc, body.getI32Type(),
+                                           lane));
+            // The entries that other lanes of the warp wrote.
+            NVVM::SyncWarpOp::create(
+                body, loc,
+                arith::ConstantOp::create(body, loc, body.getI32Type(),
+                                          body.getI32IntegerAttr(-1)));
+            kernels::GroupLists inner = lists;
+            kernels::GroupStream stream{ctx.prune.blockOf, ctx.stride, kept};
+            IRMapping local;
+            return kernels::emitGroupPairKernel(body, op, inner, layout, box,
+                                                inverse, group, lane, local,
+                                                &stream);
+          });
+      emitActiveUnits(then, loc, ctx);
+      scf::YieldOp::create(then, loc, groupWarps);
+      OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
+      scf::YieldOp::create(otherwise, loc, emitLoop(otherwise));
+    }
+    warps = choice.getResult(0);
+    // The inner list is whole only now: the check of the pruning follows
+    // the loop (D268).
+    if (checkPruning)
+      emitPruneCheck(builder, loc, structure, positions, cell,
+                     refresh.getCutoff().convertToDouble());
+  } else {
+    warps = emitLoop(builder);
   }
-  gpu::TerminatorOp::create(kernel, loc);
-  bringIn(launch);
 
   // The buffers are freed once the loop has read them.
   for (Value target : targets) {
@@ -5692,6 +5855,14 @@ std::pair<Value, Value> Lowering::getGroupsShape(OpBuilder &builder,
   return {groups, stride};
 }
 
+Value Lowering::takesFusedPruning(OpBuilder &builder, Location loc,
+                                  const Neighbors &structure) {
+  Value groups = getGroupsShape(builder, loc, structure).first;
+  return arith::CmpIOp::create(
+      builder, loc, arith::CmpIPredicate::uge, groups,
+      createIndex(builder, loc, fusePruningGroups));
+}
+
 void Lowering::emitGroupsBlockIndex(OpBuilder &builder, Location loc,
                                     const Neighbors &structure) {
   Type i32 = builder.getI32Type();
@@ -5831,14 +6002,9 @@ static void emitAtomicAddI32(OpBuilder &b, Location loc, Value buffer,
                             StringRef("device"));
 }
 
-void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
+void Lowering::emitPruneFrames(OpBuilder &builder, Location loc,
                                const Neighbors &structure, Value positions,
-                               Value box, double reach) {
-  Type i32 = builder.getI32Type();
-  Type f32 = builder.getF32Type();
-  Type f64 = builder.getF64Type();
-  Type index = builder.getIndexType();
-  auto vector3 = VectorType::get({3}, f32);
+                               Value box) {
   // Remember the cell of the pruning; the kernel of the frames below
   // remembers the configuration.
   for (int64_t c = 0; c < getCellSize(); ++c)
@@ -5852,45 +6018,19 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
       ValueRange());
 
   GroupBuffers buffers = getGroupsBuffers(builder, loc, structure.handle);
-  InnerLists inner = getInnerLists(builder, loc, structure.handle);
   PruneBuffers prune = getPruneBuffers(builder, loc, structure.handle);
   Value placed = getGroupsPlaced(builder, loc, structure.handle);
+  Value index = createIndex(builder, loc, 0);
   Value places = arith::IndexCastOp::create(
-      builder, loc, index,
+      builder, loc, builder.getIndexType(),
       memref::LoadOp::create(builder, loc, structure.sizes,
-                             ValueRange{createIndex(builder, loc, 0)}));
-  auto [groups, stride] = getGroupsShape(builder, loc, structure);
-  // The reach widened as the build widens it: by 3e-6 of the sum of the
-  // edges, far more than the rounding of the positions to f32 can move a
-  // distance, so that every pair within the reach in f64 is kept.
-  // For a triclinic cell, the diagonal and the magnitudes of the tilts.
-  Value sum = vector::ReductionOp::create(
-      builder, loc, vector::CombiningKind::ADD,
-      isTriclinic(box) ? Value(math::AbsFOp::create(builder, loc, box)) : box);
-  Value widened = arith::AddFOp::create(
-      builder, loc, createReal(builder, loc, f64, reach),
-      arith::MulFOp::create(builder, loc, sum,
-                            createReal(builder, loc, f64, 3.0e-6)));
-  Value reach2 = arith::TruncFOp::create(
-      builder, loc, f32, arith::MulFOp::create(builder, loc, widened, widened));
-  Value box32 = arith::TruncFOp::create(
-      builder, loc,
-      VectorType::get({cast<VectorType>(box.getType()).getNumElements()}, f32),
-      box);
-  auto constant32 = [&](OpBuilder &b, int64_t v) -> Value {
-    return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
-  };
-  auto toIndex = [&](OpBuilder &b, Value v) -> Value {
-    return arith::IndexCastOp::create(b, loc, b.getIndexType(), v);
-  };
-  Value warp32 = createIndex(builder, loc, 32);
-  // The blocks of the outer list, in runs of 32 and of 1024, for the active
-  // units.
+                             ValueRange{index}));
   Value blocks = arith::IndexCastOp::create(
-      builder, loc, index,
+      builder, loc, builder.getIndexType(),
       memref::LoadOp::create(builder, loc, structure.sizes,
                              ValueRange{createIndex(builder, loc, 2)}));
-  Value runs = arith::CeilDivUIOp::create(builder, loc, blocks, warp32);
+  Value runs = arith::CeilDivUIOp::create(builder, loc, blocks,
+                                          createIndex(builder, loc, 32));
   Value wideRuns = arith::CeilDivUIOp::create(
       builder, loc, blocks, createIndex(builder, loc, 1024));
 
@@ -5906,194 +6046,292 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
                       {prune.wideSums, wideRuns},
                       {prune.activeCount, createIndex(builder, loc, 1)}});
 
+  // The loops over pairs at these positions may take the frames as they are
+  // (lowerGroupPairFor).
+  memref::StoreOp::create(
+      builder, loc,
+      arith::ConstantOp::create(builder, loc, builder.getI1Type(),
+                                builder.getBoolAttr(true)),
+      structure.prunedNow, ValueRange{});
+}
+
+PruneContext Lowering::getPruneContext(OpBuilder &builder, Location loc,
+                                       const Neighbors &structure, Value box,
+                                       double reach) {
+  Type f32 = builder.getF32Type();
+  Type f64 = builder.getF64Type();
+  Type index = builder.getIndexType();
+  PruneContext ctx;
+  ctx.buffers = getGroupsBuffers(builder, loc, structure.handle);
+  ctx.inner = getInnerLists(builder, loc, structure.handle);
+  ctx.prune = getPruneBuffers(builder, loc, structure.handle);
+  ctx.placed = getGroupsPlaced(builder, loc, structure.handle);
+  std::tie(ctx.groups, ctx.stride) = getGroupsShape(builder, loc, structure);
+  ctx.triclinic = isTriclinic(box);
+  // The reach widened as the build widens it: by 3e-6 of the sum of the
+  // edges, far more than the rounding of the positions to f32 can move a
+  // distance, so that every pair within the reach in f64 is kept.
+  // For a triclinic cell, the diagonal and the magnitudes of the tilts.
+  Value sum = vector::ReductionOp::create(
+      builder, loc, vector::CombiningKind::ADD,
+      ctx.triclinic ? Value(math::AbsFOp::create(builder, loc, box)) : box);
+  Value widened = arith::AddFOp::create(
+      builder, loc, createReal(builder, loc, f64, reach),
+      arith::MulFOp::create(builder, loc, sum,
+                            createReal(builder, loc, f64, 3.0e-6)));
+  ctx.reach2 = arith::TruncFOp::create(
+      builder, loc, f32, arith::MulFOp::create(builder, loc, widened, widened));
+  ctx.box32 = arith::TruncFOp::create(
+      builder, loc,
+      VectorType::get({cast<VectorType>(box.getType()).getNumElements()}, f32),
+      box);
+  // The blocks of the outer list, in runs of 32 and of 1024, for the active
+  // units.
+  ctx.blocks = arith::IndexCastOp::create(
+      builder, loc, index,
+      memref::LoadOp::create(builder, loc, structure.sizes,
+                             ValueRange{createIndex(builder, loc, 2)}));
+  ctx.runs = arith::CeilDivUIOp::create(builder, loc, ctx.blocks,
+                                        createIndex(builder, loc, 32));
+  ctx.wideRuns = arith::CeilDivUIOp::create(builder, loc, ctx.blocks,
+                                            createIndex(builder, loc, 1024));
+  return ctx;
+}
+
+void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
+                               const Neighbors &structure, Value positions,
+                               Value box, double reach) {
+  emitPruneFrames(builder, loc, structure, positions, box);
+  PruneContext ctx = getPruneContext(builder, loc, structure, box, reach);
+  Value warp32 = createIndex(builder, loc, 32);
+  // A warp for each group (emitPruneGroup).
+  launchOver(builder, loc,
+             arith::MulIOp::create(builder, loc, ctx.groups, warp32),
+             [&](OpBuilder &b, Value thread) {
+               Value group = arith::DivUIOp::create(b, loc, thread, warp32);
+               Value lane = arith::IndexCastOp::create(
+                   b, loc, b.getI32Type(),
+                   arith::RemUIOp::create(b, loc, thread, warp32));
+               emitPruneGroup(b, loc, ctx, group, lane);
+             });
+  emitActiveUnits(builder, loc, ctx);
+}
+
+Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
+                               const PruneContext &ctx, Value group,
+                               Value lane) {
+  Type i32 = b.getI32Type();
+  Type f32 = b.getF32Type();
+  auto vector3 = VectorType::get({3}, f32);
+  auto constant32 = [&](OpBuilder &b, int64_t v) -> Value {
+    return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
+  };
+  auto toIndex = [&](OpBuilder &b, Value v) -> Value {
+    return arith::IndexCastOp::create(b, loc, b.getIndexType(), v);
+  };
+  const GroupBuffers &buffers = ctx.buffers;
+  const InnerLists &inner = ctx.inner;
+  const PruneBuffers &prune = ctx.prune;
+  Value placed = ctx.placed;
+  Value stride = ctx.stride;
+  Value reach2 = ctx.reach2;
+  Value box32 = ctx.box32;
   // The blocks of each group in the order of its list, made at the build
   // (emitGroupsBlockIndex).
   Value blockOf = prune.blockOf;
 
-  // A warp for each group: it takes the entries of the outer list in their
+  // The warp takes the entries of the outer list of the group in their
   // order, 32 at a time, and writes those with a pair within the reach to
   // the front of the blocks of the group, in their order (a ballot and a
   // count of the bits below each lane), so that the inner list fills its
   // blocks and adds no order of its own to that of the outer list.
-  launchOver(
-      builder, loc, arith::MulIOp::create(builder, loc, groups, warp32),
-      [&](OpBuilder &b, Value thread) {
-        Value group = arith::DivUIOp::create(b, loc, thread, warp32);
-        Value lane = arith::IndexCastOp::create(
-            b, loc, i32, arith::RemUIOp::create(b, loc, thread, warp32));
-        Value count = memref::LoadOp::create(b, loc, buffers.counts,
-                                             ValueRange{group});
-        Value base = arith::MulIOp::create(b, loc, group, stride);
-        // The particles of the group, in every lane.
-        Value u = arith::AndIOp::create(b, loc, lane, constant32(b, 15));
-        Value member = arith::AddIOp::create(
-            b, loc,
-            arith::MulIOp::create(b, loc, group, createIndex(b, loc, 16)),
-            toIndex(b, u));
-        Value mine = loadElement(b, loc, placed, member);
-        Value width = constant32(b, 32);
-        SmallVector<Value> members;
-        for (int64_t p = 0; p != 16; ++p) {
-          SmallVector<Value> parts;
-          for (int64_t c = 0; c != 3; ++c)
-            parts.push_back(
-                gpu::ShuffleOp::create(
-                    b, loc, vector::ExtractOp::create(b, loc, mine, c),
-                    constant32(b, p), width, gpu::ShuffleMode::IDX)
-                    .getShuffleResult());
-          members.push_back(
-              vector::FromElementsOp::create(b, loc, vector3, parts));
-        }
-        Value below = arith::SubIOp::create(
-            b, loc, arith::ShLIOp::create(b, loc, constant32(b, 1), lane),
-            constant32(b, 1));
-        // The slot of entry `e` of the list of the group.
-        auto slotOf = [&](OpBuilder &c, Value e) -> Value {
-          Value block = memref::LoadOp::create(
-              c, loc, blockOf,
-              ValueRange{arith::AddIOp::create(
-                  c, loc, base,
-                  toIndex(c, arith::DivUIOp::create(c, loc, e,
-                                                    constant32(c, 64))))});
-          return arith::AddIOp::create(
+  Value count = memref::LoadOp::create(b, loc, buffers.counts,
+                                       ValueRange{group});
+  Value base = arith::MulIOp::create(b, loc, group, stride);
+  // The particles of the group, in every lane.
+  Value u = arith::AndIOp::create(b, loc, lane, constant32(b, 15));
+  Value member = arith::AddIOp::create(
+      b, loc,
+      arith::MulIOp::create(b, loc, group, createIndex(b, loc, 16)),
+      toIndex(b, u));
+  Value mine = loadElement(b, loc, placed, member);
+  Value width = constant32(b, 32);
+  SmallVector<Value> members;
+  for (int64_t p = 0; p != 16; ++p) {
+    SmallVector<Value> parts;
+    for (int64_t c = 0; c != 3; ++c)
+      parts.push_back(
+          gpu::ShuffleOp::create(
+              b, loc, vector::ExtractOp::create(b, loc, mine, c),
+              constant32(b, p), width, gpu::ShuffleMode::IDX)
+              .getShuffleResult());
+    members.push_back(
+        vector::FromElementsOp::create(b, loc, vector3, parts));
+  }
+  Value below = arith::SubIOp::create(
+      b, loc, arith::ShLIOp::create(b, loc, constant32(b, 1), lane),
+      constant32(b, 1));
+  // The slot of entry `e` of the list of the group.
+  auto slotOf = [&](OpBuilder &c, Value e) -> Value {
+    Value block = memref::LoadOp::create(
+        c, loc, blockOf,
+        ValueRange{arith::AddIOp::create(
+            c, loc, base,
+            toIndex(c, arith::DivUIOp::create(c, loc, e,
+                                              constant32(c, 64))))});
+    return arith::AddIOp::create(
+        c, loc,
+        arith::MulIOp::create(c, loc, toIndex(c, block),
+                              createIndex(c, loc, 64)),
+        toIndex(c, arith::RemUIOp::create(c, loc, e,
+                                          constant32(c, 64))));
+  };
+  auto rounds = scf::ForOp::create(
+      b, loc, constant32(b, 0), count, constant32(b, 32),
+      ValueRange{constant32(b, 0)},
+      [&](OpBuilder &c, Location, Value first, ValueRange carried) {
+        Value kept = carried[0];
+        Value e = arith::AddIOp::create(c, loc, first, lane);
+        Value has = arith::CmpIOp::create(
+            c, loc, arith::CmpIPredicate::slt, e, count);
+        Value at = slotOf(
+            c, arith::SelectOp::create(c, loc, has, e, first));
+        Value entry = memref::LoadOp::create(c, loc, buffers.entries,
+                                             ValueRange{at});
+        Value mask = arith::SelectOp::create(
+            c, loc, has,
+            memref::LoadOp::create(c, loc, buffers.masks,
+                                   ValueRange{at}),
+            constant32(c, 0));
+        // The entry in the frame of the group: moved by the whole
+        // cells, or lattice vectors, of the shift in its mask (D95,
+        // D115).
+        Value position = loadElement(
+            c, loc, placed,
+            toIndex(c, arith::SelectOp::create(c, loc, has, entry,
+                                               constant32(c, 0))));
+        int64_t width = getEntryShiftBits(ctx.triclinic);
+        int64_t offset = getEntryShiftOffset(ctx.triclinic);
+        SmallVector<Value> cells;
+        for (int64_t axis = 0; axis != 3; ++axis) {
+          Value bits = arith::AndIOp::create(
               c, loc,
-              arith::MulIOp::create(c, loc, toIndex(c, block),
-                                    createIndex(c, loc, 64)),
-              toIndex(c, arith::RemUIOp::create(c, loc, e,
-                                                constant32(c, 64))));
-        };
-        auto rounds = scf::ForOp::create(
-            b, loc, constant32(b, 0), count, constant32(b, 32),
-            ValueRange{constant32(b, 0)},
-            [&](OpBuilder &c, Location, Value first, ValueRange carried) {
-              Value kept = carried[0];
-              Value e = arith::AddIOp::create(c, loc, first, lane);
-              Value has = arith::CmpIOp::create(
-                  c, loc, arith::CmpIPredicate::slt, e, count);
-              Value at = slotOf(
-                  c, arith::SelectOp::create(c, loc, has, e, first));
-              Value entry = memref::LoadOp::create(c, loc, buffers.entries,
-                                                   ValueRange{at});
-              Value mask = arith::SelectOp::create(
-                  c, loc, has,
-                  memref::LoadOp::create(c, loc, buffers.masks,
-                                         ValueRange{at}),
-                  constant32(c, 0));
-              // The entry in the frame of the group: moved by the whole
-              // cells, or lattice vectors, of the shift in its mask (D95,
-              // D115).
-              Value position = loadElement(
-                  c, loc, placed,
-                  toIndex(c, arith::SelectOp::create(c, loc, has, entry,
-                                                     constant32(c, 0))));
-              int64_t width = getEntryShiftBits(isTriclinic(box));
-              int64_t offset = getEntryShiftOffset(isTriclinic(box));
-              SmallVector<Value> cells;
-              for (int64_t axis = 0; axis != 3; ++axis) {
-                Value bits = arith::AndIOp::create(
-                    c, loc,
-                    arith::ShRUIOp::create(c, loc, mask,
-                                           constant32(c, 16 + width * axis)),
-                    constant32(c, (1 << width) - 1));
-                cells.push_back(arith::SIToFPOp::create(
-                    c, loc, f32,
-                    arith::SubIOp::create(c, loc, bits,
-                                          constant32(c, offset))));
-              }
-              position = arith::AddFOp::create(
-                  c, loc, position,
-                  emitLatticeShift(
-                      c, loc,
-                      vector::FromElementsOp::create(c, loc, vector3, cells),
-                      box32));
-              // The bits of the pairs still within the reach.
-              Value kept16 = constant32(c, 0);
-              for (int64_t p = 0; p != 16; ++p) {
-                Value d = arith::SubFOp::create(c, loc, members[p], position);
-                Value r2 = vector::ReductionOp::create(
-                    c, loc, vector::CombiningKind::ADD,
-                    arith::MulFOp::create(c, loc, d, d));
-                Value within = arith::CmpFOp::create(
-                    c, loc, arith::CmpFPredicate::OLE, r2, reach2);
-                Value bit = constant32(c, 1 << p);
-                Value had = arith::CmpIOp::create(
-                    c, loc, arith::CmpIPredicate::ne,
-                    arith::AndIOp::create(c, loc, mask, bit),
-                    constant32(c, 0));
-                kept16 = arith::SelectOp::create(
-                    c, loc, arith::AndIOp::create(c, loc, had, within),
-                    arith::OrIOp::create(c, loc, kept16, bit), kept16);
-              }
-              Value keep = arith::CmpIOp::create(
-                  c, loc, arith::CmpIPredicate::ne, kept16, constant32(c, 0));
-              Value ballot = gpu::BallotOp::create(c, loc, i32, keep);
-              Value before = math::CtPopOp::create(
-                  c, loc, arith::AndIOp::create(c, loc, ballot, below));
-              scf::IfOp::create(c, loc, keep, [&](OpBuilder &d, Location) {
-                Value to = slotOf(d, arith::AddIOp::create(d, loc, kept,
-                                                           before));
-                memref::StoreOp::create(d, loc, entry, inner.entries,
-                                        ValueRange{to});
-                memref::StoreOp::create(
-                    d, loc,
-                    arith::OrIOp::create(
-                        d, loc,
-                        arith::AndIOp::create(d, loc, mask,
-                                              constant32(d, ~0xFFFF)),
-                        kept16),
-                    inner.masks, ValueRange{to});
-                scf::YieldOp::create(d, loc);
-              });
-              scf::YieldOp::create(
-                  c, loc,
-                  ValueRange{arith::AddIOp::create(
-                      c, loc, kept, math::CtPopOp::create(c, loc, ballot))});
-            });
-        // The entries that each block of the group keeps: its blocks fill
-        // in order.
-        Value kept = rounds.getResult(0);
-        Value blocksOfGroup = arith::CeilDivUIOp::create(b, loc, count,
-                                                         constant32(b, 64));
-        scf::ForOp::create(
-            b, loc, lane, blocksOfGroup, constant32(b, 32), ValueRange(),
-            [&](OpBuilder &c, Location, Value k, ValueRange) {
-              Value block = memref::LoadOp::create(
-                  c, loc, blockOf,
-                  ValueRange{arith::AddIOp::create(c, loc, base,
-                                                   toIndex(c, k))});
-              Value left = arith::SubIOp::create(
-                  c, loc, kept,
-                  arith::MulIOp::create(c, loc, k, constant32(c, 64)));
-              Value held = arith::MaxSIOp::create(
-                  c, loc,
-                  arith::MinSIOp::create(c, loc, left, constant32(c, 64)),
-                  constant32(c, 0));
-              memref::StoreOp::create(c, loc, held, inner.counts,
-                                      ValueRange{toIndex(c, block)});
-              // A block that holds entries is an active unit: it counts in
-              // its runs of 32 and 1024 blocks (D268).
-              scf::IfOp::create(
-                  c, loc,
-                  arith::CmpIOp::create(c, loc, arith::CmpIPredicate::sgt,
-                                        held, constant32(c, 0)),
-                  [&](OpBuilder &d, Location) {
-                    Value at = toIndex(d, block);
-                    emitAtomicAddI32(
-                        d, loc, prune.runSums,
-                        arith::DivUIOp::create(d, loc, at,
-                                               createIndex(d, loc, 32)),
-                        constant32(d, 1));
-                    emitAtomicAddI32(
-                        d, loc, prune.wideSums,
-                        arith::DivUIOp::create(d, loc, at,
-                                               createIndex(d, loc, 1024)),
-                        constant32(d, 1));
-                    scf::YieldOp::create(d, loc);
-                  });
-              scf::YieldOp::create(c, loc);
-            });
+              arith::ShRUIOp::create(c, loc, mask,
+                                     constant32(c, 16 + width * axis)),
+              constant32(c, (1 << width) - 1));
+          cells.push_back(arith::SIToFPOp::create(
+              c, loc, f32,
+              arith::SubIOp::create(c, loc, bits,
+                                    constant32(c, offset))));
+        }
+        position = arith::AddFOp::create(
+            c, loc, position,
+            emitLatticeShift(
+                c, loc,
+                vector::FromElementsOp::create(c, loc, vector3, cells),
+                box32));
+        // The bits of the pairs still within the reach.
+        Value kept16 = constant32(c, 0);
+        for (int64_t p = 0; p != 16; ++p) {
+          Value d = arith::SubFOp::create(c, loc, members[p], position);
+          Value r2 = vector::ReductionOp::create(
+              c, loc, vector::CombiningKind::ADD,
+              arith::MulFOp::create(c, loc, d, d));
+          Value within = arith::CmpFOp::create(
+              c, loc, arith::CmpFPredicate::OLE, r2, reach2);
+          Value bit = constant32(c, 1 << p);
+          Value had = arith::CmpIOp::create(
+              c, loc, arith::CmpIPredicate::ne,
+              arith::AndIOp::create(c, loc, mask, bit),
+              constant32(c, 0));
+          kept16 = arith::SelectOp::create(
+              c, loc, arith::AndIOp::create(c, loc, had, within),
+              arith::OrIOp::create(c, loc, kept16, bit), kept16);
+        }
+        Value keep = arith::CmpIOp::create(
+            c, loc, arith::CmpIPredicate::ne, kept16, constant32(c, 0));
+        Value ballot = gpu::BallotOp::create(c, loc, i32, keep);
+        Value before = math::CtPopOp::create(
+            c, loc, arith::AndIOp::create(c, loc, ballot, below));
+        scf::IfOp::create(c, loc, keep, [&](OpBuilder &d, Location) {
+          Value to = slotOf(d, arith::AddIOp::create(d, loc, kept,
+                                                     before));
+          memref::StoreOp::create(d, loc, entry, inner.entries,
+                                  ValueRange{to});
+          memref::StoreOp::create(
+              d, loc,
+              arith::OrIOp::create(
+                  d, loc,
+                  arith::AndIOp::create(d, loc, mask,
+                                        constant32(d, ~0xFFFF)),
+                  kept16),
+              inner.masks, ValueRange{to});
+          scf::YieldOp::create(d, loc);
+        });
+        scf::YieldOp::create(
+            c, loc,
+            ValueRange{arith::AddIOp::create(
+                c, loc, kept, math::CtPopOp::create(c, loc, ballot))});
       });
+  // The entries that each block of the group keeps: its blocks fill
+  // in order.
+  Value kept = rounds.getResult(0);
+  Value blocksOfGroup = arith::CeilDivUIOp::create(b, loc, count,
+                                                   constant32(b, 64));
+  scf::ForOp::create(
+      b, loc, lane, blocksOfGroup, constant32(b, 32), ValueRange(),
+      [&](OpBuilder &c, Location, Value k, ValueRange) {
+        Value block = memref::LoadOp::create(
+            c, loc, blockOf,
+            ValueRange{arith::AddIOp::create(c, loc, base,
+                                             toIndex(c, k))});
+        Value left = arith::SubIOp::create(
+            c, loc, kept,
+            arith::MulIOp::create(c, loc, k, constant32(c, 64)));
+        Value held = arith::MaxSIOp::create(
+            c, loc,
+            arith::MinSIOp::create(c, loc, left, constant32(c, 64)),
+            constant32(c, 0));
+        memref::StoreOp::create(c, loc, held, inner.counts,
+                                ValueRange{toIndex(c, block)});
+        // A block that holds entries is an active unit: it counts in
+        // its runs of 32 and 1024 blocks (D268).
+        scf::IfOp::create(
+            c, loc,
+            arith::CmpIOp::create(c, loc, arith::CmpIPredicate::sgt,
+                                  held, constant32(c, 0)),
+            [&](OpBuilder &d, Location) {
+              Value at = toIndex(d, block);
+              emitAtomicAddI32(
+                  d, loc, prune.runSums,
+                  arith::DivUIOp::create(d, loc, at,
+                                         createIndex(d, loc, 32)),
+                  constant32(d, 1));
+              emitAtomicAddI32(
+                  d, loc, prune.wideSums,
+                  arith::DivUIOp::create(d, loc, at,
+                                         createIndex(d, loc, 1024)),
+                  constant32(d, 1));
+              scf::YieldOp::create(d, loc);
+            });
+        scf::YieldOp::create(c, loc);
+      });
+  return kept;
+}
 
+void Lowering::emitActiveUnits(OpBuilder &builder, Location loc,
+                               const PruneContext &ctx) {
+  Type i32 = builder.getI32Type();
+  auto constant32 = [&](OpBuilder &b, int64_t v) -> Value {
+    return arith::ConstantOp::create(b, loc, i32, b.getI32IntegerAttr(v));
+  };
+  auto toIndex = [&](OpBuilder &b, Value v) -> Value {
+    return arith::IndexCastOp::create(b, loc, b.getIndexType(), v);
+  };
+  const InnerLists &inner = ctx.inner;
+  const PruneBuffers &prune = ctx.prune;
+  Value blocks = ctx.blocks, runs = ctx.runs;
+  Value warp32 = createIndex(builder, loc, 32);
   // The active units (D268): the blocks that hold entries of
   // the inner list, in the order of the blocks, as the loop over pairs took
   // all blocks before, so that it launches no work for a block that the
@@ -6179,14 +6417,6 @@ void Lowering::emitGroupsPrune(OpBuilder &builder, Location loc,
           scf::YieldOp::create(c, loc);
         });
       });
-
-  // The loops over pairs at these positions may take the frames as they are
-  // (lowerGroupPairFor).
-  memref::StoreOp::create(
-      builder, loc,
-      arith::ConstantOp::create(builder, loc, builder.getI1Type(),
-                                builder.getBoolAttr(true)),
-      structure.prunedNow, ValueRange{});
 }
 
 void Lowering::emitPruneCheck(OpBuilder &builder, Location loc,
@@ -6672,20 +6902,39 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
         structure.prunedNow, ValueRange{});
     // The branches are filled once they are in the function: the pruning
     // launches kernels, which look up where they are.
+    // Where the first loop over pairs that takes the result prunes
+    // (D[fused-prune]), the refresh moves the positions into their frames
+    // and leaves the rest to the loop, from the groups at which the loop
+    // takes it.
+    bool fused = prunedInLoop.contains(op.getOperation());
+    auto emitPrune = [&](OpBuilder &at) {
+      if (!fused) {
+        emitGroupsPrune(at, loc, structure, positions, box, inner);
+        return;
+      }
+      auto choice = scf::IfOp::create(
+          at, loc, takesFusedPruning(at, loc, structure),
+          /*withElseRegion=*/true);
+      OpBuilder inLoop(choice.thenBlock()->getTerminator());
+      emitPruneFrames(inLoop, loc, structure, positions, box);
+      OpBuilder here(choice.elseBlock()->getTerminator());
+      emitGroupsPrune(here, loc, structure, positions, box, inner);
+    };
     auto rebuild = scf::IfOp::create(builder, loc, stale,
                                      /*withElseRegion=*/true);
     {
       OpBuilder then(rebuild.thenBlock()->getTerminator());
       status = emitBuild(then, loc, structure, positions, box, reach,
                          cellWidth);
-      emitGroupsPrune(then, loc, structure, positions, box, inner);
+      emitPrune(then);
       OpBuilder otherwise(rebuild.elseBlock()->getTerminator());
       auto again = scf::IfOp::create(otherwise, loc, op.getStale(),
                                      /*withElseRegion=*/false);
       OpBuilder prune(again.thenBlock()->getTerminator());
-      emitGroupsPrune(prune, loc, structure, positions, box, inner);
+      emitPrune(prune);
     }
-    if (checkPruning)
+    // The loop that prunes checks after it.
+    if (checkPruning && !fused)
       emitPruneCheck(builder, loc, structure, positions, box,
                      op.getCutoff().convertToDouble());
     structure.dual = true;
@@ -7438,6 +7687,8 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   });
 
   findSharedFrames(function, aliases);
+  if (fusePruning)
+    findPrunedInLoop();
 
   // The kernels are copied into the loops, so the ops inside them are not
   // lowered where they are. A run of loops is lowered at its last loop.
@@ -7603,6 +7854,8 @@ public:
     lowering.checkPruning = checkPruning;
     lowering.tupleBlockSums = tupleBlockSums;
     lowering.tupleBlockLeast = tupleBlockLeast;
+    lowering.fusePruning = fusePruning;
+    lowering.fusePruningGroups = fusePruningGroups;
     if (failed(lowering.run()))
       return signalPassFailure();
     // Products and sums in the kernels may become fused multiply-adds, as
