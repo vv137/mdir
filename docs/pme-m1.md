@@ -770,13 +770,16 @@ precision below 10⁻³) the same to three or four digits at every tier, and
 is 20 to 1600 times below $\Delta$ of the kernel in double.
 
 **The step on the CPU.** One job per system and tier alternates `main` and
-the branch (frozen copies of their programs, the branch with the code of this change) for the prolate
-default and the fastest Gaussian of the tables above (the same order and
-grid), in 5 rounds with the first dropped, as above; the pairs are the
-sampler's share of the main thread's wall clock times the rate of the
-sampled run. One round of the branch's prolate kernel on Cellulose at
-10⁻³ (534.9 ms, twice the others, from another job on the node) is left
-out. ms a step:
+the branch (frozen copies of their programs) for the prolate default and
+the fastest Gaussian of the tables above (the same order and grid, the
+erfc tolerance 10⁻⁴, 10⁻⁵, 10⁻⁶ at the three tiers), in 5 rounds with the
+first dropped, as above; the pairs are the sampler's share of the main
+thread's wall clock times the rate of the sampled run (`pair_job.py` and
+`pair_summary.py` in `scripts/benchmarks/prolate-ewald/`). One round of
+the branch's prolate kernel on Cellulose at 10⁻³ (534.9 ms, twice the
+others, from another job on the node) is left out, and one sampled run at
+1 thread (the Gaussian of `main` on TIP3P 34k at 10⁻⁵) ended without its
+rate and is not used. ms a step:
 
 | System | CPU | ε | Prolate, `main`: 16 / 4 / 1 threads | Prolate, branch: 16 / 4 / 1 | Gaussian: 16 / 4 / 1 | Pairs at 16: prolate `main`, branch, Gaussian |
 |---|---|---|---|---|---|---|
