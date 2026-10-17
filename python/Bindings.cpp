@@ -1,6 +1,7 @@
 // Owned Python inputs; collections cross the boundary by value.
 #include "mdir/Compiler/Compile.h"
 #include "mdir/Compiler/Simulation.h"
+#include "mdir/Compiler/Skins.h"
 #include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/ModelTerm.h"
 #include <pybind11/pybind11.h>
@@ -54,6 +55,8 @@ struct Version {
   virtual ~Version() = default;
 };
 template <class T> struct Input : Version { T value; std::optional<size_t> particleCount; };
+/// The type of `mdir.Auto` (D[skin-auto]).
+struct AutoValue {};
 template <class T, class V>
 static void property(py::class_<Input<T>, std::shared_ptr<Input<T>>> &c,
                      const char *name, V T::*member) {
@@ -237,6 +240,15 @@ PYBIND11_MODULE(_core, m) {
     .value("Matrix", driver::NeighborStructure::Matrix)
     .value("Groups", driver::NeighborStructure::Groups)
     .value("Auto", driver::NeighborStructure::Auto);
+  // `mdir.Auto`, the value of a reach that the run chooses, as "AUTO" of
+  // the control file (D[skin-auto]).
+  py::class_<AutoValue>(m, "AutoType")
+    .def("__repr__", [](const AutoValue &) { return "mdir.Auto"; })
+    .def("__eq__", [](const AutoValue &, py::object other) {
+      return py::isinstance<AutoValue>(other);
+    })
+    .def("__hash__", [](const AutoValue &) { return 0x417554; });
+  m.attr("Auto") = AutoValue{};
   py::enum_<driver::Integrator>(m, "IntegratorMethod")
     .value("VelocityVerlet", driver::Integrator::VelocityVerlet)
     .value("Leapfrog", driver::Integrator::Leapfrog)
@@ -455,11 +467,38 @@ PYBIND11_MODULE(_core, m) {
       ++o.version;
     });
   };
-  followsCutoff("pairlist_distance", &model::System::pairlistDistance,
-                &model::System::getPairlistDistance);
+  // The reaches take `mdir.Auto` as well (D[skin-auto]): the run chooses
+  // them, from the defaults or the cache of earlier choices.
+  system.def_property("pairlist_distance", [](const Input<model::System> &o) -> py::object {
+    if (o.value.pairlistDistanceAuto) return py::cast(AutoValue{});
+    return py::float_(o.value.getPairlistDistance());
+  }, [](Input<model::System> &o, py::object value) {
+    o.value.pairlistDistanceAuto = py::isinstance<AutoValue>(value);
+    if (value.is_none() || o.value.pairlistDistanceAuto) {
+      o.value.pairlistDistance.reset();
+      if (o.value.pairlistDistanceAuto) o.given.insert("pairlist_distance");
+      else o.given.erase("pairlist_distance");
+    } else {
+      o.value.pairlistDistance =
+          units::scalar(value, "System.pairlist_distance", units::nm);
+      o.given.insert("pairlist_distance");
+    }
+    ++o.version;
+  });
   followsCutoff("switch_distance", &model::System::switchDistance,
                 &model::System::getSwitchDistance);
-  property(system, "pruned_distance", &model::System::prunedDistance, units::nm);
+  system.def_property("pruned_distance", [](const Input<model::System> &o) -> py::object {
+    if (o.value.prunedDistanceAuto) return py::cast(AutoValue{});
+    return py::float_(o.value.prunedDistance);
+  }, [](Input<model::System> &o, py::object value) {
+    o.value.prunedDistanceAuto = py::isinstance<AutoValue>(value);
+    o.value.prunedDistance =
+        o.value.prunedDistanceAuto
+            ? 0.0
+            : units::scalar(value, "System.pruned_distance", units::nm);
+    o.given.insert("pruned_distance");
+    ++o.version;
+  });
   property(system, "truncation", &model::System::truncation);
   property(system, "electrostatics", &model::System::electrostatics);
   property(system, "coulomb_modifier", &model::System::coulombModifier);
@@ -773,6 +812,12 @@ PYBIND11_MODULE(_core, m) {
       d["neighbor_structure_reason"] = resolved.neighborStructureReason;
       d["pairlist_distance"] = resolved.pairlistDistance * driver::units::length;
       d["pruned_distance"] = resolved.prunedDistance * driver::units::length;
+      // Where the reaches came from (D[skin-auto]).
+      d["pairlist_distance_source"] =
+          resolved.pairlistDistanceAuto ? resolved.skinSource : std::string("given");
+      d["pruned_distance_source"] =
+          resolved.prunedDistanceAuto ? resolved.skinSource : std::string("given");
+      d["skin_reason"] = resolved.skinReason;
       d["entry"] = c.program.entry;
       d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";
       d["force_dtype"] = c.program.force == driver::Element::F64 ? "float64" : "float32";
@@ -855,6 +900,9 @@ PYBIND11_MODULE(_core, m) {
     system->value.pmeSpacingGiven = system->given.count("pme_spacing") != 0;
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,
                                           ensemble->value, execution->value, schedule->value));
+    // The reaches that are `mdir.Auto` (D[skin-auto]): the defaults or the
+    // cache; a Python simulation does not measure candidates.
+    compiler::chooseSkins(prepared.control, prepared.system, /*search=*/false);
     // A restraint that selects nothing restrains nothing: the control file
     // warns of it, and so does compile.
     for (const auto &[code, message] : prepared.system.warnings)

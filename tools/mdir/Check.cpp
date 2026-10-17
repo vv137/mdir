@@ -2,6 +2,7 @@
 // without compiling anything.
 
 #include "Commands.h"
+#include "mdir/Compiler/Skins.h"
 #include "Manifest.h"
 
 #include "mdir/Driver/Cell.h"
@@ -398,6 +399,11 @@ static void describeRun(const Control &control, const System &system,
   if (control.neighborStructureRequested == NeighborStructure::Auto)
     std::printf(" (AUTO: %s)", control.neighborStructureReason.c_str());
   std::printf("\n");
+  // The reaches that are "AUTO" (D[skin-auto]): check measures nothing; it
+  // names the defaults or the cache, and whether `mdir run` would search.
+  if (control.isSkinAuto())
+    std::printf("skins:              %s (%s)\n", control.skinSource.c_str(),
+                control.skinReason.c_str());
   if (!control.restartInput.empty())
     std::printf("input checkpoint:   %s (not loaded by check)\n",
                 control.restartInput.c_str());
@@ -522,6 +528,12 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
               {"pruned_distance_angstrom",
                control.prunedDistance != 0.0 ? Value(control.prunedDistance)
                                              : Value(nullptr)}}},
+      {"skins",
+       Object{{"pairlist_distance_source",
+               control.pairlistDistanceAuto ? control.skinSource : "given"},
+              {"pruned_distance_source",
+               control.prunedDistanceAuto ? control.skinSource : "given"},
+              {"reason", control.skinReason}}},
       {"input_checkpoint", control.restartInput.empty() ? Value(nullptr)
                                                        : Value(control.restartInput)}};
   if (control.pme) {
@@ -570,6 +582,7 @@ int mdir::tool::checkControl(llvm::StringRef controlFile, bool json) {
     return fail(system.takeError(), json);
   // As `mdir run` resolves it (D261).
   resolveNeighborStructure(*control, *system);
+  compiler::chooseSkins(*control, *system, /*search=*/false);
   if (llvm::Error error = checkManifestPath(control->manifestFile,
           getManifestInputs(controlFile, *control, *system),
           {control->logFile, control->energyFile, control->pullFile,

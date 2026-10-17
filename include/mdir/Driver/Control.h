@@ -352,6 +352,8 @@ struct Control {
   /// Whether a key of a reach that is not given means "AUTO" (asked of the
   /// maintainer on the pull request of D[skin-auto]).
   static constexpr bool omittedSkinIsAuto = true;
+  /// Whether a key of a reach was given as "AUTO" (not only left out).
+  bool skinsRequested = false;
   /// Where the reaches of the run came from, for the log, the manifest,
   /// and `mdir check`: "given", "default", "cached", or "measured", and
   /// why (D[skin-auto]).

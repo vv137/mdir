@@ -236,6 +236,7 @@ Error Reader::readPositiveOrAuto(const toml::table &table, StringRef key,
       return fail(*node, "expected a positive number or \"AUTO\" for '" +
                              key + "'");
     automatic = true;
+    control.skinsRequested = true;
     return Error::success();
   }
   if (node && !node->is_number())
