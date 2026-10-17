@@ -180,6 +180,72 @@
                 "null"
               ]
             },
+            "pairlist_distance_source": {
+              "enum": [
+                "given",
+                "default",
+                "cached",
+                "measured"
+              ]
+            },
+            "pruned_distance_source": {
+              "enum": [
+                "given",
+                "default",
+                "cached",
+                "measured"
+              ]
+            },
+            "skin_search": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "required": [
+                "source",
+                "reason",
+                "cache",
+                "seconds",
+                "candidates"
+              ],
+              "properties": {
+                "source": {
+                  "enum": [
+                    "given",
+                    "default",
+                    "cached",
+                    "measured"
+                  ]
+                },
+                "reason": {
+                  "type": "string"
+                },
+                "cache": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "seconds": {
+                  "type": "number",
+                  "minimum": 0
+                },
+                "candidates": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "pairlist_distance_angstrom",
+                      "pruned_distance_angstrom",
+                      "predicted_relative",
+                      "compile_seconds",
+                      "run_seconds"
+                    ]
+                  }
+                }
+              },
+              "additionalProperties": false
+            },
             "neighbor_structures": {
               "type": "array",
               "items": {
@@ -286,6 +352,9 @@
             "neighbor_structure_reason",
             "pairlist_distance_angstrom",
             "pruned_distance_angstrom",
+            "pairlist_distance_source",
+            "pruned_distance_source",
+            "skin_search",
             "neighbor_structures",
             "buffer_precision",
             "pme"

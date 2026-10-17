@@ -1,0 +1,12 @@
+# REQUIRES: python-api
+# `mdir.Auto` for `System.pairlist_distance` and `System.pruned_distance`
+# (D[skin-auto]): the fields give it back, `Program.plan` names the
+# defaults and why nothing was measured, and a number is "given";
+# Inputs/python_skin_auto.py on the CPU, which needs no device.
+# RUN: %mdir_python %S/Inputs/python_skin_auto.py %S/Inputs/dipeptide CPU | FileCheck %s
+# CHECK: structure matrix
+# CHECK-NEXT: pairlist 0.95 default
+# CHECK-NEXT: pruned 0.0 default
+# CHECK-NEXT: reason the CPU
+# CHECK-NEXT: given given default
+# CHECK-NEXT: done

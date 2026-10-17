@@ -19,6 +19,7 @@
 #include "mdir/Driver/H5MD.h"
 #include "mdir/Driver/Builder.h"
 #include "mdir/Compiler/Compile.h"
+#include "mdir/Compiler/Skins.h"
 #include "mdir/Driver/Checkpoint.h"
 #include "mdir/Driver/Control.h"
 #include "mdir/Driver/Fingerprint.h"
@@ -490,6 +491,17 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // checkpoint does not continue it.
   if (fromPositions)
     control->restartInput.clear();
+  // The reaches that are "AUTO" (D[skin-auto]): the defaults, the cache, or
+  // candidates measured from the state the run begins with, before its own
+  // program is built. What the search printed goes to the log once its
+  // header is written.
+  std::string skinLines;
+  compiler::SkinChoice skinChoice;
+  {
+    llvm::raw_string_ostream lines(skinLines);
+    skinChoice = compiler::chooseSkins(*control, *system,
+                                       /*search=*/emit == Emit::Run, &lines);
+  }
   // The step that the run began at, from which `steps` counts, and its
   // part: a run that begins from the checkpoint of another begins at its
   // step, whose counter and time it continues (D129).
@@ -564,19 +576,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   llvm::InitializeNativeTargetAsmPrinter();
   llvm::InitializeNativeTargetAsmParser();
 
-  mlir::registerAllPasses();
-  md::registerMDPasses();
-  md_exec::registerMDExecPasses();
-  registerMDIRConversionPasses();
-  registerGpuLowerToNVVMPipeline();
-
-  mlir::DialectRegistry registry;
-  mlir::registerAllDialects(registry);
-  mlir::registerAllExtensions(registry);
-  mdir::md::registerDerivativeInterfaces(registry);
-  mlir::registerAllToLLVMIRTranslations(registry);
-  registry.insert<dyn::DynDialect, md::MDDialect, md_exec::MDExecDialect,
-                  mdrt::MDRTDialect>();
+  // The passes are registered once a process: a search of the skins may
+  // have lowered programs before (D[skin-auto]).
+  mlir::DialectRegistry registry = compiler::getRegistry();
   // The threads of the process's pool, at most MDIR_COMPILE_THREADS, as a
   // Python simulation lowers (D211); the GPU modules are serialized on them
   // (D214).
@@ -1020,6 +1022,14 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"pairlist_distance_angstrom", control->pairlistDistance},
         {"pruned_distance_angstrom", control->prunedDistance != 0.0
              ? llvm::json::Value(control->prunedDistance) : llvm::json::Value(nullptr)},
+        // Where each reach came from, and the search if there was one
+        // (D[skin-auto]).
+        {"pairlist_distance_source",
+         control->getSkinSource(/*outer=*/true)},
+        {"pruned_distance_source",
+         control->getSkinSource(/*outer=*/false)},
+        {"skin_search", control->isSkinAuto()
+             ? skinChoice.toJSON(*control) : llvm::json::Value(nullptr)},
         {"neighbor_structures", std::move(neighbors)},
         {"buffer_precision", llvm::json::Object{{"state", element(program->state)},
             {"force", element(program->force)}, {"mass", element(program->mass)},
@@ -1376,6 +1386,27 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
       output.log.print(", pruned to %g Å", control->prunedDistance);
     output.log.print(" (AUTO: %s)\n",
                      control->neighborStructureReason.c_str());
+  }
+  // The reaches that "AUTO" took, and how (D[skin-auto]): given ones and
+  // the defaults of keys not given are not repeated.
+  bool skinsShown = control->skinSource == "cached" ||
+                    control->skinSource == "measured" ||
+                    control->skinsRequested;
+  if (control->isSkinAuto() && skinsShown) {
+    output.log.print("%s", skinLines.c_str());
+    output.log.print("MDIR: skins: the reach %g Å", control->pairlistDistance);
+    if (control->prunedDistance != 0.0)
+      output.log.print(", pruned to %g Å", control->prunedDistance);
+    output.log.print(" (%s: %s", control->skinSource.c_str(),
+                     control->skinReason.c_str());
+    if (!skinChoice.trials.empty())
+      output.log.print("; %zu candidates in %.1f s",
+                       skinChoice.trials.size(), skinChoice.seconds);
+    if (!skinChoice.cachePath.empty())
+      output.log.print("; %s '%s'",
+                       control->skinSource == "cached" ? "from" : "stored in",
+                       skinChoice.cachePath.c_str());
+    output.log.print(")\n");
   }
   output.log.print("MDIR: compiled in %.2f s\n", compileTime);
   if (output.models)

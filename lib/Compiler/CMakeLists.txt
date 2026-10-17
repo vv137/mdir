@@ -23,7 +23,7 @@ endforeach()
 
 # A simulation that persists across runs (D196): it compiles
 # and runs its programs in the process that embeds it.
-add_mlir_library(MDIRSimulation Simulation.cpp JITEngine.cpp JITMemory.cpp
+add_mlir_library(MDIRSimulation Simulation.cpp JITEngine.cpp JITMemory.cpp Skins.cpp
   PARTIAL_SOURCES_INTENDED
   LINK_COMPONENTS BitWriter Core Object Support nativecodegen native
     DebugInfoDWARF
@@ -34,6 +34,7 @@ foreach(target MDIRSimulation obj.MDIRSimulation)
     target_compile_definitions(${target} PRIVATE
       MDIR_BUILD_LIBRARY_DIR="${CMAKE_BINARY_DIR}/lib"
       MDIR_LLVM_LIBRARY_DIR="${LLVM_LIBRARY_DIR}"
-      MDIR_CUDA_ROOT="${MDIR_CUDA_ROOT}")
+      MDIR_CUDA_ROOT="${MDIR_CUDA_ROOT}"
+      MDIR_VERSION="${PROJECT_VERSION}")
   endif()
 endforeach()

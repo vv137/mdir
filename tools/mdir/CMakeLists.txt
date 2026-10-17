@@ -33,6 +33,7 @@ llvm_update_compile_flags(mdir)
 target_link_libraries(mdir PRIVATE
   MDIRDriver
   MDIRCompiler
+  MDIRSimulation
   MDIRDyn
   MDIRMD
   MDIRMDExec

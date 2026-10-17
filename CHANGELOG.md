@@ -12,6 +12,29 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **An exact automatic choice of the skins of the neighbor lists**
+  (D[skin-auto], #406,
+  [docs/neighbors-m0.md](docs/neighbors-m0.md#6-the-choice-of-the-skins)):
+  `pairlist_distance = "AUTO"` and `pruned_distance = "AUTO"` of
+  `[energy]`, and the keys not given, let the run choose the skins. The
+  lists stay exact, so the choice changes the speed, not the pairs within
+  the cutoff. A run of `mdir run` with the groups on a GPU, outside the
+  deterministic mode, of at least $5 \times 10^{12}$ particles times steps,
+  measures the defaults of D261, two candidates of a cost model fitted to
+  the grid of #406, and a climb from the fastest, each compiled anew from
+  the state the run begins with, and keeps the fastest unless it is within
+  the noise of the defaults. The choice is cached under a key of the
+  system, the device, the precision, the step, and the ensemble
+  (`MDIR_SKIN_CACHE_DIR`, by default `~/.cache/mdir/skins`;
+  `MDIR_SKIN_CACHE=off`), which a later run and a continuation take.
+  `MDIR_SKIN_SEARCH=always|never` overrides the length. Every other run
+  keeps the reaches of before. The log (`MDIR: skins:`), the manifest
+  (`pairlist_distance_source`, `pruned_distance_source`, `skin_search`),
+  `mdir check` (`skins:`), and `Program.plan` say where the reaches came
+  from. In Python, `System.pairlist_distance` and `System.pruned_distance`
+  take `mdir.Auto`, which takes the cache or the defaults and measures
+  nothing.
+
 - ML2, stage 1, part 3 (D279, #31,
   [docs/distributed-ml2.md](docs/distributed-ml2.md), Section 15):
   `md-differentiate` derives the forces and the virial of a potential on

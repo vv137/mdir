@@ -1,0 +1,56 @@
+# `pairlist_distance` and `pruned_distance` take "AUTO" (D[skin-auto]), and
+# a key not given is "AUTO" as well. `mdir check` measures nothing: it names
+# where the reaches come from and why a run would not search. "AUTO" begins
+# at the defaults of D261 (the groups at 3 and 0.6 Å beyond the cutoff, the
+# matrix at 1.5 Å); only `mdir run` of a long run with the groups on a GPU,
+# outside the deterministic mode, measures candidates. A number is fixed,
+# and a value that is neither a positive number nor "AUTO" is refused.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/argon_lattice.py 40 %t/big.pdb
+# RUN: %python %S/Inputs/argon_lattice.py 20 %t/small.pdb
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/neighbor-auto.test | sed '1d;$d' > %t/big.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "AUTO"\npruned_distance = "AUTO"|' %t/big.toml > %t/auto.toml
+# RUN: sed -e 's|^steps = 20|steps = 100000000|' %t/auto.toml > %t/long.toml
+# RUN: sed -e 's|^target = "GPU"|target = "CPU"|' %t/auto.toml > %t/cpu.toml
+# RUN: sed -e 's|^target = "GPU"|target = "GPU"\ndeterministic = true|' %t/long.toml > %t/deterministic.toml
+# RUN: sed -e 's|big.pdb|small.pdb|' -e 's|152.0|76.0|g' %t/long.toml > %t/matrix.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 11.0\npruned_distance = "AUTO"|' -e 's|^steps = 20|steps = 100000000|' %t/big.toml > %t/outer.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 11.0\npruned_distance = 9.3|' %t/big.toml > %t/given.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "auto"|' %t/big.toml > %t/lower.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npruned_distance = true|' %t/big.toml > %t/boolean.toml
+# RUN: cd %t && mdir check big.toml | FileCheck %s --check-prefix=OMITTED
+# RUN: cd %t && mdir check auto.toml | FileCheck %s --check-prefix=SHORT
+# RUN: cd %t && mdir check long.toml | FileCheck %s --check-prefix=LONG
+# RUN: cd %t && env MDIR_SKIN_SEARCH=always mdir check auto.toml | FileCheck %s --check-prefix=LONG
+# RUN: cd %t && env MDIR_SKIN_SEARCH=never mdir check long.toml | FileCheck %s --check-prefix=NEVER
+# RUN: cd %t && mdir check cpu.toml | FileCheck %s --check-prefix=CPU
+# RUN: cd %t && mdir check deterministic.toml | FileCheck %s --check-prefix=DETERMINISTIC
+# RUN: cd %t && mdir check matrix.toml | FileCheck %s --check-prefix=MATRIX
+# RUN: cd %t && mdir check outer.toml | FileCheck %s --check-prefix=OUTER
+# RUN: cd %t && mdir check given.toml | FileCheck %s --check-prefix=GIVEN --implicit-check-not=skins:
+# RUN: cd %t && not mdir check lower.toml 2>&1 | FileCheck %s --check-prefix=LOWER
+# RUN: cd %t && not mdir check boolean.toml 2>&1 | FileCheck %s --check-prefix=BOOLEAN
+# RUN: cd %t && mdir check --json auto.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['skins'], sort_keys=True))" | FileCheck %s --check-prefix=JSON
+# RUN: cd %t && mdir check --json given.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['skins'], sort_keys=True))" | FileCheck %s --check-prefix=JSON-GIVEN
+
+# OMITTED: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles
+# OMITTED-NEXT: skins: default (a short run: 64000 particles times 20 steps, below 5e+12)
+# SHORT: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles
+# SHORT-NEXT: skins: default (a short run: 64000 particles times 20 steps, below 5e+12)
+# LONG: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å
+# LONG-NEXT: skins: default (`mdir run` measures candidates; this does not)
+# NEVER: skins: default (MDIR_SKIN_SEARCH=never)
+# CPU: neighbors: matrix, reach 10.5 Å (AUTO: the target is the CPU)
+# CPU-NEXT: skins: default (the CPU)
+# DETERMINISTIC: neighbors: matrix, reach 10.5 Å (AUTO: the deterministic mode)
+# DETERMINISTIC-NEXT: skins: default (the deterministic mode)
+# MATRIX: neighbors: matrix, reach 10.5 Å (AUTO: 8000 particles
+# MATRIX-NEXT: skins: default (the matrix, which is not searched)
+# OUTER: neighbors: groups of 16, reach 11 Å, pruned to 9.6 Å
+# OUTER-NEXT: skins: default (`mdir run` measures candidates; this does not)
+# GIVEN: neighbors: groups of 16, reach 11 Å, pruned to 9.3 Å
+# LOWER: expected a positive number or "AUTO" for 'pairlist_distance'
+# BOOLEAN: expected a positive number or "AUTO" for 'pruned_distance'
+# JSON: {"pairlist_distance_source": "default", "pruned_distance_source": "default", "reason": "a short run: 64000 particles times 20 steps, below 5e+12"}
+# JSON-GIVEN: {"pairlist_distance_source": "given", "pruned_distance_source": "given", "reason": ""}
