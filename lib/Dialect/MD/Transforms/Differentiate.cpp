@@ -134,7 +134,55 @@ private:
   LogicalResult buildDistributedForces(Value &forces);
   LogicalResult buildDistributedVirial(Value &virial);
 
+  // Fields on domains computed from the positions (D[ml2-eam]). The terms
+  // of `distTerms` are negated adjoints, −∂U/∂v, of the values v on domains
+  // and of the positions: forces where v is the positions, and the forces
+  // on a field elsewhere. A term is complete, or one of the two partial
+  // results of a traversal, which only md_dist.halo_sum adds.
+
+  /// A gather of a field that the energy depends on: the negated adjoint
+  /// of its result at the owned rows and its copy to the ghosts.
+  struct Density {
+    md_dist::GatherPairsOp gather;
+    Value force;
+    Value ghosts;
+  };
+  /// Fills `distTerms` and `densities`, in the reverse order of the body.
+  /// With `wantForces`, the terms of the positions as well.
+  LogicalResult buildDistributedTerms();
+  /// Carries the terms of the result of `transfer` to its operands by its
+  /// declared transpose.
+  LogicalResult transposeTransfer(Operation *transfer);
+  /// The complete terms of `list` added into one, the partial ones kept.
+  void addCompleteTerms(SmallVectorImpl<Value> &list);
+  /// `fields`, complete and of one type on domains, added row by row.
+  Value addDistributedFields(ArrayRef<Value> fields);
+  /// `scale · ∂value/∂variable` in a kernel, negated with `negate`; for a
+  /// vector variable a component at a time, along its unit vectors.
+  LogicalResult emitScaledSlope(OpBuilder &kernel, Value value,
+                                Value variable, Value scale, bool negate,
+                                Value &result);
+  /// The forces on the field gathered at place `place` of the pair sum
+  /// `sum`, a directed traversal, computed at the owners (Section 15.4).
+  LogicalResult emitPairFieldTerm(md_dist::SumPairsOp sum, unsigned place,
+                                  Value weight, Value &result);
+  /// The forces on the field at place `place` of the map `map` from the
+  /// forces `outer` on its result.
+  LogicalResult emitMapTerm(md_dist::MapParticlesOp map, unsigned place,
+                            Value outer, Value &result);
+  /// The pair op of the forces (a two-ended gather) or of the virial (a sum
+  /// of d ⊗ K) that the density `density` gives.
+  LogicalResult emitDensityOp(const Density &density, bool virial,
+                              Operation *&result);
+  /// Whether `value` holds positions, or values moved from them by
+  /// transfers alone: a term of the absolute positions, not of pairs.
+  bool isPositionValued(Value value);
+
   bool distributed = false;
+  bool wantForces = false;
+  bool distTermsBuilt = false;
+  llvm::DenseMap<Value, SmallVector<Value, 2>> distTerms;
+  SmallVector<Density> densities;
   SmallVector<md_dist::SumPairsOp> pairSums;
   SmallVector<md_dist::SumParticlesOp> rowSums;
 
@@ -1199,12 +1247,52 @@ Operation *DerivativeBuilder::createDistributedPairOp(
   return op;
 }
 
+LogicalResult DerivativeBuilder::emitScaledSlope(OpBuilder &kernel,
+                                                Value value, Value variable,
+                                                Value scale, bool negate,
+                                                Value &result) {
+  ScalarEmitter emit(kernel, loc);
+  auto scaled = [&](Value slope) -> Value {
+    Value product = emit.mul(scale, slope);
+    return negate ? emit.neg(product) : product;
+  };
+  if (auto vector = dyn_cast<VectorType>(variable.getType())) {
+    // A component at a time, along its unit vector.
+    SmallVector<Value, 3> components;
+    for (int64_t c = 0; c < vector.getNumElements(); ++c) {
+      SmallVector<double, 3> unit(vector.getNumElements(), 0.0);
+      unit[c] = 1.0;
+      Value seed = arith::ConstantOp::create(
+          kernel, loc, vector,
+          DenseElementsAttr::get(cast<ShapedType>(vector),
+                                 ArrayRef<double>(unit)));
+      ScalarDerivative derivative(kernel, variable, nullptr, seed);
+      Value slope;
+      if (failed(derivative.get(value, slope)))
+        return failure();
+      Value component = scaled(slope);
+      components.push_back(
+          component ? component
+                    : emit.constant(0.0, vector.getElementType()));
+    }
+    result = vector::FromElementsOp::create(kernel, loc, vector, components);
+    return success();
+  }
+  ScalarDerivative derivative(kernel, variable);
+  Value slope;
+  if (failed(derivative.get(value, slope)))
+    return failure();
+  result = scaled(slope);
+  if (!result)
+    result = emit.constant(0.0, variable.getType());
+  return success();
+}
+
 LogicalResult DerivativeBuilder::emitRowForces(md_dist::SumParticlesOp sum,
                                                unsigned place, Value weight,
                                                Value &result) {
   Value input = sum.getGathered()[place];
   auto type = cast<md_dist::FieldType>(input.getType());
-  Type valueType = type.getKernelValueType();
   OperationState state(loc, md_dist::MapParticlesOp::getOperationName());
   state.addOperands(sum.getGathered());
   state.addRegion();
@@ -1218,157 +1306,453 @@ LogicalResult DerivativeBuilder::emitRowForces(md_dist::SumParticlesOp sum,
     mapping.map(argument, block->addArgument(argument.getType(), loc));
   Value value = inlineKernel(source, *block, mapping);
   OpBuilder kernel = OpBuilder::atBlockEnd(block);
-  ScalarEmitter emit(kernel, loc);
-  Value x = block->getArgument(place);
   Value force;
-  if (auto vector = dyn_cast<VectorType>(valueType)) {
-    // A component at a time, along its unit vector.
-    SmallVector<Value, 3> components;
-    for (int64_t c = 0; c < vector.getNumElements(); ++c) {
-      SmallVector<double, 3> unit(vector.getNumElements(), 0.0);
-      unit[c] = 1.0;
-      Value seed = arith::ConstantOp::create(
-          kernel, loc, vector,
-          DenseElementsAttr::get(cast<ShapedType>(vector),
-                                 ArrayRef<double>(unit)));
-      ScalarDerivative derivative(kernel, x, nullptr, seed);
-      Value slope;
-      if (failed(derivative.get(value, slope)))
-        return failure();
-      Value component = emit.neg(emit.mul(weight, slope));
-      components.push_back(
-          component ? component
-                    : emit.constant(0.0, vector.getElementType()));
-    }
-    force = vector::FromElementsOp::create(kernel, loc, vector, components);
-  } else {
-    ScalarDerivative derivative(kernel, x);
-    Value slope;
-    if (failed(derivative.get(value, slope)))
-      return failure();
-    force = emit.neg(emit.mul(weight, slope));
-    if (!force)
-      force = emit.constant(0.0, valueType);
-  }
+  if (failed(emitScaledSlope(kernel, value, block->getArgument(place), weight,
+                             /*negate=*/true, force)))
+    return failure();
   md_dist::YieldOp::create(kernel, loc, ValueRange{force});
   eraseDeadOps(*block);
   result = map->getResult(0);
   return success();
 }
 
-LogicalResult DerivativeBuilder::buildDistributedForces(Value &forces) {
-  Value positions = body->getArgument(0);
-  Type vectorType = cast<FieldType>(positions.getType()).getKernelValueType();
-  // The forces, the negated adjoints, at the rows that each value has: a
-  // list of terms, since partial terms are summed only by md_dist.halo_sum.
-  llvm::DenseMap<Value, SmallVector<Value, 2>> terms;
-
-  // The sums give the forces at the rows they read.
-  for (md_dist::SumPairsOp sum : pairSums) {
-    Value weight;
-    if (failed(getPartialWeight(sum.getResult(), weight)))
-      return failure();
-    if (!weight)
-      continue;
-    for (Value field : sum.getGathered())
-      if (isPositional(field))
-        return sum.emitOpError()
-               << "cannot differentiate a sum over pairs on domains that "
-                  "gathers a field computed from the positions; that is the "
-                  "next part, EAM";
-    // K(i, k) = −weight · u'(r) · d / r at i, and its value under exchange,
-    // −K, at k.
-    Operation *gather = createDistributedPairOp(sum, /*gather=*/true,
-                                                Exchange::Antisymmetric,
-                                                Type());
-    Block &block = gather->getRegion(0).front();
-    OpBuilder kernel(block.getTerminator());
-    Value factor;
-    if (failed(emitRadialFactor(gather, weight, kernel, factor)))
-      return failure();
-    ScalarEmitter emit(kernel, loc);
-    Value contribution =
-        factor ? emit.mul(vector::BroadcastOp::create(kernel, loc, vectorType,
-                                                      factor),
-                          block.getArgument(1))
-               : emit.constant(0.0, vectorType);
-    setYield(block, contribution);
-    terms[sum.getPositions()].push_back(gather->getResult(0));
-    terms[sum.getGhosts()].push_back(gather->getResult(1));
-  }
-  for (md_dist::SumParticlesOp sum : rowSums) {
-    Value weight;
-    if (failed(getPartialWeight(sum.getResult(), weight)))
-      return failure();
-    if (!weight)
-      continue;
-    for (auto [place, input] : llvm::enumerate(sum.getGathered())) {
-      if (!isPositional(input))
-        continue;
-      Value term;
-      if (failed(emitRowForces(sum, place, weight, term)))
-        return failure();
-      terms[input].push_back(term);
-    }
-  }
-  if (activityFailed)
+LogicalResult DerivativeBuilder::emitMapTerm(md_dist::MapParticlesOp map,
+                                             unsigned place, Value outer,
+                                             Value &result) {
+  Value input = map.getGathered()[place];
+  auto type = cast<md_dist::FieldType>(input.getType());
+  if (!map.getResult().getType().getKernelValueType().isF64())
+    return map.emitOpError()
+           << "cannot differentiate on domains through a map whose value "
+              "is not f64";
+  // F_a = F_b ∂g/∂a for b = g(a, ...): the forces on the result, a field
+  // the map reads beside its operands, carried back by the chain rule.
+  OperationState state(loc, md_dist::MapParticlesOp::getOperationName());
+  state.addOperands(map.getGathered());
+  state.addOperands(outer);
+  state.addRegion();
+  state.addTypes(type.with(type.getRole(), false));
+  Operation *op = builder.create(state);
+  Block *block = new Block();
+  op->getRegion(0).push_back(block);
+  Block &source = map.getKernel().front();
+  IRMapping mapping;
+  for (BlockArgument argument : source.getArguments())
+    mapping.map(argument, block->addArgument(argument.getType(), loc));
+  Value scale = block->addArgument(
+      cast<md_dist::FieldType>(outer.getType()).getKernelValueType(), loc);
+  Value value = inlineKernel(source, *block, mapping);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  Value term;
+  if (failed(emitScaledSlope(kernel, value, block->getArgument(place), scale,
+                             /*negate=*/false, term)))
     return failure();
+  md_dist::YieldOp::create(kernel, loc, ValueRange{term});
+  eraseDeadOps(*block);
+  result = op->getResult(0);
+  return success();
+}
 
-  // Back through the transfers, by their declared transposes, in the
-  // reverse order of the body.
-  for (Operation *op : llvm::reverse(potentialOps)) {
-    if (isa<md_dist::GatherPairsOp, md_dist::MapParticlesOp>(op)) {
-      if (llvm::any_of(op->getResults(),
-                       [&](Value result) { return terms.count(result); }))
-        return op->emitOpError()
-               << "cannot differentiate through a field on domains computed "
-                  "from the positions; that is the next part, EAM";
-      continue;
+LogicalResult DerivativeBuilder::emitPairFieldTerm(md_dist::SumPairsOp sum,
+                                                   unsigned place,
+                                                   Value weight,
+                                                   Value &result) {
+  // Section 15.4: over a directed relation that covers its cutoff, the
+  // derivative of a symmetric pair sum in the value a_i, through its own
+  // row and every copy of it to the ghosts, is Σ_{k : (i,k) ∈ D} ∂₁k(i, k),
+  // the gather at the owners with nothing returned. The premises, with the
+  // code of the verifier.
+  if (sum.getRelation().getType().getTraversal() !=
+      md_dist::Traversal::Directed)
+    return sum.emitOpError()
+           << "cannot differentiate on the unique traversal a sum over pairs "
+              "that reads a field computed from the positions: the "
+              "derivative at the second particle of a pair has no exchange "
+              "contract (D[ml2-eam], docs/distributed-ml2.md, Section 15.4); "
+              "use the directed traversal";
+  auto neighborhood =
+      sum.getRelation().getDefiningOp<md_dist::NeighborhoodOp>();
+  if (!neighborhood)
+    return sum.emitOpError()
+           << "cannot show that every pair is at both of its owners: the "
+              "relation does not come from md_dist.neighborhood";
+  if (failed(md_dist::verifyCoverage(sum, neighborhood)) ||
+      failed(md_dist::proveContract(sum, sum.getKernel().front(),
+                                    Exchange::Symmetric)))
+    return failure();
+  auto type = cast<md_dist::FieldType>(sum.getGathered()[place].getType());
+  if (type.isGhost() || type.getPartial())
+    return sum.emitOpError() << "expected the owned values of a field at an "
+                                "even place of 'gather'";
+  MLIRContext *context = builder.getContext();
+  OperationState state(loc, md_dist::GatherPairsOp::getOperationName());
+  state.addOperands(sum->getOperands());
+  state.addAttribute("exchange", ExchangeAttr::get(context, Exchange::None));
+  state.addTypes(type.with(md_dist::Role::Owned, false));
+  state.addRegion();
+  Operation *gather = builder.create(state);
+  IRMapping mapping;
+  sum.getKernel().cloneInto(&gather->getRegion(0), mapping);
+  Block &block = gather->getRegion(0).front();
+  OpBuilder kernel(block.getTerminator());
+  Value value = block.getTerminator()->getOperand(0);
+  // The center's value of the field: the kernel takes the distance, the
+  // displacement, and two values of each gathered field.
+  Value term;
+  if (failed(emitScaledSlope(kernel, value, block.getArgument(2 + place),
+                             weight, /*negate=*/true, term)))
+    return failure();
+  setYield(block, term);
+  result = gather->getResult(0);
+  return success();
+}
+
+LogicalResult DerivativeBuilder::emitDensityOp(const Density &density,
+                                               bool virial,
+                                               Operation *&result) {
+  // ρ_i = Σ_k f(i, k) gives the particle i the force
+  // K(i, k) = (F_i f'(i, k) + F_k f'(k, i)) d / r from each pair, with F the
+  // forces on ρ, −ρ̄: the kernel evaluated from both ends, so that K is
+  // antisymmetric by construction (Section 15.2). The virial is Σ d ⊗ K.
+  md_dist::GatherPairsOp gather = density.gather;
+  Type vectorType = VectorType::get({3}, builder.getF64Type());
+  Type virialType = VectorType::get({9}, builder.getF64Type());
+  MLIRContext *context = builder.getContext();
+  OperationState state(loc, virial ? md_dist::SumPairsOp::getOperationName()
+                                   : md_dist::GatherPairsOp::getOperationName());
+  state.addOperands(
+      {gather.getRelation(), gather.getPositions(), gather.getGhosts()});
+  state.addOperands(gather.getGathered());
+  state.addOperands({density.force, density.ghosts});
+  state.addAttribute("exchange",
+                     ExchangeAttr::get(context, virial ? Exchange::Symmetric
+                                                       : Exchange::Antisymmetric));
+  if (virial) {
+    state.addTypes(md_dist::PartialType::get(context, virialType));
+  } else {
+    auto rows = cast<md_dist::FieldType>(gather.getPositions().getType());
+    state.addTypes({rows.with(md_dist::Role::Owned, true),
+                    rows.with(md_dist::Role::Ghost, true)});
+  }
+  state.addRegion();
+  Operation *op = builder.create(state);
+  Block *block = new Block();
+  op->getRegion(0).push_back(block);
+  Block &source = gather.getKernel().front();
+  Value r = block->addArgument(source.getArgument(0).getType(), loc);
+  Value d = block->addArgument(source.getArgument(1).getType(), loc);
+  unsigned ends = source.getNumArguments() - 2;
+  SmallVector<Value> values;
+  for (unsigned k = 0; k != ends; ++k)
+    values.push_back(
+        block->addArgument(source.getArgument(2 + k).getType(), loc));
+  Type real = builder.getF64Type();
+  Value forceI = block->addArgument(real, loc);
+  Value forceK = block->addArgument(real, loc);
+
+  // The kernel with i at its center, and with k.
+  IRMapping forward, backward;
+  forward.map(source.getArgument(0), r);
+  backward.map(source.getArgument(0), r);
+  forward.map(source.getArgument(1), d);
+  backward.map(source.getArgument(1), d);
+  for (unsigned k = 0; k + 1 < ends; k += 2) {
+    forward.map(source.getArgument(2 + k), values[k]);
+    forward.map(source.getArgument(3 + k), values[k + 1]);
+    backward.map(source.getArgument(2 + k), values[k + 1]);
+    backward.map(source.getArgument(3 + k), values[k]);
+  }
+  Value fromI = inlineKernel(source, *block, forward);
+  Value fromK = inlineKernel(source, *block, backward);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  ScalarDerivative derivative(kernel, r);
+  Value slopeI, slopeK;
+  if (failed(derivative.get(fromI, slopeI)) ||
+      failed(derivative.get(fromK, slopeK)))
+    return failure();
+  ScalarEmitter emit(kernel, loc);
+  Value both = emit.add(emit.mul(forceI, slopeI), emit.mul(forceK, slopeK));
+  Value factor = both ? emit.div(both, r) : Value();
+  Value yielded;
+  if (!factor) {
+    yielded = emit.constant(0.0, virial ? virialType : vectorType);
+  } else {
+    Value force = emit.mul(
+        vector::BroadcastOp::create(kernel, loc, vectorType, factor), d);
+    if (!virial) {
+      yielded = force;
+    } else {
+      SmallVector<Value, 9> elements;
+      for (int64_t a = 0; a < 3; ++a)
+        for (int64_t b = 0; b < 3; ++b)
+          elements.push_back(
+              emit.mul(vector::ExtractOp::create(kernel, loc, d, a),
+                       vector::ExtractOp::create(kernel, loc, force, b)));
+      yielded =
+          vector::FromElementsOp::create(kernel, loc, virialType, elements);
     }
-    auto transfer = dyn_cast<AdjointOpInterface>(op);
-    if (!transfer || op->getNumResults() != 1)
+  }
+  md_dist::YieldOp::create(kernel, loc, ValueRange{yielded});
+  eraseDeadOps(*block);
+  result = op;
+  return success();
+}
+
+Value DerivativeBuilder::addDistributedFields(ArrayRef<Value> fields) {
+  if (fields.empty())
+    return Value();
+  if (fields.size() == 1)
+    return fields.front();
+  auto type = cast<md_dist::FieldType>(fields.front().getType());
+  Type valueType = type.getKernelValueType();
+  OperationState state(loc, md_dist::MapParticlesOp::getOperationName());
+  state.addOperands(fields);
+  state.addRegion();
+  state.addTypes(type);
+  Operation *map = builder.create(state);
+  Block *block = new Block();
+  map->getRegion(0).push_back(block);
+  for (size_t i = 0, e = fields.size(); i != e; ++i)
+    block->addArgument(valueType, loc);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  ScalarEmitter emit(kernel, loc);
+  Value total;
+  for (BlockArgument argument : block->getArguments())
+    total = emit.add(total, argument);
+  md_dist::YieldOp::create(kernel, loc, ValueRange{total});
+  return map->getResult(0);
+}
+
+/// Whether `term` is one of the two partial results of a traversal.
+static bool isPartialTerm(Value term) {
+  auto type = dyn_cast<md_dist::FieldType>(term.getType());
+  return type && type.getPartial();
+}
+
+void DerivativeBuilder::addCompleteTerms(SmallVectorImpl<Value> &list) {
+  SmallVector<Value, 2> complete, kept;
+  for (Value term : list)
+    (isPartialTerm(term) ? kept : complete).push_back(term);
+  if (complete.size() < 2)
+    return;
+  Value total = isa<md_dist::FieldType>(complete.front().getType())
+                    ? addDistributedFields(complete)
+                    : addFields(complete);
+  kept.push_back(total);
+  list.assign(kept.begin(), kept.end());
+}
+
+bool DerivativeBuilder::isPositionValued(Value value) {
+  if (value == body->getArgument(0))
+    return true;
+  Operation *op = value.getDefiningOp();
+  if (auto distribute = dyn_cast_or_null<md_dist::DistributeOp>(op))
+    return isPositionValued(distribute.getField());
+  if (auto copy = dyn_cast_or_null<md_dist::HaloCopyOp>(op))
+    return isPositionValued(copy.getField());
+  if (auto sum = dyn_cast_or_null<md_dist::HaloSumOp>(op))
+    return isPositionValued(sum.getOwned()) ||
+           isPositionValued(sum.getGhosts());
+  if (auto collect = dyn_cast_or_null<md_dist::CollectOp>(op))
+    return isPositionValued(collect.getField());
+  return false;
+}
+
+LogicalResult DerivativeBuilder::transposeTransfer(Operation *op) {
+  auto transfer = dyn_cast<AdjointOpInterface>(op);
+  if (!transfer || op->getNumResults() != 1)
+    return success();
+  auto found = distTerms.find(op->getResult(0));
+  if (found == distTerms.end())
+    return success();
+  // The complete terms travel as one; each partial one with its partner.
+  addCompleteTerms(found->second);
+  SmallVector<Value, 2> incoming = found->second;
+  for (OpOperand &operand : op->getOpOperands()) {
+    unsigned index = operand.getOperandNumber();
+    Value input = operand.get();
+    if (!transfer.isLinearOperand(index) || !isPositional(input))
       continue;
-    auto found = terms.find(op->getResult(0));
-    if (found == terms.end())
-      continue;
-    SmallVector<Value, 2> incoming = found->second;
-    for (OpOperand &operand : op->getOpOperands()) {
-      unsigned index = operand.getOperandNumber();
-      Value input = operand.get();
-      if (!transfer.isLinearOperand(index) || !isPositional(input))
-        continue;
-      for (Value term : incoming) {
-        // The ghost contributions of a gather go back with the owned
-        // contributions of the same gather, in one md_dist.halo_sum.
-        Value partner;
-        auto partial = dyn_cast<md_dist::FieldType>(term.getType());
-        if (partial && partial.getPartial()) {
-          auto gather = term.getDefiningOp<md_dist::GatherPairsOp>();
-          if (!isa<md_dist::HaloCopyOp>(op) || !gather ||
-              gather.getResults().size() != 2 || term != gather.getResult(1))
-            return op->emitOpError()
-                   << "cannot carry a partial adjoint through this op";
-          SmallVector<Value, 2> &owned = terms[input];
-          auto place = llvm::find(owned, gather.getResult(0));
-          if (place == owned.end())
-            return op->emitOpError()
-                   << "cannot find the owned contributions of the traversal "
-                      "whose ghost contributions return to the owners";
-          partner = *place;
-          owned.erase(place);
-        }
-        Value next = transfer.emitTranspose(builder, index, term, partner);
-        if (!next)
-          return failure();
-        terms[input].push_back(next);
+    for (Value term : incoming) {
+      // The ghost contributions of a gather go back with the owned
+      // contributions of the same gather, in one md_dist.halo_sum.
+      Value partner;
+      if (isPartialTerm(term)) {
+        auto gather = term.getDefiningOp<md_dist::GatherPairsOp>();
+        if (!isa<md_dist::HaloCopyOp>(op) || !gather ||
+            gather.getResults().size() != 2 || term != gather.getResult(1))
+          return op->emitOpError()
+                 << "cannot carry a partial adjoint through this op";
+        SmallVector<Value, 2> &owned = distTerms[input];
+        auto place = llvm::find(owned, gather.getResult(0));
+        if (place == owned.end())
+          return op->emitOpError()
+                 << "cannot find the owned contributions of the traversal "
+                    "whose ghost contributions return to the owners";
+        partner = *place;
+        owned.erase(place);
       }
+      Value next = transfer.emitTranspose(builder, index, term, partner);
+      if (!next)
+        return failure();
+      distTerms[input].push_back(next);
     }
   }
-  if (activityFailed)
-    return failure();
+  return success();
+}
 
+LogicalResult DerivativeBuilder::buildDistributedTerms() {
+  if (distTermsBuilt)
+    return success();
+  distTermsBuilt = true;
+  for (Operation *op : llvm::reverse(potentialOps)) {
+    if (auto sum = dyn_cast<md_dist::SumPairsOp>(op)) {
+      Value weight;
+      if (failed(getPartialWeight(sum.getResult(), weight)))
+        return failure();
+      if (!weight)
+        continue;
+      // The fields the kernel reads at both particles (Section 15.4).
+      for (unsigned place = 0; place < sum.getGathered().size(); place += 2) {
+        Value field = sum.getGathered()[place];
+        if (!isPositional(field))
+          continue;
+        Value term;
+        if (failed(emitPairFieldTerm(sum, place, weight, term)))
+          return failure();
+        distTerms[field].push_back(term);
+      }
+      if (!wantForces)
+        continue;
+      // K(i, k) = −weight · u'(r) · d / r at i, and its value under
+      // exchange, −K, at k: the forces of the distance.
+      Operation *gather = createDistributedPairOp(
+          sum, /*gather=*/true, Exchange::Antisymmetric, Type());
+      Block &block = gather->getRegion(0).front();
+      OpBuilder kernel(block.getTerminator());
+      Value factor;
+      if (failed(emitRadialFactor(gather, weight, kernel, factor)))
+        return failure();
+      Type vectorType = VectorType::get({3}, builder.getF64Type());
+      ScalarEmitter emit(kernel, loc);
+      Value contribution =
+          factor ? emit.mul(vector::BroadcastOp::create(kernel, loc,
+                                                        vectorType, factor),
+                            block.getArgument(1))
+                 : emit.constant(0.0, vectorType);
+      setYield(block, contribution);
+      distTerms[sum.getPositions()].push_back(gather->getResult(0));
+      distTerms[sum.getGhosts()].push_back(gather->getResult(1));
+      continue;
+    }
+    if (auto sum = dyn_cast<md_dist::SumParticlesOp>(op)) {
+      Value weight;
+      if (failed(getPartialWeight(sum.getResult(), weight)))
+        return failure();
+      if (!weight)
+        continue;
+      for (auto [place, input] : llvm::enumerate(sum.getGathered())) {
+        if (!isPositional(input))
+          continue;
+        Value term;
+        if (failed(emitRowForces(sum, place, weight, term)))
+          return failure();
+        distTerms[input].push_back(term);
+      }
+      continue;
+    }
+    if (auto map = dyn_cast<md_dist::MapParticlesOp>(op)) {
+      auto found = distTerms.find(map.getResult());
+      if (found == distTerms.end() || found->second.empty())
+        continue;
+      addCompleteTerms(found->second);
+      Value outer = found->second.front();
+      for (auto [place, input] : llvm::enumerate(map.getGathered())) {
+        if (!isPositional(input))
+          continue;
+        Value term;
+        if (failed(emitMapTerm(map, place, outer, term)))
+          return failure();
+        distTerms[input].push_back(term);
+      }
+      continue;
+    }
+    if (auto gather = dyn_cast<md_dist::GatherPairsOp>(op)) {
+      bool twoEnded = gather.getResults().size() == 2;
+      SmallVector<Value, 2> owned = distTerms.lookup(gather.getResult(0));
+      SmallVector<Value, 2> ghost =
+          twoEnded ? distTerms.lookup(gather.getResult(1))
+                   : SmallVector<Value, 2>();
+      if (owned.empty() && ghost.empty())
+        continue;
+      Block &kernel = gather.getKernel().front();
+      if (!kernel.getArgument(1).use_empty())
+        return gather.emitOpError()
+               << "cannot differentiate a field gathered on domains from a "
+                  "kernel that uses the displacement; only kernels that "
+                  "depend on the distance are supported";
+      if (!cast<md_dist::FieldType>(gather.getResult(0).getType())
+               .getKernelValueType()
+               .isF64())
+        return gather.emitOpError()
+               << "cannot differentiate a gathered field on domains that "
+                  "is not of f64";
+      for (Value field : gather.getGathered())
+        if (isPositional(field))
+          return gather.emitOpError()
+                 << "cannot differentiate a field gathered on domains from "
+                    "a kernel that reads a field computed from the "
+                    "positions";
+      auto neighborhood =
+          gather.getRelation().getDefiningOp<md_dist::NeighborhoodOp>();
+      Value halo = neighborhood.getHalo();
+      Density density{gather, Value(), Value()};
+      if (!twoEnded) {
+        // Complete at the owners (directed): the forces on ρ, copied to the
+        // ghosts, of exactly this version.
+        addCompleteTerms(owned);
+        density.force = owned.front();
+        auto type = cast<md_dist::FieldType>(density.force.getType());
+        density.ghosts = md_dist::HaloCopyOp::create(
+            builder, loc, type.with(md_dist::Role::Ghost, false),
+            density.force, halo, Value());
+      } else {
+        // The two partial results (unique), completed by halo_sum: its
+        // transposes gave the forces on ρ and their copy.
+        auto copy = ghost.size() == 1
+                        ? ghost.front().getDefiningOp<md_dist::HaloCopyOp>()
+                        : md_dist::HaloCopyOp();
+        if (owned.size() != 1 || !copy || copy.getField() != owned.front() ||
+            copy.getHalo() != halo || copy.getImage())
+          return gather.emitOpError()
+                 << "cannot differentiate a gather whose two results do not "
+                    "return to the owners together through the halo of its "
+                    "relation";
+        density.force = owned.front();
+        density.ghosts = copy.getResult();
+      }
+      densities.push_back(density);
+      if (!wantForces)
+        continue;
+      Operation *forces;
+      if (failed(emitDensityOp(density, /*virial=*/false, forces)))
+        return failure();
+      distTerms[gather.getPositions()].push_back(forces->getResult(0));
+      distTerms[gather.getGhosts()].push_back(forces->getResult(1));
+      continue;
+    }
+    if (failed(transposeTransfer(op)))
+      return failure();
+  }
+  return success(!activityFailed);
+}
+
+LogicalResult DerivativeBuilder::buildDistributedForces(Value &forces) {
+  if (failed(buildDistributedTerms()))
+    return failure();
+  Value positions = body->getArgument(0);
   SmallVector<Value> total;
-  for (Value term : terms.lookup(positions))
+  for (Value term : distTerms.lookup(positions))
     total.push_back(term);
   if (total.empty())
     return potential.emitOpError()
@@ -1381,19 +1765,23 @@ LogicalResult DerivativeBuilder::buildDistributedForces(Value &forces) {
 LogicalResult DerivativeBuilder::buildDistributedVirial(Value &virial) {
   Type virialType = VectorType::get({9}, builder.getF64Type());
   ScalarEmitter outer(builder, loc);
-  for (md_dist::SumParticlesOp sum : rowSums)
-    if (llvm::any_of(sum.getGathered(),
-                     [&](Value input) { return isPositional(input); }))
-      return sum.emitOpError()
-             << "cannot compute the virial of a sum over rows of fields "
-                "computed from the positions on domains";
+  // The virial of pairs, Σ d ⊗ K, is the derivative in a strain only where
+  // the positions enter the energy through the distances of pairs.
   for (Operation *op : potentialOps)
-    if (isa<md_dist::GatherPairsOp, md_dist::MapParticlesOp>(op) &&
-        isPositional(op->getResult(0)))
-      return op->emitOpError()
-             << "cannot compute the virial through a field on domains "
-                "computed from the positions; that is the next part, "
-                "EAM";
+    if (isa<md_dist::SumParticlesOp, md_dist::MapParticlesOp,
+            md_dist::SumPairsOp, md_dist::GatherPairsOp>(op)) {
+      ValueRange read = isa<md_dist::SumParticlesOp, md_dist::MapParticlesOp>(op)
+                            ? op->getOperands()
+                            : op->getOperands().drop_front(3);
+      if (llvm::any_of(read, [&](Value input) {
+            return isPositionValued(input);
+          }))
+        return op->emitOpError()
+               << "cannot compute the virial of a term that reads the "
+                  "positions on domains as a field";
+    }
+  if (failed(buildDistributedTerms()))
+    return failure();
   Value total;
   for (md_dist::SumPairsOp sum : pairSums) {
     Value weight;
@@ -1429,6 +1817,15 @@ LogicalResult DerivativeBuilder::buildDistributedVirial(Value &virial) {
       contribution = emit.constant(0.0, virialType);
     }
     setYield(block, contribution);
+    Value reduced = md_dist::AllReduceOp::create(builder, loc, virialType,
+                                                 term->getResult(0));
+    total = outer.add(total, reduced);
+  }
+  // The virial of the forces of each density (Section 15.2).
+  for (const Density &density : densities) {
+    Operation *term;
+    if (failed(emitDensityOp(density, /*virial=*/true, term)))
+      return failure();
     Value reduced = md_dist::AllReduceOp::create(builder, loc, virialType,
                                                  term->getResult(0));
     total = outer.add(total, reduced);
@@ -2013,6 +2410,7 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
     return request == Request::Forces || request == Request::Virial;
   });
   if (distributed) {
+    wantForces = llvm::is_contained(kinds, static_cast<int32_t>(Request::Forces));
     for (int32_t kind : kinds)
       if (static_cast<Request>(kind) == Request::Derivative) {
         potential.emitOpError()

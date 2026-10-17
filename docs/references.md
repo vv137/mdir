@@ -340,6 +340,17 @@ electrostatics," *J. Chem. Phys.* **124**, 234104 (2006).
 Used for: damped shifted force electrostatics, a cutoff-based
 alternative named in the design review.
 
+### Finnis1984
+
+M. W. Finnis, J. E. Sinclair, "A simple empirical N-body potential for
+transition metals," *Philos. Mag. A* **50**, 45–55 (1984).
+[doi:10.1080/01418618408244210](https://doi.org/10.1080/01418618408244210)
+
+Used for: the analytic form of the embedded-atom potential on which EAM
+on domains is validated (D[ml2-eam]): a density of pairs
+$(r - d)^2$, an embedding $-A\sqrt\rho$, and a pair term
+$(r - c)^2(c_0 + c_1r + c_2r^2)$, each zero with its slope at its cutoff.
+
 ### Fuchs2025
 
 P. Fuchs, W. Chen, S. Thaler, J. Zavadlav, "chemtrain-deploy: A parallel

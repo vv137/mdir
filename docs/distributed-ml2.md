@@ -9,7 +9,8 @@ ensembles, the Amber suite on several GPUs). Sections 1 to 11 are the
 design; Section 12 is what the first PR builds and its validation;
 Section 13 records the maintainer's rulings; Section 14 is the second part,
 `md-distribute` and the derivative rules of $G$ and $G^\mathsf T$
-(D276).
+(D276); Section 15 is the third part, the derivative through
+fields computed from the positions, EAM on domains (D[ml2-eam]).
 
 ## 1. Scope
 
@@ -563,7 +564,7 @@ the backward's communication is the AD's transpose of the forward's.
    unreduced partial sum, and a relation traversed at other positions.
 
 Next parts of stage 1, each with its own tests: `md-distribute` and the
-rules of the AD (Section 11; built, Section 14), EAM, the schedule print and trace, the
+rules of the AD (Section 11; built, Section 14), EAM (built, Section 15), the schedule print and trace, the
 `md_exec` path (Section 7.2), migration and `covered` with a trajectory
 (Section 8), MPI on CPU ranks, then GPUs.
 
@@ -705,8 +706,9 @@ the cell.
 
 Not yet differentiated, each refused with a diagnostic: a pair sum that
 gathers a field computed from the positions, and a derivative through a
-`gather_pairs` or `map_particles` of the positions (the next part, EAM);
-and derivatives in a parameter or a field (`derivative(n)`).
+`gather_pairs` or `map_particles` of the positions (built in the next
+part, EAM, Section 15); and derivatives in a parameter or a field
+(`derivative(n)`).
 
 The derived kernels of `md_dist` must pass the proof of their exchange
 contract (V8), where those of `md` carry the basis `derived` and are not
@@ -786,7 +788,8 @@ sum over particles with a field argument, and a pair sum that reads the map
 at both particles through its copy to the ghosts), on the grids
 $2\times1\times1$, $3\times2\times1$, and $16\times1\times1$ and both
 traversals, against one domain: $U = 1896.65$ within $2.4\times10^{-16}$
-relative (tolerance $10^{-10}$). Its derivative is the next part.
+relative (tolerance $10^{-10}$). Its derivative is the next part
+(Section 15).
 
 IR tests: `test/Dialect/MD/Transforms/distribute.mlir` (the rewrite of
 Lennard-Jones with a truncation, and of a many-body term with a gather, a
@@ -808,3 +811,235 @@ dialect (`test/Dialect/MDDist/invalid.mlir`).
   relation, which the executor runs with the weight one half.
 - No control-file key, Python API, or output changes: the keys ruled on
   PR #379 arrive with the first part that runs a distributed trajectory.
+
+## 15. The third part: EAM on domains
+
+D[ml2-eam] carries the derivative of a potential on domains through the
+fields it computes from the positions: a density gathered over pairs, a
+map of it, sums over particles that read them, and the copy of such a
+field to the ghosts. The embedded-atom method (EAM)
+[[Daw1984]](references.md#daw1984) is the case that needs all of them,
+and the second pass of its forces reads, at the neighbors, a field of the
+first: the derivative of the embedding energy.
+
+### 15.1 The potential and its forces
+
+$$
+U = \sum_i F(\rho_i) + \tfrac12\sum_i\sum_{j\ne i}\phi(r_{ij}),
+\qquad \rho_i = \sum_{j\ne i} f(r_{ij}).
+$$
+
+With $\bar\rho_i = \partial U/\partial\rho_i = F'(\rho_i)$, the chain rule
+gives the force on particle $i$ as a sum over its pairs,
+
+$$
+\mathbf F_i = -\sum_{j\ne i}\Bigl[\bigl(\bar\rho_i + \bar\rho_j\bigr) f'(r_{ij})
++ \phi'(r_{ij})\Bigr]\frac{\mathbf d_{ij}}{r_{ij}},
+\qquad \mathbf d_{ij} = \mathbf x_i - \mathbf x_j,
+$$
+
+antisymmetric in the pair, and the virial is
+$\mathsf W = \sum_{i<j}\mathbf d_{ij}\otimes\mathbf K_{ij}$, with $\mathbf K_{ij}$
+the term of the pair in $\mathbf F_i$
+[[Louwerse2006]](references.md#louwerse2006). The force needs $\bar\rho_j$
+at every neighbor $j$: on domains, a copy of $\bar\rho$ to the ghosts
+between the pass that computes $\rho$ and the pass that computes the
+forces. On one domain `md-differentiate` already derives this (the adjoint
+of an intermediate field, D2, D182): the gather of the forces reads the
+adjoint of the density at both particles of a pair.
+
+### 15.2 Adjoints of fields on domains
+
+`md-differentiate` keeps, for every field on domains that depends on the
+positions, the derivative of the energy in it, its adjoint, as a list of
+terms, and fills it in the reverse order of the body, as on one domain:
+
+| Op of the potential that reads the field $\mathbf a$ | Term of $\bar{\mathbf a}$ |
+|---|---|
+| `sum_particles` of $k(\mathbf a_i, \dots)$, of weight $w$ | $w\,\partial k/\partial\mathbf a_i$: `map_particles` over the same rows |
+| `map_particles` $\mathbf b_i = g(\mathbf a_i, \dots)$ | $\bar{\mathbf b}_i\,\partial g/\partial\mathbf a_i$: `map_particles` that also reads $\bar{\mathbf b}$ |
+| `halo_copy`, $G\mathbf a$ | $G^\mathsf T$ of the adjoint of the copy (Section 14.3) |
+| `halo_sum`, $\mathbf p + G^\mathsf T\mathbf q$ | $\bar{\mathbf p} = \bar{\mathbf r}$, $\bar{\mathbf q} = G\bar{\mathbf r}$ (Section 14.3) |
+| `sum_pairs` that gathers $(\mathbf a, G\mathbf a)$, directed | $w\sum_{k : (i,k)\in D_{o(i)}}\partial_1 k(i,k)$: `gather_pairs` at the owners (15.4) |
+
+Terms are added where they are complete, by `md_dist.map_particles` over
+owned rows. A gather of the field gives the forces and the virial:
+
+| Op of the potential that computes $\rho$ | Forces and virial from $\bar\rho$ |
+|---|---|
+| `gather_pairs` (directed, complete), or its two partial results completed by `halo_sum` (unique) | $\bar\rho_\Gamma =$ `halo_copy` of $\bar\rho$; a two-ended `gather_pairs` of $\mathbf K(i,k) = -\bigl(\bar\rho_i f'(i,k) + \bar\rho_k f'(k,i)\bigr)\mathbf d/r$ that gathers $(\bar\rho, \bar\rho_\Gamma)$; a `sum_pairs` of $\mathbf d\otimes\mathbf K$ |
+
+$f'(i,k)$ is the derivative in $r$ of the density's kernel with $i$ at its
+center, and $f'(k,i)$ with $k$ there: the kernel is inlined twice with its
+ends exchanged, so that $\mathbf K$ is antisymmetric by construction, and
+the verifier proves it (V8), as it proves every derived kernel of
+`md_dist`. The two partial results of $\mathbf K$ return to the owners as
+those of a pair sum do, by the rule of the copy of the positions
+($G^\mathsf T$, Section 14.3), and `md-dist-owner-computes` applies to them
+on the directed traversal with the premises of Section 14.4.
+
+On the unique traversal the transposes of 14.3 give the copy by
+themselves: the adjoint of the density's `halo_sum` is $\bar\rho$ for its
+owned operand and $G\bar\rho$ for its ghost operand, and the force gather
+takes the two as its gathered pair. On the directed traversal the density
+is complete at the owners, and the derivative inserts the copy. Either way
+the copy is of exactly the version of $\bar\rho$ computed in this
+derivative, which the verifier checks (V2): a copy of another version is a
+stale halo.
+
+### 15.3 The program, written out
+
+EAM with forces on the directed traversal, in the derivative's form (the
+ops of Section 5 that build the halo and the relation omitted):
+
+```mlir
+%rho = md_dist.gather_pairs %n, %xo, %xg exchange(symmetric) { f(r) }
+%e1p = md_dist.sum_particles gather(%rho) { F(rho) }
+%e2p = md_dist.sum_pairs %n, %xo, %xg exchange(symmetric) { phi(r) }
+// the derivative
+%k:2 = md_dist.gather_pairs %n, %xo, %xg exchange(antisymmetric) { −phi'(r) d / r }
+%rb  = md_dist.map_particles gather(%rho) { F'(rho) }        // ρ̄
+%rbg = md_dist.halo_copy %rb, %h                            // ρ̄ to the ghosts
+%g:2 = md_dist.gather_pairs %n, %xo, %xg gather(%rb, %rbg)
+         exchange(antisymmetric) { −(ρ̄_i f'(r) + ρ̄_k f'(r)) d / r }
+%f1  = md_dist.halo_sum %k#0, %k#1, %h                      // G^T
+%f2  = md_dist.halo_sum %g#0, %g#1, %h                      // G^T
+```
+
+and the collection of $\mathbf f_1 + \mathbf f_2$. After
+`md-dist-owner-computes` the two `halo_sum`s are gone and each gather has
+one complete result; the copy of $\bar\rho$ stays, since the forces at an
+owner need $\bar\rho$ at its neighbors. This is the stage boundary of the
+[architecture plan](future-architecture-plan.md#eam-makes-the-stage-boundary-concrete),
+derived rather than written.
+
+### 15.4 A field read at neighbors by a pair sum
+
+A pair sum may read a field computed from the positions at both particles
+(the many-body energy of Section 14.5 reads $\psi = \sqrt\rho$ so). The
+derivatives in the field at the center of a pair, $\partial_1 k(i,k)$, and
+at the neighbor, $\partial_2 k(i,k)$, are different functions with no sign
+between them, so the two-ended gather of Section 4.6, whose value at the
+neighbor comes from an exchange contract, cannot carry them. On the
+directed traversal the derivative takes the gather at the owners instead.
+
+*Claim.* For a directed relation $D$ whose halo covers its cutoff and a
+symmetric kernel $k$, the derivative of
+$S = \tfrac12\sum_d\sum_{(i,k)\in D_d} k(i,k)$ in the owned value $a_i$,
+through its own row and through every copy of it to the ghosts, is
+$\sum_{k : (i,k)\in D_{o(i)}}\partial_1 k(i,k)$.
+
+*Proof.* $a_i$ enters $S$ at the pairs $(i,k)$ of $D_{o(i)}$, as the
+center's value, and at the pairs $(j,k')$ whose $k'$ is $i$ or a copy of
+it, as the neighbor's value. By coverage (Section 4.3) the pair of $i$ and
+$j$, $r_{ij} < r_c$, is in both forms once each. Since $k$ is symmetric,
+$\partial_2 k(j,k') = \partial_1 k(k', j)$, and $k(k', j)$ is $k(i,k)$: the
+distance is the same, the displacement $\mathbf x_{k'} - \mathbf x_j$
+equals $\mathbf x_i - \mathbf x_k$, and the values at $k'$ and $j$ are those
+of $i$ and $k$ (a copy carries its source's value, V2). The two halves are
+equal, and their sum is the term of the claim. $\square$
+
+*Premises*, checked where the derivative emits the gather, with the code of
+the verifier: the relation is directed (its type), covered (V4,
+`md_dist::verifyCoverage`), and the kernel symmetric (V8, proven again by
+`md_dist::proveContract`). On the unique traversal the derivative refuses
+with a diagnostic: the neighbor's half is computed only in the center's
+domain, and returning it needs a two-ended gather whose value at the
+neighbor is the kernel evaluated with the ends exchanged, a form the
+dialect does not have yet.
+
+### 15.5 Validation
+
+`test/Integration/dist-eam.mlir`: an EAM potential of the analytic form of
+Finnis and Sinclair [[Finnis1984]](references.md#finnis1984), with
+parameters for the 64 particles of Section 12 in reduced units,
+
+$$
+f(r) = (r - 2)^2,\quad F(\rho) = -\sqrt\rho,\quad
+\phi(r) = (r - 2)^2(3 - 2r + 0.4r^2)
+$$
+
+for $r < 2$ (each zero with its slope at the cutoff), distributed by
+`md-distribute` and differentiated by `md-differentiate`. It runs on the
+grids $1\times1\times1$, $2\times1\times1$, $3\times2\times1$ (uneven), and
+$16\times1\times1$ (half of the domains empty), each with the unique
+traversal, the directed traversal in the derivative's form, and the
+directed traversal after `md-dist-owner-computes` (12 runs). The reference
+is the same potential on one domain through `md_exec`, which agrees with a
+Python reference written from the definitions and their closed-form
+derivatives (`test/Integration/Inputs/eam_reference.py`). The largest
+relative differences over the 12 runs, `double`, on the CPU:
+
+| Quantity | Reference | Largest difference | Tolerance |
+|---|---|---|---|
+| Energy, $U = 31.8605$ | `eam_reference.py` (one domain) | $3.6\times10^{-15}$ | $10^{-10}$ |
+| A force component, of $\max\lvert F\rvert = 2.2406$ | `eam_reference.py` (one domain) | $2.5\times10^{-17}$ | $10^{-10}$ |
+| $\mathrm{tr}\,\mathsf W = 584.824$ | `eam_reference.py` (one domain) | $0$ | $10^{-10}$ |
+| Energy | One domain | $1.8\times10^{-15}$ | $10^{-10}$ |
+| Force component, of $\max\lvert F\rvert$ | One domain | $3.1\times10^{-15}$ | $10^{-10}$ |
+| Virial component, of $\lvert\mathrm{tr}\,\mathsf W\rvert$ | One domain | $4.4\times10^{-16}$ | $10^{-10}$ |
+| Six force components, of $\max\lvert F\rvert$ | Central differences of the distributed energy, step $10^{-5}$ | $2.3\times10^{-9}$ | $10^{-7}$ |
+| The diagonal of the virial, of $\lvert\mathrm{tr}\,\mathsf W\rvert$ | Central differences in the three stretches of the cell, step $10^{-5}$ | $6.0\times10^{-11}$ | $10^{-7}$ |
+| $\langle\mathbf F, \mathbf v\rangle$ of $U = \langle\mathbf c, \rho\rangle$ | $-\langle\mathbf c, J\mathbf v\rangle$, summed directly | $6.9\times10^{-15}$ | $10^{-12}$ |
+
+The differences from central differences are those of the differences
+themselves, the rounding of $U$ over $2h$. The last row is the adjoint
+identity of the density: for $U = \langle\mathbf c, \rho(\mathbf x)\rangle$
+with a field $\mathbf c$ and $J = \partial\rho/\partial\mathbf x$, the forces
+on domains are $-J^\mathsf T\mathbf c$, carried back through the copy of
+$\bar\rho = \mathbf c$ to the ghosts and $G^\mathsf T$, and their product with
+a field $\mathbf v$ is compared with
+$-\langle\mathbf c, J\mathbf v\rangle = -\sum_i c_i\sum_{j\ne i} f'(r_{ij})\,\mathbf d_{ij}\cdot(\mathbf v_i - \mathbf v_j)/r_{ij}$,
+summed in the test over all pairs in the minimum image, with no relation,
+no domains, and no derivative.
+
+`test/Integration/dist-many-body-forces.mlir`: the many-body energy of
+Section 14.5, whose pair sum reads $\psi = \sqrt\rho$ at both particles, on
+the directed traversal (Section 15.4) on the grids $2\times1\times1$,
+$3\times2\times1$, and $16\times1\times1$, in the derivative's form and
+after `md-dist-owner-computes` (6 runs), against one domain: energy within
+$2.4\times10^{-16}$, force components within $2.1\times10^{-15}$, virial
+components within $5.2\times10^{-17}$ (tolerance $10^{-10}$); three force
+components and the stretch along $x$ against central differences (step
+$10^{-5}$) within $2.5\times10^{-9}$ and $7.1\times10^{-12}$ (tolerance $10^{-7}$).
+
+IR tests: `test/Dialect/MD/Transforms/differentiate-eam.mlir` (the copy of
+$\bar\rho$ to the ghosts and the force gather that reads it, on both
+traversals; $G^\mathsf T$ in the derivative's form and its absence after
+owner-computes, with the copy kept; the gather at the owners of the adjoint
+of $\psi$). Negative tests: a stale copy of $F'(\rho)$, and none, in an EAM
+program written in `md_dist` (`test/Dialect/MDDist/eam-invalid.mlir`, V2
+and V1); a pair sum that reads a field computed from the positions on the
+unique traversal, and densities whose kernel uses the displacement or reads
+a field computed from the positions
+(`test/Dialect/MD/Transforms/differentiate-eam-invalid.mlir`).
+
+### 15.6 What changed in the code
+
+- `md-differentiate` (`lib/Dialect/MD/Transforms/Differentiate.cpp`) walks
+  the body of a potential on domains once, in reverse, keeping the negated
+  adjoints of its values on domains and of the positions as lists of terms
+  (complete, or the two partial results of a traversal): the map of the
+  density's adjoint yields $-\bar\rho$, the force on the density, and the
+  force kernel is written for it. The transfers are
+  transposed by `AdjointOpInterface` as in Section 14.3, with the complete
+  terms of a value added before its transpose, so that the density's
+  `halo_sum` yields one $\bar\rho$ and one copy.
+- No change to the dialect, the executor, or `md-dist-owner-computes`: the
+  force gather of a density is the two-ended gather of Section 4.6 with a
+  proven contract, and the adjoint of a field read by a pair sum is a
+  gather with one complete result over a directed relation.
+- No control-file key, Python API, or output changes.
+
+### 15.7 What is left
+
+- The derivative through a pair sum that reads a field computed from the
+  positions on the unique traversal (15.4). The same missing form, a
+  two-ended gather that evaluates the kernel at both particles, means that
+  on the directed traversal the adjoint of such a field is emitted directly
+  as the gather at the owners: a checked optimization (V4, V8, the proof
+  of 15.4) without a switch, so that no derivative's form with $G^\mathsf T$
+  is compared with it, as principle 3 asks. That form, and the comparison,
+  come with the new gather.
+- Derivatives in parameters or fields on domains; the `mixed` mode and
+  GPUs; the path through `md_exec` (Section 7.2); migration; MPI.
