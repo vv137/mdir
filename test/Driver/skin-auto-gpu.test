@@ -1,0 +1,67 @@
+# The search of the skins (D[skin-auto]) on the water box of
+# pme-settle.test with the groups: `MDIR_SKIN_SEARCH=always` measures the
+# reference of D261 (12 / 9.6 Å) and the candidates of the cost model,
+# keeps one, and caches it; a second run and a continuation take it from
+# the cache, and a run of another time step does not. The run with the
+# reaches chosen misses no pair within the cutoff (MDIR_CHECK_PRUNING,
+# D268), and its energies at the start are those of the defaults to the
+# digits of the log in double precision: the skins change the speed, not
+# the pairs. The deterministic mode does not search, so that its bits
+# repeat; across skins it agrees to the rounding, not to the bit, since the
+# order of a row of the matrix follows its cells.
+#
+# REQUIRES: cuda, hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme-settle.test | sed '1d;$d' \
+# RUN:     | sed -e 's|^pairlist_distance = 10.0|pairlist_distance = "AUTO"\npruned_distance = "AUTO"|' \
+# RUN:           -e 's|^steps *= 100|steps = 100|' \
+# RUN:           -e 's|energy_interval = 50|energy_interval = 50\ncheckpoint = "run.h5"\ncheckpoint_interval = 100\nmanifest = "run.json"|' \
+# RUN:           -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "double"\nneighbor_structure = "GROUPS"|' > %t/auto.toml
+# RUN: sed -e 's|^steps = 100|steps = 200|' %t/auto.toml > %t/longer.toml
+# RUN: sed -e 's|^time_step *= 0.001|time_step = 0.0005|' %t/auto.toml > %t/half.toml
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always MDIR_CHECK_PRUNING=1 mdir run auto.toml > first.log 2> first.err
+# RUN: FileCheck %s --check-prefix=FIRST < %t/first.log
+# RUN: FileCheck %s --check-prefix=CHECKED < %t/first.err
+# RUN: %python -c "import json; e = json.loads(open('%t/run.json').readline())['effective']; s = e['skin_search']; print(e['pairlist_distance_source'], e['pruned_distance_source'], s['source'], len(s['candidates']) >= 3, bool(s['cache']))" | FileCheck %s --check-prefix=MANIFEST
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run auto.toml > second.log 2>&1
+# RUN: FileCheck %s --check-prefix=CACHED < %t/second.log
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=always mdir run --continue longer.toml > continued.log 2>&1
+# RUN: FileCheck %s --check-prefix=CONTINUED < %t/continued.log
+# RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run half.toml > half.log 2>&1
+# RUN: FileCheck %s --check-prefix=MISSED < %t/half.log
+# RUN: ls %t/cache | wc -l | FileCheck %s --check-prefix=ONE
+# The defaults, and the chosen reaches, at the start.
+# RUN: cd %t && env MDIR_SKIN_SEARCH=never mdir run auto.toml > never.log 2>&1
+# RUN: cat %t/never.log %t/first.log | FileCheck %s --check-prefix=SAME
+# The deterministic mode: the matrix, no search, the same bits twice, and
+# another reach to the rounding.
+# RUN: sed -e 's|^neighbor_structure = "GROUPS"|deterministic = true|' -e 's|run.json|deterministic.json|' %t/auto.toml > %t/deterministic.toml
+# RUN: sed -e 's|run.h5|again.h5|' %t/deterministic.toml > %t/again.toml
+# RUN: sed -e 's|run.h5|reach.h5|' -e 's|^pairlist_distance = "AUTO"|pairlist_distance = 11.5|' %t/deterministic.toml > %t/reach.toml
+# RUN: cd %t && rm -f run.h5 && env MDIR_SKIN_SEARCH=always mdir run deterministic.toml > deterministic.log 2>&1
+# RUN: FileCheck %s --check-prefix=DETERMINISTIC < %t/deterministic.log
+# RUN: cd %t && env MDIR_SKIN_SEARCH=always mdir run again.toml > again.log 2>&1
+# RUN: mdir checkpoint %t/run.h5 %t/again.h5 | FileCheck %s --check-prefix=BITS
+# RUN: cd %t && mdir run reach.toml > reach.log 2>&1
+# RUN: not mdir checkpoint %t/run.h5 %t/reach.h5 | FileCheck %s --check-prefix=ROUNDING
+
+# FIRST: MDIR: skins: candidate 12 / 9.6 Å: {{[0-9.]+}} µs a step
+# FIRST: MDIR: skins: candidate {{[0-9.]+}} / {{[0-9.]+}} Å: {{[0-9.]+}} µs a step
+# FIRST: MDIR: skins: candidate {{[0-9.]+}} / {{[0-9.]+}} Å: {{[0-9.]+}} µs a step
+# FIRST: MDIR: skins: the reach {{[0-9.]+}} Å, pruned to {{[0-9.]+}} Å (measured: {{.*}}; {{[34]}} candidates in {{[0-9.]+}} s; stored in '{{.*}}cache/{{[0-9a-f]+}}.json')
+# FIRST: MDIR: the inner lists were pruned
+# CHECKED: mdrt: the inner lists were checked at {{[0-9]+}} steps: {{[1-9][0-9]+}} pairs within the cutoff, none missed
+# MANIFEST: measured measured measured True True
+# CACHED: MDIR: skins: the reach {{[0-9.]+}} Å, pruned to {{[0-9.]+}} Å (cached: the choice of an earlier run of the same key; from '{{.*}}cache/{{[0-9a-f]+}}.json')
+# CONTINUED: MDIR: continues the run after step 100
+# CONTINUED: MDIR: skins: {{.*}} (cached:
+# MISSED: MDIR: skins: the reach 10.5 Å (default: MDIR_SKIN_SEARCH=never)
+# ONE: {{^}}1{{$}}
+# SAME: MDIR:   total {{ *}}[[TOTAL:-?[0-9]+\.[0-9]+]]
+# SAME: MDIR: skins: {{.*}} (measured:
+# SAME: MDIR:   total {{ *}}[[TOTAL]]
+# DETERMINISTIC: MDIR: skins: the reach 10.5 Å (default: the deterministic mode)
+# BITS: the states are identical
+# ROUNDING: values of the positions differ, by up to {{[0-9.]+}}e-{{(09|1[0-9])}}

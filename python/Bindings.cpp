@@ -813,10 +813,8 @@ PYBIND11_MODULE(_core, m) {
       d["pairlist_distance"] = resolved.pairlistDistance * driver::units::length;
       d["pruned_distance"] = resolved.prunedDistance * driver::units::length;
       // Where the reaches came from (D[skin-auto]).
-      d["pairlist_distance_source"] =
-          resolved.pairlistDistanceAuto ? resolved.skinSource : std::string("given");
-      d["pruned_distance_source"] =
-          resolved.prunedDistanceAuto ? resolved.skinSource : std::string("given");
+      d["pairlist_distance_source"] = resolved.getSkinSource(/*outer=*/true);
+      d["pruned_distance_source"] = resolved.getSkinSource(/*outer=*/false);
       d["skin_reason"] = resolved.skinReason;
       d["entry"] = c.program.entry;
       d["state_dtype"] = c.program.state == driver::Element::F64 ? "float64" : "float32";

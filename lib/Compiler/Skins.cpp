@@ -692,8 +692,6 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
                             100.0 * gain, 100.0 * noise)
                   .str();
   }
-  control.pairlistDistanceGiven = true;
-  control.prunedDistanceGiven = control.prunedDistance != 0.0;
   control.skinSource = "measured";
   if (!path.empty()) {
     choice.cachePath = path;

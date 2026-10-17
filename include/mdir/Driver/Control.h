@@ -362,6 +362,15 @@ struct Control {
   bool isSkinAuto() const {
     return pairlistDistanceAuto || prunedDistanceAuto;
   }
+  /// Where the reach of `pairlist_distance` (`outer`) or of
+  /// `pruned_distance` came from: `skinSource` if it is "AUTO", else
+  /// "given" or "default".
+  std::string getSkinSource(bool outer) const {
+    if (outer ? pairlistDistanceAuto : prunedDistanceAuto)
+      return skinSource;
+    return (outer ? pairlistDistanceGiven : prunedDistanceGiven) ? "given"
+                                                                 : "default";
+  }
   Truncation truncation = Truncation::Switch;
   std::vector<PairTerm> pairs;
   /// Terms over the triplets centered on each particle (D160):

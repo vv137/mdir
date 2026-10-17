@@ -530,9 +530,9 @@ static llvm::json::Object makeJSON(const Control &control, const System &system,
                                              : Value(nullptr)}}},
       {"skins",
        Object{{"pairlist_distance_source",
-               control.pairlistDistanceAuto ? control.skinSource : "given"},
+               control.getSkinSource(/*outer=*/true)},
               {"pruned_distance_source",
-               control.prunedDistanceAuto ? control.skinSource : "given"},
+               control.getSkinSource(/*outer=*/false)},
               {"reason", control.skinReason}}},
       {"input_checkpoint", control.restartInput.empty() ? Value(nullptr)
                                                        : Value(control.restartInput)}};

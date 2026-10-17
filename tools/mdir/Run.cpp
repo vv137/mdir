@@ -1025,9 +1025,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         // Where each reach came from, and the search if there was one
         // (D[skin-auto]).
         {"pairlist_distance_source",
-         control->pairlistDistanceAuto ? control->skinSource : "given"},
+         control->getSkinSource(/*outer=*/true)},
         {"pruned_distance_source",
-         control->prunedDistanceAuto ? control->skinSource : "given"},
+         control->getSkinSource(/*outer=*/false)},
         {"skin_search", control->isSkinAuto()
              ? skinChoice.toJSON(*control) : llvm::json::Value(nullptr)},
         {"neighbor_structures", std::move(neighbors)},
