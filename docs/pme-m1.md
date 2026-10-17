@@ -605,8 +605,12 @@ $P = 6$ everywhere, which stays the default. The order-4 path is unchanged:
 the Gaussian default and the suite's settings take the time of `main`
 within 1% on every system and device. The loop over pairs takes 44.2 µs on
 JAC (RTX 4090) against 42.4 µs with the Gaussian, since its tables read 4
-coefficients a pair in f32. Tiled spreading (#336), which would serve both
-kernels, is the next step; the kernels are then to be compared again.
+coefficients a pair in f32. These timings are without tiles. Tiled
+spreading (Section 3.3, D[pme-tiles]) serves both kernels: on a grid in
+f32 of at least 500,000 points the prolate default takes 0.83 to 0.87
+times the step without tiles on Factor IX, Cellulose, and STMV (RTX
+4090), and the Gaussian of orders 6 and 8 0.79 to 0.85; the comparison of
+the kernels is still to be made again with the tiles.
 
 **On the CPU target (issue #371).** With PME on the host in parallel
 (D271), the comparison was repeated on the CPU target. The runs are
