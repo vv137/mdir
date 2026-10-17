@@ -1,4 +1,4 @@
-// The derivative of EAM on domains (D[ml2-eam], docs/distributed-ml2.md,
+// The derivative of EAM on domains (D279, docs/distributed-ml2.md,
 // Section 15): the adjoint of the density, F'(ρ), is a map over the owned
 // rows, copied to the ghosts between the two passes, and read at both
 // particles of each pair by the gather of the forces, whose ghost

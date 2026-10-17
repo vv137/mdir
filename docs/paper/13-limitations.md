@@ -206,7 +206,7 @@ particle, the ghost's half returned to its owner, equals the whole term at
 each owner when the pair lies in the rows of both owners and the kernel is
 symmetric or antisymmetric under exchange, two premises the pass checks.
 The derivative also goes through the fields that a potential computes from
-the positions (D[ml2-eam]): for the embedded-atom method, with
+the positions (D279): for the embedded-atom method, with
 $\bar\rho_i = F'(\rho_i)$, the force of a pair,
 $-(\bar\rho_i + \bar\rho_j)f'(r_{ij})\,\mathbf d_{ij}/r_{ij}$, needs $\bar\rho$ at
 both particles, so the derivative copies $\bar\rho$ to the ghosts between

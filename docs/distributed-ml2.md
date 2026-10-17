@@ -10,7 +10,7 @@ design; Section 12 is what the first PR builds and its validation;
 Section 13 records the maintainer's rulings; Section 14 is the second part,
 `md-distribute` and the derivative rules of $G$ and $G^\mathsf T$
 (D276); Section 15 is the third part, the derivative through
-fields computed from the positions, EAM on domains (D[ml2-eam]).
+fields computed from the positions, EAM on domains (D279).
 
 ## 1. Scope
 
@@ -814,7 +814,7 @@ dialect (`test/Dialect/MDDist/invalid.mlir`).
 
 ## 15. The third part: EAM on domains
 
-D[ml2-eam] carries the derivative of a potential on domains through the
+D279 carries the derivative of a potential on domains through the
 fields it computes from the positions: a density gathered over pairs, a
 map of it, sums over particles that read them, and the copy of such a
 field to the ghosts. The embedded-atom method (EAM)

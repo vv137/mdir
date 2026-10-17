@@ -1,5 +1,5 @@
 // The forces and the virial of a many-body energy on several domains
-// through the compiler (D[ml2-eam], docs/distributed-ml2.md, Section 15.4):
+// through the compiler (D279, docs/distributed-ml2.md, Section 15.4):
 // the energy of dist-many-body.mlir, whose pair sum reads ψ = √ρ, a field
 // computed from the positions, at both particles. On the directed
 // traversal the adjoint of ψ is the gather at the owners; the adjoint of

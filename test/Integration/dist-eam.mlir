@@ -1,4 +1,4 @@
-// EAM on several domains through the compiler (D[ml2-eam],
+// EAM on several domains through the compiler (D279,
 // docs/distributed-ml2.md, Section 15): an embedded-atom potential,
 // distributed by md-distribute and differentiated by md-differentiate
 // through its density and embedding, against the same potential on one

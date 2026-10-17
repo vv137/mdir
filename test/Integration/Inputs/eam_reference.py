@@ -1,4 +1,4 @@
-"""Reference values for the EAM test on domains (dist-eam.mlir, D[ml2-eam]).
+"""Reference values for the EAM test on domains (dist-eam.mlir, D279).
 
 Evaluates the 64 particles of lj-forces.mlir with an embedded-atom potential
 of the analytic form of Finnis and Sinclair (Philos. Mag. A 50, 45 (1984)),

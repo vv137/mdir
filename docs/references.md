@@ -347,7 +347,7 @@ transition metals," *Philos. Mag. A* **50**, 45–55 (1984).
 [doi:10.1080/01418618408244210](https://doi.org/10.1080/01418618408244210)
 
 Used for: the analytic form of the embedded-atom potential on which EAM
-on domains is validated (D[ml2-eam]): a density of pairs
+on domains is validated (D279): a density of pairs
 $(r - d)^2$, an embedding $-A\sqrt\rho$, and a pair term
 $(r - c)^2(c_0 + c_1r + c_2r^2)$, each zero with its slope at its cutoff.
 

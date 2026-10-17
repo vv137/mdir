@@ -134,7 +134,7 @@ private:
   LogicalResult buildDistributedForces(Value &forces);
   LogicalResult buildDistributedVirial(Value &virial);
 
-  // Fields on domains computed from the positions (D[ml2-eam]). The terms
+  // Fields on domains computed from the positions (D279). The terms
   // of `distTerms` are negated adjoints, −∂U/∂v, of the values v on domains
   // and of the positions: forces where v is the positions, and the forces
   // on a field elsewhere. A term is complete, or one of the two partial
@@ -1368,7 +1368,7 @@ LogicalResult DerivativeBuilder::emitPairFieldTerm(md_dist::SumPairsOp sum,
            << "cannot differentiate on the unique traversal a sum over pairs "
               "that reads a field computed from the positions: the "
               "derivative at the second particle of a pair has no exchange "
-              "contract (D[ml2-eam], docs/distributed-ml2.md, Section 15.4); "
+              "contract (D279, docs/distributed-ml2.md, Section 15.4); "
               "use the directed traversal";
   auto neighborhood =
       sum.getRelation().getDefiningOp<md_dist::NeighborhoodOp>();

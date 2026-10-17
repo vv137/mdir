@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- ML2, stage 1, part 3 (D[ml2-eam], #31,
+- ML2, stage 1, part 3 (D279, #31,
   [docs/distributed-ml2.md](docs/distributed-ml2.md), Section 15):
   `md-differentiate` derives the forces and the virial of a potential on
   domains through the fields it computes from the positions, such as the

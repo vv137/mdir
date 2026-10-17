@@ -477,7 +477,7 @@ Lennard-Jones on two domains against one. Its second part
 (D276) derives that program from the global potential:
 `md-distribute`, the transposes of $G$ and $G^\mathsf T$ declared to
 `md-differentiate`, and `md-dist-owner-computes` for the directed
-traversal. Its third part (D[ml2-eam]) carries the derivative through the
+traversal. Its third part (D279) carries the derivative through the
 fields computed from the positions: EAM on domains, with the adjoint of the
 density copied to the ghosts between the two passes. The path through
 `md_exec`, migration, MPI on CPU ranks,

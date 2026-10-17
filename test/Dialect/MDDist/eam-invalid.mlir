@@ -1,6 +1,6 @@
 // The forces of EAM on domains read the density's adjoint, F'(ρ), at both
 // particles of a pair: through a copy to the ghosts of exactly the version
-// computed in this step (D[ml2-eam], docs/distributed-ml2.md, Section 15.2).
+// computed in this step (D279, docs/distributed-ml2.md, Section 15.2).
 // A copy of the previous step's F'(ρ), or no copy, is an error of the
 // verifier (V2, V1), not of a run.
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics

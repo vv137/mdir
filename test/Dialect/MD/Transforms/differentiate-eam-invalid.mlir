@@ -1,5 +1,5 @@
 // What md-differentiate does not differentiate through fields on domains
-// computed from the positions, refused with the reason (D[ml2-eam],
+// computed from the positions, refused with the reason (D279,
 // docs/distributed-ml2.md, Sections 15.2 and 15.4).
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=unique" --md-differentiate -split-input-file -verify-diagnostics
 
