@@ -80,14 +80,18 @@ For each tuple set whose structures are to be built, the lowering
    $c = \mathrm{first}_{q+1} - \mathrm{first}_q$, the thread of $k = 0$
    writes $c$ at the head of the row, and a thread with $k < c$ reads
    $(t, s)$ from entry $\mathrm{first}_q + k$ and writes $t$, $s$, and
-   $m'_{t,0..a-1}$ at $1 + k(a + 2)$. Threads with $k \ge c$ write nothing,
-   as the host writes nothing past the tuples of a row.
+   $m'_{t,0..a-1}$ at $1 + k(a + 2)$. Threads with $k \ge c$ write zeros
+   in their slot. A kernel of an integration run (D110) reads the first
+   slot of every particle and keeps it only where $c \ne 0$; before #347
+   these slots were left as the allocation found them, which
+   compute-sanitizer's initcheck reported as reads of memory that nothing
+   had written.
 
 **Determinism.** No element is written by two threads and no element is
 read after it is written in the same kernel, so the structure does not
 depend on the order in which threads run: its rows hold the tuples of each
 particle in the order of the tuples, as the host's do, and every element
-that a loop over tuples reads equals the host's, element for element. The
+that a loop over tuples keeps equals the host's, element for element. The
 same kernels run in and outside the deterministic mode.
 
 **Where they come from.** The kernels are emitted by the lowering, as the

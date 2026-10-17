@@ -3580,6 +3580,35 @@ void Lowering::buildOnDevice(md_exec::BuildIncidenceOp op,
       });
       Value inside = arith::CmpIOp::create(body, loc,
                                            arith::CmpIPredicate::ult, k, count);
+      // A slot past the count of the particle holds zeros: the kernels
+      // of an integration run read the first tuple of every particle and
+      // keep it only where the count is not zero, and the memory of the
+      // structure is not cleared when it is allocated (#347).
+      auto empty = [&](OpBuilder &b, Location) {
+        Value zero32 = arith::ConstantOp::create(b, loc, narrow,
+                                                 b.getI32IntegerAttr(0));
+        Value base = arith::AddIOp::create(
+            b, loc,
+            arith::MulIOp::create(b, loc, k, createIndex(b, loc, entry)),
+            createIndex(b, loc, 1));
+        for (int64_t c = 0; c != entry; ++c)
+          memref::StoreOp::create(
+              b, loc, zero32, structure,
+              ValueRange{p, arith::AddIOp::create(b, loc, base,
+                                                  createIndex(b, loc, c))});
+        scf::YieldOp::create(b, loc);
+      };
+      Value fits = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult,
+                                         k, slots);
+      scf::IfOp::create(
+          body, loc,
+          arith::AndIOp::create(
+              body, loc, fits,
+              arith::XOrIOp::create(
+                  body, loc, inside,
+                  arith::ConstantOp::create(body, loc, body.getI1Type(),
+                                            body.getBoolAttr(true)))),
+          empty);
       scf::IfOp::create(body, loc, inside, [&](OpBuilder &b, Location) {
         Value at = arith::MulIOp::create(
             b, loc, arith::AddIOp::create(b, loc, from, k),

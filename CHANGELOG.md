@@ -1226,6 +1226,15 @@ format, or the outputs; every such change is listed under **Changed** or
   of `md_dist`, which is null for such an op. The op is now taken as one
   of another dialect: left in place, or refused with the pass's diagnostic
   when it uses a value of `md_dist`.
+- compute-sanitizer's initcheck reported 4.7 million reads of memory that
+  nothing had written in a GPU run of 20 steps of NPT on examples/ala3 in
+  mixed precision (#347). The kernels of an integration run (D110) read
+  the first tuple of every particle in the incidence structure that the
+  device builds and keep it only where the particle has a tuple; the slots
+  past a particle's count were never written. The build now writes zeros
+  there. The values read were never used, so the results do not change.
+  `test/Sanitizer/npt-velocity-verlet-gpu.test` runs that case under
+  initcheck, memcheck, and racecheck.
 
 - A `.gro` file whose velocities do not read in fields as wide as its
   coordinates is refused, with the line, instead of read with the
