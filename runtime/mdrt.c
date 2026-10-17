@@ -100,7 +100,7 @@ void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest,
 
 /* Sets the counts of the builds and prunings and the notes of the groups
    back to none, so that the log of a run counts its own alone after the
-   trial runs of a search of the skins (D[skin-auto]). */
+   trial runs of a search of the skins (D281). */
 void mdrtResetCounts(void) {
   numBuilds = numPrunes = numLateBuilds = 0;
   groupsBlocks = groupsCapacity = groupsLongest = groupsOverflow = 0;

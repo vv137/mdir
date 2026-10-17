@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The kernels of the reciprocal sums of PME in a report of Nsight Systems
-(D[pme-tiles]): the mean time of each launch, the launches of one
+(D282): the mean time of each launch, the launches of one
 function told apart by their place among the consecutive launches of its
 name (the kernels of a function of the templates share its name: the
 binning is #0, the zeroing of the grid, and #1, the binning proper).

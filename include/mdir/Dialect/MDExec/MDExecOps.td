@@ -210,7 +210,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     With `tiles(E)`, which `md-exec-choose-spreading` sets on a device, the
     charges are spread through tiles of the memory of a block, one for each
     bin of $E^3$ points of the grid, into which the particles are binned
-    by their first point at each evaluation (D[pme-tiles]); without it, as
+    by their first point at each evaluation (D282); without it, as
     before (into the bricks of D108 for splines of order 4 in f32, by
     atomics of the device into the grid otherwise). The deterministic mode
     takes no tiles: its grid is in fixed point (D70, D84).

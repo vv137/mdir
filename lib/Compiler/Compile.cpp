@@ -127,7 +127,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
 
   if (control.target == Target::GPU) {
     // How each reciprocal sum spreads its charges, by the size of its grid
-    // (D[pme-tiles]); MDIR_PME_SPREAD (`global`, `tiles`, `tiles4`,
+    // (D282); MDIR_PME_SPREAD (`global`, `tiles`, `tiles4`,
     // `tiles8`, `tiles16`, or `auto`) overrides the choice, to compare the
     // two.
     os << "md-exec-choose-spreading{";

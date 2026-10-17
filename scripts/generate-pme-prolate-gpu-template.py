@@ -23,7 +23,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 # The kernels of the Gaussian template that the spreading into tiles
-# shares (D[pme-tiles]): the tile kernel, with the window in place of the
+# shares (D282): the tile kernel, with the window in place of the
 # B-splines; the binning is that of PMEGPU.mlir.
 _spec = importlib.util.spec_from_file_location(
     'generate_pme_gpu_template', os.path.join(HERE, 'generate-pme-gpu-template.py'))
@@ -923,7 +923,7 @@ def tables(triclinic=False):
 
 def tiles():
     """The spreading of the window into tiles of the bins of
-    PMEGPU.mlir (D[pme-tiles]; tile_kernel of
+    PMEGPU.mlir (D282; tile_kernel of
     generate-pme-gpu-template.py): the lanes 0 .. 3P − 1 of the warp of a
     particle evaluate the window from the fraction of their axis, which
     the tile kernel has read into the memory of the block, as the bricks
@@ -962,7 +962,7 @@ def tiles():
             '%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,',
             lane,
             'Adds the charges of the binned particles to `real` through tiles of\n'
-            '// the memory of the block, with the window (D[pme-tiles], D266).')
+            '// the memory of the block, with the window (D282, D266).')
     return text
 
 
@@ -986,7 +986,7 @@ def main():
     # compiler adds them where a sum has a list.
     out += spread(fixed=False, listed=True) + spread(fixed=True, listed=True)
     out += gather(potential=False, listed=True) + gather(potential=False, triclinic=True, listed=True)
-    # The spreading into tiles (D[pme-tiles]), after them for the same
+    # The spreading into tiles (D282), after them for the same
     # reason.
     out += tiles()
     out = out.replace('@mdrt_gpu_pme_blocks(', '@mdrt_gpu_pme_prolate_blocks(')

@@ -1,5 +1,5 @@
 """Runs one control file with each layout of the spreading of PME on a
-device (MDIR_PME_SPREAD, D[pme-tiles]) and compares each run after the
+device (MDIR_PME_SPREAD, D282) and compares each run after the
 first with the first: the forces of the checkpoint `run.h5`, by the root
 mean square of their difference relative to that of the first,
 sqrt(sum |F - F1|^2 / sum |F1|^2), and the rows of energies, each number

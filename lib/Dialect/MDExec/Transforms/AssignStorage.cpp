@@ -952,7 +952,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       gpu::WaitOp::create(root->builder, loc, Type(), ValueRange{cleared});
       scratch.push_back(buffer);
     }
-    // The bins of the spreading into tiles (D[pme-tiles]), last: in i32,
+    // The bins of the spreading into tiles (D282), last: in i32,
     // the count of each bin and that of the particles that overflow, which
     // each binning zeroes first, a run of C places for each bin, C twice
     // the mean number of particles of a bin and 8 more, and n places for

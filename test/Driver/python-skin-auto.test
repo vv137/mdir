@@ -1,6 +1,6 @@
 # REQUIRES: python-api
 # `mdir.Auto` for `System.pairlist_distance` and `System.pruned_distance`
-# (D[skin-auto]): the fields give it back, `Program.plan` names the
+# (D281): the fields give it back, `Program.plan` names the
 # defaults and why nothing was measured, and a number is "given";
 # Inputs/python_skin_auto.py on the CPU, which needs no device.
 # RUN: %mdir_python %S/Inputs/python_skin_auto.py %S/Inputs/dipeptide CPU | FileCheck %s

@@ -399,7 +399,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   // The control file takes 'pairlist_distance' 1.5 Å beyond the cutoff.
   // Given, the key of the control file; not given, the model takes the
   // 1.5 Å beyond the cutoff of an absent key (D248).
-  // `mdir.Auto` as "AUTO" of the control file (D[skin-auto]).
+  // `mdir.Auto` as "AUTO" of the control file (D281).
   if (s.pairlistDistanceAuto)
     add("execution", "[energy] pairlist_distance",
         getFingerprintString("AUTO"));

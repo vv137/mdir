@@ -197,8 +197,8 @@ Python simulation had the neighbor matrix alone, and the rates of
 | Python | Control file | Values |
 |---|---|---|
 | `Execution.neighbor_structure` | `[execution] neighbor_structure` | `mdir.NeighborStructure.Auto` (the default, D261), `mdir.NeighborStructure.Matrix`, `mdir.NeighborStructure.Groups` |
-| `System.pruned_distance` | `[energy] pruned_distance` | a length in nm or a unit quantity (D200), between `System.cutoff` and `System.pairlist_distance`; `0`, the default, keeps one list, and under `Auto` is the key not given: groups that `Auto` takes have the inner reach of the control file; or `mdir.Auto`, as `"AUTO"` (D[skin-auto]) |
-| `System.pairlist_distance` | `[energy] pairlist_distance` | a length in nm or a unit quantity; `None`, the default, follows the cutoff; or `mdir.Auto`, as `"AUTO"` of the control file (D[skin-auto]): the reaches that an earlier `mdir run` of the same key cached, else the defaults. A Python simulation measures no candidates |
+| `System.pruned_distance` | `[energy] pruned_distance` | a length in nm or a unit quantity (D200), between `System.cutoff` and `System.pairlist_distance`; `0`, the default, keeps one list, and under `Auto` is the key not given: groups that `Auto` takes have the inner reach of the control file; or `mdir.Auto`, as `"AUTO"` (D281) |
+| `System.pairlist_distance` | `[energy] pairlist_distance` | a length in nm or a unit quantity; `None`, the default, follows the cutoff; or `mdir.Auto`, as `"AUTO"` of the control file (D281): the reaches that an earlier `mdir run` of the same key cached, else the defaults. A Python simulation measures no candidates |
 
 Each is where the control file has it: `neighbor_structure` is a key of
 `[execution]`, and `pruned_distance` a key of `[energy]` beside
@@ -244,7 +244,7 @@ the log of `mdir run`), `Program.plan["pairlist_distance"]` the reach of the
 lists in nm, and `Program.plan["pruned_distance"]` the reach of the inner
 list in nm, `0.0` without one; `Program.plan["pairlist_distance_source"]`
 and `["pruned_distance_source"]` where each came from (`"given"`,
-`"default"`, or `"cached"`), and `["skin_reason"]` why (D[skin-auto]). `Program.pipeline` has
+`"default"`, or `"cached"`), and `["skin_reason"]` why (D281). `Program.pipeline` has
 `md-exec-choose-neighbors{kind=groups}` and the `prune-skin` of
 `md-exec-reuse-neighbors`, so the key of the code that a `Program` keeps
 (D236), which holds the pipeline and the module, tells the structures

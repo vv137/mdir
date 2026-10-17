@@ -1,4 +1,4 @@
-"""`mdir.Auto` for the reaches of a Python model (D[skin-auto]): the fields
+"""`mdir.Auto` for the reaches of a Python model (D281): the fields
 take it and give it back, `Program.plan` names where each reach came from,
 and the fingerprint of a checkpoint records "AUTO" as the control file
 does. A Python simulation measures no candidates: the reaches are the

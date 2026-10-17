@@ -52,7 +52,7 @@ private:
   Error readReal(const toml::table &table, StringRef key, double &value);
   Error readPositive(const toml::table &table, StringRef key, double &value);
   /// A positive number, or "AUTO", which sets `automatic` and leaves
-  /// `value` (D[skin-auto]).
+  /// `value` (D281).
   Error readPositiveOrAuto(const toml::table &table, StringRef key,
                            double &value, bool &automatic);
   Error readCount(const toml::table &table, StringRef key, int64_t &value,
@@ -1911,7 +1911,7 @@ Error Reader::readEnergy(const toml::table &table) {
     return error;
   control.pairlistDistance = control.cutoffDistance + 1.5;
   // A number fixes a reach; "AUTO", or a key not given, lets the run
-  // choose it (D[skin-auto]).
+  // choose it (D281).
   control.pairlistDistanceAuto = Control::omittedSkinIsAuto;
   control.prunedDistanceAuto = Control::omittedSkinIsAuto;
   if (Error error =

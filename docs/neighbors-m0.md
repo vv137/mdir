@@ -462,7 +462,7 @@ On the host with 16 threads, in double precision:
 
 ## 6. The choice of the skins
 
-D[skin-auto], issue #406. `pairlist_distance = "AUTO"` and
+D281, issue #406. `pairlist_distance = "AUTO"` and
 `pruned_distance = "AUTO"`, and the keys not given, let a run choose the
 skin $s$ of its structure and the skin $s_\text{in}$ of the inner list of a
 dual list (D114). A number fixes a skin, and is the switch off.

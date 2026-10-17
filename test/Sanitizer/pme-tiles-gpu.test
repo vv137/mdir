@@ -1,5 +1,5 @@
 # The spreading of PME through tiles of the memory of a block
-# (D[pme-tiles]) under compute-sanitizer: the binning (match.any.sync, the
+# (D282) under compute-sanitizer: the binning (match.any.sync, the
 # runs of the bins and their overflow) and the tile kernel, with the shared
 # atomics and the rounds of particles staged in the memory of the block, in
 # mixed precision, over 5 steps of the OPC box of pme-tiles-gpu.test: the

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The step of the Amber suite with the spreading of PME of two builds and
-of each layout (D[pme-tiles], docs/pme-m1.md, Section 3.3), alternated in
+of each layout (D282, docs/pme-m1.md, Section 3.3), alternated in
 rounds within one job (the first round dropped), then one run of each
 under Nsight Systems for the kernels of PME.
 

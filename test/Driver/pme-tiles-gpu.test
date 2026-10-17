@@ -1,5 +1,5 @@
 # The spreading of particle mesh Ewald through tiles of bins on a device
-# (D[pme-tiles]) against the spreading of before (MDIR_PME_SPREAD=global:
+# (D282) against the spreading of before (MDIR_PME_SPREAD=global:
 # the bricks of D108 for order 4 in f32, atomics into the grid otherwise),
 # one step of the OPC box (1,570 sites; the oxygens have no charge, so the
 # particles are binned from the list of D262): the forces of the checkpoint

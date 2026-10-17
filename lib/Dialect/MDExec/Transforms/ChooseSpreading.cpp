@@ -1,6 +1,6 @@
 // How each reciprocal sum of PME on a device spreads its charges.
 //
-// See the description of the pass in Passes.td, and D[pme-tiles] in
+// See the description of the pass in Passes.td, and D282 in
 // docs/decisions.md.
 
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"

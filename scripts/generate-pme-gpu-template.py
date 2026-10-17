@@ -1034,7 +1034,7 @@ def weights_kernels(listed=False):
     158 us on Cellulose against 127 to 134 (2026-10-01); from the first
     points and the fractions, see gather_weights."""
     # The weights: the places of the order of the instance, which the
-    # spreading into tiles takes at every order (D[pme-tiles]).
+    # spreading into tiles takes at every order (D282).
     w = Body("      ")
     w("""\
 %i = arith.addi %item, %c0 : index
@@ -1364,7 +1364,7 @@ func.func private @mdrt_gpu_pme_spread_bricks{tag}(%x: memref<?x3x!pme_pos, 1>, 
 
 
 # The edges, in points, of the bins of the spreading into tiles
-# (D[pme-tiles]); a sum takes one of them (md_exec.reciprocal tiles(E)).
+# (D282); a sum takes one of them (md_exec.reciprocal tiles(E)).
 TILE_EDGES = (4, 8, 16)
 
 # The threads of a block of the tiles, and the particles of a round, for
@@ -1380,7 +1380,7 @@ TILE_THREADS = {4: 128, 8: 128, 16: 512}
 
 def bin_kernels(edge, listed=False):
     """The particles binned by their first point, for the spreading into
-    tiles (D[pme-tiles]): the binned spreading of cuFINUFFT [Shih2021].
+    tiles (D282): the binned spreading of cuFINUFFT [Shih2021].
     The bins are cubes of `edge` points of the grid, numbered with z
     fastest. `bins` holds, in i32, the count of each bin, the count of
     the particles that overflow, a run of C places for each bin, C twice
@@ -1498,7 +1498,7 @@ scf.if %valid {
     return f"""
 // The particles{" of the list (D262)" if listed else ""} into bins of {edge}^3 points of the grid by their
 // first points, which `places` holds, for the spreading into tiles; zeroes
-// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+// the grid `real` (D282; see bin_kernels in the script).
 func.func private @mdrt_gpu_pme_bin{edge}{tag}(%q: memref<?x!pme_chg, 1>,{" %list: memref<?xi32, 1>," if listed else ""}
                                       %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
                                       %real: memref<?x!pme_real, 1>,
@@ -1566,7 +1566,7 @@ memref.store %none, %real[%item] : memref<?x!pme_real, 1>""")
 
 
 def tile_kernel(edge, name, args, lane_weight, comment):
-    """The spreading into tiles (D[pme-tiles]), as cuFINUFFT spreads
+    """The spreading into tiles (D282), as cuFINUFFT spreads
     [Shih2021]: a block of TILE_THREADS threads a bin, and one more for the
     particles that overflow the runs of the bins (bin_kernels). The tile of
     a bin, its `edge`^3 points and P - 1 more on the high side of each
@@ -1868,7 +1868,7 @@ def tiles_kernels():
             "%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>,",
             gaussian_lane_weight(),
             "Adds the charges of the binned particles to `real` through tiles\n"
-            "// of the memory of the block (D[pme-tiles]; see tile_kernel in the\n"
+            "// of the memory of the block (D282; see tile_kernel in the\n"
             "// script).")
     return text
 

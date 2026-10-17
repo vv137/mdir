@@ -1,4 +1,4 @@
-// The automatic choice of the skins of the neighbor lists (D[skin-auto]):
+// The automatic choice of the skins of the neighbor lists (D281):
 // a cost model narrows the reaches to a few candidates, each is compiled
 // and measured on the system for a few blocks of steps, and the fastest is
 // kept, unless it is within the noise of the reference. The rebuilds and
@@ -41,7 +41,7 @@ namespace {
 /// search: about five hours of an RTX 4090 at about 4 ns a particle and a
 /// step (the Amber suite: JAC 5.5, Cellulose 3.6, STMV 4.3), so that a
 /// search of 1.5 to 4 minutes, a compilation of 13 to 35 s a candidate,
-/// costs at most about 1% of the run and gains 1 to 4% (D[skin-auto]).
+/// costs at most about 1% of the run and gains 1 to 4% (D281).
 constexpr double searchParticleSteps = 5e12;
 
 /// The constants of the cost model of a step, fitted to the grid of #406 on
@@ -206,7 +206,7 @@ compiler::SkinTrial measure(const Control &control, const System &system,
         .count();
   };
   // Nothing is kept or cached: each candidate is compiled anew, which is
-  // what the search costs (D[skin-auto]).
+  // what the search costs (D281).
   auto simulation = compiler::Simulation::create(prepared, /*cache=*/true);
   if (!simulation) {
     trial.failure = llvm::toString(simulation.takeError());

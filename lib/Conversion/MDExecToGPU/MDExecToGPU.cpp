@@ -566,14 +566,14 @@ private:
   /// `potential` the kernel of the potential at the particles, and with
   /// `listed` the kernels of a list of the particles, and with `tiles` E
   /// the binning and the spreading into tiles of bins of E points
-  /// (D[pme-tiles]).
+  /// (D282).
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
                                 int64_t order, bool tilted, bool potential,
                                 bool listed, int64_t tiles = 0);
   /// Adds the kernels of the prolate kernel (D266) for these
   /// types and points of the window, and with `listed` those of a list of
   /// the particles, and with `tiles` E the spreading into tiles of bins
-  /// of E points (D[pme-tiles]).
+  /// of E points (D282).
   LogicalResult addProlateTemplates(Type position, Type charge, Type force,
                                     int64_t order, bool listed,
                                     int64_t tiles = 0);
@@ -3830,7 +3830,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
                module, getPMEInstanceName(full, position, charge, force,
                                           order)) != nullptr;
   };
-  // The functions of the tiles of an edge (D[pme-tiles]), which do not
+  // The functions of the tiles of an edge (D282), which do not
   // depend on the cell: in PMEGPU.mlir alone.
   std::string edge = std::to_string(tiles);
   auto hasTiles = [&]() {
@@ -3980,7 +3980,7 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
 
 /// The bricks of the spreading (D108), the scratch after the factors of
 /// the influence function where the grid is in f32; the bins of the tiles
-/// (D[pme-tiles]), in i32, come after them where the sum has `tiles`.
+/// (D282), in i32, come after them where the sum has `tiles`.
 static Value getBricks(md_exec::ReciprocalOp op) {
   if (op.getScratch().size() <= 6)
     return Value();
@@ -3990,7 +3990,7 @@ static Value getBricks(md_exec::ReciprocalOp op) {
   return bricks;
 }
 
-/// The bins of the spreading into tiles (D[pme-tiles]): the last scratch
+/// The bins of the spreading into tiles (D282): the last scratch
 /// of a sum with `tiles`.
 static Value getBins(md_exec::ReciprocalOp op) {
   if (!op.getTiles() || op.getScratch().empty())
@@ -4047,7 +4047,7 @@ static LogicalResult lowerProlate(
     return operands;
   };
   std::string spreadTag = listed ? "_listed" : "";
-  // Into tiles (D[pme-tiles]): the bins of PMEGPU.mlir from the places,
+  // Into tiles (D282): the bins of PMEGPU.mlir from the places,
   // then the window into the tiles.
   if (int64_t tiles = op.getTiles().value_or(0)) {
     std::string edge = std::to_string(tiles);
@@ -4139,7 +4139,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // The listed particles alone (D262); the
   // potential at the particles takes every particle.
   Value listed = op.getPotential() ? Value() : op.getListed();
-  // The spreading into tiles (D[pme-tiles]): never in the deterministic
+  // The spreading into tiles (D282): never in the deterministic
   // mode, whose grid is in fixed point (D70, D84), which
   // md-exec-choose-spreading does not tile; checked here as well.
   int64_t tiles = op.getTiles().value_or(0);

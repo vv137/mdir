@@ -630,7 +630,7 @@ within 2% of a list built with 9 Å.
 The settings of the suite (Section 10) are an outer skin of 3 Å and an
 inner skin of 0.6 Å at 2 fs, in proportion to the step.
 
-**The choice of the skins** (D[skin-auto]). Because the test of validity
+**The choice of the skins** (D281). Because the test of validity
 is exact, every pair of skins $(s, s_\text{in})$ gives the same pairs
 within $r_c$: the skins set the speed alone, and `"AUTO"`, the default,
 lets the run choose them. Per particle a step costs

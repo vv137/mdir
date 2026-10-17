@@ -132,7 +132,7 @@ struct System {
   /// `pairlistDistance` (D261).
   double prunedDistance = 0.0;
   /// `mdir.Auto` for `pairlistDistance` or `prunedDistance`, as "AUTO" of
-  /// the control file (D[skin-auto]): the defaults above, or the reaches
+  /// the control file (D281): the defaults above, or the reaches
   /// that an earlier run of the same key chose and cached.
   bool pairlistDistanceAuto = false, prunedDistanceAuto = false;
   /// A plain cutoff, as the control file without `lennard_jones_modifier`

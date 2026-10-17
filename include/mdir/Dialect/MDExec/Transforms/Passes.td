@@ -105,7 +105,7 @@ def ChooseSpreading
   let description = [{
     Sets `tiles(E)` on each `md_exec.reciprocal` that spreads its charges
     through tiles of the memory of a block, one for each bin of $E^3$
-    points of the grid (D[pme-tiles], docs/pme-m1.md); the others spread
+    points of the grid (D282, docs/pme-m1.md); the others spread
     as before, into the bricks of D108 (splines of order 4 in f32) or by
     atomics of the device into the grid. Runs on programs for a device,
     after the precision is assigned and before the storage.

@@ -5011,7 +5011,7 @@ func.func private @mdrt_gpu_pme_prolate_gather_listed_triclinic(%q: memref<?x!pm
 
 
 // Adds the charges of the binned particles to `real` through tiles of
-// the memory of the block, with the window (D[pme-tiles], D266).
+// the memory of the block, with the window (D282, D266).
 func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
                                       %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
                                       %k1: index, %k2: index, %k3: index) {
@@ -5305,7 +5305,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles4(%q: memref<?x!pme_chg, 1>,
 }
 
 // Adds the charges of the binned particles to `real` through tiles of
-// the memory of the block, with the window (D[pme-tiles], D266).
+// the memory of the block, with the window (D282, D266).
 func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
                                       %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
                                       %k1: index, %k2: index, %k3: index) {
@@ -5599,7 +5599,7 @@ func.func private @mdrt_gpu_pme_prolate_spread_tiles8(%q: memref<?x!pme_chg, 1>,
 }
 
 // Adds the charges of the binned particles to `real` through tiles of
-// the memory of the block, with the window (D[pme-tiles], D266).
+// the memory of the block, with the window (D282, D266).
 func.func private @mdrt_gpu_pme_prolate_spread_tiles16(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,
                                       %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
                                       %k1: index, %k2: index, %k3: index) {

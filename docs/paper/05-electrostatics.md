@@ -175,7 +175,7 @@ precision (D78).*
 | Places | `weights` | A thread a particle writes the first point and the fraction $w$ along each axis, six values (D109). The fractional coordinate $x\cdot(1/L) - \lfloor x\cdot(1/L)\rfloor$ is computed in f64, its product with $K$ and the fraction within a point in the type of the grid; the first point is $(\lfloor u\rfloor - n + 1)\bmod K$ |
 | Spreading | `spread_bricks` | Order 4 in f32: a warp a particle; lane $16c+4b+a$ adds the points $(a,b,c)$ and $(a,b,c+2)$ of its $4^3$ points into *bricks* of $4\times4$ points in $x$ and $y$ with $z$ inside, by `red.global.add.f32`. A lane computes its weight from $w$ in closed form: $\tfrac{(1-w)^3}{6}$, $\tfrac{3w^3-6w^2+4}{6}$, $\tfrac{-3w^3+3w^2+3w+1}{6}$, $\tfrac{w^3}{6}$ for the points 0 to 3, what the recursion gives to $3\times10^{-16}$ |
 | | Copy | The bricks are copied into the grid of the transform through block memory, a tile with rows of 17 values to avoid bank conflicts, and set to zero after the barrier, so they need no clearing kernel (D108) |
-| | Tiles | `bin`, `spread_tiles`: the particles binned by their first point into bins of $g^3$ points, a block a bin adds into a tile of $(g + n - 1)^3$ points in block memory and the tile into the grid, by atomics; the default outside the deterministic mode for a grid in f32 of at least 500,000 points, B-splines or the prolate window (Section 5.6) (D[pme-tiles], below) [[Shih2021]](references.md#shih2021) |
+| | Tiles | `bin`, `spread_tiles`: the particles binned by their first point into bins of $g^3$ points, a block a bin adds into a tile of $(g + n - 1)^3$ points in block memory and the tile into the grid, by atomics; the default outside the deterministic mode for a grid in f32 of at least 500,000 points, B-splines or the prolate window (Section 5.6) (D282, below) [[Shih2021]](references.md#shih2021) |
 | | Otherwise | Orders 6 and 8, or f64, without tiles: a thread for each particle and point along $z$, with floating-point atomics; in the deterministic mode the products $q\prod M$ are scaled by $2^{40}$, rounded to 64-bit integers, added with integer atomics, and scaled back, so the grid does not depend on the order of the threads [[LeGrand2013]](references.md#legrand2013) (D70, D84) |
 | Transform | cuFFT | Real-to-complex and back, in the type of the grid; plans are cached and bound to the stream of the kernels |
 | Tables | `tables` | The separable factors of Section 5.2 |
@@ -207,7 +207,7 @@ places take 27 µs a step, the additions 214, the copy and the clearing 63
 and the gathering 90 (RTX 3090; medians of a launch, from D102, D104,
 D108, and D109).
 
-**Tiles** (D[pme-tiles]). The sum $Q(\mathbf l) = \sum_j q_j\prod_a
+**Tiles** (D282). The sum $Q(\mathbf l) = \sum_j q_j\prod_a
 M_n(u_{aj} - l_a - p_aK_a)$ may be taken in any partition of the
 particles. Bin them by their first point $s_{aj} = (\lfloor u_{aj}\rfloor
 - n + 1)\bmod K_a$, the bin $\lfloor s_{aj}/g\rfloor$ along each axis; since
@@ -885,7 +885,7 @@ the tier of the standard settings of pmemd, GROMACS, and MDIR, 1.04 to 1.21 time
 times at $10^{-5}$ against the faster of orders 6 and 8 (the table, with
 the grids, is in `docs/pme-m1.md`, Section 7). The
 Gaussian kernel stays the default. Spreading through tiles of block memory
-(Section 5.3, D[pme-tiles]) serves both kernels: with it the prolate
+(Section 5.3, D282) serves both kernels: with it the prolate
 default takes 0.83 to 0.87 times the step without tiles on Factor IX,
 Cellulose, and STMV (RTX 4090), its spreading 72, 209, and 540 µs a step
 against 137, 585, and 1640; the ratios to the Gaussian above were measured

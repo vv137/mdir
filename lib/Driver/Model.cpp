@@ -296,7 +296,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // As the keys of the control file, given or not (D261).
   c.pairlistDistanceGiven = s.pairlistDistance.has_value();
   c.prunedDistanceGiven = s.prunedDistance != 0.0;
-  // `mdir.Auto` (D[skin-auto]); a reach not given is not "AUTO" in Python.
+  // `mdir.Auto` (D281); a reach not given is not "AUTO" in Python.
   c.pairlistDistanceAuto = s.pairlistDistanceAuto;
   c.prunedDistanceAuto = s.prunedDistanceAuto;
   c.skinsRequested = s.pairlistDistanceAuto || s.prunedDistanceAuto;

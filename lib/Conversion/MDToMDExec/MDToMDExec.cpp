@@ -519,7 +519,7 @@ LogicalResult Converter::convert(Operation *op) {
           reciprocal.getProlateAttr(),
           yieldsPotential ? UnitAttr() : reciprocal.getGatherAllAttr(),
           // The layout of the spreading is chosen later, on a device
-          // (md-exec-choose-spreading, D[pme-tiles]).
+          // (md-exec-choose-spreading, D282).
           /*tiles=*/IntegerAttr());
     };
     if (takesForces) {

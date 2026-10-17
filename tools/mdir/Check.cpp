@@ -399,7 +399,7 @@ static void describeRun(const Control &control, const System &system,
   if (control.neighborStructureRequested == NeighborStructure::Auto)
     std::printf(" (AUTO: %s)", control.neighborStructureReason.c_str());
   std::printf("\n");
-  // The reaches that are "AUTO" (D[skin-auto]): check measures nothing; it
+  // The reaches that are "AUTO" (D281): check measures nothing; it
   // names the defaults or the cache, and whether `mdir run` would search.
   if (control.isSkinAuto())
     std::printf("skins:              %s (%s)\n", control.skinSource.c_str(),

@@ -14,7 +14,7 @@
 // RUN: not mdir-opt %s --md-exec-choose-spreading=edge=6 2>&1 \
 // RUN: | FileCheck %s --check-prefix=EDGE
 
-// How each reciprocal sum spreads its charges on a device (D[pme-tiles]):
+// How each reciprocal sum spreads its charges on a device (D282):
 // `auto` tiles, with bins of 8 points by default, every sum in f32 on a
 // grid of at least `min-points` points; `tiles` every sum that can be; `global` and the
 // deterministic mode none. A sum cannot be tiled where an edge of the

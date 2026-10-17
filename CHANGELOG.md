@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - **An exact automatic choice of the skins of the neighbor lists**
-  (D[skin-auto], #406,
+  (D281, #406,
   [docs/neighbors-m0.md](docs/neighbors-m0.md#6-the-choice-of-the-skins)):
   `pairlist_distance = "AUTO"` and `pruned_distance = "AUTO"` of
   `[energy]`, and the keys not given, let the run choose the skins. The
@@ -533,7 +533,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **PME on a device spreads through tiles of the memory of a block**
-  (D[pme-tiles], #336,
+  (D282, #336,
   [docs/pme-m1.md §3.3](docs/pme-m1.md#33-spreading-through-tiles)): the
   particles are binned by their first grid point at each evaluation, a
   block adds the charges of a bin into a tile and the tile into the grid,

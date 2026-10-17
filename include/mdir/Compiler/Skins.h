@@ -1,4 +1,4 @@
-// The automatic choice of the skins of the neighbor lists (D[skin-auto]).
+// The automatic choice of the skins of the neighbor lists (D281).
 //
 // See docs/neighbors-m0.md, "The choice of the skins".
 #ifndef MDIR_COMPILER_SKINS_H
@@ -53,7 +53,7 @@ struct SkinChoice {
 /// it (see `chooseSkins`).
 bool canSearchSkins(const driver::Control &control, std::string &why);
 
-/// Resolves the reaches of `control` that are "AUTO" (D[skin-auto]): from
+/// Resolves the reaches of `control` that are "AUTO" (D281): from
 /// the defaults that resolveNeighborStructure set; then, where
 /// canSearchSkins holds, from the cache of earlier choices; then, where
 /// `search` is true and the run is long enough (or MDIR_SKIN_SEARCH says

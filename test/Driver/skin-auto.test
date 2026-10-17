@@ -1,4 +1,4 @@
-# `pairlist_distance` and `pruned_distance` take "AUTO" (D[skin-auto]), and
+# `pairlist_distance` and `pruned_distance` take "AUTO" (D281), and
 # a key not given is "AUTO" as well. `mdir check` measures nothing: it names
 # where the reaches come from and why a run would not search. "AUTO" begins
 # at the defaults of D261 (the groups at 3 and 0.6 Å beyond the cutoff, the

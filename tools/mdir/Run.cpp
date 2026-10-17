@@ -491,7 +491,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   // checkpoint does not continue it.
   if (fromPositions)
     control->restartInput.clear();
-  // The reaches that are "AUTO" (D[skin-auto]): the defaults, the cache, or
+  // The reaches that are "AUTO" (D281): the defaults, the cache, or
   // candidates measured from the state the run begins with, before its own
   // program is built. What the search printed goes to the log once its
   // header is written.
@@ -577,7 +577,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   llvm::InitializeNativeTargetAsmParser();
 
   // The passes are registered once a process: a search of the skins may
-  // have lowered programs before (D[skin-auto]).
+  // have lowered programs before (D281).
   mlir::DialectRegistry registry = compiler::getRegistry();
   // The threads of the process's pool, at most MDIR_COMPILE_THREADS, as a
   // Python simulation lowers (D211); the GPU modules are serialized on them
@@ -1023,7 +1023,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         {"pruned_distance_angstrom", control->prunedDistance != 0.0
              ? llvm::json::Value(control->prunedDistance) : llvm::json::Value(nullptr)},
         // Where each reach came from, and the search if there was one
-        // (D[skin-auto]).
+        // (D281).
         {"pairlist_distance_source",
          control->getSkinSource(/*outer=*/true)},
         {"pruned_distance_source",
@@ -1387,7 +1387,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     output.log.print(" (AUTO: %s)\n",
                      control->neighborStructureReason.c_str());
   }
-  // The reaches that "AUTO" took, and how (D[skin-auto]): given ones and
+  // The reaches that "AUTO" took, and how (D281): given ones and
   // the defaults of keys not given are not repeated.
   bool skinsShown = control->skinSource == "cached" ||
                     control->skinSource == "measured" ||

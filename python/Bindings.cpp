@@ -55,7 +55,7 @@ struct Version {
   virtual ~Version() = default;
 };
 template <class T> struct Input : Version { T value; std::optional<size_t> particleCount; };
-/// The type of `mdir.Auto` (D[skin-auto]).
+/// The type of `mdir.Auto` (D281).
 struct AutoValue {};
 template <class T, class V>
 static void property(py::class_<Input<T>, std::shared_ptr<Input<T>>> &c,
@@ -241,7 +241,7 @@ PYBIND11_MODULE(_core, m) {
     .value("Groups", driver::NeighborStructure::Groups)
     .value("Auto", driver::NeighborStructure::Auto);
   // `mdir.Auto`, the value of a reach that the run chooses, as "AUTO" of
-  // the control file (D[skin-auto]).
+  // the control file (D281).
   py::class_<AutoValue>(m, "AutoType")
     .def("__repr__", [](const AutoValue &) { return "mdir.Auto"; })
     .def("__eq__", [](const AutoValue &, py::object other) {
@@ -467,7 +467,7 @@ PYBIND11_MODULE(_core, m) {
       ++o.version;
     });
   };
-  // The reaches take `mdir.Auto` as well (D[skin-auto]): the run chooses
+  // The reaches take `mdir.Auto` as well (D281): the run chooses
   // them, from the defaults or the cache of earlier choices.
   system.def_property("pairlist_distance", [](const Input<model::System> &o) -> py::object {
     if (o.value.pairlistDistanceAuto) return py::cast(AutoValue{});
@@ -812,7 +812,7 @@ PYBIND11_MODULE(_core, m) {
       d["neighbor_structure_reason"] = resolved.neighborStructureReason;
       d["pairlist_distance"] = resolved.pairlistDistance * driver::units::length;
       d["pruned_distance"] = resolved.prunedDistance * driver::units::length;
-      // Where the reaches came from (D[skin-auto]).
+      // Where the reaches came from (D281).
       d["pairlist_distance_source"] = resolved.getSkinSource(/*outer=*/true);
       d["pruned_distance_source"] = resolved.getSkinSource(/*outer=*/false);
       d["skin_reason"] = resolved.skinReason;
@@ -898,7 +898,7 @@ PYBIND11_MODULE(_core, m) {
     system->value.pmeSpacingGiven = system->given.count("pme_spacing") != 0;
     auto prepared = unwrap(model::prepare(system->value, state->value, integrator->value,
                                           ensemble->value, execution->value, schedule->value));
-    // The reaches that are `mdir.Auto` (D[skin-auto]): the defaults or the
+    // The reaches that are `mdir.Auto` (D281): the defaults or the
     // cache; a Python simulation does not measure candidates.
     compiler::chooseSkins(prepared.control, prepared.system, /*search=*/false);
     // A restraint that selects nothing restrains nothing: the control file

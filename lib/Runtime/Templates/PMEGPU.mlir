@@ -6231,7 +6231,7 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
 
 // The particles into bins of 4^3 points of the grid by their
 // first points, which `places` holds, for the spreading into tiles; zeroes
-// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+// the grid `real` (D282; see bin_kernels in the script).
 func.func private @mdrt_gpu_pme_bin4(%q: memref<?x!pme_chg, 1>,
                                       %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
                                       %real: memref<?x!pme_real, 1>,
@@ -6379,7 +6379,7 @@ func.func private @mdrt_gpu_pme_bin4(%q: memref<?x!pme_chg, 1>,
 
 // The particles of the list (D262) into bins of 4^3 points of the grid by their
 // first points, which `places` holds, for the spreading into tiles; zeroes
-// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+// the grid `real` (D282; see bin_kernels in the script).
 func.func private @mdrt_gpu_pme_bin4_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>,
                                       %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
                                       %real: memref<?x!pme_real, 1>,
@@ -6530,7 +6530,7 @@ func.func private @mdrt_gpu_pme_bin4_listed(%q: memref<?x!pme_chg, 1>, %list: me
 }
 
 // Adds the charges of the binned particles to `real` through tiles
-// of the memory of the block (D[pme-tiles]; see tile_kernel in the
+// of the memory of the block (D282; see tile_kernel in the
 // script).
 func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>,
                                       %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
@@ -6908,7 +6908,7 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
 
 // The particles into bins of 8^3 points of the grid by their
 // first points, which `places` holds, for the spreading into tiles; zeroes
-// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+// the grid `real` (D282; see bin_kernels in the script).
 func.func private @mdrt_gpu_pme_bin8(%q: memref<?x!pme_chg, 1>,
                                       %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
                                       %real: memref<?x!pme_real, 1>,
@@ -7056,7 +7056,7 @@ func.func private @mdrt_gpu_pme_bin8(%q: memref<?x!pme_chg, 1>,
 
 // The particles of the list (D262) into bins of 8^3 points of the grid by their
 // first points, which `places` holds, for the spreading into tiles; zeroes
-// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+// the grid `real` (D282; see bin_kernels in the script).
 func.func private @mdrt_gpu_pme_bin8_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>,
                                       %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
                                       %real: memref<?x!pme_real, 1>,
@@ -7207,7 +7207,7 @@ func.func private @mdrt_gpu_pme_bin8_listed(%q: memref<?x!pme_chg, 1>, %list: me
 }
 
 // Adds the charges of the binned particles to `real` through tiles
-// of the memory of the block (D[pme-tiles]; see tile_kernel in the
+// of the memory of the block (D282; see tile_kernel in the
 // script).
 func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>,
                                       %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
@@ -7585,7 +7585,7 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
 
 // The particles into bins of 16^3 points of the grid by their
 // first points, which `places` holds, for the spreading into tiles; zeroes
-// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+// the grid `real` (D282; see bin_kernels in the script).
 func.func private @mdrt_gpu_pme_bin16(%q: memref<?x!pme_chg, 1>,
                                       %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
                                       %real: memref<?x!pme_real, 1>,
@@ -7733,7 +7733,7 @@ func.func private @mdrt_gpu_pme_bin16(%q: memref<?x!pme_chg, 1>,
 
 // The particles of the list (D262) into bins of 16^3 points of the grid by their
 // first points, which `places` holds, for the spreading into tiles; zeroes
-// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+// the grid `real` (D282; see bin_kernels in the script).
 func.func private @mdrt_gpu_pme_bin16_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>,
                                       %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
                                       %real: memref<?x!pme_real, 1>,
@@ -7884,7 +7884,7 @@ func.func private @mdrt_gpu_pme_bin16_listed(%q: memref<?x!pme_chg, 1>, %list: m
 }
 
 // Adds the charges of the binned particles to `real` through tiles
-// of the memory of the block (D[pme-tiles]; see tile_kernel in the
+// of the memory of the block (D282; see tile_kernel in the
 // script).
 func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>,
                                       %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,

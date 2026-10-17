@@ -1,4 +1,4 @@
-# The search of the skins (D[skin-auto]) on the water box of
+# The search of the skins (D281) on the water box of
 # pme-settle.test with the groups: `MDIR_SKIN_SEARCH=always` measures the
 # reference of D261 (12 / 9.6 Å) and the candidates of the cost model,
 # keeps one, and caches it; a second run and a continuation take it from

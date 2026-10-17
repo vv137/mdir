@@ -229,7 +229,7 @@ threads, in every mode:
 ### 3.3 Spreading through tiles
 
 Outside the deterministic mode a device may spread the charges through
-tiles of the memory of a block (D[pme-tiles], issue #336), as cuFINUFFT
+tiles of the memory of a block (D282, issue #336), as cuFINUFFT
 spreads [[Shih2021]](references.md#shih2021): the particles are binned by
 their first point into bins of $E^3$ points of the grid, and a block adds
 the charges of a bin into a tile of $(E + P - 1)^3$ points, the bin and
@@ -606,7 +606,7 @@ the Gaussian default and the suite's settings take the time of `main`
 within 1% on every system and device. The loop over pairs takes 44.2 µs on
 JAC (RTX 4090) against 42.4 µs with the Gaussian, since its tables read 4
 coefficients a pair in f32. These timings are without tiles. Tiled
-spreading (Section 3.3, D[pme-tiles]) serves both kernels: on a grid in
+spreading (Section 3.3, D282) serves both kernels: on a grid in
 f32 of at least 500,000 points the prolate default takes 0.83 to 0.87
 times the step without tiles on Factor IX, Cellulose, and STMV (RTX
 4090), and the Gaussian of orders 6 and 8 0.79 to 0.85; the comparison of

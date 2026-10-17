@@ -458,7 +458,7 @@ The groups take `pairlist_distance` = cutoff + 3 Å and
 are not given. The matrix keeps cutoff + 1.5 Å. These are the defaults
 that `"AUTO"` begins at; a long run measures candidates around them
 ([neighbors-m0.md](neighbors-m0.md#6-the-choice-of-the-skins),
-D[skin-auto]).
+D281).
 
 **The size.** The matrix at its default reach is set against the groups
 at these reaches, in mixed precision, µs a step: 6 rounds alternated in

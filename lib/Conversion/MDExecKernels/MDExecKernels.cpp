@@ -2453,7 +2453,7 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
                     "%pointer, %value : (!llvm.ptr<1>, f32) -> ()";
     } else if (text.starts_with("PME_TILE_") ||
                text.starts_with("PME_SHARED_ADD_")) {
-      // The tiles of the spreading of bins of E points (D[pme-tiles]):
+      // The tiles of the spreading of bins of E points (D282):
       // `PME_TILE_SIDE_E` the points of a side of a tile, E + P - 1, and
       // `PME_TILE_POINTS_E` those of the tile; `PME_SHARED_ADD_E %tile[%t],
       // %value` an atomic addition to the tile in the memory of the block.

@@ -1178,7 +1178,7 @@ IEEE International Parallel and Distributed Processing Symposium Workshops
 Used for: the binning of the particles by the points they spread to and
 the spreading into blocks of the grid in shared memory: the prototype of
 issue #334 (D266), and the spreading into tiles of PME on a device, of
-the B-splines and of the prolate kernel (D[pme-tiles], issue #336,
+the B-splines and of the prolate kernel (D282, issue #336,
 [pme-m1.md](pme-m1.md#33-spreading-through-tiles)).
 
 ### Shirts2007
