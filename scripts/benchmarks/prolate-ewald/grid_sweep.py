@@ -196,4 +196,5 @@ def main():
                 out.write(json.dumps(row) + '\n')
 
 
-main()
+if __name__ == '__main__':  # cpu_cases.py imports control() and smooth()
+    main()

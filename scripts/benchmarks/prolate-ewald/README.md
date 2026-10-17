@@ -39,6 +39,9 @@ which agree to $2\times10^{-12}$.
 | `grid_sweep.py make/run/report` | MDIR's own $\Delta$ on the CPU in double at explicit grids, over the Coulomb forces of the topology (the forces less those of the system without charges), against the Gaussian at erfc 10⁻¹³, 0.33 Å, order 8, checked by the prolate kernel at 10⁻⁹; the eq. 10 estimate of each run; the calibration of the grid rule |
 | `perf_cases.py NAME STEPS OUT [MAIN]`, `ws_table.py LOG...` | The whole step at matched $\Delta$ (the grids by the spacing of JAC), with runs of a build of `main` for the order-4 path; the table from the round lines of a job's log |
 | `dynamics.py make/run/report` | JAC in NVE (the drift, with the slopes of the two halves) and NPT (the mean volume), both kernels, mixed and double precision |
+| `cpu_cases.py accuracy/mixed/pick` | The CPU target (issue #371): the sweep of $\Delta$ at a cutoff of 9 Å for `grid_sweep.py run` and `report` (the Gaussian of orders 4, 6, 8 at erfc $10^{-4}$ to $10^{-7}$ over spacings, the prolate kernel at its automatic grid for $P$ = 5, 6, 7), the same cases in mixed precision, and the matched cases of each tier $\varepsilon$ = $10^{-3}$, $10^{-4}$, $10^{-5}$: for each Gaussian order the grid of fewest points whose $\Delta$ is at most 1.1 times that of the prolate default |
+| `cpu_job.py NAME CASES TIER ROUNDS 16,4,1` | One job a system and tier: `mdir run` on the CPU target in mixed precision, every case at 16 threads and the prolate default and the three Gaussian orders at 4 and 1, alternated in rounds (the first dropped), then one run of each under the sampler of `scripts/benchmarks/cpu-breakdown/` |
+| `cpu_table.py NAME...` | The step at each number of threads, the parts of the sampled runs (`cpu-breakdown/prof.py --json`), and an estimate of the step with a shorter, Coulomb-only cutoff from the parts |
 
 ## Use
 
@@ -58,4 +61,21 @@ python proto_all.py 4090 brick,tiled4,tiled8 f jac cel stmv   # on the GPU
 python table.py $ESP_WORK/proto2-jac-4090.jsonl check
 python run_ref.py cel 3000 && python check_cases.py cel 3000
 python mk_mdir.py jac 10000 && python mdir_job.py $ESP_WORK/runs/runs-jac.json out.jsonl 6 PATH_TO_MDIR
+```
+
+The CPU target: `ESP_CPU_DIR` holds `sys/NAME/` (`sys.prmtop`, `sys.inpcrd`,
+and `npt.h5` for a state equilibrated at constant pressure, which is then
+the input), `MDIR` names a frozen copy of the program, and `SAMPLER` the
+library built from `cpu-breakdown/sampler.c`. Each job has 16 cores.
+
+```sh
+python cpu_cases.py accuracy jac $ESP_CPU_DIR/acc/jac
+python grid_sweep.py run $MDIR $ESP_CPU_DIR/acc/jac 4      # 4 runs of 4 threads at once
+python grid_sweep.py report $MDIR $ESP_CPU_DIR/acc/jac $ESP_CPU_DIR/acc/jac/report.jsonl
+python cpu_cases.py pick $ESP_CPU_DIR/acc/jac $ESP_CPU_DIR/acc/jac/cases.json
+python cpu_cases.py mixed $ESP_CPU_DIR/acc/jac CASE...     # then run, report, and pick again
+python cpu_cases.py accuracy cel $ESP_CPU_DIR/acc/cel $ESP_CPU_DIR/acc/jac/cases.json
+python cpu_job.py jac $ESP_CPU_DIR/acc/jac/cases.json 1e-5 6 16,4,1 --tag t1e-5
+python ../cpu-breakdown/prof.py RUN/prof --program RUN/mdir.toml --json RUN/parts.json
+python cpu_table.py jac tip3p-32k tip3p-103k cel
 ```
