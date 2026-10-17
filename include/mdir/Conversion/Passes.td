@@ -379,4 +379,38 @@ def GpuModuleToBinary
   ];
 }
 
+def ConvertMDDistToLoops
+    : Pass<"convert-md-dist-to-loops", "::mlir::ModuleOp"> {
+  let summary = "Runs every domain of md_dist in one process";
+  let description = [{
+    The reference executor of `md_dist` (D[ml2-core],
+    docs/distributed-ml2.md, Section 6): every op runs for all domains in
+    turn, in the order of the domains, which is a valid bulk-synchronous
+    schedule of the global view. It is the oracle of every later
+    transport.
+
+    | Op | Becomes |
+    |---|---|
+    | A distributed field | `memref<D x rows x k x f64>`: domain, row, component |
+    | `md_dist.partition`, `distribute`, `collect` | Calls of the in-process transport (`runtime/mdrt_dist.c`) |
+    | `md_dist.halo`, `halo_copy` (G), `halo_sum` (G^T) | Calls of the transport |
+    | `md_dist.sum_pairs`, `gather_pairs` | `scf.for` over the domains, their owned centers, and all their local rows, with the cutoff test and the kernel inlined: a search over all pairs, which shares no code with the neighbor structures of `md_exec` |
+    | `md_dist.sum_particles` | `scf.for` over the domains and their rows |
+    | `md_dist.all_reduce` | A sum over the domains in their order |
+
+    The values of `md_dist` must be in one block, with no use across
+    blocks or functions; the cell must come from `md.orthorhombic_cell`;
+    fields are of `f64`. The pass rejects what it cannot run, naming the
+    reason. It runs before the passes of `md`, which then compile what
+    `md_dist.collect` and `md.evaluate` leave.
+  }];
+  let dependentDialects = ["::mdir::mdrt::MDRTDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::func::FuncDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 #endif // MDIR_CONVERSION_PASSES_TD

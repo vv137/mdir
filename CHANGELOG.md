@@ -12,6 +12,19 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- ML2, stage 1 of distributed execution, the core (D[ml2-core], #31,
+  [docs/distributed-ml2.md](docs/distributed-ml2.md)): the dialect
+  `md_dist`, with layouts (ownership), halos, the owner-to-ghost copy and
+  the sum of the ghosts' contributions at the owner as adjoint ops, and a
+  verifier that rejects a missing transfer, a stale halo, a halo whose
+  reach is below the cutoff, and partial sums read or counted twice; the
+  in-process reference executor of several domains,
+  `--convert-md-dist-to-loops` with `runtime/mdrt_dist.c`, whose trace
+  `MDRT_DIST_TRACE` prints the rows of each domain and of each transfer.
+  `md-check-exchange` now also proves kernels through components and
+  lanes of vectors (`vector.extract`, `vector.from_elements`,
+  `vector.shuffle`), so more kernels pass it. No control-file key or
+  output changes.
 - `[minimize]` and stochastic cell rescaling with a term of
   `[[energy.model]]` (D272, #367): the model's energy,
   forces, and virial enter the steepest descent and the pressure of every

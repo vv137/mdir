@@ -38,6 +38,7 @@ target_link_libraries(mdir PRIVATE
   MDIRMDExec
   MDIRMDExecToGPU
   MDIRMDExecToLoops
+  MDIRMDDistToLoops
   MDIRMDExecTransforms
   MDIRMDRT
   MDIRMDToMDExec
