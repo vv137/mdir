@@ -1,0 +1,39 @@
+# The pruning of the inner list of a dual list in the loop over pairs that
+# follows its refresh (D[fused-prune]): where the refresh prunes, the loop
+# runs one kernel, a warp for each group, that prunes the group as the
+# refresh would and computes the pairs of the entries it kept. By default
+# it does so from 4096 groups, so the water box of 1,570 sites (about 100
+# groups) prunes in the refresh; MDIR_FUSED_PRUNE=always takes the loop at
+# any size, and =off never does, nor compiles its kernel. The energies of the log are
+# those of the refresh's pruning to every printed digit in double precision
+# (groups-gpu.test against the matrix), and the check of the pairs passes
+# (prune-check-gpu.test).
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/opc.prmtop %S/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme-settle.test | sed '1d;$d' \
+# RUN:     | sed -e 's|energy_interval = 50|energy_interval = 20|' \
+# RUN:           -e 's|^pairlist_distance = 10.0|pairlist_distance = 11.0\npruned_distance = 9.3|' \
+# RUN:           -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "double"\nneighbor_structure = "GROUPS"|' > %t/run.toml
+# RUN: cd %t && env MDIR_COMPILE_CACHE=off mdir run run.toml > default.out
+# RUN: FileCheck %s --check-prefix=REFRESH < %t/default.out
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always MDIR_COMPILE_CACHE=off mdir run run.toml > always.out
+# RUN: FileCheck %s --check-prefix=LOOP < %t/always.out
+# RUN: grep 'INFO: \|MDIR:   ' %t/default.out > %t/default.log
+# RUN: grep 'INFO: \|MDIR:   ' %t/always.out > %t/always.log
+# RUN: diff %t/default.log %t/always.log
+# RUN: cd %t && env MDIR_FUSED_PRUNE=off MDIR_COMPILE_CACHE=off mdir run run.toml > off.out
+# RUN: FileCheck %s --check-prefix=REFRESH < %t/off.out
+# The loop that prunes counts its prunings; without the option it is not
+# compiled.
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always MDIR_COMPILE_CACHE=off MDIR_PRINT_AFTER=convert-md-exec-to-gpu mdir run run.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=KERNEL
+# RUN: cd %t && env MDIR_FUSED_PRUNE=off MDIR_COMPILE_CACHE=off MDIR_PRINT_AFTER=convert-md-exec-to-gpu mdir run run.toml 2>&1 >/dev/null | FileCheck %s --check-prefix=NOKERNEL
+
+# REFRESH:     MDIR: the inner lists were pruned {{[0-9]+}} times, every {{[0-9.]+}} steps on average{{$}}
+
+# LOOP:        MDIR: the inner lists were pruned [[N:[0-9]+]] times, every {{[0-9.]+}} steps on average, [[N]] of them in the loop over pairs
+
+# KERNEL:      call @mdrtCountFusedPrune
+# NOKERNEL-NOT: @mdrtCountFusedPrune

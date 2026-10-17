@@ -3100,6 +3100,10 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
                                     /*withElseRegion=*/true);
     {
       OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
+      func::CallOp::create(
+          then, loc,
+          getOrDeclare("mdrtCountFusedPrune", then.getFunctionType({}, {})),
+          ValueRange());
       PruneContext ctx = getPruneContext(then, loc, structure, cell, reach);
       Value groupWarps = emitWarps(
           then, ctx.groups,

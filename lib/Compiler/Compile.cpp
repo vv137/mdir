@@ -81,17 +81,20 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
   return options;
 }
 
-/// The options of the pruning in the loop over pairs (D[fused-prune]):
-/// MDIR_FUSED_PRUNE=on fuses from MDIR_FUSED_PRUNE_GROUPS groups (0 if
-/// unset).
+/// The options of the pruning in the loop over pairs (D[fused-prune]): on
+/// from `fusedPruningGroups` groups, unless MDIR_FUSED_PRUNE is `off`;
+/// `always` takes it at any number of groups.
 static std::string getFusedPruningOptions() {
+  // The groups from which the fused pruning took less time a step than the
+  // pruning of the refresh on an RTX 4090 (water boxes of 52,686 and
+  // 103,158 sites: 3,292 groups equal, 6,447 groups 4% less).
+  constexpr int64_t fusedPruningGroups = 4096;
   const char *fuse = std::getenv("MDIR_FUSED_PRUNE");
-  if (!fuse || llvm::StringRef(fuse) != "on")
+  llvm::StringRef value = fuse ? fuse : "";
+  if (value == "off")
     return "";
-  std::string options = "fuse-pruning=true ";
-  if (const char *groups = std::getenv("MDIR_FUSED_PRUNE_GROUPS"))
-    options += "fuse-pruning-groups=" + std::string(groups) + " ";
-  return options;
+  return "fuse-pruning=true fuse-pruning-groups=" +
+         std::to_string(value == "always" ? 0 : fusedPruningGroups) + " ";
 }
 
 std::string mdir::compiler::getPipeline(const Control &control,

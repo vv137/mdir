@@ -1526,6 +1526,15 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         output.log.print(", every %.1f steps on average",
                      static_cast<double>(control->numSteps) /
                          static_cast<double>(prunes - 1));
+      // Those that the loop over pairs did (D[fused-prune]).
+      if (auto fused = (*engine)->lookup("mdrtGetFusedPruneCount")) {
+        int64_t inLoop = reinterpret_cast<int64_t (*)()>(*fused)();
+        if (inLoop > 0)
+          output.log.print(", %lld of them in the loop over pairs",
+                           static_cast<long long>(inLoop));
+      } else {
+        llvm::consumeError(fused.takeError());
+      }
       output.log.print("\n");
     }
   } else {
