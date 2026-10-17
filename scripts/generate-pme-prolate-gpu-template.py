@@ -925,18 +925,35 @@ def tiles():
     """The spreading of the window into tiles of the bins of
     PMEGPU.mlir (D[pme-tiles]; tile_kernel of
     generate-pme-gpu-template.py): the lanes 0 .. 3P − 1 of the warp of a
-    particle evaluate the window as the bricks do (warp_weights)."""
-    lane = '''      %c0w = arith.constant 0 : index
-      %two_i = arith.constant 2 : index
-      %three_i = arith.constant 3 : index
-      %k12t = arith.addi %k1, %k2 : index
-      %k123t = arith.addi %k12t, %k3 : index
-      %pe = arith.muli %k123t, %three_i : index
-''' + warp_weights(slopes=False) + '''      %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
-      %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
-      %first_axis = arith.cmpi eq, %axis, %c0w : index
-      %qv = arith.mulf %wvalue, %qi : !pme_real
-      %weight = arith.select %first_axis, %qv, %wvalue : !pme_real
+    particle evaluate the window from the fraction of their axis, which
+    the tile kernel has read into the memory of the block, as the bricks
+    do (warp_weights)."""
+    lane = '''          %two_i = arith.constant 2 : index
+          %three_i = arith.constant 3 : index
+          %one = arith.constant 1 : index
+          %points = arith.constant PME_ORDER : index
+          %k12t = arith.addi %k1, %k2 : index
+          %k123t = arith.addi %k12t, %k3 : index
+          %pe = arith.muli %k123t, %three_i : index
+          %j = arith.addi %j_l, %c0 : index
+          %twor = arith.constant 2.0 : !pme_real
+          %oner = arith.constant 1.0 : !pme_real
+          %frac2 = arith.mulf %frac, %twor : !pme_real
+          %t = arith.subf %frac2, %oner : !pme_real
+          %meta_d = arith.addi %pe, %two_i : index
+          %dr = memref.load %tables[%meta_d] : memref<?x!pme_real, 1>
+          %meta_n = memref.load %tables[%pe] : memref<?x!pme_real, 1>
+          %terms_i = arith.fptosi %dr : !pme_real to i32
+          %terms = arith.index_cast %terms_i : i32 to index
+          %n_i = arith.fptosi %meta_n : !pme_real to i32
+          %n_s = arith.index_cast %n_i : i32 to index
+          %n_2 = arith.addi %n_s, %n_s : index
+          %wb0 = arith.addi %pe, %three_i : index
+          %wbase = arith.addi %wb0, %n_2 : index
+''' + clenshaw('wv', '%wbase', '%t', 'wvalue0') + '''          %wvalue = arith.select %active, %wvalue0, %zero_r : !pme_real
+          %first_axis = arith.cmpi eq, %axis_l, %c0 : index
+          %qv = arith.mulf %wvalue, %qk : !pme_real
+          %weight = arith.select %first_axis, %qv, %wvalue : !pme_real
 '''
     text = ''
     for edge in GAUSSIAN.TILE_EDGES:

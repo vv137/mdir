@@ -57,8 +57,14 @@ public:
       Type element = forces.getElementType();
       if (!element.isF32() && !element.isF64())
         return;
+      // The tile, and the charges, fractions, and first points of a round
+      // of one particle a thread (tile_kernel and TILE_THREADS of
+      // scripts/generate-pme-gpu-template.py).
+      int64_t threads = edge == 16 ? 512 : 128;
       int64_t side = edge + op.getOrder() - 1;
-      int64_t bytes = side * side * side * (element.isF32() ? 4 : 8);
+      int64_t real = element.isF32() ? 4 : 8;
+      int64_t bytes =
+          (side * side * side + 4 * threads) * real + 3 * threads * 4;
       if (bytes > kTileBytes)
         return;
       int64_t points = 1;
@@ -67,7 +73,12 @@ public:
           return;
         points *= length;
       }
-      if (layout == "auto" && points < minPoints)
+      // The bricks of D108 and D109, the spreading of the B-splines of
+      // order 4 in f32, are faster on a small grid; every other spreading
+      // takes the tiles that fit.
+      bool bricks =
+          !op.getProlate() && op.getOrder() == 4 && element.isF32();
+      if (layout == "auto" && bricks && points < minPoints)
         return;
       op.setTilesAttr(builder.getI64IntegerAttr(edge));
     });

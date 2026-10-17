@@ -953,9 +953,11 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       scratch.push_back(buffer);
     }
     // The bins of the spreading into tiles (D[pme-tiles]), last: in i32,
-    // the count of each bin, zero at the start and left zero by each
-    // binning, the first place of each bin and the end, and the bin, the
-    // rank, and the place in the order of the bins of each particle.
+    // the count of each bin and that of the particles that overflow, which
+    // each binning zeroes first, a run of C places for each bin, C twice
+    // the mean number of particles of a bin and 8 more, and n places for
+    // those that overflow (bin_header of
+    // scripts/generate-pme-gpu-template.py, which computes the same).
     if (std::optional<int64_t> edge = op.getTiles()) {
       int64_t bins = 1;
       for (int64_t points : grid)
@@ -963,28 +965,25 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       auto type = MemRefType::get({ShapedType::kDynamic},
                                   IntegerType::get(context, 32),
                                   MemRefLayoutAttrInterface(), space);
+      OpBuilder &b = root->builder;
+      auto constant = [&](int64_t value) {
+        return arith::ConstantIndexOp::create(b, loc, value).getResult();
+      };
+      Value mean = arith::DivUIOp::create(
+          b, loc, arith::AddIOp::create(b, loc, size, constant(bins - 1)),
+          constant(bins));
+      Value capacity = arith::AddIOp::create(
+          b, loc, arith::AddIOp::create(b, loc, mean, mean), constant(8));
+      Value runs = arith::MulIOp::create(b, loc, capacity, constant(bins));
       Value length = arith::AddIOp::create(
-          root->builder, loc,
-          arith::MulIOp::create(
-              root->builder, loc, size,
-              arith::ConstantIndexOp::create(root->builder, loc, 3)),
-          arith::ConstantIndexOp::create(root->builder, loc, 2 * bins + 1));
-      Value buffer = gpu::AllocOp::create(root->builder, loc, type,
+          b, loc, arith::AddIOp::create(b, loc, runs, size),
+          constant(bins + 1));
+      Value buffer = gpu::AllocOp::create(b, loc, type,
                                           /*asyncToken=*/Type(),
                                           /*asyncDependencies=*/ValueRange(),
                                           ValueRange{length},
                                           /*symbolOperands=*/ValueRange())
                          .getMemref();
-      Type token = gpu::AsyncTokenType::get(context);
-      Value begin = gpu::WaitOp::create(root->builder, loc, token, ValueRange())
-                        .getAsyncToken();
-      Value cleared =
-          gpu::MemsetOp::create(
-              root->builder, loc, token, ValueRange{begin}, buffer,
-              arith::ConstantOp::create(root->builder, loc,
-                                        root->builder.getI32IntegerAttr(0)))
-              .getAsyncToken();
-      gpu::WaitOp::create(root->builder, loc, Type(), ValueRange{cleared});
       scratch.push_back(buffer);
     }
   }

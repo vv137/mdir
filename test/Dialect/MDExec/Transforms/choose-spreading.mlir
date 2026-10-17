@@ -13,11 +13,14 @@
 // RUN: | FileCheck %s --check-prefix=EDGE
 
 // How each reciprocal sum spreads its charges on a device (D[pme-tiles]):
-// `auto` tiles a grid of at least `min-points` points, with bins of 8
-// points by default; `tiles` every sum that can be; `global` and the
+// `auto` tiles, with bins of 8 points by default, every sum but the
+// B-splines of order 4 in f32 (the bricks of D108) on a grid of fewer than
+// `min-points` points; `tiles` every sum that can be; `global` and the
 // deterministic mode none. A sum cannot be tiled where an edge of the
 // grid is shorter than a tile, E + P - 1 points, or where a tile of the
-// type of the forces would not fit 48 KiB of the memory of a block.
+// type of the forces, with the particles of a round, would not fit 48 KiB
+// of the memory of a block. The default of `min-points` is checked in
+// pme-tiles-gpu.test.
 
 !vec = !md.field<@atoms, 3 x f32>
 !real = !md.field<@atoms, f32>
@@ -51,6 +54,20 @@ func.func @small(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
     -> (f64, !vec) {
   %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
       grid([40, 40, 40]) order(4) beta(3.0) coulomb(138.9)
+      : !vec, !real, !grid -> f64, vector<9xf64>, !vec
+  return %u, %f : f64, !vec
+}
+
+// Orders 6 and 8 have no bricks: tiled at any size that fits.
+// CHECK-LABEL: func.func @sixth(
+// CHECK: md_exec.reciprocal {{.*}} order(6) {{.*}} tiles(8)
+// GLOBAL-LABEL: func.func @sixth(
+// GLOBAL-NOT: tiles(
+// GLOBAL: return
+func.func @sixth(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
+    -> (f64, !vec) {
+  %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
+      grid([40, 40, 40]) order(6) beta(3.0) coulomb(138.9)
       : !vec, !real, !grid -> f64, vector<9xf64>, !vec
   return %u, %f : f64, !vec
 }

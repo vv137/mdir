@@ -26,6 +26,13 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/prolate-triclinic.test | sed '1d;$d' \
 # RUN:   | sed 's/^kernel = "PROLATE"/order = 4/; s/^target    = "CPU"/target    = "GPU"/; s/^precision = "DOUBLE"/precision = "MIXED"/; s/^steps      = 0/steps = 1/; s/^energy_interval = 0/energy_interval = 1\ncheckpoint = "run.h5"\ncheckpoint_interval = 1/' > %t/tm.toml
 # RUN: sed 's/^precision = "MIXED"/precision = "MIXED"\ndeterministic = true/' %t/m4.toml > %t/det.toml
+# The box made 200 Å long in z with the waters in 1.6 to 23.5 Å of it, on a
+# grid of 32 x 32 x 200: 400 bins of 8 points, runs of C = 2 ceil(1570 / 400)
+# + 8 = 16 places, and about 56 bins holding the 1,178 charged sites, about
+# 21 each, so that many particles overflow their runs and are added by the
+# block of the overflow.
+# RUN: sed '$ s/  25.1595755/ 200.0000000/' %t/opc.inpcrd > %t/slab.inpcrd
+# RUN: sed 's/opc.inpcrd/slab.inpcrd/; s/^order = 4/order = 4\ngrid = [32, 32, 200]/' %t/m4.toml > %t/slab.toml
 #
 # RUN: cd %t && %python %S/Inputs/compare_spreading.py mdir %t m4 2e-6 1e-6 global tiles4 tiles8 tiles16 | FileCheck %s --check-prefix=M4
 # RUN: cd %t && %python %S/Inputs/compare_spreading.py mdir %t d4 1e-11 1e-11 global tiles8 | FileCheck %s --check-prefix=D4
@@ -34,6 +41,7 @@
 # RUN: cd %t && %python %S/Inputs/compare_spreading.py mdir %t mp 2e-6 1e-6 global tiles8 | FileCheck %s --check-prefix=MP
 # RUN: cd %t && %python %S/Inputs/compare_spreading.py mdir %t dp 1e-11 1e-11 global tiles8 | FileCheck %s --check-prefix=DP
 # RUN: cd %t && %python %S/Inputs/compare_spreading.py mdir %t tm 2e-6 1e-6 global tiles8 | FileCheck %s --check-prefix=TM
+# RUN: cd %t && %python %S/Inputs/compare_spreading.py mdir %t slab 2e-6 1e-6 global tiles8 | FileCheck %s --check-prefix=SLAB
 #
 # The choice in the module, and none in the deterministic mode.
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 MDIR_PRINT_AFTER=md-exec-choose-spreading mdir run m4.toml 2>&1 | FileCheck %s --check-prefix=IR
@@ -51,6 +59,7 @@
 # MP: tiles8: forces ok, energies ok
 # DP: tiles8: forces ok, energies ok
 # TM: tiles8: forces ok, energies ok
+# SLAB: tiles8: forces ok, energies ok
 # IR: md_exec.reciprocal {{.*}} tiles(8)
 # DET: md_exec.reciprocal
 # DET-NOT: tiles(

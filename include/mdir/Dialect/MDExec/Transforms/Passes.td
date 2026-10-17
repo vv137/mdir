@@ -111,13 +111,16 @@ def ChooseSpreading
     after the precision is assigned and before the storage.
 
     `layout=global` sets no tiles; `layout=tiles` tiles every sum that can
-    be tiled; `layout=auto`, the default, tiles a sum whose grid has at
-    least `min-points` points. A sum can be tiled where the run is not in
+    be tiled; `layout=auto`, the default, tiles every sum that can be tiled
+    but one that would otherwise spread into the bricks (the B-splines of
+    order 4 in f32) on a grid of fewer than `min-points` points, where the
+    bricks are faster. A sum can be tiled where the run is not in
     the deterministic mode (whose grid is in fixed point, D70, D84), where
     each edge of the grid has at least $E + P - 1$ points, so that a point
     of a tile wraps around the grid once at most, and where a tile of
-    $(E + P - 1)^3$ values of the type of the forces fits 48 KiB of the
-    memory of a block.
+    $(E + P - 1)^3$ values of the type of the forces, with the charges,
+    fractions, and first points of a particle for each thread of the block
+    (128, or 512 for $E = 16$), fits 48 KiB of the memory of a block.
 
     ```mlir
     %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
@@ -130,9 +133,10 @@ def ChooseSpreading
            "auto, global, or tiles">,
     Option<"edge", "edge", "int64_t", /*default=*/"8",
            "The points of an edge of a bin of the tiles: 4, 8, or 16">,
-    Option<"minPoints", "min-points", "int64_t", /*default=*/"0",
-           "With layout=auto, the least number of points of a grid that "
-           "is tiled">,
+    Option<"minPoints", "min-points", "int64_t", /*default=*/"500000",
+           "With layout=auto, the least number of points of a grid whose "
+           "B-splines of order 4 in f32 are tiled rather than spread into "
+           "bricks">,
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
            "The deterministic mode, which takes no tiles">
   ];
