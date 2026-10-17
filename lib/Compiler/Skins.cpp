@@ -625,36 +625,63 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
     note(trial);
     choice.trials.push_back(trial);
   }
-  // One step further from the reference beyond the fastest so far, where
-  // that is not the reference: 0.5 Å of the outer skin, or 0.1 Å of the
-  // inner one where only it is chosen. On the grid of #406 this took the
-  // choice to the grid's best on four systems of five, and to 0.4% of it on
-  // the fifth, from up to 1.2%.
-  {
-    const SkinTrial *fastest = &choice.trials.front();
+  // Then a climb from the fastest so far, while it gains: steps of 0.5 Å of
+  // the outer skin away from the reference, then of 0.1 Å of the inner
+  // one, up, or down if the first step up does not gain; at most
+  // `maxTrials` candidates in all. The cost model narrows; the landscape
+  // is not smooth (#406), and on the grid of #406 one step of the outer
+  // skin took the choice to the grid's best on four systems of five, from
+  // up to 1.2% from it. The inner skin is a step of 0.1 Å, a finer grid
+  // than #406's, whose best prunings the model places low on JAC (0.7 Å
+  // against 0.8, 2% on an RTX 4090).
+  constexpr size_t maxTrials = 7;
+  auto fastest = [&]() -> const SkinTrial & {
+    const SkinTrial *f = &choice.trials.front();
     for (const SkinTrial &trial : choice.trials)
-      if (trial.failure.empty() && trial.microseconds < fastest->microseconds)
-        fastest = &trial;
-    if (fastest != &choice.trials.front()) {
-      double outer = fastest->outer, inner = fastest->inner;
-      if (control.pairlistDistanceAuto)
-        outer += outer > outer0 ? 0.5 : -0.5;
-      else
-        inner += inner > inner0 ? 0.1 : -0.1;
-      double cutoff = control.cutoffDistance;
-      bool valid = outer - cutoff >= 1.5 - 1e-9 &&
-                   outer - cutoff <= 6.0 + 1e-9 &&
-                   outer <= 0.999 * leastEdge &&
-                   (inner == 0.0 || (inner > cutoff && inner < outer - 0.25));
-      for (const SkinTrial &trial : choice.trials)
-        valid &= std::fabs(trial.outer - outer) > 1e-9 ||
-                 std::fabs(trial.inner - inner) > 1e-9;
-      if (valid) {
-        SkinTrial trial = measure(control, system, outer, inner);
-        trial.predicted = model.predict(outer, inner) / base;
-        note(trial);
-        choice.trials.push_back(trial);
-      }
+      if (trial.failure.empty() && trial.microseconds < f->microseconds)
+        f = &trial;
+    return *f;
+  };
+  // Measures (outer, inner) if it is a valid candidate not measured yet;
+  // whether it was the fastest.
+  auto attempt = [&](double outer, double inner) {
+    double cutoff = control.cutoffDistance;
+    bool valid = choice.trials.size() < maxTrials &&
+                 outer - cutoff >= 1.5 - 1e-9 && outer - cutoff <= 6.0 + 1e-9 &&
+                 outer <= 0.999 * leastEdge && outer <= 127.0 * cutoff &&
+                 (inner == 0.0 ||
+                  (inner >= cutoff + 0.3 - 1e-9 && inner < outer - 0.25));
+    for (const SkinTrial &trial : choice.trials)
+      valid &= std::fabs(trial.outer - outer) > 1e-9 ||
+               std::fabs(trial.inner - inner) > 1e-9;
+    if (!valid)
+      return false;
+    double before = fastest().microseconds;
+    SkinTrial trial = measure(control, system, outer, inner);
+    trial.predicted = model.predict(outer, inner) / base;
+    note(trial);
+    choice.trials.push_back(trial);
+    return trial.failure.empty() && trial.microseconds < before;
+  };
+  if (control.pairlistDistanceAuto) {
+    while (std::fabs(fastest().outer - outer0) > 1e-9) {
+      const SkinTrial &f = fastest();
+      if (!attempt(f.outer + (f.outer > outer0 ? 0.5 : -0.5), f.inner))
+        break;
+    }
+  }
+  if (control.prunedDistanceAuto && inner0 != 0.0) {
+    bool gained = false;
+    while (true) {
+      const SkinTrial &f = fastest();
+      if (!attempt(f.outer, f.inner + 0.1))
+        break;
+      gained = true;
+    }
+    while (!gained) {
+      const SkinTrial &f = fastest();
+      if (!attempt(f.outer, f.inner - 0.1))
+        break;
     }
   }
   finish();
