@@ -1,8 +1,9 @@
 # The direct sum of the prolate kernel as a table of r² (D[prolate-pair-table])
 # on the CPU: in mixed precision under `fast_math` the builder writes
-# Φ(x)/x as a Chebyshev series of r² (md.chebyshev), which a table of r²
-# then holds as it holds the Gaussian's erfc (D94); MDIR_PROLATE_CELLS=1
-# keeps the cells of polynomials in r/r_c, and the double mode keeps them.
+# 1 − Φ(x) as (1 − x) times a Chebyshev series in 2x − 1 (md.chebyshev),
+# x = r/r_c, which a table of r² then holds as it holds the Gaussian's erfc
+# (D94); MDIR_PROLATE_CELLS=1 keeps the cells of polynomials in r/r_c, and
+# the double mode keeps them.
 # The forces of the solvated dipeptide at the start, the series against the
 # cells (4.0e-7 of the root mean square of the forces), and each against
 # the double mode (5.3e-5 both, the error of the mixed mode, which the

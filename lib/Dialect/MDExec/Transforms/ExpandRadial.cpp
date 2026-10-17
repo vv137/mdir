@@ -94,7 +94,7 @@ std::optional<double> evaluateRadialOp(Operation *op,
   if (isa<math::CoshOp>(op))
     return std::cosh(x);
   if (auto series = dyn_cast<md::ChebyshevOp>(op))
-    return md::evaluateChebyshev(series.getCoefficients(), x);
+    return md::evaluateChebyshev(series.getSeries(), x);
   return std::nullopt;
 }
 
@@ -133,7 +133,8 @@ public:
       step.kind = getKind(&op, step.constant);
       if (auto chebyshev = dyn_cast<md::ChebyshevOp>(op)) {
         step.series = series.size();
-        series.push_back(chebyshev.getCoefficients().vec());
+        llvm::SmallVector<double> coefficients = chebyshev.getSeries();
+        series.emplace_back(coefficients.begin(), coefficients.end());
       }
       if (op.getNumOperands() > 0)
         step.first = numberOf(op.getOperand(0));
@@ -612,7 +613,7 @@ public:
     for (md::ChebyshevOp op : series) {
       OpBuilder builder(op);
       op.replaceAllUsesWith(md::emitChebyshev(builder, op.getLoc(), op.getY(),
-                                              op.getCoefficients()));
+                                              op.getSeries()));
       op.erase();
     }
   }

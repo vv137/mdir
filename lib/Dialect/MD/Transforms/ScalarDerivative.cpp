@@ -326,12 +326,12 @@ static LogicalResult emitScalarRule(Value value, ScalarDerivative &derivative,
     if (failed(operandTangent(0, operand)))
       return failure();
     SmallVector<double> slope =
-        getChebyshevDerivative(series.getCoefficients());
+        getChebyshevDerivative(series.getSeries());
     if (!operand || slope.empty())
       return success();
     Value derivative =
         ChebyshevOp::create(builder, loc, series.getType(), series.getY(),
-                            slope);
+                            builder.getF64ArrayAttr(slope));
     tangent = emit.mul(derivative, operand);
     return success();
   }

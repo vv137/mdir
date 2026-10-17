@@ -3100,7 +3100,7 @@ llvm::Error Builder::collectProlate() {
     program.tables.push_back(std::move(split));
   }
 
-  program.pmeNearSeries = prolate::getNearSeries(psi);
+  program.pmeFarSeries = prolate::getFarSeries(psi);
   program.pmeProlate = true;
   program.pmeBandwidth = c;
   program.pmeWindowBandwidth = c1;
@@ -5063,22 +5063,22 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
            << formatReal(1.0 / cutoff) << " : f64\n"
            << "    %xr = arith.mulf " << rq << ", %rc_inverse : f64\n";
         if (takesProlateSeries(control) && !scalesCoulomb) {
-          // f q q (1/r − (Φ(x)/x)/r_c), Φ(x)/x a Chebyshev series in
-          // y = 2x² − 1: a function of r² alone, which a table of r² then
-          // holds as it holds erfc(βr)/r (D94, D[prolate-pair-table]).
-          os << "    %pn_x2 = arith.mulf %xr, %xr : f64\n"
-             << "    %pn_two = arith.constant 2.0 : f64\n"
-             << "    %pn_one = arith.constant 1.0 : f64\n"
-             << "    %pn_2x2 = arith.mulf %pn_two, %pn_x2 : f64\n"
-             << "    %pn_y = arith.subf %pn_2x2, %pn_one : f64\n"
-             << "    %pn_near = md.chebyshev %pn_y [";
-          llvm::interleaveComma(program.pmeNearSeries, os, [&](double c) {
+          // f q q (1 − x) P(t) / r, P = (1 − Φ(x))/(1 − x) a Chebyshev
+          // series in t = 2x − 1: a function of r² alone, which a table of
+          // r² then holds as it holds erfc(βr)/r (D94,
+          // D[prolate-pair-table]).
+          os << "    %pf_two = arith.constant 2.0 : f64\n"
+             << "    %pf_one = arith.constant 1.0 : f64\n"
+             << "    %pf_2x = arith.mulf %pf_two, %xr : f64\n"
+             << "    %pf_t = arith.subf %pf_2x, %pf_one : f64\n"
+             << "    %pf_mean = md.chebyshev %pf_t [";
+          llvm::interleaveComma(program.pmeFarSeries, os, [&](double c) {
             os << formatReal(c);
           });
           os << "] : f64\n"
-             << "    %pn_shielded = arith.mulf %pn_near, %rc_inverse : f64\n"
-             << "    %pn_inverse = arith.divf %pn_one, " << rq << " : f64\n"
-             << "    %screened = arith.subf %pn_inverse, %pn_shielded : f64\n"
+             << "    %pf_rest = arith.subf %pf_one, %xr : f64\n"
+             << "    %pf_far = arith.mulf %pf_rest, %pf_mean : f64\n"
+             << "    %screened = arith.divf %pf_far, " << rq << " : f64\n"
              << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
         } else {
           std::string far = emitProlateSplitting(os, "pme_far", "%xr", "%pf_",

@@ -1,9 +1,9 @@
-// A Chebyshev series of the squared distance (D[prolate-pair-table]): the
-// direct sum of the prolate kernel, f q_i q_j (1/r - Q(y)/r_c) with
-// y = 2 r^2 / r_c^2 - 1, as the builder writes it.
+// A Chebyshev series of the distance (D[prolate-pair-table]): the direct
+// sum of the prolate kernel, f q_i q_j (1 - x) P(t) / r with x = r / r_c and
+// t = 2x - 1, as the builder writes it (the first terms of P at 1e-5).
 //
-// md-exec-simplify-distance counts the series as costly and takes the term
-// with 1/r into one function of r^2:
+// md-exec-simplify-distance counts the series as costly and takes the
+// product into one function of r^2:
 // RUN: mdir-opt %s --md-exec-simplify-distance=radial=true --canonicalize | FileCheck %s --check-prefix=SIMPLIFY
 //
 // md-exec-expand-radial makes such a function a table in a kernel of f32
@@ -25,7 +25,8 @@ md.particle_set @atoms
 // SIMPLIFY-NOT:       math.sqrt
 // SIMPLIFY:           md_exec.yield
 // SIMPLIFY:       func.func private @md_radial(%{{[a-z0-9]+}}: f64) -> f64
-// SIMPLIFY:         md.chebyshev %{{.*}} [1.690690e+00, -9.227800e-01, 3.033470e-01, -8.989980e-02, 2.271290e-02] : f64
+// SIMPLIFY:         math.sqrt
+// SIMPLIFY:         md.chebyshev %{{.*}} [0.318476{{[0-9]*}}, -0.487631{{[0-9]*}}, 0.2427165] : f64
 
 // EXPAND:       memref.global "private" constant @md_radial_series_table : memref<{{[0-9]+}}x4xf32>
 // EXPAND-NOT:   md.chebyshev
@@ -52,15 +53,14 @@ func.func @prolate(%x: !vec, %cell: !md.cell, %nl: !nl, %q: !real) -> f64 {
     %fqq = arith.mulf %f, %qq : f64
     %rc_inverse = arith.constant 1.1111111111111112 : f64
     %xr = arith.mulf %r, %rc_inverse : f64
-    %x2 = arith.mulf %xr, %xr : f64
     %two = arith.constant 2.0 : f64
     %one = arith.constant 1.0 : f64
-    %twice = arith.mulf %two, %x2 : f64
-    %y = arith.subf %twice, %one : f64
-    %near = md.chebyshev %y [1.69069, -0.92278, 0.303347, -0.0898998, 0.0227129] : f64
-    %shielded = arith.mulf %near, %rc_inverse : f64
-    %inverse = arith.divf %one, %r : f64
-    %screened = arith.subf %inverse, %shielded : f64
+    %twice = arith.mulf %two, %xr : f64
+    %t = arith.subf %twice, %one : f64
+    %mean = md.chebyshev %t [0.3184762, -0.4876314, 0.2427165] : f64
+    %rest = arith.subf %one, %xr : f64
+    %far = arith.mulf %rest, %mean : f64
+    %screened = arith.divf %far, %r : f64
     %coulomb = arith.mulf %fqq, %screened : f64
     md_exec.yield %coulomb : f64
   } : !nl, !vec -> f64
@@ -70,17 +70,19 @@ func.func @prolate(%x: !vec, %cell: !md.cell, %nl: !nl, %q: !real) -> f64 {
 // The function of @prolate after md-exec-simplify-distance, read by a
 // kernel of f32.
 func.func private @md_radial_series(%s: f64) -> f64 {
-  %c = arith.constant -154.37222222222223 : f64
   %f = arith.constant 138.935 : f64
   %one = arith.constant 1.0 : f64
-  %k = arith.constant 2.4691358024691361 : f64
-  %t = arith.mulf %s, %k : f64
-  %y = arith.subf %t, %one : f64
-  %near = md.chebyshev %y [1.69069, -0.92278, 0.303347, -0.0898998, 0.0227129] : f64
+  %two = arith.constant 2.0 : f64
+  %k = arith.constant 1.1111111111111112 : f64
   %r = math.sqrt %s : f64
-  %inverse = arith.divf %f, %r : f64
-  %shielded = arith.mulf %near, %c : f64
-  %g = arith.addf %inverse, %shielded : f64
+  %x = arith.mulf %r, %k : f64
+  %twice = arith.mulf %two, %x : f64
+  %t = arith.subf %twice, %one : f64
+  %mean = md.chebyshev %t [0.3184762, -0.4876314, 0.2427165] : f64
+  %rest = arith.subf %one, %x : f64
+  %far = arith.mulf %rest, %mean : f64
+  %fr = arith.mulf %f, %far : f64
+  %g = arith.divf %fr, %r : f64
   return %g : f64
 }
 

@@ -379,8 +379,9 @@ def MD_ChebyshevOp : MD_Op<"chebyshev", [Pure, SameOperandsAndResultType]> {
     The value $\sum_k c_k T_k(y)$ of the Chebyshev polynomials of the first
     kind at `y`, which should lie in $[-1, 1]$, with the coefficients
     `coefficients` from $c_0$ upwards: a smooth function that a kernel
-    computes of its arguments, such as a part of the splitting of the
-    prolate kernel of particle mesh Ewald (D266) in $y = 2 r^2 / r_c^2 - 1$.
+    computes of its arguments, such as the mean of the splitting kernel of
+    the prolate kernel of particle mesh Ewald (D266) over $[x, 1]$ in
+    $t = 2x - 1$, $x = r / r_c$ (D[prolate-pair-table]).
 
     ```mlir
     %s = md.chebyshev %y [1.0, -0.5, 0.125] : f64
@@ -388,14 +389,20 @@ def MD_ChebyshevOp : MD_Op<"chebyshev", [Pure, SameOperandsAndResultType]> {
 
     Its derivative is the series of the derivatives. In a loop over pairs
     under `fast_math`, `md-exec-simplify-distance` takes a series of the
-    squared distance into a function of it that `md-exec-expand-radial`
+    distance into a function of its square that `md-exec-expand-radial`
     tabulates in f32 (D94); a series that no table takes becomes Clenshaw's
     recurrence there [Clenshaw1955].
   }];
-  let arguments = (ins AnyFloat:$y, DenseF64ArrayAttr:$coefficients);
+  // An array of FloatAttr, which prints every coefficient so that it reads
+  // back to the same bits (a dense array of f64 prints six digits).
+  let arguments = (ins AnyFloat:$y, F64ArrayAttr:$coefficients);
   let results = (outs AnyFloat:$result);
   let assemblyFormat = [{
     $y $coefficients attr-dict `:` type($result)
+  }];
+  let extraClassDeclaration = [{
+    /// The coefficients c_0, c_1, ... as numbers.
+    llvm::SmallVector<double> getSeries();
   }];
   let hasVerifier = 1;
 }

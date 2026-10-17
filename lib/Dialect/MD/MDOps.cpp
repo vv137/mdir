@@ -671,11 +671,17 @@ Value mdir::md::emitChebyshev(OpBuilder &builder, Location loc, Value y,
   return sum;
 }
 
+llvm::SmallVector<double> ChebyshevOp::getSeries() {
+  llvm::SmallVector<double> series;
+  for (Attribute coefficient : getCoefficients())
+    series.push_back(cast<FloatAttr>(coefficient).getValueAsDouble());
+  return series;
+}
+
 LogicalResult ChebyshevOp::verify() {
   if (getCoefficients().empty())
     return emitOpError() << "expected at least one coefficient";
-  if (!llvm::all_of(getCoefficients(),
-                    [](double c) { return std::isfinite(c); }))
+  if (!llvm::all_of(getSeries(), [](double c) { return std::isfinite(c); }))
     return emitOpError() << "expected finite coefficients";
   return success();
 }

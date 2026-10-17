@@ -381,14 +381,23 @@ double mdir::prolate::getSplitting(const Function &psi, Part part, double x) {
   return part == Part::Near ? near : 1.0 - x * near;
 }
 
-std::vector<double> mdir::prolate::getNearSeries(const Function &psi) {
-  // x = √((y + 1)/2). The coefficients fall below 10⁻¹⁴ of the largest
-  // after 16 to 20 terms, where those of the 64 points reach the noise of
-  // the quadrature (about 10⁻¹⁵); the cut keeps those above it.
+std::vector<double> mdir::prolate::getFarSeries(const Function &psi) {
+  // (1 − Φ(x))/(1 − x) = (1/C₀) ∫₀¹ ψ(x + (1 − x)τ) dτ, the mean of χ over
+  // [x, 1], by Gauss–Legendre in τ: no cancellation near x = 1, where
+  // 1 − Φ is of the order of ψ(1)(1 − x). Its series in t = 2x − 1 falls
+  // below 10⁻¹⁴ of its largest term after 30 to 40 terms, where those of
+  // the 64 points reach the noise of the quadrature; the cut keeps those
+  // above it.
+  static thread_local std::vector<double> nodes, weights;
+  if (nodes.empty())
+    gaussLegendre(64, nodes, weights);
   return getChebyshevSeries(
-      [&](double y) {
-        return getSplitting(psi, Part::Near,
-                            std::sqrt(std::max(0.0, 0.5 * (y + 1.0))));
+      [&](double t) {
+        double x = 0.5 * (t + 1.0), sum = 0.0;
+        for (size_t i = 0; i != nodes.size(); ++i)
+          sum += 0.5 * weights[i] *
+                 psi.value(x + (1.0 - x) * 0.5 * (nodes[i] + 1.0));
+        return sum / psi.halfIntegral();
       },
       1e-14);
 }
