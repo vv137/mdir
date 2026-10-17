@@ -564,10 +564,12 @@ private:
   /// Adds the template of particle mesh Ewald for these types, with
   /// `tilted` the kernels of a triclinic cell as well, and with
   /// `potential` the kernel of the potential at the particles, and with
-  /// `listed` the kernels of a list of the particles.
+  /// `listed` the kernels of a list of the particles, and with `tiles` E
+  /// the binning and the spreading into tiles of bins of E points
+  /// (D[pme-tiles]).
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
                                 int64_t order, bool tilted, bool potential,
-                                bool listed);
+                                bool listed, int64_t tiles = 0);
   /// Adds the kernels of the prolate kernel (D266) for these
   /// types and points of the window, and with `listed` those of a list of
   /// the particles.
@@ -3812,13 +3814,13 @@ static void unrollSmallLoops(Operation *root, int64_t limit) {
 LogicalResult Lowering::addPMETemplates(Type position, Type charge,
                                         Type force, int64_t order,
                                         bool tilted, bool potential,
-                                        bool listed) {
+                                        bool listed, int64_t tiles) {
   // A triclinic cell takes the kernels of its own as well, which only it
   // parses and specializes (docs/triclinic-m2.md); the spreading into
   // bricks, of its list too.
   if (tilted && failed(addPMETemplates(position, charge, force, order,
                                        /*tilted=*/false, /*potential=*/false,
-                                       listed)))
+                                       listed, tiles)))
     return failure();
   auto has = [&](StringRef name) {
     std::string full = tilted ? (name + "_triclinic").str() : name.str();
@@ -3826,9 +3828,23 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
                module, getPMEInstanceName(full, position, charge, force,
                                           order)) != nullptr;
   };
+  // The functions of the tiles of an edge (D[pme-tiles]), which do not
+  // depend on the cell: in PMEGPU.mlir alone.
+  std::string edge = std::to_string(tiles);
+  auto hasTiles = [&]() {
+    if (!tiles)
+      return true;
+    auto named = [&](StringRef name) {
+      return SymbolTable::lookupSymbolIn(
+                 module, getPMEInstanceName(name, position, charge, force,
+                                            order)) != nullptr;
+    };
+    return named("mdrt_gpu_pme_spread_tiles" + edge) &&
+           named("mdrt_gpu_pme_bin" + edge + (listed ? "_listed" : ""));
+  };
   if (has("mdrt_gpu_pme_spread") &&
       (!potential || has("mdrt_gpu_pme_potential")) &&
-      (!listed || has("mdrt_gpu_pme_spread_listed")))
+      (!listed || has("mdrt_gpu_pme_spread_listed")) && hasTiles())
     return success();
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
@@ -3874,7 +3890,18 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
     bool isPotential =
         function && function.getSymName().contains("pme_potential");
     bool isListed = function && function.getSymName().contains("_listed");
+    // The binning and the tiles of the edge that the sum takes, alone.
+    bool isTiles = function &&
+                   (function.getSymName().starts_with("mdrt_gpu_pme_bin") ||
+                    function.getSymName().contains("_spread_tiles"));
+    bool ownEdge = false;
+    if (isTiles && tiles) {
+      StringRef name = function.getSymName();
+      ownEdge = name.contains("mdrt_gpu_pme_bin" + edge + "_") ||
+                name.contains("mdrt_gpu_pme_spread_tiles" + edge + "_");
+    }
     if ((isPotential && !potential) || (isListed && !listed) ||
+        (isTiles && !ownEdge) ||
         (function && SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
       op.erase();
       continue;
@@ -3942,6 +3969,29 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
   return success();
 }
 
+/// The bricks of the spreading (D108), the scratch after the factors of
+/// the influence function where the grid is in f32; the bins of the tiles
+/// (D[pme-tiles]), in i32, come after them where the sum has `tiles`.
+static Value getBricks(md_exec::ReciprocalOp op) {
+  if (op.getScratch().size() <= 6)
+    return Value();
+  Value bricks = op.getScratch()[6];
+  if (cast<MemRefType>(bricks.getType()).getElementType().isInteger(32))
+    return Value();
+  return bricks;
+}
+
+/// The bins of the spreading into tiles (D[pme-tiles]): the last scratch
+/// of a sum with `tiles`.
+static Value getBins(md_exec::ReciprocalOp op) {
+  if (!op.getTiles() || op.getScratch().empty())
+    return Value();
+  Value bins = op.getScratch().back();
+  if (!cast<MemRefType>(bins.getType()).getElementType().isInteger(32))
+    return Value();
+  return bins;
+}
+
 /// The reciprocal sum of the prolate kernel on a device (D266):
 /// the coefficients of the table into the type of the grid, the places, the
 /// spreading (into bricks, or in fixed point in the deterministic mode and
@@ -3974,7 +4024,7 @@ static LogicalResult lowerProlate(
     return op->emitOpError()
            << "expected buffers for the places and the tables";
   Value places = op.getScratch()[4], tables = op.getScratch()[5];
-  Value bricks = op.getScratch().size() > 6 ? op.getScratch()[6] : Value();
+  Value bricks = getBricks(op);
   func::CallOp::create(builder, loc,
                        instance("mdrt_gpu_pme_prolate_coefficients"),
                        ValueRange{op.getModuli(), tables, k1, k2, k3});
@@ -4070,13 +4120,32 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // The listed particles alone (D262); the
   // potential at the particles takes every particle.
   Value listed = op.getPotential() ? Value() : op.getListed();
+  // The spreading into tiles (D[pme-tiles]): never in the deterministic
+  // mode, whose grid is in fixed point (D70, D84), which
+  // md-exec-choose-spreading does not tile; checked here as well.
+  int64_t tiles = op.getTiles().value_or(0);
+  Value bins = getBins(op);
+  if (tiles) {
+    if (deterministic)
+      return op->emitOpError()
+             << "spreads into tiles, which the deterministic mode does not "
+                "allow: its grid is in fixed point";
+    if (!bins)
+      return op->emitOpError() << "has tiles but no buffer of the bins";
+  }
   if (failed(addPMETemplates(position, charge, force, op.getOrder(), tilted,
-                             op.getPotential(), static_cast<bool>(listed))))
+                             op.getPotential(), static_cast<bool>(listed),
+                             tiles)))
     return failure();
+  // The kernels that do not depend on the cell, which a triclinic cell
+  // shares: the conversion from fixed point, the bricks, the binning and
+  // the tiles.
   auto instance = [&](StringRef name) {
     bool own = tilted && name != "mdrt_gpu_pme_real" &&
                name != "mdrt_gpu_pme_spread_bricks" &&
-               name != "mdrt_gpu_pme_spread_bricks_listed";
+               name != "mdrt_gpu_pme_spread_bricks_listed" &&
+               !name.starts_with("mdrt_gpu_pme_bin") &&
+               !name.starts_with("mdrt_gpu_pme_spread_tiles");
     std::string full = own ? (name + "_triclinic").str() : name.str();
     return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
         module,
@@ -4101,7 +4170,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // particles into bricks of their own, which each spreading leaves zero
   // (D85, D108).
   Value weights = op.getScratch().size() > 4 ? op.getScratch()[4] : Value();
-  Value bricks = op.getScratch().size() > 6 ? op.getScratch()[6] : Value();
+  Value bricks = getBricks(op);
   // The potential at the particles (the fourth result of md.reciprocal)
   // has the kernel of its own, which takes no weights.
   bool usesWeights = weights && bricks && !deterministic &&
@@ -4122,6 +4191,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         ValueRange());
   // The prolate kernel has kernels of its own (D266).
   if (op.getProlate()) {
+    if (tiles)
+      return op->emitOpError()
+             << "spreads the prolate kernel into tiles, which it does not "
+                "have yet";
     if (failed(addProlateTemplates(position, charge, force, op.getOrder(),
                                    static_cast<bool>(listed))))
       return failure();
@@ -4160,7 +4233,25 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // by default with floating-point atomics, straight to the grid (D84).
   // With a list, the gathering stores the forces of the listed particles
   // and a force of zero at each of the others.
-  if (listed && deterministic) {
+  // Into tiles: the places of every particle (the weights kernel, for the
+  // gathering of order 4 as well), the binning of the particles or of the
+  // entries of the list, and the tiles.
+  std::string edge = std::to_string(tiles);
+  if (tiles) {
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_weights"),
+                         ValueRange{positions, box, weights, k1, k2, k3});
+    SmallVector<Value> binned = {charges};
+    if (listed)
+      binned.push_back(listed);
+    binned.append({weights, bins, real, k1, k2, k3});
+    func::CallOp::create(
+        builder, loc,
+        instance("mdrt_gpu_pme_bin" + edge + (listed ? "_listed" : "")),
+        binned);
+    func::CallOp::create(builder, loc,
+                         instance("mdrt_gpu_pme_spread_tiles" + edge),
+                         ValueRange{charges, weights, bins, real, k1, k2, k3});
+  } else if (listed && deterministic) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_listed"),
                          ValueRange{positions, charges, listed, box, fixed, k1,
                                     k2, k3, order});

@@ -206,6 +206,23 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     take those particles only, and the others take a force of zero. A sum
     with `potential` takes no list. With `gather_all` (that of
     `md.reciprocal`), a device gathers every particle, as without a list.
+
+    With `tiles(E)`, which `md-exec-choose-spreading` sets on a device, the
+    charges are spread through tiles of the memory of a block, one for each
+    bin of $E^3$ points of the grid, into which the particles are binned
+    by their first point at each evaluation (D[pme-tiles]); without it, as
+    before (into the bricks of D108 for splines of order 4 in f32, by
+    atomics of the device into the grid otherwise). The deterministic mode
+    takes no tiles: its grid is in fixed point (D70, D84).
+
+    ```mlir
+    %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
+                   grid([64, 64, 64]) order(4) beta(3.12) coulomb(138.935)
+                   tiles(8)
+                   : !md.field<@atoms, 3 x f32>, !md.field<@atoms, f32>,
+                     !md.table<2, f32>
+                   -> f64, vector<9xf64>, !md.field<@atoms, 3 x f32>
+    ```
   }];
   let arguments = (ins
     MDExec_FieldOrBuffer:$positions,
@@ -222,7 +239,8 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     UnitAttr:$dispersion,
     UnitAttr:$potential,
     UnitAttr:$prolate,
-    UnitAttr:$gather_all
+    UnitAttr:$gather_all,
+    OptionalAttr<I64Attr>:$tiles
   );
   let results = (outs
     F64:$energy,
@@ -239,6 +257,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     (`prolate` $prolate^)?
     (`listed` `(` $listed^ `:` qualified(type($listed)) `)`)?
     (`gather_all` $gather_all^)?
+    (`tiles` `(` $tiles^ `)`)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) `->` type($energy) `,` type($virial)
     (`,` qualified(type($forces))^)?

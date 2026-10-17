@@ -952,6 +952,41 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       gpu::WaitOp::create(root->builder, loc, Type(), ValueRange{cleared});
       scratch.push_back(buffer);
     }
+    // The bins of the spreading into tiles (D[pme-tiles]), last: in i32,
+    // the count of each bin, zero at the start and left zero by each
+    // binning, the first place of each bin and the end, and the bin, the
+    // rank, and the place in the order of the bins of each particle.
+    if (std::optional<int64_t> edge = op.getTiles()) {
+      int64_t bins = 1;
+      for (int64_t points : grid)
+        bins *= (points + *edge - 1) / *edge;
+      auto type = MemRefType::get({ShapedType::kDynamic},
+                                  IntegerType::get(context, 32),
+                                  MemRefLayoutAttrInterface(), space);
+      Value length = arith::AddIOp::create(
+          root->builder, loc,
+          arith::MulIOp::create(
+              root->builder, loc, size,
+              arith::ConstantIndexOp::create(root->builder, loc, 3)),
+          arith::ConstantIndexOp::create(root->builder, loc, 2 * bins + 1));
+      Value buffer = gpu::AllocOp::create(root->builder, loc, type,
+                                          /*asyncToken=*/Type(),
+                                          /*asyncDependencies=*/ValueRange(),
+                                          ValueRange{length},
+                                          /*symbolOperands=*/ValueRange())
+                         .getMemref();
+      Type token = gpu::AsyncTokenType::get(context);
+      Value begin = gpu::WaitOp::create(root->builder, loc, token, ValueRange())
+                        .getAsyncToken();
+      Value cleared =
+          gpu::MemsetOp::create(
+              root->builder, loc, token, ValueRange{begin}, buffer,
+              arith::ConstantOp::create(root->builder, loc,
+                                        root->builder.getI32IntegerAttr(0)))
+              .getAsyncToken();
+      gpu::WaitOp::create(root->builder, loc, Type(), ValueRange{cleared});
+      scratch.push_back(buffer);
+    }
   }
 
   auto created = ReciprocalOp::create(
@@ -959,7 +994,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       /*forces=*/Type(), positions, charges, mapping.lookup(op.getCell()),
       moduli, out, scratch, listed, op.getGridAttr(), op.getOrderAttr(),
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
-      op.getPotentialAttr(), op.getProlateAttr(), op.getGatherAllAttr());
+      op.getPotentialAttr(), op.getProlateAttr(), op.getGatherAllAttr(),
+      onDevice ? op.getTilesAttr() : IntegerAttr());
   mapping.map(op.getEnergy(), created.getEnergy());
   mapping.map(op.getVirial(), created.getVirial());
   buffers[op.getForces()] = out;
