@@ -770,7 +770,7 @@ precision below 10⁻³) the same to three or four digits at every tier, and
 is 20 to 1600 times below $\Delta$ of the kernel in double.
 
 **The step on the CPU.** One job per system and tier alternates `main` and
-the branch (frozen copies of their programs; the branch at 9ab19008) for the prolate
+the branch (frozen copies of their programs, the branch with the code of this change) for the prolate
 default and the fastest Gaussian of the tables above (the same order and
 grid), in 5 rounds with the first dropped, as above; the pairs are the
 sampler's share of the main thread's wall clock times the rate of the
