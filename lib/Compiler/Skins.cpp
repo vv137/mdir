@@ -631,6 +631,33 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
                   reference.pruneInterval};
   double base = model.predict(outer0, inner0);
   choice.trials.front().predicted = 1.0;
+  // The candidates the run can afford: a compilation and its steps each,
+  // as the reference took them, within 2% of the time of the run at the
+  // reference's rate, and at most `maxTrials` (MDIR_SKIN_SEARCH=always: the
+  // most). A large system compiles for longer: STMV took 86 to 130 s a
+  // candidate on an RTX 4090's node, JAC 11 to 13 s.
+  constexpr size_t maxTrials = 7;
+  size_t budget = maxTrials;
+  if (policy != "always") {
+    double runSeconds = 1e-6 * reference.microseconds *
+                        static_cast<double>(control.numSteps);
+    double trialSeconds = reference.compileSeconds + reference.runSeconds;
+    budget = std::min<size_t>(
+        maxTrials, static_cast<size_t>(0.02 * runSeconds / trialSeconds));
+  }
+  if (budget < 3) {
+    finish();
+    control.pairlistDistance = outer0;
+    control.prunedDistance = inner0;
+    // Not cached: a longer run of the same key may afford the search.
+    control.skinReason = llvm::formatv(
+        "a candidate costs {0:f0} s, and the run of about {1:f0} s affords "
+        "{2} within 2% of it, fewer than 3",
+        reference.compileSeconds + reference.runSeconds,
+        1e-6 * reference.microseconds * static_cast<double>(control.numSteps),
+        budget).str();
+    return choice;
+  }
   for (auto [outer, inner] :
        proposeCandidates(control, model, outer0, inner0, leastEdge)) {
     SkinTrial trial = measure(control, system, outer, inner);
@@ -648,7 +675,6 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
   // up to 1.2% from it. The inner skin is a step of 0.1 Å, a finer grid
   // than #406's, whose best prunings the model places low on JAC (0.7 Å
   // against 0.8, 2% on an RTX 4090).
-  constexpr size_t maxTrials = 7;
   auto fastest = [&]() -> const SkinTrial & {
     const SkinTrial *f = &choice.trials.front();
     for (const SkinTrial &trial : choice.trials)
@@ -660,7 +686,7 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
   // whether it was the fastest.
   auto attempt = [&](double outer, double inner) {
     double cutoff = control.cutoffDistance;
-    bool valid = choice.trials.size() < maxTrials &&
+    bool valid = choice.trials.size() < budget &&
                  outer - cutoff >= 1.5 - 1e-9 && outer - cutoff <= 6.0 + 1e-9 &&
                  outer <= 0.999 * leastEdge && outer <= 127.0 * cutoff &&
                  (inner == 0.0 ||

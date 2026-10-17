@@ -480,7 +480,7 @@ steps on an RTX 4090 in double precision, gives the energies of the log to
 every digit and positions that differ by up to $1.8\times10^{-9}$ nm, also
 with `spatial_order = false`. The deterministic mode therefore does not
 search: a search chooses by timing, and the bits of a deterministic run
-repeat only if its skins do.
+repeat only if its skins do (the maintainer's ruling on PR #407; sums independent of the reach are #409).
 
 ### 6.2 The cost of a step
 
@@ -555,6 +555,15 @@ The search (`lib/Compiler/Skins.cpp`, `chooseSkins`):
    down if the first step up does not gain; at most seven candidates in
    all.
 
+The candidates must pay for themselves: after the reference, the run
+affords as many as fit, at the reference's cost of a compilation and its
+steps each, within 2% of the time of the run at the reference's rate, at
+most seven. With fewer than three it keeps the reference, and caches
+nothing, so a longer run of the same key may still search. The
+compilation grows with the system: 11 to 13 s a candidate for JAC, 17 to
+22 s for Factor IX, 86 to 130 s for STMV on the node of an RTX 4090
+(16 cores).
+
 Each candidate is a simulation of its own (D196), compiled with its skins
 as constants of its program, from the state the run begins with: two
 warm-ups of 200 steps, then six blocks of about 0.5 s and at least 200
@@ -597,4 +606,40 @@ the default or the cache. In Python, `System.pairlist_distance` and
 
 ### 6.5 Measurements
 
-MEASUREMENTS
+The Amber suite on one RTX 4090 (`scripts/benchmarks/amber/bench.py`'s
+control files, mixed precision, the groups given, $r_c = 8$ Å, twice the
+suite's steps), in one job: the default of D261 (11 Å and an inner list at
+8.6 Å, 9.2 Å at 4 fs), the best point of the grid of #406 where there is
+one, and `"AUTO"` with `MDIR_SKIN_SEARCH=always`, in two rounds, the
+second in reverse order, whose `"AUTO"` takes the cache. µs a step from the
+second half of each run (the search is before it), the mean of the rounds;
+reaches in Å.
+
+| System | Atoms | Default | Grid's best | `"AUTO"` chose | `"AUTO"` | / best | / default | Search |
+|---|---|---|---|---|---|---|---|---|
+| JAC NVE, 2 fs | 23,558 | 136.7 | 131.4 (14 / 8.8) | 14 / 8.8 | 133.0 | 1.012 | 0.972 | 95 s |
+| JAC NVE, 4 fs | 23,558 | 146.4 | 140.5 (14 / 8.9) | 14 / 8.8 | 140.9 | 1.003 | 0.962 | 94 s |
+| JAC NPT, 2 fs | 23,558 | 150.4 | | 13.5 / 8.9 | 147.1 | | 0.978 | 189 s |
+| JAC NPT, 4 fs | 23,558 | 154.9 | | 13.5 / 8.7 | 151.4 | | 0.977 | 186 s |
+| Factor IX NVE | 90,906 | 335.9 | 332.9 (12.5 / 8.6) | 11 / 8.6 | 335.6 | 1.008 | 0.999 | 132 s |
+| Factor IX NPT | 90,906 | 358.9 | | 11 / 8.6 | 358.7 | | 0.999 | 197 s |
+| Cellulose NVE | 408,609 | 1458.8 | 1448.4 (11.5 / 8.45) | 11.5 / 8.65 | 1435.8 | 0.991 | 0.984 | 229 s |
+| Cellulose NPT | 408,609 | 1519.1 | | 11.5 / 8.65 | 1498.7 | | 0.987 | 286 s |
+| STMV NPT, 4 fs | 1,067,095 | 4731.0 | 4565.4 (12.5 / 8.9) | 12 / 8.7 | 4535.5 | 0.993 | 0.959 | 848 s |
+
+`"AUTO"` is within 1% of the grid's best on four systems of five and
+faster than it on two; on JAC at 2 fs it chose the grid's best point, and
+the 1.2% is its first round, which runs right after the search: a run of
+the same skins after 105 s of steps is 1.0% slower than one after a rest
+(1320.5 against 1333.4 ns/day), from the device's heat, and the round that
+took the cache was within 0.2%. A run that searched and one that took the
+cache in a fresh process give the same rate (1334.1 against 1333.1
+ns/day). On Factor IX no candidate gained beyond the noise, and the
+default was kept, 0.8% from the grid's point at 12.5 Å. Against the
+default the gain is 0 to 4.1%. The search costs 1.5 to 5 minutes, and 14
+on STMV, whose compilation takes 86 to 130 s a candidate; a run affords
+the candidates within 2% of its time (Section 6.3).
+
+On an RTX PRO 6000 Blackwell (Max-Q), three rounds in one job, the search
+chose other skins than on the RTX 4090 (Factor IX 13.5 / 8.7 Å, JAC
+13.5 / 9 Å, STMV 12.5 / 8.8 Å), but the reference's blocks varied by up to several percent (its noise 2.9 to 7% on JAC), and the rounds of one setting by up to 4% (STMV with the cached skins: 3326 and 3456 µs), on a node of six devices that other users' jobs share. Where the noise covered the gain the search kept the default, as it should (JAC at 4 fs, JAC NPT at 2 fs, Cellulose NVE; on JAC at 4 fs 13.5 / 8.9 Å was 4.9% faster within a noise of the same size), so against the grid's best `"AUTO"` was 0.983 (JAC 2 fs), 1.032 (JAC 4 fs), 1.005 (Factor IX), 1.005 (Cellulose), 1.004 (STMV), the means of three rounds, and against the default 0.868 to 1.003. A comparison on that device wants a node that runs nothing else.

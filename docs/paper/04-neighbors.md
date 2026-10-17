@@ -670,7 +670,25 @@ repeat to the bit only with the same skins. Table 4.3 compares the choice
 with the best point of a grid; [neighbors-m0.md](../neighbors-m0.md),
 Section 6, has the details.
 
-TABLE43
+*Table 4.3. The skins of `"AUTO"` against the default of D261 and the
+best point of the grid of #406 (µs per step, RTX 4090, mixed precision,
+the groups, twice the suite's steps, the mean of two rounds in one job;
+outer / inner reach in Å; the search, compilations included, before the
+run). On JAC at 2 fs the first round follows the search on a device it
+heated (1.0% slower), and the round that took the cache was within 0.2%
+of the best.*
+
+| System | Atoms | Default | Grid's best | `"AUTO"` chose | `"AUTO"` | / best | / default | Search |
+|---|---|---|---|---|---|---|---|---|
+| JAC NVE, 2 fs | 23,558 | 136.7 | 131.4 (14 / 8.8) | 14 / 8.8 | 133.0 | 1.012 | 0.972 | 95 s |
+| JAC NVE, 4 fs | 23,558 | 146.4 | 140.5 (14 / 8.9) | 14 / 8.8 | 140.9 | 1.003 | 0.962 | 94 s |
+| JAC NPT, 2 fs | 23,558 | 150.4 | | 13.5 / 8.9 | 147.1 | | 0.978 | 189 s |
+| JAC NPT, 4 fs | 23,558 | 154.9 | | 13.5 / 8.7 | 151.4 | | 0.977 | 186 s |
+| Factor IX NVE | 90,906 | 335.9 | 332.9 (12.5 / 8.6) | 11 / 8.6 | 335.6 | 1.008 | 0.999 | 132 s |
+| Factor IX NPT | 90,906 | 358.9 | | 11 / 8.6 | 358.7 | | 0.999 | 197 s |
+| Cellulose NVE | 408,609 | 1458.8 | 1448.4 (11.5 / 8.45) | 11.5 / 8.65 | 1435.8 | 0.991 | 0.984 | 229 s |
+| Cellulose NPT | 408,609 | 1519.1 | | 11.5 / 8.65 | 1498.7 | | 0.987 | 286 s |
+| STMV NPT, 4 fs | 1,067,095 | 4731.0 | 4565.4 (12.5 / 8.9) | 12 / 8.7 | 4535.5 | 0.993 | 0.959 | 848 s |
 
 **Checks.** In double precision `test/Driver/groups-gpu.test` runs a water
 box with a dual list (11/9.3 Å, 37 prunings and 6 builds in 100 steps) and
