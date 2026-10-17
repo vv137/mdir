@@ -1017,7 +1017,7 @@ dynamics," *J. Comput. Phys.* **117**, 1–19 (1995).
 Used for: the spatial decomposition of a periodic cell into domains, with
 ghost copies of the particles near each domain, and the choice between
 computing each pair at both owners and computing it once with the force
-on the ghost returned to its owner (D[ml2-core],
+on the ghost returned to its owner (D275,
 [distributed-ml2.md](distributed-ml2.md)).
 
 ### Press2007

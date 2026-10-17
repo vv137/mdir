@@ -1,6 +1,6 @@
 // Ops of the md_dist dialect.
 //
-// See docs/distributed-ml2.md, Section 4, for the design (D[ml2-core]).
+// See docs/distributed-ml2.md, Section 4, for the design (D275).
 
 #ifndef MDIR_DIALECT_MDDIST_MDDISTOPS_TD
 #define MDIR_DIALECT_MDDIST_MDDISTOPS_TD

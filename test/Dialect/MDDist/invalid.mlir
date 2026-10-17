@@ -1,5 +1,5 @@
 // The verifier of md_dist rejects what would compute a wrong result:
-// V1 to V9 of docs/distributed-ml2.md, Section 4.9 (D[ml2-core]).
+// V1 to V9 of docs/distributed-ml2.md, Section 4.9 (D275).
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
 
 !vec  = !md.field<@atoms, 3 x f64>

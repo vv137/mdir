@@ -1,5 +1,5 @@
 // Lennard-Jones on several domains in one process against one domain
-// (D[ml2-core], docs/distributed-ml2.md, Section 12).
+// (D275, docs/distributed-ml2.md, Section 12).
 //
 // The distributed program is written in md_dist and run by the reference
 // executor (convert-md-dist-to-loops), whose pair search covers all pairs

@@ -1,6 +1,6 @@
 // The md_dist dialect, its types, and its ops.
 //
-// See docs/distributed-ml2.md for the design (D[ml2-core]). The checks
+// See docs/distributed-ml2.md for the design (D275). The checks
 // V1 to V9 are those of Section 4.9.
 
 #include "mdir/Dialect/MDDist/MDDistDialect.h"

@@ -487,7 +487,7 @@ computation, replica communicators.
 
 `md_dist` ops take and return field values (Section 8.3).
 
-The sketch above predates the design of D[ml2-core]
+The sketch above predates the design of D275
 ([distributed-ml2.md](distributed-ml2.md)), which replaces it: a layout
 and a halo are values, `forward_halo` is `halo_copy` ($G$),
 `reverse_accumulate` is `halo_sum` ($\mathbf a + G^\mathsf T\mathbf b$), and the

@@ -15,7 +15,7 @@ namespace md {
 /// could be shown. The kernel takes the distance, the displacement, and
 /// two values of each gathered field, of the first particle and of the
 /// second, as those of `md.sum_relation` do. `md-check-exchange` and the
-/// verifiers of `md_dist` share this proof (D[ml2-core]).
+/// verifiers of `md_dist` share this proof (D275).
 int proveExchange(mlir::Block &kernel, mlir::Value value);
 
 } // namespace md

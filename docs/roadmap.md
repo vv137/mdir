@@ -468,7 +468,7 @@ tensor operations. See the [layer and model plan](future-architecture-plan.md#ex
 
 ML1's first step is built (D270, [metatomic-ml1.md](metatomic-ml1.md#9-what-the-first-pr-built-d270)): the TorchScript backend with chunks of centers, from `[[energy.model]]` and `mdir.System.models`, validated against the `nequip` package's calculator in `mixed` and `double`; a minimization and stochastic cell rescaling take the model (D272, [metatomic-ml1.md](metatomic-ml1.md#10-minimization-and-constant-pressure-d272)). The AOTInductor backend (D273, [metatomic-ml1.md](metatomic-ml1.md#11-the-aotinductor-backend-d273)) takes the `nequip` package's compiled packages: 132 kB per pair against 1.22 MB, and 6 times less time (85 kB and 9 times with its Triton kernel). The pair list from MDIR's structures and the CPU target follow.
 
-ML2 has begun (D[ml2-core], [distributed-ml2.md](distributed-ml2.md)), in
+ML2 has begun (D275, [distributed-ml2.md](distributed-ml2.md)), in
 parallel with M3 (the ruling on #377): its stage 1 is the dialect
 `md_dist` (layouts, halos, $G$ and $G^\mathsf T$ as adjoint ops, and the
 verifier of missing transfers, stale halos, coverage, and exactly-once

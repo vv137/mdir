@@ -1,6 +1,6 @@
 // The reference executor of md_dist: every domain in one process.
 //
-// See docs/distributed-ml2.md, Sections 6 and 7.1 (D[ml2-core]). Every op
+// See docs/distributed-ml2.md, Sections 6 and 7.1 (D275). Every op
 // runs for all domains in turn, in the order of the domains; collective
 // ops are the points where all domains' values are complete, so running
 // op by op is a bulk-synchronous schedule of the global view. Layouts and

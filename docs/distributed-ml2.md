@@ -1,6 +1,6 @@
 # ML2: ownership, halos, and their adjoints in the IR
 
-Design of `D[ml2-core]`, stage 1 of distributed execution (M4; issue #31
+Design of `D275`, stage 1 of distributed execution (M4; issue #31
 with #35 and #38; the ruling on #377 of 2026-10-16). Stage 1 is the core
 on which every later stage builds: ML3 (the Allegro model of ML1 on two
 GPUs), PaiNN and MACE in stages on two GPUs (#377), distributed particle

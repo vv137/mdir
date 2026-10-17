@@ -1,7 +1,7 @@
 // The md_dist dialect: domains, ownership, halos, and the transfers
 // between domains.
 //
-// See docs/distributed-ml2.md for the design (D[ml2-core]).
+// See docs/distributed-ml2.md for the design (D275).
 
 #ifndef MDIR_DIALECT_MDDIST_MDDISTDIALECT_TD
 #define MDIR_DIALECT_MDDIST_MDDISTDIALECT_TD

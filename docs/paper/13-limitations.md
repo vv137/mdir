@@ -182,7 +182,7 @@ the virial and of observed terms in the parameters, which a fit to the
 pressure needs; and the JAX adapter.
 
 *M3 and M4.* Learned potentials behind a versioned interface, one model on
-one GPU first. The distributed work has begun beside it (D[ml2-core]),
+one GPU first. The distributed work has begun beside it (D275),
 with ownership and halos as IR. A domain $d$ owns particles $O_d$ and holds
 ghosts $\Gamma_d$, images of particles within a reach of its region. The
 copy $G$ of owned values to ghosts and its transpose $G^\mathsf T$, which

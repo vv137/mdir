@@ -108,7 +108,7 @@ md.function @wrong_sign(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell)
 
 md.particle_set @atoms
 
-// Components and lanes of the displacement (D[ml2-core]): a component is
+// Components and lanes of the displacement (D275): a component is
 // antisymmetric, the outer product d ⊗ d of a virial symmetric.
 md.function @components(%x: !vec, %cell: !md.cell) -> (f64, vector<9xf64>) {
   %n = md.neighborhood %x, %cell cutoff(1.0) : !vec -> !pairs

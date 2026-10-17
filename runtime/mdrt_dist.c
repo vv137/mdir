@@ -1,4 +1,4 @@
-/* The in-process transport of md_dist (D[ml2-core], docs/distributed-ml2.md,
+/* The in-process transport of md_dist (D275, docs/distributed-ml2.md,
    Sections 6 and 9): every domain in one process, its rows in buffers of the
    compiled program, and a transfer a copy between them.
 

@@ -1,4 +1,4 @@
-// The ops of md_dist parse, verify, and print back (D[ml2-core]).
+// The ops of md_dist parse, verify, and print back (D275).
 // RUN: mdir-opt %s | mdir-opt | FileCheck %s
 
 !vec = !md.field<@atoms, 3 x f64>

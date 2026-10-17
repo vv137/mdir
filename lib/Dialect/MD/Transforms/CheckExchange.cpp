@@ -153,7 +153,7 @@ int ExchangeProof::combine(Operation *op, ArrayRef<int> signs) {
   // A component keeps the sign of its vector, at a position that does not
   // change; a vector of components, or of the lanes of two vectors, keeps
   // a sign they all have: the outer product d ⊗ d of a virial is symmetric
-  // (D[ml2-core]).
+  // (D275).
   if (isa<vector::ExtractOp>(op))
     return llvm::all_of(ArrayRef<int>(signs).drop_front(),
                         [](int sign) { return sign == 1; })

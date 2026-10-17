@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- ML2, stage 1 of distributed execution, the core (D[ml2-core], #31,
+- ML2, stage 1 of distributed execution, the core (D275, #31,
   [docs/distributed-ml2.md](docs/distributed-ml2.md)): the dialect
   `md_dist`, with layouts (ownership), halos, the owner-to-ghost copy and
   the sum of the ghosts' contributions at the owner as adjoint ops, and a

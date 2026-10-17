@@ -383,7 +383,7 @@ def ConvertMDDistToLoops
     : Pass<"convert-md-dist-to-loops", "::mlir::ModuleOp"> {
   let summary = "Runs every domain of md_dist in one process";
   let description = [{
-    The reference executor of `md_dist` (D[ml2-core],
+    The reference executor of `md_dist` (D275,
     docs/distributed-ml2.md, Section 6): every op runs for all domains in
     turn, in the order of the domains, which is a valid bulk-synchronous
     schedule of the global view. It is the oracle of every later
