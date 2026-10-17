@@ -260,14 +260,6 @@ static bool canMoveUp(ParticleForOp first, ParticleForOp second) {
   return available;
 }
 
-/// Returns true if `op` is a loop over the tuples of a disjoint set
-/// without global sums: one that a device can join with the loop over
-/// particles before it and the one after it (D110).
-static bool isOfIntegrationRun(Operation *op) {
-  auto loop = dyn_cast_or_null<TupleForOp>(op);
-  return loop && loop.getDisjoint() && loop.getReduce().empty();
-}
-
 /// Returns true if `loop` tells in a value of `reduce` whether its kernel
 /// yields true for some tuple.
 static bool hasFlags(TupleForOp loop) {
@@ -276,15 +268,34 @@ static bool hasFlags(TupleForOp loop) {
   });
 }
 
+/// Returns true if `loop` has a global sum in `reduce`. A flag, which the
+/// constraints of a step yield (D[constraint-failure-stop]), is not one: a
+/// device sets it from the kernel of an integration run (D110).
+static bool hasSums(TupleForOp loop) {
+  return llvm::any_of(loop.getReduce(), [](Value value) {
+    return !value.getType().isInteger(1);
+  });
+}
+
+/// Returns true if `op` is a loop over the tuples of a disjoint set
+/// without global sums: one that a device can join with the loop over
+/// particles before it and the one after it (D110).
+static bool isOfIntegrationRun(Operation *op) {
+  auto loop = dyn_cast_or_null<TupleForOp>(op);
+  return loop && loop.getDisjoint() && !hasSums(loop) &&
+         !loop.getOuts().empty();
+}
+
 /// Returns true if a loop over the tuples of a disjoint set uses a result
 /// of `loop`, as a field of its members or as its positions. A loop with a
-/// flag, the test of the constraints, writes nothing and is a kernel of its
-/// own on a device, of no run (D[constraint-failure-stop]).
+/// flag that writes nothing, the separate test of the constraints, is a
+/// kernel of its own on a device, of no run (D[constraint-failure-stop]).
 static bool feedsDisjointTuples(ParticleForOp loop) {
   for (Value result : loop->getResults())
     for (Operation *user : result.getUsers())
       if (auto tuples = dyn_cast<TupleForOp>(user))
-        if (tuples.getDisjoint() && !hasFlags(tuples))
+        if (tuples.getDisjoint() &&
+            !(hasFlags(tuples) && tuples.getOuts().empty()))
           return true;
   return false;
 }
@@ -298,8 +309,7 @@ static bool feedsDisjointSums(ParticleForOp loop) {
   for (Value result : loop->getResults())
     for (Operation *user : result.getUsers())
       if (auto tuples = dyn_cast<TupleForOp>(user))
-        if (tuples.getDisjoint() && !tuples.getReduce().empty() &&
-            !hasFlags(tuples))
+        if (tuples.getDisjoint() && hasSums(tuples))
           return true;
   return false;
 }

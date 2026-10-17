@@ -41,6 +41,14 @@
 
 # RUN: not mdir run %t/restrained.toml 2>&1 | FileCheck %s --check-prefix=FAR
 # RUN: not mdir run %t/restrained-mixed.toml 2>&1 | FileCheck %s --check-prefix=FAR
+#
+# The test in the kernels of the constraints, joined with the loops over
+# particles around them (D110), is the default; in loops of their own for
+# comparison (MDIR_CONSTRAINT_TEST=separate), both orders again.
+#
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/water.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/peptide-mixed.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/restrained-mixed.toml 2>&1 | FileCheck %s --check-prefix=FAR
 
 # FAR-NOT: the constraints of the set
 # FAR: mdir: {{(a position is not a number or is|[0-9]+ positions are not numbers or are)}} far outside the cell at a build of the neighbor structure; the run has failed

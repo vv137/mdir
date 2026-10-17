@@ -1445,6 +1445,24 @@ void kernels::emitIntegrationThread(
   auto cellOf = [&](OpBuilder &, unsigned i) -> std::pair<Value, Value> {
     return {boxes[i], inverses[i]};
   };
+  // The flag of loop `i`, set by the member at place 0 of a tuple whose
+  // kernel yields true after its destinations (D[constraint-failure-stop]).
+  auto setFlag = [&](OpBuilder &b, unsigned i, const IRMapping &inside) {
+    if (i >= run.flags.size() || !run.flags[i])
+      return;
+    md_exec::TupleForOp loop = loops[i];
+    Operation *yield = loop.getKernel().front().getTerminator();
+    Value failed = inside.lookupOrDefault(
+        yield->getOperand(loop.getOuts().size() * loop.getArity()));
+    Value flag = run.flags[i];
+    scf::IfOp::create(b, loc, failed, [&](OpBuilder &set, Location) {
+      memref::StoreOp::create(
+          set, loc,
+          arith::ConstantOp::create(set, loc, i32, set.getI32IntegerAttr(1)),
+          flag, ValueRange{createIndex(set, loc, 0)});
+      scf::YieldOp::create(set, loc);
+    });
+  };
 
   // The loop after for a member, its values of the loop before from
   // registers and those of the loops over tuples from `corrections` (one
@@ -1586,6 +1604,7 @@ void kernels::emitIntegrationThread(
           auto [box, inverse] = cellOf(c, i);
           evaluateMembers(c, loop, evaluated, box, inverse, IRMapping(),
                           loadMember);
+          setFlag(c, i, evaluated.inside);
           Operation *yield = loop.getKernel().front().getTerminator();
           for (int64_t q = 0; q != arity; ++q) {
             SmallVector<SmallVector<Value>> corrections;
@@ -1824,6 +1843,7 @@ void kernels::emitIntegrationThread(
           auto [box, inverse] = cellOf(b, i);
           evaluateMembers(b, loop, evaluated, box, inverse, IRMapping(),
                           loadMember);
+          setFlag(b, i, evaluated.inside);
           Operation *yield = loop.getKernel().front().getTerminator();
           SmallVector<Value> values;
           for (int64_t q = 0; q != arity; ++q)

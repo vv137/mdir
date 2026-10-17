@@ -663,10 +663,12 @@ static LogicalResult verifyTupleOperands(OpTy op) {
 }
 
 /// Verifies the kernel: its arguments and its terminator. The kernel must
-/// yield `numYields` values of the type `yieldType`.
+/// yield `numYields` values of the type `yieldType`, then, with
+/// `extraFlag`, one i1.
 template <typename OpTy>
 static LogicalResult verifyTupleKernel(OpTy op, unsigned numYields,
-                                       Type yieldType) {
+                                       Type yieldType,
+                                       bool extraFlag = false) {
   Block &block = op.getKernel().front();
   Builder builder(op.getContext());
 
@@ -696,13 +698,18 @@ static LogicalResult verifyTupleKernel(OpTy op, unsigned numYields,
   auto yield = dyn_cast<YieldOp>(block.getTerminator());
   if (!yield)
     return op.emitOpError() << "expected the kernel to end with 'md.yield'";
-  if (yield.getNumOperands() != numYields)
-    return yield.emitOpError() << "expected " << numYields << " values, got "
-                               << yield.getNumOperands();
-  for (Value value : yield.getOperands())
+  if (yield.getNumOperands() != numYields + (extraFlag ? 1 : 0))
+    return yield.emitOpError()
+           << "expected " << numYields << " values"
+           << (extraFlag ? " and an i1" : "") << ", got "
+           << yield.getNumOperands();
+  for (Value value : yield.getOperands().take_front(numYields))
     if (value.getType() != yieldType)
       return yield.emitOpError() << "expected values of type " << yieldType
                                  << ", got " << value.getType();
+  if (extraFlag && !yield.getOperand(numYields).getType().isInteger(1))
+    return yield.emitOpError() << "expected the last value to be an i1, got "
+                               << yield.getOperand(numYields).getType();
   return success();
 }
 
@@ -736,9 +743,12 @@ LogicalResult GatherTuplesOp::verify() {
   return success();
 }
 
+void GatherTuplesOp::getAsmResultNames(OpAsmSetValueNameFn setNameFn) {}
+
 LogicalResult GatherTuplesOp::verifyRegions() {
   auto result = cast<FieldType>(getResult().getType());
-  return verifyTupleKernel(*this, getArity(), result.getKernelValueType());
+  return verifyTupleKernel(*this, getArity(), result.getKernelValueType(),
+                           /*extraFlag=*/bool(getFailed()));
 }
 
 //===----------------------------------------------------------------------===//

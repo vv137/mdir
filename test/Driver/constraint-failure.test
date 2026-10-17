@@ -1,5 +1,6 @@
 # A step whose constraints fail stops the run, with the step and the set
-# (D[constraint-failure-stop]). One hydrogen of the first of the three OPC
+# (D[constraint-failure-stop]); the kernel of each set of constraints tests
+# the lengths it gives. One hydrogen of the first of the three OPC
 # waters of settle.test starts at 1000 Å/ps, 2 Å in a step of 2 fs: SETTLE
 # cannot take its water back to its shape in the first step. The hydrogen
 # of the first amide of the peptide of shake.test, alone with its nitrogen
@@ -24,6 +25,13 @@
 # RUN: not mdir run %t/peptide.toml 2>&1 | FileCheck %s --check-prefix=PEPTIDE
 # RUN: not mdir run %t/peptide-single.toml 2>&1 | FileCheck %s --check-prefix=PEPTIDE
 # RUN: not mdir run %t/peptide-mixed.toml 2>&1 | FileCheck %s --check-prefix=PEPTIDE
+#
+# The same with the test of the constraints in loops of their own
+# (MDIR_CONSTRAINT_TEST=separate), which the kernels of the constraints
+# take by default.
+#
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/water.toml 2>&1 | FileCheck %s --check-prefix=WATER
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/peptide-mixed.toml 2>&1 | FileCheck %s --check-prefix=PEPTIDE
 
 # WATER: INFO: 0 0.0000
 # WATER-NOT: INFO: 1 0.0020

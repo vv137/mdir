@@ -423,7 +423,7 @@ private:
   bool recordIntegration(ArrayRef<Operation *> run);
   /// Lowers an integration run to one kernel (emitIntegrationThread) and
   /// the reductions of its loop after.
-  LogicalResult lowerIntegration(const kernels::IntegrationRun &run);
+  LogicalResult lowerIntegration(const kernels::IntegrationRun &given);
 
   /// Finds the runs of loops over pairs and tuples in `function` that one
   /// kernel can do (lowerRows), and records them in `rows`.
@@ -1943,9 +1943,13 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   bool readsBefore = false;
   for (Operation *op : run) {
     auto loop = cast<md_exec::TupleForOp>(op);
-    // The loops take the particles of one set, have no reductions, and
-    // write none of what the loop before wrote.
-    if (!loop.getReduce().empty())
+    // The loops take the particles of one set, have no reductions but a
+    // flag each at most, the test of the constraints that the member at
+    // place 0 sets (D[constraint-failure-stop]), and write none of what the
+    // loop before wrote.
+    if (loop.getOuts().empty() || loop.getReduce().size() > 1 ||
+        (loop.getReduce().size() == 1 &&
+         !loop.getReduce().front().getType().isInteger(1)))
       return false;
     if (!positions)
       positions = loop.getPositions();
@@ -2007,12 +2011,25 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   return true;
 }
 
-LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &run) {
+LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
+  kernels::IntegrationRun run = given;
   md_exec::ParticleForOp before = run.before, after = run.after;
   Location loc = after.getLoc();
   OpBuilder builder(after);
   setPurpose(before);
   purpose += "_integration" + std::to_string(run.loops.size());
+
+  // The flag of each loop that tests its tuples (D[constraint-failure-stop]),
+  // one of its own (D118).
+  SmallVector<Flag> loopFlags;
+  for (md_exec::TupleForOp loop : run.loops) {
+    if (loop.getReduce().empty()) {
+      run.flags.push_back(Value());
+      continue;
+    }
+    loopFlags.push_back(getFlag(flags.size(), loc));
+    run.flags.push_back(loopFlags.back().device);
+  }
 
   // The cells of the loops over tuples, in the type of their kernels.
   SmallVector<Value> boxes, inverses;
@@ -2126,6 +2143,17 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &run) {
     }
     Value total = arith::AddFOp::create(builder, loc, start, sums[place]);
     after.getResult(index).replaceAllUsesWith(total);
+  }
+  // The flags of the loops over tuples, which both kernels set: one event
+  // after them for all.
+  if (!loopFlags.empty()) {
+    SmallVector<Value> starts, results;
+    for (md_exec::TupleForOp loop : run.loops)
+      if (!loop.getReduce().empty()) {
+        starts.push_back(loop.getReduce().front());
+        results.push_back(loop.getResult(0));
+      }
+    replaceWithFlags(builder, loc, loopFlags, starts, results);
   }
   return success();
 }

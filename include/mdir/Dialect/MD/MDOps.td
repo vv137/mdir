@@ -6,6 +6,7 @@
 #define MDIR_DIALECT_MD_MDOPS_TD
 
 include "mlir/IR/BuiltinAttributes.td"
+include "mlir/IR/OpAsmInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
@@ -568,9 +569,10 @@ def MD_GatherRelationOp : MD_Op<"gather_relation", [
 // Tuples of a topology
 //===----------------------------------------------------------------------===//
 
-class MD_TupleOp<string mnemonic> : MD_Op<mnemonic, [
-    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock
-  ]> {
+class MD_TupleOp<string mnemonic, list<Trait> traits = []>
+    : MD_Op<mnemonic, !listconcat([
+        AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock
+      ], traits)> {
   let arguments = (ins
     MD_RelationType:$relation,
     MD_ReferenceFieldType:$positions,
@@ -642,7 +644,11 @@ def MD_SumTuplesOp : MD_TupleOp<"sum_tuples"> {
   let results = (outs AnyType:$result);
 }
 
-def MD_GatherTuplesOp : MD_TupleOp<"gather_tuples"> {
+// The results keep the numbers of the printer, not the names of their
+// declaration, which an op of more than one result would print.
+def MD_GatherTuplesOp : MD_TupleOp<"gather_tuples", [
+    DeclareOpInterfaceMethods<OpAsmOpInterface, ["getAsmResultNames"]>
+  ]> {
   let summary = "Sums a kernel, per particle, over the tuples it is in";
   let description = [{
     ```text
@@ -655,6 +661,11 @@ def MD_GatherTuplesOp : MD_TupleOp<"gather_tuples"> {
 
     The kernel receives what that of `md.sum_tuples` receives.
 
+    With a second result, of the type `i1`, the kernel yields one more
+    value, an `i1`, after those of the members, and the result tells
+    whether it is true for some tuple: the constraints of a step test the
+    lengths that they give in their own kernel (D[constraint-failure-stop]).
+
     ```mlir
     %f = md.gather_tuples %bonds, %x, %cell
            coordinates(distance(0, 1), displacement(0, 1))
@@ -666,7 +677,15 @@ def MD_GatherTuplesOp : MD_TupleOp<"gather_tuples"> {
         !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>
     ```
   }];
-  let results = (outs MD_ReferenceFieldType:$result);
+  let results = (outs MD_ReferenceFieldType:$result, Optional<I1>:$failed);
+  let assemblyFormat = [{
+    $relation `,` $positions `,` $cell
+    custom<Coordinates>($coordinate_kinds, $coordinate_members)
+    (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
+    (`tuple` `(` $parameters^ `:` qualified(type($parameters)) `)`)?
+    $kernel attr-dict
+    `:` qualified(type($relation)) `,` qualified(type($positions)) `->` qualified(type($result)) (`,` type($failed)^)?
+  }];
 }
 
 //===----------------------------------------------------------------------===//

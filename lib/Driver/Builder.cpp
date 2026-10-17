@@ -96,6 +96,8 @@ struct Parameter {
   unsigned field = 0;
 };
 
+class SiteKernel;
+
 class Builder {
 public:
   Builder(const Control &control, const System &system, Program &program)
@@ -821,8 +823,13 @@ private:
   /// Emits `result`, the positions `x` with the bonds of the groups of
   /// `set` brought back to their lengths along the bonds of `old`, by the
   /// iterations of SHAKE [Ryckaert1977].
+  /// With `failed`, the kernel also yields whether a length it gives is
+  /// off its target, `failed`, an i1 (`emitLengthTest`,
+  /// D[constraint-failure-stop]); so do those of emitBondConstraints and
+  /// emitSettlePositions.
   void emitShakePositions(StringRef indent, StringRef old, StringRef x,
-                          const Program::TupleSet &set, StringRef result);
+                          const Program::TupleSet &set, StringRef result,
+                          StringRef failed = "");
   /// A bond of a group of constraints: its members, by their places in the
   /// tuple, and the argument of the kernel that holds its length.
   struct ConstrainedBond {
@@ -836,7 +843,22 @@ private:
   void emitBondConstraints(StringRef indent, StringRef setName,
                            unsigned arity, llvm::ArrayRef<ConstrainedBond> bonds,
                            llvm::ArrayRef<std::string> tuple, StringRef old,
-                           StringRef x, StringRef change);
+                           StringRef x, StringRef change,
+                           StringRef failed = "");
+  /// Emits, in a kernel of the constraints, whether one of the bonds
+  /// `bonds`, given by their vectors and lengths, is off its target by the
+  /// tolerance of `emitConstraintFailures`, or is not a number; returns the
+  /// name of the i1 (D[constraint-failure-stop]).
+  std::string emitLengthTest(
+      SiteKernel &k,
+      llvm::ArrayRef<std::pair<std::string, std::string>> bonds);
+  /// Whether the step tests the constraints in their own kernels (the
+  /// default) or in loops of their own (`MDIR_CONSTRAINT_TEST=separate`,
+  /// for comparison, D[constraint-failure-stop]).
+  bool testsConstraintsApart() const {
+    const char *value = std::getenv("MDIR_CONSTRAINT_TEST");
+    return value && StringRef(value) == "separate";
+  }
   /// Emits `result`, the positions `x` plus `change`.
   void emitAddChange(StringRef indent, StringRef x, StringRef change,
                      StringRef result);
@@ -870,7 +892,8 @@ private:
   /// to their shape from `old`, the positions before the drift, and
   /// `change`, what that adds to the positions [Miyamoto1992].
   void emitSettlePositions(StringRef indent, StringRef old, StringRef x,
-                           StringRef change, StringRef result);
+                           StringRef change, StringRef result,
+                           StringRef failed = "");
   /// Emits `result`, the velocities `v` at the positions `x` without their
   /// parts along the bonds of the rigid waters. If `virial` is given,
   /// returns the name of that virial with that of the constraints added,
@@ -6232,6 +6255,11 @@ void Builder::emitPrograms() {
     // the atoms there over the step (the first half of RATTLE).
     std::string velocities = drifting;
     std::vector<std::pair<const Program::TupleSet *, std::string>> changes;
+    // Each set of constraints tests the lengths it gives in its own kernel,
+    // which yields whether one fails; with MDIR_CONSTRAINT_TEST=separate a
+    // loop of its own tests them below (D[constraint-failure-stop]).
+    bool apart = testsConstraintsApart();
+    std::vector<std::pair<int, std::string>> failures;
     if (constraints) {
       std::string current = "%x1d";
       std::string constrained = sites ? "%x1s" : "%x1";
@@ -6243,7 +6271,10 @@ void Builder::emitPrograms() {
       };
       if (settles) {
         std::string result = next();
-        emitSettlePositions("  ", reference, current, "%dx1", result);
+        if (!apart)
+          failures.push_back({0, "%broken_settles"});
+        emitSettlePositions("  ", reference, current, "%dx1", result,
+                            apart ? "" : "%broken_settles");
         changes.push_back({program.tupleSets.data(), "%dx1"});
         for (const Program::TupleSet &set : program.tupleSets)
           if (set.name == "settles")
@@ -6252,7 +6283,11 @@ void Builder::emitPrograms() {
       }
       for (const Program::TupleSet *set : shakeSets) {
         std::string result = next();
-        emitShakePositions("  ", reference, current, *set, result);
+        std::string failed = "%broken_" + set->name;
+        if (!apart)
+          failures.push_back({static_cast<int>(set->arity) - 1, failed});
+        emitShakePositions("  ", reference, current, *set, result,
+                           apart ? "" : failed);
         changes.push_back({set, result + "_change"});
         current = result;
       }
@@ -6292,13 +6327,12 @@ void Builder::emitPrograms() {
         }
       }
     }
-    // Each set of constraints tested at the positions it gave, by a loop of
-    // its own, after the loops that update the velocities from them, so
-    // that the run of the constraints stays one kernel with those loops
-    // (D110); the flags are read after the evaluation
-    // (D[constraint-failure-stop]).
-    std::vector<std::pair<int, std::string>> failures;
-    if (constraints)
+    // With MDIR_CONSTRAINT_TEST=separate, each set of constraints tested at
+    // the positions it gave, by a loop of its own, after the loops that
+    // update the velocities from them, so that the run of the constraints
+    // stays one kernel with those loops (D110); the flags are read after the
+    // evaluation (D[constraint-failure-stop]).
+    if (constraints && apart)
       failures = emitConstraintTests("  ", sites ? "%x1s" : "%x1",
                                      "%broken", /*flag=*/true);
     if (sites)
@@ -6761,6 +6795,26 @@ public:
                    term(a0, b1, a1, b0));
   }
   std::string unit(StringRef a) { return vector("divf", a, splat(norm(a))); }
+  /// `op a`, of an f64, such as `math.absf`.
+  std::string unary(StringRef op, StringRef a) {
+    std::string name = fresh();
+    os << indent << name << " = " << op << " " << a << " : f64\n";
+    return name;
+  }
+  /// `arith.cmpf predicate, a, b` of two f64.
+  std::string compare(StringRef predicate, StringRef a, StringRef b) {
+    std::string name = fresh();
+    os << indent << name << " = arith.cmpf " << predicate << ", " << a
+       << ", " << b << " : f64\n";
+    return name;
+  }
+  /// `arith.op a, b` of two i1.
+  std::string boolean(StringRef op, StringRef a, StringRef b) {
+    std::string name = fresh();
+    os << indent << name << " = arith." << op << " " << a << ", " << b
+       << " : i1\n";
+    return name;
+  }
   /// `a x + b y + c z`.
   std::string combine(StringRef a, StringRef x, StringRef b, StringRef y,
                       StringRef c, StringRef z) {
@@ -6962,7 +7016,7 @@ std::string Builder::emitSpreadSites(StringRef indent, StringRef x,
 
 void Builder::emitSettlePositions(StringRef indent, StringRef old,
                                   StringRef x, StringRef change,
-                                  StringRef result) {
+                                  StringRef result, StringRef failed) {
   // Below double precision, the three bonds of the water by M-SHAKE: the
   // positions that SETTLE turns are of the size of the water, and their
   // rounding in f32 over the change of a step is an error of the
@@ -6972,7 +7026,8 @@ void Builder::emitSettlePositions(StringRef indent, StringRef old,
     emitBondConstraints(indent, "settles", 3,
                         {{0, 1, "%vs_doh"}, {0, 2, "%vs_doh"},
                          {1, 2, "%vs_dhh"}},
-                        {"%f_settles_doh", "%f_settles_dhh"}, old, x, change);
+                        {"%f_settles_doh", "%f_settles_dhh"}, old, x, change,
+                        failed);
     emitAddChange(indent, x, change, result);
     return;
   }
@@ -6982,8 +7037,8 @@ void Builder::emitSettlePositions(StringRef indent, StringRef old,
   // angles (Miyamoto and Kollman 1992, Appendix A). The positions are
   // taken relative to the new oxygen, in the minimum image; the old ones
   // are moved by the same periods of the cell.
-  os << indent << change << " = md.gather_tuples %r_settles, " << x
-     << ", %cell\n"
+  os << indent << change << (failed.empty() ? "" : ", " + failed.str())
+     << " = md.gather_tuples %r_settles, " << x << ", %cell\n"
      << indent << "    coordinates(displacement(1, 0), displacement(2, 0))\n"
      << indent << "    gather(" << old << ", " << x
      << ", %m : !vec, !vec, !real)\n"
@@ -7091,9 +7146,18 @@ void Builder::emitSettlePositions(StringRef indent, StringRef old,
   std::string c3 = back(xc3, yc3, zc1);
   std::string db = k.vector("subf", b3, "%vs_b1");
   std::string dc = k.vector("subf", c3, "%vs_c1");
-  os << inner << "md.yield " << a3 << ", " << db << ", " << dc
-     << " : vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
-     << indent << "} : !rel_settles, !vec -> !vec\n";
+  // The bonds of the new triangle, which the test of the constraints takes
+  // (D[constraint-failure-stop]).
+  std::string test;
+  if (!failed.empty())
+    test = ", " + emitLengthTest(k, {{k.vector("subf", b3, a3), "%vs_doh"},
+                                     {k.vector("subf", c3, a3), "%vs_doh"},
+                                     {k.vector("subf", c3, b3), "%vs_dhh"}});
+  os << inner << "md.yield " << a3 << ", " << db << ", " << dc << test
+     << " : vector<3xf64>, vector<3xf64>, vector<3xf64>"
+     << (failed.empty() ? "" : ", i1") << "\n"
+     << indent << "} : !rel_settles, !vec -> !vec"
+     << (failed.empty() ? "" : ", i1") << "\n";
   os << indent << result << " = md.map_particles gather(" << x << ", "
      << change << " : !vec, !vec) {\n"
      << indent << "^bb0(%vs_x: vector<3xf64>, %vs_d: vector<3xf64>):\n"
@@ -7191,7 +7255,7 @@ emitSmallSolve(SiteKernel &k, std::vector<std::vector<std::string>> A,
 
 void Builder::emitShakePositions(StringRef indent, StringRef old,
                                  StringRef x, const Program::TupleSet &set,
-                                 StringRef result) {
+                                 StringRef result, StringRef failed) {
   unsigned count = set.arity - 1;
   std::string change = (result + "_change").str();
   // The bonds of the heavy atom 0 to its hydrogens.
@@ -7202,7 +7266,7 @@ void Builder::emitShakePositions(StringRef indent, StringRef old,
     tuple.push_back("%f_" + set.name + "_d" + std::to_string(k));
   }
   emitBondConstraints(indent, set.name, set.arity, bonds, tuple, old, x,
-                      change);
+                      change, failed);
   emitAddChange(indent, x, change, result);
 }
 
@@ -7221,7 +7285,8 @@ void Builder::emitBondConstraints(StringRef indent, StringRef setName,
                                   unsigned arity,
                                   llvm::ArrayRef<ConstrainedBond> bonds,
                                   llvm::ArrayRef<std::string> tuple, StringRef old,
-                                  StringRef x, StringRef change) {
+                                  StringRef x, StringRef change,
+                                  StringRef failed) {
   unsigned count = bonds.size();
   std::string inner = (indent + "  ").str();
   std::string coordinates, tupleTypes, arguments;
@@ -7250,8 +7315,8 @@ void Builder::emitBondConstraints(StringRef indent, StringRef setName,
   for (auto [k, name] : llvm::enumerate(fieldArguments))
     arguments += name + ": f64" +
                  (k + 1 == fieldArguments.size() ? "" : ", ");
-  os << indent << change << " = md.gather_tuples %r_" << setName << ", " << x
-     << ", %cell\n"
+  os << indent << change << (failed.empty() ? "" : ", " + failed.str())
+     << " = md.gather_tuples %r_" << setName << ", " << x << ", %cell\n"
      << indent << "    coordinates(" << coordinates << ")\n"
      << indent << "    gather(" << old << ", " << x
      << ", %m : !vec, !vec, !real)\n"
@@ -7397,8 +7462,49 @@ void Builder::emitBondConstraints(StringRef indent, StringRef setName,
     os << inner << "}\n";
     results = "%vs_checked0, %vs_checked1";
   }
-  os << inner << "md.yield " << results << " : " << types << "\n"
-     << indent << "} : !rel_" << setName << ", !vec -> !vec\n";
+  // The bonds that the changes give, which the test of the constraints
+  // takes (D[constraint-failure-stop]).
+  std::string test;
+  if (!failed.empty()) {
+    SiteKernel t(os, inner, "%vst");
+    std::vector<std::string> changes;
+    StringRef rest = results;
+    while (!rest.empty()) {
+      auto [name, tail] = rest.split(", ");
+      changes.push_back(name.str());
+      rest = tail;
+    }
+    std::vector<std::pair<std::string, std::string>> lengths;
+    for (auto [i, bond] : llvm::enumerate(bonds))
+      lengths.push_back(
+          {t.vector("subf",
+                    t.vector("addf", "%vs_r" + std::to_string(i),
+                             changes[bond.second]),
+                    changes[bond.first]),
+           bond.length});
+    test = ", " + emitLengthTest(t, lengths);
+  }
+  os << inner << "md.yield " << results << test << " : " << types
+     << (failed.empty() ? "" : ", i1") << "\n"
+     << indent << "} : !rel_" << setName << ", !vec -> !vec"
+     << (failed.empty() ? "" : ", i1") << "\n";
+}
+
+std::string Builder::emitLengthTest(
+    SiteKernel &k, llvm::ArrayRef<std::pair<std::string, std::string>> bonds) {
+  // The test of emitConstraintFailures: |r²/d² − 1| above the tolerance,
+  // or not a number (an unordered comparison).
+  double tolerance = control.precision == Precision::Double ? 1.0e-8 : 1.0e-4;
+  std::string one = k.constant(1.0), limit = k.constant(tolerance);
+  std::string any;
+  for (const auto &[r, length] : bonds) {
+    std::string d2 = k.real("mulf", length, length);
+    std::string off = k.real("subf", k.real("divf", k.dot(r, r), d2), one);
+    std::string magnitude = k.unary("math.absf", off);
+    std::string bad = k.compare("ugt", magnitude, limit);
+    any = any.empty() ? bad : k.boolean("ori", any, bad);
+  }
+  return any;
 }
 
 std::string Builder::emitShakeVelocities(StringRef indent, StringRef x,
