@@ -1,0 +1,13 @@
+# REQUIRES: python-api, cuda
+# Plans of cuFFT for more grids than the 8 of the table the runtime had
+# (#323): frame evaluators of three grids with tunable charges in one
+# process, four plans a grid in mixed precision, the case of the issue, and
+# six in all in double. Before the fix the mixed run ended the process at
+# the ninth plan ("mdrt: too many grids of FFT", status -6).
+# RUN: %mdir_python %S/Inputs/python_fft_plans.py %S/Inputs Mixed | FileCheck %s -DMODE=Mixed
+# RUN: %mdir_python %S/Inputs/python_fft_plans.py %S/Inputs Double | FileCheck %s -DMODE=Double
+# CHECK: [[MODE]]: amber at 64 points: finite energy and gradients
+# CHECK: [[MODE]]: amber at 128 points: finite energy and gradients
+# CHECK: [[MODE]]: water at 32 points: finite energy and gradients
+# CHECK: [[MODE]]: the first evaluator again, after 3 grids: the same bits
+# CHECK: fft plans passed

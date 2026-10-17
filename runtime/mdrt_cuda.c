@@ -783,50 +783,104 @@ typedef struct {
   int64_t strides[1];
 } DeviceBuffer1DF32;
 
-enum { NUM_FFT_PLANS = 8 };
-static struct {
+/* A failure that ends the run but need not end the process: the program
+   that embeds the run (a simulation of the Python interface, D196) takes
+   it through its handler, which records it, and the run goes on to the end
+   of its part, whose state the program discards; without a handler the
+   failure is printed and the process exits with status 1. The calls that
+   fail return without their work. */
+static void (*stopHandler)(const char *) = NULL;
+void mdrtCudaSetStopHandler(void (*handler)(const char *)) {
+  stopHandler = handler;
+}
+
+static void stopWith(const char *message) {
+  if (stopHandler) {
+    stopHandler(message);
+    return;
+  }
+  fprintf(stderr, "mdir: %s\n", message);
+  fflush(stderr);
+  exit(1);
+}
+
+/* The plans of cuFFT of the process, one for each grid, direction, and
+   precision that a program has transformed, kept until the process ends
+   and shared by the programs that transform the same grid. A program in
+   mixed precision with tunable charges takes four a grid (both directions,
+   f32 and f64), so the table grows as programs of other grids come (#323);
+   it held 8 before, and the ninth plan ended the process. */
+struct FFTPlan {
   int64_t k1, k2, k3;
   int forward, single;
   cufftHandle plan;
-} fftPlans[NUM_FFT_PLANS];
-static int numFFTPlans = 0;
+};
+static struct FFTPlan *fftPlans = NULL;
+static int64_t numFFTPlans = 0, fftPlansCapacity = 0;
 
-static void checkFFT(cufftResult result, const char *what) {
+/* Whether `result` is a success; otherwise the run stops, naming `what`. */
+static int checkFFT(cufftResult result, const char *what, int64_t k1,
+                    int64_t k2, int64_t k3) {
   if (result == CUFFT_SUCCESS)
-    return;
-  fprintf(stderr, "mdrt: %s failed with the cuFFT error %d\n", what,
-          (int)result);
-  fflush(stderr);
-  abort();
+    return 1;
+  char message[256];
+  snprintf(message, sizeof message,
+           "%s failed with the cuFFT error %d for the grid of %lld x %lld x "
+           "%lld points; the run has failed",
+           what, (int)result, (long long)k1, (long long)k2, (long long)k3);
+  stopWith(message);
+  return 0;
 }
 
-/* The plan of a grid, a direction, and a precision (f32 if `single`). */
-static cufftHandle getFFTPlan(int64_t k1, int64_t k2, int64_t k3,
-                              int forward, int single) {
-  for (int i = 0; i != numFFTPlans; ++i)
+/* The plan of a grid, a direction, and a precision (f32 if `single`), on
+   the stream of the kernels, in `plan`; 0 if it cannot be made, and the
+   run stops. */
+static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
+                      int single, cufftHandle *plan) {
+  for (int64_t i = 0; i != numFFTPlans; ++i)
     if (fftPlans[i].k1 == k1 && fftPlans[i].k2 == k2 &&
         fftPlans[i].k3 == k3 && fftPlans[i].forward == forward &&
-        fftPlans[i].single == single)
-      return fftPlans[i].plan;
-  if (numFFTPlans == NUM_FFT_PLANS) {
-    fprintf(stderr, "mdrt: too many grids of FFT\n");
-    abort();
+        fftPlans[i].single == single) {
+      *plan = fftPlans[i].plan;
+      return checkFFT(cufftSetStream(*plan, (cudaStream_t)mgpuStreamCreate()),
+                      "cufftSetStream", k1, k2, k3);
+    }
+  if (numFFTPlans == fftPlansCapacity) {
+    int64_t capacity = fftPlansCapacity ? 2 * fftPlansCapacity : 8;
+    struct FFTPlan *grown =
+        realloc(fftPlans, (size_t)capacity * sizeof(struct FFTPlan));
+    if (!grown) {
+      char message[160];
+      snprintf(message, sizeof message,
+               "no memory of the host for a plan of FFT of the grid of %lld x "
+               "%lld x %lld points; the run has failed",
+               (long long)k1, (long long)k2, (long long)k3);
+      stopWith(message);
+      return 0;
+    }
+    fftPlans = grown;
+    fftPlansCapacity = capacity;
   }
-  cufftHandle plan;
   cufftType type = single ? (forward ? CUFFT_R2C : CUFFT_C2R)
                           : (forward ? CUFFT_D2Z : CUFFT_Z2D);
-  checkFFT(cufftPlan3d(&plan, (int)k1, (int)k2, (int)k3, type),
-           "cufftPlan3d");
-  checkFFT(cufftSetStream(plan, (cudaStream_t)mgpuStreamCreate()),
-           "cufftSetStream");
-  fftPlans[numFFTPlans].k1 = k1;
-  fftPlans[numFFTPlans].k2 = k2;
-  fftPlans[numFFTPlans].k3 = k3;
-  fftPlans[numFFTPlans].forward = forward;
-  fftPlans[numFFTPlans].single = single;
-  fftPlans[numFFTPlans].plan = plan;
-  ++numFFTPlans;
-  return plan;
+  cufftHandle made;
+  if (!checkFFT(cufftPlan3d(&made, (int)k1, (int)k2, (int)k3, type),
+                "cufftPlan3d", k1, k2, k3))
+    return 0;
+  if (!checkFFT(cufftSetStream(made, (cudaStream_t)mgpuStreamCreate()),
+                "cufftSetStream", k1, k2, k3)) {
+    cufftDestroy(made);
+    return 0;
+  }
+  struct FFTPlan *entry = &fftPlans[numFFTPlans++];
+  entry->k1 = k1;
+  entry->k2 = k2;
+  entry->k3 = k3;
+  entry->forward = forward;
+  entry->single = single;
+  entry->plan = made;
+  *plan = made;
+  return 1;
 }
 
 /* The forward transform of the real grid of k1 x k2 x k3 points into the
@@ -837,14 +891,13 @@ void _mlir_ciface_mdrtCudaFFTForward3D(DeviceBuffer1D *real,
                                        int64_t k2, int64_t k3) {
   enter();
   double start = begin();
-  checkFFT(cufftSetStream(getFFTPlan(k1, k2, k3, 1, 0),
-                          (cudaStream_t)mgpuStreamCreate()),
-           "cufftSetStream");
-  checkFFT(cufftExecD2Z(getFFTPlan(k1, k2, k3, 1, 0),
-                        (cufftDoubleReal *)(real->aligned + real->offset),
-                        (cufftDoubleComplex *)(complex->aligned +
-                                               complex->offset)),
-           "cufftExecD2Z");
+  cufftHandle plan;
+  if (getFFTPlan(k1, k2, k3, 1, 0, &plan))
+    checkFFT(cufftExecD2Z(plan,
+                          (cufftDoubleReal *)(real->aligned + real->offset),
+                          (cufftDoubleComplex *)(complex->aligned +
+                                                 complex->offset)),
+             "cufftExecD2Z", k1, k2, k3);
   isPending = 1;
   end(LAUNCH, start);
 }
@@ -856,14 +909,13 @@ void _mlir_ciface_mdrtCudaFFTBackward3D(DeviceBuffer1D *complex,
                                         int64_t k2, int64_t k3) {
   enter();
   double start = begin();
-  checkFFT(cufftSetStream(getFFTPlan(k1, k2, k3, 0, 0),
-                          (cudaStream_t)mgpuStreamCreate()),
-           "cufftSetStream");
-  checkFFT(cufftExecZ2D(getFFTPlan(k1, k2, k3, 0, 0),
-                        (cufftDoubleComplex *)(complex->aligned +
-                                               complex->offset),
-                        (cufftDoubleReal *)(real->aligned + real->offset)),
-           "cufftExecZ2D");
+  cufftHandle plan;
+  if (getFFTPlan(k1, k2, k3, 0, 0, &plan))
+    checkFFT(cufftExecZ2D(plan,
+                          (cufftDoubleComplex *)(complex->aligned +
+                                                 complex->offset),
+                          (cufftDoubleReal *)(real->aligned + real->offset)),
+             "cufftExecZ2D", k1, k2, k3);
   isPending = 1;
   end(LAUNCH, start);
 }
@@ -875,13 +927,12 @@ void _mlir_ciface_mdrtCudaFFTForward3DF32(DeviceBuffer1DF32 *real,
                                           int64_t k3) {
   enter();
   double start = begin();
-  checkFFT(cufftSetStream(getFFTPlan(k1, k2, k3, 1, 1),
-                          (cudaStream_t)mgpuStreamCreate()),
-           "cufftSetStream");
-  checkFFT(cufftExecR2C(getFFTPlan(k1, k2, k3, 1, 1),
-                        (cufftReal *)(real->aligned + real->offset),
-                        (cufftComplex *)(complex->aligned + complex->offset)),
-           "cufftExecR2C");
+  cufftHandle plan;
+  if (getFFTPlan(k1, k2, k3, 1, 1, &plan))
+    checkFFT(cufftExecR2C(plan, (cufftReal *)(real->aligned + real->offset),
+                          (cufftComplex *)(complex->aligned +
+                                           complex->offset)),
+             "cufftExecR2C", k1, k2, k3);
   isPending = 1;
   end(LAUNCH, start);
 }
@@ -892,13 +943,12 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
                                            int64_t k3) {
   enter();
   double start = begin();
-  checkFFT(cufftSetStream(getFFTPlan(k1, k2, k3, 0, 1),
-                          (cudaStream_t)mgpuStreamCreate()),
-           "cufftSetStream");
-  checkFFT(cufftExecC2R(getFFTPlan(k1, k2, k3, 0, 1),
-                        (cufftComplex *)(complex->aligned + complex->offset),
-                        (cufftReal *)(real->aligned + real->offset)),
-           "cufftExecC2R");
+  cufftHandle plan;
+  if (getFFTPlan(k1, k2, k3, 0, 1, &plan))
+    checkFFT(cufftExecC2R(plan,
+                          (cufftComplex *)(complex->aligned + complex->offset),
+                          (cufftReal *)(real->aligned + real->offset)),
+             "cufftExecC2R", k1, k2, k3);
   isPending = 1;
   end(LAUNCH, start);
 }

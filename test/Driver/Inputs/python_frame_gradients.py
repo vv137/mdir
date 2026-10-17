@@ -39,9 +39,8 @@ Scenarios:
              the positions and in a strain: its sum of the mesh with the
              pair sums written in PyTorch, as python_tunable_gradient.py
              has them for the derivative in the charges; the dipeptide in
-             an orthorhombic cell, and with `torchpme-water` water in a
-             rhombic dodecahedron (a process of its own), at
-             two grids. Needs an interpreter with torch and torchpme
+             an orthorhombic cell and water in a rhombic dodecahedron, at
+             two grids each. Needs an interpreter with torch and torchpme
   openmm     G and the nine components of S of the whole potential against
              OpenMM: its forces, and central differences of its energy
              under the strain (it reports no virial), with the same
@@ -752,15 +751,13 @@ def run_torchpme():
         compared(f"{name}: the same at {2 * points} points, S", s2, rs2,
                  np.abs(s - s2).max() / scale_s, np.abs(rs - rs2).max() / scale_s, 2e-5)
 
-    # One system a process: on a device the runtime keeps a plan of FFT for
-    # each grid, direction, and precision of a process, 8 at most, and a
-    # program in mixed precision with tunable charges takes four a grid;
-    # the two grids of one system fill that.
-    if scenario == "torchpme-water":
+    # Both systems in one process: on a device four grids of a program in
+    # mixed precision with tunable charges take 16 plans of FFT, which the
+    # runtime keeps (#323; its table held 8 before).
+    one("amber", first_grid(),
+        "the dipeptide in water" if len(sys.argv) <= 6 else "the system")
+    if len(sys.argv) <= 6:
         one("water", 32, "water in a rhombic dodecahedron")
-    else:
-        one("amber", first_grid(),
-            "the dipeptide in water" if len(sys.argv) <= 6 else "the system")
     print("torchpme passed")
 
 
@@ -1072,7 +1069,7 @@ if scenario in ("finite", "prolate"):
     run_finite()
 elif scenario == "torch":
     run_torch()
-elif scenario in ("torchpme", "torchpme-water"):
+elif scenario == "torchpme":
     run_torchpme()
 elif scenario == "openmm":
     run_openmm()

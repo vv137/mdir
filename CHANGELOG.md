@@ -1213,6 +1213,17 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- A process that used more than 8 plans of cuFFT ended with "mdrt: too
+  many grids of FFT" and `abort()` (#323). The runtime of a device keeps a
+  plan for each grid, direction, and precision of the process, and a
+  program in mixed precision with tunable charges takes four a grid, so
+  three such grids in one Python process ended it with no Python error.
+  The table now grows. A plan of cuFFT that cannot be made, or a transform
+  that fails, stops the run: a `SimulationError` of the simulation or the
+  frame evaluator in Python, and an exit with status 1 of `mdir run`, in
+  place of an abort. `python-frame-gradients-torchpme-gpu.test` runs its
+  two systems in one process again.
+
 - A `.gro` file whose velocities do not read in fields as wide as its
   coordinates is refused, with the line, instead of read with the
   velocities that do not read taken as 0 (#365). Velocities written one
