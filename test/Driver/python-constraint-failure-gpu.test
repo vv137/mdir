@@ -1,6 +1,6 @@
 # REQUIRES: python-api, cuda
 # The test of python-constraint-failure.test on a GPU: the flag of the loop
-# that tests the group of SHAKE fails the part (D[constraint-failure-stop]).
+# that tests the group of SHAKE fails the part (D278).
 # With the waters rigid, a restraint of 1e300 on an atom that no constraint
 # holds sends it beyond the cell: the build records its stop, the waters
 # pass their test, and the part fails with the message of D107 (the

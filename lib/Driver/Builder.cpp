@@ -288,7 +288,7 @@ private:
   /// Emits, for each set of constraints (SETTLE, then each set of SHAKE), a
   /// test of its lengths at the positions `x` by the tolerance of
   /// `emitConstraintFailures`: the number of lengths that fail, an f64, or,
-  /// with `flag`, whether one fails, an i1 (D[constraint-failure-stop]).
+  /// with `flag`, whether one fails, an i1 (D278).
   /// The value of a set is named `prefix` and the set's name. Returns, for
   /// each set, its number for `mdrtStopConstraintFailure` (0 for SETTLE, k
   /// for the set of SHAKE of k hydrogens) and the name of its value.
@@ -299,7 +299,7 @@ private:
   /// step `%noise_step` for each set whose test `failures` of
   /// `emitConstraintTests` failed, then the stop that a build of the
   /// neighbor structure of the step recorded, if any
-  /// (D[constraint-failure-stop]).
+  /// (D278).
   void emitConstraintStops(
       StringRef indent,
       const std::vector<std::pair<int, std::string>> &failures);
@@ -399,7 +399,7 @@ private:
   /// Whether the programs of the steps take the number of the step: for the
   /// noise of Langevin dynamics, for the time of terms that take it, and
   /// for the stop of a run whose constraints failed
-  /// (D[constraint-failure-stop]).
+  /// (D278).
   bool needsStepNumber() const {
     return control.isLangevin() || control.isBrownian() || control.usesTime ||
            (hasConstraints() && !control.minimize);
@@ -827,7 +827,7 @@ private:
   /// iterations of SHAKE [Ryckaert1977].
   /// With `failed`, the kernel also yields whether a length it gives is
   /// off its target, `failed`, an i1 (`emitLengthTest`,
-  /// D[constraint-failure-stop]); so do those of emitBondConstraints and
+  /// D278); so do those of emitBondConstraints and
   /// emitSettlePositions.
   void emitShakePositions(StringRef indent, StringRef old, StringRef x,
                           const Program::TupleSet &set, StringRef result,
@@ -850,13 +850,13 @@ private:
   /// Emits, in a kernel of the constraints, whether one of the bonds
   /// `bonds`, given by their vectors and lengths, is off its target by the
   /// tolerance of `emitConstraintFailures`, or is not a number; returns the
-  /// name of the i1 (D[constraint-failure-stop]).
+  /// name of the i1 (D278).
   std::string emitLengthTest(
       SiteKernel &k,
       llvm::ArrayRef<std::pair<std::string, std::string>> bonds);
   /// Whether the step tests the constraints in their own kernels (the
   /// default) or in loops of their own (`MDIR_CONSTRAINT_TEST=separate`,
-  /// for comparison, D[constraint-failure-stop]).
+  /// for comparison, D278).
   bool testsConstraintsApart() const {
     const char *value = std::getenv("MDIR_CONSTRAINT_TEST");
     return value && StringRef(value) == "separate";
@@ -6108,7 +6108,7 @@ void Builder::emitPrograms() {
     // finds positions that are not numbers records its stop, and the step
     // runs to its end: a failed set of constraints then stops the run with
     // its own message, and the recorded stop follows the tests otherwise
-    // (D[constraint-failure-stop], the maintainer's ruling on PR #381).
+    // (D278, the maintainer's ruling on PR #381).
     if (constraints)
       os << "  func.call @mdrtDeferStops() : () -> ()\n";
     // The time at the end of the step, at which its forces are evaluated
@@ -6266,7 +6266,7 @@ void Builder::emitPrograms() {
     std::vector<std::pair<const Program::TupleSet *, std::string>> changes;
     // Each set of constraints tests the lengths it gives in its own kernel,
     // which yields whether one fails; with MDIR_CONSTRAINT_TEST=separate a
-    // loop of its own tests them below (D[constraint-failure-stop]).
+    // loop of its own tests them below (D278).
     bool apart = testsConstraintsApart();
     std::vector<std::pair<int, std::string>> failures;
     if (constraints) {
@@ -6340,7 +6340,7 @@ void Builder::emitPrograms() {
     // the positions it gave, by a loop of its own, after the loops that
     // update the velocities from them, so that the run of the constraints
     // stays one kernel with those loops (D110); the flags are read after the
-    // evaluation (D[constraint-failure-stop]).
+    // evaluation (D278).
     if (constraints && apart)
       failures = emitConstraintTests("  ", sites ? "%x1s" : "%x1",
                                      "%broken", /*flag=*/true);
@@ -7156,7 +7156,7 @@ void Builder::emitSettlePositions(StringRef indent, StringRef old,
   std::string db = k.vector("subf", b3, "%vs_b1");
   std::string dc = k.vector("subf", c3, "%vs_c1");
   // The bonds of the new triangle, which the test of the constraints takes
-  // (D[constraint-failure-stop]).
+  // (D278).
   std::string test;
   if (!failed.empty())
     test = ", " + emitLengthTest(k, {{k.vector("subf", b3, a3), "%vs_doh"},
@@ -7472,7 +7472,7 @@ void Builder::emitBondConstraints(StringRef indent, StringRef setName,
     results = "%vs_checked0, %vs_checked1";
   }
   // The bonds that the changes give, which the test of the constraints
-  // takes (D[constraint-failure-stop]).
+  // takes (D278).
   std::string test;
   if (!failed.empty()) {
     SiteKernel t(os, inner, "%vst");

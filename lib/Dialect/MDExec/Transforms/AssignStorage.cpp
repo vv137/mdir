@@ -708,7 +708,7 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
   }
 
   // A sum needs buffers on a device. A value that tells whether the kernel
-  // yields true for any tuple does not (D[constraint-failure-stop]).
+  // yields true for any tuple does not (D278).
   SmallVector<Value> reduce;
   SmallVector<Type> resultTypes, sums;
   for (Value value : op.getReduce()) {

@@ -513,7 +513,7 @@ format, or the outputs; every such change is listed under **Changed** or
   minimization ends there as well, and `state().minimization` has
   `stalled`. A run that reached such a step now ends before `steps`.
 
-- **A constraint failure in dynamics stops the run** (D[constraint-failure-stop],
+- **A constraint failure in dynamics stops the run** (D278,
   #349), as a position that is not a number does: a SETTLE or SHAKE group
   whose constrained lengths are off their targets after a step
   ($\lvert r^2/d^2 - 1\rvert$ above $10^{-4}$ below double precision and

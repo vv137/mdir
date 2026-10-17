@@ -40,7 +40,7 @@ def emit(path):
     assert '%vs_analytic' in body
     body = body.replace('md.yield', 'return')
     # The constraints of a step also yield the test of their lengths, an i1
-    # (D[constraint-failure-stop]); the projection is what is checked here.
+    # (D278); the projection is what is checked here.
     body = re.sub(r'(return [^\n]*?), %[a-z0-9_]+ : ([^\n]*?), i1\n?$',
                   r'\1 : \2', body.rstrip())
     print('module {')

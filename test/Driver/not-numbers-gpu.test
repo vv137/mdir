@@ -2,7 +2,7 @@
 # device, with either neighbor structure (D107): a time step of 0.5 ps
 # sends the particles beyond any cell within a few steps. The run has no
 # constraints: with them, their test stops it at the first step
-# (D[constraint-failure-stop], constraint-failure-gpu.test).
+# (D278, constraint-failure-gpu.test).
 #
 # REQUIRES: cuda
 #

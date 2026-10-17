@@ -707,7 +707,7 @@ def MD_GatherTuplesOp : MD_TupleOp<"gather_tuples", [
     With a second result, of the type `i1`, the kernel yields one more
     value, an `i1`, after those of the members, and the result tells
     whether it is true for some tuple: the constraints of a step test the
-    lengths that they give in their own kernel (D[constraint-failure-stop]).
+    lengths that they give in their own kernel (D278).
 
     ```mlir
     %f = md.gather_tuples %bonds, %x, %cell

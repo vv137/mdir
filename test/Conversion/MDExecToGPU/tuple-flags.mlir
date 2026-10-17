@@ -1,5 +1,5 @@
 // A loop over tuples that tells whether its kernel yields true for some
-// tuple (D[constraint-failure-stop]) takes a flag of its own in memory of
+// tuple (D278) takes a flag of its own in memory of
 // the host mapped for the device (D118): a thread whose tuple yields true
 // stores 1, and the host reads the flag before the first op that uses the
 // value, not where the loop is.

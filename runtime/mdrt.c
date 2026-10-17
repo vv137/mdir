@@ -122,7 +122,7 @@ static void stopWith(const char *message) {
    makes safe: the tests of the constraints are read after the evaluation,
    and a failed set stops the run with its own message, naming the step and
    the set; otherwise mdrtStopPending delivers the recorded stop after the
-   tests (D[constraint-failure-stop], the maintainer's ruling on PR #381). */
+   tests (D278, the maintainer's ruling on PR #381). */
 static int deferringStops = 0, hasPendingStop = 0;
 static char pendingStop[256];
 void mdrtDeferStops(void) { deferringStops = 1; }
@@ -163,7 +163,7 @@ void mdrtStopNotNumbers(int64_t count) {
 
 /* The constraints of a set, SETTLE (`set` 0) or the groups of SHAKE of `set`
    hydrogens, left a length off its target or not a number in the step
-   `step`: the run has failed (D[constraint-failure-stop]). */
+   `step`: the run has failed (D278). */
 void mdrtStopConstraintFailure(int64_t step, int64_t set) {
   char name[32];
   if (set == 0)

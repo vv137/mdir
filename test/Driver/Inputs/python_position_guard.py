@@ -13,7 +13,7 @@ Scenarios, each in double and mixed precision:
   constraints the bonds of hydrogen and the waters rigid, a step of 2 fs,
              and the hydrogen of the first amide starting at 100 nm/ps: the
              constraints of its group (SHAKE, one hydrogen) fail in the
-             first step (D[constraint-failure-stop]); on a GPU also the
+             first step (D278); on a GPU also the
              restraint with the waters rigid, whose build records its stop
              until the waters, intact, are tested, and then fails the part
   sanitize   one short case of each, in mixed precision, for

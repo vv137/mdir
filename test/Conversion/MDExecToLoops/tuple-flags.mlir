@@ -1,5 +1,5 @@
 // A loop over tuples that tells whether its kernel yields true for some
-// tuple (D[constraint-failure-stop]): on the host the value is reduced as an
+// tuple (D278): on the host the value is reduced as an
 // integer of 32 bits, as that of a loop over particles, and compared with 0.
 //
 // RUN: mdir-opt %s --convert-md-exec-to-loops | FileCheck %s

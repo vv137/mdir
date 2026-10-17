@@ -1,5 +1,5 @@
 // The constraints of a step test the lengths they give in their own kernel
-// (D[constraint-failure-stop]): a loop over disjoint tuples that writes its
+// (D278): a loop over disjoint tuples that writes its
 // destinations and has a flag in `reduce` joins the integration run of the
 // loops over particles around it (D110), and the member at place 0 of a
 // tuple whose kernel yields true sets the loop's flag, in both kernels of

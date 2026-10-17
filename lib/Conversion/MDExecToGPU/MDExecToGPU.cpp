@@ -510,7 +510,7 @@ private:
   /// Stores the contributions of a particle and returns, for each global
   /// sum of a loop, its result.
   /// Lowers a loop over tuples with a flag in `reduce`
-  /// (D[constraint-failure-stop]).
+  /// (D278).
   LogicalResult lowerTupleForWithFlags(md_exec::TupleForOp op);
 
   LogicalResult finishSums(Operation *op, OpBuilder &builder,
@@ -533,7 +533,7 @@ private:
   /// Replaces `results` as `replaceWithFlag` does, for flags that one
   /// kernel sets: one event after the kernel, waited for before the first
   /// op of the block that uses one of them, after which the others are read
-  /// as they are (`mdrtFlagTake`, D[constraint-failure-stop]).
+  /// as they are (`mdrtFlagTake`, D278).
   void replaceWithFlags(OpBuilder &builder, Location loc, ArrayRef<Flag> flags,
                         ArrayRef<Value> starts, ArrayRef<Value> results);
 
@@ -859,7 +859,7 @@ void Lowering::replaceWithFlags(OpBuilder &builder, Location loc,
       arith::ConstantOp::create(wait, loc, i32, wait.getI32IntegerAttr(0));
   for (auto [index, flag] : llvm::enumerate(flags)) {
     // The first flag waits for the event after the kernel; the others,
-    // which the same kernel sets (D[constraint-failure-stop]), are read
+    // which the same kernel sets (D278), are read
     // after that wait, without an event of their own.
     Value value =
         index == 0
@@ -1276,7 +1276,7 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
 //===----------------------------------------------------------------------===//
 
 /// Returns true if `loop` tells in a value of `reduce` whether its kernel
-/// yields true for some tuple, which takes a flag (D[constraint-failure-stop]).
+/// yields true for some tuple, which takes a flag (D278).
 static bool hasFlags(md_exec::TupleForOp loop) {
   return llvm::any_of(loop.getReduce(), [](Value value) {
     return value.getType().isInteger(1);
@@ -1747,7 +1747,7 @@ void Lowering::findSharedFrames(func::FuncOp function,
 
 void Lowering::findRows(func::FuncOp function) {
   // A loop over tuples with a flag is lowered alone
-  // (D[constraint-failure-stop]).
+  // (D278).
   auto isRowLoop = [&](Operation *op) {
     if (auto tuple = dyn_cast<md_exec::TupleForOp>(op))
       return !tuple.getDisjoint() && !evaluatesOnce(tuple) &&
@@ -1861,7 +1861,7 @@ void Lowering::findRows(func::FuncOp function) {
       }
       // The loops with flags, the tests of the constraints, are a run of
       // their own: one kernel, whose flags one event covers
-      // (D[constraint-failure-stop]); no other loop joins them.
+      // (D278); no other loop joins them.
       bool joins = !run.empty() &&
                    hasFlags(tuple) ==
                        hasFlags(cast<md_exec::TupleForOp>(run.front()));
@@ -1975,7 +1975,7 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
     auto loop = cast<md_exec::TupleForOp>(op);
     // The loops take the particles of one set, have no reductions but a
     // flag each at most, the test of the constraints that the member at
-    // place 0 sets (D[constraint-failure-stop]), and write none of what the
+    // place 0 sets (D278), and write none of what the
     // loop before wrote.
     if (loop.getOuts().empty() || loop.getReduce().size() > 1 ||
         (loop.getReduce().size() == 1 &&
@@ -2049,7 +2049,7 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
   setPurpose(before);
   purpose += "_integration" + std::to_string(run.loops.size());
 
-  // The flag of each loop that tests its tuples (D[constraint-failure-stop]),
+  // The flag of each loop that tests its tuples (D278),
   // one of its own (D118).
   SmallVector<Flag> loopFlags;
   for (md_exec::TupleForOp loop : run.loops) {
@@ -2319,7 +2319,7 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
       size = arith::MaxUIOp::create(builder, loc, size, sizes.back());
     }
     // A run of loops with flags (findRows): each loop a flag of its own,
-    // set by a thread whose tuple yields true (D[constraint-failure-stop]).
+    // set by a thread whose tuple yields true (D278).
     bool flagged = hasFlags(cast<md_exec::TupleForOp>(run.front()));
     SmallVector<SmallVector<Flag, 1>> loopFlags(loops.size());
     if (flagged)
@@ -3087,7 +3087,7 @@ LogicalResult Lowering::lowerTupleForWithFlags(md_exec::TupleForOp op) {
 
   // A value in `reduce` is a sum, which takes two buffers, or tells whether
   // the kernel yields true for some tuple, which takes a flag of the loop's
-  // own (D118), as in a loop over particles (D[constraint-failure-stop]).
+  // own (D118), as in a loop over particles (D278).
   SmallVector<int> places;
   unsigned numSums = 0, numFlags = 0;
   for (Value value : op.getReduce())

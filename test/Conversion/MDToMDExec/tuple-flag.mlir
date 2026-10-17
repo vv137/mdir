@@ -1,5 +1,5 @@
 // `md.sum_tuples` with a result of the type i1 tells whether its kernel
-// yields true for some tuple (D[constraint-failure-stop]): it becomes a loop
+// yields true for some tuple (D278): it becomes a loop
 // over the tuples with an i1 in `reduce`, which takes no buffers of scratch
 // in storage on a device, and which `md-exec-fuse-loops` does not join with
 // a loop over the same tuples.

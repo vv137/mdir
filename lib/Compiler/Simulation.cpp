@@ -139,7 +139,7 @@ int64_t usedDevice = -1;
 /// The first failure that the runtime reports during a part: a build of the
 /// neighbor structures that found positions that are not numbers
 /// (mdrtStopNotNumbers), or constraints that failed in a step
-/// (mdrtStopConstraintFailure, D[constraint-failure-stop]). The part goes on
+/// (mdrtStopConstraintFailure, D278). The part goes on
 /// to its end and is discarded.
 std::string stopMessage;
 extern "C" void stopPart(const char *message) {

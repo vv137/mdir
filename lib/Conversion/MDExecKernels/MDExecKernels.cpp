@@ -971,7 +971,7 @@ static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
 
 /// `partial` with `value` added, or, for a value of the type i1 that tells
 /// whether the kernel yields true for some tuple, or-ed
-/// (D[constraint-failure-stop]).
+/// (D278).
 static Value accumulate(OpBuilder &builder, Location loc, Value partial,
                         Value value) {
   if (value.getType().isInteger(1))
@@ -1446,7 +1446,7 @@ void kernels::emitIntegrationThread(
     return {boxes[i], inverses[i]};
   };
   // The flag of loop `i`, set by the member at place 0 of a tuple whose
-  // kernel yields true after its destinations (D[constraint-failure-stop]).
+  // kernel yields true after its destinations (D278).
   auto setFlag = [&](OpBuilder &b, unsigned i, const IRMapping &inside) {
     if (i >= run.flags.size() || !run.flags[i])
       return;

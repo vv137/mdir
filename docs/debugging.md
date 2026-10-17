@@ -101,7 +101,7 @@ raises `SimulationError` instead and keeps the state from before the part
 | Message | What failed |
 |---|---|
 | `a position is not a number or is far outside the cell at a build of the neighbor structure` | The positions, at a build (D107, D176, D225) |
-| `the constraints of the set 'S' failed at step N` | After the constraints of the positions of step N, a length of a group of the set `S` (`settles`, or `shake1` to `shake3` for the groups of SHAKE of one to three hydrogens) is off its target by more than $10^{-4}$ of its square below double precision, $10^{-8}$ in double, or is not a number (D[constraint-failure-stop]). In a run with constraints this message takes precedence: a build of the step that finds positions that are not numbers reports them only if every set passed its test |
+| `the constraints of the set 'S' failed at step N` | After the constraints of the positions of step N, a length of a group of the set `S` (`settles`, or `shake1` to `shake3` for the groups of SHAKE of one to three hydrogens) is off its target by more than $10^{-4}$ of its square below double precision, $10^{-8}$ in double, or is not a number (D278). In a run with constraints this message takes precedence: a build of the step that finds positions that are not numbers reports them only if every set passed its test |
 
 Either usually means a time step too long for the system, a bad contact
 in the starting structure, or a start that was not minimized; a smaller

@@ -312,7 +312,7 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
   else
     outs.push_back(md_exec::ZerosOp::create(builder, loc, resultType));
   // A gather that also tells whether its kernel is true for some tuple
-  // (D[constraint-failure-stop]) reduces that to a flag.
+  // (D278) reduces that to a flag.
   Value failed;
   if constexpr (std::is_same_v<OpTy, md::GatherTuplesOp>)
     failed = op.getFailed();

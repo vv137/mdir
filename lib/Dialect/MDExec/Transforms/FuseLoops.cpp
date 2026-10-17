@@ -269,7 +269,7 @@ static bool hasFlags(TupleForOp loop) {
 }
 
 /// Returns true if `loop` has a global sum in `reduce`. A flag, which the
-/// constraints of a step yield (D[constraint-failure-stop]), is not one: a
+/// constraints of a step yield (D278), is not one: a
 /// device sets it from the kernel of an integration run (D110).
 static bool hasSums(TupleForOp loop) {
   return llvm::any_of(loop.getReduce(), [](Value value) {
@@ -289,7 +289,7 @@ static bool isOfIntegrationRun(Operation *op) {
 /// Returns true if a loop over the tuples of a disjoint set uses a result
 /// of `loop`, as a field of its members or as its positions. A loop with a
 /// flag that writes nothing, the separate test of the constraints, is a
-/// kernel of its own on a device, of no run (D[constraint-failure-stop]).
+/// kernel of its own on a device, of no run (D278).
 static bool feedsDisjointTuples(ParticleForOp loop) {
   for (Value result : loop->getResults())
     for (Operation *user : result.getUsers())
@@ -571,7 +571,7 @@ static bool canMoveAfter(Operation *second, Operation *first,
 
 /// Returns true if `a` and `b` run over the same tuples in the same way.
 /// A loop with a flag, the test of the constraints
-/// (D[constraint-failure-stop]), stays a kernel of its own: joined with the
+/// (D278), stays a kernel of its own: joined with the
 /// projection of the velocities at the same positions it would give that
 /// loop a reduction, and a run of loops over disjoint tuples with one is
 /// no longer joined with the loops over particles around it (D110).

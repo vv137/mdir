@@ -506,7 +506,7 @@ int32_t mdrtFlagFinish(int64_t slot) {
 
 /* Reads and clears a flag that the kernel of an other flag set, after
    mdrtFlagFinish of that flag has waited for the event after the kernel
-   (D[constraint-failure-stop]): the loops of a run, one kernel, have a flag
+   (D278): the loops of a run, one kernel, have a flag
    each and one event. A flag outside the mapped words is copied as
    mdrtFlagStart does and waited for. */
 int32_t mdrtFlagTake(void *device) {

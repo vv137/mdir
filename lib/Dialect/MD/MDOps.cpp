@@ -755,7 +755,7 @@ LogicalResult SumTuplesOp::verify() {
   if (failed(verifyTupleOperands(*this)))
     return failure();
   // An i1 tells whether the kernel yields true for some tuple
-  // (D[constraint-failure-stop]).
+  // (D278).
   Type result = getResult().getType();
   if (!isRealOrRealVector(result) && !result.isInteger(1))
     return emitOpError()

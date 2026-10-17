@@ -1,5 +1,5 @@
 # A step whose constraints fail stops the run, with the step and the set
-# (D[constraint-failure-stop]); the kernel of each set of constraints tests
+# (D278); the kernel of each set of constraints tests
 # the lengths it gives. One hydrogen of the first of the three OPC
 # waters of settle.test starts at 1000 Å/ps, 2 Å in a step of 2 fs: SETTLE
 # cannot take its water back to its shape in the first step. The hydrogen

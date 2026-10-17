@@ -253,7 +253,7 @@ energy of the motion within the group.
 $N_c = 3N_\text{water} + \sum_\text{groups} n_\text{H}$; the three of the
 center of mass are always subtracted.
 
-**A failure of the constraints** (D[constraint-failure-stop]). The
+**A failure of the constraints** (D278). The
 constrained dynamics samples the surface $g_k(\mathbf x) = 0$ and the
 velocities tangent to it: the count $N_f$ above, the virial
 $\mathsf W_c$, and the temperature and the pressure of the log all assume

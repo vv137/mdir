@@ -299,7 +299,7 @@ void Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   OpBuilder builder(op);
 
   // A value of the type i1, whether the kernel yields true for some tuple
-  // (D[constraint-failure-stop]), is reduced as an integer of 32 bits, as
+  // (D278), is reduced as an integer of 32 bits, as
   // in a loop over particles.
   Type wide = builder.getI32Type();
   auto widen = [&](OpBuilder &b, Value value) -> Value {

@@ -2,7 +2,7 @@
 # A part of a Python simulation whose constraints fail raises SimulationError
 # with the step and the set, keeps the state from before the part, and
 # leaves the process able to run another simulation
-# (D[constraint-failure-stop]), scenario constraints of
+# (D278), scenario constraints of
 # Inputs/python_position_guard.py: the hydrogen of the first amide of the
 # dipeptide starts at 100 nm/ps, and its group of SHAKE fails in the first
 # step, in double and mixed precision.

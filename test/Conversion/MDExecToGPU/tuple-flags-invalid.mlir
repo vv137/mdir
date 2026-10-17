@@ -1,5 +1,5 @@
 // A flag of a loop over tuples that may share particles in the
-// deterministic mode (D[constraint-failure-stop]).
+// deterministic mode (D278).
 //
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="deterministic=true" \
 // RUN:     -verify-diagnostics

@@ -214,7 +214,7 @@ struct IntegrationRun {
   bool storedPositions = false;
   /// For each loop over tuples, the flag that its member at place 0 sets
   /// where the kernel yields true after the destinations (the test of the
-  /// constraints, D[constraint-failure-stop]), or no value.
+  /// constraints, D278), or no value.
   llvm::SmallVector<mlir::Value, 4> flags;
 };
 
