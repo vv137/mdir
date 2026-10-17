@@ -711,9 +711,13 @@ llvm::Expected<InitialState> mdir::model::drawVelocities(
   // for the default execution, on the CPU, where `Auto` is the matrix, so
   // without the dual list, which is of the groups (D245). A value that
   // `compile` would refuse is refused there. The copy of the system is
-  // the price of preparing it as `prepare` does.
+  // the price of preparing it as `prepare` does. The terms of
+  // [[energy.model]] are left out: the draw reads the masses, the
+  // constraints, and the temperature only, and a model term is refused on
+  // the CPU of that execution (#388).
   System physics = s;
   physics.prunedDistance = 0.0;
+  physics.models.clear();
   auto prepared = prepare(physics, state, Integrator{}, ensemble, Execution{}, Schedule{});
   if (!prepared) return prepared.takeError();
   // The draw of `mdir run` when its coordinates give no velocities.

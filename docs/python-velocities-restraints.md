@@ -38,6 +38,12 @@ freedom of the log. The system is prepared by the same path as `compile`
 (an NVE ensemble at `temperature`), so the velocities are those of
 `mdir run` bit for bit when the control file has the same topology,
 coordinates, constraints, `[ensemble] temperature`, and `[dynamics] seed`.
+The terms of `System.models` (`[[energy.model]]`, D270) are left out of
+that preparation: they change neither the masses nor the constraints, and
+the draw is the same with and without them. The draw needs no plugin and
+does not check the term; `compile` checks it and its target (before #388
+the draw refused a system with a model term, since it prepared the system
+for the CPU).
 `mdir run` takes its one seed for the velocities and the thermostat; in
 Python `Ensemble.seed` is the thermostat's, and a run that should repeat
 `mdir run` sets both to the same value. The draw has a generator of its own
@@ -45,7 +51,7 @@ and moves no other random stream.
 
 | Argument | Type | Unit | Accepted |
 |---|---|---|---|
-| `system` | `System` | | what `compile` accepts, with the particle count of the state |
+| `system` | `System` | | what `compile` accepts, with the particle count of the state; its model terms are not checked |
 | `temperature` | float | K | finite, at least 0 (0 gives velocities of 0) |
 | `seed` | int | | 0 to $2^{63}-1$, as `[dynamics] seed` |
 
