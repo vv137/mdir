@@ -384,6 +384,11 @@ transport: a transport must give the same rows and the same sums.
   in that order, so the result is the same to the bit from run to run for
   a given grid. It is not the same to the bit as one domain, whose sums run
   in another order.
+- The ops of `md_dist` of a function run in one block, and a value of
+  `md_dist` goes only to ops of `md_dist`. An op of another dialect, or of
+  no registered dialect (under `--allow-unregistered-dialect`), that uses
+  such a value is refused with a diagnostic; one that does not is left
+  where it is (`test/Conversion/MDDistToLoops/unregistered-op.mlir`).
 
 ## 7. Lowering a pair loop over owned and ghost rows
 

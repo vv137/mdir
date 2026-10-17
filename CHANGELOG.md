@@ -1213,6 +1213,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- `--convert-md-dist-to-loops` asserted on a function that holds ops of
+  `md_dist` and an op of no registered dialect, which `--allow-unregistered-dialect` admits (#383).
+  It took the dialect of every op it walked and of every user of a value
+  of `md_dist`, which is null for such an op. The op is now taken as one
+  of another dialect: left in place, or refused with the pass's diagnostic
+  when it uses a value of `md_dist`.
+
 - A `.gro` file whose velocities do not read in fields as wide as its
   coordinates is refused, with the line, instead of read with the
   velocities that do not read taken as 0 (#365). Velocities written one
