@@ -36,6 +36,14 @@ void mdrtCountPrune(void) { ++numPrunes; }
 
 int64_t mdrtGetPruneCount(void) { return numPrunes; }
 
+/* Of those, the prunings that the loop over pairs that follows the refresh
+   did in its own kernel (D[fused-prune]). */
+static int64_t numFusedPrunes = 0;
+
+void mdrtCountFusedPrune(void) { ++numFusedPrunes; }
+
+int64_t mdrtGetFusedPruneCount(void) { return numFusedPrunes; }
+
 /* The check of the pruning (MDIR_CHECK_PRUNING, D268): at each
    step, compiled code counts the pairs within the cutoff in the outer list
    and in the inner one, through its active units, at that step's

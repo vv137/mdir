@@ -1,0 +1,32 @@
+# The kernel of the loop over pairs that prunes the inner list of a dual
+# list (D[fused-prune]) under compute-sanitizer, at any number of groups
+# (MDIR_FUSED_PRUNE=always): the water box of test/Driver/pme-settle.test,
+# 11 / 9.3 Å, in mixed and double precision, and the rhombic dodecahedron of
+# test/Driver/triclinic.test, 9 / 8.4 Å, over 20 steps each. Each warp
+# writes the inner list of its group and reads it back after a barrier of
+# the warp. initcheck runs on the dodecahedron only: on the water box it
+# reports reads in the build of the groups on main as well (#413).
+#
+# REQUIRES: cuda, compute-sanitizer
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../Driver/Inputs/opc/opc.prmtop %S/../Driver/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/pme-settle.test | sed '1d;$d' \
+# RUN:     | sed -e 's|energy_interval = 50|energy_interval = 10|' -e 's|^steps *= 100|steps = 20|' \
+# RUN:           -e 's|^pairlist_distance = 10.0|pairlist_distance = 11.0\npruned_distance = 9.3|' \
+# RUN:           -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "mixed"\nneighbor_structure = "GROUPS"|' > %t/mixed.toml
+# RUN: sed -e 's|^precision = "mixed"|precision = "double"|' %t/mixed.toml > %t/double.toml
+# RUN: cp %S/../Driver/Inputs/triclinic/water.top %S/../Driver/Inputs/triclinic/dodecahedron.gro %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/triclinic.test | sed '1d;$d' \
+# RUN:   | sed -e 's/^steps .*/steps = 20/' -e 's/^energy_interval .*/energy_interval = 10/' \
+# RUN:         -e 's/^target .*/target = "GPU"\nneighbor_structure = "GROUPS"/' -e 's/^precision .*/precision = "MIXED"/' \
+# RUN:         -e 's/^pairlist_distance = 9.0/pairlist_distance = 9.0\npruned_distance = 8.4/' > %t/triclinic.toml
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run mixed.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run mixed.toml 2>&1 | FileCheck %s --check-prefix=RACE
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run double.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run triclinic.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run triclinic.toml 2>&1 | FileCheck %s
+
+# CHECK: the inner lists were pruned {{[0-9]+}} times, {{.*}}{{[0-9]+}} of them in the loop over pairs
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

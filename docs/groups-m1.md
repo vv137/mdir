@@ -387,8 +387,9 @@ the derivative in the tunables of a Python model are such loops).
 | The configuration | The kernel of the pruning that moves the positions into the frames of the groups also copies the positions, particle by particle in their order, to the configuration of the pruning, in place of a copy of the buffer (D268): 13.0 µs on the 103k TIP3P box against 7.3 and 8.7 for the two apart. Written by place, where each particle's position is read anyway, the scattered writes took 20.9 µs, and in the main kernel 17 µs more |
 | The frames | The positions in the frames of the groups, in f32, are kept with the structure. A loop over pairs that follows the refresh at the same positions and in the same cell, with no op between that may write the positions (by the memory effects of the ops and the aliases of the buffers, `findSharedFrames`), and that computes in f32, takes them as they are when the refresh pruned: they are the loop's own, to the bit (the same shift in f64, added in f64, rounded to f32). Otherwise, and in double precision, the loop moves the positions itself (D268) |
 | The order | The pruning keeps the order of the outer list and adds no order of its own. The order of the outer list, the blocks that the build takes with an atomic addition, and the atomic additions of the loop are as without a dual list: the sums still depend on the order of the threads, and the deterministic mode does not take groups. The loop takes the active units in the order of the blocks, as it took all units before; a warp takes other units than before, and its sums are added in another order |
-| The check | With `MDIR_CHECK_PRUNING` set, each refresh counts, at the positions of its step, the pairs within the cutoff in the outer list and in the inner list through the active units, in f32 on the frames of that step; the inner list is a part of the outer one, so the two differ only where it misses a pair, and the runtime stops the run. At its end the run reports the steps it checked (`test/Driver/prune-check-gpu.test`; the option `check-pruning` of `convert-md-exec-to-gpu`) |
-| The log | `the inner lists were pruned N times, every k steps on average`, the prunings that follow a build included |
+| The pruning in the loop | Where a refresh prunes, the first loop over pairs that takes its result prunes for it (D[fused-prune], #362), if it follows the refresh in the same block at the same positions and in the same cell with no op between that may write the positions (the conditions of the frames, below) and no op between takes the refresh's result (`findPrunedInLoop`). The refresh then runs only the kernel of the frames (the frames, the configuration and the cell of the pruning, the counts cleared), and the loop runs one kernel with a warp for each group: the warp prunes its group with the code of the pruning above (`emitPruneGroup`), waits for the stores of its other lanes (`bar.warp.sync`), and computes the pairs of the entries it kept, read back from the inner list as one stream of the group, 32 at a time, with the round of the loop (`GroupStream`); the kernel of the active units follows. The inner list is the pruning's to the bit, and on the step itself the warp takes the pairs within $r_c < R_\text{in}$ of the entries kept, those of the loop over the fresh inner list; only the order of the additions differs. On the steps that do not prune the loop takes the active units as before. The host takes it from 4096 groups of the last build, 20,480 on a device of `sm_12x` (`takesFusedPruning`, one test for the refresh and the loop; the threshold from the architecture that the kernels are compiled for); `MDIR_FUSED_PRUNE=off` never, `=always` at any number. A warp a group is slower where the groups do not fill the device: JAC (1,472 groups) +1.2% a step on an RTX 4090 |
+| The check | With `MDIR_CHECK_PRUNING` set, each refresh counts (the loop that prunes for it, after the loop), at the positions of its step, the pairs within the cutoff in the outer list and in the inner list through the active units, in f32 on the frames of that step; the inner list is a part of the outer one, so the two differ only where it misses a pair, and the runtime stops the run. At its end the run reports the steps it checked (`test/Driver/prune-check-gpu.test`; the option `check-pruning` of `convert-md-exec-to-gpu`) |
+| The log | `the inner lists were pruned N times, every k steps on average`, the prunings that follow a build included, and `, M of them in the loop over pairs` where the loop pruned |
 
 Measured (RTX 3090 at 300 W, mixed precision, one run each, ns/day):
 
@@ -437,6 +438,45 @@ rather than with atomic additions in the main kernel, changed nothing
 runs of main differ from each other (`forces.py`; on TIP3P at most
 9.8 × 10⁻⁴ kJ/mol/nm against 1.1 × 10⁻³, in double on JAC 1.4 × 10⁻¹²
 against 1.4 × 10⁻¹²).
+
+The pruning in the loop (D[fused-prune], #362), against the pruning of
+the refresh in the same binary (`MDIR_FUSED_PRUNE=always` and `off`),
+mixed precision, the inputs of `scripts/benchmarks/rolling-prune` with
+Cellulose NVE of the suite (11 / 8.6 Å) and TIP3P boxes of four sizes
+(12 / 9.6 Å), [scripts/benchmarks/fused-prune](../scripts/benchmarks/fused-prune)
+(`steps.py`: 4 rounds alternated in one job, the first dropped; mean of 3),
+µs a step:
+
+| System | Groups (sites / 16) | RTX 4090: refresh | loop | RTX PRO 6000: refresh | loop |
+|---|---|---|---|---|---|
+| JAC | 1,472 | 136.0 | 137.7 | 116.3 | 124.0 |
+| Ubiquitin in OPC | 1,626 | 188.7 | 193.7 | | |
+| TIP3P, 27,234 sites | 1,702 | 155.0 | 157.0 | | |
+| TIP3P, 52,686 sites | 3,292 | 233.7 | 233.7 | 173.0 | 178.7 |
+| TIP3P, 103,158 sites | 6,447 | 405.0 | 388.3 | 291.3 | 294.3 |
+| TIP3P, 203,490 sites | 12,718 | 741.0 | 707.0 | | |
+| TIP3P, 309,876 sites | 19,367 | 1118.3 | 1050.3 | 896.3 | 898.3 |
+| Cellulose | 25,538 | 1465.3 | 1375.7 | 1094.7 | 1093.0 |
+| OPC, 413,168 sites | 25,823 | 1630.7 | 1528.3 | | |
+| STMV, 4 fs | 66,693 | 4710.0 | 4458.0 | 3481.0 | 3441.3 |
+
+On the RTX 4090 the kernel that prunes and computes takes, a call, the
+loop and 0 to 7% more (nsys: Cellulose 584.9 µs against 550.6 for the
+loop and 228.6 for the main kernel of the pruning; TIP3P 309,876 sites
+539.3 against 503.6 and 206.8; STMV 1638.4 against 1654.2 and 575.0): the
+part of a warp that prunes is bound by memory, the part that computes by
+the shuffles and the arithmetic, and warps of the two parts run side by
+side on a multiprocessor. On STMV it takes less than the loop alone, as a
+warp a group adds the sums of its members once rather than once a block.
+It holds 94 to 96 registers a thread, against 72 for the loop and for the
+pruning. On the RTX PRO 6000 Blackwell Max-Q, at its cap of 300 W, the
+kernel takes the sum of the two (Cellulose 591.2 against 415.0 and
+167.5), so the loop that prunes gains at most 1%; that a device bound by
+its power gains nothing from running the two parts side by side is a
+hypothesis, not measured. Below about 3,300 groups a warp a group leaves
+the device partly idle where the loop had a warp for each active unit.
+The loop therefore prunes from 4096 groups, and on a device of `sm_12x`
+from 20,480, where a step is equal from about 19,000 groups.
 
 ## 6.3 The default: `AUTO` (D261)
 

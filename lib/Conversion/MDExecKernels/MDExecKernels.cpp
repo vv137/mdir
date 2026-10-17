@@ -463,7 +463,7 @@ static void emitAtomicAdd(OpBuilder &b, Location loc, Value value,
 SmallVector<Value> kernels::emitGroupPairKernel(
     OpBuilder &builder, md_exec::PairForOp op, const GroupLists &lists,
     const PairLayout &layout, Value box, Value inverse, Value unit,
-    Value lane, IRMapping &local) {
+    Value lane, IRMapping &local, const GroupStream *stream) {
   Location loc = op.getLoc();
   Block &kernel = op.getKernel().front();
   Operation *yield = kernel.getTerminator();
@@ -483,13 +483,20 @@ SmallVector<Value> kernels::emitGroupPairKernel(
   };
 
   // The unit: its group, and its entries.
-  Value group = memref::LoadOp::create(builder, loc, lists.units,
-                                       ValueRange{unit});
-  Value k = memref::LoadOp::create(builder, loc, lists.ordinals,
-                                   ValueRange{unit});
+  Value group, k;
+  if (stream) {
+    group = arith::IndexCastOp::create(builder, loc, i32, unit);
+  } else {
+    group = memref::LoadOp::create(builder, loc, lists.units, ValueRange{unit});
+    k = memref::LoadOp::create(builder, loc, lists.ordinals, ValueRange{unit});
+  }
   Value groupIndex = toIndex(builder, group);
   Value begin, end;
-  if (lists.blockCounts) {
+  if (stream) {
+    // The stream of the group, from its front (D[fused-prune]).
+    begin = constant32(builder, 0);
+    end = stream->count;
+  } else if (lists.blockCounts) {
     // The inner list keeps its entries at the front of each block.
     begin = constant32(builder, 0);
     end = memref::LoadOp::create(builder, loc, lists.blockCounts,
@@ -556,6 +563,10 @@ SmallVector<Value> kernels::emitGroupPairKernel(
   // unit is block `unit` of the entries.
   Value blockBase = arith::MulIOp::create(builder, loc, unit,
                                           createIndex(builder, loc, 64));
+  // Of a stream: the row of the group's blocks.
+  Value streamRow;
+  if (stream)
+    streamRow = arith::MulIOp::create(builder, loc, groupIndex, stream->stride);
   Value first = toIndex(builder, begin);
   Value last = toIndex(builder, end);
   Value step32 = createIndex(builder, loc, 32);
@@ -566,9 +577,24 @@ SmallVector<Value> kernels::emitGroupPairKernel(
         Value has = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ult,
                                           e, last);
         Value safe = arith::SelectOp::create(b, loc, has, e, first);
-        // Entry e of the list is entry e - 64 k of the block.
-        Value at = arith::AddIOp::create(
-            b, loc, arith::SubIOp::create(b, loc, safe, first), blockBase);
+        // Entry e of the list is entry e - 64 k of the block; of a stream,
+        // entry e mod 64 of its block e / 64.
+        Value at;
+        if (stream) {
+          Value c64 = createIndex(b, loc, 64);
+          Value block = toIndex(
+              b, memref::LoadOp::create(
+                     b, loc, stream->blockOf,
+                     ValueRange{arith::AddIOp::create(
+                         b, loc, streamRow,
+                         arith::DivUIOp::create(b, loc, safe, c64))}));
+          at = arith::AddIOp::create(
+              b, loc, arith::MulIOp::create(b, loc, block, c64),
+              arith::RemUIOp::create(b, loc, safe, c64));
+        } else {
+          at = arith::AddIOp::create(
+              b, loc, arith::SubIOp::create(b, loc, safe, first), blockBase);
+        }
         Value place32 =
             memref::LoadOp::create(b, loc, lists.entries, ValueRange{at});
         Value mask = arith::SelectOp::create(
