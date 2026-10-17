@@ -80,12 +80,18 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
     *options += " cache=false";
   return options;
 }
-/// Whether the values of the tuples evaluated once go to their destinations
-/// with an atomic each (`MDIR_TUPLE_SUMS=atomics`), as before the sums of a
-/// block, for comparing the two (D[tuple-block-sums]).
-static bool sumsTuplesByAtomics() {
+/// The options of the sums of a block of the tuples evaluated once
+/// (D[tuple-block-sums]): `MDIR_TUPLE_SUMS=atomics` adds every value to its
+/// destination with an atomic, as before; `=blocks` takes the sums of a
+/// block for a run of any size, which the tests of small systems need.
+static llvm::StringRef getTupleSumsOptions() {
   const char *value = std::getenv("MDIR_TUPLE_SUMS");
-  return value && llvm::StringRef(value) == "atomics";
+  llvm::StringRef given = value ? value : "";
+  if (given == "atomics")
+    return "tuple-block-sums=false ";
+  if (given == "blocks")
+    return "tuple-block-least=0 ";
+  return "";
 }
 
 std::string mdir::compiler::getPipeline(const Control &control,
@@ -163,10 +169,9 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // A check of the pruning of the dual lists, for tests
        // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
-       // The values of the tuples evaluated once added to the destinations
-       // with an atomic each, as before the sums of a block, for comparing
-       // the two (D[tuple-block-sums]).
-       << (sumsTuplesByAtomics() ? "tuple-block-sums=false " : "")
+       // The sums of a block of the tuples evaluated once, off or for runs
+       // of any size, for comparing and for tests (D[tuple-block-sums]).
+       << getTupleSumsOptions()
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        // The code of the host writes no buffer of the model that the entry

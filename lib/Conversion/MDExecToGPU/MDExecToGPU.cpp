@@ -242,6 +242,10 @@ public:
   /// adds each particle's sum to the destination once a block
   /// (`tuple-block-sums`, D[tuple-block-sums]).
   bool tupleBlockSums = true;
+  /// The fewest tuples of a run that take the sums of a block; a run of
+  /// fewer keeps the atomics, chosen on the host by the count
+  /// (`tuple-block-least`).
+  int64_t tupleBlockLeast = 100000;
 
 private:
   /// An entry of the runtime's store for a tuple set built on the device:
@@ -1576,11 +1580,31 @@ bool Lowering::launchTupleBlocks(
     attributions.push_back(MemRefType::get(
         {slots * c}, element, MemRefLayoutAttrInterface(), workgroup));
 
-  Value one = createIndex(builder, loc, 1);
-  Value threads = createIndex(builder, loc, blockSize);
-  Value grid = createGroups(builder, loc, count, blockSize);
+  // A run of few tuples keeps the atomics: the device holds all its blocks
+  // at once, and the table lengthens each (measured on one RTX 4090 and one
+  // RTX PRO 6000: JAC, 55,000 tuples, ran 1.5% and 3% slower with the
+  // table, Factor IX, 165,000, 2.3% and 1% faster). The host chooses by the
+  // count.
+  std::optional<OpBuilder> chosen;
+  if (tupleBlockLeast > 0) {
+    Value many = arith::CmpIOp::create(
+        builder, loc, arith::CmpIPredicate::uge, count,
+        createIndex(builder, loc, tupleBlockLeast));
+    auto choice = scf::IfOp::create(builder, loc, many, /*withElseRegion=*/true);
+    OpBuilder few = choice.getElseBodyBuilder();
+    launchOver(few, loc, count, [&](OpBuilder &b, Value item) {
+      emitItem(b, item, nullptr);
+    });
+    chosen.emplace(choice.getThenBodyBuilder());
+  } else {
+    chosen.emplace(builder);
+  }
+  OpBuilder &at = *chosen;
+  Value one = createIndex(at, loc, 1);
+  Value threads = createIndex(at, loc, blockSize);
+  Value grid = createGroups(at, loc, count, blockSize);
   auto launch = gpu::LaunchOp::create(
-      builder, loc, grid, one, one, threads, one, one,
+      at, loc, grid, one, one, threads, one, one,
       /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
       /*asyncDependencies=*/{}, /*workgroupAttributions=*/attributions);
   OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
@@ -7471,6 +7495,7 @@ public:
     lowering.deviceTuples = keptTuples && deviceTuples;
     lowering.checkPruning = checkPruning;
     lowering.tupleBlockSums = tupleBlockSums;
+    lowering.tupleBlockLeast = tupleBlockLeast;
     if (failed(lowering.run()))
       return signalPassFailure();
     // Products and sums in the kernels may become fused multiply-adds, as

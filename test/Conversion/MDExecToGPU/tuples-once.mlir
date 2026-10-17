@@ -5,10 +5,12 @@
 // default, D[tuple-block-sums]) a thread adds to a table of the particles
 // of its block in block memory, which it finds by a compare-and-swap, or,
 // past a few slots, to the destination; after a barrier each particle of
-// the table is added to the destination once.
+// the table is added to the destination once. A run of fewer tuples than
+// tuple-block-least keeps the atomics, chosen on the host by the count.
 //
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true tuple-block-sums=false" | FileCheck %s
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=BLOCKS
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true tuple-block-least=0" | FileCheck %s --check-prefix=BLOCKS
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=CHOOSE
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=false" | FileCheck %s --check-prefix=ROWS
 // RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CENTERS
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="fuse-centers=false" | FileCheck %s --check-prefix=APART
@@ -34,6 +36,15 @@ md.particle_set @atoms
 // BLOCKS:           memref.load %{{[a-z0-9]+}}[%{{[a-z0-9]+}}] : memref<256xi32, #gpu.address_space<workgroup>>
 // BLOCKS-COUNT-3:     "red.relaxed.gpu.global.add.f32 [$0], $1;"
 // BLOCKS:         return
+// CHOOSE-LABEL: func.func @bonds(
+// CHOOSE:         %[[LEAST:[a-z0-9_]+]] = arith.constant 100000 : index
+// CHOOSE:         %[[MANY:[0-9]+]] = arith.cmpi uge, %{{[a-z0-9_]+}}, %[[LEAST]] : index
+// CHOOSE:         scf.if %[[MANY]] {
+// CHOOSE:           gpu.launch {{.*}}workgroup(
+// CHOOSE:         } else {
+// CHOOSE:           gpu.launch
+// CHOOSE-NOT:         "red.shared.add.f32 [$0], $1;"
+// CHOOSE:         return
 func.func @bonds(%members: memref<?x2xi32>, %n: index,
                  %x: memref<?x3xf32, 1>, %cell: !md.cell,
                  %f: memref<?x3xf32, 1>) {
