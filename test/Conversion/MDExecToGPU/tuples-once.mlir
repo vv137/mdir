@@ -1,9 +1,14 @@
 // By default (tuples-once), a loop over tuples that may share particles, has no
 // global sums, and adds to its destination evaluates each tuple once, a
 // thread for each tuple, and adds to the members with atomics: in f32 by
-// PTX's own reduction.
+// PTX's own reduction. With the sums of a block (tuple-block-sums, the
+// default, D[tuple-block-sums]) a thread adds to a table of the particles
+// of its block in block memory, which it finds by a compare-and-swap, or,
+// past a few slots, to the destination; after a barrier each particle of
+// the table is added to the destination once.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true tuple-block-sums=false" | FileCheck %s
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=BLOCKS
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=false" | FileCheck %s --check-prefix=ROWS
 // RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CENTERS
 // RUN: mdir-opt %s --convert-md-exec-to-gpu="fuse-centers=false" | FileCheck %s --check-prefix=APART
@@ -16,6 +21,19 @@ md.particle_set @atoms
 // CHECK-COUNT-6:   llvm.inline_asm has_side_effects "red.relaxed.gpu.global.add.f32 [$0], $1;"
 // ROWS-LABEL:  func.func @bonds(
 // ROWS-NOT:      llvm.inline_asm
+// BLOCKS-LABEL: func.func @bonds(
+// BLOCKS:         gpu.launch {{.*}}workgroup(%{{[a-z0-9]+}} : memref<256xi32, #gpu.address_space<workgroup>>, %{{[a-z0-9]+}} : memref<768xf32, #gpu.address_space<workgroup>>)
+// BLOCKS:           memref.store %c-1_i32
+// BLOCKS:           gpu.barrier
+// BLOCKS:           scf.while
+// BLOCKS:             "atom.shared.cas.b32 $0, [$1], $2, $3;"
+// BLOCKS-COUNT-3:     "red.shared.add.f32 [$0], $1;"
+// BLOCKS-COUNT-3:     "red.relaxed.gpu.global.add.f32 [$0], $1;"
+// BLOCKS:           scf.while
+// BLOCKS:           gpu.barrier
+// BLOCKS:           memref.load %{{[a-z0-9]+}}[%{{[a-z0-9]+}}] : memref<256xi32, #gpu.address_space<workgroup>>
+// BLOCKS-COUNT-3:     "red.relaxed.gpu.global.add.f32 [$0], $1;"
+// BLOCKS:         return
 func.func @bonds(%members: memref<?x2xi32>, %n: index,
                  %x: memref<?x3xf32, 1>, %cell: !md.cell,
                  %f: memref<?x3xf32, 1>) {

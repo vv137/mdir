@@ -80,6 +80,14 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
     *options += " cache=false";
   return options;
 }
+/// Whether the values of the tuples evaluated once go to their destinations
+/// with an atomic each (`MDIR_TUPLE_SUMS=atomics`), as before the sums of a
+/// block, for comparing the two (D[tuple-block-sums]).
+static bool sumsTuplesByAtomics() {
+  const char *value = std::getenv("MDIR_TUPLE_SUMS");
+  return value && llvm::StringRef(value) == "atomics";
+}
+
 std::string mdir::compiler::getPipeline(const Control &control,
                                const Program &program, StringRef gpuOptions) {
   std::string pipeline;
@@ -155,6 +163,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // A check of the pruning of the dual lists, for tests
        // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
+       // The values of the tuples evaluated once added to the destinations
+       // with an atomic each, as before the sums of a block, for comparing
+       // the two (D[tuple-block-sums]).
+       << (sumsTuplesByAtomics() ? "tuple-block-sums=false " : "")
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        // The code of the host writes no buffer of the model that the entry

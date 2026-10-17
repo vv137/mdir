@@ -457,9 +457,6 @@ static Value fromComponents(OpBuilder &b, Location loc, Type type,
   return parts.front();
 }
 
-static void emitAtomicAdd(OpBuilder &b, Location loc, Value value,
-                          Value buffer, Value row);
-
 SmallVector<Value> kernels::emitGroupPairKernel(
     OpBuilder &builder, md_exec::PairForOp op, const GroupLists &lists,
     const PairLayout &layout, Value box, Value inverse, Value unit,
@@ -1190,8 +1187,8 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
 /// the buffer `buffer` on a device, with no result: a relaxed atomic at the
 /// scope of the device. f32 takes PTX's own reduction, as the NVPTX backend
 /// of LLVM expands atomicrmw fadd of f32 into a loop of compare-and-swap.
-static void emitAtomicAdd(OpBuilder &b, Location loc, Value value,
-                          Value buffer, Value row) {
+void kernels::emitAtomicAdd(OpBuilder &b, Location loc, Value value,
+                            Value buffer, Value row) {
   auto type = cast<MemRefType>(buffer.getType());
   Type element = type.getElementType();
   int64_t components = type.getRank() == 1 ? 1 : type.getDimSize(1);
@@ -1231,7 +1228,8 @@ static void emitAtomicAdd(OpBuilder &b, Location loc, Value value,
 
 void kernels::emitTupleOnce(OpBuilder &builder, md_exec::TupleForOp op,
                             Value members, Value tuple, Value box,
-                            Value inverse, IRMapping &local) {
+                            Value inverse, IRMapping &local,
+                            AddToMember add) {
   Location loc = op.getLoc();
   Block &kernel = op.getKernel().front();
   Operation *yield = kernel.getTerminator();
@@ -1254,8 +1252,12 @@ void kernels::emitTupleOnce(OpBuilder &builder, md_exec::TupleForOp op,
     for (int64_t q = 0; q != arity; ++q) {
       Value value = evaluated.inside.lookupOrDefault(
           yield->getOperand(i * arity + q));
-      emitAtomicAdd(builder, loc, convertReal(builder, loc, value, stored),
-                    destination, evaluated.members[q]);
+      Value converted = convertReal(builder, loc, value, stored);
+      if (add)
+        add(builder, i, evaluated.members[q], converted);
+      else
+        emitAtomicAdd(builder, loc, converted, destination,
+                      evaluated.members[q]);
     }
   }
 }

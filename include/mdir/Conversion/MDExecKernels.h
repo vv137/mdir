@@ -261,9 +261,23 @@ void emitIntegrationThread(
 /// for the destinations added to the members with atomics, whose order the
 /// threads decide (not in the deterministic mode, D84). The loop has no
 /// global sums, and adds to its destinations.
+///
+/// `add`, if given, takes the value for destination `out` of the member
+/// `member` in place of the atomic addition to the destination (the sums of
+/// a block, D[tuple-block-sums]).
+using AddToMember = llvm::function_ref<void(mlir::OpBuilder &, unsigned out,
+                                            mlir::Value member,
+                                            mlir::Value value)>;
 void emitTupleOnce(mlir::OpBuilder &builder, md_exec::TupleForOp op,
                    mlir::Value members, mlir::Value tuple, mlir::Value box,
-                   mlir::Value inverse, mlir::IRMapping &local);
+                   mlir::Value inverse, mlir::IRMapping &local,
+                   AddToMember add = nullptr);
+
+/// Adds `value`, a number or a vector of the components of a row, to the
+/// row `row` of `buffer` on a device with a relaxed atomic at the scope of
+/// the device, with no result.
+void emitAtomicAdd(mlir::OpBuilder &builder, mlir::Location loc,
+                   mlir::Value value, mlir::Value buffer, mlir::Value row);
 
 /// Emits what a thread of a loop over tuples with global sums does where
 /// each tuple is evaluated once (D103): the tuples `first`, `first +
