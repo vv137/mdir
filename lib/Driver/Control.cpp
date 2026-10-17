@@ -3515,10 +3515,10 @@ trajectory_interval = 0         # steps between frames; 0: none
 [energy]
 cutoff            = 12.0        # Å
 switch_distance   = 10.0        # where switching begins (Å); the cutoff: none
-# pairlist_distance = 13.5      # reach of the neighbor structures (Å);
-                                # the cutoff + 1.5, + 3 for the groups
-                                # that AUTO takes
-# pruned_distance = 0           # reach of the inner list of a dual list,
+# pairlist_distance = "AUTO"    # reach of the neighbor structures (Å);
+                                # AUTO: the cutoff + 1.5, + 3 for the
+                                # groups, or measured on a long run
+# pruned_distance = "AUTO"      # reach of the inner list of a dual list,
                                 # pruned from the structure; needs GROUPS
                                 # or AUTO (Å)
 # rebuild_interval = 0          # 0: rebuild when a particle has moved half
@@ -3608,10 +3608,10 @@ checkpoint_interval = 50000     # steps between checkpoints
 
 [energy]
 cutoff            = 9.0         # of the direct terms (Å)
-# pairlist_distance = 10.5      # reach of the neighbor structures (Å);
-                                # the cutoff + 1.5, + 3 for the groups
-                                # that AUTO takes
-# pruned_distance = 0           # reach of the inner list of a dual list,
+# pairlist_distance = "AUTO"    # reach of the neighbor structures (Å);
+                                # AUTO: the cutoff + 1.5, + 3 for the
+                                # groups, or measured on a long run
+# pruned_distance = "AUTO"      # reach of the inner list of a dual list,
                                 # pruned from the structure; needs GROUPS
                                 # or AUTO (Å)
 # rebuild_interval = 0          # 0: rebuild when a particle has moved half

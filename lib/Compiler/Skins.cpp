@@ -38,10 +38,11 @@ using llvm::StringRef;
 namespace {
 
 /// The product of particles and steps from which a run is long enough to
-/// search: about an hour of an RTX 4090 at about 4 ns a particle and a step
-/// (the Amber suite: JAC 5.5, Cellulose 3.6, STMV 4.3), against a search of
-/// a minute or two that gains 1 to 3% (issue #406).
-constexpr double searchParticleSteps = 1e12;
+/// search: about five hours of an RTX 4090 at about 4 ns a particle and a
+/// step (the Amber suite: JAC 5.5, Cellulose 3.6, STMV 4.3), so that a
+/// search of 1.5 to 4 minutes, a compilation of 13 to 35 s a candidate,
+/// costs at most about 1% of the run and gains 1 to 4% (D[skin-auto]).
+constexpr double searchParticleSteps = 5e12;
 
 /// The constants of the cost model of a step, fitted to the grid of #406 on
 /// an RTX 4090 (480 runs of the Amber suite in mixed precision, outer skins
@@ -212,6 +213,10 @@ compiler::SkinTrial measure(const Control &control, const System &system,
     return trial;
   }
   trial.compileSeconds = seconds(began);
+  compiler::CompileStats stats = (*simulation)->getCompileStats();
+  trial.pipelineSeconds = stats.pipelineSeconds;
+  trial.kernelSeconds = stats.gpuSerializeSeconds;
+  trial.hostSeconds = stats.compileSeconds;
   int64_t unit = getStepUnit(control);
   auto run = [&](int64_t steps) -> double {
     auto from = std::chrono::steady_clock::now();
@@ -312,12 +317,16 @@ proposeCandidates(const Control &control, const CostModel &model,
     return chosen;
   chosen.push_back({scored[0].outer, scored[0].inner});
   // A second candidate elsewhere: the landscape is not smooth (#406), so
-  // the second is at least 1 Å away in the outer skin where the outer is
-  // chosen, or 0.2 Å in the inner one where only it is.
+  // the second is at least 1 Å away in the outer skin from the first and
+  // from the reference where the outer is chosen, or 0.2 Å in the inner
+  // one from both where only it is.
   for (const Scored &s : scored) {
-    bool far = control.pairlistDistanceAuto
-                   ? std::fabs(s.outer - scored[0].outer) >= 1.0 - 1e-9
-                   : std::fabs(s.inner - scored[0].inner) >= 0.2 - 1e-9;
+    bool far =
+        control.pairlistDistanceAuto
+            ? std::fabs(s.outer - scored[0].outer) >= 1.0 - 1e-9 &&
+                  std::fabs(s.outer - outerReference) >= 1.0 - 1e-9
+            : std::fabs(s.inner - scored[0].inner) >= 0.2 - 1e-9 &&
+                  std::fabs(s.inner - innerReference) >= 0.2 - 1e-9;
     if (far) {
       chosen.push_back({s.outer, s.inner});
       break;
@@ -573,9 +582,13 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
                           trial.inner != 0.0 ? format(trial.inner) : "-");
     if (trial.failure.empty())
       *log << llvm::formatv("{0:f2} µs a step ± {1:f2}%, builds every {2:f1} "
-                            "steps, compiled in {3:f1} s\n",
+                            "steps, compiled in {3:f1} s (the pipeline "
+                            "{4:f1} s, of which the kernels {5:f1} s; the "
+                            "host code {6:f1} s)\n",
                             trial.microseconds, 100.0 * trial.error,
-                            trial.buildInterval, trial.compileSeconds);
+                            trial.buildInterval, trial.compileSeconds,
+                            trial.pipelineSeconds, trial.kernelSeconds,
+                            trial.hostSeconds);
     else
       *log << "failed: " << trial.failure << "\n";
     log->flush();
@@ -626,7 +639,8 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
     choice.trials.push_back(trial);
   }
   // Then a climb from the fastest so far, while it gains: steps of 0.5 Å of
-  // the outer skin away from the reference, then of 0.1 Å of the inner
+  // the outer skin away from the reference (toward the model's best where
+  // the reference is the fastest), then of 0.1 Å of the inner
   // one, up, or down if the first step up does not gain; at most
   // `maxTrials` candidates in all. The cost model narrows; the landscape
   // is not smooth (#406), and on the grid of #406 one step of the outer
@@ -664,9 +678,15 @@ compiler::SkinChoice compiler::chooseSkins(Control &control,
     return trial.failure.empty() && trial.microseconds < before;
   };
   if (control.pairlistDistanceAuto) {
-    while (std::fabs(fastest().outer - outer0) > 1e-9) {
+    // Away from the reference, or, where the reference is the fastest,
+    // toward the model's best.
+    double toward = choice.trials.size() > 1 ? choice.trials[1].outer : outer0;
+    while (true) {
       const SkinTrial &f = fastest();
-      if (!attempt(f.outer + (f.outer > outer0 ? 0.5 : -0.5), f.inner))
+      double away = std::fabs(f.outer - outer0) > 1e-9 ? f.outer - outer0
+                                                       : toward - outer0;
+      if (std::fabs(away) < 1e-9 ||
+          !attempt(f.outer + (away > 0.0 ? 0.5 : -0.5), f.inner))
         break;
     }
   }

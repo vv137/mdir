@@ -50,7 +50,7 @@
 # FIRST: MDIR: skins: candidate 12 / 9.6 Å: {{[0-9.]+}} µs a step
 # FIRST: MDIR: skins: candidate {{[0-9.]+}} / {{[0-9.]+}} Å: {{[0-9.]+}} µs a step
 # FIRST: MDIR: skins: candidate {{[0-9.]+}} / {{[0-9.]+}} Å: {{[0-9.]+}} µs a step
-# FIRST: MDIR: skins: the reach {{[0-9.]+}} Å, pruned to {{[0-9.]+}} Å (measured: {{.*}}; {{[34]}} candidates in {{[0-9.]+}} s; stored in '{{.*}}cache/{{[0-9a-f]+}}.json')
+# FIRST: MDIR: skins: the reach {{[0-9.]+}} Å, pruned to {{[0-9.]+}} Å (measured: {{.*}}; {{[3-7]}} candidates in {{[0-9.]+}} s; stored in '{{.*}}cache/{{[0-9a-f]+}}.json')
 # FIRST: MDIR: the inner lists were pruned
 # CHECKED: mdrt: the inner lists were checked at {{[0-9]+}} steps: {{[1-9][0-9]+}} pairs within the cutoff, none missed
 # MANIFEST: measured measured measured True True

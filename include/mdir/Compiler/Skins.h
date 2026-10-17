@@ -26,8 +26,11 @@ struct SkinTrial {
   double microseconds = 0.0, error = 0.0;
   /// The steps between builds and between prunings in the blocks.
   double buildInterval = 0.0, pruneInterval = 0.0;
-  /// The seconds of its compilation and of its steps.
+  /// The seconds of its compilation and of its steps; of the compilation,
+  /// those of the MLIR pipeline, of the serialization of the kernels, and
+  /// of the host code.
   double compileSeconds = 0.0, runSeconds = 0.0;
+  double pipelineSeconds = 0.0, kernelSeconds = 0.0, hostSeconds = 0.0;
   /// Empty, or why it could not be measured.
   std::string failure;
 };

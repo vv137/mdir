@@ -459,3 +459,142 @@ On the host with 16 threads, in double precision:
 | Put in order, the scattered particles take the time of the lattice. | The order of the cells is as good as that of the lattice. |
 | On the GPU in double precision the order changes the time by less than 1 percent. | There the arithmetic takes the time, not the memory. |
 | On the host a scattered order costs 6 to 13 percent at every size. | |
+
+## 6. The choice of the skins
+
+D[skin-auto], issue #406. `pairlist_distance = "AUTO"` and
+`pruned_distance = "AUTO"`, and the keys not given, let a run choose the
+skin $s$ of its structure and the skin $s_\text{in}$ of the inner list of a
+dual list (D114). A number fixes a skin, and is the switch off.
+
+### 6.1 Why the run may choose them
+
+The test of Section 3 is exact: a structure is rebuilt, and an inner list
+pruned, when a particle has moved half its skin, so every pair within the
+cutoff is in the list at every step whatever the skins. The skins change
+which steps build and prune and the length of the lists, and so the speed
+and the order of the sums, not the pairs. In the deterministic mode the
+order of the entries of a row of the matrix follows its cells, and so its
+reach: the water box of `pme-settle.test` at 10.0, 10.6, and 11.5 Å, 500
+steps on an RTX 4090 in double precision, gives the energies of the log to
+every digit and positions that differ by up to $1.8\times10^{-9}$ nm, also
+with `spatial_order = false`. The deterministic mode therefore does not
+search: a search chooses by timing, and the bits of a deterministic run
+repeat only if its skins do.
+
+### 6.2 The cost of a step
+
+A step of the groups with a dual list costs, per particle,
+
+$$\frac{t_\text{step}}{N} = a + c_1\rho' R_\text{in}^3 + \frac{c_2\rho' R^3}{n_\text{prune}} + \frac{c_3 + c_4\rho' R^3}{n_\text{build}} + \frac{L}{N\,n_\text{build}},$$
+
+with $\rho' = \rho / (0.1\ \text{Å}^{-3})$ the density relative to that of
+water: the loop over the inner list, the pruning of the outer list every
+$n_\text{prune}$ steps, and the build every $n_\text{build}$ steps with a
+cost per particle and a fixed cost $L$ of its launches and its readback.
+One list is the case $R_\text{in} = R$ without the pruning.
+
+The intervals follow from the motion of the particles. A list is rebuilt
+when the largest displacement since its build reaches half its skin. In
+equilibrium each component of a velocity is Gaussian with the variance
+$k_BT/m_i$, so over the $N$ particles the largest displacement after a time
+$t$ is a few times the root mean square of the lightest; it grows as
+$\sqrt{3k_BT/m}\,t$ while the velocities are correlated and more slowly
+once they decorrelate, toward $\sqrt{6Dt}$. The inner skin, crossed within a
+few steps, is in the first regime, $n_\text{prune} \approx
+s_\text{in}/(2v_\text{max}\Delta t)$; the outer skin, crossed in tens of
+steps, is between the two, and $n_\text{build}$ grows faster than linearly
+with $s$. With the first regime, the inner skin that minimizes the cost
+solves $3c_1R_\text{in}^2 = 2c_2R^3v_\text{max}\Delta t/s_\text{in}^2$, and
+for $s_\text{in} \ll r_c$ it grows as $\sqrt{\Delta t}$: by $\sqrt 2$ from
+2 to 4 fs, as the grid of #406 shows, where the default of D261 grows in
+proportion to $\Delta t$.
+
+The constants were fitted to the grid of #406: 480 runs of five systems of
+the Amber suite on an RTX 4090, mixed precision, $r_c = 8$ Å, outer skins
+of 1.5 to 6 Å and inner ones of 0.45 to 1.0 Å at 2 fs ($\times\Delta t/2$
+fs), with the intervals that each run measured. Per particle,
+$c_1 = 1.31$, $c_2 = 0.365$, $c_4 = 0.081$ ps per Å³, $c_3 = 2.12$ ns, and
+$L = 74$ µs; the root mean square of the relative residuals is 1.0%.
+Within each system $n_\text{build} \propto s^{1.57}$ and $n_\text{prune}
+\propto s_\text{in}^{0.76}$ (the means of the five fits). On another
+device the constants are used as they are: the model only narrows the
+candidates, and the measurement decides.
+
+### 6.3 The search
+
+`mdir run` searches where all of these hold; elsewhere `"AUTO"` keeps the
+default of D261 (cutoff + 3 Å and an inner list at cutoff + 0.6 Å ×
+max(1, Δt / 2 fs) where `AUTO` takes the groups; cutoff + 1.5 Å for the
+matrix and for `GROUPS` given), and the log says why:
+
+- the target is a GPU, not in the deterministic mode;
+- the structure is the groups (the matrix is not searched);
+- not a minimization, no `rebuild_interval`, no `[[energy.model]]`;
+- no entry of the cache for the key (Section 6.4);
+- particles times steps of at least $5 \times 10^{12}$, about five hours on an RTX 4090
+  at about 4 ns a particle and a step. `MDIR_SKIN_SEARCH=always` searches
+  whatever the length, `never` never.
+
+The search (`lib/Compiler/Skins.cpp`, `chooseSkins`):
+
+1. **The reference**, the dual list of D261 for the skins that are chosen
+   (also where `GROUPS` is given), is measured first. Its intervals of
+   builds and prunings calibrate $n_\text{build}$ and $n_\text{prune}$ of
+   the model to the system, which stands in for its temperature, its
+   masses, its density, and its step.
+2. **Two candidates of the model**: its best pair on a grid of outer skins
+   of 1.5 to 6 Å by 0.5 Å and inner skins of 0.3 to 1.5 Å by 0.05 Å, and
+   its best pair whose outer skin is at least 1 Å from that one and from
+   the reference (0.2 Å of the inner skin where only it is chosen). The
+   landscape is not smooth (JAC's rate falls from 4 to 5 Å and rises again
+   to 6 Å, #406), so the second looks elsewhere.
+3. **A climb** from the fastest so far, while it gains: steps of 0.5 Å of
+   the outer skin away from the reference (toward the model's best where
+   the reference is the fastest), then of 0.1 Å of the inner skin, up, or
+   down if the first step up does not gain; at most seven candidates in
+   all.
+
+Each candidate is a simulation of its own (D196), compiled with its skins
+as constants of its program, from the state the run begins with: two
+warm-ups of 200 steps, then six blocks of about 0.5 s and at least 200
+steps each, timed one by one; a part ends at a boundary that reads from the
+device, so a block has waited for it. The time of a candidate is the median
+of its blocks, and its error the standard error of their mean. A candidate
+whose reach exceeds 0.999 of the least edge of the cell (D242) or 127 times
+the cutoff is not tried; one that fails is dropped. The fastest is kept
+unless its gain over the reference is within twice the standard error of
+the difference, and at least 0.3%; then the reference is kept. The counts
+of builds and prunings of the trials and their handler of failures are
+reset before the run (`mdrtResetCounts`), so its log counts its own.
+
+### 6.4 The cache and the record
+
+The choice is stored as one JSON file a key, under `MDIR_SKIN_CACHE_DIR`,
+by default `$XDG_CACHE_HOME/mdir/skins` (else `~/.cache/mdir/skins`);
+`MDIR_SKIN_CACHE=off` neither reads nor writes it. The key is the text of
+what the choice depends on: the version of MDIR, the particle count, a
+hash of the composition (the types, masses, and charges), the cutoff, the
+structure, each reach given as a number or `AUTO`, the name of the device,
+the precision, the time step, the ensemble, and its temperature. A file
+whose key differs is not taken, so a run of another step, device, or
+system searches anew; a continuation, which has the key of the run it
+continues, takes the choice of that run. Removing the directory, or an
+entry, is always safe.
+
+The log names the reaches and where they came from when a key was given
+as `"AUTO"` or the reaches were cached or measured (`MDIR: skins: the
+reach 14 Å, pruned to 8.8 Å (measured: ...)`), with a line for each
+candidate. The manifest's `effective` has `pairlist_distance_source` and
+`pruned_distance_source` (`given`, `default`, `cached`, or `measured`)
+and `skin_search` (the source, the reason, the file of the cache, the
+seconds, and each candidate's reaches, time, error, intervals, and the
+model's prediction relative to the reference); `mdir check` prints
+`skins:`, and `run.skins` with `--json`; `Program.plan` has the sources and
+`skin_reason`. `mdir check` and `mdir.compile` measure nothing: they name
+the default or the cache. In Python, `System.pairlist_distance` and
+`System.pruned_distance` take `mdir.Auto`.
+
+### 6.5 Measurements
+
+MEASUREMENTS

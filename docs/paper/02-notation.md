@@ -26,6 +26,7 @@ element.
 | $r_s$, $S_2(r)$ | Onset and squared-distance potential switch of a topology Lennard-Jones term (Section 3.3) |
 | $s,\ R = r_c + s$ | Skin and reach of a neighbor structure |
 | $s_\text{in},\ R_\text{in} = r_c + s_\text{in}$ | Skin and reach of the inner list of a dual list |
+| $n_\text{build},\ n_\text{prune};\ t_\text{step};\ \rho;\ v_\text{max}$ | In Section 4.5, the mean number of steps between builds of a structure and between prunings of its inner list; the time of a step; the number density of the particles; the largest speed among the particles |
 | $\mathbf x^\text{ref},\ \mathbf L^\text{ref}$ | Configuration and cell of the last build of a structure |
 | $\mathbf x^p,\ \mathbf L^p$ | Configuration and cell of the last pruning of an inner list |
 | $\mathbf m = \mathbf L\oslash\mathbf L^\text{ref}$ | Scale of each axis since the build |

@@ -11,11 +11,11 @@
 # RUN: %python %S/Inputs/argon_lattice.py 20 %t/small.pdb
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/neighbor-auto.test | sed '1d;$d' > %t/big.toml
 # RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "AUTO"\npruned_distance = "AUTO"|' %t/big.toml > %t/auto.toml
-# RUN: sed -e 's|^steps = 20|steps = 20000000|' %t/auto.toml > %t/long.toml
+# RUN: sed -e 's|^steps = 20|steps = 100000000|' %t/auto.toml > %t/long.toml
 # RUN: sed -e 's|^target = "GPU"|target = "CPU"|' %t/auto.toml > %t/cpu.toml
 # RUN: sed -e 's|^target = "GPU"|target = "GPU"\ndeterministic = true|' %t/long.toml > %t/deterministic.toml
 # RUN: sed -e 's|big.pdb|small.pdb|' -e 's|152.0|76.0|g' %t/long.toml > %t/matrix.toml
-# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 11.0\npruned_distance = "AUTO"|' -e 's|^steps = 20|steps = 20000000|' %t/big.toml > %t/outer.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 11.0\npruned_distance = "AUTO"|' -e 's|^steps = 20|steps = 100000000|' %t/big.toml > %t/outer.toml
 # RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 11.0\npruned_distance = 9.3|' %t/big.toml > %t/given.toml
 # RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "auto"|' %t/big.toml > %t/lower.toml
 # RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npruned_distance = true|' %t/big.toml > %t/boolean.toml
@@ -35,9 +35,9 @@
 # RUN: cd %t && mdir check --json given.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['skins'], sort_keys=True))" | FileCheck %s --check-prefix=JSON-GIVEN
 
 # OMITTED: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles
-# OMITTED-NEXT: skins: default (a short run: 64000 particles times 20 steps, below 1e+12)
+# OMITTED-NEXT: skins: default (a short run: 64000 particles times 20 steps, below 5e+12)
 # SHORT: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å (AUTO: 64000 particles
-# SHORT-NEXT: skins: default (a short run: 64000 particles times 20 steps, below 1e+12)
+# SHORT-NEXT: skins: default (a short run: 64000 particles times 20 steps, below 5e+12)
 # LONG: neighbors: groups of 16, reach 12 Å, pruned to 9.6 Å
 # LONG-NEXT: skins: default (`mdir run` measures candidates; this does not)
 # NEVER: skins: default (MDIR_SKIN_SEARCH=never)
@@ -52,5 +52,5 @@
 # GIVEN: neighbors: groups of 16, reach 11 Å, pruned to 9.3 Å
 # LOWER: expected a positive number or "AUTO" for 'pairlist_distance'
 # BOOLEAN: expected a positive number or "AUTO" for 'pruned_distance'
-# JSON: {"pairlist_distance_source": "default", "pruned_distance_source": "default", "reason": "a short run: 64000 particles times 20 steps, below 1e+12"}
+# JSON: {"pairlist_distance_source": "default", "pruned_distance_source": "default", "reason": "a short run: 64000 particles times 20 steps, below 5e+12"}
 # JSON-GIVEN: {"pairlist_distance_source": "given", "pruned_distance_source": "given", "reason": ""}

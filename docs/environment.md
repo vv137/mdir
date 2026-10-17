@@ -33,6 +33,9 @@ and for tests.
 | `MDIR_COMPILE_CACHE_MAX_MB=<n>` | the same | Bounds the cache directory, host and GPU entries together, to $n$ MiB, 2048 by default, removing the entries used least recently when a store takes the total, kept in `<dir>/size`, over the bound (D234). |
 | `MDIR_GPU_BINARY=auto\|cubin\|ptx` | every lowering of a GPU program (`mdir run`, `mdir.compile`, a Python simulation) | The binaries of the kernels (D214). `auto`, the default, makes cubins for the device's architecture with the toolkit's `ptxas`, and PTX where it cannot. `cubin` makes a missing architecture or `ptxas` an error. `ptx` keeps PTX, which the driver compiles at load. See [compile-cache.md](compile-cache.md#cubins-for-the-device). |
 | `MDIR_GPU_ARCH=sm_XY` | the same | The architecture to compile the kernels for, instead of the one that NVML reports for the device (D214, [compile-cache.md](compile-cache.md#cubins-for-the-device)). |
+| `MDIR_SKIN_SEARCH=auto\|always\|never` | `mdir run` | Whether a run whose `pairlist_distance` or `pruned_distance` is `"AUTO"` (or not given) measures candidates (D[skin-auto], [neighbors-m0.md](neighbors-m0.md#6-the-choice-of-the-skins)). `auto`, the default, measures where the run takes the groups on a GPU outside the deterministic mode and holds at least $5 \times 10^{12}$ particles times steps; `always` measures whatever the length, for tests and measurements; `never` keeps the defaults of D261. `mdir check` and `mdir.compile` measure nothing. |
+| `MDIR_SKIN_CACHE_DIR=<dir>` | `mdir run`, `mdir check`, `mdir.compile` | The directory of the cache of the chosen skins, one JSON file a key (D[skin-auto]); by default `$XDG_CACHE_HOME/mdir/skins`, else `~/.cache/mdir/skins`. Removing it, or any entry, is always safe. |
+| `MDIR_SKIN_CACHE=off` | the same | Neither reads nor writes the cache of the chosen skins. The test suite sets it, and the tests of the cache give their own directory. |
 
 ## Debugging
 
