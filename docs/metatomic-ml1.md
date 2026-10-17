@@ -1439,3 +1439,24 @@ search's block of up to 256 MiB. The padded list gives the model 1.23 to 1.26
 times the pairs with this skin: 20 to 26% more time and peak memory, and
 the whole system of 1,152 atoms, which fits on 24 GB with the exact list,
 asks for 12.6 GiB more and fails.
+
+On an RTX PRO 6000 (96 GB), the same runs with chunks of 2,048 centers
+from 3,072 atoms, and 24,576 atoms added:
+
+| Atoms | Pairs | Search (ms) | Exact, plugin (ms) | MDIR's kernels per step (ms) | Step, search (ms) | Step, exact | Step, padded | Peak, search and exact (GiB) | Peak, padded |
+|---|---|---|---|---|---|---|---|---|---|
+| 96 | 13,660 | 0.56 | 0.21 | 0.17 + 0.40 | 41.7 | 41.7 | 51.6 | 1.73 | 2.12 |
+| 384 | 55,628 | 0.83 | 0.28 | 0.20 + 0.33 | 171 | 172 | 205 | 6.90 | 8.29 |
+| 1,152 | 171,782 | 3.7 | 0.30 | 0.22 + 0.40 | 540 | 535 | 634 | 21.2 | 25.4 |
+| 3,072 | 456,554 | 22.9 | 0.34 | 0.22 + 0.51 | 1,440 | 1,420 | 1,710 | 37.6 | 45.3 |
+| 6,144 | 900,448 | 89 | 0.39 | 0.23 + 0.49 | 2,870 | 2,780 | 3,460 | 37.2 | 46.7 |
+| 12,288 | 1,766,834 | 353 | 0.41 | 0.23 + 0.46 | 5,810 | 5,470 | 6,940 | 36.6 | 46.2 |
+| 24,576 | about 3.61 million | 1,400 | 0.52 | 0.35 + 0.77 | 12,600 | 11,200 | 14,100 | 37.9 | 47.4 |
+
+The list again costs about 1 ms a step at every size, and the exact list
+shortens the step by 6% at 12,288 atoms and 11% at 24,576, where the
+search takes 1.4 s. The padded list costs 19 to 26% more time and 23 to
+25% more peak memory; on this device the whole system of 1,152 atoms fits
+with either. The model tests (`model-term-gpu.test`,
+`model-term-aoti-gpu.test`, `model-term-errors.test`) pass on this device
+with the package of several architectures.
