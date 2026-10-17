@@ -120,6 +120,18 @@ def draws_copies():
         cold = state.draw_velocities(system, 0.0, SEED)
         assert not cold.velocities.any()
 
+    # A term of [[energy.model]] changes neither the masses nor the
+    # constraints, so the draw is the same bits with it (#388): the draw
+    # leaves the term out, loads no plugin (the artifact does not exist), and
+    # does not refuse the CPU target of its preparation.
+    system, state = model()
+    plain = state.draw_velocities(system, 300.0, SEED)
+    system.models = [mdir.ModelTerm("learned", root + "/absent-model.pt")]
+    learned = state.draw_velocities(system, 300.0, SEED)
+    differing = np.count_nonzero(learned.velocities.view(np.uint64) != plain.velocities.view(np.uint64))
+    assert differing == 0, differing
+    print(f"drawn velocities with a model term: {differing} differing bits")
+
     system, state = model()
     for temperature in (-1.0, float("nan"), float("inf")):
         expect(mdir.InputError, lambda: state.draw_velocities(system, temperature, SEED), "temperature")

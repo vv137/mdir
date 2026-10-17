@@ -1213,6 +1213,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- `InitialState.draw_velocities` refused a system with a term of
+  `[[energy.model]]` (`System.models`): it prepared the system for the
+  default execution, on the CPU, which a model term refuses (#388). The
+  draw now leaves the model terms out of its preparation; they change
+  neither the masses nor the constraints, so the velocities are those of
+  the same system without them, bit for bit, and no plugin is loaded.
+  `compile` still checks the term and its target.
+
 - A `.gro` file whose velocities do not read in fields as wide as its
   coordinates is refused, with the line, instead of read with the
   velocities that do not read taken as 0 (#365). Velocities written one
