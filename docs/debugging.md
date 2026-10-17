@@ -103,9 +103,11 @@ raises `SimulationError` instead and keeps the state from before the part
 | `a position is not a number or is far outside the cell at a build of the neighbor structure` | The positions, at a build (D107, D176, D225) |
 | `the constraints of the set 'S' failed at step N` | After the constraints of the positions of step N, a length of a group of the set `S` (`settles`, or `shake1` to `shake3` for the groups of SHAKE of one to three hydrogens) is off its target by more than $10^{-4}$ of its square below double precision, $10^{-8}$ in double, or is not a number (D278). In a run with constraints this message takes precedence: a build of the step that finds positions that are not numbers reports them only if every set passed its test |
 
-Either usually means a time step too long for the system, a bad contact
-in the starting structure, or a start that was not minimized; a smaller
-`time_step` or a minimization first tells which.
+| `cufftPlan3d failed with the cuFFT error E for the grid of K1 x K2 x K3 points` | On a device, the plan of the FFT of a grid of PME could not be made, usually for want of device memory for its work area; a transform that fails (`cufftExecR2C` and the others) is reported the same way (#323). The plans of a process are kept until it ends, one for each grid, direction, and precision |
+
+The first two usually mean a time step too long for the system, a bad
+contact in the starting structure, or a start that was not minimized; a
+smaller `time_step` or a minimization first tells which.
 
 ## Failures on the device
 

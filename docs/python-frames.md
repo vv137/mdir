@@ -1667,9 +1667,9 @@ grid and one of twice the points. Each entry is CPU, GPU.
 
 In mixed precision on JAC at 256 points the difference of $\mathbf G$,
 $4.3\times10^{-5}$, is that of the f32 kernels, which a finer mesh does
-not lower. On a device the two systems run in a process each: the
-runtime keeps at most 8 plans of FFT a process, and a program in mixed
-precision with tunable charges takes four a grid (#323).
+not lower. The two systems run in one process; on a device in mixed
+precision their four grids take 16 plans of FFT, four a grid with tunable
+charges, which the runtime keeps in a table that grows (#323).
 
 
 **Against OpenMM 8.6.1**, the whole potential: the dipeptide with PME at

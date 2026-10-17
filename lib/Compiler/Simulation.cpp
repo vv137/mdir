@@ -139,8 +139,8 @@ int64_t usedDevice = -1;
 /// The first failure that the runtime reports during a part: a build of the
 /// neighbor structures that found positions that are not numbers
 /// (mdrtStopNotNumbers), or constraints that failed in a step
-/// (mdrtStopConstraintFailure, D278). The part goes on
-/// to its end and is discarded.
+/// (mdrtStopConstraintFailure, D278), or a plan of FFT on a device that
+/// could not be made (#323). The part goes on to its end and is discarded.
 std::string stopMessage;
 extern "C" void stopPart(const char *message) {
   if (stopMessage.empty())
@@ -687,6 +687,12 @@ compileEngine(const Control &control, const System &system,
   if (auto set = reinterpret_cast<void (*)(void (*)(const char *))>(
           llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(
               "mdrtSetStopHandler")))
+    set(&stopPart);
+  // The runtime of a device stops a run whose plan of FFT cannot be made
+  // (#323).
+  if (auto set = reinterpret_cast<void (*)(void (*)(const char *))>(
+          llvm::sys::DynamicLibrary::SearchForAddressOfSymbol(
+              "mdrtCudaSetStopHandler")))
     set(&stopPart);
   if (control.target == Target::GPU) {
     if (usedDevice >= 0 && usedDevice != execution.device) {
