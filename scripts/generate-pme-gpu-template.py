@@ -1033,14 +1033,15 @@ def weights_kernels(listed=False):
     splines again: read from 27 arrays with their slopes, it took 155 to
     158 us on Cellulose against 127 to 134 (2026-10-01); from the first
     points and the fractions, see gather_weights."""
-    # The weights.
+    # The weights: the places of the order of the instance, which the
+    # spreading into tiles takes at every order (D[pme-tiles]).
     w = Body("      ")
     w("""\
 %i = arith.addi %item, %c0 : index
 %i0 = arith.constant 0 : index
 %i1 = arith.constant 1 : index
 %i2 = arith.constant 2 : index
-%order = arith.constant 4 : index""")
+%order = arith.constant PME_ORDER : index""")
     places = [(f"%{t}p", length) for t, length in zip("xyz", ("%ilx", "%ily", "%ilz"))]
     if TILTED:
         for axis, t in enumerate("xyz"):
@@ -1333,7 +1334,8 @@ scf.for %h = %h0 to %h2 step %h1 {
                    if listed else "")
     weights_function = "" if listed else f"""
 // The weights of the particles for the spreading and the gathering of
-// order 4: see weights_kernels in the script.
+// order 4, and the places of the spreading into tiles at every order:
+// see weights_kernels in the script.
 func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vector<3xf64>,
                                         %weights: memref<?x!pme_real, 1>,
                                         %k1: index, %k2: index, %k3: index) {{
@@ -1359,6 +1361,516 @@ func.func private @mdrt_gpu_pme_spread_bricks{tag}(%x: memref<?x3x!pme_pos, 1>, 
 {launch(a.text(), "%lanes")}{copy}  return
 }}
 """
+
+
+# The edges, in points, of the bins of the spreading into tiles
+# (D[pme-tiles]); a sum takes one of them (md_exec.reciprocal tiles(E)).
+TILE_EDGES = (4, 8, 16)
+
+# The threads of a block of the tiles, and the particles of a round, for
+# each edge: about as many as the bin has particles in water at a spacing
+# of 1 Å (8^3 points, about 50), and no more, since the warps of a block
+# add to one tile and the atomics of the memory of the block are a loop of
+# compare-and-swap on the devices measured (ATOMS.CAST.SPIN, sm_89). On
+# Cellulose (RTX 4090) the tile kernel took 67.6, 74.5, and 106.6 us with
+# bins of 8 points and 128, 256, and 512 threads, and 107.4, 86.1, and 66.6
+# with bins of 16.
+TILE_THREADS = {4: 128, 8: 128, 16: 512}
+
+
+def bin_kernels(edge, listed=False):
+    """The particles binned by their first point, for the spreading into
+    tiles (D[pme-tiles]): the binned spreading of cuFINUFFT [Shih2021].
+    The bins are cubes of `edge` points of the grid, numbered with z
+    fastest. `bins` holds, in i32, the count of each bin, the count of
+    the particles that overflow, a run of C places for each bin, C twice
+    the mean number of particles of a bin and 8 more (bin_header), and the
+    particles that overflow. Two kernels: the first zeroes the grid of the
+    transform, to which the tiles are added, and the counts; in the
+    second a thread an entry finds its bin from the first point that
+    `places` holds, and the lanes of a warp with the same bin
+    (match.any.sync) take their ranks from one atomic of the first of
+    them, so that a warp of particles in the order of their positions adds
+    to a count once or a few times; a particle takes the place of its rank
+    in the run of its bin, or, past C, one of the list of those that
+    overflow, which the tile kernel spreads with atomics of the device.
+    No scan of the counts. The order of the particles within a bin depends
+    on the order of the atomics, so the spreading that follows adds in an
+    order of the threads, as the bricks do; the deterministic mode does
+    not bin (D84). With `listed`, the entries are those of the list of
+    the particles (D262), and those past the last listed place are not
+    binned."""
+    tag = "_listed" if listed else ""
+    zero = Body("      ")
+    zero("""\
+%none = arith.constant 0.0 : !pme_real
+memref.store %none, %real[%item] : memref<?x!pme_real, 1>
+%counts_end = arith.addi %nbins, %c1 : index
+%a_count = arith.cmpi ult, %item, %counts_end : index
+scf.if %a_count {
+  %none32 = arith.constant 0 : i32
+  memref.store %none32, %bins[%item] : memref<?xi32, 1>
+}""")
+    entry = Body("      ")
+    if listed:
+        entry("""\
+%listed_raw = memref.load %list[%at_item] : memref<?xi32, 1>
+%listed_none = arith.constant 0 : i32
+%is_listed = arith.cmpi sge, %listed_raw, %listed_none : i32
+%valid = arith.andi %inside, %is_listed : i1
+%listed_0 = arith.select %is_listed, %listed_raw, %listed_none : i32
+%i = arith.index_cast %listed_0 : i32 to index""")
+    else:
+        entry("""\
+%valid = arith.ori %inside, %false : i1
+%i = arith.addi %at_item, %c0 : index""")
+    # The bin of the first point: its places are those of the weights
+    # kernel, read again by the spreading, so the point is in the bin.
+    for axis, t in enumerate("xyz"):
+        entry(f"""\
+%{t}c = arith.constant {axis} : index
+%{t}n = arith.muli %n_all, %{t}c : index
+%{t}at = arith.addi %{t}n, %i : index
+%{t}start_r = memref.load %places[%{t}at] : memref<?x!pme_real, 1>
+%{t}start = arith.fptosi %{t}start_r : !pme_real to i32
+%{t}bin = arith.divui %{t}start, %edge32 : i32""")
+    entry("""\
+%nb2t = arith.index_cast %nb2 : index to i32
+%nb3t = arith.index_cast %nb3 : index to i32
+%bxy = arith.muli %xbin, %nb2t : i32
+%bxy2 = arith.addi %bxy, %ybin : i32
+%bxyz = arith.muli %bxy2, %nb3t : i32
+%bin_of = arith.addi %bxyz, %zbin : i32
+%no_bin = arith.constant -1 : i32
+%bin = arith.select %valid, %bin_of, %no_bin : i32
+// The lanes of the warp with the same bin, and the first of them.
+%same = llvm.inline_asm has_side_effects "match.any.sync.b32 $0, $1, -1;", "=r,r" %bin : (i32) -> i32
+%leader = math.cttz %same : i32
+%lane = arith.remui %item32, %t32 : i32
+%one32 = arith.constant 1 : i32
+%below_bit = arith.shli %one32, %lane : i32
+%below = arith.subi %below_bit, %one32 : i32
+%same_below = arith.andi %same, %below : i32
+%offset = math.ctpop %same_below : i32
+%together = math.ctpop %same : i32
+%leads = arith.cmpi eq, %lane, %leader : i32
+%counts = arith.andi %leads, %valid : i1
+%bins_index = memref.extract_aligned_pointer_as_index %bins : memref<?xi32, 1> -> index
+%bins_base = arith.index_cast %bins_index : index to i64
+%four64 = arith.constant 4 : i64
+%zero32 = arith.constant 0 : i32
+%first_rank = scf.if %counts -> (i32) {
+  // A relaxed atomic at the scope of the device, as the fixed point adds.
+  %bin64 = arith.extui %bin : i32 to i64
+  %bin_offset = arith.muli %bin64, %four64 : i64
+  %bin_address = arith.addi %bins_base, %bin_offset : i64
+  %bin_pointer = llvm.inttoptr %bin_address : i64 to !llvm.ptr<1>
+  %old = llvm.atomicrmw add %bin_pointer, %together syncscope("device") monotonic : !llvm.ptr<1>, i32
+  scf.yield %old : i32
+} else {
+  scf.yield %zero32 : i32
+}
+%width = arith.constant 32 : i32
+%base_rank, %base_valid = gpu.shuffle idx %first_rank, %leader, %width : i32
+%rank = arith.addi %base_rank, %offset : i32
+%capacity32 = arith.index_cast %capacity : index to i32
+%fits = arith.cmpi slt, %rank, %capacity32 : i32
+%particle = arith.index_cast %i : index to i32
+scf.if %valid {
+  scf.if %fits {
+    %bin_i = arith.index_cast %bin : i32 to index
+    %run = arith.muli %bin_i, %capacity : index
+    %run_at = arith.addi %of_lists, %run : index
+    %rank_i = arith.index_cast %rank : i32 to index
+    %place = arith.addi %run_at, %rank_i : index
+    memref.store %particle, %bins[%place] : memref<?xi32, 1>
+  } else {
+    %over_offset = arith.index_cast %nbins : index to i64
+    %over_bytes = arith.muli %over_offset, %four64 : i64
+    %over_address = arith.addi %bins_base, %over_bytes : i64
+    %over_pointer = llvm.inttoptr %over_address : i64 to !llvm.ptr<1>
+    %over = llvm.atomicrmw add %over_pointer, %one32 syncscope("device") monotonic : !llvm.ptr<1>, i32
+    %over_i = arith.index_cast %over : i32 to index
+    %over_at = arith.addi %of_overflow, %over_i : index
+    memref.store %particle, %bins[%over_at] : memref<?xi32, 1>
+  }
+}""")
+    return f"""
+// The particles{" of the list (D262)" if listed else ""} into bins of {edge}^3 points of the grid by their
+// first points, which `places` holds, for the spreading into tiles; zeroes
+// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+func.func private @mdrt_gpu_pme_bin{edge}{tag}(%q: memref<?x!pme_chg, 1>,{" %list: memref<?xi32, 1>," if listed else ""}
+                                      %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
+                                      %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {{
+{bin_header(edge)}  %points = memref.dim %real, %c0 : memref<?x!pme_real, 1>
+{launch(zero.text(), "%points")}  // Every lane of a warp takes part in its match.any.sync and shuffle:
+  // the threads past the last entry take the last entry and bin nothing.
+  %blocks_entries = func.call @mdrt_gpu_pme_blocks(%n_all) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_entries, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {{
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %n_all : index
+    %false = arith.constant false
+    %n_last = arith.subi %n_all, %c1 : index
+    %at_item = arith.minui %item, %n_last : index
+    %item32 = arith.index_cast %item : index to i32
+    %t32 = arith.constant 32 : i32
+{entry.text()}    gpu.terminator
+  }}
+  return
+}}
+"""
+
+
+def bin_header(edge):
+    """The numbers of the bins of `edge` points and the parts of `bins`:
+    the counts and the count of the overflow (nbins + 1), a run of C
+    places for each bin, C = 2 ceil(n / nbins) + 8, and n places for the
+    particles that overflow; AssignStorage allocates as many."""
+    return f"""\
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant {edge} : index
+  %edge32 = arith.constant {edge} : i32
+  %edge_m1 = arith.constant {edge - 1} : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+"""
+
+
+def zero_grid_text():
+    zero = Body("      ")
+    zero("""\
+%none = arith.constant 0.0 : !pme_real
+memref.store %none, %real[%item] : memref<?x!pme_real, 1>""")
+    return zero.text()
+
+
+def tile_kernel(edge, name, args, lane_weight, comment):
+    """The spreading into tiles (D[pme-tiles]), as cuFINUFFT spreads
+    [Shih2021]: a block of TILE_THREADS threads a bin, and one more for the
+    particles that overflow the runs of the bins (bin_kernels). The tile of
+    a bin, its `edge`^3 points and P - 1 more on the high side of each
+    axis, is in the memory of the block. In rounds of up to one particle a
+    thread, a thread a particle first reads its charge, its first
+    points, and its fractions into the memory of the block, so that the
+    loads of the round wait once; then a warp takes a particle, its lanes
+    0 to 3P - 1 compute the weight of their point and axis once
+    (`lane_weight`, which defines %weight from %frac, %qk, %axis_l, %j_l,
+    and %active, the charge in the weights along x), and the others take
+    them by shuffles; each lane adds the product of its point, z fastest,
+    to the tile with an atomic of the memory of the block. Then every
+    nonzero point of the tile is added to the grid with an atomic of the
+    device, a point being in at most 8 tiles. The particles of a bin have
+    their first points in the bin, so their points are in the tile. The
+    block of the overflow adds its particles to the grid directly."""
+    shared = f"memref<PME_TILE_POINTS_{edge}x!pme_real, #gpu.address_space<workgroup>>"
+    threads = TILE_THREADS[edge]
+    staged_r = f"memref<{4 * threads}x!pme_real, #gpu.address_space<workgroup>>"
+    staged_i = f"memref<{3 * threads}xi32, #gpu.address_space<workgroup>>"
+    return f"""
+// {comment}
+func.func private @{name}{edge}({args}
+                                      %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {{
+{bin_header(edge)}  %cthreads = arith.constant {threads} : index
+  %blocks_tiles = arith.addi %nbins, %c1 : index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
+             workgroup(%tile : {shared}, %staged : {staged_r}, %starts : {staged_i}) {{
+    %c3w = arith.constant 3 : index
+    %c32w = arith.constant 32 : index
+    %cwarps = arith.constant {threads // 32} : index
+    %cthreads2 = arith.constant {2 * threads} : index
+    %zero_r = arith.constant 0.0 : !pme_real
+    %true_w = arith.constant true
+    %side32 = arith.constant PME_TILE_SIDE_{edge} : i32
+    %volume = arith.constant PME_TILE_POINTS_{edge} : index
+    // The block of the overflow, after the bins.
+    %overflows = arith.cmpi eq, %bx, %nbins : index
+    %bins_block = arith.xori %overflows, %true_w : i1
+    %bin = arith.select %overflows, %c0, %bx : index
+    // The first point of the bin.
+    %b3 = arith.remui %bin, %nb3 : index
+    %b12 = arith.divui %bin, %nb3 : index
+    %b2 = arith.remui %b12, %nb2 : index
+    %b1 = arith.divui %b12, %nb2 : index
+    %o1 = arith.muli %b1, %edge : index
+    %o2 = arith.muli %b2, %edge : index
+    %o3 = arith.muli %b3, %edge : index
+    %o1t = arith.index_cast %o1 : index to i32
+    %o2t = arith.index_cast %o2 : index to i32
+    %o3t = arith.index_cast %o3 : index to i32
+    // The particles of the bin: those of its run, at most C, or those of
+    // the overflow.
+    %counted32 = memref.load %bins[%bx] : memref<?xi32, 1>
+    %counted = arith.index_cast %counted32 : i32 to index
+    %in_run = arith.minui %counted, %capacity : index
+    %count = arith.select %overflows, %counted, %in_run : index
+    %run = arith.muli %bin, %capacity : index
+    %run_at = arith.addi %of_lists, %run : index
+    %list_at = arith.select %overflows, %of_overflow, %run_at : index
+    // A bin without particles adds nothing; the whole block leaves.
+    %some = arith.cmpi ugt, %count, %c0 : index
+    scf.if %some {{
+      scf.for %t = %tx to %volume step %cthreads {{
+        memref.store %zero_r, %tile[%t] : {shared}
+      }}
+      %warp = arith.divui %tx, %c32w : index
+      %lane_x = arith.remui %tx, %c32w : index
+      %lane = arith.index_cast %lane_x : index to i32
+      %pt = arith.constant PME_ORDER : i32
+      %pidx = arith.constant PME_ORDER : index
+      %ppt = arith.muli %pt, %pt : i32
+      %pppt = arith.muli %ppt, %pt : i32
+      %pt2 = arith.addi %pt, %pt : i32
+      %thirty_two = arith.constant 32 : i32
+      %zero32 = arith.constant 0 : i32
+      %width = arith.constant 32 : i32
+      %passes_n2 = arith.muli %pidx, %pidx : index
+      %passes_n3 = arith.muli %passes_n2, %pidx : index
+      %c31p = arith.constant 31 : index
+      %passes_u = arith.addi %passes_n3, %c31p : index
+      %passes = arith.divui %passes_u, %c32w : index
+      // The point and axis of a lane: lane a P + j, a < 3, weighs.
+      %three_p = arith.muli %pidx, %c3w : index
+      %active = arith.cmpi ult, %lane_x, %three_p : index
+      %lane_a = arith.select %active, %lane_x, %c0 : index
+      %axis_l = arith.divui %lane_a, %pidx : index
+      %j_l = arith.remui %lane_a, %pidx : index
+      %axis_at = arith.muli %axis_l, %cthreads : index
+      %k1t = arith.index_cast %k1 : index to i32
+      %k2t = arith.index_cast %k2 : index to i32
+      %k3t = arith.index_cast %k3 : index to i32
+      %k3w = arith.extui %k3t : i32 to i64
+      %bytes = arith.constant PME_REAL_BYTES : i64
+      %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
+      %gbase = arith.index_cast %gindex : index to i64
+      scf.for %round = %c0 to %count step %cthreads {{
+        // The particles of the round into the memory of the block, after
+        // the warps of the round before have read theirs.
+        gpu.barrier
+        %left = arith.subi %count, %round : index
+        %in_round = arith.minui %left, %cthreads : index
+        %stages = arith.cmpi ult, %tx, %in_round : index
+        scf.if %stages {{
+          %entry = arith.addi %round, %tx : index
+          %entry_at = arith.addi %list_at, %entry : index
+          %particle = memref.load %bins[%entry_at] : memref<?xi32, 1>
+          %i = arith.index_cast %particle : i32 to index
+          %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
+          %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+          memref.store %qi, %staged[%tx] : {staged_r}
+          scf.for %ax = %c0 to %c3w step %c1 {{
+            %at_n = arith.muli %n_all, %ax : index
+            %at_s = arith.addi %at_n, %i : index
+            %start_r = memref.load %places[%at_s] : memref<?x!pme_real, 1>
+            %start = arith.fptosi %start_r : !pme_real to i32
+            %fax = arith.addi %ax, %c3w : index
+            %at_fn = arith.muli %n_all, %fax : index
+            %at_f = arith.addi %at_fn, %i : index
+            %frac_g = memref.load %places[%at_f] : memref<?x!pme_real, 1>
+            %slot0 = arith.muli %ax, %cthreads : index
+            %slot = arith.addi %slot0, %tx : index
+            memref.store %start, %starts[%slot] : {staged_i}
+            %fslot = arith.addi %slot, %cthreads : index
+            memref.store %frac_g, %staged[%fslot] : {staged_r}
+          }}
+        }}
+        gpu.barrier
+        scf.for %k = %warp to %in_round step %cwarps {{
+          %qk = memref.load %staged[%k] : {staged_r}
+          %fk0 = arith.addi %axis_at, %k : index
+          %fk = arith.addi %fk0, %cthreads : index
+          %frac = memref.load %staged[%fk] : {staged_r}
+{lane_weight}          %xstart = memref.load %starts[%k] : {staged_i}
+          %ys_at = arith.addi %k, %cthreads : index
+          %ystart = memref.load %starts[%ys_at] : {staged_i}
+          %zs_at = arith.addi %k, %cthreads2 : index
+          %zstart = memref.load %starts[%zs_at] : {staged_i}
+          %l1 = arith.subi %xstart, %o1t : i32
+          %l2 = arith.subi %ystart, %o2t : i32
+          %l3 = arith.subi %zstart, %o3t : i32
+          // A point of a pass: z fastest, so that the lanes of a row add
+          // to neighboring words of the tile.
+          scf.for %pass = %c0 to %passes step %c1 {{
+            %pass32 = arith.index_cast %pass : index to i32
+            %pass_base = arith.muli %pass32, %thirty_two : i32
+            %kk = arith.addi %pass_base, %lane : i32
+            %in = arith.cmpi slt, %kk, %pppt : i32
+            %kc = arith.select %in, %kk, %zero32 : i32
+            %pa = arith.divui %kc, %ppt : i32
+            %pbc = arith.remui %kc, %ppt : i32
+            %pb = arith.divui %pbc, %pt : i32
+            %pc = arith.remui %pbc, %pt : i32
+            %wx, %vwx = gpu.shuffle idx %weight, %pa, %width : !pme_real
+            %pbs = arith.addi %pb, %pt : i32
+            %wy, %vwy = gpu.shuffle idx %weight, %pbs, %width : !pme_real
+            %pcs = arith.addi %pc, %pt2 : i32
+            %wz, %vwz = gpu.shuffle idx %weight, %pcs, %width : !pme_real
+            scf.if %in {{
+              %wxy = arith.mulf %wx, %wy : !pme_real
+              %value = arith.mulf %wxy, %wz : !pme_real
+              scf.if %overflows {{
+{indent(wrap_point("g1", "%xstart", "%pa", "%k1t"), 16)}{indent(wrap_point("g2", "%ystart", "%pb", "%k2t"), 16)}{indent(wrap_point("g3", "%zstart", "%pc", "%k3t"), 16)}{indent(grid_add(), 16)}              }} else {{
+                %t1 = arith.addi %l1, %pa : i32
+                %t2 = arith.addi %l2, %pb : i32
+                %t3 = arith.addi %l3, %pc : i32
+                %t1s = arith.muli %t1, %side32 : i32
+                %t12 = arith.addi %t1s, %t2 : i32
+                %t12s = arith.muli %t12, %side32 : i32
+                %t123 = arith.addi %t12s, %t3 : i32
+                %tat = arith.index_cast %t123 : i32 to index
+                PME_SHARED_ADD_{edge} %tile[%tat], %value
+              }}
+            }}
+          }}
+        }}
+      }}
+      gpu.barrier
+      // The tile into the grid; a point wraps around once at most, since
+      // the tile is no longer than the grid along any axis.
+      scf.if %bins_block {{
+        scf.for %t = %tx to %volume step %cthreads {{
+          %value = memref.load %tile[%t] : {shared}
+          %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
+          scf.if %nonzero {{
+            %t32 = arith.index_cast %t : index to i32
+            %c = arith.remui %t32, %side32 : i32
+            %ab = arith.divui %t32, %side32 : i32
+            %b = arith.remui %ab, %side32 : i32
+            %a = arith.divui %ab, %side32 : i32
+{indent(wrap_point("g1", "%o1t", "%a", "%k1t"), 12)}{indent(wrap_point("g2", "%o2t", "%b", "%k2t"), 12)}{indent(wrap_point("g3", "%o3t", "%c", "%k3t"), 12)}{indent(grid_add(), 12)}          }}
+        }}
+      }}
+    }}
+    gpu.terminator
+  }}
+  return
+}}
+"""
+
+
+def grid_add():
+    """The atomic addition of %value to the point (%g1, %g2, %g3) of the
+    grid `real`."""
+    return """\
+%row1 = arith.muli %g1, %k2t : i32
+%row = arith.addi %row1, %g2 : i32
+%row64 = arith.extui %row : i32 to i64
+%rowbase = arith.muli %row64, %k3w : i64
+%g364 = arith.extui %g3 : i32 to i64
+%at = arith.addi %rowbase, %g364 : i64
+%offset = arith.muli %at, %bytes : i64
+%address = arith.addi %gbase, %offset : i64
+%pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+PME_ATOMIC_ADD %pointer, %value
+"""
+
+
+def indent(text, spaces):
+    return "".join(" " * spaces + line + "\n" if line else "\n"
+                   for line in text.splitlines())
+
+
+def wrap_point(name, origin, offset, k):
+    return f"""\
+%{name}s = arith.addi {origin}, {offset} : i32
+%{name}w = arith.subi %{name}s, {k} : i32
+%{name}over = arith.cmpi sge, %{name}s, {k} : i32
+%{name} = arith.select %{name}over, %{name}w, %{name}s : i32
+"""
+
+
+def gaussian_lane_weight():
+    """The weight of a lane of the spreading into tiles: lane a P + j, a < 3,
+    the B-spline of point j along axis a of the particle, from %frac, the
+    fraction along its axis that the weights kernel stored, times the
+    charge %qk along x; the other lanes 0. Order 4 in closed form, as the
+    bricks (D109), the others by the recursion of the splines, as
+    spread_float."""
+    b = Body("          ")
+    b("""\
+%order = arith.constant PME_ORDER : index
+%c4o = arith.constant 4 : index
+%closed = arith.cmpi eq, %order, %c4o : index
+%splines = memref.alloca() : memref<8x!pme_real>""")
+    bspline(b, "tw_", "%frac", "%order", "%splines", None)
+    recursion = pick(b, "tp_", "%splines", "%j_l")
+    b("""\
+%w_sixth = arith.constant 0.16666666666666666 : !pme_real
+%w_one = arith.constant 1.0 : !pme_real
+%w_three = arith.constant 3.0 : !pme_real
+%w_four = arith.constant 4.0 : !pme_real
+%w_six = arith.constant 6.0 : !pme_real
+%cw_w2 = arith.mulf %frac, %frac : !pme_real
+%cw_w3 = arith.mulf %cw_w2, %frac : !pme_real
+%cw_omw = arith.subf %w_one, %frac : !pme_real
+%cw_omw2 = arith.mulf %cw_omw, %cw_omw : !pme_real
+%cw_m0 = arith.mulf %cw_omw2, %cw_omw : !pme_real
+%cw_a1 = arith.mulf %w_three, %cw_w3 : !pme_real
+%cw_b1 = arith.mulf %w_six, %cw_w2 : !pme_real
+%cw_c1 = arith.subf %cw_a1, %cw_b1 : !pme_real
+%cw_m1 = arith.addf %cw_c1, %w_four : !pme_real
+%cw_a2 = arith.mulf %w_three, %cw_w2 : !pme_real
+%cw_b2 = arith.mulf %w_three, %frac : !pme_real
+%cw_c2 = arith.subf %cw_a2, %cw_a1 : !pme_real
+%cw_d2 = arith.addf %cw_c2, %cw_b2 : !pme_real
+%cw_m2 = arith.addf %cw_d2, %w_one : !pme_real
+%cw_j0 = arith.constant 0 : index
+%cw_j1 = arith.constant 1 : index
+%cw_j2 = arith.constant 2 : index
+%cw_is0 = arith.cmpi eq, %j_l, %cw_j0 : index
+%cw_is1 = arith.cmpi eq, %j_l, %cw_j1 : index
+%cw_is2 = arith.cmpi eq, %j_l, %cw_j2 : index
+%cw_s2 = arith.select %cw_is2, %cw_m2, %cw_w3 : !pme_real
+%cw_s1 = arith.select %cw_is1, %cw_m1, %cw_s2 : !pme_real
+%cw_s0 = arith.select %cw_is0, %cw_m0, %cw_s1 : !pme_real
+%cw_value = arith.mulf %cw_s0, %w_sixth : !pme_real""")
+    b(f"""\
+%spline = arith.select %closed, %cw_value, {recursion} : !pme_real
+%first_axis = arith.cmpi eq, %axis_l, %c0 : index
+%charged = arith.mulf %qk, %spline : !pme_real
+%along = arith.select %first_axis, %charged, %spline : !pme_real
+%weight = arith.select %active, %along, %zero_r : !pme_real""")
+    return b.text()
+
+
+def tiles_kernels():
+    """The binning and the Gaussian spreading into tiles for each edge of
+    TILE_EDGES, after every other kernel, so that a module without tiles
+    is that of before; the compiler adds the functions of the edge that a
+    sum takes."""
+    text = ""
+    for edge in TILE_EDGES:
+        text += bin_kernels(edge) + bin_kernels(edge, listed=True)
+        text += tile_kernel(
+            edge, "mdrt_gpu_pme_spread_tiles",
+            "%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>,",
+            gaussian_lane_weight(),
+            "Adds the charges of the binned particles to `real` through tiles\n"
+            "// of the memory of the block (D[pme-tiles]; see tile_kernel in the\n"
+            "// script).")
+    return text
 
 
 def zero_text():
@@ -1935,7 +2447,7 @@ def main():
         file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
                    tables() + convolve() + scale() + dispersion() + gather() +
                    gather_weights() + gather(potential=True) +
-                   listed_kernels(weights_kernels(listed=True)))
+                   listed_kernels(weights_kernels(listed=True)) + tiles_kernels())
     with open(os.path.join(templates, "PMEGPUTriclinic.mlir"), "w") as file:
         file.write(triclinic())
 

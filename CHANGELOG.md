@@ -509,6 +509,24 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **PME on a device spreads through tiles of the memory of a block**
+  (D[pme-tiles], #336,
+  [docs/pme-m1.md §3.3](docs/pme-m1.md#33-spreading-through-tiles)): the
+  particles are binned by their first grid point at each evaluation, a
+  block adds the charges of a bin into a tile and the tile into the grid,
+  as cuFINUFFT spreads. A new pass, `md-exec-choose-spreading`, sets
+  `tiles(8)` on `md_exec.reciprocal` for every sum in f32 whose grid has
+  at least 500,000 points; a smaller grid, double precision, and the
+  deterministic mode spread as before.
+  The prolate kernel, LJ-PME, and triclinic cells take the tiles too.
+  `MDIR_PME_SPREAD` (`global`, `tiles`, `tiles4`, `tiles8`, `tiles16`,
+  `auto`) overrides the choice. On an RTX 4090 in mixed precision the
+  step at order 4 takes 0.94 to 0.96 times as long on Factor IX,
+  Cellulose, and STMV, and 0.79 to 0.87 at orders 6 and 8 and with the
+  prolate kernel. No control-file key or
+  output changes; results agree with the previous spreading to the
+  rounding of the atomics.
+
 - **Steepest descent ends once its step has shrunk below a floor**
   (D274, #369): $10^{-7}$ Å below double precision and
   $10^{-11}$ Å in double, checked at each row of the log, rather than

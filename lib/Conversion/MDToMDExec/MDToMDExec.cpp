@@ -517,7 +517,10 @@ LogicalResult Converter::convert(Operation *op) {
           reciprocal.getDispersionAttr(),
           yieldsPotential ? builder.getUnitAttr() : UnitAttr(),
           reciprocal.getProlateAttr(),
-          yieldsPotential ? UnitAttr() : reciprocal.getGatherAllAttr());
+          yieldsPotential ? UnitAttr() : reciprocal.getGatherAllAttr(),
+          // The layout of the spreading is chosen later, on a device
+          // (md-exec-choose-spreading, D[pme-tiles]).
+          /*tiles=*/IntegerAttr());
     };
     if (takesForces) {
       auto converted = create(reciprocal.getForces().getType(), false);

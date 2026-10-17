@@ -1,0 +1,29 @@
+# The spreading of PME through tiles of the memory of a block
+# (D[pme-tiles]) under compute-sanitizer: the binning (match.any.sync, the
+# runs of the bins and their overflow) and the tile kernel, with the shared
+# atomics and the rounds of particles staged in the memory of the block, in
+# mixed precision, over 5 steps of the OPC box of pme-tiles-gpu.test: the
+# B-splines of order 4 (from the list of D262) in the box made 200 Å long
+# in z, where many particles overflow the runs of their bins, and the
+# prolate kernel (D266) in the box as it is.
+#
+# REQUIRES: cuda, compute-sanitizer, hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../Driver/Inputs/opc/opc.prmtop %t
+# RUN: sed '$ s/  25.1595755/ 200.0000000/' %S/../Driver/Inputs/opc/opc.inpcrd > %t/slab.inpcrd
+# RUN: cp %S/../Driver/Inputs/opc/opc.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/pme-tiles-gpu.test | sed '1d;$d' \
+# RUN:   | sed -e 's/PRECISION/MIXED/' -e 's/^steps .*/steps = 5/' -e '/^checkpoint/d' \
+# RUN:         -e 's/opc.inpcrd/slab.inpcrd/' -e 's/^order = ORDER/order = 4\ngrid = [32, 32, 200]/' > %t/slab.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/pme-tiles-gpu.test | sed '1d;$d' \
+# RUN:   | sed -e 's/PRECISION/MIXED/' -e 's/^steps .*/steps = 5/' -e '/^checkpoint/d' \
+# RUN:         -e 's/^order = ORDER/kernel = "PROLATE"/' > %t/prolate.toml
+# RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run slab.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run slab.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run slab.toml 2>&1 | FileCheck %s --check-prefix=RACE
+# RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run prolate.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run prolate.toml 2>&1 | FileCheck %s --check-prefix=RACE
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

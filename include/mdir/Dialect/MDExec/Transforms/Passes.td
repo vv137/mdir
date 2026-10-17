@@ -98,6 +98,49 @@ def RebuildAtInterval
   ];
 }
 
+def ChooseSpreading
+    : Pass<"md-exec-choose-spreading", "::mlir::ModuleOp"> {
+  let summary = "Chooses how each reciprocal sum of PME on a device spreads "
+                "its charges";
+  let description = [{
+    Sets `tiles(E)` on each `md_exec.reciprocal` that spreads its charges
+    through tiles of the memory of a block, one for each bin of $E^3$
+    points of the grid (D[pme-tiles], docs/pme-m1.md); the others spread
+    as before, into the bricks of D108 (splines of order 4 in f32) or by
+    atomics of the device into the grid. Runs on programs for a device,
+    after the precision is assigned and before the storage.
+
+    `layout=global` sets no tiles; `layout=tiles` tiles every sum that can
+    be tiled; `layout=auto`, the default, tiles every sum in f32 whose
+    grid has at least `min-points` points: a smaller grid has too few
+    bins to occupy a device, and a grid in f64 spreads faster as before.
+    A sum can be tiled where the run is not in
+    the deterministic mode (whose grid is in fixed point, D70, D84), where
+    each edge of the grid has at least $E + P - 1$ points, so that a point
+    of a tile wraps around the grid once at most, and where a tile of
+    $(E + P - 1)^3$ values of the type of the forces, with the charges,
+    fractions, and first points of a particle for each thread of the block
+    (128, or 512 for $E = 16$), fits 48 KiB of the memory of a block.
+
+    ```mlir
+    %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
+                   grid([64, 64, 64]) order(4) beta(3.12) coulomb(138.935)
+                   tiles(8) : ...
+    ```
+  }];
+  let options = [
+    Option<"layout", "layout", "std::string", /*default=*/"\"auto\"",
+           "auto, global, or tiles">,
+    Option<"edge", "edge", "int64_t", /*default=*/"8",
+           "The points of an edge of a bin of the tiles: 4, 8, or 16">,
+    Option<"minPoints", "min-points", "int64_t", /*default=*/"500000",
+           "With layout=auto, the least number of points of a grid that "
+           "is tiled">,
+    Option<"deterministic", "deterministic", "bool", /*default=*/"false",
+           "The deterministic mode, which takes no tiles">
+  ];
+}
+
 def ChooseNeighbors
     : Pass<"md-exec-choose-neighbors", "::mlir::ModuleOp"> {
   let summary = "Chooses the kind of each neighbor structure and the policy "

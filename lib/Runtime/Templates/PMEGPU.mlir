@@ -895,7 +895,8 @@ func.func private @mdrt_gpu_pme_spread_float(%x: memref<?x3x!pme_pos, 1>, %q: me
 }
 
 // The weights of the particles for the spreading and the gathering of
-// order 4: see weights_kernels in the script.
+// order 4, and the places of the spreading into tiles at every order:
+// see weights_kernels in the script.
 func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vector<3xf64>,
                                         %weights: memref<?x!pme_real, 1>,
                                         %k1: index, %k2: index, %k3: index) {
@@ -932,7 +933,7 @@ func.func private @mdrt_gpu_pme_weights(%x: memref<?x3x!pme_pos, 1>, %box: vecto
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
-      %order = arith.constant 4 : index
+      %order = arith.constant PME_ORDER : index
       %xc = arith.constant 0 : index
       %xs = memref.load %x[%i, %xc] : memref<?x3x!pme_pos, 1>
       %xp = PME_EXTEND_POS %xs : !pme_pos to f64
@@ -6222,6 +6223,2037 @@ func.func private @mdrt_gpu_pme_gather_weights_listed(%x: memref<?x3x!pme_pos, 1
       memref.store %zero_f, %f[%zplace, %c0] : memref<?x3x!pme_frc, 1>
       memref.store %zero_f, %f[%zplace, %zc1] : memref<?x3x!pme_frc, 1>
       memref.store %zero_f, %f[%zplace, %zc2] : memref<?x3x!pme_frc, 1>
+    }
+    gpu.terminator
+  }
+  return
+}
+
+// The particles into bins of 4^3 points of the grid by their
+// first points, which `places` holds, for the spreading into tiles; zeroes
+// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+func.func private @mdrt_gpu_pme_bin4(%q: memref<?x!pme_chg, 1>,
+                                      %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
+                                      %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant 4 : index
+  %edge32 = arith.constant 4 : i32
+  %edge_m1 = arith.constant 3 : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+  %points = memref.dim %real, %c0 : memref<?x!pme_real, 1>
+  %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %points : index
+    scf.if %inside {
+      %none = arith.constant 0.0 : !pme_real
+      memref.store %none, %real[%item] : memref<?x!pme_real, 1>
+      %counts_end = arith.addi %nbins, %c1 : index
+      %a_count = arith.cmpi ult, %item, %counts_end : index
+      scf.if %a_count {
+        %none32 = arith.constant 0 : i32
+        memref.store %none32, %bins[%item] : memref<?xi32, 1>
+      }
+    }
+    gpu.terminator
+  }
+  // Every lane of a warp takes part in its match.any.sync and shuffle:
+  // the threads past the last entry take the last entry and bin nothing.
+  %blocks_entries = func.call @mdrt_gpu_pme_blocks(%n_all) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_entries, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %n_all : index
+    %false = arith.constant false
+    %n_last = arith.subi %n_all, %c1 : index
+    %at_item = arith.minui %item, %n_last : index
+    %item32 = arith.index_cast %item : index to i32
+    %t32 = arith.constant 32 : i32
+      %valid = arith.ori %inside, %false : i1
+      %i = arith.addi %at_item, %c0 : index
+      %xc = arith.constant 0 : index
+      %xn = arith.muli %n_all, %xc : index
+      %xat = arith.addi %xn, %i : index
+      %xstart_r = memref.load %places[%xat] : memref<?x!pme_real, 1>
+      %xstart = arith.fptosi %xstart_r : !pme_real to i32
+      %xbin = arith.divui %xstart, %edge32 : i32
+      %yc = arith.constant 1 : index
+      %yn = arith.muli %n_all, %yc : index
+      %yat = arith.addi %yn, %i : index
+      %ystart_r = memref.load %places[%yat] : memref<?x!pme_real, 1>
+      %ystart = arith.fptosi %ystart_r : !pme_real to i32
+      %ybin = arith.divui %ystart, %edge32 : i32
+      %zc = arith.constant 2 : index
+      %zn = arith.muli %n_all, %zc : index
+      %zat = arith.addi %zn, %i : index
+      %zstart_r = memref.load %places[%zat] : memref<?x!pme_real, 1>
+      %zstart = arith.fptosi %zstart_r : !pme_real to i32
+      %zbin = arith.divui %zstart, %edge32 : i32
+      %nb2t = arith.index_cast %nb2 : index to i32
+      %nb3t = arith.index_cast %nb3 : index to i32
+      %bxy = arith.muli %xbin, %nb2t : i32
+      %bxy2 = arith.addi %bxy, %ybin : i32
+      %bxyz = arith.muli %bxy2, %nb3t : i32
+      %bin_of = arith.addi %bxyz, %zbin : i32
+      %no_bin = arith.constant -1 : i32
+      %bin = arith.select %valid, %bin_of, %no_bin : i32
+      // The lanes of the warp with the same bin, and the first of them.
+      %same = llvm.inline_asm has_side_effects "match.any.sync.b32 $0, $1, -1;", "=r,r" %bin : (i32) -> i32
+      %leader = math.cttz %same : i32
+      %lane = arith.remui %item32, %t32 : i32
+      %one32 = arith.constant 1 : i32
+      %below_bit = arith.shli %one32, %lane : i32
+      %below = arith.subi %below_bit, %one32 : i32
+      %same_below = arith.andi %same, %below : i32
+      %offset = math.ctpop %same_below : i32
+      %together = math.ctpop %same : i32
+      %leads = arith.cmpi eq, %lane, %leader : i32
+      %counts = arith.andi %leads, %valid : i1
+      %bins_index = memref.extract_aligned_pointer_as_index %bins : memref<?xi32, 1> -> index
+      %bins_base = arith.index_cast %bins_index : index to i64
+      %four64 = arith.constant 4 : i64
+      %zero32 = arith.constant 0 : i32
+      %first_rank = scf.if %counts -> (i32) {
+        // A relaxed atomic at the scope of the device, as the fixed point adds.
+        %bin64 = arith.extui %bin : i32 to i64
+        %bin_offset = arith.muli %bin64, %four64 : i64
+        %bin_address = arith.addi %bins_base, %bin_offset : i64
+        %bin_pointer = llvm.inttoptr %bin_address : i64 to !llvm.ptr<1>
+        %old = llvm.atomicrmw add %bin_pointer, %together syncscope("device") monotonic : !llvm.ptr<1>, i32
+        scf.yield %old : i32
+      } else {
+        scf.yield %zero32 : i32
+      }
+      %width = arith.constant 32 : i32
+      %base_rank, %base_valid = gpu.shuffle idx %first_rank, %leader, %width : i32
+      %rank = arith.addi %base_rank, %offset : i32
+      %capacity32 = arith.index_cast %capacity : index to i32
+      %fits = arith.cmpi slt, %rank, %capacity32 : i32
+      %particle = arith.index_cast %i : index to i32
+      scf.if %valid {
+        scf.if %fits {
+          %bin_i = arith.index_cast %bin : i32 to index
+          %run = arith.muli %bin_i, %capacity : index
+          %run_at = arith.addi %of_lists, %run : index
+          %rank_i = arith.index_cast %rank : i32 to index
+          %place = arith.addi %run_at, %rank_i : index
+          memref.store %particle, %bins[%place] : memref<?xi32, 1>
+        } else {
+          %over_offset = arith.index_cast %nbins : index to i64
+          %over_bytes = arith.muli %over_offset, %four64 : i64
+          %over_address = arith.addi %bins_base, %over_bytes : i64
+          %over_pointer = llvm.inttoptr %over_address : i64 to !llvm.ptr<1>
+          %over = llvm.atomicrmw add %over_pointer, %one32 syncscope("device") monotonic : !llvm.ptr<1>, i32
+          %over_i = arith.index_cast %over : i32 to index
+          %over_at = arith.addi %of_overflow, %over_i : index
+          memref.store %particle, %bins[%over_at] : memref<?xi32, 1>
+        }
+      }
+    gpu.terminator
+  }
+  return
+}
+
+// The particles of the list (D262) into bins of 4^3 points of the grid by their
+// first points, which `places` holds, for the spreading into tiles; zeroes
+// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+func.func private @mdrt_gpu_pme_bin4_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>,
+                                      %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
+                                      %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant 4 : index
+  %edge32 = arith.constant 4 : i32
+  %edge_m1 = arith.constant 3 : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+  %points = memref.dim %real, %c0 : memref<?x!pme_real, 1>
+  %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %points : index
+    scf.if %inside {
+      %none = arith.constant 0.0 : !pme_real
+      memref.store %none, %real[%item] : memref<?x!pme_real, 1>
+      %counts_end = arith.addi %nbins, %c1 : index
+      %a_count = arith.cmpi ult, %item, %counts_end : index
+      scf.if %a_count {
+        %none32 = arith.constant 0 : i32
+        memref.store %none32, %bins[%item] : memref<?xi32, 1>
+      }
+    }
+    gpu.terminator
+  }
+  // Every lane of a warp takes part in its match.any.sync and shuffle:
+  // the threads past the last entry take the last entry and bin nothing.
+  %blocks_entries = func.call @mdrt_gpu_pme_blocks(%n_all) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_entries, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %n_all : index
+    %false = arith.constant false
+    %n_last = arith.subi %n_all, %c1 : index
+    %at_item = arith.minui %item, %n_last : index
+    %item32 = arith.index_cast %item : index to i32
+    %t32 = arith.constant 32 : i32
+      %listed_raw = memref.load %list[%at_item] : memref<?xi32, 1>
+      %listed_none = arith.constant 0 : i32
+      %is_listed = arith.cmpi sge, %listed_raw, %listed_none : i32
+      %valid = arith.andi %inside, %is_listed : i1
+      %listed_0 = arith.select %is_listed, %listed_raw, %listed_none : i32
+      %i = arith.index_cast %listed_0 : i32 to index
+      %xc = arith.constant 0 : index
+      %xn = arith.muli %n_all, %xc : index
+      %xat = arith.addi %xn, %i : index
+      %xstart_r = memref.load %places[%xat] : memref<?x!pme_real, 1>
+      %xstart = arith.fptosi %xstart_r : !pme_real to i32
+      %xbin = arith.divui %xstart, %edge32 : i32
+      %yc = arith.constant 1 : index
+      %yn = arith.muli %n_all, %yc : index
+      %yat = arith.addi %yn, %i : index
+      %ystart_r = memref.load %places[%yat] : memref<?x!pme_real, 1>
+      %ystart = arith.fptosi %ystart_r : !pme_real to i32
+      %ybin = arith.divui %ystart, %edge32 : i32
+      %zc = arith.constant 2 : index
+      %zn = arith.muli %n_all, %zc : index
+      %zat = arith.addi %zn, %i : index
+      %zstart_r = memref.load %places[%zat] : memref<?x!pme_real, 1>
+      %zstart = arith.fptosi %zstart_r : !pme_real to i32
+      %zbin = arith.divui %zstart, %edge32 : i32
+      %nb2t = arith.index_cast %nb2 : index to i32
+      %nb3t = arith.index_cast %nb3 : index to i32
+      %bxy = arith.muli %xbin, %nb2t : i32
+      %bxy2 = arith.addi %bxy, %ybin : i32
+      %bxyz = arith.muli %bxy2, %nb3t : i32
+      %bin_of = arith.addi %bxyz, %zbin : i32
+      %no_bin = arith.constant -1 : i32
+      %bin = arith.select %valid, %bin_of, %no_bin : i32
+      // The lanes of the warp with the same bin, and the first of them.
+      %same = llvm.inline_asm has_side_effects "match.any.sync.b32 $0, $1, -1;", "=r,r" %bin : (i32) -> i32
+      %leader = math.cttz %same : i32
+      %lane = arith.remui %item32, %t32 : i32
+      %one32 = arith.constant 1 : i32
+      %below_bit = arith.shli %one32, %lane : i32
+      %below = arith.subi %below_bit, %one32 : i32
+      %same_below = arith.andi %same, %below : i32
+      %offset = math.ctpop %same_below : i32
+      %together = math.ctpop %same : i32
+      %leads = arith.cmpi eq, %lane, %leader : i32
+      %counts = arith.andi %leads, %valid : i1
+      %bins_index = memref.extract_aligned_pointer_as_index %bins : memref<?xi32, 1> -> index
+      %bins_base = arith.index_cast %bins_index : index to i64
+      %four64 = arith.constant 4 : i64
+      %zero32 = arith.constant 0 : i32
+      %first_rank = scf.if %counts -> (i32) {
+        // A relaxed atomic at the scope of the device, as the fixed point adds.
+        %bin64 = arith.extui %bin : i32 to i64
+        %bin_offset = arith.muli %bin64, %four64 : i64
+        %bin_address = arith.addi %bins_base, %bin_offset : i64
+        %bin_pointer = llvm.inttoptr %bin_address : i64 to !llvm.ptr<1>
+        %old = llvm.atomicrmw add %bin_pointer, %together syncscope("device") monotonic : !llvm.ptr<1>, i32
+        scf.yield %old : i32
+      } else {
+        scf.yield %zero32 : i32
+      }
+      %width = arith.constant 32 : i32
+      %base_rank, %base_valid = gpu.shuffle idx %first_rank, %leader, %width : i32
+      %rank = arith.addi %base_rank, %offset : i32
+      %capacity32 = arith.index_cast %capacity : index to i32
+      %fits = arith.cmpi slt, %rank, %capacity32 : i32
+      %particle = arith.index_cast %i : index to i32
+      scf.if %valid {
+        scf.if %fits {
+          %bin_i = arith.index_cast %bin : i32 to index
+          %run = arith.muli %bin_i, %capacity : index
+          %run_at = arith.addi %of_lists, %run : index
+          %rank_i = arith.index_cast %rank : i32 to index
+          %place = arith.addi %run_at, %rank_i : index
+          memref.store %particle, %bins[%place] : memref<?xi32, 1>
+        } else {
+          %over_offset = arith.index_cast %nbins : index to i64
+          %over_bytes = arith.muli %over_offset, %four64 : i64
+          %over_address = arith.addi %bins_base, %over_bytes : i64
+          %over_pointer = llvm.inttoptr %over_address : i64 to !llvm.ptr<1>
+          %over = llvm.atomicrmw add %over_pointer, %one32 syncscope("device") monotonic : !llvm.ptr<1>, i32
+          %over_i = arith.index_cast %over : i32 to index
+          %over_at = arith.addi %of_overflow, %over_i : index
+          memref.store %particle, %bins[%over_at] : memref<?xi32, 1>
+        }
+      }
+    gpu.terminator
+  }
+  return
+}
+
+// Adds the charges of the binned particles to `real` through tiles
+// of the memory of the block (D[pme-tiles]; see tile_kernel in the
+// script).
+func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>,
+                                      %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant 4 : index
+  %edge32 = arith.constant 4 : i32
+  %edge_m1 = arith.constant 3 : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+  %cthreads = arith.constant 128 : index
+  %blocks_tiles = arith.addi %nbins, %c1 : index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
+             workgroup(%tile : memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<512x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<384xi32, #gpu.address_space<workgroup>>) {
+    %c3w = arith.constant 3 : index
+    %c32w = arith.constant 32 : index
+    %cwarps = arith.constant 4 : index
+    %cthreads2 = arith.constant 256 : index
+    %zero_r = arith.constant 0.0 : !pme_real
+    %true_w = arith.constant true
+    %side32 = arith.constant PME_TILE_SIDE_4 : i32
+    %volume = arith.constant PME_TILE_POINTS_4 : index
+    // The block of the overflow, after the bins.
+    %overflows = arith.cmpi eq, %bx, %nbins : index
+    %bins_block = arith.xori %overflows, %true_w : i1
+    %bin = arith.select %overflows, %c0, %bx : index
+    // The first point of the bin.
+    %b3 = arith.remui %bin, %nb3 : index
+    %b12 = arith.divui %bin, %nb3 : index
+    %b2 = arith.remui %b12, %nb2 : index
+    %b1 = arith.divui %b12, %nb2 : index
+    %o1 = arith.muli %b1, %edge : index
+    %o2 = arith.muli %b2, %edge : index
+    %o3 = arith.muli %b3, %edge : index
+    %o1t = arith.index_cast %o1 : index to i32
+    %o2t = arith.index_cast %o2 : index to i32
+    %o3t = arith.index_cast %o3 : index to i32
+    // The particles of the bin: those of its run, at most C, or those of
+    // the overflow.
+    %counted32 = memref.load %bins[%bx] : memref<?xi32, 1>
+    %counted = arith.index_cast %counted32 : i32 to index
+    %in_run = arith.minui %counted, %capacity : index
+    %count = arith.select %overflows, %counted, %in_run : index
+    %run = arith.muli %bin, %capacity : index
+    %run_at = arith.addi %of_lists, %run : index
+    %list_at = arith.select %overflows, %of_overflow, %run_at : index
+    // A bin without particles adds nothing; the whole block leaves.
+    %some = arith.cmpi ugt, %count, %c0 : index
+    scf.if %some {
+      scf.for %t = %tx to %volume step %cthreads {
+        memref.store %zero_r, %tile[%t] : memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>
+      }
+      %warp = arith.divui %tx, %c32w : index
+      %lane_x = arith.remui %tx, %c32w : index
+      %lane = arith.index_cast %lane_x : index to i32
+      %pt = arith.constant PME_ORDER : i32
+      %pidx = arith.constant PME_ORDER : index
+      %ppt = arith.muli %pt, %pt : i32
+      %pppt = arith.muli %ppt, %pt : i32
+      %pt2 = arith.addi %pt, %pt : i32
+      %thirty_two = arith.constant 32 : i32
+      %zero32 = arith.constant 0 : i32
+      %width = arith.constant 32 : i32
+      %passes_n2 = arith.muli %pidx, %pidx : index
+      %passes_n3 = arith.muli %passes_n2, %pidx : index
+      %c31p = arith.constant 31 : index
+      %passes_u = arith.addi %passes_n3, %c31p : index
+      %passes = arith.divui %passes_u, %c32w : index
+      // The point and axis of a lane: lane a P + j, a < 3, weighs.
+      %three_p = arith.muli %pidx, %c3w : index
+      %active = arith.cmpi ult, %lane_x, %three_p : index
+      %lane_a = arith.select %active, %lane_x, %c0 : index
+      %axis_l = arith.divui %lane_a, %pidx : index
+      %j_l = arith.remui %lane_a, %pidx : index
+      %axis_at = arith.muli %axis_l, %cthreads : index
+      %k1t = arith.index_cast %k1 : index to i32
+      %k2t = arith.index_cast %k2 : index to i32
+      %k3t = arith.index_cast %k3 : index to i32
+      %k3w = arith.extui %k3t : i32 to i64
+      %bytes = arith.constant PME_REAL_BYTES : i64
+      %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
+      %gbase = arith.index_cast %gindex : index to i64
+      scf.for %round = %c0 to %count step %cthreads {
+        // The particles of the round into the memory of the block, after
+        // the warps of the round before have read theirs.
+        gpu.barrier
+        %left = arith.subi %count, %round : index
+        %in_round = arith.minui %left, %cthreads : index
+        %stages = arith.cmpi ult, %tx, %in_round : index
+        scf.if %stages {
+          %entry = arith.addi %round, %tx : index
+          %entry_at = arith.addi %list_at, %entry : index
+          %particle = memref.load %bins[%entry_at] : memref<?xi32, 1>
+          %i = arith.index_cast %particle : i32 to index
+          %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
+          %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+          memref.store %qi, %staged[%tx] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          scf.for %ax = %c0 to %c3w step %c1 {
+            %at_n = arith.muli %n_all, %ax : index
+            %at_s = arith.addi %at_n, %i : index
+            %start_r = memref.load %places[%at_s] : memref<?x!pme_real, 1>
+            %start = arith.fptosi %start_r : !pme_real to i32
+            %fax = arith.addi %ax, %c3w : index
+            %at_fn = arith.muli %n_all, %fax : index
+            %at_f = arith.addi %at_fn, %i : index
+            %frac_g = memref.load %places[%at_f] : memref<?x!pme_real, 1>
+            %slot0 = arith.muli %ax, %cthreads : index
+            %slot = arith.addi %slot0, %tx : index
+            memref.store %start, %starts[%slot] : memref<384xi32, #gpu.address_space<workgroup>>
+            %fslot = arith.addi %slot, %cthreads : index
+            memref.store %frac_g, %staged[%fslot] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          }
+        }
+        gpu.barrier
+        scf.for %k = %warp to %in_round step %cwarps {
+          %qk = memref.load %staged[%k] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          %fk0 = arith.addi %axis_at, %k : index
+          %fk = arith.addi %fk0, %cthreads : index
+          %frac = memref.load %staged[%fk] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          %order = arith.constant PME_ORDER : index
+          %c4o = arith.constant 4 : index
+          %closed = arith.cmpi eq, %order, %c4o : index
+          %splines = memref.alloca() : memref<8x!pme_real>
+          %tw_c0 = arith.constant 0 : index
+          %tw_c1 = arith.constant 1 : index
+          %tw_c2 = arith.constant 2 : index
+          %tw_c3 = arith.constant 3 : index
+          %tw_c8 = arith.constant 8 : index
+          %tw_zero = arith.constant 0.0 : !pme_real
+          %tw_one = arith.constant 1.0 : !pme_real
+          scf.for %tw_j = %tw_c0 to %tw_c8 step %tw_c1 {
+            memref.store %tw_zero, %splines[%tw_j] : memref<8x!pme_real>
+          }
+          %tw_omw = arith.subf %tw_one, %frac : !pme_real
+          memref.store %tw_omw, %splines[%tw_c0] : memref<8x!pme_real>
+          memref.store %frac, %splines[%tw_c1] : memref<8x!pme_real>
+          scf.for %tw_k = %tw_c3 to %order step %tw_c1 {
+          %tw_r_km1 = arith.subi %tw_k, %tw_c1 : index
+          %tw_r_km2 = arith.subi %tw_k, %tw_c2 : index
+          %tw_r_km1i = arith.index_cast %tw_r_km1 : index to i64
+          %tw_r_km1f = arith.sitofp %tw_r_km1i : i64 to !pme_real
+          %tw_r_div = arith.divf %tw_one, %tw_r_km1f : !pme_real
+          %tw_r_ki = arith.index_cast %tw_k : index to i64
+          %tw_r_kf = arith.sitofp %tw_r_ki : i64 to !pme_real
+          %tw_r_last = memref.load %splines[%tw_r_km2] : memref<8x!pme_real>
+          %tw_r_dw = arith.mulf %tw_r_div, %frac : !pme_real
+          %tw_r_top = arith.mulf %tw_r_dw, %tw_r_last : !pme_real
+          memref.store %tw_r_top, %splines[%tw_r_km1] : memref<8x!pme_real>
+          scf.for %tw_r_j = %tw_c1 to %tw_r_km1 step %tw_c1 {
+            %tw_r_ji = arith.index_cast %tw_r_j : index to i64
+            %tw_r_jf = arith.sitofp %tw_r_ji : i64 to !pme_real
+            %tw_r_at = arith.subi %tw_r_km1, %tw_r_j : index
+            %tw_r_below = arith.subi %tw_r_at, %tw_c1 : index
+            %tw_r_lo = memref.load %splines[%tw_r_below] : memref<8x!pme_real>
+            %tw_r_hi = memref.load %splines[%tw_r_at] : memref<8x!pme_real>
+            %tw_r_wj = arith.addf %frac, %tw_r_jf : !pme_real
+            %tw_r_kj = arith.subf %tw_r_kf, %tw_r_jf : !pme_real
+            %tw_r_kjw = arith.subf %tw_r_kj, %frac : !pme_real
+            %tw_r_t1 = arith.mulf %tw_r_wj, %tw_r_lo : !pme_real
+            %tw_r_t2 = arith.mulf %tw_r_kjw, %tw_r_hi : !pme_real
+            %tw_r_sum = arith.addf %tw_r_t1, %tw_r_t2 : !pme_real
+            %tw_r_value = arith.mulf %tw_r_div, %tw_r_sum : !pme_real
+            memref.store %tw_r_value, %splines[%tw_r_at] : memref<8x!pme_real>
+          }
+          %tw_r_first = memref.load %splines[%tw_c0] : memref<8x!pme_real>
+          %tw_r_omw = arith.subf %tw_one, %frac : !pme_real
+          %tw_r_d0 = arith.mulf %tw_r_div, %tw_r_omw : !pme_real
+          %tw_r_bottom = arith.mulf %tw_r_d0, %tw_r_first : !pme_real
+          memref.store %tw_r_bottom, %splines[%tw_c0] : memref<8x!pme_real>
+          }
+          %tw_f_km1 = arith.subi %order, %tw_c1 : index
+          %tw_f_km2 = arith.subi %order, %tw_c2 : index
+          %tw_f_km1i = arith.index_cast %tw_f_km1 : index to i64
+          %tw_f_km1f = arith.sitofp %tw_f_km1i : i64 to !pme_real
+          %tw_f_div = arith.divf %tw_one, %tw_f_km1f : !pme_real
+          %tw_f_ki = arith.index_cast %order : index to i64
+          %tw_f_kf = arith.sitofp %tw_f_ki : i64 to !pme_real
+          %tw_f_last = memref.load %splines[%tw_f_km2] : memref<8x!pme_real>
+          %tw_f_dw = arith.mulf %tw_f_div, %frac : !pme_real
+          %tw_f_top = arith.mulf %tw_f_dw, %tw_f_last : !pme_real
+          memref.store %tw_f_top, %splines[%tw_f_km1] : memref<8x!pme_real>
+          scf.for %tw_f_j = %tw_c1 to %tw_f_km1 step %tw_c1 {
+            %tw_f_ji = arith.index_cast %tw_f_j : index to i64
+            %tw_f_jf = arith.sitofp %tw_f_ji : i64 to !pme_real
+            %tw_f_at = arith.subi %tw_f_km1, %tw_f_j : index
+            %tw_f_below = arith.subi %tw_f_at, %tw_c1 : index
+            %tw_f_lo = memref.load %splines[%tw_f_below] : memref<8x!pme_real>
+            %tw_f_hi = memref.load %splines[%tw_f_at] : memref<8x!pme_real>
+            %tw_f_wj = arith.addf %frac, %tw_f_jf : !pme_real
+            %tw_f_kj = arith.subf %tw_f_kf, %tw_f_jf : !pme_real
+            %tw_f_kjw = arith.subf %tw_f_kj, %frac : !pme_real
+            %tw_f_t1 = arith.mulf %tw_f_wj, %tw_f_lo : !pme_real
+            %tw_f_t2 = arith.mulf %tw_f_kjw, %tw_f_hi : !pme_real
+            %tw_f_sum = arith.addf %tw_f_t1, %tw_f_t2 : !pme_real
+            %tw_f_value = arith.mulf %tw_f_div, %tw_f_sum : !pme_real
+            memref.store %tw_f_value, %splines[%tw_f_at] : memref<8x!pme_real>
+          }
+          %tw_f_first = memref.load %splines[%tw_c0] : memref<8x!pme_real>
+          %tw_f_omw = arith.subf %tw_one, %frac : !pme_real
+          %tw_f_d0 = arith.mulf %tw_f_div, %tw_f_omw : !pme_real
+          %tw_f_bottom = arith.mulf %tw_f_d0, %tw_f_first : !pme_real
+          memref.store %tw_f_bottom, %splines[%tw_c0] : memref<8x!pme_real>
+          %tp_none = arith.constant 0.0 : !pme_real
+          %tp_c0 = arith.constant 0 : index
+          %tp_c1 = arith.constant 1 : index
+          %tp_value = scf.for %tp_e = %tp_c0 to %order step %tp_c1
+              iter_args(%tp_acc = %tp_none) -> (!pme_real) {
+            %tp_at = memref.load %splines[%tp_e] : memref<8x!pme_real>
+            %tp_here = arith.cmpi eq, %tp_e, %j_l : index
+            %tp_chosen = arith.select %tp_here, %tp_at, %tp_acc : !pme_real
+            scf.yield %tp_chosen : !pme_real
+          }
+          %w_sixth = arith.constant 0.16666666666666666 : !pme_real
+          %w_one = arith.constant 1.0 : !pme_real
+          %w_three = arith.constant 3.0 : !pme_real
+          %w_four = arith.constant 4.0 : !pme_real
+          %w_six = arith.constant 6.0 : !pme_real
+          %cw_w2 = arith.mulf %frac, %frac : !pme_real
+          %cw_w3 = arith.mulf %cw_w2, %frac : !pme_real
+          %cw_omw = arith.subf %w_one, %frac : !pme_real
+          %cw_omw2 = arith.mulf %cw_omw, %cw_omw : !pme_real
+          %cw_m0 = arith.mulf %cw_omw2, %cw_omw : !pme_real
+          %cw_a1 = arith.mulf %w_three, %cw_w3 : !pme_real
+          %cw_b1 = arith.mulf %w_six, %cw_w2 : !pme_real
+          %cw_c1 = arith.subf %cw_a1, %cw_b1 : !pme_real
+          %cw_m1 = arith.addf %cw_c1, %w_four : !pme_real
+          %cw_a2 = arith.mulf %w_three, %cw_w2 : !pme_real
+          %cw_b2 = arith.mulf %w_three, %frac : !pme_real
+          %cw_c2 = arith.subf %cw_a2, %cw_a1 : !pme_real
+          %cw_d2 = arith.addf %cw_c2, %cw_b2 : !pme_real
+          %cw_m2 = arith.addf %cw_d2, %w_one : !pme_real
+          %cw_j0 = arith.constant 0 : index
+          %cw_j1 = arith.constant 1 : index
+          %cw_j2 = arith.constant 2 : index
+          %cw_is0 = arith.cmpi eq, %j_l, %cw_j0 : index
+          %cw_is1 = arith.cmpi eq, %j_l, %cw_j1 : index
+          %cw_is2 = arith.cmpi eq, %j_l, %cw_j2 : index
+          %cw_s2 = arith.select %cw_is2, %cw_m2, %cw_w3 : !pme_real
+          %cw_s1 = arith.select %cw_is1, %cw_m1, %cw_s2 : !pme_real
+          %cw_s0 = arith.select %cw_is0, %cw_m0, %cw_s1 : !pme_real
+          %cw_value = arith.mulf %cw_s0, %w_sixth : !pme_real
+          %spline = arith.select %closed, %cw_value, %tp_value : !pme_real
+          %first_axis = arith.cmpi eq, %axis_l, %c0 : index
+          %charged = arith.mulf %qk, %spline : !pme_real
+          %along = arith.select %first_axis, %charged, %spline : !pme_real
+          %weight = arith.select %active, %along, %zero_r : !pme_real
+          %xstart = memref.load %starts[%k] : memref<384xi32, #gpu.address_space<workgroup>>
+          %ys_at = arith.addi %k, %cthreads : index
+          %ystart = memref.load %starts[%ys_at] : memref<384xi32, #gpu.address_space<workgroup>>
+          %zs_at = arith.addi %k, %cthreads2 : index
+          %zstart = memref.load %starts[%zs_at] : memref<384xi32, #gpu.address_space<workgroup>>
+          %l1 = arith.subi %xstart, %o1t : i32
+          %l2 = arith.subi %ystart, %o2t : i32
+          %l3 = arith.subi %zstart, %o3t : i32
+          // A point of a pass: z fastest, so that the lanes of a row add
+          // to neighboring words of the tile.
+          scf.for %pass = %c0 to %passes step %c1 {
+            %pass32 = arith.index_cast %pass : index to i32
+            %pass_base = arith.muli %pass32, %thirty_two : i32
+            %kk = arith.addi %pass_base, %lane : i32
+            %in = arith.cmpi slt, %kk, %pppt : i32
+            %kc = arith.select %in, %kk, %zero32 : i32
+            %pa = arith.divui %kc, %ppt : i32
+            %pbc = arith.remui %kc, %ppt : i32
+            %pb = arith.divui %pbc, %pt : i32
+            %pc = arith.remui %pbc, %pt : i32
+            %wx, %vwx = gpu.shuffle idx %weight, %pa, %width : !pme_real
+            %pbs = arith.addi %pb, %pt : i32
+            %wy, %vwy = gpu.shuffle idx %weight, %pbs, %width : !pme_real
+            %pcs = arith.addi %pc, %pt2 : i32
+            %wz, %vwz = gpu.shuffle idx %weight, %pcs, %width : !pme_real
+            scf.if %in {
+              %wxy = arith.mulf %wx, %wy : !pme_real
+              %value = arith.mulf %wxy, %wz : !pme_real
+              scf.if %overflows {
+                %g1s = arith.addi %xstart, %pa : i32
+                %g1w = arith.subi %g1s, %k1t : i32
+                %g1over = arith.cmpi sge, %g1s, %k1t : i32
+                %g1 = arith.select %g1over, %g1w, %g1s : i32
+                %g2s = arith.addi %ystart, %pb : i32
+                %g2w = arith.subi %g2s, %k2t : i32
+                %g2over = arith.cmpi sge, %g2s, %k2t : i32
+                %g2 = arith.select %g2over, %g2w, %g2s : i32
+                %g3s = arith.addi %zstart, %pc : i32
+                %g3w = arith.subi %g3s, %k3t : i32
+                %g3over = arith.cmpi sge, %g3s, %k3t : i32
+                %g3 = arith.select %g3over, %g3w, %g3s : i32
+                %row1 = arith.muli %g1, %k2t : i32
+                %row = arith.addi %row1, %g2 : i32
+                %row64 = arith.extui %row : i32 to i64
+                %rowbase = arith.muli %row64, %k3w : i64
+                %g364 = arith.extui %g3 : i32 to i64
+                %at = arith.addi %rowbase, %g364 : i64
+                %offset = arith.muli %at, %bytes : i64
+                %address = arith.addi %gbase, %offset : i64
+                %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+                PME_ATOMIC_ADD %pointer, %value
+              } else {
+                %t1 = arith.addi %l1, %pa : i32
+                %t2 = arith.addi %l2, %pb : i32
+                %t3 = arith.addi %l3, %pc : i32
+                %t1s = arith.muli %t1, %side32 : i32
+                %t12 = arith.addi %t1s, %t2 : i32
+                %t12s = arith.muli %t12, %side32 : i32
+                %t123 = arith.addi %t12s, %t3 : i32
+                %tat = arith.index_cast %t123 : i32 to index
+                PME_SHARED_ADD_4 %tile[%tat], %value
+              }
+            }
+          }
+        }
+      }
+      gpu.barrier
+      // The tile into the grid; a point wraps around once at most, since
+      // the tile is no longer than the grid along any axis.
+      scf.if %bins_block {
+        scf.for %t = %tx to %volume step %cthreads {
+          %value = memref.load %tile[%t] : memref<PME_TILE_POINTS_4x!pme_real, #gpu.address_space<workgroup>>
+          %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
+          scf.if %nonzero {
+            %t32 = arith.index_cast %t : index to i32
+            %c = arith.remui %t32, %side32 : i32
+            %ab = arith.divui %t32, %side32 : i32
+            %b = arith.remui %ab, %side32 : i32
+            %a = arith.divui %ab, %side32 : i32
+            %g1s = arith.addi %o1t, %a : i32
+            %g1w = arith.subi %g1s, %k1t : i32
+            %g1over = arith.cmpi sge, %g1s, %k1t : i32
+            %g1 = arith.select %g1over, %g1w, %g1s : i32
+            %g2s = arith.addi %o2t, %b : i32
+            %g2w = arith.subi %g2s, %k2t : i32
+            %g2over = arith.cmpi sge, %g2s, %k2t : i32
+            %g2 = arith.select %g2over, %g2w, %g2s : i32
+            %g3s = arith.addi %o3t, %c : i32
+            %g3w = arith.subi %g3s, %k3t : i32
+            %g3over = arith.cmpi sge, %g3s, %k3t : i32
+            %g3 = arith.select %g3over, %g3w, %g3s : i32
+            %row1 = arith.muli %g1, %k2t : i32
+            %row = arith.addi %row1, %g2 : i32
+            %row64 = arith.extui %row : i32 to i64
+            %rowbase = arith.muli %row64, %k3w : i64
+            %g364 = arith.extui %g3 : i32 to i64
+            %at = arith.addi %rowbase, %g364 : i64
+            %offset = arith.muli %at, %bytes : i64
+            %address = arith.addi %gbase, %offset : i64
+            %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+            PME_ATOMIC_ADD %pointer, %value
+          }
+        }
+      }
+    }
+    gpu.terminator
+  }
+  return
+}
+
+// The particles into bins of 8^3 points of the grid by their
+// first points, which `places` holds, for the spreading into tiles; zeroes
+// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+func.func private @mdrt_gpu_pme_bin8(%q: memref<?x!pme_chg, 1>,
+                                      %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
+                                      %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant 8 : index
+  %edge32 = arith.constant 8 : i32
+  %edge_m1 = arith.constant 7 : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+  %points = memref.dim %real, %c0 : memref<?x!pme_real, 1>
+  %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %points : index
+    scf.if %inside {
+      %none = arith.constant 0.0 : !pme_real
+      memref.store %none, %real[%item] : memref<?x!pme_real, 1>
+      %counts_end = arith.addi %nbins, %c1 : index
+      %a_count = arith.cmpi ult, %item, %counts_end : index
+      scf.if %a_count {
+        %none32 = arith.constant 0 : i32
+        memref.store %none32, %bins[%item] : memref<?xi32, 1>
+      }
+    }
+    gpu.terminator
+  }
+  // Every lane of a warp takes part in its match.any.sync and shuffle:
+  // the threads past the last entry take the last entry and bin nothing.
+  %blocks_entries = func.call @mdrt_gpu_pme_blocks(%n_all) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_entries, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %n_all : index
+    %false = arith.constant false
+    %n_last = arith.subi %n_all, %c1 : index
+    %at_item = arith.minui %item, %n_last : index
+    %item32 = arith.index_cast %item : index to i32
+    %t32 = arith.constant 32 : i32
+      %valid = arith.ori %inside, %false : i1
+      %i = arith.addi %at_item, %c0 : index
+      %xc = arith.constant 0 : index
+      %xn = arith.muli %n_all, %xc : index
+      %xat = arith.addi %xn, %i : index
+      %xstart_r = memref.load %places[%xat] : memref<?x!pme_real, 1>
+      %xstart = arith.fptosi %xstart_r : !pme_real to i32
+      %xbin = arith.divui %xstart, %edge32 : i32
+      %yc = arith.constant 1 : index
+      %yn = arith.muli %n_all, %yc : index
+      %yat = arith.addi %yn, %i : index
+      %ystart_r = memref.load %places[%yat] : memref<?x!pme_real, 1>
+      %ystart = arith.fptosi %ystart_r : !pme_real to i32
+      %ybin = arith.divui %ystart, %edge32 : i32
+      %zc = arith.constant 2 : index
+      %zn = arith.muli %n_all, %zc : index
+      %zat = arith.addi %zn, %i : index
+      %zstart_r = memref.load %places[%zat] : memref<?x!pme_real, 1>
+      %zstart = arith.fptosi %zstart_r : !pme_real to i32
+      %zbin = arith.divui %zstart, %edge32 : i32
+      %nb2t = arith.index_cast %nb2 : index to i32
+      %nb3t = arith.index_cast %nb3 : index to i32
+      %bxy = arith.muli %xbin, %nb2t : i32
+      %bxy2 = arith.addi %bxy, %ybin : i32
+      %bxyz = arith.muli %bxy2, %nb3t : i32
+      %bin_of = arith.addi %bxyz, %zbin : i32
+      %no_bin = arith.constant -1 : i32
+      %bin = arith.select %valid, %bin_of, %no_bin : i32
+      // The lanes of the warp with the same bin, and the first of them.
+      %same = llvm.inline_asm has_side_effects "match.any.sync.b32 $0, $1, -1;", "=r,r" %bin : (i32) -> i32
+      %leader = math.cttz %same : i32
+      %lane = arith.remui %item32, %t32 : i32
+      %one32 = arith.constant 1 : i32
+      %below_bit = arith.shli %one32, %lane : i32
+      %below = arith.subi %below_bit, %one32 : i32
+      %same_below = arith.andi %same, %below : i32
+      %offset = math.ctpop %same_below : i32
+      %together = math.ctpop %same : i32
+      %leads = arith.cmpi eq, %lane, %leader : i32
+      %counts = arith.andi %leads, %valid : i1
+      %bins_index = memref.extract_aligned_pointer_as_index %bins : memref<?xi32, 1> -> index
+      %bins_base = arith.index_cast %bins_index : index to i64
+      %four64 = arith.constant 4 : i64
+      %zero32 = arith.constant 0 : i32
+      %first_rank = scf.if %counts -> (i32) {
+        // A relaxed atomic at the scope of the device, as the fixed point adds.
+        %bin64 = arith.extui %bin : i32 to i64
+        %bin_offset = arith.muli %bin64, %four64 : i64
+        %bin_address = arith.addi %bins_base, %bin_offset : i64
+        %bin_pointer = llvm.inttoptr %bin_address : i64 to !llvm.ptr<1>
+        %old = llvm.atomicrmw add %bin_pointer, %together syncscope("device") monotonic : !llvm.ptr<1>, i32
+        scf.yield %old : i32
+      } else {
+        scf.yield %zero32 : i32
+      }
+      %width = arith.constant 32 : i32
+      %base_rank, %base_valid = gpu.shuffle idx %first_rank, %leader, %width : i32
+      %rank = arith.addi %base_rank, %offset : i32
+      %capacity32 = arith.index_cast %capacity : index to i32
+      %fits = arith.cmpi slt, %rank, %capacity32 : i32
+      %particle = arith.index_cast %i : index to i32
+      scf.if %valid {
+        scf.if %fits {
+          %bin_i = arith.index_cast %bin : i32 to index
+          %run = arith.muli %bin_i, %capacity : index
+          %run_at = arith.addi %of_lists, %run : index
+          %rank_i = arith.index_cast %rank : i32 to index
+          %place = arith.addi %run_at, %rank_i : index
+          memref.store %particle, %bins[%place] : memref<?xi32, 1>
+        } else {
+          %over_offset = arith.index_cast %nbins : index to i64
+          %over_bytes = arith.muli %over_offset, %four64 : i64
+          %over_address = arith.addi %bins_base, %over_bytes : i64
+          %over_pointer = llvm.inttoptr %over_address : i64 to !llvm.ptr<1>
+          %over = llvm.atomicrmw add %over_pointer, %one32 syncscope("device") monotonic : !llvm.ptr<1>, i32
+          %over_i = arith.index_cast %over : i32 to index
+          %over_at = arith.addi %of_overflow, %over_i : index
+          memref.store %particle, %bins[%over_at] : memref<?xi32, 1>
+        }
+      }
+    gpu.terminator
+  }
+  return
+}
+
+// The particles of the list (D262) into bins of 8^3 points of the grid by their
+// first points, which `places` holds, for the spreading into tiles; zeroes
+// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+func.func private @mdrt_gpu_pme_bin8_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>,
+                                      %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
+                                      %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant 8 : index
+  %edge32 = arith.constant 8 : i32
+  %edge_m1 = arith.constant 7 : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+  %points = memref.dim %real, %c0 : memref<?x!pme_real, 1>
+  %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %points : index
+    scf.if %inside {
+      %none = arith.constant 0.0 : !pme_real
+      memref.store %none, %real[%item] : memref<?x!pme_real, 1>
+      %counts_end = arith.addi %nbins, %c1 : index
+      %a_count = arith.cmpi ult, %item, %counts_end : index
+      scf.if %a_count {
+        %none32 = arith.constant 0 : i32
+        memref.store %none32, %bins[%item] : memref<?xi32, 1>
+      }
+    }
+    gpu.terminator
+  }
+  // Every lane of a warp takes part in its match.any.sync and shuffle:
+  // the threads past the last entry take the last entry and bin nothing.
+  %blocks_entries = func.call @mdrt_gpu_pme_blocks(%n_all) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_entries, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %n_all : index
+    %false = arith.constant false
+    %n_last = arith.subi %n_all, %c1 : index
+    %at_item = arith.minui %item, %n_last : index
+    %item32 = arith.index_cast %item : index to i32
+    %t32 = arith.constant 32 : i32
+      %listed_raw = memref.load %list[%at_item] : memref<?xi32, 1>
+      %listed_none = arith.constant 0 : i32
+      %is_listed = arith.cmpi sge, %listed_raw, %listed_none : i32
+      %valid = arith.andi %inside, %is_listed : i1
+      %listed_0 = arith.select %is_listed, %listed_raw, %listed_none : i32
+      %i = arith.index_cast %listed_0 : i32 to index
+      %xc = arith.constant 0 : index
+      %xn = arith.muli %n_all, %xc : index
+      %xat = arith.addi %xn, %i : index
+      %xstart_r = memref.load %places[%xat] : memref<?x!pme_real, 1>
+      %xstart = arith.fptosi %xstart_r : !pme_real to i32
+      %xbin = arith.divui %xstart, %edge32 : i32
+      %yc = arith.constant 1 : index
+      %yn = arith.muli %n_all, %yc : index
+      %yat = arith.addi %yn, %i : index
+      %ystart_r = memref.load %places[%yat] : memref<?x!pme_real, 1>
+      %ystart = arith.fptosi %ystart_r : !pme_real to i32
+      %ybin = arith.divui %ystart, %edge32 : i32
+      %zc = arith.constant 2 : index
+      %zn = arith.muli %n_all, %zc : index
+      %zat = arith.addi %zn, %i : index
+      %zstart_r = memref.load %places[%zat] : memref<?x!pme_real, 1>
+      %zstart = arith.fptosi %zstart_r : !pme_real to i32
+      %zbin = arith.divui %zstart, %edge32 : i32
+      %nb2t = arith.index_cast %nb2 : index to i32
+      %nb3t = arith.index_cast %nb3 : index to i32
+      %bxy = arith.muli %xbin, %nb2t : i32
+      %bxy2 = arith.addi %bxy, %ybin : i32
+      %bxyz = arith.muli %bxy2, %nb3t : i32
+      %bin_of = arith.addi %bxyz, %zbin : i32
+      %no_bin = arith.constant -1 : i32
+      %bin = arith.select %valid, %bin_of, %no_bin : i32
+      // The lanes of the warp with the same bin, and the first of them.
+      %same = llvm.inline_asm has_side_effects "match.any.sync.b32 $0, $1, -1;", "=r,r" %bin : (i32) -> i32
+      %leader = math.cttz %same : i32
+      %lane = arith.remui %item32, %t32 : i32
+      %one32 = arith.constant 1 : i32
+      %below_bit = arith.shli %one32, %lane : i32
+      %below = arith.subi %below_bit, %one32 : i32
+      %same_below = arith.andi %same, %below : i32
+      %offset = math.ctpop %same_below : i32
+      %together = math.ctpop %same : i32
+      %leads = arith.cmpi eq, %lane, %leader : i32
+      %counts = arith.andi %leads, %valid : i1
+      %bins_index = memref.extract_aligned_pointer_as_index %bins : memref<?xi32, 1> -> index
+      %bins_base = arith.index_cast %bins_index : index to i64
+      %four64 = arith.constant 4 : i64
+      %zero32 = arith.constant 0 : i32
+      %first_rank = scf.if %counts -> (i32) {
+        // A relaxed atomic at the scope of the device, as the fixed point adds.
+        %bin64 = arith.extui %bin : i32 to i64
+        %bin_offset = arith.muli %bin64, %four64 : i64
+        %bin_address = arith.addi %bins_base, %bin_offset : i64
+        %bin_pointer = llvm.inttoptr %bin_address : i64 to !llvm.ptr<1>
+        %old = llvm.atomicrmw add %bin_pointer, %together syncscope("device") monotonic : !llvm.ptr<1>, i32
+        scf.yield %old : i32
+      } else {
+        scf.yield %zero32 : i32
+      }
+      %width = arith.constant 32 : i32
+      %base_rank, %base_valid = gpu.shuffle idx %first_rank, %leader, %width : i32
+      %rank = arith.addi %base_rank, %offset : i32
+      %capacity32 = arith.index_cast %capacity : index to i32
+      %fits = arith.cmpi slt, %rank, %capacity32 : i32
+      %particle = arith.index_cast %i : index to i32
+      scf.if %valid {
+        scf.if %fits {
+          %bin_i = arith.index_cast %bin : i32 to index
+          %run = arith.muli %bin_i, %capacity : index
+          %run_at = arith.addi %of_lists, %run : index
+          %rank_i = arith.index_cast %rank : i32 to index
+          %place = arith.addi %run_at, %rank_i : index
+          memref.store %particle, %bins[%place] : memref<?xi32, 1>
+        } else {
+          %over_offset = arith.index_cast %nbins : index to i64
+          %over_bytes = arith.muli %over_offset, %four64 : i64
+          %over_address = arith.addi %bins_base, %over_bytes : i64
+          %over_pointer = llvm.inttoptr %over_address : i64 to !llvm.ptr<1>
+          %over = llvm.atomicrmw add %over_pointer, %one32 syncscope("device") monotonic : !llvm.ptr<1>, i32
+          %over_i = arith.index_cast %over : i32 to index
+          %over_at = arith.addi %of_overflow, %over_i : index
+          memref.store %particle, %bins[%over_at] : memref<?xi32, 1>
+        }
+      }
+    gpu.terminator
+  }
+  return
+}
+
+// Adds the charges of the binned particles to `real` through tiles
+// of the memory of the block (D[pme-tiles]; see tile_kernel in the
+// script).
+func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>,
+                                      %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant 8 : index
+  %edge32 = arith.constant 8 : i32
+  %edge_m1 = arith.constant 7 : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+  %cthreads = arith.constant 128 : index
+  %blocks_tiles = arith.addi %nbins, %c1 : index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
+             workgroup(%tile : memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<512x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<384xi32, #gpu.address_space<workgroup>>) {
+    %c3w = arith.constant 3 : index
+    %c32w = arith.constant 32 : index
+    %cwarps = arith.constant 4 : index
+    %cthreads2 = arith.constant 256 : index
+    %zero_r = arith.constant 0.0 : !pme_real
+    %true_w = arith.constant true
+    %side32 = arith.constant PME_TILE_SIDE_8 : i32
+    %volume = arith.constant PME_TILE_POINTS_8 : index
+    // The block of the overflow, after the bins.
+    %overflows = arith.cmpi eq, %bx, %nbins : index
+    %bins_block = arith.xori %overflows, %true_w : i1
+    %bin = arith.select %overflows, %c0, %bx : index
+    // The first point of the bin.
+    %b3 = arith.remui %bin, %nb3 : index
+    %b12 = arith.divui %bin, %nb3 : index
+    %b2 = arith.remui %b12, %nb2 : index
+    %b1 = arith.divui %b12, %nb2 : index
+    %o1 = arith.muli %b1, %edge : index
+    %o2 = arith.muli %b2, %edge : index
+    %o3 = arith.muli %b3, %edge : index
+    %o1t = arith.index_cast %o1 : index to i32
+    %o2t = arith.index_cast %o2 : index to i32
+    %o3t = arith.index_cast %o3 : index to i32
+    // The particles of the bin: those of its run, at most C, or those of
+    // the overflow.
+    %counted32 = memref.load %bins[%bx] : memref<?xi32, 1>
+    %counted = arith.index_cast %counted32 : i32 to index
+    %in_run = arith.minui %counted, %capacity : index
+    %count = arith.select %overflows, %counted, %in_run : index
+    %run = arith.muli %bin, %capacity : index
+    %run_at = arith.addi %of_lists, %run : index
+    %list_at = arith.select %overflows, %of_overflow, %run_at : index
+    // A bin without particles adds nothing; the whole block leaves.
+    %some = arith.cmpi ugt, %count, %c0 : index
+    scf.if %some {
+      scf.for %t = %tx to %volume step %cthreads {
+        memref.store %zero_r, %tile[%t] : memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>
+      }
+      %warp = arith.divui %tx, %c32w : index
+      %lane_x = arith.remui %tx, %c32w : index
+      %lane = arith.index_cast %lane_x : index to i32
+      %pt = arith.constant PME_ORDER : i32
+      %pidx = arith.constant PME_ORDER : index
+      %ppt = arith.muli %pt, %pt : i32
+      %pppt = arith.muli %ppt, %pt : i32
+      %pt2 = arith.addi %pt, %pt : i32
+      %thirty_two = arith.constant 32 : i32
+      %zero32 = arith.constant 0 : i32
+      %width = arith.constant 32 : i32
+      %passes_n2 = arith.muli %pidx, %pidx : index
+      %passes_n3 = arith.muli %passes_n2, %pidx : index
+      %c31p = arith.constant 31 : index
+      %passes_u = arith.addi %passes_n3, %c31p : index
+      %passes = arith.divui %passes_u, %c32w : index
+      // The point and axis of a lane: lane a P + j, a < 3, weighs.
+      %three_p = arith.muli %pidx, %c3w : index
+      %active = arith.cmpi ult, %lane_x, %three_p : index
+      %lane_a = arith.select %active, %lane_x, %c0 : index
+      %axis_l = arith.divui %lane_a, %pidx : index
+      %j_l = arith.remui %lane_a, %pidx : index
+      %axis_at = arith.muli %axis_l, %cthreads : index
+      %k1t = arith.index_cast %k1 : index to i32
+      %k2t = arith.index_cast %k2 : index to i32
+      %k3t = arith.index_cast %k3 : index to i32
+      %k3w = arith.extui %k3t : i32 to i64
+      %bytes = arith.constant PME_REAL_BYTES : i64
+      %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
+      %gbase = arith.index_cast %gindex : index to i64
+      scf.for %round = %c0 to %count step %cthreads {
+        // The particles of the round into the memory of the block, after
+        // the warps of the round before have read theirs.
+        gpu.barrier
+        %left = arith.subi %count, %round : index
+        %in_round = arith.minui %left, %cthreads : index
+        %stages = arith.cmpi ult, %tx, %in_round : index
+        scf.if %stages {
+          %entry = arith.addi %round, %tx : index
+          %entry_at = arith.addi %list_at, %entry : index
+          %particle = memref.load %bins[%entry_at] : memref<?xi32, 1>
+          %i = arith.index_cast %particle : i32 to index
+          %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
+          %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+          memref.store %qi, %staged[%tx] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          scf.for %ax = %c0 to %c3w step %c1 {
+            %at_n = arith.muli %n_all, %ax : index
+            %at_s = arith.addi %at_n, %i : index
+            %start_r = memref.load %places[%at_s] : memref<?x!pme_real, 1>
+            %start = arith.fptosi %start_r : !pme_real to i32
+            %fax = arith.addi %ax, %c3w : index
+            %at_fn = arith.muli %n_all, %fax : index
+            %at_f = arith.addi %at_fn, %i : index
+            %frac_g = memref.load %places[%at_f] : memref<?x!pme_real, 1>
+            %slot0 = arith.muli %ax, %cthreads : index
+            %slot = arith.addi %slot0, %tx : index
+            memref.store %start, %starts[%slot] : memref<384xi32, #gpu.address_space<workgroup>>
+            %fslot = arith.addi %slot, %cthreads : index
+            memref.store %frac_g, %staged[%fslot] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          }
+        }
+        gpu.barrier
+        scf.for %k = %warp to %in_round step %cwarps {
+          %qk = memref.load %staged[%k] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          %fk0 = arith.addi %axis_at, %k : index
+          %fk = arith.addi %fk0, %cthreads : index
+          %frac = memref.load %staged[%fk] : memref<512x!pme_real, #gpu.address_space<workgroup>>
+          %order = arith.constant PME_ORDER : index
+          %c4o = arith.constant 4 : index
+          %closed = arith.cmpi eq, %order, %c4o : index
+          %splines = memref.alloca() : memref<8x!pme_real>
+          %tw_c0 = arith.constant 0 : index
+          %tw_c1 = arith.constant 1 : index
+          %tw_c2 = arith.constant 2 : index
+          %tw_c3 = arith.constant 3 : index
+          %tw_c8 = arith.constant 8 : index
+          %tw_zero = arith.constant 0.0 : !pme_real
+          %tw_one = arith.constant 1.0 : !pme_real
+          scf.for %tw_j = %tw_c0 to %tw_c8 step %tw_c1 {
+            memref.store %tw_zero, %splines[%tw_j] : memref<8x!pme_real>
+          }
+          %tw_omw = arith.subf %tw_one, %frac : !pme_real
+          memref.store %tw_omw, %splines[%tw_c0] : memref<8x!pme_real>
+          memref.store %frac, %splines[%tw_c1] : memref<8x!pme_real>
+          scf.for %tw_k = %tw_c3 to %order step %tw_c1 {
+          %tw_r_km1 = arith.subi %tw_k, %tw_c1 : index
+          %tw_r_km2 = arith.subi %tw_k, %tw_c2 : index
+          %tw_r_km1i = arith.index_cast %tw_r_km1 : index to i64
+          %tw_r_km1f = arith.sitofp %tw_r_km1i : i64 to !pme_real
+          %tw_r_div = arith.divf %tw_one, %tw_r_km1f : !pme_real
+          %tw_r_ki = arith.index_cast %tw_k : index to i64
+          %tw_r_kf = arith.sitofp %tw_r_ki : i64 to !pme_real
+          %tw_r_last = memref.load %splines[%tw_r_km2] : memref<8x!pme_real>
+          %tw_r_dw = arith.mulf %tw_r_div, %frac : !pme_real
+          %tw_r_top = arith.mulf %tw_r_dw, %tw_r_last : !pme_real
+          memref.store %tw_r_top, %splines[%tw_r_km1] : memref<8x!pme_real>
+          scf.for %tw_r_j = %tw_c1 to %tw_r_km1 step %tw_c1 {
+            %tw_r_ji = arith.index_cast %tw_r_j : index to i64
+            %tw_r_jf = arith.sitofp %tw_r_ji : i64 to !pme_real
+            %tw_r_at = arith.subi %tw_r_km1, %tw_r_j : index
+            %tw_r_below = arith.subi %tw_r_at, %tw_c1 : index
+            %tw_r_lo = memref.load %splines[%tw_r_below] : memref<8x!pme_real>
+            %tw_r_hi = memref.load %splines[%tw_r_at] : memref<8x!pme_real>
+            %tw_r_wj = arith.addf %frac, %tw_r_jf : !pme_real
+            %tw_r_kj = arith.subf %tw_r_kf, %tw_r_jf : !pme_real
+            %tw_r_kjw = arith.subf %tw_r_kj, %frac : !pme_real
+            %tw_r_t1 = arith.mulf %tw_r_wj, %tw_r_lo : !pme_real
+            %tw_r_t2 = arith.mulf %tw_r_kjw, %tw_r_hi : !pme_real
+            %tw_r_sum = arith.addf %tw_r_t1, %tw_r_t2 : !pme_real
+            %tw_r_value = arith.mulf %tw_r_div, %tw_r_sum : !pme_real
+            memref.store %tw_r_value, %splines[%tw_r_at] : memref<8x!pme_real>
+          }
+          %tw_r_first = memref.load %splines[%tw_c0] : memref<8x!pme_real>
+          %tw_r_omw = arith.subf %tw_one, %frac : !pme_real
+          %tw_r_d0 = arith.mulf %tw_r_div, %tw_r_omw : !pme_real
+          %tw_r_bottom = arith.mulf %tw_r_d0, %tw_r_first : !pme_real
+          memref.store %tw_r_bottom, %splines[%tw_c0] : memref<8x!pme_real>
+          }
+          %tw_f_km1 = arith.subi %order, %tw_c1 : index
+          %tw_f_km2 = arith.subi %order, %tw_c2 : index
+          %tw_f_km1i = arith.index_cast %tw_f_km1 : index to i64
+          %tw_f_km1f = arith.sitofp %tw_f_km1i : i64 to !pme_real
+          %tw_f_div = arith.divf %tw_one, %tw_f_km1f : !pme_real
+          %tw_f_ki = arith.index_cast %order : index to i64
+          %tw_f_kf = arith.sitofp %tw_f_ki : i64 to !pme_real
+          %tw_f_last = memref.load %splines[%tw_f_km2] : memref<8x!pme_real>
+          %tw_f_dw = arith.mulf %tw_f_div, %frac : !pme_real
+          %tw_f_top = arith.mulf %tw_f_dw, %tw_f_last : !pme_real
+          memref.store %tw_f_top, %splines[%tw_f_km1] : memref<8x!pme_real>
+          scf.for %tw_f_j = %tw_c1 to %tw_f_km1 step %tw_c1 {
+            %tw_f_ji = arith.index_cast %tw_f_j : index to i64
+            %tw_f_jf = arith.sitofp %tw_f_ji : i64 to !pme_real
+            %tw_f_at = arith.subi %tw_f_km1, %tw_f_j : index
+            %tw_f_below = arith.subi %tw_f_at, %tw_c1 : index
+            %tw_f_lo = memref.load %splines[%tw_f_below] : memref<8x!pme_real>
+            %tw_f_hi = memref.load %splines[%tw_f_at] : memref<8x!pme_real>
+            %tw_f_wj = arith.addf %frac, %tw_f_jf : !pme_real
+            %tw_f_kj = arith.subf %tw_f_kf, %tw_f_jf : !pme_real
+            %tw_f_kjw = arith.subf %tw_f_kj, %frac : !pme_real
+            %tw_f_t1 = arith.mulf %tw_f_wj, %tw_f_lo : !pme_real
+            %tw_f_t2 = arith.mulf %tw_f_kjw, %tw_f_hi : !pme_real
+            %tw_f_sum = arith.addf %tw_f_t1, %tw_f_t2 : !pme_real
+            %tw_f_value = arith.mulf %tw_f_div, %tw_f_sum : !pme_real
+            memref.store %tw_f_value, %splines[%tw_f_at] : memref<8x!pme_real>
+          }
+          %tw_f_first = memref.load %splines[%tw_c0] : memref<8x!pme_real>
+          %tw_f_omw = arith.subf %tw_one, %frac : !pme_real
+          %tw_f_d0 = arith.mulf %tw_f_div, %tw_f_omw : !pme_real
+          %tw_f_bottom = arith.mulf %tw_f_d0, %tw_f_first : !pme_real
+          memref.store %tw_f_bottom, %splines[%tw_c0] : memref<8x!pme_real>
+          %tp_none = arith.constant 0.0 : !pme_real
+          %tp_c0 = arith.constant 0 : index
+          %tp_c1 = arith.constant 1 : index
+          %tp_value = scf.for %tp_e = %tp_c0 to %order step %tp_c1
+              iter_args(%tp_acc = %tp_none) -> (!pme_real) {
+            %tp_at = memref.load %splines[%tp_e] : memref<8x!pme_real>
+            %tp_here = arith.cmpi eq, %tp_e, %j_l : index
+            %tp_chosen = arith.select %tp_here, %tp_at, %tp_acc : !pme_real
+            scf.yield %tp_chosen : !pme_real
+          }
+          %w_sixth = arith.constant 0.16666666666666666 : !pme_real
+          %w_one = arith.constant 1.0 : !pme_real
+          %w_three = arith.constant 3.0 : !pme_real
+          %w_four = arith.constant 4.0 : !pme_real
+          %w_six = arith.constant 6.0 : !pme_real
+          %cw_w2 = arith.mulf %frac, %frac : !pme_real
+          %cw_w3 = arith.mulf %cw_w2, %frac : !pme_real
+          %cw_omw = arith.subf %w_one, %frac : !pme_real
+          %cw_omw2 = arith.mulf %cw_omw, %cw_omw : !pme_real
+          %cw_m0 = arith.mulf %cw_omw2, %cw_omw : !pme_real
+          %cw_a1 = arith.mulf %w_three, %cw_w3 : !pme_real
+          %cw_b1 = arith.mulf %w_six, %cw_w2 : !pme_real
+          %cw_c1 = arith.subf %cw_a1, %cw_b1 : !pme_real
+          %cw_m1 = arith.addf %cw_c1, %w_four : !pme_real
+          %cw_a2 = arith.mulf %w_three, %cw_w2 : !pme_real
+          %cw_b2 = arith.mulf %w_three, %frac : !pme_real
+          %cw_c2 = arith.subf %cw_a2, %cw_a1 : !pme_real
+          %cw_d2 = arith.addf %cw_c2, %cw_b2 : !pme_real
+          %cw_m2 = arith.addf %cw_d2, %w_one : !pme_real
+          %cw_j0 = arith.constant 0 : index
+          %cw_j1 = arith.constant 1 : index
+          %cw_j2 = arith.constant 2 : index
+          %cw_is0 = arith.cmpi eq, %j_l, %cw_j0 : index
+          %cw_is1 = arith.cmpi eq, %j_l, %cw_j1 : index
+          %cw_is2 = arith.cmpi eq, %j_l, %cw_j2 : index
+          %cw_s2 = arith.select %cw_is2, %cw_m2, %cw_w3 : !pme_real
+          %cw_s1 = arith.select %cw_is1, %cw_m1, %cw_s2 : !pme_real
+          %cw_s0 = arith.select %cw_is0, %cw_m0, %cw_s1 : !pme_real
+          %cw_value = arith.mulf %cw_s0, %w_sixth : !pme_real
+          %spline = arith.select %closed, %cw_value, %tp_value : !pme_real
+          %first_axis = arith.cmpi eq, %axis_l, %c0 : index
+          %charged = arith.mulf %qk, %spline : !pme_real
+          %along = arith.select %first_axis, %charged, %spline : !pme_real
+          %weight = arith.select %active, %along, %zero_r : !pme_real
+          %xstart = memref.load %starts[%k] : memref<384xi32, #gpu.address_space<workgroup>>
+          %ys_at = arith.addi %k, %cthreads : index
+          %ystart = memref.load %starts[%ys_at] : memref<384xi32, #gpu.address_space<workgroup>>
+          %zs_at = arith.addi %k, %cthreads2 : index
+          %zstart = memref.load %starts[%zs_at] : memref<384xi32, #gpu.address_space<workgroup>>
+          %l1 = arith.subi %xstart, %o1t : i32
+          %l2 = arith.subi %ystart, %o2t : i32
+          %l3 = arith.subi %zstart, %o3t : i32
+          // A point of a pass: z fastest, so that the lanes of a row add
+          // to neighboring words of the tile.
+          scf.for %pass = %c0 to %passes step %c1 {
+            %pass32 = arith.index_cast %pass : index to i32
+            %pass_base = arith.muli %pass32, %thirty_two : i32
+            %kk = arith.addi %pass_base, %lane : i32
+            %in = arith.cmpi slt, %kk, %pppt : i32
+            %kc = arith.select %in, %kk, %zero32 : i32
+            %pa = arith.divui %kc, %ppt : i32
+            %pbc = arith.remui %kc, %ppt : i32
+            %pb = arith.divui %pbc, %pt : i32
+            %pc = arith.remui %pbc, %pt : i32
+            %wx, %vwx = gpu.shuffle idx %weight, %pa, %width : !pme_real
+            %pbs = arith.addi %pb, %pt : i32
+            %wy, %vwy = gpu.shuffle idx %weight, %pbs, %width : !pme_real
+            %pcs = arith.addi %pc, %pt2 : i32
+            %wz, %vwz = gpu.shuffle idx %weight, %pcs, %width : !pme_real
+            scf.if %in {
+              %wxy = arith.mulf %wx, %wy : !pme_real
+              %value = arith.mulf %wxy, %wz : !pme_real
+              scf.if %overflows {
+                %g1s = arith.addi %xstart, %pa : i32
+                %g1w = arith.subi %g1s, %k1t : i32
+                %g1over = arith.cmpi sge, %g1s, %k1t : i32
+                %g1 = arith.select %g1over, %g1w, %g1s : i32
+                %g2s = arith.addi %ystart, %pb : i32
+                %g2w = arith.subi %g2s, %k2t : i32
+                %g2over = arith.cmpi sge, %g2s, %k2t : i32
+                %g2 = arith.select %g2over, %g2w, %g2s : i32
+                %g3s = arith.addi %zstart, %pc : i32
+                %g3w = arith.subi %g3s, %k3t : i32
+                %g3over = arith.cmpi sge, %g3s, %k3t : i32
+                %g3 = arith.select %g3over, %g3w, %g3s : i32
+                %row1 = arith.muli %g1, %k2t : i32
+                %row = arith.addi %row1, %g2 : i32
+                %row64 = arith.extui %row : i32 to i64
+                %rowbase = arith.muli %row64, %k3w : i64
+                %g364 = arith.extui %g3 : i32 to i64
+                %at = arith.addi %rowbase, %g364 : i64
+                %offset = arith.muli %at, %bytes : i64
+                %address = arith.addi %gbase, %offset : i64
+                %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+                PME_ATOMIC_ADD %pointer, %value
+              } else {
+                %t1 = arith.addi %l1, %pa : i32
+                %t2 = arith.addi %l2, %pb : i32
+                %t3 = arith.addi %l3, %pc : i32
+                %t1s = arith.muli %t1, %side32 : i32
+                %t12 = arith.addi %t1s, %t2 : i32
+                %t12s = arith.muli %t12, %side32 : i32
+                %t123 = arith.addi %t12s, %t3 : i32
+                %tat = arith.index_cast %t123 : i32 to index
+                PME_SHARED_ADD_8 %tile[%tat], %value
+              }
+            }
+          }
+        }
+      }
+      gpu.barrier
+      // The tile into the grid; a point wraps around once at most, since
+      // the tile is no longer than the grid along any axis.
+      scf.if %bins_block {
+        scf.for %t = %tx to %volume step %cthreads {
+          %value = memref.load %tile[%t] : memref<PME_TILE_POINTS_8x!pme_real, #gpu.address_space<workgroup>>
+          %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
+          scf.if %nonzero {
+            %t32 = arith.index_cast %t : index to i32
+            %c = arith.remui %t32, %side32 : i32
+            %ab = arith.divui %t32, %side32 : i32
+            %b = arith.remui %ab, %side32 : i32
+            %a = arith.divui %ab, %side32 : i32
+            %g1s = arith.addi %o1t, %a : i32
+            %g1w = arith.subi %g1s, %k1t : i32
+            %g1over = arith.cmpi sge, %g1s, %k1t : i32
+            %g1 = arith.select %g1over, %g1w, %g1s : i32
+            %g2s = arith.addi %o2t, %b : i32
+            %g2w = arith.subi %g2s, %k2t : i32
+            %g2over = arith.cmpi sge, %g2s, %k2t : i32
+            %g2 = arith.select %g2over, %g2w, %g2s : i32
+            %g3s = arith.addi %o3t, %c : i32
+            %g3w = arith.subi %g3s, %k3t : i32
+            %g3over = arith.cmpi sge, %g3s, %k3t : i32
+            %g3 = arith.select %g3over, %g3w, %g3s : i32
+            %row1 = arith.muli %g1, %k2t : i32
+            %row = arith.addi %row1, %g2 : i32
+            %row64 = arith.extui %row : i32 to i64
+            %rowbase = arith.muli %row64, %k3w : i64
+            %g364 = arith.extui %g3 : i32 to i64
+            %at = arith.addi %rowbase, %g364 : i64
+            %offset = arith.muli %at, %bytes : i64
+            %address = arith.addi %gbase, %offset : i64
+            %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+            PME_ATOMIC_ADD %pointer, %value
+          }
+        }
+      }
+    }
+    gpu.terminator
+  }
+  return
+}
+
+// The particles into bins of 16^3 points of the grid by their
+// first points, which `places` holds, for the spreading into tiles; zeroes
+// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+func.func private @mdrt_gpu_pme_bin16(%q: memref<?x!pme_chg, 1>,
+                                      %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
+                                      %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant 16 : index
+  %edge32 = arith.constant 16 : i32
+  %edge_m1 = arith.constant 15 : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+  %points = memref.dim %real, %c0 : memref<?x!pme_real, 1>
+  %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %points : index
+    scf.if %inside {
+      %none = arith.constant 0.0 : !pme_real
+      memref.store %none, %real[%item] : memref<?x!pme_real, 1>
+      %counts_end = arith.addi %nbins, %c1 : index
+      %a_count = arith.cmpi ult, %item, %counts_end : index
+      scf.if %a_count {
+        %none32 = arith.constant 0 : i32
+        memref.store %none32, %bins[%item] : memref<?xi32, 1>
+      }
+    }
+    gpu.terminator
+  }
+  // Every lane of a warp takes part in its match.any.sync and shuffle:
+  // the threads past the last entry take the last entry and bin nothing.
+  %blocks_entries = func.call @mdrt_gpu_pme_blocks(%n_all) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_entries, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %n_all : index
+    %false = arith.constant false
+    %n_last = arith.subi %n_all, %c1 : index
+    %at_item = arith.minui %item, %n_last : index
+    %item32 = arith.index_cast %item : index to i32
+    %t32 = arith.constant 32 : i32
+      %valid = arith.ori %inside, %false : i1
+      %i = arith.addi %at_item, %c0 : index
+      %xc = arith.constant 0 : index
+      %xn = arith.muli %n_all, %xc : index
+      %xat = arith.addi %xn, %i : index
+      %xstart_r = memref.load %places[%xat] : memref<?x!pme_real, 1>
+      %xstart = arith.fptosi %xstart_r : !pme_real to i32
+      %xbin = arith.divui %xstart, %edge32 : i32
+      %yc = arith.constant 1 : index
+      %yn = arith.muli %n_all, %yc : index
+      %yat = arith.addi %yn, %i : index
+      %ystart_r = memref.load %places[%yat] : memref<?x!pme_real, 1>
+      %ystart = arith.fptosi %ystart_r : !pme_real to i32
+      %ybin = arith.divui %ystart, %edge32 : i32
+      %zc = arith.constant 2 : index
+      %zn = arith.muli %n_all, %zc : index
+      %zat = arith.addi %zn, %i : index
+      %zstart_r = memref.load %places[%zat] : memref<?x!pme_real, 1>
+      %zstart = arith.fptosi %zstart_r : !pme_real to i32
+      %zbin = arith.divui %zstart, %edge32 : i32
+      %nb2t = arith.index_cast %nb2 : index to i32
+      %nb3t = arith.index_cast %nb3 : index to i32
+      %bxy = arith.muli %xbin, %nb2t : i32
+      %bxy2 = arith.addi %bxy, %ybin : i32
+      %bxyz = arith.muli %bxy2, %nb3t : i32
+      %bin_of = arith.addi %bxyz, %zbin : i32
+      %no_bin = arith.constant -1 : i32
+      %bin = arith.select %valid, %bin_of, %no_bin : i32
+      // The lanes of the warp with the same bin, and the first of them.
+      %same = llvm.inline_asm has_side_effects "match.any.sync.b32 $0, $1, -1;", "=r,r" %bin : (i32) -> i32
+      %leader = math.cttz %same : i32
+      %lane = arith.remui %item32, %t32 : i32
+      %one32 = arith.constant 1 : i32
+      %below_bit = arith.shli %one32, %lane : i32
+      %below = arith.subi %below_bit, %one32 : i32
+      %same_below = arith.andi %same, %below : i32
+      %offset = math.ctpop %same_below : i32
+      %together = math.ctpop %same : i32
+      %leads = arith.cmpi eq, %lane, %leader : i32
+      %counts = arith.andi %leads, %valid : i1
+      %bins_index = memref.extract_aligned_pointer_as_index %bins : memref<?xi32, 1> -> index
+      %bins_base = arith.index_cast %bins_index : index to i64
+      %four64 = arith.constant 4 : i64
+      %zero32 = arith.constant 0 : i32
+      %first_rank = scf.if %counts -> (i32) {
+        // A relaxed atomic at the scope of the device, as the fixed point adds.
+        %bin64 = arith.extui %bin : i32 to i64
+        %bin_offset = arith.muli %bin64, %four64 : i64
+        %bin_address = arith.addi %bins_base, %bin_offset : i64
+        %bin_pointer = llvm.inttoptr %bin_address : i64 to !llvm.ptr<1>
+        %old = llvm.atomicrmw add %bin_pointer, %together syncscope("device") monotonic : !llvm.ptr<1>, i32
+        scf.yield %old : i32
+      } else {
+        scf.yield %zero32 : i32
+      }
+      %width = arith.constant 32 : i32
+      %base_rank, %base_valid = gpu.shuffle idx %first_rank, %leader, %width : i32
+      %rank = arith.addi %base_rank, %offset : i32
+      %capacity32 = arith.index_cast %capacity : index to i32
+      %fits = arith.cmpi slt, %rank, %capacity32 : i32
+      %particle = arith.index_cast %i : index to i32
+      scf.if %valid {
+        scf.if %fits {
+          %bin_i = arith.index_cast %bin : i32 to index
+          %run = arith.muli %bin_i, %capacity : index
+          %run_at = arith.addi %of_lists, %run : index
+          %rank_i = arith.index_cast %rank : i32 to index
+          %place = arith.addi %run_at, %rank_i : index
+          memref.store %particle, %bins[%place] : memref<?xi32, 1>
+        } else {
+          %over_offset = arith.index_cast %nbins : index to i64
+          %over_bytes = arith.muli %over_offset, %four64 : i64
+          %over_address = arith.addi %bins_base, %over_bytes : i64
+          %over_pointer = llvm.inttoptr %over_address : i64 to !llvm.ptr<1>
+          %over = llvm.atomicrmw add %over_pointer, %one32 syncscope("device") monotonic : !llvm.ptr<1>, i32
+          %over_i = arith.index_cast %over : i32 to index
+          %over_at = arith.addi %of_overflow, %over_i : index
+          memref.store %particle, %bins[%over_at] : memref<?xi32, 1>
+        }
+      }
+    gpu.terminator
+  }
+  return
+}
+
+// The particles of the list (D262) into bins of 16^3 points of the grid by their
+// first points, which `places` holds, for the spreading into tiles; zeroes
+// the grid `real` (D[pme-tiles]; see bin_kernels in the script).
+func.func private @mdrt_gpu_pme_bin16_listed(%q: memref<?x!pme_chg, 1>, %list: memref<?xi32, 1>,
+                                      %places: memref<?x!pme_real, 1>, %bins: memref<?xi32, 1>,
+                                      %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant 16 : index
+  %edge32 = arith.constant 16 : i32
+  %edge_m1 = arith.constant 15 : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+  %points = memref.dim %real, %c0 : memref<?x!pme_real, 1>
+  %blocks_points = func.call @mdrt_gpu_pme_blocks(%points) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_points, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %points : index
+    scf.if %inside {
+      %none = arith.constant 0.0 : !pme_real
+      memref.store %none, %real[%item] : memref<?x!pme_real, 1>
+      %counts_end = arith.addi %nbins, %c1 : index
+      %a_count = arith.cmpi ult, %item, %counts_end : index
+      scf.if %a_count {
+        %none32 = arith.constant 0 : i32
+        memref.store %none32, %bins[%item] : memref<?xi32, 1>
+      }
+    }
+    gpu.terminator
+  }
+  // Every lane of a warp takes part in its match.any.sync and shuffle:
+  // the threads past the last entry take the last entry and bin nothing.
+  %blocks_entries = func.call @mdrt_gpu_pme_blocks(%n_all) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_entries, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %base = arith.muli %bx, %c128 : index
+    %item = arith.addi %base, %tx : index
+    %inside = arith.cmpi ult, %item, %n_all : index
+    %false = arith.constant false
+    %n_last = arith.subi %n_all, %c1 : index
+    %at_item = arith.minui %item, %n_last : index
+    %item32 = arith.index_cast %item : index to i32
+    %t32 = arith.constant 32 : i32
+      %listed_raw = memref.load %list[%at_item] : memref<?xi32, 1>
+      %listed_none = arith.constant 0 : i32
+      %is_listed = arith.cmpi sge, %listed_raw, %listed_none : i32
+      %valid = arith.andi %inside, %is_listed : i1
+      %listed_0 = arith.select %is_listed, %listed_raw, %listed_none : i32
+      %i = arith.index_cast %listed_0 : i32 to index
+      %xc = arith.constant 0 : index
+      %xn = arith.muli %n_all, %xc : index
+      %xat = arith.addi %xn, %i : index
+      %xstart_r = memref.load %places[%xat] : memref<?x!pme_real, 1>
+      %xstart = arith.fptosi %xstart_r : !pme_real to i32
+      %xbin = arith.divui %xstart, %edge32 : i32
+      %yc = arith.constant 1 : index
+      %yn = arith.muli %n_all, %yc : index
+      %yat = arith.addi %yn, %i : index
+      %ystart_r = memref.load %places[%yat] : memref<?x!pme_real, 1>
+      %ystart = arith.fptosi %ystart_r : !pme_real to i32
+      %ybin = arith.divui %ystart, %edge32 : i32
+      %zc = arith.constant 2 : index
+      %zn = arith.muli %n_all, %zc : index
+      %zat = arith.addi %zn, %i : index
+      %zstart_r = memref.load %places[%zat] : memref<?x!pme_real, 1>
+      %zstart = arith.fptosi %zstart_r : !pme_real to i32
+      %zbin = arith.divui %zstart, %edge32 : i32
+      %nb2t = arith.index_cast %nb2 : index to i32
+      %nb3t = arith.index_cast %nb3 : index to i32
+      %bxy = arith.muli %xbin, %nb2t : i32
+      %bxy2 = arith.addi %bxy, %ybin : i32
+      %bxyz = arith.muli %bxy2, %nb3t : i32
+      %bin_of = arith.addi %bxyz, %zbin : i32
+      %no_bin = arith.constant -1 : i32
+      %bin = arith.select %valid, %bin_of, %no_bin : i32
+      // The lanes of the warp with the same bin, and the first of them.
+      %same = llvm.inline_asm has_side_effects "match.any.sync.b32 $0, $1, -1;", "=r,r" %bin : (i32) -> i32
+      %leader = math.cttz %same : i32
+      %lane = arith.remui %item32, %t32 : i32
+      %one32 = arith.constant 1 : i32
+      %below_bit = arith.shli %one32, %lane : i32
+      %below = arith.subi %below_bit, %one32 : i32
+      %same_below = arith.andi %same, %below : i32
+      %offset = math.ctpop %same_below : i32
+      %together = math.ctpop %same : i32
+      %leads = arith.cmpi eq, %lane, %leader : i32
+      %counts = arith.andi %leads, %valid : i1
+      %bins_index = memref.extract_aligned_pointer_as_index %bins : memref<?xi32, 1> -> index
+      %bins_base = arith.index_cast %bins_index : index to i64
+      %four64 = arith.constant 4 : i64
+      %zero32 = arith.constant 0 : i32
+      %first_rank = scf.if %counts -> (i32) {
+        // A relaxed atomic at the scope of the device, as the fixed point adds.
+        %bin64 = arith.extui %bin : i32 to i64
+        %bin_offset = arith.muli %bin64, %four64 : i64
+        %bin_address = arith.addi %bins_base, %bin_offset : i64
+        %bin_pointer = llvm.inttoptr %bin_address : i64 to !llvm.ptr<1>
+        %old = llvm.atomicrmw add %bin_pointer, %together syncscope("device") monotonic : !llvm.ptr<1>, i32
+        scf.yield %old : i32
+      } else {
+        scf.yield %zero32 : i32
+      }
+      %width = arith.constant 32 : i32
+      %base_rank, %base_valid = gpu.shuffle idx %first_rank, %leader, %width : i32
+      %rank = arith.addi %base_rank, %offset : i32
+      %capacity32 = arith.index_cast %capacity : index to i32
+      %fits = arith.cmpi slt, %rank, %capacity32 : i32
+      %particle = arith.index_cast %i : index to i32
+      scf.if %valid {
+        scf.if %fits {
+          %bin_i = arith.index_cast %bin : i32 to index
+          %run = arith.muli %bin_i, %capacity : index
+          %run_at = arith.addi %of_lists, %run : index
+          %rank_i = arith.index_cast %rank : i32 to index
+          %place = arith.addi %run_at, %rank_i : index
+          memref.store %particle, %bins[%place] : memref<?xi32, 1>
+        } else {
+          %over_offset = arith.index_cast %nbins : index to i64
+          %over_bytes = arith.muli %over_offset, %four64 : i64
+          %over_address = arith.addi %bins_base, %over_bytes : i64
+          %over_pointer = llvm.inttoptr %over_address : i64 to !llvm.ptr<1>
+          %over = llvm.atomicrmw add %over_pointer, %one32 syncscope("device") monotonic : !llvm.ptr<1>, i32
+          %over_i = arith.index_cast %over : i32 to index
+          %over_at = arith.addi %of_overflow, %over_i : index
+          memref.store %particle, %bins[%over_at] : memref<?xi32, 1>
+        }
+      }
+    gpu.terminator
+  }
+  return
+}
+
+// Adds the charges of the binned particles to `real` through tiles
+// of the memory of the block (D[pme-tiles]; see tile_kernel in the
+// script).
+func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>,
+                                      %bins: memref<?xi32, 1>, %real: memref<?x!pme_real, 1>,
+                                      %k1: index, %k2: index, %k3: index) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c128 = arith.constant 128 : index
+  %n_all = memref.dim %q, %c0 : memref<?x!pme_chg, 1>
+  %edge = arith.constant 16 : index
+  %edge32 = arith.constant 16 : i32
+  %edge_m1 = arith.constant 15 : index
+  %k1e = arith.addi %k1, %edge_m1 : index
+  %nb1 = arith.divui %k1e, %edge : index
+  %k2e = arith.addi %k2, %edge_m1 : index
+  %nb2 = arith.divui %k2e, %edge : index
+  %k3e = arith.addi %k3, %edge_m1 : index
+  %nb3 = arith.divui %k3e, %edge : index
+  %nb12 = arith.muli %nb1, %nb2 : index
+  %nbins = arith.muli %nb12, %nb3 : index
+  %nbins_m1 = arith.subi %nbins, %c1 : index
+  %mean_u = arith.addi %n_all, %nbins_m1 : index
+  %mean = arith.divui %mean_u, %nbins : index
+  %mean2 = arith.addi %mean, %mean : index
+  %slack = arith.constant 8 : index
+  %capacity = arith.addi %mean2, %slack : index
+  %of_lists = arith.addi %nbins, %c1 : index
+  %lists = arith.muli %nbins, %capacity : index
+  %of_overflow = arith.addi %of_lists, %lists : index
+  %cthreads = arith.constant 512 : index
+  %blocks_tiles = arith.addi %nbins, %c1 : index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_tiles, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %cthreads, %sy = %c1, %sz = %c1)
+             workgroup(%tile : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>, %staged : memref<2048x!pme_real, #gpu.address_space<workgroup>>, %starts : memref<1536xi32, #gpu.address_space<workgroup>>) {
+    %c3w = arith.constant 3 : index
+    %c32w = arith.constant 32 : index
+    %cwarps = arith.constant 16 : index
+    %cthreads2 = arith.constant 1024 : index
+    %zero_r = arith.constant 0.0 : !pme_real
+    %true_w = arith.constant true
+    %side32 = arith.constant PME_TILE_SIDE_16 : i32
+    %volume = arith.constant PME_TILE_POINTS_16 : index
+    // The block of the overflow, after the bins.
+    %overflows = arith.cmpi eq, %bx, %nbins : index
+    %bins_block = arith.xori %overflows, %true_w : i1
+    %bin = arith.select %overflows, %c0, %bx : index
+    // The first point of the bin.
+    %b3 = arith.remui %bin, %nb3 : index
+    %b12 = arith.divui %bin, %nb3 : index
+    %b2 = arith.remui %b12, %nb2 : index
+    %b1 = arith.divui %b12, %nb2 : index
+    %o1 = arith.muli %b1, %edge : index
+    %o2 = arith.muli %b2, %edge : index
+    %o3 = arith.muli %b3, %edge : index
+    %o1t = arith.index_cast %o1 : index to i32
+    %o2t = arith.index_cast %o2 : index to i32
+    %o3t = arith.index_cast %o3 : index to i32
+    // The particles of the bin: those of its run, at most C, or those of
+    // the overflow.
+    %counted32 = memref.load %bins[%bx] : memref<?xi32, 1>
+    %counted = arith.index_cast %counted32 : i32 to index
+    %in_run = arith.minui %counted, %capacity : index
+    %count = arith.select %overflows, %counted, %in_run : index
+    %run = arith.muli %bin, %capacity : index
+    %run_at = arith.addi %of_lists, %run : index
+    %list_at = arith.select %overflows, %of_overflow, %run_at : index
+    // A bin without particles adds nothing; the whole block leaves.
+    %some = arith.cmpi ugt, %count, %c0 : index
+    scf.if %some {
+      scf.for %t = %tx to %volume step %cthreads {
+        memref.store %zero_r, %tile[%t] : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>
+      }
+      %warp = arith.divui %tx, %c32w : index
+      %lane_x = arith.remui %tx, %c32w : index
+      %lane = arith.index_cast %lane_x : index to i32
+      %pt = arith.constant PME_ORDER : i32
+      %pidx = arith.constant PME_ORDER : index
+      %ppt = arith.muli %pt, %pt : i32
+      %pppt = arith.muli %ppt, %pt : i32
+      %pt2 = arith.addi %pt, %pt : i32
+      %thirty_two = arith.constant 32 : i32
+      %zero32 = arith.constant 0 : i32
+      %width = arith.constant 32 : i32
+      %passes_n2 = arith.muli %pidx, %pidx : index
+      %passes_n3 = arith.muli %passes_n2, %pidx : index
+      %c31p = arith.constant 31 : index
+      %passes_u = arith.addi %passes_n3, %c31p : index
+      %passes = arith.divui %passes_u, %c32w : index
+      // The point and axis of a lane: lane a P + j, a < 3, weighs.
+      %three_p = arith.muli %pidx, %c3w : index
+      %active = arith.cmpi ult, %lane_x, %three_p : index
+      %lane_a = arith.select %active, %lane_x, %c0 : index
+      %axis_l = arith.divui %lane_a, %pidx : index
+      %j_l = arith.remui %lane_a, %pidx : index
+      %axis_at = arith.muli %axis_l, %cthreads : index
+      %k1t = arith.index_cast %k1 : index to i32
+      %k2t = arith.index_cast %k2 : index to i32
+      %k3t = arith.index_cast %k3 : index to i32
+      %k3w = arith.extui %k3t : i32 to i64
+      %bytes = arith.constant PME_REAL_BYTES : i64
+      %gindex = memref.extract_aligned_pointer_as_index %real : memref<?x!pme_real, 1> -> index
+      %gbase = arith.index_cast %gindex : index to i64
+      scf.for %round = %c0 to %count step %cthreads {
+        // The particles of the round into the memory of the block, after
+        // the warps of the round before have read theirs.
+        gpu.barrier
+        %left = arith.subi %count, %round : index
+        %in_round = arith.minui %left, %cthreads : index
+        %stages = arith.cmpi ult, %tx, %in_round : index
+        scf.if %stages {
+          %entry = arith.addi %round, %tx : index
+          %entry_at = arith.addi %list_at, %entry : index
+          %particle = memref.load %bins[%entry_at] : memref<?xi32, 1>
+          %i = arith.index_cast %particle : i32 to index
+          %qs = memref.load %q[%i] : memref<?x!pme_chg, 1>
+          %qi = PME_CHG_TO_REAL %qs : !pme_chg to !pme_real
+          memref.store %qi, %staged[%tx] : memref<2048x!pme_real, #gpu.address_space<workgroup>>
+          scf.for %ax = %c0 to %c3w step %c1 {
+            %at_n = arith.muli %n_all, %ax : index
+            %at_s = arith.addi %at_n, %i : index
+            %start_r = memref.load %places[%at_s] : memref<?x!pme_real, 1>
+            %start = arith.fptosi %start_r : !pme_real to i32
+            %fax = arith.addi %ax, %c3w : index
+            %at_fn = arith.muli %n_all, %fax : index
+            %at_f = arith.addi %at_fn, %i : index
+            %frac_g = memref.load %places[%at_f] : memref<?x!pme_real, 1>
+            %slot0 = arith.muli %ax, %cthreads : index
+            %slot = arith.addi %slot0, %tx : index
+            memref.store %start, %starts[%slot] : memref<1536xi32, #gpu.address_space<workgroup>>
+            %fslot = arith.addi %slot, %cthreads : index
+            memref.store %frac_g, %staged[%fslot] : memref<2048x!pme_real, #gpu.address_space<workgroup>>
+          }
+        }
+        gpu.barrier
+        scf.for %k = %warp to %in_round step %cwarps {
+          %qk = memref.load %staged[%k] : memref<2048x!pme_real, #gpu.address_space<workgroup>>
+          %fk0 = arith.addi %axis_at, %k : index
+          %fk = arith.addi %fk0, %cthreads : index
+          %frac = memref.load %staged[%fk] : memref<2048x!pme_real, #gpu.address_space<workgroup>>
+          %order = arith.constant PME_ORDER : index
+          %c4o = arith.constant 4 : index
+          %closed = arith.cmpi eq, %order, %c4o : index
+          %splines = memref.alloca() : memref<8x!pme_real>
+          %tw_c0 = arith.constant 0 : index
+          %tw_c1 = arith.constant 1 : index
+          %tw_c2 = arith.constant 2 : index
+          %tw_c3 = arith.constant 3 : index
+          %tw_c8 = arith.constant 8 : index
+          %tw_zero = arith.constant 0.0 : !pme_real
+          %tw_one = arith.constant 1.0 : !pme_real
+          scf.for %tw_j = %tw_c0 to %tw_c8 step %tw_c1 {
+            memref.store %tw_zero, %splines[%tw_j] : memref<8x!pme_real>
+          }
+          %tw_omw = arith.subf %tw_one, %frac : !pme_real
+          memref.store %tw_omw, %splines[%tw_c0] : memref<8x!pme_real>
+          memref.store %frac, %splines[%tw_c1] : memref<8x!pme_real>
+          scf.for %tw_k = %tw_c3 to %order step %tw_c1 {
+          %tw_r_km1 = arith.subi %tw_k, %tw_c1 : index
+          %tw_r_km2 = arith.subi %tw_k, %tw_c2 : index
+          %tw_r_km1i = arith.index_cast %tw_r_km1 : index to i64
+          %tw_r_km1f = arith.sitofp %tw_r_km1i : i64 to !pme_real
+          %tw_r_div = arith.divf %tw_one, %tw_r_km1f : !pme_real
+          %tw_r_ki = arith.index_cast %tw_k : index to i64
+          %tw_r_kf = arith.sitofp %tw_r_ki : i64 to !pme_real
+          %tw_r_last = memref.load %splines[%tw_r_km2] : memref<8x!pme_real>
+          %tw_r_dw = arith.mulf %tw_r_div, %frac : !pme_real
+          %tw_r_top = arith.mulf %tw_r_dw, %tw_r_last : !pme_real
+          memref.store %tw_r_top, %splines[%tw_r_km1] : memref<8x!pme_real>
+          scf.for %tw_r_j = %tw_c1 to %tw_r_km1 step %tw_c1 {
+            %tw_r_ji = arith.index_cast %tw_r_j : index to i64
+            %tw_r_jf = arith.sitofp %tw_r_ji : i64 to !pme_real
+            %tw_r_at = arith.subi %tw_r_km1, %tw_r_j : index
+            %tw_r_below = arith.subi %tw_r_at, %tw_c1 : index
+            %tw_r_lo = memref.load %splines[%tw_r_below] : memref<8x!pme_real>
+            %tw_r_hi = memref.load %splines[%tw_r_at] : memref<8x!pme_real>
+            %tw_r_wj = arith.addf %frac, %tw_r_jf : !pme_real
+            %tw_r_kj = arith.subf %tw_r_kf, %tw_r_jf : !pme_real
+            %tw_r_kjw = arith.subf %tw_r_kj, %frac : !pme_real
+            %tw_r_t1 = arith.mulf %tw_r_wj, %tw_r_lo : !pme_real
+            %tw_r_t2 = arith.mulf %tw_r_kjw, %tw_r_hi : !pme_real
+            %tw_r_sum = arith.addf %tw_r_t1, %tw_r_t2 : !pme_real
+            %tw_r_value = arith.mulf %tw_r_div, %tw_r_sum : !pme_real
+            memref.store %tw_r_value, %splines[%tw_r_at] : memref<8x!pme_real>
+          }
+          %tw_r_first = memref.load %splines[%tw_c0] : memref<8x!pme_real>
+          %tw_r_omw = arith.subf %tw_one, %frac : !pme_real
+          %tw_r_d0 = arith.mulf %tw_r_div, %tw_r_omw : !pme_real
+          %tw_r_bottom = arith.mulf %tw_r_d0, %tw_r_first : !pme_real
+          memref.store %tw_r_bottom, %splines[%tw_c0] : memref<8x!pme_real>
+          }
+          %tw_f_km1 = arith.subi %order, %tw_c1 : index
+          %tw_f_km2 = arith.subi %order, %tw_c2 : index
+          %tw_f_km1i = arith.index_cast %tw_f_km1 : index to i64
+          %tw_f_km1f = arith.sitofp %tw_f_km1i : i64 to !pme_real
+          %tw_f_div = arith.divf %tw_one, %tw_f_km1f : !pme_real
+          %tw_f_ki = arith.index_cast %order : index to i64
+          %tw_f_kf = arith.sitofp %tw_f_ki : i64 to !pme_real
+          %tw_f_last = memref.load %splines[%tw_f_km2] : memref<8x!pme_real>
+          %tw_f_dw = arith.mulf %tw_f_div, %frac : !pme_real
+          %tw_f_top = arith.mulf %tw_f_dw, %tw_f_last : !pme_real
+          memref.store %tw_f_top, %splines[%tw_f_km1] : memref<8x!pme_real>
+          scf.for %tw_f_j = %tw_c1 to %tw_f_km1 step %tw_c1 {
+            %tw_f_ji = arith.index_cast %tw_f_j : index to i64
+            %tw_f_jf = arith.sitofp %tw_f_ji : i64 to !pme_real
+            %tw_f_at = arith.subi %tw_f_km1, %tw_f_j : index
+            %tw_f_below = arith.subi %tw_f_at, %tw_c1 : index
+            %tw_f_lo = memref.load %splines[%tw_f_below] : memref<8x!pme_real>
+            %tw_f_hi = memref.load %splines[%tw_f_at] : memref<8x!pme_real>
+            %tw_f_wj = arith.addf %frac, %tw_f_jf : !pme_real
+            %tw_f_kj = arith.subf %tw_f_kf, %tw_f_jf : !pme_real
+            %tw_f_kjw = arith.subf %tw_f_kj, %frac : !pme_real
+            %tw_f_t1 = arith.mulf %tw_f_wj, %tw_f_lo : !pme_real
+            %tw_f_t2 = arith.mulf %tw_f_kjw, %tw_f_hi : !pme_real
+            %tw_f_sum = arith.addf %tw_f_t1, %tw_f_t2 : !pme_real
+            %tw_f_value = arith.mulf %tw_f_div, %tw_f_sum : !pme_real
+            memref.store %tw_f_value, %splines[%tw_f_at] : memref<8x!pme_real>
+          }
+          %tw_f_first = memref.load %splines[%tw_c0] : memref<8x!pme_real>
+          %tw_f_omw = arith.subf %tw_one, %frac : !pme_real
+          %tw_f_d0 = arith.mulf %tw_f_div, %tw_f_omw : !pme_real
+          %tw_f_bottom = arith.mulf %tw_f_d0, %tw_f_first : !pme_real
+          memref.store %tw_f_bottom, %splines[%tw_c0] : memref<8x!pme_real>
+          %tp_none = arith.constant 0.0 : !pme_real
+          %tp_c0 = arith.constant 0 : index
+          %tp_c1 = arith.constant 1 : index
+          %tp_value = scf.for %tp_e = %tp_c0 to %order step %tp_c1
+              iter_args(%tp_acc = %tp_none) -> (!pme_real) {
+            %tp_at = memref.load %splines[%tp_e] : memref<8x!pme_real>
+            %tp_here = arith.cmpi eq, %tp_e, %j_l : index
+            %tp_chosen = arith.select %tp_here, %tp_at, %tp_acc : !pme_real
+            scf.yield %tp_chosen : !pme_real
+          }
+          %w_sixth = arith.constant 0.16666666666666666 : !pme_real
+          %w_one = arith.constant 1.0 : !pme_real
+          %w_three = arith.constant 3.0 : !pme_real
+          %w_four = arith.constant 4.0 : !pme_real
+          %w_six = arith.constant 6.0 : !pme_real
+          %cw_w2 = arith.mulf %frac, %frac : !pme_real
+          %cw_w3 = arith.mulf %cw_w2, %frac : !pme_real
+          %cw_omw = arith.subf %w_one, %frac : !pme_real
+          %cw_omw2 = arith.mulf %cw_omw, %cw_omw : !pme_real
+          %cw_m0 = arith.mulf %cw_omw2, %cw_omw : !pme_real
+          %cw_a1 = arith.mulf %w_three, %cw_w3 : !pme_real
+          %cw_b1 = arith.mulf %w_six, %cw_w2 : !pme_real
+          %cw_c1 = arith.subf %cw_a1, %cw_b1 : !pme_real
+          %cw_m1 = arith.addf %cw_c1, %w_four : !pme_real
+          %cw_a2 = arith.mulf %w_three, %cw_w2 : !pme_real
+          %cw_b2 = arith.mulf %w_three, %frac : !pme_real
+          %cw_c2 = arith.subf %cw_a2, %cw_a1 : !pme_real
+          %cw_d2 = arith.addf %cw_c2, %cw_b2 : !pme_real
+          %cw_m2 = arith.addf %cw_d2, %w_one : !pme_real
+          %cw_j0 = arith.constant 0 : index
+          %cw_j1 = arith.constant 1 : index
+          %cw_j2 = arith.constant 2 : index
+          %cw_is0 = arith.cmpi eq, %j_l, %cw_j0 : index
+          %cw_is1 = arith.cmpi eq, %j_l, %cw_j1 : index
+          %cw_is2 = arith.cmpi eq, %j_l, %cw_j2 : index
+          %cw_s2 = arith.select %cw_is2, %cw_m2, %cw_w3 : !pme_real
+          %cw_s1 = arith.select %cw_is1, %cw_m1, %cw_s2 : !pme_real
+          %cw_s0 = arith.select %cw_is0, %cw_m0, %cw_s1 : !pme_real
+          %cw_value = arith.mulf %cw_s0, %w_sixth : !pme_real
+          %spline = arith.select %closed, %cw_value, %tp_value : !pme_real
+          %first_axis = arith.cmpi eq, %axis_l, %c0 : index
+          %charged = arith.mulf %qk, %spline : !pme_real
+          %along = arith.select %first_axis, %charged, %spline : !pme_real
+          %weight = arith.select %active, %along, %zero_r : !pme_real
+          %xstart = memref.load %starts[%k] : memref<1536xi32, #gpu.address_space<workgroup>>
+          %ys_at = arith.addi %k, %cthreads : index
+          %ystart = memref.load %starts[%ys_at] : memref<1536xi32, #gpu.address_space<workgroup>>
+          %zs_at = arith.addi %k, %cthreads2 : index
+          %zstart = memref.load %starts[%zs_at] : memref<1536xi32, #gpu.address_space<workgroup>>
+          %l1 = arith.subi %xstart, %o1t : i32
+          %l2 = arith.subi %ystart, %o2t : i32
+          %l3 = arith.subi %zstart, %o3t : i32
+          // A point of a pass: z fastest, so that the lanes of a row add
+          // to neighboring words of the tile.
+          scf.for %pass = %c0 to %passes step %c1 {
+            %pass32 = arith.index_cast %pass : index to i32
+            %pass_base = arith.muli %pass32, %thirty_two : i32
+            %kk = arith.addi %pass_base, %lane : i32
+            %in = arith.cmpi slt, %kk, %pppt : i32
+            %kc = arith.select %in, %kk, %zero32 : i32
+            %pa = arith.divui %kc, %ppt : i32
+            %pbc = arith.remui %kc, %ppt : i32
+            %pb = arith.divui %pbc, %pt : i32
+            %pc = arith.remui %pbc, %pt : i32
+            %wx, %vwx = gpu.shuffle idx %weight, %pa, %width : !pme_real
+            %pbs = arith.addi %pb, %pt : i32
+            %wy, %vwy = gpu.shuffle idx %weight, %pbs, %width : !pme_real
+            %pcs = arith.addi %pc, %pt2 : i32
+            %wz, %vwz = gpu.shuffle idx %weight, %pcs, %width : !pme_real
+            scf.if %in {
+              %wxy = arith.mulf %wx, %wy : !pme_real
+              %value = arith.mulf %wxy, %wz : !pme_real
+              scf.if %overflows {
+                %g1s = arith.addi %xstart, %pa : i32
+                %g1w = arith.subi %g1s, %k1t : i32
+                %g1over = arith.cmpi sge, %g1s, %k1t : i32
+                %g1 = arith.select %g1over, %g1w, %g1s : i32
+                %g2s = arith.addi %ystart, %pb : i32
+                %g2w = arith.subi %g2s, %k2t : i32
+                %g2over = arith.cmpi sge, %g2s, %k2t : i32
+                %g2 = arith.select %g2over, %g2w, %g2s : i32
+                %g3s = arith.addi %zstart, %pc : i32
+                %g3w = arith.subi %g3s, %k3t : i32
+                %g3over = arith.cmpi sge, %g3s, %k3t : i32
+                %g3 = arith.select %g3over, %g3w, %g3s : i32
+                %row1 = arith.muli %g1, %k2t : i32
+                %row = arith.addi %row1, %g2 : i32
+                %row64 = arith.extui %row : i32 to i64
+                %rowbase = arith.muli %row64, %k3w : i64
+                %g364 = arith.extui %g3 : i32 to i64
+                %at = arith.addi %rowbase, %g364 : i64
+                %offset = arith.muli %at, %bytes : i64
+                %address = arith.addi %gbase, %offset : i64
+                %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+                PME_ATOMIC_ADD %pointer, %value
+              } else {
+                %t1 = arith.addi %l1, %pa : i32
+                %t2 = arith.addi %l2, %pb : i32
+                %t3 = arith.addi %l3, %pc : i32
+                %t1s = arith.muli %t1, %side32 : i32
+                %t12 = arith.addi %t1s, %t2 : i32
+                %t12s = arith.muli %t12, %side32 : i32
+                %t123 = arith.addi %t12s, %t3 : i32
+                %tat = arith.index_cast %t123 : i32 to index
+                PME_SHARED_ADD_16 %tile[%tat], %value
+              }
+            }
+          }
+        }
+      }
+      gpu.barrier
+      // The tile into the grid; a point wraps around once at most, since
+      // the tile is no longer than the grid along any axis.
+      scf.if %bins_block {
+        scf.for %t = %tx to %volume step %cthreads {
+          %value = memref.load %tile[%t] : memref<PME_TILE_POINTS_16x!pme_real, #gpu.address_space<workgroup>>
+          %nonzero = arith.cmpf une, %value, %zero_r : !pme_real
+          scf.if %nonzero {
+            %t32 = arith.index_cast %t : index to i32
+            %c = arith.remui %t32, %side32 : i32
+            %ab = arith.divui %t32, %side32 : i32
+            %b = arith.remui %ab, %side32 : i32
+            %a = arith.divui %ab, %side32 : i32
+            %g1s = arith.addi %o1t, %a : i32
+            %g1w = arith.subi %g1s, %k1t : i32
+            %g1over = arith.cmpi sge, %g1s, %k1t : i32
+            %g1 = arith.select %g1over, %g1w, %g1s : i32
+            %g2s = arith.addi %o2t, %b : i32
+            %g2w = arith.subi %g2s, %k2t : i32
+            %g2over = arith.cmpi sge, %g2s, %k2t : i32
+            %g2 = arith.select %g2over, %g2w, %g2s : i32
+            %g3s = arith.addi %o3t, %c : i32
+            %g3w = arith.subi %g3s, %k3t : i32
+            %g3over = arith.cmpi sge, %g3s, %k3t : i32
+            %g3 = arith.select %g3over, %g3w, %g3s : i32
+            %row1 = arith.muli %g1, %k2t : i32
+            %row = arith.addi %row1, %g2 : i32
+            %row64 = arith.extui %row : i32 to i64
+            %rowbase = arith.muli %row64, %k3w : i64
+            %g364 = arith.extui %g3 : i32 to i64
+            %at = arith.addi %rowbase, %g364 : i64
+            %offset = arith.muli %at, %bytes : i64
+            %address = arith.addi %gbase, %offset : i64
+            %pointer = llvm.inttoptr %address : i64 to !llvm.ptr<1>
+            PME_ATOMIC_ADD %pointer, %value
+          }
+        }
+      }
     }
     gpu.terminator
   }
