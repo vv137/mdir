@@ -6,8 +6,8 @@
 
 | Item | MDIR | pmemd.cuda |
 |---|---|---|
-| Program | `mdir` at D134, built with LLVM and MLIR 23.1.2, PTX compiled by the driver at load | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 |
-| Device | One NVIDIA RTX 3090 (GPU 0), power capped at 300 W, driver 595.84; the node's other GPUs ran other jobs, among them, during the first two repeats, runs of this work on GPU 1 and on the CPU | The same |
+| Program | `mdir` at D280, built with LLVM and MLIR 23.1.2, kernels loaded as cubins (D214) | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 for the RTX 4090 |
+| Device | One NVIDIA RTX 4090 (450 W, driver 595.45.04) of a compute node, in a job of the cluster's scheduler that held the device alone (`gpu-run --idle`); other jobs ran on the node's other GPUs | The same |
 | Inputs | The systems of the Amber 24 GPU benchmark suite (PME), the topologies and restart files of the suite as they are (`prmtop`, `inpcrd`; two topologies are in the format before Amber 7, D133), with the settings of `scripts/benchmarks/amber/bench.py` | The inputs of the suite as they are (`mdin.GPU`, `prmtop`, `inpcrd`) |
 | Model | Cutoff 8 Å; PME with the $\beta$ of pmemd, $\mathrm{erfc}(\beta r_c)/r_c = 10^{-6}$ at constant energy and $10^{-5}$ at constant pressure (0.39467 and 0.34864 Å⁻¹), the grids of pmemd.cuda (64³; 144 × 84 × 80; 256 × 128 × 128; 224 × 224 × 240), order 4, and Amber's influence function (D134); SHAKE on the bonds of hydrogen and rigid water; the correction for the dispersion | The same, by the inputs |
 | Couplings (NPT) | Stochastic velocity rescaling [[Bussi2007]](references.md#bussi2007) and stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020), every 25 steps, $\tau_T$ = 1 ps, $\tau_P$ = 2 ps | Berendsen's thermostat [[Berendsen1984]](references.md#berendsen1984), $\tau$ = 10 ps; Monte Carlo barostat every 100 steps |
@@ -19,12 +19,14 @@
 
 The two programs ran one after the other on the same device, MDIR over
 the whole suite and then pmemd.cuda, three times
-(`scripts/paper/run-suite-repeats.sh`). The benchmark script watches the
-device every two seconds during each run and marks the rate as no
-measurement if another process used it; no run of the repeats was
-marked. The ratio of a
-system is taken within each repeat and then averaged. The table is made
-by `scripts/paper/suite-table.py` and the figure by
+(`scripts/paper/run-suite-repeats.sh`), from a frozen copy of the
+program. The benchmark script watches the device every two seconds
+during each run and marks the rate as no measurement if another process
+used it; no run of the repeats was marked. The ratio of a system is
+taken within each repeat and then averaged; ratios from different nodes
+of the cluster are not mixed, since the same program's rate differs
+between them by up to 3.5% (pmemd.cuda on Cellulose, #405). The table is made by
+`scripts/paper/suite-table.py` and the figure by
 `scripts/paper/plot-suite.py`.
 
 ## 10.2 Rates
@@ -35,49 +37,58 @@ energy (NVE) or of the conserved energy $\tilde H$ (NPT, Section 6.5)
 between the first and the last row of MDIR's log, relative to its value. The counts are the mean
 number of steps between builds of the outer list and between prunings of
 the inner list. The rates, the changes of the energy, the counts, and the
-times of compilation are from the same three repeats, at D134, with the
-$\beta$, the grid, and the influence function of pmemd.cuda (Table 10.1).*
+times of compilation are from the same three repeats, at D280 on an RTX
+4090, with the $\beta$, the grid, and the influence function of pmemd.cuda (Table 10.1).*
 
 | System | Atoms | MDIR, ns/day | pmemd.cuda, ns/day | MDIR / pmemd.cuda | Energy changed by (MDIR) | Builds, prunings: every | Compiled in |
 |---|---|---|---|---|---|---|---|
-| `jac_nve` | 23,558 | 814.6 ± 1.2 | 619.3 ± 1.2 | 131.5 ± 0.4% | 6.2e-05 to 1.3e-04 | 16.3, 2.8 | 11–12 s |
-| `jac_nve_4fs` | 23,558 | 1520.3 ± 3.0 | 1153.3 ± 1.3 | 131.8 ± 0.2% | 3.1e-03 to 3.4e-03 | 10.7, 3.5 | 11 s |
-| `jac_npt` | 23,558 | 745.2 ± 1.5 | 587.7 ± 0.6 | 126.8 ± 0.3% | 3.5e-04 to 4.5e-04 | 16.3, 2.8 | 23–32 s |
-| `jac_npt_4fs` | 23,558 | 1437.7 ± 2.4 | 1133.3 ± 2.1 | 126.9 ± 0.4% | 4.2e-04 to 7.3e-04 | 12.7, 4.1 | 23 s |
-| `factorix_nve` | 90,906 | 290.4 ± 0.6 | 264.1 ± 0.3 | 110.0 ± 0.1% | 3.5e-06 to 5.6e-06 | 14.8, 2.7 | 11–12 s |
-| `factorix_npt` | 90,906 | 273.4 ± 0.6 | 250.4 ± 0.7 | 109.2 ± 0.5% | 2.8e-04 to 3.0e-04 | 14.8, 2.6 | 22–23 s |
-| `cellulose_nve` | 408,609 | 64.0 ± 0.1 | 61.3 ± 0.0 | 104.4 ± 0.1% | 3.1e-05 to 5.6e-05 | 13.7, 2.2 | 10 s |
-| `cellulose_npt` | 408,609 | 61.4 ± 0.2 | 58.3 ± 0.1 | 105.3 ± 0.3% | 8.3e-05 to 1.4e-04 | 13.6, 2.1 | 19–28 s |
-| `stmv_npt_4fs` | 1,067,095 | 41.6 ± 0.1 | 37.5 ± 0.0 | 111.0 ± 0.4% | 3.7e-05 to 7.1e-05 | 6.7, 2.1 | 23–25 s |
+| `jac_nve` | 23,558 | 1269.0 ± 6.5 | 896.1 ± 1.7 | 141.6 ± 0.5% | 6.3e-05 to 1.3e-04 | 16.4, 2.8 | 6 s |
+| `jac_nve_4fs` | 23,558 | 2373.3 ± 9.2 | 1656.1 ± 0.9 | 143.3 ± 0.5% | 3.4e-03 to 3.6e-03 | 10.7, 3.5 | 6 s |
+| `jac_npt` | 23,558 | 1154.1 ± 5.5 | 845.2 ± 1.1 | 136.5 ± 0.5% | 3.8e-04 to 5.3e-04 | 16.4, 2.8 | 12 s |
+| `jac_npt_4fs` | 23,558 | 2221.6 ± 2.8 | 1630.6 ± 3.6 | 136.2 ± 0.3% | 1.1e-03 to 1.4e-03 | 12.9, 4.1 | 12 s |
+| `factorix_nve` | 90,906 | 518.0 ± 1.0 | 456.5 ± 1.2 | 113.5 ± 0.5% | 1.0e-05 to 1.9e-05 | 14.8, 2.7 | 6 s |
+| `factorix_npt` | 90,906 | 485.2 ± 0.2 | 426.6 ± 1.1 | 113.7 ± 0.3% | 2.8e-04 to 3.2e-04 | 14.8, 2.7 | 12 s |
+| `cellulose_nve` | 408,609 | 118.8 ± 0.2 | 120.3 ± 0.1 | 98.8 ± 0.2% | 6.4e-05 to 8.9e-05 | 13.4, 2.2 | 6 s |
+| `cellulose_npt` | 408,609 | 114.8 ± 0.2 | 112.2 ± 0.0 | 102.3 ± 0.2% | 1.5e-04 to 1.7e-04 | 13.4, 2.2 | 11 s |
+| `stmv_npt_4fs` | 1,067,095 | 73.8 ± 0.1 | 75.1 ± 0.2 | 98.3 ± 0.4% | 5.0e-05 to 9.8e-05 | 6.6, 2.1 | 12 s |
 
 ![Rates of MDIR and pmemd.cuda over the Amber suite](figures/suite.png)
 
 *Figure 10.1. The rates of Table 10.2 on a logarithmic scale, with the
 ratio of the means above each pair.*
 
-MDIR is faster than pmemd.cuda on every system of the suite. The margin
-is largest on the smallest system and smallest on Cellulose:
+On this device MDIR's rate is 136% to 143% of pmemd.cuda's on JAC, 114%
+on Factor IX, 99% and 102% on Cellulose at constant energy and pressure,
+and 98% on STMV. The ratio falls with the size of the system:
 
-- **JAC** (23,558 atoms; a step of about 210 µs at 2 fs). A step of this
+- **JAC** (23,558 atoms; a step of about 136 µs at 2 fs). A step of this
   size has few warps of work per kernel and many kernels, so what the
   host and the launches cost matters as much as the arithmetic. The
   integration kernel (Section 8.2) does in one launch what took three,
   the flags of the tests reach the host without waiting for the stream
-  (Section 8.3, from 695 to 739 ns/day, and with mapped memory of the
-  host from 771 to 817), and the dual list keeps an
-  inner list of reach 8.6 Å, pruned every 2.8 steps, under an outer list
-  of 11 Å built every 16, so the loop over pairs reads the pairs within
-  8.6 Å rather than within the 10 Å of one list (Section 4.5).
-- **Cellulose** (408,609 atoms). The device is busy 97% of a step (Table
-  8.2); the loop over pairs and PME take two thirds of it, and both are
-  close to the limits of their resources (the loop over groups at 92% of
-  the peak of the pipe of loads and shuffles). Here the ratio rests on the
-  arithmetic of the kernels: each pair once, tables of the radial
-  functions (Section 7.2), the bricks of the spreading (Section 5.3).
-- **STMV** at 4 fs (1,067,095 atoms) builds its outer list every 6.7
-  steps and prunes every 2.1. Its ratio lies between those of FactorIX
-  and Cellulose; the measurements of this paper do not separate its
-  causes.
+  (Section 8.3), and the dual list keeps an inner list of reach 8.6 Å,
+  pruned every 2.8 steps, under an outer list of 11 Å built every 16, so
+  the loop over pairs reads the pairs within 8.6 Å rather than within
+  the 10 Å of one list (Section 4.5).
+- **Cellulose** (408,609 atoms) and **STMV** at 4 fs (1,067,095 atoms).
+  The device is busy nearly the whole step (Table 8.2, measured on an
+  RTX 3090), and the loop over pairs and PME take most of it. The rate
+  rests on the arithmetic and the memory traffic of those kernels: each
+  pair once, tables of the radial functions (Section 7.2), the bricks of
+  the spreading (Section 5.3). STMV builds its outer list every 6.6 steps
+  and prunes every 2.1. The settings of the lists (Table 10.1) were
+  chosen on an RTX 3090 and are the same for every system; whether other
+  settings, or the kernels themselves, account for the 1 to 2% on these
+  two systems is not separated by these measurements.
+
+**An earlier measurement.** At D134 on an RTX 3090 capped at 300 W, with
+the same inputs and settings, the ratios were 131.5% on JAC at constant
+energy, 110.0% on Factor IX, 104.4% and 105.3% on Cellulose, and 111.0% on
+STMV, which completed the first milestone's target of at least
+pmemd.cuda's rate on every system of the suite (D114). From that
+measurement to this one, on the newer device and with MDIR's changes up to
+D280, pmemd.cuda's rate grew by a factor of 1.4 on JAC to 2.0 on STMV, and
+MDIR's by 1.6 to 1.9: the large systems gained more with pmemd.cuda.
 
 ## 10.3 Energy in the measured runs
 
@@ -90,11 +101,11 @@ kcal/mol/ns against 5.9 for pmemd.cuda (Section 9.4).
 ## 10.4 Compilation
 
 Each run compiles its program first (Section 3.6). The time is that of
-the column "Compiled in" of Table 10.2: about 10 s for a system at
-constant energy and about 20 s at constant pressure, whose module has
+the column "Compiled in" of Table 10.2: about 6 s for a system at
+constant energy and about 12 s at constant pressure, whose module has
 the programs of the barostat in addition, independent of the size of the
 system. It is spent once per run: 4% of a run of 2 ns of JAC, which
-takes 4 minutes, and 0.1% of a run of 100 ns.
+takes 2.3 minutes, and 0.1% of a run of 100 ns.
 
 A Python simulation can take its host object from the compile cache
 (Section 3.6). For the stages of the ala3 example on a GPU in mixed

@@ -4,7 +4,9 @@
 with the sample standard deviation as an error bar, and the ratio of the
 means above each pair.
 
-    plot-suite.py LOGS OUTPUT.png
+    plot-suite.py LOGS OUTPUT.png [DEVICE]
+
+DEVICE names the device in the title ("one RTX 4090 (450 W)" by default).
 
 Needs matplotlib.
 """
@@ -34,6 +36,7 @@ def rates(path):
 
 def main():
     logs, output = sys.argv[1], sys.argv[2]
+    device = sys.argv[3] if len(sys.argv) > 3 else "one RTX 4090 (450 W)"
     series = {"mdir": [], "pmemd": []}
     for engine in series:
         for path in sorted(glob.glob(os.path.join(logs, f"{engine}-*.log"))):
@@ -67,7 +70,7 @@ def main():
         name, rest = s.split("_", 1)
         labels.append(f"{name}\n{rest}\n{ATOMS[name]:,} atoms")
     ax.set_xticks(list(x), labels, fontsize=8.5)
-    ax.set_title("The Amber suite on one RTX 3090 (300 W), mixed precision: "
+    ax.set_title(f"The Amber suite on {device}, mixed precision: "
                  "MDIR against pmemd.cuda", fontsize=10)
     ax.legend(loc="upper right", fontsize=9)
     fig.tight_layout()
