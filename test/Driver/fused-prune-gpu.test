@@ -2,7 +2,7 @@
 # follows its refresh (D[fused-prune]): where the refresh prunes, the loop
 # runs one kernel, a warp for each group, that prunes the group as the
 # refresh would and computes the pairs of the entries it kept. By default
-# it does so from 4096 groups, so the water box of 1,570 sites (about 100
+# it does so from 4096 groups (20,480 on sm_12x), so the water box of 1,570 sites (about 100
 # groups) prunes in the refresh; MDIR_FUSED_PRUNE=always takes the loop at
 # any size, and =off never does, nor compiles its kernel. The energies of the log are
 # those of the refresh's pruning to every printed digit in double precision

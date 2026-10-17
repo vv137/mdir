@@ -670,7 +670,9 @@ loop therefore prunes from 4096 groups by default, which the host decides
 at each pruning from the groups of the last build. On an RTX PRO 6000
 Blackwell Max-Q, which ran at its cap of 300 W, $t_\text{fused} \approx
 t_\text{loop} + t_\text{prune}$ (Cellulose 591.2 against 415.0 and
-167.5), and the step changes by −1.1 to +1.0% from 6,400 groups.
+167.5), and the step changes by −1.1 to +1.0% from 6,400 groups, equal
+from about 19,000; on such a device (`sm_12x`) the loop prunes from 20,480
+groups.
 
 **Checks.** In double precision `test/Driver/groups-gpu.test` runs a water
 box with a dual list (11/9.3 Å, 37 prunings and 6 builds in 100 steps) and

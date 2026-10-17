@@ -15,9 +15,10 @@ format, or the outputs; every such change is listed under **Changed** or
 - The pruning of the inner list of a dual list in the loop over pairs
   (D[fused-prune], #362, [docs/groups-m1.md](docs/groups-m1.md), Section
   6.2): where a refresh prunes, the loop over pairs that follows it prunes
-  and computes in one kernel, a warp for each group, from 4096 groups.
+  and computes in one kernel, a warp for each group, from 4096 groups
+  (20,480 on `sm_12x`).
   On an RTX 4090 a step takes 4 to 6% less from about 6,400 groups; on an
-  RTX PRO 6000 Max-Q it changes by at most about 1%.
+  RTX PRO 6000 Max-Q it gains on the largest systems only, by 1 to 2%.
   `MDIR_FUSED_PRUNE=off|always` sets it aside or takes it at any size.
   The log line of the prunings adds how many the loop did. No control-file
   key changes; the forces are those of before to the order of their sums.
