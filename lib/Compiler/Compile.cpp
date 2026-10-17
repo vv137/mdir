@@ -95,19 +95,25 @@ static llvm::StringRef getTupleSumsOptions() {
 }
 
 /// The options of the pruning in the loop over pairs (D[fused-prune]): on
-/// from `fusedPruningGroups` groups, unless MDIR_FUSED_PRUNE is `off`;
-/// `always` takes it at any number of groups.
-static std::string getFusedPruningOptions() {
-  // The groups from which the fused pruning took less time a step than the
-  // pruning of the refresh on an RTX 4090 (water boxes of 52,686 and
-  // 103,158 sites: 3,292 groups equal, 6,447 groups 4% less).
-  constexpr int64_t fusedPruningGroups = 4096;
+/// from the groups of `getFusedPruningGroups` for the architecture of
+/// `gpuOptions`, unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
+/// number of groups.
+static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
+  // The groups from which the pruning in the loop took no more time a step
+  // than the pruning of the refresh. On an RTX 4090 (sm_89), water boxes of
+  // 52,686 and 103,158 sites: 3,292 groups equal, 6,447 groups 4% less. On
+  // an RTX PRO 6000 Blackwell Max-Q (sm_120) the kernel takes the sum of
+  // the two it replaces, and a step is equal from about 19,000 groups
+  // (+1.0% at 6,447, +0.2% at 19,367, -0.2% at 25,538, -1.1% at 66,693).
+  int64_t groups = 4096;
+  if (gpuOptions.contains("cubin-chip=sm_12"))
+    groups = 20480;
   const char *fuse = std::getenv("MDIR_FUSED_PRUNE");
   llvm::StringRef value = fuse ? fuse : "";
   if (value == "off")
     return "";
   return "fuse-pruning=true fuse-pruning-groups=" +
-         std::to_string(value == "always" ? 0 : fusedPruningGroups) + " ";
+         std::to_string(value == "always" ? 0 : groups) + " ";
 }
 
 std::string mdir::compiler::getPipeline(const Control &control,
@@ -203,7 +209,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        << getTupleSumsOptions()
        // The pruning of a dual list in the loop over pairs that follows
        // its refresh (D[fused-prune]).
-       << getFusedPruningOptions()
+       << getFusedPruningOptions(gpuOptions)
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"
        // The code of the host writes no buffer of the model that the entry
