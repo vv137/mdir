@@ -44,9 +44,10 @@ bonded terms with CMAP and Urey–Bradley angles, Lennard-Jones with the
 correction for the dispersion or CHARMM's force switch, particle mesh
 Ewald, SHAKE and SETTLE,
 virtual sites, restraints, stochastic velocity rescaling or Langevin dynamics, and stochastic
-cell rescaling, in single, mixed, or double precision. On an RTX 3090 it
-runs every system of the Amber GPU benchmark suite at 104% to 132% of the
-rate of pmemd.cuda. A driver reads a control file and writes a log, a
+cell rescaling, in single, mixed, or double precision. On an RTX 4090 it
+runs the systems of the Amber GPU benchmark suite at 98% to 143% of the
+rate of pmemd.cuda (104% to 132% on an RTX 3090 when the first milestone
+was completed). A driver reads a control file and writes a log, a
 trajectory, and checkpoints, from which a run continues exactly. The white
 paper of the first milestone is in [docs/paper/](docs/paper/README.md).
 
