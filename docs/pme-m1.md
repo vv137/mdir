@@ -151,8 +151,11 @@ order of the transform take 351 µs with a warp a particle and 434 with 4
 threads, in bricks 257; atomics of `i32` in fixed point are slower than
 those of `f32`; and computing the splines in every lane of a warp, as a
 first version did, left the kernel bound by its instructions (375 a
-particle, 442 µs). The orders 6 and 8, and the deterministic mode, keep the
-spreading of a thread for each particle and point along z.
+particle, 442 µs). Without tiles, the orders 6 and 8 keep the spreading of
+a thread for each particle and point along z; the deterministic mode always
+does. A grid in f32 of at least 500,000 points spreads through tiles of
+the memory of a block instead, at every order and with the prolate kernel
+(Section 3.3).
 
 The gathering
 takes a thread for each particle and point along z (the least power of 2
@@ -222,6 +225,110 @@ threads, in every mode:
 | Product | A row of the grid ($k_1 k_2$ rows of $k_3/2 + 1$ points) an iteration. The Gaussian influence function of a rectangular cell from the factors of its edges (D104): $m_a$, $m_a^2$, and $\exp(-\pi^2 m_a^2/\beta^2)$ times the factor of the B-splines (along $x$ also $f/(\pi V)$), computed in f64 once an evaluation, $k_1 + k_2 + k_3$ exponentials, and rounded once to the type of the grid. A triclinic cell, the dispersion (D162), and the prolate kernel (D266) compute the influence of each point in f64 (`pme_influence`) and round it once. The energy and the virial of a row are summed in the type of the grid and returned in f64, and the rows in the fixed partition of D171. A step that writes neither calls `pme_scale`, which only multiplies, as on a device |
 | Places | In f64 on the host: the fraction along the cell, the point of the grid, and the fraction within it, which is rounded once to the type of the grid for the B-splines. A device takes the point and the fraction within it in the type of the forces (D78), so the mixed modes of the two differ in this step |
 | Gathering | A particle an iteration, its sums in the type of the grid, its force from them in f64 |
+
+### 3.3 Spreading through tiles
+
+Outside the deterministic mode a device may spread the charges through
+tiles of the memory of a block (D[pme-tiles], issue #336), as cuFINUFFT
+spreads [[Shih2021]](references.md#shih2021): the particles are binned by
+their first point into bins of $E^3$ points of the grid, and a block adds
+the charges of a bin into a tile of $(E + P - 1)^3$ points, the bin and
+$P - 1$ more on the high side of each axis, with atomics of the memory of
+the block; then it adds the tile to the grid with atomics of the device.
+A point of the grid is in at most 8 tiles, so the atomics of the device
+fall from $P^3$ a particle to about $(1 + (P - 1)/E)^3$ a point of the
+grid: on Cellulose, from 24 million a step into the bricks (its 378,000
+charged sites) to at most 11 million (8,192 tiles of 1,331 points)
+with bins of 8 points.
+
+| Item | Value |
+|---|---|
+| The choice | `md_exec.reciprocal ... tiles(E)`, set by `md-exec-choose-spreading` on a program for a device, after the precision and before the storage. With `layout=auto`, the default, a sum in f32 whose grid has at least `min-points` = 500,000 points is tiled with bins of 8 points; a smaller grid, and a grid in f64, keep the spreading of Section 3. The size stands for the number of bins, which must occupy the device: at 512 bins (JAC, 64³ points) the tiles took 1.004 to 1.008 times the step of the bricks at order 4 on an RTX 4090 and 1.05 on an RTX PRO 6000, and at orders 6 and 8 0.91 to 0.93 on the RTX 4090 but 1.01 to 1.03 on the RTX PRO 6000; at 27 to 112 bins (the prolate kernel at ε = 10⁻³ on JAC and Factor IX) 1.98 and 1.17; from 1,008 bins up they were faster on both devices, in the spreading everywhere and in the step but for one disturbed round (the timings below). In double precision they were slower on every system measured. A rule by the number of multiprocessors of the device would tile more of the 4090's systems; the threshold is the same for every device instead. `MDIR_PME_SPREAD` overrides the choice: `global` (the spreading of Section 3), `tiles`, `tiles4`, `tiles8`, `tiles16`, or `auto` ([environment.md](environment.md)) |
+| Where a sum can be tiled | Outside the deterministic mode; where each edge of the grid has at least $E + P - 1$ points, so that a point of a tile wraps around the grid once at most; and where the tile and the particles of a round (below) fit 48 KiB of the memory of a block: bins of 16 points do not fit in f64 or at $P \ge 6$ |
+| Places | The weights kernel of Section 3, now of every order: the first points and the fractions of every particle, 6 values. The tiles do not depend on the cell, so a triclinic cell takes them too (its own places); so does the sum of the dispersion (D162) |
+| Binning | One kernel zeroes the grid of the transform, to which the tiles are added, and the counts of the bins. In a second, a thread an entry (a particle, or an entry of the list of D262) finds its bin from its first points; the lanes of a warp with the same bin (`match.any.sync`) take their ranks from one atomic of the first of them, so that a warp of particles in the order of their positions adds to a count once or a few times; the particle takes the place of its rank in a run of $C$ places of its bin, $C = 2\lceil n/n_\text{bins}\rceil + 8$, or, past $C$, a place in a list of the particles that overflow. No scan of the counts, and no sort. The bins are made at every evaluation: the cells of the neighbor structures are made at each build, with a geometry of their own, and the first point of a particle changes between builds. What the binning takes from the order of the particles (D44, D86) is the locality of the warps, which keeps the atomics of the counts few |
+| The tile kernel | A block of 128 threads a bin of 4 or 8 points, 512 of 16, and one more block for the overflow. In rounds of a particle a thread, the block reads the charges, the first points, and the fractions of the bin's particles into the memory of the block; then a warp takes a particle, its lanes $0$ to $3P - 1$ compute the weight of their point and axis (order 4 in closed form, D109; 6 and 8 by the recursion; the prolate window by its series, Section 7), the other lanes take them by shuffles, and each lane adds the product of its point, $z$ fastest, to the tile. The atomics of the memory of the block are a loop of compare-and-swap on the devices measured (`ATOMS.CAST.SPIN`, sm_89), and more warps on one tile wait for each other: on Cellulose the tile kernel took 67.6, 74.5, and 106.6 µs with bins of 8 and 128, 256, and 512 threads. The nonzero points of the tile are then added to the grid; the block of the overflow adds its particles to the grid directly |
+| Mixed and double | The tile and the grid in the type of the forces. Equal to the spreading of Section 3 to the rounding of the atomics ([`pme-tiles-gpu.test`](../test/Driver/pme-tiles-gpu.test): one step of the OPC box, 1,570 sites, the forces of the checkpoint and the rows of energies against `global`). The relative rms of the difference of the forces in mixed precision: order 4 with bins of 4, 8, and 16 points 1.3, 1.4, and 1.0 × 10⁻⁷, order 6 1.7 × 10⁻⁷, order 8 1.7 × 10⁻⁷, the prolate kernel 0.9 × 10⁻⁷, a rhombic dodecahedron 1.3 × 10⁻⁸, the box made 200 Å long, where many particles overflow the runs of their bins, 2.2 × 10⁻⁷, where two runs of `global` differ by 0.8 to 1.3 × 10⁻⁷; the energies within 1.7 × 10⁻⁶ of the largest of their columns, as two runs of `global` within 8 × 10⁻⁷. In double precision 5.5 × 10⁻¹⁶ at order 4 (two runs of `global`: 1.4 × 10⁻¹⁶), and 6.2 × 10⁻¹³ for the prolate kernel, whose spreading without tiles is in fixed point in double (Section 7). LJ-PME (D162) as well. compute-sanitizer finds no error or hazard in the binning and the tiles ([`test/Sanitizer/pme-tiles-gpu.test`](../test/Sanitizer/pme-tiles-gpu.test)) |
+| The deterministic mode | Not tiled: its grid is in fixed point (D70, D84), added by a thread for each particle and point along $z$, the same to the bit as before. Integer atomics in a tile would give the same sums, but the products $q M M M$ would have to be rounded to fixed point as that kernel rounds them, which the tiles do not reproduce; the lowering refuses `tiles` in that mode |
+| The gathering | Not tiled. In the prototype of #334 (P0, Cellulose, RTX 4090) a gathering of order 4 from tiles took 51 µs against 39 from the grid with 8 lanes a particle; at order 8 a tiled gathering with 32 lanes took 193 µs against 358 for 8 lanes from the grid, which is MDIR's present form of orders 6 and 8: the lanes, more than the tiles, are what pays there (issue #411) |
+
+The step of the Amber suite in mixed precision, without tiles and with
+bins of 8 points (`MDIR_PME_SPREAD=tiles8`, whatever the default would
+choose), alternated in rounds within one job on one node, the first round
+dropped (`scripts/benchmarks/pme-tiles/bench.py`), and the spreading,
+binning and zeroing included, from Nsight Systems
+(`scripts/benchmarks/pme-tiles/trace.py` splits it by kernel). Without
+tiles is `main` at order 4 and this branch's `global` otherwise; at
+order 4 `global` and `main` took the same time, within 0.6% on the RTX
+4090 and within the scatter of the rounds on the RTX PRO 6000.
+In each table the rows from the first of JAC on are those of grids below
+`min-points` or in f64, which `auto` does not tile.
+
+*RTX 4090 (ada-002 at order 4, ada-001 otherwise), µs:*
+
+| System | Spreading | Step without | Step with tiles | Ratio | Spreading without | Spreading with tiles |
+|---|---|---:|---:|---:|---:|---:|
+| Factor IX NVE | order 4 | 341.9 | 328.4 | 0.960 | 41.5 | 27.7 |
+| Factor IX NPT | order 4 | 365.6 | 350.7 | 0.959 | 41.5 | 27.7 |
+| Cellulose NVE | order 4 | 1523.8 | 1443.2 | 0.947 | 165.0 | 95.1 |
+| Cellulose NPT | order 4 | 1575.7 | 1500.5 | 0.952 | 167.8 | 95.0 |
+| STMV NPT 4 fs | order 4 | 4967.9 | 4687.2 | 0.943 | 538.5 | 279.3 |
+| Factor IX NVE | order 6 | 443.3 | 378.4 | 0.853 | 129.5 | 56.0 |
+| Factor IX NVE | order 8 | 555.9 | 468.6 | 0.843 | 230.4 | 134.7 |
+| Factor IX NVE | prolate, ε = 10⁻⁵ | 512.7 | 444.0 | 0.866 | 136.7 | 71.7 |
+| Cellulose NVE | order 6 | 1928.6 | 1622.6 | 0.841 | 519.4 | 191.6 |
+| Cellulose NVE | order 8 | 2432.1 | 1996.5 | 0.821 | 939.8 | 495.8 |
+| Cellulose NVE | prolate, ε = 10⁻⁵ | 2263.3 | 1904.1 | 0.841 | 585.4 | 209.2 |
+| Cellulose NVE | prolate, ε = 10⁻⁴ | 2184.6 | 1872.2 | 0.857 | 595.8 | 268.7 |
+| STMV NPT 4 fs | order 6 | 6298.1 | 5189.9 | 0.824 | 1499.0 | 525.8 |
+| STMV NPT 4 fs | order 8 | 7809.2 | 6160.4 | 0.789 | 2713.1 | 1367.4 |
+| STMV NPT 4 fs | prolate, ε = 10⁻⁵ | 6485.5 | 5379.9 | 0.830 | 1640.1 | 539.8 |
+| STMV NPT 4 fs | prolate, ε = 10⁻⁴ | 6603.5 | 5370.9 | 0.813 | 1773.7 | 506.7 |
+| STMV NPT 4 fs | prolate, ε = 10⁻³ | 6684.8 | 5123.9 | 0.767 | 2165.7 | 579.5 |
+| JAC NVE | order 4 | 140.0 | 141.0 | 1.007 | 12.0 | 12.2 |
+| JAC NPT | order 4 | 153.7 | 154.9 | 1.008 | 12.1 | 12.2 |
+| JAC NVE 4 fs | order 4 | 150.6 | 150.9 | 1.002 | 11.9 | 12.6 |
+| JAC NPT 4 fs | order 4 | 159.6 | 160.2 | 1.004 | 12.2 | 12.4 |
+| JAC NVE | order 6 | 168.2 | 156.1 | 0.928 | 37.4 | 21.6 |
+| JAC NVE | order 8 | 202.0 | 184.4 | 0.913 | 63.0 | 46.3 |
+| JAC NVE | prolate, ε = 10⁻⁵ | 183.8 | 179.6 | 0.978 | 42.1 | 38.0 |
+| JAC NVE | prolate, ε = 10⁻⁴ | 190.0 | 252.7 | 1.330 | 42.9 | 107.7 |
+| JAC NVE | prolate, ε = 10⁻³ | 186.4 | 369.7 | 1.984 | 51.1 | 235.3 |
+| Factor IX NVE | prolate, ε = 10⁻⁴ | 478.3 | 443.9 | 0.928 | 155.8 | 121.6 |
+| Factor IX NVE | prolate, ε = 10⁻³ | 480.1 | 563.6 | 1.174 | 162.2 | 245.3 |
+| Cellulose NVE | prolate, ε = 10⁻³ | 2195.7 | 1766.9 | 0.805 | 704.6 | 264.8 |
+| JAC NVE, double | order 4 | 2221.1 | 2235.4 | 1.006 | 27.6 | 38.4 |
+| Factor IX NVE, double | order 4 | 7731.6 | 7836.8 | 1.014 | 81.5 | 128.2 |
+| Cellulose NVE, double | order 4 | 35265.3 | 36000.0 | 1.021 | 307.7 | 501.0 |
+
+*RTX PRO 6000 (ada-004; the step there varied by up to 4% from round to
+round, with another job of this measurement on the node, so the
+spreading is the firmer number), µs:*
+
+| System | Spreading | Step without | Step with tiles | Ratio | Spreading without | Spreading with tiles |
+|---|---|---:|---:|---:|---:|---:|
+| Factor IX NVE | order 4 | 247.0 | 245.7 | 0.995 | 22.9 | 22.3 |
+| Cellulose NVE | order 4 | 1142.1 | 1122.9 | 0.983 | 96.8 | 82.0 |
+| STMV NPT 4 fs | order 4 | 3699.9 | 3587.4 | 0.970 | 289.4 | 220.6 |
+| Factor IX NVE | order 6 | 304.9 | 295.7 | 0.970 | 62.4 | 44.1 |
+| Factor IX NVE | order 8 | 376.2 | 427.8 | 1.137 | 115.0 | 95.1 |
+| Factor IX NVE | prolate, ε = 10⁻⁵ | 369.9 | 345.5 | 0.934 | 61.4 | 49.8 |
+| Cellulose NVE | order 6 | 1429.5 | 1384.4 | 0.968 | 262.6 | 167.6 |
+| Cellulose NVE | order 8 | 1747.5 | 1670.1 | 0.956 | 480.8 | 359.0 |
+| Cellulose NVE | prolate, ε = 10⁻⁵ | 1739.9 | 1651.0 | 0.949 | 313.9 | 185.3 |
+| STMV NPT 4 fs | order 6 | 4497.1 | 4369.3 | 0.972 | 753.3 | 465.0 |
+| STMV NPT 4 fs | order 8 | 5349.9 | 5075.4 | 0.949 | 1384.6 | 999.5 |
+| STMV NPT 4 fs | prolate, ε = 10⁻⁵ | 5035.6 | 4559.8 | 0.905 | 929.0 | 494.4 |
+| JAC NVE | order 4 | 122.1 | 128.1 | 1.050 | 6.7 | 10.0 |
+| JAC NVE | order 6 | 135.3 | 137.2 | 1.014 | 19.6 | 18.7 |
+| JAC NVE | order 8 | 154.5 | 158.9 | 1.028 | 34.1 | 36.5 |
+| JAC NVE | prolate, ε = 10⁻⁵ | 147.1 | 162.0 | 1.101 | 21.6 | 35.4 |
+
+Factor IX at order 8 on the RTX PRO 6000: the rounds took 368, 358, and
+498 µs with tiles against 399, 371, and 381 without; the third is the
+disturbed one. On Cellulose (RTX 4090) the spreading of 95 µs is 16 for
+zeroing the grid, 8 for the binning, and 71 for the tiles; on STMV
+(RTX 4090) 44, 26, and 209 (the zeroing of a grid of 12 million points).
 
 ## 4. Parameters (D71)
 
