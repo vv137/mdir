@@ -790,7 +790,14 @@ and $10^{-4}$ and $b = 8$ at $10^{-5}$ (20 and 40 KB), the energy's
 $b = 8$ and 9, against $b = 7$ for the Gaussian's at the same cutoff; the
 cubics in f32 are within $2.3\times10^{-7}$ of the function, relative to
 its largest value on an interval. The kernels of f64 keep the cells,
-which take less than the series evaluated as itself.
+which take less than the series evaluated as itself. The forces move by
+$3.4$ to $4.1\times10^{-7}$ of the RMS Coulomb force, and $\Delta$ in mixed
+precision not at its third digit. On the CPU target (16 cores, mixed
+precision, 9 Å) the loop over pairs then takes 0.98 to 1.02 times the
+Gaussian's, from 1.5 to 1.85, and the step of the prolate default 0.96
+to 1.03 times that of the fastest Gaussian order at $\Delta \approx
+10^{-5}$ and 1.05 to 1.24 times at $10^{-4}$ and $10^{-3}$, where the
+window of the spreading is what remains of the difference.
 
 **On a device.** The kernels are generated from those of the dispersion
 (Section 5.5) and the bricks of D108. The coefficients of the window are

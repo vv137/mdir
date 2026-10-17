@@ -696,6 +696,8 @@ would leave the loop over pairs as it is and only enlarge the grid.
   rule for the value and the slope), where the Gaussian's is one table of
   $r^2$ in f32 (D94); #380. The difference, 5.7 ms on JAC to 70 to 120 ms
   on Cellulose, is larger than the whole mesh of the fastest Gaussian.
+  *Since D[prolate-pair-table]* the direct sum is such a table too, and the
+  loop takes 0.98 to 1.02 times the Gaussian's (below).
 - **The mesh alone** (spreading, window or B-splines, FFT, product,
   gathering) of the prolate default takes 0.99 to 1.09 times that of
   order 6 at 10⁻⁵ at 16 threads. Its window, by Clenshaw's recurrence,
@@ -712,3 +714,142 @@ On the CPU target of one node, therefore, the prolate kernel takes less
 time than order 4 with its grid raised at 10⁻⁵ only, and than the fastest
 Gaussian order at none of the three accuracies measured; the loop over
 pairs (#380) and the window, not the FFT, set the difference.
+With the direct sum as a table of $r^2$ (below), the loop over pairs no
+longer sets a difference, and the window does.
+
+**The direct sum as a table of $r^2$ (issue #380, D[prolate-pair-table]).**
+Before this change the prolate kernel's loop over pairs took 1.7 to 1.85
+times the Gaussian's on the CPU (above) and, measured anew on one RTX 4090
+in the jobs below, 1.02 to 1.12 times (JAC 53.0 against 50.3 µs, Cellulose
+770.6 against 690.7 µs at 10⁻³). The direct sum is now
+$f q_i q_j (1 - x)\bar\chi(x)/r$, with $\bar\chi$ the mean of $\chi$ over
+$[x, 1]$ as a Chebyshev series in $2x - 1$ (`md.chebyshev`), so that
+`md-exec-simplify-distance` takes it and its derivative into functions of
+$r^2$ and `md-exec-expand-radial` makes them tables of cubics in f32 with
+the fit and the test of D94 (white paper, Section 5.6): the kernel reads
+the prolate kernel's direct sum as it reads the Gaussian's, with no square
+root, no index of a cell, and one load of 16 bytes. The table brings the
+loop to the Gaussian's time, the bound that the other candidates of #380
+(cells in $r^2$, a branch-free piecewise form) aimed at, and those keep
+the gathered loads of the cells, so they were not built; vectorization
+across pairs is step 4 of D267, which a kernel of this shape shares with
+the Gaussian's. The cells stay in kernels of f64, the pairs of
+[free_energy], and the excluded pairs, and with `MDIR_PROLATE_CELLS=1`.
+
+The tables, which depend on ε and the cutoff alone (here 9 Å), rebuilt as
+the pass builds them (`scripts/benchmarks/prolate-ewald/pair_table.py`);
+the Gaussian's force table at the same cutoff has 7 bits, 20 KB. A step
+reads the force's table, and the energy's only where it writes energies.
+
+| ε | Terms of $\bar\chi$ | Force: bits, intervals, size | Energy: bits, intervals, size | The cubics in f32, of the largest value of an interval (force, energy) |
+|---|---|---|---|---|
+| 10⁻³ | 20 | 7, 1281, 20 KB | 8, 2561, 40 KB | 1.1, 1.2 × 10⁻⁷ |
+| 10⁻⁴ | 21 | 7, 1281, 20 KB | 9, 5121, 80 KB | 1.2, 2.3 × 10⁻⁷ |
+| 10⁻⁵ | 23 | 8, 2561, 40 KB | 9, 5121, 80 KB | 1.1, 1.2 × 10⁻⁷ |
+
+**Accuracy.** $\Delta$ as above (one step from the coordinates of the
+topology, CPU and GPU, against the Gaussian at erfc $10^{-13}$, 0.33 Å,
+order 8 in double, `scripts/benchmarks/prolate-ewald/pair_delta.py`), with
+the cells (`MDIR_PROLATE_CELLS=1`) and with the table, and the difference
+of their forces relative to the RMS Coulomb force of the reference. In
+double precision both are the cells: the program is that of `main` byte
+for byte, and the CPU gives the same forces to the bit.
+
+| System | ε | $\Delta$, double | $\Delta$, mixed, CPU: cells, table | $\Delta$, mixed, GPU: cells, table | Table − cells, CPU, GPU |
+|---|---|---|---|---|---|
+| JAC | 10⁻³ | 5.65 × 10⁻⁴ | 5.742, 5.742 × 10⁻⁴ | 5.742, 5.742 × 10⁻⁴ | 3.8, 3.4 × 10⁻⁷ |
+| JAC | 10⁻⁴ | 7.10 × 10⁻⁵ | 1.2426, 1.2426 × 10⁻⁴ | 1.2422, 1.2422 × 10⁻⁴ | 3.7, 3.5 × 10⁻⁷ |
+| JAC | 10⁻⁵ | 7.95 × 10⁻⁶ | 1.0199, 1.0199 × 10⁻⁴ | 1.0197, 1.0197 × 10⁻⁴ | 3.9, 3.6 × 10⁻⁷ |
+| TIP3P 34k | 10⁻³ | 6.24 × 10⁻⁴ | 6.504, 6.503 × 10⁻⁴ | 6.504, 6.504 × 10⁻⁴ | 3.9, 3.6 × 10⁻⁷ |
+| TIP3P 34k | 10⁻⁴ | 6.89 × 10⁻⁵ | 1.963, 1.963 × 10⁻⁴ | 1.963, 1.963 × 10⁻⁴ | 3.9, 3.6 × 10⁻⁷ |
+| TIP3P 34k | 10⁻⁵ | 1.124 × 10⁻⁵ | 1.839, 1.839 × 10⁻⁴ | 1.839, 1.839 × 10⁻⁴ | 4.1, 3.8 × 10⁻⁷ |
+
+The table moves the forces by 3.4 to 4.1 × 10⁻⁷ of the RMS Coulomb force,
+which leaves $\Delta$ of mixed precision (1.0 to 6.5 × 10⁻⁴, set by the
+precision below 10⁻³) the same to three or four digits at every tier, and
+is 20 to 1600 times below $\Delta$ of the kernel in double.
+
+**The step on the CPU.** One job per system and tier alternates `main` and
+the branch (frozen copies of their programs; the branch at 9ab19008) for the prolate
+default and the fastest Gaussian of the tables above (the same order and
+grid), in 5 rounds with the first dropped, as above; the pairs are the
+sampler's share of the main thread's wall clock times the rate of the
+sampled run. One round of the branch's prolate kernel on Cellulose at
+10⁻³ (534.9 ms, twice the others, from another job on the node) is left
+out. ms a step:
+
+| System | CPU | ε | Prolate, `main`: 16 / 4 / 1 threads | Prolate, branch: 16 / 4 / 1 | Gaussian: 16 / 4 / 1 | Pairs at 16: prolate `main`, branch, Gaussian |
+|---|---|---|---|---|---|---|
+| JAC | AMD EPYC 7543 | 10⁻³ | 21.1 / 70.7 / 270.8 | 15.3 / 48.8 / 179.4 | 12.3 / 42.3 / 159.6 | 13.5, 7.6, 7.5 |
+| JAC | AMD EPYC 7543 | 10⁻⁴ | 21.4 / 71.6 / 275.3 | 15.6 / 50.2 / 183.8 | 14.2 / 46.6 / 172.4 | 13.4, 7.6, 7.6 |
+| JAC | AMD EPYC 7543 | 10⁻⁵ | 21.1 / 73.5 / 282.6 | 15.2 / 51.6 / 191.2 | 15.3 / 49.6 / 178.8 | 13.4, 7.6, 7.6 |
+| TIP3P 34k | AMD EPYC 7543 | 10⁻³ | 86.1 / 324.3 / 1234.1 | 59.2 / 218.6 / 830.0 | 49.4 / 179.2 / 739.2 | 61.1, 34.1, 34.1 |
+| TIP3P 34k | AMD EPYC 7543 | 10⁻⁴ | 85.2 / 327.0 / 1246.8 | 58.1 / 220.4 / 841.3 | 53.4 / 203.7 / 791.1 | 61.9, 33.9, 33.5 |
+| TIP3P 34k | AMD EPYC 9354 | 10⁻⁵ | 82.0 / 306.0 / 1168.2 | 61.5 / 218.3 / 838.6 | 64.4 / 208.4 / 780.1 | 56.8, 36.4, 37.2 |
+| TIP3P 103k | AMD EPYC 7543 | 10⁻³ | 253.4 / 931.1 / 3664.0 | 176.4 / 623.9 / 2431.4 | 149.5 / 535.4 / 2120.9 | 182.8, 101.3, 100.3 |
+| TIP3P 103k | AMD EPYC 9354 | 10⁻⁴ | 224.8 / 884.4 / 3392.8 | 162.1 / 617.1 / 2359.3 | 153.3 / 578.0 / 2166.9 | 160.1, 91.9, 89.9 |
+| TIP3P 103k | AMD EPYC 7543 | 10⁻⁵ | 257.4 / 955.2 / 3784.3 | 180.7 / 652.9 / 2545.3 | 175.8 / 624.8 / 2336.3 | 182.3, 101.1, 100.8 |
+| Cellulose | AMD EPYC 7543 | 10⁻³ | 388.2 / 1372.7 / 5052.3 | 270.8 / 953.0 / 3414.3 | 246.0 / 846.2 / 3061.2 | 257.2, 143.9, 143.9 |
+| Cellulose | AMD EPYC 7543 | 10⁻⁴ | 386.6 / 1384.7 / 5073.5 | 272.1 / 962.9 / 3462.8 | 258.4 / 912.7 / 3245.3 | 256.5, 145.6, 145.6 |
+| Cellulose | AMD EPYC 9354 | 10⁻⁵ | 356.4 / 1336.6 / 4785.5 | 257.1 / 961.1 / 3411.0 | 256.0 / 943.3 / 3275.9 | 224.8, 128.2, 127.4 |
+
+The prolate default's step over the fastest Gaussian's, before and after,
+in the form of the table above, and its loop over pairs over the
+Gaussian's:
+
+| System | CPU | ε | / fastest, 16 / 4 / 1 threads, `main` | / fastest, 16 / 4 / 1, branch | Pairs / Gaussian's, `main`, branch |
+|---|---|---|---|---|---|
+| JAC | AMD EPYC 7543 | 10⁻³ | 1.71 / 1.67 / 1.72 | 1.24 / 1.16 / 1.12 | 1.79, 1.01 |
+| JAC | AMD EPYC 7543 | 10⁻⁴ | 1.51 / 1.54 / 1.59 | 1.10 / 1.08 / 1.07 | 1.76, 1.00 |
+| JAC | AMD EPYC 7543 | 10⁻⁵ | 1.38 / 1.49 / 1.58 | 0.99 / 1.04 / 1.07 | 1.77, 1.01 |
+| TIP3P 34k | AMD EPYC 7543 | 10⁻³ | 1.74 / 1.81 / 1.67 | 1.20 / 1.22 / 1.12 | 1.80, 1.00 |
+| TIP3P 34k | AMD EPYC 7543 | 10⁻⁴ | 1.59 / 1.60 / 1.60 | 1.09 / 1.08 / 1.06 | 1.83, 1.01 |
+| TIP3P 34k | AMD EPYC 9354 | 10⁻⁵ | 1.28 / 1.48 / 1.50 | 0.96 / 1.05 / 1.07 | 1.51, 0.98 |
+| TIP3P 103k | AMD EPYC 7543 | 10⁻³ | 1.70 / 1.74 / 1.73 | 1.18 / 1.17 / 1.15 | 1.82, 1.01 |
+| TIP3P 103k | AMD EPYC 9354 | 10⁻⁴ | 1.46 / 1.56 / 1.57 | 1.06 / 1.07 / 1.09 | 1.75, 1.02 |
+| TIP3P 103k | AMD EPYC 7543 | 10⁻⁵ | 1.47 / 1.54 / 1.62 | 1.03 / 1.05 / 1.09 | 1.80, 1.00 |
+| Cellulose | AMD EPYC 7543 | 10⁻³ | 1.61 / 1.62 / 1.65 | 1.10 / 1.13 / 1.12 | 1.79, 1.00 |
+| Cellulose | AMD EPYC 7543 | 10⁻⁴ | 1.50 / 1.52 / 1.57 | 1.05 / 1.06 / 1.07 | 1.77, 1.00 |
+| Cellulose | AMD EPYC 9354 | 10⁻⁵ | 1.41 / 1.42 / 1.47 | 1.00 / 1.02 / 1.04 | 1.76, 1.01 |
+
+**On one RTX 4090** (`--idle`, the same cases in mixed precision, 5 rounds
+alternated in one job a system, the first dropped; the loop over pairs is
+the kernel of the step's pairs under `MDRT_PROFILE` and `MDRT_WAIT`, µs a
+call), ms a step:
+
+| System | ε | Prolate: `main`, branch | Gaussian: `main`, branch | Pairs, prolate: `main`, branch | Pairs, Gaussian: `main`, branch |
+|---|---|---|---|---|---|
+| JAC | 10⁻³ | 0.202, 0.200 | 0.147, 0.147 | 53.0, 50.9 | 50.3, 50.4 |
+| JAC | 10⁻⁴ | 0.195, 0.194 | 0.171, 0.171 | 52.8, 51.1 | 52.0, 51.5 |
+| JAC | 10⁻⁵ | 0.195, 0.193 | 0.194, 0.194 | 53.4, 51.6 | 51.1, 51.5 |
+| TIP3P 34k | 10⁻³ | 0.608, 0.592 | 0.392, 0.391 | 192.7, 174.1 | 173.9, 175.7 |
+| TIP3P 34k | 10⁻⁴ | 0.591, 0.569 | 0.508, 0.508 | 195.2, 174.1 | 174.7, 173.3 |
+| TIP3P 34k | 10⁻⁵ | 0.572, 0.563 | 0.579, 0.579 | 194.2, 176.8 | 175.4, 176.3 |
+| TIP3P 103k | 10⁻³ | 1.801, 1.751 | 1.121, 1.123 | 573.9, 524.0 | 523.1, 521.0 |
+| TIP3P 103k | 10⁻⁴ | 1.700, 1.651 | 1.517, 1.518 | 572.5, 524.1 | 522.6, 521.8 |
+| TIP3P 103k | 10⁻⁵ | 1.684, 1.644 | 1.617, 1.615 | 572.5, 532.2 | 522.5, 523.1 |
+| Cellulose | 10⁻³ | 2.480, 2.397 | 1.628, 1.628 | 770.6, 693.7 | 690.7, 692.7 |
+| Cellulose | 10⁻⁴ | 2.401, 2.327 | 2.100, 2.099 | 767.7, 694.5 | 695.5, 694.4 |
+| Cellulose | 10⁻⁵ | 2.375, 2.314 | 2.253, 2.251 | 767.2, 703.0 | 696.0, 695.1 |
+
+**Reading (the table of $r^2$).**
+- **The loop over pairs** of the prolate kernel takes 0.98 to 1.02 times
+  the Gaussian's on the CPU (1.51 to 1.83 before) and 0.99 to 1.02 times
+  on the GPU (1.02 to 1.12 before).
+- **The step** of the prolate default on the CPU at 16 threads is 0.68 to
+  0.75 of `main`'s. Against the fastest Gaussian it is 1.10 to
+  1.24 times at 10⁻³ (1.61 to 1.74 before), 1.05 to 1.10 at 10⁻⁴ (1.46 to
+  1.59), and 0.96 to 1.03 at 10⁻⁵ (1.28 to 1.47); at 1 thread 1.12 to
+  1.15, 1.06 to 1.09, and 1.04 to 1.09. On one GPU the step falls by 1 to
+  4% and is 0.97 to 1.03 times the Gaussian's at 10⁻⁵.
+- **What is left** at 10⁻³ and 10⁻⁴ is the mesh: the window by Clenshaw's
+  recurrence (1.3 to 23 ms against 0.1 to 3.3 for the B-splines, above)
+  and the spreading of $P^3$ points.
+- **The Gaussian is unchanged.** Its lowered program, and those of the
+  prolate kernel in double precision and with `MDIR_PROLATE_CELLS=1`, are
+  `main`'s byte for byte on the CPU; the Gaussian's step takes 0.994 to
+  1.021 times `main`'s on the CPU at 16 threads (1.021 on Cellulose at
+  10⁻³, within its spread of 6 ms) and the same within 0.2% on the GPU.
+- **The compile time** of the prolate kernel grows by 0.5 s on JAC
+  (4.54 to 5.04 s) and on TIP3P 103k (2.45 to 2.91 s), the search for two
+  tables, and by less than 0.1 s on the others.
