@@ -1293,6 +1293,11 @@ energy, against a spread of $3.3 \times 10^{-6}$ eV/Å and $9.3 \times
 10^{-6}$ eV between five calls of the strict list: the float32 sums of the
 model in another order.
 
+*Ruled* (the maintainer on PR #386, 2026-10-17): `exact` is the default;
+`padded` stays, measured (12.8); the model's structure takes the skin of
+the run, `pairlist_distance` − `cutoff` of `[energy]`, with no new key; the
+switch is the environment variable `MDIR_MLIP_PAIRS`.
+
 ### 12.5 The C boundary, version 2
 
 `mdir_mlip_inputs` gains the list: the slots (device, $C \times 5$ int32),
