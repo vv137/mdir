@@ -64,6 +64,7 @@ static const char *const buildNeighborsName =
 static const char *const countBuildName = "mdrtCountBuild";
 static const char *const flagStartName = "mdrtFlagStart";
 static const char *const flagFinishName = "mdrtFlagFinish";
+static const char *const flagTakeName = "mdrtFlagTake";
 static const char *const flagMemoryName = "mdrtFlagMemory";
 /// The renumbered members, the incidence structures, and the copies of the
 /// members on the device that the runtime keeps (mdrt_cuda.c,
@@ -452,7 +453,7 @@ private:
   bool recordIntegration(ArrayRef<Operation *> run);
   /// Lowers an integration run to one kernel (emitIntegrationThread) and
   /// the reductions of its loop after.
-  LogicalResult lowerIntegration(const kernels::IntegrationRun &run);
+  LogicalResult lowerIntegration(const kernels::IntegrationRun &given);
 
   /// Finds the runs of loops over pairs and tuples in `function` that one
   /// kernel can do (lowerRows), and records them in `rows`.
@@ -508,6 +509,10 @@ private:
 
   /// Stores the contributions of a particle and returns, for each global
   /// sum of a loop, its result.
+  /// Lowers a loop over tuples with a flag in `reduce`
+  /// (D[constraint-failure-stop]).
+  LogicalResult lowerTupleForWithFlags(md_exec::TupleForOp op);
+
   LogicalResult finishSums(Operation *op, OpBuilder &builder,
                            ValueRange reduce, ValueRange scratch, Value size,
                            std::optional<RowSums> rows = {});
@@ -525,6 +530,12 @@ private:
   /// `result`, so that it issues the work between before it waits (D113).
   void replaceWithFlag(OpBuilder &builder, Location loc, const Flag &flag,
                        Value start, Value result);
+  /// Replaces `results` as `replaceWithFlag` does, for flags that one
+  /// kernel sets: one event after the kernel, waited for before the first
+  /// op of the block that uses one of them, after which the others are read
+  /// as they are (`mdrtFlagTake`, D[constraint-failure-stop]).
+  void replaceWithFlags(OpBuilder &builder, Location loc, ArrayRef<Flag> flags,
+                        ArrayRef<Value> starts, ArrayRef<Value> results);
 
   /// Copies what `source` holds to `destination`.
   void createTransfer(OpBuilder &builder, Location loc, Value destination,
@@ -807,47 +818,71 @@ Flag Lowering::getFlag(unsigned number, Location loc) {
 
 void Lowering::replaceWithFlag(OpBuilder &builder, Location loc,
                                const Flag &flag, Value start, Value result) {
+  replaceWithFlags(builder, loc, {flag}, {start}, {result});
+}
+
+void Lowering::replaceWithFlags(OpBuilder &builder, Location loc,
+                                ArrayRef<Flag> flags, ArrayRef<Value> starts,
+                                ArrayRef<Value> results) {
   Type i64 = builder.getI64Type();
   Type i32 = builder.getI32Type();
   auto pointerType = LLVM::LLVMPointerType::get(context);
-  Value address = arith::IndexCastOp::create(
-      builder, loc, i64,
-      memref::ExtractAlignedPointerAsIndexOp::create(builder, loc,
-                                                     flag.device));
-  Value pointer = LLVM::IntToPtrOp::create(builder, loc, pointerType, address);
+  auto getPointer = [&](OpBuilder &b, const Flag &flag) -> Value {
+    Value address = arith::IndexCastOp::create(
+        b, loc, i64,
+        memref::ExtractAlignedPointerAsIndexOp::create(b, loc, flag.device));
+    return LLVM::IntToPtrOp::create(b, loc, pointerType, address);
+  };
   Value slot =
       func::CallOp::create(
           builder, loc,
           getOrDeclare(flagStartName,
                        builder.getFunctionType({pointerType}, {i64})),
-          ValueRange{pointer})
+          ValueRange{getPointer(builder, flags.front())})
           .getResult(0);
-  // The first op of the block that uses the result, directly or within.
+  // The first op of the block that uses a result, directly or within.
   Block *block = builder.getInsertionBlock();
   Operation *first = nullptr;
-  for (Operation *user : result.getUsers()) {
-    Operation *inBlock = block->findAncestorOpInBlock(*user);
-    if (inBlock && (!first || inBlock->isBeforeInBlock(first)))
-      first = inBlock;
-  }
+  for (Value result : results)
+    for (Operation *user : result.getUsers()) {
+      Operation *inBlock = block->findAncestorOpInBlock(*user);
+      if (inBlock && (!first || inBlock->isBeforeInBlock(first)))
+        first = inBlock;
+    }
   OpBuilder wait(builder.getContext());
   if (first)
     wait.setInsertionPoint(first);
   else
     wait.setInsertionPoint(builder.getInsertionBlock(),
                            builder.getInsertionPoint());
-  Value value =
-      func::CallOp::create(
-          wait, loc,
-          getOrDeclare(flagFinishName, wait.getFunctionType({i64}, {i32})),
-          ValueRange{slot})
-          .getResult(0);
-  Value isSet = arith::CmpIOp::create(
-      wait, loc, arith::CmpIPredicate::ne, value,
-      arith::ConstantOp::create(wait, loc, i32, wait.getI32IntegerAttr(0)));
-  // The runtime clears the flag as it reads it (D118); a copy of a zero
-  // from the host waited for the reciprocal sum issued before it.
-  result.replaceAllUsesWith(arith::OrIOp::create(wait, loc, start, isSet));
+  Value zero =
+      arith::ConstantOp::create(wait, loc, i32, wait.getI32IntegerAttr(0));
+  for (auto [index, flag] : llvm::enumerate(flags)) {
+    // The first flag waits for the event after the kernel; the others,
+    // which the same kernel sets (D[constraint-failure-stop]), are read
+    // after that wait, without an event of their own.
+    Value value =
+        index == 0
+            ? func::CallOp::create(
+                  wait, loc,
+                  getOrDeclare(flagFinishName,
+                               wait.getFunctionType({i64}, {i32})),
+                  ValueRange{slot})
+                  .getResult(0)
+            : func::CallOp::create(
+                  wait, loc,
+                  getOrDeclare(flagTakeName,
+                               wait.getFunctionType({pointerType}, {i32})),
+                  ValueRange{getPointer(wait, flag)})
+                  .getResult(0);
+    Value isSet = arith::CmpIOp::create(wait, loc, arith::CmpIPredicate::ne,
+                                        value, zero);
+    // The runtime clears the flag as it reads it (D118); a copy of a zero
+    // from the host waited for the reciprocal sum issued before it.
+    Value result = results[index];
+    result.replaceAllUsesWith(
+        arith::OrIOp::create(wait, loc, starts[index], isSet));
+  }
 }
 
 static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
@@ -1240,6 +1275,14 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
 // Loops
 //===----------------------------------------------------------------------===//
 
+/// Returns true if `loop` tells in a value of `reduce` whether its kernel
+/// yields true for some tuple, which takes a flag (D[constraint-failure-stop]).
+static bool hasFlags(md_exec::TupleForOp loop) {
+  return llvm::any_of(loop.getReduce(), [](Value value) {
+    return value.getType().isInteger(1);
+  });
+}
+
 /// Verifies that a loop with global sums has the buffers that it needs.
 static LogicalResult checkScratch(Operation *op, unsigned sums,
                                   unsigned scratch) {
@@ -1278,8 +1321,9 @@ void Lowering::findCenterFusions(func::FuncOp function) {
   if (!fuseCenters)
     return;
   function.walk([&](md_exec::TupleForOp sums) {
-    if (sums.getReduce().empty() || !sums.getOuts().empty() ||
-        !evaluatesOnce(sums) || inRows.contains(sums) ||
+    if (sums.getReduce().empty() || hasFlags(sums) ||
+        !sums.getOuts().empty() || !evaluatesOnce(sums) ||
+        inRows.contains(sums) ||
         sums->hasAttr(md_exec::kSideAttrName))
       return;
     // The sums are numbers in f64, and the kernels of several parts take
@@ -1702,9 +1746,12 @@ void Lowering::findSharedFrames(func::FuncOp function,
 }
 
 void Lowering::findRows(func::FuncOp function) {
+  // A loop over tuples with a flag is lowered alone
+  // (D[constraint-failure-stop]).
   auto isRowLoop = [&](Operation *op) {
     if (auto tuple = dyn_cast<md_exec::TupleForOp>(op))
-      return !tuple.getDisjoint() && !evaluatesOnce(tuple);
+      return !tuple.getDisjoint() && !evaluatesOnce(tuple) &&
+             !hasFlags(tuple);
     // A loop that takes each pair once runs over groups, not rows (D89).
     auto pair = dyn_cast<md_exec::PairForOp>(op);
     return pair && pair.getTraversal() == md_exec::Traversal::Directed;
@@ -1812,7 +1859,12 @@ void Lowering::findRows(func::FuncOp function) {
         sums.clear();
         continue;
       }
-      bool joins = !run.empty();
+      // The loops with flags, the tests of the constraints, are a run of
+      // their own: one kernel, whose flags one event covers
+      // (D[constraint-failure-stop]); no other loop joins them.
+      bool joins = !run.empty() &&
+                   hasFlags(tuple) ==
+                       hasFlags(cast<md_exec::TupleForOp>(run.front()));
       for (Value operand : op.getOperands())
         joins &= !written.contains(operand) && !sums.contains(operand);
       for (Value out :
@@ -1921,9 +1973,13 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   bool readsBefore = false;
   for (Operation *op : run) {
     auto loop = cast<md_exec::TupleForOp>(op);
-    // The loops take the particles of one set, have no reductions, and
-    // write none of what the loop before wrote.
-    if (!loop.getReduce().empty())
+    // The loops take the particles of one set, have no reductions but a
+    // flag each at most, the test of the constraints that the member at
+    // place 0 sets (D[constraint-failure-stop]), and write none of what the
+    // loop before wrote.
+    if (loop.getOuts().empty() || loop.getReduce().size() > 1 ||
+        (loop.getReduce().size() == 1 &&
+         !loop.getReduce().front().getType().isInteger(1)))
       return false;
     if (!positions)
       positions = loop.getPositions();
@@ -1985,12 +2041,25 @@ bool Lowering::recordIntegration(ArrayRef<Operation *> run) {
   return true;
 }
 
-LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &run) {
+LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
+  kernels::IntegrationRun run = given;
   md_exec::ParticleForOp before = run.before, after = run.after;
   Location loc = after.getLoc();
   OpBuilder builder(after);
   setPurpose(before);
   purpose += "_integration" + std::to_string(run.loops.size());
+
+  // The flag of each loop that tests its tuples (D[constraint-failure-stop]),
+  // one of its own (D118).
+  SmallVector<Flag> loopFlags;
+  for (md_exec::TupleForOp loop : run.loops) {
+    if (loop.getReduce().empty()) {
+      run.flags.push_back(Value());
+      continue;
+    }
+    loopFlags.push_back(getFlag(flags.size(), loc));
+    run.flags.push_back(loopFlags.back().device);
+  }
 
   // The cells of the loops over tuples, in the type of their kernels.
   SmallVector<Value> boxes, inverses;
@@ -2105,6 +2174,17 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &run) {
     Value total = arith::AddFOp::create(builder, loc, start, sums[place]);
     after.getResult(index).replaceAllUsesWith(total);
   }
+  // The flags of the loops over tuples, which both kernels set: one event
+  // after them for all.
+  if (!loopFlags.empty()) {
+    SmallVector<Value> starts, results;
+    for (md_exec::TupleForOp loop : run.loops)
+      if (!loop.getReduce().empty()) {
+        starts.push_back(loop.getReduce().front());
+        results.push_back(loop.getResult(0));
+      }
+    replaceWithFlags(builder, loc, loopFlags, starts, results);
+  }
   return success();
 }
 
@@ -2196,7 +2276,8 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
       loop.entries = getMatrixEntries(builder, loc, loop.structure.handle);
     } else {
       auto tuple = cast<md_exec::TupleForOp>(op);
-      if (failed(checkScratch(op, tuple.getReduce().size(),
+      if (!hasFlags(tuple) &&
+          failed(checkScratch(op, tuple.getReduce().size(),
                               tuple.getScratch().size())))
         return failure();
       positions = tuple.getPositions();
@@ -2237,8 +2318,23 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
           builder, loc, cast<md_exec::TupleForOp>(loop.op).getPositions()));
       size = arith::MaxUIOp::create(builder, loc, size, sizes.back());
     }
+    // A run of loops with flags (findRows): each loop a flag of its own,
+    // set by a thread whose tuple yields true (D[constraint-failure-stop]).
+    bool flagged = hasFlags(cast<md_exec::TupleForOp>(run.front()));
+    SmallVector<SmallVector<Flag, 1>> loopFlags(loops.size());
+    if (flagged)
+      for (auto [loop, used] : llvm::zip(loops, loopFlags)) {
+        auto tuple = cast<md_exec::TupleForOp>(loop.op);
+        if (!llvm::all_of(tuple.getReduce(), [](Value value) {
+              return value.getType().isInteger(1);
+            }))
+          return tuple->emitOpError()
+                 << "joins a run of loops with flags with a global sum";
+        for (unsigned i = 0, e = tuple.getReduce().size(); i != e; ++i)
+          used.push_back(getFlag(flags.size(), loc));
+      }
     launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
-      for (auto [loop, own] : llvm::zip(loops, sizes)) {
+      for (auto [loop, own, used] : llvm::zip(loops, sizes, loopFlags)) {
         auto tuple = cast<md_exec::TupleForOp>(loop.op);
         Value inside = arith::CmpIOp::create(
             body, loc, arith::CmpIPredicate::ult, particle, own);
@@ -2248,11 +2344,38 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
         SmallVector<Value> contributions =
             emitTupleKernel(then, tuple, tuple.getIncidence(), loop.box,
                             loop.inverse, particle, local);
-        for (auto [index, value] : llvm::enumerate(contributions))
-          storeElement(then, loc, value, tuple.getScratch()[2 * index],
-                       particle);
+        for (auto [index, value] : llvm::enumerate(contributions)) {
+          if (!flagged) {
+            storeElement(then, loc, value, tuple.getScratch()[2 * index],
+                         particle);
+            continue;
+          }
+          Value device = used[index].device;
+          scf::IfOp::create(then, loc, value, [&](OpBuilder &set, Location) {
+            Value one = arith::ConstantOp::create(set, loc, set.getI32Type(),
+                                                  set.getI32IntegerAttr(1));
+            memref::StoreOp::create(set, loc, one, device,
+                                    ValueRange{createIndex(set, loc, 0)});
+            scf::YieldOp::create(set, loc);
+          });
+        }
       }
     });
+    if (flagged) {
+      // One event after the kernel for all the flags of the run.
+      SmallVector<Flag> all;
+      SmallVector<Value> starts, results;
+      for (auto [loop, used] : llvm::zip(loops, loopFlags)) {
+        auto tuple = cast<md_exec::TupleForOp>(loop.op);
+        for (auto [index, start] : llvm::enumerate(tuple.getReduce())) {
+          all.push_back(used[index]);
+          starts.push_back(start);
+          results.push_back(tuple->getResult(index));
+        }
+      }
+      replaceWithFlags(builder, loc, all, starts, results);
+      return success();
+    }
     // The global sums of each loop, over its own particles.
     for (auto [loop, own] : llvm::zip(loops, sizes)) {
       auto tuple = cast<md_exec::TupleForOp>(loop.op);
@@ -2958,9 +3081,109 @@ void Lowering::lowerFusedSums(CenterFusion &fusion, Value tupleMembers,
   }
 }
 
+LogicalResult Lowering::lowerTupleForWithFlags(md_exec::TupleForOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+
+  // A value in `reduce` is a sum, which takes two buffers, or tells whether
+  // the kernel yields true for some tuple, which takes a flag of the loop's
+  // own (D118), as in a loop over particles (D[constraint-failure-stop]).
+  SmallVector<int> places;
+  unsigned numSums = 0, numFlags = 0;
+  for (Value value : op.getReduce())
+    places.push_back(value.getType().isInteger(1) ? -int(++numFlags)
+                                                  : int(numSums++));
+  if (failed(checkScratch(op, numSums, op.getScratch().size())))
+    return failure();
+  if (!op.getDisjoint() && !evaluatesOnce(op))
+    return op->emitOpError()
+           << "takes a flag in 'reduce' over tuples that may share "
+              "particles, which a device evaluates once per tuple only "
+              "outside the deterministic mode";
+  SmallVector<Flag, 2> used;
+  for (unsigned i = 0; i != numFlags; ++i)
+    used.push_back(getFlag(flags.size(), loc));
+
+  Value positions = op.getPositions();
+  Value size = createSize(builder, loc, positions);
+  Type real = cast<MemRefType>(positions.getType()).getElementType();
+  Value box = convertReal(builder, loc, op.getCellMutable().get(), real);
+  Value inverse = createInverse(builder, loc, box);
+
+  // The contributions of a row: a sum to its buffer, and a flag set by a
+  // thread whose tuples yield true. Every thread that writes the flag
+  // writes the same value, so the threads need not take turns.
+  auto store = [&](OpBuilder &body, ArrayRef<Value> contributions,
+                   Value row) {
+    for (auto [index, value] : llvm::enumerate(contributions)) {
+      int place = places[index];
+      if (place >= 0) {
+        storeElement(body, loc, value, op.getScratch()[2 * place], row);
+        continue;
+      }
+      Value device = used[-place - 1].device;
+      scf::IfOp::create(body, loc, value, [&](OpBuilder &then, Location) {
+        Value set = arith::ConstantOp::create(then, loc, then.getI32Type(),
+                                              then.getI32IntegerAttr(1));
+        memref::StoreOp::create(then, loc, set, device,
+                                ValueRange{createIndex(then, loc, 0)});
+        scf::YieldOp::create(then, loc);
+      });
+    }
+  };
+
+  Value rows = size;
+  if (op.getDisjoint()) {
+    // Each tuple once, by the thread of its member at place 0.
+    launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+      IRMapping local;
+      store(body,
+            emitTupleKernel(body, op, op.getIncidence(), box, inverse,
+                            particle, local),
+            particle);
+    });
+  } else {
+    // Each tuple once, by one of m rows, which takes the tuples r, r + m,
+    // ..., as a loop with global sums does (D103).
+    Value tupleMembers = members.lookup(op.getIncidence());
+    if (!tupleMembers)
+      return op->emitOpError()
+             << "has no members on the device to evaluate each tuple once";
+    Value tuples = createSize(builder, loc, tupleMembers);
+    rows = arith::MinUIOp::create(builder, loc, size, tuples);
+    launchOver(builder, loc, rows, [&](OpBuilder &body, Value row) {
+      store(body,
+            emitTuplesOnceWithSums(body, op, tupleMembers, row, rows, tuples,
+                                   box, inverse),
+            row);
+    });
+  }
+
+  SmallVector<Value> contributions, partials;
+  for (unsigned i = 0; i != numSums; ++i) {
+    contributions.push_back(op.getScratch()[2 * i]);
+    partials.push_back(op.getScratch()[2 * i + 1]);
+  }
+  SmallVector<Value> sums = emitReductions(builder, loc, contributions,
+                                           partials, rows, /*isSum=*/true);
+  for (auto [index, start] : llvm::enumerate(op.getReduce())) {
+    int place = places[index];
+    if (place < 0) {
+      replaceWithFlag(builder, loc, used[-place - 1], start,
+                      op.getResult(index));
+      continue;
+    }
+    Value total = arith::AddFOp::create(builder, loc, start, sums[place]);
+    op.getResult(index).replaceAllUsesWith(total);
+  }
+  return success();
+}
+
 LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
+  if (hasFlags(op))
+    return lowerTupleForWithFlags(op);
   if (failed(checkScratch(op, op.getReduce().size(), op.getScratch().size())))
     return failure();
 

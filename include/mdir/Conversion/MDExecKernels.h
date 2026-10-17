@@ -212,6 +212,10 @@ struct IntegrationRun {
   /// otherwise a member takes its position relative to that of the member
   /// at place 0, narrowed.
   bool storedPositions = false;
+  /// For each loop over tuples, the flag that its member at place 0 sets
+  /// where the kernel yields true after the destinations (the test of the
+  /// constraints, D[constraint-failure-stop]), or no value.
+  llvm::SmallVector<mlir::Value, 4> flags;
 };
 
 /// The particles that a warp of the first kernel of an integration run

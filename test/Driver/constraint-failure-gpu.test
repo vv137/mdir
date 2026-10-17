@@ -1,0 +1,92 @@
+# The runs of constraint-failure.test on a GPU, in single, mixed, and
+# double precision: each stops at step 1 with its set, which a flag of the
+# loop that tests the set tells the host (D[constraint-failure-stop]). In
+# double precision SETTLE, which has no solution for the kicked water,
+# leaves its positions not numbers, and the build of the neighbor structure
+# in the evaluation of the same step finds them: in a run with constraints
+# that build records its stop and the step runs to its end, so that the
+# failed set is what the run reports (the maintainer's ruling on PR #381).
+# Below double precision the waters take M-SHAKE, which leaves finite
+# lengths.
+#
+# The other order: the dipeptide in water with rigid waters and its first
+# atom, not constrained, under a positional restraint of 1e300 kcal/mol/Å²,
+# which sends it beyond any cell within a few steps (as in
+# python_position_guard.py) while every water keeps its shape. The recorded
+# stop of the build then ends the run after the tests, with the message of
+# D107, in double and mixed precision.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: cp %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- restrained.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/restrained.toml
+# RUN: sed 's/DOUBLE/MIXED/' %t/restrained.toml > %t/restrained-mixed.toml
+# RUN: %python %S/Inputs/kick_atom.py %t/three.inpcrd %t/three.rst7 2 1000 0 0
+# RUN: %python %S/Inputs/kick_atom.py %t/vacuum.inpcrd %t/vacuum.rst7 8 1000 0 0
+# RUN: sed -n '/^#--- water.toml/,/^#--- end/p' %S/constraint-failure.test | sed '1d;$d' | sed 's/"CPU"/"GPU"/' > %t/water.toml
+# RUN: sed -n '/^#--- peptide.toml/,/^#--- end/p' %S/constraint-failure.test | sed '1d;$d' | sed 's/"CPU"/"GPU"/' > %t/peptide.toml
+# RUN: sed 's/DOUBLE/SINGLE/' %t/water.toml > %t/water-single.toml
+# RUN: sed 's/DOUBLE/MIXED/' %t/water.toml > %t/water-mixed.toml
+# RUN: sed 's/DOUBLE/SINGLE/' %t/peptide.toml > %t/peptide-single.toml
+# RUN: sed 's/DOUBLE/MIXED/' %t/peptide.toml > %t/peptide-mixed.toml
+# RUN: not mdir run %t/water.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
+# RUN: not mdir run %t/water-single.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
+# RUN: not mdir run %t/water-mixed.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
+# RUN: not mdir run %t/peptide.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
+# RUN: not mdir run %t/peptide-single.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
+# RUN: not mdir run %t/peptide-mixed.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
+
+# RUN: not mdir run %t/restrained.toml 2>&1 | FileCheck %s --check-prefix=FAR
+# RUN: not mdir run %t/restrained-mixed.toml 2>&1 | FileCheck %s --check-prefix=FAR
+#
+# The test in the kernels of the constraints, joined with the loops over
+# particles around them (D110), is the default; in loops of their own for
+# comparison (MDIR_CONSTRAINT_TEST=separate), both orders again.
+#
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/water.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=WATER
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/peptide-mixed.toml 2>&1 | FileCheck %S/constraint-failure.test --check-prefix=PEPTIDE
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/restrained-mixed.toml 2>&1 | FileCheck %s --check-prefix=FAR
+
+# FAR-NOT: the constraints of the set
+# FAR: mdir: {{(a position is not a number or is|[0-9]+ positions are not numbers or are)}} far outside the cell at a build of the neighbor structure; the run has failed
+# FAR-NOT: the constraints of the set
+
+#--- restrained.toml
+[input]
+topology   = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[output]
+energy_interval = 1
+
+[energy]
+cutoff        = 8.0
+pairlist_distance = 9.0
+electrostatics = "PME"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.002
+steps         = 50
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[constraints]
+rigid_water = true
+
+[[restraints]]
+selection      = "@1"
+force_constant = 1.0e300
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"
+precision = "DOUBLE"
+#--- end

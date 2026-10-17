@@ -1059,7 +1059,7 @@ LogicalResult TupleForOp::verify() {
                               "'outs', got "
                            << overwrite->size();
   }
-  return verifyLoop(*this, particleSet, /*allowsFlags=*/false);
+  return verifyLoop(*this, particleSet, /*allowsFlags=*/true);
 }
 
 LogicalResult TupleForOp::verifyRegions() {

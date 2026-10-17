@@ -512,6 +512,21 @@ format, or the outputs; every such change is listed under **Changed** or
   to ...` that gives the step, the floor, and the largest force. A Python
   minimization ends there as well, and `state().minimization` has
   `stalled`. A run that reached such a step now ends before `steps`.
+
+- **A constraint failure in dynamics stops the run** (D[constraint-failure-stop],
+  #349), as a position that is not a number does: a SETTLE or SHAKE group
+  whose constrained lengths are off their targets after a step
+  ($\lvert r^2/d^2 - 1\rvert$ above $10^{-4}$ below double precision and
+  $10^{-8}$ in double, or not a number) ends `mdir run` with a message
+  naming the step and the set (`settles`, `shake1`, `shake2`, `shake3`),
+  and fails a part of a Python simulation. Before, such a run went on with
+  distorted groups. In a run with constraints this message takes precedence
+  over that of positions that are not numbers in the same step (the
+  maintainer's ruling on PR #381). The kernels of the constraints test the
+  lengths they give (`md.gather_tuples` may yield an `i1`); on one RTX 4090
+  the Amber suite runs 0.3% to 1.7% slower. `MDIR_CONSTRAINT_TEST=separate`
+  tests them in loops of their own instead, for comparison. No key changes.
+
 - **The loop over the inner list of a dual list of groups takes only the
   blocks that hold entries** (D268, #357; the maintainer's
   ruling on PR #360). Each pruning lists them, the index of the blocks of

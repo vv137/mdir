@@ -260,21 +260,42 @@ static bool canMoveUp(ParticleForOp first, ParticleForOp second) {
   return available;
 }
 
+/// Returns true if `loop` tells in a value of `reduce` whether its kernel
+/// yields true for some tuple.
+static bool hasFlags(TupleForOp loop) {
+  return llvm::any_of(loop.getReduce(), [](Value value) {
+    return value.getType().isInteger(1);
+  });
+}
+
+/// Returns true if `loop` has a global sum in `reduce`. A flag, which the
+/// constraints of a step yield (D[constraint-failure-stop]), is not one: a
+/// device sets it from the kernel of an integration run (D110).
+static bool hasSums(TupleForOp loop) {
+  return llvm::any_of(loop.getReduce(), [](Value value) {
+    return !value.getType().isInteger(1);
+  });
+}
+
 /// Returns true if `op` is a loop over the tuples of a disjoint set
 /// without global sums: one that a device can join with the loop over
 /// particles before it and the one after it (D110).
 static bool isOfIntegrationRun(Operation *op) {
   auto loop = dyn_cast_or_null<TupleForOp>(op);
-  return loop && loop.getDisjoint() && loop.getReduce().empty();
+  return loop && loop.getDisjoint() && !hasSums(loop) &&
+         !loop.getOuts().empty();
 }
 
 /// Returns true if a loop over the tuples of a disjoint set uses a result
-/// of `loop`, as a field of its members or as its positions.
+/// of `loop`, as a field of its members or as its positions. A loop with a
+/// flag that writes nothing, the separate test of the constraints, is a
+/// kernel of its own on a device, of no run (D[constraint-failure-stop]).
 static bool feedsDisjointTuples(ParticleForOp loop) {
   for (Value result : loop->getResults())
     for (Operation *user : result.getUsers())
       if (auto tuples = dyn_cast<TupleForOp>(user))
-        if (tuples.getDisjoint())
+        if (tuples.getDisjoint() &&
+            !(hasFlags(tuples) && tuples.getOuts().empty()))
           return true;
   return false;
 }
@@ -282,12 +303,13 @@ static bool feedsDisjointTuples(ParticleForOp loop) {
 /// Returns true if a loop over the tuples of a disjoint set with global
 /// sums reads a result of `loop`: the run that `loop` is before then holds
 /// a loop that no kernel of a run takes, as the projection of the
-/// velocities does where it sums the virial.
+/// velocities does where it sums the virial. A loop with a flag is of no
+/// run.
 static bool feedsDisjointSums(ParticleForOp loop) {
   for (Value result : loop->getResults())
     for (Operation *user : result.getUsers())
       if (auto tuples = dyn_cast<TupleForOp>(user))
-        if (tuples.getDisjoint() && !tuples.getReduce().empty())
+        if (tuples.getDisjoint() && hasSums(tuples))
           return true;
   return false;
 }
@@ -548,8 +570,13 @@ static bool canMoveAfter(Operation *second, Operation *first,
 //===----------------------------------------------------------------------===//
 
 /// Returns true if `a` and `b` run over the same tuples in the same way.
+/// A loop with a flag, the test of the constraints
+/// (D[constraint-failure-stop]), stays a kernel of its own: joined with the
+/// projection of the velocities at the same positions it would give that
+/// loop a reduction, and a run of loops over disjoint tuples with one is
+/// no longer joined with the loops over particles around it (D110).
 static bool haveSameDomain(TupleForOp a, TupleForOp b) {
-  return a.getIncidence() == b.getIncidence() &&
+  return !hasFlags(a) && !hasFlags(b) && a.getIncidence() == b.getIncidence() &&
          a.getPositions() == b.getPositions() && a.getCell() == b.getCell() &&
          a.getArity() == b.getArity() && a.getDisjoint() == b.getDisjoint() &&
          !a.getOverwrite() && !b.getOverwrite();

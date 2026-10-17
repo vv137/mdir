@@ -198,6 +198,15 @@ carry, have no meaning for a tuple of a topology.
 coordinates, such as the angle of three particles and the distance of the
 two outer ones.
 
+The result of `md.sum_tuples` is a sum (`f64` or a vector of `f64`), or an
+`i1` that tells whether the kernel yields true for some tuple.
+`md.gather_tuples` may have a second result, an `i1` of the same meaning,
+which its kernel yields after the values of the members: the constraints
+of each step test the lengths they give so (D[constraint-failure-stop]).
+In `md_exec.tuple_for` such a value takes a flag, not buffers for a sum,
+and a loop over disjoint tuples with flags only is still of an
+integration run (D110).
+
 After the coordinates the kernel takes the fields of the particles that
 the op gathers, one value for each member, and the fields of the tuple.
 
@@ -547,6 +556,7 @@ stage begins.
 | Virial | The mean of those of the forces of the constraints over the two halves of the step: $\mathbf G_i = 2 m_i \Delta\mathbf x_i / \Delta t^2$ of the positions, with the bonds before the drift for arms, and $\mathbf G_i = 2 m_i \Delta\mathbf v_i / \Delta t$ of the velocities, with the bonds after it; $\sum (\mathbf x_i - \mathbf x_O) \otimes \mathbf G_i$ of each. The mean is that of the pressure (D45). |
 | At the start | The drawn velocities have their parts along the bonds removed before they are scaled to the temperature. The positions are not constrained, as sander does not. |
 | Degrees of freedom | Three fewer for each water |
+| A failure | The kernel of the constraints of the positions of each set (`settles`, then each set of SHAKE), an `md.gather_tuples` with a second result of `i1`, tests every constrained length that it gives (with `MDIR_CONSTRAINT_TEST=separate`, an `md.sum_tuples` of `i1` over each set at the new positions does): $\lvert r^2/d^2 - 1\rvert$ above $10^{-4}$ below double precision and $10^{-8}$ in double, or not a number, stops the run with the step and the set (`mdrtStopConstraintFailure`). On a device the test is in the integration kernel of the step (D110), with a flag for each set and one event (the separate tests are one kernel of their own), which the host reads after the evaluation of the step, so that the read adds no wait; a build of the step that finds positions that are not numbers records its stop until then, and reports it only if every set passed (D[constraint-failure-stop]) |
 | Temperature of the log | The optimal estimate, with the kinetic energies of the half steps measured from the velocities after the constraints of the positions (D45; D203), which the thermostats control (D263) |
 | In the IR | An `md.gather_tuples` over a tuple set `settles` of arity 3, the oxygen first, for each of the two halves, in the program of the step; the virial an `md.sum_tuples` |
 | Which waters | Those of `[ settles ]` of GROMACS; from Amber the residues of `water_residues`, `["WAT"]` by default, which are an oxygen and two hydrogens with at most virtual sites after them. Their bonds and angles are dropped. |

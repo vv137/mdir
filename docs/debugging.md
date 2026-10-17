@@ -91,6 +91,22 @@ prints the module after each run of that pass, and `MDIR_PIPELINE=<passes>`
 replaces the pipeline (`mdir emit --stage=pipeline` prints the one that
 `mdir run` uses).
 
+## Failures of a run
+
+A run whose state is no longer that of the system stops with a message
+on the standard error and the status 1; a part of a Python simulation
+raises `SimulationError` instead and keeps the state from before the part
+(D225).
+
+| Message | What failed |
+|---|---|
+| `a position is not a number or is far outside the cell at a build of the neighbor structure` | The positions, at a build (D107, D176, D225) |
+| `the constraints of the set 'S' failed at step N` | After the constraints of the positions of step N, a length of a group of the set `S` (`settles`, or `shake1` to `shake3` for the groups of SHAKE of one to three hydrogens) is off its target by more than $10^{-4}$ of its square below double precision, $10^{-8}$ in double, or is not a number (D[constraint-failure-stop]). In a run with constraints this message takes precedence: a build of the step that finds positions that are not numbers reports them only if every set passed its test |
+
+Either usually means a time step too long for the system, a bad contact
+in the starting structure, or a start that was not minimized; a smaller
+`time_step` or a minimization first tells which.
+
 ## Failures on the device
 
 The runtime reports a failure of the CUDA driver with the last kernel that

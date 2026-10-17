@@ -1,0 +1,13 @@
+# REQUIRES: python-api, cuda
+# The test of python-constraint-failure.test on a GPU: the flag of the loop
+# that tests the group of SHAKE fails the part (D[constraint-failure-stop]).
+# With the waters rigid, a restraint of 1e300 on an atom that no constraint
+# holds sends it beyond the cell: the build records its stop, the waters
+# pass their test, and the part fails with the message of D107 (the
+# maintainer's ruling on PR #381).
+# RUN: %mdir_python %S/Inputs/python_position_guard.py %S/Inputs/dipeptide GPU constraints | FileCheck %s
+# CHECK: constraints Double: fails after step 0 and keeps its state; another simulation runs: the constraints of the set 'shake1' failed at step 1: a constrained length is off its target or is not a number
+# CHECK: restraint rigid Double: fails after step {{[0-9]+}} and keeps its state; another simulation runs: {{.*}}far outside the cell
+# CHECK: constraints Mixed: fails after step 0 and keeps its state; another simulation runs: the constraints of the set 'shake1' failed at step 1
+# CHECK: restraint rigid Mixed: fails after step {{[0-9]+}} and keeps its state; another simulation runs: {{.*}}far outside the cell
+# CHECK: position guard constraints passed

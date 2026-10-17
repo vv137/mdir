@@ -707,11 +707,15 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
     overwrite.push_back(!accumulates);
   }
 
+  // A sum needs buffers on a device. A value that tells whether the kernel
+  // yields true for any tuple does not (D[constraint-failure-stop]).
   SmallVector<Value> reduce;
-  SmallVector<Type> resultTypes;
+  SmallVector<Type> resultTypes, sums;
   for (Value value : op.getReduce()) {
     reduce.push_back(mapping.lookup(value));
     resultTypes.push_back(value.getType());
+    if (!value.getType().isInteger(1))
+      sums.push_back(value.getType());
   }
 
   OpBuilder &builder = scope.builder;
@@ -720,7 +724,7 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
     overwriteAttr = builder.getDenseBoolArrayAttr(overwrite);
 
   SmallVector<Value> scratch;
-  if (failed(getScratch(op, resultTypes, op.getPositions().getType(), scope,
+  if (failed(getScratch(op, sums, op.getPositions().getType(), scope,
                         scratch)))
     return failure();
 

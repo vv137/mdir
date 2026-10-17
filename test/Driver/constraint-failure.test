@@ -1,0 +1,106 @@
+# A step whose constraints fail stops the run, with the step and the set
+# (D[constraint-failure-stop]); the kernel of each set of constraints tests
+# the lengths it gives. One hydrogen of the first of the three OPC
+# waters of settle.test starts at 1000 Å/ps, 2 Å in a step of 2 fs: SETTLE
+# cannot take its water back to its shape in the first step. The hydrogen
+# of the first amide of the peptide of shake.test, alone with its nitrogen
+# in a group of SHAKE, starts the same way. Each run stops at step 1, in
+# single, mixed, and double precision; without the kick the runs of
+# settle.test and shake.test go on to their ends.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: cp %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %t
+# RUN: %python %S/Inputs/kick_atom.py %t/three.inpcrd %t/three.rst7 2 1000 0 0
+# RUN: %python %S/Inputs/kick_atom.py %t/vacuum.inpcrd %t/vacuum.rst7 8 1000 0 0
+# RUN: sed -n '/^#--- water.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/water.toml
+# RUN: sed -n '/^#--- peptide.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/peptide.toml
+# RUN: sed 's/DOUBLE/SINGLE/' %t/water.toml > %t/water-single.toml
+# RUN: sed 's/DOUBLE/MIXED/' %t/water.toml > %t/water-mixed.toml
+# RUN: sed 's/DOUBLE/SINGLE/' %t/peptide.toml > %t/peptide-single.toml
+# RUN: sed 's/DOUBLE/MIXED/' %t/peptide.toml > %t/peptide-mixed.toml
+# RUN: not mdir run %t/water.toml 2>&1 | FileCheck %s --check-prefix=WATER
+# RUN: not mdir run %t/water-single.toml 2>&1 | FileCheck %s --check-prefix=WATER
+# RUN: not mdir run %t/water-mixed.toml 2>&1 | FileCheck %s --check-prefix=WATER
+# RUN: not mdir run %t/peptide.toml 2>&1 | FileCheck %s --check-prefix=PEPTIDE
+# RUN: not mdir run %t/peptide-single.toml 2>&1 | FileCheck %s --check-prefix=PEPTIDE
+# RUN: not mdir run %t/peptide-mixed.toml 2>&1 | FileCheck %s --check-prefix=PEPTIDE
+#
+# The same with the test of the constraints in loops of their own
+# (MDIR_CONSTRAINT_TEST=separate), which the kernels of the constraints
+# take by default.
+#
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/water.toml 2>&1 | FileCheck %s --check-prefix=WATER
+# RUN: env MDIR_CONSTRAINT_TEST=separate not mdir run %t/peptide-mixed.toml 2>&1 | FileCheck %s --check-prefix=PEPTIDE
+
+# WATER: INFO: 0 0.0000
+# WATER-NOT: INFO: 1 0.0020
+# WATER: mdir: the constraints of the set 'settles' failed at step 1: a constrained length is off its target or is not a number; the run has failed
+
+# PEPTIDE: INFO: 0 0.0000
+# PEPTIDE-NOT: INFO: 1 0.0020
+# PEPTIDE: mdir: the constraints of the set 'shake1' failed at step 1: a constrained length is off its target or is not a number; the run has failed
+
+#--- water.toml
+[input]
+topology   = "three.prmtop"
+coordinates = "three.rst7"
+
+[output]
+energy_interval = 1
+
+[energy]
+cutoff        = 18.0
+pairlist_distance = 19.0
+electrostatics = "CUTOFF"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.002
+steps         = 10
+
+[ensemble]
+ensemble    = "NVE"
+
+[constraints]
+rigid_water = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end
+
+#--- peptide.toml
+[input]
+topology   = "vacuum.prmtop"
+coordinates = "vacuum.rst7"
+
+[output]
+energy_interval = 1
+
+[energy]
+cutoff        = 28.0
+pairlist_distance = 29.0
+electrostatics = "CUTOFF"
+
+[dynamics]
+integrator    = "VELOCITY_VERLET"
+time_step     = 0.002
+steps         = 10
+
+[ensemble]
+ensemble    = "NVE"
+
+[constraints]
+hydrogen_bonds = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- end

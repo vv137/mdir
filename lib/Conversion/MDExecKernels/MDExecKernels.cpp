@@ -969,6 +969,16 @@ static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
   }
 }
 
+/// `partial` with `value` added, or, for a value of the type i1 that tells
+/// whether the kernel yields true for some tuple, or-ed
+/// (D[constraint-failure-stop]).
+static Value accumulate(OpBuilder &builder, Location loc, Value partial,
+                        Value value) {
+  if (value.getType().isInteger(1))
+    return arith::OrIOp::create(builder, loc, partial, value);
+  return arith::AddFOp::create(builder, loc, partial, value);
+}
+
 /// The loop of `emitTupleKernel` for a set whose tuples share no particle:
 /// the member at place 0 evaluates the tuple once and writes the values of
 /// all members; a particle in no tuple writes 0 where the loop overwrites.
@@ -1134,7 +1144,7 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
           Value nothing = createZero(b, loc, contribution.getType());
           Value masked =
               arith::SelectOp::create(b, loc, atFirst, contribution, nothing);
-          updated.push_back(arith::AddFOp::create(b, loc, partial[j], masked));
+          updated.push_back(accumulate(b, loc, partial[j], masked));
         }
         scf::YieldOp::create(b, loc, updated);
       });
@@ -1305,8 +1315,7 @@ kernels::emitTuplesOnceWithSums(OpBuilder &builder, md_exec::TupleForOp op,
           Value narrow = getNarrow(i);
           Value contribution =
               inside.lookupOrDefault(narrow ? narrow : yield->getOperand(i));
-          updated.push_back(
-              arith::AddFOp::create(b, loc, partial[j], contribution));
+          updated.push_back(accumulate(b, loc, partial[j], contribution));
         }
         scf::YieldOp::create(b, loc, updated);
       });
@@ -1435,6 +1444,24 @@ void kernels::emitIntegrationThread(
   // The cell of a loop in the type its kernel computes in.
   auto cellOf = [&](OpBuilder &, unsigned i) -> std::pair<Value, Value> {
     return {boxes[i], inverses[i]};
+  };
+  // The flag of loop `i`, set by the member at place 0 of a tuple whose
+  // kernel yields true after its destinations (D[constraint-failure-stop]).
+  auto setFlag = [&](OpBuilder &b, unsigned i, const IRMapping &inside) {
+    if (i >= run.flags.size() || !run.flags[i])
+      return;
+    md_exec::TupleForOp loop = loops[i];
+    Operation *yield = loop.getKernel().front().getTerminator();
+    Value failed = inside.lookupOrDefault(
+        yield->getOperand(loop.getOuts().size() * loop.getArity()));
+    Value flag = run.flags[i];
+    scf::IfOp::create(b, loc, failed, [&](OpBuilder &set, Location) {
+      memref::StoreOp::create(
+          set, loc,
+          arith::ConstantOp::create(set, loc, i32, set.getI32IntegerAttr(1)),
+          flag, ValueRange{createIndex(set, loc, 0)});
+      scf::YieldOp::create(set, loc);
+    });
   };
 
   // The loop after for a member, its values of the loop before from
@@ -1577,6 +1604,7 @@ void kernels::emitIntegrationThread(
           auto [box, inverse] = cellOf(c, i);
           evaluateMembers(c, loop, evaluated, box, inverse, IRMapping(),
                           loadMember);
+          setFlag(c, i, evaluated.inside);
           Operation *yield = loop.getKernel().front().getTerminator();
           for (int64_t q = 0; q != arity; ++q) {
             SmallVector<SmallVector<Value>> corrections;
@@ -1815,6 +1843,7 @@ void kernels::emitIntegrationThread(
           auto [box, inverse] = cellOf(b, i);
           evaluateMembers(b, loop, evaluated, box, inverse, IRMapping(),
                           loadMember);
+          setFlag(b, i, evaluated.inside);
           Operation *yield = loop.getKernel().front().getTerminator();
           SmallVector<Value> values;
           for (int64_t q = 0; q != arity; ++q)

@@ -504,6 +504,24 @@ int32_t mdrtFlagFinish(int64_t slot) {
   return value;
 }
 
+/* Reads and clears a flag that the kernel of an other flag set, after
+   mdrtFlagFinish of that flag has waited for the event after the kernel
+   (D[constraint-failure-stop]): the loops of a run, one kernel, have a flag
+   each and one event. A flag outside the mapped words is copied as
+   mdrtFlagStart does and waited for. */
+int32_t mdrtFlagTake(void *device) {
+  CUdeviceptr address = (CUdeviceptr)device;
+  if (mappedFlags && address >= mappedDevice &&
+      address < mappedDevice + MAPPED_FLAGS * sizeof(int32_t)) {
+    volatile int32_t *source =
+        mappedFlags + (address - mappedDevice) / sizeof(int32_t);
+    int32_t value = *source;
+    *source = 0;
+    return value;
+  }
+  return mdrtFlagFinish(mdrtFlagStart(device));
+}
+
 /* Waits until the device has run everything that was issued. */
 static void finish(void) {
   if (!isPending || !sharedStream)

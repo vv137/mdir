@@ -1237,13 +1237,19 @@ def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
 
     ```text
     a_i = a0_i + Σ_t k_a(t)[s]          for every field in `outs`
-    S   = S0   + Σ_{t : s = 0} k_S(t)   for every value in `reduce`
+    S   = S0   + Σ_{t : s = 0} k_S(t)   for every number or vector in `reduce`
+    A   = A0 or any_t k_A(t)            for every value of the type i1 in `reduce`
     ```
 
     A tuple of `k` members is evaluated `k` times, once by each of its
     members, and every member takes its own part. A sum takes the
     contribution of a tuple from the member at place 0, so that a tuple
     counts once.
+
+    A value of the type `i1` in `reduce` tells whether the kernel yields
+    true for any tuple, as in `md_exec.particle_for`. It needs nothing in
+    `scratch`: on a device, a thread that yields true sets a flag of the
+    loop's own, and the others do nothing.
 
     The loop computes the displacements that `coordinates` names, each in
     the minimum image, from the positions and the cell. The kernel receives

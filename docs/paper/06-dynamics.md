@@ -253,6 +253,42 @@ energy of the motion within the group.
 $N_c = 3N_\text{water} + \sum_\text{groups} n_\text{H}$; the three of the
 center of mass are always subtracted.
 
+**A failure of the constraints** (D[constraint-failure-stop]). The
+constrained dynamics samples the surface $g_k(\mathbf x) = 0$ and the
+velocities tangent to it: the count $N_f$ above, the virial
+$\mathsf W_c$, and the temperature and the pressure of the log all assume
+that every constraint holds after every step. Neither solver can always
+make it hold. The projection of M-SHAKE along the old bond has a solution
+only if the bond moved by less than its length (Section 6.7), its six
+iterations converge only near that solution, and SETTLE in double
+precision takes square roots that become those of negative numbers. A
+step that leaves a group off the surface is not a step of the constrained
+system: the group's bonds, which have no energy of their own, carry the
+error into the following steps, and the kinetic energy of its motion
+along the bonds counts toward a temperature whose $N_f$ leaves it out.
+Each set (SETTLE, then each set of SHAKE) therefore tests, in the kernel
+of its constraints, the bonds that the kernel gives, by the test of
+Section 6.7: a group fails if
+$\big\lvert\lVert\mathbf r_k\rVert^2/d_k^2 - 1\big\rvert$ is above
+$10^{-8}$ in double precision and $10^{-4}$ below it for one of its bonds,
+or is not a number. A failure stops the run with the step and the set,
+as positions that are not numbers do (Section 4). The kernel of the
+constraints yields, beside the change of each member, an `i1` that tells
+whether its test is true for some tuple; on a device that kernel is the
+integration kernel of the step (Section 8), whose thread at place 0 of a
+failing group sets a flag of the set in memory of the host, and the host
+reads the flags after the evaluation of the step, by which time it has
+waited for a later flag of the neighbor structure, so that the test adds
+neither a kernel nor a wait. A test by a loop of its own over the tuples of
+each set, after the step, gives the same results and stops, and is kept
+for comparison (`MDIR_CONSTRAINT_TEST=separate`). A failed set leaves its
+positions off the surface, or, where SETTLE has no solution, not numbers,
+which the build of the neighbor structure in that evaluation finds. In a
+step with constraints that build therefore records its stop and the step
+runs to its end, which the guards of Section 4 make safe: the failed set
+is what the run reports, and the recorded stop ends the run after the
+tests only if every set passed.
+
 ## 6.3 The thermostat
 
 Velocity rescaling with a stochastic term [[Bussi2007]](references.md#bussi2007) acts at the end

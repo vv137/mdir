@@ -4,6 +4,8 @@
 
 #include "mdir/Conversion/Passes.h"
 
+#include <type_traits>
+
 #include "mdir/Dialect/Dyn/DynOps.h"
 #include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -51,7 +53,8 @@ private:
   Value getIncidence(Value relation, Location loc);
   LogicalResult convertDrift(dyn::DriftOp op);
 
-  /// A zero of type `type`, which is f64 or a vector of f64.
+  /// A zero of type `type`, which is f64 or a vector of f64, or false for
+  /// i1.
   Value createZero(Location loc, Type type) {
     return arith::ConstantOp::create(builder, loc, type,
                                      cast<TypedAttr>(builder.getZeroAttr(type)));
@@ -303,10 +306,20 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
   builder.setInsertionPoint(op);
   Type resultType = op.getResult().getType();
   SmallVector<Value, 1> outs, reduce;
+  SmallVector<Type, 2> resultTypes = {resultType};
   if (isSum)
     reduce.push_back(createZero(loc, resultType));
   else
     outs.push_back(md_exec::ZerosOp::create(builder, loc, resultType));
+  // A gather that also tells whether its kernel is true for some tuple
+  // (D[constraint-failure-stop]) reduces that to a flag.
+  Value failed;
+  if constexpr (std::is_same_v<OpTy, md::GatherTuplesOp>)
+    failed = op.getFailed();
+  if (failed) {
+    reduce.push_back(createZero(loc, failed.getType()));
+    resultTypes.push_back(failed.getType());
+  }
 
   DenseI32ArrayAttr kinds;
   DenseI64ArrayAttr members;
@@ -320,7 +333,7 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
         if (set.getDisjoint())
           disjoint = builder.getUnitAttr();
   auto loop = md_exec::TupleForOp::create(
-      builder, loc, TypeRange(resultType), incidence, op.getPositions(),
+      builder, loc, TypeRange(resultTypes), incidence, op.getPositions(),
       op.getCell(), op.getGathered(), op.getParameters(), outs, reduce,
       /*scratch=*/ValueRange(), kinds, members,
       builder.getI64IntegerAttr(arity), /*overwrite=*/DenseBoolArrayAttr(),
@@ -353,6 +366,8 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
   copyKernel(source, target, mapping);
 
   op.getResult().replaceAllUsesWith(loop.getResult(0));
+  if (failed)
+    failed.replaceAllUsesWith(loop.getResult(1));
   converted.push_back(op);
   return success();
 }
