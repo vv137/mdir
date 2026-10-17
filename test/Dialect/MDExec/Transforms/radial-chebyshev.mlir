@@ -1,0 +1,98 @@
+// A Chebyshev series of the squared distance (D[prolate-pair-table]): the
+// direct sum of the prolate kernel, f q_i q_j (1/r - Q(y)/r_c) with
+// y = 2 r^2 / r_c^2 - 1, as the builder writes it.
+//
+// md-exec-simplify-distance counts the series as costly and takes the term
+// with 1/r into one function of r^2:
+// RUN: mdir-opt %s --md-exec-simplify-distance=radial=true --canonicalize | FileCheck %s --check-prefix=SIMPLIFY
+//
+// md-exec-expand-radial makes such a function a table in a kernel of f32
+// (@single, as precision leaves it), and inlines it in one of f64, the
+// series as Clenshaw's recurrence:
+// RUN: mdir-opt %s --md-exec-simplify-distance=radial=true --canonicalize \
+// RUN:   --md-exec-expand-radial | FileCheck %s --check-prefix=EXPAND
+
+!vec = !md.field<@atoms, 3 x f64>
+!real = !md.field<@atoms, f64>
+!nl  = !mdrt.neighbors<@atoms>
+
+md.particle_set @atoms
+
+// SIMPLIFY-LABEL: func.func @prolate(
+// SIMPLIFY:         ^bb0(%[[R2:[a-z0-9]+]]: f64, %{{[a-z0-9]+}}: vector<3xf64>, %{{[a-z0-9]+}}: f64, %{{[a-z0-9]+}}: f64):
+// SIMPLIFY:           md_exec.radial @md_radial(%[[R2]]) : f64 -> f64
+// SIMPLIFY-NOT:       md.chebyshev
+// SIMPLIFY-NOT:       math.sqrt
+// SIMPLIFY:           md_exec.yield
+// SIMPLIFY:       func.func private @md_radial(%{{[a-z0-9]+}}: f64) -> f64
+// SIMPLIFY:         md.chebyshev %{{.*}} [1.690690e+00, -9.227800e-01, 3.033470e-01, -8.989980e-02, 2.271290e-02] : f64
+
+// EXPAND:       memref.global "private" constant @md_radial_series_table : memref<{{[0-9]+}}x4xf32>
+// EXPAND-NOT:   md.chebyshev
+// EXPAND-LABEL: func.func @prolate(
+// EXPAND:         md_exec.pair_for
+// EXPAND-NOT:       md_exec.radial
+// EXPAND:           arith.addf
+// EXPAND:           arith.mulf
+// EXPAND:           arith.subf
+// EXPAND:           md_exec.yield
+// EXPAND-LABEL: func.func @single(
+// EXPAND:         md_exec.pair_for
+// EXPAND:           vector.load %{{.*}} : memref<{{[0-9]+}}x4xf32>, vector<4xf32>
+// EXPAND-NOT:       md_exec.radial
+func.func @prolate(%x: !vec, %cell: !md.cell, %nl: !nl, %q: !real) -> f64 {
+  %u0 = arith.constant 0.0 : f64
+  %u = md_exec.pair_for %nl, %x, %cell ins(%q : !real) reduce(%u0 : f64)
+      cutoff(0.9) weights [0.5] exchange [symmetric]
+      policy(directed, owner_only) {
+  ^bb0(%r2: f64, %d: vector<3xf64>, %qi: f64, %qj: f64):
+    %r = math.sqrt %r2 : f64
+    %f = arith.constant 138.935 : f64
+    %qq = arith.mulf %qi, %qj : f64
+    %fqq = arith.mulf %f, %qq : f64
+    %rc_inverse = arith.constant 1.1111111111111112 : f64
+    %xr = arith.mulf %r, %rc_inverse : f64
+    %x2 = arith.mulf %xr, %xr : f64
+    %two = arith.constant 2.0 : f64
+    %one = arith.constant 1.0 : f64
+    %twice = arith.mulf %two, %x2 : f64
+    %y = arith.subf %twice, %one : f64
+    %near = md.chebyshev %y [1.69069, -0.92278, 0.303347, -0.0898998, 0.0227129] : f64
+    %shielded = arith.mulf %near, %rc_inverse : f64
+    %inverse = arith.divf %one, %r : f64
+    %screened = arith.subf %inverse, %shielded : f64
+    %coulomb = arith.mulf %fqq, %screened : f64
+    md_exec.yield %coulomb : f64
+  } : !nl, !vec -> f64
+  return %u : f64
+}
+
+// The function of @prolate after md-exec-simplify-distance, read by a
+// kernel of f32.
+func.func private @md_radial_series(%s: f64) -> f64 {
+  %c = arith.constant -154.37222222222223 : f64
+  %f = arith.constant 138.935 : f64
+  %one = arith.constant 1.0 : f64
+  %k = arith.constant 2.4691358024691361 : f64
+  %t = arith.mulf %s, %k : f64
+  %y = arith.subf %t, %one : f64
+  %near = md.chebyshev %y [1.69069, -0.92278, 0.303347, -0.0898998, 0.0227129] : f64
+  %r = math.sqrt %s : f64
+  %inverse = arith.divf %f, %r : f64
+  %shielded = arith.mulf %near, %c : f64
+  %g = arith.addf %inverse, %shielded : f64
+  return %g : f64
+}
+
+func.func @single(%x: !md.field<@atoms, 3 x f32>, %cell: !md.cell, %nl: !nl)
+    -> f64 {
+  %u0 = arith.constant 0.0 : f64
+  %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(0.9)
+      weights [0.5] exchange [symmetric] policy(directed, owner_only) {
+  ^bb0(%r2: f32, %d: vector<3xf32>):
+    %g = md_exec.radial @md_radial_series(%r2) : f32 -> f32
+    %w = arith.extf %g : f32 to f64
+    md_exec.yield %w : f64
+  } : !nl, !md.field<@atoms, 3 x f32> -> f64
+  return %u : f64
+}

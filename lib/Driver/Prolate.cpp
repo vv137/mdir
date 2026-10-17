@@ -382,14 +382,15 @@ double mdir::prolate::getSplitting(const Function &psi, Part part, double x) {
 }
 
 std::vector<double> mdir::prolate::getNearSeries(const Function &psi) {
-  // x = √((y + 1)/2); 64 points interpolate the polynomial of ψ's series
-  // exactly, and the cut keeps the terms above the rounding of f64.
+  // x = √((y + 1)/2). The coefficients fall below 10⁻¹⁴ of the largest
+  // after 16 to 20 terms, where those of the 64 points reach the noise of
+  // the quadrature (about 10⁻¹⁵); the cut keeps those above it.
   return getChebyshevSeries(
       [&](double y) {
         return getSplitting(psi, Part::Near,
                             std::sqrt(std::max(0.0, 0.5 * (y + 1.0))));
       },
-      1e-17);
+      1e-14);
 }
 
 std::vector<double> mdir::prolate::getSplittingTable(const Function &psi,

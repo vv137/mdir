@@ -42,7 +42,7 @@ target_link_libraries(mdir-model-test PRIVATE MDIRDriver)
 
 add_llvm_executable(mdir-prolate-test Driver/ProlateTest.cpp)
 llvm_update_compile_flags(mdir-prolate-test)
-target_link_libraries(mdir-prolate-test PRIVATE MDIRDriver)
+target_link_libraries(mdir-prolate-test PRIVATE MDIRDriver MDIRMD)
 
 add_llvm_executable(mdir-output-rows-test Driver/OutputRowsTest.cpp)
 llvm_update_compile_flags(mdir-output-rows-test)
