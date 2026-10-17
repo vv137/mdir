@@ -73,13 +73,18 @@ public:
           return;
         points *= length;
       }
-      // The bricks of D108 and D109, the spreading of the B-splines of
-      // order 4 in f32, are faster on a small grid; every other spreading
-      // takes the tiles that fit.
-      bool bricks =
-          !op.getProlate() && op.getOrder() == 4 && element.isF32();
-      if (layout == "auto" && bricks && points < minPoints)
-        return;
+      // With `auto`, a grid in f64 keeps the spreading of before, which is
+      // faster there on the devices measured (their f64 is slow, and the
+      // atomics of a tile are a loop of compare-and-swap of 64 bits); so do
+      // the bricks of D108 and D109, the B-splines of order 4 in f32, on a
+      // small grid. Every other spreading takes the tiles that fit.
+      if (layout == "auto") {
+        if (!element.isF32())
+          return;
+        bool bricks = !op.getProlate() && op.getOrder() == 4;
+        if (bricks && points < minPoints)
+          return;
+      }
       op.setTilesAttr(builder.getI64IntegerAttr(edge));
     });
   }

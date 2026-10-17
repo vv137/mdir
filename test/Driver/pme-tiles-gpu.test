@@ -54,6 +54,11 @@
 #
 # The choice in the module, and none in the deterministic mode.
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 MDIR_PRINT_AFTER=md-exec-choose-spreading mdir run m4.toml 2>&1 | FileCheck %s --check-prefix=IR
+# The default (`auto`): this grid of 24 x 28 x 24 points keeps the bricks at
+# order 4 in f32, order 6 in f32 is tiled, and a grid in f64 is not.
+# RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-choose-spreading mdir run m4.toml 2>&1 | FileCheck %s --check-prefix=AUTO
+# RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-choose-spreading mdir run m6.toml 2>&1 | FileCheck %s --check-prefix=IR
+# RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-choose-spreading mdir run d4.toml 2>&1 | FileCheck %s --check-prefix=AUTO
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 MDIR_PRINT_AFTER=md-exec-choose-spreading mdir run det.toml > det-a.log 2>&1 && mv run.h5 det-a.h5
 # RUN: FileCheck %s --check-prefix=DET < %t/det-a.log
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 mdir run det.toml > det-b.log 2>&1 && mv run.h5 det-b.h5
@@ -73,6 +78,8 @@
 # LJIR-COUNT-2: md_exec.reciprocal {{.*}} tiles(8)
 # LJD: md_exec.reciprocal {{.*}} dispersion {{.*}}tiles(8)
 # IR: md_exec.reciprocal {{.*}} tiles(8)
+# AUTO: md_exec.reciprocal
+# AUTO-NOT: tiles(
 # DET: md_exec.reciprocal
 # DET-NOT: tiles(
 # SAME: the states are identical

@@ -111,10 +111,11 @@ def ChooseSpreading
     after the precision is assigned and before the storage.
 
     `layout=global` sets no tiles; `layout=tiles` tiles every sum that can
-    be tiled; `layout=auto`, the default, tiles every sum that can be tiled
-    but one that would otherwise spread into the bricks (the B-splines of
-    order 4 in f32) on a grid of fewer than `min-points` points, where the
-    bricks are faster. A sum can be tiled where the run is not in
+    be tiled; `layout=auto`, the default, tiles every sum in f32 that can
+    be tiled but one that would otherwise spread into the bricks (the
+    B-splines of order 4) on a grid of fewer than `min-points` points,
+    where the bricks are faster; a grid in f64 keeps the spreading of
+    before, which is faster there. A sum can be tiled where the run is not in
     the deterministic mode (whose grid is in fixed point, D70, D84), where
     each edge of the grid has at least $E + P - 1$ points, so that a point
     of a tile wraps around the grid once at most, and where a tile of

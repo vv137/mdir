@@ -1,6 +1,8 @@
 // RUN: mdir-opt %s --md-exec-choose-spreading=min-points=100000 | FileCheck %s
 // RUN: mdir-opt %s --md-exec-choose-spreading="layout=tiles edge=16" \
 // RUN: | FileCheck %s --check-prefix=TILES
+// RUN: mdir-opt %s --md-exec-choose-spreading=layout=tiles \
+// RUN: | FileCheck %s --check-prefix=T8
 // RUN: mdir-opt %s --md-exec-choose-spreading=layout=global \
 // RUN: | FileCheck %s --check-prefix=GLOBAL
 // RUN: mdir-opt %s --md-exec-choose-spreading="layout=tiles deterministic=true" \
@@ -13,8 +15,8 @@
 // RUN: | FileCheck %s --check-prefix=EDGE
 
 // How each reciprocal sum spreads its charges on a device (D[pme-tiles]):
-// `auto` tiles, with bins of 8 points by default, every sum but the
-// B-splines of order 4 in f32 (the bricks of D108) on a grid of fewer than
+// `auto` tiles, with bins of 8 points by default, every sum in f32 but the
+// B-splines of order 4 (the bricks of D108) on a grid of fewer than
 // `min-points` points; `tiles` every sum that can be; `global` and the
 // deterministic mode none. A sum cannot be tiled where an edge of the
 // grid is shorter than a tile, E + P - 1 points, or where a tile of the
@@ -84,9 +86,14 @@ func.func @short(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
   return %u, %f : f64, !vec
 }
 
-// A tile of 19^3 values of f64 takes 54,872 bytes; 11^3 of them fit.
+// A grid in f64 keeps the spreading of before with `auto`; with `tiles`,
+// a tile of 19^3 values of f64 (54,872 bytes) does not fit, one of 11^3
+// does.
 // CHECK-LABEL: func.func @double(
-// CHECK: md_exec.reciprocal {{.*}} tiles(8)
+// CHECK-NOT: tiles(
+// CHECK: return
+// T8-LABEL: func.func @double(
+// T8: md_exec.reciprocal {{.*}} tiles(8)
 // TILES-LABEL: func.func @double(
 // TILES-NOT: tiles(
 // TILES: return
