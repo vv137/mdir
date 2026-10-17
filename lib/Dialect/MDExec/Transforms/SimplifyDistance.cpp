@@ -319,6 +319,8 @@ bool Rewriter::isCostly(Value value) {
     result = (isa<math::MathDialect>(def->getDialect()) &&
               !isa<math::SqrtOp, math::FPowIOp, math::AbsFOp>(def)) ||
              isa<md::ChebyshevOp>(def);
+    result = isa_and_nonnull<math::MathDialect>(def->getDialect()) &&
+             !isa<math::SqrtOp, math::FPowIOp, math::AbsFOp>(def);
     for (Value operand : def->getOperands())
       result |= isCostly(operand);
   }

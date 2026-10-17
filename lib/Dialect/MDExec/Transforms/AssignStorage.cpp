@@ -1774,8 +1774,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
   // Ops on cells hold no fields, and are copied as they are.
   bool isCell = isa<md::OrthorhombicCellOp, md::TriclinicCellOp, CellEdgesOp,
                     CellNumbersOp>(op);
-  if (!isCell && (isa<md::MDDialect>(op->getDialect()) ||
-                  isa<MDExecDialect>(op->getDialect()) ||
+  if (!isCell && (isa_and_nonnull<md::MDDialect>(op->getDialect()) ||
+                  isa_and_nonnull<MDExecDialect>(op->getDialect()) ||
                   op->getName().getDialectNamespace() == "dyn"))
     return op->emitOpError()
            << "cannot be given storage; run 'md-differentiate', "

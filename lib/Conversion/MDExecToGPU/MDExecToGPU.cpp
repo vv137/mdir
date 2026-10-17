@@ -1357,7 +1357,8 @@ void Lowering::findCenterFusions(func::FuncOp function) {
           continue;
         }
         if (user->getNumRegions() != 0 || !isMemoryEffectFree(user) ||
-            isa<md_exec::MDExecDialect, md::MDDialect>(user->getDialect()) ||
+            isa_and_nonnull<md_exec::MDExecDialect, md::MDDialect>(
+                user->getDialect()) ||
             !llvm::all_of(user->getResultTypes(),
                           [](Type type) { return type.isIntOrIndexOrFloat(); }))
           return;
@@ -1454,7 +1455,8 @@ void Lowering::findOnceRuns(func::FuncOp function) {
         // they touch no memory, and the kernel of the run is launched at its
         // last loop, after them.
         if (op.getNumRegions() == 0 && isMemoryEffectFree(&op) &&
-            !isa<md_exec::MDExecDialect, md::MDDialect>(op.getDialect()))
+            !isa_and_nonnull<md_exec::MDExecDialect, md::MDDialect>(
+                op.getDialect()))
           continue;
         finish(run);
         written.clear();
@@ -6439,7 +6441,7 @@ LogicalResult Lowering::lowerOp(Operation *op) {
 
   // The members of tuples are on the host, and the incidence structure is
   // built there.
-  if (isa<md_exec::MDExecDialect>(op->getDialect()) &&
+  if (isa_and_nonnull<md_exec::MDExecDialect>(op->getDialect()) &&
       !isa<md_exec::BuildIncidenceOp, md_exec::RenumberOp>(op)) {
     bool onHost = llvm::any_of(op->getOperandTypes(), [](Type type) {
       return isa<MemRefType>(type) && !isDeviceType(type);
@@ -6601,9 +6603,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
         builder, op->getLoc(), VectorType::get({6}, real),
         ValueRange{cell.getLx(), cell.getLy(), cell.getLz(), cell.getBx(),
                    cell.getCx(), cell.getCy()}));
-  } else if (isa<md::MDDialect>(op->getDialect()) ||
-             isa<md_exec::MDExecDialect>(op->getDialect()) ||
-             isa<mdrt::MDRTDialect>(op->getDialect()) ||
+  } else if (isa_and_nonnull<md::MDDialect>(op->getDialect()) ||
+             isa_and_nonnull<md_exec::MDExecDialect>(op->getDialect()) ||
+             isa_and_nonnull<mdrt::MDRTDialect>(op->getDialect()) ||
              op->getName().getDialectNamespace() == "dyn") {
     return op->emitOpError()
            << "cannot be lowered; run 'md-differentiate', 'md-inline', "
@@ -7135,8 +7137,8 @@ LogicalResult Lowering::run() {
     if (isa<func::FuncOp>(op))
       continue;
     // Ops of other dialects, such as globals, stay.
-    if (!isa<md::MDDialect, md_exec::MDExecDialect, mdrt::MDRTDialect>(
-            op.getDialect()) &&
+    if (!isa_and_nonnull<md::MDDialect, md_exec::MDExecDialect,
+                         mdrt::MDRTDialect>(op.getDialect()) &&
         op.getName().getDialectNamespace() != "dyn")
       continue;
     if (isa<md::ParticleSetOp, md::TupleSetOp, md::DisjointUnionOp>(op)) {

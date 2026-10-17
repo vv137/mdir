@@ -39,7 +39,8 @@ struct Dependence {
 /// arith or math without memory effects or regions, whose results are
 /// floating-point numbers.
 bool isArithmetic(Operation *op) {
-  if (!isa<arith::ArithDialect, math::MathDialect>(op->getDialect()) ||
+  if (!isa_and_nonnull<arith::ArithDialect, math::MathDialect>(
+          op->getDialect()) ||
       op->getNumRegions() != 0 || !isMemoryEffectFree(op))
     return false;
   return llvm::all_of(op->getResultTypes(),

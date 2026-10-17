@@ -1076,7 +1076,7 @@ LogicalResult Lowering::lowerOp(Operation *op) {
            << "is not in the storage form; run 'md-exec-assign-storage' "
               "first";
 
-  if (isa<md_exec::MDExecDialect>(op->getDialect())) {
+  if (isa_and_nonnull<md_exec::MDExecDialect>(op->getDialect())) {
     bool onDevice = llvm::any_of(op->getOperandTypes(), isDeviceType);
     if (auto empty = dyn_cast<md_exec::EmptyNeighborsOp>(op))
       if (auto positions = empty.getPositions())
@@ -1250,9 +1250,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
         builder, op->getLoc(), VectorType::get({6}, real),
         ValueRange{cell.getLx(), cell.getLy(), cell.getLz(), cell.getBx(),
                    cell.getCx(), cell.getCy()}));
-  } else if (isa<md::MDDialect>(op->getDialect()) ||
-             isa<md_exec::MDExecDialect>(op->getDialect()) ||
-             isa<mdrt::MDRTDialect>(op->getDialect()) ||
+  } else if (isa_and_nonnull<md::MDDialect>(op->getDialect()) ||
+             isa_and_nonnull<md_exec::MDExecDialect>(op->getDialect()) ||
+             isa_and_nonnull<mdrt::MDRTDialect>(op->getDialect()) ||
              op->getName().getDialectNamespace() == "dyn") {
     return op->emitOpError()
            << "cannot be lowered; run 'md-differentiate', 'md-inline', "
@@ -1356,8 +1356,8 @@ LogicalResult Lowering::run() {
     if (isa<func::FuncOp>(op))
       continue;
     // Ops of other dialects, such as globals, stay.
-    if (!isa<md::MDDialect, md_exec::MDExecDialect, mdrt::MDRTDialect>(
-            op.getDialect()) &&
+    if (!isa_and_nonnull<md::MDDialect, md_exec::MDExecDialect,
+                         mdrt::MDRTDialect>(op.getDialect()) &&
         op.getName().getDialectNamespace() != "dyn")
       continue;
     if (isa<md::ParticleSetOp, md::TupleSetOp, md::DisjointUnionOp>(op)) {
