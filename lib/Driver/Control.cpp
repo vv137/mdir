@@ -51,6 +51,10 @@ private:
 
   Error readReal(const toml::table &table, StringRef key, double &value);
   Error readPositive(const toml::table &table, StringRef key, double &value);
+  /// A positive number, or "AUTO", which sets `automatic` and leaves
+  /// `value` (D[skin-auto]).
+  Error readPositiveOrAuto(const toml::table &table, StringRef key,
+                           double &value, bool &automatic);
   Error readCount(const toml::table &table, StringRef key, int64_t &value,
                   int64_t least);
   Error readBool(const toml::table &table, StringRef key, bool &value);
@@ -222,6 +226,24 @@ Error Reader::readPositive(const toml::table &table, StringRef key,
   if (node && !(value > 0.0))
     return fail(*node, "expected a positive number for '" + key + "'");
   return Error::success();
+}
+
+Error Reader::readPositiveOrAuto(const toml::table &table, StringRef key,
+                                 double &value, bool &automatic) {
+  const toml::node *node = table.get(std::string_view(key));
+  if (node && node->is_string()) {
+    if (*node->value<std::string>() != "AUTO")
+      return fail(*node, "expected a positive number or \"AUTO\" for '" +
+                             key + "'");
+    automatic = true;
+    return Error::success();
+  }
+  if (node && !node->is_number())
+    return fail(*node, "expected a positive number or \"AUTO\" for '" + key +
+                           "'");
+  if (node)
+    automatic = false;
+  return readPositive(table, key, value);
 }
 
 Error Reader::readCount(const toml::table &table, StringRef key,
@@ -1887,13 +1909,19 @@ Error Reader::readEnergy(const toml::table &table) {
           readPositive(table, "switch_distance", control.switchDistance))
     return error;
   control.pairlistDistance = control.cutoffDistance + 1.5;
+  // A number fixes a reach; "AUTO", or a key not given, lets the run
+  // choose it (D[skin-auto]).
+  control.pairlistDistanceAuto = Control::omittedSkinIsAuto;
+  control.prunedDistanceAuto = Control::omittedSkinIsAuto;
   if (Error error =
-          readPositive(table, "pairlist_distance", control.pairlistDistance))
+          readPositiveOrAuto(table, "pairlist_distance",
+                             control.pairlistDistance,
+                             control.pairlistDistanceAuto))
     return error;
   // Under `AUTO` the groups take reaches of their own where these are not
-  // given (D261).
-  control.pairlistDistanceGiven = table.contains("pairlist_distance");
-  control.prunedDistanceGiven = table.contains("pruned_distance");
+  // given as numbers (D261).
+  control.pairlistDistanceGiven = !control.pairlistDistanceAuto &&
+                                  table.contains("pairlist_distance");
 
   // Opt-in, not a default: a structure rebuilt at a fixed interval may miss
   // pairs within the cutoff (D88). The run warns.
@@ -1908,8 +1936,11 @@ Error Reader::readEnergy(const toml::table &table) {
   // A dual list (D114): the inner list, pruned from the structure of
   // 'pairlist_distance', with the reach 'pruned_distance'.
   if (Error error =
-          readPositive(table, "pruned_distance", control.prunedDistance))
+          readPositiveOrAuto(table, "pruned_distance", control.prunedDistance,
+                             control.prunedDistanceAuto))
     return error;
+  control.prunedDistanceGiven =
+      !control.prunedDistanceAuto && table.contains("pruned_distance");
   if (control.prunedDistance != 0.0 &&
       !(control.prunedDistance > control.cutoffDistance &&
         control.prunedDistance < control.pairlistDistance))

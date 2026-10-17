@@ -343,6 +343,23 @@ struct Control {
   /// `AUTO` the groups take their own defaults for those that were not.
   bool pairlistDistanceGiven = false;
   bool prunedDistanceGiven = false;
+  /// Whether the run chooses the reaches (D[skin-auto]): "AUTO", or a key
+  /// not given where `omittedSkinIsAuto`. The reaches then begin at the
+  /// defaults above (D261), and a run long enough on a device measures
+  /// candidates and keeps the fastest (`chooseSkins`).
+  bool pairlistDistanceAuto = false;
+  bool prunedDistanceAuto = false;
+  /// Whether a key of a reach that is not given means "AUTO" (asked of the
+  /// maintainer on the pull request of D[skin-auto]).
+  static constexpr bool omittedSkinIsAuto = true;
+  /// Where the reaches of the run came from, for the log, the manifest,
+  /// and `mdir check`: "given", "default", "cached", or "measured", and
+  /// why (D[skin-auto]).
+  std::string skinSource = "given";
+  std::string skinReason;
+  bool isSkinAuto() const {
+    return pairlistDistanceAuto || prunedDistanceAuto;
+  }
   Truncation truncation = Truncation::Switch;
   std::vector<PairTerm> pairs;
   /// Terms over the triplets centered on each particle (D160):
