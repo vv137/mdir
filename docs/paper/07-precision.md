@@ -51,6 +51,13 @@ values and only then narrowed:
   position is taken relative to that of the first member of its group
   before it is narrowed (D110).
 
+**Parameters.** The parameters of the tuples (force constants,
+equilibrium values, phases) are stored in f64 and narrowed to the type of
+the kernel where they are loaded. Stored in f32 they would give the same
+bits in mixed precision, and half the bytes: measured, about 4 µs of a
+1.36 ms step on Cellulose, which did not pay for a second type of the
+arguments of every entry (D[tuple-block-sums]).
+
 **Sums.** Global sums (energies, virials, the kinetic energy) are
 accumulated in f64, in a fixed order, from partial sums in the type of
 the kernel over a block. The charges of particle mesh Ewald are spread in
