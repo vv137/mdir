@@ -1,5 +1,5 @@
 """The force error of the prolate kernel with its direct sum as a table of
-r² against the cells of D266 (D[prolate-pair-table], issue #380).
+r² against the cells of D266 (D280, issue #380).
 
 Delta is that of grid_sweep.py and docs/pme-m1.md Section 7: the RMS of the
 difference of the forces from those of the Gaussian at erfc 1e-13, 0.33 A,

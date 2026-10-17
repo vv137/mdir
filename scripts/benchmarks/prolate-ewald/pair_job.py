@@ -1,6 +1,6 @@
 """The step and the loop over pairs of the prolate kernel against the
 Gaussian, alternated over programs in one job (issue #380,
-D[prolate-pair-table]).
+D280).
 
     pair_job.py OUT SYSTEM TIERS ROUNDS THREADS BUILDS [--gpu] [--keys K,..]
                 [--sample] [--profile] [--steps N] [--subset K,..]

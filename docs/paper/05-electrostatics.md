@@ -760,7 +760,7 @@ the control file): 64 cells of 10 terms within $10^{-14}$ for kernels in
 f64, 128 cells of 4 terms within $4\times10^{-10}$ for kernels in f32. The
 excluded pairs take $\Phi(x)/(xr_c)$ within the cutoff and $1/r$ beyond it.
 
-In the loop over pairs of a kernel in f32 (D[prolate-pair-table]) the
+In the loop over pairs of a kernel in f32 (D280) the
 direct sum is instead a function of $r^2$ alone, so that it becomes a
 table of $r^2$ as the Gaussian's $\mathrm{erfc}(\beta r)/r$ does
 (Section 7.2): no square root, no index of a cell, one load and three

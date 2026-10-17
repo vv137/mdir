@@ -56,7 +56,7 @@ def classify(ll):
         elif "erff" in calls or "erfcf" in calls:
             part = "excluded pairs"
         # The prolate kernel (D266) reads a radial table in f32 kernels under
-        # fast_math (D[prolate-pair-table]), above; elsewhere (f64,
+        # fast_math (D280), above; elsewhere (f64,
         # MDIR_PROLATE_CELLS=1) its direct term is a table of cells of
         # polynomials, found by floor; the loop over pairs also has the
         # Lennard-Jones (powi), the excluded pairs not.

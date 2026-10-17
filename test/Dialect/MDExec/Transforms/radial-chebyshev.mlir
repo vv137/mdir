@@ -1,4 +1,4 @@
-// A Chebyshev series of the distance (D[prolate-pair-table]): the direct
+// A Chebyshev series of the distance (D280): the direct
 // sum of the prolate kernel, f q_i q_j (1 - x) P(t) / r with x = r / r_c and
 // t = 2x - 1, as the builder writes it (the first terms of P at 1e-5).
 //

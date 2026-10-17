@@ -150,7 +150,7 @@ int main() {
     }
   }
   // (1 − Φ(x))/(1 − x) as a Chebyshev series in t = 2x − 1
-  // (D[prolate-pair-table]), by Clenshaw's recurrence of md.chebyshev:
+  // (D280), by Clenshaw's recurrence of md.chebyshev:
   // (1 − x) times it against 1 − Φ by quadrature at 1000 points, to 2e-14
   // (its cut at 1e-14 of the largest term, and the noise of the
   // quadrature); at x = 1 against its limit χ(1) = ψ(1)/C₀ to 1e-14, the

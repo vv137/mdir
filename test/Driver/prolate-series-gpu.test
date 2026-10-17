@@ -1,5 +1,5 @@
 # REQUIRES: cuda
-# The direct sum of the prolate kernel as a table of r² (D[prolate-pair-table])
+# The direct sum of the prolate kernel as a table of r² (D280)
 # on a GPU, as prolate-series.test has it on the CPU: the series in mixed
 # precision, the cells with MDIR_PROLATE_CELLS=1 and in the double mode, and
 # the forces of the solvated dipeptide at the start, the series against the

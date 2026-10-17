@@ -80,7 +80,7 @@ python ../cpu-breakdown/prof.py RUN/prof --program RUN/mdir.toml --json RUN/part
 python cpu_table.py jac tip3p-32k tip3p-103k cel
 ```
 
-The direct sum as a table of $r^2$ (issue #380, D[prolate-pair-table]):
+The direct sum as a table of $r^2$ (issue #380, D280):
 `PAIR_DIR` holds `sys/NAME/` as above (`jac`, `tip3p-34k`, `tip3p-103k`,
 `cellulose`); `MAIN` and `BRANCH` name frozen copies of the two programs.
 The force error with the table and with the cells (`MDIR_PROLATE_CELLS=1`)

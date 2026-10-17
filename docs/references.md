@@ -238,7 +238,7 @@ C. W. Clenshaw, "A note on the summation of Chebyshev series,"
 *Mathematics of Computation*).
 [doi:10.1090/S0025-5718-1955-0071856-0](https://doi.org/10.1090/S0025-5718-1955-0071856-0)
 
-Used for: the recurrence by which `md.chebyshev` is evaluated (D[prolate-pair-table]).
+Used for: the recurrence by which `md.chebyshev` is evaluated (D280).
 
 ### CurtisPowellReid1974
 

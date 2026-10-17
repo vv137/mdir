@@ -381,7 +381,7 @@ def MD_ChebyshevOp : MD_Op<"chebyshev", [Pure, SameOperandsAndResultType]> {
     `coefficients` from $c_0$ upwards: a smooth function that a kernel
     computes of its arguments, such as the mean of the splitting kernel of
     the prolate kernel of particle mesh Ewald (D266) over $[x, 1]$ in
-    $t = 2x - 1$, $x = r / r_c$ (D[prolate-pair-table]).
+    $t = 2x - 1$, $x = r / r_c$ (D280).
 
     ```mlir
     %s = md.chebyshev %y [1.0, -0.5, 0.125] : f64

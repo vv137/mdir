@@ -1,4 +1,4 @@
-// md.chebyshev (D[prolate-pair-table]): its form, and its derivative, the
+// md.chebyshev (D280): its form, and its derivative, the
 // series of the derivatives times the derivative of its argument:
 // d/dy (1 - y/2 + T_2(y)/8) = -1/2 + y/2.
 //

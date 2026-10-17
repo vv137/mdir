@@ -1,4 +1,4 @@
-# The direct sum of the prolate kernel as a table of r² (D[prolate-pair-table])
+# The direct sum of the prolate kernel as a table of r² (D280)
 # on the CPU: in mixed precision under `fast_math` the builder writes
 # 1 − Φ(x) as (1 − x) times a Chebyshev series in 2x − 1 (md.chebyshev),
 # x = r/r_c, which a table of r² then holds as it holds the Gaussian's erfc

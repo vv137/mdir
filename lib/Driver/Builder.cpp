@@ -31,7 +31,7 @@ static std::pair<int64_t, int64_t> getProlateTableShape(Precision precision) {
 
 /// Whether the direct sum of the prolate kernel in a loop over pairs is a
 /// Chebyshev series of r², which a table in f32 takes (D94), rather than
-/// the cells of `pme_far` (D[prolate-pair-table]): under `fast_math`, where
+/// the cells of `pme_far` (D280): under `fast_math`, where
 /// the kernels compute in f32. A kernel in f64 would evaluate the series
 /// itself, for which the cells are faster. `MDIR_PROLATE_CELLS=1` keeps
 /// the cells, to compare the two.
@@ -5066,7 +5066,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
           // f q q (1 − x) P(t) / r, P = (1 − Φ(x))/(1 − x) a Chebyshev
           // series in t = 2x − 1: a function of r² alone, which a table of
           // r² then holds as it holds erfc(βr)/r (D94,
-          // D[prolate-pair-table]).
+          // D280).
           os << "    %pf_two = arith.constant 2.0 : f64\n"
              << "    %pf_one = arith.constant 1.0 : f64\n"
              << "    %pf_2x = arith.mulf %pf_two, %xr : f64\n"

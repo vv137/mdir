@@ -1,5 +1,5 @@
 """The tables of r² that the prolate kernel's direct sum takes
-(D[prolate-pair-table], issue #380), rebuilt as md-exec-expand-radial builds
+(D280, issue #380), rebuilt as md-exec-expand-radial builds
 them (D94), with their error against the analytic functions.
 
     pair_table.py MODULE.mlir CUTOFF_NM
