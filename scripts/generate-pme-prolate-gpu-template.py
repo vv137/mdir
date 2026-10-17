@@ -15,11 +15,20 @@ coefficients in the type of the grid laid out term by term so that the
 lanes of a term read adjacent words; the other lanes take them by
 shuffles."""
 
+import importlib.util
 import os
 import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+
+# The kernels of the Gaussian template that the spreading into tiles
+# shares (D[pme-tiles]): the tile kernel, with the window in place of the
+# B-splines; the binning is that of PMEGPU.mlir.
+_spec = importlib.util.spec_from_file_location(
+    'generate_pme_gpu_template', os.path.join(HERE, 'generate-pme-gpu-template.py'))
+GAUSSIAN = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(GAUSSIAN)
 BASE = open(os.path.join(HERE, '..', 'lib', 'Runtime', 'Templates', 'PMEGPU.mlir')).read()
 TRICLINIC = open(os.path.join(HERE, '..', 'lib', 'Runtime', 'Templates', 'PMEGPUTriclinic.mlir')).read()
 
@@ -912,6 +921,51 @@ def tables(triclinic=False):
     return text
 
 
+def tiles():
+    """The spreading of the window into tiles of the bins of
+    PMEGPU.mlir (D[pme-tiles]; tile_kernel of
+    generate-pme-gpu-template.py): the lanes 0 .. 3P − 1 of the warp of a
+    particle evaluate the window from the fraction of their axis, which
+    the tile kernel has read into the memory of the block, as the bricks
+    do (warp_weights)."""
+    lane = '''          %two_i = arith.constant 2 : index
+          %three_i = arith.constant 3 : index
+          %one = arith.constant 1 : index
+          %points = arith.constant PME_ORDER : index
+          %k12t = arith.addi %k1, %k2 : index
+          %k123t = arith.addi %k12t, %k3 : index
+          %pe = arith.muli %k123t, %three_i : index
+          %j = arith.addi %j_l, %c0 : index
+          %twor = arith.constant 2.0 : !pme_real
+          %oner = arith.constant 1.0 : !pme_real
+          %frac2 = arith.mulf %frac, %twor : !pme_real
+          %t = arith.subf %frac2, %oner : !pme_real
+          %meta_d = arith.addi %pe, %two_i : index
+          %dr = memref.load %tables[%meta_d] : memref<?x!pme_real, 1>
+          %meta_n = memref.load %tables[%pe] : memref<?x!pme_real, 1>
+          %terms_i = arith.fptosi %dr : !pme_real to i32
+          %terms = arith.index_cast %terms_i : i32 to index
+          %n_i = arith.fptosi %meta_n : !pme_real to i32
+          %n_s = arith.index_cast %n_i : i32 to index
+          %n_2 = arith.addi %n_s, %n_s : index
+          %wb0 = arith.addi %pe, %three_i : index
+          %wbase = arith.addi %wb0, %n_2 : index
+''' + clenshaw('wv', '%wbase', '%t', 'wvalue0') + '''          %wvalue = arith.select %active, %wvalue0, %zero_r : !pme_real
+          %first_axis = arith.cmpi eq, %axis_l, %c0 : index
+          %qv = arith.mulf %wvalue, %qk : !pme_real
+          %weight = arith.select %first_axis, %qv, %wvalue : !pme_real
+'''
+    text = ''
+    for edge in GAUSSIAN.TILE_EDGES:
+        text += GAUSSIAN.tile_kernel(
+            edge, 'mdrt_gpu_pme_prolate_spread_tiles',
+            '%q: memref<?x!pme_chg, 1>, %places: memref<?x!pme_real, 1>, %tables: memref<?x!pme_real, 1>,',
+            lane,
+            'Adds the charges of the binned particles to `real` through tiles of\n'
+            '// the memory of the block, with the window (D[pme-tiles], D266).')
+    return text
+
+
 def main():
     out = HEADER + coefficients() + places(False) + places(True) + spread(fixed=False) + spread(fixed=True)
     out += gather(potential=False) + gather(potential=True)
@@ -932,6 +986,9 @@ def main():
     # compiler adds them where a sum has a list.
     out += spread(fixed=False, listed=True) + spread(fixed=True, listed=True)
     out += gather(potential=False, listed=True) + gather(potential=False, triclinic=True, listed=True)
+    # The spreading into tiles (D[pme-tiles]), after them for the same
+    # reason.
+    out += tiles()
     out = out.replace('@mdrt_gpu_pme_blocks(', '@mdrt_gpu_pme_prolate_blocks(')
     out = out.replace('@mdrt_gpu_pme_blocks_triclinic(', '@mdrt_gpu_pme_prolate_blocks(')
     sys.stdout.write(out)

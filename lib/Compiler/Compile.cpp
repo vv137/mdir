@@ -126,6 +126,19 @@ std::string mdir::compiler::getPipeline(const Control &control,
     os << "md-exec-approximate,md-exec-expand-radial,canonicalize,cse,";
 
   if (control.target == Target::GPU) {
+    // How each reciprocal sum spreads its charges, by the size of its grid
+    // (D[pme-tiles]); MDIR_PME_SPREAD (`global`, `tiles`, `tiles4`,
+    // `tiles8`, `tiles16`, or `auto`) overrides the choice, to compare the
+    // two.
+    os << "md-exec-choose-spreading{";
+    if (const char *spread = std::getenv("MDIR_PME_SPREAD")) {
+      StringRef layout(spread);
+      if (layout.consume_front("tiles") && !layout.empty())
+        os << "layout=tiles edge=" << layout << " ";
+      else
+        os << "layout=" << spread << " ";
+    }
+    os << (control.deterministic ? "deterministic=true" : "") << "},";
     // Kernels in f32 look their tables up in f32.
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")

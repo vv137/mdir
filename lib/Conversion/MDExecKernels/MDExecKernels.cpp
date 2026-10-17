@@ -2451,6 +2451,52 @@ std::string kernels::instantiatePMETemplates(StringRef text, Type position,
         instance += "llvm.inline_asm has_side_effects "
                     "\"red.relaxed.gpu.global.add.f32 [$0], $1;\", \"l,f\" "
                     "%pointer, %value : (!llvm.ptr<1>, f32) -> ()";
+    } else if (text.starts_with("PME_TILE_") ||
+               text.starts_with("PME_SHARED_ADD_")) {
+      // The tiles of the spreading of bins of E points (D[pme-tiles]):
+      // `PME_TILE_SIDE_E` the points of a side of a tile, E + P - 1, and
+      // `PME_TILE_POINTS_E` those of the tile; `PME_SHARED_ADD_E %tile[%t],
+      // %value` an atomic addition to the tile in the memory of the block.
+      bool side = text.consume_front("PME_TILE_SIDE_");
+      bool add = !side && text.consume_front("PME_SHARED_ADD_");
+      if (!side && !add)
+        (void)text.consume_front("PME_TILE_POINTS_");
+      StringRef digits = text.take_while(llvm::isDigit);
+      text = text.drop_front(digits.size());
+      int64_t edge = 0;
+      (void)digits.getAsInteger(10, edge);
+      int64_t length = edge + order - 1;
+      int64_t points = length * length * length;
+      if (side) {
+        instance += std::to_string(length);
+      } else if (!add) {
+        instance += std::to_string(points);
+      } else {
+        // A relaxed atomic addition at the scope of the block, native for
+        // f32 and f64 (`atom.relaxed.cta.shared.add`): `memref.atomic_rmw`
+        // is acq_rel at the scope of the system.
+        StringRef rest = text.take_until([](char c) { return c == '\n'; });
+        text = text.drop_front(rest.size());
+        auto [target, value] = rest.trim().split(", ");
+        auto [memory, subscript] = target.split('[');
+        StringRef at = subscript.rtrim(']');
+        std::string real = force.isF64() ? "f64" : "f32";
+        std::string bytes = force.isF64() ? "8" : "4";
+        std::string type = "memref<" + std::to_string(points) + "x" + real +
+                           ", #gpu.address_space<workgroup>>";
+        instance += "%shared_base = memref.extract_aligned_pointer_as_index " +
+                    memory.str() + " : " + type +
+                    " -> index\n%shared_bytes = arith.constant " + bytes +
+                    " : index\n%shared_at = arith.muli " + at.str() +
+                    ", %shared_bytes : index\n";
+        instance += "%shared_address = arith.addi %shared_base, %shared_at "
+                    ": index\n%shared_int = arith.index_cast "
+                    "%shared_address : index to i64\n%shared_pointer = "
+                    "llvm.inttoptr %shared_int : i64 to !llvm.ptr<3>\n"
+                    "%shared_old = llvm.atomicrmw fadd %shared_pointer, " +
+                    value.str() + " syncscope(\"block\") monotonic : "
+                    "!llvm.ptr<3>, " + real;
+      }
     } else if (text.consume_front("PME_FFT")) {
       // The transforms of the runtime of the host for a grid in
       // `!pme_real` (runtime/mdrt_fft.c).

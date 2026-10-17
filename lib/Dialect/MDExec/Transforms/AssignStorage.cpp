@@ -952,6 +952,40 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       gpu::WaitOp::create(root->builder, loc, Type(), ValueRange{cleared});
       scratch.push_back(buffer);
     }
+    // The bins of the spreading into tiles (D[pme-tiles]), last: in i32,
+    // the count of each bin and that of the particles that overflow, which
+    // each binning zeroes first, a run of C places for each bin, C twice
+    // the mean number of particles of a bin and 8 more, and n places for
+    // those that overflow (bin_header of
+    // scripts/generate-pme-gpu-template.py, which computes the same).
+    if (std::optional<int64_t> edge = op.getTiles()) {
+      int64_t bins = 1;
+      for (int64_t points : grid)
+        bins *= (points + *edge - 1) / *edge;
+      auto type = MemRefType::get({ShapedType::kDynamic},
+                                  IntegerType::get(context, 32),
+                                  MemRefLayoutAttrInterface(), space);
+      OpBuilder &b = root->builder;
+      auto constant = [&](int64_t value) {
+        return arith::ConstantIndexOp::create(b, loc, value).getResult();
+      };
+      Value mean = arith::DivUIOp::create(
+          b, loc, arith::AddIOp::create(b, loc, size, constant(bins - 1)),
+          constant(bins));
+      Value capacity = arith::AddIOp::create(
+          b, loc, arith::AddIOp::create(b, loc, mean, mean), constant(8));
+      Value runs = arith::MulIOp::create(b, loc, capacity, constant(bins));
+      Value length = arith::AddIOp::create(
+          b, loc, arith::AddIOp::create(b, loc, runs, size),
+          constant(bins + 1));
+      Value buffer = gpu::AllocOp::create(b, loc, type,
+                                          /*asyncToken=*/Type(),
+                                          /*asyncDependencies=*/ValueRange(),
+                                          ValueRange{length},
+                                          /*symbolOperands=*/ValueRange())
+                         .getMemref();
+      scratch.push_back(buffer);
+    }
   }
 
   auto created = ReciprocalOp::create(
@@ -959,7 +993,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       /*forces=*/Type(), positions, charges, mapping.lookup(op.getCell()),
       moduli, out, scratch, listed, op.getGridAttr(), op.getOrderAttr(),
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
-      op.getPotentialAttr(), op.getProlateAttr(), op.getGatherAllAttr());
+      op.getPotentialAttr(), op.getProlateAttr(), op.getGatherAllAttr(),
+      onDevice ? op.getTilesAttr() : IntegerAttr());
   mapping.map(op.getEnergy(), created.getEnergy());
   mapping.map(op.getVirial(), created.getVirial());
   buffers[op.getForces()] = out;

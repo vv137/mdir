@@ -541,6 +541,14 @@ physics," in *Advances in Neural Information Processing Systems 33
 (NeurIPS 2020)* (Curran Associates, 2020), pp. 11428–11441. No DOI;
 [proceedings page](https://proceedings.neurips.cc/paper_files/paper/2020/hash/83d3d4b6c9579515e1679aca8cbc8033-Abstract.html).
 
+### Shih2021
+
+Y.-H. Shih, G. Wright, J. Andén, J. Blaschke, A. H. Barnett, "cuFINUFFT: a
+load-balanced GPU library for general-purpose nonuniform FFTs," in *2021
+IEEE International Parallel and Distributed Processing Symposium Workshops
+(IPDPSW)*, 688–697 (2021).
+[doi:10.1109/IPDPSW52791.2021.00105](https://doi.org/10.1109/IPDPSW52791.2021.00105)
+
 ### Shirts2007
 
 M. R. Shirts, D. L. Mobley, J. D. Chodera, V. S. Pande, "Accurate and

@@ -953,7 +953,8 @@ func.func private @mdrt_gpu_pme_spread_float_triclinic(%x: memref<?x3x!pme_pos, 
 }
 
 // The weights of the particles for the spreading and the gathering of
-// order 4: see weights_kernels in the script.
+// order 4, and the places of the spreading into tiles at every order:
+// see weights_kernels in the script.
 func.func private @mdrt_gpu_pme_weights_triclinic(%x: memref<?x3x!pme_pos, 1>, %box: vector<6xf64>,
                                         %weights: memref<?x!pme_real, 1>,
                                         %k1: index, %k2: index, %k3: index) {
@@ -1015,7 +1016,7 @@ func.func private @mdrt_gpu_pme_weights_triclinic(%x: memref<?x3x!pme_pos, 1>, %
       %i0 = arith.constant 0 : index
       %i1 = arith.constant 1 : index
       %i2 = arith.constant 2 : index
-      %order = arith.constant 4 : index
+      %order = arith.constant PME_ORDER : index
       %xc = arith.constant 0 : index
       %xs = memref.load %x[%i, %xc] : memref<?x3x!pme_pos, 1>
       %xp = PME_EXTEND_POS %xs : !pme_pos to f64
