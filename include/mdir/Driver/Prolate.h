@@ -115,6 +115,12 @@ std::vector<double> getSplittingTable(const Function &psi, Part part,
                                       int64_t cells, int64_t terms);
 double getSplitting(const Function &psi, Part part, double x);
 
+/// `Near`, Φ(x)/x, as a Chebyshev series in y = 2x² − 1 for x in [0, 1]:
+/// Φ is odd, so Φ(x)/x is a polynomial in x², which this series holds to
+/// the rounding of f64. The direct sum f q q (1 − Φ(x))/r is then
+/// f q q (1/r − Σ a_k T_k(y) / r_c), a function of r² alone.
+std::vector<double> getNearSeries(const Function &psi);
+
 /// The aliasing error of the spreading relative to the spectral sum that
 /// it perturbs, the estimate of eq. 10 of [Liang2026] divided by the same
 /// sum without the factor of the alias: for each axis a,

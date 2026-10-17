@@ -12,6 +12,7 @@
 
 #include <array>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <map>
 
@@ -26,6 +27,20 @@ static std::pair<int64_t, int64_t> getProlateTableShape(Precision precision) {
   if (precision == Precision::Double)
     return {64, 10};
   return {128, 4};
+}
+
+/// Whether the direct sum of the prolate kernel in a loop over pairs is a
+/// Chebyshev series of r², which a table in f32 takes (D94), rather than
+/// the cells of `pme_far` (D[prolate-pair-table]): under `fast_math`, where
+/// the kernels compute in f32. A kernel in f64 would evaluate the series
+/// itself, for which the cells are faster. `MDIR_PROLATE_CELLS=1` keeps
+/// the cells, to compare the two.
+static bool takesProlateSeries(const Control &control) {
+  if (!control.fastMath || control.precision == Precision::Double)
+    return false;
+  const char *cells = std::getenv("MDIR_PROLATE_CELLS");
+  return !cells || llvm::StringRef(cells).empty() ||
+         llvm::StringRef(cells) == "0";
 }
 
 using llvm::StringRef;
@@ -3085,6 +3100,7 @@ llvm::Error Builder::collectProlate() {
     program.tables.push_back(std::move(split));
   }
 
+  program.pmeNearSeries = prolate::getNearSeries(psi);
   program.pmeProlate = true;
   program.pmeBandwidth = c;
   program.pmeWindowBandwidth = c1;
@@ -5046,9 +5062,31 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
         os << "    %rc_inverse = arith.constant "
            << formatReal(1.0 / cutoff) << " : f64\n"
            << "    %xr = arith.mulf " << rq << ", %rc_inverse : f64\n";
-        std::string far = emitProlateSplitting(os, "pme_far", "%xr", "%pf_", control.precision);
-        os << "    %screened = arith.divf " << far << ", " << rq << " : f64\n"
-           << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
+        if (takesProlateSeries(control) && !scalesCoulomb) {
+          // f q q (1/r − (Φ(x)/x)/r_c), Φ(x)/x a Chebyshev series in
+          // y = 2x² − 1: a function of r² alone, which a table of r² then
+          // holds as it holds erfc(βr)/r (D94, D[prolate-pair-table]).
+          os << "    %pn_x2 = arith.mulf %xr, %xr : f64\n"
+             << "    %pn_two = arith.constant 2.0 : f64\n"
+             << "    %pn_one = arith.constant 1.0 : f64\n"
+             << "    %pn_2x2 = arith.mulf %pn_two, %pn_x2 : f64\n"
+             << "    %pn_y = arith.subf %pn_2x2, %pn_one : f64\n"
+             << "    %pn_near = md.chebyshev %pn_y [";
+          llvm::interleaveComma(program.pmeNearSeries, os, [&](double c) {
+            os << formatReal(c);
+          });
+          os << "] : f64\n"
+             << "    %pn_shielded = arith.mulf %pn_near, %rc_inverse : f64\n"
+             << "    %pn_inverse = arith.divf %pn_one, " << rq << " : f64\n"
+             << "    %screened = arith.subf %pn_inverse, %pn_shielded : f64\n"
+             << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
+        } else {
+          std::string far = emitProlateSplitting(os, "pme_far", "%xr", "%pf_",
+                                                 control.precision);
+          os << "    %screened = arith.divf " << far << ", " << rq
+             << " : f64\n"
+             << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
+        }
       } else if (program.pme) {
         // The direct sum of particle mesh Ewald, f q q erfc(β r) / r,
         // shifted to 0 at the cutoff if the control file asks.

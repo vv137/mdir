@@ -7,6 +7,7 @@
 
 include "mlir/IR/BuiltinAttributes.td"
 include "mlir/IR/OpAsmInterface.td"
+include "mlir/Interfaces/InferTypeOpInterface.td"
 include "mlir/IR/SymbolInterfaces.td"
 include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/FunctionInterfaces.td"
@@ -368,6 +369,33 @@ def MD_LookupOp : MD_Op<"lookup", [Pure]> {
   let assemblyFormat = [{
     $table `[` $indices `]` attr-dict `:` qualified(type($table)) `,`
     type($indices) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def MD_ChebyshevOp : MD_Op<"chebyshev", [Pure, SameOperandsAndResultType]> {
+  let summary = "A Chebyshev series";
+  let description = [{
+    The value $\sum_k c_k T_k(y)$ of the Chebyshev polynomials of the first
+    kind at `y`, which should lie in $[-1, 1]$, with the coefficients
+    `coefficients` from $c_0$ upwards: a smooth function that a kernel
+    computes of its arguments, such as a part of the splitting of the
+    prolate kernel of particle mesh Ewald (D266) in $y = 2 r^2 / r_c^2 - 1$.
+
+    ```mlir
+    %s = md.chebyshev %y [1.0, -0.5, 0.125] : f64
+    ```
+
+    Its derivative is the series of the derivatives. In a loop over pairs
+    under `fast_math`, `md-exec-simplify-distance` takes a series of the
+    squared distance into a function of it that `md-exec-expand-radial`
+    tabulates in f32 (D94); a series that no table takes becomes Clenshaw's
+    recurrence there [Clenshaw1955].
+  }];
+  let arguments = (ins AnyFloat:$y, DenseF64ArrayAttr:$coefficients);
+  let results = (outs AnyFloat:$result);
+  let assemblyFormat = [{
+    $y $coefficients attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }
