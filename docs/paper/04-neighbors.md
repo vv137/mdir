@@ -662,7 +662,7 @@ of the tests is narrower than the 7 Å cutoff of the model. The model's
 energy is a sum over centers of functions of their edges alone, so the
 list must hold each element of $\mathcal E$ exactly once. MDIR's program
 derives it from a neighborhood at the model's cutoff (`md.edges`,
-D[mlip-pairlist]), and the opaque call of the model (D270) takes it.
+D277), and the opaque call of the model (D270) takes it.
 
 **Candidates.** A row of the matrix holds $j$ once if its nearest image is
 within $R$ at the build (Section 4.3; the build of a triclinic cell tests

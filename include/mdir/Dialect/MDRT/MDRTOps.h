@@ -33,7 +33,7 @@ mlir::MemRefType getHostNumberType(mlir::Type number);
 /// The arguments of the function of mdrt.host_call that an input of the
 /// type `input` takes: four for the pairs of images of `md_exec.build_edges`
 /// (its slots, counts, offsets, and the number of their build,
-/// D[mlip-pairlist]), one for any other.
+/// D277), one for any other.
 unsigned getHostArgumentCount(mlir::Type input);
 
 /// The index of the first argument of the function of `call` that takes

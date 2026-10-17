@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s | mdir-opt | FileCheck %s
 
 // The pairs of images within a cutoff that a learned potential takes,
-// derived from a neighborhood (D[mlip-pairlist]).
+// derived from a neighborhood (D277).
 
 !vec   = !md.field<@atoms, 3 x f64>
 !pairs = !md.relation<@atoms, 2, unordered>

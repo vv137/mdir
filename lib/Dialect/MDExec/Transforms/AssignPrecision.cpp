@@ -370,7 +370,7 @@ LogicalResult Assigner::collect(Operation *op) {
     return success();
   }
   // The pairs of images are tested in the type of the positions as they
-  // are stored, f64 (D[mlip-pairlist]).
+  // are stored, f64 (D277).
   if (auto edges = dyn_cast<BuildEdgesOp>(op)) {
     positions.push_back(edges.getPositions());
     return success();

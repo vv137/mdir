@@ -13,7 +13,7 @@
 // RUN:     --md-exec-assign-storage 2>&1 \
 // RUN: | FileCheck %s --check-prefix=HOST
 
-// The pair list of a learned potential (D[mlip-pairlist],
+// The pair list of a learned potential (D277,
 // docs/metatomic-ml1.md, Section 12): the pairs of images of a neighborhood
 // at the model's cutoff, which a host call takes in place.
 

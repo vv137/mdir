@@ -1127,7 +1127,7 @@ void mdrtMatrixGrow(int64_t handle, int64_t width) {
 /* The candidates of the pairs of images that each build of a neighbor
    matrix gives its particles, a row (j, s_a, s_b, s_c) for each, and the
    slots that each step writes them into, a row (i, j, s_a, s_b, s_c) for
-   each (D[mlip-pairlist], docs/metatomic-ml1.md, Section 12).
+   each (D277, docs/metatomic-ml1.md, Section 12).
    A build sets their number, `length`; the buffers grow, a quarter more
    than asked, when a build needs more. What they held is lost: the build
    writes the candidates anew. Compiled code takes a buffer where it uses it

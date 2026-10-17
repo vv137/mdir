@@ -97,7 +97,7 @@ def MD_RelationType : MD_Type<"Relation", "relation"> {
 def MD_EdgesType : MD_Type<"Edges", "edges"> {
   let summary = "The directed pairs of images within a cutoff";
   let description = [{
-    The pairs that a local learned potential takes (D[mlip-pairlist],
+    The pairs that a local learned potential takes (D277,
     docs/metatomic-ml1.md, Section 12): for each particle `i`, every other
     particle `j` and every image of it, and every image of `i` itself,
     within the cutoff,

@@ -87,7 +87,7 @@ static const char *const reserveBlockOfName = "mdrtGroupsReserveBlockOf";
 static const char *const placedGroupsName = "mdrtGroupsPlaced";
 static const char *const checkPrunedName = "mdrtCheckPruned";
 /// The candidates and the slots of the pairs of images of a learned
-/// potential (D[mlip-pairlist]).
+/// potential (D277).
 static const char *const createEdgesName = "mdrtEdgesCreate";
 static const char *const reserveEdgesName = "mdrtEdgesReserve";
 static const char *const edgesBufferName = "mdrtEdgesBuffer";
@@ -150,7 +150,7 @@ struct Neighbors {
   /// (D268).
   Value prunedNow;
   /// The pairs of images that `md_exec.build_edges` takes from a matrix
-  /// (D[mlip-pairlist]): each build counts the candidates of each
+  /// (D277): each build counts the candidates of each
   /// particle, gives it the slots at its offset, and writes the candidates
   /// there, which the runtime holds by `edgesHandle` with the slots; the
   /// counts (of candidates at a build, of pairs within the cutoff after a
@@ -330,7 +330,7 @@ private:
   /// is.
   Value getMatrixEntries(OpBuilder &builder, Location loc, Value handle);
   /// The candidates (`which` 0) or the slots (1) of the pairs of images of
-  /// `handle`, as the last build left them (D[mlip-pairlist]).
+  /// `handle`, as the last build left them (D277).
   Value getEdgesBuffer(OpBuilder &builder, Location loc, Value handle,
                        int64_t which);
   /// After a build of the matrix `structure` at `positions` in the cell
@@ -4262,7 +4262,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
   memref::StoreOp::create(builder, loc, none, structure.builds, ValueRange{});
   memref::StoreOp::create(builder, loc, none, structure.age, ValueRange{});
   // The slots of the pairs of images, where a matrix gives them
-  // (D[mlip-pairlist]).
+  // (D277).
   if (!structure.groups && feedsEdges(op.getResult())) {
     structure.edges = true;
     structure.edgesHandle =
@@ -4450,7 +4450,7 @@ Value Lowering::getMatrixEntries(OpBuilder &builder, Location loc,
 }
 
 //===----------------------------------------------------------------------===//
-// The pairs of images of a learned potential (D[mlip-pairlist])
+// The pairs of images of a learned potential (D277)
 //===----------------------------------------------------------------------===//
 
 Value Lowering::getEdgesBuffer(OpBuilder &builder, Location loc, Value handle,

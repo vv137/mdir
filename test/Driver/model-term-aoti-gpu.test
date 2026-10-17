@@ -24,7 +24,7 @@
 # CHECK: forces ok
 # CHECK: virial ok
 
-# The pair list is MDIR's (D[mlip-pairlist], docs/metatomic-ml1.md,
+# The pair list is MDIR's (D277, docs/metatomic-ml1.md,
 # Section 12): with MDIR_MLIP_CHECK_PAIRS the plugin compares its pairs
 # within the cutoff, at every evaluation, with those of its own search, as
 # sets; taken exactly or padded (chunks begin at the offsets of the slots

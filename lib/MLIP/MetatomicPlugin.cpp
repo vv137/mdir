@@ -12,7 +12,7 @@
 // (register_autograd_neighbors). Forces and virial are the derivatives of the
 // energy in the positions and in a strain of positions and cell, the
 // approach of metatomic's own ASE calculator. The pair list is MDIR's
-// (D[mlip-pairlist], Section 12 of the design): slots of every pair of
+// (D277, Section 12 of the design): slots of every pair of
 // images within the cutoff and the skin, built by the engine from its
 // neighbor matrix, those within the cutoff first for each particle; the
 // plugin takes every slot, or gathers the pairs within the cutoff. With
@@ -150,7 +150,7 @@ struct mdir_mlip_model {
   double searchSeconds = 0.0, modelSeconds = 0.0;
   int32_t pairsMode = MDIR_MLIP_PAIRS_SEARCH;
   /// The offsets of the slots of MDIR's pair list on the host, from the
-  /// build that `offsetsBuild` counts (D[mlip-pairlist]).
+  /// build that `offsetsBuild` counts (D277).
   std::vector<int32_t> hostOffsets;
   int64_t offsetsBuild = -1;
   torch::Dict<std::string, mta::ModelOutput> outputs;
@@ -446,7 +446,7 @@ int64_t evaluatePackage(mdir_mlip_model &m, const torch::Tensor &positions,
   return static_cast<int64_t>(starts.size() - 1);
 }
 
-/// The pairs of MDIR's list (D[mlip-pairlist], Section 12 of the
+/// The pairs of MDIR's list (D277, Section 12 of the
 /// design) for an evaluation of `n` particles: every slot (padded), or the
 /// pairs within the cutoff gathered on the device (exact); and, for chunks
 /// of `m.centersPerCall` centers, the place in the list where each chunk
@@ -540,7 +540,7 @@ torch::Tensor sortedPairs(const torch::Tensor &pairs,
 }
 
 /// MDIR_MLIP_CHECK_PAIRS: the pairs within the cutoff of MDIR's list
-/// against those of the plugin's own search, as sets (D[mlip-pairlist]);
+/// against those of the plugin's own search, as sets (D277);
 /// with the padded list, its pairs within the cutoff alone. Waits for the
 /// device, and throws where they differ.
 void comparePairs(mdir_mlip_model &m, const mdir_mlip_pairs &list,
@@ -826,7 +826,7 @@ int mdir_mlip_evaluate(mdir_mlip_model *m, const mdir_mlip_inputs *in,
       m->modelSeconds += std::chrono::duration<double>(clock::now() - searched).count();
     };
 
-    // MDIR's pair list (D[mlip-pairlist]), or the plugin's own search.
+    // MDIR's pair list (D277), or the plugin's own search.
     torch::Tensor pairs, shifts;
     std::vector<int64_t> bounds;
     bool search = in->pairs.mode == MDIR_MLIP_PAIRS_SEARCH;

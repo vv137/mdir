@@ -538,7 +538,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   }
 
   // The program of a model term asks the plugin for its cutoff
-  // (D[mlip-pairlist]); the plugin is beside the runtime libraries,
+  // (D277); the plugin is beside the runtime libraries,
   // <prefix>/lib.
   {
     std::string executable =

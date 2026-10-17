@@ -512,7 +512,7 @@ compileEngine(const Control &control, const System &system,
   auto engine = std::make_unique<Simulation::Engine>();
   engine->control = control;
   // The program of a model term asks the plugin for its cutoff
-  // (D[mlip-pairlist]).
+  // (D277).
   driver::setPluginDirectory(findRuntimeDirectory());
   auto program = buildProgram(control, system);
   if (!program)

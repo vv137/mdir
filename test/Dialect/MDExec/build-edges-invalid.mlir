@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
 
-// The forms of md_exec.build_edges (D[mlip-pairlist]) and the host
+// The forms of md_exec.build_edges (D277) and the host
 // call that takes its pairs.
 
 !vec = !md.field<@atoms, 3 x f64>

@@ -104,7 +104,7 @@ public:
       keep.insert(beginnings.begin(), beginnings.end());
     });
     // So are the pairs of images of a learned potential
-    // (D[mlip-pairlist]).
+    // (D277).
     getOperation()->walk([&](BuildEdgesOp edges) {
       llvm::DenseSet<Value> visited;
       llvm::SetVector<Operation *> beginnings;

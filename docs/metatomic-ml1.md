@@ -1183,7 +1183,7 @@ within $1.8 \times 10^{-4}$, $3.0 \times 10^{-3}$, and $1.3 \times 10^{-3}$.
 minimization with this backend beyond the test of `mdir run` (D272's
 validation holds for any backend, since the plugin's outputs are the same).
 
-## 12. The pair list from MDIR's neighbor structures (D[mlip-pairlist])
+## 12. The pair list from MDIR's neighbor structures (D277)
 
 The third step of Section 8 (issue #378), the common prerequisite of the
 staged models (#377) and of ML3. Until this step the plugin searched its

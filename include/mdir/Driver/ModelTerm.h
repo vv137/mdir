@@ -38,11 +38,11 @@ llvm::Expected<std::string> getPluginTorchVersion(llvm::StringRef path);
 void setPluginDirectory(llvm::StringRef directory);
 
 /// The cutoff of the pair list of the model of `term`, in nm, which the
-/// plugin reads from the model's file without a device (D[mlip-pairlist]):
+/// plugin reads from the model's file without a device (D277):
 /// the program of a run with the term is built with it.
 llvm::Expected<double> getModelCutoff(const Control::ModelTerm &term);
 
-/// How the plugin takes the pair list (`MDIR_MLIP_PAIRS`, D[mlip-pairlist],
+/// How the plugin takes the pair list (`MDIR_MLIP_PAIRS`, D277,
 /// docs/environment.md): MDIR's list of the pairs within the cutoff
 /// ("exact", the default), every slot of MDIR's list ("padded"), or the
 /// plugin's own search ("search"), as the constants MDIR_MLIP_PAIRS_* of
@@ -71,7 +71,7 @@ public:
   /// (device, n x 3, of `forceBits` bits). Returns an empty string or what
   /// failed.
   /// `slots`, `pairCounts`, and `pairOffsets` (device) are MDIR's pair
-  /// list (D[mlip-pairlist]) of `numSlots` slots from the build that
+  /// list (D277) of `numSlots` slots from the build that
   /// `builds` counts, or null where the plugin searches its own.
   std::string evaluate(int64_t index, const void *positions, int bits,
                        const int32_t *numbers, int64_t count,
@@ -120,7 +120,7 @@ private:
 /// numbers, and the cell (its diagonal and tilts b_x, c_x, c_y), its forces
 /// added to `forces`; with `Energy`, its energy and virial written to
 /// `energy` (1) and `virial` (9). With `Edges`, it takes MDIR's pair list
-/// (D[mlip-pairlist]): the slots, the counts, the offsets, and the
+/// (D277): the slots, the counts, the offsets, and the
 /// number of the build of the slots of `md_exec.build_edges`.
 extern "C" {
 void _mlir_ciface_mdrtModelEvaluateEdges(

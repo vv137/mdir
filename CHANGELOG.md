@@ -44,7 +44,7 @@ format, or the outputs; every such change is listed under **Changed** or
   cutoff of 9 Å and time them at 16, 4, and 1 threads with the parts of
   the step; `cpu-breakdown/prof.py` labels the prolate kernel's loop over
   pairs. MDIR's behavior does not change.
-- The pair list of a term of `[[energy.model]]` is MDIR's (D[mlip-pairlist],
+- The pair list of a term of `[[energy.model]]` is MDIR's (D277,
   #378): `md.edges` of an `md.neighborhood` at the model's cutoff, every
   image of each pair within it from the rows of the neighbor matrix (cells
   narrower than the cutoff included), built on the device in slots fixed at

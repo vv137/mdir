@@ -1129,7 +1129,7 @@ def MDExec_BuildEdgesOp : MDExec_Op<"build_edges", [
   let summary = "Finds the pairs of images within a cutoff";
   let description = [{
     The pairs of `md.edges` at the positions `positions` in the cell
-    `cell` (D[mlip-pairlist], docs/metatomic-ml1.md, Section 12):
+    `cell` (D277, docs/metatomic-ml1.md, Section 12):
     for each particle `i`, every image `s` of each particle `j` of its row
     in `neighbors`, and of `i` itself, with `|x_j − x_i + s H| < cutoff`.
 

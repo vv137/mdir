@@ -1050,7 +1050,7 @@ struct Coupled {
 
   /// The cutoffs of the pair lists of the models of [[energy.model]], in
   /// nm, which the plugin reads from their files, and whether the program
-  /// builds their pair lists (D[mlip-pairlist]): not where the plugin
+  /// builds their pair lists (D277): not where the plugin
   /// searches its own (`MDIR_MLIP_PAIRS=search`).
   std::vector<double> modelCutoffs;
   bool modelEdges = false;
@@ -9332,7 +9332,7 @@ std::string Builder::emitModelTerms(StringRef indent, StringRef x,
     std::string k = t + "_" + std::to_string(index);
     bool last = index + 1 == control.models.size();
     std::string next = last ? fResult.str() : "%mf" + k;
-    // The model's pair list (D[mlip-pairlist]): the pairs of images
+    // The model's pair list (D277): the pairs of images
     // within its cutoff, from a neighborhood at that cutoff, which the
     // program refreshes with the skin of the run.
     if (modelEdges) {
@@ -10340,7 +10340,7 @@ void Builder::emitEntry() {
   // energy and its virial as well.
   if (!control.models.empty()) {
     // With the pair list of the program, its slots, counts, offsets, and
-    // the number of their build (D[mlip-pairlist]).
+    // the number of their build (D277).
     std::string edges =
         modelEdges ? "memref<?x5xi32> {mdrt.read_only}, memref<?xi32> "
                      "{mdrt.read_only}, memref<?xi32> {mdrt.read_only}, i64, "
@@ -11590,7 +11590,7 @@ llvm::Error Builder::build() {
       return makeError("a term of [[energy.model]] has no derivative in a "
                        "tunable parameter: tunables are refused");
     // The pair list is a value of the program, at the model's cutoff
-    // (D[mlip-pairlist]).
+    // (D277).
     llvm::Expected<int> mode = getPairsMode();
     if (!mode)
       return mode.takeError();

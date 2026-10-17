@@ -217,7 +217,7 @@ private:
   llvm::DenseMap<Value, Value> neighbors;
   /// The pairs of images of `md_exec.build_edges`: the results of its
   /// storage form, which a host call takes in their place
-  /// (D[mlip-pairlist]).
+  /// (D277).
   llvm::DenseMap<Value, SmallVector<Value, 4>> edges;
   /// Orders of the particles: the buffer that holds the order.
   llvm::DenseMap<Value, Value> orders;
@@ -802,7 +802,7 @@ LogicalResult Assignment::convertBuildEdges(BuildEdgesOp op, Scope &scope) {
   if (op.isStorageForm())
     return op.emitOpError() << "is in the storage form already";
   // The pairs of images are found on the device, for a learned potential
-  // that runs there (D[mlip-pairlist]).
+  // that runs there (D277).
   if (!onDevice)
     return op.emitOpError() << "finds the pairs of images on a device only: "
                                "a learned potential runs on a GPU";
@@ -1479,7 +1479,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     // The buffers of the host that this call has taken, by type.
     llvm::DenseMap<std::pair<Type, Attribute>, unsigned> taken;
     // The function takes the buffers of the pairs of images in place of
-    // them, four arguments for one (D[mlip-pairlist]).
+    // them, four arguments for one (D277).
     ArrayRef<Type> calleeTypes = callee.getArgumentTypes();
     unsigned next = 0;
     for (Value operand : call.getInputs()) {

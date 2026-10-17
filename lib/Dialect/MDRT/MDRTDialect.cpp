@@ -129,7 +129,7 @@ LogicalResult HostCallOp::verify() {
                            << " to have the type of the field in 'outs', "
                            << getOuts()[i].getType();
   // The pairs of images are buffers of the device, which the host takes
-  // only where they are (D[mlip-pairlist]).
+  // only where they are (D277).
   for (Value input : getInputs())
     if (isa<mdir::md::EdgesType>(input.getType()) && !getInPlace())
       return emitOpError() << "takes the pairs of images, which a host call "
@@ -153,7 +153,7 @@ HostCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   // The operands, the buffers of the fields of `outs`, and the buffers of
   // the host that take the numbers. The pairs of images of
   // `md_exec.build_edges` are four arguments: its slots, counts, and
-  // offsets, and the number of their build (D[mlip-pairlist]).
+  // offsets, and the number of their build (D277).
   ArrayRef<Type> expected = callee.getArgumentTypes();
   MLIRContext *context = getContext();
   Type narrow = IntegerType::get(context, 32);

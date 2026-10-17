@@ -26,7 +26,7 @@ extern "C" {
 #endif
 
 /* The version of this boundary; a plugin of another version is refused.
-   Version 2 gives the plugin MDIR's pair list (D[mlip-pairlist],
+   Version 2 gives the plugin MDIR's pair list (D277,
    docs/metatomic-ml1.md, Section 12) and asks it for the cutoff of a model
    before the program is built. */
 #define MDIR_MLIP_ABI_VERSION 2
@@ -85,7 +85,7 @@ typedef struct mdir_mlip_description {
 #define MDIR_MLIP_PAIRS_EXACT 1  /* the pairs within the cutoff, counted */
 #define MDIR_MLIP_PAIRS_PADDED 2 /* every slot, without a wait */
 
-/* MDIR's pair list (D[mlip-pairlist]): on the device, `num_slots` slots,
+/* MDIR's pair list (D277): on the device, `num_slots` slots,
    rows (i, j, s_a, s_b, s_c) of int32, the pair vector of a row being
    x_j - x_i + s H, grouped by i in ascending order; particle i has the slots
    [offsets[i], offsets[i + 1]) (`offsets`, n + 1), and the first counts[i]

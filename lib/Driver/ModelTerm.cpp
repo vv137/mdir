@@ -263,7 +263,7 @@ ModelTerms::load(const Control &control, const System &system,
                           "call, whatever 'centers_per_call' asks")
             : std::string("the whole system in one call"),
         term.backend == "AOTI" ? "AOTInductor package" : "metatomic",
-        // How the model takes its pair list (D[mlip-pairlist]).
+        // How the model takes its pair list (D277).
         terms->pairsMode == MDIR_MLIP_PAIRS_EXACT
             ? "the pair list MDIR's, its pairs within the cutoff"
         : terms->pairsMode == MDIR_MLIP_PAIRS_PADDED
@@ -308,7 +308,7 @@ std::string ModelTerms::evaluate(int64_t index, const void *positions,
   std::copy(cell, cell + 9, inputs.cell);
   inputs.periodic[0] = inputs.periodic[1] = inputs.periodic[2] = 1;
   inputs.stream = stream();
-  // MDIR's pair list (D[mlip-pairlist]), where the program built it.
+  // MDIR's pair list (D277), where the program built it.
   if (pairCounts) {
     inputs.pairs.mode = pairsMode;
     inputs.pairs.slots = slots;
@@ -404,7 +404,7 @@ void evaluateModel(int64_t index, void *given, void *atomic, double lx,
                    void *countsGiven = nullptr, void *offsetsGiven = nullptr,
                    int64_t builds = 0) {
   auto *positions = static_cast<StridedMemRefType<char, 2> *>(given);
-  // MDIR's pair list (D[mlip-pairlist]): buffers of the device.
+  // MDIR's pair list (D277): buffers of the device.
   const int32_t *slots = nullptr, *pairCounts = nullptr,
                 *pairOffsets = nullptr;
   int64_t numSlots = 0;

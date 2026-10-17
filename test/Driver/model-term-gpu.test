@@ -25,7 +25,7 @@
 # CHECK: forces ok
 # CHECK: virial ok
 
-# MDIR's pair list (D[mlip-pairlist]), padded, compared at every
+# MDIR's pair list (D277), padded, compared at every
 # evaluation with the plugin's own search; and that search alone.
 # RUN: env MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=padded %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.pt --centers-per-call 5 --steps 2 2>%t/padded.err | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
 # RUN: FileCheck %s --check-prefix=AGREE < %t/padded.err

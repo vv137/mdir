@@ -306,7 +306,7 @@ def MD_EdgesOp : MD_Op<"edges", [Pure]> {
     E(N, x, h) = { (i, j, s) : (j, s) ≠ (i, 0), |x_j − x_i + s H| < r_c }
     ```
 
-    The list that a local learned potential takes (D[mlip-pairlist],
+    The list that a local learned potential takes (D277,
     docs/metatomic-ml1.md, Section 12): every image of every particle
     within the cutoff of each particle, the particle's own images
     included, in both directions, grouped by `i` in the order of the

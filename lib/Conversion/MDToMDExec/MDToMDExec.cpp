@@ -148,7 +148,7 @@ LogicalResult Converter::convertTriplets(md::TripletsOp op) {
 }
 
 /// The pairs of images of a learned potential are found from the rows of
-/// the neighbor structure of the neighborhood (D[mlip-pairlist]).
+/// the neighbor structure of the neighborhood (D277).
 LogicalResult Converter::convertEdges(md::EdgesOp op) {
   if (!op.getNeighbors().getDefiningOp<md::NeighborhoodOp>())
     return op.emitOpError() << "cannot convert the edges of a relation that "
