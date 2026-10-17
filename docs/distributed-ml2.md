@@ -9,7 +9,7 @@ ensembles, the Amber suite on several GPUs). Sections 1 to 11 are the
 design; Section 12 is what the first PR builds and its validation;
 Section 13 records the maintainer's rulings; Section 14 is the second part,
 `md-distribute` and the derivative rules of $G$ and $G^\mathsf T$
-(D[ml2-distribute]).
+(D276).
 
 ## 1. Scope
 
@@ -256,7 +256,7 @@ In both, $\sum_d S_d$ is the sum of `md.sum_relation` over the global
 relation and $\mathbf a$ the field of `md.gather_relation`.
 
 Over a directed relation, `gather_pairs` may also yield the two partial
-results (D[ml2-distribute]): each pair $(i, k) \in D_d$ adds
+results (D276): each pair $(i, k) \in D_d$ adds
 $\tfrac12 k(i,k)$ at $i$ and $\tfrac12\sigma\,k(i,k)$ at $k$, owned or ghost,
 again with $\mathbf a = \mathbf p + G^\mathsf T\mathbf q$. It is the transpose of
 a directed `sum_pairs`, the form the derivative takes (Section 14.3), and
@@ -588,7 +588,7 @@ The order of the passes of Section 11 stands as designed.
 
 ## 14. The second part: `md-distribute` and the rules of $G$ and $G^\mathsf T$
 
-D[ml2-distribute] makes a global potential run on domains through the
+D276 makes a global potential run on domains through the
 compiler: the program of Section 5 is no longer written by hand but derived
 from the potential of `md`, and its forces and virial from the semantic
 differentiation, with the adjoints of the transfers taken by declared

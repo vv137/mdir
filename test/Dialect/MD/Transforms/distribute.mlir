@@ -1,4 +1,4 @@
-// md-distribute rewrites a global potential into md_dist (D[ml2-distribute],
+// md-distribute rewrites a global potential into md_dist (D276,
 // docs/distributed-ml2.md, Section 14).
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1" | FileCheck %s --check-prefixes=CHECK,DIRECTED
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=unique" | FileCheck %s --check-prefixes=CHECK,UNIQUE

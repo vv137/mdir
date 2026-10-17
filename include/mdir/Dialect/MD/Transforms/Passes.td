@@ -48,7 +48,7 @@ def Distribute : Pass<"md-distribute", "::mlir::ModuleOp"> {
   let summary = "Rewrites global potentials to run on a grid of domains";
   let description = [{
     Rewrites the body of every `md.potential` (or of those that
-    `potentials` names) into `md_dist` (D[ml2-distribute],
+    `potentials` names) into `md_dist` (D276,
     docs/distributed-ml2.md, Section 14): a decomposition of the particle
     set into a grid of domains, a layout from the positions, the owned
     rows of every field, one halo of ghosts with their images, a copy to
@@ -101,7 +101,7 @@ def DistOwnerComputes
     owners. Every pair of a directed relation is at the owner of each of
     its particles, so the same sum is the gather with one complete result,
     every pair at its center with the weight one, and nothing to return
-    (D[ml2-distribute], docs/distributed-ml2.md, Section 14):
+    (D276, docs/distributed-ml2.md, Section 14):
 
     ```text
     p_i + (G^T q)_i = ½ Σ_k k(i, k) + ½ σ Σ_{(j, k) : s(k) = i} k(j, k)

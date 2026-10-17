@@ -1,5 +1,5 @@
 // The declared transposes of linear ops, which md-differentiate carries
-// adjoints through (D[ml2-distribute]).
+// adjoints through (D276).
 
 #ifndef MDIR_DIALECT_MD_TRANSFORMS_ADJOINTINTERFACE_H
 #define MDIR_DIALECT_MD_TRANSFORMS_ADJOINTINTERFACE_H

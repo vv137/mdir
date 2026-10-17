@@ -1,5 +1,5 @@
 // md-distribute refuses what it cannot distribute, with the reason
-// (D[ml2-distribute]).
+// (D276).
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1" -split-input-file -verify-diagnostics
 // RUN: not mdir-opt %s --md-distribute="grid=2,1,1 traversal=unique" -split-input-file 2>&1 | FileCheck %s --check-prefix=UNIQUE
 

@@ -360,7 +360,7 @@ def MDDist_GatherPairsOp : MDDist_PairOp<"gather_pairs"> {
     states and the verifier proves.
 
     Over a `directed` relation the op may yield the two partial results as
-    well (D[ml2-distribute]): every pair `(i, k)` of a domain adds
+    well (D276): every pair `(i, k)` of a domain adds
     `½ k(i, k)` at `i` and `½ σ k(i, k)` at `k`, owned or ghost, again with
     `a = p + G^T q`. It is the transpose of a directed `md_dist.sum_pairs`,
     the form `md-differentiate` gives, and `md-dist-owner-computes` turns
@@ -430,7 +430,7 @@ def MDDist_MapParticlesOp : MDDist_Op<"map_particles", [
     The map of `md.map_particles` over the owned rows of fields of one
     layout, or over the ghost rows of fields of one halo. The fields are
     complete; the result is complete, of the same rows
-    (D[ml2-distribute]).
+    (D276).
 
     ```mlir
     %b = md_dist.map_particles gather(%a : !md_dist.field<@dd, owned, f64>) {

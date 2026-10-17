@@ -1,4 +1,4 @@
-// The declared transposes of the transfers of md_dist (D[ml2-distribute]).
+// The declared transposes of the transfers of md_dist (D276).
 //
 // See docs/distributed-ml2.md, Sections 3, 4.5, and 11. G, the copy of
 // owned values to the ghosts, and G^T, the sum of the ghosts' values at

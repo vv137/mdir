@@ -1,6 +1,6 @@
 // The forces of a directed traversal, computed at the owners.
 //
-// See docs/distributed-ml2.md, Sections 11 and 14 (D[ml2-distribute]).
+// See docs/distributed-ml2.md, Sections 11 and 14 (D276).
 // The derivative of a directed md_dist.sum_pairs is a gather_pairs with
 // two partial results, half of every pair at each of its particles,
 // completed by md_dist.halo_sum (G^T). Every pair of a directed relation is

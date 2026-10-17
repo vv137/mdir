@@ -1,4 +1,4 @@
-// Lennard-Jones on several domains through the compiler (D[ml2-distribute],
+// Lennard-Jones on several domains through the compiler (D276,
 // docs/distributed-ml2.md, Section 14): the global potential of
 // dist-lj.mlir, distributed by md-distribute and differentiated by
 // md-differentiate, against the same potential on one domain and against

@@ -110,7 +110,7 @@ func.func @transpose(%x: !vec, %l: f64) -> (f64, !vec) {
 
 // The transpose of a directed sum: half of each pair at each of its
 // particles, completed by G^T; and a map over owned rows
-// (D[ml2-distribute]).
+// (D276).
 // CHECK-LABEL: func.func @directed_two_ended
 func.func @directed_two_ended(%x: !vec, %l: f64) -> !vec {
   %cell = md.orthorhombic_cell %l, %l, %l

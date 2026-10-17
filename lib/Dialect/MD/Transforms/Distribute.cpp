@@ -1,6 +1,6 @@
 // md-distribute: a global potential on a grid of domains.
 //
-// See docs/distributed-ml2.md, Sections 11 and 14 (D[ml2-distribute]). The
+// See docs/distributed-ml2.md, Sections 11 and 14 (D276). The
 // body of an md.potential is rewritten into md_dist: a layout from the
 // positions, the owned rows of every field, one halo, a copy to the ghosts
 // of every field that a pair kernel reads, and the pair ops on the chosen

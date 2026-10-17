@@ -3,7 +3,7 @@
 //
 // See docs/ops-m0.md, Section 4.7. It is in the library of the dialect so
 // that md_dist, which the passes of md use, does not depend on them
-// (D[ml2-distribute]).
+// (D276).
 
 #include "mdir/Dialect/MD/MDExchange.h"
 

@@ -490,7 +490,7 @@ md_dist.decomposition @dd on(@atoms) grid([2, 0, 1])
 md.particle_set @atoms
 md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
 
-// The two-ended gather over a directed relation (D[ml2-distribute]) adds
+// The two-ended gather over a directed relation (D276) adds
 // half of each pair at its second particle from the exchange contract, too.
 func.func @directed_two_ended_without_exchange(%x: !vec, %cell: !md.cell) {
   %l = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>

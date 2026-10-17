@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- ML2, stage 1, part 2 (D[ml2-distribute], #31,
+- ML2, stage 1, part 2 (D276, #31,
   [docs/distributed-ml2.md](docs/distributed-ml2.md), Section 14):
   `md-distribute` rewrites a global potential to run on a grid of domains
   (`grid`, `traversal`), and `md-differentiate` derives its forces and

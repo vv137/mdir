@@ -1,5 +1,5 @@
 // A many-body energy on several domains through md-distribute
-// (D[ml2-distribute], docs/distributed-ml2.md, Section 14.2): a density
+// (D276, docs/distributed-ml2.md, Section 14.2): a density
 // gathered over pairs, a map of it, a sum over particles with a field
 // argument, and a pair sum that reads the map at both particles, through
 // its copy to the ghosts. On the unique traversal the density is summed at

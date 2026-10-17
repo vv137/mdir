@@ -726,7 +726,7 @@ LogicalResult Lowering::lowerGatherPairs(GatherPairsOp op) {
   // With two results the contributions of each pair go to both of its
   // particles; over a directed relation, where every pair is visited at
   // both of its owners, each with the weight one half (the transpose of a
-  // directed md_dist.sum_pairs, D[ml2-distribute]).
+  // directed md_dist.sum_pairs, D276).
   bool twoEnded = op.getResults().size() == 2;
   bool directed =
       op.getRelation().getType().getTraversal() == Traversal::Directed;

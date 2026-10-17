@@ -105,7 +105,7 @@ private:
   LogicalResult buildFieldDerivative(int64_t argument, Value &result);
 
   //===--------------------------------------------------------------------===//
-  // Potentials on domains (D[ml2-distribute])
+  // Potentials on domains (D276)
   //===--------------------------------------------------------------------===//
   //
   // A potential that md-distribute rewrote, or one written in md_dist,
@@ -1113,7 +1113,7 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
 }
 
 //===----------------------------------------------------------------------===//
-// Potentials on domains (D[ml2-distribute])
+// Potentials on domains (D276)
 //===----------------------------------------------------------------------===//
 
 LogicalResult DerivativeBuilder::checkDistributedUses() {
@@ -2018,7 +2018,7 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
         potential.emitOpError()
             << "cannot differentiate a potential on domains in a parameter "
                "or a field yet; energy, forces, and virial are supported "
-               "(D[ml2-distribute])";
+               "(D276)";
         return fail();
       }
     if (needsPositions && (failed(checkDistributedUses()) || activityFailed))

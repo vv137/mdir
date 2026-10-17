@@ -1,5 +1,5 @@
 // What md-differentiate does not differentiate on domains yet, refused with
-// the reason (D[ml2-distribute]).
+// the reason (D276).
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1" --md-differentiate -split-input-file -verify-diagnostics
 
 !vec   = !md.field<@atoms, 3 x f64>

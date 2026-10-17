@@ -197,7 +197,7 @@ which a message-passing model distributed by layers needs. The version of
 a field is its SSA value, so a ghost copy of an earlier version, or a
 field read at ghosts without a copy, is an error of the verifier, not of a
 run. A pass distributes a global potential before the differentiation
-(D[ml2-distribute]), and the transposes of $G$ and $G^\mathsf T$ are
+(D276), and the transposes of $G$ and $G^\mathsf T$ are
 declared to it as the scalar rules are, so that the forces with the
 reverse sum are derived, not written. Computing every pair at the owner of
 each of its particles, with nothing returned, is then an optimization of

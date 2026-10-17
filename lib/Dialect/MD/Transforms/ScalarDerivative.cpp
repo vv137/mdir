@@ -599,7 +599,7 @@ void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
   registry.addExtension(+[](MLIRContext *context, MDDialect *) {
     attachRules<LookupOp>(context);
   });
-  // The transposes of the transfers of md_dist (D[ml2-distribute]).
+  // The transposes of the transfers of md_dist (D276).
   registerAdjointInterfaces(registry);
 }
 

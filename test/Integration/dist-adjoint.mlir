@@ -1,5 +1,5 @@
 // The derivative rules of G and G^T, through md-differentiate
-// (D[ml2-distribute], docs/distributed-ml2.md, Section 14).
+// (D276, docs/distributed-ml2.md, Section 14).
 //
 // The potential, written in md_dist,
 //

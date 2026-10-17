@@ -22,7 +22,7 @@ class CheckDerivativeCoverage : public impl::CheckDerivativeCoverageBase<CheckDe
           return;
         // The ops of md_dist are semantic: md-differentiate takes the
         // transfers by their declared transposes and the structure as
-        // inactive, and refuses what it cannot (D[ml2-distribute]).
+        // inactive, and refuses what it cannot (D276).
         if (isa_and_nonnull<md_dist::MDDistDialect>(op->getDialect()))
           return;
         if (!isa<DerivativeOpInterface>(op)) {

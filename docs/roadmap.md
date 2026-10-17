@@ -474,7 +474,7 @@ parallel with M3 (the ruling on #377): its stage 1 is the dialect
 verifier of missing transfers, stale halos, coverage, and exactly-once
 sums) with an in-process executor of several domains as the oracle, and
 Lennard-Jones on two domains against one. Its second part
-(D[ml2-distribute]) derives that program from the global potential:
+(D276) derives that program from the global potential:
 `md-distribute`, the transposes of $G$ and $G^\mathsf T$ declared to
 `md-differentiate`, and `md-dist-owner-computes` for the directed
 traversal. EAM, the path through `md_exec`, migration, MPI on CPU ranks,

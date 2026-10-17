@@ -56,7 +56,7 @@ mlir::LogicalResult verifyPartialUses(mlir::Operation *op);
 /// at least its cutoff, so that every pair within the cutoff is in the
 /// rows of the owner of each of its particles (docs/distributed-ml2.md,
 /// Section 4.3). Diagnoses on `op`. The verifier of md_dist.neighborhood
-/// and md-dist-owner-computes share it (D[ml2-distribute]).
+/// and md-dist-owner-computes share it (D276).
 mlir::LogicalResult verifyCoverage(mlir::Operation *op,
                                    NeighborhoodOp neighborhood);
 

@@ -1,7 +1,7 @@
 // The derivative of a potential on domains carries the adjoints of the
 // transfers back by their declared transposes: the forces of the ghost rows
 // return to their owners by G^T (md_dist.halo_sum), those of the owned rows
-// to the particle set by md_dist.collect (D[ml2-distribute]). On the
+// to the particle set by md_dist.collect (D276). On the
 // directed traversal the derivative's form computes half of every pair at
 // each of its particles; md-dist-owner-computes replaces it by the gather
 // at the owners, with nothing returned.

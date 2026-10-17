@@ -47,7 +47,7 @@ static auto isSumOp = [](Operation *op) {
   // domain owns a particle, which images are ghosts, which pairs are within
   // the cutoff), whose derivative is zero almost everywhere, as that of the
   // relation of md.neighborhood is. A value that depends on the variable
-  // only through them is inactive (D[ml2-distribute]).
+  // only through them is inactive (D276).
 static auto isDistributed = [](Operation *op) {
     return isa_and_nonnull<mdir::md_dist::MDDistDialect>(op->getDialect());
   };
