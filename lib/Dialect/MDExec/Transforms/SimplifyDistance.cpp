@@ -316,11 +316,9 @@ bool Rewriter::isCostly(Value value) {
   if (def && def->getBlock() == fresh) {
     // A Chebyshev series costs a multiplication and two additions a term,
     // more than a table's lookup.
-    result = (isa<math::MathDialect>(def->getDialect()) &&
+    result = (isa_and_nonnull<math::MathDialect>(def->getDialect()) &&
               !isa<math::SqrtOp, math::FPowIOp, math::AbsFOp>(def)) ||
              isa<md::ChebyshevOp>(def);
-    result = isa_and_nonnull<math::MathDialect>(def->getDialect()) &&
-             !isa<math::SqrtOp, math::FPowIOp, math::AbsFOp>(def);
     for (Value operand : def->getOperands())
       result |= isCostly(operand);
   }
