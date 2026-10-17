@@ -7,6 +7,7 @@
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDExec/Transforms/Radial.h"
 
+#include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -92,6 +93,8 @@ std::optional<double> evaluateRadialOp(Operation *op,
     return std::sinh(x);
   if (isa<math::CoshOp>(op))
     return std::cosh(x);
+  if (auto series = dyn_cast<md::ChebyshevOp>(op))
+    return md::evaluateChebyshev(series.getSeries(), x);
   return std::nullopt;
 }
 
@@ -128,6 +131,11 @@ public:
         continue;
       Step step;
       step.kind = getKind(&op, step.constant);
+      if (auto chebyshev = dyn_cast<md::ChebyshevOp>(op)) {
+        step.series = series.size();
+        llvm::SmallVector<double> coefficients = chebyshev.getSeries();
+        series.emplace_back(coefficients.begin(), coefficients.end());
+      }
       if (op.getNumOperands() > 0)
         step.first = numberOf(op.getOperand(0));
       if (op.getNumOperands() > 1)
@@ -171,6 +179,9 @@ public:
       case Kind::Atan: value = std::atan(a); break;
       case Kind::Sinh: value = std::sinh(a); break;
       case Kind::Cosh: value = std::cosh(a); break;
+      case Kind::Chebyshev:
+        value = md::evaluateChebyshev(series[step.series], a);
+        break;
       case Kind::Unknown: break;
       }
       values[step.target] = value;
@@ -192,18 +203,27 @@ public:
                             step.second, step.target};
       append(fields, sizeof fields);
       append(&step.constant, sizeof step.constant);
+      if (step.kind == Kind::Chebyshev) {
+        const std::vector<double> &c = series[step.series];
+        uint32_t size = static_cast<uint32_t>(c.size());
+        append(&size, sizeof size);
+        append(c.data(), c.size() * sizeof(double));
+      }
     }
   }
 
 private:
   enum class Kind : uint8_t {
     Constant, Add, Sub, Mul, Div, Neg, Pow, Atan2, Sqrt, Exp, Erfc, Erf, Log,
-    Abs, Tanh, Sin, Cos, Tan, Asin, Acos, Atan, Sinh, Cosh, Unknown
+    Abs, Tanh, Sin, Cos, Tan, Asin, Acos, Atan, Sinh, Cosh, Chebyshev,
+    Unknown
   };
   struct Step {
     Kind kind = Kind::Unknown;
     uint32_t first = 0, second = 0, target = 0;
     double constant = 0.0;
+    /// The coefficients of a Chebyshev series, in `series`.
+    uint32_t series = 0;
   };
 
   /// The kind of `op`, as evaluateRadialOp tells the ops apart, and the
@@ -242,10 +262,12 @@ private:
     if (isa<math::AtanOp>(op)) return Kind::Atan;
     if (isa<math::SinhOp>(op)) return Kind::Sinh;
     if (isa<math::CoshOp>(op)) return Kind::Cosh;
+    if (isa<md::ChebyshevOp>(op)) return Kind::Chebyshev;
     return Kind::Unknown;
   }
 
   std::vector<Step> steps;
+  std::vector<std::vector<double>> series;
   uint32_t numValues = 2, result = 0;
   bool returns = false;
 };
@@ -583,6 +605,17 @@ public:
           !function.getSymName().ends_with("_table") &&
           SymbolTable::symbolKnownUseEmpty(function, module))
         function.erase();
+    // A Chebyshev series that no table took, in a kernel of f64 or one
+    // whose function no table holds, becomes Clenshaw's recurrence in its
+    // type.
+    SmallVector<md::ChebyshevOp> series;
+    module.walk([&](md::ChebyshevOp op) { series.push_back(op); });
+    for (md::ChebyshevOp op : series) {
+      OpBuilder builder(op);
+      op.replaceAllUsesWith(md::emitChebyshev(builder, op.getLoc(), op.getY(),
+                                              op.getSeries()));
+      op.erase();
+    }
   }
 };
 } // namespace

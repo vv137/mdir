@@ -8,4 +8,5 @@
 # CHECK: c 9.5392 lambda
 # CHECK: c 14.4712 lambda
 # CHECK: epsilon 1e-05 bandwidth 14.471
+# CHECK: series of (1 - Phi)/(1 - x) at epsilon 1e-05: 23 terms, {{.*}} ok
 # CHECK: 0 failures

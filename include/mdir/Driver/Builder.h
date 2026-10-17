@@ -301,6 +301,10 @@ struct Program {
   bool pmeProlate = false;
   double pmeBandwidth = 0.0, pmeWindowBandwidth = 0.0, pmeAliasing = 0.0;
   int64_t pmeOrder = 4;
+  /// (1 − Φ(x))/(1 − x) of the prolate kernel as a Chebyshev series in
+  /// t = 2x − 1, x = r / r_c: the direct sum's term in a loop over pairs
+  /// whose kernel a table of r² takes (D[prolate-pair-table]).
+  std::vector<double> pmeFarSeries;
   /// The self term is −f s Σ q² and the background of a net charge Q
   /// −f π Q² b / V: s = β/√π and b = 1/(2β²) for the Gaussian, s = χ(0)/
   /// (2 r_c) and b = r_c² ⟨x²⟩_χ for the prolate kernel, in nm⁻¹ and nm².

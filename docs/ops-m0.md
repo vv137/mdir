@@ -217,6 +217,7 @@ is needed when the kernels are compiled, not when LLVM is built.
 | `md.map_particles` | Applies a kernel to each particle. |
 | `md.evaluate` | Requests energy and derivatives of a potential. |
 | `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; see [design-m1.md](design-m1.md), Sections 2 and 3. |
+| `md.chebyshev` | In a kernel, $\sum_k c_k T_k(y)$, a Chebyshev series with its coefficients as an attribute; its derivative is the series of the derivatives, and in a loop over pairs under `fast_math` a series of the distance becomes part of a table of $r^2$ (D94, D[prolate-pair-table]). |
 | `md.yield`, `md.return` | Terminators of kernels and functions. |
 
 All `md` ops are pure.
@@ -575,6 +576,7 @@ derivative of the argument.
 | `select(c, a, b)` | `select(c, a', b')`. The condition is not differentiated. |
 | `step(x)`, `delta(x)`, `floor(x)`, `ceil(x)` | 0 |
 | `abs(x)` | `x'` if $x \ge 0$, else `−x'` |
+| `md.chebyshev y [c_0, …, c_n]` | `md.chebyshev y [d_0, …, d_{n−1}]` times `y'`, with $d_{k-1} = d_{k+1} + 2k c_k$ from the top and $d_0$ halved |
 | `vector.extract` of a component | The same component of the derivative of the vector |
 | `min(a, b)` | `a'` if `a < b`, else `b'` |
 | `max(a, b)` | `a'` if `a > b`, else `b'` |

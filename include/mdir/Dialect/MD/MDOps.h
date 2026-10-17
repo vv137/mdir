@@ -10,6 +10,7 @@
 #include "mlir/IR/SymbolTable.h"
 #include "mlir/Interfaces/ControlFlowInterfaces.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
+#include "mlir/Interfaces/InferTypeOpInterface.h"
 #include "mlir/Interfaces/SideEffectInterfaces.h"
 
 #include "mdir/Dialect/MD/MDCoordinates.h"
@@ -17,5 +18,27 @@
 
 #define GET_OP_CLASSES
 #include "mdir/Dialect/MD/MDOps.h.inc"
+
+#include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/SmallVector.h"
+
+namespace mdir {
+namespace md {
+
+/// Σ c_k T_k(y) by Clenshaw's recurrence [Clenshaw1955], in f64.
+double evaluateChebyshev(llvm::ArrayRef<double> coefficients, double y);
+
+/// The coefficients of the derivative of Σ c_k T_k(y) in y, one fewer
+/// (none for a constant).
+llvm::SmallVector<double> getChebyshevDerivative(
+    llvm::ArrayRef<double> coefficients);
+
+/// Emits Σ c_k T_k(y) by Clenshaw's recurrence in the type of `y`.
+mlir::Value emitChebyshev(mlir::OpBuilder &builder, mlir::Location loc,
+                          mlir::Value y,
+                          llvm::ArrayRef<double> coefficients);
+
+} // namespace md
+} // namespace mdir
 
 #endif // MDIR_DIALECT_MD_MDOPS_H

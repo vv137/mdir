@@ -3,6 +3,7 @@
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDExec/Transforms/Radial.h"
 
+#include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -313,8 +314,11 @@ bool Rewriter::isCostly(Value value) {
   Operation *def = value.getDefiningOp();
   bool result = false;
   if (def && def->getBlock() == fresh) {
-    result = isa<math::MathDialect>(def->getDialect()) &&
-             !isa<math::SqrtOp, math::FPowIOp, math::AbsFOp>(def);
+    // A Chebyshev series costs a multiplication and two additions a term,
+    // more than a table's lookup.
+    result = (isa<math::MathDialect>(def->getDialect()) &&
+              !isa<math::SqrtOp, math::FPowIOp, math::AbsFOp>(def)) ||
+             isa<md::ChebyshevOp>(def);
     for (Value operand : def->getOperands())
       result |= isCostly(operand);
   }

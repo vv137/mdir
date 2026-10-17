@@ -3,10 +3,13 @@
 #include "mdir/Dialect/MD/MDOps.h"
 
 #include "mdir/Dialect/MD/MDDialect.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/OpImplementation.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
+
+#include <cmath>
 
 using namespace mlir;
 using namespace mdir::md;
@@ -610,6 +613,76 @@ LogicalResult LookupOp::verify() {
     return emitOpError() << "expected " << rank << " indices, one for each "
                          << "dimension of the table, got "
                          << getIndices().size();
+  return success();
+}
+
+double mdir::md::evaluateChebyshev(llvm::ArrayRef<double> c, double y) {
+  // b_k = c_k + 2y b_{k+1} − b_{k+2}; the sum is c_0 + y b_1 − b_2.
+  double next = 0.0, after = 0.0;
+  for (size_t k = c.size(); k-- > 1;) {
+    double b = c[k] + 2.0 * y * next - after;
+    after = next;
+    next = b;
+  }
+  return c.empty() ? 0.0 : c[0] + y * next - after;
+}
+
+llvm::SmallVector<double>
+mdir::md::getChebyshevDerivative(llvm::ArrayRef<double> c) {
+  // T_k' in the T_j: d_{k−1} = d_{k+1} + 2k c_k from the top, d_0 halved.
+  size_t n = c.size();
+  if (n < 2)
+    return {};
+  llvm::SmallVector<double> d(n + 1, 0.0);
+  for (size_t k = n - 1; k >= 1; --k)
+    d[k - 1] = d[k + 1] + 2.0 * static_cast<double>(k) * c[k];
+  d[0] *= 0.5;
+  d.resize(n - 1);
+  return d;
+}
+
+Value mdir::md::emitChebyshev(OpBuilder &builder, Location loc, Value y,
+                              llvm::ArrayRef<double> c) {
+  Type type = y.getType();
+  auto constant = [&](double v) -> Value {
+    return arith::ConstantOp::create(builder, loc, type,
+                                     builder.getFloatAttr(type, v));
+  };
+  if (c.size() == 1)
+    return constant(c[0]);
+  Value twice = arith::AddFOp::create(builder, loc, y, y);
+  Value next, after;
+  for (size_t k = c.size(); k-- > 1;) {
+    Value b = constant(c[k]);
+    if (next)
+      b = arith::AddFOp::create(builder, loc, b,
+                                arith::MulFOp::create(builder, loc, twice,
+                                                      next));
+    if (after)
+      b = arith::SubFOp::create(builder, loc, b, after);
+    after = next;
+    next = b;
+  }
+  Value sum = arith::AddFOp::create(builder, loc, constant(c[0]),
+                                    arith::MulFOp::create(builder, loc, y,
+                                                          next));
+  if (after)
+    sum = arith::SubFOp::create(builder, loc, sum, after);
+  return sum;
+}
+
+llvm::SmallVector<double> ChebyshevOp::getSeries() {
+  llvm::SmallVector<double> series;
+  for (Attribute coefficient : getCoefficients())
+    series.push_back(cast<FloatAttr>(coefficient).getValueAsDouble());
+  return series;
+}
+
+LogicalResult ChebyshevOp::verify() {
+  if (getCoefficients().empty())
+    return emitOpError() << "expected at least one coefficient";
+  if (!llvm::all_of(getSeries(), [](double c) { return std::isfinite(c); }))
+    return emitOpError() << "expected finite coefficients";
   return success();
 }
 

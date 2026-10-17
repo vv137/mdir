@@ -115,6 +115,14 @@ std::vector<double> getSplittingTable(const Function &psi, Part part,
                                       int64_t cells, int64_t terms);
 double getSplitting(const Function &psi, Part part, double x);
 
+/// (1 − Φ(x))/(1 − x), the mean of χ over [x, 1], as a Chebyshev series in
+/// t = 2x − 1 for x in [0, 1], to 10⁻¹⁴ of its largest term. The direct
+/// sum f q q (1 − Φ(x))/r is then f q q (1 − x) Σ a_k T_k(t) / r, a
+/// function of r² whose value near the cutoff, of the order of ψ(1)(1 − x),
+/// carries the relative accuracy of (1 − x) and of the series, not the
+/// cancellation of 1 − Φ.
+std::vector<double> getFarSeries(const Function &psi);
+
 /// The aliasing error of the spreading relative to the spectral sum that
 /// it perturbs, the estimate of eq. 10 of [Liang2026] divided by the same
 /// sum without the factor of the alias: for each axis a,

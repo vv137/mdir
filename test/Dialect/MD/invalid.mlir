@@ -349,3 +349,11 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %q: !md.field<@atoms, f64>,
       -> f64, !md.field<@atoms, 3 x f64>, vector<9xf64>
   md.return %u : f64
 }
+
+// -----
+
+md.function @chebyshev_empty(%y: f64) -> f64 {
+  // expected-error@+1 {{expected at least one coefficient}}
+  %s = md.chebyshev %y [] : f64
+  md.return %s : f64
+}

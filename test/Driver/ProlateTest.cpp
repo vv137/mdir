@@ -10,9 +10,11 @@
 //===----------------------------------------------------------------------===//
 
 #include "mdir/Driver/Prolate.h"
+#include "mdir/Dialect/MD/MDOps.h"
 
 #include <cmath>
 #include <cstdio>
+#include <vector>
 
 using mdir::prolate::Function;
 
@@ -146,6 +148,43 @@ int main() {
                   part == Part::Far ? "1 - Phi" : "Phi/x", worst,
                   ok ? "ok" : "FAIL");
     }
+  }
+  // (1 − Φ(x))/(1 − x) as a Chebyshev series in t = 2x − 1
+  // (D[prolate-pair-table]), by Clenshaw's recurrence of md.chebyshev:
+  // (1 − x) times it against 1 − Φ by quadrature at 1000 points, to 2e-14
+  // (its cut at 1e-14 of the largest term, and the noise of the
+  // quadrature); at x = 1 against its limit χ(1) = ψ(1)/C₀ to 1e-14, the
+  // noise of ψ (relative to χ(1), 4e-11 at ε = 1e-5 and 3e-7 at 1e-9,
+  // printed); and the derivative of
+  // (1 − x) P, −P + (1 − x) 2 P'(t), against −χ(x), to 2e-11 (the first
+  // term cut, times k² of its derivative), of values of order 1.
+  for (double epsilon : {1e-3, 1e-5, 1e-9}) {
+    using mdir::prolate::Part;
+    Function psi(mdir::prolate::bandwidthForTolerance(epsilon));
+    std::vector<double> series = mdir::prolate::getFarSeries(psi);
+    llvm::SmallVector<double> slope =
+        mdir::md::getChebyshevDerivative(series);
+    double worst = 0.0, worstSlope = 0.0;
+    for (int i = 0; i != 1000; ++i) {
+      double x = (i + 0.37) / 1000.0, t = 2 * x - 1;
+      double mean = mdir::md::evaluateChebyshev(series, t);
+      double far = mdir::prolate::getSplitting(psi, Part::Far, x);
+      worst = std::max(worst, std::fabs((1 - x) * mean - far));
+      double chi = psi.value(x) / psi.halfIntegral();
+      worstSlope = std::max(
+          worstSlope,
+          std::fabs(-mean + (1 - x) * 2 * mdir::md::evaluateChebyshev(slope, t) +
+                    chi));
+    }
+    double edge = psi.value(1.0) / psi.halfIntegral();
+    double atEdge = std::fabs(mdir::md::evaluateChebyshev(series, 1.0) - edge);
+    bool ok = worst <= 2e-14 && atEdge <= 1e-14 && worstSlope <= 2e-11;
+    failures += !ok;
+    std::printf("series of (1 - Phi)/(1 - x) at epsilon %g: %zu terms, "
+                "largest difference %.1e, at x = 1 %.1e (%.1e of chi(1)), of "
+                "the slope %.1e %s\n",
+                epsilon, series.size(), worst, atEdge, atEdge / edge, worstSlope,
+                ok ? "ok" : "FAIL");
   }
   std::printf("%d failures\n", failures);
   return failures ? 1 : 0;

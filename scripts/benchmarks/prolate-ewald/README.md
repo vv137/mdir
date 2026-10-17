@@ -79,3 +79,20 @@ python cpu_job.py jac $ESP_CPU_DIR/acc/jac/cases.json 1e-5 6 16,4,1 --tag t1e-5
 python ../cpu-breakdown/prof.py RUN/prof --program RUN/mdir.toml --json RUN/parts.json
 python cpu_table.py jac tip3p-32k tip3p-103k cel
 ```
+
+The direct sum as a table of $r^2$ (issue #380, D[prolate-pair-table]):
+`PAIR_DIR` holds `sys/NAME/` as above (`jac`, `tip3p-34k`, `tip3p-103k`,
+`cellulose`); `MAIN` and `BRANCH` name frozen copies of the two programs.
+The force error with the table and with the cells (`MDIR_PROLATE_CELLS=1`)
+on the CPU and a GPU, the tables rebuilt as the pass builds them, and the
+step alternated against `main` (16 cores; on a GPU, an idle device):
+
+```sh
+python pair_delta.py make $PAIR_DIR/delta/jac $PAIR_DIR/sys/jac/sys.prmtop $PAIR_DIR/sys/jac/sys.inpcrd
+python pair_delta.py run $BRANCH $PAIR_DIR/delta/jac 4
+python pair_delta.py report $BRANCH $PAIR_DIR/delta/jac
+$BRANCH emit run.toml > module.mlir && python pair_table.py module.mlir 0.9
+python pair_job.py $PAIR_DIR/cpu/jac-1e-5 jac 1e-5 5 16,4,1 main=$MAIN,br=$BRANCH --sample
+python pair_job.py $PAIR_DIR/gpu/jac jac 1e-3,1e-4,1e-5 5 1 main=$MAIN,br=$BRANCH --gpu --profile
+MDIR_MAIN=$MAIN MDIR_BRANCH=$BRANCH python pair_summary.py $PAIR_DIR/cpu $PAIR_DIR/gpu
+```

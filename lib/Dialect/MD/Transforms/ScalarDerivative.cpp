@@ -320,6 +320,22 @@ static LogicalResult emitScalarRule(Value value, ScalarDerivative &derivative,
   if (isa<math::FloorOp, math::CeilOp>(op))
     return success();
 
+  // (Σ c_k T_k(y))' = (Σ d_k T_k(y)) · y', the series of the derivative.
+  if (auto series = dyn_cast<ChebyshevOp>(op)) {
+    Value operand;
+    if (failed(operandTangent(0, operand)))
+      return failure();
+    SmallVector<double> slope =
+        getChebyshevDerivative(series.getSeries());
+    if (!operand || slope.empty())
+      return success();
+    Value derivative =
+        ChebyshevOp::create(builder, loc, series.getType(), series.getY(),
+                            builder.getF64ArrayAttr(slope));
+    tangent = emit.mul(derivative, operand);
+    return success();
+  }
+
   //===--------------------------------------------------------------------===//
   // Powers
   //===--------------------------------------------------------------------===//
@@ -597,7 +613,7 @@ void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
     attachRules<vector::BroadcastOp, vector::ExtractOp, vector::FromElementsOp, vector::ReductionOp>(context);
   });
   registry.addExtension(+[](MLIRContext *context, MDDialect *) {
-    attachRules<LookupOp>(context);
+    attachRules<LookupOp, ChebyshevOp>(context);
   });
   // The transposes of the transfers of md_dist (D276).
   registerAdjointInterfaces(registry);

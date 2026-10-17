@@ -1,0 +1,64 @@
+# The direct sum of the prolate kernel as a table of r² (D[prolate-pair-table])
+# on the CPU: in mixed precision under `fast_math` the builder writes
+# 1 − Φ(x) as (1 − x) times a Chebyshev series in 2x − 1 (md.chebyshev),
+# x = r/r_c, which a table of r² then holds as it holds the Gaussian's erfc
+# (D94); MDIR_PROLATE_CELLS=1 keeps the cells of polynomials in r/r_c, and
+# the double mode keeps them.
+# The forces of the solvated dipeptide at the start, the series against the
+# cells (4.0e-7 of the root mean square of the forces), and each against
+# the double mode (5.3e-5 both, the error of the mixed mode, which the
+# table does not change at the digits shown).
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/series.toml
+# RUN: sed -e 's/series.h5/cells.h5/' %t/series.toml > %t/cells.toml
+# RUN: sed -e 's/series.h5/double.h5/' -e 's/"MIXED"/"DOUBLE"/' %t/series.toml > %t/double.toml
+#
+# RUN: mdir emit %t/series.toml | FileCheck %s --check-prefix=SERIES
+# RUN: env MDIR_PROLATE_CELLS=1 mdir emit %t/cells.toml | FileCheck %s --check-prefix=CELLS
+# RUN: mdir emit %t/double.toml | FileCheck %s --check-prefix=CELLS
+# SERIES: md.chebyshev
+# CELLS-NOT: md.chebyshev
+#
+# RUN: mdir emit %t/series.toml --stage=lowered | FileCheck %s --check-prefix=TABLE
+# TABLE: llvm.mlir.global private constant @md_radial{{.*}}_table
+#
+# RUN: cd %t && mdir run series.toml > series.log
+# RUN: cd %t && env MDIR_PROLATE_CELLS=1 mdir run cells.toml > cells.log
+# RUN: cd %t && mdir run double.toml > double.log
+# RUN: mdir checkpoint --print=forces %t/series.h5 > %t/series.forces
+# RUN: mdir checkpoint --print=forces %t/cells.h5 > %t/cells.forces
+# RUN: mdir checkpoint --print=forces %t/double.h5 > %t/double.forces
+# RUN: %python %S/Inputs/compare_forces_rms.py %t/series.forces %t/cells.forces 2e-6 "series against cells" | FileCheck %s
+# RUN: %python %S/Inputs/compare_forces_rms.py %t/series.forces %t/double.forces 1e-4 "series against double" | FileCheck %s
+# RUN: %python %S/Inputs/compare_forces_rms.py %t/cells.forces %t/double.forces 1e-4 "cells against double" | FileCheck %s
+# CHECK: relative difference {{.*}} ok
+
+#--- run.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+[output]
+energy_interval = 0
+checkpoint = "series.h5"
+checkpoint_interval = 1
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+[pme]
+kernel = "PROLATE"
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 1e-9
+steps      = 1
+[ensemble]
+ensemble    = "NVE"
+temperature = 0.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target    = "CPU"
+precision = "MIXED"
+#--- end

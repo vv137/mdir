@@ -760,6 +760,45 @@ the control file): 64 cells of 10 terms within $10^{-14}$ for kernels in
 f64, 128 cells of 4 terms within $4\times10^{-10}$ for kernels in f32. The
 excluded pairs take $\Phi(x)/(xr_c)$ within the cutoff and $1/r$ beyond it.
 
+In the loop over pairs of a kernel in f32 (D[prolate-pair-table]) the
+direct sum is instead a function of $r^2$ alone, so that it becomes a
+table of $r^2$ as the Gaussian's $\mathrm{erfc}(\beta r)/r$ does
+(Section 7.2): no square root, no index of a cell, one load and three
+fused multiply–adds a pair. Since $\Phi(1) = 1$,
+$$
+1 - \Phi(x) = \int_x^1 \chi(t)\,dt = (1 - x)\,\bar\chi(x),
+\qquad
+\bar\chi(x) = \int_0^1 \chi\big(x + (1 - x)\tau\big)\,d\tau ,
+$$
+the mean of $\chi$ over $[x, 1]$, a polynomial of the degree of the
+series of $\psi_0^c$, which Gauss–Legendre quadrature in $\tau$ gives
+without cancellation and which a Chebyshev series in $2x - 1$ holds to
+$10^{-14}$ of its largest term (20, 23, and 27 terms at
+$\eta = 10^{-3}$, $10^{-5}$, $10^{-9}$). The term of a pair is then
+$f q_i q_j (1 - x)\bar\chi(x)/r$, a function of $r = \sqrt{s}$ that the
+compiler outlines and tabulates in $s$; its derivative, the force, is
+outlined with it. The factor $1 - x$ matters near the cutoff, where
+$1 - \Phi(x) \approx \chi(1)(1 - x)$ is of the order of
+$\eta(1 - x)$: the same function written as $1/r - \Phi(x)/(x r_c)$,
+which is a polynomial in $x^2$ since $\chi$ is even, cancels there to
+below the rounding of f64 relative to its value, and the energy's table
+missed the test of Section 7.2 at every number of bits. Written with the
+factor, the relative error of the function is that of $1 - x$ and of
+$\bar\chi$.
+On JAC ($r_c = 9$ Å) the force's table has $b = 7$ at $\eta = 10^{-3}$
+and $10^{-4}$ and $b = 8$ at $10^{-5}$ (20 and 40 KB), the energy's
+$b = 8$ and 9, against $b = 7$ for the Gaussian's at the same cutoff; the
+cubics in f32 are within $2.3\times10^{-7}$ of the function, relative to
+its largest value on an interval. The kernels of f64 keep the cells,
+which take less than the series evaluated as itself. The forces move by
+$3.4$ to $4.1\times10^{-7}$ of the RMS Coulomb force, and $\Delta$ in mixed
+precision not at its third digit. On the CPU target (16 cores, mixed
+precision, 9 Å) the loop over pairs then takes 0.98 to 1.02 times the
+Gaussian's, from 1.5 to 1.85, and the step of the prolate default 0.96
+to 1.03 times that of the fastest Gaussian order at $\Delta \approx
+10^{-5}$ and 1.05 to 1.24 times at $10^{-4}$ and $10^{-3}$, where the
+window of the spreading is what remains of the difference.
+
 **On a device.** The kernels are generated from those of the dispersion
 (Section 5.5) and the bricks of D108. The coefficients of the window are
 converted once a sum into the type of the grid, term by term, and read
