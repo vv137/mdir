@@ -6656,8 +6656,6 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
       %lane = arith.index_cast %lane_x : index to i32
       %pt = arith.constant PME_ORDER : i32
       %pidx = arith.constant PME_ORDER : index
-      %axis = arith.divui %lane_x, %pidx : index
-      %j = arith.remui %lane_x, %pidx : index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -6677,6 +6675,8 @@ func.func private @mdrt_gpu_pme_spread_tiles4(%q: memref<?x!pme_chg, 1>, %places
         %list_at = arith.addi %of_list, %entry : index
         %particle = memref.load %bins[%list_at] : memref<?xi32, 1>
         %i = arith.index_cast %particle : i32 to index
+        %axis = arith.divui %lane_x, %pidx : index
+        %j = arith.remui %lane_x, %pidx : index
         %three = arith.constant 3 : index
         %weighs = arith.cmpi ult, %axis, %three : index
         %faxis = arith.select %weighs, %axis, %c0 : index
@@ -7337,8 +7337,6 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
       %lane = arith.index_cast %lane_x : index to i32
       %pt = arith.constant PME_ORDER : i32
       %pidx = arith.constant PME_ORDER : index
-      %axis = arith.divui %lane_x, %pidx : index
-      %j = arith.remui %lane_x, %pidx : index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -7358,6 +7356,8 @@ func.func private @mdrt_gpu_pme_spread_tiles8(%q: memref<?x!pme_chg, 1>, %places
         %list_at = arith.addi %of_list, %entry : index
         %particle = memref.load %bins[%list_at] : memref<?xi32, 1>
         %i = arith.index_cast %particle : i32 to index
+        %axis = arith.divui %lane_x, %pidx : index
+        %j = arith.remui %lane_x, %pidx : index
         %three = arith.constant 3 : index
         %weighs = arith.cmpi ult, %axis, %three : index
         %faxis = arith.select %weighs, %axis, %c0 : index
@@ -8018,8 +8018,6 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
       %lane = arith.index_cast %lane_x : index to i32
       %pt = arith.constant PME_ORDER : i32
       %pidx = arith.constant PME_ORDER : index
-      %axis = arith.divui %lane_x, %pidx : index
-      %j = arith.remui %lane_x, %pidx : index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -8039,6 +8037,8 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
         %list_at = arith.addi %of_list, %entry : index
         %particle = memref.load %bins[%list_at] : memref<?xi32, 1>
         %i = arith.index_cast %particle : i32 to index
+        %axis = arith.divui %lane_x, %pidx : index
+        %j = arith.remui %lane_x, %pidx : index
         %three = arith.constant 3 : index
         %weighs = arith.cmpi ult, %axis, %three : index
         %faxis = arith.select %weighs, %axis, %c0 : index

@@ -572,9 +572,11 @@ private:
                                 bool listed, int64_t tiles = 0);
   /// Adds the kernels of the prolate kernel (D266) for these
   /// types and points of the window, and with `listed` those of a list of
-  /// the particles.
+  /// the particles, and with `tiles` E the spreading into tiles of bins
+  /// of E points (D[pme-tiles]).
   LogicalResult addProlateTemplates(Type position, Type charge, Type force,
-                                    int64_t order, bool listed);
+                                    int64_t order, bool listed,
+                                    int64_t tiles = 0);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
 
   ModuleOp module;
@@ -3914,15 +3916,17 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
 
 LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
                                             Type force, int64_t order,
-                                            bool listed) {
+                                            bool listed, int64_t tiles) {
   auto has = [&](StringRef name) {
     return SymbolTable::lookupSymbolIn(
                module,
                getPMEInstanceName(name, position, charge, force, order)) !=
            nullptr;
   };
+  std::string edge = std::to_string(tiles);
   if (has("mdrt_gpu_pme_prolate_gather") &&
-      (!listed || has("mdrt_gpu_pme_prolate_gather_listed")))
+      (!listed || has("mdrt_gpu_pme_prolate_gather_listed")) &&
+      (!tiles || has("mdrt_gpu_pme_prolate_spread_tiles" + edge)))
     return success();
   ParserConfig config(context);
   OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
@@ -3957,7 +3961,12 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     auto function = dyn_cast<func::FuncOp>(&op);
     bool isListed = function && function.getSymName().contains("_listed");
-    if ((isListed && !listed) ||
+    // The tiles of the edge that the sum takes, alone.
+    bool isTiles =
+        function && function.getSymName().contains("_spread_tiles");
+    bool ownEdge = isTiles && tiles &&
+                   function.getSymName().contains("_spread_tiles" + edge + "_");
+    if ((isListed && !listed) || (isTiles && !ownEdge) ||
         (function &&
          SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
       op.erase();
@@ -4038,7 +4047,17 @@ static LogicalResult lowerProlate(
     return operands;
   };
   std::string spreadTag = listed ? "_listed" : "";
-  if (deterministic || !bricks) {
+  // Into tiles (D[pme-tiles]): the bins of PMEGPU.mlir from the places,
+  // then the window into the tiles.
+  if (int64_t tiles = op.getTiles().value_or(0)) {
+    std::string edge = std::to_string(tiles);
+    Value bins = getBins(op);
+    func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_bin" + edge + spreadTag),
+                         withList({charges, places, bins, real, k1, k2, k3}));
+    func::CallOp::create(
+        builder, loc, instance("mdrt_gpu_pme_prolate_spread_tiles" + edge),
+        ValueRange{charges, places, tables, bins, real, k1, k2, k3});
+  } else if (deterministic || !bricks) {
     func::CallOp::create(
         builder, loc,
         instance("mdrt_gpu_pme_prolate_spread_fixed" + spreadTag),
@@ -4191,19 +4210,16 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
         ValueRange());
   // The prolate kernel has kernels of its own (D266).
   if (op.getProlate()) {
-    if (tiles)
-      return op->emitOpError()
-             << "spreads the prolate kernel into tiles, which it does not "
-                "have yet";
     if (failed(addProlateTemplates(position, charge, force, op.getOrder(),
-                                   static_cast<bool>(listed))))
+                                   static_cast<bool>(listed), tiles)))
       return failure();
     // A triclinic cell takes its own places, gathering, and influence;
     // the coefficients and the spreading do not depend on the cell.
     auto prolateInstance = [&](StringRef name) {
       bool own = tilted && name != "mdrt_gpu_pme_real" &&
                  name != "mdrt_gpu_pme_prolate_coefficients" &&
-                 !name.starts_with("mdrt_gpu_pme_prolate_spread");
+                 !name.starts_with("mdrt_gpu_pme_prolate_spread") &&
+                 !name.starts_with("mdrt_gpu_pme_bin");
       std::string full = own ? (name + "_triclinic").str() : name.str();
       return cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
           module,

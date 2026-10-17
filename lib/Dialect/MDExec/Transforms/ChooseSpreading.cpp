@@ -32,7 +32,7 @@ public:
     if (layout != "auto" && layout != "global" && layout != "tiles") {
       getOperation()->emitError()
           << "expected the layout 'auto', 'global', or 'tiles', got '"
-          << layout << "'";
+          << static_cast<std::string>(layout) << "'";
       return signalPassFailure();
     }
     // The edges for which the template has kernels
@@ -40,14 +40,14 @@ public:
     if (edge != 4 && edge != 8 && edge != 16) {
       getOperation()->emitError()
           << "expected an edge of the tiles of 4, 8, or 16 points, got "
-          << edge;
+          << static_cast<int64_t>(edge);
       return signalPassFailure();
     }
     if (layout == "global" || deterministic)
       return;
     Builder builder(&getContext());
     getOperation()->walk([&](ReciprocalOp op) {
-      if (op.isStorageForm() || op.getProlate())
+      if (op.isStorageForm())
         return;
       // The type of the grid: that of the forces (D271).
       auto forces = dyn_cast_or_null<md::FieldType>(

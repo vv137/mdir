@@ -1622,8 +1622,6 @@ func.func private @{name}{edge}({args}
       %lane = arith.index_cast %lane_x : index to i32
       %pt = arith.constant PME_ORDER : i32
       %pidx = arith.constant PME_ORDER : index
-      %axis = arith.divui %lane_x, %pidx : index
-      %j = arith.remui %lane_x, %pidx : index
       %ppt = arith.muli %pt, %pt : i32
       %pppt = arith.muli %ppt, %pt : i32
       %pt2 = arith.addi %pt, %pt : i32
@@ -1752,6 +1750,8 @@ def gaussian_lane_weight():
     others by the recursion of the splines, as spread_float."""
     b = Body("        ")
     b("""\
+%axis = arith.divui %lane_x, %pidx : index
+%j = arith.remui %lane_x, %pidx : index
 %three = arith.constant 3 : index
 %weighs = arith.cmpi ult, %axis, %three : index
 %faxis = arith.select %weighs, %axis, %c0 : index
