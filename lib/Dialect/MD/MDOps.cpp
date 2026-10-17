@@ -335,6 +335,44 @@ LogicalResult TripletsOp::verify() {
   return success();
 }
 
+LogicalResult EdgesOp::verify() {
+  double cutoff = getCutoff().convertToDouble();
+  if (!(cutoff > 0.0))
+    return emitOpError() << "expected a positive cutoff, got " << cutoff;
+  auto pairs = cast<RelationType>(getNeighbors().getType());
+  if (pairs.getTupleSet() || pairs.getArity() != 2 ||
+      pairs.getOrientation() != Orientation::Unordered)
+    return emitOpError() << "expected the unordered relation of arity 2 of "
+                            "a neighborhood, got "
+                         << pairs;
+  if (!isPositionField(getPositions().getType()))
+    return emitOpError() << "expected a position field with 3 components of "
+                            "f64, got "
+                         << getPositions().getType();
+  auto positions = cast<FieldType>(getPositions().getType());
+  auto edges = cast<EdgesType>(getResult().getType());
+  if (positions.getParticleSet() != pairs.getParticleSet() ||
+      edges.getParticleSet() != pairs.getParticleSet())
+    return emitOpError() << "expected the positions and the result on "
+                         << pairs.getParticleSet() << ", the set of the pairs";
+  // The candidates are the neighbors of the neighborhood, at its positions
+  // and in its cell, within its cutoff.
+  if (auto neighborhood = getNeighbors().getDefiningOp<NeighborhoodOp>()) {
+    double reach = neighborhood.getCutoff().convertToDouble();
+    if (cutoff > reach)
+      return emitOpError() << "expected a cutoff of at most " << reach
+                           << ", that of the neighborhood, got " << cutoff;
+    if (neighborhood.getPositions() != getPositions() ||
+        neighborhood.getCell() != getCell())
+      return emitOpError() << "expected the positions and the cell of the "
+                              "neighborhood";
+    if (neighborhood.getExcluded())
+      return emitOpError() << "expected a neighborhood without excluded "
+                              "pairs: the edges take every pair";
+  }
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // Ops with a pair kernel
 //===----------------------------------------------------------------------===//

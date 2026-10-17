@@ -205,6 +205,9 @@ static void setObserve(Term &term, py::object value, const char *name) {
   term.observe = std::move(names);
 }
 PYBIND11_MODULE(_core, m) {
+  // The program of a model term asks the plugin beside the runtime for the
+  // model's cutoff when it is built (D[mlip-pairlist]).
+  driver::setPluginDirectory(compiler::getRuntimeDirectory());
   // Required at import as well as configuration, including installed modules.
   try {
     auto numpy = py::module_::import("numpy");

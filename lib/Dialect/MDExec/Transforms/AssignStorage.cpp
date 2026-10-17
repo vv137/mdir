@@ -137,6 +137,7 @@ private:
                                 unsigned position);
   LogicalResult convertBuildIncidence(BuildIncidenceOp op, Scope &scope);
   LogicalResult convertBuildTriplets(BuildTripletsOp op, Scope &scope);
+  LogicalResult convertBuildEdges(BuildEdgesOp op, Scope &scope);
   LogicalResult convertReciprocal(ReciprocalOp op, Scope &scope);
   LogicalResult convertGeneric(Operation *op, Scope &scope);
 
@@ -214,6 +215,10 @@ private:
   llvm::DenseMap<Value, Value> hostTables;
   /// Neighbor structures: their storage.
   llvm::DenseMap<Value, Value> neighbors;
+  /// The pairs of images of `md_exec.build_edges`: the results of its
+  /// storage form, which a host call takes in their place
+  /// (D[mlip-pairlist]).
+  llvm::DenseMap<Value, SmallVector<Value, 4>> edges;
   /// Orders of the particles: the buffer that holds the order.
   llvm::DenseMap<Value, Value> orders;
   /// Particle sets: the number of particles.
@@ -790,6 +795,38 @@ LogicalResult Assignment::convertBuildTriplets(BuildTripletsOp op,
       scope.builder, op.getLoc(), mdrt::getMembersType(relation), storage,
       positions, mapping.lookup(op.getCell()), op.getCutoffAttr());
   mapping.map(op.getResult(), members);
+  return success();
+}
+
+LogicalResult Assignment::convertBuildEdges(BuildEdgesOp op, Scope &scope) {
+  if (op.isStorageForm())
+    return op.emitOpError() << "is in the storage form already";
+  // The pairs of images are found on the device, for a learned potential
+  // that runs there (D[mlip-pairlist]).
+  if (!onDevice)
+    return op.emitOpError() << "finds the pairs of images on a device only: "
+                               "a learned potential runs on a GPU";
+  Value storage;
+  if (failed(getNeighbors(op, op.getNeighbors(), op.getPositions().getType(),
+                          scope, storage)))
+    return failure();
+  Value positions;
+  if (failed(getBuffer(op.getPositions(), scope, positions)))
+    return failure();
+  Attribute space =
+      IntegerAttr::get(IntegerType::get(context, 64), deviceSpace);
+  Type narrow = IntegerType::get(context, 32);
+  auto device = [&](ArrayRef<int64_t> shape) -> Type {
+    return MemRefType::get(shape, narrow, MemRefLayoutAttrInterface(), space);
+  };
+  auto built = BuildEdgesOp::create(
+      scope.builder, op.getLoc(),
+      TypeRange{device({ShapedType::kDynamic, 5}),
+                device({ShapedType::kDynamic}),
+                device({ShapedType::kDynamic}), IntegerType::get(context, 64)},
+      storage, positions, mapping.lookup(op.getCell()), op.getCutoffAttr());
+  edges[op.getResult(0)].assign(built.getResults().begin(),
+                                built.getResults().end());
   return success();
 }
 
@@ -1441,8 +1478,31 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     SmallVector<Value> arguments;
     // The buffers of the host that this call has taken, by type.
     llvm::DenseMap<std::pair<Type, Attribute>, unsigned> taken;
-    for (auto [operand, type] :
-         llvm::zip(call.getInputs(), callee.getArgumentTypes())) {
+    // The function takes the buffers of the pairs of images in place of
+    // them, four arguments for one (D[mlip-pairlist]).
+    ArrayRef<Type> calleeTypes = callee.getArgumentTypes();
+    unsigned next = 0;
+    for (Value operand : call.getInputs()) {
+      if (isa<md::EdgesType>(operand.getType())) {
+        auto found = edges.find(operand);
+        if (found == edges.end())
+          return op->emitOpError() << "the pairs of images have no buffers";
+        // The buffers of the device as the host takes them (D215).
+        for (Value value : found->second) {
+          auto device = dyn_cast<MemRefType>(value.getType());
+          arguments.push_back(
+              device ? memref::MemorySpaceCastOp::create(
+                           builder, op->getLoc(),
+                           MemRefType::get(device.getShape(),
+                                           device.getElementType()),
+                           value)
+                           .getResult()
+                     : value);
+        }
+        next += found->second.size();
+        continue;
+      }
+      Type type = calleeTypes[next++];
       if (!isField(operand.getType())) {
         arguments.push_back(mapping.lookup(operand));
         continue;
@@ -1666,6 +1726,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     return convertBuildIncidence(build, scope);
   if (auto triplets = dyn_cast<BuildTripletsOp>(op))
     return convertBuildTriplets(triplets, scope);
+  if (auto build = dyn_cast<BuildEdgesOp>(op))
+    return convertBuildEdges(build, scope);
   if (auto renumber = dyn_cast<RenumberOp>(op)) {
     if (renumber.isStorageForm())
       return op->emitOpError() << "is in the storage form already";

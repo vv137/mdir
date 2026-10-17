@@ -94,6 +94,32 @@ def MD_RelationType : MD_Type<"Relation", "relation"> {
   let genVerifyDecl = 1;
 }
 
+def MD_EdgesType : MD_Type<"Edges", "edges"> {
+  let summary = "The directed pairs of images within a cutoff";
+  let description = [{
+    The pairs that a local learned potential takes (D[mlip-pairlist],
+    docs/metatomic-ml1.md, Section 12): for each particle `i`, every other
+    particle `j` and every image of it, and every image of `i` itself,
+    within the cutoff,
+
+    ```text
+    E = { (i, j, s) : (j, s) ≠ (i, 0), |x_j − x_i + s H| < r_c },
+    ```
+
+    `s` the shift in cells (integers) and `H` the cell, its rows the edges.
+    Each pair is in it in both directions. Unlike a relation, the members
+    need not be distinct and a pair may be in it several times, once for
+    each image: the cell may be narrower than the cutoff. The pairs are
+    grouped by `i`, in the order of the particles.
+
+    ```mlir
+    !md.edges<@atoms>
+    ```
+  }];
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$particleSet);
+  let assemblyFormat = "`<` $particleSet `>`";
+}
+
 def MD_TableType : MD_Type<"Table", "table"> {
   let summary = "A table of parameters, indexed by types";
   let description = [{

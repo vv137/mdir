@@ -24,12 +24,31 @@
 # CHECK: forces ok
 # CHECK: virial ok
 
+# The pair list is MDIR's (D[mlip-pairlist], docs/metatomic-ml1.md,
+# Section 12): with MDIR_MLIP_CHECK_PAIRS the plugin compares its pairs
+# within the cutoff, at every evaluation, with those of its own search, as
+# sets; taken exactly or padded (chunks begin at the offsets of the slots
+# then), and the plugin's own search, all within the same tolerances.
+# RUN: env TMPDIR=%t MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=exact %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --centers-per-call 5 --steps 4 2>%t/exact.err | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=AGREE < %t/exact.err
+# RUN: env TMPDIR=%t MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=padded %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --precision Mixed --steps 4 2>%t/padded.err | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: FileCheck %s --check-prefix=AGREE < %t/padded.err
+# RUN: env TMPDIR=%t MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=padded %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --centers-per-call 1 | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# Chunks of the padded list over several activations of a Python
+# simulation, each of which builds its structure anew: the plugin reads the
+# offsets of every build (the check compares them with the engine's).
+# RUN: env TMPDIR=%t MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=padded %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --centers-per-call 5 --steps 4 | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: env TMPDIR=%t MDIR_MLIP_PAIRS=search %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 --centers-per-call 5 | %mlip_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# AGREE: (MDIR_MLIP_CHECK_PAIRS): the engine's pair list and the plugin's search agree, {{[0-9]+}} pairs
+# RUN: not env TMPDIR=%t MDIR_MLIP_PAIRS=fast %mlip_python %S/../../scripts/mlip/check-model-term.py %t %t/allegro.nequip.pt2 2>&1 | FileCheck %s --check-prefix=MODE
+# MODE: MDIR_MLIP_PAIRS is 'fast'; it takes 'exact', 'padded', or 'search'
+
 # mdir run: the term in the log, its energy at the start, and chunks.
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: cd %t && env TMPDIR=%t mdir run run.toml > %t/run.log
 # RUN: FileCheck %s --check-prefix=LOG < %t/run.log
 # RUN: %mlip_python %S/Inputs/model-term/compare.py log %t/reference.npz < %t/run.log | FileCheck %s --check-prefix=START
-# LOG: MDIR: model 'allegro' (allegro.nequip.pt2, {{.*}}): AOTInductor package, torch {{.*}}, model float32; cutoff 0.70 nm, full pair list; inputs of 64 bits; units angstrom and eV, factors 0.10 and 96.49 to nm and kJ/mol; 4 centers per call
+# LOG: MDIR: model 'allegro' (allegro.nequip.pt2, {{.*}}): AOTInductor package, torch {{.*}}, model float32; cutoff 0.70 nm, full pair list; inputs of 64 bits; units angstrom and eV, factors 0.10 and 96.49 to nm and kJ/mol; 4 centers per call; the pair list MDIR's, its pairs within the cutoff
 # LOG: MDIR: MODEL allegro
 # LOG: MDIR: model 'allegro': 3 evaluations, {{[0-9]+}} pairs and 6 calls in the last
 # START: mdir run energy ok
@@ -46,6 +65,12 @@
 # RUN: FileCheck %s --check-prefix=NPT < %t/npt.log
 # NPT: MDIR:   MODEL allegro
 # NPT: MDIR: model 'allegro': {{[0-9]+}} evaluations
+
+# The same run at constant pressure with the pairs compared at every
+# evaluation: the cell that the barostat scales and the builds of the
+# structure that it causes.
+# RUN: cd %t && env TMPDIR=%t MDIR_MLIP_CHECK_PAIRS=1 MDIR_MLIP_PAIRS=padded mdir run npt.toml > %t/npt-check.log 2>&1
+# RUN: FileCheck %s --check-prefix=AGREE < %t/npt-check.log
 
 # A package on a device it has no kernels for is refused (the package is
 # told that it was compiled for sm_10).

@@ -269,14 +269,18 @@ LogicalResult Assigner::collect(Operation *op) {
         op, call.getCalleeAttr()));
     if (!callee)
       return op->emitOpError() << "calls a function that is not declared";
-    for (auto [operand, type] :
-         llvm::zip(call.getInputs(), callee.getArgumentTypes()))
+    ArrayRef<Type> argumentTypes = callee.getArgumentTypes();
+    for (auto [index, operand] : llvm::enumerate(call.getInputs()))
       if (isRealField(operand.getType()))
-        markBoundary(operand, cast<MemRefType>(type).getElementType(), op);
+        markBoundary(operand,
+                     cast<MemRefType>(argumentTypes[mdrt::getHostArgumentIndex(
+                                          call, index)])
+                         .getElementType(),
+                     op);
     // A field that the function adds to is stored with its result, in the
     // type that the function declares (D270).
-    ArrayRef<Type> outTypes =
-        callee.getArgumentTypes().slice(call.getInputs().size());
+    ArrayRef<Type> outTypes = argumentTypes.slice(
+        mdrt::getHostArgumentIndex(call, call.getInputs().size()));
     for (auto [index, destination] : llvm::enumerate(call.getOuts())) {
       if (!isRealField(destination.getType()))
         continue;
@@ -363,6 +367,12 @@ LogicalResult Assigner::collect(Operation *op) {
   }
   if (auto triplets = dyn_cast<BuildTripletsOp>(op)) {
     positions.push_back(triplets.getPositions());
+    return success();
+  }
+  // The pairs of images are tested in the type of the positions as they
+  // are stored, f64 (D[mlip-pairlist]).
+  if (auto edges = dyn_cast<BuildEdgesOp>(op)) {
+    positions.push_back(edges.getPositions());
     return success();
   }
   if (auto refresh = dyn_cast<RefreshNeighborsOp>(op)) {

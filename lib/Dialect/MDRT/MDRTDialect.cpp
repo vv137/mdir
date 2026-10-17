@@ -128,6 +128,12 @@ LogicalResult HostCallOp::verify() {
       return emitOpError() << "expected result " << i
                            << " to have the type of the field in 'outs', "
                            << getOuts()[i].getType();
+  // The pairs of images are buffers of the device, which the host takes
+  // only where they are (D[mlip-pairlist]).
+  for (Value input : getInputs())
+    if (isa<mdir::md::EdgesType>(input.getType()) && !getInPlace())
+      return emitOpError() << "takes the pairs of images, which a host call "
+                              "takes only in place";
   for (Value number : getNumbers())
     if (!getNumberBufferType(number.getType()))
       return emitOpError() << "expected the results after the fields to be "
@@ -145,9 +151,20 @@ HostCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                          << "' does not name a function";
 
   // The operands, the buffers of the fields of `outs`, and the buffers of
-  // the host that take the numbers.
+  // the host that take the numbers. The pairs of images of
+  // `md_exec.build_edges` are four arguments: its slots, counts, and
+  // offsets, and the number of their build (D[mlip-pairlist]).
   ArrayRef<Type> expected = callee.getArgumentTypes();
-  unsigned numOperands = getInputs().size(), numOuts = getOuts().size();
+  MLIRContext *context = getContext();
+  Type narrow = IntegerType::get(context, 32);
+  SmallVector<Type, 4> edgeTypes = {
+      MemRefType::get({ShapedType::kDynamic, 5}, narrow),
+      MemRefType::get({ShapedType::kDynamic}, narrow),
+      MemRefType::get({ShapedType::kDynamic}, narrow),
+      IntegerType::get(context, 64)};
+  unsigned numOperands = 0, numOuts = getOuts().size();
+  for (Value input : getInputs())
+    numOperands += isa<mdir::md::EdgesType>(input.getType()) ? edgeTypes.size() : 1;
   unsigned total = numOperands + numOuts + getNumbers().size();
   if (expected.size() != total)
     return emitOpError() << "'" << getCallee() << "' takes "
@@ -157,9 +174,17 @@ HostCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
                          << "' returns a value; a function of the host "
                             "that reads fields returns none";
 
+  SmallVector<Type> given;
+  for (Value input : getInputs()) {
+    if (isa<mdir::md::EdgesType>(input.getType()))
+      given.append(edgeTypes.begin(), edgeTypes.end());
+    else
+      given.push_back(input.getType());
+  }
+  for (Value out : getOuts())
+    given.push_back(out.getType());
   for (unsigned i = 0, e = numOperands + numOuts; i != e; ++i) {
-    Type type = i < numOperands ? getInputs()[i].getType()
-                                : getOuts()[i - numOperands].getType();
+    Type type = given[i];
     auto field = dyn_cast<FieldType>(type);
     bool fits = field ? canHold(expected[i], field) : type == expected[i];
     if (!fits)
@@ -176,6 +201,20 @@ HostCallOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
              << number.getType();
   }
   return success();
+}
+
+unsigned mdir::mdrt::getHostArgumentCount(Type input) {
+  return isa<mdir::md::EdgesType>(input) ? 4 : 1;
+}
+
+unsigned mdir::mdrt::getHostArgumentIndex(HostCallOp call, unsigned index) {
+  unsigned argument = 0;
+  ValueRange inputs = call.getInputs();
+  for (unsigned i = 0; i != index && i < inputs.size(); ++i)
+    argument += getHostArgumentCount(inputs[i].getType());
+  if (index > inputs.size())
+    argument += index - inputs.size();
+  return argument;
 }
 
 MemRefType mdir::mdrt::getHostNumberType(Type number) {

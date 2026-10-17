@@ -939,6 +939,61 @@ void BuildTripletsOp::getEffects(
                        SideEffects::DefaultResource::get());
 }
 
+LogicalResult BuildEdgesOp::verify() {
+  auto neighbors = cast<NeighborsType>(getNeighbors().getType());
+  if (failed(verifyPositions(getOperation(), getPositions(),
+                             neighbors.getParticleSet())))
+    return failure();
+  double cutoff = getCutoff().convertToDouble();
+  if (!(cutoff > 0.0))
+    return emitOpError() << "expected a positive cutoff, got " << cutoff;
+  TypeRange results = getResultTypes();
+  if (isStorageForm()) {
+    auto rows = [](Type type, int64_t columns) {
+      auto buffer = dyn_cast<MemRefType>(type);
+      return buffer && buffer.getRank() == 2 &&
+             buffer.getDimSize(1) == columns &&
+             buffer.getElementType().isInteger(32) &&
+             buffer.getMemorySpace();
+    };
+    auto list = [](Type type) {
+      auto buffer = dyn_cast<MemRefType>(type);
+      return buffer && buffer.getRank() == 1 &&
+             buffer.getElementType().isInteger(32) &&
+             buffer.getMemorySpace();
+    };
+    if (results.size() != 4 || !rows(results[0], 5) || !list(results[1]) ||
+        !list(results[2]) || !results[3].isInteger(64))
+      return emitOpError()
+             << "expected the slots, the counts, and the offsets on the "
+                "device (memref<?x5xi32>, memref<?xi32>, memref<?xi32> in a "
+                "memory space) and the number of their build (i64)";
+    if (!cast<MemRefType>(getPositions().getType()).getElementType().isF64())
+      return emitOpError() << "expected the positions in f64: the cutoff is "
+                              "tested in f64";
+    return success();
+  }
+  auto edges = results.size() == 1 ? dyn_cast<md::EdgesType>(results[0])
+                                   : md::EdgesType();
+  if (!edges || edges.getParticleSet() != neighbors.getParticleSet())
+    return emitOpError() << "expected the result to have type "
+                         << md::EdgesType::get(getContext(),
+                                               neighbors.getParticleSet());
+  return success();
+}
+
+void BuildEdgesOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  // The op reads the structure and the positions, and writes the slots and
+  // the counts that the structure holds.
+  addEffect<MemoryEffects::Read>(effects, getNeighborsMutable());
+  addEffect<MemoryEffects::Write>(effects, getNeighborsMutable());
+  addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
+}
+
 /// The floating-point type that the kernel of a loop over tuples computes
 /// in, which its first argument states.
 static Type getTupleKernelReal(TupleForOp op) {

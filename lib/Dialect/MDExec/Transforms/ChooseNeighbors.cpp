@@ -103,6 +103,15 @@ public:
         unknown = true;
       keep.insert(beginnings.begin(), beginnings.end());
     });
+    // So are the pairs of images of a learned potential
+    // (D[mlip-pairlist]).
+    getOperation()->walk([&](BuildEdgesOp edges) {
+      llvm::DenseSet<Value> visited;
+      llvm::SetVector<Operation *> beginnings;
+      if (!findBeginnings(edges.getNeighbors(), beginnings, visited))
+        unknown = true;
+      keep.insert(beginnings.begin(), beginnings.end());
+    });
     // A loop over a structure whose beginnings are unknown may be over any
     // of them: all stay matrices.
     if (unknown)

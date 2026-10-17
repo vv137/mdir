@@ -44,6 +44,7 @@ private:
   LogicalResult convertTupleOp(OpTy op, bool isSum);
   LogicalResult convertKick(dyn::KickOp op);
   LogicalResult convertTriplets(md::TripletsOp op);
+  LogicalResult convertEdges(md::EdgesOp op);
 
   /// The incidence structure of `relation`, a relation of a tuple set or
   /// of triplets. It is built once, where the relation is defined.
@@ -142,6 +143,23 @@ LogicalResult Converter::convertTriplets(md::TripletsOp op) {
       neighborhood.getPositions(), neighborhood.getCell(),
       op.getCutoffAttr());
   op.getResult().replaceAllUsesWith(triplets);
+  converted.push_back(op);
+  return success();
+}
+
+/// The pairs of images of a learned potential are found from the rows of
+/// the neighbor structure of the neighborhood (D[mlip-pairlist]).
+LogicalResult Converter::convertEdges(md::EdgesOp op) {
+  if (!op.getNeighbors().getDefiningOp<md::NeighborhoodOp>())
+    return op.emitOpError() << "cannot convert the edges of a relation that "
+                               "is not the result of 'md.neighborhood'";
+  Value structure = neighbors.lookup(op.getNeighbors());
+  assert(structure && "the neighborhood is converted before its users");
+  builder.setInsertionPoint(op);
+  auto edges = md_exec::BuildEdgesOp::create(
+      builder, op.getLoc(), TypeRange{op.getResult().getType()}, structure,
+      op.getPositions(), op.getCell(), op.getCutoffAttr());
+  op.getResult().replaceAllUsesWith(edges.getResult(0));
   converted.push_back(op);
   return success();
 }
@@ -441,6 +459,8 @@ LogicalResult Converter::convert(Operation *op) {
     return convertNeighborhood(neighborhood);
   if (auto triplets = dyn_cast<md::TripletsOp>(op))
     return convertTriplets(triplets);
+  if (auto edges = dyn_cast<md::EdgesOp>(op))
+    return convertEdges(edges);
 
   if (auto sum = dyn_cast<md::SumRelationOp>(op)) {
     if (sum.getTruncation() != md::Truncation::None)
