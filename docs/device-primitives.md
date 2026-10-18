@@ -41,12 +41,14 @@ specialization of CUB's `BlockHistogram` [[CUB]](references.md#cub), the
 privatized histogram whose cost [[GomezLuna2013]](references.md#gomezluna2013)
 models, with a value in place of a count.
 
-Two strategies differ in how a block finds its copy of an index:
+Two strategies differ in how a block finds its copy of an index. Here $P$
+is the order of the stencil of PME, and the slots that a search of a
+table tries are written `P`, as in the attribute:
 
 | Strategy | The copy of a block | For a footprint that |
 |---|---|---|
 | `tile(E)` | A dense tile: the bin of $E^3$ points of the grid and the $P - 1$ points of the stencil past it on each axis, $(E + P - 1)^3$ values | the IR bounds (the stencil of order $P$ and the bin) |
-| `hash(S, P, L)` | A table of $S$ slots keyed by the index, found by a multiplicative hash and the next slots in turn [[Knuth1998]](references.md#knuth1998), claimed by a compare-and-swap. A search gives up after $P$ slots, and the value goes to the field with an atomic of its own. The host takes the table from $L$ items of a launch on | has no bound (the members of tuples) |
+| `hash(S, P, L)` | A table of $S$ slots keyed by the index, found by a multiplicative hash and the next slots in turn [[Knuth1998]](references.md#knuth1998), claimed by a compare-and-swap. A search gives up after `P` slots, and the value goes to the field with an atomic of its own. The host takes the table from $L$ items of a launch on | has no bound (the members of tuples) |
 | `atomic` | None: an atomic of the device for each value | — |
 
 `sorted` (#417) is reserved.
@@ -127,7 +129,7 @@ Where the preconditions hold, the pass chooses by cost:
 - **`hash`** for every loop that can take it, with $S$ = 128 × the arity
   rounded up to a power of two (room for every member of a block's
   tuples; 512 slots and 8 KB for a run with dihedrals and forces in f32),
-  $P$ = 8, and $L$ = 100,000. Below 100,000 tuples the device holds every
+  `P` = 8 slots tried, and $L$ = 100,000. Below 100,000 tuples the device holds every
   block at once, and the table lengthens each one: with the table JAC
   (55,000 tuples) ran 1.5% slower on an RTX 4090 and 3% slower on an RTX
   PRO 6000, Factor IX (165,000) 2.3% and 1% faster. The count is known on
@@ -146,7 +148,7 @@ or the reason for a refusal.
 | `md-exec-choose-scatter{tile=auto\|on\|off}` | `auto` the rule above; `on` every sum that can be tiled; `off` none |
 | `tile-edge`, `tile-min-points` | The points of an edge of a bin (4, 8, 16; 8 by default) and the threshold of `auto` |
 | `hash=auto\|on\|off` | `on` takes the table at any count ($L$ = 0) |
-| `hash-least`, `hash-probes`, `block-size` | $L$, $P$, and the threads of a block, as `convert-md-exec-to-gpu` launches them |
+| `hash-least`, `hash-probes`, `block-size` | $L$, the slots tried `P`, and the threads of a block, as `convert-md-exec-to-gpu` launches them |
 | `deterministic`, `explain` | The mode, which privatizes no floating-point sum; the remarks |
 | `MDIR_PME_SPREAD` | `global` is `tile=off`; `tiles` is `tile=on`; `tiles4`, `tiles8`, `tiles16` set the edge as well; `auto` is the default ([environment.md](environment.md)) |
 | `MDIR_TUPLE_SUMS` | `atomics` is `hash=off`; `blocks` is `hash=on`, which the tests of small systems use |

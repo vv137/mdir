@@ -413,7 +413,7 @@ of a term over centers, whose block computes the sums of the centers
 **The strategy, its preconditions, and the choice.** The table is the
 strategy `hash(S, P, L)` of the privatized scatter-accumulate, which
 `md-exec-choose-scatter` sets on each loop that can take it:
-$S$ = 512 slots for a run with dihedrals, $P$ = 8 slots tried, and
+$S$ = 512 slots for a run with dihedrals, `P` = 8 slots tried, and
 $L$ = 100,000 tuples, below which the host launches the kernel with the
 atomics (JAC, 55,000 tuples, ran 1.5% slower with the table). The
 preconditions, the block memory and the occupancy, the measurements behind
