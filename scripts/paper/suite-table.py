@@ -6,7 +6,9 @@
 LOGS holds mdir-N.log and pmemd-N.log, the summaries of bench.py, and
 optionally out-mdir-N/SYSTEM.out, the output of MDIR for each system of
 repeat N, from which the change of the energy, the counts of builds and
-prunings, and the time of compilation are taken. Rates are the mean and
+prunings, the time of compilation, and the reaches of the lists where the
+log states them (D281: "MDIR: skins: the reach ...", with their source)
+are taken. Rates are the mean and
 the sample standard deviation over the repeats; the ratio is that of the
 runs of the same repeat, which ran one after the other on the same device.
 Prints a table in Markdown.
@@ -51,14 +53,16 @@ def main():
         pmemd[r] = rates(path) if os.path.exists(path) else {}
 
     print("| System | Atoms | MDIR, ns/day | pmemd.cuda, ns/day | MDIR / pmemd.cuda "
-          "| Energy changed by (MDIR) | Builds, prunings: every | Compiled in |")
-    print("|---|---|---|---|---|---|---|---|")
+          "| Energy changed by (MDIR) | Builds, prunings: every | Compiled in "
+          "| Reaches, Å |")
+    print("|---|---|---|---|---|---|---|---|---|")
     for name in SYSTEMS:
         ours = [mdir[r][name] for r in repeats if name in mdir[r]]
         theirs = [pmemd[r][name] for r in repeats if name in pmemd[r]]
         ratios = [100 * mdir[r][name] / pmemd[r][name] for r in repeats
                   if name in mdir[r] and name in pmemd[r]]
         atoms, changes, builds, prunes, compiled = "", [], [], [], []
+        reaches = set()
         for out in sorted(glob.glob(os.path.join(logs, "out-mdir-*", name + ".out"))):
             text = open(out).read()
             m = re.search(r"MDIR: (\d+) particles", text)
@@ -76,6 +80,11 @@ def main():
             m = re.search(r"compiled in ([0-9.]+) s", text)
             if m:
                 compiled.append(float(m.group(1)))
+            m = re.search(r"^MDIR: skins: the reach ([0-9.]+) Å"
+                          r"(?:, pruned to ([0-9.]+) Å)? \((\w+):", text, re.M)
+            if m:
+                reaches.add(m.group(1) + (f" / {m.group(2)}" if m.group(2) else "")
+                            + f" ({m.group(3)})")
         change = (f"{min(changes):.1e} to {max(changes):.1e}" if len(changes) > 1
                   else (f"{changes[0]:.1e}" if changes else ""))
         every = (f"{statistics.mean(builds):.1f}, {statistics.mean(prunes):.1f}"
@@ -83,7 +92,8 @@ def main():
         lo, hi = (round(min(compiled)), round(max(compiled))) if compiled else (0, 0)
         time = "" if not compiled else (f"{lo} s" if lo == hi else f"{lo}–{hi} s")
         print(f"| `{name}` | {atoms} | {spread(ours, 1)} | {spread(theirs, 1)} "
-              f"| {spread(ratios, 1)}% | {change} | {every} | {time} |")
+              f"| {spread(ratios, 1)}% | {change} | {every} | {time} "
+              f"| {'; '.join(sorted(reaches))} |")
     print(f"\n{len(repeats)} repeats; energy and counts from "
           f"{len(glob.glob(os.path.join(logs, 'out-mdir-*')))} of them.")
 

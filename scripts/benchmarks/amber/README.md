@@ -37,7 +37,7 @@ As in `mdin.GPU` of each system:
 | Item | Amber input | MDIR | GROMACS |
 |---|---|---|---|
 | Cutoff | `cut=8.` | `cutoff = 8` | `rcoulomb = rvdw = 0.8` |
-| Neighbor lists | skin of 2 Å (pmemd) | `pairlist_distance = 10` | Verlet buffer from its tolerance |
+| Neighbor lists | skin of 2 Å (pmemd) | `pairlist_distance = 10` by default; `--skin`, `--prune-skin`, or `"AUTO"` | Verlet buffer from its tolerance |
 | Particle mesh Ewald | `dsum_tol` 1e-6 (NVE), 1e-5 (NPT): $\beta$ from $\mathrm{erfc}(\beta r_c)/r_c$ = `dsum_tol`, 0.39467 and 0.34864 Å⁻¹; pmemd.cuda's grid, order 4 | the same `beta` and `grid`, order 4, `influence = "OPTIMAL"` (D134) | `ewald-rtol` = $\mathrm{erfc}(\beta r_c)$ of the same $\beta$, `fourier-nx`, `-ny`, `-nz` of the same grid, order 4; `-notunepme` |
 | Dispersion | correction of energy and pressure | the same | `DispCorr = EnerPres` |
 | Constraints | SHAKE of the bonds of hydrogen, rigid water | SHAKE, RATTLE, SETTLE | LINCS, SETTLE |
@@ -63,6 +63,8 @@ bench.py --work DIR prepare --parmed-python PYTHON_WITH_PARMED
 bench.py --work DIR run mdir [SYSTEM ...] --mdir PATH_TO_MDIR
 bench.py --work DIR run mdir --mdir PATH_TO_MDIR --neighbor-structure GROUPS \
     --skin 3 --prune-skin 0.6        # a dual list, D114: the settings of the suite since
+bench.py --work DIR run mdir --mdir PATH_TO_MDIR --skin AUTO
+                                     # the reaches chosen by the run (D281)
 bench.py --work DIR run gromacs [SYSTEM ...] --gmx PATH_TO_GMX
 bench.py --work DIR report
 ```
@@ -71,6 +73,21 @@ The work directory defaults to `$MDIR_BENCH_DIR`, or `~/mdir-benchmarks`.
 Each system has a directory there with the converted inputs, the control
 file and the `.mdp` that a run writes, and the logs; `results.json` keeps
 the rates.
+
+`--skin AUTO` writes `pairlist_distance = "AUTO"` and, unless
+`--prune-skin` gives the inner skin, `pruned_distance = "AUTO"`: what a
+control file without the two keys means (D281,
+[neighbors-m0.md](../../../docs/neighbors-m0.md#6-the-choice-of-the-skins)),
+except that the log then states the reaches and their source. A run
+searches for its skins only when it is long (at least $5 \times 10^{12}$
+particles times steps), far beyond the suite's runs, and otherwise takes
+the choice of an earlier run of the same key from the cache of the skins
+(`MDIR_SKIN_CACHE_DIR`), else the defaults of D261. To time the reaches a
+long run would choose, run each system once with `MDIR_SKIN_SEARCH=always`,
+which measures the candidates and caches its choice, and time the runs
+after it, which take the cache; `scripts/paper/run-suite-repeats.sh` does
+this for the white paper (Section 10). `--prune-skin AUTO` with a number
+for `--skin` leaves the inner list alone to the run.
 
 `bench.py --work DIR smoke --mdir PATH_TO_MDIR` runs 50 steps (two
 coupling periods), with energy output only at the start and end. Add
