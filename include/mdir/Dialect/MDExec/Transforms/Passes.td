@@ -114,9 +114,9 @@ def ChooseScatter
       block memory, one for each bin of $E^3$ points of the grid (D282).
       It can be tiled where the run is not in the deterministic mode,
       the grid is in f32 or f64, the template has kernels of bins of $E$
-      points (4, 8, 16), a tile of $(E + P - 1)^3$ values with the
+      points (4, 8, 16), a tile of $(E + n - 1)^3$ values (order $n$) with the
       particles of a round fits 48 KiB of block memory, and every edge of
-      the grid has at least $E + P - 1$ points, so that a point of a tile
+      the grid has at least $E + n - 1$ points, so that a point of a tile
       wraps around the grid once at most. With `tile=auto`, the default,
       a sum is tiled where its grid is in f32 and has at least
       `tile-min-points` points: a smaller grid has too few bins to occupy a
@@ -124,9 +124,9 @@ def ChooseScatter
       every sum that can be tiled, `tile=off` none.
     - `md_exec.tuple_for`: `hash(S, P, L)`, the values of the tuples of a
       block added in a table of the block's particles in block memory
-      first (D283), with $S$ the slots for `block-size` threads of `arity`
-      members, rounded up to a power of two, $P$ = `hash-probes` slots
-      tried before a direct atomic, and $L$ = `hash-least` the fewest
+      first (D283), with `S` the slots for `block-size` threads of `arity`
+      members, rounded up to a power of two, `P` = `hash-probes` slots
+      tried before a direct atomic, and `L` = `hash-least` the fewest
       tuples of a launch that take the table, chosen on the host by the
       count. A loop takes it where the run is not in the deterministic
       mode, it may share particles (not `disjoint`), has no global sums,
@@ -134,7 +134,7 @@ def ChooseScatter
       of a static length of f32 or f64, and the table fits 48 KiB. The
       lowering applies it where it evaluates each tuple once, to a run of
       loops in one kernel if each of them takes it and their joint table
-      fits. `hash=on` takes the table at any count ($L = 0$), `hash=off`
+      fits. `hash=on` takes the table at any count (`L` = 0), `hash=off`
       never.
 
     With `explain`, each choice and each refusal is a remark on its op.
