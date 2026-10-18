@@ -119,7 +119,12 @@ public:
     for (auto &[loop, beginnings] : found)
       for (Operation *beginning : beginnings) {
         loops[beginning].push_back(loop);
-        if (!allowsUnique(loop))
+        // The rows of a domain stay a matrix (D[ml2-exec]): groups take
+        // every row as a center, in the minimum image.
+        bool domainRows = loop.getCenters() ||
+                          loop.getImages() == Images::Explicit ||
+                          loop.getConflict() == Conflict::Atomic;
+        if (!allowsUnique(loop) || domainRows)
           keep.insert(beginning);
       }
     // Every beginning of a loop must have the same kind.

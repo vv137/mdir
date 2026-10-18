@@ -213,6 +213,23 @@ void kernels::storeElement(OpBuilder &builder, Location loc, Value value,
   }
 }
 
+/// Adds `value`, a scalar or a vector, atomically to the element `row` of
+/// the buffer `buffer` on the host.
+static void emitHostAtomicAdd(OpBuilder &b, Location loc, Value value,
+                              Value buffer, Value row) {
+  auto type = cast<MemRefType>(buffer.getType());
+  if (type.getRank() == 1) {
+    memref::AtomicRMWOp::create(b, loc, arith::AtomicRMWKind::addf, value,
+                                buffer, ValueRange{row});
+    return;
+  }
+  for (int64_t c = 0, e = type.getDimSize(1); c < e; ++c)
+    memref::AtomicRMWOp::create(
+        b, loc, arith::AtomicRMWKind::addf,
+        vector::ExtractOp::create(b, loc, value, c), buffer,
+        ValueRange{row, createIndex(b, loc, c)});
+}
+
 //===----------------------------------------------------------------------===//
 // Loops over particles
 //===----------------------------------------------------------------------===//
@@ -265,6 +282,10 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   unsigned numIns = op.getIns().size();
   unsigned numOuts = op.getOuts().size();
   unsigned numYields = yield->getNumOperands();
+  // The rows of a domain (D[ml2-exec]).
+  bool explicitImages = op.getImages() == md_exec::Images::Explicit;
+  bool twoEnded = op.getTraversal() == md_exec::Traversal::Directed &&
+                  op.getConflict() == md_exec::Conflict::Atomic;
 
   // The difference of the positions is taken in their type and then
   // converted to the type that the kernel computes in: the subtraction is
@@ -326,14 +347,17 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                                  pair.getIndexType(), narrow);
 
         // The minimum-image displacement [AllenTildesley2017] and its
-        // squared length.
+        // squared length; with explicit images, the plain difference, since
+        // the rows carry their images (D[ml2-exec]).
         Value otherPosition = loadElement(pair, loc, positions, other);
         Value raw = convertReal(
             pair, loc,
             arith::SubFOp::create(pair, loc, centralPosition, otherPosition),
             computed);
-        Value d = emitMinimumImage(pair, loc, raw, boxComputed,
-                                   inverseComputed);
+        Value d = explicitImages ? raw
+                                 : emitMinimumImage(pair, loc, raw,
+                                                    boxComputed,
+                                                    inverseComputed);
         Value squares = arith::MulFOp::create(pair, loc, d, d);
         Value r2 = vector::ReductionOp::create(
             pair, loc, vector::CombiningKind::ADD, squares);
@@ -358,6 +382,31 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
         Value distinct = arith::CmpIOp::create(
             pair, loc, arith::CmpIPredicate::ne, other, central);
         within = arith::AndIOp::create(pair, loc, within, distinct);
+        // With the policy (directed, atomic), the value of each destination
+        // at the neighbor, sigma times that at the center, added atomically
+        // (D[ml2-exec]).
+        if (twoEnded && numOuts != 0)
+          scf::IfOp::create(pair, loc, within, [&](OpBuilder &then,
+                                                   Location) {
+            Value neighbor = other;
+            if (layout)
+              neighbor = arith::IndexCastOp::create(
+                  then, loc, then.getIndexType(),
+                  memref::LoadOp::create(then, loc, layout->order,
+                                         ValueRange{other}));
+            for (unsigned i = 0; i != numOuts; ++i) {
+              Value value = inside.lookupOrDefault(yield->getOperand(i));
+              if (op.getExchange(i) == md::Exchange::Antisymmetric)
+                value = arith::NegFOp::create(then, loc, value);
+              Value destination = op.getOuts()[i];
+              auto type = cast<MemRefType>(destination.getType());
+              if (type.getMemorySpace())
+                emitAtomicAdd(then, loc, value, destination, neighbor);
+              else
+                emitHostAtomicAdd(then, loc, value, destination, neighbor);
+            }
+            scf::YieldOp::create(then, loc);
+          });
         SmallVector<Value> updated;
         for (unsigned i = 0; i != numYields; ++i) {
           Value narrow = getNarrow(i);

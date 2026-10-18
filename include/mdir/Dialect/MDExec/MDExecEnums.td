@@ -27,6 +27,19 @@ def MDExec_Traversal : I32EnumAttr<"Traversal", "pairs that a loop visits", [
   let cppNamespace = "::mdir::md_exec";
 }
 
+// How a loop over pairs takes the displacement of a pair, and the pairs
+// that a neighbor structure holds.
+def MDExec_Images : I32EnumAttr<"Images", "images of a displacement", [
+    // The minimum image in the cell.
+    I32EnumAttrCase<"Minimum", 0, "minimum">,
+    // The plain difference of the positions: the rows carry their images,
+    // as the ghost rows of a domain do (D[ml2-exec],
+    // docs/distributed-ml2.md, Section 7.2).
+    I32EnumAttrCase<"Explicit", 1, "explicit">
+  ]> {
+  let cppNamespace = "::mdir::md_exec";
+}
+
 // How a loop avoids conflicting writes.
 def MDExec_Conflict : I32EnumAttr<"Conflict",
     "strategy against conflicting writes", [

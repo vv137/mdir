@@ -106,10 +106,12 @@ private:
   LogicalResult getNeighbors(Operation *op, Value structure,
                              Neighbors &storage);
 
-  /// Builds `structure` at the configuration `positions`.
+  /// Builds `structure` at the configuration `positions`. With `centers`,
+  /// the rows of the first `centers` particles only (D[ml2-exec]).
   LogicalResult emitBuild(OpBuilder &builder, Location loc,
                           const Neighbors &structure, Value positions,
-                          Value box, double reach, double cellWidth);
+                          Value box, double reach, double cellWidth,
+                          Value centers = Value());
 
   /// The number of particles that `buffer` holds a field of.
   Value createSize(OpBuilder &builder, Location loc, Value buffer) {
@@ -123,7 +125,8 @@ private:
                        ArrayRef<Value> values, bool isSum);
 
   /// Adds the templates for positions of the type `real` to the module.
-  LogicalResult addTemplates(Type real);
+  /// With `centers`, the build with a center extent as well.
+  LogicalResult addTemplates(Type real, bool centers = false);
   /// Adds the templates of particle mesh Ewald for the types of the
   /// positions, the charges, and the forces.
   /// With `potential`, the functions of the potential at the particles
@@ -160,7 +163,6 @@ private:
   MLIRContext *context;
 
   llvm::DenseMap<Value, Neighbors> neighbors;
-  llvm::DenseSet<Type> templatesAdded;
 
   /// The ops that have been lowered, in the order of the program.
   SmallVector<Operation *> lowered;
@@ -264,7 +266,14 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
 
   Value positions = op.getPositions();
   SmallVector<Value> inits(op.getReduce().begin(), op.getReduce().end());
-  Value size = createSize(builder, loc, positions);
+  // The rows of the centers alone (D[ml2-exec]).
+  Value size = op.getCenters() ? op.getCenters()
+                               : createSize(builder, loc, positions);
+  if ((op.getCenters() || op.getConflict() == md_exec::Conflict::Atomic) &&
+      op.getOverwrite() && llvm::is_contained(*op.getOverwrite(), true))
+    return op.emitOpError()
+           << "writes not every value of a destination once, which it "
+              "cannot overwrite";
 
   // The cell has become the vector of its edge lengths.
   Type real = cast<MemRefType>(positions.getType()).getElementType();
@@ -444,12 +453,18 @@ Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
   return memref::CastOp::create(builder, loc, type, given);
 }
 
-LogicalResult Lowering::addTemplates(Type real) {
-  if (!templatesAdded.insert(real).second)
-    return success();
+LogicalResult Lowering::addTemplates(Type real, bool centers) {
+  // The build with a center extent (D[ml2-exec]) is added only to a module
+  // that builds a structure with `centers`, so that other modules are what
+  // they were; it may come after the others, for a build of the same type
+  // that was lowered before.
+  auto has = [&](StringRef name) {
+    return SymbolTable::lookupSymbolIn(module, getInstanceName(name, real)) !=
+           nullptr;
+  };
+  std::string centersName = std::string(buildNeighborsName) + "_centers";
   // A module that was lowered in part has the templates already.
-  if (SymbolTable::lookupSymbolIn(
-          module, getInstanceName(buildNeighborsName, real)))
+  if (has(buildNeighborsName) && (!centers || has(centersName)))
     return success();
 
   ParserConfig config(context);
@@ -458,6 +473,15 @@ LogicalResult Lowering::addTemplates(Type real) {
   if (!templates)
     return module.emitError() << "cannot parse the neighbor build template";
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
+    auto function = dyn_cast<func::FuncOp>(&op);
+    bool isCenters =
+        function && function.getSymName() == getInstanceName(centersName, real);
+    if ((isCenters && !centers) ||
+        (function &&
+         SymbolTable::lookupSymbolIn(module, function.getSymName()))) {
+      op.erase();
+      continue;
+    }
     op.remove();
     module.push_back(&op);
   }
@@ -680,9 +704,9 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
 LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                   const Neighbors &structure, Value positions,
                                   Value box, double reach,
-                                  double cellWidth) {
+                                  double cellWidth, Value centers) {
   Type real = cast<MemRefType>(positions.getType()).getElementType();
-  if (failed(addTemplates(real)))
+  if (failed(addTemplates(real, static_cast<bool>(centers))))
     return failure();
 
   Value reachValue = createReal(builder, loc, real, reach);
@@ -705,11 +729,14 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
                                       leastValue})
           .getResult(0);
 
-  auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
-      module, getInstanceName(tilted ? (std::string(buildNeighborsName) +
-                                        "_triclinic")
-                                     : std::string(buildNeighborsName),
-                              real)));
+  if (centers && tilted)
+    return module.emitError()
+           << "a neighbor structure with 'centers' is built in an "
+              "orthorhombic cell only";
+  std::string name = std::string(buildNeighborsName) +
+                     (tilted ? "_triclinic" : centers ? "_centers" : "");
+  auto build = cast<func::FuncOp>(
+      SymbolTable::lookupSymbolIn(module, getInstanceName(name, real)));
   // Build; if a row was too narrow to hold the neighbors of a particle,
   // the runtime makes the rows wider, and the build is made again.
   Type wide = builder.getI64Type();
@@ -718,14 +745,14 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
     Block *before = builder.createBlock(&again.getBefore());
     OpBuilder at = OpBuilder::atBlockEnd(before);
     Value entries = getMatrixEntries(at, loc, structure.handle);
+    SmallVector<Value, 8> operands = {positions, boxValue};
+    if (tilted)
+      operands.push_back(widthsValue);
+    operands.append({reachValue, widthValue, structure.counts, entries});
+    if (centers)
+      operands.push_back(centers);
     Value largest =
-        func::CallOp::create(
-            at, loc, build,
-            tilted ? ValueRange{positions, boxValue, widthsValue, reachValue,
-                                widthValue, structure.counts, entries}
-                   : ValueRange{positions, boxValue, reachValue, widthValue,
-                                structure.counts, entries})
-            .getResult(0);
+        func::CallOp::create(at, loc, build, operands).getResult(0);
     Value width =
         memref::DimOp::create(at, loc, entries, createIndex(at, loc, 1));
     Value tooMany = arith::CmpIOp::create(
@@ -825,9 +852,15 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   double skin = op.getSkin().convertToDouble();
   double cellWidth = op.getCellWidth().convertToDouble();
 
+  // A structure over the rows of a domain (D[ml2-exec]) is built at every
+  // refresh, which the verifier checks. With explicit images the search
+  // wraps the rows into the cell and takes the minimum image, whose
+  // distance never exceeds the plain one: the structure holds every pair
+  // within the reach in plain differences, and more, which the loops' test
+  // of the cutoff on the plain displacement removes.
   if (op.getPolicy() == md_exec::RebuildPolicy::Always)
     return emitBuild(builder, loc, structure, positions, box, reach,
-                     cellWidth);
+                     cellWidth, op.getCenters());
 
   // Whether no particle has moved more than half the skin since the
   // structure was built, emitted where `at` is. A barostat scales the

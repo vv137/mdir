@@ -483,6 +483,16 @@ LogicalResult BuildNeighborsOp::verify() {
                          << skin;
   if (getWidth() <= 0)
     return emitOpError() << "expected a positive width, got " << getWidth();
+  // The rows of a domain (D[ml2-exec]): a matrix, without exclusions, which
+  // across domains are the topology of stage 2.
+  if (getCenters() || getImages() == Images::Explicit) {
+    if (getKind() != NeighborKind::Matrix)
+      return emitOpError() << "a structure with 'centers' or "
+                              "'images(explicit)' is a matrix";
+    if (getExcluded())
+      return emitOpError() << "a structure with 'centers' or "
+                              "'images(explicit)' leaves out no pairs";
+  }
   return verifyExcluded(getOperation(), getExcluded(),
                         neighbors.getParticleSet());
 }
@@ -570,6 +580,14 @@ LogicalResult RefreshNeighborsOp::verify() {
   }
   if (getStale() && !getPruneSkin())
     return emitOpError() << "'stale' belongs to a dual list ('prune_skin')";
+
+  // The rows of a domain are built at every refresh (D[ml2-exec]): the test
+  // of validity over explicit images comes with migration.
+  if ((getCenters() || getImages() == Images::Explicit) &&
+      (getPolicy() != RebuildPolicy::Always || getPruneSkin()))
+    return emitOpError() << "a structure with 'centers' or "
+                            "'images(explicit)' is refreshed with the "
+                            "policy 'always' and without 'prune_skin'";
 
   if (getMoved()) {
     if (getPolicy() != RebuildPolicy::Check)
@@ -756,11 +774,21 @@ LogicalResult PairForOp::verify() {
   // symmetric.
   bool unique = getTraversal() == Traversal::Unique &&
                 getConflict() == Conflict::Atomic;
-  if (!unique && (getTraversal() != Traversal::Directed ||
-                  getConflict() != Conflict::OwnerOnly))
-    return emitOpError() << "only the policies (directed, owner_only) and "
-                            "(unique, atomic) are supported";
-  if (unique) {
+  // Every entry, with the value at its neighbor too (D[ml2-exec]).
+  bool twoEnded = getTraversal() == Traversal::Directed &&
+                  getConflict() == Conflict::Atomic;
+  if (!unique && !twoEnded &&
+      (getTraversal() != Traversal::Directed ||
+       getConflict() != Conflict::OwnerOnly))
+    return emitOpError() << "only the policies (directed, owner_only), "
+                            "(directed, atomic), and (unique, atomic) are "
+                            "supported";
+  bool domainRows = getCenters() || getImages() == Images::Explicit;
+  if (unique && domainRows)
+    return emitOpError() << "the policy (unique, atomic) takes a structure "
+                            "of groups, which has neither 'centers' nor "
+                            "'images(explicit)'";
+  if (unique || twoEnded) {
     unsigned numOuts = getOuts().size();
     for (unsigned i = 0, e = numOuts + getReduce().size(); i != e; ++i) {
       mdir::md::Exchange exchange = getExchange(i);
@@ -768,7 +796,8 @@ LogicalResult PairForOp::verify() {
           (i < numOuts && exchange == mdir::md::Exchange::Antisymmetric))
         continue;
       return emitOpError()
-             << "the policy (unique, atomic) needs every destination "
+             << "the policy (" << (unique ? "unique" : "directed")
+             << ", atomic) needs every destination "
                 "symmetric or antisymmetric and every sum symmetric; value "
              << i << " is " << mdir::md::stringifyExchange(exchange);
     }
@@ -796,17 +825,37 @@ LogicalResult PairForOp::verify() {
   }
 
   // The list must contain every pair within the cutoff of this loop.
+  // The centers and the images are those of the structure (D[ml2-exec]).
   std::optional<double> built;
-  if (auto build = getNeighbors().getDefiningOp<BuildNeighborsOp>())
+  Value builtCenters;
+  Images builtImages = Images::Minimum;
+  bool known = false;
+  if (auto build = getNeighbors().getDefiningOp<BuildNeighborsOp>()) {
     built = build.getCutoff().convertToDouble();
-  else if (auto refresh = getNeighbors().getDefiningOp<RefreshNeighborsOp>())
+    builtCenters = build.getCenters();
+    builtImages = build.getImages();
+    known = true;
+  } else if (auto refresh =
+                 getNeighbors().getDefiningOp<RefreshNeighborsOp>()) {
     built = refresh.getCutoff().convertToDouble();
+    builtCenters = refresh.getCenters();
+    builtImages = refresh.getImages();
+    known = true;
+  }
   if (built && cutoff > *built)
     return emitOpError()
            << "the cutoff, " << cutoff
            << ", exceeds the cutoff that the neighbor structure was "
               "built with, "
            << *built;
+  if (known && builtCenters != getCenters())
+    return emitOpError() << "the centers of the loop are not those of the "
+                            "neighbor structure";
+  if (known && builtImages != getImages())
+    return emitOpError() << "the loop takes images("
+                         << stringifyImages(getImages())
+                         << "), but the neighbor structure holds images("
+                         << stringifyImages(builtImages) << ")";
 
   return verifyLoop(*this, neighbors.getParticleSet(),
                     /*allowsFlags=*/false);

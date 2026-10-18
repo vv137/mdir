@@ -183,7 +183,8 @@ static void mergeOuts(PairForOp loop, unsigned into, unsigned from) {
       loop.getCell(), loop.getIns(), outs, loop.getReduce(),
       /*scratch=*/ValueRange(), loop.getCutoffAttr(), loop.getWeightsAttr(),
       /*overwrite=*/DenseBoolArrayAttr(), loop.getTraversalAttr(),
-      loop.getConflictAttr(), exchange);
+      loop.getConflictAttr(), exchange, loop.getCenters(),
+      loop.getImagesAttr());
   merged.getKernel().takeBody(loop.getKernel());
 
   auto yield = cast<YieldOp>(merged.getKernel().front().getTerminator());

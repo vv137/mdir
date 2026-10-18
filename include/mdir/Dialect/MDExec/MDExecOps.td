@@ -357,7 +357,9 @@ def MDExec_PermuteOp : MDExec_Op<"permute", [
   let hasVerifier = 1;
 }
 
-def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [Pure]> {
+def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [
+    Pure, AttrSizedOperandSegments
+  ]> {
   let summary = "Builds a physical neighbor structure";
   let description = [{
     The structure is built at the configuration `positions` with the
@@ -384,22 +386,42 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [Pure]> {
     structure of a tuple set of arity 2. `width` is the room a row has at
     first, for the neighbors of a particle before those are left out; a
     build that finds a row too narrow makes the rows wider.
+
+    With `centers(%n)`, the first `n` particles of the set are the centers:
+    the structure has the rows of the centers, whose entries are any
+    particles of the set, and a loop over it takes those rows only. With
+    `images(explicit)`, the positions carry their images, as the owned and
+    ghost rows of a domain do (D[ml2-exec], docs/distributed-ml2.md,
+    Section 7.2): the structure holds every pair within `cutoff + skin` in
+    the plain difference of the positions, and may hold more, which the
+    cutoff of a loop removes. Such a structure is a matrix.
+
+    ```mlir
+    %nl = md_exec.build_neighbors %cells, %x, %cell centers(%n)
+            cutoff(2.0) skin(0.0) kind(matrix) width(64) images(explicit)
+            : !mdrt.cells<@dd.d0.local>, !md.field<@dd.d0.local, 3 x f64>
+            -> !mdrt.neighbors<@dd.d0.local>
+    ```
   }];
   let arguments = (ins
     MDRT_CellsType:$cells,
     MD_FieldType:$positions,
     MD_CellType:$cell,
     Optional<MDExec_Incidence>:$excluded,
+    Optional<Index>:$centers,
     F64Attr:$cutoff,
     F64Attr:$skin,
     MDExec_NeighborKind:$kind,
-    I64Attr:$width
+    I64Attr:$width,
+    DefaultValuedAttr<MDExec_Images,
+                      "::mdir::md_exec::Images::Minimum">:$images
   );
   let results = (outs MDRT_NeighborsType:$result);
   let assemblyFormat = [{
-    $cells `,` $positions `,` $cell
+    $cells `,` $positions `,` $cell (`centers` `(` $centers^ `)`)?
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
     `kind` `(` $kind `)` `width` `(` $width `)`
+    (`images` `(` $images^ `)`)?
     (`exclude` `(` $excluded^ `:` qualified(type($excluded)) `)`)? attr-dict
     `:` qualified(type($cells)) `,` qualified(type($positions))
     `->` qualified(type($result))
@@ -556,6 +578,12 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
              cell_width(2.8) policy(check)
              : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64>
     ```
+
+    `centers` and `images` are as for `md_exec.build_neighbors`. A
+    structure with either is refreshed with the policy `always` only and is
+    not a dual list: the test of validity over explicit images belongs to
+    the migration of particles between domains (docs/distributed-ml2.md,
+    Section 8).
   }];
   let arguments = (ins
     MDRT_NeighborsType:$neighbors,
@@ -564,22 +592,27 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     Variadic<MDExec_Scratch>:$scratch,
     Optional<I1>:$moved,
     Optional<I1>:$stale,
+    Optional<Index>:$centers,
     F64Attr:$cutoff,
     F64Attr:$skin,
     OptionalAttr<F64Attr>:$prune_skin,
     F64Attr:$cell_width,
     DefaultValuedAttr<MDExec_RebuildPolicy,
                       "::mdir::md_exec::RebuildPolicy::Check">:$policy,
-    OptionalAttr<I64Attr>:$interval
+    OptionalAttr<I64Attr>:$interval,
+    DefaultValuedAttr<MDExec_Images,
+                      "::mdir::md_exec::Images::Minimum">:$images
   );
   let results = (outs MDRT_NeighborsType:$result);
   let assemblyFormat = [{
     $neighbors `,` $positions `,` $cell
     (`scratch` `(` $scratch^ `:` type($scratch) `)`)?
     (`moved` `(` $moved^ `)`)? (`stale` `(` $stale^ `)`)?
+    (`centers` `(` $centers^ `)`)?
     `cutoff` `(` $cutoff `)` `skin` `(` $skin `)`
     (`prune_skin` `(` $prune_skin^ `)`)?
     `cell_width` `(` $cell_width `)` (`interval` `(` $interval^ `)`)?
+    (`images` `(` $images^ `)`)?
     `policy` `(` $policy `)` attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))
   }];
@@ -909,6 +942,32 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
                exchange [antisymmetric, symmetric]
                policy(directed, owner_only) { ... }
     ```
+
+    With `centers(%n)`, the loop takes the rows of the first `n` particles
+    only, the centers, whose entries are any particles of the set; it
+    updates a destination at the centers, and the other particles keep
+    what the destination holds. With `images(explicit)`, the displacement
+    is the plain difference `d = x_i − x_j` of the positions, which carry
+    their images, as the owned and ghost rows of a domain do, and no
+    minimum image is taken; the cell is still an operand. Both are those of
+    the structure (D[ml2-exec], docs/distributed-ml2.md, Section 7.2).
+
+    With the policy `(directed, atomic)`, every entry `(i, j)` of the list
+    adds `k_a(i, j)` at `i` and `σ k_a(i, j)` at `j`, where `σ` is +1 for
+    a `symmetric` destination and −1 for an `antisymmetric` one; the
+    additions at `j` are atomic. Every destination must be symmetric or
+    antisymmetric, and every sum symmetric. Over the owned and ghost rows
+    of a domain it is the two-ended `md_dist.gather_pairs`, whose
+    contributions at the ghosts return to their owners.
+
+    ```mlir
+    %f = md_exec.pair_for %nl, %x, %cell centers(%n)
+           outs(%f0 : !md.field<@dd.d0.local, 3 x f64>) cutoff(2.0)
+           exchange [antisymmetric] images(explicit)
+           policy(directed, atomic) { ... }
+           : !mdrt.neighbors<@dd.d0.local>, !md.field<@dd.d0.local, 3 x f64>
+           -> !md.field<@dd.d0.local, 3 x f64>
+    ```
   }];
   let arguments = (ins
     MDRT_NeighborsType:$neighbors,
@@ -926,12 +985,15 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     DefaultValuedAttr<MDExec_Conflict,
                       "::mdir::md_exec::Conflict::OwnerOnly">:$conflict,
     OptionalAttr<TypedArrayAttrBase<MD_Exchange,
-                 "exchange contracts">>:$exchange
+                 "exchange contracts">>:$exchange,
+    Optional<Index>:$centers,
+    DefaultValuedAttr<MDExec_Images,
+                      "::mdir::md_exec::Images::Minimum">:$images
   );
   let regions = (region SizedRegion<1>:$kernel);
   let results = (outs Variadic<AnyType>:$results);
   let assemblyFormat = [{
-    $neighbors `,` $positions `,` $cell
+    $neighbors `,` $positions `,` $cell (`centers` `(` $centers^ `)`)?
     (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
     (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
     (`reduce` `(` $reduce^ `:` type($reduce) `)`)?
@@ -940,6 +1002,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     (`weights` $weights^)?
     (`overwrite` $overwrite^)?
     custom<ExchangeList>($exchange)
+    (`images` `(` $images^ `)`)?
     `policy` `(` $traversal `,` $conflict `)`
     $kernel attr-dict
     `:` qualified(type($neighbors)) `,` qualified(type($positions))

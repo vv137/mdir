@@ -122,9 +122,9 @@ LogicalResult Converter::convertNeighborhood(md::NeighborhoodOp op) {
   }
   Value structure = md_exec::BuildNeighborsOp::create(
       builder, loc, mdrt::NeighborsType::get(context, particleSet), cells,
-      op.getPositions(), op.getCell(), excluded, APFloat(cutoff),
-      APFloat(skin), md_exec::NeighborKind::Matrix,
-      static_cast<uint64_t>(width));
+      op.getPositions(), op.getCell(), excluded, /*centers=*/Value(),
+      APFloat(cutoff), APFloat(skin), md_exec::NeighborKind::Matrix,
+      static_cast<uint64_t>(width), md_exec::Images::Minimum);
 
   neighbors[op.getResult()] = structure;
   converted.push_back(op);
@@ -209,7 +209,7 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
                                   md_exec::Traversal::Directed),
       md_exec::ConflictAttr::get(builder.getContext(),
                                  md_exec::Conflict::OwnerOnly),
-      exchange);
+      exchange, /*centers=*/Value(), /*images=*/md_exec::ImagesAttr());
 
   // The kernel receives the squared distance; the semantic kernel is
   // written in terms of the distance.
