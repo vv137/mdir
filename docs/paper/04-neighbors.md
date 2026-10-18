@@ -715,10 +715,11 @@ steps between prunings. Counting only the work removed, $t_\text{fused}
 \approx t_\text{loop} + t_\text{prune}$ less the read back. On an RTX 4090
 the measured $t_\text{fused}$ is instead $t_\text{loop}$ and 0 to 7% more:
 on Cellulose 584.9 µs against $t_\text{loop} = 550.6$ and a main kernel
-of the pruning of 228.6; on STMV 1638.4 against 1654.2 and 575.0. A warp's
-pruning is bound by memory and its computation by the shuffles and the
-arithmetic of the loop, and warps of the two parts share a
-multiprocessor, so the pruning hides under the loop. A step takes 4 to 6%
+of the pruning of 228.6; on STMV 1638.4 against 1654.2 and 575.0. The
+reading that fits, which no counter has measured: a warp's pruning is
+bound by memory and its computation by the shuffles and the arithmetic of
+the loop, and warps of the two parts share a multiprocessor, so the
+pruning hides under the loop. A step takes 4 to 6%
 less from about 6,400 groups (Cellulose 1465 → 1376 µs, STMV at 4 fs
 4710 → 4458; `docs/groups-m1.md`, Section 6.2). Two costs bound the gain.
 The warps are as many as the groups, where the loop has one for each

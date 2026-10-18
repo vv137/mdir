@@ -3419,6 +3419,9 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
           getOrDeclare("mdrtCountFusedPrune", then.getFunctionType({}, {})),
           ValueRange());
       PruneContext ctx = getPruneContext(then, loc, structure, cell, reach);
+      // The warp stores the inner list and loads it back through the same
+      // buffers, one argument of the kernel each.
+      ctx.inner = {lists.entries, lists.masks, lists.blockCounts};
       Value groupWarps = emitWarps(
           then, ctx.groups,
           [&](OpBuilder &, Value count) -> Value { return count; },

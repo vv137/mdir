@@ -463,11 +463,13 @@ Cellulose NVE of the suite (11 / 8.6 Å) and TIP3P boxes of four sizes
 On the RTX 4090 the kernel that prunes and computes takes, a call, the
 loop and 0 to 7% more (nsys: Cellulose 584.9 µs against 550.6 for the
 loop and 228.6 for the main kernel of the pruning; TIP3P 309,876 sites
-539.3 against 503.6 and 206.8; STMV 1638.4 against 1654.2 and 575.0): the
-part of a warp that prunes is bound by memory, the part that computes by
-the shuffles and the arithmetic, and warps of the two parts run side by
-side on a multiprocessor. On STMV it takes less than the loop alone, as a
-warp a group adds the sums of its members once rather than once a block.
+539.3 against 503.6 and 206.8; STMV 1638.4 against 1654.2 and 575.0).
+The reading that fits, not measured with counters: the part of a warp that
+prunes is bound by memory, the part that computes by the shuffles and the
+arithmetic, and warps of the two parts run side by side on a
+multiprocessor. On STMV it takes less than the loop alone; a warp a group
+adds the sums of its members once rather than once a block, which may be
+why.
 It holds 94 to 96 registers a thread, against 72 for the loop and for the
 pruning. On the RTX PRO 6000 Blackwell Max-Q, at its cap of 300 W, the
 kernel takes the sum of the two (Cellulose 591.2 against 415.0 and
