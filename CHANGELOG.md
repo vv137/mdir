@@ -562,6 +562,21 @@ format, or the outputs; every such change is listed under **Changed** or
   output changes; results agree with the previous spreading to the
   rounding of the atomics.
 
+- **The tiles of PME and the tables of the tuple kernel are strategies of
+  one privatized scatter-accumulate** (D[privatize-scatter], part of #416,
+  [docs/device-primitives.md](docs/device-primitives.md)): the attribute
+  `#md_exec.scatter` (`tile(E)` on `md_exec.reciprocal`, replacing
+  `tiles(E)`; `hash(S, P, L)` on `md_exec.tuple_for`; `sorted` reserved
+  for #417) states the strategy, and the pass `md-exec-choose-scatter`
+  chooses it, replacing `md-exec-choose-spreading` and the options
+  `tuple-block-sums` and `tuple-block-least` of `convert-md-exec-to-gpu`.
+  The pass and the lowerings check each precondition with the same
+  functions. `MDIR_PME_SPREAD` and `MDIR_TUPLE_SUMS` keep their values.
+  The generated kernels, the results, and the speed are those of before;
+  no control-file key or output changes. A script or test that names
+  `md-exec-choose-spreading` in `MDIR_PRINT_AFTER` or in a pipeline, or
+  the removed options, names `md-exec-choose-scatter` and its options
+  `tile` and `hash` instead.
 - **The kernel of the bonded terms, the 1-4 pairs, and the excluded pairs
   adds the values of a block in block memory first** (D283,
   #408, [docs/device-tuples.md](docs/device-tuples.md), Section 11): on a

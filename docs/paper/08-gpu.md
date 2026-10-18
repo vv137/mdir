@@ -50,6 +50,8 @@ atomics differ: by $10^{-6}$ of the RMS force on the systems of the
 suite. The excluded pairs, half the tuples of Cellulose, stay in this
 kernel: evaluated by the rows of their particles, without atomics, they
 took as long as with them.
+Section 8.5 derives the conditions under which the table gives the sum
+of the atomics.
 Destinations that the forces of a step add are merged where a loop gives
 two of them by the same contract: the forces of the sums over the centers
 of a term (D150), and those of a term over the pairs of a topology fused
@@ -294,3 +296,89 @@ list 11/8.6 Å, RTX 3090 at 300 W; the device time of a step from nsys,
 The wall time of the same steps was 2783 µs (62.1 ns/day): the device is
 busy 97% of a step on a system of this size. On JAC, a step of about
 240 µs, the share of the host is larger, which is what D113 addressed.
+
+## 8.5 Privatized scatter-accumulation
+
+Two kernels add values into a field at indices that their threads share:
+the spreading of PME adds $q_j\prod_a M_n(\cdot)$ into the points of the
+grid (Section 5.3), and the kernel of the tuples evaluated once adds the
+forces of each tuple into its members (Section 8.1). Item $k$ adds
+$v_k$ at index $i_k$, and the result is
+
+$$
+a_i' = a_i + \sum_{k : i_k = i} v_k .
+$$
+
+With one atomic addition of the device for each item, the atomics are the
+cost: about 70% of the kernel of the tuples on Cellulose (D283). A
+*privatized* scatter gives each block $\mathcal B_b$ of threads a copy, in
+block memory, of the indices its items touch. The block adds its items
+there, and after a barrier adds each touched index to the field once:
+
+$$
+a_i' = a_i + \sum_b \Big(\sum_{k \in \mathcal B_b : i_k = i} v_k\Big).
+$$
+
+This is the atomic specialization of CUB's `BlockHistogram`
+[[CUB]](references.md#cub), with a value in place of a count; the cost of
+such privatized sums in block memory is modeled in
+[[GomezLuna2013]](references.md#gomezluna2013). The strategy is the
+attribute `#md_exec.scatter` of the ops that scatter, which the pass
+`md-exec-choose-scatter` sets and the lowering applies. Each condition
+below is one function that both of them call (D[privatize-scatter],
+`docs/device-primitives.md`).
+
+**The reordering.** The two forms are the same sum, grouped differently.
+For integers, fixed point included, addition is associative and
+commutative, modulo $2^{64}$ as well, so the grouping gives the same bits.
+Floating-point addition $\oplus$ is commutative but not associative: a sum
+of $m$ terms in any order and grouping differs from the exact sum by at
+most $(m - 1)\,\mathsf u\sum_k\lvert v_k\rvert + O(\mathsf u^2)$
+[[Higham2002]](references.md#higham2002) (Section 4.2), with
+$\mathsf u$ the unit roundoff. The atomics already add in an order the
+threads decide, so a privatized sum lies within the bound that any run
+with atomics satisfies, and its results differ from them as two runs with
+atomics differ from each other: $10^{-7}$ to $10^{-6}$ of the RMS force in
+mixed precision, $10^{-16}$ to $10^{-15}$ in double (D282, D283). The
+default mode therefore allows a privatized floating-point sum, and the
+deterministic mode does not: it fixes the bits, which a regrouping in f32
+or f64 changes. Its sums are in fixed point (D70, D84), where a privatized
+sum would give the same bits; that is the next step of #416. No strategy
+of floating-point values keeps the deterministic mode bitwise.
+
+**The tile: a bounded footprint.** In the spreading, item $j$ with first
+point $s_{aj}$ adds only to the points $s_{aj} + t_a$, $0 \le t_a < n$,
+since $M_n$ vanishes outside $(0, n)$. Binned by $\lfloor s_{aj}/g\rfloor$,
+the items of the bin with origin $g\mathbf b$ add only to the points
+$g\mathbf b + \mathbf t$, $0 \le t_a < g + n - 1$: the footprint of a block
+is bounded by the IR, by the order and the bin, and a dense tile of
+$(g + n - 1)^3$ values holds it. The tile maps to the grid by
+$(g b_a + t_a) \bmod K_a$, which the kernel takes as one subtraction of
+$K_a$ where $g b_a + t_a \ge K_a$. That is exact where $g b_a + t_a <
+2K_a$, which $g b_a < K_a$ and $g + n - 1 \le K_a$ ensure, and it maps the
+points of a tile to distinct points of the grid. Hence the condition: every
+edge of the grid has at least $g + n - 1$ points. The tile and the items of
+a round must also fit the 48 KiB of block memory that a kernel takes
+without asking for more, or the launch fails.
+
+**The hash: a fallback.** The members of the tuples of a block are not
+bounded by the IR. The table keys a slot by the index, found by a
+multiplicative hash and the next slots in turn
+[[Knuth1998]](references.md#knuth1998), and claimed by a
+compare-and-swap, so that a slot holds one index. A search gives up after
+a bounded number of slots, and the item then adds its value to the field
+with an atomic of its own. Each value is therefore added once, either to
+the slot of its index, which the flush adds once after the barrier, or to
+the field directly. The sum is the same as above with some items in a
+group of their own. Without the fallback a bounded search would lose
+values, and an unbounded one has no bound on its time: one block of JAC
+with 494 particles in 512 slots took the kernel from 12 to 42 µs. With a
+bound of 8 slots it took 13.2 µs.
+
+**The choice.** The conditions above make a strategy correct. Cost
+decides between strategies that are correct: a grid of at least 500,000
+points in f32 for the tiles, and at least 100,000 tuples for the table,
+counted on the host. Below these thresholds the blocks are too few to
+occupy the device, and the privatized form is slower (Section 5.3, D283).
+Moving both kernels onto the attribute and the pass left the generated
+code as it was.

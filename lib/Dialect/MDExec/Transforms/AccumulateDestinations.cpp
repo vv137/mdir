@@ -119,7 +119,9 @@ static void mergeOuts(TupleForOp loop, unsigned into, unsigned from) {
       loop.getCell(), loop.getIns(), loop.getParameters(), outs,
       loop.getReduce(), /*scratch=*/ValueRange(), loop.getCoordinateKindsAttr(),
       loop.getCoordinateMembersAttr(), loop.getArityAttr(),
-      /*overwrite=*/DenseBoolArrayAttr(), loop.getDisjointAttr());
+      /*overwrite=*/DenseBoolArrayAttr(), loop.getDisjointAttr(),
+      // Chosen later, for the loop as it is then (md-exec-choose-scatter).
+      /*scatter=*/ScatterAttr());
   merged.getKernel().takeBody(loop.getKernel());
 
   // Each member takes the sum of its two contributions, in the destination

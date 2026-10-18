@@ -5,7 +5,7 @@ add_mlir_dialect_library(MDIRMDExecTransforms
   AssignStorage.cpp
   AssignStreams.cpp
   ChooseNeighbors.cpp
-  ChooseSpreading.cpp
+  ChooseScatter.cpp
   ExpandRadial.cpp
   ExposeValidity.cpp
   FoldTables.cpp

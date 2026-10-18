@@ -238,7 +238,8 @@ times as long on Factor IX, Cellulose, and STMV. Below 500,000 points the
 bins are too few to occupy a device (JAC, 512 bins: 1.00 to 1.01 times the
 step at order 4 on an RTX 4090, 1.05 on an RTX PRO 6000), and in f64 the
 tiles are slower (1.01 to 1.02); neither is tiled by default (the tables
-are in `docs/pme-m1.md`, Section 3.3). The gathering is not tiled: in the
+are in `docs/pme-m1.md`, Section 3.3; the conditions of the tiles are
+derived in Section 8.5). The gathering is not tiled: in the
 prototype of #334 tiles did not pay there at order 4 (#411).
 
 **Particles without a coefficient.** A particle with $q_j = 0$ adds

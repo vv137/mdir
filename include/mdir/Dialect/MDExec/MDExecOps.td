@@ -13,6 +13,7 @@ include "mlir/Interfaces/ControlFlowInterfaces.td"
 include "mlir/Interfaces/SideEffectInterfaces.td"
 include "mdir/Dialect/MD/MDEnums.td"
 include "mdir/Dialect/MD/MDTypes.td"
+include "mdir/Dialect/MDExec/MDExecAttrs.td"
 include "mdir/Dialect/MDExec/MDExecDialect.td"
 include "mdir/Dialect/MDExec/MDExecEnums.td"
 include "mdir/Dialect/MDRT/MDRTTypes.td"
@@ -207,18 +208,20 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     with `potential` takes no list. With `gather_all` (that of
     `md.reciprocal`), a device gathers every particle, as without a list.
 
-    With `tiles(E)`, which `md-exec-choose-spreading` sets on a device, the
-    charges are spread through tiles of the memory of a block, one for each
-    bin of $E^3$ points of the grid, into which the particles are binned
-    by their first point at each evaluation (D282); without it, as
-    before (into the bricks of D108 for splines of order 4 in f32, by
-    atomics of the device into the grid otherwise). The deterministic mode
-    takes no tiles: its grid is in fixed point (D70, D84).
+    With `scatter(tile(E))`, which `md-exec-choose-scatter` sets on a
+    device (D[privatize-scatter], docs/device-primitives.md), the charges
+    are spread through tiles of the memory of a block, one for each bin of
+    $E^3$ points of the grid, into which the particles are binned by their
+    first point at each evaluation (D282); without it, or with
+    `scatter(atomic)`, as before (into the bricks of D108 for splines of
+    order 4 in f32, by atomics of the device into the grid otherwise). The
+    deterministic mode takes no tiles: its grid is in fixed point (D70,
+    D84). A sum takes no other strategy.
 
     ```mlir
     %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
                    grid([64, 64, 64]) order(4) beta(3.12) coulomb(138.935)
-                   tiles(8)
+                   scatter(tile(8))
                    : !md.field<@atoms, 3 x f32>, !md.field<@atoms, f32>,
                      !md.table<2, f32>
                    -> f64, vector<9xf64>, !md.field<@atoms, 3 x f32>
@@ -240,7 +243,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     UnitAttr:$potential,
     UnitAttr:$prolate,
     UnitAttr:$gather_all,
-    OptionalAttr<I64Attr>:$tiles
+    OptionalAttr<MDExec_ScatterAttr>:$scatter
   );
   let results = (outs
     F64:$energy,
@@ -257,7 +260,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     (`prolate` $prolate^)?
     (`listed` `(` $listed^ `:` qualified(type($listed)) `)`)?
     (`gather_all` $gather_all^)?
-    (`tiles` `(` $tiles^ `)`)?
+    custom<Scatter>($scatter)
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) `->` type($energy) `,` type($virial)
     (`,` qualified(type($forces))^)?
@@ -267,6 +270,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
       return ::llvm::isa<::mlir::MemRefType>(getPositions().getType());
     }
   }];
+  let hasVerifier = 1;
 }
 
 def MDExec_NonzeroOp : MDExec_Op<"nonzero", [
@@ -1298,6 +1302,14 @@ def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
     tuple set declares (`md.tuple_set`). The results are the same; a
     lowering may evaluate each tuple once, by its member at place 0, and
     write to all of its members.
+
+    `scatter(hash(S, P, L))`, which `md-exec-choose-scatter` sets on a
+    device (D[privatize-scatter], docs/device-primitives.md), states how a
+    lowering that evaluates each tuple once adds to the members: through a
+    table of `S` slots of the particles of a block in block memory, at
+    most `P` slots tried before an atomic of the device, from `L` tuples of
+    a launch on (D283). Without it, or with `scatter(atomic)`, by an atomic
+    of the device for each value. A loop takes no other strategy.
   }];
   let arguments = (ins
     MDExec_Incidence:$incidence,
@@ -1312,7 +1324,8 @@ def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
     DenseI64ArrayAttr:$coordinate_members,
     I64Attr:$arity,
     OptionalAttr<DenseBoolArrayAttr>:$overwrite,
-    UnitAttr:$disjoint
+    UnitAttr:$disjoint,
+    OptionalAttr<MDExec_ScatterAttr>:$scatter
   );
   let regions = (region SizedRegion<1>:$kernel);
   let results = (outs Variadic<AnyType>:$results);
@@ -1327,6 +1340,7 @@ def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
     `arity` `(` $arity `)`
     (`overwrite` $overwrite^)?
     (`disjoint` $disjoint^)?
+    custom<Scatter>($scatter)
     $kernel attr-dict
     `:` qualified(type($incidence)) `,` qualified(type($positions))
     (`->` qualified(type($results))^)?

@@ -11,6 +11,7 @@
 #include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/Scatter.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -249,15 +250,6 @@ public:
   /// which stops the run if they differ (`check-pruning`,
   /// D268).
   bool checkPruning = false;
-  /// Whether a kernel of loops over tuples evaluated once adds the values
-  /// of the tuples of a block for each particle in block memory first, and
-  /// adds each particle's sum to the destination once a block
-  /// (`tuple-block-sums`, D283).
-  bool tupleBlockSums = true;
-  /// The fewest tuples of a run that take the sums of a block; a run of
-  /// fewer keeps the atomics, chosen on the host by the count
-  /// (`tuple-block-least`).
-  int64_t tupleBlockLeast = 100000;
   /// Whether the first loop over pairs after a refresh of a dual list, at
   /// the same positions and in the same cell, prunes the inner list in its
   /// own kernel, a warp a group, where the refresh prunes, from
@@ -559,9 +551,13 @@ private:
   /// block (D283): what the tuples of a block add to a
   /// particle is added in a table in block memory, keyed by the particle,
   /// and after a barrier each particle of the table is added to each
-  /// destination of the loops once. Returns false, launching nothing, where
-  /// the table would not fit the block memory.
-  bool launchTupleBlocks(
+  /// destination of the loops once. The table is the strategy
+  /// `scatter(hash(S, P, L))` of each loop (md-exec-choose-scatter,
+  /// D[privatize-scatter]). Returns false, launching nothing, where a loop
+  /// does not take it, the loops take different probes or bounds, or the
+  /// joint table of their destinations would not fit the block memory;
+  /// fails where the precondition of a loop's own table does not hold.
+  FailureOr<bool> launchTupleBlocks(
       OpBuilder &builder, Location loc, Value count,
       ArrayRef<md_exec::TupleForOp> loops,
       function_ref<void(OpBuilder &, Value, AddToBuffer)> emitItem);
@@ -1591,44 +1587,53 @@ static Value getSharedAddress(OpBuilder &b, Location loc, Value buffer,
   return arith::AddIOp::create(b, loc, base, offset);
 }
 
-bool Lowering::launchTupleBlocks(
+FailureOr<bool> Lowering::launchTupleBlocks(
     OpBuilder &builder, Location loc, Value count,
     ArrayRef<md_exec::TupleForOp> loops,
     function_ref<void(OpBuilder &, Value, AddToBuffer)> emitItem) {
+  // The table where each loop of the launch takes it
+  // (md-exec-choose-scatter), each loop's precondition checked again with
+  // the pass's function (Scatter.h). The slots are the most that a loop
+  // takes: room for the members of a block's tuples of the largest arity,
+  // rounded up to a power of two.
+  int64_t slots = 0, probes = 0, least = 0;
+  for (md_exec::TupleForOp loop : loops) {
+    md_exec::ScatterAttr scatter = loop.getScatterAttr();
+    if (!scatter || !scatter.isHash())
+      return false;
+    if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
+            scatter.getSlots(), loop.getOuts().getTypes(), deterministic))
+      return loop->emitOpError()
+             << "takes the strategy 'hash', whose precondition does not "
+                "hold: "
+             << *refused;
+    if (slots == 0) {
+      probes = scatter.getProbes();
+      least = scatter.getLeast();
+    } else if (scatter.getProbes() != probes || scatter.getLeast() != least) {
+      return false;
+    }
+    slots = std::max(slots, scatter.getSlots());
+  }
   // The destinations of the loops, each with its components and type.
   SmallVector<Value> outs;
-  int64_t arity = 1;
-  for (md_exec::TupleForOp loop : loops) {
-    arity = std::max<int64_t>(arity, loop.getArity());
+  for (md_exec::TupleForOp loop : loops)
     for (Value out : loop.getOuts())
       if (!llvm::is_contained(outs, out))
         outs.push_back(out);
-  }
-  if (outs.empty())
+  // The joint table of a run of loops may not fit where each loop's does:
+  // then the run keeps the atomics.
+  SmallVector<md_exec::scatter::Destination> destinations;
+  if (md_exec::scatter::checkHash(slots, ValueRange(outs).getTypes(),
+                                  deterministic, &destinations))
     return false;
-  // A block of `blockSize` threads, each with one tuple of at most `arity`
-  // members, adds to at most blockSize * arity particles: the table has as
-  // many slots, rounded up to a power of two.
-  int64_t slots = llvm::PowerOf2Ceil(blockSize * arity);
   unsigned shift = 32 - llvm::Log2_64(slots);
   SmallVector<int64_t> components;
   SmallVector<Type> elements;
-  int64_t bytes = 4 * slots;
-  for (Value out : outs) {
-    auto type = cast<MemRefType>(out.getType());
-    Type element = type.getElementType();
-    if (!element.isF32() && !element.isF64())
-      return false;
-    int64_t c = type.getRank() == 1 ? 1 : type.getDimSize(1);
-    if (type.getRank() > 2 || ShapedType::isDynamic(c))
-      return false;
-    components.push_back(c);
-    elements.push_back(element);
-    bytes += slots * c * element.getIntOrFloatBitWidth() / 8;
+  for (const md_exec::scatter::Destination &destination : destinations) {
+    components.push_back(destination.components);
+    elements.push_back(destination.element);
   }
-  // The block memory that a kernel may take without asking for more.
-  if (bytes > 48 * 1024)
-    return false;
 
   auto workgroup = gpu::AddressSpaceAttr::get(
       context, gpu::GPUDialect::getWorkgroupAddressSpace());
@@ -1639,16 +1644,17 @@ bool Lowering::launchTupleBlocks(
     attributions.push_back(MemRefType::get(
         {slots * c}, element, MemRefLayoutAttrInterface(), workgroup));
 
-  // A run of few tuples keeps the atomics: the device holds all its blocks
-  // at once, and the table lengthens each (measured on one RTX 4090 and one
-  // RTX PRO 6000: JAC, 55,000 tuples, ran 1.5% and 3% slower with the
-  // table, Factor IX, 165,000, 2.3% and 1% faster). The host chooses by the
-  // count.
+  // A run of fewer than `least` tuples (the L of `hash`, which
+  // md-exec-choose-scatter sets from `hash-least`) keeps the atomics: the
+  // device holds all its blocks at once, and the table lengthens each
+  // (measured on one RTX 4090 and one RTX PRO 6000: JAC, 55,000 tuples, ran
+  // 1.5% and 3% slower with the table, Factor IX, 165,000, 2.3% and 1%
+  // faster). The host chooses by the count.
   std::optional<OpBuilder> chosen;
-  if (tupleBlockLeast > 0) {
+  if (least > 0) {
     Value many = arith::CmpIOp::create(
         builder, loc, arith::CmpIPredicate::uge, count,
-        createIndex(builder, loc, tupleBlockLeast));
+        createIndex(builder, loc, least));
     auto choice = scf::IfOp::create(builder, loc, many, /*withElseRegion=*/true);
     OpBuilder few = choice.getElseBodyBuilder();
     launchOver(few, loc, count, [&](OpBuilder &b, Value item) {
@@ -1702,7 +1708,6 @@ bool Lowering::launchTupleBlocks(
   // with an atomic of its own: a block whose tuples share few particles
   // fills its table, where the slots that a search tries grow without
   // bound (measured: one block of JAC with 494 particles in 512 slots).
-  constexpr int64_t probes = 8;
   auto findSlot = [&](OpBuilder &b, Value member) -> std::pair<Value, Value> {
     Value key = arith::IndexCastOp::create(b, loc, i32, member);
     auto constant = [&](OpBuilder &c, int64_t value) -> Value {
@@ -1931,8 +1936,11 @@ LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
     emitItemTo(body, item, nullptr);
   };
   if (fused.empty()) {
-    if (!tupleBlockSums ||
-        !launchTupleBlocks(builder, loc, ends.back(), others, emitItemTo))
+    FailureOr<bool> launched =
+        launchTupleBlocks(builder, loc, ends.back(), others, emitItemTo);
+    if (failed(launched))
+      return failure();
+    if (!*launched)
       launchOver(builder, loc, ends.back(), emitItem);
     return success();
   }
@@ -3700,8 +3708,11 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
         emitTupleOnce(body, op, tupleMembers, tuple, box, inverse, local,
                       add ? AddToMember(toBuffer) : AddToMember());
       };
-      if (!tupleBlockSums ||
-          !launchTupleBlocks(builder, loc, tuples, {op}, emitItemTo))
+      FailureOr<bool> launched =
+          launchTupleBlocks(builder, loc, tuples, {op}, emitItemTo);
+      if (failed(launched))
+        return failure();
+      if (!*launched)
         launchOver(builder, loc, tuples, [&](OpBuilder &body, Value tuple) {
           emitItemTo(body, tuple, nullptr);
         });
@@ -4480,10 +4491,17 @@ static Value getBricks(md_exec::ReciprocalOp op) {
   return bricks;
 }
 
+/// The points of an edge of a bin of the tiles of `op`
+/// (`scatter(tile(E))`, D282, D[privatize-scatter]), or 0.
+static int64_t getTileEdge(md_exec::ReciprocalOp op) {
+  md_exec::ScatterAttr scatter = op.getScatterAttr();
+  return scatter && scatter.isTile() ? scatter.getEdge() : 0;
+}
+
 /// The bins of the spreading into tiles (D282): the last scratch
 /// of a sum with `tiles`.
 static Value getBins(md_exec::ReciprocalOp op) {
-  if (!op.getTiles() || op.getScratch().empty())
+  if (!getTileEdge(op) || op.getScratch().empty())
     return Value();
   Value bins = op.getScratch().back();
   if (!cast<MemRefType>(bins.getType()).getElementType().isInteger(32))
@@ -4539,7 +4557,7 @@ static LogicalResult lowerProlate(
   std::string spreadTag = listed ? "_listed" : "";
   // Into tiles (D282): the bins of PMEGPU.mlir from the places,
   // then the window into the tiles.
-  if (int64_t tiles = op.getTiles().value_or(0)) {
+  if (int64_t tiles = getTileEdge(op)) {
     std::string edge = std::to_string(tiles);
     Value bins = getBins(op);
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_bin" + edge + spreadTag),
@@ -4629,16 +4647,19 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // The listed particles alone (D262); the
   // potential at the particles takes every particle.
   Value listed = op.getPotential() ? Value() : op.getListed();
-  // The spreading into tiles (D282): never in the deterministic
-  // mode, whose grid is in fixed point (D70, D84), which
-  // md-exec-choose-spreading does not tile; checked here as well.
-  int64_t tiles = op.getTiles().value_or(0);
+  // The spreading into tiles (D282): where the preconditions of
+  // md-exec-choose-scatter hold, checked here with its functions
+  // (Scatter.h, D[privatize-scatter]); never in the deterministic mode,
+  // whose grid is in fixed point (D70, D84).
+  int64_t tiles = getTileEdge(op);
   Value bins = getBins(op);
   if (tiles) {
-    if (deterministic)
+    if (md_exec::scatter::Refusal refused =
+            md_exec::scatter::checkTile(op, tiles, deterministic))
       return op->emitOpError()
-             << "spreads into tiles, which the deterministic mode does not "
-                "allow: its grid is in fixed point";
+             << "takes the strategy 'tile', whose precondition does not "
+                "hold: "
+             << *refused;
     if (!bins)
       return op->emitOpError() << "has tiles but no buffer of the bins";
   }
@@ -7859,8 +7880,6 @@ public:
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;
     lowering.checkPruning = checkPruning;
-    lowering.tupleBlockSums = tupleBlockSums;
-    lowering.tupleBlockLeast = tupleBlockLeast;
     lowering.fusePruning = fusePruning;
     lowering.fusePruningGroups = fusePruningGroups;
     if (failed(lowering.run()))

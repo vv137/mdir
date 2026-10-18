@@ -23,6 +23,10 @@ def MDExec_Dialect : Dialect {
   let cppNamespace = "::mdir::md_exec";
   let dependentDialects = ["::mdir::md::MDDialect",
                            "::mdir::mdrt::MDRTDialect"];
+  let useDefaultAttributePrinterParser = 1;
+  let extraClassDeclaration = [{
+    void registerAttributes();
+  }];
 }
 
 class MDExec_Op<string mnemonic, list<Trait> traits = []>

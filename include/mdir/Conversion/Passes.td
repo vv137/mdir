@@ -253,14 +253,14 @@ def ConvertMDExecToGPU
     | `md_exec.particle_for` | One `gpu.launch` with a thread for each particle, which writes only to its own particle. |
     | `md_exec.pair_for` over a neighbor matrix | `row-lanes` threads share the row of a particle and add their values by shuffles; the first writes the particle. No atomics. |
     | `md_exec.pair_for` over groups | A warp for each block of 64 entries of the lists of groups of 16; each pair once, added to the particle of the entry with an atomic addition and to the group once for the block (D89). |
-    | `md_exec.tuple_for`, not disjoint | A thread evaluates each tuple once and adds to its members with atomics (`tuples-once`, D103); in the deterministic mode, the rows of the particles take the tuples they belong to. |
+    | `md_exec.tuple_for`, not disjoint | A thread evaluates each tuple once and adds to its members with atomics (`tuples-once`, D103), or, with `scatter(hash(S, P, L))`, through a table of the particles of its block in block memory (D283, D[privatize-scatter]); in the deterministic mode, the rows of the particles take the tuples they belong to. |
     | `md_exec.tuple_for`, disjoint | A thread for each particle; the member at place 0 evaluates the tuple and writes every member, which no other thread writes (D83). |
     | Consecutive loops of the same positions | One kernel, where no loop reads what another writes (`fuse-rows`); a loop over particles, the loops over the tuples of a disjoint union that read it, and the loop over particles that reads them become one integration kernel, in which a warp takes whole groups of constraints (`fuse-integration`, D110, D111). |
     | The global sums of a loop | Each thread adds up the particles that it takes, and a block adds up its threads by a tree (`gpu.all_reduce`) into partial sums in `scratch`; one block adds up the partial sums. The order depends only on the number of particles. The host reads the results with one copy for each type of number. Sums over tuples evaluated once that reach only a later loop over tuples evaluated once, through arithmetic, are computed with one part by a block of the kernel of that loop, which then does the arithmetic and the later loop; several parts keep their kernels, launched only for several, which leave the totals in a buffer for that block (`fuse-centers`, #66). |
     | An `i1` reduction (any) | A flag on the device, set by a plain store; the host reads it through pinned memory and an event, without waiting for the stream, just before the first op that uses it (`mdrtFlagStart`, `mdrtFlagFinish`, D113). |
     | `md_exec.empty_neighbors` | The buffers of a neighbor matrix or of the lists of groups, which the runtime grows when a build needs more |
     | `md_exec.refresh_neighbors` | A branch on the flag of the test of validity to the build of its kind, a template that the pass adds to the module; with `prune_skin`, on the flag of the inner list to a pruning of the inner list from the outer one (D114) |
-    | `md_exec.reciprocal` | The kernels of the template of particle mesh Ewald on a device and the transforms of cuFFT; with `md_exec.side`, on the second stream |
+    | `md_exec.reciprocal` | The kernels of the template of particle mesh Ewald on a device and the transforms of cuFFT, with `scatter(tile(E))` those of the tiles (D282); with `md_exec.side`, on the second stream |
     | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 
     A constant that a kernel uses is a constant of the kernel, not an
@@ -307,17 +307,6 @@ def ConvertMDExecToGPU
            "each tuple once and adds to its members with atomics, outside "
            "the deterministic mode (JAC: 526 against 505 ns/day for the "
            "rows of the particles)">,
-    Option<"tupleBlockSums", "tuple-block-sums", "bool", /*default=*/"true",
-           "Whether a kernel of loops over tuples evaluated once adds the "
-           "values of the tuples of a block for each particle in block "
-           "memory, and each particle's sum to the destination with one "
-           "atomic a block (D283); otherwise every value is "
-           "an atomic addition to the destination">,
-    Option<"tupleBlockLeast", "tuple-block-least", "int64_t",
-           /*default=*/"100000",
-           "The fewest tuples of a kernel that take the sums of a block; a "
-           "kernel of fewer keeps the atomics, chosen on the host by the "
-           "count (0: always the sums of a block)">,
     Option<"fuseCenters", "fuse-centers", "bool", /*default=*/"true",
            "Whether the sums of a loop over few tuples evaluated once, which "
            "reach only a later such loop through arithmetic, are computed by "

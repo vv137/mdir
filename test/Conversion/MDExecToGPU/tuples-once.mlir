@@ -1,19 +1,21 @@
 // By default (tuples-once), a loop over tuples that may share particles, has no
 // global sums, and adds to its destination evaluates each tuple once, a
 // thread for each tuple, and adds to the members with atomics: in f32 by
-// PTX's own reduction. With the sums of a block (tuple-block-sums, the
-// default, D283) a thread adds to a table of the particles
+// PTX's own reduction. With the sums of a block (D283), the strategy
+// `scatter(hash(S, P, L))` that md-exec-choose-scatter sets by default
+// (D[privatize-scatter]), a thread adds to a table of the particles
 // of its block in block memory, which it finds by a compare-and-swap, or,
 // past a few slots, to the destination; after a barrier each particle of
 // the table is added to the destination once. A run of fewer tuples than
-// tuple-block-least keeps the atomics, chosen on the host by the count.
+// L keeps the atomics, chosen on the host by the count.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true tuple-block-sums=false" | FileCheck %s
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true tuple-block-least=0" | FileCheck %s --check-prefix=BLOCKS
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=CHOOSE
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=false" | FileCheck %s --check-prefix=ROWS
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CENTERS
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="fuse-centers=false" | FileCheck %s --check-prefix=APART
+// RUN: mdir-opt %s --md-exec-choose-scatter=hash=off --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s
+// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s
+// RUN: mdir-opt %s --md-exec-choose-scatter=hash=on --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=BLOCKS
+// RUN: mdir-opt %s --md-exec-choose-scatter --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=CHOOSE
+// RUN: mdir-opt %s --md-exec-choose-scatter --convert-md-exec-to-gpu="tuples-once=false" | FileCheck %s --check-prefix=ROWS
+// RUN: mdir-opt %s --md-exec-choose-scatter --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CENTERS
+// RUN: mdir-opt %s --md-exec-choose-scatter --convert-md-exec-to-gpu="fuse-centers=false" | FileCheck %s --check-prefix=APART
 
 md.particle_set @atoms
 

@@ -98,46 +98,78 @@ def RebuildAtInterval
   ];
 }
 
-def ChooseSpreading
-    : Pass<"md-exec-choose-spreading", "::mlir::ModuleOp"> {
-  let summary = "Chooses how each reciprocal sum of PME on a device spreads "
-                "its charges";
+def ChooseScatter
+    : Pass<"md-exec-choose-scatter", "::mlir::ModuleOp"> {
+  let summary = "Chooses the strategy of each scatter-accumulate on a device";
   let description = [{
-    Sets `tiles(E)` on each `md_exec.reciprocal` that spreads its charges
-    through tiles of the memory of a block, one for each bin of $E^3$
-    points of the grid (D282, docs/pme-m1.md); the others spread
-    as before, into the bricks of D108 (splines of order 4 in f32) or by
-    atomics of the device into the grid. Runs on programs for a device,
-    after the precision is assigned and before the storage.
+    Sets `scatter(...)` (`#md_exec.scatter`) on each op whose lowering for
+    a device adds values into a field at indices that its threads share,
+    where the strategy's preconditions hold (D[privatize-scatter],
+    docs/device-primitives.md). The preconditions are the functions of
+    include/mdir/Dialect/MDExec/Scatter.h, which the lowering calls as
+    well. Runs on programs for a device, after the precision is assigned
+    and before the storage, which sizes the bins of the tiles from it.
 
-    `layout=global` sets no tiles; `layout=tiles` tiles every sum that can
-    be tiled; `layout=auto`, the default, tiles every sum in f32 whose
-    grid has at least `min-points` points: a smaller grid has too few
-    bins to occupy a device, and a grid in f64 spreads faster as before.
-    A sum can be tiled where the run is not in
-    the deterministic mode (whose grid is in fixed point, D70, D84), where
-    each edge of the grid has at least $E + P - 1$ points, so that a point
-    of a tile wraps around the grid once at most, and where a tile of
-    $(E + P - 1)^3$ values of the type of the forces, with the charges,
-    fractions, and first points of a particle for each thread of the block
-    (128, or 512 for $E = 16$), fits 48 KiB of the memory of a block.
+    - `md_exec.reciprocal`: `tile(E)`, the charges spread through tiles of
+      block memory, one for each bin of $E^3$ points of the grid (D282).
+      It can be tiled where the run is not in the deterministic mode,
+      the grid is in f32 or f64, the template has kernels of bins of $E$
+      points (4, 8, 16), a tile of $(E + n - 1)^3$ values (order $n$) with the
+      particles of a round fits 48 KiB of block memory, and every edge of
+      the grid has at least $E + n - 1$ points, so that a point of a tile
+      wraps around the grid once at most. With `tile=auto`, the default,
+      a sum is tiled where its grid is in f32 and has at least
+      `tile-min-points` points: a smaller grid has too few bins to occupy a
+      device, and a grid in f64 spreads faster as before. `tile=on` tiles
+      every sum that can be tiled, `tile=off` none.
+    - `md_exec.tuple_for`: `hash(S, P, L)`, the values of the tuples of a
+      block added in a table of the block's particles in block memory
+      first (D283), with `S` the slots for `block-size` threads of `arity`
+      members, rounded up to a power of two, `P` = `hash-probes` slots
+      tried before a direct atomic, and `L` = `hash-least` the fewest
+      tuples of a launch that take the table, chosen on the host by the
+      count. A loop takes it where the run is not in the deterministic
+      mode, it may share particles (not `disjoint`), has no global sums,
+      adds to its destinations (none overwritten), each a number or a row
+      of a static length of f32 or f64, and the table fits 48 KiB. The
+      lowering applies it where it evaluates each tuple once, to a run of
+      loops in one kernel if each of them takes it and their joint table
+      fits. `hash=on` takes the table at any count (`L` = 0), `hash=off`
+      never.
+
+    With `explain`, each choice and each refusal is a remark on its op.
 
     ```mlir
     %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
                    grid([64, 64, 64]) order(4) beta(3.12) coulomb(138.935)
-                   tiles(8) : ...
+                   scatter(tile(8)) : ...
     ```
   }];
   let options = [
-    Option<"layout", "layout", "std::string", /*default=*/"\"auto\"",
-           "auto, global, or tiles">,
-    Option<"edge", "edge", "int64_t", /*default=*/"8",
+    Option<"tile", "tile", "std::string", /*default=*/"\"auto\"",
+           "The tiles of PME: auto, on, or off">,
+    Option<"tileEdge", "tile-edge", "int64_t", /*default=*/"8",
            "The points of an edge of a bin of the tiles: 4, 8, or 16">,
-    Option<"minPoints", "min-points", "int64_t", /*default=*/"500000",
-           "With layout=auto, the least number of points of a grid that "
-           "is tiled">,
+    Option<"tileMinPoints", "tile-min-points", "int64_t",
+           /*default=*/"500000",
+           "With tile=auto, the least number of points of a grid that is "
+           "tiled">,
+    Option<"hash", "hash", "std::string", /*default=*/"\"auto\"",
+           "The tables of the tuples: auto, on (at any count), or off">,
+    Option<"hashLeast", "hash-least", "int64_t", /*default=*/"100000",
+           "With hash=auto, the fewest tuples of a launch that take the "
+           "table; a launch of fewer keeps the atomics">,
+    Option<"hashProbes", "hash-probes", "int64_t", /*default=*/"8",
+           "The slots that a search of the table tries before the value "
+           "goes to the destination with an atomic">,
+    Option<"blockSize", "block-size", "int64_t", /*default=*/"128",
+           "The threads of a block of the tuples, as convert-md-exec-to-gpu "
+           "launches them">,
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
-           "The deterministic mode, which takes no tiles">
+           "The deterministic mode, which privatizes no floating-point "
+           "sum">,
+    Option<"explain", "explain", "bool", /*default=*/"false",
+           "A remark on each op for its choice or the reason of a refusal">
   ];
 }
 

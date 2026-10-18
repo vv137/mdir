@@ -410,30 +410,16 @@ keep their atomics, and so does every loop of a run that holds the forces
 of a term over centers, whose block computes the sums of the centers
 (D194). The compile takes up to 0.2 s longer (5.3 to 11 s on the suite).
 
-**A run of few tuples keeps the atomics.** With the table JAC (55,000
-tuples, 432 blocks) ran 1.5% slower on an RTX 4090 and 3% slower on an
-RTX PRO 6000 in the Amber suite, though its kernel took 1.1 µs more: the
-device holds all its blocks at once, and the table lengthens each, the
-two barriers, the loops that empty and add the table, and the searches.
-Factor IX (165,000 tuples) ran 2.3% and 1% faster. A run of fewer than
-100,000 tuples therefore keeps the atomics: the host compares the count
-of the run's tuples with that number and launches one kernel or the
-other, both of which the lowering emits. The number lies between the two
-measured systems; it is the option `tuple-block-least`.
-
-**The switch.** The option `tuple-block-sums` of `convert-md-exec-to-gpu`,
-on by default; `MDIR_TUPLE_SUMS=atomics` turns it off, and
-`MDIR_TUPLE_SUMS=blocks` takes the table for a run of any size
-(`tuple-block-least=0`), which the tests of small systems use
-([environment.md](environment.md); `tuple-block-sums-gpu.test`, under
-the sanitizer as well).
-
-**Block memory and occupancy.** 8 KB a block for a run with dihedrals and
-forces in f32. The kernel takes 47 registers a thread where it took 44
-(from the profiles); both are allocated as 48, so an SM of the RTX 4090
-holds 10 blocks of 128 threads either way, bound by the registers, and
-their tables take 80 KB of its 100 KB of block memory: the table costs no
-occupancy there.
+**The strategy, its preconditions, and the choice.** The table is the
+strategy `hash(S, P, L)` of the privatized scatter-accumulate, which
+`md-exec-choose-scatter` sets on each loop that can take it:
+$S$ = 512 slots for a run with dihedrals, `P` = 8 slots tried, and
+$L$ = 100,000 tuples, below which the host launches the kernel with the
+atomics (JAC, 55,000 tuples, ran 1.5% slower with the table). The
+preconditions, the block memory and the occupancy, the measurements behind
+the bound, and the switch `MDIR_TUPLE_SUMS` are in
+[device-primitives.md](device-primitives.md), Section 2
+(D[privatize-scatter]).
 
 **Validated** (one RTX 4090, the settings of the Amber suite, one step;
 the same binary with and without the switch; the force differences

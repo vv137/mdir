@@ -104,6 +104,16 @@ parallel tempering simulations," *J. Chem. Theory Comput.* **3**(1),
 26–41 (2007).
 [doi:10.1021/ct0502864](https://doi.org/10.1021/ct0502864)
 
+### CUB
+
+NVIDIA, "CUB," the block, warp, and device primitives of the CUDA C++ Core
+Libraries (CCCL), version 3.2.0 as shipped with CUDA 13.2 (`CUB_VERSION`
+300200), under the 3-clause BSD license: `cub::BlockHistogram` with the
+algorithm `BLOCK_HISTO_ATOMIC`, `cub/block/block_histogram.cuh` and
+`cub/block/specializations/block_histogram_atomic.cuh`. No paper;
+[github.com/NVIDIA/cccl](https://github.com/NVIDIA/cccl) (read 2026-10-18,
+against the headers of CUDA 13.2).
+
 ### CurtisPowellReid1974
 
 A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse
@@ -179,6 +189,13 @@ M. Grabe, "Taking the Monte-Carlo gamble: How not to buckle under the
 pressure!," *J. Comput. Chem.* **43**, 431–434 (2022).
 [doi:10.1002/jcc.26798](https://doi.org/10.1002/jcc.26798)
 
+### GomezLuna2013
+
+J. Gómez-Luna, J. M. González-Linares, J. I. Benavides Benítez, N. Guil
+Mata, "Performance modeling of atomic additions on GPU scratchpad memory,"
+*IEEE Trans. Parallel Distrib. Syst.* **24**(11), 2273–2282 (2013).
+[doi:10.1109/TPDS.2012.319](https://doi.org/10.1109/TPDS.2012.319)
+
 ### Gratl2022
 
 F. A. Gratl, S. Seckler, H.-J. Bungartz, P. Neumann, "N ways to simulate
@@ -206,6 +223,12 @@ and GPU porting of FFT libraries," in *Euro-Par 2023: Parallel Processing
 Workshops*, Lecture Notes in Computer Science (Springer, Cham, 2024),
 pp. 207–218.
 [doi:10.1007/978-3-031-50684-0_16](https://doi.org/10.1007/978-3-031-50684-0_16)
+
+### Higham2002
+
+N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed.
+(SIAM, Philadelphia, 2002).
+[doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027)
 
 ### HockneyEastwood1988
 

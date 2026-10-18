@@ -9,3 +9,8 @@ set(LLVM_TARGET_DEFINITIONS MDExecEnums.td)
 mlir_tablegen(MDExecEnums.h.inc -gen-enum-decls)
 mlir_tablegen(MDExecEnums.cpp.inc -gen-enum-defs)
 add_public_tablegen_target(MDIRMDExecEnumsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS MDExecAttrs.td)
+mlir_tablegen(MDExecAttrs.h.inc -gen-attrdef-decls -attrdefs-dialect=md_exec)
+mlir_tablegen(MDExecAttrs.cpp.inc -gen-attrdef-defs -attrdefs-dialect=md_exec)
+add_public_tablegen_target(MDIRMDExecAttrsIncGen)

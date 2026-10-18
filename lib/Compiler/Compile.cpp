@@ -80,18 +80,33 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
     *options += " cache=false";
   return options;
 }
-/// The options of the sums of a block of the tuples evaluated once
-/// (D283): `MDIR_TUPLE_SUMS=atomics` adds every value to its
-/// destination with an atomic, as before; `=blocks` takes the sums of a
-/// block for a run of any size, which the tests of small systems need.
-static llvm::StringRef getTupleSumsOptions() {
-  const char *value = std::getenv("MDIR_TUPLE_SUMS");
-  llvm::StringRef given = value ? value : "";
-  if (given == "atomics")
-    return "tuple-block-sums=false ";
-  if (given == "blocks")
-    return "tuple-block-least=0 ";
-  return "";
+/// The options of md-exec-choose-scatter (D[privatize-scatter]) from the
+/// switches of the environment, for comparing the strategies and for
+/// tests: `MDIR_PME_SPREAD` the tiles of PME (D282; `global` none,
+/// `tiles` or `tilesN` every sum that can be tiled, with bins of N points),
+/// and `MDIR_TUPLE_SUMS` the tables of the tuples (D283; `atomics` none,
+/// `blocks` at any count, which the tests of small systems need).
+static std::string getScatterOptions(const Control &control) {
+  std::string options;
+  if (const char *spread = std::getenv("MDIR_PME_SPREAD")) {
+    StringRef layout(spread);
+    if (layout == "global")
+      options += "tile=off ";
+    else if (layout.consume_front("tiles"))
+      options += layout.empty() ? "tile=on "
+                                : ("tile=on tile-edge=" + layout + " ").str();
+    else
+      options += ("tile=" + layout + " ").str();
+  }
+  StringRef sums = std::getenv("MDIR_TUPLE_SUMS") ? std::getenv("MDIR_TUPLE_SUMS")
+                                                  : "";
+  if (sums == "atomics")
+    options += "hash=off ";
+  else if (sums == "blocks")
+    options += "hash=on ";
+  if (control.deterministic)
+    options += "deterministic=true";
+  return options;
 }
 
 llvm::StringRef mdir::compiler::getFusedPruningSetting() {
@@ -169,19 +184,12 @@ std::string mdir::compiler::getPipeline(const Control &control,
     os << "md-exec-approximate,md-exec-expand-radial,canonicalize,cse,";
 
   if (control.target == Target::GPU) {
-    // How each reciprocal sum spreads its charges, by the size of its grid
-    // (D282); MDIR_PME_SPREAD (`global`, `tiles`, `tiles4`,
-    // `tiles8`, `tiles16`, or `auto`) overrides the choice, to compare the
-    // two.
-    os << "md-exec-choose-spreading{";
-    if (const char *spread = std::getenv("MDIR_PME_SPREAD")) {
-      StringRef layout(spread);
-      if (layout.consume_front("tiles") && !layout.empty())
-        os << "layout=tiles edge=" << layout << " ";
-      else
-        os << "layout=" << spread << " ";
-    }
-    os << (control.deterministic ? "deterministic=true" : "") << "},";
+    // The strategy of each scatter-accumulate: the tiles of the spreading
+    // of PME by the size of its grid (D282), the tables of the tuples
+    // evaluated once from 100,000 tuples (D283); MDIR_PME_SPREAD and
+    // MDIR_TUPLE_SUMS override the choice, to compare the strategies
+    // (D[privatize-scatter]).
+    os << "md-exec-choose-scatter{" << getScatterOptions(control) << "},";
     // Kernels in f32 look their tables up in f32.
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")
@@ -211,9 +219,6 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // A check of the pruning of the dual lists, for tests
        // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
-       // The sums of a block of the tuples evaluated once, off or for runs
-       // of any size, for comparing and for tests (D283).
-       << getTupleSumsOptions()
        // The pruning of a dual list in the loop over pairs that follows
        // its refresh (D284).
        << getFusedPruningOptions(gpuOptions)
