@@ -275,6 +275,18 @@ in block memory and one atomic for each index (D285,
 [device-primitives.md](device-primitives.md)); the plan of lowering
 strategies after CUB's primitives (#415).
 
+### CUDAGuideL2
+
+NVIDIA, *CUDA Programming Guide*, Section 4.14, "L2 Cache Control"
+(the set-aside of L2 for persisting accesses, the access policy window of a
+stream with `hitRatio`, `hitProp`, and `missProp`, and the reset of
+persisting lines), last updated 2026-09-10. No paper;
+[docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/l2-cache-control.html](https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/l2-cache-control.html)
+(read 2026-10-18).
+
+Used for: the L2 access policy window measured and not adopted in #434
+([device-primitives.md](device-primitives.md), Section 3).
+
 ### CurtisPowellReid1974
 
 A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse

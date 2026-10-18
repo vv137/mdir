@@ -20,6 +20,7 @@ switches ([principles.md](principles.md), principles 2 and 3; issue #415).
 | Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420 | Planned | — |
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
 | Reductions chosen by the algebra of the operator | `BlockReduce` (raking, commutative only) | #422 | Planned | — |
+| L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 
 The order follows #415: #421 first, then #419 on the gathering of PME,
 then #417 and #422 for the deterministic mode, and #418 and #420 where
@@ -229,3 +230,130 @@ point, added by a thread for each particle (D70, D84), and its tuples are
 taken by the rows of their particles. Fixed-point additions are exact in
 any order, so a privatized fixed-point sum would keep the mode bitwise;
 that is step 2 of #416.
+
+## 3. The L2 access policy window (measured, not adopted)
+
+### 3.1 What was tried
+
+From compute capability 8.0 on, a part of the L2 cache can be set aside for
+lines marked *persisting*. A stream can carry one window of addresses. A
+fraction of the accesses in the window, the hit ratio, is marked
+persisting, and the rest is marked *streaming*, which is evicted first
+[[CUDAGuideL2]](references.md#cudaguidel2). Step 1 of #434 asked whether
+keeping one buffer that a step reads many times in L2 speeds up the step.
+It changed no kernel.
+
+For the measurement, the runtime set a window on its two streams over one
+buffer that an environment variable chose:
+
+- the call `cuStreamSetAttribute` with
+  `CU_STREAM_ATTRIBUTE_ACCESS_POLICY_WINDOW`, with persisting hits and
+  streaming misses;
+- the set-aside `CU_LIMIT_PERSISTING_L2_CACHE_SIZE`, equal to the window
+  and at most the device's `MAX_PERSISTING_L2_CACHE_SIZE`;
+- the window, at most `MAX_ACCESS_POLICY_WINDOW_SIZE`, optionally capped to
+  the first megabytes of the buffer;
+- the hit ratio, the set-aside divided by the window.
+
+The buffers windowed:
+
+| Choice | Buffer |
+|---|---|
+| `outer` | The entries of the outer list of the groups (D114) |
+| `outer@32`, `inner@32` | The first 32 MB of the entries of the outer or of the inner list |
+| `placed` | The positions of the places in the frames of their groups in f32, which a loop over pairs after a pruning reads (D268) |
+| `hot` | The block of the runtime's pool that the most launches took, counted from the launches' arguments over the first 2000 launches: on every system one of the blocks of $3N$ numbers in f64 |
+
+The switch is not kept. The code is described on #434.
+
+### 3.2 Measured effect
+
+The settings:
+
+- the Amber suite in mixed precision, the dual list of groups of 3 / 0.6 Å
+  beyond the cutoff at 2 fs (in proportion to the step), and twice the
+  suite's steps;
+- the rate of the second half of each run;
+- the six variants rotated over 5 rounds, the first round dropped;
+- one frozen binary, with only the variable differing;
+- one job on one node for each device, on 2026-10-18:
+  - an RTX 4090 at 450 W (ada-003): 72 MB of L2, at most 49.5 MB set
+    aside, a window of at most 128 MB;
+  - an RTX PRO 6000 Blackwell Max-Q at 300 W (ada-004): 128 MB of L2, at
+    most 80 MB set aside, a window of at most 128 MB.
+
+The tables give the time of a step with the window divided by the time
+without it; below 1 is faster.
+
+**RTX 4090.**
+
+| System | No window (µs/step) | `hot` | `placed` | `outer` | `outer@32` | `inner@32` |
+|---|---:|---:|---:|---:|---:|---:|
+| JAC NVE | 139.6 ± 0.5 | 0.998 | 0.999 | 0.999 | 0.998 | 1.000 |
+| Factor IX NVE | 310.2 ± 0.2 | 0.999 | 1.003 | 1.001 | 0.999 | 1.005 |
+| Cellulose NVE | 1178.1 ± 1.4 | 0.995 | 1.011 | 1.077 | 1.064 | 1.057 |
+| STMV NPT 4 fs | 3997.7 ± 2.7 | 1.014 | 1.019 | 1.139 | 1.076 | 1.059 |
+
+**RTX PRO 6000.**
+
+| System | No window (µs/step) | `hot` | `placed` | `outer` | `outer@32` | `inner@32` |
+|---|---:|---:|---:|---:|---:|---:|
+| JAC NVE | 116.7 ± 0.1 | 0.999 | 0.999 | 0.999 | 1.000 | 0.999 |
+| Factor IX NVE | 238.3 ± 0.2 | 0.999 | 1.001 | 0.999 | 0.999 | 0.998 |
+| Cellulose NVE | 1033.6 ± 1.6 | 1.000 | 1.000 | 1.001 | 1.002 | 0.997 |
+| STMV NPT 4 fs | 3311.1 ± 3.0 | 1.002 | 1.003 | 1.015 | 1.007 | 1.004 |
+
+The windows covered the following:
+
+| Buffer | Size on JAC and Factor IX | Window on Cellulose and STMV |
+|---|---|---|
+| The outer list | 5.75 and 23.6 MB, whole | 118 MB at a hit ratio of 0.42 on the RTX 4090 and 0.68 on the RTX PRO 6000; 128 MB of the 277 MB buffer at 0.39 and 0.63 |
+| `placed` | 0.34 and 1.30 MB | 5.85 and 15.3 MB |
+| `hot` | 0.54 and 2.08 MB | 9.35 and 24.4 MB |
+
+On Cellulose, a build uses about half of the outer list's buffer, from its
+start.
+
+The 0.995 of `hot` on Cellulose on the RTX 4090 is within noise: in another
+job, the step took 1.143 and 1.145 ms with the window and 1.140 and 1.143
+without it.
+
+### 3.3 Why it loses on the RTX 4090 and is neutral on the RTX PRO 6000
+
+Nsight Systems timed the kernels of Cellulose on the RTX 4090: 600 steps,
+two alternated rounds, µs a call.
+
+| Kernel | No window | `outer@32` | `outer` |
+|---|---:|---:|---:|
+| The loop over pairs that prunes (D284), which reads the outer list | 563.5 | 556.1 | 559.7 |
+| The loop over pairs | 534.6 | 536.5 | 535.0 |
+| An integration kernel (`particle_for ... integration3`) | 70.3 | 125.4 | 120.5 |
+| The gathering of PME | 43.3 | 46.3 | 46.0 |
+| All kernels, 600 steps (ms) | 682.8 | 735.3 | 741.9 |
+
+The window gains about 1% where it is read. The set-aside, though, takes L2
+from the memory-bound kernels of the rest of the step, which on Cellulose
+and STMV use all 72 MB of the RTX 4090. The integration kernel takes 70
+→ 120–125 µs, and the step loses more than the reader gains. The RTX PRO
+6000's 128 MB of L2 still hold the working set beside a set-aside of 80
+MB, and the windows change its step by at most 0.3% on Cellulose and 1.5%
+on STMV.
+
+### 3.4 Limits of the measurement
+
+- **The positions.** The runtime cannot follow them. Compiled code
+  allocates them as any other buffer. Also, at each build, `md_exec.permute`
+  writes the fields of the particles into new buffers, and the runtime's
+  pool hands the freed blocks to the next permutation of the same size. The
+  positions, the velocities, and the target of a permutation therefore
+  take turns in three or four blocks that lie far apart: four blocks of 9.8
+  MB span 2.3 GB on Cellulose. `hot` thus holds the positions for part of
+  the run only. A window that follows them needs a mark from the compiler
+  on the field where it is allocated.
+- **Kernel-side hints were not measured.** Streaming loads of data that is
+  read once, PTX's `createpolicy` with `ld.global.L2::cache_hint`, and
+  `discard.global.L2` on scratch at the end of its life (the later part of
+  #434) set no part of L2 aside and are a different mechanism.
+- **No hit rates.** Nsight Compute's counters are refused on the cluster's
+  nodes (`ERR_NVGPUCTRPERM`; the driver's `RmProfilingAdminOnly` is 1),
+  so the measurement has kernel times, not L2 hit rates.
