@@ -399,22 +399,79 @@ $\mathbf d = \mathbf x_i - \mathbf x_k$ and the cutoff test; the unique traversa
 skips $k$ unless $\mathrm{id}(i) < \mathrm{id}(s(k))$, and adds $\sigma\,k$ to
 the row of $k$, owned or ghost.
 
-### 7.2 Through `md_exec` (stage 1, next part)
+### 7.2 Through `md_exec`
 
-A domain's work is ordinary `md_exec` over its local rows, with two
-changes, both stated in the ops:
+`D[ml2-exec]` (#442): `--convert-md-dist-to-md-exec`, the second
+executor, makes a domain's work ordinary `md_exec` over its local rows. It
+runs where `--convert-md-dist-to-loops` runs, before
+`--convert-md-to-md-exec`, and the passes of `md_exec` that follow are the
+existing ones, on the CPU and on a device. The reference executor stays
+the oracle of the new path and its switch (principle 3).
 
-- `pair_for` and `build_neighbors` take a *center extent* (the owned rows)
-  apart from the *row extent* (owned and ghost rows), the split that #34
-  made in its prototype. Rows of the list are built for centers only; their
-  entries are any local rows.
-- The geometry is `images(explicit)`: displacements are plain differences,
-  since ghosts carry their images. The cell is still known to the loop (for
-  the virial of a strain and for a later skin test), but not used for a
-  minimum image.
+*Two row sets per domain.* Each domain $d$ has two particle sets of its
+own, declared by the pass: `@<decomposition>.d<d>.owned`, its owned rows
+$O_d$, and `@<decomposition>.d<d>.local`, its local rows, $O_d$ followed by
+$\Gamma_d$. A set of `md_exec` has one number of rows, which
+`md-exec-assign-storage` takes from the first buffer of the set, so sets of
+different domains, and the owned and the local rows of one domain, are
+different sets. Loops over particles (`sum_particles`, `map_particles`) run
+over the owned set, loops over pairs over the local set.
 
-With these the GPU path is the existing one, per domain; the transfers are
-between the domains' buffers (Section 9).
+*Center extent.* `md_exec.build_neighbors`, `md_exec.refresh_neighbors`,
+and `md_exec.pair_for` take `centers(%n)`: the first $n$ rows of the set
+are the centers, the rows of the list are those of the centers, and its
+entries are any rows of the set. A loop updates a destination at the
+centers (and at the neighbors, below); the other rows keep what they hold.
+On a domain $n = \lvert O_d\rvert$.
+
+*Explicit images.* With `images(explicit)` a loop takes the displacement
+$\mathbf d = \mathbf x_i - \mathbf x_k$ as a plain difference, since ghosts
+carry their images, and no minimum image; the cell is still an operand, for
+the virial of a strain and the later skin test (Section 8). A structure
+with `images(explicit)` holds every pair of rows within the reach in plain
+differences. The existing search, which wraps the rows into the cell and
+takes the minimum image, finds a superset of these pairs: the
+minimum-image distance of two rows never exceeds their plain distance. The
+loop's test of the cutoff on the plain displacement removes the rest. A
+ghost and its source wrap onto one point and list each other and each
+other's neighbors, so the rows are longer than they need to be; a search
+over the box of the local rows that does not wrap is an optimization for
+later.
+
+*Writes at the neighbor.* `pair_for` with the policy
+`(directed, atomic)` adds, for every entry $(i, k)$ of a center $i$, the
+kernel's value at $i$ and $\sigma$ times it at $k$ (from `exchange`, which
+must be `symmetric` or `antisymmetric`, as for `(unique, atomic)`), with an
+atomic addition at $k$. This is the two-ended `gather_pairs`: its owned
+and ghost partial results are the prefix and the tail of one destination
+over the local rows. Over a directed relation the kernel is scaled by one
+half (Section 4.6).
+
+*The unique traversal* needs no list of its own: the list is the directed
+one, and the kernel's value is selected only where
+$\mathrm{id}(i) < \mathrm{id}(s(k))$, with the identities of the local
+rows given as a field of `i64` in `ins`. Every pair is then visited twice
+and computed once; a half list built by identity is #391's.
+
+*Transfers.* Distributed values keep the storage of the reference executor
+and the calls of `runtime/mdrt_dist.c` (partition, halo, $G$, $G^\mathsf T$,
+`all_reduce`). At the boundary of `md_exec` each domain's rows are copied
+from the buffer of all domains into a buffer of the domain (`[x_o ; G_x x]`
+for the positions, `[a_o ; G a]` for a gathered field) and handed over by
+`mdrt.from_buffer`; results come back by `mdrt.to_buffer` and are copied
+into the buffer of all domains. These copies are where a rank of the MPI
+transport (order 2) sends and receives; there a rank holds its own rows
+only.
+
+*Order.* The domains are unrolled: for every op of `md_dist`, the work of
+domain 0, then 1, and so on, as in Section 6, so that the results are the
+same to the bit from run to run for a fixed grid. The code of one domain is
+emitted from the domain's number; an MPI rank emits it once, for its own.
+
+What the pass refuses, besides what the reference executor refuses (a cell
+that is not orthorhombic, fields not of `f64`): `sum_particles rows(ghost)`
+(the inner product of the adjoint test, which the reference executor
+keeps), and a value of `md_dist` handed to another dialect.
 
 ## 8. Migration and rebuilds
 
