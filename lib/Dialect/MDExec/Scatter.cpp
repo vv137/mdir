@@ -1,5 +1,5 @@
 // The strategies of a scatter-accumulate and their preconditions
-// (D[privatize-scatter]); see include/mdir/Dialect/MDExec/Scatter.h.
+// (D285); see include/mdir/Dialect/MDExec/Scatter.h.
 
 #include "mdir/Dialect/MDExec/Scatter.h"
 

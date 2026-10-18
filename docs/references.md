@@ -251,7 +251,7 @@ algorithm `BLOCK_HISTO_ATOMIC`, `cub/block/block_histogram.cuh` and
 against the headers of CUDA 13.2).
 
 Used for: the privatized scatter-accumulate of a device, a sum of a block
-in block memory and one atomic for each index (D[privatize-scatter],
+in block memory and one atomic for each index (D285,
 [device-primitives.md](device-primitives.md)); the plan of lowering
 strategies after CUB's primitives (#415).
 
@@ -426,7 +426,7 @@ Mata, "Performance modeling of atomic additions on GPU scratchpad memory,"
 [doi:10.1109/TPDS.2012.319](https://doi.org/10.1109/TPDS.2012.319)
 
 Used for: the cost of privatized sums in block memory, the model behind
-the privatized scatter-accumulate (D[privatize-scatter],
+the privatized scatter-accumulate (D285,
 [device-primitives.md](device-primitives.md)).
 
 ### Gratl2022
@@ -516,7 +516,7 @@ N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed.
 
 Used for: the bound of the rounding of a floating-point sum in any order
 (Section 4.2), by which a privatized sum agrees with atomics
-(D[privatize-scatter], white paper Section 8.5).
+(D285, white paper Section 8.5).
 
 ### HockneyEastwood1988
 

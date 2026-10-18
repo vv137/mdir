@@ -1,6 +1,6 @@
 // The strategy of each scatter-accumulate on a device.
 //
-// See the description of the pass in Passes.td, D[privatize-scatter] in
+// See the description of the pass in Passes.td, D285 in
 // docs/decisions.md, and docs/device-primitives.md. The preconditions are
 // those of include/mdir/Dialect/MDExec/Scatter.h, which the lowering checks
 // with the same functions; what this pass adds is the cost: which of the

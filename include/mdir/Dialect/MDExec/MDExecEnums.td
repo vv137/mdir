@@ -40,7 +40,7 @@ def MDExec_Conflict : I32EnumAttr<"Conflict",
 }
 
 // How a loop or a sum adds values into a field at indices that its threads
-// share: the strategy of a scatter-accumulate (D[privatize-scatter],
+// share: the strategy of a scatter-accumulate (D285,
 // docs/device-primitives.md), which `md-exec-choose-scatter` sets.
 def MDExec_ScatterStrategy : I32EnumAttr<"ScatterStrategy",
     "strategy of a scatter-accumulate", [

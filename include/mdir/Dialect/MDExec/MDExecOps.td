@@ -209,7 +209,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     `md.reciprocal`), a device gathers every particle, as without a list.
 
     With `scatter(tile(E))`, which `md-exec-choose-scatter` sets on a
-    device (D[privatize-scatter], docs/device-primitives.md), the charges
+    device (D285, docs/device-primitives.md), the charges
     are spread through tiles of the memory of a block, one for each bin of
     $E^3$ points of the grid, into which the particles are binned by their
     first point at each evaluation (D282); without it, or with
@@ -1304,7 +1304,7 @@ def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
     write to all of its members.
 
     `scatter(hash(S, P, L))`, which `md-exec-choose-scatter` sets on a
-    device (D[privatize-scatter], docs/device-primitives.md), states how a
+    device (D285, docs/device-primitives.md), states how a
     lowering that evaluates each tuple once adds to the members: through a
     table of `S` slots of the particles of a block in block memory, at
     most `P` slots tried before an atomic of the device, from `L` tuples of

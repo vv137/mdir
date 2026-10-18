@@ -11,7 +11,7 @@ def MDExec_ScatterAttr : AttrDef<MDExec_Dialect, "Scatter"> {
   let summary = "The strategy of a scatter-accumulate";
   let description = [{
     How an op adds values into a field at indices that its threads share
-    (D[privatize-scatter], docs/device-primitives.md):
+    (D285, docs/device-primitives.md):
 
     | Form | Strategy |
     |---|---|

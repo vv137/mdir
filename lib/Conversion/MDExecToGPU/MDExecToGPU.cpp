@@ -553,7 +553,7 @@ private:
   /// and after a barrier each particle of the table is added to each
   /// destination of the loops once. The table is the strategy
   /// `scatter(hash(S, P, L))` of each loop (md-exec-choose-scatter,
-  /// D[privatize-scatter]). Returns false, launching nothing, where a loop
+  /// D285). Returns false, launching nothing, where a loop
   /// does not take it, the loops take different probes or bounds, or the
   /// joint table of their destinations would not fit the block memory;
   /// fails where the precondition of a loop's own table does not hold.
@@ -4492,7 +4492,7 @@ static Value getBricks(md_exec::ReciprocalOp op) {
 }
 
 /// The points of an edge of a bin of the tiles of `op`
-/// (`scatter(tile(E))`, D282, D[privatize-scatter]), or 0.
+/// (`scatter(tile(E))`, D282, D285), or 0.
 static int64_t getTileEdge(md_exec::ReciprocalOp op) {
   md_exec::ScatterAttr scatter = op.getScatterAttr();
   return scatter && scatter.isTile() ? scatter.getEdge() : 0;
@@ -4649,7 +4649,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Value listed = op.getPotential() ? Value() : op.getListed();
   // The spreading into tiles (D282): where the preconditions of
   // md-exec-choose-scatter hold, checked here with its functions
-  // (Scatter.h, D[privatize-scatter]); never in the deterministic mode,
+  // (Scatter.h, D285); never in the deterministic mode,
   // whose grid is in fixed point (D70, D84).
   int64_t tiles = getTileEdge(op);
   Value bins = getBins(op);

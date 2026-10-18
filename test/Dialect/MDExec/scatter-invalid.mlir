@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
 
-// The strategy of a scatter-accumulate (D[privatize-scatter]): each op takes
+// The strategy of a scatter-accumulate (D285): each op takes
 // the strategies that its lowering has, and the parameters are checked.
 
 func.func @f(%inc: memref<?x?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,

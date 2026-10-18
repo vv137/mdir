@@ -80,7 +80,7 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
     *options += " cache=false";
   return options;
 }
-/// The options of md-exec-choose-scatter (D[privatize-scatter]) from the
+/// The options of md-exec-choose-scatter (D285) from the
 /// switches of the environment, for comparing the strategies and for
 /// tests: `MDIR_PME_SPREAD` the tiles of PME (D282; `global` none,
 /// `tiles` or `tilesN` every sum that can be tiled, with bins of N points),
@@ -188,7 +188,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
     // of PME by the size of its grid (D282), the tables of the tuples
     // evaluated once from 100,000 tuples (D283); MDIR_PME_SPREAD and
     // MDIR_TUPLE_SUMS override the choice, to compare the strategies
-    // (D[privatize-scatter]).
+    // (D285).
     os << "md-exec-choose-scatter{" << getScatterOptions(control) << "},";
     // Kernels in f32 look their tables up in f32.
     os << "md-exec-assign-storage{memory=device"

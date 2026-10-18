@@ -1,5 +1,5 @@
 // The strategies of a scatter-accumulate and their preconditions
-// (D[privatize-scatter], docs/device-primitives.md).
+// (D285, docs/device-primitives.md).
 //
 // A scatter-accumulate adds values into a field at indices that the
 // threads of a device share: the charges of PME into its grid, the values

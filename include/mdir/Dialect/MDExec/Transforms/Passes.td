@@ -104,7 +104,7 @@ def ChooseScatter
   let description = [{
     Sets `scatter(...)` (`#md_exec.scatter`) on each op whose lowering for
     a device adds values into a field at indices that its threads share,
-    where the strategy's preconditions hold (D[privatize-scatter],
+    where the strategy's preconditions hold (D285,
     docs/device-primitives.md). The preconditions are the functions of
     include/mdir/Dialect/MDExec/Scatter.h, which the lowering calls as
     well. Runs on programs for a device, after the precision is assigned

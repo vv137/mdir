@@ -3,7 +3,7 @@
 // RUN: | FileCheck %s --check-prefix=DET
 
 // The lowering checks the preconditions of the strategy of a scatter
-// (D[privatize-scatter]) with the functions that md-exec-choose-scatter
+// (D285) with the functions that md-exec-choose-scatter
 // uses (Scatter.h), so that they hold of any program that it lowers.
 
 !pos = memref<?x3xf32, 1>

@@ -325,7 +325,7 @@ such privatized sums in block memory is modeled in
 [[GomezLuna2013]](references.md#gomezluna2013). The strategy is the
 attribute `#md_exec.scatter` of the ops that scatter, which the pass
 `md-exec-choose-scatter` sets and the lowering applies. Each condition
-below is one function that both of them call (D[privatize-scatter],
+below is one function that both of them call (D285,
 `docs/device-primitives.md`).
 
 **The reordering.** The two forms are the same sum, grouped differently.

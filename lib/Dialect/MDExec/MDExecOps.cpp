@@ -68,7 +68,7 @@ static void printCoordinates(OpAsmPrinter &printer, Operation *,
 }
 
 /// `scatter(<strategy>)`, the strategy of a scatter-accumulate
-/// (D[privatize-scatter]), or nothing.
+/// (D285), or nothing.
 static ParseResult parseScatter(OpAsmParser &parser, ScatterAttr &scatter) {
   if (failed(parser.parseOptionalKeyword("scatter")))
     return success();

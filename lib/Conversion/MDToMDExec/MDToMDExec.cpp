@@ -338,7 +338,7 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
       /*scratch=*/ValueRange(), kinds, members,
       builder.getI64IntegerAttr(arity), /*overwrite=*/DenseBoolArrayAttr(),
       disjoint,
-      // Chosen on a device (md-exec-choose-scatter, D[privatize-scatter]).
+      // Chosen on a device (md-exec-choose-scatter, D285).
       /*scatter=*/md_exec::ScatterAttr());
 
   Block &source = op.getKernel().front();
@@ -521,7 +521,7 @@ LogicalResult Converter::convert(Operation *op) {
           reciprocal.getProlateAttr(),
           yieldsPotential ? UnitAttr() : reciprocal.getGatherAllAttr(),
           // The strategy of the spreading is chosen later, on a device
-          // (md-exec-choose-scatter, D[privatize-scatter]).
+          // (md-exec-choose-scatter, D285).
           /*scatter=*/md_exec::ScatterAttr());
     };
     if (takesForces) {

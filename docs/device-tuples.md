@@ -419,7 +419,7 @@ atomics (JAC, 55,000 tuples, ran 1.5% slower with the table). The
 preconditions, the block memory and the occupancy, the measurements behind
 the bound, and the switch `MDIR_TUPLE_SUMS` are in
 [device-primitives.md](device-primitives.md), Section 2
-(D[privatize-scatter]).
+(D285).
 
 **Validated** (one RTX 4090, the settings of the Amber suite, one step;
 the same binary with and without the switch; the force differences

@@ -563,7 +563,7 @@ format, or the outputs; every such change is listed under **Changed** or
   rounding of the atomics.
 
 - **The tiles of PME and the tables of the tuple kernel are strategies of
-  one privatized scatter-accumulate** (D[privatize-scatter], part of #416,
+  one privatized scatter-accumulate** (D285, part of #416,
   [docs/device-primitives.md](docs/device-primitives.md)): the attribute
   `#md_exec.scatter` (`tile(E)` on `md_exec.reciprocal`, replacing
   `tiles(E)`; `hash(S, P, L)` on `md_exec.tuple_for`; `sorted` reserved

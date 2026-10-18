@@ -22,7 +22,7 @@
 # overflow the runs of their bins, and the sum of the dispersion of LJ-PME
 # (D162), whose coefficients are spread through tiles as the charges are. The module states the choice
 # (`scatter(tile(8))` on md_exec.reciprocal, which md-exec-choose-scatter
-# sets, D[privatize-scatter]); the deterministic mode takes no tiles
+# sets, D285); the deterministic mode takes no tiles
 # even when asked, and gives the same state twice.
 #
 # REQUIRES: cuda, hdf5

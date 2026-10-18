@@ -13,7 +13,7 @@ switches ([principles.md](principles.md), principles 2 and 3; issue #415).
 
 | Primitive | CUB's counterpart | Issue | Status | Decision |
 |---|---|---|---|---|
-| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. Step 1 shares the attribute, the pass, and the preconditions; the code is not shared: each site keeps its own kernel (the template's tile, the generated table) and its own emitter of the addition in block memory (Section 2.6). Fixed point in the deterministic mode (step 2) and further sites (step 3) are planned | D282 (`tile`), D283 (`hash`), D[privatize-scatter] (the attribute and the pass) |
+| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. Step 1 shares the attribute, the pass, and the preconditions; the code is not shared: each site keeps its own kernel (the template's tile, the generated table) and its own emitter of the addition in block memory (Section 2.6). Fixed point in the deterministic mode (step 2) and further sites (step 3) are planned | D282 (`tile`), D283 (`hash`), D285 (the attribute and the pass) |
 | Sorted scatter: runs reduced without atomics | `BlockHistogram`, sort specialization; `BlockDiscontinuity` | #417 | Planned. `sorted` is reserved in the attribute and refused | — |
 | Warp-aggregated atomics | `WarpReduce`, matching by key | #418 | Planned | — |
 | Vectorized and transposed gathers | `BlockLoad`, `WarpLoad`, `BlockExchange` | #419 | Next, on the gathering of PME (tiled gathering at orders 6 and 8 is #411) | — |
@@ -198,7 +198,7 @@ from 24 million a step to at most 11 million for the spreading, and from
 three a member to about a quarter of that for the tuples (a block of 128
 tuples touches 0.24 distinct particles a member).
 
-**One attribute and one pass (D[privatize-scatter]).** Moving both sites
+**One attribute and one pass (D285).** Moving both sites
 onto the attribute changed no kernel. The module after
 `convert-md-exec-to-gpu` is identical to that of `main` on JAC NVE and
 NPT, Factor IX NVE, Cellulose NVE, and STMV NPT 4 fs, apart from the line

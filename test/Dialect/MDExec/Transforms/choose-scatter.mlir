@@ -22,7 +22,7 @@
 // RUN: not mdir-opt %s --md-exec-choose-scatter=tile-edge=6 2>&1 \
 // RUN: | FileCheck %s --check-prefix=EDGE
 
-// The strategy of each scatter-accumulate on a device (D[privatize-scatter],
+// The strategy of each scatter-accumulate on a device (D285,
 // docs/device-primitives.md).
 //
 // The reciprocal sums of PME (D282): `tile=auto` tiles, with bins of 8

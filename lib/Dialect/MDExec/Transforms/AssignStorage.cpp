@@ -733,7 +733,7 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
       mapping.lookup(op.getCell()), ins, parameters, outs, reduce, scratch,
       op.getCoordinateKindsAttr(), op.getCoordinateMembersAttr(),
       op.getArityAttr(), overwriteAttr, op.getDisjointAttr(),
-      // The strategy of the scatter (D[privatize-scatter]), for a loop
+      // The strategy of the scatter (D285), for a loop
       // that adds to its destinations: one that overwrites a destination
       // writes the rows of its particles, and scatters nothing.
       overwriteAttr ? ScatterAttr() : op.getScatterAttr());
@@ -957,7 +957,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       scratch.push_back(buffer);
     }
     // The bins of the spreading into tiles (D282, `scatter(tile(E))`,
-    // D[privatize-scatter]), last: in i32,
+    // D285), last: in i32,
     // the count of each bin and that of the particles that overflow, which
     // each binning zeroes first, a run of C places for each bin, C twice
     // the mean number of particles of a bin and 8 more, and n places for

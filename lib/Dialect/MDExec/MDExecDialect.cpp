@@ -32,7 +32,7 @@ void MDExecDialect::registerAttributes() {
 }
 
 //===----------------------------------------------------------------------===//
-// #md_exec.scatter (D[privatize-scatter])
+// #md_exec.scatter (D285)
 //===----------------------------------------------------------------------===//
 
 ScatterAttr ScatterAttr::getTile(MLIRContext *context, int64_t edge) {
