@@ -583,7 +583,11 @@ IR tests: `test/Dialect/MDExec/domain-rows.mlir` (the forms of the ops),
 structure with a center extent and explicit images, the sums, the mask of
 the unique traversal, and the two-ended loop with $G^\mathsf T$),
 `invalid.mlir` (ghost rows), and `deterministic-invalid.mlir` (the device's
-deterministic mode).
+deterministic mode). Under compute-sanitizer
+(`test/Sanitizer/dist-exec-gpu.test`, with `-Dsanitize=1`): Lennard-Jones on
+$3\times2\times1$ with the unique traversal and EAM in the derivative's
+form, memcheck, initcheck, and racecheck, no errors and no hazards (42 s on
+an RTX 4090).
 
 ### 7.4 What is left of the path through `md_exec`
 
