@@ -438,6 +438,16 @@ arXiv:2511.22951 (2025).
 Used for: related work, an engine with a Python interface over a core in
 C++, parallel with MPI, that runs learned potentials.
 
+### Geiger2022
+
+M. Geiger, T. Smidt, "e3nn: Euclidean Neural Networks,"
+arXiv:2207.09453 (2022).
+[doi:10.48550/arXiv.2207.09453](https://doi.org/10.48550/arXiv.2207.09453)
+
+Used for: the notation of the irreducible representations of O(3) that
+the components of a field of features carry, `M x l p`, and their order
+and layout (D[ml4-feature-types]).
+
 ### Gomez2022
 
 Y. K. Gomez, A. M. Natale, J. Lincoff, C. W. Wolgemuth, J. M. Rosenberg,

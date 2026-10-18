@@ -23,6 +23,8 @@ element.
 | $\mathbf n = (n_a, n_b, n_c)$ | Lattice indices of an image of a displacement, $\mathbf d - \mathbf n H$ (Sections 4.3 and 4.4) |
 | $\mathcal E;\ C_i,\ E_i,\ O_i$ | In Section 4.6, the pairs of images within $r_c$ that a learned potential takes, $(i, j, \mathbf n)$ with $\lVert\mathbf x_j - \mathbf x_i + \mathbf n H\rVert < r_c$; the candidates of particle $i$ (its pairs of images within $R$ at the last build), those of them within $r_c$ at the step, and the offset of its slots, $O_i = \sum_{k<i} C_k$ |
 | $N_\text{layer};\ \mathbf h_i^{(k)}$ | The number of message-passing layers of a learned potential, and the features of atom $i$ after layer $k$ (Section 13) |
+| $\phi_k,\ \psi_k,\ \eta,\ \mathcal R;\ \mathbf A_i^{(k)};\ z_i$ | In Section 3.3, the edge stage and the node stage of layer $k$ of a message-passing model, its embedding of the species, and its readout; the sum of the edge stage over the neighbors of $i$, $\mathbf A_i^{(k)} = \sum_j\phi_k(i,j)$; the species of atom $i$ |
+| $\bar v = \partial U/\partial v;\ \bar r_{ij},\ \bar{\mathbf d}_{ij},\ \bar{\mathbf h}^\mathrm c_{ij},\ \bar{\mathbf h}^\mathrm n_{ij}$ | The adjoint of a value $v$ that the computation of $U$ forms; in Section 3.3, the cotangents of the distance, the displacement, the center's features, and the neighbor's features that the vector-Jacobian product of an edge stage gives at the directed pair $(i, j)$ for the cotangent $\bar{\mathbf A}_i$ of its value |
 | $r_c$ | Cutoff of the pair terms and of the direct sum of Ewald |
 | $r_s$, $S_2(r)$ | Onset and squared-distance potential switch of a topology Lennard-Jones term (Section 3.3) |
 | $s,\ R = r_c + s$ | Skin and reach of a neighbor structure |

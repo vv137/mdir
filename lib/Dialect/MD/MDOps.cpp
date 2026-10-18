@@ -422,10 +422,10 @@ static LogicalResult verifyPairOperands(OpTy op) {
   return success();
 }
 
-/// Verifies the kernel: its arguments and its terminator. `yieldType` is the
-/// type the kernel must yield.
+/// Verifies the kernel: its arguments and its terminator. `yieldTypes` are
+/// the types the kernel must yield.
 template <typename OpTy>
-static LogicalResult verifyPairKernel(OpTy op, Type yieldType) {
+static LogicalResult verifyPairKernel(OpTy op, TypeRange yieldTypes) {
   Block &block = op.getKernel().front();
   Builder builder(op.getContext());
 
@@ -453,13 +453,16 @@ static LogicalResult verifyPairKernel(OpTy op, Type yieldType) {
   auto yield = dyn_cast<YieldOp>(block.getTerminator());
   if (!yield)
     return op.emitOpError() << "expected the kernel to end with 'md.yield'";
-  if (yield.getNumOperands() != 1)
+  if (yield.getNumOperands() != yieldTypes.size())
     return yield.emitOpError()
-           << "expected exactly 1 value, got " << yield.getNumOperands();
-  if (yield.getOperand(0).getType() != yieldType)
-    return yield.emitOpError()
-           << "expected a value of type " << yieldType << ", got "
-           << yield.getOperand(0).getType();
+           << "expected exactly " << yieldTypes.size() << " value"
+           << (yieldTypes.size() == 1 ? "" : "s") << ", got "
+           << yield.getNumOperands();
+  for (auto [value, type] : llvm::zip_equal(yield.getOperands(), yieldTypes))
+    if (value.getType() != type)
+      return yield.emitOpError()
+             << "expected a value of type " << type << ", got "
+             << value.getType();
   return success();
 }
 
@@ -518,7 +521,7 @@ LogicalResult SumRelationOp::verify() {
 }
 
 LogicalResult SumRelationOp::verifyRegions() {
-  return verifyPairKernel(*this, getResult().getType());
+  return verifyPairKernel(*this, TypeRange(getResult().getType()));
 }
 
 //===----------------------------------------------------------------------===//
@@ -530,17 +533,27 @@ LogicalResult GatherRelationOp::verify() {
     return failure();
 
   auto relation = cast<RelationType>(getRelation().getType());
-  auto result = cast<FieldType>(getResult().getType());
-  if (result.getParticleSet() != relation.getParticleSet())
-    return emitOpError() << "the relation is on " << relation.getParticleSet()
-                         << ", but the result belongs to "
-                         << result.getParticleSet();
+  if (getResults().empty())
+    return emitOpError() << "expected at least one result";
+  for (Type type : getResultTypes()) {
+    auto result = cast<FieldType>(type);
+    if (result.getParticleSet() != relation.getParticleSet())
+      return emitOpError() << "the relation is on "
+                           << relation.getParticleSet()
+                           << ", but the result belongs to "
+                           << result.getParticleSet();
+  }
+  if (getNumResults() > 1 && getExchange() != Exchange::None)
+    return emitOpError() << "a gather of several fields has no exchange "
+                            "contract: expected 'exchange(none)'";
   return success();
 }
 
 LogicalResult GatherRelationOp::verifyRegions() {
-  auto result = cast<FieldType>(getResult().getType());
-  return verifyPairKernel(*this, result.getKernelValueType());
+  SmallVector<Type> values;
+  for (Type type : getResultTypes())
+    values.push_back(cast<FieldType>(type).getKernelValueType());
+  return verifyPairKernel(*this, TypeRange(values));
 }
 
 //===----------------------------------------------------------------------===//
@@ -960,6 +973,129 @@ LogicalResult MapParticlesOp::verify() {
 LogicalResult MapParticlesOp::verifyRegions() {
   auto result = cast<FieldType>(getResult().getType());
   return verifyParticleKernel(*this, result.getKernelValueType());
+}
+
+//===----------------------------------------------------------------------===//
+// Neural stages
+//===----------------------------------------------------------------------===//
+
+/// Whether `type` is the value of one element of a floating field: f64 or a
+/// vector of it. The stages are declared at the reference precision.
+static bool isStageReal(Type type) {
+  if (auto vector = dyn_cast<VectorType>(type))
+    return vector.getRank() == 1 && !vector.isScalable() &&
+           vector.getElementType().isF64();
+  return type.isF64();
+}
+
+static bool isStageInteger(Type type) {
+  return type.isSignlessInteger(32) || type.isSignlessInteger(64);
+}
+
+bool StageOp::isDifferentiable(unsigned index) {
+  return isStageReal(getFunctionType().getInput(index));
+}
+
+FunctionType StageOp::getVjpType() {
+  FunctionType type = getFunctionType();
+  SmallVector<Type> inputs(type.getInputs());
+  llvm::append_range(inputs, type.getResults());
+  SmallVector<Type> results;
+  for (auto [index, input] : llvm::enumerate(type.getInputs()))
+    if (isDifferentiable(index))
+      results.push_back(input);
+  return FunctionType::get(getContext(), inputs, results);
+}
+
+LogicalResult StageOp::verify() {
+  FunctionType type = getFunctionType();
+  for (Type input : type.getInputs())
+    if (!isStageReal(input) && !isStageInteger(input))
+      return emitOpError() << "expected each operand of f64, a vector of "
+                              "f64, i32, or i64, got "
+                           << input;
+  if (type.getNumResults() == 0)
+    return emitOpError() << "expected at least one result";
+  for (Type result : type.getResults())
+    if (!isStageReal(result))
+      return emitOpError() << "expected each result of f64 or a vector of "
+                              "f64, got "
+                           << result;
+  return success();
+}
+
+/// Verifies that `name` names a body of the type `type` in the module: a
+/// function with a body of ops without memory effects.
+static LogicalResult verifyStageBody(StageOp stage, StringRef role,
+                                     FlatSymbolRefAttr name, FunctionType type,
+                                     SymbolTableCollection &symbolTable) {
+  auto body = dyn_cast_or_null<FunctionOpInterface>(
+      symbolTable.lookupNearestSymbolFrom(stage, name));
+  if (!body)
+    return stage.emitOpError()
+           << "'" << name.getValue() << "', its " << role
+           << " body, does not name a function";
+  if (body.getFunctionType() != type)
+    return stage.emitOpError()
+           << "expected its " << role << " body '" << name.getValue()
+           << "' of the type " << type << ", got " << body.getFunctionType();
+  if (body.isExternal())
+    return stage.emitOpError()
+           << "cannot bind the declaration '" << name.getValue()
+           << "' as its " << role
+           << " body: only a body in the module is lowered (an external "
+              "body, such as an AOTInductor export, is step 4 of #377)";
+  WalkResult walk = body.getFunctionBody().walk([&](Operation *op) {
+    if (op->hasTrait<OpTrait::ReturnLike>() || isMemoryEffectFree(op))
+      return WalkResult::advance();
+    op->emitOpError() << "in the " << role << " body of the stage '"
+                      << stage.getSymName()
+                      << "', which must be pure: the op has memory effects";
+    return WalkResult::interrupt();
+  });
+  return failure(walk.wasInterrupted());
+}
+
+LogicalResult StageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyStageBody(*this, "forward", getForwardAttr(),
+                             getFunctionType(), symbolTable)))
+    return failure();
+  if (FlatSymbolRefAttr vjp = getVjpAttr())
+    return verifyStageBody(*this, "vjp", vjp, getVjpType(), symbolTable);
+  return success();
+}
+
+LogicalResult ApplyStageOp::verify() {
+  // A kernel of the md dialect or of md_dist holds the op: its operands are
+  // the values of one element.
+  Operation *parent = (*this)->getParentOp();
+  if (!parent || isa<FunctionOpInterface>(parent) ||
+      !parent->getDialect() ||
+      (parent->getDialect()->getNamespace() != "md" &&
+       parent->getDialect()->getNamespace() != "md_dist"))
+    return emitOpError() << "expected to be in a kernel of the md dialect";
+  return success();
+}
+
+LogicalResult
+ApplyStageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto stage = symbolTable.lookupNearestSymbolFrom<StageOp>(*this,
+                                                            getStageAttr());
+  if (!stage)
+    return emitOpError() << "'" << getStage() << "' does not name a stage";
+  if (getVjp() && !stage.getVjpAttr())
+    return emitOpError() << "the stage '" << getStage()
+                         << "' has no vector-Jacobian product";
+  FunctionType expected =
+      getVjp() ? stage.getVjpType() : stage.getFunctionType();
+  FunctionType actual = FunctionType::get(
+      getContext(), getOperands().getTypes(), getResults().getTypes());
+  if (actual != expected)
+    return emitOpError() << "expected the type " << expected << " of "
+                         << (getVjp() ? "the vector-Jacobian product of " : "")
+                         << "the stage '" << getStage() << "', got "
+                         << actual;
+  return success();
 }
 
 //===----------------------------------------------------------------------===//

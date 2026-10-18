@@ -201,7 +201,14 @@ little. Run as one opaque call of the whole system, a pretrained PaiNN
 calculators and peak at their packages' memory, 61 kB and 164 kB per pair
 (MACE in float64), which bounds a water box on a 24 GB device
 to about 6,000 and 1,500 atoms (D286); these are the baselines
-that the models in stages are measured against. The distributed work has begun beside it (D275),
+that the models in stages are measured against. M3 closes with PaiNN and
+MACE in stages on one GPU, both required, and M4 with them on two GPUs
+(D[ml-milestones]). The IR of the stages is built (Section 3.3,
+D[ml4-neural-op]): a stage binds its body and its vector-Jacobian product,
+from AOTInductor or from StableHLO, which lowers through `linalg`; what is
+left on one GPU is lowering the bodies of the two models, a scatter that
+evaluates each product once, and the choice between storing and
+recomputing what a product takes. The distributed work has begun beside it (D275),
 with ownership and halos as IR. A domain $d$ owns particles $O_d$ and holds
 ghosts $\Gamma_d$, images of particles within a reach of its region. The
 copy $G$ of owned values to ghosts and its transpose $G^\mathsf T$, which

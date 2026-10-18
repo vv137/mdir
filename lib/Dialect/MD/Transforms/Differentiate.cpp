@@ -7,6 +7,7 @@
 #include "mdir/Dialect/MD/Transforms/Activity.h"
 #include "mdir/Dialect/MD/Transforms/Truncation.h"
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"
+#include "mdir/Dialect/MD/Transforms/DerivativeInterface.h"
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
 
@@ -28,9 +29,11 @@ namespace {
 /// Builds the function that computes requested quantities from a potential.
 class DerivativeBuilder {
 public:
-  DerivativeBuilder(PotentialOp potential, StringRef name, bool remarks)
+  DerivativeBuilder(PotentialOp potential, StringRef name, bool remarks,
+                    bool separateStages)
       : potential(potential), name(name), builder(potential.getContext()),
-        loc(potential.getLoc()), remarks(remarks) {}
+        loc(potential.getLoc()), remarks(remarks),
+        separateStages(separateStages) {}
 
   /// Returns the generated function, or a null op after emitting a
   /// diagnostic.
@@ -94,6 +97,61 @@ private:
   /// gives through the adjoint `adjoint` of its result.
   LogicalResult emitGatherTerm(GatherRelationOp gather, Value adjoint,
                                bool virial, Value &result);
+
+  //===--------------------------------------------------------------------===//
+  // Neural stages (D[ml4-neural-op], docs/ml4-ir.md, Section 4)
+  //===--------------------------------------------------------------------===//
+  //
+  // A stage kernel yields the value of md.apply_stage, whose operands are
+  // arguments of the kernel or constants. Its derivative is the stage's
+  // vector-Jacobian product: the adjoint of a gather over pairs is a gather
+  // over the same relation that evaluates the product from both ends of
+  // each pair, and that of a map or a sum over particles a map.
+
+  /// The stage that the kernel of `op` applies, if it is a stage kernel.
+  ApplyStageOp getStage(Operation *op);
+  /// Fails with a diagnostic if the kernel of `op` applies a stage but is
+  /// not a stage kernel.
+  LogicalResult checkStageKernel(Operation *op);
+  /// In `block`, the cotangents of the arguments of the stage kernel of
+  /// `source` from the cotangent `cotangent` of its value, with the
+  /// arguments of the kernel mapped by `mapping`; `cotangents` receives one
+  /// value, or null for zero, for each argument of the source kernel.
+  LogicalResult emitStageCotangents(Operation *source, Block &block,
+                                    IRMapping &mapping, Value cotangent,
+                                    SmallVectorImpl<Value> &cotangents);
+  /// The kernel arguments of a new op over pairs that copies the arguments
+  /// of `source`'s kernel, then two values of the adjoint `adjoint`; maps
+  /// them from the center (`forward`) and with the ends exchanged
+  /// (`backward`), in which the displacement is negated.
+  void addPairArguments(GatherRelationOp source, Block &block, Value adjoint,
+                        IRMapping &forward, IRMapping &backward,
+                        Value &adjointI, Value &adjointJ);
+  /// The adjoint of the field gathered at place `place` of the stage gather
+  /// `gather`, from the adjoint of its result.
+  LogicalResult emitStageFieldTerm(GatherRelationOp gather, unsigned place,
+                                   Value adjoint, Value &result);
+  /// The adjoint of the field read at `place` of the stage map or sum
+  /// `user`, from `cotangent`: the weight of a sum, or the adjoint of the
+  /// result of a map.
+  LogicalResult emitStageParticleTerm(Operation *user, unsigned place,
+                                      Value cotangent, Value &result);
+  /// What the products of a stage gather give in one gather: the adjoint
+  /// of each field it gathers that depends on the positions (null
+  /// elsewhere), the forces, and the virial, the sum over the particles of
+  /// a field of 9 components.
+  struct StageTerms {
+    SmallVector<Value> fields;
+    Value forces;
+    Value virial;
+  };
+  /// The terms of the stage gather `gather`, built at the first request.
+  LogicalResult getStageTerms(GatherRelationOp gather, StageTerms *&terms);
+  llvm::DenseMap<Operation *, StageTerms> stageTerms;
+  /// The forces, or with `virial` the virial, that the stage gather
+  /// `gather` gives through the adjoint of its result: the separate form.
+  LogicalResult emitStageGatherTerm(GatherRelationOp gather, Value adjoint,
+                                    bool virial, Value &result);
 
   llvm::DenseMap<Value, bool> positional;
   llvm::DenseMap<Value, Value> adjoints;
@@ -193,6 +251,11 @@ private:
   /// Whether a parameter derivative remarks on each op that it takes as
   /// independent of the parameter.
   bool remarks;
+  /// Whether a stage kernel over pairs gives its terms as separate ops,
+  /// the reference form, instead of one gather of all of them.
+  bool separateStages;
+  bool requestForces = false;
+  bool requestVirial = false;
 
   FunctionOp function;
   Block *body = nullptr;
@@ -255,6 +318,16 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
     auto gather = dyn_cast<GatherRelationOp>(&op);
     if (!gather || !isPositional(gather.getResult()))
       continue;
+    if (gather->getNumResults() != 1)
+      return gather.emitOpError()
+             << "cannot differentiate a gather of several fields that "
+                "depend on the positions";
+    // A stage kernel takes the displacement and fields of any size: the
+    // product of its stage gives their cotangents (D[ml4-neural-op]).
+    if (getStage(gather))
+      continue;
+    if (failed(checkStageKernel(gather)))
+      return failure();
     if (!gather.getKernel().front().getArgument(1).use_empty())
       return gather.emitOpError()
              << "cannot differentiate a field gathered from a kernel that "
@@ -559,6 +632,375 @@ static Value inlineKernel(Block &source, Block &target, IRMapping &mapping) {
   return mapping.lookupOrDefault(source.getTerminator()->getOperand(0));
 }
 
+//===----------------------------------------------------------------------===//
+// Neural stages
+//===----------------------------------------------------------------------===//
+
+ApplyStageOp DerivativeBuilder::getStage(Operation *op) {
+  if (op->getNumRegions() != 1 || op->getRegion(0).empty())
+    return ApplyStageOp();
+  Block &block = op->getRegion(0).front();
+  Operation *terminator = block.getTerminator();
+  if (terminator->getNumOperands() != 1)
+    return ApplyStageOp();
+  auto apply = terminator->getOperand(0).getDefiningOp<ApplyStageOp>();
+  if (!apply || apply.getVjp() || apply->getNumResults() != 1 ||
+      apply->getBlock() != &block)
+    return ApplyStageOp();
+  for (Value operand : apply.getOperands()) {
+    auto argument = dyn_cast<BlockArgument>(operand);
+    if (argument ? argument.getOwner() != &block
+                 : !matchPattern(operand, m_Constant()))
+      return ApplyStageOp();
+  }
+  return apply;
+}
+
+LogicalResult DerivativeBuilder::checkStageKernel(Operation *op) {
+  if (getStage(op))
+    return success();
+  WalkResult walk = op->walk([](ApplyStageOp) { return WalkResult::interrupt(); });
+  if (!walk.wasInterrupted())
+    return success();
+  return op->emitOpError()
+         << "cannot differentiate a kernel that applies a stage unless it "
+            "yields the stage's value, with arguments of the kernel or "
+            "constants as its operands: a cutoff function or an envelope "
+            "belongs to the body of the stage";
+}
+
+LogicalResult DerivativeBuilder::emitStageCotangents(
+    Operation *source, Block &block, IRMapping &mapping, Value cotangent,
+    SmallVectorImpl<Value> &cotangents) {
+  ApplyStageOp apply = getStage(source);
+  Block &kernel = source->getRegion(0).front();
+  OpBuilder builder = OpBuilder::atBlockEnd(&block);
+  // The application with the operands of this kernel; its value is not
+  // used, only its operands, by the product that replaces it.
+  for (Value operand : apply.getOperands())
+    if (Operation *constant = operand.getDefiningOp())
+      if (!mapping.contains(operand))
+        builder.clone(*constant, mapping);
+  auto copy = cast<ApplyStageOp>(builder.clone(*apply, mapping));
+  SmallVector<Value> operandCotangents;
+  auto rule = dyn_cast<DerivativeOpInterface>(copy.getOperation());
+  if (!rule)
+    return copy.emitOpError() << "has no derivative rule registered";
+  if (failed(rule.emitAdjoint(builder, ValueRange{cotangent},
+                              operandCotangents)))
+    return failure();
+  copy.erase();
+  ScalarEmitter emit(builder, loc);
+  cotangents.assign(kernel.getNumArguments(), Value());
+  for (auto [operand, value] :
+       llvm::zip_equal(apply.getOperands(), operandCotangents)) {
+    auto argument = dyn_cast<BlockArgument>(operand);
+    if (!argument || !value)
+      continue;
+    Value &slot = cotangents[argument.getArgNumber()];
+    slot = emit.add(slot, value);
+  }
+  return success();
+}
+
+void DerivativeBuilder::addPairArguments(GatherRelationOp source,
+                                         Block &block, Value adjoint,
+                                         IRMapping &forward,
+                                         IRMapping &backward,
+                                         Value &adjointI, Value &adjointJ) {
+  Block &kernel = source.getKernel().front();
+  Value r = block.addArgument(kernel.getArgument(0).getType(), loc);
+  Value d = block.addArgument(kernel.getArgument(1).getType(), loc);
+  unsigned count = source.getGathered().size();
+  SmallVector<Value> ends;
+  for (unsigned k = 0; k != 2 * count; ++k)
+    ends.push_back(block.addArgument(kernel.getArgument(2 + k).getType(), loc));
+  Type valueType =
+      cast<FieldType>(adjoint.getType()).getKernelValueType();
+  adjointI = block.addArgument(valueType, loc);
+  adjointJ = block.addArgument(valueType, loc);
+  // From the other end the displacement is d_ji = −d_ij, and the values of
+  // the two ends change places.
+  OpBuilder builder = OpBuilder::atBlockEnd(&block);
+  Value negated = arith::NegFOp::create(builder, loc, d);
+  forward.map(kernel.getArgument(0), r);
+  backward.map(kernel.getArgument(0), r);
+  forward.map(kernel.getArgument(1), d);
+  backward.map(kernel.getArgument(1), negated);
+  for (unsigned k = 0; k != count; ++k) {
+    forward.map(kernel.getArgument(2 + 2 * k), ends[2 * k]);
+    forward.map(kernel.getArgument(3 + 2 * k), ends[2 * k + 1]);
+    backward.map(kernel.getArgument(2 + 2 * k), ends[2 * k + 1]);
+    backward.map(kernel.getArgument(3 + 2 * k), ends[2 * k]);
+  }
+}
+
+/// A new op over the pairs of `gather`, with its operands and those of
+/// `extra`, of the type `resultType`, and an empty kernel.
+static Operation *createPairLike(OpBuilder &builder, Location loc,
+                                 StringRef opName, GatherRelationOp gather,
+                                 Value extra, Exchange exchange,
+                                 TypeRange resultTypes) {
+  MLIRContext *context = builder.getContext();
+  OperationState state(loc, opName);
+  state.addOperands(
+      {gather.getRelation(), gather.getPositions(), gather.getCell()});
+  state.addOperands(gather.getGathered());
+  state.addOperands(extra);
+  state.addAttribute("exchange", ExchangeAttr::get(context, exchange));
+  state.addAttribute("exchange_basis",
+                     ExchangeBasisAttr::get(context, ExchangeBasis::Derived));
+  state.addRegion();
+  state.addTypes(resultTypes);
+  Operation *op = builder.create(state);
+  op->getRegion(0).push_back(new Block());
+  return op;
+}
+
+LogicalResult DerivativeBuilder::emitStageFieldTerm(GatherRelationOp gather,
+                                                    unsigned place,
+                                                    Value adjoint,
+                                                    Value &result) {
+  // h̄_m = Σ_b [∂φ(m, b)/∂h_m^T Ā_m + ∂φ(b, m)/∂h_m^T Ā_b]: the product at
+  // the pair with m at its center, and at the pair from the other end,
+  // where m is the neighbor (docs/ml4-ir.md, Section 4.2). Neither has a
+  // sign under exchange, so the gather has no contract.
+  Type fieldType = gather.getGathered()[place].getType();
+  Type valueType = cast<FieldType>(fieldType).getKernelValueType();
+  Operation *op =
+      createPairLike(builder, loc, GatherRelationOp::getOperationName(),
+                     gather, adjoint, Exchange::None, TypeRange(fieldType));
+  Block &block = op->getRegion(0).front();
+  IRMapping forward, backward;
+  Value adjointI, adjointJ;
+  addPairArguments(gather, block, adjoint, forward, backward, adjointI,
+                   adjointJ);
+  SmallVector<Value> fromI, fromJ;
+  if (failed(emitStageCotangents(gather, block, forward, adjointI, fromI)) ||
+      failed(emitStageCotangents(gather, block, backward, adjointJ, fromJ)))
+    return failure();
+  OpBuilder kernel = OpBuilder::atBlockEnd(&block);
+  ScalarEmitter emit(kernel, loc);
+  Value total = emit.add(fromI[2 + 2 * place], fromJ[3 + 2 * place]);
+  YieldOp::create(kernel, loc,
+                  ValueRange{total ? total : emit.constant(0.0, valueType)});
+  eraseDeadOps(block);
+  result = op->getResult(0);
+  return success();
+}
+
+LogicalResult DerivativeBuilder::emitStageParticleTerm(Operation *user,
+                                                       unsigned place,
+                                                       Value cotangent,
+                                                       Value &result) {
+  // h̄_i = (∂k/∂h_i)^T w for a sum S = Σ_i k(h_i, ...), and (∂g/∂h_i)^T Ḡ_i
+  // for a map G = g(h, ...): a map of the product.
+  bool isField = isa<FieldType>(cotangent.getType());
+  Type fieldType = user->getOperand(place).getType();
+  Type valueType = cast<FieldType>(fieldType).getKernelValueType();
+  OperationState state(loc, MapParticlesOp::getOperationName());
+  state.addOperands(user->getOperands());
+  if (isField)
+    state.addOperands(cotangent);
+  state.addRegion();
+  state.addTypes(fieldType);
+  Operation *op = builder.create(state);
+  Block *block = new Block();
+  op->getRegion(0).push_back(block);
+  Block &source = user->getRegion(0).front();
+  IRMapping mapping;
+  for (BlockArgument argument : source.getArguments())
+    mapping.map(argument, block->addArgument(argument.getType(), loc));
+  // The weight of a sum is a number outside the kernel, which the kernel
+  // takes as a value that it captures.
+  Value seed = isField ? block->addArgument(
+                             cast<FieldType>(cotangent.getType())
+                                 .getKernelValueType(),
+                             loc)
+                       : cotangent;
+  SmallVector<Value> cotangents;
+  if (failed(emitStageCotangents(user, *block, mapping, seed, cotangents)))
+    return failure();
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  ScalarEmitter emit(kernel, loc);
+  Value value = cotangents[place];
+  YieldOp::create(kernel, loc,
+                  ValueRange{value ? value : emit.constant(0.0, valueType)});
+  eraseDeadOps(*block);
+  result = op->getResult(0);
+  return success();
+}
+
+LogicalResult DerivativeBuilder::emitStageGatherTerm(GatherRelationOp gather,
+                                                     Value adjoint,
+                                                     bool virial,
+                                                     Value &result) {
+  // With g(i, j) = r̄ d_ij / r + d̄ from the product at (i, j), the force on
+  // m is K(m, b) = −[g(m, b) − g(b, m)], antisymmetric by construction, and
+  // the virial Σ d ⊗ K over the pairs (docs/ml4-ir.md, Section 4.2).
+  Type fieldType = body->getArgument(0).getType();
+  Type vectorType = cast<FieldType>(fieldType).getKernelValueType();
+  Type virialType = VectorType::get({9}, builder.getF64Type());
+  Operation *op = createPairLike(
+      builder, loc,
+      virial ? SumRelationOp::getOperationName()
+             : GatherRelationOp::getOperationName(),
+      gather, adjoint, virial ? Exchange::Symmetric : Exchange::Antisymmetric,
+      TypeRange(virial ? virialType : fieldType));
+  Block &block = op->getRegion(0).front();
+  IRMapping forward, backward;
+  Value adjointI, adjointJ;
+  addPairArguments(gather, block, adjoint, forward, backward, adjointI,
+                   adjointJ);
+  SmallVector<Value> fromI, fromJ;
+  if (failed(emitStageCotangents(gather, block, forward, adjointI, fromI)) ||
+      failed(emitStageCotangents(gather, block, backward, adjointJ, fromJ)))
+    return failure();
+  OpBuilder kernel = OpBuilder::atBlockEnd(&block);
+  ScalarEmitter emit(kernel, loc);
+  Value r = block.getArgument(0);
+  Value d = block.getArgument(1);
+  // −[(r̄_ij + r̄_ji) d / r + d̄_ij − d̄_ji], d̄_ji the cotangent of −d.
+  Value radial = emit.add(fromI[0], fromJ[0]);
+  Value along = radial ? vector::BroadcastOp::create(
+                             kernel, loc, vectorType, emit.div(radial, r))
+                       : Value();
+  Value force = emit.neg(
+      emit.add(emit.mul(along, d), emit.sub(fromI[1], fromJ[1])));
+  Value yielded;
+  if (!force) {
+    yielded = emit.constant(0.0, virial ? virialType : vectorType);
+  } else if (!virial) {
+    yielded = force;
+  } else {
+    SmallVector<Value, 9> elements;
+    for (int64_t a = 0; a < 3; ++a)
+      for (int64_t b = 0; b < 3; ++b)
+        elements.push_back(
+            emit.mul(vector::ExtractOp::create(kernel, loc, d, a),
+                     vector::ExtractOp::create(kernel, loc, force, b)));
+    yielded = vector::FromElementsOp::create(kernel, loc, virialType, elements);
+  }
+  YieldOp::create(kernel, loc, ValueRange{yielded});
+  eraseDeadOps(block);
+  result = op->getResult(0);
+  return success();
+}
+
+LogicalResult DerivativeBuilder::getStageTerms(GatherRelationOp gather,
+                                               StageTerms *&terms) {
+  auto found = stageTerms.find(gather);
+  if (found != stageTerms.end()) {
+    terms = &found->second;
+    return success();
+  }
+  terms = &stageTerms[gather];
+  Value adjoint = adjoints.lookup(gather.getResult());
+  if (!adjoint)
+    return success();
+  // One gather of every term that this derivative needs, each pair's two
+  // products evaluated once for all of them (the ruling of 2026-10-19 on
+  // #441; docs/ml4-ir.md, Section 4.3). Its values have no sign under
+  // exchange, so it has no contract.
+  MLIRContext *context = builder.getContext();
+  Type positionsType = body->getArgument(0).getType();
+  Type vectorType = cast<FieldType>(positionsType).getKernelValueType();
+  Type nine = VectorType::get({9}, builder.getF64Type());
+  Type virialType = FieldType::get(
+      context, cast<FieldType>(positionsType).getParticleSet(), 9,
+      builder.getF64Type());
+  SmallVector<Type> types;
+  SmallVector<unsigned> places;
+  for (auto [place, field] : llvm::enumerate(gather.getGathered())) {
+    Type value = cast<FieldType>(field.getType()).getKernelValueType();
+    if (!isa<FloatType, VectorType>(value) || !isPositional(field))
+      continue;
+    places.push_back(place);
+    types.push_back(field.getType());
+  }
+  if (requestForces)
+    types.push_back(positionsType);
+  if (requestVirial)
+    types.push_back(virialType);
+  terms->fields.assign(gather.getGathered().size(), Value());
+  if (types.empty())
+    return success();
+  Operation *op =
+      createPairLike(builder, loc, GatherRelationOp::getOperationName(),
+                     gather, adjoint, Exchange::None, types);
+  Block &block = op->getRegion(0).front();
+  IRMapping forward, backward;
+  Value adjointI, adjointJ;
+  addPairArguments(gather, block, adjoint, forward, backward, adjointI,
+                   adjointJ);
+  SmallVector<Value> fromI, fromJ;
+  if (failed(emitStageCotangents(gather, block, forward, adjointI, fromI)) ||
+      failed(emitStageCotangents(gather, block, backward, adjointJ, fromJ)))
+    return failure();
+  OpBuilder kernel = OpBuilder::atBlockEnd(&block);
+  ScalarEmitter emit(kernel, loc);
+  SmallVector<Value> yielded;
+  // h̄_m: the center's cotangent at (m, b) and the neighbor's at (b, m).
+  for (unsigned place : places) {
+    Value total = emit.add(fromI[2 + 2 * place], fromJ[3 + 2 * place]);
+    Type valueType = cast<FieldType>(gather.getGathered()[place].getType())
+                         .getKernelValueType();
+    yielded.push_back(total ? total : emit.constant(0.0, valueType));
+  }
+  // K(m, b) = −[(r̄_mb + r̄_bm) d / r + d̄_mb − d̄_bm], and half of d ⊗ K at
+  // each center, so that the sum over the particles is Σ_{i<j} d ⊗ K.
+  Value r = block.getArgument(0);
+  Value d = block.getArgument(1);
+  Value radial = emit.add(fromI[0], fromJ[0]);
+  Value along = radial ? vector::BroadcastOp::create(
+                             kernel, loc, vectorType, emit.div(radial, r))
+                       : Value();
+  Value force = emit.neg(
+      emit.add(emit.mul(along, d), emit.sub(fromI[1], fromJ[1])));
+  if (requestForces)
+    yielded.push_back(force ? force : emit.constant(0.0, vectorType));
+  if (requestVirial) {
+    Value value;
+    if (!force) {
+      value = emit.constant(0.0, nine);
+    } else {
+      SmallVector<Value, 9> elements;
+      for (int64_t a = 0; a < 3; ++a) {
+        Value arm =
+            emit.scale(0.5, vector::ExtractOp::create(kernel, loc, d, a));
+        for (int64_t b = 0; b < 3; ++b)
+          elements.push_back(emit.mul(
+              arm, vector::ExtractOp::create(kernel, loc, force, b)));
+      }
+      value = vector::FromElementsOp::create(kernel, loc, nine, elements);
+    }
+    yielded.push_back(value);
+  }
+  YieldOp::create(kernel, loc, yielded);
+  eraseDeadOps(block);
+
+  unsigned next = 0;
+  for (unsigned place : places)
+    terms->fields[place] = op->getResult(next++);
+  if (requestForces)
+    terms->forces = op->getResult(next++);
+  if (requestVirial) {
+    // The sum over the particles of the virial at each center.
+    OperationState state(loc, SumParticlesOp::getOperationName());
+    state.addOperands(op->getResult(next++));
+    state.addRegion();
+    state.addTypes(nine);
+    Operation *sum = builder.create(state);
+    Block *sumBlock = new Block();
+    sum->getRegion(0).push_back(sumBlock);
+    Value element = sumBlock->addArgument(nine, loc);
+    OpBuilder sumKernel = OpBuilder::atBlockEnd(sumBlock);
+    YieldOp::create(sumKernel, loc, ValueRange{element});
+    terms->virial = sum->getResult(0);
+  }
+  return success();
+}
+
 LogicalResult DerivativeBuilder::buildAdjoints() {
   if (adjointsBuilt)
     return success();
@@ -575,12 +1017,58 @@ LogicalResult DerivativeBuilder::buildAdjoints() {
     Type fieldType = field.getType();
     Type valueType = cast<FieldType>(fieldType).getKernelValueType();
     SmallVector<Value> parts;
-    // The uses before the ops of the derivative, which read the field as
-    // well, are added.
+    // The uses by the ops of the potential only: the adjoints of the fields
+    // after this one, maps and gathers of the derivative, may read it too.
     SmallVector<std::pair<Operation *, unsigned>> uses;
     for (OpOperand &use : field.getUses())
-      uses.push_back({use.getOwner(), use.getOperandNumber()});
+      if (llvm::is_contained(potentialOps, use.getOwner()))
+        uses.push_back({use.getOwner(), use.getOperandNumber()});
     for (auto [user, operand] : uses) {
+      if (getStage(user)) {
+        // A stage kernel: the vector-Jacobian product of its stage.
+        Value term;
+        if (auto gather = dyn_cast<GatherRelationOp>(user)) {
+          Value adjoint = adjoints.lookup(gather.getResult());
+          if (!adjoint)
+            continue;
+          if (separateStages) {
+            if (failed(emitStageFieldTerm(gather, operand - 3, adjoint, term)))
+              return failure();
+          } else {
+            StageTerms *terms;
+            if (failed(getStageTerms(gather, terms)))
+              return failure();
+            term = terms->fields[operand - 3];
+          }
+        } else if (isa<SumParticlesOp, MapParticlesOp>(user)) {
+          Value cotangent;
+          if (isa<SumParticlesOp>(user)) {
+            if (failed(getWeight(user->getResult(0), cotangent)))
+              return failure();
+          } else {
+            cotangent = adjoints.lookup(user->getResult(0));
+          }
+          if (!cotangent)
+            continue;
+          if (failed(emitStageParticleTerm(user, operand, cotangent, term)))
+            return failure();
+        } else {
+          return user->emitError()
+                 << "cannot differentiate through this use of a field that "
+                    "depends on the positions";
+        }
+        parts.push_back(term);
+        continue;
+      }
+      if (failed(checkStageKernel(user)))
+        return failure();
+      if (!valueType.isF64())
+        return user->emitError()
+               << "cannot differentiate a field of "
+               << cast<FieldType>(fieldType).getNumComponents()
+               << " components that depends on the positions through a "
+                  "kernel that does not yield the value of a stage "
+                  "(md.apply_stage)";
       if (auto sum = dyn_cast<SumRelationOp>(user)) {
         // ∂E/∂F_i = w Σ_j ∂u(i, j)/∂F_i, the kernel with i at its centre.
         unsigned place = operand - 3;
@@ -929,8 +1417,18 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
     if (!adjoint)
       continue;
     Value term;
-    if (failed(emitGatherTerm(gather, adjoint, /*virial=*/false, term)))
+    if (getStage(gather) && !separateStages) {
+      StageTerms *terms;
+      if (failed(getStageTerms(gather, terms)))
+        return failure();
+      term = terms->forces;
+    } else if (failed(getStage(gather)
+                          ? emitStageGatherTerm(gather, adjoint,
+                                                /*virial=*/false, term)
+                          : emitGatherTerm(gather, adjoint, /*virial=*/false,
+                                           term))) {
       return failure();
+    }
     terms.push_back(term);
   }
 
@@ -1072,8 +1570,18 @@ LogicalResult DerivativeBuilder::buildVirial(Value &virial) {
     if (!adjoint)
       continue;
     Value term;
-    if (failed(emitGatherTerm(gather, adjoint, /*virial=*/true, term)))
+    if (getStage(gather) && !separateStages) {
+      StageTerms *terms;
+      if (failed(getStageTerms(gather, terms)))
+        return failure();
+      term = terms->virial;
+    } else if (failed(getStage(gather)
+                          ? emitStageGatherTerm(gather, adjoint,
+                                                /*virial=*/true, term)
+                          : emitGatherTerm(gather, adjoint, /*virial=*/true,
+                                           term))) {
       return failure();
+    }
     total = outer.add(total, term);
   }
 
@@ -2405,6 +2913,10 @@ FunctionOp DerivativeBuilder::build(ArrayRef<int32_t> kinds,
     sums.push_back(sum);
   }
 
+  requestForces =
+      llvm::is_contained(kinds, static_cast<int32_t>(Request::Forces));
+  requestVirial =
+      llvm::is_contained(kinds, static_cast<int32_t>(Request::Virial));
   bool needsPositions = llvm::any_of(kinds, [](int32_t kind) {
     auto request = static_cast<Request>(kind);
     return request == Request::Forces || request == Request::Virial;
@@ -2521,7 +3033,8 @@ public:
           return signalPassFailure();
         }
       } else {
-        DerivativeBuilder derivative(potential, name, remarks);
+        DerivativeBuilder derivative(potential, name, remarks,
+                                     separateStages);
         if (!derivative.build(evaluate.getRequestKinds(),
                               evaluate.getRequestArguments()))
           return signalPassFailure();

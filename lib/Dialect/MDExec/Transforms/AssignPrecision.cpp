@@ -66,8 +66,7 @@ static bool isRealField(Type type) {
 static Type withReal(Type type, Type real) {
   if (auto field = dyn_cast<FieldType>(type))
     return isReal(field.getElementType())
-               ? FieldType::get(type.getContext(), field.getParticleSet(),
-                                field.getNumComponents(), real)
+               ? field.withElementType(real)
                : type;
   if (auto vector = dyn_cast<VectorType>(type))
     return isReal(vector.getElementType())

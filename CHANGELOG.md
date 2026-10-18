@@ -12,6 +12,26 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **The IR of ML4: neural stages, fields of features, and their
+  derivative** (D[ml4-neural-op], D[ml4-feature-types], #377 step 3,
+  PR #441, [docs/ml4-ir.md](docs/ml4-ir.md)): `md.stage` declares a pure
+  function of one element and binds its forward body and its
+  vector-Jacobian product; `md.apply_stage` applies it in the kernels of
+  gathers over pairs, maps, and sums over particles. `md-differentiate`
+  carries the adjoints of the features back through the stages by their
+  products, with one gather of the field adjoints, the forces, and the
+  virial of each stage gather (two evaluations of the product per directed
+  pair; the separate form behind `md-differentiate{separate-stages=true}`).
+  `!md.field` takes any number of components and `irreps<...>` with its
+  layout; `md.gather_relation` may give several fields from one kernel.
+  The bodies of step 3 are functions in the module, which `md-inline`
+  inlines into the kernels; StableHLO and AOTInductor bodies are step 4.
+  No key of the control file changes.
+- **The milestones of learned potentials** (D[ml-milestones], amending D167
+  and D169): M3 is ML1 steps 1 to 3, the IR of ML4, and PaiNN and MACE in
+  stages on one GPU; M4 is ML2, ML3, both models on two GPUs, ML5, and
+  distributed particle mesh Ewald; StableHLO is a form of the bodies of
+  the stages beside AOTInductor.
 - **Baselines of ML4: a pretrained PaiNN and a pretrained MACE through the
   model term** (D286, #377, PR #436,
   [docs/ml4-baselines.md](docs/ml4-baselines.md)):

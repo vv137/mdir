@@ -186,22 +186,25 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
   auto relation = cast<md::RelationType>(op.getRelation().getType());
 
   builder.setInsertionPoint(op);
-  Type resultType = op.getResult().getType();
+  // A gather may give several fields from one kernel, a destination each.
+  SmallVector<Type> resultTypes(op->getResultTypes());
   SmallVector<Value, 1> outs, reduce;
   DenseF64ArrayAttr weights;
   if (isSum) {
-    reduce.push_back(createZero(loc, resultType));
+    reduce.push_back(createZero(loc, resultTypes.front()));
     // Each unordered pair is visited in both directions.
     if (relation.getOrientation() == md::Orientation::Unordered)
       weights = builder.getDenseF64ArrayAttr({0.5});
   } else {
-    outs.push_back(md_exec::ZerosOp::create(builder, loc, resultType));
+    for (Type type : resultTypes)
+      outs.push_back(md_exec::ZerosOp::create(builder, loc, type));
   }
 
-  // The exchange contract of the kernel goes with the value it gives.
-  ArrayAttr exchange = builder.getArrayAttr({op.getExchangeAttr()});
+  // The exchange contract of the kernel goes with each value it gives.
+  ArrayAttr exchange = builder.getArrayAttr(SmallVector<Attribute>(
+      resultTypes.size(), op.getExchangeAttr()));
   auto loop = md_exec::PairForOp::create(
-      builder, loc, TypeRange(resultType), structure, op.getPositions(),
+      builder, loc, resultTypes, structure, op.getPositions(),
       op.getCell(), op.getGathered(), outs, reduce, /*scratch=*/ValueRange(),
       builder.getF64FloatAttr(cutoff), weights,
       /*overwrite=*/DenseBoolArrayAttr(),
@@ -229,7 +232,7 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
     mapping.map(source.getArgument(i), target->getArgument(i));
   copyKernel(source, target, mapping);
 
-  op.getResult().replaceAllUsesWith(loop.getResult(0));
+  op->replaceAllUsesWith(loop->getResults());
   converted.push_back(op);
   return success();
 }

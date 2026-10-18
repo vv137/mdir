@@ -37,7 +37,11 @@ def Differentiate : Pass<"md-differentiate", "::mlir::ModuleOp"> {
   let options = [
     Option<"remarks", "remarks", "bool", /*default=*/"false",
            "Remark on every op that a derivative with respect to a "
-           "parameter takes as independent of it">
+           "parameter takes as independent of it">,
+    Option<"separateStages", "separate-stages", "bool", /*default=*/"false",
+           "Take the adjoints of the fields, the forces, and the virial of "
+           "a stage kernel over pairs as three ops, the reference form, "
+           "instead of one gather of all three (D[ml4-neural-op])">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::math::MathDialect",

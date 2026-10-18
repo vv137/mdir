@@ -319,6 +319,9 @@ LogicalResult Distributor::rewrite(SumRelationOp op) {
 }
 
 LogicalResult Distributor::rewrite(GatherRelationOp op) {
+  if (op->getNumResults() != 1)
+    return op.emitOpError() << "cannot be distributed: it gathers several "
+                               "fields (step 6 of #377)";
   Value relation = relations.lookup(op.getRelation());
   if (!relation)
     return op.emitOpError()

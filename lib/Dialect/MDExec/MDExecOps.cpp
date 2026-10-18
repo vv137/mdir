@@ -119,8 +119,11 @@ bool mdir::md_exec::isBufferType(Type type) {
       !buffer.isDynamicDim(0))
     return false;
   Type element = buffer.getElementType();
+  // A field of several components (three for a vector, any number for
+  // features, D[ml4-feature-types]) has them along the second dimension.
   if (buffer.getRank() == 2)
-    return buffer.getDimSize(1) == 3 && isReal(element);
+    return !buffer.isDynamicDim(1) && buffer.getDimSize(1) >= 1 &&
+           isReal(element);
   return isReal(element) || element.isSignlessInteger(32) ||
          element.isSignlessInteger(64);
 }
@@ -182,7 +185,8 @@ Type mdir::md_exec::getKernelValueType(Type fieldOrBuffer) {
 /// components of f32 or f64, or a buffer that holds one.
 static bool isPositionType(Type type) {
   if (auto buffer = dyn_cast<MemRefType>(type))
-    return mdir::md_exec::isBufferType(type) && buffer.getRank() == 2;
+    return mdir::md_exec::isBufferType(type) && buffer.getRank() == 2 &&
+           buffer.getDimSize(1) == 3;
   auto field = dyn_cast<FieldType>(type);
   return field && field.getNumComponents() == 3 &&
          isReal(field.getElementType());

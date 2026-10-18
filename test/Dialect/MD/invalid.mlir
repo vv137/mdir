@@ -1,7 +1,9 @@
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
 
-// expected-error@+1 {{expected 1 or 3 components, got 2}}
-md.function @f(%a: !md.field<@atoms, 2 x f64>) {
+// A field has components; features have any number of them
+// (D[ml4-feature-types]).
+// expected-error@+1 {{expected at least 1 component}}
+md.function @f(%a: !md.field<@atoms, 0 x f64>) {
   md.return
 }
 
@@ -21,7 +23,7 @@ md.function @f(%a: !md.field<@atoms, f32>) {
 
 // -----
 
-// expected-error@+1 {{a field with 3 components must have element type f64 or f32, got 'i32'}}
+// expected-error@+1 {{a field with several components must have element type f64 or f32, got 'i32'}}
 md.function @f(%a: !md.field<@atoms, 3 x i32>) {
   md.return
 }

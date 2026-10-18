@@ -590,6 +590,54 @@ struct ScalarRule : DerivativeOpInterface::ExternalModel<ScalarRule<Op>, Op> {
 template <typename... Ops> void attachRules(MLIRContext *context) {
   (Ops::template attachInterface<ScalarRule<Ops>>(*context), ...);
 }
+
+/// The rule of a neural stage (D[ml4-neural-op]): its vector-Jacobian
+/// product, which the stage binds; no tangent, since no Jacobian-vector
+/// product is bound and MDIR writes no derivative of a body (D167).
+struct StageRule
+    : DerivativeOpInterface::ExternalModel<StageRule, ApplyStageOp> {
+  DerivativeOperand getDerivativeOperand(Operation *op,
+                                         unsigned index) const {
+    Type type = op->getOperand(index).getType();
+    return isa<IntegerType>(type) ? DerivativeOperand::Structural
+                                  : DerivativeOperand::Differentiable;
+  }
+  LogicalResult emitDerivative(Operation *op, Value, ScalarDerivative &,
+                               Value &) const {
+    return op->emitOpError()
+           << "has no forward derivative: a stage binds its vector-Jacobian "
+              "product only, which md-differentiate applies to a kernel that "
+              "yields the stage's value";
+  }
+  LogicalResult emitAdjoint(Operation *op, OpBuilder &builder,
+                            ValueRange cotangents,
+                            SmallVectorImpl<Value> &operandCotangents) const {
+    auto apply = cast<ApplyStageOp>(op);
+    if (apply.getVjp())
+      return op->emitOpError()
+             << "cannot be differentiated: the vector-Jacobian product of a "
+                "stage has no derivative of its own";
+    auto stage = SymbolTable::lookupNearestSymbolFrom<StageOp>(
+        op, apply.getStageAttr());
+    if (!stage || !stage.getVjpAttr())
+      return op->emitOpError()
+             << "cannot be differentiated: the stage '" << apply.getStage()
+             << "' binds no vector-Jacobian product";
+    SmallVector<Value> operands(apply.getOperands());
+    llvm::append_range(operands, cotangents);
+    FunctionType type = stage.getVjpType();
+    auto vjp = ApplyStageOp::create(builder, op->getLoc(), type.getResults(),
+                                    apply.getStageAttr(),
+                                    builder.getUnitAttr(), operands);
+    operandCotangents.clear();
+    unsigned next = 0;
+    for (unsigned i = 0, e = op->getNumOperands(); i != e; ++i)
+      operandCotangents.push_back(stage.isDifferentiable(i)
+                                      ? vjp.getResult(next++)
+                                      : Value());
+    return success();
+  }
+};
 } // namespace
 
 void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
@@ -614,6 +662,7 @@ void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
   });
   registry.addExtension(+[](MLIRContext *context, MDDialect *) {
     attachRules<LookupOp, ChebyshevOp>(context);
+    ApplyStageOp::attachInterface<StageRule>(*context);
   });
   // The transposes of the transfers of md_dist (D276).
   registerAdjointInterfaces(registry);

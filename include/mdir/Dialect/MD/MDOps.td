@@ -612,6 +612,13 @@ def MD_GatherRelationOp : MD_Op<"gather_relation", [
     The definition is a gather and has no write conflicts. `exchange` records
     a fact that an execution policy may exploit.
 
+    With several results, the kernel yields one value for each, and each
+    result is the sum of its values: several fields gathered over the
+    same pairs in one evaluation of the kernel. The derivative of a stage
+    kernel takes the adjoints of the fields, the forces, and the virial
+    together this way (D[ml4-neural-op]). A gather of several fields has
+    no exchange contract, `exchange(none)`.
+
     ```mlir
     %f = md.gather_relation %n, %x, %cell exchange(antisymmetric, derived) {
     ^bb0(%r: f64, %d: vector<3xf64>):
@@ -631,13 +638,17 @@ def MD_GatherRelationOp : MD_Op<"gather_relation", [
                       "::mdir::md::ExchangeBasis::Proof">:$exchange_basis
   );
   let regions = (region SizedRegion<1>:$kernel);
-  let results = (outs MD_ReferenceFieldType:$result);
+  let results = (outs Variadic<MD_ReferenceFieldType>:$results);
   let assemblyFormat = [{
     $relation `,` $positions `,` $cell
     (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
     custom<Exchange>($exchange, $exchange_basis)
     $kernel attr-dict
-    `:` qualified(type($relation)) `,` qualified(type($positions)) `->` qualified(type($result))
+    `:` qualified(type($relation)) `,` qualified(type($positions)) `->` qualified(type($results))
+  }];
+  let extraClassDeclaration = [{
+    /// The first result, the only one of a gather of one field.
+    ::mlir::Value getResult() { return getResults().front(); }
   }];
   let hasVerifier = 1;
   let hasRegionVerifier = 1;
@@ -828,6 +839,111 @@ def MD_MapParticlesOp : MD_Op<"map_particles", [
   }];
   let hasVerifier = 1;
   let hasRegionVerifier = 1;
+}
+
+//===----------------------------------------------------------------------===//
+// Neural stages (D[ml4-neural-op], docs/ml4-ir.md)
+//===----------------------------------------------------------------------===//
+
+def MD_StageOp : MD_Op<"stage", [
+    Symbol, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "Declares a neural stage and binds its bodies";
+  let description = [{
+    Declares a pure function of one element, one directed pair or one
+    particle, that a kernel applies with `md.apply_stage`: a stage of a
+    learned potential whose body is external to MDIR's semantics (D167).
+
+    ```mlir
+    md.stage @edge1 forward(@edge1.f) vjp(@edge1.b)
+        : (f64, vector<3xf64>, vector<16xf64>, vector<16xf64>, i32, i32)
+          -> vector<16xf64>
+    ```
+
+    Each operand and result is the value of one element: `f64`, a vector
+    of `f64`, or for an operand an integer (`i32`, `i64`). Operands of
+    floating type are differentiable; integer operands, such as species,
+    are structural and take no cotangent.
+
+    `forward` names the body, a function of the type of the declaration.
+    `vjp` names its vector-Jacobian product: a function of the operands,
+    then one cotangent for each result, that returns one cotangent for
+    each differentiable operand, in order. The declaration states that the
+    bodies are pure and that the VJP is the transpose of the derivative of
+    the forward body at the same operands. A stage without `vjp` cannot be
+    differentiated in an operand that is active.
+
+    The form of a body is the form of the function that the symbol names.
+    The form that is lowered is a body in the module, a `func.func` of
+    `arith`, `math`, and `vector` ops, which `md-inline` inlines into the
+    kernels. An external declaration (an AOTInductor export) and a body of
+    tensors with a batch dimension (StableHLO) are the forms of step 4 of
+    issue #377 and are refused here.
+  }];
+  let arguments = (ins
+    SymbolNameAttr:$sym_name,
+    TypeAttrOf<FunctionType>:$function_type,
+    FlatSymbolRefAttr:$forward,
+    OptionalAttr<FlatSymbolRefAttr>:$vjp
+  );
+  let assemblyFormat = [{
+    $sym_name `forward` `(` $forward `)` (`vjp` `(` $vjp^ `)`)? attr-dict
+    `:` $function_type
+  }];
+  let hasVerifier = 1;
+  let extraClassDeclaration = [{
+    /// Whether operand `index` of the stage takes a cotangent.
+    bool isDifferentiable(unsigned index);
+    /// The type of the vector-Jacobian product: the operands and a
+    /// cotangent for each result, to a cotangent for each differentiable
+    /// operand.
+    ::mlir::FunctionType getVjpType();
+  }];
+}
+
+def MD_ApplyStageOp : MD_Op<"apply_stage", [
+    Pure, DeclareOpInterfaceMethods<SymbolUserOpInterface>
+  ]> {
+  let summary = "Applies a neural stage to one element in a kernel";
+  let description = [{
+    Applies the stage `stage` to the values of one element inside a kernel:
+    one directed pair of `md.gather_relation`, one particle of
+    `md.map_particles` or `md.sum_particles`.
+
+    ```mlir
+    %m = md.apply_stage @edge1(%r, %d, %hi, %hj, %zi, %zj)
+        : (f64, vector<3xf64>, vector<16xf64>, vector<16xf64>, i32, i32)
+          -> vector<16xf64>
+    ```
+
+    With `vjp`, it applies the vector-Jacobian product of the stage
+    instead: its operands are those of the stage followed by a cotangent
+    of each result, and its results the cotangents of the differentiable
+    operands. `md-differentiate` emits this form; it has no derivative of
+    its own.
+
+    ```mlir
+    %rb, %db, %hib, %hjb = md.apply_stage @edge1 vjp(%r, %d, %hi, %hj, %zi,
+                                                     %zj, %mb)
+        : (f64, vector<3xf64>, vector<16xf64>, vector<16xf64>, i32, i32,
+           vector<16xf64>)
+          -> (f64, vector<3xf64>, vector<16xf64>, vector<16xf64>)
+    ```
+
+    The semantics are those of one element; how many elements a body takes
+    at once is an execution choice.
+  }];
+  let arguments = (ins
+    FlatSymbolRefAttr:$stage,
+    UnitAttr:$vjp,
+    Variadic<AnyType>:$operands
+  );
+  let results = (outs Variadic<AnyType>:$results);
+  let assemblyFormat = [{
+    $stage (`vjp` $vjp^)? `(` $operands `)` attr-dict
+    `:` functional-type($operands, results)
+  }];
+  let hasVerifier = 1;
 }
 
 //===----------------------------------------------------------------------===//
