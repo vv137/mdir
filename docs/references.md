@@ -240,6 +240,21 @@ C. W. Clenshaw, "A note on the summation of Chebyshev series,"
 
 Used for: the recurrence by which `md.chebyshev` is evaluated (D280).
 
+### CUB
+
+NVIDIA, "CUB," the block, warp, and device primitives of the CUDA C++ Core
+Libraries (CCCL), version 3.2.0 as shipped with CUDA 13.2 (`CUB_VERSION`
+300200), under the 3-clause BSD license: `cub::BlockHistogram` with the
+algorithm `BLOCK_HISTO_ATOMIC`, `cub/block/block_histogram.cuh` and
+`cub/block/specializations/block_histogram_atomic.cuh`. No paper;
+[github.com/NVIDIA/cccl](https://github.com/NVIDIA/cccl) (read 2026-10-18,
+against the headers of CUDA 13.2).
+
+Used for: the privatized scatter-accumulate of a device, a sum of a block
+in block memory and one atomic for each index (D[privatize-scatter],
+[device-primitives.md](device-primitives.md)); the plan of lowering
+strategies after CUB's primitives (#415).
+
 ### CurtisPowellReid1974
 
 A. R. Curtis, M. J. D. Powell, J. K. Reid, "On the estimation of sparse
@@ -403,6 +418,17 @@ energy, which jumps where a pair crosses a truncated cutoff, and the
 pressure of the virial does not see the jump; the volumes of the two
 differ unless the correction for the dispersion accounts for it.
 
+### GomezLuna2013
+
+J. Gómez-Luna, J. M. González-Linares, J. I. Benavides Benítez, N. Guil
+Mata, "Performance modeling of atomic additions on GPU scratchpad memory,"
+*IEEE Trans. Parallel Distrib. Syst.* **24**(11), 2273–2282 (2013).
+[doi:10.1109/TPDS.2012.319](https://doi.org/10.1109/TPDS.2012.319)
+
+Used for: the cost of privatized sums in block memory, the model behind
+the privatized scatter-accumulate (D[privatize-scatter],
+[device-primitives.md](device-primitives.md)).
+
 ### Gratl2022
 
 F. A. Gratl, S. Seckler, H.-J. Bungartz, P. Neumann, "N ways to simulate
@@ -481,6 +507,16 @@ simulation," *J. Chem. Theory Comput.* **4**, 435–447 (2008).
 
 Used for: eighth-shell domain decomposition with dynamic load balancing
 and separate PME ranks, discussed in [prior-art.md](prior-art.md).
+
+### Higham2002
+
+N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed.
+(SIAM, Philadelphia, 2002).
+[doi:10.1137/1.9780898718027](https://doi.org/10.1137/1.9780898718027)
+
+Used for: the bound of the rounding of a floating-point sum in any order
+(Section 4.2), by which a privatized sum agrees with atomics
+(D[privatize-scatter], white paper Section 8.5).
 
 ### HockneyEastwood1988
 
