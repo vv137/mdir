@@ -424,4 +424,54 @@ def ConvertMDDistToLoops
                            "::mlir::vector::VectorDialect"];
 }
 
+def ConvertMDDistToMDExec
+    : Pass<"convert-md-dist-to-md-exec", "::mlir::ModuleOp"> {
+  let summary = "Runs every domain of md_dist through md_exec";
+  let description = [{
+    The second executor of `md_dist` (D[ml2-exec],
+    docs/distributed-ml2.md, Section 7.2): a domain's work is ordinary
+    `md_exec` over its local rows, and the passes of `md_exec` that follow
+    are the existing ones, on the CPU and on a device. The transfers are
+    those of the reference executor (`--convert-md-dist-to-loops`), which
+    is the oracle of this one.
+
+    | Op | Becomes, for each domain in turn |
+    |---|---|
+    | `md_dist.partition`, `distribute`, `collect`, `halo`, `halo_copy`, `halo_sum`, `all_reduce` | As in the reference executor |
+    | `md_dist.neighborhood` | `md_exec.build_cells` and `md_exec.build_neighbors ... centers(n) images(explicit)` over the local rows of the domain, owned then ghost |
+    | `md_dist.sum_pairs` | `md_exec.pair_for` with a sum, of weight 1/2 on a directed relation |
+    | `md_dist.gather_pairs`, one result | `md_exec.pair_for` with the policy `(directed, owner_only)`: its owned rows |
+    | `md_dist.gather_pairs`, two results | `md_exec.pair_for` with the policy `(directed, atomic)`: its owned rows and its ghost rows; the kernel halved on a directed relation |
+    | `md_dist.sum_particles`, `map_particles` | `md_exec.particle_for` over the owned rows |
+
+    Each domain has two particle sets, declared by the pass,
+    `@<decomposition>.d<d>.owned` and `@<decomposition>.d<d>.local`. Its
+    rows are copied from the buffers of all domains into buffers of the
+    domain, handed to `md_exec` by `mdrt.from_buffer`, and back by
+    `mdrt.to_buffer`. The unique traversal takes a pair where the identity
+    of its center is the lesser, from a field of the identities of the
+    local rows. Besides what the reference executor refuses, the pass
+    refuses loops over ghost rows. It runs before
+    `--convert-md-to-md-exec`.
+  }];
+  let options = [
+    Option<"width", "width", "int64_t", /*default=*/"64",
+           "the number of neighbors that a row of a structure holds at first">,
+    Option<"cells", "cells", "int64_t", /*default=*/"3",
+           "the number of cells that the reach of a structure spans">,
+    ListOption<"functions", "functions", "std::string",
+               "the functions to run; all if empty. The others are left to "
+               "the reference executor, so that a test compares the two">
+  ];
+  let dependentDialects = ["::mdir::md::MDDialect",
+                           "::mdir::md_exec::MDExecDialect",
+                           "::mdir::mdrt::MDRTDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::func::FuncDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 #endif // MDIR_CONVERSION_PASSES_TD

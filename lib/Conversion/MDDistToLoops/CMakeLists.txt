@@ -10,6 +10,7 @@ add_mlir_conversion_library(MDIRMDDistToLoops
   LINK_LIBS PUBLIC
   MDIRMD
   MDIRMDDist
+  MDIRMDExec
   MDIRMDRT
   MLIRArithDialect
   MLIRFuncDialect
