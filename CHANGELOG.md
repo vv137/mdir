@@ -1803,6 +1803,15 @@ format, or the outputs; every such change is listed under **Changed** or
   with the line. No program of today is refused, and no number, key, or
   call changes. `python-frames-loop*.test` measure the stack of the entry
   per frame to the byte.
+- The build of groups on a device read memory that nothing had written
+  when a chunk of fewer than four particles left a group empty (#413): the
+  lists read the cells between the frame and the wrapped position at the
+  first place of every group, which the boxes wrote only for a place with a
+  particle. compute-sanitizer's initcheck reported it on JAC of the Amber
+  suite. The boxes now write zero cells there for an empty place, as they
+  write its shift; no entry of an empty group used the value, so no result
+  changes. `test/Sanitizer/groups-empty-gpu.test` builds three empty
+  groups.
 
 ## [0.1.0] - 2026-10-04
 

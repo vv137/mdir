@@ -1,0 +1,23 @@
+# The build of groups on a device with groups that hold no particle, under
+# compute-sanitizer (#413). A chunk of fewer than four particles makes
+# four groups, some of them empty; the lists read the fourth lane of the
+# wrapped position at the first place of every group, which the boxes wrote
+# only for a place with a particle. initcheck found the read on JAC of the
+# Amber suite; here a fluid of 129 atoms in one column, cut into chunks of
+# 64, 64, and 1, has three empty groups at its first build
+# (Inputs/short_chunk.py). No access beyond a buffer, no read of memory
+# that nothing has written, and no race in shared memory.
+#
+# REQUIRES: cuda, compute-sanitizer
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/short_chunk.py %t
+# RUN: cd %t && %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: cd %t && %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run run.toml 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
