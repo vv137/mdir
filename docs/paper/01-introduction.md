@@ -61,7 +61,7 @@ paper describes the system that reaches it.
 5. **Results** (Sections 9 and 10): agreement of the energy terms and of
    the force on every particle with sander and GROMACS, and of the terms
    with CHARMM and, in triclinic cells, with all three; conservation of energy over 2 ns of JAC better than
-   that of pmemd.cuda on the same input; on an RTX 4090, a rate between 122%
+   that of pmemd.cuda on the same input; on an RTX 4090, a rate between 124%
    and 151% of pmemd.cuda's over the Amber suite, with the skins that
    MDIR chooses, and between 104% and
    132% on every system on an RTX 3090 when the first milestone was

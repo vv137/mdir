@@ -545,9 +545,9 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **The white paper's comparison with pmemd.cuda is measured again on
-  `main` (D284) with the skins that MDIR chooses (D281)** (#437; Section
+  `main` (D285) with the skins that MDIR chooses (D281)** (#437; Section
   10, Tables 10.2 and 10.3, Figure 10.1, and the range quoted in the
-  README, the paper's README, and Section 1): 122% to 151% of pmemd.cuda
+  README, the paper's README, and Section 1): 124% to 151% of pmemd.cuda
   26's rate on one RTX 4090, from 98% to 143% at D280 with fixed skins.
   `scripts/benchmarks/amber/bench.py run mdir --skin AUTO` writes the
   reaches as `"AUTO"` (`--prune-skin AUTO` the inner one alone), and

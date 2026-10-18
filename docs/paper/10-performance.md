@@ -6,7 +6,7 @@
 
 | Item | MDIR | pmemd.cuda |
 |---|---|---|
-| Program | `mdir` at D284 (commit bfb73f96), built with LLVM and MLIR 23.1.2, kernels loaded as cubins (D214) | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 for the RTX 4090 |
+| Program | `mdir` at D285 (`main` e9c06572), built with LLVM and MLIR 23.1.2, kernels loaded as cubins (D214) | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 for the RTX 4090 |
 | Device | One NVIDIA RTX 4090 (450 W, driver 595.45.04) of one compute node (ada-003), on 2026-10-18, in one job of the cluster's scheduler that held the device alone (`gpu-run --idle`); other jobs ran on the node's other GPUs | The same |
 | Inputs | The systems of the Amber 24 GPU benchmark suite (PME), the topologies and restart files of the suite as they are (`prmtop`, `inpcrd`; two topologies are in the format before Amber 7, D133), with the settings of `scripts/benchmarks/amber/bench.py` | The inputs of the suite as they are (`mdin.GPU`, `prmtop`, `inpcrd`) |
 | Model | Cutoff 8 Å; PME with the $\beta$ of pmemd, $\mathrm{erfc}(\beta r_c)/r_c = 10^{-6}$ at constant energy and $10^{-5}$ at constant pressure (0.39467 and 0.34864 Å⁻¹), the grids of pmemd.cuda (64³; 144 × 84 × 80; 256 × 128 × 128; 224 × 224 × 240), order 4, and Amber's influence function (D134); SHAKE on the bonds of hydrogen and rigid water; the correction for the dispersion | The same, by the inputs |
@@ -42,7 +42,7 @@ the choice; every timed run took its reaches from that cache, and its log
 says so. A run at the threshold affords fewer candidates, those whose
 compilation and steps fit within 2% of its time (three or more, else it
 keeps the defaults and caches nothing), so the cached choice is that of a
-run several times longer. The search took 94 to 274 s a system, and 877 s
+run several times longer. The search took 93 to 272 s a system, and 861 s
 on STMV.
 
 ## 10.2 Rates
@@ -55,88 +55,92 @@ number of steps between builds of the outer list and between prunings of
 the inner list. "Reaches" are the outer and inner reaches that the search
 chose and every timed run took from the cache. The rates, the changes of
 the energy, the counts, and the times of compilation are from the same
-three repeats, at D284 on one RTX 4090, with the $\beta$, the grid, and
+three repeats, at D285 on one RTX 4090, with the $\beta$, the grid, and
 the influence function of pmemd.cuda (Table 10.1).*
 
 | System | Atoms | MDIR, ns/day | pmemd.cuda, ns/day | MDIR / pmemd.cuda | Energy changed by (MDIR) | Builds, prunings: every | Compiled in | Reaches, Å |
 |---|---|---|---|---|---|---|---|---|
-| `jac_nve` | 23,558 | 1336.7 ± 5.7 | 900.5 ± 1.6 | 148.4 ± 0.6% | 7.7e-05 to 1.1e-04 | 69.0, 3.9 | 6–7 s | 14 / 8.9 |
-| `jac_nve_4fs` | 23,558 | 2514.1 ± 4.7 | 1663.4 ± 1.2 | 151.1 ± 0.4% | 3.3e-03 to 3.4e-03 | 31.0, 2.8 | 6–7 s | 14 / 8.8 |
-| `jac_npt` | 23,558 | 1196.1 ± 3.5 | 850.4 ± 4.1 | 140.6 ± 0.5% | 3.6e-04 to 5.1e-04 | 57.0, 4.2 | 12–13 s | 13.5 / 9 |
-| `jac_npt_4fs` | 23,558 | 2297.2 ± 11.7 | 1632.0 ± 2.7 | 140.8 ± 0.9% | 8.1e-04 to 1.1e-03 | 28.4, 2.8 | 12–13 s | 13 / 8.7 |
-| `factorix_nve` | 90,906 | 581.1 ± 1.3 | 446.4 ± 0.4 | 130.2 ± 0.3% | 5.1e-06 to 1.4e-05 | 14.8, 2.7 | 6 s | 11 / 8.6 |
-| `factorix_npt` | 90,906 | 541.7 ± 1.5 | 422.2 ± 1.2 | 128.3 ± 0.2% | 2.9e-04 to 3.0e-04 | 14.8, 2.7 | 12 s | 11 / 8.6 |
-| `cellulose_nve` | 408,609 | 153.4 ± 0.2 | 121.6 ± 0.2 | 126.2 ± 0.3% | 5.1e-05 to 5.2e-05 | 17.3, 1.9 | 6 s | 11.5 / 8.45 |
-| `cellulose_npt` | 408,609 | 139.2 ± 5.9 | 113.9 ± 0.1 | 122.2 ± 5.2% | 1.6e-04 to 1.8e-04 | 13.5, 2.2 | 11 s | 11 / 8.6 |
-| `stmv_npt_4fs` | 1,067,095 | 93.7 ± 0.1 | 74.3 ± 0.2 | 126.0 ± 0.4% | 2.2e-05 to 9.2e-05 | 13.5, 1.9 | 12–13 s | 12.5 / 8.8 |
+| `jac_nve` | 23,558 | 1337.6 ± 5.7 | 902.0 ± 1.2 | 148.3 ± 0.8% | 1.0e-04 to 1.1e-04 | 69.1, 4.3 | 6 s | 14 / 9 |
+| `jac_nve_4fs` | 23,558 | 2511.2 ± 5.1 | 1663.3 ± 2.7 | 151.0 ± 0.2% | 3.4e-03 to 3.5e-03 | 31.0, 2.8 | 6 s | 14 / 8.8 |
+| `jac_npt` | 23,558 | 1182.3 ± 3.0 | 850.0 ± 2.6 | 139.1 ± 0.3% | 4.0e-04 to 4.5e-04 | 36.7, 2.9 | 12 s | 12.5 / 8.65 |
+| `jac_npt_4fs` | 23,558 | 2304.4 ± 4.7 | 1628.4 ± 3.4 | 141.5 ± 0.5% | 9.0e-04 to 9.5e-04 | 28.5, 2.8 | 12 s | 13 / 8.7 |
+| `factorix_nve` | 90,906 | 580.5 ± 2.3 | 447.6 ± 0.8 | 129.7 ± 0.5% | 5.2e-06 to 1.8e-05 | 14.7, 2.7 | 6 s | 11 / 8.6 |
+| `factorix_npt` | 90,906 | 540.4 ± 0.9 | 423.9 ± 1.8 | 127.5 ± 0.5% | 2.6e-04 to 2.9e-04 | 14.8, 2.7 | 12 s | 11 / 8.6 |
+| `cellulose_nve` | 408,609 | 150.8 ± 0.3 | 121.1 ± 0.1 | 124.5 ± 0.3% | 3.9e-05 to 5.1e-05 | 13.4, 2.2 | 5–6 s | 11 / 8.6 |
+| `cellulose_npt` | 408,609 | 142.5 ± 0.1 | 113.4 ± 0.1 | 125.6 ± 0.2% | 1.7e-04 to 1.9e-04 | 13.4, 2.2 | 11 s | 11 / 8.6 |
+| `stmv_npt_4fs` | 1,067,095 | 93.7 ± 0.0 | 74.6 ± 0.5 | 125.5 ± 0.8% | 5.3e-05 to 8.1e-05 | 13.5, 1.9 | 12 s | 12.5 / 8.8 |
 
 ![Rates of MDIR and pmemd.cuda over the Amber suite](figures/suite.png)
 
 *Figure 10.1. The rates of Table 10.2 on a logarithmic scale, with the
 ratio of the means above each pair.*
 
-On this device MDIR's rate is 141% to 151% of pmemd.cuda's on JAC, 128%
-and 130% on Factor IX, 126% and 122% on Cellulose at constant energy and
-pressure, and 126% on STMV. The 122% of Cellulose at constant pressure
-holds one slow repeat: its second run took 1.305 ms a step over the
-second half against 1.212 ms in the first and the third, with the same
-reaches and the same counts of builds and prunings (76 and 454 against 74
-to 75 and 451 to 456), and no other process on the device; the other two
-repeats give 125.3%. The ratio falls with the size of the system:
+On this device MDIR's rate is 139% to 151% of pmemd.cuda's on JAC, 130%
+and 127% on Factor IX at constant energy and pressure, 124% and 126% on
+Cellulose, and 126% on STMV. The three repeats of each system agree
+within 1%: over the second half of the runs, the time of a step of a
+system differs between repeats by at most 2 µs (Cellulose NVE 1.144 to
+1.148 ms). The ratio falls with the size of the system:
 
 - **JAC** (23,558 atoms; a step of about 129 µs at 2 fs). A step of this
   size has few warps of work per kernel and many kernels, so what the
   host and the launches cost matters as much as the arithmetic. The
   integration kernel (Section 8.2) does in one launch what took three,
   the flags of the tests reach the host without waiting for the stream
-  (Section 8.3), and the dual list keeps an inner list of reach 8.9 Å,
-  pruned every 3.9 steps, under an outer list of 14 Å built every 69, so
-  the loop over pairs reads the pairs within 8.9 Å and the builds, which
+  (Section 8.3), and the dual list keeps an inner list of reach 9 Å,
+  pruned every 4.3 steps, under an outer list of 14 Å built every 69, so
+  the loop over pairs reads the pairs within 9 Å and the builds, which
   cost a fixed time of launches each, are rare (Section 4.5). The search
-  chose a long outer skin on all four JAC inputs, 2.3% to 3.8% faster
+  chose a long outer skin on all four JAC inputs, 1.9% to 4.0% faster
   than the defaults in its own measurement.
 - **Factor IX** (90,906 atoms). No candidate gained beyond the noise of
-  the search (0.5% and 0.6%, within 1.7% and 2.3%), and both runs kept
-  the defaults, 11 / 8.6 Å.
+  the search, and both runs kept the defaults, 11 / 8.6 Å.
 - **Cellulose** (408,609 atoms) and **STMV** at 4 fs (1,067,095 atoms).
   The device is busy nearly the whole step (Table 8.2, measured on an
   RTX 3090), and the loop over pairs and PME take most of it. The rate
   rests on the arithmetic and the memory traffic of those kernels: each
   pair once, tables of the radial functions (Section 7.2), the tiles of
   the spreading (Section 5.3), and, from 4096 groups, the pruning inside
-  the loop over pairs (D284, Section 4.5). The search chose 11.5 / 8.45 Å
-  for Cellulose at constant energy (1.7% faster than the defaults) and
-  12.5 / 8.8 Å for STMV (5.7%); at constant pressure on Cellulose the
-  fastest candidate, 11.5 / 8.65 Å, gained 1.0%, within the noise of
-  1.6%, and the run kept the defaults.
+  the loop over pairs (D284, Section 4.5). The search chose 12.5 / 8.8 Å
+  for STMV, 5.6% faster than the defaults. On Cellulose it kept the
+  defaults: the fastest candidate, 11.5 / 8.45 Å at constant energy and
+  11.5 / 8.65 Å at constant pressure, gained 2.0% and 0.9%, within the
+  noise of 2.3% and 0.9%.
 
-**With the skins of a grid.** On the same commit, on another RTX 4090
-node, the skins of each system taken from the grid of #406 gave the rates
-of Table 10.3 (#405). With the automatic skins MDIR's rate is 0.5% to 2.4%
-higher on eight systems and 1.5% lower on Cellulose at constant pressure
-(142.6 ns/day in its two regular repeats; 3.8% with the slow one), where
-the search kept the defaults; MDIR's own rate differs between RTX 4090
-nodes by about 1% (#405), so these differences are of the order of the
-node. The ratios differ by up to 4 points, and by 9 on Cellulose at
-constant pressure, mostly because pmemd.cuda's rate differs between the
-two nodes (Cellulose NVE 117.3 there against 121.6 ns/day here), which is
-why the ratios of Table 10.2 come from one job on one node.
+**The choice near the noise.** Where a candidate's gain is close to the
+noise of the search, the choice can differ from one search to the next.
+An earlier job of the same protocol, on the same node at D284, chose
+11.5 / 8.45 Å for Cellulose at constant energy (1.7% faster than the
+defaults, beyond a noise of 0.8%) and 13.5 / 9 Å for JAC at constant
+pressure, and MDIR ran Cellulose NVE at 153.4 ns/day against 150.8 here.
+
+**With the skins of a grid.** On D284, on another RTX 4090 node, the skins
+of each system taken from the grid of #406 gave the rates of Table 10.3
+(#405). With the automatic skins MDIR's rate is 0.7% to 2.3% higher on
+the seven systems of JAC, Factor IX, and STMV, and 1.2% and 1.5% lower on
+Cellulose at constant energy and pressure, where the search kept the
+defaults; MDIR's own rate differs between RTX 4090 nodes by about 1%
+(#405), so these differences are of the order of the node. The ratios
+differ by up to 3 points on the seven, and by 6 on Cellulose: pmemd.cuda's
+rate differs between the two nodes (Cellulose NVE 117.3 there against
+121.1 ns/day here), which is why the ratios of Table 10.2 come from one
+job on one node.
 
 *Table 10.3. MDIR with the skins of the grid of #406 (another RTX 4090
-node, ada-002, same commit, three repeats, #405) against the automatic skins of
-Table 10.2; ns/day, and the ratio to pmemd.cuda in the same job.*
+node, ada-002, at D284, three repeats, #405) against the automatic skins
+of Table 10.2; ns/day, and the ratio to pmemd.cuda in the same job.*
 
 | System | Grid's skins, Å | MDIR, grid | MDIR, automatic | / pmemd.cuda, grid | / pmemd.cuda, automatic |
 |---|---|---|---|---|---|
-| `jac_nve` | 14 / 8.8 | 1312.8 | 1336.7 | 147.5% | 148.4% |
-| `jac_nve_4fs` | 14 / 9.2 | 2455.1 | 2514.1 | 149.4% | 151.1% |
-| `jac_npt` | 14 / 8.8 | 1173.7 | 1196.1 | 139.5% | 140.6% |
-| `jac_npt_4fs` | 14 / 9.2 | 2277.7 | 2297.2 | 140.7% | 140.8% |
-| `factorix_nve` | 12.5 / 8.6 | 574.5 | 581.1 | 126.8% | 130.2% |
-| `factorix_npt` | 12.5 / 8.6 | 535.4 | 541.7 | 126.0% | 128.3% |
-| `cellulose_nve` | 11.5 / 8.45 | 152.6 | 153.4 | 130.1% | 126.2% |
-| `cellulose_npt` | 11.5 / 8.45 | 144.7 | 139.2 | 131.4% | 122.2% |
-| `stmv_npt_4fs` | 12.5 / 8.9 | 92.4 | 93.7 | 124.2% | 126.0% |
+| `jac_nve` | 14 / 8.8 | 1312.8 | 1337.6 | 147.5% | 148.3% |
+| `jac_nve_4fs` | 14 / 9.2 | 2455.1 | 2511.2 | 149.4% | 151.0% |
+| `jac_npt` | 14 / 8.8 | 1173.7 | 1182.3 | 139.5% | 139.1% |
+| `jac_npt_4fs` | 14 / 9.2 | 2277.7 | 2304.4 | 140.7% | 141.5% |
+| `factorix_nve` | 12.5 / 8.6 | 574.5 | 580.5 | 126.8% | 129.7% |
+| `factorix_npt` | 12.5 / 8.6 | 535.4 | 540.4 | 126.0% | 127.5% |
+| `cellulose_nve` | 11.5 / 8.45 | 152.6 | 150.8 | 130.1% | 124.5% |
+| `cellulose_npt` | 11.5 / 8.45 | 144.7 | 142.5 | 131.4% | 125.6% |
+| `stmv_npt_4fs` | 12.5 / 8.9 | 92.4 | 93.7 | 124.2% | 125.5% |
 
 **Earlier measurements.** At D280, on an RTX 4090 with the skins fixed at
 3 Å and 0.6 Å at 2 fs for every system, the ratios were 136% to 143% on

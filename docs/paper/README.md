@@ -17,7 +17,7 @@ role; and lower the result to OpenMP or to NVIDIA GPUs, specialized to
 the topology and the parameters at hand. On one RTX 4090 in mixed
 precision, MDIR runs the systems of the Amber GPU benchmark suite, from
 23,558 to 1,067,095 atoms, at constant energy and at constant pressure,
-at 122% to 151% of the rate of pmemd.cuda 26 on the same device, with
+at 124% to 151% of the rate of pmemd.cuda 26 on the same device, with
 the skins of the neighbor lists that MDIR chooses itself (104% to
 132% on an RTX 3090 when the first milestone was completed); on
 ubiquitin in OPC with a cutoff of 9 Å it reaches 66% to 72% of the rate
