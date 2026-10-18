@@ -521,7 +521,7 @@ Within each system $n_\text{build} \propto s^{1.57}$ and $n_\text{prune}
 device the constants are used as they are: the model only narrows the
 candidates, and the measurement decides.
 
-The grid was measured before the loop over pairs pruned (D[fused-prune],
+The grid was measured before the loop over pairs pruned (D284,
 [groups-m1.md](groups-m1.md), Section 6.2). Where it does, from 4096
 groups on an RTX 4090, a pruning costs only a few percent of the loop
 rather than $c_2\rho' R^3$, so the model overstates the cost of a short
@@ -594,7 +594,7 @@ what the choice depends on: the version of MDIR, the particle count, a
 hash of the composition (the types, masses, and charges), the cutoff, the
 structure, each reach given as a number or `AUTO`, the name of the device,
 the precision, the time step, the ensemble, its temperature, and whether
-the loop over pairs prunes (`MDIR_FUSED_PRUNE`, D[fused-prune]; a key
+the loop over pairs prunes (`MDIR_FUSED_PRUNE`, D284; a key
 of before misses once). A file
 whose key differs is not taken, so a run of another step, device, or
 system searches anew; a continuation, which has the key of the run it

@@ -159,7 +159,7 @@ struct GroupLists {
   mlir::Value blockCounts = {};
 };
 
-/// The entries of a whole group as one stream (D[fused-prune]): the first
+/// The entries of a whole group as one stream (D284): the first
 /// `count` entries (an i32) of the inner list of the group, which fill the
 /// blocks of its list in their order, block `blockOf[g stride + e / 64]`
 /// holding entry e at 64 b + e mod 64 (the index of the blocks made at the

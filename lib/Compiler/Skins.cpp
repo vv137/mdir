@@ -463,7 +463,7 @@ std::string compiler::getSkinCacheKey(const Control &control,
      << "\n"
      << "temperature " << format(control.temperature) << "\n"
      // A pruning in the loop over pairs costs less than one of its own, so
-     // the fastest skins differ with it (D[fused-prune]).
+     // the fastest skins differ with it (D284).
      << "pruning in the loop " << getFusedPruningSetting() << "\n";
   return text;
 }

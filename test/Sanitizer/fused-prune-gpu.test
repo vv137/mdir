@@ -1,5 +1,5 @@
 # The kernel of the loop over pairs that prunes the inner list of a dual
-# list (D[fused-prune]) under compute-sanitizer, at any number of groups
+# list (D284) under compute-sanitizer, at any number of groups
 # (MDIR_FUSED_PRUNE=always): the water box of test/Driver/pme-settle.test,
 # 11 / 9.3 Å, in mixed and double precision, and the rhombic dodecahedron of
 # test/Driver/triclinic.test, 9 / 8.4 Å, over 20 steps each. Each warp

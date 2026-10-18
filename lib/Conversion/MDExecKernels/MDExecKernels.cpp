@@ -490,7 +490,7 @@ SmallVector<Value> kernels::emitGroupPairKernel(
   Value groupIndex = toIndex(builder, group);
   Value begin, end;
   if (stream) {
-    // The stream of the group, from its front (D[fused-prune]).
+    // The stream of the group, from its front (D284).
     begin = constant32(builder, 0);
     end = stream->count;
   } else if (lists.blockCounts) {

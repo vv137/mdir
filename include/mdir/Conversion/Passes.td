@@ -350,12 +350,12 @@ def ConvertMDExecToGPU
            "list of groups, at the same positions and in the same cell, "
            "prunes the inner list in its own kernel, a warp a group, on the "
            "steps where the refresh prunes (MDIR_FUSED_PRUNE, "
-           "D[fused-prune])">,
+           "D284)">,
     Option<"fusePruningGroups", "fuse-pruning-groups", "int64_t",
            /*default=*/"0",
            "With fuse-pruning: the least number of groups of the last build "
            "for which the loop prunes; below it the refresh prunes "
-           "(D[fused-prune])">
+           "(D284)">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

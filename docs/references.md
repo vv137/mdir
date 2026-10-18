@@ -1010,7 +1010,7 @@ a buffer estimated from a tolerance of the energy drift, which the tile
 structure of MDIR (D82) follows or departs from; see
 [tiles-m1.md](tiles-m1.md). Also for the first pruning of a list in a special version
 of the kernel of forces, beside which the pruning of the inner list in the
-loop over pairs of MDIR (D[fused-prune]) is set in the white paper,
+loop over pairs of MDIR (D284) is set in the white paper,
 Section 4.5.
 
 ### Park2024

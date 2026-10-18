@@ -1557,7 +1557,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
         output.log.print(", every %.1f steps on average",
                      static_cast<double>(control->numSteps) /
                          static_cast<double>(prunes - 1));
-      // Those that the loop over pairs did (D[fused-prune]).
+      // Those that the loop over pairs did (D284).
       if (auto fused = (*engine)->lookup("mdrtGetFusedPruneCount")) {
         int64_t inLoop = reinterpret_cast<int64_t (*)()>(*fused)();
         if (inLoop > 0)

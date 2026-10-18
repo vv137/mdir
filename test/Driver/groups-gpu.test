@@ -5,7 +5,7 @@
 # matrix, start with almost no room and the builds make them larger, and
 # with a dual list (D114), whose inner list of 9.3 Å is pruned from an
 # outer one of 11 Å every few steps, also where the loop over pairs prunes
-# it (D[fused-prune], MDIR_FUSED_PRUNE=always: these systems are below the
+# it (D284, MDIR_FUSED_PRUNE=always: these systems are below the
 # groups from which it does by default); in mixed precision they conserve
 # the energy as well.
 #

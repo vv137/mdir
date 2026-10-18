@@ -261,7 +261,7 @@ public:
   /// Whether the first loop over pairs after a refresh of a dual list, at
   /// the same positions and in the same cell, prunes the inner list in its
   /// own kernel, a warp a group, where the refresh prunes, from
-  /// `fusePruningGroups` groups (`fuse-pruning`, D[fused-prune]).
+  /// `fusePruningGroups` groups (`fuse-pruning`, D284).
   bool fusePruning = false;
   int64_t fusePruningGroups = 0;
 
@@ -358,7 +358,7 @@ private:
   /// moves the positions into the frames of their groups and copies the
   /// configuration (emitFramePositions), and clears the counts of the
   /// active units (D268). The loop over pairs that prunes
-  /// (D[fused-prune]) takes the rest.
+  /// (D284) takes the rest.
   void emitPruneFrames(OpBuilder &builder, Location loc,
                        const Neighbors &structure, Value positions,
                        Value box);
@@ -379,7 +379,7 @@ private:
                        const PruneContext &ctx);
   /// Whether a loop over pairs prunes for its refresh, on the host: from
   /// `fusePruningGroups` groups of the last build of `structure`
-  /// (D[fused-prune]). The refresh and the loop decide by this one test.
+  /// (D284). The refresh and the loop decide by this one test.
   Value takesFusedPruning(OpBuilder &builder, Location loc,
                           const Neighbors &structure);
   /// The rows of the neighbor matrix `handle`, as they are where `builder`
@@ -699,7 +699,7 @@ private:
   llvm::DenseSet<Operation *> sharesPrunedFrames;
   void findSharedFrames(func::FuncOp function, md_exec::BufferAliases &aliases);
   /// The refreshes of dual lists whose pruning the first loop over pairs
-  /// that takes their result does (D[fused-prune]), with that loop: the
+  /// that takes their result does (D284), with that loop: the
   /// loops of sharesPrunedFrames that are the first users of the refresh.
   /// The refresh then moves the positions into their frames, and the loop
   /// prunes and computes in one kernel where the refresh pruned.
@@ -2121,7 +2121,7 @@ void Lowering::findPrunedInLoop() {
   // and in the same cell, with nothing between that may write the
   // positions. It prunes for the refresh if it is also the first op that
   // takes the refresh's result: nothing reads the inner list before the
-  // loop writes it (D[fused-prune]).
+  // loop writes it (D284).
   for (Operation *op : sharesPrunedFrames) {
     auto pair = cast<md_exec::PairForOp>(op);
     auto refresh =
@@ -3390,7 +3390,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
         });
   };
 
-  // The loop that prunes for its refresh (D[fused-prune]): where the
+  // The loop that prunes for its refresh (D284): where the
   // refresh pruned, and from `fusePruningGroups` groups, a warp for each
   // group prunes the inner list of the group from the outer one as the
   // refresh would (emitPruneGroup) and then computes the pairs of the
@@ -6910,7 +6910,7 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
     // The branches are filled once they are in the function: the pruning
     // launches kernels, which look up where they are.
     // Where the first loop over pairs that takes the result prunes
-    // (D[fused-prune]), the refresh moves the positions into their frames
+    // (D284), the refresh moves the positions into their frames
     // and leaves the rest to the loop, from the groups at which the loop
     // takes it.
     bool fused = prunedInLoop.contains(op.getOperation());

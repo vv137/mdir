@@ -102,7 +102,7 @@ llvm::StringRef mdir::compiler::getFusedPruningSetting() {
   return "default";
 }
 
-/// The options of the pruning in the loop over pairs (D[fused-prune]): on
+/// The options of the pruning in the loop over pairs (D284): on
 /// from the groups of `getFusedPruningGroups` for the architecture of
 /// `gpuOptions`, unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
 /// number of groups.
@@ -215,7 +215,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // of any size, for comparing and for tests (D283).
        << getTupleSumsOptions()
        // The pruning of a dual list in the loop over pairs that follows
-       // its refresh (D[fused-prune]).
+       // its refresh (D284).
        << getFusedPruningOptions(gpuOptions)
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"

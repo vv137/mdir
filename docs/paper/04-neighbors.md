@@ -690,7 +690,7 @@ of the best.*
 | Cellulose NVE | 408,609 | 1458.8 | 1448.4 (11.5 / 8.45) | 11.5 / 8.65 | 1435.8 | 0.991 | 0.984 | 229 s |
 | Cellulose NPT | 408,609 | 1519.1 | | 11.5 / 8.65 | 1498.7 | | 0.987 | 286 s |
 | STMV NPT, 4 fs | 1,067,095 | 4731.0 | 4565.4 (12.5 / 8.9) | 12 / 8.7 | 4535.5 | 0.993 | 0.959 | 848 s |
-**The pruning in the loop** (D[fused-prune]). A pruning reads every
+**The pruning in the loop** (D284). A pruning reads every
 entry of the outer list, gathers its position, tests its 16 bits, and
 stores the inner list; the loop over pairs then reads the inner list back
 and does the arithmetic of each pair. Any exact pruning does the first

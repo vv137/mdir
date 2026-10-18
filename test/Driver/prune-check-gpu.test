@@ -8,7 +8,7 @@
 # outer one of 11 Å, over several prunings between builds, in mixed and in
 # double precision, and the mixture of argon and krypton of barostat.test
 # under its barostat, whose cell changes at every step. Where the loop over
-# pairs prunes for its refresh (D[fused-prune], MDIR_FUSED_PRUNE=always),
+# pairs prunes for its refresh (D284, MDIR_FUSED_PRUNE=always),
 # the check follows the loop, which writes the inner list.
 #
 # REQUIRES: cuda

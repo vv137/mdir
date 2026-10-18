@@ -33,7 +33,7 @@
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run half.toml > half.log 2>&1
 # RUN: FileCheck %s --check-prefix=MISSED < %t/half.log
 # RUN: ls %t/cache | wc -l | FileCheck %s --check-prefix=ONE
-# Whether the loop over pairs prunes (D[fused-prune]) is part of the key.
+# Whether the loop over pairs prunes (D284) is part of the key.
 # RUN: cd %t && env MDIR_FUSED_PRUNE=always MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run auto.toml > fused.log 2>&1
 # RUN: FileCheck %s --check-prefix=FUSEDKEY < %t/fused.log
 # The defaults, and the chosen reaches, at the start.

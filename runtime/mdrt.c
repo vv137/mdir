@@ -37,7 +37,7 @@ void mdrtCountPrune(void) { ++numPrunes; }
 int64_t mdrtGetPruneCount(void) { return numPrunes; }
 
 /* Of those, the prunings that the loop over pairs that follows the refresh
-   did in its own kernel (D[fused-prune]). */
+   did in its own kernel (D284). */
 static int64_t numFusedPrunes = 0;
 
 void mdrtCountFusedPrune(void) { ++numFusedPrunes; }

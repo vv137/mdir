@@ -36,7 +36,7 @@ format, or the outputs; every such change is listed under **Changed** or
   nothing.
 
 - The pruning of the inner list of a dual list in the loop over pairs
-  (D[fused-prune], #362, [docs/groups-m1.md](docs/groups-m1.md), Section
+  (D284, #362, [docs/groups-m1.md](docs/groups-m1.md), Section
   6.2): where a refresh prunes, the loop over pairs that follows it prunes
   and computes in one kernel, a warp for each group, from 4096 groups
   (20,480 on `sm_12x`).
