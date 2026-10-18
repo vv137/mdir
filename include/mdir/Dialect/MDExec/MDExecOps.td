@@ -391,7 +391,7 @@ def MDExec_BuildNeighborsOp : MDExec_Op<"build_neighbors", [
     the structure has the rows of the centers, whose entries are any
     particles of the set, and a loop over it takes those rows only. With
     `images(explicit)`, the positions carry their images, as the owned and
-    ghost rows of a domain do (D[ml2-exec], docs/distributed-ml2.md,
+    ghost rows of a domain do (D290, docs/distributed-ml2.md,
     Section 7.2): the structure holds every pair within `cutoff + skin` in
     the plain difference of the positions, and may hold more, which the
     cutoff of a loop removes. Such a structure is a matrix.
@@ -950,7 +950,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     is the plain difference `d = x_i − x_j` of the positions, which carry
     their images, as the owned and ghost rows of a domain do, and no
     minimum image is taken; the cell is still an operand. Both are those of
-    the structure (D[ml2-exec], docs/distributed-ml2.md, Section 7.2).
+    the structure (D290, docs/distributed-ml2.md, Section 7.2).
 
     With the policy `(directed, atomic)`, every entry `(i, j)` of the list
     adds `k_a(i, j)` at `i` and `σ k_a(i, j)` at `j`, where `σ` is +1 for

@@ -1,4 +1,4 @@
-// The executor of md_dist through md_exec (D[ml2-exec],
+// The executor of md_dist through md_exec (D290,
 // docs/distributed-ml2.md, Section 7.2): for each of the two domains, the
 // local rows (owned, then ghost) as a field of a particle set of its own,
 // the neighbor structure with a center extent and explicit images, and the

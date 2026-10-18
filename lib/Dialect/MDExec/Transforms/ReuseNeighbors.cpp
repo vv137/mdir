@@ -117,7 +117,7 @@ static SmallVector<Source, 4> findSources(Block &block) {
         continue;
       // The rows of a domain are built where they are, at every
       // evaluation, with the halo: their reuse needs the test of coverage
-      // of migration (D[ml2-exec], docs/distributed-ml2.md, Section 8).
+      // of migration (D290, docs/distributed-ml2.md, Section 8).
       if (build.getCenters() || build.getImages() == Images::Explicit)
         continue;
       Source source;

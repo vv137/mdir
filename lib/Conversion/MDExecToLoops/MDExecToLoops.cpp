@@ -107,7 +107,7 @@ private:
                              Neighbors &storage);
 
   /// Builds `structure` at the configuration `positions`. With `centers`,
-  /// the rows of the first `centers` particles only (D[ml2-exec]).
+  /// the rows of the first `centers` particles only (D290).
   LogicalResult emitBuild(OpBuilder &builder, Location loc,
                           const Neighbors &structure, Value positions,
                           Value box, double reach, double cellWidth,
@@ -266,7 +266,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
 
   Value positions = op.getPositions();
   SmallVector<Value> inits(op.getReduce().begin(), op.getReduce().end());
-  // The rows of the centers alone (D[ml2-exec]).
+  // The rows of the centers alone (D290).
   Value size = op.getCenters() ? op.getCenters()
                                : createSize(builder, loc, positions);
   if ((op.getCenters() || op.getConflict() == md_exec::Conflict::Atomic) &&
@@ -454,7 +454,7 @@ Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
 }
 
 LogicalResult Lowering::addTemplates(Type real, bool centers) {
-  // The build with a center extent (D[ml2-exec]) is added only to a module
+  // The build with a center extent (D290) is added only to a module
   // that builds a structure with `centers`, so that other modules are what
   // they were; it may come after the others, for a build of the same type
   // that was lowered before.
@@ -852,7 +852,7 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
   double skin = op.getSkin().convertToDouble();
   double cellWidth = op.getCellWidth().convertToDouble();
 
-  // A structure over the rows of a domain (D[ml2-exec]) is built at every
+  // A structure over the rows of a domain (D290) is built at every
   // refresh, which the verifier checks. With explicit images the search
   // wraps the rows into the cell and takes the minimum image, whose
   // distance never exceeds the plain one: the structure holds every pair

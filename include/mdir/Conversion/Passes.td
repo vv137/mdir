@@ -428,7 +428,7 @@ def ConvertMDDistToMDExec
     : Pass<"convert-md-dist-to-md-exec", "::mlir::ModuleOp"> {
   let summary = "Runs every domain of md_dist through md_exec";
   let description = [{
-    The second executor of `md_dist` (D[ml2-exec],
+    The second executor of `md_dist` (D290,
     docs/distributed-ml2.md, Section 7.2): a domain's work is ordinary
     `md_exec` over its local rows, and the passes of `md_exec` that follow
     are the existing ones, on the CPU and on a device. The transfers are

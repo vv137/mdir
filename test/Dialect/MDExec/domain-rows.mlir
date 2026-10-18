@@ -1,4 +1,4 @@
-// The rows of a domain in md_exec (D[ml2-exec], docs/distributed-ml2.md,
+// The rows of a domain in md_exec (D290, docs/distributed-ml2.md,
 // Section 7.2): a center extent, explicit images, and the policy
 // (directed, atomic), in the value and the storage form.
 //

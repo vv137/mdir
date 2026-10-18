@@ -19,7 +19,7 @@ dispersion may be summed by particle mesh Ewald as well (D162); there is no
 polarizable model and no learned potential. Terms over triplets (D160) run
 on the CPU only.
 The distributed lowering (`md_dist`) runs its domains in one process
-only, on the CPU or one GPU (D275, D[ml2-exec]); the joint planner that
+only, on the CPU or one GPU (D275, D290); the joint planner that
 would choose structures and layouts, and the `mlff` and `ensemble`
 dialects of the architecture are designs, not code.
 
@@ -240,7 +240,7 @@ both particles, so the derivative copies $\bar\rho$ to the ghosts between
 the pass of the density and that of the forces, and the verifier rejects a
 copy of any other version of it.
 The loops of each domain then run through the execution level of one
-domain (D[ml2-exec]): the rows of its neighbor list are those of its owned
+domain (D290): the rows of its neighbor list are those of its owned
 particles $O_d$ and their entries any of its rows, owned or in $\Gamma_d$;
 displacements are plain differences, since the ghosts carry their images;
 and a pair computed once adds its term at both of its rows, the part at

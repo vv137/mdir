@@ -1,6 +1,6 @@
 // The test of ../dist-lj-exec.mlir on a GPU: the loops of each domain through the
 // device lowering of md_exec, the domains one after another on one
-// device, and the transfers on the host (D[ml2-exec]).
+// device, and the transfers on the host (D290).
 //
 // REQUIRES: cuda
 //

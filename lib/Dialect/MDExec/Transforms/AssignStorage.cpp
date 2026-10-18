@@ -629,7 +629,7 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
 
   // A loop that writes at its centers only, or at the neighbors as well,
   // does not write every value of a destination once: it adds to a buffer
-  // that holds the destination, zeros included (D[ml2-exec]).
+  // that holds the destination, zeros included (D290).
   bool writesSome = op.getCenters() ||
                     (op.getTraversal() == Traversal::Directed &&
                      op.getConflict() == Conflict::Atomic);

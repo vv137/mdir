@@ -2160,7 +2160,7 @@ void Lowering::findRows(func::FuncOp function) {
       return !tuple.getDisjoint() && !evaluatesOnce(tuple) &&
              !hasFlags(tuple);
     // A loop that takes each pair once runs over groups, not rows (D89). A
-    // loop over the rows of a domain is lowered alone (D[ml2-exec]).
+    // loop over the rows of a domain is lowered alone (D290).
     auto pair = dyn_cast<md_exec::PairForOp>(op);
     return pair && pair.getTraversal() == md_exec::Traversal::Directed &&
            pair.getConflict() == md_exec::Conflict::OwnerOnly &&
@@ -3098,7 +3098,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
                         "of groups does not give");
   if (unique)
     return lowerGroupPairFor(op, structure);
-  // The rows of a domain (D[ml2-exec]): the rows of the centers alone, and
+  // The rows of a domain (D290): the rows of the centers alone, and
   // with (directed, atomic) the values at the neighbors as well, which a
   // destination that the loop overwrote would lose.
   Value centers = op.getCenters();

@@ -1,6 +1,6 @@
 // The deterministic mode on a device refuses a loop over the rows of a
 // domain that adds at the neighbors with floating-point atomics
-// (D[ml2-exec]): the two-ended gather of the unique traversal.
+// (D290): the two-ended gather of the unique traversal.
 //
 // RUN: mdir-opt %s --convert-md-dist-to-md-exec \
 // RUN:     --md-exec-assign-storage=memory=device \

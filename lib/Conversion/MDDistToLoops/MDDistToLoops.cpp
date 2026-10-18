@@ -1,6 +1,6 @@
 // The executors of md_dist: every domain in one process.
 //
-// See docs/distributed-ml2.md, Sections 6 and 7 (D275, D[ml2-exec]). Every
+// See docs/distributed-ml2.md, Sections 6 and 7 (D275, D290). Every
 // op runs for all domains in turn, in the order of the domains; collective
 // ops are the points where all domains' values are complete, so running
 // op by op is a bulk-synchronous schedule of the global view. Layouts and
@@ -70,7 +70,7 @@ struct DomainRelation {
 class Lowering {
 public:
   /// With `throughExec`, the loops of each domain are those of md_exec
-  /// (D[ml2-exec]): a structure holds `width` neighbors of a row at first,
+  /// (D290): a structure holds `width` neighbors of a row at first,
   /// in cells of 1/`cellsPerReach` of its reach.
   Lowering(ModuleOp module, bool throughExec = false, int64_t width = 64,
            int64_t cellsPerReach = 3)
@@ -83,7 +83,7 @@ private:
   LogicalResult lower(Operation *op);
 
   //===--------------------------------------------------------------------===//
-  // The second executor (D[ml2-exec])
+  // The second executor (D290)
   //===--------------------------------------------------------------------===//
 
   LogicalResult lowerNeighborhoodExec(NeighborhoodOp op);
@@ -959,7 +959,7 @@ LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
 }
 
 //===----------------------------------------------------------------------===//
-// The second executor: each domain through md_exec (D[ml2-exec])
+// The second executor: each domain through md_exec (D290)
 //===----------------------------------------------------------------------===//
 
 FlatSymbolRefAttr Lowering::getSet(int64_t d, bool local) {

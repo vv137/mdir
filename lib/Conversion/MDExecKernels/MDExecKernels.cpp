@@ -282,7 +282,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
   unsigned numIns = op.getIns().size();
   unsigned numOuts = op.getOuts().size();
   unsigned numYields = yield->getNumOperands();
-  // The rows of a domain (D[ml2-exec]).
+  // The rows of a domain (D290).
   bool explicitImages = op.getImages() == md_exec::Images::Explicit;
   bool twoEnded = op.getTraversal() == md_exec::Traversal::Directed &&
                   op.getConflict() == md_exec::Conflict::Atomic;
@@ -348,7 +348,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
 
         // The minimum-image displacement [AllenTildesley2017] and its
         // squared length; with explicit images, the plain difference, since
-        // the rows carry their images (D[ml2-exec]).
+        // the rows carry their images (D290).
         Value otherPosition = loadElement(pair, loc, positions, other);
         Value raw = convertReal(
             pair, loc,
@@ -384,7 +384,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
         within = arith::AndIOp::create(pair, loc, within, distinct);
         // With the policy (directed, atomic), the value of each destination
         // at the neighbor, sigma times that at the center, added atomically
-        // (D[ml2-exec]).
+        // (D290).
         if (twoEnded && numOuts != 0)
           scf::IfOp::create(pair, loc, within, [&](OpBuilder &then,
                                                    Location) {
@@ -442,7 +442,7 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
       Value destination = op.getOuts()[i];
       Value total = totals[i];
       // Other rows add to this one at their neighbors at the same time:
-      // the center adds atomically as well (D[ml2-exec]).
+      // the center adds atomically as well (D290).
       if (twoEnded) {
         if (cast<MemRefType>(destination.getType()).getMemorySpace())
           emitAtomicAdd(writer, loc, total, destination, particle);

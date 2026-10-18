@@ -487,7 +487,7 @@ LogicalResult BuildNeighborsOp::verify() {
                          << skin;
   if (getWidth() <= 0)
     return emitOpError() << "expected a positive width, got " << getWidth();
-  // The rows of a domain (D[ml2-exec]): a matrix, without exclusions, which
+  // The rows of a domain (D290): a matrix, without exclusions, which
   // across domains are the topology of stage 2.
   if (getCenters() || getImages() == Images::Explicit) {
     if (getKind() != NeighborKind::Matrix)
@@ -585,7 +585,7 @@ LogicalResult RefreshNeighborsOp::verify() {
   if (getStale() && !getPruneSkin())
     return emitOpError() << "'stale' belongs to a dual list ('prune_skin')";
 
-  // The rows of a domain are built at every refresh (D[ml2-exec]): the test
+  // The rows of a domain are built at every refresh (D290): the test
   // of validity over explicit images comes with migration.
   if ((getCenters() || getImages() == Images::Explicit) &&
       (getPolicy() != RebuildPolicy::Always || getPruneSkin()))
@@ -778,7 +778,7 @@ LogicalResult PairForOp::verify() {
   // symmetric.
   bool unique = getTraversal() == Traversal::Unique &&
                 getConflict() == Conflict::Atomic;
-  // Every entry, with the value at its neighbor too (D[ml2-exec]).
+  // Every entry, with the value at its neighbor too (D290).
   bool twoEnded = getTraversal() == Traversal::Directed &&
                   getConflict() == Conflict::Atomic;
   if (!unique && !twoEnded &&
@@ -829,7 +829,7 @@ LogicalResult PairForOp::verify() {
   }
 
   // The list must contain every pair within the cutoff of this loop.
-  // The centers and the images are those of the structure (D[ml2-exec]).
+  // The centers and the images are those of the structure (D290).
   std::optional<double> built;
   Value builtCenters;
   Images builtImages = Images::Minimum;

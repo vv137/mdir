@@ -119,7 +119,7 @@ public:
     for (auto &[loop, beginnings] : found)
       for (Operation *beginning : beginnings) {
         loops[beginning].push_back(loop);
-        // The rows of a domain stay a matrix (D[ml2-exec]): groups take
+        // The rows of a domain stay a matrix (D290): groups take
         // every row as a center, in the minimum image.
         bool domainRows = loop.getCenters() ||
                           loop.getImages() == Images::Explicit ||

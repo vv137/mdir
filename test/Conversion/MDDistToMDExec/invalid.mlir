@@ -1,4 +1,4 @@
-// What the executor through md_exec refuses (D[ml2-exec]): a loop over the
+// What the executor through md_exec refuses (D290): a loop over the
 // ghost rows, the inner product of the adjoint test, which the reference
 // executor runs.
 //

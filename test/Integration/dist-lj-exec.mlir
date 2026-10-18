@@ -1,4 +1,4 @@
-// Lennard-Jones on several domains through md_exec (D[ml2-exec],
+// Lennard-Jones on several domains through md_exec (D290,
 // docs/distributed-ml2.md, Section 7.2): the program of
 // dist-lj-distribute.mlir, distributed by md-distribute and differentiated
 // by md-differentiate, run by --convert-md-dist-to-md-exec, whose loops

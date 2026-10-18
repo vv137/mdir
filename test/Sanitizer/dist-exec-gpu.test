@@ -1,4 +1,4 @@
-# The loops of the domains through md_exec on a device (D[ml2-exec],
+# The loops of the domains through md_exec on a device (D290,
 # docs/distributed-ml2.md, Section 7.2) under compute-sanitizer: the
 # loops over the centers of each domain, whose places in the order of the
 # cells skip the ghost rows, and the policy (directed, atomic), whose

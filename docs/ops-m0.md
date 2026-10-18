@@ -1156,7 +1156,7 @@ S &= S^0 + w \sum_{(i,j) \in L,\ r_{ij} < r_c} k_S(i, j).
 \end{aligned}
 $$
 
-**The rows of a domain** (D[ml2-exec],
+**The rows of a domain** (D290,
 [distributed-ml2.md](distributed-ml2.md#72-through-md_exec)). A loop, and
 the `build_neighbors` or `refresh_neighbors` of its structure, may take
 

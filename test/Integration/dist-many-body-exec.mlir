@@ -1,5 +1,5 @@
 // The forces and the virial of a many-body energy on several domains
-// through md_exec (D[ml2-exec], docs/distributed-ml2.md, Section 7.2): the
+// through md_exec (D290, docs/distributed-ml2.md, Section 7.2): the
 // program of dist-many-body-forces.mlir, whose pair sum reads ψ = √ρ, a
 // field computed from the positions, at both particles, run by
 // --convert-md-dist-to-md-exec on the directed traversal, in the

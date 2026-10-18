@@ -1,4 +1,4 @@
-// What the verifier refuses of the rows of a domain (D[ml2-exec],
+// What the verifier refuses of the rows of a domain (D290,
 // docs/distributed-ml2.md, Section 7.2).
 //
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics

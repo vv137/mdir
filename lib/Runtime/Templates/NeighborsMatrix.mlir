@@ -460,7 +460,7 @@ func.func private @mdrt.build_neighbors_matrix(
 }
 
 // The build of @mdrt.build_neighbors_matrix with a center extent
-// (D[ml2-exec], docs/distributed-ml2.md, Section 7.2): the particles from
+// (D290, docs/distributed-ml2.md, Section 7.2): the particles from
 // `centers` on are entries of rows but have no rows of their own; their
 // counts are 0. The compiler adds it to a module that builds a structure
 // with `centers` only, so that other modules do not change.

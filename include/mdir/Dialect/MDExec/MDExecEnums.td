@@ -33,7 +33,7 @@ def MDExec_Images : I32EnumAttr<"Images", "images of a displacement", [
     // The minimum image in the cell.
     I32EnumAttrCase<"Minimum", 0, "minimum">,
     // The plain difference of the positions: the rows carry their images,
-    // as the ghost rows of a domain do (D[ml2-exec],
+    // as the ghost rows of a domain do (D290,
     // docs/distributed-ml2.md, Section 7.2).
     I32EnumAttrCase<"Explicit", 1, "explicit">
   ]> {

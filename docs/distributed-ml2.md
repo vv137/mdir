@@ -12,7 +12,7 @@ Section 13 records the maintainer's rulings; Section 14 is the second part,
 (D276); Section 15 is the third part, the derivative through
 fields computed from the positions, EAM on domains (D279). Section 7.2 is
 the path of a domain's work through `md_exec`, on the CPU and on a GPU
-(D[ml2-exec]).
+(D290).
 
 ## 1. Scope
 
@@ -403,7 +403,7 @@ the row of $k$, owned or ghost.
 
 ### 7.2 Through `md_exec`
 
-`D[ml2-exec]` (#442): `--convert-md-dist-to-md-exec`, the second
+`D290` (#442): `--convert-md-dist-to-md-exec`, the second
 executor, makes a domain's work ordinary `md_exec` over its local rows. It
 runs where `--convert-md-dist-to-loops` runs, before
 `--convert-md-to-md-exec`, and the passes of `md_exec` that follow are the

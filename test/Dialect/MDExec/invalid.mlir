@@ -76,7 +76,7 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
 // -----
 
 // The value at the neighbor of (directed, atomic) comes from the exchange
-// contract (D[ml2-exec]).
+// contract (D290).
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
                %nl: !mdrt.neighbors<@atoms>) -> f64 {
   %u0 = arith.constant 0.0 : f64
