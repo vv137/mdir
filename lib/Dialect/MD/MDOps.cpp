@@ -422,10 +422,10 @@ static LogicalResult verifyPairOperands(OpTy op) {
   return success();
 }
 
-/// Verifies the kernel: its arguments and its terminator. `yieldType` is the
-/// type the kernel must yield.
+/// Verifies the kernel: its arguments and its terminator. `yieldTypes` are
+/// the types the kernel must yield.
 template <typename OpTy>
-static LogicalResult verifyPairKernel(OpTy op, Type yieldType) {
+static LogicalResult verifyPairKernel(OpTy op, TypeRange yieldTypes) {
   Block &block = op.getKernel().front();
   Builder builder(op.getContext());
 
@@ -453,13 +453,16 @@ static LogicalResult verifyPairKernel(OpTy op, Type yieldType) {
   auto yield = dyn_cast<YieldOp>(block.getTerminator());
   if (!yield)
     return op.emitOpError() << "expected the kernel to end with 'md.yield'";
-  if (yield.getNumOperands() != 1)
+  if (yield.getNumOperands() != yieldTypes.size())
     return yield.emitOpError()
-           << "expected exactly 1 value, got " << yield.getNumOperands();
-  if (yield.getOperand(0).getType() != yieldType)
-    return yield.emitOpError()
-           << "expected a value of type " << yieldType << ", got "
-           << yield.getOperand(0).getType();
+           << "expected exactly " << yieldTypes.size() << " value"
+           << (yieldTypes.size() == 1 ? "" : "s") << ", got "
+           << yield.getNumOperands();
+  for (auto [value, type] : llvm::zip_equal(yield.getOperands(), yieldTypes))
+    if (value.getType() != type)
+      return yield.emitOpError()
+             << "expected a value of type " << type << ", got "
+             << value.getType();
   return success();
 }
 
@@ -518,7 +521,7 @@ LogicalResult SumRelationOp::verify() {
 }
 
 LogicalResult SumRelationOp::verifyRegions() {
-  return verifyPairKernel(*this, getResult().getType());
+  return verifyPairKernel(*this, TypeRange(getResult().getType()));
 }
 
 //===----------------------------------------------------------------------===//
@@ -530,17 +533,27 @@ LogicalResult GatherRelationOp::verify() {
     return failure();
 
   auto relation = cast<RelationType>(getRelation().getType());
-  auto result = cast<FieldType>(getResult().getType());
-  if (result.getParticleSet() != relation.getParticleSet())
-    return emitOpError() << "the relation is on " << relation.getParticleSet()
-                         << ", but the result belongs to "
-                         << result.getParticleSet();
+  if (getResults().empty())
+    return emitOpError() << "expected at least one result";
+  for (Type type : getResultTypes()) {
+    auto result = cast<FieldType>(type);
+    if (result.getParticleSet() != relation.getParticleSet())
+      return emitOpError() << "the relation is on "
+                           << relation.getParticleSet()
+                           << ", but the result belongs to "
+                           << result.getParticleSet();
+  }
+  if (getNumResults() > 1 && getExchange() != Exchange::None)
+    return emitOpError() << "a gather of several fields has no exchange "
+                            "contract: expected 'exchange(none)'";
   return success();
 }
 
 LogicalResult GatherRelationOp::verifyRegions() {
-  auto result = cast<FieldType>(getResult().getType());
-  return verifyPairKernel(*this, result.getKernelValueType());
+  SmallVector<Type> values;
+  for (Type type : getResultTypes())
+    values.push_back(cast<FieldType>(type).getKernelValueType());
+  return verifyPairKernel(*this, TypeRange(values));
 }
 
 //===----------------------------------------------------------------------===//

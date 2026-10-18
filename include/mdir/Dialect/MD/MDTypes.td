@@ -17,12 +17,30 @@ def MD_FieldType : MD_Type<"Field", "field"> {
   let summary = "A per-particle field";
   let description = [{
     A field assigns a value to every particle of a particle set. The value
-    has one component or three.
+    has one component, or several of a floating-point type: three for a
+    vector, any number for the features of a learned potential.
 
     ```mlir
     !md.field<@atoms, f64>
     !md.field<@atoms, 3 x f64>
+    !md.field<@atoms, 16 x f64>
     !md.field<@atoms, i32>
+    ```
+
+    The features may state the representation of the rotation group O(3)
+    that their components carry (D[ml4-feature-types],
+    docs/ml4-ir.md, Section 3): a sum of blocks `M x l p`, M copies of the
+    irreducible representation of degree l (2l + 1 components) and parity
+    `e` or `o`, in e3nn's notation [Geiger2022]. The components of a
+    particle are the blocks in order; within a block, `mul_ir` (the
+    default) places the 2l + 1 components of each copy together, and
+    `ir_mul` the M copies of each component together. Within a copy the
+    components are those of the real spherical harmonics of e3nn 0.4, in
+    its order: for l = 1, (x, y, z).
+
+    ```mlir
+    !md.field<@atoms, irreps<4x0e + 4x1o>, f64>           // 16 components
+    !md.field<@atoms, irreps<128x0e + 128x1o, ir_mul>, f64>
     ```
 
     At the semantic level `f64` is the only floating-point element type. It
@@ -36,16 +54,33 @@ def MD_FieldType : MD_Type<"Field", "field"> {
   let parameters = (ins
     "::mlir::FlatSymbolRefAttr":$particleSet,
     "unsigned":$numComponents,
-    "::mlir::Type":$elementType
+    "::mlir::Type":$elementType,
+    // The blocks of the irreducible representations, three numbers each:
+    // the multiplicity M, the degree l, and the parity (0 even, 1 odd).
+    OptionalArrayRefParameter<"int64_t">:$irreps,
+    // ir_mul: the copies of each component together.
+    DefaultValuedParameter<"bool", "false">:$componentMajor
   );
+  let builders = [
+    TypeBuilder<(ins "::mlir::FlatSymbolRefAttr":$particleSet,
+                     "unsigned":$numComponents,
+                     "::mlir::Type":$elementType), [{
+      return $_get($_ctxt, particleSet, numComponents, elementType,
+                   ::llvm::ArrayRef<int64_t>(), false);
+    }]>
+  ];
   let assemblyFormat = [{
-    `<` $particleSet `,` custom<FieldElement>($numComponents, $elementType) `>`
+    `<` $particleSet `,` custom<FieldElement>($numComponents, $elementType,
+                                              $irreps, $componentMajor) `>`
   }];
   let genVerifyDecl = 1;
   let extraClassDeclaration = [{
     /// The type of one value of this field inside a kernel: the element type
     /// for a one-component field, a fixed-size vector otherwise.
     ::mlir::Type getKernelValueType() const;
+    /// This type with the element type `element`, its components and their
+    /// representation kept.
+    FieldType withElementType(::mlir::Type element) const;
   }];
 }
 

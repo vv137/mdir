@@ -283,11 +283,11 @@ func.func @f(%n: index) {
 
 md.particle_set @atoms
 
-// A buffer holds one value or three per particle.
-func.func @f(%v: memref<?x2xf64>) {
-  // expected-error@+1 {{operand #0 must be variadic of A per-particle field or buffer of a field, but got 'memref<?x2xf64>'}}
-  md_exec.particle_for ins(%v : memref<?x2xf64>)
-      outs(%v : memref<?x2xf64>) {
+// A buffer holds a fixed number of values per particle (D[ml4-feature-types]).
+func.func @f(%v: memref<?x?xf64>) {
+  // expected-error@+1 {{operand #0 must be variadic of A per-particle field or buffer of a field, but got 'memref<?x?xf64>'}}
+  md_exec.particle_for ins(%v : memref<?x?xf64>)
+      outs(%v : memref<?x?xf64>) {
   ^bb0(%v_i: vector<2xf64>):
     md_exec.yield %v_i : vector<2xf64>
   }

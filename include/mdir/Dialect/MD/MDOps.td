@@ -612,6 +612,13 @@ def MD_GatherRelationOp : MD_Op<"gather_relation", [
     The definition is a gather and has no write conflicts. `exchange` records
     a fact that an execution policy may exploit.
 
+    With several results, the kernel yields one value for each, and each
+    result is the sum of its values: several fields gathered over the
+    same pairs in one evaluation of the kernel. The derivative of a stage
+    kernel takes the adjoints of the fields, the forces, and the virial
+    together this way (D[ml4-neural-op]). A gather of several fields has
+    no exchange contract, `exchange(none)`.
+
     ```mlir
     %f = md.gather_relation %n, %x, %cell exchange(antisymmetric, derived) {
     ^bb0(%r: f64, %d: vector<3xf64>):
@@ -631,13 +638,17 @@ def MD_GatherRelationOp : MD_Op<"gather_relation", [
                       "::mdir::md::ExchangeBasis::Proof">:$exchange_basis
   );
   let regions = (region SizedRegion<1>:$kernel);
-  let results = (outs MD_ReferenceFieldType:$result);
+  let results = (outs Variadic<MD_ReferenceFieldType>:$results);
   let assemblyFormat = [{
     $relation `,` $positions `,` $cell
     (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
     custom<Exchange>($exchange, $exchange_basis)
     $kernel attr-dict
-    `:` qualified(type($relation)) `,` qualified(type($positions)) `->` qualified(type($result))
+    `:` qualified(type($relation)) `,` qualified(type($positions)) `->` qualified(type($results))
+  }];
+  let extraClassDeclaration = [{
+    /// The first result, the only one of a gather of one field.
+    ::mlir::Value getResult() { return getResults().front(); }
   }];
   let hasVerifier = 1;
   let hasRegionVerifier = 1;

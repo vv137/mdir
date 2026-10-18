@@ -31,6 +31,34 @@
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
 //
+// The separate form of the derivative, the reference of the one gather of
+// the adjoints, the forces, and the virial of each stage kernel over pairs
+// (docs/ml4-ir.md, Section 4.3), agrees with the same reference.
+//
+// RUN: mdir-opt %t/model.mlir --md-check-exchange \
+// RUN:     --md-differentiate="separate-stages=true" --md-expand-truncation \
+// RUN:     --md-inline \
+// RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+// RUN: | mlir-opt %lower_loops_to_llvm \
+// RUN: | mlir-runner -e main --entry-point-result=void \
+// RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+// RUN: | FileCheck %s
+//
+// In mixed precision, where the bodies compute in f32, within 3e-5 of the
+// largest value (measured: 1.0e-6 in the energy, 9.7e-6 in the forces).
+//
+// RUN: sed -e 's/arith.constant 1.0e-12 : f64/arith.constant 3.0e-5 : f64/' \
+// RUN:     %s > %t/mixed.mlir
+// RUN: cat %t/stages.mlir %t/mixed.mlir \
+// RUN: | mdir-opt %md_passes \
+// RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+// RUN:     --md-exec-assign-precision="mode=mixed" \
+// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN: | mlir-opt %lower_loops_to_llvm \
+// RUN: | mlir-runner -e main --entry-point-result=void \
+// RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+// RUN: | FileCheck %s
+//
 // A product of the second edge stage that is not the transpose of its
 // body's derivative (its cotangent of the distance scaled by 1.001) gives
 // forces that the check refuses.
@@ -57,7 +85,7 @@
 // CHECK-NEXT: {{^[0-9.e+-]+$}}
 
 !vec   = !md.field<@atoms, 3 x f64>
-!h     = !md.field<@atoms, 16 x f64>
+!h     = !md.field<@atoms, irreps<4x0e + 4x1o>, f64>  // 16 components
 !z     = !md.field<@atoms, i32>
 !pairs = !md.relation<@atoms, 2, unordered>
 
