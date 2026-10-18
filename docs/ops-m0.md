@@ -212,12 +212,13 @@ is needed when the kernels are compiled, not when LLVM is built.
 | `md.neighborhood` | Builds the relation of pairs within a cutoff. |
 | `md.triplets` | Derives the triplets centered on each particle from a neighborhood (Section 4.11, D160). |
 | `md.sum_relation` | Sums a kernel over the tuples of a relation. |
-| `md.gather_relation` | For each particle, sums a kernel over the tuples it belongs to. |
+| `md.gather_relation` | For each particle, sums a kernel over the tuples it belongs to; with several results, several fields from one kernel (D[ml4-neural-op]). |
 | `md.sum_particles` | Sums a kernel over particles. |
 | `md.map_particles` | Applies a kernel to each particle. |
 | `md.evaluate` | Requests energy and derivatives of a potential. |
 | `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; see [design-m1.md](design-m1.md), Sections 2 and 3. |
 | `md.chebyshev` | In a kernel, $\sum_k c_k T_k(y)$, a Chebyshev series with its coefficients as an attribute; its derivative is the series of the derivatives, and in a loop over pairs under `fast_math` a series of the distance becomes part of a table of $r^2$ (D94, D280). |
+| `md.stage`, `md.apply_stage` | A neural stage, a pure function of one element bound to its body and its vector-Jacobian product, and its application, or that of its product, in a kernel ([ml4-ir.md](ml4-ir.md), D[ml4-neural-op]). |
 | `md.yield`, `md.return` | Terminators of kernels and functions. |
 
 All `md` ops are pure.
