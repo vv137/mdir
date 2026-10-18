@@ -182,7 +182,22 @@ the virial and of observed terms in the parameters, which a fit to the
 pressure needs; and the JAX adapter.
 
 *M3 and M4.* Learned potentials behind a versioned interface, one model on
-one GPU first. The distributed work has begun beside it (D275),
+one GPU first. A message-passing potential is not local: its layer $k$ forms
+$\mathbf h_i^{(k)}$ from $\mathbf h_i^{(k-1)}$ and the $\mathbf h_j^{(k-1)}$ of
+the $j$ within $r_c$ of $i$, with $\mathbf h_i^{(0)}$ a function of the
+element of $i$ alone, so by induction on $k$ the features
+$\mathbf h_i^{(N_\text{layer})}$, and the energy of $i$ read from them,
+depend on the positions of the atoms within $N_\text{layer}\,r_c$ of $i$
+and on no other. The energy of a subset of centers then needs every atom
+within $N_\text{layer}\,r_c$ of it, so the chunks of centers that bound the
+memory of a strictly local model (D270) give a message-passing model
+little. Run as one opaque call of the whole system, a pretrained PaiNN
+($N_\text{layer} = 6$, $r_c$ = 5 Å) and MACE-OFF23 medium
+($N_\text{layer} = 2$, $r_c$ = 5 Å) agree with their packages'
+calculators and peak at their packages' memory, 61 kB and 164 kB per pair
+(MACE in float64), which bounds a water box on a 24 GB device
+to about 6,000 and 1,500 atoms (D[ml4-baselines]); these are the baselines
+that the models in stages are measured against. The distributed work has begun beside it (D275),
 with ownership and halos as IR. A domain $d$ owns particles $O_d$ and holds
 ghosts $\Gamma_d$, images of particles within a reach of its region. The
 copy $G$ of owned values to ghosts and its transpose $G^\mathsf T$, which

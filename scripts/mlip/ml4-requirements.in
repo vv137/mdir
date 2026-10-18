@@ -1,0 +1,10 @@
+# The environment of ML4's baselines (docs/ml4-baselines.md): mace-torch pins
+# e3nn 0.4.4, which the nequip package of requirements.in does not take.
+torch==2.14.1
+metatomic-torch==0.1.19
+metatensor-torch==0.10.8
+metatomic-ase==0.1.4
+vesin==0.6.2
+ase==3.29.0
+mace-torch==0.3.16
+schnetpack==2.2.0

@@ -15,13 +15,22 @@ With `--reference` it also evaluates the `nequip` package's ASE calculator
 ML1, Section 1) on the configuration and writes the energy (kJ/mol), the
 forces (kJ/mol/nm), and the virial W = -dE/d(strain) (kJ/mol) to
 reference.npz. That needs the environment of the plugin (torch, nequip, ase).
+With `--kind mace` the reference is mace-torch's MACECalculator of the
+model file given (in float64), and with `--kind painn`
+(always float32, the checkpoint's type)
+SchNetPack's SpkCalculator of the PaiNN checkpoint given, built as
+painn-to-metatomic.py builds it with SchNetPack's `Strain` input added for
+the stress (ML4's baselines, docs/ml4-baselines.md); these need the
+environment of scripts/mlip/ml4-requirements.lock.
 With `--minimize STEPS` the configuration is first relaxed with ASE's FIRE
 on that calculator, in the fixed cell, as the reference minimum of the
 validation.
 
 usage: water-box.py OUTDIR [--n 3] [--spacing 5.0] [--tilt bx cx cy]
                            [--liquid N] [--seed 1]
-                           [--reference PACKAGE.nequip.zip] [--device cuda]
+                           [--reference PACKAGE.nequip.zip | MODEL]
+                           [--kind nequip|mace|painn]
+                           [--device cuda]
                            [--minimize STEPS]
 """
 import argparse
@@ -106,7 +115,38 @@ def write(outdir, positions, cell, velocities=None):
             box[1, 2], box[2, 0], box[2, 1]))
 
 
+KIND = "nequip"
+
+
 def calculator(package, device):
+    if KIND == "mace":
+        from mace.calculators import MACECalculator
+
+        return MACECalculator(model_paths=package, device=device, default_dtype="float64",
+                              compute_stress=True)
+    if KIND == "painn":
+        import importlib.util
+
+        import schnetpack as spk
+        import schnetpack.transform as trn
+        import torch
+
+        spec = importlib.util.spec_from_file_location(
+            "painn_to_metatomic", os.path.join(os.path.dirname(__file__), "painn-to-metatomic.py"))
+        wrapper = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(wrapper)
+        net = wrapper.load_potential(package, 6, 128, 100, 5.0)
+        # The same modules and weights with SchNetPack's strain input, for the stress.
+        net = spk.model.NeuralNetworkPotential(
+            representation=net.representation,
+            input_modules=[spk.atomistic.Strain(), spk.atomistic.PairwiseDistances()],
+            output_modules=[net.output_modules[0], spk.atomistic.Forces(calc_stress=True)],
+            postprocessors=list(net.postprocessors), do_postprocessing=True)
+        return spk.interfaces.SpkCalculator(
+            model=net, neighbor_list=trn.MatScipyNeighborList(cutoff=5.0),
+            energy_key="energy", force_key="forces", stress_key="stress",
+            energy_unit="Hartree", position_unit="Ang", device=device,
+            dtype=torch.float32)  # the checkpoint's type, as the package evaluates it
     from nequip.integrations.ase import NequIPCalculator
 
     return NequIPCalculator._from_saved_model(package, device=device)
@@ -145,12 +185,15 @@ def main():
     parser.add_argument("--liquid", type=int, default=0)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--reference")
+    parser.add_argument("--kind", choices=["nequip", "mace", "painn"], default="nequip")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--minimize", type=int, default=0)
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="writes velocities of this temperature (K) to the .gro, "
                         "without the motion of the center of mass")
     args = parser.parse_args()
+    global KIND
+    KIND = args.kind
     os.makedirs(args.outdir, exist_ok=True)
     if args.liquid:
         positions, cell = liquid(args.liquid, args.seed)
@@ -161,6 +204,11 @@ def main():
     positions = wrap(positions, cell)
     # The coordinates are written to 1e-7 nm; the reference takes them so.
     positions = np.round(positions / 10.0, 7) * 10.0
+    # So is the cell: an edge of liquid water is not a multiple of 1e-7 nm,
+    # and the reference in the unrounded cell differed from MDIR's evaluation
+    # in the written one by up to 7.6e-4 kJ/mol/nm (MACE-OFF23 in float64, 64
+    # waters), where the evaluations agree to 1e-11 in the same cell.
+    cell = np.round(cell / 10.0, 7) * 10.0
     velocities = None
     if args.temperature > 0:
         # Maxwell-Boltzmann in nm/ps: sqrt(kT/m), kT in kJ/mol, m in amu.

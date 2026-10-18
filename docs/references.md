@@ -97,6 +97,26 @@ $e^{c(\sqrt{1-x^2}-1)}$, a closed form close to the prolate spheroidal wave
 function, named as the alternative to the PSWF for the spreading of ESP and
 not measured (issue #334, D266).
 
+### Batatia2022
+
+I. Batatia, D. P. Kovács, G. N. C. Simm, C. Ortner, G. Csányi, "MACE:
+Higher order equivariant message passing neural networks for fast and
+accurate force fields," *Advances in Neural Information Processing
+Systems* **35**, 11423–11436 (2022); arXiv:2206.07697.
+[doi:10.48550/arXiv.2206.07697](https://doi.org/10.48550/arXiv.2206.07697)
+
+Used for: MACE, the architecture of ML4's second baseline
+(docs/ml4-baselines.md, D[ml4-baselines]).
+
+### Batatia2025
+
+I. Batatia, P. Benner, Y. Chiang, et al., "A foundation model for
+atomistic materials chemistry," *J. Chem. Phys.* **163**, 184110 (2025).
+[doi:10.1063/5.0297006](https://doi.org/10.1063/5.0297006)
+
+Used for: MACE-MP-0, the alternative MACE of ML4's baselines
+(docs/ml4-baselines.md).
+
 ### Batzner2022
 
 S. Batzner, A. Musaelian, L. Sun, et al., "E(3)-equivariant graph neural
@@ -642,6 +662,17 @@ productivity compiler framework," arXiv:2509.25605 (2025).
 Used for: related work, a compiler on MLIR for sparse and dense linear
 algebra that emits Kokkos.
 
+### Khrabrov2024
+
+K. Khrabrov, A. Ber, A. Tsypin, et al., "$\nabla^2$DFT: A universal quantum
+chemistry dataset of drug-like molecules and a benchmark for neural network
+potentials," *Advances in Neural Information Processing Systems* **37**,
+Datasets and Benchmarks Track (2024); arXiv:2406.14347.
+[doi:10.48550/arXiv.2406.14347](https://doi.org/10.48550/arXiv.2406.14347)
+
+Used for: the pretrained PaiNN of ML4's baselines, the benchmark's
+checkpoint of the split `train_large` (docs/ml4-baselines.md).
+
 ### Kirkwood1935
 
 J. G. Kirkwood, "Statistical mechanics of fluid mixtures," *J. Chem.
@@ -662,6 +693,16 @@ of the next slots in turn (linear probing) of the table of the particles
 of a block, in which the kernel of the tuples evaluated once adds the
 values of a block before it adds them to the destinations
 (D283).
+
+### Kovacs2025
+
+D. P. Kovács, J. H. Moore, N. J. Browning, et al., "MACE-OFF: Short-range
+transferable machine learning force fields for organic molecules," *J. Am.
+Chem. Soc.* **147**, 17598–17611 (2025).
+[doi:10.1021/jacs.4c07099](https://doi.org/10.1021/jacs.4c07099)
+
+Used for: MACE-OFF23, the MACE of ML4's baselines, trained on SPICE with
+water (docs/ml4-baselines.md).
 
 ### Krautler2001
 
@@ -1218,6 +1259,17 @@ generalized workflow for membrane-protein–lipid-bilayer system building,"
 [doi:10.1021/acs.jcim.9b00269](https://doi.org/10.1021/acs.jcim.9b00269)
 
 Used for: the input of PACKMOL for the POPC bilayer of D119.
+
+### Schutt2021
+
+K. T. Schütt, O. T. Unke, M. Gastegger, "Equivariant message passing for
+the prediction of tensorial properties and molecular spectra," in
+*Proceedings of the 38th International Conference on Machine Learning*,
+PMLR **139**, 9377–9388 (2021); arXiv:2102.03150.
+[doi:10.48550/arXiv.2102.03150](https://doi.org/10.48550/arXiv.2102.03150)
+
+Used for: PaiNN, the architecture of ML4's first baseline, as SchNetPack 2
+implements it (docs/ml4-baselines.md).
 
 ### Shih2021
 

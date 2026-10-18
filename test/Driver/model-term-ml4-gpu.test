@@ -1,0 +1,91 @@
+# ML4's baselines (D[ml4-baselines], docs/ml4-baselines.md): a pretrained
+# PaiNN (nablaDFT's, SchNetPack 2) and a pretrained MACE (MACE-OFF23 medium)
+# as one whole-system call of the model term (METATOMIC, D270), wrapped by
+# scripts/mlip/painn-to-metatomic.py and mace-to-metatomic.py from the
+# checkpoints that scripts/mlip/fetch-ml4-artifacts.py fetches (lit's
+# -Dml4_artifacts= or MDIR_ML4_ARTIFACTS; never in the repository; nothing is
+# fetched here), against their packages' ASE calculators (mace-torch's
+# MACECalculator, SchNetPack's SpkCalculator) on 8 waters in a cell of 6.2 Å,
+# narrower than twice either cutoff (5 Å), so that the pair list takes
+# several images of each particle.
+#
+# REQUIRES: cuda, metatomic, ml4-python, ml4-artifacts
+#
+# RUN: rm -rf %t && mkdir -p %t/mace %t/painn
+# RUN: %ml4_python %S/../../scripts/mlip/mace-to-metatomic.py %ml4_artifacts/MACE-OFF23_medium.model %t/mace.pt 2>&1 | FileCheck %s --check-prefix=WRAP-MACE
+# WRAP-MACE: 10 types, r_max 5.0 A, 2 layers, float64
+# RUN: %ml4_python %S/../../scripts/mlip/painn-to-metatomic.py %ml4_artifacts/painn_100k.ckpt %t/painn.pt 2>&1 | FileCheck %s --check-prefix=WRAP-PAINN
+# WRAP-PAINN: 8 types, cutoff 5.0 A, 6 interactions, inputs float32, energy in Hartree
+# RUN: %ml4_python %S/../../scripts/mlip/water-box.py %t/mace --n 2 --spacing 3.1 --seed 2 --kind mace --reference %ml4_artifacts/MACE-OFF23_medium.model
+# RUN: %ml4_python %S/../../scripts/mlip/water-box.py %t/painn --n 2 --spacing 3.1 --seed 2 --kind painn --reference %ml4_artifacts/painn_100k.ckpt
+
+# The Python model in double and mixed precision: energy, forces, and the
+# virial tensor, within ML1's tolerances (Section 7 of metatomic-ml1.md) for
+# MACE in float64, and ten times them for PaiNN, whose network is float32.
+# RUN: %ml4_python %S/../../scripts/mlip/check-model-term.py %t/mace %t/mace.pt --precision Double | %ml4_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: %ml4_python %S/../../scripts/mlip/check-model-term.py %t/mace %t/mace.pt --precision Mixed | %ml4_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+# RUN: %ml4_python %S/../../scripts/mlip/check-model-term.py %t/painn %t/painn.pt --precision Double | %ml4_python %S/Inputs/model-term/compare.py json 10 | FileCheck %s
+# RUN: %ml4_python %S/../../scripts/mlip/check-model-term.py %t/painn %t/painn.pt --precision Mixed | %ml4_python %S/Inputs/model-term/compare.py json 10 | FileCheck %s
+# CHECK: energy ok
+# CHECK: forces ok
+# CHECK: virial ok
+
+# A message-passing model is not local: chunks of centers asked for, the
+# whole system goes in one call (the log of MACE's run below says so).
+# RUN: %ml4_python %S/../../scripts/mlip/check-model-term.py %t/mace %t/mace.pt --centers-per-call 5 | %ml4_python %S/Inputs/model-term/compare.py json 1 | FileCheck %s
+
+# mdir run: the term in the log, and its energy at the start.
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed -e 's/@MODEL@/mace.pt/' -e 's/@CENTERS@/5/' > %t/mace/run.toml
+# RUN: cp %t/mace.pt %t/mace/mace.pt
+# RUN: cd %t/mace && mdir run run.toml > %t/mace/run.log
+# RUN: FileCheck %s --check-prefixes=LOG,LOCAL < %t/mace/run.log
+# RUN: %ml4_python %S/Inputs/model-term/compare.py log %t/mace/reference.npz < %t/mace/run.log | FileCheck %s --check-prefix=START
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed -e 's/@MODEL@/painn.pt/' -e 's/@CENTERS@/0/' > %t/painn/run.toml
+# RUN: cp %t/painn.pt %t/painn/painn.pt
+# RUN: cd %t/painn && mdir run run.toml > %t/painn/run.log
+# RUN: FileCheck %s --check-prefix=LOG < %t/painn/run.log
+# RUN: %ml4_python %S/Inputs/model-term/compare.py log %t/painn/reference.npz < %t/painn/run.log | FileCheck %s --check-prefix=START
+# LOG: MDIR: model 'model' ({{.*}}): metatomic, torch {{.*}}; cutoff 0.50 nm, full pair list
+# LOCAL-SAME: not declared local: the whole system in one call, whatever 'centers_per_call' asks
+# LOG: MDIR: MODEL model
+# LOG: MDIR: model 'model': 3 evaluations
+# START: mdir run energy ok
+
+#--- run.toml
+[input]
+topology    = "system.top"
+coordinates = "system.gro"
+
+[output]
+energy_interval = 1
+
+[energy]
+cutoff = 0.2
+pairlist_distance = 0.25
+electrostatics = "CUTOFF"
+
+[[energy.model]]
+name = "model"
+path = "@MODEL@"
+centers_per_call = @CENTERS@
+
+[constraints]
+hydrogen_bonds = false
+rigid_water = false
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 2
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "GPU"
+precision = "mixed"
+#--- end

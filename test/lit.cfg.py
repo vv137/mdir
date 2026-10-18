@@ -197,6 +197,24 @@ if config.mdir_metatomic:
     if package and os.path.exists(package):
         config.available_features.add("allegro-package")
         config.substitutions.append(("%allegro_package", package))
+    # ML4's baselines (D[ml4-baselines], docs/ml4-baselines.md): "ml4-python"
+    # where the interpreter of -Dml4_python= or MDIR_ML4_PYTHON imports torch,
+    # metatomic, mace-torch, and SchNetPack (scripts/mlip/ml4-requirements.lock),
+    # and "ml4-artifacts" where the directory of -Dml4_artifacts= or
+    # MDIR_ML4_ARTIFACTS holds the checkpoints that
+    # scripts/mlip/fetch-ml4-artifacts.py fetches (never in the repository).
+    ml4_python = lit_config.params.get("ml4_python", os.environ.get("MDIR_ML4_PYTHON", ""))
+    if ml4_python and config.mdir_python and subprocess.run(
+            [ml4_python, "-c", "import torch, metatomic.torch, mace, schnetpack, ase"],
+            capture_output=True).returncode == 0:
+        config.available_features.add("ml4-python")
+        config.substitutions.append(("%ml4_python", ml4_python))
+    artifacts = lit_config.params.get("ml4_artifacts",
+                                      os.environ.get("MDIR_ML4_ARTIFACTS", ""))
+    if artifacts and all(os.path.exists(os.path.join(artifacts, f)) for f in (
+            "painn_100k.ckpt", "MACE-OFF23_medium.model")):
+        config.available_features.add("ml4-artifacts")
+        config.substitutions.append(("%ml4_artifacts", artifacts))
 
 # The tests that a release adds to the default suite: the whole matrix of
 # a test whose default form runs a part of its cases, on every target and
