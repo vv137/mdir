@@ -16,7 +16,7 @@ ML1, Section 1) on the configuration and writes the energy (kJ/mol), the
 forces (kJ/mol/nm), and the virial W = -dE/d(strain) (kJ/mol) to
 reference.npz. That needs the environment of the plugin (torch, nequip, ase).
 With `--kind mace` the reference is mace-torch's MACECalculator of the
-model file given (in `--dtype`, float64 by default), and with `--kind painn`
+model file given (in float64), and with `--kind painn`
 (always float32, the checkpoint's type)
 SchNetPack's SpkCalculator of the PaiNN checkpoint given, built as
 painn-to-metatomic.py builds it with SchNetPack's `Strain` input added for
@@ -29,7 +29,7 @@ validation.
 usage: water-box.py OUTDIR [--n 3] [--spacing 5.0] [--tilt bx cx cy]
                            [--liquid N] [--seed 1]
                            [--reference PACKAGE.nequip.zip | MODEL]
-                           [--kind nequip|mace|painn] [--dtype float64]
+                           [--kind nequip|mace|painn]
                            [--device cuda]
                            [--minimize STEPS]
 """
@@ -116,14 +116,13 @@ def write(outdir, positions, cell, velocities=None):
 
 
 KIND = "nequip"
-DTYPE = "float64"
 
 
 def calculator(package, device):
     if KIND == "mace":
         from mace.calculators import MACECalculator
 
-        return MACECalculator(model_paths=package, device=device, default_dtype=DTYPE,
+        return MACECalculator(model_paths=package, device=device, default_dtype="float64",
                               compute_stress=True)
     if KIND == "painn":
         import importlib.util
@@ -187,15 +186,14 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--reference")
     parser.add_argument("--kind", choices=["nequip", "mace", "painn"], default="nequip")
-    parser.add_argument("--dtype", choices=["float64", "float32"], default="float64")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--minimize", type=int, default=0)
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="writes velocities of this temperature (K) to the .gro, "
                         "without the motion of the center of mass")
     args = parser.parse_args()
-    global KIND, DTYPE
-    KIND, DTYPE = args.kind, args.dtype
+    global KIND
+    KIND = args.kind
     os.makedirs(args.outdir, exist_ok=True)
     if args.liquid:
         positions, cell = liquid(args.liquid, args.seed)

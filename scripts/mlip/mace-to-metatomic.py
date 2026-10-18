@@ -5,8 +5,9 @@ docs/ml4-baselines.md).
 
 An example of bringing a model into MDIR without changing it, as
 `nequip-to-metatomic.py` is for the `nequip` package. The weights are not
-changed; `--dtype float32` casts them, as mace-torch's own calculator does
-with `default_dtype="float32"`. metatrain's experimental MACE architecture
+changed, and the model runs in float64, the type in which these files are
+stored (and in which MACE-OFF23 was trained and is evaluated by mace-torch's
+`mace_off()`). metatrain's experimental MACE architecture
 (metatrain 2026.4.1, `metatrain.experimental.mace`) also exports such files
 to metatomic, by a training of zero epochs that moves the reference
 energies and the scale into its own heads; this wrapper calls the model as
@@ -41,12 +42,9 @@ Architecture: Batatia et al., NeurIPS 35 (2022), arXiv:2206.07697. Interface:
 Bigi et al., J. Chem. Phys. 164, 064113 (2026), doi:10.1063/5.0304911.
 
 usage: python mace-to-metatomic.py MODEL.model OUTPUT.pt
-           [--dtype float64|float32]
 
-`--dtype` is the type of the network and of the positions, cell, and pair
-vectors that the engine hands over: MACE computes in the type of its
-weights. float64, the default, is what mace-torch's calculator uses for
-MACE-OFF; it uses float32 for MACE-MP by default.
+The network, the positions, the cell, and the pair vectors that the engine
+hands over are float64: MACE computes in the type of its weights.
 """
 import argparse
 from typing import Dict, List, Optional
@@ -139,13 +137,12 @@ def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     p.add_argument("model")
     p.add_argument("output")
-    p.add_argument("--dtype", choices=["float64", "float32"], default="float64")
     a = p.parse_args()
 
     mace = torch.load(a.model, map_location="cpu", weights_only=False)
     if getattr(mace, "heads", None) is not None and len(mace.heads) > 1:
         raise SystemExit(f"a model of several heads ({mace.heads}) is not handled")
-    mace = mace.to(torch.float64 if a.dtype == "float64" else torch.float32).eval()
+    mace = mace.to(torch.float64).eval()
     for q in mace.parameters():
         q.requires_grad_(False)
     r_max = float(mace.r_max)
@@ -158,7 +155,7 @@ def main():
         interaction_range=layers * r_max,
         length_unit="angstrom",
         supported_devices=["cuda", "cpu"],
-        dtype=a.dtype,
+        dtype="float64",
     )
     metadata = ModelMetadata(
         name=f"{a.model.rsplit('/', 1)[-1]} (metatomic wrapper)",
@@ -175,7 +172,7 @@ def main():
     model = AtomisticModel(wrapper, metadata, capabilities)
     model.save(a.output)
     print(f"saved {a.output}: {len(zs)} types, r_max {r_max} A, {layers} layers, "
-          f"{a.dtype}")
+          "float64")
 
 
 if __name__ == "__main__":

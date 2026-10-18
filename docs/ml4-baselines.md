@@ -36,6 +36,7 @@ an artifact without changing its weights:
   ([Batatia2022](references.md#batatia2022)); the wrapper hands MACE the
   edges and the shifts $\mathbf s\,\mathsf H$, and MACE forms its edge
   vectors from the positions and the cell, which the plugin differentiates.
+  It takes the model in float64 only, the type of its stored weights.
   metatrain 2026.4.1 has an experimental MACE architecture that also
   exports such files (by a training of zero epochs that moves the reference
   energies and the scale into its heads); the wrapper calls the file's own
@@ -68,7 +69,7 @@ torch of the plugin's build.
 |---|---|---|---|---|---|---|---|---|
 | **MACE-OFF23 medium** (ruled) | `ACEsuit/mace-off` at commit `91a78c5`, `mace_off23/MACE-OFF23_medium.model`, 18,350,596 bytes, SHA-256 `4842c52ad210d6e1f84d6cf1ffa70fae25a7e0d755ed55cf223f43913f587db7` | Academic Software License (academic, non-commercial; copyleft for derived works) | H, C, N, O, F, P, S, Cl, Br, I | 5 Å | 2 | hidden 128x0e+128x1o (last layer 128x0e), spherical harmonics to $\ell = 3$, correlation order 3, 8 Bessel functions; 1.43 million parameters; stored in float64 (all 29 parameter tensors), trained in float64 by the published training script (`mace_off23/train_scripts/medium.sh` at the same commit: `--default_dtype="float64"`), and evaluated in float64 by mace-torch's `mace_off()` (its default `default_dtype`) | energy in eV, forces by autograd | SPICE (ωB97M-D3(BJ)/def2-TZVPPD), water clusters included; its paper simulates liquid water ([Kovacs2025](references.md#kovacs2025)) |
 | MACE-OFF23 small | the same commit, `MACE-OFF23_small.model`, SHA-256 `165cce4c…` | ASL | the same | 4.5 Å | 2 | 96x0e (invariant messages); 0.69 million | eV | Has no $\ell = 1$ features, so step 5 would not exercise the irreducible representations |
-| MACE-MP-0 medium (the MIT alternative, in the fetch list) | `ACEsuit/mace-mp` release `mace_mp_0`, `2023-12-03-mace-128-L1_epoch-199.model`, 44,422,970 bytes, SHA-256 `01bfe22100139f424713cf921144e5509cbe353d67aa9fa1be9c6e1e0ed35845` | MIT | 89 elements, H to Pu | 6 Å | 2 | 128x0e+128x1o, $\ell \le 3$, correlation 3, 10 Bessel; 4.69 million; stored in float64 (mace-torch's calculator casts it to float32 by default) | eV | MPtrj (PBE and PBE+U), materials; its water is not validated physics ([Batatia2025](references.md#batatia2025)) |
+| MACE-MP-0 medium (the MIT alternative, in the fetch list) | `ACEsuit/mace-mp` release `mace_mp_0`, `2023-12-03-mace-128-L1_epoch-199.model`, 44,422,970 bytes, SHA-256 `01bfe22100139f424713cf921144e5509cbe353d67aa9fa1be9c6e1e0ed35845` | MIT | 89 elements, H to Pu | 6 Å | 2 | 128x0e+128x1o, $\ell \le 3$, correlation 3, 10 Bessel; 4.69 million; stored in float64 (mace-torch's `mace_mp()` casts it to float32 by default; the wrapper takes it in float64, as every MACE here) | eV | MPtrj (PBE and PBE+U), materials; its water is not validated physics ([Batatia2025](references.md#batatia2025)) |
 | MACE-MP-0 small | the same release, `2023-12-10-mace-128-L0_energy_epoch-249.model`, SHA-256 `2ddb079c…` | MIT | 89 | 6 Å | 2 | 128x0e; 3.85 million | eV | No $\ell = 1$ features |
 | MACE-MPA-0, OMAT-0, MATPES, MH-1, OMOL-0 | `ACEsuit/mace-foundations` and `mace-mp` releases | MIT (MPA-0), ASL or other (the rest) | | 6 Å | 2 | medium or larger | eV | Materials or multi-head models; none adds to the two above for water |
 | JAX MACE | ACEsuit's `mace-jax` imports mace-torch checkpoints (`mace-jax-from-torch`); chemtrain exports MACE-MH-1 through it with `jax.export` to StableHLO, with symbolic numbers of atoms and edges, and an optional OpenEquivariance kernel that the export carries as a custom call; InstaDeep's `mlip` 0.2.5 ([Brunken2025](references.md#brunken2025)) publishes JAX MACE, NequIP, ViSNet, and eSEN trained on SPICE2 | `mlip`'s weights: non-commercial only; `mace-jax`: no license file found | | | | | | Converted weights count as the same model only when the conversion is shown equivalent (D167); not tested here, it belongs to step 3's comparison of StableHLO with AOTInductor |
@@ -95,7 +96,6 @@ artifact against the package's own ASE calculator, on the CPU:
 |---|---|---|---|---|---|
 | MACE-OFF23 medium, float64 | `MACECalculator`, float64 | −56,190.26 eV | $2.9 \times 10^{-11}$ | 0.642, $1.9 \times 10^{-15}$ | 9.50, $1.6 \times 10^{-14}$ |
 | MACE-MP-0 medium, float64 | `MACECalculator`, float64 | −382.81 eV | $2.3 \times 10^{-13}$ | 0.270, $1.9 \times 10^{-15}$ | 3.43, $7.6 \times 10^{-15}$ |
-| MACE-MP-0 medium, float32 | `MACECalculator`, float64 | | $2.8 \times 10^{-4}$ | $9.5 \times 10^{-7}$ | $4.3 \times 10^{-6}$ |
 | nablaDFT PaiNN, float32 | SchNetPack's `SpkCalculator`, float32, with a `Strain` input for the stress | −252.73 eV (−9.29 Hartree) | $8.9 \times 10^{-6}$ | 0.878, $4.2 \times 10^{-6}$ | 5.92, $1.9 \times 10^{-5}$ |
 
 The virial is $\mathsf W = -V\sigma$ from ASE's stress. In float64 the
@@ -185,19 +185,6 @@ then differed by up to $7.6 \times 10^{-4}$ in the forces of MACE in
 `double`, where the evaluations agree to $10^{-11}$ in the same cell. The
 script now rounds the cell too; the numbers above are with it.
 
-**The float32 copy of MACE-OFF23** (`mace-to-metatomic.py --dtype float32`,
-the weights cast as mace-torch's `default_dtype="float32"` casts them),
-which Sections 2.2 and 2.3 measure beside the float64 model, is not the
-trained model but its rounding. Against the float64 references above, on
-the same boxes, devices, and modes, it differs by up to 0.76 kJ/mol in the
-energy ($1.5 \times 10^{-8}$ of $5.1 \times 10^{7}$, most of which is the
-reference energies of the elements, which float32 rounds), 0.12 kJ/mol/nm in
-the forces ($3.3 \times 10^{-5}$ of the largest), and 0.059 kJ/mol in the
-virial ($4.8 \times 10^{-6}$ of the largest), the same on both devices and in
-both modes. It is measured for memory and time, as the precision a user of
-mace-torch's default for MACE-MP would run; it is not a validated
-replacement of the float64 model.
-
 ### 2.2 Peak device memory against pairs
 
 Liquid water (29.9 Å³ per molecule, `model-sweep.py`), from 64 waters
@@ -213,8 +200,6 @@ Python, `torch.cuda.max_memory_allocated` above the model's weights.
 |---|---|---|---|---|---|
 | MACE-OFF23 medium, float64 | RTX 4090 | 163 to 168 kB | 160 to 163 kB | 1,536 atoms, 83,422 pairs: 12.7 GiB | 3,072 atoms fail in both (one allocation of 6.22 GiB) |
 | | RTX PRO 6000 | 163 to 172 kB | 160 to 167 kB | 6,144 atoms, 330,250 pairs: 50.2 GiB | 12,288 atoms fail in both (25.4 GiB at once) |
-| MACE-OFF23 medium, float32 copy | RTX 4090 | 82 to 84 kB | 80 to 82 kB | 3,072 atoms, 163,284 pairs: 12.4 GiB | 6,144 fail in both (6.28 GiB) |
-| | RTX PRO 6000 | 82 to 89 kB | 80 to 87 kB | 12,288 atoms, 666,636 pairs: 50.6 GiB | 24,576 fail in both (25.0 GiB) |
 | nablaDFT PaiNN, float32 | RTX 4090 | 61 to 63 kB | 62 to 65 kB | 6,144 atoms, 330,176 pairs: 18.8 GiB | 12,288 fail in both |
 | | RTX PRO 6000 | 61 to 68 kB | 61.5 to 70 kB | 24,576 atoms, 1,313,206 pairs: 74.8 GiB | 49,152 fail in both |
 
@@ -225,18 +210,16 @@ takes, within 3%: MDIR adds nothing to the model's memory, and saves
 nothing either. The limit is the same in both, a size apart on each
 device. MACE's failing allocation is one tensor of $4.1 \times 10^4$ bytes
 per pair in float64 (5,120 values; 6.22 GiB at 163,128 pairs, 25.4 GiB at
-665,312), and half that in float32: a per-pair tensor of the interaction,
+665,312): a per-pair tensor of the interaction,
 before its sum over the neighbors, which the opaque call materializes for
 every pair at once. Where its bytes go in detail was not traced.
 
 Against ML1's Allegro-OAM-L (Section 4.1 of metatomic-ml1.md), the eager
 baselines per pair are: Allegro 1.22 MB (TorchScript) and 132 kB
-(AOTInductor); MACE-OFF23 medium 164 kB in float64 and 82 kB in float32;
-PaiNN 61 kB. A message-passing model cannot be cut into chunks of centers
+(AOTInductor); MACE-OFF23 medium 164 kB; PaiNN 61 kB. A message-passing model cannot be cut into chunks of centers
 as Allegro can (its atom energies depend on atoms up to $L\,r_c$ away), so
 these per-pair peaks bound the system on one GPU: about 1,500 atoms of
-water for MACE in float64 on 24 GB, 6,000 on 96 GB; 3,000 and 12,000 in
-float32; 6,000 and 24,000 for PaiNN.
+water for MACE on 24 GB, 6,000 on 96 GB; 6,000 and 24,000 for PaiNN.
 
 ### 2.3 Time
 
@@ -251,20 +234,17 @@ structures of these runs, started hot from an unrelaxed liquid with the
 |---|---|---|---|---|---|
 | MACE-OFF23 medium, float64 | RTX 4090 | 11.5 to 12.3 | 11.5 to 12.2 | 124; 962 | 1,600 |
 | | RTX PRO 6000 | 9.0 to 9.8 | 9.4 to 10.9 | 99; 747; 3,012 at 6,144 | 2,060 |
-| MACE-OFF23 medium, float32 copy | RTX 4090 | 1.9 to 2.1 | 2.1 to 3.5 | 21.6; 158; 309 at 3,072 | 9,700 |
-| | RTX PRO 6000 | 1.2 to 1.4 | 1.5 to 2.1 | 14.4; 101; 811 at 12,288 | 15,300 |
 | nablaDFT PaiNN, float32 | RTX 4090 | 0.50 to 0.79 | 0.71 to 0.88 (2.7 at 192 atoms) | 8.2; 44.4; 167 at 6,144 | 34,600 |
 | | RTX PRO 6000 | 0.32 to 0.79 | 0.50 to 0.62 (2.1 at 192 atoms) | 8.3; 28.5; 419 at 24,576 | 53,900 |
 
-At 0.5 fs, a step of 1,536 atoms is 0.045 ns/day for MACE in float64 on the
-RTX 4090 (0.058 on the RTX PRO 6000), 0.27 (0.43) in float32, and 0.97
-(1.5) for PaiNN. The opaque call runs at the package's speed: the time
-per pair of MDIR's step and of the package's evaluation agree within the
-scatter of the measurements for MACE, and MDIR's step is shorter than the
-package's evaluation for PaiNN and for MACE in float32 (the package builds
-its neighbor list on the host and copies it each time). MACE in float64 is
-6 to 8 times slower than in float32 on both devices, which have little
-float64 throughput. The time per pair is flat from about 40,000 pairs
+At 0.5 fs, a step of 1,536 atoms is 0.045 ns/day for MACE on the RTX 4090
+(0.058 on the RTX PRO 6000) and 0.97 (1.5) for PaiNN. The opaque call runs
+at the package's speed: the time per pair of MDIR's step and of the
+package's evaluation agree within the scatter of the measurements for
+MACE, and MDIR's step is shorter than the package's evaluation for PaiNN
+(the package builds its neighbor list on the host and copies it each
+time). MACE runs in float64, of which both devices have little throughput.
+The time per pair is flat from about 40,000 pairs
 up; below, the fixed cost of a call (a few milliseconds) dominates.
 
 ### 2.4 What the baselines fix for steps 3 to 5

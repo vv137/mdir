@@ -22,7 +22,7 @@ format, or the outputs; every such change is listed under **Changed** or
   artifacts of them for `backend = "METATOMIC"`, without changing a weight;
   `model-sweep.py` measures peak device memory and time against size.
   Validated against the packages' calculators; 164 kB per pair for
-  MACE-OFF23 in float64 (82 kB in float32) and 61 kB for PaiNN, as the
+  MACE-OFF23 (float64) and 61 kB for PaiNN, as the
   packages take. The tests (`model-term-ml4-gpu.test`) take the fetched
   files from `MDIR_ML4_ARTIFACTS` and an environment of
   `scripts/mlip/ml4-requirements.lock` from `MDIR_ML4_PYTHON`, and are

@@ -28,7 +28,7 @@ printed, and the table at the end.
 
 usage: model-sweep.py OUT --waters 8 16 32 ... (--artifact A.pt | --package KIND:PATH)
            [--precision mixed|double] [--steps 60] [--mdir mdir]
-           [--dtype float64|float32] [--seed 1]
+           [--seed 1]
 """
 import argparse
 import importlib.util
@@ -129,7 +129,7 @@ def run_package(positions, cell, args):
     from ase.neighborlist import neighbor_list
 
     wb = water_box()
-    wb.KIND, wb.DTYPE = args.package.split(":", 1)[0], args.dtype
+    wb.KIND = args.package.split(":", 1)[0]
     torch.cuda.empty_cache()
     torch.cuda.reset_peak_memory_stats()
     calc = wb.calculator(args.package.split(":", 1)[1], "cuda")
@@ -172,7 +172,6 @@ def main():
     p.add_argument("--precision", default="mixed")
     p.add_argument("--steps", type=int, default=60)
     p.add_argument("--mdir", default="mdir")
-    p.add_argument("--dtype", default="float64")
     p.add_argument("--seed", type=int, default=1)
     args = p.parse_args()
     if bool(args.artifact) == bool(args.package):
