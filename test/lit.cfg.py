@@ -197,7 +197,7 @@ if config.mdir_metatomic:
     if package and os.path.exists(package):
         config.available_features.add("allegro-package")
         config.substitutions.append(("%allegro_package", package))
-    # ML4's baselines (D[ml4-baselines], docs/ml4-baselines.md): "ml4-python"
+    # ML4's baselines (D286, docs/ml4-baselines.md): "ml4-python"
     # where the interpreter of -Dml4_python= or MDIR_ML4_PYTHON imports torch,
     # metatomic, mace-torch, and SchNetPack (scripts/mlip/ml4-requirements.lock),
     # and "ml4-artifacts" where the directory of -Dml4_artifacts= or

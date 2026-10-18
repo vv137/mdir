@@ -1,4 +1,4 @@
-# ML4's baselines (D[ml4-baselines], docs/ml4-baselines.md): a pretrained
+# ML4's baselines (D286, docs/ml4-baselines.md): a pretrained
 # PaiNN (nablaDFT's, SchNetPack 2) and a pretrained MACE (MACE-OFF23 medium)
 # as one whole-system call of the model term (METATOMIC, D270), wrapped by
 # scripts/mlip/painn-to-metatomic.py and mace-to-metatomic.py from the

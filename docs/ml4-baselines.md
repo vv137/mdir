@@ -1,6 +1,6 @@
 # ML4 baselines: pretrained PaiNN and MACE through the opaque model term
 
-Steps 1 and 2 of issue #377 (`D[ml4-baselines]`), the prerequisites of
+Steps 1 and 2 of issue #377 (`D286`), the prerequisites of
 ML4's staged models ([roadmap](roadmap.md#7-learned-potentials-m3-and-distributed-execution-m4),
 D167, D169, and the milestone ruling of 2026-10-16 on #377): one pretrained
 PaiNN and one pretrained MACE, each pinned, run as one whole-system call

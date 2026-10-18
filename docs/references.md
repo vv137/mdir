@@ -106,7 +106,7 @@ Systems* **35**, 11423–11436 (2022); arXiv:2206.07697.
 [doi:10.48550/arXiv.2206.07697](https://doi.org/10.48550/arXiv.2206.07697)
 
 Used for: MACE, the architecture of ML4's second baseline
-(docs/ml4-baselines.md, D[ml4-baselines]).
+(docs/ml4-baselines.md, D286).
 
 ### Batatia2025
 

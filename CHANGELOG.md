@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - **Baselines of ML4: a pretrained PaiNN and a pretrained MACE through the
-  model term** (D[ml4-baselines], #377, PR #436,
+  model term** (D286, #377, PR #436,
   [docs/ml4-baselines.md](docs/ml4-baselines.md)):
   `scripts/mlip/fetch-ml4-artifacts.py` fetches nablaDFT's PaiNN (MIT) and
   MACE-OFF23 medium (Academic Software License: academic, non-commercial

@@ -196,7 +196,7 @@ little. Run as one opaque call of the whole system, a pretrained PaiNN
 ($N_\text{layer} = 2$, $r_c$ = 5 Å) agree with their packages'
 calculators and peak at their packages' memory, 61 kB and 164 kB per pair
 (MACE in float64), which bounds a water box on a 24 GB device
-to about 6,000 and 1,500 atoms (D[ml4-baselines]); these are the baselines
+to about 6,000 and 1,500 atoms (D286); these are the baselines
 that the models in stages are measured against. The distributed work has begun beside it (D275),
 with ownership and halos as IR. A domain $d$ owns particles $O_d$ and holds
 ghosts $\Gamma_d$, images of particles within a reach of its region. The
