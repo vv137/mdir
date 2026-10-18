@@ -1,5 +1,5 @@
 # REQUIRES: cuda
-# The sums of a block of the tuples evaluated once (D[tuple-block-sums]):
+# The sums of a block of the tuples evaluated once (D283):
 # the bonded terms, the 1-4 pairs, and the excluded pairs of a solvated
 # protein, with the table of a block (MDIR_TUPLE_SUMS=blocks: this system is
 # smaller than the run that takes it by default) against an atomic for each

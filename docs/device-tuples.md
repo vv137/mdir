@@ -338,7 +338,7 @@ of its own, and frees them.
   the build of MDIR): a second way of making kernels, which the build does
   not have; the lowering already emits every kernel.
 
-## 11. The kernel of the tuples evaluated once: the sums of a block (D[tuple-block-sums])
+## 11. The kernel of the tuples evaluated once: the sums of a block (D283)
 
 Issue #408. Outside the deterministic mode a loop over tuples that may
 share particles evaluates each tuple once, a thread a tuple, and the loops

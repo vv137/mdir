@@ -81,7 +81,7 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
   return options;
 }
 /// The options of the sums of a block of the tuples evaluated once
-/// (D[tuple-block-sums]): `MDIR_TUPLE_SUMS=atomics` adds every value to its
+/// (D283): `MDIR_TUPLE_SUMS=atomics` adds every value to its
 /// destination with an atomic, as before; `=blocks` takes the sums of a
 /// block for a run of any size, which the tests of small systems need.
 static llvm::StringRef getTupleSumsOptions() {
@@ -183,7 +183,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        // (D268).
        << (std::getenv("MDIR_CHECK_PRUNING") ? "check-pruning=true " : "")
        // The sums of a block of the tuples evaluated once, off or for runs
-       // of any size, for comparing and for tests (D[tuple-block-sums]).
+       // of any size, for comparing and for tests (D283).
        << getTupleSumsOptions()
        << (control.fastMath && !control.deterministic ? "" : "contract=false")
        << "},"

@@ -1,4 +1,4 @@
-# The table of a block of the tuples evaluated once (D[tuple-block-sums])
+# The table of a block of the tuples evaluated once (D283)
 # under compute-sanitizer: the slots claimed by compare-and-swap, the
 # additions in block memory, and the barriers around them. This system is
 # smaller than the run that takes the table by default, so

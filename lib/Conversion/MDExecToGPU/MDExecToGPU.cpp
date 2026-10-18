@@ -240,7 +240,7 @@ public:
   /// Whether a kernel of loops over tuples evaluated once adds the values
   /// of the tuples of a block for each particle in block memory first, and
   /// adds each particle's sum to the destination once a block
-  /// (`tuple-block-sums`, D[tuple-block-sums]).
+  /// (`tuple-block-sums`, D283).
   bool tupleBlockSums = true;
   /// The fewest tuples of a run that take the sums of a block; a run of
   /// fewer keeps the atomics, chosen on the host by the count
@@ -510,7 +510,7 @@ private:
       function_ref<void(OpBuilder &, Value buffer, Value member, Value value)>;
   /// Launches a thread for each of `count` items of the loops `loops`, which
   /// evaluate each tuple once, as `emitItem` emits them, with the sums of a
-  /// block (D[tuple-block-sums]): what the tuples of a block add to a
+  /// block (D283): what the tuples of a block add to a
   /// particle is added in a table in block memory, keyed by the particle,
   /// and after a barrier each particle of the table is added to each
   /// destination of the loops once. Returns false, launching nothing, where

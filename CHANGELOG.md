@@ -551,7 +551,7 @@ format, or the outputs; every such change is listed under **Changed** or
   rounding of the atomics.
 
 - **The kernel of the bonded terms, the 1-4 pairs, and the excluded pairs
-  adds the values of a block in block memory first** (D[tuple-block-sums],
+  adds the values of a block in block memory first** (D283,
   #408, [docs/device-tuples.md](docs/device-tuples.md), Section 11): on a
   GPU, outside the deterministic mode, each particle that the tuples of a
   block touch is added to the forces once a block instead of once a

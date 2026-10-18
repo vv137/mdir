@@ -2,7 +2,7 @@
 // global sums, and adds to its destination evaluates each tuple once, a
 // thread for each tuple, and adds to the members with atomics: in f32 by
 // PTX's own reduction. With the sums of a block (tuple-block-sums, the
-// default, D[tuple-block-sums]) a thread adds to a table of the particles
+// default, D283) a thread adds to a table of the particles
 // of its block in block memory, which it finds by a compare-and-swap, or,
 // past a few slots, to the destination; after a barrier each particle of
 // the table is added to the destination once. A run of fewer tuples than

@@ -14,7 +14,7 @@ MLIR, compiled at run time (Section 3.6).
 | Over particles (`md_exec.particle_for`) | One a particle | Its own particle; global sums through partials per block, then a reduction in a fixed order |
 | Over pairs, the matrix | 16 lanes a row (`row-lanes`), owner computes | Its own particle, no atomics |
 | Over pairs, groups | A warp a block of 64 entries (Section 4.4) | Atomic additions for the entries, one per block for the group |
-| Over tuples that may share particles (bonds, angles, …) | A thread a tuple; with global sums, a thread a particle, the tuples $p, p+n, \dots$ evaluated once each (D103) | Atomic additions to the members; from 100,000 tuples, additions to a table of the particles of the block in block memory, then one atomic addition a particle a block (D[tuple-block-sums]); sums of its own tuples |
+| Over tuples that may share particles (bonds, angles, …) | A thread a tuple; with global sums, a thread a particle, the tuples $p, p+n, \dots$ evaluated once each (D103) | Atomic additions to the members; from 100,000 tuples, additions to a table of the particles of the block in block memory, then one atomic addition a particle a block (D283); sums of its own tuples |
 | Over disjoint tuples (constraints) | A thread a particle; the member at place 0 evaluates the tuple (D83) | Every member of its tuple, which no other thread writes |
 
 **Runs.** Consecutive loops that take the same positions and do not read
@@ -28,7 +28,7 @@ all their tuples, each thread finding its loop by the running totals of the
 tuples (D181); on JAC the five bonded kernels of a step
 become one. A run is lowered where its last loop is.
 
-**The sums of a block** (D[tuple-block-sums]). In that kernel the global
+**The sums of a block** (D283). In that kernel the global
 atomics, three for the force on each member of each tuple, were about
 70% of its time: on Cellulose it took 223 µs a step, and 65 µs with plain
 stores in their place (for timing, wrong forces). The tuples of a block

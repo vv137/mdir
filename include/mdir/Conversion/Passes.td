@@ -311,7 +311,7 @@ def ConvertMDExecToGPU
            "Whether a kernel of loops over tuples evaluated once adds the "
            "values of the tuples of a block for each particle in block "
            "memory, and each particle's sum to the destination with one "
-           "atomic a block (D[tuple-block-sums]); otherwise every value is "
+           "atomic a block (D283); otherwise every value is "
            "an atomic addition to the destination">,
     Option<"tupleBlockLeast", "tuple-block-least", "int64_t",
            /*default=*/"100000",

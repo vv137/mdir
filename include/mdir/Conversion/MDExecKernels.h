@@ -264,7 +264,7 @@ void emitIntegrationThread(
 ///
 /// `add`, if given, takes the value for destination `out` of the member
 /// `member` in place of the atomic addition to the destination (the sums of
-/// a block, D[tuple-block-sums]).
+/// a block, D283).
 using AddToMember = llvm::function_ref<void(mlir::OpBuilder &, unsigned out,
                                             mlir::Value member,
                                             mlir::Value value)>;

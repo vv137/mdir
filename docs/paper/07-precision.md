@@ -56,7 +56,7 @@ equilibrium values, phases) are stored in f64 and narrowed to the type of
 the kernel where they are loaded. Stored in f32 they would give the same
 bits in mixed precision, and half the bytes: measured, about 4 µs of a
 1.36 ms step on Cellulose, which did not pay for a second type of the
-arguments of every entry (D[tuple-block-sums]).
+arguments of every entry (D283).
 
 **Sums.** Global sums (energies, virials, the kinetic energy) are
 accumulated in f64, in a fixed order, from partial sums in the type of

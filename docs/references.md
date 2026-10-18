@@ -625,7 +625,7 @@ Used for: Section 6.4, hashing: the multiplicative hash and the search
 of the next slots in turn (linear probing) of the table of the particles
 of a block, in which the kernel of the tuples evaluated once adds the
 values of a block before it adds them to the destinations
-(D[tuple-block-sums]).
+(D283).
 
 ### Krautler2001
 
