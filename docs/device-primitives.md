@@ -13,7 +13,7 @@ switches ([principles.md](principles.md), principles 2 and 3; issue #415).
 
 | Primitive | CUB's counterpart | Issue | Status | Decision |
 |---|---|---|---|---|
-| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. Step 1 put both strategies on one attribute and one pass. Fixed point in the deterministic mode (step 2) and further sites (step 3) are planned | D282 (`tile`), D283 (`hash`), D[privatize-scatter] (the attribute and the pass) |
+| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. Step 1 shares the attribute, the pass, and the preconditions; the code is not shared: each site keeps its own kernel (the template's tile, the generated table) and its own emitter of the addition in block memory (Section 2.6). Fixed point in the deterministic mode (step 2) and further sites (step 3) are planned | D282 (`tile`), D283 (`hash`), D[privatize-scatter] (the attribute and the pass) |
 | Sorted scatter: runs reduced without atomics | `BlockHistogram`, sort specialization; `BlockDiscontinuity` | #417 | Planned. `sorted` is reserved in the attribute and refused | — |
 | Warp-aggregated atomics | `WarpReduce`, matching by key | #418 | Planned | — |
 | Vectorized and transposed gathers | `BlockLoad`, `WarpLoad`, `BlockExchange` | #419 | Next, on the gathering of PME (tiled gathering at orders 6 and 8 is #411) | — |
@@ -167,9 +167,12 @@ lowering's refusals.
 | The spreading of PME on a device: the charges, the coefficients of LJ-PME (D162), the prolate kernel (D266), orthorhombic and triclinic cells | `tile(8)` | `mdrt_gpu_pme_bin<E>`, `mdrt_gpu_pme_spread_tiles<E>` of the template; the addition to the tile is a relaxed `atomicrmw fadd` at the scope of the block (`PME_SHARED_ADD_E`, `MDExecKernels.cpp`) | [pme-m1.md](pme-m1.md#33-spreading-through-tiles), Section 3.3 |
 | The kernel of the tuples evaluated once: the bonded terms, the 1-4 pairs, the excluded pairs of the reciprocal sum | `hash(512, 8, 100000)` for a run with dihedrals | `launchTupleBlocks` in `MDExecToGPU.cpp`; `red.shared.add` | [device-tuples.md](device-tuples.md), Section 11 |
 
-The two sites emit their additions in block memory differently. One
-emitter for both would change the kernels, so step 1 left them as they
-were.
+What the two sites share today is the attribute, the pass, and the
+functions of the preconditions, not code: each has its own kernel, and
+they emit their additions in block memory differently, a relaxed
+`atomicrmw fadd` at the scope of the block in the template and PTX's
+`red.shared.add` in the table. One emitter for both would change the
+kernels, so step 1 left them as they were.
 
 ### 2.7 Measured effect
 
