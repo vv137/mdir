@@ -562,6 +562,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **Documented: an L2 access policy window, measured and not adopted**
+  (#434, [docs/device-primitives.md §3](docs/device-primitives.md#3-the-l2-access-policy-window-measured-not-adopted)):
+  a persisting window over the outer or inner list of the groups, the
+  frames of the positions, or the buffer most launches take gave no gain
+  on the Amber suite on an RTX 4090 or an RTX PRO 6000, and made Cellulose
+  and STMV up to 14% slower on the RTX 4090. No code, key, or default
+  changes.
+
 - **PME on a device spreads through tiles of the memory of a block**
   (D282, #336,
   [docs/pme-m1.md §3.3](docs/pme-m1.md#33-spreading-through-tiles)): the
