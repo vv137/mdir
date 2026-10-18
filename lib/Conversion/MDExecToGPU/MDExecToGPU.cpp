@@ -3107,6 +3107,11 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     return op.emitOpError()
            << "writes not every value of a destination once, which it "
               "cannot overwrite";
+  if (deterministic && op.getConflict() == md_exec::Conflict::Atomic)
+    return op.emitOpError()
+           << "adds at the neighbors with floating-point atomics, whose "
+              "order depends on the threads; the deterministic mode (D84) "
+              "takes the policy (directed, owner_only)";
 
   Value positions = op.getPositions();
   Value size = createSize(builder, loc, positions);
