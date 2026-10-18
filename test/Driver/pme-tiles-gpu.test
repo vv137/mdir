@@ -1,13 +1,21 @@
 # The spreading of particle mesh Ewald through tiles of bins on a device
 # (D282) against the spreading of before (MDIR_PME_SPREAD=global:
 # the bricks of D108 for order 4 in f32, atomics into the grid otherwise),
-# one step of the OPC box (1,570 sites; the oxygens have no charge, so the
-# particles are binned from the list of D262): the forces of the checkpoint
-# within the rounding of the atomics, relative rms 2e-6 in mixed precision
-# (2.5e-7 measured; two runs of `global` differ by about 2e-7) and 1e-11 in
-# double, and the numbers of the rows of energies within 1e-5 and 1e-11 of
-# the largest of their columns (1.6e-6 measured at order 6 in mixed
-# precision). The B-splines of orders 4 (bins of 4, 8,
+# one step of 10^-6 ps of the OPC box (1,570 sites; the oxygens have no
+# charge, so the particles are binned from the list of D262): the forces of
+# the checkpoint within the rounding of the atomics, relative rms 2e-6 in
+# mixed precision (0.7 to 1.2e-7 measured over five repeats; two runs of
+# `global` differ by 0.6 to 1.1e-7) and 1e-11 in double (5.2e-16 at order
+# 4, 4.9e-13 for the prolate kernel), and the numbers of the rows of
+# energies within 1e-5 and 1e-11 of the largest of their columns (1.8e-6
+# measured, with LJ-PME, in mixed precision). The step is that short so
+# that every run evaluates the forces of the checkpoint at the same f32
+# positions: the positions after it differ between runs by 4e-16 nm at
+# most. After a step of 0.001 ps they differed by about 1e-12 nm, from the
+# rounding of the forces of step 0, and the y of atom 4 of the dipeptide,
+# 2e-12 nm from a midpoint between two f32 numbers, rounded to the other
+# one in about 1 run of 400 with `tiles8` at order 8: its bonded forces
+# then changed by 0.1 kJ/mol/nm, a relative rms of 2.46e-6 (#427). The B-splines of orders 4 (bins of 4, 8,
 # and 16 points), 6, and 8, the prolate kernel of 6 points (D266), and the
 # rhombic dodecahedron of prolate-triclinic.test with the Gaussian, whose
 # cell the tiles do not depend on, the box made 200 Å long, where particles
@@ -28,7 +36,7 @@
 # RUN: sed 's/PRECISION/MIXED/; s/^order = ORDER/kernel = "PROLATE"/' %t/base.toml > %t/mp.toml
 # RUN: sed 's/PRECISION/DOUBLE/; s/^order = ORDER/kernel = "PROLATE"/' %t/base.toml > %t/dp.toml
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/prolate-triclinic.test | sed '1d;$d' \
-# RUN:   | sed 's/^kernel = "PROLATE"/order = 4/; s/^target    = "CPU"/target    = "GPU"/; s/^precision = "DOUBLE"/precision = "MIXED"/; s/^steps      = 0/steps = 1/; s/^energy_interval = 0/energy_interval = 1\ncheckpoint = "run.h5"\ncheckpoint_interval = 1/' > %t/tm.toml
+# RUN:   | sed 's/^kernel = "PROLATE"/order = 4/; s/^target    = "CPU"/target    = "GPU"/; s/^precision = "DOUBLE"/precision = "MIXED"/; s/^time_step  = 0.0005/time_step = 0.000001/; s/^steps      = 0/steps = 1/; s/^energy_interval = 0/energy_interval = 1\ncheckpoint = "run.h5"\ncheckpoint_interval = 1/' > %t/tm.toml
 # RUN: sed 's/^precision = "MIXED"/precision = "MIXED"\ndeterministic = true/' %t/m4.toml > %t/det.toml
 # RUN: sed 's/^electrostatics    = "PME"/electrostatics    = "PME"\nlennard_jones = "PME"/' %t/m4.toml > %t/lj.toml
 # The box made 200 Å long in z with the waters in 1.6 to 23.5 Å of it, on a
@@ -109,7 +117,7 @@ order = ORDER
 
 [dynamics]
 integrator = "VELOCITY_VERLET"
-time_step  = 0.001
+time_step  = 0.000001
 steps      = 1
 
 [ensemble]

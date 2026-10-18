@@ -5,7 +5,9 @@
 # mixed precision, over 5 steps of the OPC box of pme-tiles-gpu.test: the
 # B-splines of order 4 (from the list of D262) in the box made 200 Å long
 # in z, where many particles overflow the runs of their bins, and the
-# prolate kernel (D266) in the box as it is.
+# prolate kernel (D266) in the box as it is; and the B-splines of order 8
+# in the box as it is, with the spreading of before (`global`: atomics into
+# the grid) and through tiles, under synccheck as well (#427).
 #
 # REQUIRES: cuda, compute-sanitizer, hdf5
 #
@@ -19,11 +21,22 @@
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/pme-tiles-gpu.test | sed '1d;$d' \
 # RUN:   | sed -e 's/PRECISION/MIXED/' -e 's/^steps .*/steps = 5/' -e '/^checkpoint/d' \
 # RUN:         -e 's/^order = ORDER/kernel = "PROLATE"/' > %t/prolate.toml
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/pme-tiles-gpu.test | sed '1d;$d' \
+# RUN:   | sed -e 's/PRECISION/MIXED/' -e 's/^steps .*/steps = 5/' -e '/^checkpoint/d' \
+# RUN:         -e 's/^order = ORDER/order = 8/' > %t/m8.toml
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run slab.toml 2>&1 | FileCheck %s
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run slab.toml 2>&1 | FileCheck %s
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run slab.toml 2>&1 | FileCheck %s --check-prefix=RACE
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run prolate.toml 2>&1 | FileCheck %s
 # RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run prolate.toml 2>&1 | FileCheck %s --check-prefix=RACE
+# RUN: cd %t && env MDIR_PME_SPREAD=global %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run m8.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_PME_SPREAD=global %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run m8.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_PME_SPREAD=global %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run m8.toml 2>&1 | FileCheck %s --check-prefix=RACE
+# RUN: cd %t && env MDIR_PME_SPREAD=global %compute_sanitizer --tool synccheck --error-exitcode 1 mdir run m8.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run m8.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run m8.toml 2>&1 | FileCheck %s
+# RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run m8.toml 2>&1 | FileCheck %s --check-prefix=RACE
+# RUN: cd %t && env MDIR_PME_SPREAD=tiles8 %compute_sanitizer --tool synccheck --error-exitcode 1 mdir run m8.toml 2>&1 | FileCheck %s
 
 # CHECK: ERROR SUMMARY: 0 errors
 # RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
