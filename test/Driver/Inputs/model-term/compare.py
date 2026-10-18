@@ -1,5 +1,7 @@
 """Compares an evaluation of the model term (D270) with the
-reference of NequIP's calculator, within the tolerances of
+reference of the model's package (the `nequip` package's calculator for
+ML1; mace-torch's and SchNetPack's for ML4's baselines, written by
+water-box.py --kind), within the tolerances of
 docs/metatomic-ml1.md, Section 7 (float64 inputs; ten times them for
 float32), in kJ/mol and nm.
 

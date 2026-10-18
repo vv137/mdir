@@ -184,6 +184,19 @@ then differed by up to $7.6 \times 10^{-4}$ in the forces of MACE in
 `double`, where the evaluations agree to $10^{-11}$ in the same cell. The
 script now rounds the cell too; the numbers above are with it.
 
+**The float32 copy of MACE-OFF23** (`mace-to-metatomic.py --dtype float32`,
+the weights cast as mace-torch's `default_dtype="float32"` casts them),
+which Sections 2.2 and 2.3 measure beside the float64 model, is not the
+trained model but its rounding. Against the float64 references above, on
+the same boxes, devices, and modes, it differs by up to 0.76 kJ/mol in the
+energy ($1.5 \times 10^{-8}$ of $5.1 \times 10^{7}$, most of which is the
+reference energies of the elements, which float32 rounds), 0.12 kJ/mol/nm in
+the forces ($3.3 \times 10^{-5}$ of the largest), and 0.059 kJ/mol in the
+virial ($4.8 \times 10^{-6}$ of the largest), the same on both devices and in
+both modes. It is measured for memory and time, as the precision a user of
+mace-torch's default for MACE-MP would run; it is not a validated
+replacement of the float64 model.
+
 ### 2.2 Peak device memory against pairs
 
 Liquid water (29.9 Å³ per molecule, `model-sweep.py`), from 64 waters
