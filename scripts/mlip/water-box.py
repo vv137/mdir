@@ -206,6 +206,11 @@ def main():
     positions = wrap(positions, cell)
     # The coordinates are written to 1e-7 nm; the reference takes them so.
     positions = np.round(positions / 10.0, 7) * 10.0
+    # So is the cell: an edge of liquid water is not a multiple of 1e-7 nm,
+    # and the reference in the unrounded cell differed from MDIR's evaluation
+    # in the written one by up to 7.6e-4 kJ/mol/nm (MACE-OFF23 in float64, 64
+    # waters), where the evaluations agree to 1e-11 in the same cell.
+    cell = np.round(cell / 10.0, 7) * 10.0
     velocities = None
     if args.temperature > 0:
         # Maxwell-Boltzmann in nm/ps: sqrt(kT/m), kT in kJ/mol, m in amu.

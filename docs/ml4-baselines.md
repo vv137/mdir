@@ -7,8 +7,8 @@ PaiNN and one pretrained MACE, each pinned, run as one whole-system call
 through the existing model term (D270, D277), validated against its own
 package's calculator, and measured in peak device memory and time per pair.
 These are the numbers that the staged models of steps 4 and 5 are compared
-with. Section 1 is the survey of artifacts and the recommendation; the
-baselines follow when the artifacts are ruled.
+with. Section 1 is the survey of artifacts and the ruling; Section 2 the
+baselines: their validation, and their memory and time against size.
 
 ## 1. Artifacts
 
@@ -129,3 +129,145 @@ modules, without changing a weight.
   committed. The tests of the model term take the downloaded directory and
   are unsupported without it, as those of ML1 are without the Allegro
   package.
+
+## 2. The opaque baselines
+
+Each artifact runs as one whole-system call of the model term
+(`backend = "METATOMIC"`, MDIR's exact pair list of D277, the plugin's
+autograd for the forces and the virial). torch 2.14.1, mace-torch 0.3.16,
+schnetpack 2.2.0, metatomic-torch 0.1.19 (`ml4-requirements.lock`); the
+plugin built against the same torch. RTX 4090 (`MDIR_GPU=RTX4090`, 24 GB)
+and RTX PRO 6000 Blackwell (`MDIR_GPU=RTX6000`, 96 GB). Units: kJ/mol and
+nm.
+
+### 2.1 Validation against the packages' calculators
+
+The systems, written by `water-box.py`: 8 waters in a 6.2 Å box (24 atoms,
+narrower than $2 r_c$ = 10 Å, so that the list takes several images of each
+atom), 27 waters 5 Å apart in a cubic and in a triclinic 15 Å cell (81
+atoms), and liquid water of 64 and 256 waters (192 and 768 atoms). The
+reference of each is the package's ASE calculator on the same device
+(`water-box.py --kind mace`, `MACECalculator` in float64; `--kind painn`,
+SchNetPack's `SpkCalculator` in float32 with its `Strain` input); MDIR's
+evaluation is the Python model (`check-model-term.py`), in `double` and
+`mixed`. Five evaluations of one configuration by either calculator are
+identical, so the differences below are MDIR's.
+
+Largest differences over the five systems and both devices:
+
+| Model | Mode | $\lvert\Delta E\rvert$ | max $\lvert\Delta F\rvert$ | max $\lvert\Delta W\rvert$ | Tolerance ($E$, $F$, $W$) |
+|---|---|---|---|---|---|
+| MACE-OFF23 medium, float64 | double | $1.5 \times 10^{-7}$ of $5.1 \times 10^{7}$ | $5.4 \times 10^{-12}$ of 3,561 | $7.6 \times 10^{-11}$ of 12,326 | $4.8 \times 10^{-3}$, $1.9 \times 10^{-2}$, $4.8 \times 10^{-3}$ |
+| | mixed | $1.5 \times 10^{-7}$ | $1.2 \times 10^{-4}$ | $7.3 \times 10^{-11}$ | the same |
+| nablaDFT PaiNN, float32 | double | $4.1 \times 10^{-2}$ of $2.4 \times 10^{5}$ | $1.3 \times 10^{-1}$ of 9,424 | $7.1 \times 10^{-2}$ of 12,540 | $10^{-6}\lvert E\rvert$, $3 \times 10^{-5}\max\lvert F\rvert$, $10^{-5}\max\lvert W\rvert$ |
+| | mixed | $4.1 \times 10^{-2}$ | $1.2 \times 10^{-1}$ | $7.7 \times 10^{-2}$ | the same |
+
+The tolerances of MACE are those of ML1 for float64 inputs
+([metatomic-ml1.md](metatomic-ml1.md#7-validation), Section 7). In
+`double` MACE is the package's evaluation to the rounding of float64 (the
+sums of its scatters in MDIR's order of the pairs); in `mixed` the
+forces are added into MDIR's forces of f32, whose rounding is the
+difference ($1.2 \times 10^{-4}$ of 3,561 is $3 \times 10^{-8}$ of it). PaiNN's
+network is float32, and its differences are those of float32 sums in
+another order; they grow with the system, so its tolerances are relative,
+and every case is within them by a factor of 1.6 or more (the largest relative
+differences: energy $1.7 \times 10^{-7}$, forces $1.3 \times 10^{-5}$, virial
+$6.2 \times 10^{-6}$, all at 768 atoms). On the smallest box, which the test
+`model-term-ml4-gpu.test` runs, the PaiNN differences are within ten times
+ML1's absolute tolerances ($1.1 \times 10^{-3}$, $1.2 \times 10^{-2}$, $2.4
+\times 10^{-3}$).
+
+The reference must take the coordinates as MDIR reads them: `water-box.py`
+rounded the positions to the $10^{-7}$ nm of the `.gro` file but not the
+cell, and the liquid boxes, whose edges are not multiples of $10^{-7}$ nm,
+then differed by up to $7.6 \times 10^{-4}$ in the forces of MACE in
+`double`, where the evaluations agree to $10^{-11}$ in the same cell. The
+script now rounds the cell too; the numbers above are with it.
+
+### 2.2 Peak device memory against pairs
+
+Liquid water (29.9 Å³ per molecule, `model-sweep.py`), from 64 waters
+doubling until a size fails. MDIR: `mdir run`, `mixed`, 40 steps of NVE at
+0.5 fs, the peak of the plugin's allocator over the run (torch's count),
+which is the model's: the model term's own buffers (the positions, the
+forces, the pair list's slots of 36 bytes, D277) are MDIR's and small
+beside it. The package: its calculator's energy, forces, and stress in
+Python, `torch.cuda.max_memory_allocated` above the model's weights.
+"Per pair" is the peak over the directed pairs within $r_c$.
+
+| Model | Device | Per pair, MDIR | Per pair, package | Largest that ran (MDIR) | Next size |
+|---|---|---|---|---|---|
+| MACE-OFF23 medium, float64 | RTX 4090 | 163 to 168 kB | 160 to 163 kB | 1,536 atoms, 83,422 pairs: 12.7 GiB | 3,072 atoms fail in both (one allocation of 6.22 GiB) |
+| | RTX PRO 6000 | 163 to 172 kB | 160 to 167 kB | 6,144 atoms, 330,250 pairs: 50.2 GiB | 12,288 atoms fail in both (25.4 GiB at once) |
+| MACE-OFF23 medium, float32 copy | RTX 4090 | 82 to 84 kB | 80 to 82 kB | 3,072 atoms, 163,284 pairs: 12.4 GiB | 6,144 fail in both (6.28 GiB) |
+| | RTX PRO 6000 | 82 to 89 kB | 80 to 87 kB | 12,288 atoms, 666,636 pairs: 50.6 GiB | 24,576 fail in both (25.0 GiB) |
+| nablaDFT PaiNN, float32 | RTX 4090 | 61 to 63 kB | 62 to 65 kB | 6,144 atoms, 330,176 pairs: 18.8 GiB | 12,288 fail in both |
+| | RTX PRO 6000 | 61 to 68 kB | 61.5 to 70 kB | 24,576 atoms, 1,313,206 pairs: 74.8 GiB | 49,152 fail in both |
+
+The peak grows in proportion to the pairs on both devices (the highest
+bytes per pair are those of the smallest box, where the weights and the
+fixed workspace weigh most), and the opaque call takes what the package
+takes, within 3%: MDIR adds nothing to the model's memory, and saves
+nothing either. The limit is the same in both, a size apart on each
+device. MACE's failing allocation is one tensor of $4.1 \times 10^4$ bytes
+per pair in float64 (5,120 values; 6.22 GiB at 163,128 pairs, 25.4 GiB at
+665,312), and half that in float32: a per-pair tensor of the interaction,
+before its sum over the neighbors, which the opaque call materializes for
+every pair at once. Where its bytes go in detail was not traced.
+
+Against ML1's Allegro-OAM-L (Section 4.1 of metatomic-ml1.md), the eager
+baselines per pair are: Allegro 1.22 MB (TorchScript) and 132 kB
+(AOTInductor); MACE-OFF23 medium 164 kB in float64 and 82 kB in float32;
+PaiNN 61 kB. A message-passing model cannot be cut into chunks of centers
+as Allegro can (its atom energies depend on atoms up to $L\,r_c$ away), so
+these per-pair peaks bound the system on one GPU: about 1,500 atoms of
+water for MACE in float64 on 24 GB, 6,000 on 96 GB; 3,000 and 12,000 in
+float32; 6,000 and 24,000 for PaiNN.
+
+### 2.3 Time
+
+The time per step of the second half of each run of `mdir run` (without
+the first evaluations, which TorchScript's profiling executor specializes);
+the package's shortest of three evaluations after a warm-up. The neighbor
+structures of these runs, started hot from an unrelaxed liquid with the
+0.5 Å skin of the tests, were rebuilt every step; MDIR's list costs about
+1 ms a step (D277), inside the step times below.
+
+| Model | Device | µs per pair, MDIR (step) | µs per pair, package | ms per step, MDIR: 192 atoms; 1,536; the largest | Atom-steps per s at 1,536 atoms |
+|---|---|---|---|---|---|
+| MACE-OFF23 medium, float64 | RTX 4090 | 11.5 to 12.3 | 11.5 to 12.2 | 124; 962 | 1,600 |
+| | RTX PRO 6000 | 9.0 to 9.8 | 9.4 to 10.9 | 99; 747; 3,012 at 6,144 | 2,060 |
+| MACE-OFF23 medium, float32 copy | RTX 4090 | 1.9 to 2.1 | 2.1 to 3.5 | 21.6; 158; 309 at 3,072 | 9,700 |
+| | RTX PRO 6000 | 1.2 to 1.4 | 1.5 to 2.1 | 14.4; 101; 811 at 12,288 | 15,300 |
+| nablaDFT PaiNN, float32 | RTX 4090 | 0.50 to 0.79 | 0.71 to 0.88 (2.7 at 192 atoms) | 8.2; 44.4; 167 at 6,144 | 34,600 |
+| | RTX PRO 6000 | 0.32 to 0.79 | 0.50 to 0.62 (2.1 at 192 atoms) | 8.3; 28.5; 419 at 24,576 | 53,900 |
+
+At 0.5 fs, a step of 1,536 atoms is 0.045 ns/day for MACE in float64 on the
+RTX 4090 (0.058 on the RTX PRO 6000), 0.27 (0.43) in float32, and 0.97
+(1.5) for PaiNN. The opaque call runs at the package's speed: the time
+per pair of MDIR's step and of the package's evaluation agree within the
+scatter of the measurements for MACE, and MDIR's step is shorter than the
+package's evaluation for PaiNN and for MACE in float32 (the package builds
+its neighbor list on the host and copies it each time). MACE in float64 is
+6 to 8 times slower than in float32 on both devices, which have little
+float64 throughput. The time per pair is flat from about 40,000 pairs
+up; below, the fixed cost of a call (a few milliseconds) dominates.
+
+### 2.4 What the baselines fix for steps 3 to 5
+
+- **Memory is the bound.** On one GPU, the largest whole system of each
+  model is set by one per-pair intermediate that the eager call holds for
+  every pair at once; MDIR's opaque call reproduces the package's peak to
+  3%. Steps 4 and 5 are measured against the per-pair peaks of Section 2.2
+  at the same sizes and devices, with the same artifacts.
+- **Chunks of centers do not apply.** The artifacts declare no
+  `mdir::local_centers`: with $L$ layers, the energy of an atom depends on
+  its neighbors' features of the layer before, which depend on theirs, so
+  by induction on the layers on every atom within $L\,r_c$ (30 Å for this
+  PaiNN, 10 Å for MACE-OFF23). The opaque route to larger systems is
+  therefore a halo of $L\,r_c$ around each chunk, which recomputes most of
+  the system; ML4's stages make the edge stage of each layer a loop over
+  pairs that MDIR can tile, store, or recompute.
+- **The references stand.** Both wrappers reproduce their packages (MACE to
+  $10^{-11}$ in float64, PaiNN at float32's rounding), so a staged model is
+  compared with the opaque call, and through it with the package.

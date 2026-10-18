@@ -12,6 +12,24 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **Baselines of ML4: a pretrained PaiNN and a pretrained MACE through the
+  model term** (D[ml4-baselines], #377, PR #436,
+  [docs/ml4-baselines.md](docs/ml4-baselines.md)):
+  `scripts/mlip/fetch-ml4-artifacts.py` fetches nablaDFT's PaiNN (MIT) and
+  MACE-OFF23 medium (Academic Software License: academic, non-commercial
+  use), or MACE-MP-0 medium (MIT), each checked against its pinned SHA-256;
+  `painn-to-metatomic.py` and `mace-to-metatomic.py` make metatomic
+  artifacts of them for `backend = "METATOMIC"`, without changing a weight;
+  `model-sweep.py` measures peak device memory and time against size.
+  Validated against the packages' calculators; 164 kB per pair for
+  MACE-OFF23 in float64 (82 kB in float32) and 61 kB for PaiNN, as the
+  packages take. The tests (`model-term-ml4-gpu.test`) take the fetched
+  files from `MDIR_ML4_ARTIFACTS` and an environment of
+  `scripts/mlip/ml4-requirements.lock` from `MDIR_ML4_PYTHON`, and are
+  unsupported without them. No key of the control file changes.
+  `water-box.py` now rounds the cell of its reference to the $10^{-7}$ nm
+  of the `.gro` file, as it rounded the positions.
+
 - **An exact automatic choice of the skins of the neighbor lists**
   (D281, #406,
   [docs/neighbors-m0.md](docs/neighbors-m0.md#6-the-choice-of-the-skins)):
