@@ -18,9 +18,10 @@ cutoff, a reaction field (D140), or generalized Born (D144, D152), and the
 dispersion may be summed by particle mesh Ewald as well (D162); there is no
 polarizable model and no learned potential. Terms over triplets (D160) run
 on the CPU only.
-The distributed lowering (`md_dist`), the joint planner that would choose
-structures and layouts, and the `mlff` and `ensemble` dialects of the
-architecture are designs, not code.
+The distributed lowering (`md_dist`) runs its domains in one process
+only, on the CPU or one GPU (D275, D[ml2-exec]); the joint planner that
+would choose structures and layouts, and the `mlff` and `ensemble`
+dialects of the architecture are designs, not code.
 
 **The deterministic mode does not take groups.** The loop over groups adds
 with floating-point atomics; in the deterministic mode a run keeps the
@@ -231,6 +232,16 @@ $-(\bar\rho_i + \bar\rho_j)f'(r_{ij})\,\mathbf d_{ij}/r_{ij}$, needs $\bar\rho$ 
 both particles, so the derivative copies $\bar\rho$ to the ghosts between
 the pass of the density and that of the forces, and the verifier rejects a
 copy of any other version of it.
+The loops of each domain then run through the execution level of one
+domain (D[ml2-exec]): the rows of its neighbor list are those of its owned
+particles $O_d$ and their entries any of its rows, owned or in $\Gamma_d$;
+displacements are plain differences, since the ghosts carry their images;
+and a pair computed once adds its term at both of its rows, the part at
+the ghosts returned to the owners by $G^\mathsf T$. The existing search, in
+the minimum image, finds a superset of these pairs, since the
+minimum-image distance of two rows never exceeds their plain distance,
+and the loops are those of one domain on the CPU and, one domain after
+another, on one GPU.
 Topology across domains follows, with the disjoint union of the
 constraints as the unit of ownership (D83).
 

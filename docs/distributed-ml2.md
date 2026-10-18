@@ -10,7 +10,9 @@ design; Section 12 is what the first PR builds and its validation;
 Section 13 records the maintainer's rulings; Section 14 is the second part,
 `md-distribute` and the derivative rules of $G$ and $G^\mathsf T$
 (D276); Section 15 is the third part, the derivative through
-fields computed from the positions, EAM on domains (D279).
+fields computed from the positions, EAM on domains (D279). Section 7.2 is
+the path of a domain's work through `md_exec`, on the CPU and on a GPU
+(D[ml2-exec]).
 
 ## 1. Scope
 
@@ -44,12 +46,12 @@ The vocabulary leaves room for them (Section 10).
 | Layer | What it has today | What distribution needs from it |
 |---|---|---|
 | `md` (semantic) | Particle sets, fields `!md.field<@set, k x T>` of the whole set, relations `!md.relation`, sums and gathers over pairs and tuples with kernels, `md.evaluate`, and semantic differentiation (`md-differentiate`, D2, D182, D183), which already carries adjoints of intermediate fields (an EAM density is a gather, its adjoint a field) | Unchanged. A global program stays the specification and the one-domain oracle |
-| `md_exec` (execution) | `pair_for` over a neighbor structure, with the minimum image of a cell, over all rows of the positions; `particle_for`; `tuple_for`; neighbor builds and validity (`ExposeValidity`, D-series of M0); storage assignment | A pair loop over owned centers with neighbors among owned and ghost rows, in coordinates that carry their images (Section 7.2) |
+| `md_exec` (execution) | `pair_for` over a neighbor structure, with the minimum image of a cell, over all rows of the positions; `particle_for`; `tuple_for`; neighbor builds and validity (`ExposeValidity`, D-series of M0); storage assignment | A pair loop over owned centers with neighbors among owned and ghost rows, in coordinates that carry their images; built: `centers`, `images(explicit)`, and the policy `(directed, atomic)` (Section 7.2) |
 | `mdrt` (runtime ABI) | Neighbor structures, cells, permutations; `!mdrt.event` declared without semantics | The transport ABI of Section 9 |
 | `dyn` | Kick and drift, programs of one step | Migration between steps (Section 8) |
 | Runtime | `libmdrt` (host), `libmdrt_cuda` | `mdrt_dist`, the in-process transport |
 
-Nothing distributed is implemented. Architecture Section 8.1 sketched
+Before stage 1 nothing distributed was implemented. Architecture Section 8.1 sketched
 `md_dist` with `forward_halo` and `reverse_accumulate`; the closed
 prototype (#32, #34, #36, #39, #42) explored contracts, a C++ MPI
 executable, a Cartesian grid, asynchronous halos, and migration outside
@@ -422,7 +424,12 @@ and `md_exec.pair_for` take `centers(%n)`: the first $n$ rows of the set
 are the centers, the rows of the list are those of the centers, and its
 entries are any rows of the set. A loop updates a destination at the
 centers (and at the neighbors, below); the other rows keep what they hold.
-On a domain $n = \lvert O_d\rvert$.
+On a domain $n = \lvert O_d\rvert$. On the CPU the build searches the cells
+of the centers only (`@mdrt.build_neighbors_matrix_centers`, a variant of
+the template added only to a module that builds with `centers`, so that no
+other module changes); on a device the build searches every row, and the
+loop's places in the order of the cells skip the rows that are not
+centers.
 
 *Explicit images.* With `images(explicit)` a loop takes the displacement
 $\mathbf d = \mathbf x_i - \mathbf x_k$ as a plain difference, since ghosts
@@ -434,24 +441,32 @@ takes the minimum image, finds a superset of these pairs: the
 minimum-image distance of two rows never exceeds their plain distance. The
 loop's test of the cutoff on the plain displacement removes the rest. A
 ghost and its source wrap onto one point and list each other and each
-other's neighbors, so the rows are longer than they need to be; a search
-over the box of the local rows that does not wrap is an optimization for
-later.
+other's neighbors, so the rows are longer than they need to be (measured
+in Section 7.3); a search over the box of the local rows that does not
+wrap is an optimization for later. Such a structure is a matrix, leaves
+out no pairs (exclusions across domains are the topology of stage 2), and
+is built at every refresh (the policy `always`): the skin test over
+explicit images comes with migration (Section 8).
 
 *Writes at the neighbor.* `pair_for` with the policy
 `(directed, atomic)` adds, for every entry $(i, k)$ of a center $i$, the
 kernel's value at $i$ and $\sigma$ times it at $k$ (from `exchange`, which
-must be `symmetric` or `antisymmetric`, as for `(unique, atomic)`), with an
-atomic addition at $k$. This is the two-ended `gather_pairs`: its owned
-and ghost partial results are the prefix and the tail of one destination
-over the local rows. Over a directed relation the kernel is scaled by one
-half (Section 4.6).
+must be `symmetric` or `antisymmetric`, as for `(unique, atomic)`). Since
+other rows add to a row at their neighbors while it adds its own, both
+additions are atomic, on a device and on the host (`memref.atomic_rmw`),
+and a destination of such a loop, or of a loop over centers, starts from
+zeros and is never overwritten (`md-exec-assign-storage`). This is the
+two-ended `gather_pairs`: its owned and ghost partial results are the
+prefix and the tail of one destination over the local rows, and
+`halo_sum` returns the tail to the owners ($G^\mathsf T$). Over a directed
+relation the kernel is scaled by one half (Section 4.6).
 
 *The unique traversal* needs no list of its own: the list is the directed
 one, and the kernel's value is selected only where
 $\mathrm{id}(i) < \mathrm{id}(s(k))$, with the identities of the local
-rows given as a field of `i64` in `ins`. Every pair is then visited twice
-and computed once; a half list built by identity is #391's.
+rows given as a field of `i64` in `ins`. Every pair is then visited, and
+its kernel evaluated, at both of its rows of a domain, and taken at one; a
+half list built by identity is #391's.
 
 *Transfers.* Distributed values keep the storage of the reference executor
 and the calls of `runtime/mdrt_dist.c` (partition, halo, $G$, $G^\mathsf T$,
@@ -464,14 +479,135 @@ transport (order 2) sends and receives; there a rank holds its own rows
 only.
 
 *Order.* The domains are unrolled: for every op of `md_dist`, the work of
-domain 0, then 1, and so on, as in Section 6, so that the results are the
-same to the bit from run to run for a fixed grid. The code of one domain is
+domain 0, then 1, and so on, as in Section 6. The code of one domain is
 emitted from the domain's number; an MPI rank emits it once, for its own.
+On one thread of the host the results are the same to the bit from run to
+run for a fixed grid. The additions at the neighbors are in no fixed order
+on a device or under OpenMP, and the deterministic mode of the device
+lowering (D84) refuses the policy `(directed, atomic)`; the directed
+traversal after `md-dist-owner-computes` writes at the centers alone and
+keeps it.
 
-What the pass refuses, besides what the reference executor refuses (a cell
-that is not orthorhombic, fields not of `f64`): `sum_particles rows(ghost)`
-(the inner product of the adjoint test, which the reference executor
-keeps), and a value of `md_dist` handed to another dialect.
+*The passes of `md_exec`.* Those that rebuild a loop or a structure carry
+`centers` and `images` over (`md-exec-fuse-loops`, which fuses two loops
+only with the same centers and images; `md-exec-accumulate-destinations`;
+`md-exec-assign-storage`), and the lowerings to loops and to a device
+learn them. `md-exec-reuse-neighbors` leaves a structure with either where
+it is, built at every evaluation; `md-exec-choose-neighbors` keeps it a
+matrix, since a structure of groups (D89) takes every row as a center in
+the minimum image; and a device lowers a loop over the rows of a domain on
+its own, not in a fused run of loops over rows. The verifier refuses
+`centers` or `images(explicit)` on a structure of groups, with exclusions,
+or refreshed with another policy than `always` or with `prune_skin`, the
+policy `(unique, atomic)` with either, and a loop whose centers or images
+are not those of its structure where the structure's build is visible
+(`test/Dialect/MDExec/domain-rows-invalid.mlir`).
+
+What `--convert-md-dist-to-md-exec` refuses, besides what the reference
+executor refuses (a cell that is not orthorhombic, fields not of `f64`,
+values of `md_dist` handed to another dialect): loops over ghost rows
+(`sum_particles rows(ghost)`, the inner product of the adjoint test, which
+the reference executor keeps). Its option `functions` names the functions
+it runs and leaves the others to the reference executor, so that one
+program runs through both and the two are compared.
+
+### 7.3 Validation
+
+The tests of Sections 14.5 and 15.5, through the second executor:
+`test/Integration/dist-lj-exec.mlir` (Lennard-Jones, and the program of
+`dist-lj.mlir` written by hand), `dist-eam-exec.mlir` (EAM, and the adjoint
+identity of the density), and `dist-many-body-exec.mlir` (the many-body
+energy whose pair sum reads $\psi = \sqrt\rho$ at both particles). Each runs
+the grids of those tests with the unique traversal, the directed traversal
+in the derivative's form ($G^\mathsf T$ through the tail of a loop that
+writes at the neighbors), and the directed traversal after
+`md-dist-owner-computes` (the many-body energy on the directed traversal
+only), in `double` (12, 12, and 6 runs) and in `mixed` (4, 4, and 1 runs).
+The oracles are those of the earlier tests (the same potential on one
+domain through `md_exec`, `Inputs/eam_reference.py` and
+`Inputs/lj_reference.py`, central differences of the distributed energy
+in positions and in the stretches of the cell, the adjoint identity) and,
+new, the same program through the reference executor in `double` (the
+oracle of a transport, Section 6). Their twins in
+`test/Integration/GPU/` run the device lowering, the domains one after
+another on one device, on 7, 7, and 3 runs in `double` and 3, 3, and 1 in
+`mixed`. The largest relative differences, over all runs (energy relative
+to $\lvert U\rvert$, a force component to the largest one, a virial
+component to the trace), CPU and an RTX 4090:
+
+| Quantity | Reference | `double`, CPU | `double`, GPU | `mixed`, CPU | `mixed`, GPU | Tolerance (`double`, `mixed`) |
+|---|---|---|---|---|---|---|
+| LJ energy, force, virial | One domain | $3.8\times10^{-16}$, $2.9\times10^{-15}$, $3.0\times10^{-16}$ | $1.3\times10^{-16}$, $3.0\times10^{-15}$, $1.7\times10^{-16}$ | $9.7\times10^{-8}$, $4.5\times10^{-6}$, $1.8\times10^{-7}$ | $1.2\times10^{-7}$, $4.2\times10^{-6}$, $1.7\times10^{-7}$ | $10^{-10}$, $10^{-5}$ |
+| LJ energy, force, virial | Reference executor | $2.5\times10^{-16}$, $4.2\times10^{-16}$, $4.3\times10^{-17}$ | $2.5\times10^{-16}$, $6.6\times10^{-16}$, $2.2\times10^{-16}$ | $1.4\times10^{-8}$, $3.9\times10^{-6}$, $8.9\times10^{-8}$ | $9.2\times10^{-9}$, $2.8\times10^{-6}$, $1.2\times10^{-7}$ | $10^{-10}$, $10^{-5}$ |
+| LJ energy, force | Written by hand (both traversals) | $2.5\times10^{-16}$, $1.0\times10^{-15}$ | $1.3\times10^{-16}$, $5.3\times10^{-16}$ | $7.9\times10^{-9}$, $6.5\times10^{-7}$ | $1.7\times10^{-8}$, $5.4\times10^{-7}$ | $10^{-10}$, $10^{-5}$ |
+| EAM energy, force, virial | One domain | $1.8\times10^{-15}$, $3.0\times10^{-15}$, $3.9\times10^{-16}$ | $1.8\times10^{-15}$, $3.7\times10^{-15}$, $1.5\times10^{-16}$ | $7.1\times10^{-7}$, $2.3\times10^{-6}$, $8.4\times10^{-8}$ | $7.3\times10^{-7}$, $2.4\times10^{-6}$, $7.7\times10^{-8}$ | $10^{-10}$, $10^{-5}$ |
+| EAM energy, force, virial | Reference executor | $8.9\times10^{-16}$, $9.9\times10^{-16}$, $9.7\times10^{-17}$ | $2.7\times10^{-15}$, $1.4\times10^{-15}$, $1.9\times10^{-16}$ | $1.5\times10^{-7}$, $1.6\times10^{-6}$, $7.7\times10^{-9}$ | $3.6\times10^{-7}$, $1.4\times10^{-6}$, $4.3\times10^{-8}$ | $10^{-10}$, $10^{-5}$ |
+| Many-body energy, force, virial | One domain | $2.4\times10^{-16}$, $1.9\times10^{-15}$, $1.0\times10^{-16}$ | $0$, $2.5\times10^{-15}$, $1.0\times10^{-16}$ | $9.8\times10^{-8}$, $1.3\times10^{-6}$, $2.7\times10^{-8}$ | $8.4\times10^{-8}$, $1.0\times10^{-6}$, $2.3\times10^{-8}$ | $10^{-10}$, $10^{-5}$ |
+| Many-body energy, force, virial | Reference executor | $1.2\times10^{-16}$, $8.0\times10^{-16}$, $1.0\times10^{-16}$ | $1.2\times10^{-16}$, $1.0\times10^{-15}$, $5.2\times10^{-17}$ | $1.4\times10^{-8}$, $1.1\times10^{-6}$, $4.2\times10^{-9}$ | $3.6\times10^{-8}$, $1.3\times10^{-6}$, $1.9\times10^{-8}$ | $10^{-10}$, $10^{-5}$ |
+| Force components, LJ / EAM / many-body | Central differences (`double`) | $1.5\times10^{-9}$, $2.4\times10^{-9}$, $2.5\times10^{-9}$ | $1.5\times10^{-9}$, $1.4\times10^{-9}$, $2.5\times10^{-9}$ | | | $10^{-7}$ |
+| Diagonal of the virial, LJ / EAM / many-body | Central differences in the stretches (`double`) | $1.4\times10^{-10}$, $6.2\times10^{-11}$, $7.1\times10^{-12}$ | $7.9\times10^{-11}$, $5.5\times10^{-11}$, $9.7\times10^{-12}$ | | | $10^{-7}$ |
+| $\langle\mathbf F, \mathbf v\rangle$ of $U = \langle\mathbf c, \rho\rangle$ | $-\langle\mathbf c, J\mathbf v\rangle$ (`double`) | $4.4\times10^{-15}$ | $2.1\times10^{-15}$ | | | $10^{-12}$ |
+
+In `mixed` the kernels compute in f32 and the global sums in f64; the
+buffers of the transport stay in f64, and `md-exec-assign-precision`
+assigns the types within `md_exec` from the f64 buffers that
+`mdrt.from_buffer` hands it, as at any boundary of a program. Central differences are not checked
+in `mixed`: the energy's rounding over $2h$ exceeds the forces. The
+mixed-precision measurements above are those of the grid $3\times2\times1$
+with each traversal (the many-body energy after `md-dist-owner-computes`);
+the tests' fourth mixed run, $16\times1\times1$ after
+`md-dist-owner-computes`, passes the same tolerance.
+
+*The rows of the structure.* For the 64 particles of these tests (reach
+2.0, no skin), the entries of a row of a center in the search that wraps,
+against the rows of the local rows within the reach in plain differences,
+which equal those of one domain in the minimum image (19.2): 105.0 on
+$1\times1\times1$, 68.0 on $2\times1\times1$, 40.0 on $3\times2\times1$, and
+59.7 on $16\times1\times1$, 2.1 to 5.5 times as many. They are computed
+from the halo of `runtime/mdrt_dist.c`, whose ghosts agree with
+`MDRT_DIST_TRACE` of a run (271 on $1\times1\times1$; 132 to 147 a domain
+on $3\times2\times1$), and the search's test of the minimum-image
+distance; they are the baseline of a search that does not wrap.
+
+*No other program changes.* The module that the pipeline of
+`mdir emit --stage=pipeline` makes of JAC NVE (`GPU`, `MIXED`, through
+`convert-md-exec-to-gpu`, and `CPU`, `DOUBLE`, through
+`convert-md-exec-to-loops`) is the same text with and without this change,
+and so are those of `dist-lj-distribute.mlir` and `dist-eam.mlir` through
+the reference executor, `lj-dynamics.mlir` on the CPU, and
+`tuples-nonbonded.mlir` on a device in `mixed`.
+
+IR tests: `test/Dialect/MDExec/domain-rows.mlir` (the forms of the ops),
+`domain-rows-invalid.mlir` (the verifier),
+`test/Conversion/MDDistToMDExec/pairs.mlir` (the sets of the domains, the
+structure with a center extent and explicit images, the sums, the mask of
+the unique traversal, and the two-ended loop with $G^\mathsf T$),
+`invalid.mlir` (ghost rows), and `deterministic-invalid.mlir` (the device's
+deterministic mode).
+
+### 7.4 What is left of the path through `md_exec`
+
+- **Groups and dual lists on domains.** A structure of groups (D89) and a
+  dual list (D114, D284) are refused for the rows of a domain, and they are
+  the fast path on a device: the per-domain timings of this stage are those
+  of the matrix. Distributed runs on GPUs need groups with `centers`.
+- **A search that does not wrap**, over the box of the local rows, with the
+  rows of Section 7.3 as its baseline; on a device, a build of the rows of
+  the centers only.
+- **A half list by identity** for the unique traversal, and the two-valued
+  pair kernel (#391).
+- **Migration and `covered`** (Section 8, #38): a structure kept across
+  steps needs the skin test over explicit images; today a structure with
+  `centers` or explicit images is built at every evaluation, with the halo.
+- **MPI on CPU ranks** (transport order 2): the per-domain code is emitted
+  from a domain's number, and the copies at the boundary of `md_exec` are
+  where a rank sends and receives; a rank then holds its own rows, and the
+  buffers of all domains of the reference executor become those of one.
+- **Buffers handed to `md_exec`** by `mdrt.from_buffer` are, as for every
+  program of `md_exec`, not freed by it; a trajectory on domains needs the
+  copies at the boundary kept across steps rather than made at each.
+- **The deterministic mode** for the two-ended loop, by fixed point as the
+  spreading of PME (D70) or by rows of the neighbors.
 
 ## 8. Migration and rebuilds
 
@@ -627,8 +763,8 @@ the backward's communication is the AD's transpose of the forward's.
 
 Next parts of stage 1, each with its own tests: `md-distribute` and the
 rules of the AD (Section 11; built, Section 14), EAM (built, Section 15), the schedule print and trace, the
-`md_exec` path (Section 7.2), migration and `covered` with a trajectory
-(Section 8), MPI on CPU ranks, then GPUs.
+`md_exec` path with the `mixed` mode and GPUs (built, Section 7.2), migration and `covered` with a trajectory
+(Section 8), MPI on CPU ranks, then several GPUs.
 
 ## 13. What has been ruled (the maintainer on PR #379, 2026-10-16)
 
@@ -1103,5 +1239,5 @@ a field computed from the positions
   of 15.4) without a switch, so that no derivative's form with $G^\mathsf T$
   is compared with it, as principle 3 asks. That form, and the comparison,
   come with the new gather.
-- Derivatives in parameters or fields on domains; the `mixed` mode and
-  GPUs; the path through `md_exec` (Section 7.2); migration; MPI.
+- Derivatives in parameters or fields on domains; migration; MPI. The
+  `mixed` mode and GPUs run through `md_exec` (Section 7.2, 7.4).

@@ -479,9 +479,11 @@ Lennard-Jones on two domains against one. Its second part
 `md-differentiate`, and `md-dist-owner-computes` for the directed
 traversal. Its third part (D279) carries the derivative through the
 fields computed from the positions: EAM on domains, with the adjoint of the
-density copied to the ghosts between the two passes. The path through
-`md_exec`, migration, MPI on CPU ranks,
-and GPUs follow, then the classical track of #31 (topology, PME,
+density copied to the ghosts between the two passes. Its fourth part
+(D[ml2-exec]) runs each domain's loops through `md_exec`, with a center
+extent and explicit images, on the CPU and, one domain after another, on
+one GPU, in `double` and `mixed`. Migration, MPI on CPU ranks, and
+several GPUs follow, then the classical track of #31 (topology, PME,
 ensembles, the Amber suite on several GPUs).
 
 A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
