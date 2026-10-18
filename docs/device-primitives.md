@@ -200,8 +200,20 @@ tuples touches 0.24 distinct particles a member).
 onto the attribute changed no kernel. The module after
 `convert-md-exec-to-gpu` is identical to that of `main` on JAC NVE and
 NPT, Factor IX NVE, Cellulose NVE, and STMV NPT 4 fs, apart from the line
-that prints the options of the pass. The Amber suite alternated against
-`main` on an RTX 4090 is in the decision row of D[privatize-scatter].
+that prints the options of the pass, and the PTX of JAC NVE and NPT (245
+and 326 kernels) is identical. The Amber suite, alternated against `main`
+in one job on an RTX 4090, three rounds, the median ns/day ratio:
+
+| System | Ratio | System | Ratio |
+|---|---:|---|---:|
+| JAC NVE | 0.997 | Factor IX NVE | 1.001 |
+| JAC NVE 4 fs | 1.000 | Factor IX NPT | 1.001 |
+| JAC NPT | 0.997 | Cellulose NVE | 0.999 |
+| JAC NPT 4 fs | 1.002 | Cellulose NPT | 1.000 |
+| STMV NPT 4 fs | 1.001 | | |
+
+JAC NVE and NPT, again in five rounds on another node, gave 1.001 and
+0.999.
 
 ### 2.8 Results and the deterministic mode
 
