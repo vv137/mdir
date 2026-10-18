@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
 
-// The verifiers of the neural stages (D[ml4-neural-op]) and of fields of
+// The verifiers of the neural stages (D288) and of fields of
 // features.
 
 // expected-error@+1 {{expected each operand of f64, a vector of f64, i32, or i64, got 'f32'}}

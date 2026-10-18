@@ -591,7 +591,7 @@ template <typename... Ops> void attachRules(MLIRContext *context) {
   (Ops::template attachInterface<ScalarRule<Ops>>(*context), ...);
 }
 
-/// The rule of a neural stage (D[ml4-neural-op]): its vector-Jacobian
+/// The rule of a neural stage (D288): its vector-Jacobian
 /// product, which the stage binds; no tangent, since no Jacobian-vector
 /// product is bound and MDIR writes no derivative of a body (D167).
 struct StageRule

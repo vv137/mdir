@@ -446,7 +446,7 @@ arXiv:2207.09453 (2022).
 
 Used for: the notation of the irreducible representations of O(3) that
 the components of a field of features carry, `M x l p`, and their order
-and layout (D[ml4-feature-types]).
+and layout (D289).
 
 ### Gomez2022
 

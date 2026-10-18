@@ -1,4 +1,4 @@
-# The test of synthetic-mp.mlir on a GPU (D[ml4-neural-op]): the
+# The test of synthetic-mp.mlir on a GPU (D288): the
 # synthetic two-layer model in stages, with the bodies inlined into the
 # kernels, with both neighbor structures in double precision, and in mixed
 # precision within 3e-5 of the largest value.

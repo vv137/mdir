@@ -212,13 +212,13 @@ is needed when the kernels are compiled, not when LLVM is built.
 | `md.neighborhood` | Builds the relation of pairs within a cutoff. |
 | `md.triplets` | Derives the triplets centered on each particle from a neighborhood (Section 4.11, D160). |
 | `md.sum_relation` | Sums a kernel over the tuples of a relation. |
-| `md.gather_relation` | For each particle, sums a kernel over the tuples it belongs to; with several results, several fields from one kernel (D[ml4-neural-op]). |
+| `md.gather_relation` | For each particle, sums a kernel over the tuples it belongs to; with several results, several fields from one kernel (D288). |
 | `md.sum_particles` | Sums a kernel over particles. |
 | `md.map_particles` | Applies a kernel to each particle. |
 | `md.evaluate` | Requests energy and derivatives of a potential. |
 | `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; see [design-m1.md](design-m1.md), Sections 2 and 3. |
 | `md.chebyshev` | In a kernel, $\sum_k c_k T_k(y)$, a Chebyshev series with its coefficients as an attribute; its derivative is the series of the derivatives, and in a loop over pairs under `fast_math` a series of the distance becomes part of a table of $r^2$ (D94, D280). |
-| `md.stage`, `md.apply_stage` | A neural stage, a pure function of one element bound to its body and its vector-Jacobian product, and its application, or that of its product, in a kernel ([ml4-ir.md](ml4-ir.md), D[ml4-neural-op]). |
+| `md.stage`, `md.apply_stage` | A neural stage, a pure function of one element bound to its body and its vector-Jacobian product, and its application, or that of its product, in a kernel ([ml4-ir.md](ml4-ir.md), D288). |
 | `md.yield`, `md.return` | Terminators of kernels and functions. |
 
 All `md` ops are pure.
@@ -673,7 +673,7 @@ Restrictions of the current implementation:
 |---|---|
 | A pair kernel that uses the displacement `d` cannot be differentiated with respect to positions. | Only the geometry rule for the distance exists for pairs. A kernel over tuples may use a displacement through its components (`vector.extract` at constant places): its gradient is taken a component at a time, along each unit vector, and with $\mathbf d = \mathbf x_a - \mathbf x_b$ the forces are $\mp\,\partial u/\partial\mathbf d$ on $a$ and $b$ and the virial $\mathbf d \otimes \mathbf F_a$ (D139; `test/Dialect/MD/Transforms/differentiate-displacement-values.mlir`). |
 | A parameter derivative is taken with respect to a scalar argument only. | Per-particle parameters would need a field-valued result. |
-| An intermediate field is gathered over pairs from a kernel of the distance and of fields, of `f64`, and read by sums over pairs and particles and by maps; a gather that reads such a field, and a sum over tuples that does, are not differentiated yet. | The adjoint of a gather that reads a field needs the kernel from both ends as well; generalized Born does not take it. A *stage kernel*, one that yields the value of `md.apply_stage`, lifts both this and the first restriction: its fields may have any number of components, it may take the displacement, and a gather of it may read fields computed from the positions, through the stage's vector-Jacobian product evaluated from both ends of each pair (D[ml4-neural-op], [ml4-ir.md](ml4-ir.md), Section 4). |
+| An intermediate field is gathered over pairs from a kernel of the distance and of fields, of `f64`, and read by sums over pairs and particles and by maps; a gather that reads such a field, and a sum over tuples that does, are not differentiated yet. | The adjoint of a gather that reads a field needs the kernel from both ends as well; generalized Born does not take it. A *stage kernel*, one that yields the value of `md.apply_stage`, lifts both this and the first restriction: its fields may have any number of components, it may take the displacement, and a gather of it may read fields computed from the positions, through the stage's vector-Jacobian product evaluated from both ends of each pair (D288, [ml4-ir.md](ml4-ir.md), Section 4). |
 | The body of a potential must be a single block. | |
 
 The numerical values of the generated kernels are tested. A test pass turns

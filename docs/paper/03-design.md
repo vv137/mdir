@@ -313,7 +313,7 @@ rule. Unknown required activity fails. Operands and captured kernel values
 are followed, and block arguments are independent only in scopes whose
 meaning is known. `--md-analyze-activity=argument=N` reports these outcomes.
 
-**Neural stages (D[ml4-neural-op], D[ml4-feature-types]).** A
+**Neural stages (D288, D289).** A
 message-passing potential is written in the same ops, with its neural
 bodies as stages: a layer $k$ is a gather over the pairs,
 $\mathbf A_i^{(k)} = \sum_{j:(i,j)\in D(N)}\phi_k(r_{ij}, \mathbf d_{ij},

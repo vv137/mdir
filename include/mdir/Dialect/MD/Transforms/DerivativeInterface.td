@@ -10,7 +10,7 @@ def DerivativeOpInterface : OpInterface<"DerivativeOpInterface"> {
     An op may also have a reverse rule, `emitAdjoint`: the cotangents of
     its operands from those of its results. `md.apply_stage` has only that
     rule, the vector-Jacobian product of its stage
-    (D[ml4-neural-op], docs/ml4-ir.md).
+    (D288, docs/ml4-ir.md).
   }];
   let methods = [
     InterfaceMethod<"The role of an operand in the derivative",

@@ -1,5 +1,5 @@
 // Inlining of potentials, functions, and programs, and of the bodies of
-// neural stages into the kernels that apply them (D[ml4-neural-op]).
+// neural stages into the kernels that apply them (D288).
 
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 

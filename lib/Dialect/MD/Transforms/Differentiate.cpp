@@ -99,7 +99,7 @@ private:
                                bool virial, Value &result);
 
   //===--------------------------------------------------------------------===//
-  // Neural stages (D[ml4-neural-op], docs/ml4-ir.md, Section 4)
+  // Neural stages (D288, docs/ml4-ir.md, Section 4)
   //===--------------------------------------------------------------------===//
   //
   // A stage kernel yields the value of md.apply_stage, whose operands are
@@ -323,7 +323,7 @@ LogicalResult DerivativeBuilder::checkPositionUses() {
              << "cannot differentiate a gather of several fields that "
                 "depend on the positions";
     // A stage kernel takes the displacement and fields of any size: the
-    // product of its stage gives their cotangents (D[ml4-neural-op]).
+    // product of its stage gives their cotangents (D288).
     if (getStage(gather))
       continue;
     if (failed(checkStageKernel(gather)))

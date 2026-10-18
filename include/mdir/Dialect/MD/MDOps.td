@@ -616,7 +616,7 @@ def MD_GatherRelationOp : MD_Op<"gather_relation", [
     result is the sum of its values: several fields gathered over the
     same pairs in one evaluation of the kernel. The derivative of a stage
     kernel takes the adjoints of the fields, the forces, and the virial
-    together this way (D[ml4-neural-op]). A gather of several fields has
+    together this way (D288). A gather of several fields has
     no exchange contract, `exchange(none)`.
 
     ```mlir
@@ -842,7 +842,7 @@ def MD_MapParticlesOp : MD_Op<"map_particles", [
 }
 
 //===----------------------------------------------------------------------===//
-// Neural stages (D[ml4-neural-op], docs/ml4-ir.md)
+// Neural stages (D288, docs/ml4-ir.md)
 //===----------------------------------------------------------------------===//
 
 def MD_StageOp : MD_Op<"stage", [

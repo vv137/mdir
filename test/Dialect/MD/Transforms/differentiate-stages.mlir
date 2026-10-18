@@ -2,7 +2,7 @@
 // RUN: mdir-opt %s --md-differentiate="separate-stages=true" \
 // RUN: | FileCheck %s --check-prefix=SEPARATE
 
-// The derivative through neural stages (D[ml4-neural-op], docs/ml4-ir.md,
+// The derivative through neural stages (D288, docs/ml4-ir.md,
 // Section 4): the adjoint of the readout is a map of its product; for each
 // edge stage, one gather over the same relation evaluates the product from
 // both ends of each pair (the second end takes −d and the ends exchanged)

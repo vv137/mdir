@@ -1,5 +1,5 @@
 // A test pass that writes the two sides of the adjoint identity of each
-// neural stage (D[ml4-neural-op], docs/ml4-ir.md, Section 6):
+// neural stage (D288, docs/ml4-ir.md, Section 6):
 //
 //   <ȳ, J v> = <J^T ȳ, v>,
 //

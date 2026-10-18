@@ -1,5 +1,5 @@
-// Fields of features (D[ml4-feature-types], docs/ml4-ir.md, Section 3) and
-// a gather of several fields from one kernel (D[ml4-neural-op]); printed and
+// Fields of features (D289, docs/ml4-ir.md, Section 3) and
+// a gather of several fields from one kernel (D288); printed and
 // parsed again unchanged.
 //
 // RUN: mdir-opt %s | mdir-opt | FileCheck %s

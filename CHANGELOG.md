@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - **The IR of ML4: neural stages, fields of features, and their
-  derivative** (D[ml4-neural-op], D[ml4-feature-types], #377 step 3,
+  derivative** (D288, D289, #377 step 3,
   PR #441, [docs/ml4-ir.md](docs/ml4-ir.md)): `md.stage` declares a pure
   function of one element and binds its forward body and its
   vector-Jacobian product; `md.apply_stage` applies it in the kernels of
@@ -27,7 +27,7 @@ format, or the outputs; every such change is listed under **Changed** or
   The bodies of step 3 are functions in the module, which `md-inline`
   inlines into the kernels; StableHLO and AOTInductor bodies are step 4.
   No key of the control file changes.
-- **The milestones of learned potentials** (D[ml-milestones], amending D167
+- **The milestones of learned potentials** (D287, amending D167
   and D169): M3 is ML1 steps 1 to 3, the IR of ML4, and PaiNN and MACE in
   stages on one GPU; M4 is ML2, ML3, both models on two GPUs, ML5, and
   distributed particle mesh Ewald; StableHLO is a form of the bodies of

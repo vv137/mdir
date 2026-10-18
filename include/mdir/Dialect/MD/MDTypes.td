@@ -28,7 +28,7 @@ def MD_FieldType : MD_Type<"Field", "field"> {
     ```
 
     The features may state the representation of the rotation group O(3)
-    that their components carry (D[ml4-feature-types],
+    that their components carry (D289,
     docs/ml4-ir.md, Section 3): a sum of blocks `M x l p`, M copies of the
     irreducible representation of degree l (2l + 1 components) and parity
     `e` or `o`, in e3nn's notation [Geiger2022]. The components of a

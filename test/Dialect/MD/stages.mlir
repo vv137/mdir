@@ -1,4 +1,4 @@
-// Neural stages (D[ml4-neural-op], docs/ml4-ir.md): a declaration that binds
+// Neural stages (D288, docs/ml4-ir.md): a declaration that binds
 // a forward body and its vector-Jacobian product, their application in
 // kernels, and fields of features; printed and parsed again unchanged.
 //

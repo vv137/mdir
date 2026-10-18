@@ -203,8 +203,8 @@ calculators and peak at their packages' memory, 61 kB and 164 kB per pair
 to about 6,000 and 1,500 atoms (D286); these are the baselines
 that the models in stages are measured against. M3 closes with PaiNN and
 MACE in stages on one GPU, both required, and M4 with them on two GPUs
-(D[ml-milestones]). The IR of the stages is built (Section 3.3,
-D[ml4-neural-op]): a stage binds its body and its vector-Jacobian product,
+(D287). The IR of the stages is built (Section 3.3,
+D288): a stage binds its body and its vector-Jacobian product,
 from AOTInductor or from StableHLO, which lowers through `linalg`; what is
 left on one GPU is lowering the bodies of the two models, a scatter that
 evaluates each product once, and the choice between storing and

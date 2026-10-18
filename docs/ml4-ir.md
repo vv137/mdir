@@ -1,6 +1,6 @@
 # ML4 IR: neural stages, feature fields, and their derivative
 
-Step 3 of issue #377 (`D[ml4-neural-op]`, `D[ml4-feature-types]`): the IR in
+Step 3 of issue #377 (`D288`, `D289`): the IR in
 which a message-passing model (PaiNN, MACE) is written as stages of the
 `md` dialect, so that MDIR differentiates, schedules, and later
 distributes it. The particle structure (the relation, the gathers and sums
@@ -432,7 +432,7 @@ for an AOTInductor package through its entry.
 - **Q3.** StableHLO lowers through `linalg` and MDIR's own lowering; the
   choice is measured against AOTInductor in step 4.
 - **Q4.** The milestone ruling of 2026-10-16 and the StableHLO ruling of
-  2026-10-17 are recorded as `D[ml-milestones]`, amending D167 and D169.
+  2026-10-17 are recorded as `D287`, amending D167 and D169.
 - **The number of evaluations.** One gather of the three terms in this
   step (two evaluations per directed pair), the separate form kept as the
   reference; the two-ended scatter (one evaluation) and store against

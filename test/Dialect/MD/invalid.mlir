@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
 
 // A field has components; features have any number of them
-// (D[ml4-feature-types]).
+// (D289).
 // expected-error@+1 {{expected at least 1 component}}
 md.function @f(%a: !md.field<@atoms, 0 x f64>) {
   md.return

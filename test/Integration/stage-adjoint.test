@@ -1,5 +1,5 @@
 # The adjoint identity of each stage of the synthetic model of
-# Inputs/synthetic_mp.py (#377, step 3; D[ml4-neural-op]):
+# Inputs/synthetic_mp.py (#377, step 3; D288):
 # <ȳ, J v> = <J^T ȳ, v> at three points a stage, J v from MDIR's forward
 # rules (D183) on the forward body and J^T ȳ from the bound product, which
 # the script wrote by a reverse sweep of its own. Each stage prints 1 if

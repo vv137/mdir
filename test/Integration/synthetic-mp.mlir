@@ -1,5 +1,5 @@
 // A synthetic message-passing model in stages (#377, step 3;
-// D[ml4-neural-op], docs/ml4-ir.md): two PaiNN-like layers whose bodies,
+// D288, docs/ml4-ir.md): two PaiNN-like layers whose bodies,
 // and their vector-Jacobian products, are functions in the module, written
 // by Inputs/synthetic_mp.py. md-differentiate carries the adjoints of the
 // features back through the stages, and the forces and the virial come from

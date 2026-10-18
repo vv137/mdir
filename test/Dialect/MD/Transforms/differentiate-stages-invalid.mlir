@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s --md-differentiate -split-input-file -verify-diagnostics
 
-// What md-differentiate refuses around neural stages (D[ml4-neural-op]),
+// What md-differentiate refuses around neural stages (D288),
 // each with its reason, so that a derivative it cannot take is never a
 // zero.
 

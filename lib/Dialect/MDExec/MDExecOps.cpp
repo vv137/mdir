@@ -120,7 +120,7 @@ bool mdir::md_exec::isBufferType(Type type) {
     return false;
   Type element = buffer.getElementType();
   // A field of several components (three for a vector, any number for
-  // features, D[ml4-feature-types]) has them along the second dimension.
+  // features, D289) has them along the second dimension.
   if (buffer.getRank() == 2)
     return !buffer.isDynamicDim(1) && buffer.getDimSize(1) >= 1 &&
            isReal(element);
