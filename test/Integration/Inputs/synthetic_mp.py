@@ -367,6 +367,38 @@ def adjoint(t, outputs, cotangents, wanted):
     return [bar.get(n, t.const(0.0)) for n in wanted]
 
 
+def mlir_float(value):
+    """`value` as an MLIR float literal that reads back to the same bits:
+    repr(), with '.0' before the exponent where it has no point (MLIR
+    requires one: '1e-05' is not a float literal, '1.0e-05' is)."""
+    text = repr(float(value))
+    if not math.isfinite(float(value)):
+        raise ValueError(f"not a finite constant: {text}")
+    if "." not in text and "e" in text:
+        mantissa, exponent = text.split("e")
+        text = f"{mantissa}.0e{exponent}"
+    elif "." not in text:
+        text += ".0"
+    return text
+
+
+# Values whose repr() has no point, to test mlir_float (`floats`).
+FLOATS = [1.0e-5, 3.0e20, -2.0e-300, 5.0, 0.1, -1.0e16]
+
+
+def floats():
+    """A function that returns the constants FLOATS, written by mlir_float,
+    for a test that MLIR parses them back to the same values."""
+    types = ", ".join("f64" for _ in FLOATS)
+    out = [f"func.func @floats() -> ({types}) {{"]
+    for k, value in enumerate(FLOATS):
+        out.append(f"  %c{k} = arith.constant {mlir_float(value)} : f64")
+    out.append("  return " + ", ".join(f"%c{k}" for k in range(len(FLOATS)))
+               + f" : {types}")
+    out.append("}")
+    print("\n".join(out))
+
+
 MLIR_OPS = {"add": "arith.addf", "sub": "arith.subf", "mul": "arith.mulf",
             "div": "arith.divf", "neg": "arith.negf", "tanh": "math.tanh",
             "sqrt": "math.sqrt", "sin": "math.sin", "cos": "math.cos"}
@@ -418,7 +450,7 @@ def emit(name, arguments, results, t):
             continue
         if n.op == "const":
             names[n] = f"%c{count}"
-            lines.append(f"  %c{count} = arith.constant {n.value!r} : f64")
+            lines.append(f"  %c{count} = arith.constant {mlir_float(n.value)} : f64")
         elif n.op == "input":
             raise ValueError("an input without an argument")
         else:
@@ -549,9 +581,9 @@ def adjoint_test():
         if kind == "i32":
             return f"  %{name} = arith.constant {int(uniform(0, 2))} : i32"
         if kind == "f64":
-            return f"  %{name} = arith.constant {uniform(0.2, 0.48)!r} : f64"
+            return f"  %{name} = arith.constant {mlir_float(uniform(0.2, 0.48))} : f64"
         size = int(kind[len("vector<"):kind.index("x")])
-        values = ", ".join(repr(uniform(-1.0, 1.0)) for _ in range(size))
+        values = ", ".join(mlir_float(uniform(-1.0, 1.0)) for _ in range(size))
         return f"  %{name} = arith.constant dense<[{values}]> : {kind}"
 
     out = [declarations(), "",
@@ -726,16 +758,16 @@ def reference():
     print("virial of the sweep against differences: "
           f"{np.abs(virial - fd_virial).max():.3g} of "
           f"{np.abs(virial).max():.3g}")
-    print("positions:", ", ".join(repr(float(v)) for v in x.flatten()))
+    print("positions:", ", ".join(mlir_float(v) for v in x.flatten()))
     print("species:", ", ".join(str(int(v)) for v in z))
-    print(f"energy: {u!r}")
-    print("forces:", ", ".join(repr(float(v)) for v in forces.flatten()))
-    print("virial:", ", ".join(repr(float(v)) for v in virial.flatten()))
+    print(f"energy: {mlir_float(u)}")
+    print("forces:", ", ".join(mlir_float(v) for v in forces.flatten()))
+    print("virial:", ", ".join(mlir_float(v) for v in virial.flatten()))
     print(f"asymmetry of the virial: {np.abs(virial - virial.T).max():.3g}")
     print(f"sum of the forces: {np.abs(forces.sum(axis=0)).max():.3g}")
 
 
 if __name__ == "__main__":
     {"stages": stages, "reference": reference, "check": check,
-     "adjoint": adjoint_test}[sys.argv[1]](
+     "adjoint": adjoint_test, "floats": floats}[sys.argv[1]](
         *sys.argv[2:])

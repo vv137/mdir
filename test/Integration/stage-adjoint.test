@@ -26,6 +26,21 @@
 # RUN:     --shared-libs=%mlir_c_runner_utils \
 # RUN: | FileCheck %s --check-prefix=WRONG
 
+#
+# The script writes every constant as an MLIR float literal, also where
+# repr() has no point ('1e-05', which MLIR does not parse as a float); the
+# values come back unchanged.
+#
+# RUN: %python %S/Inputs/synthetic_mp.py floats | mdir-opt \
+# RUN: | FileCheck %s --check-prefix=FLOATS
+
+# FLOATS: arith.constant 1.000000e-05 : f64
+# FLOATS: arith.constant 3.000000e+20 : f64
+# FLOATS: arith.constant -2.000000e-300 : f64
+# FLOATS: arith.constant 5.000000e+00 : f64
+# FLOATS: arith.constant 1.000000e-01 : f64
+# FLOATS: arith.constant -1.000000e+16 : f64
+
 # edge1, node1, edge2, node2, readout:
 # CHECK:      {{^}}1{{$}}
 # CHECK-NEXT: {{^[0-9.e+-]+$}}
