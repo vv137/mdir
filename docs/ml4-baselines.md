@@ -66,7 +66,7 @@ torch of the plugin's build.
 
 | Candidate | Source and pin | License | Species | $r_c$ | $L$ | Features | Outputs and units | Notes |
 |---|---|---|---|---|---|---|---|---|
-| **MACE-OFF23 medium** (ruled) | `ACEsuit/mace-off` at commit `91a78c5`, `mace_off23/MACE-OFF23_medium.model`, 18,350,596 bytes, SHA-256 `4842c52ad210d6e1f84d6cf1ffa70fae25a7e0d755ed55cf223f43913f587db7` | Academic Software License (academic, non-commercial; copyleft for derived works) | H, C, N, O, F, P, S, Cl, Br, I | 5 Å | 2 | hidden 128x0e+128x1o (last layer 128x0e), spherical harmonics to $\ell = 3$, correlation order 3, 8 Bessel functions; 1.43 million parameters; trained and stored in float64 | energy in eV, forces by autograd | SPICE (ωB97M-D3(BJ)/def2-TZVPPD), water clusters included; its paper simulates liquid water ([Kovacs2025](references.md#kovacs2025)) |
+| **MACE-OFF23 medium** (ruled) | `ACEsuit/mace-off` at commit `91a78c5`, `mace_off23/MACE-OFF23_medium.model`, 18,350,596 bytes, SHA-256 `4842c52ad210d6e1f84d6cf1ffa70fae25a7e0d755ed55cf223f43913f587db7` | Academic Software License (academic, non-commercial; copyleft for derived works) | H, C, N, O, F, P, S, Cl, Br, I | 5 Å | 2 | hidden 128x0e+128x1o (last layer 128x0e), spherical harmonics to $\ell = 3$, correlation order 3, 8 Bessel functions; 1.43 million parameters; stored in float64 (all 29 parameter tensors), trained in float64 by the published training script (`mace_off23/train_scripts/medium.sh` at the same commit: `--default_dtype="float64"`), and evaluated in float64 by mace-torch's `mace_off()` (its default `default_dtype`) | energy in eV, forces by autograd | SPICE (ωB97M-D3(BJ)/def2-TZVPPD), water clusters included; its paper simulates liquid water ([Kovacs2025](references.md#kovacs2025)) |
 | MACE-OFF23 small | the same commit, `MACE-OFF23_small.model`, SHA-256 `165cce4c…` | ASL | the same | 4.5 Å | 2 | 96x0e (invariant messages); 0.69 million | eV | Has no $\ell = 1$ features, so step 5 would not exercise the irreducible representations |
 | MACE-MP-0 medium (the MIT alternative, in the fetch list) | `ACEsuit/mace-mp` release `mace_mp_0`, `2023-12-03-mace-128-L1_epoch-199.model`, 44,422,970 bytes, SHA-256 `01bfe22100139f424713cf921144e5509cbe353d67aa9fa1be9c6e1e0ed35845` | MIT | 89 elements, H to Pu | 6 Å | 2 | 128x0e+128x1o, $\ell \le 3$, correlation 3, 10 Bessel; 4.69 million; stored in float64 (mace-torch's calculator casts it to float32 by default) | eV | MPtrj (PBE and PBE+U), materials; its water is not validated physics ([Batatia2025](references.md#batatia2025)) |
 | MACE-MP-0 small | the same release, `2023-12-10-mace-128-L0_energy_epoch-249.model`, SHA-256 `2ddb079c…` | MIT | 89 | 6 Å | 2 | 128x0e; 3.85 million | eV | No $\ell = 1$ features |
@@ -117,7 +117,8 @@ modules, without changing a weight.
   its own (D167).
 - **MACE: MACE-OFF23 medium** (ASL, above). Water is in its training set and
   its paper simulates liquid water; its hidden features carry $\ell = 1$,
-  which step 5 needs; float64 as trained. The weights are never committed
+  which step 5 needs; float64, the precision of its published training
+  script and of its package's calculator. The weights are never committed
   or redistributed; users fetch them with the script.
 - **MACE-MP-0 medium** (MIT, the same feature sizes, 6 Å) stays in the fetch
   script's list as the alternative for users who cannot accept the ASL; the
