@@ -2,7 +2,8 @@
 # pme-settle.test with the groups: `MDIR_SKIN_SEARCH=always` measures the
 # reference of D261 (12 / 9.6 Å) and the candidates of the cost model,
 # keeps one, and caches it; a second run and a continuation take it from
-# the cache, and a run of another time step does not. The run with the
+# the cache, and neither a run of another time step nor one whose loop over
+# pairs prunes (MDIR_FUSED_PRUNE=always) does. The run with the
 # reaches chosen misses no pair within the cutoff (MDIR_CHECK_PRUNING,
 # D268), and its energies at the start are those of the defaults to the
 # digits of the log in double precision: the skins change the speed, not
@@ -32,6 +33,9 @@
 # RUN: cd %t && env MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run half.toml > half.log 2>&1
 # RUN: FileCheck %s --check-prefix=MISSED < %t/half.log
 # RUN: ls %t/cache | wc -l | FileCheck %s --check-prefix=ONE
+# Whether the loop over pairs prunes (D[fused-prune]) is part of the key.
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always MDIR_SKIN_CACHE=on MDIR_SKIN_CACHE_DIR=%t/cache MDIR_SKIN_SEARCH=never mdir run auto.toml > fused.log 2>&1
+# RUN: FileCheck %s --check-prefix=FUSEDKEY < %t/fused.log
 # The defaults, and the chosen reaches, at the start.
 # RUN: cd %t && env MDIR_SKIN_SEARCH=never mdir run auto.toml > never.log 2>&1
 # RUN: cat %t/never.log %t/first.log | FileCheck %s --check-prefix=SAME
@@ -58,6 +62,7 @@
 # CONTINUED: MDIR: continues the run after step 100
 # CONTINUED: MDIR: skins: {{.*}} (cached:
 # MISSED: MDIR: skins: the reach 10.5 Å (default: MDIR_SKIN_SEARCH=never)
+# FUSEDKEY: MDIR: skins: {{.*}}(default: MDIR_SKIN_SEARCH=never)
 # ONE: {{^}}1{{$}}
 # SAME: MDIR:   total {{ *}}[[TOTAL:-?[0-9]+\.[0-9]+]]
 # SAME: MDIR: skins: {{.*}} (measured:

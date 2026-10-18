@@ -9,6 +9,7 @@
 // See docs/neighbors-m0.md, "The choice of the skins".
 
 #include "mdir/Compiler/Skins.h"
+#include "mdir/Compiler/Compile.h"
 #include "mdir/Compiler/Simulation.h"
 #include "mdir/Driver/Model.h"
 #include "mdir/Driver/Topology.h"
@@ -460,7 +461,10 @@ std::string compiler::getSkinCacheKey(const Control &control,
      << "ensemble "
      << (control.barostat ? "NPT" : control.thermostat ? "NVT" : "NVE")
      << "\n"
-     << "temperature " << format(control.temperature) << "\n";
+     << "temperature " << format(control.temperature) << "\n"
+     // A pruning in the loop over pairs costs less than one of its own, so
+     // the fastest skins differ with it (D[fused-prune]).
+     << "pruning in the loop " << getFusedPruningSetting() << "\n";
   return text;
 }
 

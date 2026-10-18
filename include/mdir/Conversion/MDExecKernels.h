@@ -159,6 +159,17 @@ struct GroupLists {
   mlir::Value blockCounts = {};
 };
 
+/// The entries of a whole group as one stream (D[fused-prune]): the first
+/// `count` entries (an i32) of the inner list of the group, which fill the
+/// blocks of its list in their order, block `blockOf[g stride + e / 64]`
+/// holding entry e at 64 b + e mod 64 (the index of the blocks made at the
+/// build, D268); `stride` is an index.
+struct GroupStream {
+  mlir::Value blockOf;
+  mlir::Value stride;
+  mlir::Value count;
+};
+
 /// Emits what a warp does for the unit of work `unit` of a loop over pairs
 /// over groups, each pair once: lanes u and u + 16 hold the particle at
 /// place 16 g + u; the entries of the unit, 32 at a time, turn within each
@@ -168,12 +179,14 @@ struct GroupLists {
 /// entry, with atomic additions to the destinations (in the order of the
 /// particles); `lane` is the lane in the warp. Returns the contributions of
 /// the lane to the global sums, each pair once (no weight): the caller sums
-/// them over the warp.
+/// them over the warp. With `stream`, `unit` is a group and the warp takes
+/// the entries of its stream, 32 at a time as from the blocks.
 llvm::SmallVector<mlir::Value>
 emitGroupPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                     const GroupLists &lists, const PairLayout &layout,
                     mlir::Value box, mlir::Value inverse, mlir::Value unit,
-                    mlir::Value lane, mlir::IRMapping &local);
+                    mlir::Value lane, mlir::IRMapping &local,
+                    const GroupStream *stream = nullptr);
 
 /// Emits what a loop over tuples does for the particle `particle`: the loop
 /// over the tuples in its row of `incidence`, with the displacements in the

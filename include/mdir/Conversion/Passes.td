@@ -344,7 +344,18 @@ def ConvertMDExecToGPU
            "within the cutoff in its outer list and in its inner list, "
            "through the active units, at the positions of the step, and "
            "the runtime stops the run if the counts differ "
-           "(MDIR_CHECK_PRUNING, D268)">
+           "(MDIR_CHECK_PRUNING, D268)">,
+    Option<"fusePruning", "fuse-pruning", "bool", /*default=*/"false",
+           "Whether the first loop over pairs after a refresh of a dual "
+           "list of groups, at the same positions and in the same cell, "
+           "prunes the inner list in its own kernel, a warp a group, on the "
+           "steps where the refresh prunes (MDIR_FUSED_PRUNE, "
+           "D[fused-prune])">,
+    Option<"fusePruningGroups", "fuse-pruning-groups", "int64_t",
+           /*default=*/"0",
+           "With fuse-pruning: the least number of groups of the last build "
+           "for which the loop prunes; below it the refresh prunes "
+           "(D[fused-prune])">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

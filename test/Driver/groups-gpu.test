@@ -4,8 +4,10 @@
 # over 100 steps, also when the buffers of the lists, or the rows of the
 # matrix, start with almost no room and the builds make them larger, and
 # with a dual list (D114), whose inner list of 9.3 Å is pruned from an
-# outer one of 11 Å every few steps; in mixed precision they conserve the
-# energy as well.
+# outer one of 11 Å every few steps, also where the loop over pairs prunes
+# it (D[fused-prune], MDIR_FUSED_PRUNE=always: these systems are below the
+# groups from which it does by default); in mixed precision they conserve
+# the energy as well.
 #
 # REQUIRES: cuda
 #
@@ -32,6 +34,10 @@
 # RUN: grep 'INFO: \|MDIR:   ' %t/dual.out > %t/dual.log
 # RUN: diff %t/matrix.log %t/dual.log
 # RUN: FileCheck %s --check-prefix=DUAL < %t/dual.out
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always mdir run dual.toml > fused.out
+# RUN: grep 'INFO: \|MDIR:   ' %t/fused.out > %t/fused.log
+# RUN: diff %t/matrix.log %t/fused.log
+# RUN: FileCheck %s --check-prefix=DUAL < %t/fused.out
 # Under a barostat that compresses a mixture of argon and krypton
 # (barostat.test) the dual list gives the energies of one list until the
 # order of the atomic additions sets them apart, past 1000 steps.
@@ -43,6 +49,8 @@
 # RUN: cd %t && mdir run npt.toml | grep 'INFO: ' > npt.log
 # RUN: cd %t && mdir run npt-dual.toml | grep 'INFO: ' > npt-dual.log
 # RUN: diff %t/npt.log %t/npt-dual.log
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always mdir run npt-dual.toml | grep 'INFO: ' > npt-fused.log
+# RUN: diff %t/npt.log %t/npt-fused.log
 # The cell of the mixture, 23.2 Å, is narrower than twice the reach of 10 Å
 # and the extent of a group (about 9 Å at this density), so some pairs need
 # the image on the other side of the boundary from the one nearest to the

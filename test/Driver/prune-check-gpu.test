@@ -7,7 +7,9 @@
 # The run of pme-settle.test with an inner list of 9.3 Å pruned from an
 # outer one of 11 Å, over several prunings between builds, in mixed and in
 # double precision, and the mixture of argon and krypton of barostat.test
-# under its barostat, whose cell changes at every step.
+# under its barostat, whose cell changes at every step. Where the loop over
+# pairs prunes for its refresh (D[fused-prune], MDIR_FUSED_PRUNE=always),
+# the check follows the loop, which writes the inner list.
 #
 # REQUIRES: cuda
 #
@@ -31,6 +33,15 @@
 # RUN: cd %t && env MDIR_CHECK_PRUNING=1 MDIR_COMPILE_CACHE=off mdir run npt.toml > npt.out 2> npt.err
 # RUN: FileCheck %s --check-prefix=PRUNED < %t/npt.out
 # RUN: FileCheck %s < %t/npt.err
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always MDIR_CHECK_PRUNING=1 MDIR_COMPILE_CACHE=off mdir run mixed.toml > fused.out 2> fused.err
+# RUN: FileCheck %s --check-prefix=PRUNED < %t/fused.out
+# RUN: FileCheck %s < %t/fused.err
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always MDIR_CHECK_PRUNING=1 MDIR_COMPILE_CACHE=off mdir run double.toml > fused-double.out 2> fused-double.err
+# RUN: FileCheck %s --check-prefix=PRUNED < %t/fused-double.out
+# RUN: FileCheck %s < %t/fused-double.err
+# RUN: cd %t && env MDIR_FUSED_PRUNE=always MDIR_CHECK_PRUNING=1 MDIR_COMPILE_CACHE=off mdir run npt.toml > fused-npt.out 2> fused-npt.err
+# RUN: FileCheck %s --check-prefix=PRUNED < %t/fused-npt.out
+# RUN: FileCheck %s < %t/fused-npt.err
 # Without the variable the run checks nothing.
 # RUN: cd %t && env MDIR_COMPILE_CACHE=off mdir run mixed.toml > plain.out 2>&1
 # RUN: FileCheck %s --check-prefix=PLAIN < %t/plain.out
