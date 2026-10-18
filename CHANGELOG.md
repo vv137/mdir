@@ -32,6 +32,16 @@ format, or the outputs; every such change is listed under **Changed** or
   stages on one GPU; M4 is ML2, ML3, both models on two GPUs, ML5, and
   distributed particle mesh Ewald; StableHLO is a form of the bodies of
   the stages beside AOTInductor.
+- ML2, stage 1, the path through `md_exec` (D[ml2-exec], #442,
+  [docs/distributed-ml2.md](docs/distributed-ml2.md), Section 7.2):
+  `--convert-md-dist-to-md-exec` runs the loops of each domain through
+  `md_exec` over its owned and ghost rows, on the CPU and on a GPU, in
+  `double` and `mixed`, with the transfers of the reference executor.
+  `md_exec.build_neighbors`, `refresh_neighbors`, and `pair_for` take a
+  center extent (`centers`) and `images(explicit)`, and `pair_for` the
+  policy `(directed, atomic)`, which adds at the neighbor as well. No
+  control-file key or output changes, and the modules of existing programs
+  are unchanged.
 - **Baselines of ML4: a pretrained PaiNN and a pretrained MACE through the
   model term** (D286, #377, PR #436,
   [docs/ml4-baselines.md](docs/ml4-baselines.md)):

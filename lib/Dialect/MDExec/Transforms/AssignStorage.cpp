@@ -150,6 +150,16 @@ private:
                                   Scope &scope, unsigned position,
                                   Value &buffer, bool &accumulates);
 
+  /// Fills `buffer`, which holds a field of the type `fieldType`, with
+  /// zeros, by a loop over particles.
+  void fillZeros(OpBuilder &builder, Location loc, Value buffer,
+                 md::FieldType fieldType);
+
+  /// The number of centers of a loop or a structure in the storage form.
+  Value mapCenters(Value centers) {
+    return centers ? mapping.lookupOrDefault(centers) : Value();
+  }
+
   /// Gives `loop`, a loop in the storage form without a kernel, a copy of
   /// the kernel `source`.
   void copyKernel(Operation *loop, Block &source);
@@ -404,22 +414,23 @@ LogicalResult Assignment::getBuffer(Value field, Scope &scope,
                          getStorageSet(fieldType), op->getLoc());
   buffers[field] = buffer;
 
-  if (isa<ZerosOp>(op)) {
-    OpBuilder &builder = scope.builder;
-    Location loc = op->getLoc();
-    auto fill = ParticleForOp::create(builder, loc, TypeRange(), ValueRange(),
-                                      ValueRange{buffer}, ValueRange(),
-                                      /*scratch=*/ValueRange());
-    Block *block = new Block();
-    fill.getKernel().push_back(block);
-    OpBuilder kernel = OpBuilder::atBlockEnd(block);
-    Type valueType = fieldType.getKernelValueType();
-    Value zero = arith::ConstantOp::create(
-        kernel, loc, valueType,
-        cast<TypedAttr>(kernel.getZeroAttr(valueType)));
-    YieldOp::create(kernel, loc, ValueRange{zero});
-  }
+  if (isa<ZerosOp>(op))
+    fillZeros(scope.builder, op->getLoc(), buffer, fieldType);
   return success();
+}
+
+void Assignment::fillZeros(OpBuilder &builder, Location loc, Value buffer,
+                           md::FieldType fieldType) {
+  auto fill = ParticleForOp::create(builder, loc, TypeRange(), ValueRange(),
+                                    ValueRange{buffer}, ValueRange(),
+                                    /*scratch=*/ValueRange());
+  Block *block = new Block();
+  fill.getKernel().push_back(block);
+  OpBuilder kernel = OpBuilder::atBlockEnd(block);
+  Type valueType = fieldType.getKernelValueType();
+  Value zero = arith::ConstantOp::create(
+      kernel, loc, valueType, cast<TypedAttr>(kernel.getZeroAttr(valueType)));
+  YieldOp::create(kernel, loc, ValueRange{zero});
 }
 
 LogicalResult Assignment::getNeighbors(Operation *op, Value structure,
@@ -616,11 +627,32 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
   SmallVector<Value> readFields(op.getIns().begin(), op.getIns().end());
   readFields.push_back(op.getPositions());
 
+  // A loop that writes at its centers only, or at the neighbors as well,
+  // does not write every value of a destination once: it adds to a buffer
+  // that holds the destination, zeros included (D[ml2-exec]).
+  bool writesSome = op.getCenters() ||
+                    (op.getTraversal() == Traversal::Directed &&
+                     op.getConflict() == Conflict::Atomic);
   SmallVector<Value> outs;
   SmallVector<bool> overwrite;
   for (Value destination : op.getOuts()) {
     Value buffer;
     bool accumulates;
+    if (writesSome && !buffers.count(destination) &&
+        destination.getDefiningOp<ZerosOp>()) {
+      // A buffer of its own that holds zeros, which other loops that start
+      // from the same zeros do not share.
+      Value size;
+      if (failed(getSize(op, destination.getType(), size)))
+        return failure();
+      auto fieldType = cast<md::FieldType>(destination.getType());
+      buffer = scope.request(getStorageType(fieldType), size,
+                             getStorageSet(fieldType), op.getLoc());
+      fillZeros(scope.builder, op.getLoc(), buffer, fieldType);
+      outs.push_back(buffer);
+      overwrite.push_back(false);
+      continue;
+    }
     if (failed(chooseDestination(op, destination, readFields,
                                  /*inPlace=*/false, scope, position, buffer,
                                  accumulates)))
@@ -650,7 +682,8 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
       builder, op.getLoc(), resultTypes, storage, positions,
       mapping.lookup(op.getCell()), ins, outs, reduce, scratch,
       op.getCutoffAttr(), op.getWeightsAttr(), overwriteAttr,
-      op.getTraversalAttr(), op.getConflictAttr(), op.getExchangeAttr());
+      op.getTraversalAttr(), op.getConflictAttr(), op.getExchangeAttr(),
+      mapCenters(op.getCenters()), op.getImagesAttr());
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
     scope.release(buffer);
@@ -1042,10 +1075,11 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, loc, storage.getType(), storage, positions,
       mapping.lookup(op.getCell()), /*scratch=*/ValueRange(),
-      /*moved=*/Value(), /*stale=*/Value(), op.getCutoffAttr(),
-      op.getSkinAttr(), /*prune_skin=*/FloatAttr(), cells.getWidthAttr(),
+      /*moved=*/Value(), /*stale=*/Value(), mapCenters(op.getCenters()),
+      op.getCutoffAttr(), op.getSkinAttr(), /*prune_skin=*/FloatAttr(),
+      cells.getWidthAttr(),
       RebuildPolicyAttr::get(scope.builder.getContext(), RebuildPolicy::Check),
-      /*interval=*/IntegerAttr());
+      /*interval=*/IntegerAttr(), op.getImagesAttr());
   refresh.setPolicy(RebuildPolicy::Always);
   neighbors[op.getResult()] = refresh.getResult();
   return success();
@@ -1085,9 +1119,10 @@ LogicalResult Assignment::convertRefreshNeighbors(RefreshNeighborsOp op,
   Value stale = op.getStale() ? mapping.lookup(op.getStale()) : Value();
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, op.getLoc(), storage.getType(), storage, positions,
-      mapping.lookup(op.getCell()), scratch, moved, stale, op.getCutoffAttr(),
-      op.getSkinAttr(), op.getPruneSkinAttr(), op.getCellWidthAttr(),
-      op.getPolicyAttr(), op.getIntervalAttr());
+      mapping.lookup(op.getCell()), scratch, moved, stale,
+      mapCenters(op.getCenters()), op.getCutoffAttr(), op.getSkinAttr(),
+      op.getPruneSkinAttr(), op.getCellWidthAttr(), op.getPolicyAttr(),
+      op.getIntervalAttr(), op.getImagesAttr());
   neighbors[op.getResult()] = refresh.getResult();
   for (Value buffer : scratch)
     scope.release(buffer);

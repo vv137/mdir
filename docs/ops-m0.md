@@ -1156,6 +1156,28 @@ S &= S^0 + w \sum_{(i,j) \in L,\ r_{ij} < r_c} k_S(i, j).
 \end{aligned}
 $$
 
+**The rows of a domain** (D[ml2-exec],
+[distributed-ml2.md](distributed-ml2.md#72-through-md_exec)). A loop, and
+the `build_neighbors` or `refresh_neighbors` of its structure, may take
+
+| Clause | Meaning |
+|---|---|
+| `centers(%n)` | The first $n$ particles of the set are the centers: $L$ holds rows of centers only, whose entries are any particles, the sums above run over $i < n$, and a destination keeps $a^0_i$ at $i \ge n$ but where the loop writes at a neighbor. |
+| `images(explicit)` | $\mathbf d = \mathbf x_i - \mathbf x_j$ without the minimum image: the positions carry their images, as the ghost rows of a domain do. $L$ holds every pair within the reach in plain differences, and may hold more, which the cutoff removes. The cell stays an operand. |
+
+and both must be those of the structure. With the policy
+`(directed, atomic)`, each term is added at the neighbor as well, with the
+sign $\sigma = \pm1$ of the destination's exchange contract,
+
+$$
+a_j \mathrel{+}= \sigma_a\, k_a(i, j) \quad \text{for every } (i,j) \in L,\ r_{ij} < r_c,
+$$
+
+with atomic additions at $i$ and at $j$; every destination must be
+symmetric or antisymmetric, and every sum symmetric. A structure with
+`centers` or `images(explicit)` is a matrix without exclusions, built at
+every refresh; the policy `(unique, atomic)` takes neither.
+
 ### 8.4 `md_exec.particle_for`
 
 ```mlir

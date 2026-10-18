@@ -22,7 +22,8 @@ static bool haveSameDomain(PairForOp a, PairForOp b) {
          a.getPositions() == b.getPositions() && a.getCell() == b.getCell() &&
          a.getCutoffAttr() == b.getCutoffAttr() &&
          a.getTraversal() == b.getTraversal() &&
-         a.getConflict() == b.getConflict();
+         a.getConflict() == b.getConflict() &&
+         a.getCenters() == b.getCenters() && a.getImages() == b.getImages();
 }
 
 /// Returns true if `op` or an op nested in it uses a result of `producer`.
@@ -119,7 +120,8 @@ static void fuse(PairForOp first, PairForOp second) {
       first.getCell(), ins, outs, reduce, /*scratch=*/ValueRange(),
       first.getCutoffAttr(), weightsAttr,
       /*overwrite=*/DenseBoolArrayAttr(), first.getTraversalAttr(),
-      first.getConflictAttr(), exchangeAttr);
+      first.getConflictAttr(), exchangeAttr, first.getCenters(),
+      first.getImagesAttr());
 
   // The kernel: the first kernel, then the second.
   Block *block = new Block();

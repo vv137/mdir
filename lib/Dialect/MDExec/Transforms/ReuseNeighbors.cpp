@@ -115,6 +115,11 @@ static SmallVector<Source, 4> findSources(Block &block) {
       auto cells = build.getCells().getDefiningOp<BuildCellsOp>();
       if (!cells)
         continue;
+      // The rows of a domain are built where they are, at every
+      // evaluation, with the halo: their reuse needs the test of coverage
+      // of migration (D[ml2-exec], docs/distributed-ml2.md, Section 8).
+      if (build.getCenters() || build.getImages() == Images::Explicit)
+        continue;
       Source source;
       source.anchor = build;
       source.build = build;
@@ -225,10 +230,11 @@ static Value continueIn(Source source, Value current) {
     Value refreshed = RefreshNeighborsOp::create(
         builder, build.getLoc(), current.getType(), current,
         build.getPositions(), build.getCell(), /*scratch=*/ValueRange(),
-        /*moved=*/Value(), /*stale=*/Value(), build.getCutoffAttr(),
-        build.getSkinAttr(), /*prune_skin=*/FloatAttr(), cells.getWidthAttr(),
+        /*moved=*/Value(), /*stale=*/Value(), /*centers=*/Value(),
+        build.getCutoffAttr(), build.getSkinAttr(), /*prune_skin=*/FloatAttr(),
+        cells.getWidthAttr(),
         RebuildPolicyAttr::get(builder.getContext(), RebuildPolicy::Check),
-        /*interval=*/IntegerAttr());
+        /*interval=*/IntegerAttr(), /*images=*/ImagesAttr());
     build.getResult().replaceAllUsesWith(refreshed);
     build.erase();
     if (cells.use_empty())

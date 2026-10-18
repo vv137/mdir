@@ -2159,9 +2159,13 @@ void Lowering::findRows(func::FuncOp function) {
     if (auto tuple = dyn_cast<md_exec::TupleForOp>(op))
       return !tuple.getDisjoint() && !evaluatesOnce(tuple) &&
              !hasFlags(tuple);
-    // A loop that takes each pair once runs over groups, not rows (D89).
+    // A loop that takes each pair once runs over groups, not rows (D89). A
+    // loop over the rows of a domain is lowered alone (D[ml2-exec]).
     auto pair = dyn_cast<md_exec::PairForOp>(op);
-    return pair && pair.getTraversal() == md_exec::Traversal::Directed;
+    return pair && pair.getTraversal() == md_exec::Traversal::Directed &&
+           pair.getConflict() == md_exec::Conflict::OwnerOnly &&
+           !pair.getCenters() &&
+           pair.getImages() == md_exec::Images::Minimum;
   };
   auto getPositions = [](Operation *op) -> Value {
     if (auto pair = dyn_cast<md_exec::PairForOp>(op))
@@ -3094,6 +3098,20 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
                         "of groups does not give");
   if (unique)
     return lowerGroupPairFor(op, structure);
+  // The rows of a domain (D[ml2-exec]): the rows of the centers alone, and
+  // with (directed, atomic) the values at the neighbors as well, which a
+  // destination that the loop overwrote would lose.
+  Value centers = op.getCenters();
+  if ((centers || op.getConflict() == md_exec::Conflict::Atomic) &&
+      op.getOverwrite() && llvm::is_contained(*op.getOverwrite(), true))
+    return op.emitOpError()
+           << "writes not every value of a destination once, which it "
+              "cannot overwrite";
+  if (deterministic && op.getConflict() == md_exec::Conflict::Atomic)
+    return op.emitOpError()
+           << "adds at the neighbors with floating-point atomics, whose "
+              "order depends on the threads; the deterministic mode (D84) "
+              "takes the policy (directed, owner_only)";
 
   Value positions = op.getPositions();
   Value size = createSize(builder, loc, positions);
@@ -3110,9 +3128,24 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
                                      const RowLanes &sharing) {
     IRMapping local;
+    // The places run in the order of the cells, which mixes the centers
+    // with the other rows: a place whose particle is not a center does
+    // nothing, as a place past the last does.
+    RowLanes lanes = sharing;
+    if (centers) {
+      Value particle = arith::IndexCastOp::create(
+          body, loc, body.getIndexType(),
+          memref::LoadOp::create(body, loc, structure.order,
+                                 ValueRange{central}));
+      Value isCenter = arith::CmpIOp::create(
+          body, loc, arith::CmpIPredicate::ult, particle, centers);
+      lanes.valid = arith::AndIOp::create(body, loc, sharing.valid, isCenter);
+    }
     SmallVector<Value> contributions = emitPairKernel(
         body, op, structure.counts, entries, box, inverse, central,
-        local, &sharing, /*outTotals=*/nullptr, &layout);
+        local, &lanes, /*outTotals=*/nullptr, &layout);
+    // A place that is not a center contributes zeros to the sums, which
+    // its slot of the scratch must hold.
     storeContributions(body, loc, contributions, op.getScratch(), central,
                        sharing);
   }, structure.order);
