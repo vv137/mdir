@@ -1,0 +1,22 @@
+# Every test that writes outputs under %t removes them first (#423).
+# `mdir run` and the Python interface keep an output that exists as a
+# numbered backup and refuse to write after 99 of them, so a test that writes
+# at a fixed %t path without removing it failed after 99 runs of the suite
+# in one build tree (Inputs/check_test_outputs.py says how a test is
+# checked).
+#
+# The checker on small cases: outputs next to %t, a directory that
+# split-file fills without removing it first, a removal after the run, and
+# the forms that pass (a removal first, a glob, a test that runs nothing
+# that keeps backups, a substitution that starts with %t).
+# RUN: %python %S/Inputs/check_test_outputs.py %S/Inputs/outputs \
+# RUN:   | FileCheck %s --check-prefix=CASES
+# CASES: late.test: %t
+# CASES-NEXT: sibling.test: %t.dcd %t.toml
+# CASES-NEXT: split.test: %t %t-mixed
+# CASES-NOT: {{.}}
+#
+# The tests of the suite.
+# RUN: %python %S/Inputs/check_test_outputs.py %S/.. \
+# RUN:   | FileCheck %s --check-prefix=SUITE --allow-empty
+# SUITE-NOT: {{.}}

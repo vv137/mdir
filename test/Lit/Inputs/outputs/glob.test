@@ -1,0 +1,2 @@
+# RUN: rm -rf %t-*
+# RUN: %mdir_python check.py %t-double

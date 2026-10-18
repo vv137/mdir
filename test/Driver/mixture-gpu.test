@@ -2,11 +2,12 @@
 #
 # REQUIRES: cuda
 #
-# RUN: sed -e 's|Inputs/|%S/Inputs/|' %S/mixture.toml > %t.toml
-# RUN: echo '[execution]' >> %t.toml
-# RUN: echo 'target = "gpu"' >> %t.toml
-# RUN: echo 'precision = "mixed"' >> %t.toml
-# RUN: mdir run %t.toml | FileCheck %s
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' %S/mixture.toml > %t/run.toml
+# RUN: echo '[execution]' >> %t/run.toml
+# RUN: echo 'target = "gpu"' >> %t/run.toml
+# RUN: echo 'precision = "mixed"' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
 
 # The virial is a sum of vectors, which the device adds up.
 #

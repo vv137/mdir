@@ -1,6 +1,6 @@
 # What is wrong with a control file is reported with its line.
 #
-# RUN: split-file %s %t
+# RUN: rm -rf %t && split-file %s %t
 # RUN: not mdir run %t/keyword.toml 2>&1 | FileCheck %s --check-prefix=KEYWORD
 # RUN: not mdir run %t/choice.toml 2>&1 | FileCheck %s --check-prefix=CHOICE
 # RUN: not mdir run %t/period.toml 2>&1 | FileCheck %s --check-prefix=PERIOD

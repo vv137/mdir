@@ -1,7 +1,7 @@
 # File-backed grids on GPU in mixed and double precision, against the
 # independent spline and finite-difference oracles of D138 and D165.
 # REQUIRES: hdf5, cuda
-# RUN: rm -rf %t
+# RUN: rm -rf %t %t.report
 # RUN: %python %S/Inputs/check_function_files.py %S %t GPU mdir > %t.report
 # RUN: FileCheck %s < %t.report
 # CHECK: 1d-gpu-double: identical IR; equivalent energies and forces; independent oracle passed

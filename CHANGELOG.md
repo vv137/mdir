@@ -1803,6 +1803,15 @@ format, or the outputs; every such change is listed under **Changed** or
   with the line. No program of today is refused, and no number, key, or
   call changes. `python-frames-loop*.test` measure the stack of the entry
   per frame to the byte.
+- The tests that write outputs under `%t` remove them first (#423). They
+  wrote at fixed paths without removing them, so every run of the suite
+  in one build tree left one numbered backup more (`#name.dcd.N#`), and
+  after 99 runs `mdir` refused to write and the tests failed. 42 tests
+  now start from an empty `%t` (`rm -rf %t && mkdir -p %t`, or
+  `rm -rf %t` before `split-file` or a script); those that wrote next to
+  `%t` (`%t.dcd`, `%t.toml`) write inside it. `test/Lit/test-outputs.test`
+  lists any test that runs `mdir run` or a Python interpreter on a path
+  under `%t` that no `rm` removes before its first use.
 
 ## [0.1.0] - 2026-10-04
 

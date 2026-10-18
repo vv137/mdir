@@ -7,15 +7,16 @@
 # (D218), so the interval counts from step 1: of 2000
 # steps, the rebuilds at 401, 801, 1201, and 1601 are tested.
 #
+# RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' \
-# RUN:     -e 's|"argon.dcd"|"%t.dcd"|' \
+# RUN:     -e 's|"argon.dcd"|"%t/run.dcd"|' \
 # RUN:     -e 's|^pairlist_distance = 9.5|pairlist_distance = 9.5\nrebuild_interval = 10|' \
-# RUN:     %S/../../examples/argon/argon.toml > %t.toml
-# RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = 400|' %t.toml > %t.late.toml
-# RUN: mdir run %t.toml 2>&1 | FileCheck %s
-# RUN: mdir run %t.late.toml 2>&1 | FileCheck %s --check-prefix=LATE
-# RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = -1|' %t.toml > %t.bad.toml
-# RUN: not mdir run %t.bad.toml 2>&1 | FileCheck %s --check-prefix=BAD
+# RUN:     %S/../../examples/argon/argon.toml > %t/run.toml
+# RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = 400|' %t/run.toml > %t/late.toml
+# RUN: mdir run %t/run.toml 2>&1 | FileCheck %s
+# RUN: mdir run %t/late.toml 2>&1 | FileCheck %s --check-prefix=LATE
+# RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = -1|' %t/run.toml > %t/bad.toml
+# RUN: not mdir run %t/bad.toml 2>&1 | FileCheck %s --check-prefix=BAD
 
 # CHECK:      mdir: warning: 'rebuild_interval = 10': the neighbor structures are rebuilt every 10 steps and not tested in between; they may miss pairs within the cutoff. This is not a default of MDIR
 # CHECK:      MDIR: warning: the neighbor structures are rebuilt every 10 steps and not tested in between (rebuild_interval, opt-in)

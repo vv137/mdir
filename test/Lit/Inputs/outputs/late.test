@@ -1,0 +1,2 @@
+# RUN: mdir run %t/run.toml
+# RUN: rm -rf %t

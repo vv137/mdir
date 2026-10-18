@@ -15,7 +15,7 @@
 # -42.379423, CHARMM's times 332.0637 / 332.0716, the ratio of the Coulomb
 # constants of CODATA and of CHARMM (docs/charmm-m1.md, Section 2).
 #
-# RUN: split-file %s %t
+# RUN: rm -rf %t && split-file %s %t
 # RUN: mdir run %t/run.toml | FileCheck %s
 # RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=CHECK-TOPOLOGY
 # RUN: sed '/^box/d' %t/run.toml > %t/nobox.toml

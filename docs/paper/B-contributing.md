@@ -34,6 +34,12 @@ image, on CUDA's runtime image with libdevice from the toolkit.
 | Scale | `MDIR_BENCH_DIR=<dir> lit test/Scale` | Short runs of the Amber benchmark suite |
 | Host sanitizers | `scripts/build-sanitized.sh <dir>` | All tests with the driver and runtimes under AddressSanitizer and UndefinedBehaviorSanitizer |
 
+A test that writes outputs puts them under its own `%t` and removes it
+first, `rm -rf %t && mkdir -p %t` on its first line: `mdir` keeps an output
+that exists as a numbered backup and stops after 99 of them, so a test that
+wrote at fixed paths failed after 99 runs of the suite in one build tree
+(#423). `test/Lit/test-outputs.test` lists the tests that do not.
+
 ## B.2 Where a change goes
 
 | Directory | Contents |

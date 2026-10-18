@@ -1,8 +1,9 @@
 # The template is a control file that is read without an error, apart from
 # the file of the positions, which it does not come with.
 #
-# RUN: mdir template md > %t.toml
-# RUN: not mdir run %t.toml 2>&1 | FileCheck %s
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: mdir template md > %t/run.toml
+# RUN: not mdir run %t/run.toml 2>&1 | FileCheck %s
 # RUN: mdir template md | FileCheck %s --check-prefix=TEMPLATE
 
 # CHECK: cannot read '{{.*}}system.pdb'
@@ -17,7 +18,7 @@
 # the files of examples/ala3.
 #
 # RUN: mdir template amber | sed -e 's|"system.prmtop"|"%S/../../examples/ala3/ala3.prmtop"|' \
-# RUN:     -e 's|"system.inpcrd"|"%S/../../examples/ala3/ala3.inpcrd"|' > %t.amber.toml
-# RUN: mdir check %t.amber.toml | FileCheck %s --check-prefix=AMBER
+# RUN:     -e 's|"system.inpcrd"|"%S/../../examples/ala3/ala3.inpcrd"|' > %t/amber.toml
+# RUN: mdir check %t/amber.toml | FileCheck %s --check-prefix=AMBER
 # AMBER: particles: {{ *}}4905
 # AMBER: degrees of freedom: 7387

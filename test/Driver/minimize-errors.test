@@ -1,6 +1,6 @@
 # What is wrong with a minimization in the control file is reported.
 #
-# RUN: split-file %s %t
+# RUN: rm -rf %t && split-file %s %t
 # RUN: not mdir run %t/both.toml 2>&1 | FileCheck %s --check-prefix=BOTH
 # RUN: not mdir run %t/bath.toml 2>&1 | FileCheck %s --check-prefix=BATH
 # RUN: not mdir run %t/multiple.toml 2>&1 | FileCheck %s --check-prefix=MULTIPLE

@@ -1,0 +1,1 @@
+# RUN: %torch_python check.py %S

@@ -1,0 +1,3 @@
+# RUN: split-file %s %t
+# RUN: mdir run %t/run.toml
+# RUN: %python check.py %t-mixed

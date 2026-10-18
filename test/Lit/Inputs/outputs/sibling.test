@@ -1,0 +1,3 @@
+# A run writes its trajectory at a fixed path next to %t.
+# RUN: sed -e "s|out.dcd|%t.dcd|" %S/run.toml > %t.toml
+# RUN: mdir run %t.toml

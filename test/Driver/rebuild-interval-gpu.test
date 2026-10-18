@@ -3,14 +3,15 @@
 #
 # REQUIRES: cuda
 #
+# RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' \
-# RUN:     -e 's|"argon.dcd"|"%t.dcd"|' \
+# RUN:     -e 's|"argon.dcd"|"%t/run.dcd"|' \
 # RUN:     -e 's|^pairlist_distance = 9.5|pairlist_distance = 9.5\nrebuild_interval = 10|' \
 # RUN:     -e 's|^target    = "CPU"|target    = "GPU"|' \
-# RUN:     %S/../../examples/argon/argon.toml > %t.toml
-# RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = 400|' %t.toml > %t.late.toml
-# RUN: mdir run %t.toml 2>&1 | FileCheck %s
-# RUN: mdir run %t.late.toml 2>&1 | FileCheck %s --check-prefix=LATE
+# RUN:     %S/../../examples/argon/argon.toml > %t/run.toml
+# RUN: sed -e 's|^rebuild_interval = 10|rebuild_interval = 400|' %t/run.toml > %t/late.toml
+# RUN: mdir run %t/run.toml 2>&1 | FileCheck %s
+# RUN: mdir run %t/late.toml 2>&1 | FileCheck %s --check-prefix=LATE
 
 # CHECK:      mdir: warning: 'rebuild_interval = 10'
 # CHECK:      MDIR: neighbor structures were built 201 times, every 10.0 steps on average

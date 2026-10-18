@@ -1,13 +1,14 @@
 # The mixture of mixture.toml with leapfrog, with threads, in single
 # precision, and without the rewrites that change rounding.
 #
+# RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|"VELOCITY_VERLET"|"LEAPFROG"|' %S/mixture.toml \
-# RUN:     > %t.toml
-# RUN: echo '[execution]' >> %t.toml
-# RUN: echo 'threads = 4' >> %t.toml
-# RUN: echo 'precision = "single"' >> %t.toml
-# RUN: echo 'fast_math = false' >> %t.toml
-# RUN: mdir run %t.toml | FileCheck %s
+# RUN:     > %t/run.toml
+# RUN: echo '[execution]' >> %t/run.toml
+# RUN: echo 'threads = 4' >> %t/run.toml
+# RUN: echo 'precision = "single"' >> %t/run.toml
+# RUN: echo 'fast_math = false' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
 
 # With leapfrog the stored velocities are half a step behind the
 # positions. The log has the kinetic energy of the time of the row all the
