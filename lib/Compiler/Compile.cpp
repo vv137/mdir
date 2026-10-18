@@ -94,6 +94,14 @@ static llvm::StringRef getTupleSumsOptions() {
   return "";
 }
 
+llvm::StringRef mdir::compiler::getFusedPruningSetting() {
+  const char *fuse = std::getenv("MDIR_FUSED_PRUNE");
+  llvm::StringRef value = fuse ? fuse : "";
+  if (value == "off" || value == "always")
+    return value;
+  return "default";
+}
+
 /// The options of the pruning in the loop over pairs (D[fused-prune]): on
 /// from the groups of `getFusedPruningGroups` for the architecture of
 /// `gpuOptions`, unless MDIR_FUSED_PRUNE is `off`; `always` takes it at any
@@ -108,8 +116,7 @@ static std::string getFusedPruningOptions(llvm::StringRef gpuOptions) {
   int64_t groups = 4096;
   if (gpuOptions.contains("cubin-chip=sm_12"))
     groups = 20480;
-  const char *fuse = std::getenv("MDIR_FUSED_PRUNE");
-  llvm::StringRef value = fuse ? fuse : "";
+  llvm::StringRef value = mdir::compiler::getFusedPruningSetting();
   if (value == "off")
     return "";
   return "fuse-pruning=true fuse-pruning-groups=" +

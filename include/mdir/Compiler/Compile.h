@@ -25,6 +25,10 @@ public:
 /// for the default architecture (D214).
 std::string getPipeline(const driver::Control &, const driver::Program &,
                         llvm::StringRef gpuOptions = {});
+/// Where the loop over pairs prunes the inner lists of dual lists
+/// (D[fused-prune]): "off" or "always" as MDIR_FUSED_PRUNE says, else
+/// "default", from a number of groups that depends on the architecture.
+llvm::StringRef getFusedPruningSetting();
 /// Points CUDA_ROOT at the toolkit whose libdevice and ptxas the kernels of
 /// a GPU take: the one the environment names (CUDA_ROOT, CUDA_HOME, or
 /// CUDA_PATH); else the copy of libdevice carried with the module that holds

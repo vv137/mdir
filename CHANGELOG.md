@@ -45,6 +45,8 @@ format, or the outputs; every such change is listed under **Changed** or
   `MDIR_FUSED_PRUNE=off|always` sets it aside or takes it at any size.
   The log line of the prunings adds how many the loop did. No control-file
   key changes; the forces are those of before to the order of their sums.
+  The cache key of the skins (D281) names the setting, so an entry
+  cached before misses once.
 - ML2, stage 1, part 3 (D279, #31,
   [docs/distributed-ml2.md](docs/distributed-ml2.md), Section 15):
   `md-differentiate` derives the forces and the virial of a potential on
