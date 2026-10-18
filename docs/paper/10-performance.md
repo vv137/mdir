@@ -7,7 +7,7 @@
 | Item | MDIR | pmemd.cuda |
 |---|---|---|
 | Program | `mdir` at D284 (commit bfb73f96), built with LLVM and MLIR 23.1.2, kernels loaded as cubins (D214) | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 for the RTX 4090 |
-| Device | One NVIDIA RTX 4090 (450 W, driver 595.45.04) of one compute node, on 2026-10-18, in one job of the cluster's scheduler that held the device alone (`gpu-run --idle`); other jobs ran on the node's other GPUs | The same |
+| Device | One NVIDIA RTX 4090 (450 W, driver 595.45.04) of one compute node (ada-003), on 2026-10-18, in one job of the cluster's scheduler that held the device alone (`gpu-run --idle`); other jobs ran on the node's other GPUs | The same |
 | Inputs | The systems of the Amber 24 GPU benchmark suite (PME), the topologies and restart files of the suite as they are (`prmtop`, `inpcrd`; two topologies are in the format before Amber 7, D133), with the settings of `scripts/benchmarks/amber/bench.py` | The inputs of the suite as they are (`mdin.GPU`, `prmtop`, `inpcrd`) |
 | Model | Cutoff 8 Å; PME with the $\beta$ of pmemd, $\mathrm{erfc}(\beta r_c)/r_c = 10^{-6}$ at constant energy and $10^{-5}$ at constant pressure (0.39467 and 0.34864 Å⁻¹), the grids of pmemd.cuda (64³; 144 × 84 × 80; 256 × 128 × 128; 224 × 224 × 240), order 4, and Amber's influence function (D134); SHAKE on the bonds of hydrogen and rigid water; the correction for the dispersion | The same, by the inputs |
 | Couplings (NPT) | Stochastic velocity rescaling [[Bussi2007]](references.md#bussi2007) and stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020), every 25 steps, $\tau_T$ = 1 ps, $\tau_P$ = 2 ps | Berendsen's thermostat [[Berendsen1984]](references.md#berendsen1984), $\tau$ = 10 ps; Monte Carlo barostat every 100 steps |
@@ -123,7 +123,7 @@ two nodes (Cellulose NVE 117.3 there against 121.6 ns/day here), which is
 why the ratios of Table 10.2 come from one job on one node.
 
 *Table 10.3. MDIR with the skins of the grid of #406 (another RTX 4090
-node, same commit, three repeats, #405) against the automatic skins of
+node, ada-002, same commit, three repeats, #405) against the automatic skins of
 Table 10.2; ns/day, and the ratio to pmemd.cuda in the same job.*
 
 | System | Grid's skins, Å | MDIR, grid | MDIR, automatic | / pmemd.cuda, grid | / pmemd.cuda, automatic |
