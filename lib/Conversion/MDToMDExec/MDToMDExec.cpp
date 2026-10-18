@@ -337,7 +337,9 @@ LogicalResult Converter::convertTupleOp(OpTy op, bool isSum) {
       op.getCell(), op.getGathered(), op.getParameters(), outs, reduce,
       /*scratch=*/ValueRange(), kinds, members,
       builder.getI64IntegerAttr(arity), /*overwrite=*/DenseBoolArrayAttr(),
-      disjoint);
+      disjoint,
+      // Chosen on a device (md-exec-choose-scatter, D[privatize-scatter]).
+      /*scatter=*/md_exec::ScatterAttr());
 
   Block &source = op.getKernel().front();
   Type vector = VectorType::get({3}, builder.getF64Type());
@@ -518,9 +520,9 @@ LogicalResult Converter::convert(Operation *op) {
           yieldsPotential ? builder.getUnitAttr() : UnitAttr(),
           reciprocal.getProlateAttr(),
           yieldsPotential ? UnitAttr() : reciprocal.getGatherAllAttr(),
-          // The layout of the spreading is chosen later, on a device
-          // (md-exec-choose-spreading, D282).
-          /*tiles=*/IntegerAttr());
+          // The strategy of the spreading is chosen later, on a device
+          // (md-exec-choose-scatter, D[privatize-scatter]).
+          /*scatter=*/md_exec::ScatterAttr());
     };
     if (takesForces) {
       auto converted = create(reciprocal.getForces().getType(), false);

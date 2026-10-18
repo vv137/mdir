@@ -626,7 +626,9 @@ static void fuse(TupleForOp first, TupleForOp second) {
       builder, loc, resultTypes, first.getIncidence(), first.getPositions(),
       first.getCell(), ins, parameters, outs, reduce,
       /*scratch=*/ValueRange(), kinds, members, first.getArityAttr(),
-      /*overwrite=*/DenseBoolArrayAttr(), first.getDisjointAttr());
+      /*overwrite=*/DenseBoolArrayAttr(), first.getDisjointAttr(),
+      // Chosen later, for the fused loop (md-exec-choose-scatter).
+      /*scatter=*/ScatterAttr());
 
   // The arguments of a kernel: its displacements, its values of fields,
   // and its parameters.

@@ -17,6 +17,9 @@
 
 #include "mdir/Dialect/MDExec/MDExecEnums.h.inc"
 
+#define GET_ATTRDEF_CLASSES
+#include "mdir/Dialect/MDExec/MDExecAttrs.h.inc"
+
 namespace mdir {
 namespace md_exec {
 

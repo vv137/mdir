@@ -67,6 +67,40 @@ static void printCoordinates(OpAsmPrinter &printer, Operation *,
   mdir::md::printCoordinateList(printer, kinds, members);
 }
 
+/// `scatter(<strategy>)`, the strategy of a scatter-accumulate
+/// (D[privatize-scatter]), or nothing.
+static ParseResult parseScatter(OpAsmParser &parser, ScatterAttr &scatter) {
+  if (failed(parser.parseOptionalKeyword("scatter")))
+    return success();
+  if (parser.parseLParen())
+    return failure();
+  scatter = ScatterAttr::parseBody(parser);
+  if (!scatter)
+    return failure();
+  return parser.parseRParen();
+}
+
+static void printScatter(OpAsmPrinter &printer, Operation *,
+                         ScatterAttr scatter) {
+  if (!scatter)
+    return;
+  printer << "scatter(";
+  scatter.printBody(printer.getStream());
+  printer << ") ";
+}
+
+/// The strategies that `op` can take besides `atomic`.
+static LogicalResult verifyScatter(Operation *op, ScatterAttr scatter,
+                                   ScatterStrategy allowed,
+                                   StringRef why) {
+  if (!scatter || scatter.getStrategy() == ScatterStrategy::Atomic ||
+      scatter.getStrategy() == allowed)
+    return success();
+  return op->emitOpError() << "cannot take the strategy '"
+                           << stringifyScatterStrategy(scatter.getStrategy())
+                           << "': " << why;
+}
+
 #define GET_OP_CLASSES
 #include "mdir/Dialect/MDExec/MDExecOps.cpp.inc"
 
@@ -331,6 +365,12 @@ LogicalResult PermuteOp::verify() {
                             "field, "
                          << field << ", got " << getResult().getType();
   return success();
+}
+
+LogicalResult ReciprocalOp::verify() {
+  return verifyScatter(*this, getScatterAttr(), ScatterStrategy::Tile,
+                       "the template of the spreading has the kernels of "
+                       "tiles alone");
 }
 
 void ReciprocalOp::getEffects(
@@ -1006,6 +1046,10 @@ static Type getTupleKernelReal(TupleForOp op) {
 }
 
 LogicalResult TupleForOp::verify() {
+  if (failed(verifyScatter(*this, getScatterAttr(), ScatterStrategy::Hash,
+                           "a tuple may have members anywhere, so the "
+                           "footprint of a block is not bounded")))
+    return failure();
   int64_t arity = getArity();
   if (arity < 1)
     return emitOpError() << "expected an arity of at least 1, got " << arity;

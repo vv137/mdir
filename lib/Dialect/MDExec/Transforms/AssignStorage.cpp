@@ -732,7 +732,11 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
       builder, op.getLoc(), resultTypes, incidence, positions,
       mapping.lookup(op.getCell()), ins, parameters, outs, reduce, scratch,
       op.getCoordinateKindsAttr(), op.getCoordinateMembersAttr(),
-      op.getArityAttr(), overwriteAttr, op.getDisjointAttr());
+      op.getArityAttr(), overwriteAttr, op.getDisjointAttr(),
+      // The strategy of the scatter (D[privatize-scatter]), for a loop
+      // that adds to its destinations: one that overwrites a destination
+      // writes the rows of its particles, and scatters nothing.
+      overwriteAttr ? ScatterAttr() : op.getScatterAttr());
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
     scope.release(buffer);
@@ -952,16 +956,19 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       gpu::WaitOp::create(root->builder, loc, Type(), ValueRange{cleared});
       scratch.push_back(buffer);
     }
-    // The bins of the spreading into tiles (D282), last: in i32,
+    // The bins of the spreading into tiles (D282, `scatter(tile(E))`,
+    // D[privatize-scatter]), last: in i32,
     // the count of each bin and that of the particles that overflow, which
     // each binning zeroes first, a run of C places for each bin, C twice
     // the mean number of particles of a bin and 8 more, and n places for
     // those that overflow (bin_header of
     // scripts/generate-pme-gpu-template.py, which computes the same).
-    if (std::optional<int64_t> edge = op.getTiles()) {
+    ScatterAttr scatter = op.getScatterAttr();
+    if (scatter && scatter.isTile()) {
+      int64_t edge = scatter.getEdge();
       int64_t bins = 1;
       for (int64_t points : grid)
-        bins *= (points + *edge - 1) / *edge;
+        bins *= (points + edge - 1) / edge;
       auto type = MemRefType::get({ShapedType::kDynamic},
                                   IntegerType::get(context, 32),
                                   MemRefLayoutAttrInterface(), space);
@@ -994,7 +1001,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       moduli, out, scratch, listed, op.getGridAttr(), op.getOrderAttr(),
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
       op.getPotentialAttr(), op.getProlateAttr(), op.getGatherAllAttr(),
-      onDevice ? op.getTilesAttr() : IntegerAttr());
+      onDevice ? op.getScatterAttr() : ScatterAttr());
   mapping.map(op.getEnergy(), created.getEnergy());
   mapping.map(op.getVirial(), created.getVirial());
   buffers[op.getForces()] = out;

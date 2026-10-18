@@ -39,6 +39,27 @@ def MDExec_Conflict : I32EnumAttr<"Conflict",
   let cppNamespace = "::mdir::md_exec";
 }
 
+// How a loop or a sum adds values into a field at indices that its threads
+// share: the strategy of a scatter-accumulate (D[privatize-scatter],
+// docs/device-primitives.md), which `md-exec-choose-scatter` sets.
+def MDExec_ScatterStrategy : I32EnumAttr<"ScatterStrategy",
+    "strategy of a scatter-accumulate", [
+    // An atomic addition of the device for each value.
+    I32EnumAttrCase<"Atomic", 0, "atomic">,
+    // A dense tile in block memory for each bin of the indices, whose
+    // footprint the IR bounds; one atomic for each point of the tile.
+    I32EnumAttrCase<"Tile", 1, "tile">,
+    // A hash table in block memory, keyed by the index, with bounded
+    // probing and a direct atomic where the probing fails; one atomic for
+    // each index of the table.
+    I32EnumAttrCase<"Hash", 2, "hash">,
+    // Sorted by index and the runs reduced, without atomics: reserved for
+    // #417, refused by the verifier.
+    I32EnumAttrCase<"Sorted", 3, "sorted">
+  ]> {
+  let cppNamespace = "::mdir::md_exec";
+}
+
 // When a neighbor structure is rebuilt.
 def MDExec_RebuildPolicy : I32EnumAttr<"RebuildPolicy",
     "when a neighbor structure is rebuilt", [
