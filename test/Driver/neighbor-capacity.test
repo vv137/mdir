@@ -3,14 +3,15 @@
 # more neighbors: a run of liquid argon whose rows start with room for one
 # neighbor gives the energies of a run whose rows start with the estimate.
 #
+# RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' \
-# RUN:     -e 's|"argon.dcd"|"%t.dcd"|' \
+# RUN:     -e 's|"argon.dcd"|"%t/run.dcd"|' \
 # RUN:     -e 's|^steps      = 2000|steps      = 200|' \
-# RUN:     %S/../../examples/argon/argon.toml > %t.toml
-# RUN: sed -e 's|^target    = "CPU"|target    = "CPU"\nneighbor_capacity = 1|' %t.toml > %t.narrow.toml
-# RUN: mdir run %t.toml | grep 'INFO: ' > %t.log
-# RUN: mdir run %t.narrow.toml | grep 'INFO: ' > %t.narrow.log
-# RUN: diff %t.log %t.narrow.log
-# RUN: FileCheck %s < %t.narrow.log
+# RUN:     %S/../../examples/argon/argon.toml > %t/run.toml
+# RUN: sed -e 's|^target    = "CPU"|target    = "CPU"\nneighbor_capacity = 1|' %t/run.toml > %t/narrow.toml
+# RUN: mdir run %t/run.toml | grep 'INFO: ' > %t/run.log
+# RUN: mdir run %t/narrow.toml | grep 'INFO: ' > %t/narrow.log
+# RUN: diff %t/run.log %t/narrow.log
+# RUN: FileCheck %s < %t/narrow.log
 
 # CHECK: INFO:       200

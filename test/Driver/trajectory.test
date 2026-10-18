@@ -1,13 +1,14 @@
 # The trajectory: a frame every 50 steps, in the DCD format.
 #
+# RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -e 's|Inputs/|%S/Inputs/|' \
 # RUN:     -e 's|energy_interval = 50|energy_interval = 25\ntrajectory_interval = 50|' \
-# RUN:     %S/mixture.toml > %t.toml
-# RUN: echo 'trajectory = "%t.dcd"' >> %t.toml
-# RUN: mdir run %t.toml | FileCheck %s
-# RUN: od -A d -t d4 -N 24 %t.dcd | FileCheck %s --check-prefix=HEADER
-# RUN: od -A d -c -j 4 -N 4 %t.dcd | FileCheck %s --check-prefix=TAG
-# RUN: wc -c < %t.dcd | FileCheck %s --check-prefix=SIZE
+# RUN:     %S/mixture.toml > %t/run.toml
+# RUN: echo 'trajectory = "%t/run.dcd"' >> %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
+# RUN: od -A d -t d4 -N 24 %t/run.dcd | FileCheck %s --check-prefix=HEADER
+# RUN: od -A d -c -j 4 -N 4 %t/run.dcd | FileCheck %s --check-prefix=TAG
+# RUN: wc -c < %t/run.dcd | FileCheck %s --check-prefix=SIZE
 #
 # Frames more frequent than the energies: the energies are computed at
 # each frame and the log shows those of its period. The frames are those
@@ -15,10 +16,10 @@
 #
 # RUN: sed -e 's|Inputs/|%S/Inputs/|' \
 # RUN:     -e 's|energy_interval = 50|energy_interval = 100\ntrajectory_interval = 50|' \
-# RUN:     %S/mixture.toml > %t.sparse.toml
-# RUN: echo 'trajectory = "%t.sparse.dcd"' >> %t.sparse.toml
-# RUN: mdir run %t.sparse.toml | FileCheck %s --check-prefix=SPARSE
-# RUN: cmp %t.dcd %t.sparse.dcd
+# RUN:     %S/mixture.toml > %t/sparse.toml
+# RUN: echo 'trajectory = "%t/sparse.dcd"' >> %t/sparse.toml
+# RUN: mdir run %t/sparse.toml | FileCheck %s --check-prefix=SPARSE
+# RUN: cmp %t/run.dcd %t/sparse.dcd
 
 # SPARSE:      INFO:         0         0.0000
 # SPARSE-NEXT: INFO:       100         0.4000

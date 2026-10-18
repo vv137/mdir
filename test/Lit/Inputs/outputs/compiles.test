@@ -1,0 +1,2 @@
+# RUN: mdir emit %S/run.toml > %t.mlir
+# RUN: FileCheck %s < %t.mlir

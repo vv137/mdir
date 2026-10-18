@@ -11,7 +11,7 @@
 #                                              −0.222505 kJ/mol
 # which a rerun of GROMACS 2026.3 gives to the digits shown.
 #
-# RUN: split-file %s %t
+# RUN: rm -rf %t && split-file %s %t
 # RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=NBFIX
 # RUN: sed -i '/^  A  A  1  0.35  0.5$/d' %t/system.top
 # RUN: mdir run %t/run.toml | FileCheck %s --check-prefix=RULE

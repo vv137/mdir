@@ -1,4 +1,5 @@
 # REQUIRES: cuda, hdf5
+# RUN: rm -rf %t
 # RUN: %python %S/Inputs/check_squared_switch.py mdir %t/mixed gpu mixed GROUPS | FileCheck %s
 # RUN: %python %S/Inputs/check_squared_switch.py mdir %t/double gpu double MATRIX | FileCheck %s
 # RUN: %python %S/Inputs/check_squared_switch.py mdir %t/mixed-matrix gpu mixed MATRIX | FileCheck %s

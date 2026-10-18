@@ -2,7 +2,7 @@
 # Independent spline and finite-difference oracles, bit-identical inline IR,
 # provenance, continuation, and input validation in both precisions.
 # REQUIRES: hdf5
-# RUN: rm -rf %t
+# RUN: rm -rf %t %t.report
 # RUN: %python %S/Inputs/check_function_files.py %S %t CPU mdir > %t.report
 # RUN: FileCheck %s < %t.report
 # CHECK: 1d-cpu-double: identical IR; equivalent energies and forces; independent oracle passed

@@ -1,8 +1,9 @@
 # The example of liquid argon, through the driver.
 #
+# RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -e 's|"argon.pdb"|"%S/../../examples/argon/argon.pdb"|' \
-# RUN:     -e 's|"argon.dcd"|"%t.dcd"|' %S/../../examples/argon/argon.toml > %t.toml
-# RUN: mdir run %t.toml | FileCheck %s
+# RUN:     -e 's|"argon.dcd"|"%t/run.dcd"|' %S/../../examples/argon/argon.toml > %t/run.toml
+# RUN: mdir run %t/run.toml | FileCheck %s
 
 # The potential energy of the lattice is that of examples/argon/argon.mlir,
 # -5459.64 kJ/mol.

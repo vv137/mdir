@@ -23,7 +23,7 @@
 # switches the pair three bonds apart (σ = 0.33 nm, ε = 0.4 kJ/mol at
 # 0.367594 nm), as CHARMM does: −0.095106 against −0.095392.
 #
-# RUN: split-file %s %t
+# RUN: rm -rf %t && split-file %s %t
 # RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,NONE
 # RUN: sed -i 's/^# modifier$/switch_distance = 12.0\nlennard_jones_modifier = "POTENTIAL_SHIFT"\ndispersion_correction = "NONE"/' %t/run.toml
 # RUN: mdir run %t/run.toml | FileCheck %s --check-prefixes=BONDED,SHIFT

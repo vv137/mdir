@@ -1,6 +1,7 @@
 # Independent polynomial energy and slope, including ordinary and 1-4
 # pairs below/at/above the switch and cutoff; Coulomb stays unswitched.
 # REQUIRES: hdf5
+# RUN: rm -rf %t
 # RUN: %python %S/Inputs/check_squared_switch.py mdir %t/double cpu double MATRIX | FileCheck %s
 # RUN: %python %S/Inputs/check_squared_switch.py mdir %t/mixed cpu mixed MATRIX | FileCheck %s
 # RUN: sed 's/switch_distance = 10.0/switch_distance = 12.0/' %t/double/run.toml > %t/double/no-width.toml

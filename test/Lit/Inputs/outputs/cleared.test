@@ -1,0 +1,3 @@
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/run.toml %t
+# RUN: mdir run %t/run.toml

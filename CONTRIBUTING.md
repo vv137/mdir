@@ -29,6 +29,8 @@ schedule also passes the short runs of the Amber suite
   of a pass in `test/Dialect` or `test/Conversion`, a run of the driver in
   `test/Driver`. A value that a test pins after a comparison with another
   program names that program and the value it gave in the test's comment.
+  A test that writes outputs writes them under `%t` and removes it first
+  (`rm -rf %t && mkdir -p %t`); `test/Lit/test-outputs.test` checks it.
 - **A switch and a comparison** for an optimization: it can be turned off,
   and a test compares both ways, bitwise where the sums have a fixed order.
 - **A decision** in [docs/decisions.md](docs/decisions.md) for a choice

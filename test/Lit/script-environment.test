@@ -8,6 +8,7 @@
 # the values of a machine, and the environment wins over it. Each script
 # runs here in an environment that holds nothing
 # (Inputs/script_environment.py); no device, engine, or toolkit is needed.
+# RUN: rm -rf %t
 # RUN: %python %S/Inputs/script_environment.py %S/../.. %t | FileCheck %s
 # CHECK: the release, nothing set: exit 2
 # CHECK-NEXT: scripts/release/publish.sh: the environment lacks what this script needs (docs/environment.md, Scripts):

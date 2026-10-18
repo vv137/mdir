@@ -3,26 +3,27 @@
 #
 # REQUIRES: hdf5, cuda
 #
+# RUN: rm -rf %t && mkdir -p %t
 # RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|"VELOCITY_VERLET"|"LEAPFROG"|' \
 # RUN:     -e 's|^steps *= 200|steps = 200|' \
-# RUN:     %S/mixture.toml > %t.whole.toml
-# RUN: echo 'checkpoint = "%t.whole.h5"' >> %t.whole.toml
-# RUN: echo 'checkpoint_interval = 100' >> %t.whole.toml
-# RUN: echo '[execution]' >> %t.whole.toml
-# RUN: echo 'target = "gpu"' >> %t.whole.toml
-# RUN: echo 'precision = "single"' >> %t.whole.toml
+# RUN:     %S/mixture.toml > %t/whole.toml
+# RUN: echo 'checkpoint = "%t/whole.h5"' >> %t/whole.toml
+# RUN: echo 'checkpoint_interval = 100' >> %t/whole.toml
+# RUN: echo '[execution]' >> %t/whole.toml
+# RUN: echo 'target = "gpu"' >> %t/whole.toml
+# RUN: echo 'precision = "single"' >> %t/whole.toml
 #
-# RUN: sed -e 's|^steps = 200|steps = 100|' -e 's|%t.whole.h5|%t.first.h5|' \
-# RUN:     %t.whole.toml > %t.first.toml
-# RUN: sed -e 's|%t.first.h5|%t.second.h5|' \
-# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "%t.first.h5"|' \
-# RUN:     %t.first.toml > %t.second.toml
+# RUN: sed -e 's|^steps = 200|steps = 100|' -e 's|%t/whole.h5|%t/first.h5|' \
+# RUN:     %t/whole.toml > %t/first.toml
+# RUN: sed -e 's|%t/first.h5|%t/second.h5|' \
+# RUN:     -e 's|^coordinates = \(.*\)|coordinates = \1\ncheckpoint = "%t/first.h5"|' \
+# RUN:     %t/first.toml > %t/second.toml
 #
-# RUN: mdir run %t.whole.toml
-# RUN: mdir run %t.first.toml
-# RUN: mdir run %t.second.toml
-# RUN: mdir checkpoint %t.whole.h5 %t.second.h5 | FileCheck %s
-# RUN: mdir checkpoint %t.whole.h5 | FileCheck %s --check-prefix=ABOUT
+# RUN: mdir run %t/whole.toml
+# RUN: mdir run %t/first.toml
+# RUN: mdir run %t/second.toml
+# RUN: mdir checkpoint %t/whole.h5 %t/second.h5 | FileCheck %s
+# RUN: mdir checkpoint %t/whole.h5 | FileCheck %s --check-prefix=ABOUT
 
 # CHECK: the states are identical
 
