@@ -313,6 +313,68 @@ rule. Unknown required activity fails. Operands and captured kernel values
 are followed, and block arguments are independent only in scopes whose
 meaning is known. `--md-analyze-activity=argument=N` reports these outcomes.
 
+**Neural stages (D[ml4-neural-op], D[ml4-feature-types]).** A
+message-passing potential is written in the same ops, with its neural
+bodies as stages: a layer $k$ is a gather over the pairs,
+$\mathbf A_i^{(k)} = \sum_{j:(i,j)\in D(N)}\phi_k(r_{ij}, \mathbf d_{ij},
+\mathbf h_i^{(k-1)}, \mathbf h_j^{(k-1)}, z_i, z_j)$, and a map,
+$\mathbf h_i^{(k)} = \psi_k(\mathbf h_i^{(k-1)}, \mathbf A_i^{(k)})$, from
+$\mathbf h_i^{(0)} = \eta(z_i)$ to the readout $U = \sum_i\mathcal
+R(\mathbf h_i^{(N_\text{layer})})$. `md.stage` declares a pure function of
+one element and binds its body and its vector-Jacobian product, which
+external AD supplies (D167); `md.apply_stage` applies either in a kernel.
+The features are fields of $N$ components whose type states the
+representation of O(3) they carry, `irreps<4x0e + 4x1o>`, and its layout.
+The derivative follows from the first-order change of $U$ in the values of
+one gather, with $\bar{\mathbf A}_i = \partial U/\partial\mathbf A_i$ known
+from the fields after it (taken in the reverse order of the body):
+
+$$
+\delta U = \sum_i\bar{\mathbf A}_i\cdot\delta\mathbf A_i
+= \sum_{(i,j)\in D(N)}\big[\bar r_{ij}\,\delta r_{ij}
++ \bar{\mathbf d}_{ij}\cdot\delta\mathbf d_{ij}
++ \bar{\mathbf h}^\mathrm c_{ij}\cdot\delta\mathbf h_i
++ \bar{\mathbf h}^\mathrm n_{ij}\cdot\delta\mathbf h_j\big],
+$$
+
+where the bracket is the vector-Jacobian product at $(i,j)$ for the
+cotangent $\bar{\mathbf A}_i$, by its definition. Collected at a particle
+$m$, the terms in $\delta\mathbf h$ come from the pairs $(m,b)$, where $m$
+is the center, and $(b,m)$, where it is the neighbor, both pairs of the
+relation at $m$: $\bar{\mathbf h}_m \mathrel{+}= \sum_b[\bar{\mathbf
+h}^\mathrm c_{mb} + \bar{\mathbf h}^\mathrm n_{bm}]$, a gather over the
+same relation that reads $\bar{\mathbf A}$ at both ends. The adjoint of a
+gather is a gather, and that of a sum or a map over the particles a map of
+the product at each particle. With $\delta r_{ij} = \mathbf d_{ij}\cdot
+\delta\mathbf d_{ij}/r_{ij}$ and $\delta\mathbf d_{ij} = \delta\mathbf x_i -
+\delta\mathbf x_j$, the geometric terms of $(i,j)$ are $\mathbf
+g_{ij}\cdot(\delta\mathbf x_i - \delta\mathbf x_j)$ with $\mathbf g_{ij} =
+\bar r_{ij}\mathbf d_{ij}/r_{ij} + \bar{\mathbf d}_{ij}$, so the force on
+$m$ is $\sum_b\mathbf K(m,b)$, $\mathbf K(m,b) = -(\mathbf g_{mb} - \mathbf
+g_{bm})$, antisymmetric by construction. The species do not move, and
+$\mathbf h^{(0)}$ depends on them alone, so the positions enter $U$ only
+through the pairs, every layer's alike. Under the strain $\mathbf x \to
+(\mathsf 1 + \boldsymbol\varepsilon)\mathbf x$ with the cell, every
+displacement becomes $(\mathsf 1 + \boldsymbol\varepsilon)\mathbf d_{ij}$,
+so $-\partial U/\partial\varepsilon_{ab} = -\sum_{(i,j)}g_{ij,b}\,d_{ij,a}$
+over the layers' pairs, which over the unordered pairs, with $\mathbf
+d_{ji} = -\mathbf d_{ij}$, is $\sum_{\{i,j\}}(\mathbf d_{ij}\otimes\mathbf
+K(i,j))_{ab}$: the virial of pairs, and with it the pressure of Section
+6.4, $P = (2K + \mathrm{tr}\,\mathsf W)/3V$, the derivative of the free
+energy in the volume. A product gives every cotangent of a pair at once,
+so the derivative emits one gather of several results for each stage
+gather, the adjoint terms of the fields it reads, the forces, and
+$\tfrac12\mathbf d_{mb}\otimes\mathbf K(m,b)$ at each center for the
+virial: two evaluations of the product per directed pair, where one op for
+each term took six; the one-evaluation scatter is a lowering of step 4 of
+#377. On a synthetic two-layer model with 16 components, the identity
+$\langle\bar{\mathbf y}, J\mathbf v\rangle = \langle J^\mathsf
+T\bar{\mathbf y}, \mathbf v\rangle$ of each stage holds to $1.3\times
+10^{-15}$, MDIR's forward rules against the bound product, and the
+energy, forces, and virial agree with an independent reverse sweep of the
+whole energy to $2\times10^{-15}$ on the CPU and $5\times10^{-16}$ on an
+RTX 4090 in double ([ml4-ir.md](../ml4-ir.md)).
+
 **Parameters.** `derivative(n)` asks $\partial U/\partial\theta_n$ of a
 scalar argument $\theta_n$ of the potential (D2), such as a component of
 $\boldsymbol\lambda$ of `[free_energy]` (Section 6.8, D161). The
