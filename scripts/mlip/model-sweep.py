@@ -151,8 +151,11 @@ def run_package(positions, cell, args):
             torch.cuda.synchronize()
             if k:
                 times.append(time.perf_counter() - begin)
-    except torch.OutOfMemoryError as e:
-        out["failed"] = "out of memory: " + str(e).splitlines()[0][:200]
+    except RuntimeError as e:  # torch.OutOfMemoryError, or one raised through TorchScript
+        if "out of memory" not in str(e):
+            raise
+        out["failed"] = "out of memory: " + [l for l in str(e).splitlines()
+                                             if "out of memory" in l][0].strip()[:200]
         return out
     out.update(peak_allocated_MiB=(torch.cuda.max_memory_allocated() - held) / 1048576.0,
                peak_reserved_MiB=torch.cuda.max_memory_reserved() / 1048576.0,
@@ -187,7 +190,10 @@ def main():
                    else run_package(positions, cell, args))
         if "pairs" in row and "peak_allocated_MiB" in row:
             row["kB_per_pair"] = row["peak_allocated_MiB"] * 1048.576 / row["pairs"]
-        time_ms = row.get("model_ms")
+        # Through mdir run, the time per step of the second half (the model's
+        # mean includes the first evaluations, which TorchScript specializes);
+        # through the package, its shortest evaluation.
+        time_ms = row.get("ms_per_step") or (row.get("model_ms") if args.package else None)
         if time_ms and row.get("pairs"):
             row["us_per_pair"] = time_ms * 1e3 / row["pairs"]
         print(json.dumps(row), flush=True)

@@ -57,7 +57,7 @@ torch of the plugin's build.
 
 | Candidate | Source and pin | License | Species | $r_c$ | $L$ | Features | Outputs and units | Notes |
 |---|---|---|---|---|---|---|---|---|
-| **nablaDFT PaiNN, split `train_large`** (recommended; [Khrabrov2024](references.md#khrabrov2024)) | nablaDFT 2.0's `models_checkpoints.json`, key `PaiNN_train_large`: `painn_100k.ckpt` on the project's object store, 5,398,754 bytes, SHA-256 `6c81c40a99b2618ae4c0e5f96d441ece5c12bf47e1d8137cbd62883bcf77ef06` (ETag MD5 `8aff6cdaa4d4698441584ba86f6ed27e`) | MIT (the repository; the checkpoints carry no license of their own) | H, C, N, O, F, S, Cl, Br | 5 Å, cosine cutoff | 6 | 128 scalars and $3 \times 128$ vector components per atom; 100 Gaussians; filters not shared; 1.34 million parameters; float32 | energy in Hartree (formation energy from atomic references, ωB97X-D/def2-SVP), forces by autograd | SchNetPack 2 network (nablaDFT's `config/model/painn.yaml`); drug-like molecules in vacuum, no water. Lightning 2.1.4 checkpoint with `epoch` and `global_step` 0, but trained: on 60 conformations of nablaDFT's `test_2k_conformers` the energy MAE is $5.2 \times 10^{-4}$ Hartree and the force MAE $4.2 \times 10^{-4}$ Hartree/Å. Smaller splits (2k, 5k, 10k) exist with the same network |
+| **nablaDFT PaiNN, split `train_large`** (ruled; [Khrabrov2024](references.md#khrabrov2024)) | nablaDFT 2.0's `models_checkpoints.json`, key `PaiNN_train_large`: `painn_100k.ckpt` on the project's object store, 5,398,754 bytes, SHA-256 `6c81c40a99b2618ae4c0e5f96d441ece5c12bf47e1d8137cbd62883bcf77ef06` (ETag MD5 `8aff6cdaa4d4698441584ba86f6ed27e`) | MIT (the repository; the checkpoints carry no license of their own) | H, C, N, O, F, S, Cl, Br | 5 Å, cosine cutoff | 6 | 128 scalars and $3 \times 128$ vector components per atom; 100 Gaussians; filters not shared; 1.34 million parameters; float32 | energy in Hartree (formation energy from atomic references, ωB97X-D/def2-SVP), forces by autograd | SchNetPack 2 network (nablaDFT's `config/model/painn.yaml`); drug-like molecules in vacuum, no water. Lightning 2.1.4 checkpoint with `epoch` and `global_step` 0, but trained: on 60 conformations of nablaDFT's `test_2k_conformers` the energy MAE is $5.2 \times 10^{-4}$ Hartree and the force MAE $4.2 \times 10^{-4}$ Hartree/Å. Smaller splits (2k, 5k, 10k) exist with the same network |
 | Open Catalyst PaiNN (OC20 S2EF) | fairchem 1's model zoo | | | 12 Å | 6 | 512 | forces predicted directly | Not conservative (direct forces), and its code left fairchem-core 2; rejected |
 | SchNetPack | | MIT | | | | | | Ships no pretrained PaiNN |
 | JAX PaiNN | chemtrain (Apache-2.0) implements PaiNN, trained on water (H₂O-PBE0TS) and SPICE in the chemtrain-deploy paper ([Fuchs2025](references.md#fuchs2025)) | | | | | | | No weights published that were found; InstaDeep's `mlip` (JAX) has no PaiNN |
@@ -66,12 +66,24 @@ torch of the plugin's build.
 
 | Candidate | Source and pin | License | Species | $r_c$ | $L$ | Features | Outputs and units | Notes |
 |---|---|---|---|---|---|---|---|---|
-| **MACE-OFF23 medium** (recommended) | `ACEsuit/mace-off` at commit `91a78c5`, `mace_off23/MACE-OFF23_medium.model`, 18,350,596 bytes, SHA-256 `4842c52ad210d6e1f84d6cf1ffa70fae25a7e0d755ed55cf223f43913f587db7` | Academic Software License (academic, non-commercial; copyleft for derived works) | H, C, N, O, F, P, S, Cl, Br, I | 5 Å | 2 | hidden 128x0e+128x1o (last layer 128x0e), spherical harmonics to $\ell = 3$, correlation order 3, 8 Bessel functions; 1.43 million parameters; trained and stored in float64 | energy in eV, forces by autograd | SPICE (ωB97M-D3(BJ)/def2-TZVPPD), water clusters included; its paper simulates liquid water ([Kovacs2025](references.md#kovacs2025)) |
+| **MACE-OFF23 medium** (ruled) | `ACEsuit/mace-off` at commit `91a78c5`, `mace_off23/MACE-OFF23_medium.model`, 18,350,596 bytes, SHA-256 `4842c52ad210d6e1f84d6cf1ffa70fae25a7e0d755ed55cf223f43913f587db7` | Academic Software License (academic, non-commercial; copyleft for derived works) | H, C, N, O, F, P, S, Cl, Br, I | 5 Å | 2 | hidden 128x0e+128x1o (last layer 128x0e), spherical harmonics to $\ell = 3$, correlation order 3, 8 Bessel functions; 1.43 million parameters; trained and stored in float64 | energy in eV, forces by autograd | SPICE (ωB97M-D3(BJ)/def2-TZVPPD), water clusters included; its paper simulates liquid water ([Kovacs2025](references.md#kovacs2025)) |
 | MACE-OFF23 small | the same commit, `MACE-OFF23_small.model`, SHA-256 `165cce4c…` | ASL | the same | 4.5 Å | 2 | 96x0e (invariant messages); 0.69 million | eV | Has no $\ell = 1$ features, so step 5 would not exercise the irreducible representations |
-| MACE-MP-0 medium (alternative) | `ACEsuit/mace-mp` release `mace_mp_0`, `2023-12-03-mace-128-L1_epoch-199.model`, 44,422,970 bytes, SHA-256 `01bfe22100139f424713cf921144e5509cbe353d67aa9fa1be9c6e1e0ed35845` | MIT | 89 elements, H to Pu | 6 Å | 2 | 128x0e+128x1o, $\ell \le 3$, correlation 3, 10 Bessel; 4.69 million; stored in float64 (mace-torch's calculator casts it to float32 by default) | eV | MPtrj (PBE and PBE+U), materials; its water is not validated physics ([Batatia2025](references.md#batatia2025)) |
+| MACE-MP-0 medium (the MIT alternative, in the fetch list) | `ACEsuit/mace-mp` release `mace_mp_0`, `2023-12-03-mace-128-L1_epoch-199.model`, 44,422,970 bytes, SHA-256 `01bfe22100139f424713cf921144e5509cbe353d67aa9fa1be9c6e1e0ed35845` | MIT | 89 elements, H to Pu | 6 Å | 2 | 128x0e+128x1o, $\ell \le 3$, correlation 3, 10 Bessel; 4.69 million; stored in float64 (mace-torch's calculator casts it to float32 by default) | eV | MPtrj (PBE and PBE+U), materials; its water is not validated physics ([Batatia2025](references.md#batatia2025)) |
 | MACE-MP-0 small | the same release, `2023-12-10-mace-128-L0_energy_epoch-249.model`, SHA-256 `2ddb079c…` | MIT | 89 | 6 Å | 2 | 128x0e; 3.85 million | eV | No $\ell = 1$ features |
 | MACE-MPA-0, OMAT-0, MATPES, MH-1, OMOL-0 | `ACEsuit/mace-foundations` and `mace-mp` releases | MIT (MPA-0), ASL or other (the rest) | | 6 Å | 2 | medium or larger | eV | Materials or multi-head models; none adds to the two above for water |
 | JAX MACE | ACEsuit's `mace-jax` imports mace-torch checkpoints (`mace-jax-from-torch`); chemtrain exports MACE-MH-1 through it with `jax.export` to StableHLO, with symbolic numbers of atoms and edges, and an optional OpenEquivariance kernel that the export carries as a custom call; InstaDeep's `mlip` 0.2.5 ([Brunken2025](references.md#brunken2025)) publishes JAX MACE, NequIP, ViSNet, and eSEN trained on SPICE2 | `mlip`'s weights: non-commercial only; `mace-jax`: no license file found | | | | | | Converted weights count as the same model only when the conversion is shown equivalent (D167); not tested here, it belongs to step 3's comparison of StableHLO with AOTInductor |
+
+**The license of MACE-OFF23.** MACE-OFF23's model files are distributed
+under the Academic Software License (ASL) of their repository: use is
+allowed for academic, non-commercial purposes only, and any derived work
+that is redistributed must be licensed under the ASL with its source. A
+metatomic artifact made from the file by `mace-to-metatomic.py` is such a
+derived work. MDIR therefore never commits or redistributes the file or an
+artifact of it: a user fetches the file with `fetch-ml4-artifacts.py`,
+which states the license, and makes the artifact locally, accepting the
+ASL's terms (as mace-torch's own `mace_off()` asks its users to). A user who
+cannot accept them takes MACE-MP-0 medium (MIT), which the same scripts
+fetch and wrap.
 
 ### 1.3 The wrappers against their packages
 
@@ -93,20 +105,23 @@ network of the checkpoint has no stress output; its reference adds
 SchNetPack's `Strain` module and `Forces(calc_stress=True)` around the same
 modules, without changing a weight.
 
-### 1.4 Recommendation and pinning
+### 1.4 The ruling and the pinning
 
-- **PaiNN: the nablaDFT PaiNN of `train_large`.** The only public PaiNN
-  with conservative forces and published weights that was found; MIT. It
+*Ruled* (the maintainer on PR #436, 2026-10-18): the recommended pair.
+
+- **PaiNN: the nablaDFT PaiNN of `train_large`** (MIT). The only public
+  PaiNN with conservative forces and published weights that was found. It
   was trained on drug-like molecules in vacuum: on water it checks the
   interface and the memory, not the physics, as Allegro-OAM-L did for ML1
-  (D166). A PaiNN trained on water would have to be trained, which needs a
-  ruling (D167).
-- **MACE: MACE-OFF23 medium.** Water is in its training set and its paper
-  simulates liquid water; its hidden features carry $\ell = 1$, which step 5
-  needs; float64 as trained. Its license is academic and non-commercial:
-  MDIR never redistributes it, and the fetch script downloads it on the
-  user's request. MACE-MP-0 medium (MIT, the same feature sizes, 6 Å) is the
-  alternative if the license is not acceptable; the same wrapper takes it.
+  (D166). A PaiNN for water would need training, which needs a ruling of
+  its own (D167).
+- **MACE: MACE-OFF23 medium** (ASL, above). Water is in its training set and
+  its paper simulates liquid water; its hidden features carry $\ell = 1$,
+  which step 5 needs; float64 as trained. The weights are never committed
+  or redistributed; users fetch them with the script.
+- **MACE-MP-0 medium** (MIT, the same feature sizes, 6 Å) stays in the fetch
+  script's list as the alternative for users who cannot accept the ASL; the
+  same wrapper takes it.
 - **Pinning.** `scripts/mlip/fetch-ml4-artifacts.py DIR [NAME ...]` downloads
   each checkpoint from an immutable URL (a commit of a repository, a release
   asset, or an object of a store) and checks its SHA-256; a file that
