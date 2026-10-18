@@ -295,7 +295,7 @@ water assume water named `WAT`; other systems adapt them.
 |---|---|---|
 | `target` | `CPU` (with `threads`), `GPU` | The CPU runs anywhere, with OpenMP threads; the measurements of Section 10 are on a device |
 | `precision` | `MIXED`, `DOUBLE`, `SINGLE` | `MIXED`, the mode of production (Section 7); `DOUBLE` to compare with references and to check a result; `SINGLE` keeps the state in f32 as well (Table 7.1) |
-| `neighbor_structure` | `MATRIX`, `GROUPS` | `GROUPS`, with a dual list (`pruned_distance` in `[energy]`), is the configuration of the measurements of Section 10 |
+| `neighbor_structure` | `AUTO`, `MATRIX`, `GROUPS` | `AUTO`, the default, takes `GROUPS` with a dual list on a device from 23,000 particles (D261), as in the measurements of Section 10 |
 | `deterministic` | `false`, `true` | `true` for the same bits from run to run on one binary and device (D84); not with `GROUPS` on a device. The CPU gives the same bits in either mode, for any `threads` |
 
 The production stage of C.3 on a device, with the groups and a dual list
@@ -313,8 +313,10 @@ precision          = "MIXED"
 neighbor_structure = "GROUPS"
 ```
 
-Section 10 measured the suite with a cutoff of 8 Å, an outer reach of
-11 Å, and an inner one of 8.6 Å at 2 fs.
+Section 10 measured the suite with a cutoff of 8 Å and neither the
+structure nor the reaches given: the groups with a dual list, and the
+reaches that the search of a long run chose and cached for each system
+(`"AUTO"`, D281, Section 4.5).
 
 ## C.5 Runs on a cluster
 

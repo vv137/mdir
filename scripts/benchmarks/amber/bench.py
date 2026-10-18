@@ -4,6 +4,7 @@ MDIR and with GROMACS, under the settings of their Amber inputs.
 
     bench.py prepare [--work DIR] [--parmed-python PYTHON]
     bench.py run mdir [SYSTEM ...] [--work DIR] [--mdir MDIR]
+                 [--skin S|AUTO] [--prune-skin S|AUTO]
     bench.py run gromacs [SYSTEM ...] [--work DIR] [--gmx GMX]
     bench.py report [--work DIR]
 
@@ -67,7 +68,8 @@ SYSTEMS = {
 # the influence function of Amber ("OPTIMAL"), so that they compute one
 # model (D134). The couplings differ: Amber uses the thermostat of Berendsen and a Monte
 # Carlo barostat, MDIR and GROMACS stochastic velocity rescaling and cell
-# rescaling. The neighbor lists reach 10 Å, a skin of 2 Å.
+# rescaling. The neighbor lists reach 10 Å, a skin of 2 Å, unless `run`
+# is given other skins or "AUTO", which leaves them to MDIR (D281).
 CUTOFF = 8.0
 SKIN = 2.0
 TEMPERATURE = 300.0
@@ -76,6 +78,13 @@ TEMPERATURE = 300.0
 # inputs (nstpcouple 25 with nstcalcenergy 100, tau-p 2 ps); Amber's Monte
 # Carlo barostat acts every 100 steps.
 COUPLING_INTERVAL = 25
+# A skin that MDIR chooses (D281).
+AUTO = "AUTO"
+
+
+def skin_value(text):
+    """A skin in Å, or AUTO."""
+    return AUTO if text.upper() == AUTO else float(text)
 
 
 def tolerance(system):
@@ -201,6 +210,21 @@ temperature = {TEMPERATURE}
     source = os.path.relpath(
         os.path.join(os.path.dirname(target), "Amber24_Benchmark_Suite",
                      "PME", system["directory"]), target)
+    # The reaches: a skin of "AUTO" writes the key as "AUTO", which is what
+    # a key not given means (D281), so that the log states the reaches the
+    # run took and their source; a skin of AUTO with no inner skin given
+    # leaves the inner list to the run as well.
+    if skin == AUTO:
+        reaches = 'pairlist_distance = "AUTO"\n'
+        if prune_skin is None:
+            reaches += 'pruned_distance   = "AUTO"\n'
+    else:
+        reaches = f"pairlist_distance = {CUTOFF + skin}\n"
+    if prune_skin == AUTO:
+        reaches += 'pruned_distance   = "AUTO"\n'
+    elif prune_skin:
+        reaches += (f"pruned_distance   = "
+                    f"{CUTOFF + prune_skin * system['timestep'] / 0.002:.2f}\n")
     text = f"""# {name}: from {system['directory']} of the Amber benchmark suite.
 [input]
 format      = "AMBER"
@@ -212,9 +236,7 @@ energy_interval = {energy_interval or max(steps // 2, 1)}
 
 [energy]
 cutoff            = {CUTOFF}
-pairlist_distance = {CUTOFF + skin}
-""" + (f"pruned_distance   = {CUTOFF + prune_skin * system['timestep'] / 0.002:.2f}\n"
-       if prune_skin else "") + f"""electrostatics    = "PME"
+""" + reaches + f"""electrostatics    = "PME"
 
 [pme]
 beta      = {ewald_beta(system)!r}
@@ -487,12 +509,17 @@ def main():
     p.add_argument("systems", nargs="*", metavar="SYSTEM",
                    help="of " + ", ".join(SYSTEMS) + "; all by default")
     p.add_argument("--mdir", default="mdir")
-    p.add_argument("--skin", type=float, default=SKIN,
-                   help="of the neighbor structures of MDIR (Å)")
-    p.add_argument("--prune-skin", type=float,
+    p.add_argument("--skin", type=skin_value, default=SKIN,
+                   help="of the neighbor structures of MDIR (Å), or AUTO: "
+                        "pairlist_distance = \"AUTO\", and pruned_distance "
+                        "as well unless --prune-skin is given, which is what "
+                        "keys not given mean: the reaches of an earlier run "
+                        "of the same key cached, else the defaults, or a "
+                        "search where the run is long enough (D281)")
+    p.add_argument("--prune-skin", type=skin_value,
                    help="of the inner list of a dual list of MDIR (Å) at a "
-                        "step of 2 fs, in proportion to the step (D114); "
-                        "one list if absent")
+                        "step of 2 fs, in proportion to the step (D114), or "
+                        "AUTO; one list if absent, unless --skin is AUTO")
     p.add_argument("--neighbor-structure", choices=["AUTO", "MATRIX", "GROUPS"],
                    help="of MDIR on the device; its default if absent")
     p.add_argument("--barostat-work",

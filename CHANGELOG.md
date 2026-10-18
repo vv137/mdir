@@ -562,6 +562,18 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The white paper's comparison with pmemd.cuda is measured again on
+  `main` (D285) with the skins that MDIR chooses (D281)** (#437; Section
+  10, Tables 10.2 and 10.3, Figure 10.1, and the range quoted in the
+  README, the paper's README, and Section 1): 124% to 151% of pmemd.cuda
+  26's rate on one RTX 4090, from 98% to 143% at D280 with fixed skins.
+  `scripts/benchmarks/amber/bench.py run mdir --skin AUTO` writes the
+  reaches as `"AUTO"` (`--prune-skin AUTO` the inner one alone), and
+  `scripts/paper/run-suite-repeats.sh` runs one search of the skins for
+  each system with `MDIR_SKIN_SEARCH=always` before the timed repeats,
+  which take the cached choice; `scripts/paper/suite-table.py` adds the
+  reaches and their source. No decision: a script option.
+
 - **PME on a device spreads through tiles of the memory of a block**
   (D282, #336,
   [docs/pme-m1.md §3.3](docs/pme-m1.md#33-spreading-through-tiles)): the
