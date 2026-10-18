@@ -83,12 +83,16 @@ the spreading of PME has (D70), would close the gap.
   of the tuples renumbered on the device, is planned with the domain
   decomposition, which needs it anyway.
 
-**Measurements.** The rates of Section 10 are from one RTX 3090 capped at
-300 W in a node whose other GPUs ran other users' jobs; the device of the
-measurements was not shared (the benchmark script checks), but the node's
-power and host were. The cap matters: under it, MDIR's kernels ran at a
-lower clock than pmemd.cuda's (about 1590 against 1695 MHz on Cellulose),
-so a kernel that does the same work with less power gains speed.
+**Measurements.** The rates of Section 10 are from one RTX 4090 of a
+compute node whose other GPUs ran other users' jobs; the device of the
+measurements was not shared (the scheduler gives it to one job, and the
+benchmark script checks), but the node's power and host were. The same
+program's rate differs between nodes by a few percent (pmemd.cuda on
+Cellulose by 6%, #405), so a ratio is taken within one job on one node.
+The earlier rates, from one RTX 3090 capped at 300 W, show that a cap
+matters: under it, MDIR's kernels ran at a lower clock than pmemd.cuda's
+(about 1590 against 1695 MHz on Cellulose), so a kernel that does the
+same work with less power gains speed.
 
 **Next steps.** The white paper closes the first milestone; the roadmap
 (`docs/roadmap.md`) orders what follows into milestones: the Python API

@@ -628,8 +628,10 @@ within 2% of a list built with 9 Å.
 | Cellulose | 408,609 | 59.7 | 62.4 | 12/8.6 | 22.5 | 2.2 |
 | STMV, 4 fs | 1,067,095 | 37.8 | 39.9 | 11/9.0 | 6.6 | 1.8 |
 
-The settings of the suite (Section 10) are an outer skin of 3 Å and an
-inner skin of 0.6 Å at 2 fs, in proportion to the step.
+The default of D261, which a run takes where it does not choose (below),
+is an outer skin of 3 Å and an inner skin of 0.6 Å at 2 fs, in proportion
+to the step; the measurements of Section 10 take the skins that the
+choice below made for each system.
 
 **The choice of the skins** (D281). Because the test of validity
 is exact, every pair of skins $(s, s_\text{in})$ gives the same pairs

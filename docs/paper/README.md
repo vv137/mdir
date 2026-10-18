@@ -17,7 +17,8 @@ role; and lower the result to OpenMP or to NVIDIA GPUs, specialized to
 the topology and the parameters at hand. On one RTX 4090 in mixed
 precision, MDIR runs the systems of the Amber GPU benchmark suite, from
 23,558 to 1,067,095 atoms, at constant energy and at constant pressure,
-at 98% to 143% of the rate of pmemd.cuda 26 on the same device (104% to
+at 122% to 151% of the rate of pmemd.cuda 26 on the same device, with
+the skins of the neighbor lists that MDIR chooses itself (104% to
 132% on an RTX 3090 when the first milestone was completed); on
 ubiquitin in OPC with a cutoff of 9 Å it reaches 66% to 72% of the rate
 of GROMACS 2026.3, whose nonbonded kernel takes as long as MDIR's loop
@@ -67,7 +68,7 @@ by expressions, implicit solvent, and what to do when something fails.
 | What | How |
 |---|---|
 | The references | `scripts/paper/build-references.py` links the citations and writes `references.md`; `scripts/paper/verify-references.py docs/paper/references.md` checks every DOI against Crossref and DataCite |
-| Table 10.2 and Figure 10.1 | `scripts/paper/run-suite-repeats.sh MDIR PMEMD LOGS 3`, then `scripts/paper/suite-table.py LOGS` and `scripts/paper/plot-suite.py LOGS figures/suite.png`, with the suite prepared by `scripts/benchmarks/amber/bench.py prepare` |
+| Tables 10.2 and 10.3 and Figure 10.1 | `scripts/paper/run-suite-repeats.sh MDIR PMEMD LOGS 3` (a search of the skins for each system first, cached in `LOGS/skins`, D281), then `scripts/paper/suite-table.py LOGS` and `scripts/paper/plot-suite.py LOGS figures/suite.png`, with the suite prepared by `scripts/benchmarks/amber/bench.py prepare` |
 | Figure 7.1 | `scripts/paper/plot-energy.py LOGS figures/energy-jac.png`, from the logs of the runs of D112 |
 | Appendix A | `scripts/paper/check-appendix.sh MDIR` checks that its example is what `mdir template amber` prints |
 | The PDF | `scripts/paper/build-pdf.sh OUT` writes each section to LaTeX with pandoc and builds `OUT/main.pdf` with tectonic, from the master file `tex/main.tex`; the two programs are on the path or named by `PANDOC` and `TECTONIC` ([environment.md](../environment.md#scripts)). The title page shows the compilation timestamp in UTC, refreshed on every build. |
