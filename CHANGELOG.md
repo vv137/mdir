@@ -1268,6 +1268,18 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- `pme-tiles-gpu.test` failed in about 1 of 300 runs at order 8 in mixed
+  precision, a relative rms of the forces of 2.46e-6 against 2e-6 (#427).
+  The spreading was not at fault. The test compares the forces after one
+  step of 0.001 ps, and the rounding of the forces of step 0 moved the
+  positions by about 1e-12 nm, enough for one coordinate near a midpoint
+  between two numbers of f32 to round to the other one when the positions
+  are converted for the kernels (D79). Its step is now $10^{-6}$ ps, after
+  which the positions of two runs agree to 4e-16 nm, and the forces of the
+  two spreadings differ by 0.7 to 1.2e-7. The tolerances are unchanged.
+  `test/Sanitizer/pme-tiles-gpu.test` runs the spreading of order 8, with
+  and without tiles, under compute-sanitizer, synccheck included.
+
 - `InitialState.draw_velocities` refused a system with a term of
   `[[energy.model]]` (`System.models`): it prepared the system for the
   default execution, on the CPU, which a model term refuses (#388). The
