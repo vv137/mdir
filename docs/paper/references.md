@@ -273,6 +273,12 @@ J. G. Kirkwood, "Statistical mechanics of fluid mixtures," *J. Chem.
 Phys.* **3**(5), 300–313 (1935).
 [doi:10.1063/1.1749657](https://doi.org/10.1063/1.1749657)
 
+### Knuth1998
+
+D. E. Knuth, *The Art of Computer Programming*, Vol. 3, *Sorting and
+Searching*, 2nd ed. (Addison-Wesley, Reading, Massachusetts, 1998).
+ISBN 0-201-89685-0.
+
 ### Krautler2001
 
 V. Kräutler, W. F. van Gunsteren, P. H. Hünenberger, "A fast SHAKE

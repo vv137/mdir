@@ -337,3 +337,168 @@ of its own, and frees them.
 - **Kernels in the runtime library** (PTX compiled with the toolkit at
   the build of MDIR): a second way of making kernels, which the build does
   not have; the lowering already emits every kernel.
+
+## 11. The kernel of the tuples evaluated once: the sums of a block (D[tuple-block-sums])
+
+Issue #408. Outside the deterministic mode a loop over tuples that may
+share particles evaluates each tuple once, a thread a tuple, and the loops
+of a step without global sums (the bonded terms, the 1-4 pairs, and the
+correction of the excluded pairs of the reciprocal sum) are one kernel
+(D84, D181). Until this decision each thread added every value of its tuple
+to the destination of its member with an atomic of its own: three for the
+force on each member.
+
+**What the kernel spent its time on.** Cellulose NVE (408,609 atoms,
+1,700,480 tuples, of which 862,209 excluded pairs), mixed precision, one
+RTX 4090, Nsight Systems, µs a step of the steady part of 3,000 steps:
+
+| Set, as a kernel of its own | Tuples | µs | ps an atomic |
+|---|---:|---:|---:|
+| Excluded pairs | 862,209 | 89.9 | 17 |
+| Dihedrals | 336,960 | 83.3 | 21 |
+| 1-4 pairs | 272,256 | 33.5 | 21 |
+| Angles | 177,228 | 33.1 | 21 |
+| Bonds | 51,840 | 7.4 | 24 |
+| The run as one kernel | 1,700,480 | 222.6 | |
+
+Every set costs about the same per atomic addition, whether it reads
+parameters (the dihedrals read three numbers in f64 a tuple) or none (the
+excluded pairs). With plain stores in place of the atomics (wrong forces,
+for timing alone) the kernel took 65 µs, and with a load, an addition, and
+a store without an atomic 84 µs; on STMV (1,067,095 atoms) 444, 154, and
+205 µs. About 70% of the kernel was its global atomics. The excluded pairs
+evaluated by the rows of their particles instead (each pair twice, no
+atomic) took 93 µs against 90: their cost is the atomics they share with
+every set, not their arithmetic.
+
+**How much the tuples of a block share.** In the order of the run, the
+tuples of a set one after the other in the order of the files, a block of
+128 tuples touches 0.237 distinct particles a member on Cellulose (the
+dihedrals 0.13, the excluded pairs 0.27), 0.309 on JAC, and 0.269 on STMV;
+the 32 tuples of a warp, matched one slot at a time, 0.48 on Cellulose.
+
+**The kernel.** A block of 128 threads keeps a table of the particles of
+its tuples in block memory: a key of 32 bits for each slot, −1 where it is
+empty, and the sums of each destination of the run for each slot (three
+numbers for a force). The table has 128 times the largest arity of the
+run, rounded up to a power of two (512 slots and 8 KB for a run with
+dihedrals and forces in f32), so a block has room for every member of its
+tuples; a run whose destinations would take more than 48 KB keeps the
+atomics. The threads empty the table, and after a barrier each evaluates
+its tuple and, for each member, finds the slot of the particle: a
+multiplicative hash of its number, then the next slots in turn
+[[Knuth1998]](references.md#knuth1998) (Section 6.4), a compare-and-swap
+claiming an empty slot (two threads that find one empty slot for the same
+particle take it once; one for another particle tries the next). It adds
+its values to the slot with an addition in block memory. After a second
+barrier each slot that holds a particle adds its sums to each destination
+with one global atomic for each component. The threads past the last
+tuple of the run reach both barriers.
+
+A search gives up after 8 slots, and the thread adds that value to the
+destination with an atomic of its own. Without this bound the search grows
+without limit where a block's tuples share few particles: one block of JAC
+holds 494 particles in its 512 slots, and the kernel took 42 µs against
+12 before the change; with the bound 13.2.
+
+**What it changes, and what not.** The values reach the destination in
+another order and partly summed in f32 within the block, so the forces
+change by the rounding of their sums, as they change from one run to the
+next with atomics. The deterministic mode has no loops evaluated once and
+is unchanged. The loops with global sums (the steps that write energies)
+keep their atomics, and so does every loop of a run that holds the forces
+of a term over centers, whose block computes the sums of the centers
+(D194). The compile takes up to 0.2 s longer (5.3 to 11 s on the suite).
+
+**A run of few tuples keeps the atomics.** With the table JAC (55,000
+tuples, 432 blocks) ran 1.5% slower on an RTX 4090 and 3% slower on an
+RTX PRO 6000 in the Amber suite, though its kernel took 1.1 µs more: the
+device holds all its blocks at once, and the table lengthens each, the
+two barriers, the loops that empty and add the table, and the searches.
+Factor IX (165,000 tuples) ran 2.3% and 1% faster. A run of fewer than
+100,000 tuples therefore keeps the atomics: the host compares the count
+of the run's tuples with that number and launches one kernel or the
+other, both of which the lowering emits. The number lies between the two
+measured systems; it is the option `tuple-block-least`.
+
+**The switch.** The option `tuple-block-sums` of `convert-md-exec-to-gpu`,
+on by default; `MDIR_TUPLE_SUMS=atomics` turns it off, and
+`MDIR_TUPLE_SUMS=blocks` takes the table for a run of any size
+(`tuple-block-least=0`), which the tests of small systems use
+([environment.md](environment.md); `tuple-block-sums-gpu.test`, under
+the sanitizer as well).
+
+**Block memory and occupancy.** 8 KB a block for a run with dihedrals and
+forces in f32. The kernel takes 47 registers a thread where it took 44
+(from the profiles); both are allocated as 48, so an SM of the RTX 4090
+holds 10 blocks of 128 threads either way, bound by the registers, and
+their tables take 80 KB of its 100 KB of block memory: the table costs no
+occupancy there.
+
+**Validated** (one RTX 4090, the settings of the Amber suite, one step;
+the same binary with and without the switch; the force differences
+relative to the RMS force):
+
+| System | Mixed: block sums against atomics, RMS / largest | Mixed: atomics against atomics, RMS / largest | Double: RMS / largest | Deterministic mode against `main` |
+|---|---|---|---|---|
+| JAC | 2.6e-7 / 7.6e-6 | 9.8e-7 / 1.2e-4 | 3.8e-16 / 2.1e-14 | the same bits |
+| Factor IX | 1.0e-6 / 2.2e-4 | 9.7e-7 / 2.2e-4 | 1.2e-15 / 2.8e-13 | the same bits |
+| Cellulose | 8.8e-7 / 2.4e-4 | 1.1e-6 / 3.0e-4 | 1.0e-15 / 3.4e-13 | the same bits |
+
+The potential energy at step 0 agrees to 1.4 × 10⁻¹⁰ of its value and the
+virial to 10⁻⁸ in mixed precision, and to every printed digit in double.
+STMV, after 25 steps (its interval of coupling), differs by 4.3 × 10⁻⁴ of
+the RMS force between the two ways and by 4.2 × 10⁻⁴ between two runs
+with atomics: the trajectories part as two runs with atomics do.
+
+**Measured: the kernel** (the same binary with and without the switch,
+alternated twice in one job, before the bound of 100,000 tuples; µs a step
+of the tuple kernel from Nsight Systems, and ms a step):
+
+| System | RTX 4090 (ada-003): atomics | Block sums | Step | RTX PRO 6000 (ada-004): atomics | Block sums | Step |
+|---|---:|---:|---|---:|---:|---|
+| JAC NVE | 12.1 | 13.2 | 0.14 → 0.14 | 6.8 | 6.8 (atomics, below the bound) | 0.12 → 0.12 |
+| Factor IX NVE | 24.8 | 16.4 | 0.34 → 0.34 | 17.0 | 12.3 | 0.25 → 0.25 |
+| Cellulose NVE | 220.8 | 84.4 | 1.49 → 1.36 | 151.5 | 81.0 | 1.19 → 1.15 |
+| STMV NPT 4 fs | 439.1 | 189.4 | 4.89 to 5.10 → 4.65 | 254.1 | 160.3 | 3.88 → 3.82 |
+
+**Measured: the Amber suite** (`scripts/benchmarks/amber/bench.py`, the
+settings of the suite with a dual list of groups, skins 3 and 0.6 Å; `main`
+and this decision alternated system by system in one job, three rounds,
+the median in ns/day):
+
+| System | RTX 4090 (ada-003): `main` | This decision | Ratio | RTX PRO 6000 (ada-004): `main` | This decision | Ratio |
+|---|---:|---:|---:|---:|---:|---:|
+| JAC NVE | 1311.8 | 1311.8 | 1.000 | 1506.8 | 1509.4 | 1.002 |
+| JAC NVE 4 fs | 2451.1 | 2449.7 | 0.999 | 2822.3 | 2822.2 | 1.000 |
+| JAC NPT | 1185.9 | 1185.8 | 1.000 | 1338.3 | 1339.5 | 1.001 |
+| JAC NPT 4 fs | 2286.5 | 2286.1 | 1.000 | 2618.8 | 2618.8 | 1.000 |
+| Factor IX NVE | 528.8 | 543.1 | 1.027 | 713.4 | 721.5 | 1.011 |
+| Factor IX NPT | 495.8 | 508.3 | 1.025 | 660.2 | 669.1 | 1.013 |
+| Cellulose NVE | 120.9 | 133.4 | 1.103 | 158.9 | 164.7 | 1.037 |
+| Cellulose NPT | 116.8 | 127.2 | 1.089 | 152.5 | 157.7 | 1.034 |
+| STMV NPT 4 fs | 74.5 | 76.6 | 1.028 | 99.3 | 101.3 | 1.020 |
+
+STMV on the RTX 4090 varied in that job by 4% from round to round (other
+jobs ran on the node); in a job before the bound, which does not change
+STMV, it ran at 74.6 against 78.4 ns/day in three rounds within 0.3%
+(1.051). On the RTX PRO 6000 the kernel of the tuples took less time than
+on the RTX 4090 before the change (151 against 221 µs on Cellulose), and
+the change gains less there.
+
+**Considered and not done here.**
+
+- *Parameters stored in f32.* Every load of a parameter of a tuple in f64
+  is narrowed to f32 at once in the mixed mode, so parameters stored in
+  f32 would give the same bits. Measured with the block sums by reading
+  half the bytes (wrong values, the first launch of a run): Cellulose 85.5
+  against 89.9 µs, STMV 196 against 200.5. About 4 µs a step on Cellulose,
+  0.3% of a step, for a change of the arguments of every entry; not taken.
+- *The excluded pairs in the loop over pairs.* Their cost was their
+  atomics, which the block sums now share with the other sets; the masks of
+  the groups clear an excluded pair and an empty place alike (groups-m1.md,
+  Section 2), so the loop over pairs would need a second mask.
+- *The tuples in the order of their first member.* A unit of up to 128
+  particles would then leave 0.10 particles a member on Cellulose instead
+  of the block's 0.237, but the order of the tuples is that of the files,
+  which the energies of the terms and their fields follow. A follow-up.

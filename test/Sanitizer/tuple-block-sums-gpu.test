@@ -1,0 +1,22 @@
+# The table of a block of the tuples evaluated once (D[tuple-block-sums])
+# under compute-sanitizer: the slots claimed by compare-and-swap, the
+# additions in block memory, and the barriers around them. This system is
+# smaller than the run that takes the table by default, so
+# MDIR_TUPLE_SUMS=blocks takes it for any size.
+#
+# REQUIRES: cuda, compute-sanitizer
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../Driver/Inputs/ff19sb/ff19.prmtop %S/../Driver/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/../Driver/restraints-gpu.test | sed '1d;$d' \
+# RUN:   | sed -e 's/^steps .*/steps = 20/' -e 's/^energy_interval .*/energy_interval = 10/' \
+# RUN:         -e 's/^trajectory_interval .*/trajectory_interval = 10/' > %t/run.toml
+# RUN: env MDIR_TUPLE_SUMS=blocks %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: env MDIR_TUPLE_SUMS=blocks %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: env MDIR_TUPLE_SUMS=blocks %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run %t/run.toml 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

@@ -237,6 +237,15 @@ public:
   /// which stops the run if they differ (`check-pruning`,
   /// D268).
   bool checkPruning = false;
+  /// Whether a kernel of loops over tuples evaluated once adds the values
+  /// of the tuples of a block for each particle in block memory first, and
+  /// adds each particle's sum to the destination once a block
+  /// (`tuple-block-sums`, D[tuple-block-sums]).
+  bool tupleBlockSums = true;
+  /// The fewest tuples of a run that take the sums of a block; a run of
+  /// fewer keeps the atomics, chosen on the host by the count
+  /// (`tuple-block-least`).
+  int64_t tupleBlockLeast = 100000;
 
 private:
   /// An entry of the runtime's store for a tuple set built on the device:
@@ -495,6 +504,21 @@ private:
   /// Lowers the loops of `run` to one kernel: a thread takes the tuple of
   /// its number in the tuples of the loops, one loop after the other.
   LogicalResult lowerOnceRun(ArrayRef<md_exec::TupleForOp> run);
+  /// What a thread adds to the destination `buffer` for the particle
+  /// `member` (launchTupleBlocks).
+  using AddToBuffer =
+      function_ref<void(OpBuilder &, Value buffer, Value member, Value value)>;
+  /// Launches a thread for each of `count` items of the loops `loops`, which
+  /// evaluate each tuple once, as `emitItem` emits them, with the sums of a
+  /// block (D[tuple-block-sums]): what the tuples of a block add to a
+  /// particle is added in a table in block memory, keyed by the particle,
+  /// and after a barrier each particle of the table is added to each
+  /// destination of the loops once. Returns false, launching nothing, where
+  /// the table would not fit the block memory.
+  bool launchTupleBlocks(
+      OpBuilder &builder, Location loc, Value count,
+      ArrayRef<md_exec::TupleForOp> loops,
+      function_ref<void(OpBuilder &, Value, AddToBuffer)> emitItem);
   /// Lowers the loops over pairs and tuples of `run` to one kernel, in
   /// which the group of threads of a particle does each loop in turn, and
   /// their global sums to one reduction.
@@ -1496,6 +1520,281 @@ void Lowering::findOnceRuns(func::FuncOp function) {
   });
 }
 
+/// The address of element `index` of `buffer`, a buffer in block memory,
+/// as a number of 64 bits, for the instructions of PTX that take it.
+static Value getSharedAddress(OpBuilder &b, Location loc, Value buffer,
+                              Value index) {
+  Type wide = b.getI64Type();
+  auto type = cast<MemRefType>(buffer.getType());
+  int64_t bytes = type.getElementType().getIntOrFloatBitWidth() / 8;
+  Value base = arith::IndexCastOp::create(
+      b, loc, wide,
+      memref::ExtractAlignedPointerAsIndexOp::create(b, loc, buffer));
+  Value offset = arith::MulIOp::create(
+      b, loc, arith::IndexCastOp::create(b, loc, wide, index),
+      arith::ConstantOp::create(b, loc, wide, b.getI64IntegerAttr(bytes)));
+  return arith::AddIOp::create(b, loc, base, offset);
+}
+
+bool Lowering::launchTupleBlocks(
+    OpBuilder &builder, Location loc, Value count,
+    ArrayRef<md_exec::TupleForOp> loops,
+    function_ref<void(OpBuilder &, Value, AddToBuffer)> emitItem) {
+  // The destinations of the loops, each with its components and type.
+  SmallVector<Value> outs;
+  int64_t arity = 1;
+  for (md_exec::TupleForOp loop : loops) {
+    arity = std::max<int64_t>(arity, loop.getArity());
+    for (Value out : loop.getOuts())
+      if (!llvm::is_contained(outs, out))
+        outs.push_back(out);
+  }
+  if (outs.empty())
+    return false;
+  // A block of `blockSize` threads, each with one tuple of at most `arity`
+  // members, adds to at most blockSize * arity particles: the table has as
+  // many slots, rounded up to a power of two.
+  int64_t slots = llvm::PowerOf2Ceil(blockSize * arity);
+  unsigned shift = 32 - llvm::Log2_64(slots);
+  SmallVector<int64_t> components;
+  SmallVector<Type> elements;
+  int64_t bytes = 4 * slots;
+  for (Value out : outs) {
+    auto type = cast<MemRefType>(out.getType());
+    Type element = type.getElementType();
+    if (!element.isF32() && !element.isF64())
+      return false;
+    int64_t c = type.getRank() == 1 ? 1 : type.getDimSize(1);
+    if (type.getRank() > 2 || ShapedType::isDynamic(c))
+      return false;
+    components.push_back(c);
+    elements.push_back(element);
+    bytes += slots * c * element.getIntOrFloatBitWidth() / 8;
+  }
+  // The block memory that a kernel may take without asking for more.
+  if (bytes > 48 * 1024)
+    return false;
+
+  auto workgroup = gpu::AddressSpaceAttr::get(
+      context, gpu::GPUDialect::getWorkgroupAddressSpace());
+  Type i32 = builder.getI32Type();
+  SmallVector<Type> attributions{
+      MemRefType::get({slots}, i32, MemRefLayoutAttrInterface(), workgroup)};
+  for (auto [c, element] : llvm::zip(components, elements))
+    attributions.push_back(MemRefType::get(
+        {slots * c}, element, MemRefLayoutAttrInterface(), workgroup));
+
+  // A run of few tuples keeps the atomics: the device holds all its blocks
+  // at once, and the table lengthens each (measured on one RTX 4090 and one
+  // RTX PRO 6000: JAC, 55,000 tuples, ran 1.5% and 3% slower with the
+  // table, Factor IX, 165,000, 2.3% and 1% faster). The host chooses by the
+  // count.
+  std::optional<OpBuilder> chosen;
+  if (tupleBlockLeast > 0) {
+    Value many = arith::CmpIOp::create(
+        builder, loc, arith::CmpIPredicate::uge, count,
+        createIndex(builder, loc, tupleBlockLeast));
+    auto choice = scf::IfOp::create(builder, loc, many, /*withElseRegion=*/true);
+    OpBuilder few = choice.getElseBodyBuilder();
+    launchOver(few, loc, count, [&](OpBuilder &b, Value item) {
+      emitItem(b, item, nullptr);
+    });
+    chosen.emplace(choice.getThenBodyBuilder());
+  } else {
+    chosen.emplace(builder);
+  }
+  OpBuilder &at = *chosen;
+  Value one = createIndex(at, loc, 1);
+  Value threads = createIndex(at, loc, blockSize);
+  Value grid = createGroups(at, loc, count, blockSize);
+  auto launch = gpu::LaunchOp::create(
+      at, loc, grid, one, one, threads, one, one,
+      /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
+      /*asyncDependencies=*/{}, /*workgroupAttributions=*/attributions);
+  OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+  Value thread = launch.getThreadIds().x;
+  ValueRange shared = launch.getWorkgroupAttributionBBArgs();
+  Value keys = shared.front();
+  Value numSlots = createIndex(kernel, loc, slots);
+  Value empty =
+      arith::ConstantOp::create(kernel, loc, i32, kernel.getI32IntegerAttr(-1));
+
+  // Every slot empty, and its sums zero.
+  scf::ForOp::create(
+      kernel, loc, thread, numSlots, threads, ValueRange(),
+      [&](OpBuilder &b, Location, Value slot, ValueRange) {
+        memref::StoreOp::create(b, loc, empty, keys, ValueRange{slot});
+        for (auto [k, c] : llvm::enumerate(components)) {
+          Value zero = createZero(b, loc, elements[k]);
+          for (int64_t j = 0; j != c; ++j) {
+            Value place = arith::AddIOp::create(
+                b, loc, arith::MulIOp::create(b, loc, slot,
+                                              createIndex(b, loc, c)),
+                createIndex(b, loc, j));
+            memref::StoreOp::create(b, loc, zero, shared[1 + k],
+                                    ValueRange{place});
+          }
+        }
+        scf::YieldOp::create(b, loc);
+      });
+  gpu::BarrierOp::create(kernel, loc);
+
+  // The slot of the particle `member`: a multiplicative hash of its number
+  // [Knuth1998, Section 6.4], then the next slots in turn, until a slot is
+  // empty, which the thread takes with a compare-and-swap, or holds the
+  // particle; two threads that find one empty slot take it once. The search
+  // gives up after `probes` slots, and the value goes to the destination
+  // with an atomic of its own: a block whose tuples share few particles
+  // fills its table, where the slots that a search tries grow without
+  // bound (measured: one block of JAC with 494 particles in 512 slots).
+  constexpr int64_t probes = 8;
+  auto findSlot = [&](OpBuilder &b, Value member) -> std::pair<Value, Value> {
+    Value key = arith::IndexCastOp::create(b, loc, i32, member);
+    auto constant = [&](OpBuilder &c, int64_t value) -> Value {
+      return arith::ConstantOp::create(
+          c, loc, i32, c.getI32IntegerAttr(static_cast<int32_t>(value)));
+    };
+    Value hash = arith::ShRUIOp::create(
+        b, loc, arith::MulIOp::create(b, loc, key, constant(b, 0x9E3779B1u)),
+        constant(b, shift));
+    Type i1 = b.getI1Type();
+    auto search = scf::WhileOp::create(
+        b, loc, TypeRange{i32, i32, i1}, ValueRange{hash, constant(b, 1)},
+        [&](OpBuilder &c, Location, ValueRange arguments) {
+          Value slot = arguments[0], tried = arguments[1];
+          Value address = getSharedAddress(
+              c, loc, keys,
+              arith::IndexCastOp::create(c, loc, c.getIndexType(), slot));
+          Value old =
+              LLVM::InlineAsmOp::create(
+                  c, loc, TypeRange{i32}, ValueRange{address, empty, key},
+                  "atom.shared.cas.b32 $0, [$1], $2, $3;", "=r,l,r,r",
+                  /*has_side_effects=*/true, /*is_align_stack=*/false,
+                  LLVM::TailCallKind::None, LLVM::AsmDialectAttr(),
+                  ArrayAttr())
+                  .getResult(0);
+          Value taken = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::eq,
+                                              old, empty);
+          Value held = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::eq,
+                                             old, key);
+          Value found = arith::OrIOp::create(c, loc, taken, held);
+          Value more = arith::CmpIOp::create(c, loc, arith::CmpIPredicate::ult,
+                                             tried, constant(c, probes));
+          Value next = arith::AndIOp::create(
+              c, loc, more,
+              arith::XOrIOp::create(
+                  c, loc, found,
+                  arith::ConstantOp::create(c, loc, i1, c.getBoolAttr(true))));
+          scf::ConditionOp::create(c, loc, next,
+                                   ValueRange{slot, tried, found});
+        },
+        [&](OpBuilder &c, Location, ValueRange arguments) {
+          Value next = arith::AndIOp::create(
+              c, loc, arith::AddIOp::create(c, loc, arguments[0], constant(c, 1)),
+              constant(c, slots - 1));
+          Value tried =
+              arith::AddIOp::create(c, loc, arguments[1], constant(c, 1));
+          scf::YieldOp::create(c, loc, ValueRange{next, tried});
+        });
+    return {arith::IndexCastOp::create(b, loc, b.getIndexType(),
+                                       search.getResult(0)),
+            search.getResult(2)};
+  };
+
+  // The thread's item, if it has one; the threads past the last item reach
+  // the barriers as well.
+  Value base =
+      arith::MulIOp::create(kernel, loc, launch.getBlockIds().x, threads);
+  Value item = arith::AddIOp::create(kernel, loc, base, thread);
+  Value inside = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::ult,
+                                       item, count);
+  scf::IfOp::create(kernel, loc, inside, [&](OpBuilder &then, Location) {
+    // The slots of the members that the item has looked up, and whether
+    // it found them, by member.
+    DenseMap<Value, std::pair<Value, Value>> found;
+    auto add = [&](OpBuilder &b, Value buffer, Value member, Value value) {
+      std::pair<Value, Value> &lookup = found[member];
+      if (!lookup.first ||
+          lookup.first.getParentBlock() != b.getInsertionBlock())
+        lookup = findSlot(b, member);
+      auto [slot, inTable] = lookup;
+      unsigned k = llvm::find(outs, buffer) - outs.begin();
+      int64_t c = components[k];
+      bool isF32 = elements[k].isF32();
+      scf::IfOp::create(
+          b, loc, inTable,
+          [&](OpBuilder &then, Location) {
+            for (int64_t j = 0; j != c; ++j) {
+              Value part =
+                  c == 1 && !isa<VectorType>(value.getType())
+                      ? value
+                      : vector::ExtractOp::create(then, loc, value, j)
+                            .getResult();
+              Value place = arith::AddIOp::create(
+                  then, loc,
+                  arith::MulIOp::create(then, loc, slot,
+                                        createIndex(then, loc, c)),
+                  createIndex(then, loc, j));
+              Value address =
+                  getSharedAddress(then, loc, shared[1 + k], place);
+              LLVM::InlineAsmOp::create(
+                  then, loc, TypeRange(), ValueRange{address, part},
+                  isF32 ? "red.shared.add.f32 [$0], $1;"
+                        : "red.shared.add.f64 [$0], $1;",
+                  isF32 ? "l,f" : "l,d", /*has_side_effects=*/true,
+                  /*is_align_stack=*/false, LLVM::TailCallKind::None,
+                  LLVM::AsmDialectAttr(), ArrayAttr());
+            }
+            scf::YieldOp::create(then, loc);
+          },
+          [&](OpBuilder &otherwise, Location) {
+            emitAtomicAdd(otherwise, loc, value, buffer, member);
+            scf::YieldOp::create(otherwise, loc);
+          });
+    };
+    emitItem(then, item, add);
+    scf::YieldOp::create(then, loc);
+  });
+  gpu::BarrierOp::create(kernel, loc);
+
+  // Each particle of the table, once to each destination.
+  scf::ForOp::create(
+      kernel, loc, thread, numSlots, threads, ValueRange(),
+      [&](OpBuilder &b, Location, Value slot, ValueRange) {
+        Value key = memref::LoadOp::create(b, loc, keys, ValueRange{slot});
+        Value held = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+                                           key, empty);
+        scf::IfOp::create(b, loc, held, [&](OpBuilder &then, Location) {
+          Value row =
+              arith::IndexCastOp::create(then, loc, then.getIndexType(), key);
+          for (auto [k, c] : llvm::enumerate(components)) {
+            SmallVector<Value, 3> parts;
+            for (int64_t j = 0; j != c; ++j) {
+              Value place = arith::AddIOp::create(
+                  then, loc,
+                  arith::MulIOp::create(then, loc, slot,
+                                        createIndex(then, loc, c)),
+                  createIndex(then, loc, j));
+              parts.push_back(memref::LoadOp::create(
+                  then, loc, shared[1 + k], ValueRange{place}));
+            }
+            Value value =
+                cast<MemRefType>(outs[k].getType()).getRank() == 1
+                    ? parts.front()
+                    : vector::FromElementsOp::create(
+                          then, loc, VectorType::get({c}, elements[k]), parts)
+                          .getResult();
+            emitAtomicAdd(then, loc, value, outs[k], row);
+          }
+          scf::YieldOp::create(then, loc);
+        });
+        scf::YieldOp::create(b, loc);
+      });
+  gpu::TerminatorOp::create(kernel, loc);
+  bringIn(launch);
+  return true;
+}
+
 LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
   md_exec::TupleForOp first = run.front();
   Location loc = first.getLoc();
@@ -1536,8 +1835,9 @@ LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
                        : arith::AddIOp::create(builder, loc, ends.back(),
                                                count));
   }
-  // What the thread of item `item` of the other loops does.
-  auto emitItem = [&](OpBuilder &body, Value item) {
+  // What the thread of item `item` of the other loops does; with `add`,
+  // the values go to the table of the block (launchTupleBlocks).
+  auto emitItemTo = [&](OpBuilder &body, Value item, AddToBuffer add) {
     std::function<void(OpBuilder &, size_t)> emitFrom = [&](OpBuilder &at,
                                                            size_t k) {
       auto emitLoop = [&](OpBuilder &b) {
@@ -1545,8 +1845,13 @@ LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
                              : arith::SubIOp::create(b, loc, item,
                                                      ends[k - 1]);
         IRMapping local;
-        emitTupleOnce(b, others[k], tupleMembers[k], tuple, box, inverse,
-                      local);
+        md_exec::TupleForOp loop = others[k];
+        auto toBuffer = [&](OpBuilder &c, unsigned out, Value member,
+                            Value value) {
+          add(c, loop.getOuts()[out], member, value);
+        };
+        emitTupleOnce(b, loop, tupleMembers[k], tuple, box, inverse, local,
+                      add ? AddToMember(toBuffer) : AddToMember());
       };
       if (k + 1 == others.size()) {
         emitLoop(at);
@@ -1567,8 +1872,13 @@ LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
     };
     emitFrom(body, 0);
   };
+  auto emitItem = [&](OpBuilder &body, Value item) {
+    emitItemTo(body, item, nullptr);
+  };
   if (fused.empty()) {
-    launchOver(builder, loc, ends.back(), emitItem);
+    if (!tupleBlockSums ||
+        !launchTupleBlocks(builder, loc, ends.back(), others, emitItemTo))
+      launchOver(builder, loc, ends.back(), emitItem);
     return success();
   }
 
@@ -3211,10 +3521,20 @@ LogicalResult Lowering::lowerTupleFor(md_exec::TupleForOp op) {
              << "has no members on the device to evaluate each tuple once";
     Value tuples = createSize(builder, loc, tupleMembers);
     if (op.getReduce().empty()) {
-      launchOver(builder, loc, tuples, [&](OpBuilder &body, Value tuple) {
+      auto emitItemTo = [&](OpBuilder &body, Value tuple, AddToBuffer add) {
         IRMapping local;
-        emitTupleOnce(body, op, tupleMembers, tuple, box, inverse, local);
-      });
+        auto toBuffer = [&](OpBuilder &c, unsigned out, Value member,
+                            Value value) {
+          add(c, op.getOuts()[out], member, value);
+        };
+        emitTupleOnce(body, op, tupleMembers, tuple, box, inverse, local,
+                      add ? AddToMember(toBuffer) : AddToMember());
+      };
+      if (!tupleBlockSums ||
+          !launchTupleBlocks(builder, loc, tuples, {op}, emitItemTo))
+        launchOver(builder, loc, tuples, [&](OpBuilder &body, Value tuple) {
+          emitItemTo(body, tuple, nullptr);
+        });
       return success();
     }
     // With global sums, a thread for each of m rows, the tuples or the
@@ -7281,6 +7601,8 @@ public:
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;
     lowering.checkPruning = checkPruning;
+    lowering.tupleBlockSums = tupleBlockSums;
+    lowering.tupleBlockLeast = tupleBlockLeast;
     if (failed(lowering.run()))
       return signalPassFailure();
     // Products and sums in the kernels may become fused multiply-adds, as

@@ -307,6 +307,17 @@ def ConvertMDExecToGPU
            "each tuple once and adds to its members with atomics, outside "
            "the deterministic mode (JAC: 526 against 505 ns/day for the "
            "rows of the particles)">,
+    Option<"tupleBlockSums", "tuple-block-sums", "bool", /*default=*/"true",
+           "Whether a kernel of loops over tuples evaluated once adds the "
+           "values of the tuples of a block for each particle in block "
+           "memory, and each particle's sum to the destination with one "
+           "atomic a block (D[tuple-block-sums]); otherwise every value is "
+           "an atomic addition to the destination">,
+    Option<"tupleBlockLeast", "tuple-block-least", "int64_t",
+           /*default=*/"100000",
+           "The fewest tuples of a kernel that take the sums of a block; a "
+           "kernel of fewer keeps the atomics, chosen on the host by the "
+           "count (0: always the sums of a block)">,
     Option<"fuseCenters", "fuse-centers", "bool", /*default=*/"true",
            "Whether the sums of a loop over few tuples evaluated once, which "
            "reach only a later such loop through arithmetic, are computed by "
