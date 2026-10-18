@@ -1,4 +1,5 @@
-// Inlining of potentials, functions, and programs.
+// Inlining of potentials, functions, and programs, and of the bodies of
+// neural stages into the kernels that apply them (D[ml4-neural-op]).
 
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 
@@ -90,8 +91,50 @@ public:
       }
     }
 
+    // The bodies of the stages, into the kernels: the forward body, or with
+    // `vjp` its vector-Jacobian product. They are functions of one element,
+    // so that a kernel holds them as it holds any arithmetic.
+    SmallVector<md::ApplyStageOp> applications;
+    module->walk([&](md::ApplyStageOp op) { applications.push_back(op); });
+    for (md::ApplyStageOp apply : applications) {
+      auto stage = SymbolTable::lookupNearestSymbolFrom<md::StageOp>(
+          apply, apply.getStageAttr());
+      if (!stage) {
+        apply.emitOpError() << "'" << apply.getStage()
+                            << "' does not name a stage";
+        return signalPassFailure();
+      }
+      FlatSymbolRefAttr name =
+          apply.getVjp() ? stage.getVjpAttr() : stage.getForwardAttr();
+      auto body = dyn_cast_or_null<FunctionOpInterface>(
+          name ? SymbolTable::lookupNearestSymbolFrom(stage, name)
+               : nullptr);
+      if (!body) {
+        apply.emitOpError() << "cannot be inlined: the stage '"
+                            << apply.getStage() << "' binds no such body";
+        return signalPassFailure();
+      }
+      if (failed(inlineCall(apply, body)))
+        return signalPassFailure();
+    }
+
     // Remove what is no longer referenced. A potential that an
-    // `md.evaluate` still names stays.
+    // `md.evaluate` still names stays. The stages go first, so that their
+    // bodies are no longer referenced.
+    SmallVector<md::StageOp> stages(module.getOps<md::StageOp>());
+    for (md::StageOp stage : stages) {
+      if (!SymbolTable::symbolKnownUseEmpty(stage, module))
+        continue;
+      SmallVector<FlatSymbolRefAttr, 2> bodies = {stage.getForwardAttr()};
+      if (stage.getVjpAttr())
+        bodies.push_back(stage.getVjpAttr());
+      stage.erase();
+      for (FlatSymbolRefAttr name : bodies) {
+        Operation *body = SymbolTable::lookupSymbolIn(module, name);
+        if (body && SymbolTable::symbolKnownUseEmpty(body, module))
+          body->erase();
+      }
+    }
     for (Operation &op : llvm::make_early_inc_range(module))
       if (isCallee(&op) && SymbolTable::symbolKnownUseEmpty(&op, module))
         op.erase();

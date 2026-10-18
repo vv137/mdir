@@ -61,8 +61,8 @@ LogicalResult FieldType::verify(function_ref<InFlightDiagnostic()> emitError,
                                 unsigned numComponents, Type elementType) {
   if (!particleSet)
     return emitError() << "expected a particle set";
-  if (numComponents != 1 && numComponents != 3)
-    return emitError() << "expected 1 or 3 components, got " << numComponents;
+  if (numComponents == 0)
+    return emitError() << "expected at least 1 component";
 
   bool isReal = elementType.isF64() || elementType.isF32();
   bool isInteger =
@@ -70,8 +70,8 @@ LogicalResult FieldType::verify(function_ref<InFlightDiagnostic()> emitError,
   if (!isReal && !isInteger)
     return emitError() << "expected element type f64, f32, i32, or i64, got "
                        << elementType;
-  if (numComponents == 3 && !isReal)
-    return emitError() << "a field with 3 components must have element type "
+  if (numComponents != 1 && !isReal)
+    return emitError() << "a field with several components must have element type "
                           "f64 or f32, got "
                        << elementType;
   return success();

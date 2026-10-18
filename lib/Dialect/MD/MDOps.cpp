@@ -963,6 +963,129 @@ LogicalResult MapParticlesOp::verifyRegions() {
 }
 
 //===----------------------------------------------------------------------===//
+// Neural stages
+//===----------------------------------------------------------------------===//
+
+/// Whether `type` is the value of one element of a floating field: f64 or a
+/// vector of it. The stages are declared at the reference precision.
+static bool isStageReal(Type type) {
+  if (auto vector = dyn_cast<VectorType>(type))
+    return vector.getRank() == 1 && !vector.isScalable() &&
+           vector.getElementType().isF64();
+  return type.isF64();
+}
+
+static bool isStageInteger(Type type) {
+  return type.isSignlessInteger(32) || type.isSignlessInteger(64);
+}
+
+bool StageOp::isDifferentiable(unsigned index) {
+  return isStageReal(getFunctionType().getInput(index));
+}
+
+FunctionType StageOp::getVjpType() {
+  FunctionType type = getFunctionType();
+  SmallVector<Type> inputs(type.getInputs());
+  llvm::append_range(inputs, type.getResults());
+  SmallVector<Type> results;
+  for (auto [index, input] : llvm::enumerate(type.getInputs()))
+    if (isDifferentiable(index))
+      results.push_back(input);
+  return FunctionType::get(getContext(), inputs, results);
+}
+
+LogicalResult StageOp::verify() {
+  FunctionType type = getFunctionType();
+  for (Type input : type.getInputs())
+    if (!isStageReal(input) && !isStageInteger(input))
+      return emitOpError() << "expected each operand of f64, a vector of "
+                              "f64, i32, or i64, got "
+                           << input;
+  if (type.getNumResults() == 0)
+    return emitOpError() << "expected at least one result";
+  for (Type result : type.getResults())
+    if (!isStageReal(result))
+      return emitOpError() << "expected each result of f64 or a vector of "
+                              "f64, got "
+                           << result;
+  return success();
+}
+
+/// Verifies that `name` names a body of the type `type` in the module: a
+/// function with a body of ops without memory effects.
+static LogicalResult verifyStageBody(StageOp stage, StringRef role,
+                                     FlatSymbolRefAttr name, FunctionType type,
+                                     SymbolTableCollection &symbolTable) {
+  auto body = dyn_cast_or_null<FunctionOpInterface>(
+      symbolTable.lookupNearestSymbolFrom(stage, name));
+  if (!body)
+    return stage.emitOpError()
+           << "'" << name.getValue() << "', its " << role
+           << " body, does not name a function";
+  if (body.getFunctionType() != type)
+    return stage.emitOpError()
+           << "expected its " << role << " body '" << name.getValue()
+           << "' of the type " << type << ", got " << body.getFunctionType();
+  if (body.isExternal())
+    return stage.emitOpError()
+           << "cannot bind the declaration '" << name.getValue()
+           << "' as its " << role
+           << " body: only a body in the module is lowered (an external "
+              "body, such as an AOTInductor export, is step 4 of #377)";
+  WalkResult walk = body.getFunctionBody().walk([&](Operation *op) {
+    if (op->hasTrait<OpTrait::ReturnLike>() || isMemoryEffectFree(op))
+      return WalkResult::advance();
+    op->emitOpError() << "in the " << role << " body of the stage '"
+                      << stage.getSymName()
+                      << "', which must be pure: the op has memory effects";
+    return WalkResult::interrupt();
+  });
+  return failure(walk.wasInterrupted());
+}
+
+LogicalResult StageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  if (failed(verifyStageBody(*this, "forward", getForwardAttr(),
+                             getFunctionType(), symbolTable)))
+    return failure();
+  if (FlatSymbolRefAttr vjp = getVjpAttr())
+    return verifyStageBody(*this, "vjp", vjp, getVjpType(), symbolTable);
+  return success();
+}
+
+LogicalResult ApplyStageOp::verify() {
+  // A kernel of the md dialect or of md_dist holds the op: its operands are
+  // the values of one element.
+  Operation *parent = (*this)->getParentOp();
+  if (!parent || isa<FunctionOpInterface>(parent) ||
+      !parent->getDialect() ||
+      (parent->getDialect()->getNamespace() != "md" &&
+       parent->getDialect()->getNamespace() != "md_dist"))
+    return emitOpError() << "expected to be in a kernel of the md dialect";
+  return success();
+}
+
+LogicalResult
+ApplyStageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  auto stage = symbolTable.lookupNearestSymbolFrom<StageOp>(*this,
+                                                            getStageAttr());
+  if (!stage)
+    return emitOpError() << "'" << getStage() << "' does not name a stage";
+  if (getVjp() && !stage.getVjpAttr())
+    return emitOpError() << "the stage '" << getStage()
+                         << "' has no vector-Jacobian product";
+  FunctionType expected =
+      getVjp() ? stage.getVjpType() : stage.getFunctionType();
+  FunctionType actual = FunctionType::get(
+      getContext(), getOperands().getTypes(), getResults().getTypes());
+  if (actual != expected)
+    return emitOpError() << "expected the type " << expected << " of "
+                         << (getVjp() ? "the vector-Jacobian product of " : "")
+                         << "the stage '" << getStage() << "', got "
+                         << actual;
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
 // EvaluateOp
 //===----------------------------------------------------------------------===//
 

@@ -7,11 +7,13 @@ with a cosine cutoff and a radial basis, a node stage that mixes the vector
 channels, and a readout. Its weights are drawn from a fixed seed. It stands
 in for a trained model in the tests of docs/ml4-ir.md, Section 6:
 
-    python3 synthetic_mp.py stages     the bodies of the stages, as func.func
+    python3 synthetic_mp.py stages [S] the bodies of the stages, as func.func
                                        of arith, math, and vector: each
                                        forward body, and its vector-Jacobian
                                        product from a reverse sweep of this
-                                       script (the stand-in for external AD)
+                                       script (the stand-in for external AD);
+                                       with the name S of a stage, its VJP
+                                       made wrong on purpose
     python3 synthetic_mp.py reference  the energy, the forces, and the virial
                                        of a small periodic system, evaluated
                                        from the definitions below over the
@@ -469,7 +471,10 @@ def trace(stage, w):
 STAGES = ["embed", "edge1", "node1", "edge2", "node2", "readout"]
 
 
-def stages():
+def stages(wrong=None):
+    """With `wrong`, the name of a stage, the cotangent of the first operand
+    of that stage's VJP is scaled by 1.001: a product that is not the
+    transpose of the body's derivative, for the tests that must catch it."""
     w = weights()
     print("// The bodies of the stages of the synthetic model of")
     print("// Inputs/synthetic_mp.py (#377, step 3), written by")
@@ -492,9 +497,115 @@ def stages():
         for kind, nodes in differentiable:
             results.append(bars[k:k + len(nodes)])
             k += len(nodes)
+        if stage == wrong:
+            results[0][0] = t.mul(results[0][0], t.const(1.001))
         print(emit(f"{stage}.b", arguments + [(len(out), cotangents)],
                    results, t))
         print()
+
+
+SIGNATURES = {
+    "embed": (["i32"], ["v"]),
+    "edge1": (["f64", "vector<3xf64>", "v", "v", "i32", "i32"], ["v"]),
+    "node1": (["v", "v"], ["v"]),
+    "edge2": (["f64", "vector<3xf64>", "v", "v", "i32", "i32"], ["v"]),
+    "node2": (["v", "v"], ["v"]),
+    "readout": (["v"], ["f64"]),
+}
+
+
+def signature(stage):
+    """The types of the operands and of the results of a stage."""
+    return ([f"vector<{N}xf64>" if t == "v" else t for t in types]
+            for types in SIGNATURES[stage])
+
+
+def declarations():
+    """The md.stage declarations of the stages."""
+    lines = []
+    for stage in STAGES:
+        inputs, results = signature(stage)
+        vjp = "" if stage == "embed" else f" vjp(@{stage}.b)"
+        lines.append(f"md.stage @{stage} forward(@{stage}.f){vjp}")
+        lines.append(f"    : ({', '.join(inputs)}) -> {', '.join(results)}")
+    return "\n".join(lines)
+
+
+def adjoint_test():
+    """The stages' declarations and a `main` that evaluates both sides of
+    the adjoint identity of each stage with a VJP at three points, through
+    `@<stage>.adjoint` of the pass test-md-stage-adjoint, and prints for
+    each stage 1 if the largest relative difference is at most 1e-12, then
+    that difference. The operands, directions, and cotangents are uniform
+    in [-1, 1], the distance in [0.2, 0.48], and the species 0 or 1."""
+    state = [2026]
+
+    def uniform(lo, hi):
+        state[0] = (state[0] * 6364136223846793005 + 1442695040888963407) \
+            % 2 ** 64
+        return lo + (hi - lo) * ((state[0] >> 11) + 0.5) / 2.0 ** 53
+
+    def constant(name, kind):
+        if kind == "i32":
+            return f"  %{name} = arith.constant {int(uniform(0, 2))} : i32"
+        if kind == "f64":
+            return f"  %{name} = arith.constant {uniform(0.2, 0.48)!r} : f64"
+        size = int(kind[len("vector<"):kind.index("x")])
+        values = ", ".join(repr(uniform(-1.0, 1.0)) for _ in range(size))
+        return f"  %{name} = arith.constant dense<[{values}]> : {kind}"
+
+    out = [declarations(), "",
+           "func.func private @printF64(f64)",
+           "func.func private @printNewline()"]
+    for stage in STAGES[1:]:
+        inputs, results = signature(stage)
+        types = inputs + [t for t in inputs if t != "i32"] + results
+        out.append(f"func.func private @{stage}.adjoint({', '.join(types)})"
+                   " -> (f64, f64)")
+    out += ["",
+           "func.func @main() {",
+           "  %zero = arith.constant 0.0 : f64",
+           "  %bound = arith.constant 1.0e-12 : f64"]
+    for stage in STAGES[1:]:
+        inputs, results = signature(stage)
+        worst = "%zero"
+        for point in range(3):
+            p = f"%{stage}_{point}"
+            names, types = [], []
+            for k, kind in enumerate(inputs):
+                out.append(constant(f"{stage}_{point}_a{k}", kind))
+                names.append(f"{p}_a{k}")
+                types.append(kind)
+            for k, kind in enumerate(inputs):
+                if kind == "i32":
+                    continue
+                out.append(constant(f"{stage}_{point}_v{k}", kind))
+                names.append(f"{p}_v{k}")
+                types.append(kind)
+            for k, kind in enumerate(results):
+                out.append(constant(f"{stage}_{point}_y{k}", kind))
+                names.append(f"{p}_y{k}")
+                types.append(kind)
+            out += [
+                f"  {p}_l, {p}_r = func.call @{stage}.adjoint("
+                f"{', '.join(names)})",
+                f"      : ({', '.join(types)}) -> (f64, f64)",
+                f"  {p}_d = arith.subf {p}_l, {p}_r : f64",
+                f"  {p}_e = math.absf {p}_d : f64",
+                f"  {p}_al = math.absf {p}_l : f64",
+                f"  {p}_ar = math.absf {p}_r : f64",
+                f"  {p}_m = arith.maximumf {p}_al, {p}_ar : f64",
+                f"  {p}_q = arith.divf {p}_e, {p}_m : f64",
+                f"  {p}_w = arith.maximumf {worst}, {p}_q : f64"]
+            worst = f"{p}_w"
+        out += [f"  %{stage}_ok = arith.cmpf ole, {worst}, %bound : f64",
+                f"  %{stage}_flag = arith.uitofp %{stage}_ok : i1 to f64",
+                f"  func.call @printF64(%{stage}_flag) : (f64) -> ()",
+                "  func.call @printNewline() : () -> ()",
+                f"  func.call @printF64({worst}) : (f64) -> ()",
+                "  func.call @printNewline() : () -> ()"]
+    out += ["  return", "}"]
+    print("\n".join(out))
 
 
 def evaluate(t, values, outputs):
@@ -625,4 +736,6 @@ def reference():
 
 
 if __name__ == "__main__":
-    {"stages": stages, "reference": reference, "check": check}[sys.argv[1]]()
+    {"stages": stages, "reference": reference, "check": check,
+     "adjoint": adjoint_test}[sys.argv[1]](
+        *sys.argv[2:])
