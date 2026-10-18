@@ -1497,13 +1497,19 @@ public:
     for (func::FuncOp function : all) {
       if (!functions.empty() &&
           !llvm::is_contained(functions, function.getSymName())) {
-        left = true;
+        left |= function
+                    .walk([](Operation *op) {
+                      return isa_and_nonnull<MDDistDialect>(op->getDialect())
+                                 ? WalkResult::interrupt()
+                                 : WalkResult::advance();
+                    })
+                    .wasInterrupted();
         continue;
       }
       if (failed(lowering.run(function)))
         return signalPassFailure();
     }
-    // The reference executor runs what is left and needs the
+    // The reference executor runs what is left of md_dist and needs the
     // decompositions.
     if (!left)
       for (auto op :

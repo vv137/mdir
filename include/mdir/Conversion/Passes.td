@@ -460,8 +460,10 @@ def ConvertMDDistToMDExec
     Option<"cells", "cells", "int64_t", /*default=*/"3",
            "the number of cells that the reach of a structure spans">,
     ListOption<"functions", "functions", "std::string",
-               "the functions to run; all if empty. The others are left to "
-               "the reference executor, so that a test compares the two">
+               "the functions to run; all if empty. The ops of md_dist of "
+               "the others, and the decompositions they need, are left to "
+               "--convert-md-dist-to-loops, which must follow, so that a "
+               "test compares the two">
   ];
   let dependentDialects = ["::mdir::md::MDDialect",
                            "::mdir::md_exec::MDExecDialect",
