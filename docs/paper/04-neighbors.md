@@ -255,7 +255,8 @@ order*: the columns of a grid in $x$–$y$, each about 64 particles wide,
 sorted by $z$; each column cut into chunks of 64, each chunk sorted by $x$
 and halved, each half sorted by $y$ and halved again. The result is four
 groups of up to 16 particles that fill a near-cube. Group $g$ is the
-places $16g, \dots, 16g+15$; a short group is padded with empty places.
+places $16g, \dots, 16g+15$; a short group is padded with empty places,
+and a chunk of fewer than four particles leaves whole groups empty.
 Every sort breaks ties by the number of the particle, so the order does
 not depend on the threads.
 

@@ -3901,9 +3901,17 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %c3s = arith.constant 3 : index
       memref.store %wpacked_f, %xp[%p, %c3s] : memref<?x4xf32, 1>
     } else {
+      // An empty place: no shift, and no cells between the frame and the
+      // wrapped position. The lists read the fourth lane at the first place of
+      // every group, also of a group that a short chunk leaves without a
+      // particle; it is written here, so that no read takes memory that
+      // nothing wrote (#413). No entry of such a group uses it.
       %none_shift = arith.constant 537395712 : i32
       scf.if %inside {
         memref.store %none_shift, %shift[%p] : memref<?xi32, 1>
+        %none_f = arith.bitcast %none_shift : i32 to f32
+        %c3e = arith.constant 3 : index
+        memref.store %none_f, %xp[%p, %c3e] : memref<?x4xf32, 1>
       }
     }
     %lead = arith.cmpi eq, %u, %c0w : index

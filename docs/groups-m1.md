@@ -62,7 +62,12 @@ order of Section 5 (columns in x-y, bins along z, chunks of 64 split by x
 and by y), not in the order of the cells of the matrix (D86); the positions
 that the loops read are gathered in that order. Group $g$ is the places
 $16g$ to $16g + 15$; the places that a short group leaves are empty, at
-most 63 in the last chunk of each column.
+most 63 in the last chunk of each column. A chunk of fewer than four
+particles leaves whole groups empty. The build writes the shifts of an
+empty place as zero, also the cells $\mathbf W$ in the fourth lane of its
+wrapped position (D95), which the lists read at the first place of every
+group; before #413 nothing wrote them there, and compute-sanitizer's
+initcheck reported the read. No entry of an empty group uses them.
 
 **Entries.** The list of group $g$ holds entries $(q, m)$: a place $q$ and a mask
 $m$ of 16 bits, bit $u$ for the particle at place $16g + u$. The list holds
