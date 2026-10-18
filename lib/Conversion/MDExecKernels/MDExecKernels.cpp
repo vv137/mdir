@@ -441,6 +441,15 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
     for (unsigned i = 0; i != numOuts; ++i) {
       Value destination = op.getOuts()[i];
       Value total = totals[i];
+      // Other rows add to this one at their neighbors at the same time:
+      // the center adds atomically as well (D[ml2-exec]).
+      if (twoEnded) {
+        if (cast<MemRefType>(destination.getType()).getMemorySpace())
+          emitAtomicAdd(writer, loc, total, destination, particle);
+        else
+          emitHostAtomicAdd(writer, loc, total, destination, particle);
+        continue;
+      }
       if (!op.overwrites(i))
         total = arith::AddFOp::create(
             writer, loc, loadElement(writer, loc, destination, particle),
