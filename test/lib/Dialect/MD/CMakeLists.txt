@@ -2,6 +2,7 @@
 add_mlir_library(MDIRTestPasses
   TestOutlineKernels.cpp
   TestStageAdjoint.cpp
+  TestTranspose.cpp
 
   EXCLUDE_FROM_LIBMLIR
 

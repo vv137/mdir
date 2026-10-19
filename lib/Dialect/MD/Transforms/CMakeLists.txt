@@ -25,6 +25,7 @@ add_mlir_dialect_library(MDIRMDTransforms
   MDIRDyn
   MDIRMD
   MDIRMDDist
+  MDIRMDExec
   MDIRMDRT
   MLIRFuncDialect
   MLIRMemRefDialect

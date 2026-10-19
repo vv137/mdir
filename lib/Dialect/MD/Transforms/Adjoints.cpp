@@ -44,6 +44,8 @@
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
 #include "mdir/Dialect/MDDist/MDDistTypes.h"
+#include "mdir/Dialect/MDExec/MDExecDialect.h"
+#include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/IR/DialectRegistry.h"
 
@@ -408,6 +410,44 @@ struct MapParticlesTranspose
   }
 };
 
+//===----------------------------------------------------------------------===//
+// The scatter-accumulate of md_exec (D291)
+//===----------------------------------------------------------------------===//
+
+// a' = a + Σ_{k : idx_k = i} v_k is linear in the values and in the
+// destination. The transpose in the destination is the identity, ā = ā';
+// that in the values is a gather by the indices, v̄_k = ā'_{idx_k}, for
+// which md_exec has no op yet: it comes with the first derivative through
+// a scatter (the ruling of 2026-10-19 on #459).
+struct ScatterAddAdjoint
+    : md::AdjointOpInterface::ExternalModel<ScatterAddAdjoint,
+                                            mdir::md_exec::ScatterAddOp> {
+  bool isLinearOperand(Operation *, unsigned index) const {
+    return index == 0 || index == 2;
+  }
+
+  Value emitTranspose(Operation *op, OpBuilder &, unsigned index,
+                      Value adjoint, Value partner) const {
+    auto scatter = cast<mdir::md_exec::ScatterAddOp>(op);
+    if (partner) {
+      op->emitOpError() << "has no adjoint to sum with another in one op";
+      return Value();
+    }
+    // The value form, which has no overwrite(true): the destination
+    // always reaches the result.
+    if (scatter.isStorageForm()) {
+      op->emitOpError() << "has no transpose in the storage form";
+      return Value();
+    }
+    if (index == 2)
+      return adjoint;
+    op->emitOpError()
+        << "has no transpose in its values yet: it is a gather by the "
+           "indices, which md_exec has no op for";
+    return Value();
+  }
+};
+
 } // namespace
 
 void mdir::md::registerAdjointInterfaces(DialectRegistry &registry) {
@@ -426,4 +466,9 @@ void mdir::md::registerAdjointInterfaces(DialectRegistry &registry) {
     md::SumParticlesOp::attachInterface<SumParticlesTranspose>(*context);
     md::MapParticlesOp::attachInterface<MapParticlesTranspose>(*context);
   });
+  registry.addExtension(
+      +[](MLIRContext *context, mdir::md_exec::MDExecDialect *) {
+        mdir::md_exec::ScatterAddOp::attachInterface<ScatterAddAdjoint>(
+            *context);
+      });
 }
