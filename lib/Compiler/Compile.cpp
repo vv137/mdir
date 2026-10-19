@@ -86,7 +86,7 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
 /// `tiles` or `tilesN` every sum that can be tiled, with bins of N points),
 /// `MDIR_TUPLE_SUMS` the tables of the tuples (D283; `atomics` none,
 /// `blocks` at any count, which the tests of small systems need), and
-/// `MDIR_PAIR_SUMS` those of the loops over groups (D[scatter-op]).
+/// `MDIR_PAIR_SUMS` those of the loops over groups (D291).
 static std::string getScatterOptions(const Control &control) {
   std::string options;
   if (const char *spread = std::getenv("MDIR_PME_SPREAD")) {
@@ -105,7 +105,7 @@ static std::string getScatterOptions(const Control &control) {
     options += "hash=off ";
   else if (sums == "blocks")
     options += "hash=on ";
-  // `MDIR_PAIR_SUMS` the tables of the loops over groups (D[scatter-op];
+  // `MDIR_PAIR_SUMS` the tables of the loops over groups (D291;
   // `atomics` none, `blocks` every loop that can take one).
   StringRef pairs = std::getenv("MDIR_PAIR_SUMS") ? std::getenv("MDIR_PAIR_SUMS")
                                                   : "";

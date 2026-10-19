@@ -139,7 +139,7 @@ def ChooseScatter
     - `md_exec.pair_for`: `hash(S, P, L)` on a loop whose conflict is
       `atomic`, which adds the value of a pair at both of its particles:
       the loops over groups, each pair once, and the two-ended loops over
-      the rows of a matrix, `(directed, atomic)` (D[scatter-op]). `S` is the
+      the rows of a matrix, `(directed, atomic)` (D291). `S` is the
       slots for `block-size` threads that each add to 3 particles a unit
       of work (one of the group, two of the entries), `L` =
       `pair-hash-least` the fewest units of work of a launch over groups

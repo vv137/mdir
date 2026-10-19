@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s | FileCheck %s
 // RUN: mdir-opt %s | mdir-opt | FileCheck %s
 
-// The scatter-accumulate of md_exec (D[scatter-op]): the value form, and
+// The scatter-accumulate of md_exec (D291): the value form, and
 // the storage form with `overwrite` and `scatter`.
 
 !val = !md.field<@ghosts, 3 x f64>

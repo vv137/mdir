@@ -1,5 +1,5 @@
 // The emitters of the privatized scatter-accumulate on a device
-// (D[scatter-op]); see include/mdir/Conversion/ScatterEmitter.h.
+// (D291); see include/mdir/Conversion/ScatterEmitter.h.
 
 #include "mdir/Conversion/ScatterEmitter.h"
 

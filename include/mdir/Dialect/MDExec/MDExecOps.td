@@ -970,7 +970,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     ```
 
     `scatter(hash(S, P, L))`, which `md-exec-choose-scatter` sets on a
-    device (D[scatter-op], docs/device-primitives.md), states how a loop
+    device (D291, docs/device-primitives.md), states how a loop
     whose conflict is `atomic` adds to the particles of a block's pairs:
     through a table of `S` slots in block memory, at most `P` slots tried
     before an atomic of the device, from `L` units of work of a launch on.
@@ -1040,7 +1040,7 @@ def MDExec_ScatterAddOp : MDExec_Op<"scatter_add", [
   ]> {
   let summary = "Adds values into a field at the rows that indices name";
   let description = [{
-    For every row `k` of `values` and `indices` (D[scatter-op],
+    For every row `k` of `values` and `indices` (D291,
     docs/device-primitives.md):
 
     ```text

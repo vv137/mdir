@@ -7,7 +7,7 @@
 // RUN:     --convert-md-exec-to-gpu=deterministic=true 2>&1 \
 // RUN: | FileCheck %s --check-prefix=DET
 
-// The lowering of md_exec.scatter_add for a device (D[scatter-op]).
+// The lowering of md_exec.scatter_add for a device (D291).
 //
 // Without a strategy: a destination that is overwritten is cleared, then a
 // thread a value adds it with an atomic of the device.

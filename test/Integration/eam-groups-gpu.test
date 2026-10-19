@@ -1,7 +1,7 @@
 // The test of eam.mlir on a GPU, over groups (each pair once, D89):
 // the density, a gather whose value goes to both particles of a pair, and
 // the forces through the embedding, with each strategy of the scatter of
-// the loops over groups (D[scatter-op]): an atomic of the device for each
+// the loops over groups (D291): an atomic of the device for each
 // value (`pair-hash=off`), and the table of a block (`pair-hash=on`), in
 // double precision to 1e-10 of the reference and in mixed precision to
 // 1e-5. All 8 checks must print 1.

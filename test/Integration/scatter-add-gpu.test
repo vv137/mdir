@@ -1,4 +1,4 @@
-# The test of scatter-add.mlir on a device (D[scatter-op]), with each
+# The test of scatter-add.mlir on a device (D291), with each
 # strategy of md_exec.scatter_add: an atomic of the device for each value
 # (`scatter-hash=off`), the table of a block at any count
 # (`scatter-hash=on`), and the choice on the host by the count with L =

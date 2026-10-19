@@ -20,7 +20,7 @@
 
 // The loops over pairs that add the value of a pair at both of its
 // particles (the conflict `atomic`: the loops over groups, each pair once)
-// take the table of a block, `hash(S, P, L)` (D[scatter-op]), with S the
+// take the table of a block, `hash(S, P, L)` (D291), with S the
 // slots for `block-size` threads that each add to 3 particles a unit of
 // work, rounded up to a power of two: 512 for 128 threads, 1024 for 256.
 // `pair-hash=off` is the default, and `pair-hash=auto` chooses the atomics

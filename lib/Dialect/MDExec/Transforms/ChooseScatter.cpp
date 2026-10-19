@@ -158,7 +158,7 @@ private:
   }
 
   /// The tables of the loops over pairs that add at both ends of a pair
-  /// (D[scatter-op]): the loops over groups, each pair once.
+  /// (D291): the loops over groups, each pair once.
   void choosePairHash(PairForOp op) {
     // A loop that writes only at its centers, each by its own thread,
     // scatters nothing; nor does one with only global sums.
@@ -185,7 +185,7 @@ private:
     explainChosen(op, chosen);
   }
 
-  /// The table of a scatter-accumulate on its own (D[scatter-op]): a
+  /// The table of a scatter-accumulate on its own (D291): a
   /// thread a value.
   void chooseScatterHash(ScatterAddOp op) {
     if (scatterHash == "off")

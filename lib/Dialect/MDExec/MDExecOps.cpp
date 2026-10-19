@@ -438,7 +438,7 @@ void NonzeroOp::getEffects(
 }
 
 //===----------------------------------------------------------------------===//
-// scatter_add (D[scatter-op])
+// scatter_add (D291)
 //===----------------------------------------------------------------------===//
 
 // md_exec.scatter_add %v at %idx into %a [overwrite(b)] [scatter(...)]
@@ -893,7 +893,7 @@ static SmallVector<Type, 2> getPairGeometryTypes(PairForOp op) {
 }
 
 LogicalResult PairForOp::verify() {
-  // The table of a block (D[scatter-op]) is for a loop that adds at both
+  // The table of a block (D291) is for a loop that adds at both
   // ends of a pair; a loop that writes only at its centers scatters
   // nothing.
   if (failed(verifyScatter(*this, getScatterAttr(), ScatterStrategy::Hash,

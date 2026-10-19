@@ -1,5 +1,5 @@
 // The table of a block in the kernels of the loops over groups
-// (`scatter(hash(S, P, L))` on `md_exec.pair_for`, D[scatter-op]): the
+// (`scatter(hash(S, P, L))` on `md_exec.pair_for`, D291): the
 // program of Integration/eam.mlir, whose density and forces are loops over
 // groups, in mixed precision, lowered for a device without one.
 //

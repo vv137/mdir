@@ -349,7 +349,7 @@ to the destination of its member with an atomic of its own: three for the
 force on each member.
 
 The table is now emitted by the emitter that every site of the strategy
-shares, `kernels::BlockHashTable` (D[scatter-op],
+shares, `kernels::BlockHashTable` (D291,
 [device-primitives.md](device-primitives.md), Section 2.6), with the same
 generated code.
 

@@ -1,4 +1,4 @@
-// md_exec.scatter_add compiled and run (D[scatter-op]): 1000 values of 3
+// md_exec.scatter_add compiled and run (D291): 1000 values of 3
 // components added into 37 rows at the indices 7 k mod 37, once into a
 // field that holds 100 in every component and once into zeros, against
 // the same sum written out as a loop. The values are whole numbers, so

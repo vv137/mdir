@@ -405,7 +405,7 @@ at both ends of each pair (the domains of D290) has rows in the order of the cel
 which share their entries, so its $m/d$ is large. Yet the table took 2.06
 times its time in mixed precision. Each row adds to an entry once, so the
 atomics of a warp go to different addresses. The table is off at both
-(D[scatter-op]).
+(D291).
 
 **One op, one emitter.** The table is one emitter that every site calls.
 The tuples' table moved onto it with byte-identical PTX. A value that no

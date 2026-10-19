@@ -43,7 +43,7 @@ format, or the outputs; every such change is listed under **Changed** or
   control-file key or output changes, and the modules of existing programs
   are unchanged.
 - **`md_exec.scatter_add`, a scatter-accumulate of its own, and one
-  emitter of the privatized table** (D[scatter-op], #416 step 3, PR #445,
+  emitter of the privatized table** (D291, #416 step 3, PR #445,
   [docs/device-primitives.md](docs/device-primitives.md)):
   - `md_exec.scatter_add %values at %indices into %dest`, with
     `overwrite(...)` and `scatter(atomic | hash(S, P, L))`, lowered on the

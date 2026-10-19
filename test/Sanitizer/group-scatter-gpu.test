@@ -1,4 +1,4 @@
-# The table of a block in the loops over groups (D[scatter-op]) under
+# The table of a block in the loops over groups (D291) under
 # compute-sanitizer: the program of Integration/eam.mlir, whose density and
 # forces are loops over groups, in mixed precision with `pair-hash=on`; the
 # slots claimed by compare-and-swap, the additions in block memory, the

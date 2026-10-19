@@ -549,7 +549,7 @@ void Assignment::copyKernel(Operation *loop, Block &source) {
     kernel.clone(nested, local);
 }
 
-/// A scatter-accumulate (D[scatter-op]): the values and the indices are
+/// A scatter-accumulate (D291): the values and the indices are
 /// read, and the destination continues in its buffer where nothing reads
 /// the field afterward, or starts from zeros in a buffer of its own
 /// (`overwrite(true)`).
@@ -712,7 +712,7 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
       op.getCutoffAttr(), op.getWeightsAttr(), overwriteAttr,
       op.getTraversalAttr(), op.getConflictAttr(), op.getExchangeAttr(),
       mapCenters(op.getCenters()), op.getImagesAttr(),
-      // The strategy of the scatter (D[scatter-op]): a loop that overwrites
+      // The strategy of the scatter (D291): a loop that overwrites
       // a destination clears it first and then adds to it as well.
       op.getScatterAttr());
   copyKernel(loop, op.getKernel().front());

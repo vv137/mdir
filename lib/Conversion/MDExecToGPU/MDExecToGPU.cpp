@@ -295,7 +295,7 @@ private:
   void lowerNonzero(md_exec::NonzeroOp op);
   LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op);
   LogicalResult lowerParticleFor(md_exec::ParticleForOp op);
-  /// Lowers a scatter-accumulate (D[scatter-op]): a thread a value, with
+  /// Lowers a scatter-accumulate (D291): a thread a value, with
   /// an atomic of the device or the table of a block.
   LogicalResult lowerScatterAdd(md_exec::ScatterAddOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
@@ -429,7 +429,7 @@ private:
   /// the build left empty (D107) is not valid.
   /// What a launch of rows holds besides its rows: block memory, and what
   /// its kernel does before and after them (the table of a block,
-  /// D[scatter-op]).
+  /// D291).
   struct RowExtras {
     ArrayRef<Type> attributions;
     function_ref<void(OpBuilder &, gpu::LaunchOp)> before;
@@ -3063,7 +3063,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   Value entries = getMatrixEntries(builder, loc, structure.handle);
   // The table of a block for the values at the neighbors and at the
   // centers of a loop that adds at both (`scatter(hash(S, P, L))`,
-  // D[scatter-op]): the rows of a block are neighbors in the order of the
+  // D291): the rows of a block are neighbors in the order of the
   // cells, and share most of their entries. Its precondition is checked
   // again with the chooser's function (Scatter.h).
   md_exec::ScatterAttr scatter = op.getScatterAttr();
@@ -3319,7 +3319,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   Value warp32 = createIndex(builder, loc, 32);
   Value block = createIndex(builder, loc, blockSize);
   // The table of a block for the values at the particles
-  // (`scatter(hash(S, P, L))`, D[scatter-op]), its precondition checked again
+  // (`scatter(hash(S, P, L))`, D291), its precondition checked again
   // with the chooser's function (Scatter.h).
   md_exec::ScatterAttr scatter = op.getScatterAttr();
   bool hashed = scatter && scatter.isHash();

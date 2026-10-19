@@ -89,7 +89,7 @@ func.func private @g() attributes {scatter = #md_exec.scatter<tile(0)>}
 // -----
 
 // A loop over pairs takes the table where it adds at both ends of a pair
-// (D[scatter-op]).
+// (D291).
 !vec = !md.field<@atoms, 3 x f32>
 md.particle_set @atoms
 func.func @f(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms>,
@@ -120,7 +120,7 @@ func.func @f(%x: !vec, %cell: !md.cell, %nl: !mdrt.neighbors<@atoms>,
 
 // -----
 
-// md_exec.scatter_add (D[scatter-op]).
+// md_exec.scatter_add (D291).
 md.particle_set @atoms
 md.particle_set @ghosts
 func.func @f(%v: !md.field<@ghosts, 3 x f64>, %i: !md.field<@ghosts, i32>,

@@ -6,7 +6,7 @@
 // RUN: mdir-opt %s --md-exec-choose-scatter="block-size=4096 explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=WHY
 
-// The strategy of md_exec.scatter_add (D[scatter-op]): `hash(S, P, L)`
+// The strategy of md_exec.scatter_add (D291): `hash(S, P, L)`
 // with S the slots for `block-size` threads of one value each, a power of
 // two, and L = `hash-least` (100,000 by default, 0 with scatter-hash=on);
 // none with scatter-hash=off, in the deterministic mode, or where the

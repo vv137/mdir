@@ -135,7 +135,7 @@ struct PairLayout {
 ///
 /// With the policy `(directed, atomic)` and `add`, the values at the
 /// neighbors and at the center go to `add` in place of the device's atomics
-/// (the table of a block, D[scatter-op]).
+/// (the table of a block, D291).
 using AddToMember = llvm::function_ref<void(mlir::OpBuilder &, unsigned out,
                                             mlir::Value member,
                                             mlir::Value value)>;

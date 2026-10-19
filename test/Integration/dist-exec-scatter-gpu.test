@@ -1,6 +1,6 @@
 # The two-ended loops of the domains, `pair_for (directed, atomic)` over the
 # rows of a matrix (D290), with the table of a block for their values at
-# the neighbors and at the centers (`pair-hash=on`, D[scatter-op]): the
+# the neighbors and at the centers (`pair-hash=on`, D291): the
 # program of dist-eam-exec.mlir on a GPU, 3x2x1 domains in the derivative's
 # form on the directed traversal, in double and mixed precision, against
 # its references, as GPU/dist-eam-exec.mlir runs it with the atomics.

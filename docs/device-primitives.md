@@ -13,7 +13,7 @@ switches ([principles.md](principles.md), principles 2 and 3; issue #415).
 
 | Primitive | CUB's counterpart | Issue | Status | Decision |
 |---|---|---|---|---|
-| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. One attribute, one pass, and one set of preconditions (step 1). The table `hash` is one emitter that every site calls (`ScatterEmitter.h`, step 3). Its sites are the tuples, the op `md_exec.scatter_add`, and the loops over pairs that add at both ends (over groups, and `(directed, atomic)` over a matrix), where it was measured slower and is off by default (Section 2.7). The tile of PME keeps its template. Fixed point in the deterministic mode (step 2) is planned | D282 (`tile`), D283 (`hash`), D285 (the attribute and the pass), D[scatter-op] (the op, the emitter, the groups) |
+| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. One attribute, one pass, and one set of preconditions (step 1). The table `hash` is one emitter that every site calls (`ScatterEmitter.h`, step 3). Its sites are the tuples, the op `md_exec.scatter_add`, and the loops over pairs that add at both ends (over groups, and `(directed, atomic)` over a matrix), where it was measured slower and is off by default (Section 2.7). The tile of PME keeps its template. Fixed point in the deterministic mode (step 2) is planned | D282 (`tile`), D283 (`hash`), D285 (the attribute and the pass), D291 (the op, the emitter, the groups) |
 | Sorted scatter: runs reduced without atomics | `BlockHistogram`, sort specialization; `BlockDiscontinuity` | #417 | Planned. `sorted` is reserved in the attribute and refused | — |
 | Warp-aggregated atomics | `WarpReduce`, matching by key | #418 | Planned | — |
 | Vectorized and transposed gathers | `BlockLoad`, `WarpLoad`, `BlockExchange` | #419 | Next, on the gathering of PME (tiled gathering at orders 6 and 8 is #411) | — |
@@ -74,7 +74,7 @@ the ops whose lowering scatters (`include/mdir/Dialect/MDExec/MDExecAttrs.td`):
           -> !md.field<@atoms, 3 x f64>
 ```
 
-`md_exec.scatter_add` is the scatter-accumulate on its own (D[scatter-op],
+`md_exec.scatter_add` is the scatter-accumulate on its own (D291,
 ruled on #445). It computes $a'_i = a_i + \sum_{k : \mathrm{idx}_k = i} v_k$
 over the rows $k$ of the values and the indices:
 - The values and the indices are fields of one set, the indices of `i32`.
@@ -208,7 +208,7 @@ and `tuple-block-sums-gpu.test` (mixed against atomics and against
 double), both also under compute-sanitizer. `choose-scatter.mlir` checks
 each choice and refusal of the pass, `Dialect/MDExec/scatter-invalid.mlir`
 the verifiers, and `Conversion/MDExecToGPU/scatter-invalid.mlir` the
-lowering's refusals. The tests of D[scatter-op]:
+lowering's refusals. The tests of D291:
 - `choose-scatter-pairs.mlir` and `choose-scatter-add.mlir` check the
   pass on the new sites.
 - `Conversion/MDExecToGPU/group-scatter.mlir` and `scatter-add.mlir`
@@ -239,7 +239,7 @@ lowering's refusals. The tests of D[scatter-op]:
 | The loops over groups, each pair once (D89): the nonbonded forces, EAM's density and its forces | none by default; `hash(512, 8, 0)` with `pair-hash=on` | `lowerGroupPairFor` and `emitGroupPairKernel`, through the emitter | [groups-m1.md](groups-m1.md) |
 | The two-ended loops over the rows of a matrix, `(directed, atomic)` (D290): the domains of `md_dist`, the edge scatter of #377 step 4 | none by default; `hash(512, 8, 0)` with `pair-hash=on` | `lowerPairFor`, `launchRows`, and `emitPairKernel`, through the emitter | [distributed-ml2.md](distributed-ml2.md), Section 7.2 |
 
-**The emitter** (D[scatter-op]). The table is one class,
+**The emitter** (D291). The table is one class,
 `kernels::BlockHashTable` (`include/mdir/Conversion/ScatterEmitter.h`, in
 the library of the kernels). It comes with the helpers of block memory
 that it uses: `getSharedAddress`, `emitSharedAdd` (`red.shared.add.f32`
@@ -306,7 +306,7 @@ in one job on an RTX 4090, three rounds, the median ns/day ratio:
 JAC NVE and NPT, again in five rounds on another node, gave 1.001 and
 0.999.
 
-**The loops over groups (D[scatter-op]).** The table at the $i$ and $j$
+**The loops over groups (D291).** The table at the $i$ and $j$
 ends of the loops over groups was measured on an RTX 4090 at 450 W
 (ada-003), in one job, with the variants alternated. The ratio is the
 time of a step or of an evaluation with the table, divided by the time
@@ -361,7 +361,7 @@ measured: Nsight Compute's counters are refused on the cluster's nodes.
 The switch stays for comparison and is off by default at both loops over
 pairs.
 
-**The emitter and the op against `main` (D[scatter-op]).** By default
+**The emitter and the op against `main` (D291).** By default
 the branch generates the code of `main`. The Amber suite was run with
 `main` (0f6da67d) and the branch alternated in one job on an RTX 4090,
 three rounds. The table gives the median ns/day of the second half of

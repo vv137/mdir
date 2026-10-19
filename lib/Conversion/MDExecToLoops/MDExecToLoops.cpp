@@ -204,7 +204,7 @@ void Lowering::createReduction(OpBuilder &builder, Location loc,
 // Loops over particles
 //===----------------------------------------------------------------------===//
 
-/// A scatter-accumulate on the host (D[scatter-op]): with `atomic-grid`, a
+/// A scatter-accumulate on the host (D291): with `atomic-grid`, a
 /// parallel loop whose additions are atomic, as the threads of OpenMP
 /// share the rows of the destination; without, a loop on one thread with
 /// plain additions. The strategy of the op is for a device and is not used.

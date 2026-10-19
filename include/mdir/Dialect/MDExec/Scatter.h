@@ -78,7 +78,7 @@ int64_t getHashSlots(int64_t blockSize, int64_t arity);
 /// The particles that a thread of a loop over groups adds to for a unit of
 /// work, in place of the arity of a tuple: the particle of its group and
 /// those of two entries, a unit holding 64 entries for 32 lanes
-/// (D[scatter-op]).
+/// (D291).
 constexpr int64_t kPairHashReach = 3;
 
 /// A destination of a table: a number or a row of `components` numbers of

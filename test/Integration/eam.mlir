@@ -3,7 +3,7 @@
 // embedding (D279 on domains; here without md-distribute), against
 // Inputs/eam_reference.py. eam-groups-gpu.test runs the same program on a
 // device, over groups, with each strategy of the scatter of the loops over
-// groups (D[scatter-op]).
+// groups (D291).
 //
 // RUN: mdir-opt %s %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
