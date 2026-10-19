@@ -105,7 +105,7 @@ public:
         return signalPassFailure();
       }
       // A batched body is called by the tiles of the loop that the kernel
-      // becomes (D[ml4-batched-bodies]); the application stays.
+      // becomes (D293); the application stays.
       if (stage.getRows())
         continue;
       FlatSymbolRefAttr name =

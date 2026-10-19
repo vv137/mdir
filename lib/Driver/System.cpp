@@ -1275,7 +1275,7 @@ void mdir::driver::resolveNeighborStructure(Control &control,
   if (control.deterministic)
     return matrix("the deterministic mode");
   // A model in stages runs over the slots of the pairs of images that a
-  // matrix keeps (D[ml4-painn-stages]).
+  // matrix keeps (D294).
   if (!control.stagedModels.empty())
     return matrix("a model in stages runs over the slots of a matrix");
   // Loops over pairs without an exchange contract, which cannot take each

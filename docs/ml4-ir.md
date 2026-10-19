@@ -129,7 +129,7 @@ the declaration is the same for all forms:
 | Form | The symbol names | Lowering |
 |---|---|---|
 | A body in the module (step 3) | a `func.func` of `arith`, `math`, and `vector` ops over the element's values | `md-inline` inlines it into the kernel before `md_exec`, so it lowers on the CPU and on a device as any kernel does |
-| StableHLO, legalized to `linalg` (the rulings of 2026-10-17 and of 2026-10-19 on #447; step 4, D[ml4-batched-bodies]) | a `func.func` of `linalg` on tensors with a static leading dimension, the rows of a tile: `jax.export` of the stage and of its `jax.vjp` to StableHLO, legalized by StableHLO's `stablehlo-legalize-to-linalg` when the model is exported, so that MDIR's build takes no dependency on StableHLO; a body may compute in f32 where the declaration says f64 | the tile of the loop calls it with the tile's rows; `md-exec-lower-stage-bodies` lowers it with MDIR's pipeline (Section 8.3) |
+| StableHLO, legalized to `linalg` (the rulings of 2026-10-17 and of 2026-10-19 on #447; step 4, D293) | a `func.func` of `linalg` on tensors with a static leading dimension, the rows of a tile: `jax.export` of the stage and of its `jax.vjp` to StableHLO, legalized by StableHLO's `stablehlo-legalize-to-linalg` when the model is exported, so that MDIR's build takes no dependency on StableHLO; a body may compute in f32 where the declaration says f64 | the tile of the loop calls it with the tile's rows; `md-exec-lower-stage-bodies` lowers it with MDIR's pipeline (Section 8.3) |
 | AOTInductor (step 4) | a `func.func private` declaration with `md.aoti = {package = "...", entry = "..."}`, batched as the StableHLO form | a call of the package's entry with the tile's rows, as the model term calls one today (D273) |
 
 A batched body takes `tensor<T x ...>` for each value of the declaration,
@@ -447,7 +447,7 @@ belong to step 4: step 3 adds no user-visible key.
 
 ## 8. PaiNN in stages (step 4)
 
-Step 4 of #377 (`D[ml4-painn-stages]`, `D[ml4-batched-bodies]`, PR #447):
+Step 4 of #377 (`D294`, `D293`, PR #447):
 the stages of a pretrained PaiNN, nablaDFT's `painn_100k` of D286,
 exported from its weights and lowered through MDIR's pipeline, against
 the opaque call of the same checkpoint. Status: **4a built** (Section

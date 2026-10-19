@@ -216,7 +216,7 @@ if config.mdir_metatomic:
         config.available_features.add("ml4-artifacts")
         config.substitutions.append(("%ml4_artifacts", artifacts))
 
-# Models in stages (D[ml4-painn-stages], docs/ml4-ir.md, Section 8):
+# Models in stages (D294, docs/ml4-ir.md, Section 8):
 # "stages-export" where the interpreter of -Djax_python= or MDIR_JAX_PYTHON
 # imports JAX and NumPy, and -Dstablehlo_opt= or MDIR_STABLEHLO_OPT names
 # StableHLO's stablehlo-opt, which legalizes the exported bodies to linalg

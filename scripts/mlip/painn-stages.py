@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """The stages of a PaiNN of SchNetPack 2 as batched bodies for MDIR's neural
-stages (#377 step 4, D[ml4-painn-stages], docs/ml4-ir.md, Section 8).
+stages (#377 step 4, D294, docs/ml4-ir.md, Section 8).
 
 PaiNN (Schuett, Unke, and Gastegger, ICML 2021, PMLR 139, 9377-9388) in the
 configuration of nablaDFT's benchmark (Khrabrov et al., NeurIPS 2024 Datasets

@@ -1,5 +1,5 @@
 // The batched bodies of neural stages, lowered to functions of buffers that
-// the tiles of a loop call (D[ml4-batched-bodies], docs/ml4-ir.md,
+// the tiles of a loop call (D293, docs/ml4-ir.md,
 // Section 8.3).
 //
 // A batched body is a function of `linalg` on tensors with a static number

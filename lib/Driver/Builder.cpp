@@ -724,7 +724,7 @@ private:
                              StringRef tag);
 
   /// Copies the module of each model in stages into the program, its
-  /// potential renamed `@staged_<name>` (D[ml4-painn-stages]); `@energy`
+  /// potential renamed `@staged_<name>` (D294); `@energy`
   /// calls them.
   llvm::Error emitStagedModels();
   std::vector<std::string> stagedPotentials, stagedResults;
@@ -1850,7 +1850,7 @@ void Builder::collectTopologyArrays() {
   // The atomic numbers that a learned potential takes
   // (D270), in the order of the particles that the program
   // keeps, as the other fields; a model in stages takes them too
-  // (D[ml4-painn-stages]).
+  // (D294).
   if (!control.models.empty() || !control.stagedModels.empty()) {
     Program::Field numbers;
     numbers.name = "model_z";
@@ -5688,7 +5688,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     add("cmap");
   }
   // The models in stages, which md-inline brings in and md-differentiate
-  // differentiates with the rest (D[ml4-painn-stages]).
+  // differentiates with the rest (D294).
   if (terms == AllTerms)
     for (size_t k = 0; k != stagedPotentials.size(); ++k) {
       os << stagedPotentials[k];
@@ -9582,7 +9582,7 @@ llvm::Error Builder::emitStagedModels() {
     StringRef returned = StringRef(body).drop_front(ret + 10);
     result = returned.take_until([](char c) { return c == ' '; }).str();
     body.erase(body.rfind('\n', ret) + 1);
-    os << "// The model in stages '" << term.name << "' (D[ml4-painn-stages])\n"
+    os << "// The model in stages '" << term.name << "' (D294)\n"
        << text.take_front(at) << text.drop_front(close + 2) << "\n";
     stagedPotentials.push_back(body);
     stagedResults.push_back(result);

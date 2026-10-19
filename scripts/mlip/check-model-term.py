@@ -68,7 +68,7 @@ def main():
     sim.run(0, energy=True)
     state = sim.state()
     # A model in stages is a potential of the program: the run gives the
-    # trace of its virial, not the tensor (D[ml4-painn-stages]).
+    # trace of its virial, not the tensor (D294).
     model = sim.model_energies() if backend != "STAGES" else None
     result = {"precision": a.precision, "centers_per_call": a.centers_per_call,
               "particles": int(len(state.positions)),

@@ -898,7 +898,7 @@ def MD_StageOp : MD_Op<"stage", [
     /// cotangent for each result, to a cotangent for each differentiable
     /// operand.
     ::mlir::FunctionType getVjpType();
-    /// The rows of its batched bodies (D[ml4-batched-bodies]): the leading
+    /// The rows of its batched bodies (D293): the leading
     /// dimension of their tensors, or 0 if its bodies are functions of one
     /// element in the module, which `md-inline` inlines.
     int64_t getRows();

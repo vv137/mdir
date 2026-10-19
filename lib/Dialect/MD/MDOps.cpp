@@ -1025,7 +1025,7 @@ LogicalResult StageOp::verify() {
 }
 
 /// Whether `type`, the type of a function, is that of a batched body: its
-/// values are tensors (D[ml4-batched-bodies]).
+/// values are tensors (D293).
 static bool isBatchedType(Type type) {
   auto function = dyn_cast<FunctionType>(type);
   return function && llvm::any_of(function.getInputs(), [](Type input) {
@@ -1058,7 +1058,7 @@ static bool isBatchedValue(Type declared, Type actual, int64_t &rows) {
 
 /// Verifies that `name` names a body of the type `type` in the module: a
 /// function with a body of ops without memory effects, of one element or
-/// batched (D[ml4-batched-bodies]).
+/// batched (D293).
 static LogicalResult verifyStageBody(StageOp stage, StringRef role,
                                      FlatSymbolRefAttr name, FunctionType type,
                                      SymbolTableCollection &symbolTable) {
@@ -1156,7 +1156,7 @@ int64_t StageOp::getRows() {
 LogicalResult ApplyStageOp::verify() {
   // A kernel of the md dialect or of md_dist holds the op: its operands are
   // the values of one element. A batched body stays in the kernel of the
-  // md_exec loop until the loop is lowered to tiles (D[ml4-batched-bodies]).
+  // md_exec loop until the loop is lowered to tiles (D293).
   Operation *parent = (*this)->getParentOp();
   if (!parent || isa<FunctionOpInterface>(parent) ||
       !parent->getDialect() ||
@@ -1181,7 +1181,7 @@ ApplyStageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   FunctionType actual = FunctionType::get(
       getContext(), getOperands().getTypes(), getResults().getTypes());
   // Precision assignment may give the kernel's values in f32 where the
-  // declaration, at the reference precision, says f64 (D[ml4-batched-bodies]).
+  // declaration, at the reference precision, says f64 (D293).
   auto fits = [](Type declared, Type given) {
     if (declared == given)
       return true;

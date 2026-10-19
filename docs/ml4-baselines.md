@@ -262,7 +262,7 @@ up; below, the fixed cost of a call (a few milliseconds) dominates.
   therefore a halo of $L\,r_c$ around each chunk, which recomputes most of
   the system; ML4's stages make the edge stage of each layer a loop over
   pairs that MDIR can tile, store, or recompute.
-- **PaiNN in stages** (step 4a, D[ml4-painn-stages]) is measured against
+- **PaiNN in stages** (step 4a, D294) is measured against
   these rows in Section 8.6 of [ml4-ir.md](ml4-ir.md#86-peak-device-memory-and-time):
   652 MiB at 6,144 atoms against the opaque call's 18.7 GiB, and 196,608
   atoms on the same 24 GB.

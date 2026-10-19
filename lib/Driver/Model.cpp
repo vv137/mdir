@@ -616,7 +616,7 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     if (std::error_code ec = llvm::sys::fs::make_absolute(full))
       return input("the model term '" + term.name + "': " + ec.message());
     copy.path = std::string(full);
-    // A model in stages is a potential of the program (D[ml4-painn-stages]).
+    // A model in stages is a potential of the program (D294).
     if (copy.backend == "STAGES")
       c.stagedModels.push_back(std::move(copy));
     else

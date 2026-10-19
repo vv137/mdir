@@ -1,4 +1,4 @@
-// Batched bodies of neural stages (D[ml4-batched-bodies], docs/ml4-ir.md,
+// Batched bodies of neural stages (D293, docs/ml4-ir.md,
 // Sections 2.1 and 8.3): a body of linalg on tensors with a static number
 // of rows, which may compute in f32 where the declaration says f64; the
 // verifier's checks.

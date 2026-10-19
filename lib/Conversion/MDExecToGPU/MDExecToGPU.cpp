@@ -399,7 +399,7 @@ private:
                      double cutoff);
 
   /// A loop whose kernel applies batched stages runs in tiles of rows
-  /// (D[ml4-batched-bodies], docs/ml4-ir.md, Section 8.3): for each level
+  /// (D293, docs/ml4-ir.md, Section 8.3): for each level
   /// of the stages, a kernel packs the operands of the tile's rows and the
   /// bodies are called on them; a last kernel unpacks the results and runs
   /// the rest of the kernel. Over pairs, the rows are the slots of the pairs
@@ -741,7 +741,7 @@ static MemRefType getDeviceType(ArrayRef<int64_t> shape, Type element) {
 }
 
 /// The applications of batched stages in the kernel of `loop`
-/// (D[ml4-batched-bodies]).
+/// (D293).
 static SmallVector<md::ApplyStageOp> getBatchedApplications(Operation *loop) {
   SmallVector<md::ApplyStageOp> applications;
   if (!isa<md_exec::PairForOp, md_exec::ParticleForOp>(loop))
@@ -2122,7 +2122,7 @@ void Lowering::findRows(func::FuncOp function) {
              !hasFlags(tuple);
     // A loop that takes each pair once runs over groups, not rows (D89). A
     // loop over the rows of a domain is lowered alone (D290), and so is a
-    // loop of batched stages (D[ml4-batched-bodies]).
+    // loop of batched stages (D293).
     auto pair = dyn_cast<md_exec::PairForOp>(op);
     return pair && !appliesBatchedStage(pair) &&
            pair.getTraversal() == md_exec::Traversal::Directed &&
@@ -2930,7 +2930,7 @@ LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
 }
 
 //===----------------------------------------------------------------------===//
-// Neural stages in tiles (D[ml4-batched-bodies])
+// Neural stages in tiles (D293)
 //===----------------------------------------------------------------------===//
 
 namespace {
@@ -5685,7 +5685,7 @@ static bool feedsEdges(Value value) {
       Operation *user = use.getOwner();
       if (isa<md_exec::BuildEdgesOp>(user))
         return true;
-      // A loop of batched stages runs over the slots (D[ml4-batched-bodies]).
+      // A loop of batched stages runs over the slots (D293).
       if (isa<md_exec::PairForOp>(user) && appliesBatchedStage(user))
         return true;
       if (auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(user))
@@ -8578,7 +8578,7 @@ LogicalResult Lowering::run() {
       op.erase();
       continue;
     }
-    // A stage whose batched bodies the tiles call (D[ml4-batched-bodies]).
+    // A stage whose batched bodies the tiles call (D293).
     if (auto stage = dyn_cast<md::StageOp>(op); stage && stage.getRows()) {
       op.erase();
       continue;

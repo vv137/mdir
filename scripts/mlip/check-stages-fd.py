@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Checks the forces and the virial of a model in stages (D[ml4-painn-stages],
+"""Checks the forces and the virial of a model in stages (D294,
 docs/ml4-ir.md, Section 8) against central differences of its own energy
 through MDIR's Python model on a GPU: `md-check-derivatives` (D184) runs on
 the CPU, and the tiles of batched stages run on a device only.

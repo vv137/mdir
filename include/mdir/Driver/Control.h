@@ -403,7 +403,7 @@ struct Control {
   };
   std::vector<ModelTerm> models;
   /// The models of [[energy.model]] with `backend = "STAGES"`
-  /// (D[ml4-painn-stages], docs/ml4-ir.md, Section 8): an MLIR module of
+  /// (D294, docs/ml4-ir.md, Section 8): an MLIR module of
   /// `md.stage` declarations, their batched bodies, and an `md.potential`
   /// of the positions, the cell, and the atomic numbers, which the program
   /// adds to its energy and differentiates.

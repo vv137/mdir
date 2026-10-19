@@ -22,8 +22,8 @@ format, or the outputs; every such change is listed under **Changed** or
   their strategies with the measurements behind them, and the state of
   their code. Closure under transposition is stated as a design goal in
   [docs/principles.md](docs/principles.md), Section 9. Documentation only.
-- **PaiNN in stages on one GPU** (D[ml4-painn-stages],
-  D[ml4-batched-bodies], #377 step 4a, PR #447,
+- **PaiNN in stages on one GPU** (D294,
+  D293, #377 step 4a, PR #447,
   [docs/ml4-ir.md](docs/ml4-ir.md), Section 8): `[[energy.model]]` and
   `mdir.ModelTerm` take `backend = "STAGES"`, an MLIR module of neural
   stages whose bodies are batched functions of `linalg` on tensors; the

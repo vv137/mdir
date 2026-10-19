@@ -207,8 +207,8 @@ MACE in stages on one GPU, both required, and M4 with them on two GPUs
 (D287). The IR of the stages is built (Section 3.3,
 D288): a stage binds its body and its vector-Jacobian product,
 from AOTInductor or from StableHLO, which lowers through `linalg`. PaiNN
-in stages runs on one GPU (D[ml4-painn-stages],
-D[ml4-batched-bodies]): its bodies of `linalg` run in tiles of rows, and
+in stages runs on one GPU (D294,
+D293): its bodies of `linalg` run in tiles of rows, and
 it takes 1.4 to 2.1 kB of device memory a pair of liquid water against the
 opaque call's 61 kB, at about 20 times the opaque call's time, since
 MDIR's lowering of `linalg` neither tiles the products nor fuses the

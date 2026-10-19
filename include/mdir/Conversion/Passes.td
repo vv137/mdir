@@ -243,7 +243,7 @@ def SeparateSinCos : Pass<"separate-sin-cos", "::mlir::ModuleOp"> {
 def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
   let summary = "Lowers the batched bodies of neural stages to buffers";
   let description = [{
-    The batched bodies of `md.stage` (D[ml4-batched-bodies],
+    The batched bodies of `md.stage` (D293,
     docs/ml4-ir.md, Section 8.3), functions of `linalg` on tensors with a
     static number of rows, become functions of buffers that the tiles of a
     loop call: elementwise ops are fused, the bodies are bufferized with

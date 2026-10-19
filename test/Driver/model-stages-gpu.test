@@ -1,4 +1,4 @@
-# A model in stages from the control file (D[ml4-painn-stages],
+# A model in stages from the control file (D294,
 # docs/ml4-ir.md, Section 8): a PaiNN of 4 features and 2 layers with random
 # weights, exported by scripts/mlip/painn-stages.py with 64 rows a tile, in
 # `[[energy.model]]` with `backend = "STAGES"`. `mdir run` takes the

@@ -622,7 +622,7 @@ static int numFree = 0;
 static int untracked = 0;
 
 /* The bytes of the blocks in use and of those in the pool, and their peaks
-   since the program started (D[ml4-painn-stages]): with MDIR_DEVICE_MEMORY
+   since the program started (D294): with MDIR_DEVICE_MEMORY
    set, they are printed when the process ends. */
 static uint64_t liveBytes = 0, poolBytes = 0, peakLive = 0, peakReserved = 0;
 static void noteBytes(void) {

@@ -526,7 +526,7 @@ Error Reader::readModel(const toml::table &table) {
   if (Error error = readCount(table, "centers_per_call", term.centersPerCall,
                               0))
     return error;
-  // A model in stages (D[ml4-painn-stages], docs/ml4-ir.md, Section 8) is
+  // A model in stages (D294, docs/ml4-ir.md, Section 8) is
   // a potential of the program, which MDIR differentiates; the plugin does
   // not take it.
   if (term.backend == "STAGES") {
@@ -3273,7 +3273,7 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
     if (!control.periodic)
       return refuse("takes a periodic cell");
   }
-  // A model in stages (D[ml4-painn-stages]): its tiles run on a device
+  // A model in stages (D294): its tiles run on a device
   // over the slots of the pairs of images of a neighbor matrix (D277).
   for (const Control::ModelTerm &term : control.stagedModels) {
     auto refuse = [&](const char *what) {

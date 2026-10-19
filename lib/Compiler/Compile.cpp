@@ -203,7 +203,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,"
-       // The batched bodies of models in stages (D[ml4-batched-bodies]).
+       // The batched bodies of models in stages (D293).
        << (control.stagedModels.empty() ? "" : "md-exec-lower-stage-bodies,")
        << "convert-md-exec-to-gpu{"
        // In the deterministic mode the arithmetic of a step does not

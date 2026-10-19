@@ -375,7 +375,7 @@ energy, forces, and virial agree with an independent reverse sweep of the
 whole energy to $2\times10^{-15}$ on the CPU and $5\times10^{-16}$ on an
 RTX 4090 in double ([ml4-ir.md](../ml4-ir.md)).
 
-**Bodies in tiles (D[ml4-batched-bodies], D[ml4-painn-stages]).** A body
+**Bodies in tiles (D293, D294).** A body
 from external AD is batched: a function of tensors whose leading dimension
 is the rows of a tile, exported by JAX to StableHLO and legalized to
 `linalg` when the model is exported. Its semantics stay those of one

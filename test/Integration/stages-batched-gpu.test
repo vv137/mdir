@@ -1,5 +1,5 @@
 # A PaiNN of 4 features and 2 layers with random weights in stages whose
-# bodies are batched (D[ml4-batched-bodies], docs/ml4-ir.md, Section 8.3):
+# bodies are batched (D293, docs/ml4-ir.md, Section 8.3):
 # scripts/mlip/painn-stages.py exports each stage and its jax.vjp to
 # StableHLO with 8 rows a tile, legalized to linalg by stablehlo-opt; the
 # loops run in tiles on a device, the pairs over the slots of the pairs of

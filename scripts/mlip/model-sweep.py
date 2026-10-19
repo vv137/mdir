@@ -17,7 +17,7 @@ writes the system to OUT/w<count>/ and
   its pair list, from the plugin's standard error, as a mean over every
   evaluation after the first;
 - with `--stages MODEL.mlir` (a model in stages, `painn-stages.py export`,
-  D[ml4-painn-stages]): runs `mdir run` with `backend = "STAGES"`, and reads
+  D294): runs `mdir run` with `backend = "STAGES"`, and reads
   the peak of MDIR's own allocator (`MDIR_DEVICE_MEMORY`), which holds the
   model's fields, the rows of its tiles, and its bodies' buffers; the pairs
   are counted within the cutoff (ASE's neighbor list). A run through the

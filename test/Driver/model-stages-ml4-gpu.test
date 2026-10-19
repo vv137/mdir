@@ -1,4 +1,4 @@
-# nablaDFT's PaiNN (`painn_100k.ckpt`, D286) in stages (D[ml4-painn-stages],
+# nablaDFT's PaiNN (`painn_100k.ckpt`, D286) in stages (D294,
 # docs/ml4-ir.md, Section 8): its stages in JAX from SchNetPack's weights,
 # checked against SchNetPack's modules and its calculator in float64, then
 # exported with 4096 rows a tile and evaluated through the Python model

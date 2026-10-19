@@ -21,7 +21,7 @@
 # RUN: not mdir check %t/backend.toml 2>&1 | FileCheck %s --check-prefix=BACKEND
 # BACKEND: expected 'backend' as "METATOMIC", a TorchScript artifact of metatomic, "AOTI", an AOTInductor package of the `nequip` package, or "STAGES", a model in stages of MDIR's IR
 
-# A model in stages (D[ml4-painn-stages]) takes no chunks of centers, and
+# A model in stages (D294) takes no chunks of centers, and
 # runs on a GPU.
 # RUN: sed 's/"METATOMIC"/"STAGES"/' %t/run.toml > %t/stages.toml
 # RUN: not mdir check %t/stages.toml 2>&1 | FileCheck %s --check-prefix=STAGES-CENTERS
