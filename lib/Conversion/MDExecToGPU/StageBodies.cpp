@@ -319,16 +319,248 @@ static bool copyProducersOfSeveralUses(func::FuncOp function) {
   return changed;
 }
 
+/// The declaration of the runtime's function `name` in `bodies`.
+static func::FuncOp getOrDeclareRuntime(ModuleOp bodies, StringRef name,
+                                        FunctionType type) {
+  if (auto known = bodies.lookupSymbol<func::FuncOp>(name))
+    return known;
+  OpBuilder builder = OpBuilder::atBlockEnd(bodies.getBody());
+  auto declared = func::FuncOp::create(builder, bodies.getLoc(), name, type);
+  declared.setPrivate();
+  return declared;
+}
+
+/// A product of the shape of a matrix product in f32 (D[ml4-body-gemm]):
+/// C (m x n) += A B over k, row-major, A read as m x k or, with `transA`, as
+/// k x m, and B as k x n or, with `transB`, as n x k.
+struct Gemm {
+  int64_t m, n, k;
+  unsigned a, b;
+  bool transA, transB;
+};
+
+/// `op` as a GEMM: two operands of f32 and one result, three loops of
+/// static extents of which one is reduced, the result indexed by the two
+/// parallel ones (its rows, then its columns), each operand by the reduced
+/// one and one of the parallel ones, and a payload that adds the product of
+/// the operands to the result (or a `linalg.matmul`).
+static std::optional<Gemm> matchGemm(linalg::LinalgOp op) {
+  if (op.getNumDpsInputs() != 2 || op.getNumDpsInits() != 1 ||
+      op.getNumLoops() != 3 || op.getNumReductionLoops() != 1 ||
+      !isa<linalg::GenericOp, linalg::MatmulOp>(op.getOperation()))
+    return std::nullopt;
+  for (OpOperand &operand : op->getOpOperands()) {
+    auto shaped = dyn_cast<ShapedType>(operand.get().getType());
+    if (!shaped || !shaped.getElementType().isF32() ||
+        !shaped.hasStaticShape() || shaped.getRank() != 2)
+      return std::nullopt;
+  }
+  SmallVector<int64_t> extents = op.getStaticLoopRanges();
+  if (llvm::any_of(extents, ShapedType::isDynamic))
+    return std::nullopt;
+  auto dims = [](AffineMap map) -> std::optional<std::pair<unsigned, unsigned>> {
+    if (map.getNumResults() != 2)
+      return std::nullopt;
+    auto first = dyn_cast<AffineDimExpr>(map.getResult(0));
+    auto second = dyn_cast<AffineDimExpr>(map.getResult(1));
+    if (!first || !second)
+      return std::nullopt;
+    return std::make_pair(first.getPosition(), second.getPosition());
+  };
+  auto out = dims(op.getMatchingIndexingMap(op.getDpsInitOperand(0)));
+  if (!out)
+    return std::nullopt;
+  unsigned rows = out->first, cols = out->second, reduced = 3 - rows - cols;
+  SmallVector<utils::IteratorType> types = op.getIteratorTypesArray();
+  if (rows == cols || reduced > 2 ||
+      types[reduced] != utils::IteratorType::reduction)
+    return std::nullopt;
+  Gemm gemm{extents[rows], extents[cols], extents[reduced], 0, 0, false,
+            false};
+  bool haveA = false, haveB = false;
+  for (unsigned i = 0; i != 2; ++i) {
+    auto in = dims(op.getMatchingIndexingMap(op.getDpsInputOperand(i)));
+    if (!in)
+      return std::nullopt;
+    if (*in == std::make_pair(rows, reduced) ||
+        *in == std::make_pair(reduced, rows)) {
+      if (haveA)
+        return std::nullopt;
+      haveA = true;
+      gemm.a = i;
+      gemm.transA = in->first == reduced;
+    } else if (*in == std::make_pair(reduced, cols) ||
+               *in == std::make_pair(cols, reduced)) {
+      if (haveB)
+        return std::nullopt;
+      haveB = true;
+      gemm.b = i;
+      gemm.transB = in->first == cols;
+    } else {
+      return std::nullopt;
+    }
+  }
+  if (!haveA || !haveB)
+    return std::nullopt;
+  if (isa<linalg::MatmulOp>(op.getOperation()))
+    return gemm;
+  // The payload: out + a * b, in either order of each.
+  Block *body = op.getBlock();
+  auto ops = body->without_terminator();
+  if (std::distance(ops.begin(), ops.end()) != 2)
+    return std::nullopt;
+  auto mul = dyn_cast<arith::MulFOp>(&*ops.begin());
+  auto add = dyn_cast<arith::AddFOp>(&*std::next(ops.begin()));
+  if (!mul || !add)
+    return std::nullopt;
+  Value x = body->getArgument(0), y = body->getArgument(1),
+        acc = body->getArgument(2);
+  bool operands = (mul.getLhs() == x && mul.getRhs() == y) ||
+                  (mul.getLhs() == y && mul.getRhs() == x);
+  bool sum = (add.getLhs() == acc && add.getRhs() == mul) ||
+             (add.getLhs() == mul && add.getRhs() == acc);
+  auto yield = cast<linalg::YieldOp>(body->getTerminator());
+  if (!operands || !sum || yield.getNumOperands() != 1 ||
+      yield.getOperand(0) != add.getResult())
+    return std::nullopt;
+  return gemm;
+}
+
+/// The device's address of the first element of the buffer `buffer` and
+/// its rows' distance, as i64; a constant of the body (a global) is copied
+/// to the device once by the runtime. Fails on a buffer whose rows are not
+/// contiguous.
+static FailureOr<std::pair<Value, Value>>
+deviceAddress(OpBuilder &builder, Location loc, Value buffer,
+              ModuleOp bodies) {
+  auto type = cast<MemRefType>(buffer.getType());
+  SmallVector<int64_t> strides;
+  int64_t offset;
+  if (failed(type.getStridesAndOffset(strides, offset)) || strides[1] != 1 ||
+      ShapedType::isDynamic(strides[0]))
+    return failure();
+  Type i64 = builder.getI64Type();
+  auto metadata =
+      memref::ExtractStridedMetadataOp::create(builder, loc, buffer);
+  Value base = arith::IndexCastOp::create(
+      builder, loc, i64,
+      memref::ExtractAlignedPointerAsIndexOp::create(builder, loc, buffer));
+  // A constant of the body, on the host: its copy on the device.
+  Value root = buffer;
+  while (Operation *def = root.getDefiningOp()) {
+    if (auto view = dyn_cast<ViewLikeOpInterface>(def))
+      root = view.getViewSource();
+    else
+      break;
+  }
+  if (auto global = root.getDefiningOp<memref::GetGlobalOp>()) {
+    auto rootType = cast<MemRefType>(global.getType());
+    int64_t bytes = rootType.getNumElements() * 4;
+    Value hostBase = arith::IndexCastOp::create(
+        builder, loc, i64,
+        memref::ExtractAlignedPointerAsIndexOp::create(builder, loc, global));
+    Value offsetInRoot = arith::SubIOp::create(builder, loc, base, hostBase);
+    auto declare = getOrDeclareRuntime(bodies, "mdrtDeviceConstant",
+                                       builder.getFunctionType({i64, i64}, {i64}));
+    Value device =
+        func::CallOp::create(builder, loc, declare,
+                             ValueRange{hostBase,
+                                        arith::ConstantIntOp::create(
+                                            builder, loc, i64, bytes)})
+            .getResult(0);
+    base = arith::AddIOp::create(builder, loc, device, offsetInRoot);
+  }
+  Value elements = arith::IndexCastOp::create(builder, loc, i64,
+                                              metadata.getOffset());
+  Value address = arith::AddIOp::create(
+      builder, loc, base,
+      arith::MulIOp::create(builder, loc, elements,
+                            arith::ConstantIntOp::create(builder, loc, i64, 4)));
+  Value rows = arith::ConstantIntOp::create(builder, loc, i64, strides[0]);
+  return std::make_pair(address, rows);
+}
+
+/// Replaces each GEMM of the bufferized body `function` with a call of
+/// cuBLAS's f32 GEMM through the runtime, on the stream of the kernels. A
+/// result that a `linalg.fill` of zero initializes just before is not
+/// filled: the call overwrites it (beta 0).
+static LogicalResult callGemms(func::FuncOp function, ModuleOp bodies) {
+  SmallVector<std::pair<linalg::LinalgOp, Gemm>> found;
+  function.walk([&](linalg::LinalgOp op) {
+    if (op.hasPureBufferSemantics() && op->getBlock() ==
+                                           &function.getBody().front())
+      if (std::optional<Gemm> gemm = matchGemm(op))
+        found.push_back({op, *gemm});
+  });
+  Type i64 = IntegerType::get(function.getContext(), 64);
+  Type i32 = IntegerType::get(function.getContext(), 32);
+  Type f32 = Float32Type::get(function.getContext());
+  for (auto [op, gemm] : found) {
+    OpBuilder builder(op);
+    Location loc = op.getLoc();
+    Value c = op.getDpsInitOperand(0)->get();
+    // The fill of zero just before, of the same buffer, becomes beta 0.
+    float beta = 1.0f;
+    linalg::FillOp fill;
+    for (Operation *user : c.getUsers())
+      if (auto candidate = dyn_cast<linalg::FillOp>(user))
+        if (candidate->getBlock() == op->getBlock() &&
+            candidate->isBeforeInBlock(op) &&
+            candidate.getOutputs()[0] == c &&
+            matchPattern(candidate.getInputs()[0], m_AnyZeroFloat()))
+          fill = candidate;
+    // Nothing else touches the buffer between the fill and the product.
+    if (fill && llvm::none_of(c.getUsers(), [&](Operation *user) {
+          Operation *at = op->getBlock()->findAncestorOpInBlock(*user);
+          return user != fill && user != op && at &&
+                 fill->isBeforeInBlock(at) && at->isBeforeInBlock(op);
+        })) {
+      beta = 0.0f;
+      fill.erase();
+    }
+    auto a = deviceAddress(builder, loc,
+                           op.getDpsInputOperand(gemm.a)->get(), bodies);
+    auto b = deviceAddress(builder, loc,
+                           op.getDpsInputOperand(gemm.b)->get(), bodies);
+    auto out = deviceAddress(builder, loc, c, bodies);
+    if (failed(a) || failed(b) || failed(out))
+      return op.emitOpError() << "is a product of the shape of a GEMM over "
+                                 "a buffer whose rows are not contiguous";
+    auto constant = [&](int64_t value) {
+      return arith::ConstantIntOp::create(builder, loc, i64, value).getResult();
+    };
+    auto flag = [&](bool value) {
+      return arith::ConstantIntOp::create(builder, loc, i32, value).getResult();
+    };
+    auto declare = getOrDeclareRuntime(
+        bodies, "mdrtGemmF32",
+        builder.getFunctionType(
+            {i64, i64, i64, i64, i64, i32, i64, i64, i32, i64, i64, f32}, {}));
+    func::CallOp::create(
+        builder, loc, declare,
+        ValueRange{constant(gemm.m), constant(gemm.n), constant(gemm.k),
+                   a->first, a->second, flag(gemm.transA), b->first,
+                   b->second, flag(gemm.transB), out->first, out->second,
+                   arith::ConstantOp::create(builder, loc, f32,
+                                             builder.getF32FloatAttr(beta))});
+    op->erase();
+  }
+  return success();
+}
+
 /// Starts each reduction whose initial value is a `linalg.fill` of a constant
 /// from that constant, read at the first iteration of its reduced loops,
 /// instead of from a buffer that a kernel of its own fills: the init becomes
 /// `tensor.empty`, whose contents the payload no longer reads. This is the
 /// meaning of the generic unchanged: at the first reduced iteration the
-/// accumulator is the fill's value, and after it the partial sum.
-static void startReductionsFromConstants(func::FuncOp function) {
+/// accumulator is the fill's value, and after it the partial sum. With
+/// `keepGemms`, the GEMMs are left as they are, for `callGemms`.
+static void startReductionsFromConstants(func::FuncOp function,
+                                         bool keepGemms) {
   SmallVector<linalg::GenericOp> reductions;
   function.walk([&](linalg::GenericOp op) {
-    if (op.hasPureTensorSemantics() && op.getNumReductionLoops() != 0)
+    if (op.hasPureTensorSemantics() && op.getNumReductionLoops() != 0 &&
+        !(keepGemms && matchGemm(op)))
       reductions.push_back(op);
   });
   for (linalg::GenericOp op : reductions) {
@@ -446,14 +678,16 @@ static LogicalResult padsAsGathers(func::FuncOp function) {
 }
 
 /// Rewrites each `linalg.fill` that is not the initial value of a named op
-/// (a product) as a generic, which elementwise fusion takes into its
-/// consumers like any other elementwise producer.
-static void generalizeFills(func::FuncOp function) {
+/// (a product), or with `keepGemms` of a GEMM, as a generic, which
+/// elementwise fusion takes into its consumers like any other elementwise
+/// producer.
+static void generalizeFills(func::FuncOp function, bool keepGemms) {
   SmallVector<linalg::FillOp> fills;
   function.walk([&](linalg::FillOp fill) {
-    bool initOfNamed = llvm::any_of(fill->getUses(), [](OpOperand &use) {
+    bool initOfNamed = llvm::any_of(fill->getUses(), [&](OpOperand &use) {
       auto user = dyn_cast<linalg::LinalgOp>(use.getOwner());
-      return user && !isa<linalg::GenericOp>(user) && user.isDpsInit(&use);
+      return user && user.isDpsInit(&use) &&
+             (!isa<linalg::GenericOp>(user) || (keepGemms && matchGemm(user)));
     });
     if (!initOfNamed && fill.hasPureTensorSemantics())
       fills.push_back(fill);
@@ -579,6 +813,15 @@ public:
       bodies->push_back(function);
     }
 
+    // The strategy of the products of the shape of a GEMM: calls of cuBLAS
+    // on a device, or loops (D[ml4-body-gemm]).
+    if (contractions != "gemm" && contractions != "loops") {
+      module.emitError() << "md-exec-lower-stage-bodies: contractions is '"
+                         << contractions << "'; expected 'gemm' or 'loops'";
+      return signalPassFailure();
+    }
+    bool gemm = device && contractions == "gemm";
+
     // Elementwise fusion. The unit dimensions that the legalization leaves
     // (`4096x1`, `1x100`, reductions over one element) are folded first, so
     // that the reshapes around them do not stop the fusion; the pads become
@@ -594,8 +837,8 @@ public:
       for (func::FuncOp function : bodies->getOps<func::FuncOp>()) {
         if (failed(padsAsGathers(function)))
           return signalPassFailure();
-        startReductionsFromConstants(function);
-        generalizeFills(function);
+        startReductionsFromConstants(function, gemm);
+        generalizeFills(function, gemm);
       }
     }
     for (unsigned round = 0; round != (fuse ? 8 : 1); ++round) {
@@ -635,6 +878,12 @@ public:
     if (fuse)
       for (func::FuncOp function : bodies->getOps<func::FuncOp>())
         writeResultsInPlace(function);
+    // The GEMMs as calls of cuBLAS (D[ml4-body-gemm]).
+    if (gemm)
+      for (func::FuncOp function :
+           llvm::to_vector(bodies->getOps<func::FuncOp>()))
+        if (!function.isExternal() && failed(callGemms(function, *bodies)))
+          return signalPassFailure();
     // A copy into a result's buffer becomes a loop as well, so that it runs
     // where the buffers are.
     bodies->walk([&](memref::CopyOp copy) {

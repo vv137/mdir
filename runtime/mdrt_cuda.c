@@ -2146,3 +2146,97 @@ void mdrtDeviceTuplesDone(int64_t handle) {
   if (e->held > 0)
     --e->held;
 }
+
+/*===----------------------------------------------------------------------===
+  Matrix products of the bodies of neural stages (D[ml4-body-gemm])
+  ===----------------------------------------------------------------------===*/
+
+#include <cublas_v2.h>
+
+/* One handle, on the stream of the kernels, in the order of their launches.
+   The default math mode: f32 products are computed in f32, without TF32. */
+static cublasHandle_t blasHandle = NULL;
+
+static int checkBlas(cublasStatus_t status, const char *what) {
+  if (status == CUBLAS_STATUS_SUCCESS)
+    return 1;
+  char message[160];
+  snprintf(message, sizeof message,
+           "%s failed with the cuBLAS status %d; the run has failed", what,
+           (int)status);
+  stopWith(message);
+  return 0;
+}
+
+/* C = A B + beta C in f32, for row-major matrices: C is m x n with rows ldc
+   apart, A is m x k (k x m with transA) with rows lda apart, and B is k x n
+   (n x k with transB) with rows ldb apart; the pointers are the device's.
+   cuBLAS takes column-major matrices, as which a row-major one is its
+   transpose: C^T = B^T A^T. */
+void mdrtGemmF32(int64_t m, int64_t n, int64_t k, int64_t a, int64_t lda,
+                 int32_t transA, int64_t b, int64_t ldb, int32_t transB,
+                 int64_t c, int64_t ldc, float beta) {
+  enter();
+  double start = begin();
+  if (!blasHandle) {
+    if (!checkBlas(cublasCreate(&blasHandle), "cublasCreate"))
+      return;
+    if (!checkBlas(cublasSetMathMode(blasHandle, CUBLAS_DEFAULT_MATH),
+                   "cublasSetMathMode"))
+      return;
+  }
+  if (!checkBlas(cublasSetStream(blasHandle, (cudaStream_t)mgpuStreamCreate()),
+                 "cublasSetStream"))
+    return;
+  float one = 1.0f;
+  checkBlas(cublasSgemm(blasHandle, transB ? CUBLAS_OP_T : CUBLAS_OP_N,
+                        transA ? CUBLAS_OP_T : CUBLAS_OP_N, (int)n, (int)m,
+                        (int)k, &one, (const float *)(intptr_t)b, (int)ldb,
+                        (const float *)(intptr_t)a, (int)lda, &beta,
+                        (float *)(intptr_t)c, (int)ldc),
+            "cublasSgemm");
+  isPending = 1;
+  end(LAUNCH, start);
+}
+
+/* The constants that the products read (the weights of the bodies), copied
+   once to the device, found by the address and size of their host copy. */
+struct DeviceConstant {
+  int64_t host, bytes;
+  CUdeviceptr device;
+};
+static struct DeviceConstant *deviceConstants = NULL;
+static int64_t numDeviceConstants = 0, deviceConstantsCapacity = 0;
+
+int64_t mdrtDeviceConstant(int64_t host, int64_t bytes) {
+  enter();
+  for (int64_t i = 0; i != numDeviceConstants; ++i)
+    if (deviceConstants[i].host == host && deviceConstants[i].bytes == bytes)
+      return (int64_t)deviceConstants[i].device;
+  if (numDeviceConstants == deviceConstantsCapacity) {
+    int64_t capacity =
+        deviceConstantsCapacity ? 2 * deviceConstantsCapacity : 64;
+    struct DeviceConstant *grown = realloc(
+        deviceConstants, (size_t)capacity * sizeof(struct DeviceConstant));
+    if (!grown) {
+      stopWith("no memory of the host for the constants of a body's "
+               "products; the run has failed");
+      return 0;
+    }
+    deviceConstants = grown;
+    deviceConstantsCapacity = capacity;
+  }
+  CUdeviceptr device = 0;
+  check(cuMemAlloc(&device, (size_t)bytes), "cuMemAlloc");
+  check(cuMemcpyHtoD(device, (const void *)(intptr_t)host, (size_t)bytes),
+        "cuMemcpyHtoD");
+  /* From pageable memory the copy may still be under way when it returns,
+     and the stream of the kernels does not wait for the null stream: the
+     products that read the constant would race with its copy. */
+  check(cuCtxSynchronize(), "cuCtxSynchronize");
+  struct DeviceConstant *entry = &deviceConstants[numDeviceConstants++];
+  entry->host = host;
+  entry->bytes = bytes;
+  entry->device = device;
+  return (int64_t)device;
+}

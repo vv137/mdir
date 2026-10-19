@@ -48,7 +48,8 @@ classifiers = [
 # by the wheel) is linked, so its minor version need not be libdevice's;
 # 13.0.88 and 13.4.92 were run. The major is fixed because MDIR looks in
 # nvidia/cu13.
-cuda = ["nvidia-cufft>=12.0,<13", "nvidia-cuda-nvcc>=13.0,<14"]
+cuda = ["nvidia-cufft>=12.0,<13", "nvidia-cublas>=13.0,<14",
+        "nvidia-cuda-nvcc>=13.0,<14"]
 
 [project.urls]
 Homepage = "https://github.com/vv137/mdir"
