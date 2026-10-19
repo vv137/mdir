@@ -3040,59 +3040,182 @@ static LogicalResult planTiles(Operation *loop, OpBuilder &builder,
   return success();
 }
 
-/// Emits the kernel of a loop of batched stages for the row `row` of a tile,
-/// in the phase `phase`: the applications of lower levels take their results
-/// from their rows, those of the level `phase` store their operands to
-/// theirs, and the ops that depend on a later level are left out. In the
-/// last phase, `tiling.levels`, the values that the kernel yields are
-/// returned.
-static SmallVector<Value> emitStagedKernel(OpBuilder &builder, Location loc,
-                                           Block &kernel, Tiling &tiling,
-                                           unsigned phase, Value row,
-                                           IRMapping &mapping) {
-  llvm::DenseSet<Value> missing;
-  for (Operation &op : kernel.without_terminator()) {
-    if (auto apply = dyn_cast<md::ApplyStageOp>(&op)) {
-      StageCall &call = tiling.calls[tiling.callOf.lookup(apply)];
-      if (call.level < phase) {
-        for (auto [result, buffer] :
-             llvm::zip(apply.getResults(), call.outputs)) {
-          Value value = loadElement(builder, loc, buffer, row);
-          mapping.map(result, convertRow(builder, loc, value,
-                                         getElementTypeOrSelf(result)));
-        }
-        continue;
-      }
-      if (call.level == phase)
-        for (auto [operand, buffer] :
-             llvm::zip(apply.getOperands(), call.inputs))
-          storeElement(builder, loc,
-                       convertRow(builder, loc, mapping.lookupOrDefault(operand),
-                                  cast<MemRefType>(buffer.getType())
-                                      .getElementType()),
-                       buffer, row);
-      for (Value result : apply.getResults())
-        missing.insert(result);
-      continue;
-    }
-    bool available = true;
-    op.walk([&](Operation *inner) {
-      for (Value operand : inner->getOperands())
-        available &= !missing.contains(operand);
-    });
-    if (!available) {
-      for (Value result : op.getResults())
-        missing.insert(result);
-      continue;
-    }
-    builder.clone(op, mapping);
+namespace {
+/// Where the kernel's argument of a field finds its value: a buffer and the
+/// particle.
+struct ArgumentSource {
+  Value buffer, particle;
+};
+
+/// Emits what the kernel of a loop of batched stages does for one row of a
+/// tile. A value is emitted only where something needs it: an application
+/// of a lower level takes its results from its rows, and the fields of the
+/// kernel's arguments are loaded where they are read. A vector of more than
+/// `kWide` components (features) is not built as one value: a copy into a
+/// row goes component by component, and the components of a wide value
+/// that the kernel yields are computed one at a time, through the
+/// elementwise ops that make it; LLVM takes vectors of hundreds of
+/// components to the device slowly and spills them.
+class StagedEmitter {
+public:
+  static constexpr int64_t kWide = 16;
+
+  StagedEmitter(OpBuilder &builder, Location loc, Block &kernel,
+                Tiling &tiling, Value row,
+                llvm::DenseMap<Value, ArgumentSource> sources,
+                IRMapping mapping)
+      : builder(builder), loc(loc), kernel(kernel), tiling(tiling), row(row),
+        sources(std::move(sources)), mapping(std::move(mapping)) {}
+
+  static bool isWide(Type type) {
+    auto vector = dyn_cast<VectorType>(type);
+    return vector && vector.getNumElements() > kWide;
   }
-  SmallVector<Value> yielded;
-  if (phase == tiling.levels)
-    for (Value value : kernel.getTerminator()->getOperands())
-      yielded.push_back(mapping.lookupOrDefault(value));
-  return yielded;
-}
+
+  /// Stores the operands of the applications of the level `level` to their
+  /// rows.
+  void emitPack(unsigned level) {
+    for (StageCall &call : tiling.calls) {
+      if (call.level != level)
+        continue;
+      for (auto [operand, buffer] :
+           llvm::zip(call.apply.getOperands(), call.inputs)) {
+        Type element = cast<MemRefType>(buffer.getType()).getElementType();
+        if (!isWide(operand.getType())) {
+          storeElement(builder, loc,
+                       convertRow(builder, loc, get(operand), element), buffer,
+                       row);
+          continue;
+        }
+        forComponents(operand.getType(), [&](OpBuilder &b, Value c) {
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPoint(b.getInsertionBlock(),
+                                    b.getInsertionPoint());
+          Value value = component(operand, c);
+          memref::StoreOp::create(builder, loc,
+                                  convertRow(builder, loc, value, element),
+                                  buffer, ValueRange{row, c});
+        });
+      }
+    }
+  }
+
+  /// The value that the kernel yields at `index`, which must not be wide.
+  Value yielded(unsigned index) {
+    return get(kernel.getTerminator()->getOperand(index));
+  }
+
+  /// The component `c` of the value that the kernel yields at `index`.
+  Value yieldedComponent(unsigned index, Value c) {
+    return component(kernel.getTerminator()->getOperand(index), c);
+  }
+
+  /// Runs `body` for each component of the vector type `type`, in a loop.
+  void forComponents(Type type, function_ref<void(OpBuilder &, Value)> body) {
+    int64_t n = cast<VectorType>(type).getNumElements();
+    auto loop = scf::ForOp::create(builder, loc, createIndex(builder, loc, 0),
+                                   createIndex(builder, loc, n),
+                                   createIndex(builder, loc, 1));
+    OpBuilder inner(loop.getBody()->getTerminator());
+    // What the loop's body emits stays in it.
+    IRMapping saved = mapping;
+    body(inner, loop.getInductionVar());
+    mapping = saved;
+  }
+
+  /// The value `value` of the kernel, emitted with what it needs.
+  Value get(Value value) {
+    if (Value known = mapping.lookupOrNull(value))
+      return known;
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      if (argument.getOwner() != &kernel)
+        return value;
+      auto found = sources.find(value);
+      assert(found != sources.end() && "an argument without its source");
+      Value loaded = loadElement(builder, loc, found->second.buffer,
+                                 found->second.particle);
+      mapping.map(value, loaded);
+      return loaded;
+    }
+    Operation *op = value.getDefiningOp();
+    // Defined outside the kernel: the launch brings it in.
+    if (!op || !kernel.getParentOp()->isProperAncestor(op))
+      return value;
+    if (auto apply = dyn_cast<md::ApplyStageOp>(op)) {
+      StageCall &call = tiling.calls[tiling.callOf.lookup(apply)];
+      for (auto [result, buffer] : llvm::zip(apply.getResults(), call.outputs))
+        mapping.map(result,
+                    convertRow(builder, loc, loadElement(builder, loc, buffer, row),
+                               getElementTypeOrSelf(result)));
+      return mapping.lookup(value);
+    }
+    // The values that the op reads, in it and in its regions, first.
+    op->walk([&](Operation *inner) {
+      for (Value operand : inner->getOperands())
+        if (!op->isAncestor(operand.getParentRegion()->getParentOp()))
+          get(operand);
+    });
+    builder.clone(*op, mapping);
+    return mapping.lookup(value);
+  }
+
+  /// The component `c` of the wide value `value`, a number.
+  Value component(Value value, Value c) {
+    Type real = getElementTypeOrSelf(value.getType());
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      auto found = sources.find(value);
+      if (argument.getOwner() == &kernel && found != sources.end())
+        return memref::LoadOp::create(
+            builder, loc, found->second.buffer,
+            ValueRange{found->second.particle, c});
+    } else if (Operation *op = value.getDefiningOp()) {
+      if (auto apply = dyn_cast<md::ApplyStageOp>(op)) {
+        StageCall &call = tiling.calls[tiling.callOf.lookup(apply)];
+        unsigned index = cast<OpResult>(value).getResultNumber();
+        Value loaded = memref::LoadOp::create(builder, loc,
+                                              call.outputs[index],
+                                              ValueRange{row, c});
+        return convertRow(builder, loc, loaded, real);
+      }
+      if (isa<arith::AddFOp, arith::SubFOp, arith::MulFOp, arith::DivFOp,
+              arith::MaximumFOp, arith::MinimumFOp>(op)) {
+        Value lhs = component(op->getOperand(0), c);
+        Value rhs = component(op->getOperand(1), c);
+        OperationState state(loc, op->getName(), ValueRange{lhs, rhs},
+                             TypeRange{real}, op->getAttrs());
+        return builder.create(state)->getResult(0);
+      }
+      if (isa<arith::NegFOp>(op)) {
+        Value operand = component(op->getOperand(0), c);
+        OperationState state(loc, op->getName(), ValueRange{operand},
+                             TypeRange{real}, op->getAttrs());
+        return builder.create(state)->getResult(0);
+      }
+      if (isa<arith::ExtFOp, arith::TruncFOp>(op))
+        return convertRow(builder, loc, component(op->getOperand(0), c), real);
+      if (auto broadcast = dyn_cast<vector::BroadcastOp>(op))
+        if (!isa<VectorType>(broadcast.getSource().getType()))
+          return get(broadcast.getSource());
+      DenseElementsAttr constant;
+      if (matchPattern(value, m_Constant(&constant)) && constant.isSplat())
+        return arith::ConstantOp::create(
+            builder, loc, real, constant.getSplatValue<TypedAttr>());
+    }
+    // Anything else: the whole value, and its component.
+    return vector::ExtractOp::create(builder, loc, get(value),
+                                     ArrayRef<OpFoldResult>{c});
+  }
+
+private:
+  OpBuilder &builder;
+  Location loc;
+  Block &kernel;
+  Tiling &tiling;
+  Value row;
+  llvm::DenseMap<Value, ArgumentSource> sources;
+  IRMapping mapping;
+};
+} // namespace
 
 /// Calls the bodies of the level `level` on the rows of the tile.
 static void callBodies(OpBuilder &builder, Location loc, Tiling &tiling,
@@ -3150,10 +3273,12 @@ LogicalResult Lowering::lowerStagedParticleFor(md_exec::ParticleForOp op) {
   Value rows = createIndex(builder, loc, tiling.rows);
   Value zero = createIndex(builder, loc, 0);
   Value one = createIndex(builder, loc, 1);
-  auto mapArguments = [&](OpBuilder &body, Value particle, IRMapping &mapping) {
+  auto sourcesAt = [&](Value particle) {
+    llvm::DenseMap<Value, ArgumentSource> sources;
     for (auto [argument, field] :
          llvm::zip(kernel.getArguments(), op.getIns()))
-      mapping.map(argument, loadElement(body, loc, field, particle));
+      sources[argument] = {field, particle};
+    return sources;
   };
   // The loop over the tiles is in place before the kernels go into it.
   auto tiles = scf::ForOp::create(builder, loc, zero, size, rows);
@@ -3167,9 +3292,9 @@ LogicalResult Lowering::lowerStagedParticleFor(md_exec::ParticleForOp op) {
         // results are not read.
         Value particle = arith::MinUIOp::create(
             body, loc, arith::AddIOp::create(body, loc, start, row), last);
-        IRMapping mapping;
-        mapArguments(body, particle, mapping);
-        emitStagedKernel(body, loc, kernel, tiling, level, row, mapping);
+        StagedEmitter emitter(body, loc, kernel, tiling, row,
+                              sourcesAt(particle), IRMapping());
+        emitter.emitPack(level);
       });
       callBodies(tile, loc, tiling, level);
     }
@@ -3177,16 +3302,27 @@ LogicalResult Lowering::lowerStagedParticleFor(md_exec::ParticleForOp op) {
         tile, loc, rows, arith::SubIOp::create(tile, loc, size, start));
     launchOver(tile, loc, count, [&](OpBuilder &body, Value row) {
       Value particle = arith::AddIOp::create(body, loc, start, row);
-      IRMapping mapping;
-      mapArguments(body, particle, mapping);
-      SmallVector<Value> yielded = emitStagedKernel(
-          body, loc, kernel, tiling, tiling.levels, row, mapping);
+      StagedEmitter emitter(body, loc, kernel, tiling, row, sourcesAt(particle),
+                            IRMapping());
       unsigned numOuts = op.getOuts().size();
-      for (auto [value, field] : llvm::zip(yielded, op.getOuts()))
-        storeElement(body, loc, value, field, particle);
+      for (unsigned k = 0; k != numOuts; ++k) {
+        Value field = op.getOuts()[k];
+        Type type = kernel.getTerminator()->getOperand(k).getType();
+        if (!StagedEmitter::isWide(type)) {
+          storeElement(body, loc, emitter.yielded(k), field, particle);
+          continue;
+        }
+        emitter.forComponents(type, [&](OpBuilder &inner, Value c) {
+          OpBuilder::InsertionGuard guard(body);
+          body.setInsertionPoint(inner.getInsertionBlock(),
+                                 inner.getInsertionPoint());
+          memref::StoreOp::create(body, loc, emitter.yieldedComponent(k, c),
+                                  field, ValueRange{particle, c});
+        });
+      }
       for (unsigned i = 0; i != numSums; ++i)
-        storeElement(body, loc, yielded[numOuts + i], op.getScratch()[2 * i],
-                     particle);
+        storeElement(body, loc, emitter.yielded(numOuts + i),
+                     op.getScratch()[2 * i], particle);
     });
   }
   releaseTiles(builder, loc, tiling);
@@ -3257,7 +3393,8 @@ LogicalResult Lowering::lowerStagedPairFor(md_exec::PairForOp op) {
 
   // The kernel's arguments for the slot `slot`: r², d = x_i − x_j − s H,
   // and the fields at both ends.
-  auto mapPair = [&](OpBuilder &body, Value slot, IRMapping &mapping) {
+  auto emitterAt = [&](OpBuilder &body, Value slot,
+                       Value row) -> std::unique_ptr<StagedEmitter> {
     auto column = [&](int64_t c) {
       return memref::LoadOp::create(body, loc, slots,
                                     ValueRange{slot, createIndex(body, loc, c)})
@@ -3284,73 +3421,114 @@ LogicalResult Lowering::lowerStagedPairFor(md_exec::PairForOp op) {
     Value r2 = vector::ReductionOp::create(
         body, loc, vector::CombiningKind::ADD,
         arith::MulFOp::create(body, loc, d, d));
+    IRMapping mapping;
     mapping.map(kernel.getArgument(0), r2);
     mapping.map(kernel.getArgument(1), d);
+    // The fields at both ends are loaded where the kernel reads them.
+    llvm::DenseMap<Value, ArgumentSource> sources;
     for (auto [index, field] : llvm::enumerate(op.getIns())) {
-      mapping.map(kernel.getArgument(2 + 2 * index),
-                  loadElement(body, loc, field, i));
-      mapping.map(kernel.getArgument(3 + 2 * index),
-                  loadElement(body, loc, field, j));
+      sources[kernel.getArgument(2 + 2 * index)] = {field, i};
+      sources[kernel.getArgument(3 + 2 * index)] = {field, j};
     }
+    return std::make_unique<StagedEmitter>(body, loc, kernel, tiling, row,
+                                           std::move(sources),
+                                           std::move(mapping));
   };
 
   // The loop over the tiles is in place before the kernels go into it.
   auto tiles = scf::ForOp::create(builder, loc, zero, numSlots, rows);
   {
-        OpBuilder tile(tiles.getBody()->getTerminator());
-        Value start = tiles.getInductionVar();
-        Value last = arith::SubIOp::create(tile, loc, numSlots, one);
-        for (unsigned level = 0; level != tiling.levels; ++level) {
-          launchOver(tile, loc, rows, [&](OpBuilder &body, Value row) {
-            // The rows beyond the slots repeat the last one, and the slots
-            // beyond the cutoff are evaluated too; their results are not
-            // read.
-            Value slot = arith::MinUIOp::create(
-                body, loc, arith::AddIOp::create(body, loc, start, row), last);
-            IRMapping mapping;
-            mapPair(body, slot, mapping);
-            emitStagedKernel(body, loc, kernel, tiling, level, row, mapping);
-          });
-          callBodies(tile, loc, tiling, level);
+    OpBuilder tile(tiles.getBody()->getTerminator());
+    Value start = tiles.getInductionVar();
+    Value last = arith::SubIOp::create(tile, loc, numSlots, one);
+    for (unsigned level = 0; level != tiling.levels; ++level) {
+      launchOver(tile, loc, rows, [&](OpBuilder &body, Value row) {
+        // The rows beyond the slots repeat the last one, and the slots
+        // beyond the cutoff are evaluated too; their results are not read.
+        Value slot = arith::MinUIOp::create(
+            body, loc, arith::AddIOp::create(body, loc, start, row), last);
+        emitterAt(body, slot, row)->emitPack(level);
+      });
+      callBodies(tile, loc, tiling, level);
+    }
+    // Each center adds up its rows of the tile that are within the cutoff,
+    // in the order of its slots: a gather, with no atomics. A wide
+    // destination (features) is added up component by component.
+    Value end = arith::AddIOp::create(tile, loc, start, rows);
+    SmallVector<unsigned> narrow, wide;
+    for (unsigned k = 0, e = op.getOuts().size(); k != e; ++k)
+      (StagedEmitter::isWide(kernel.getTerminator()->getOperand(k).getType())
+           ? wide
+           : narrow)
+          .push_back(k);
+    launchOver(tile, loc, size, [&](OpBuilder &body, Value center) {
+      Type indexType = body.getIndexType();
+      Value begin = arith::IndexCastOp::create(
+          body, loc, indexType,
+          memref::LoadOp::create(body, loc, offsets, ValueRange{center}));
+      Value within = arith::IndexCastOp::create(
+          body, loc, indexType,
+          memref::LoadOp::create(body, loc, counts, ValueRange{center}));
+      Value from = arith::MaxUIOp::create(body, loc, begin, start);
+      Value to = arith::MaxUIOp::create(
+          body, loc, from,
+          arith::MinUIOp::create(
+              body, loc, arith::AddIOp::create(body, loc, begin, within), end));
+      if (!narrow.empty()) {
+        SmallVector<Value> inits;
+        for (unsigned k : narrow)
+          inits.push_back(createZero(
+              body, loc, md_exec::getKernelValueType(op.getOuts()[k].getType())));
+        auto sum = scf::ForOp::create(
+            body, loc, from, to, one, inits,
+            [&](OpBuilder &inner, Location, Value slot, ValueRange totals) {
+              Value row = arith::SubIOp::create(inner, loc, slot, start);
+              auto emitter = emitterAt(inner, slot, row);
+              SmallVector<Value> next;
+              for (auto [total, k] : llvm::zip(totals, narrow))
+                next.push_back(arith::AddFOp::create(inner, loc, total,
+                                                     emitter->yielded(k)));
+              scf::YieldOp::create(inner, loc, next);
+            });
+        for (auto [total, k] : llvm::zip(sum.getResults(), narrow)) {
+          Value out = op.getOuts()[k];
+          Value old = loadElement(body, loc, out, center);
+          storeElement(body, loc, arith::AddFOp::create(body, loc, old, total),
+                       out, center);
         }
-        // Each center adds up its rows of the tile that are within the
-        // cutoff, in the order of its slots: a gather, with no atomics.
-        Value end = arith::AddIOp::create(tile, loc, start, rows);
-        launchOver(tile, loc, size, [&](OpBuilder &body, Value center) {
-          Type indexType = body.getIndexType();
-          Value begin = arith::IndexCastOp::create(
-              body, loc, indexType,
-              memref::LoadOp::create(body, loc, offsets, ValueRange{center}));
-          Value within = arith::IndexCastOp::create(
-              body, loc, indexType,
-              memref::LoadOp::create(body, loc, counts, ValueRange{center}));
-          Value from = arith::MaxUIOp::create(body, loc, begin, start);
-          Value to = arith::MinUIOp::create(
-              body, loc, arith::AddIOp::create(body, loc, begin, within), end);
-          SmallVector<Value> inits;
-          for (Value out : op.getOuts())
-            inits.push_back(createZero(
-                body, loc, md_exec::getKernelValueType(out.getType())));
-          auto sum = scf::ForOp::create(
-              body, loc, from, arith::MaxUIOp::create(body, loc, from, to), one,
-              inits,
-              [&](OpBuilder &inner, Location, Value slot, ValueRange totals) {
-                IRMapping mapping;
-                mapPair(inner, slot, mapping);
-                Value row = arith::SubIOp::create(inner, loc, slot, start);
-                SmallVector<Value> yielded = emitStagedKernel(
-                    inner, loc, kernel, tiling, tiling.levels, row, mapping);
-                SmallVector<Value> next;
-                for (auto [total, value] : llvm::zip(totals, yielded))
-                  next.push_back(arith::AddFOp::create(inner, loc, total, value));
-                scf::YieldOp::create(inner, loc, next);
-              });
-          for (auto [total, out] : llvm::zip(sum.getResults(), op.getOuts())) {
-            Value old = loadElement(body, loc, out, center);
-            storeElement(body, loc, arith::AddFOp::create(body, loc, old, total),
-                         out, center);
-          }
-        });
+      }
+      for (unsigned k : wide) {
+        Value out = op.getOuts()[k];
+        int64_t n = cast<VectorType>(kernel.getTerminator()->getOperand(k).getType())
+                        .getNumElements();
+        Type element = cast<MemRefType>(out.getType()).getElementType();
+        scf::ForOp::create(
+            body, loc, createIndex(body, loc, 0), createIndex(body, loc, n),
+            one, ValueRange(),
+            [&](OpBuilder &outer, Location, Value c, ValueRange) {
+              auto sum = scf::ForOp::create(
+                  outer, loc, from, to, one,
+                  ValueRange{createZero(outer, loc, element)},
+                  [&](OpBuilder &inner, Location, Value slot,
+                      ValueRange totals) {
+                    Value row = arith::SubIOp::create(inner, loc, slot, start);
+                    auto emitter = emitterAt(inner, slot, row);
+                    Value value = emitter->yieldedComponent(k, c);
+                    scf::YieldOp::create(
+                        inner, loc,
+                        ValueRange{arith::AddFOp::create(inner, loc, totals[0],
+                                                         value)});
+                  });
+              Value old = memref::LoadOp::create(outer, loc, out,
+                                                 ValueRange{center, c});
+              memref::StoreOp::create(
+                  outer, loc,
+                  arith::AddFOp::create(outer, loc, old, sum.getResult(0)), out,
+                  ValueRange{center, c});
+              scf::YieldOp::create(outer, loc);
+            });
+      }
+    });
   }
   releaseTiles(builder, loc, tiling);
   return success();

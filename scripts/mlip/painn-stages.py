@@ -226,8 +226,10 @@ class Stages:
     def __init__(self, w):
         import jax.numpy as jnp
         self.jnp = jnp
-        self.w = {k: (jnp.asarray(v) if v.dtype != object and v.ndim >= 1 else v)
-                  for k, v in w.items() if not k.startswith("ref_")}
+        # NumPy arrays: an exported body holds only the weights that it reads
+        # as constants (a slice of a JAX array embeds the whole array and
+        # slices it in the body).
+        self.w = {k: np.asarray(v) for k, v in w.items() if not k.startswith("ref_")}
         self.F = int(w["F"])
         self.L = int(w["L"])
         self.cutoff = float(w["cutoff"])
@@ -243,7 +245,7 @@ class Stages:
 
     def embed(self, z):
         jnp = self.jnp
-        q = self.w["embedding"][z]
+        q = jnp.asarray(self.w["embedding"])[z]
         return jnp.concatenate([q, jnp.zeros((z.shape[0], 3 * self.F), q.dtype)], -1)
 
     def ctx(self, k, h):
