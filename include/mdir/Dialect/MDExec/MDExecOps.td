@@ -1035,6 +1035,66 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
   let hasRegionVerifier = 1;
 }
 
+def MDExec_ScatterAddOp : MDExec_Op<"scatter_add", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "Adds values into a field at the rows that indices name";
+  let description = [{
+    For every row `k` of `values` and `indices` (D[scatter-op],
+    docs/device-primitives.md):
+
+    ```text
+    a'_i = a_i + Σ_{k : idx_k = i} v_k
+    ```
+
+    `values` and `indices` are fields of one set, the indices of `i32`;
+    `dest` is a field of the set that the indices name rows of, with the
+    components and the type of the values. An index must be a row of the
+    destination; the op does not check it.
+
+    ```mlir
+    %a1 = md_exec.scatter_add %v at %idx into %a0
+            : !md.field<@ghosts, 3 x f64>, !md.field<@ghosts, i32>
+              -> !md.field<@atoms, 3 x f64>
+    ```
+
+    In the storage form the op takes buffers and updates the destination
+    where it is; it has no result. `overwrite(true)` means that it ignores
+    what the destination holds, as if it held zeros.
+
+    ```mlir
+    md_exec.scatter_add %v at %idx into %a overwrite(false)
+        : memref<?x3xf64, 1>, memref<?xi32, 1>, memref<?x3xf64, 1>
+    ```
+
+    `scatter(hash(S, P, L))`, which `md-exec-choose-scatter` sets on a
+    device, states that the values of a block are added in a table of `S`
+    slots in block memory first, at most `P` slots tried before an atomic of
+    the device, from `L` values on. Without it, or with `scatter(atomic)`,
+    an atomic of the device for each value. `tile` and `sorted` are refused.
+  }];
+  let arguments = (ins
+    MDExec_FieldOrBuffer:$values,
+    MDExec_FieldOrBuffer:$indices,
+    MDExec_FieldOrBuffer:$dest,
+    OptionalAttr<BoolAttr>:$overwrite,
+    OptionalAttr<MDExec_ScatterAttr>:$scatter
+  );
+  let results = (outs Optional<MD_FieldType>:$result);
+  let hasCustomAssemblyFormat = 1;
+  let extraClassDeclaration = [{
+    bool isStorageForm() {
+      return ::llvm::isa<::mlir::MemRefType>(getDest().getType());
+    }
+    /// Whether the op ignores what the destination holds.
+    bool overwrites() {
+      auto flag = getOverwrite();
+      return flag && *flag;
+    }
+  }];
+  let hasVerifier = 1;
+}
+
 def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>

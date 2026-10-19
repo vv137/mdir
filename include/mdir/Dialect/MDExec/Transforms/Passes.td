@@ -146,6 +146,15 @@ def ChooseScatter
       mode, it has destinations, each a number or a row of a static length
       of f32 or f64, and the table fits 48 KiB. `pair-hash=on` takes the
       table where it applies, `pair-hash=off` (the default) never.
+      Measured on an RTX 4090, the table made these loops slower (the
+      entries of a block are distinct particles; docs/device-primitives.md,
+      Section 2.7).
+    - `md_exec.scatter_add`: `hash(S, P, L)` with `S` the slots for
+      `block-size` threads of one value each and `L` = `hash-least`, where
+      the run is not in the deterministic mode, the destination is a number
+      or a row of a static length of f32 or f64, and the table fits 48 KiB.
+      `scatter-hash=on` takes the table at any count, `scatter-hash=off`
+      never.
 
     With `explain`, each choice and each refusal is a remark on its op.
 
@@ -175,6 +184,10 @@ def ChooseScatter
     Option<"pairHashLeast", "pair-hash-least", "int64_t", /*default=*/"0",
            "The fewest units of work of a launch of a loop over pairs that "
            "take the table; a launch of fewer keeps the atomics">,
+    Option<"scatterHash", "scatter-hash", "std::string",
+           /*default=*/"\"auto\"",
+           "The tables of md_exec.scatter_add: auto (from hash-least "
+           "values), on (at any count), or off">,
     Option<"hashProbes", "hash-probes", "int64_t", /*default=*/"8",
            "The slots that a search of the table tries before the value "
            "goes to the destination with an atomic">,

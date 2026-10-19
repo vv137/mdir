@@ -437,6 +437,143 @@ void NonzeroOp::getEffects(
     addEffect<MemoryEffects::Write>(effects, operand);
 }
 
+//===----------------------------------------------------------------------===//
+// scatter_add (D[scatter-op])
+//===----------------------------------------------------------------------===//
+
+// md_exec.scatter_add %v at %idx into %a [overwrite(b)] [scatter(...)]
+//     attr-dict : type(v), type(idx) (-> type(result) | , type(a))
+ParseResult ScatterAddOp::parse(OpAsmParser &parser, OperationState &result) {
+  OpAsmParser::UnresolvedOperand values, indices, dest;
+  if (parser.parseOperand(values) || parser.parseKeyword("at") ||
+      parser.parseOperand(indices) || parser.parseKeyword("into") ||
+      parser.parseOperand(dest))
+    return failure();
+  Builder &builder = parser.getBuilder();
+  if (succeeded(parser.parseOptionalKeyword("overwrite"))) {
+    bool flag = false;
+    if (parser.parseLParen())
+      return failure();
+    if (succeeded(parser.parseOptionalKeyword("true")))
+      flag = true;
+    else if (parser.parseKeyword("false"))
+      return failure();
+    if (parser.parseRParen())
+      return failure();
+    result.addAttribute(getOverwriteAttrName(result.name),
+                        builder.getBoolAttr(flag));
+  }
+  ScatterAttr scatter;
+  if (failed(parseScatter(parser, scatter)))
+    return failure();
+  if (scatter)
+    result.addAttribute(getScatterAttrName(result.name), scatter);
+  Type valuesType, indicesType, destType;
+  if (parser.parseOptionalAttrDict(result.attributes) ||
+      parser.parseColonType(valuesType) || parser.parseComma() ||
+      parser.parseType(indicesType))
+    return failure();
+  if (succeeded(parser.parseOptionalArrow())) {
+    if (parser.parseType(destType))
+      return failure();
+    result.addTypes(destType);
+  } else if (parser.parseComma() || parser.parseType(destType)) {
+    return failure();
+  }
+  return parser.resolveOperands({values, indices, dest},
+                                {valuesType, indicesType, destType},
+                                parser.getCurrentLocation(), result.operands);
+}
+
+void ScatterAddOp::print(OpAsmPrinter &printer) {
+  printer << " " << getValues() << " at " << getIndices() << " into "
+          << getDest();
+  if (auto flag = getOverwrite())
+    printer << " overwrite(" << (*flag ? "true" : "false") << ")";
+  if (ScatterAttr scatter = getScatterAttr()) {
+    printer << " scatter(";
+    scatter.printBody(printer.getStream());
+    printer << ")";
+  }
+  printer.printOptionalAttrDict(
+      (*this)->getAttrs(),
+      {getOverwriteAttrName().getValue(), getScatterAttrName().getValue()});
+  printer << " : " << getValues().getType() << ", " << getIndices().getType();
+  if (getResult())
+    printer << " -> " << getResult().getType();
+  else
+    printer << ", " << getDest().getType();
+}
+
+/// The element type and the components of a field or of a buffer of rows.
+static std::pair<Type, int64_t> getRowShape(Type type) {
+  if (auto field = dyn_cast<mdir::md::FieldType>(type))
+    return {field.getElementType(), field.getNumComponents()};
+  auto buffer = cast<MemRefType>(type);
+  int64_t components = buffer.getRank() == 1 ? 1 : buffer.getDimSize(1);
+  return {buffer.getElementType(), components};
+}
+
+LogicalResult ScatterAddOp::verify() {
+  if (failed(verifyScatter(*this, getScatterAttr(), ScatterStrategy::Hash,
+                           "an index may name any row of the destination, "
+                           "so the footprint of a block is not bounded")))
+    return failure();
+  Type values = getValues().getType(), indices = getIndices().getType(),
+       dest = getDest().getType();
+  bool storage = isa<MemRefType>(dest);
+  if (storage != isa<MemRefType>(values) || storage != isa<MemRefType>(indices))
+    return emitOpError() << "expected the values, the indices, and the "
+                            "destination all fields or all buffers";
+  if (storage) {
+    if (getResult())
+      return emitOpError() << "has no result in the storage form";
+    for (Type type : {values, indices, dest}) {
+      auto buffer = cast<MemRefType>(type);
+      if (buffer.getRank() < 1 || buffer.getRank() > 2)
+        return emitOpError() << "expected buffers of rank 1 or 2, got "
+                             << type;
+    }
+  } else {
+    if (!getResult() || getResult().getType() != dest)
+      return emitOpError() << "expected a result of the type of the "
+                              "destination, "
+                           << dest;
+    if (getOverwrite())
+      return emitOpError() << "takes 'overwrite' in the storage form only";
+    auto from = cast<mdir::md::FieldType>(values), at = cast<mdir::md::FieldType>(indices);
+    if (from.getParticleSet() != at.getParticleSet())
+      return emitOpError() << "expected the values and the indices on one "
+                              "set, got "
+                           << from.getParticleSet() << " and "
+                           << at.getParticleSet();
+  }
+  auto [indexType, indexComponents] = getRowShape(indices);
+  if (!indexType.isInteger(32) || indexComponents != 1)
+    return emitOpError() << "expected one index of i32 a row, got " << indices;
+  auto [valueType, valueComponents] = getRowShape(values);
+  auto [destType, destComponents] = getRowShape(dest);
+  if (valueType != destType || valueComponents != destComponents)
+    return emitOpError() << "expected the destination to have the "
+                            "components and the type of the values, got "
+                         << values << " and " << dest;
+  if (!isReal(valueType))
+    return emitOpError() << "expected values of f32 or f64, got " << valueType;
+  return success();
+}
+
+void ScatterAddOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  if (!isStorageForm())
+    return;
+  addEffect<MemoryEffects::Read>(effects, getValuesMutable());
+  addEffect<MemoryEffects::Read>(effects, getIndicesMutable());
+  if (!overwrites())
+    addEffect<MemoryEffects::Read>(effects, getDestMutable());
+  addEffect<MemoryEffects::Write>(effects, getDestMutable());
+}
+
 void PermuteOp::getEffects(
     SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
         &effects) {

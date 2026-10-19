@@ -129,6 +129,8 @@ private:
   LogicalResult convertBuildNeighbors(BuildNeighborsOp op, Scope &scope);
   LogicalResult convertRefreshNeighbors(RefreshNeighborsOp op, Scope &scope,
                                         unsigned position);
+  LogicalResult convertScatterAdd(ScatterAddOp op, Scope &scope,
+                                  unsigned position);
   LogicalResult convertParticleFor(ParticleForOp op, Scope &scope,
                                    unsigned position);
   LogicalResult convertPairFor(PairForOp op, Scope &scope,
@@ -545,6 +547,32 @@ void Assignment::copyKernel(Operation *loop, Block &source) {
   OpBuilder kernel = OpBuilder::atBlockEnd(block);
   for (Operation &nested : source)
     kernel.clone(nested, local);
+}
+
+/// A scatter-accumulate (D[scatter-op]): the values and the indices are
+/// read, and the destination continues in its buffer where nothing reads
+/// the field afterward, or starts from zeros in a buffer of its own
+/// (`overwrite(true)`).
+LogicalResult Assignment::convertScatterAdd(ScatterAddOp op, Scope &scope,
+                                            unsigned position) {
+  Value values, indices;
+  if (failed(getBuffer(op.getValues(), scope, values)) ||
+      failed(getBuffer(op.getIndices(), scope, indices)))
+    return failure();
+  Value dest;
+  bool accumulates;
+  if (failed(chooseDestination(op, op.getDest(),
+                               ValueRange{op.getValues(), op.getIndices()},
+                               /*inPlace=*/false, scope, position, dest,
+                               accumulates)))
+    return failure();
+  ScatterAddOp::create(scope.builder, op.getLoc(), TypeRange(), values,
+                       indices, dest,
+                       scope.builder.getBoolAttr(!accumulates),
+                       onDevice ? op.getScatterAttr() : ScatterAttr());
+  buffers[op.getResult()] = dest;
+  scope.owned.insert(dest);
+  return success();
 }
 
 LogicalResult Assignment::convertParticleFor(ParticleForOp op, Scope &scope,
@@ -1800,6 +1828,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                                        builder.getI64Type(), storage));
     return success();
   }
+  if (auto add = dyn_cast<ScatterAddOp>(op))
+    return convertScatterAdd(add, scope, position);
   if (auto loop = dyn_cast<ParticleForOp>(op))
     return convertParticleFor(loop, scope, position);
   if (auto loop = dyn_cast<PairForOp>(op))

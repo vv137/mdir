@@ -32,12 +32,14 @@ public:
     auto isSwitch = [](StringRef value) {
       return value == "auto" || value == "on" || value == "off";
     };
-    if (!isSwitch(tile) || !isSwitch(hash) || !isSwitch(pairHash)) {
+    if (!isSwitch(tile) || !isSwitch(hash) || !isSwitch(pairHash) ||
+        !isSwitch(scatterHash)) {
       module->emitError() << "expected 'auto', 'on', or 'off' for 'tile', "
-                             "'hash', and 'pair-hash', got '"
+                             "'hash', 'pair-hash', and 'scatter-hash', got '"
                           << static_cast<std::string>(tile) << "', '"
-                          << static_cast<std::string>(hash) << "', and '"
-                          << static_cast<std::string>(pairHash) << "'";
+                          << static_cast<std::string>(hash) << "', '"
+                          << static_cast<std::string>(pairHash) << "', and '"
+                          << static_cast<std::string>(scatterHash) << "'";
       return signalPassFailure();
     }
     if (pairHashLeast < 0) {
@@ -62,6 +64,8 @@ public:
         chooseHash(loop);
       else if (auto pairs = dyn_cast<PairForOp>(op))
         choosePairHash(pairs);
+      else if (auto add = dyn_cast<ScatterAddOp>(op))
+        chooseScatterHash(add);
     });
   }
 
@@ -175,6 +179,21 @@ private:
       return explainRefused(op, "hash", *refused);
     ScatterAttr chosen =
         ScatterAttr::getHash(&getContext(), slots, hashProbes, pairHashLeast);
+    op.setScatterAttr(chosen);
+    explainChosen(op, chosen);
+  }
+
+  /// The table of a scatter-accumulate on its own (D[scatter-op]): a
+  /// thread a value.
+  void chooseScatterHash(ScatterAddOp op) {
+    if (scatterHash == "off")
+      return explainRefused(op, "hash", "scatter-hash=off");
+    int64_t slots = scatter::getHashSlots(blockSize, 1);
+    if (scatter::Refusal refused = scatter::checkHash(
+            slots, TypeRange{op.getDest().getType()}, deterministic))
+      return explainRefused(op, "hash", *refused);
+    ScatterAttr chosen = ScatterAttr::getHash(
+        &getContext(), slots, hashProbes, scatterHash == "on" ? 0 : hashLeast);
     op.setScatterAttr(chosen);
     explainChosen(op, chosen);
   }

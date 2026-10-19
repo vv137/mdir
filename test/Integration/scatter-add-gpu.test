@@ -1,0 +1,52 @@
+# The test of scatter-add.mlir on a device (D[scatter-op]), with each
+# strategy of md_exec.scatter_add: an atomic of the device for each value
+# (`scatter-hash=off`), the table of a block at any count
+# (`scatter-hash=on`), and the choice on the host by the count with L =
+# 500 (the 1000 values take the table) and L = 5000 (they keep the
+# atomics). The values are whole numbers, so every strategy gives the bits
+# of the sum written out.
+#
+# REQUIRES: cuda
+#
+# RUN: mdir-opt %S/scatter-add.mlir --md-exec-choose-scatter=scatter-hash=off \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | FileCheck %S/scatter-add.mlir
+# RUN: mdir-opt %S/scatter-add.mlir --md-exec-choose-scatter=scatter-hash=on \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | FileCheck %S/scatter-add.mlir
+# RUN: mdir-opt %S/scatter-add.mlir --md-exec-choose-scatter=hash-least=500 \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | FileCheck %S/scatter-add.mlir
+# RUN: mdir-opt %S/scatter-add.mlir --md-exec-choose-scatter=hash-least=5000 \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | FileCheck %S/scatter-add.mlir
+#
+# Under compute-sanitizer (with -Dsanitize=1), the table at any count.
+# RUN: %if compute-sanitizer %{ mdir-opt %S/scatter-add.mlir \
+# RUN:     --md-exec-choose-scatter=scatter-hash=on \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN:   | mlir-opt %lower_gpu_to_llvm > %t.mlir %}
+# RUN: %if compute-sanitizer %{ %compute_sanitizer --tool memcheck \
+# RUN:     --error-exitcode 1 mlir-runner %t.mlir -e main \
+# RUN:     --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s %}
+# RUN: %if compute-sanitizer %{ %compute_sanitizer --tool racecheck \
+# RUN:     --error-exitcode 1 mlir-runner %t.mlir -e main \
+# RUN:     --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE %}
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

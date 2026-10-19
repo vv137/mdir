@@ -82,4 +82,4 @@ func.func @none(%x: !vec, %cell: !md.cell, %nl: !nl, %f0: !vec) -> (!vec, f64) {
   return %f, %u : !vec, f64
 }
 
-// SWITCH: expected 'auto', 'on', or 'off' for 'tile', 'hash', and 'pair-hash', got 'auto', 'auto', and 'yes'
+// SWITCH: expected 'auto', 'on', or 'off' for 'tile', 'hash', 'pair-hash', and 'scatter-hash', got 'auto', 'auto', 'yes', and 'auto'
