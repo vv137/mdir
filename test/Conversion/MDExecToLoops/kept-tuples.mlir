@@ -5,8 +5,8 @@
 // would be freed. Without the option they are built by loops in the
 // module, as before.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-loops="kept-tuples=true" | FileCheck %s
-// RUN: mdir-opt %s --convert-md-exec-to-loops | FileCheck %s --check-prefix=LOOPS
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-loops="kept-tuples=true" | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-loops | FileCheck %s --check-prefix=LOOPS
 
 md.particle_set @atoms
 

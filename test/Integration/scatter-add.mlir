@@ -6,7 +6,7 @@
 // compares exactly: it prints 1 where every component agrees.
 //
 // On one thread, with plain additions:
-// RUN: mdir-opt %s --md-exec-assign-storage \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-assign-storage \
 // RUN:     --convert-md-exec-to-loops=atomic-grid=false \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -14,7 +14,7 @@
 // RUN: | FileCheck %s
 //
 // Under OpenMP, with atomic additions:
-// RUN: mdir-opt %s --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_openmp \
 // RUN: | env OMP_NUM_THREADS=4 mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%openmp \

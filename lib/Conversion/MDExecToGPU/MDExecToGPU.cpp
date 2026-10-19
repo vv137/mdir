@@ -7,9 +7,11 @@
 
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
+#include "mdir/Conversion/ReductionEmitter.h"
 #include "mdir/Conversion/ScatterEmitter.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
@@ -258,6 +260,12 @@ public:
   /// `fusePruningGroups` groups (`fuse-pruning`, D284).
   bool fusePruning = false;
   int64_t fusePruningGroups = 0;
+  /// Whether the loops over tuples of the module may add to their members
+  /// in the order of the threads: no loop over tuples states `fixed_order` for
+  /// a value it reduces. The members of the tuples go to the device for such
+  /// loops, which evaluate each tuple once; this is the module-wide form of
+  /// `evaluatesOnce`, which the mode decided before D[reduction-algebra].
+  bool tuplesMayReorder = true;
 
 private:
   /// An entry of the runtime's store for a tuple set built on the device:
@@ -474,10 +482,13 @@ private:
   DenseMap<Value, Value> members;
   /// Whether a loop over tuples evaluates each tuple once, adding to its
   /// members with atomics: by default, for a loop that is not over disjoint
-  /// tuples and adds to its destinations. Its global sums are summed by
-  /// a thread a particle over the tuples it takes (D103).
+  /// tuples and adds to its destinations, where the stated algebra of every
+  /// value it reduces allows another order (D[reduction-algebra]). Its
+  /// global sums are summed by a thread a particle over the tuples it takes
+  /// (D103), which groups them otherwise than the rows of the particles do:
+  /// a `fixed_order` sum (the deterministic mode) takes the rows.
   bool evaluatesOnce(md_exec::TupleForOp op) {
-    if (deterministic || !tuplesOnce || op.getDisjoint())
+    if (!tuplesOnce || op.getDisjoint() || !everythingAllowsReorder(op))
       return false;
     for (unsigned i = 0, e = op.getOuts().size(); i != e; ++i)
       if (op.overwrites(i))
@@ -485,6 +496,23 @@ private:
     return true;
   }
   DenseSet<Operation *> inRows;
+
+  /// Whether the stated algebra of every destination of `op` (a loop over
+  /// pairs or tuples, or `scatter_add`) allows its values to be added in
+  /// an order that the threads decide (D[reduction-algebra]). The pass
+  /// refuses an op without an algebra before it lowers any.
+  static bool destinationsAllowReorder(Operation *op) {
+    std::optional<SmallVector<md_exec::Algebra>> algebras =
+        md_exec::algebra::getDestinationAlgebras(op);
+    return algebras && md_exec::algebra::allowReorder(*algebras);
+  }
+  /// Whether every value that `op` reduces, its destinations and its global
+  /// sums, allows reordering.
+  static bool everythingAllowsReorder(Operation *op) {
+    std::optional<SmallVector<md_exec::Algebra>> algebras =
+        md_exec::algebra::getAlgebras(op);
+    return algebras && md_exec::algebra::allowReorder(*algebras);
+  }
 
   /// How a loop provides the contributions of its rows to its global sums
   /// when one kernel can also compute them: `produce` launches the kernel
@@ -498,9 +526,10 @@ private:
   /// Adds up, or takes the maximum of, `values` over the threads of a block
   /// in one pass (D150): each warp by a butterfly of shuffles, then the
   /// warps in their order through `shared`. Every thread gets the totals.
+  /// The block reduction of the emitters (ReductionEmitter.h).
   SmallVector<Value> reduceInBlock(OpBuilder &builder, Location loc,
                                    ValueRange values, Value thread,
-                                   Value shared, bool isSum);
+                                   Value shared, kernels::Combiner combiner);
   /// Launches `blocks` blocks of threads with shared memory for `numbers`
   /// numbers of each warp; `body` takes the block, the thread, and the
   /// shared memory.
@@ -514,7 +543,7 @@ private:
   SmallVector<Value> emitReductions(OpBuilder &builder, Location loc,
                                     ArrayRef<Value> contributions,
                                     ArrayRef<Value> partials, Value size,
-                                    bool isSum,
+                                    kernels::Combiner combiner,
                                     std::optional<RowSums> rows = {});
 
   /// The integration runs (D110), by their loop after, where they are
@@ -1010,9 +1039,6 @@ void Lowering::replaceWithFlags(OpBuilder &builder, Location loc,
   }
 }
 
-static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
-                        int64_t offset);
-
 /// The numbers of `types`: one for a number, and the elements of a vector.
 static int64_t countKernelNumbers(TypeRange types) {
   int64_t count = 0;
@@ -1024,76 +1050,10 @@ static int64_t countKernelNumbers(TypeRange types) {
 
 SmallVector<Value> Lowering::reduceInBlock(OpBuilder &b, Location loc,
                                            ValueRange values, Value thread,
-                                           Value shared, bool isSum) {
-  int64_t warps = blockSize / 32;
-  auto combine = [&](OpBuilder &b, Value lhs, Value rhs) -> Value {
-    if (isSum)
-      return arith::AddFOp::create(b, loc, lhs, rhs);
-    Value larger =
-        arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, lhs, rhs);
-    return arith::SelectOp::create(b, loc, larger, lhs, rhs);
-  };
-  SmallVector<Value> numbers;
-  for (Value value : values) {
-    auto vector = dyn_cast<VectorType>(value.getType());
-    if (!vector) {
-      numbers.push_back(value);
-      continue;
-    }
-    for (int64_t i = 0, e = vector.getNumElements(); i != e; ++i)
-      numbers.push_back(vector::ExtractOp::create(b, loc, value, i));
-  }
-  for (Value &number : numbers)
-    for (int64_t offset = 16; offset >= 1; offset /= 2)
-      number = combine(b, number, shuffleXor(b, loc, number, offset));
-  Value width = createIndex(b, loc, 32);
-  Value lane = arith::RemUIOp::create(b, loc, thread, width);
-  Value warp = arith::DivUIOp::create(b, loc, thread, width);
-  Value count = createIndex(b, loc, numbers.size());
-  Value leads = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, lane,
-                                      createIndex(b, loc, 0));
-  Type wide = b.getF64Type();
-  scf::IfOp::create(b, loc, leads, [&](OpBuilder &then, Location) {
-    Value base = arith::MulIOp::create(then, loc, warp, count);
-    for (auto [k, number] : llvm::enumerate(numbers)) {
-      Value place = arith::AddIOp::create(then, loc, base,
-                                          createIndex(then, loc, k));
-      Value stored = number;
-      if (number.getType() != wide)
-        stored = arith::ExtFOp::create(then, loc, wide, number);
-      memref::StoreOp::create(then, loc, stored, shared, ValueRange{place});
-    }
-    scf::YieldOp::create(then, loc);
-  });
-  gpu::BarrierOp::create(b, loc);
-  SmallVector<Value> totals;
-  for (auto [k, number] : llvm::enumerate(numbers)) {
-    Value total;
-    for (int64_t w = 0; w != warps; ++w) {
-      Value part = memref::LoadOp::create(
-          b, loc, shared,
-          ValueRange{createIndex(b, loc, w * numbers.size() + k)});
-      if (number.getType() != wide)
-        part = arith::TruncFOp::create(b, loc, number.getType(), part);
-      total = w == 0 ? part : combine(b, total, part);
-    }
-    totals.push_back(total);
-  }
-  SmallVector<Value> results;
-  size_t next = 0;
-  for (Value value : values) {
-    auto vector = dyn_cast<VectorType>(value.getType());
-    if (!vector) {
-      results.push_back(totals[next++]);
-      continue;
-    }
-    ArrayRef<Value> elements(totals.begin() + next,
-                             totals.begin() + next + vector.getNumElements());
-    next += vector.getNumElements();
-    results.push_back(
-        vector::FromElementsOp::create(b, loc, vector, elements));
-  }
-  return results;
+                                           Value shared,
+                                           kernels::Combiner combiner) {
+  return kernels::emitBlockReduce(b, loc, values, thread, shared, combiner,
+                                  blockSize);
 }
 
 void Lowering::launchSharedBlocks(
@@ -1120,7 +1080,8 @@ void Lowering::launchSharedBlocks(
 SmallVector<Value>
 Lowering::emitReductions(OpBuilder &builder, Location loc,
                          ArrayRef<Value> contributions,
-                         ArrayRef<Value> partials, Value size, bool isSum,
+                         ArrayRef<Value> partials, Value size,
+                         kernels::Combiner combiner,
                          std::optional<RowSums> rows) {
   if (contributions.empty())
     return {};
@@ -1130,11 +1091,7 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
   for (Value buffer : contributions)
     types.push_back(md_exec::getKernelValueType(buffer.getType()));
   auto combine = [&](OpBuilder &b, Value lhs, Value rhs) -> Value {
-    if (isSum)
-      return arith::AddFOp::create(b, loc, lhs, rhs);
-    Value larger =
-        arith::CmpFOp::create(b, loc, arith::CmpFPredicate::OGT, lhs, rhs);
-    return arith::SelectOp::create(b, loc, larger, lhs, rhs);
+    return kernels::emitCombine(b, loc, combiner, lhs, rhs);
   };
 
   // A block of threads for each part of the particles, and one block for
@@ -1149,7 +1106,7 @@ Lowering::emitReductions(OpBuilder &builder, Location loc,
   auto countNumbers = [](TypeRange types) { return countKernelNumbers(types); };
   auto reduceTogether = [&](OpBuilder &b, ValueRange values, Value thread,
                             Value shared) -> SmallVector<Value> {
-    return reduceInBlock(b, loc, values, thread, shared, isSum);
+    return reduceInBlock(b, loc, values, thread, shared, combiner);
   };
   auto launchBlocks = [&](OpBuilder &at, Value blocks, int64_t numbers,
                           function_ref<void(OpBuilder &, Value, Value, Value)>
@@ -1428,7 +1385,8 @@ LogicalResult Lowering::finishSums(Operation *op, OpBuilder &builder,
     partials.push_back(scratch[2 * i + 1]);
   }
   SmallVector<Value> sums = emitReductions(builder, loc, contributions,
-                                           partials, size, /*isSum=*/true,
+                                           partials, size,
+                                           kernels::Combiner::Add,
                                            rows);
   for (unsigned i = 0, e = reduce.size(); i != e; ++i) {
     Value total = arith::AddFOp::create(builder, loc, reduce[i], sums[i]);
@@ -1632,7 +1590,8 @@ FailureOr<bool> Lowering::launchTupleBlocks(
     if (!scatter || !scatter.isHash())
       return false;
     if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
-            scatter.getSlots(), loop.getOuts().getTypes(), deterministic))
+            scatter.getSlots(), loop.getOuts().getTypes(),
+            md_exec::algebra::getDestinationAlgebras(loop)))
       return loop->emitOpError()
              << "takes the strategy 'hash', whose precondition does not "
                 "hold: "
@@ -1646,16 +1605,23 @@ FailureOr<bool> Lowering::launchTupleBlocks(
     slots = std::max(slots, scatter.getSlots());
   }
   // The destinations of the loops, each with its components and type.
+  // Each with the algebra that its first loop states for it.
   SmallVector<Value> outs;
-  for (md_exec::TupleForOp loop : loops)
-    for (Value out : loop.getOuts())
-      if (!llvm::is_contained(outs, out))
+  SmallVector<md_exec::Algebra> algebras;
+  for (md_exec::TupleForOp loop : loops) {
+    std::optional<SmallVector<md_exec::Algebra>> stated =
+        md_exec::algebra::getDestinationAlgebras(loop);
+    for (auto [index, out] : llvm::enumerate(loop.getOuts()))
+      if (!llvm::is_contained(outs, out)) {
         outs.push_back(out);
+        algebras.push_back((*stated)[index]);
+      }
+  }
   // The joint table of a run of loops may not fit where each loop's does:
   // then the run keeps the atomics.
   SmallVector<md_exec::scatter::Destination> destinations;
   if (md_exec::scatter::checkHash(slots, ValueRange(outs).getTypes(),
-                                  deterministic, &destinations))
+                                  algebras, &destinations))
     return false;
   SmallVector<Type> attributions =
       kernels::getHashAttributions(context, slots, destinations);
@@ -1756,6 +1722,15 @@ LogicalResult Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
                     loadIndex(body, k));
     });
   };
+  // The atomics and the table add in an order that the threads decide,
+  // which the stated algebra of the sum must allow (D[reduction-algebra]);
+  // a `fixed_order` sum has no form on a device yet (fixed point is #416,
+  // step 2).
+  if (!destinationsAllowReorder(op))
+    return op.emitOpError()
+           << "adds with atomics in an order that the threads decide, and "
+              "its sum is 'fixed_order'; no form of a fixed order exists on "
+              "a device";
   md_exec::ScatterAttr scatter = op.getScatterAttr();
   if (!scatter || !scatter.isHash()) {
     emitAtomics(builder);
@@ -1766,8 +1741,8 @@ LogicalResult Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
   // host by the count, as for the tuples (D283).
   SmallVector<md_exec::scatter::Destination> destinations;
   if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
-          scatter.getSlots(), TypeRange{destType}, deterministic,
-          &destinations))
+          scatter.getSlots(), TypeRange{destType},
+          md_exec::algebra::getDestinationAlgebras(op), &destinations))
     return op.emitOpError()
            << "takes the strategy 'hash', whose precondition does not hold: "
            << *refused;
@@ -1975,7 +1950,7 @@ LogicalResult Lowering::lowerOnceRun(ArrayRef<md_exec::TupleForOp> run) {
           });
       scf::YieldOp::create(one, loc,
                            reduceInBlock(one, loc, loop.getResults(), thread,
-                                         shared, /*isSum=*/true));
+                                         shared, kernels::Combiner::Add));
     }
     {
       OpBuilder several = choose.getElseBodyBuilder();
@@ -2538,7 +2513,8 @@ LogicalResult Lowering::lowerIntegration(const kernels::IntegrationRun &given) {
     partials.push_back(after.getScratch()[2 * i + 1]);
   }
   SmallVector<Value> sums = emitReductions(builder, loc, contributions,
-                                           partials, size, /*isSum=*/true);
+                                           partials, size,
+                                           kernels::Combiner::Add);
   for (auto [index, start] : llvm::enumerate(after.getReduce())) {
     int place = places[index];
     if (place < 0) {
@@ -2848,7 +2824,8 @@ LogicalResult Lowering::lowerRows(ArrayRef<Operation *> run) {
     }
   }
   SmallVector<Value> sums = emitReductions(builder, loc, contributions,
-                                           partials, size, /*isSum=*/true);
+                                           partials, size,
+                                           kernels::Combiner::Add);
   unsigned next = 0;
   for (Loop &loop : loops) {
     ValueRange reduce = isa<md_exec::PairForOp>(loop.op)
@@ -2915,7 +2892,8 @@ LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
     partials.push_back(op.getScratch()[2 * i + 1]);
   }
   SmallVector<Value> sums = emitReductions(builder, loc, contributions,
-                                           partials, size, /*isSum=*/true);
+                                           partials, size,
+                                           kernels::Combiner::Add);
 
   for (auto [index, start] : llvm::enumerate(op.getReduce())) {
     int place = places[index];
@@ -3335,7 +3313,8 @@ LogicalResult Lowering::lowerStagedParticleFor(md_exec::ParticleForOp op) {
       partials.push_back(op.getScratch()[2 * i + 1]);
     }
     SmallVector<Value> sums = emitReductions(builder, loc, contributions,
-                                             partials, size, /*isSum=*/true);
+                                             partials, size,
+                                             kernels::Combiner::Add);
     for (auto [index, start] : llvm::enumerate(op.getReduce()))
       op.getResult(index).replaceAllUsesWith(
           arith::AddFOp::create(builder, loc, start, sums[index]));
@@ -3578,48 +3557,6 @@ LogicalResult Lowering::lowerStagedPairFor(md_exec::PairForOp op) {
   return success();
 }
 
-/// `value` from the thread whose number in the warp differs from that of
-/// this one by `offset` in its bits. Numbers of 64 bits travel as two of 32,
-/// and vectors element by element.
-static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
-                        int64_t offset) {
-  Type type = value.getType();
-  if (auto vector = dyn_cast<VectorType>(type)) {
-    SmallVector<Value> elements;
-    for (int64_t i = 0, e = vector.getNumElements(); i != e; ++i)
-      elements.push_back(shuffleXor(
-          builder, loc, vector::ExtractOp::create(builder, loc, value, i),
-          offset));
-    return vector::FromElementsOp::create(builder, loc, vector, elements);
-  }
-  Type i32 = builder.getI32Type();
-  Value distance = arith::ConstantOp::create(
-      builder, loc, i32, builder.getI32IntegerAttr(offset));
-  Value width =
-      arith::ConstantOp::create(builder, loc, i32, builder.getI32IntegerAttr(32));
-  auto shuffle = [&](Value word) {
-    return gpu::ShuffleOp::create(builder, loc, word, distance, width,
-                                  gpu::ShuffleMode::XOR)
-        .getShuffleResult();
-  };
-  if (type.getIntOrFloatBitWidth() == 32)
-    return shuffle(value);
-  Type i64 = builder.getI64Type();
-  Value bits = arith::BitcastOp::create(builder, loc, i64, value);
-  Value shift =
-      arith::ConstantOp::create(builder, loc, i64, builder.getI64IntegerAttr(32));
-  Value low = arith::TruncIOp::create(builder, loc, i32, bits);
-  Value high = arith::TruncIOp::create(
-      builder, loc, i32, arith::ShRUIOp::create(builder, loc, bits, shift));
-  Value lowBack =
-      arith::ExtUIOp::create(builder, loc, i64, shuffle(low));
-  Value highBack = arith::ShLIOp::create(
-      builder, loc, arith::ExtUIOp::create(builder, loc, i64, shuffle(high)),
-      shift);
-  Value joined = arith::OrIOp::create(builder, loc, lowBack, highBack);
-  return arith::BitcastOp::create(builder, loc, type, joined);
-}
-
 /// Launches `rowLanes` threads for each of `count` particles, in groups of
 /// adjacent threads of one warp, and emits `body` for each with the
 /// particle and how its group shares the row. Every thread of a launched
@@ -3655,10 +3592,8 @@ void Lowering::launchRows(
                                         item, count);
   sharing.combine = [lanes = rowLanes](OpBuilder &builder, Location loc,
                                        Value value) {
-    for (int64_t offset = lanes / 2; offset >= 1; offset /= 2)
-      value = arith::AddFOp::create(builder, loc, value,
-                                    shuffleXor(builder, loc, value, offset));
-    return value;
+    return kernels::emitWarpReduce(builder, loc, value,
+                                   kernels::Combiner::Add, lanes);
   };
   Value particle = arith::SelectOp::create(kernel, loc, sharing.valid, item,
                                            createIndex(kernel, loc, 0));
@@ -3727,7 +3662,9 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     return op.emitOpError()
            << "writes not every value of a destination once, which it "
               "cannot overwrite";
-  if (deterministic && op.getConflict() == md_exec::Conflict::Atomic)
+  // A destination whose stated algebra is `fixed_order` (D[reduction-algebra]).
+  if (op.getConflict() == md_exec::Conflict::Atomic &&
+      !destinationsAllowReorder(op))
     return op.emitOpError()
            << "adds at the neighbors with floating-point atomics, whose "
               "order depends on the threads; the deterministic mode (D84) "
@@ -3760,8 +3697,8 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   SmallVector<Value> outs(op.getOuts());
   if (tabled) {
     if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
-            scatter.getSlots(), op.getOuts().getTypes(), deterministic,
-            &destinations))
+            scatter.getSlots(), op.getOuts().getTypes(),
+            md_exec::algebra::getDestinationAlgebras(op), &destinations))
       return op.emitOpError()
              << "takes the strategy 'hash', whose precondition does not "
                 "hold: "
@@ -3818,7 +3755,10 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   // The atomic additions make the sums depend on the order of the threads;
   // the deterministic mode needs them in fixed point (D89), which is to
   // come.
-  if (deterministic)
+  // Its destinations take atomics, and its global sums the partial sums of
+  // warps over units of lists built with atomics: every value it reduces
+  // must allow reordering (D[reduction-algebra]).
+  if (!everythingAllowsReorder(op))
     return op.emitOpError()
            << "takes each pair once with atomic additions in floating "
               "point, which the deterministic mode does not allow";
@@ -4011,8 +3951,8 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   SmallVector<md_exec::scatter::Destination> destinations;
   if (hashed)
     if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
-            scatter.getSlots(), op.getOuts().getTypes(), deterministic,
-            &destinations))
+            scatter.getSlots(), op.getOuts().getTypes(),
+            md_exec::algebra::getDestinationAlgebras(op), &destinations))
       return op.emitOpError()
              << "takes the strategy 'hash', whose precondition does not "
                 "hold: "
@@ -4075,9 +4015,8 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
         });
     SmallVector<Value> totals(loop.getResults());
     for (Value &total : totals)
-      for (int64_t offset = 16; offset >= 1; offset /= 2)
-        total = arith::AddFOp::create(kernel, loc, total,
-                                      shuffleXor(kernel, loc, total, offset));
+      total = kernels::emitWarpReduce(kernel, loc, total,
+                                      kernels::Combiner::Add);
     if (!totals.empty()) {
       Value leader = arith::AndIOp::create(
           kernel, loc, valid,
@@ -4283,7 +4222,8 @@ void Lowering::lowerFusedSums(CenterFusion &fusion, Value tupleMembers,
                 scf::YieldOp::create(inner, loc, next);
               });
           SmallVector<Value> totals = reduceInBlock(
-              b, loc, loop.getResults(), thread, shared, /*isSum=*/true);
+              b, loc, loop.getResults(), thread, shared,
+              kernels::Combiner::Add);
           Value leader = arith::CmpIOp::create(
               b, loc, arith::CmpIPredicate::eq, thread, createIndex(b, loc, 0));
           scf::IfOp::create(b, loc, leader, [&](OpBuilder &lead, Location) {
@@ -4305,7 +4245,8 @@ void Lowering::lowerFusedSums(CenterFusion &fusion, Value tupleMembers,
                 b, loc, inside, loadElement(b, loc, partial, slot),
                 createZero(b, loc, type)));
           SmallVector<Value> totals =
-              reduceInBlock(b, loc, values, thread, shared, /*isSum=*/true);
+              reduceInBlock(b, loc, values, thread, shared,
+              kernels::Combiner::Add);
           Value leader = arith::CmpIOp::create(
               b, loc, arith::CmpIPredicate::eq, thread, createIndex(b, loc, 0));
           scf::IfOp::create(b, loc, leader, [&](OpBuilder &lead, Location) {
@@ -4344,7 +4285,9 @@ LogicalResult Lowering::lowerTupleForWithFlags(md_exec::TupleForOp op) {
     return op->emitOpError()
            << "takes a flag in 'reduce' over tuples that may share "
               "particles, which a device evaluates once per tuple only "
-              "outside the deterministic mode";
+              "where the algebra of every value it reduces allows another "
+              "order (D[reduction-algebra]); an 'fixed_order' sum takes the "
+              "rows of the particles";
   SmallVector<Flag, 2> used;
   for (unsigned i = 0; i != numFlags; ++i)
     used.push_back(getFlag(flags.size(), loc));
@@ -4410,7 +4353,8 @@ LogicalResult Lowering::lowerTupleForWithFlags(md_exec::TupleForOp op) {
     partials.push_back(op.getScratch()[2 * i + 1]);
   }
   SmallVector<Value> sums = emitReductions(builder, loc, contributions,
-                                           partials, rows, /*isSum=*/true);
+                                           partials, rows,
+                                           kernels::Combiner::Add);
   for (auto [index, start] : llvm::enumerate(op.getReduce())) {
     int place = places[index];
     if (place < 0) {
@@ -4551,7 +4495,7 @@ void Lowering::lowerBuildIncidence(md_exec::BuildIncidenceOp op) {
                         cast<MemRefType>(op.getResult().getType()));
     op.getResult().replaceAllUsesWith(device);
     auto hostType = cast<MemRefType>(relation.getType());
-    if (deterministic || !tuplesOnce || hostType.getRank() != 2)
+    if (!tuplesMayReorder || !tuplesOnce || hostType.getRank() != 2)
       return;
     members[device] = takeFromRuntime(
         op, tuplesMembersName, relation, Value(),
@@ -4574,7 +4518,7 @@ void Lowering::lowerBuildIncidence(md_exec::BuildIncidenceOp op) {
   freeDeviceAtEndOfBlock(op, device);
 
   // The members too, for the loops that evaluate each tuple once.
-  if (deterministic || !tuplesOnce)
+  if (!tuplesMayReorder || !tuplesOnce)
     return;
   Value relation = op.getRelation();
   auto hostType = dyn_cast<MemRefType>(relation.getType());
@@ -4909,7 +4853,7 @@ void Lowering::buildOnDevice(md_exec::BuildIncidenceOp op,
   // The members for the loops that evaluate each tuple once: the renumbered
   // members on the device, written before on the same stream.
   auto hostType = cast<MemRefType>(op.getRelation().getType());
-  if (deterministic || !tuplesOnce || hostType.getRank() != 2)
+  if (!tuplesMayReorder || !tuplesOnce || hostType.getRank() != 2)
     return;
   MemRefType membersType =
       getDeviceType(hostType.getShape(), hostType.getElementType());
@@ -5268,8 +5212,9 @@ static Value getBins(md_exec::ReciprocalOp op) {
 
 /// The reciprocal sum of the prolate kernel on a device (D266):
 /// the coefficients of the table into the type of the grid, the places, the
-/// spreading (into bricks, or in fixed point in the deterministic mode and
-/// in f64), the transforms, the factors of the edges and the product with
+/// spreading (into bricks, or in fixed point where the spreading is
+/// `fixed_order` (D[reduction-algebra]) and in f64), the transforms, the
+/// factors of the edges and the product with
 /// the influence function, and the gathering or the potential. With
 /// `listed`, the spreading takes the listed particles alone, and so does
 /// the gathering unless `gather_all` (D262); the places are those of every
@@ -5278,7 +5223,7 @@ static LogicalResult lowerProlate(
     md_exec::ReciprocalOp op, Value listed, OpBuilder &builder,
     llvm::function_ref<func::FuncOp(StringRef)> instance,
     llvm::function_ref<func::FuncOp(StringRef, FunctionType)> declare,
-    bool deterministic) {
+    bool fixedPoint) {
   Location loc = op.getLoc();
   ArrayRef<int64_t> grid = op.getGrid();
   auto index = [&](int64_t v) {
@@ -5322,7 +5267,7 @@ static LogicalResult lowerProlate(
     func::CallOp::create(
         builder, loc, instance("mdrt_gpu_pme_prolate_spread_tiles" + edge),
         ValueRange{charges, places, tables, bins, real, k1, k2, k3});
-  } else if (deterministic || !bricks) {
+  } else if (fixedPoint || !bricks) {
     func::CallOp::create(
         builder, loc,
         instance("mdrt_gpu_pme_prolate_spread_fixed" + spreadTag),
@@ -5404,15 +5349,21 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // The listed particles alone (D262); the
   // potential at the particles takes every particle.
   Value listed = op.getPotential() ? Value() : op.getListed();
+  // The spreading adds in an order that the threads decide unless its
+  // stated algebra is `fixed_order` (the deterministic mode): then its charges
+  // are added in fixed point, exact in any order (D70, D84,
+  // D[reduction-algebra]).
+  bool fixedPoint =
+      md_exec::algebra::getAlgebra(op, 0) == md_exec::Algebra::FixedOrder;
   // The spreading into tiles (D282): where the preconditions of
   // md-exec-choose-scatter hold, checked here with its functions
-  // (Scatter.h, D285); never in the deterministic mode,
-  // whose grid is in fixed point (D70, D84).
+  // (Scatter.h, D285); never where the spreading is `fixed_order` (the
+  // deterministic mode), whose grid is in fixed point (D70, D84).
   int64_t tiles = getTileEdge(op);
   Value bins = getBins(op);
   if (tiles) {
     if (md_exec::scatter::Refusal refused =
-            md_exec::scatter::checkTile(op, tiles, deterministic))
+            md_exec::scatter::checkTile(op, tiles))
       return op->emitOpError()
              << "takes the strategy 'tile', whose precondition does not "
                 "hold: "
@@ -5460,7 +5411,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Value bricks = getBricks(op);
   // The potential at the particles (the fourth result of md.reciprocal)
   // has the kernel of its own, which takes no weights.
-  bool usesWeights = weights && bricks && !deterministic &&
+  bool usesWeights = weights && bricks && !fixedPoint &&
                      op.getOrder() == 4 && force.isF32() &&
                      !op.getPotential();
 
@@ -5498,7 +5449,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
             [&](StringRef name, FunctionType type) {
               return getOrDeclare(name, type);
             },
-            deterministic)))
+            fixedPoint)))
       return failure();
     if (side) {
       auto end = func::CallOp::create(
@@ -5513,7 +5464,8 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     }
     return success();
   }
-  // The charges in fixed point in the deterministic mode, then converted;
+  // The charges in fixed point where the spreading is `fixed_order` (the
+  // deterministic mode), then converted;
   // by default with floating-point atomics, straight to the grid (D84).
   // With a list, the gathering stores the forces of the listed particles
   // and a force of zero at each of the others.
@@ -5535,7 +5487,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
     func::CallOp::create(builder, loc,
                          instance("mdrt_gpu_pme_spread_tiles" + edge),
                          ValueRange{charges, weights, bins, real, k1, k2, k3});
-  } else if (listed && deterministic) {
+  } else if (listed && fixedPoint) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread_listed"),
                          ValueRange{positions, charges, listed, box, fixed, k1,
                                     k2, k3, order});
@@ -5555,7 +5507,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                          instance("mdrt_gpu_pme_spread_float_listed"),
                          ValueRange{positions, charges, listed, box, real, k1,
                                     k2, k3, order});
-  } else if (deterministic) {
+  } else if (fixedPoint) {
     func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_spread"),
                          ValueRange{positions, charges, box, fixed, k1, k2,
                                     k3, order});
@@ -7182,9 +7134,8 @@ void Lowering::emitActiveUnits(OpBuilder &builder, Location loc,
                     ValueRange{arith::SelectOp::create(
                         b, loc, before, near, createIndex(b, loc, 0))}),
                 constant32(b, 0)));
-        for (int64_t offset = 16; offset >= 1; offset /= 2)
-          earlier = arith::AddIOp::create(b, loc, earlier,
-                                          shuffleXor(b, loc, earlier, offset));
+        earlier = kernels::emitWarpReduce(b, loc, earlier,
+                                          kernels::Combiner::Add);
         scf::IfOp::create(b, loc, active, [&](OpBuilder &c, Location) {
           memref::StoreOp::create(
               c, loc, arith::IndexCastOp::create(c, loc, i32, block),
@@ -7608,7 +7559,7 @@ Lowering::lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op) {
     });
     Value farthest =
         emitReductions(at, loc, {moved2}, {op.getScratch()[1]},
-                       structure.size, /*isSum=*/false)
+                       structure.size, kernels::Combiner::Max)
             .front();
     return arith::CmpFOp::create(at, loc, arith::CmpFPredicate::OLE,
                                  farthest, limitReal);
@@ -8643,9 +8594,31 @@ public:
       getOperation().emitError("derivative checking requires the CPU lowering");
       return signalPassFailure();
     }
+    // The lowering reads the algebra of each sum, not the mode, where it
+    // chooses how to combine (D[reduction-algebra]): an op that reduces
+    // without stating it is refused, rather than given an algebra here.
+    bool stated = true;
+    bool tuplesMayReorder = true;
+    getOperation()->walk([&](Operation *op) {
+      if (!md_exec::algebra::needsAlgebra(op))
+        return;
+      std::optional<SmallVector<md_exec::Algebra>> algebras =
+          md_exec::algebra::getAlgebras(op);
+      if (!algebras) {
+        op->emitOpError() << md_exec::algebra::getMissingMessage();
+        stated = false;
+        return;
+      }
+      if (isa<md_exec::TupleForOp>(op) &&
+          !md_exec::algebra::allowReorder(*algebras))
+        tuplesMayReorder = false;
+    });
+    if (!stated)
+      return signalPassFailure();
     Lowering lowering(getOperation(), blockSize, rowLanes, fuseRows,
                       fuseIntegration, deterministic, tuplesOnce,
                       fuseCenters);
+    lowering.tuplesMayReorder = tuplesMayReorder;
     lowering.keptTuples = keptTuples;
     lowering.deviceTuples = keptTuples && deviceTuples;
     lowering.checkPruning = checkPruning;
@@ -8653,6 +8626,9 @@ public:
     lowering.fusePruningGroups = fusePruningGroups;
     if (failed(lowering.run()))
       return signalPassFailure();
+    // The ops whose algebras the mark of the deterministic mode verifies
+    // are lowered (D[reduction-algebra]).
+    getOperation()->removeAttr(md_exec::algebra::kDeterministicAttrName);
     // Products and sums in the kernels may become fused multiply-adds, as
     // nvcc makes them by default: the backend fuses only what is marked.
     if (contract)

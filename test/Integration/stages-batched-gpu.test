@@ -20,7 +20,7 @@
 # RUN: cat %t/head.mlir %t/model.mlir %t/harness.mlir > %t/m.mlir
 # RUN: mdir-opt %t/m.mlir %md_passes \
 # RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-# RUN:     --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies \
 # RUN:     --convert-md-exec-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
@@ -29,7 +29,7 @@
 # RUN: mdir-opt %t/m.mlir %md_passes \
 # RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 # RUN:     --md-exec-assign-precision="mode=mixed" \
-# RUN:     --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies \
 # RUN:     --convert-md-exec-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \

@@ -107,13 +107,17 @@ def ChooseScatter
     where the strategy's preconditions hold (D285,
     docs/device-primitives.md). The preconditions are the functions of
     include/mdir/Dialect/MDExec/Scatter.h, which the lowering calls as
-    well. Runs on programs for a device, after the precision is assigned
-    and before the storage, which sizes the bins of the tiles from it.
+    well. Runs on programs for a device, after the precision and the
+    algebra of the sums are assigned (`md-exec-assign-algebra`), and before
+    the storage, which sizes the bins of the tiles from it. A strategy that
+    adds in another order needs the algebra of the sums to allow it: a sum
+    whose algebra is `fixed_order` (the deterministic mode), or that states
+    none, is refused (D[reduction-algebra]).
 
     - `md_exec.reciprocal`: `tile(E)`, the charges spread through tiles of
       block memory, one for each bin of $E^3$ points of the grid (D282).
-      It can be tiled where the run is not in the deterministic mode,
-      the grid is in f32 or f64, the template has kernels of bins of $E$
+      It can be tiled where the spreading allows reordering, the grid is
+      in f32 or f64, the template has kernels of bins of $E$
       points (4, 8, 16), a tile of $(E + n - 1)^3$ values (order $n$) with the
       particles of a round fits 48 KiB of block memory, and every edge of
       the grid has at least $E + n - 1$ points, so that a point of a tile
@@ -128,8 +132,8 @@ def ChooseScatter
       members, rounded up to a power of two, `P` = `hash-probes` slots
       tried before a direct atomic, and `L` = `hash-least` the fewest
       tuples of a launch that take the table, chosen on the host by the
-      count. A loop takes it where the run is not in the deterministic
-      mode, it may share particles (not `disjoint`), has no global sums,
+      count. A loop takes it where its destinations allow reordering, it
+      may share particles (not `disjoint`), has no global sums,
       adds to its destinations (none overwritten), each a number or a row
       of a static length of f32 or f64, and the table fits 48 KiB. The
       lowering applies it where it evaluates each tuple once, to a run of
@@ -144,8 +148,8 @@ def ChooseScatter
       of work (one of the group, two of the entries), `L` =
       `pair-hash-least` the fewest units of work of a launch over groups
       that take the table (a loop over a matrix takes it at any count). A
-      loop takes it where the run is not in the deterministic
-      mode, it has destinations, each a number or a row of a static length
+      loop takes it where its destinations allow reordering, it has
+      destinations, each a number or a row of a static length
       of f32 or f64, and the table fits 48 KiB. `pair-hash=on` takes the
       table where it applies, `pair-hash=off` (the default) and
       `pair-hash=auto` never.
@@ -154,7 +158,7 @@ def ChooseScatter
       Section 2.7).
     - `md_exec.scatter_add`: `hash(S, P, L)` with `S` the slots for
       `block-size` threads of one value each and `L` = `hash-least`, where
-      the run is not in the deterministic mode, the destination is a number
+      the destination allows reordering, the destination is a number
       or a row of a static length of f32 or f64, and the table fits 48 KiB.
       `scatter-hash=on` takes the table at any count, `scatter-hash=off`
       never.
@@ -197,12 +201,69 @@ def ChooseScatter
     Option<"blockSize", "block-size", "int64_t", /*default=*/"128",
            "The threads of a block of the tuples, as convert-md-exec-to-gpu "
            "launches them">,
-    Option<"deterministic", "deterministic", "bool", /*default=*/"false",
-           "The deterministic mode, which privatizes no floating-point "
-           "sum">,
     Option<"explain", "explain", "bool", /*default=*/"false",
            "A remark on each op for its choice or the reason of a refusal">
   ];
+}
+
+def AssignAlgebra
+    : Pass<"md-exec-assign-algebra", "::mlir::ModuleOp"> {
+  let summary = "States the algebra of each value that an op reduces";
+  let description = [{
+    Sets `md_exec.algebra` (`#md_exec.algebra`) on every op that reduces
+    values, one entry for each value in the order of
+    `md_exec::algebra::getReducedTypes` (D[reduction-algebra],
+    include/mdir/Dialect/MDExec/Algebra.h): `any_order_exact` for an
+    integer or an
+    `or`, and for a floating-point number `any_order` (any order; its
+    rounding then depends on the order), or `fixed_order` with
+    `deterministic` (the result must not depend on the threads). The
+    strategies of `md-exec-choose-scatter` and the lowerings read the
+    algebra, not the mode; both refuse an op that states none.
+
+    Runs after the passes that rebuild loops (fusion, the accumulation of
+    destinations, the narrowing of sums) and after the precision, which
+    fixes the types, and before `md-exec-choose-scatter` and
+    `md-exec-assign-storage`, which carries the attribute onto the storage
+    form. It replaces an algebra already stated.
+
+    A sum across domains (`md_dist.all_reduce`, `md_dist.halo_sum`) is
+    `fixed_order` in every mode: its lowering adds the domains in their
+    order, so the result has the same bits on every run for the same
+    decomposition and build, not for another decomposition (#409).
+    This pass is the only one that states an algebra (the maintainer's
+    guard on #470): every other pass carries it unchanged, and a sum that a
+    pass creates states none until this pass runs.
+
+    With `deterministic`, the module takes the unit attribute
+    `md_exec.deterministic`, whose verifier refuses `any_order` on a
+    floating-point value anywhere in the program.
+
+    ```mlir
+    %u, %bad = md_exec.particle_for ins(%v : !md.field<@atoms, 3 x f64>)
+                 reduce(%z, %false : f64, i1) { ... }
+                 {md_exec.algebra = #md_exec.algebra<any_order, any_order_exact>}
+    ```
+  }];
+  let options = [
+    Option<"deterministic", "deterministic", "bool", /*default=*/"false",
+           "The deterministic mode (D84): floating-point sums are fixed_order">
+  ];
+}
+
+def CheckAlgebra
+    : Pass<"md-exec-check-algebra", "::mlir::ModuleOp"> {
+  let summary = "Refuses an op that reduces values without a stated algebra";
+  let description = [{
+    Every op that reduces values (`md_exec::algebra::reduces`: the loops
+    over particles, pairs, and tuples, `md_exec.scatter_add`, and
+    `md_exec.reciprocal`; `md_dist.all_reduce` and `md_dist.halo_sum`)
+    must state the algebra of each, as
+    `md_exec.algebra` (D[reduction-algebra]); the verifier of the
+    attribute checks its count and its entries. Like
+    `--md-check-transposes` (D295), the check fails at each op that states
+    none, naming it.
+  }];
 }
 
 def ChooseNeighbors

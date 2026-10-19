@@ -2,9 +2,14 @@
 // domain that adds at the neighbors with floating-point atomics
 // (D290): the two-ended gather of the unique traversal.
 //
-// RUN: mdir-opt %s --convert-md-dist-to-md-exec \
-// RUN:     --md-exec-assign-storage=memory=device \
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-dist-to-md-exec \
+// RUN:     --md-exec-assign-algebra=deterministic=true --md-exec-assign-storage=memory=device \
 // RUN:     --convert-md-exec-to-gpu=deterministic=true -verify-diagnostics
+// The ordered algebra refuses it whatever the option of the lowering
+// (D[reduction-algebra]):
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-dist-to-md-exec \
+// RUN:     --md-exec-assign-algebra=deterministic=true --md-exec-assign-storage=memory=device \
+// RUN:     --convert-md-exec-to-gpu -verify-diagnostics
 
 !vec  = !md.field<@atoms, 3 x f64>
 !own  = !md_dist.field<@dd, owned, 3 x f64>

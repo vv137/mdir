@@ -3,6 +3,8 @@
 
 #include "mdir/Dialect/MDExec/Scatter.h"
 
+#include "mdir/Dialect/MDExec/Algebra.h"
+
 #include "mdir/Dialect/MD/MDTypes.h"
 #include "mlir/IR/BuiltinTypes.h"
 #include "llvm/Support/MathExtras.h"
@@ -19,14 +21,16 @@ static std::string describe(Type type) {
   return text;
 }
 
-Refusal scatter::checkReorder(Type element, bool deterministic) {
+Refusal scatter::checkReorder(Type element, std::optional<Algebra> algebra) {
   if (!element.isF32() && !element.isF64())
     return "the values are of " + describe(element) +
            ", not of f32 or f64, which are the types privatized";
-  if (deterministic)
-    return std::string("the deterministic mode adds floating-point values "
-                       "in a fixed order, and a sum of a block first would "
-                       "round otherwise");
+  if (!algebra)
+    return "the op " + algebra::getMissingMessage();
+  if (!algebra::allowsReorder(*algebra))
+    return std::string("the sum's algebra is 'fixed_order': the deterministic "
+                       "mode adds floating-point values in a fixed order, "
+                       "and a sum of a block first would round otherwise");
   return std::nullopt;
 }
 
@@ -48,8 +52,8 @@ int64_t scatter::getTileBytes(int64_t edge, int64_t order, Type element) {
 }
 
 Refusal scatter::checkTile(int64_t edge, int64_t order, ArrayRef<int64_t> grid,
-                           Type element, bool deterministic) {
-  if (Refusal refused = checkReorder(element, deterministic))
+                           Type element, std::optional<Algebra> algebra) {
+  if (Refusal refused = checkReorder(element, algebra))
     return refused;
   if (!isTileEdge(edge))
     return "the template has no kernels of bins of " + std::to_string(edge) +
@@ -68,7 +72,7 @@ Refusal scatter::checkTile(int64_t edge, int64_t order, ArrayRef<int64_t> grid,
   return std::nullopt;
 }
 
-Refusal scatter::checkTile(ReciprocalOp op, int64_t edge, bool deterministic) {
+Refusal scatter::checkTile(ReciprocalOp op, int64_t edge) {
   // The grid is in the type of the forces (D271): the field of the value
   // form, or its buffer in the storage form.
   Type element;
@@ -81,7 +85,9 @@ Refusal scatter::checkTile(ReciprocalOp op, int64_t edge, bool deterministic) {
   }
   if (!element)
     return std::string("the sum yields no forces, whose type the grid takes");
-  return checkTile(edge, op.getOrder(), op.getGrid(), element, deterministic);
+  // The spreading is the first value that the sum reduces (Algebra.h).
+  return checkTile(edge, op.getOrder(), op.getGrid(), element,
+                   algebra::getAlgebra(op, 0));
 }
 
 int64_t scatter::getHashSlots(int64_t blockSize, int64_t arity) {
@@ -115,16 +121,20 @@ int64_t scatter::getHashBytes(int64_t slots, ArrayRef<Destination> outs) {
   return bytes;
 }
 
-Refusal scatter::checkHash(int64_t slots, TypeRange outs, bool deterministic,
+Refusal scatter::checkHash(int64_t slots, TypeRange outs,
+                           const std::optional<SmallVector<Algebra>> &algebras,
                            SmallVectorImpl<Destination> *destinations) {
   if (outs.empty())
     return std::string("the loop adds to no field");
   SmallVector<Destination> found;
-  for (Type type : outs) {
+  for (auto [index, type] : llvm::enumerate(outs)) {
     Destination destination;
     if (Refusal refused = getHashDestination(type, destination))
       return refused;
-    if (Refusal refused = checkReorder(destination.element, deterministic))
+    std::optional<Algebra> algebra;
+    if (algebras && index < algebras->size())
+      algebra = (*algebras)[index];
+    if (Refusal refused = checkReorder(destination.element, algebra))
       return refused;
     found.push_back(destination);
   }

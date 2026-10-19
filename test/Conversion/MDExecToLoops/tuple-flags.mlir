@@ -2,7 +2,7 @@
 // tuple (D278): on the host the value is reduced as an
 // integer of 32 bits, as that of a loop over particles, and compared with 0.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-loops | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-loops | FileCheck %s
 
 md.particle_set @atoms
 

@@ -17,25 +17,25 @@
 // inner product over the ghost rows. Each grid of dist-lj.mlir; the check
 // prints 1 if the two sides agree to a relative 1e-12.
 //
-// RUN: sed 's/GRID/1, 1, 1/' %s | mdir-opt %md_passes --convert-md-dist-to-loops \
+// RUN: sed 's/GRID/1, 1, 1/' %s | mdir-opt %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
-// RUN: sed 's/GRID/2, 1, 1/' %s | mdir-opt %md_passes --convert-md-dist-to-loops \
+// RUN: sed 's/GRID/2, 1, 1/' %s | mdir-opt %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
-// RUN: sed 's/GRID/3, 2, 1/' %s | mdir-opt %md_passes --convert-md-dist-to-loops \
+// RUN: sed 's/GRID/3, 2, 1/' %s | mdir-opt %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
-// RUN: sed 's/GRID/16, 1, 1/' %s | mdir-opt %md_passes --convert-md-dist-to-loops \
+// RUN: sed 's/GRID/16, 1, 1/' %s | mdir-opt %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \

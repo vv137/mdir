@@ -6,9 +6,12 @@
 // would be freed. Without the option they are built by loops in the module
 // and uploaded, as before.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="kept-tuples=true" | FileCheck %s
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="kept-tuples=true deterministic=true" | FileCheck %s --check-prefix=ROWS
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=LOOPS
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu="kept-tuples=true" | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --convert-md-exec-to-gpu="kept-tuples=true deterministic=true" | FileCheck %s --check-prefix=ROWS
+// The algebra, not the mode, decides (D[reduction-algebra]): ordered sums
+// take the rows in a lowering that is not in the deterministic mode.
+// RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --convert-md-exec-to-gpu="kept-tuples=true" | FileCheck %s --check-prefix=ROWS
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s --check-prefix=LOOPS
 //
 // With `device-tuples` as well (D257), the identities are
 // compared with the store's order by a kernel, the entry is taken from the
@@ -16,7 +19,7 @@
 // renumbered members, and the rows are kernels of the module; the copy of
 // the members for the loops over each tuple once is the renumbered members
 // on the device. Nothing is copied between the host and the device.
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="kept-tuples=true device-tuples=true" | FileCheck %s --check-prefix=DEVICE
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu="kept-tuples=true device-tuples=true" | FileCheck %s --check-prefix=DEVICE
 // DEVICE-LABEL: func.func @renumbered(
 // DEVICE:         call @mdrtDeviceTuplesOrderKept(
 // DEVICE:         call @mdrtDeviceTuplesOrderFlag()

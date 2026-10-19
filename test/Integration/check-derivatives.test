@@ -16,7 +16,7 @@
 # STEP: derivative check needs a finite positive step
 # RUN: not mdir-opt %t/random.mlir --md-check-derivatives %md_passes --convert-md-to-md-exec --md-exec-assign-precision="mode=mixed" 2>&1 | FileCheck %s --check-prefix=PRECISION
 # PRECISION: derivative checking requires double precision for every role
-# RUN: not mdir-opt %t/random.mlir --md-check-derivatives %md_passes --convert-md-to-md-exec --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu 2>&1 | FileCheck %s --check-prefix=TARGET
+# RUN: not mdir-opt %t/random.mlir --md-check-derivatives %md_passes --convert-md-to-md-exec --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu 2>&1 | FileCheck %s --check-prefix=TARGET
 # TARGET: derivative checking requires the CPU lowering
 
 # All arithmetic/math/vector rules from the coverage test, with a=0.37.

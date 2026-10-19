@@ -1,14 +1,15 @@
-// A flag of a loop over tuples that may share particles in the
-// deterministic mode (D278).
+// A flag of a loop over tuples that may share particles, where a value the
+// loop reduces is `fixed_order` (D278, D[reduction-algebra]).
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="deterministic=true" \
-// RUN:     -verify-diagnostics
+// RUN: mdir-opt %s --convert-md-exec-to-gpu -verify-diagnostics
 
 md.particle_set @atoms
 
-// Over tuples that may share particles, the deterministic mode evaluates
-// each tuple by each of its members, in rows that groups of threads share,
-// which take no flag.
+// Over tuples that may share particles, a `fixed_order` sum (the deterministic
+// mode) is evaluated by each member of each tuple, in rows that groups of
+// threads share, which take no flag. A flag alone is `any_order_exact`, which allows
+// the tuples to be evaluated once; here it is stated `fixed_order`, a stronger
+// requirement that the verifier accepts on an integer.
 //
 func.func @shared(%pairs: memref<?x?xi32, 1>, %x: memref<?x3xf64, 1>,
                   %cell: !md.cell) -> i1 {
@@ -22,6 +23,7 @@ func.func @shared(%pairs: memref<?x?xi32, 1>, %x: memref<?x3xf64, 1>,
     %limit = arith.constant 1.0 : f64
     %far = arith.cmpf ugt, %r2, %limit : f64
     md_exec.yield %far : i1
-  } : memref<?x?xi32, 1>, memref<?x3xf64, 1> -> i1
+  } {md_exec.algebra = #md_exec.algebra<fixed_order>}
+    : memref<?x?xi32, 1>, memref<?x3xf64, 1> -> i1
   return %any : i1
 }

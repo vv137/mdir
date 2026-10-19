@@ -5,7 +5,7 @@
 // loops of md_exec over it; the transfers stay those of the reference
 // executor.
 //
-// RUN: mdir-opt %s --convert-md-dist-to-md-exec | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-dist-to-md-exec | FileCheck %s
 
 !vec  = !md.field<@atoms, 3 x f64>
 !own  = !md_dist.field<@dd, owned, 3 x f64>

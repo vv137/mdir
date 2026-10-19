@@ -9,42 +9,42 @@
 // md_exec; each check prints 1 if they agree to a relative 1e-10.
 //
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=directed potentials=many_body" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=unique potentials=many_body" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
 // RUN: mdir-opt %s --md-distribute="grid=3,2,1 traversal=directed potentials=many_body" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
 // RUN: mdir-opt %s --md-distribute="grid=3,2,1 traversal=unique potentials=many_body" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
 // RUN: mdir-opt %s --md-distribute="grid=16,1,1 traversal=directed potentials=many_body" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
 // RUN: mdir-opt %s --md-distribute="grid=16,1,1 traversal=unique potentials=many_body" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \

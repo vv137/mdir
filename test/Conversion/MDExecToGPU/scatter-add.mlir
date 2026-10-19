@@ -1,9 +1,9 @@
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s
-// RUN: mdir-opt %s --md-exec-choose-scatter=scatter-hash=on \
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=scatter-hash=on \
 // RUN:     --convert-md-exec-to-gpu | FileCheck %s --check-prefix=TABLE
-// RUN: mdir-opt %s --md-exec-choose-scatter --convert-md-exec-to-gpu \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter --convert-md-exec-to-gpu \
 // RUN: | FileCheck %s --check-prefix=LEAST
-// RUN: not mdir-opt %s --md-exec-choose-scatter=scatter-hash=on \
+// RUN: not mdir-opt %s --md-exec-assign-algebra=deterministic=true --md-exec-choose-scatter=scatter-hash=on \
 // RUN:     --convert-md-exec-to-gpu=deterministic=true 2>&1 \
 // RUN: | FileCheck %s --check-prefix=DET
 
@@ -46,7 +46,7 @@
 // LEAST:         } else {
 // LEAST:           gpu.launch
 //
-// DET: error: 'md_exec.scatter_add' op takes the strategy 'hash', whose precondition does not hold: the deterministic mode adds floating-point values in a fixed order, and a sum of a block first would round otherwise
+// DET: error: 'md_exec.scatter_add' op adds with atomics in an order that the threads decide, and its sum is 'fixed_order'; no form of a fixed order exists on a device
 
 func.func @add(%v: memref<?x3xf32, 1>, %i: memref<?xi32, 1>,
                %a: memref<?x3xf32, 1>) {

@@ -7,21 +7,21 @@
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-choose-scatter="pair-hash=on" \
+// RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on" \
 // RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
 // RUN: | FileCheck %s
 // RUN: mdir-opt %S/../../Integration/eam.mlir %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-choose-scatter="pair-hash=on pair-hash-least=1000" \
+// RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on pair-hash-least=1000" \
 // RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
 // RUN: | FileCheck %s --check-prefix=LEAST
 // RUN: mdir-opt %S/../../Integration/eam.mlir %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-choose-scatter \
+// RUN:     --md-exec-assign-algebra --md-exec-choose-scatter \
 // RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
 // RUN: | FileCheck %s --check-prefix=OFF
 

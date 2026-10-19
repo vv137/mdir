@@ -7,7 +7,7 @@
 // RUN:     --md-exec-assign-storage="memory=device" \
 // RUN: | FileCheck %s --check-prefix=STORAGE
 // RUN: mdir-opt %s --convert-md-to-md-exec="skin=0.05 width=48" \
-// RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
 // RUN: | FileCheck %s --check-prefix=GPU
 // RUN: not mdir-opt %s --convert-md-to-md-exec="skin=0.05 width=48" \
 // RUN:     --md-exec-assign-storage 2>&1 \

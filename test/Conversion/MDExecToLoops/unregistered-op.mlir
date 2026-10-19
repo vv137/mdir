@@ -4,7 +4,7 @@
 // asserts on the null dialect of such an op; it now takes it as an op of
 // another dialect and leaves it where it is.
 //
-// RUN: mdir-opt --allow-unregistered-dialect --convert-md-exec-to-loops %s \
+// RUN: mdir-opt --allow-unregistered-dialect --md-exec-assign-algebra --convert-md-exec-to-loops %s \
 // RUN:   | FileCheck %s
 
 md.particle_set @atoms

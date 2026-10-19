@@ -9,6 +9,7 @@
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
+#include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
@@ -566,10 +567,12 @@ LogicalResult Assignment::convertScatterAdd(ScatterAddOp op, Scope &scope,
                                /*inPlace=*/false, scope, position, dest,
                                accumulates)))
     return failure();
-  ScatterAddOp::create(scope.builder, op.getLoc(), TypeRange(), values,
-                       indices, dest,
-                       scope.builder.getBoolAttr(!accumulates),
-                       onDevice ? op.getScatterAttr() : ScatterAttr());
+  auto created = ScatterAddOp::create(
+      scope.builder, op.getLoc(), TypeRange(), values, indices, dest,
+      scope.builder.getBoolAttr(!accumulates),
+      onDevice ? op.getScatterAttr() : ScatterAttr());
+  // The algebra of the sum (D[reduction-algebra]).
+  algebra::carry(op, created);
   buffers[op.getResult()] = dest;
   scope.owned.insert(dest);
   return success();
@@ -617,6 +620,7 @@ LogicalResult Assignment::convertParticleFor(ParticleForOp op, Scope &scope,
 
   auto loop = ParticleForOp::create(scope.builder, op.getLoc(), resultTypes,
                                     ins, outs, reduce, scratch);
+  algebra::carry(op, loop);
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
     scope.release(buffer);
@@ -715,6 +719,7 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
       // The strategy of the scatter (D291): a loop that overwrites
       // a destination clears it first and then adds to it as well.
       op.getScatterAttr());
+  algebra::carry(op, loop);
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
     scope.release(buffer);
@@ -801,6 +806,7 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
       // that adds to its destinations: one that overwrites a destination
       // writes the rows of its particles, and scatters nothing.
       overwriteAttr ? ScatterAttr() : op.getScatterAttr());
+  algebra::carry(op, loop);
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
     scope.release(buffer);
@@ -1066,6 +1072,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
       op.getPotentialAttr(), op.getProlateAttr(), op.getGatherAllAttr(),
       onDevice ? op.getScatterAttr() : ScatterAttr());
+  algebra::carry(op, created);
   mapping.map(op.getEnergy(), created.getEnergy());
   mapping.map(op.getVirial(), created.getVirial());
   buffers[op.getForces()] = out;

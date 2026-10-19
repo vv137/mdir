@@ -11,6 +11,7 @@
 #ifndef MDIR_DIALECT_MDEXEC_SCATTER_H
 #define MDIR_DIALECT_MDEXEC_SCATTER_H
 
+#include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 
 #include "llvm/ADT/ArrayRef.h"
@@ -34,11 +35,13 @@ constexpr int64_t kBlockMemoryBytes = 48 * 1024;
 /// Whether the values may be added in another order than the atomics of
 /// the device add them. A privatized sum adds the values of a block first
 /// and the block's sums afterwards: exact for integers in any order, but
-/// for floating-point numbers another rounding, which the default mode
-/// allows (the atomics already add in an order the threads decide) and the
-/// deterministic mode does not. Fixed point is not privatized yet (#416,
-/// step 2), so every element type other than f32 and f64 is refused.
-Refusal checkReorder(mlir::Type element, bool deterministic);
+/// for floating-point numbers another rounding, which the stated algebra
+/// `any_order` allows (the atomics already add in an order the threads
+/// decide) and `fixed_order` (the deterministic mode) does not; nothing is
+/// assumed where the op states no algebra (D[reduction-algebra],
+/// Algebra.h). Fixed point is not privatized yet (#416, step 2), so every
+/// element type other than f32 and f64 is refused.
+Refusal checkReorder(mlir::Type element, std::optional<Algebra> algebra);
 
 //===----------------------------------------------------------------------===//
 // tile(E): the dense tile of a bin (D282)
@@ -62,10 +65,11 @@ int64_t getTileBytes(int64_t edge, int64_t order, mlir::Type element);
 /// template, the block memory, and a footprint that wraps around the grid
 /// once at most (every edge of the grid at least the side of a tile).
 Refusal checkTile(int64_t edge, int64_t order, llvm::ArrayRef<int64_t> grid,
-                  mlir::Type element, bool deterministic);
+                  mlir::Type element, std::optional<Algebra> algebra);
 /// The same for `op`, its grid in the type of its forces (D271), in the
-/// value or the storage form.
-Refusal checkTile(ReciprocalOp op, int64_t edge, bool deterministic);
+/// value or the storage form, and the algebra that it states for its
+/// spreading.
+Refusal checkTile(ReciprocalOp op, int64_t edge);
 
 //===----------------------------------------------------------------------===//
 // hash(S, P, L): the table of a block (D283)
@@ -95,10 +99,12 @@ Refusal getHashDestination(mlir::Type fieldOrBuffer, Destination &out);
 /// The block memory of a table of `slots` slots with these destinations:
 /// a key of 32 bits and the sums of each destination for each slot.
 int64_t getHashBytes(int64_t slots, llvm::ArrayRef<Destination> outs);
-/// The preconditions of `hash` with `slots` on destinations `outs`: the
+/// The preconditions of `hash` with `slots` on destinations `outs`, whose
+/// stated algebras are `algebras` (nothing where the op states none): the
 /// reordering, the fallback of each destination, and the block memory.
 /// `destinations` takes the destinations where they are given.
-Refusal checkHash(int64_t slots, mlir::TypeRange outs, bool deterministic,
+Refusal checkHash(int64_t slots, mlir::TypeRange outs,
+                  const std::optional<llvm::SmallVector<Algebra>> &algebras,
                   llvm::SmallVectorImpl<Destination> *destinations = nullptr);
 
 } // namespace scatter

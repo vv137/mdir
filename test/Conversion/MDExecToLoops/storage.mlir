@@ -1,6 +1,6 @@
 // The storage form, lowered to loops.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-loops | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-loops | FileCheck %s
 
 md.particle_set @atoms
 

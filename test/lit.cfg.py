@@ -288,7 +288,12 @@ md_exec_fast_transforms = (
     "--md-exec-reuse-neighbors --md-exec-expose-validity --md-exec-fuse-loops"
     " --md-exec-simplify-distance --canonicalize --cse"
 )
-md_exec_lowering = " --md-exec-assign-storage --convert-md-exec-to-loops"
+# The lowerings read the algebra of each sum, which md-exec-assign-algebra
+# states (D[reduction-algebra]); these pipelines are in the default mode.
+md_exec_lowering = (
+    " --md-exec-assign-algebra --md-exec-assign-storage"
+    " --convert-md-exec-to-loops"
+)
 config.substitutions.append(("%md_exec_transforms", md_exec_transforms))
 config.substitutions.append(
     ("%md_exec_fast_transforms", md_exec_fast_transforms)
@@ -310,7 +315,8 @@ config.substitutions.append(
 # pipeline that lowers those. The kernels are embedded as PTX text, which
 # the driver compiles when the program starts.
 md_exec_gpu_lowering = (
-    " --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu"
+    " --md-exec-assign-algebra --md-exec-assign-storage=memory=device"
+    " --convert-md-exec-to-gpu"
 )
 config.substitutions.append(
     ("%md_exec_gpu_passes", md_exec_transforms + md_exec_gpu_lowering)

@@ -4,7 +4,7 @@
 // stores 1, and the host reads the flag before the first op that uses the
 // value, not where the loop is.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s
 
 md.particle_set @atoms
 

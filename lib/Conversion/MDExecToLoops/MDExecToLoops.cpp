@@ -8,6 +8,7 @@
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
@@ -206,9 +207,14 @@ void Lowering::createReduction(OpBuilder &builder, Location loc,
 
 /// A scatter-accumulate on the host (D291): with `atomic-grid`, a
 /// parallel loop whose additions are atomic, as the threads of OpenMP
-/// share the rows of the destination; without, a loop on one thread with
-/// plain additions. The strategy of the op is for a device and is not used.
+/// share the rows of the destination, where the stated algebra of the sum
+/// allows that order (D[reduction-algebra]); otherwise a loop on one
+/// thread with plain additions, in the order of the values. The strategy
+/// of the op is for a device and is not used.
 void Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
+  std::optional<md_exec::Algebra> algebra = md_exec::algebra::getAlgebra(op, 0);
+  bool atomicGrid =
+      this->atomicGrid && algebra && md_exec::algebra::allowsReorder(*algebra);
   OpBuilder builder(op);
   Location loc = op.getLoc();
   Value values = op.getValues(), indices = op.getIndices(),
@@ -1491,9 +1497,24 @@ public:
       ConvertMDExecToLoops>::ConvertMDExecToLoopsBase;
 
   void runOnOperation() final {
+    // The algebra of every sum is stated (D[reduction-algebra]): the
+    // lowering reads it, and refuses an op that reduces without one.
+    bool stated = true;
+    getOperation()->walk([&](Operation *op) {
+      if (md_exec::algebra::needsAlgebra(op) &&
+          !md_exec::algebra::getAlgebras(op)) {
+        op->emitOpError() << md_exec::algebra::getMissingMessage();
+        stated = false;
+      }
+    });
+    if (!stated)
+      return signalPassFailure();
     Lowering lowering(getOperation(), keptTuples, atomicGrid);
     if (failed(lowering.run()))
-      signalPassFailure();
+      return signalPassFailure();
+    // The ops whose algebras the mark of the deterministic mode verifies
+    // are lowered (D[reduction-algebra]).
+    getOperation()->removeAttr(md_exec::algebra::kDeterministicAttrName);
   }
 };
 } // namespace

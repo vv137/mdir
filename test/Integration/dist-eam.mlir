@@ -13,7 +13,7 @@
 // after md-dist-owner-computes.
 //
 // RUN: mdir-opt %s --md-distribute="grid=1,1,1 traversal=unique potentials=eam,linear" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -21,7 +21,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=1,1,1 traversal=directed potentials=eam,linear" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -29,7 +29,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=1,1,1 traversal=directed potentials=eam,linear" \
-// RUN:     %md_passes --md-dist-owner-computes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-dist-owner-computes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -37,7 +37,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=unique potentials=eam,linear" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -45,7 +45,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=directed potentials=eam,linear" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -53,7 +53,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=directed potentials=eam,linear" \
-// RUN:     %md_passes --md-dist-owner-computes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-dist-owner-computes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -61,7 +61,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=3,2,1 traversal=unique potentials=eam,linear" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -69,7 +69,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=3,2,1 traversal=directed potentials=eam,linear" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -77,7 +77,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=3,2,1 traversal=directed potentials=eam,linear" \
-// RUN:     %md_passes --md-dist-owner-computes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-dist-owner-computes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -85,7 +85,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=16,1,1 traversal=unique potentials=eam,linear" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -93,7 +93,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=16,1,1 traversal=directed potentials=eam,linear" \
-// RUN:     %md_passes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -101,7 +101,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: mdir-opt %s --md-distribute="grid=16,1,1 traversal=directed potentials=eam,linear" \
-// RUN:     %md_passes --md-dist-owner-computes --convert-md-dist-to-loops \
+// RUN:     %md_passes --md-dist-owner-computes --md-exec-assign-algebra --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \

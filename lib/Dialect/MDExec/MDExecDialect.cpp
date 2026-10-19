@@ -2,6 +2,7 @@
 
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/Algebra.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
@@ -126,5 +127,51 @@ ScatterAttr::verify(function_ref<InFlightDiagnostic()> emitError,
   }
   if (edge || slots || probes || least)
     return emitError() << "expected no parameters of 'atomic'";
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// #md_exec.algebra (D[reduction-algebra])
+//===----------------------------------------------------------------------===//
+
+Attribute AlgebraListAttr::parse(AsmParser &parser, Type) {
+  SmallVector<Algebra> values;
+  auto parseOne = [&]() -> ParseResult {
+    SMLoc loc = parser.getCurrentLocation();
+    StringRef keyword;
+    if (parser.parseKeyword(&keyword))
+      return failure();
+    std::optional<Algebra> algebra = symbolizeAlgebra(keyword);
+    if (!algebra)
+      return parser.emitError(loc)
+             << "expected 'any_order_exact', 'any_order', or 'fixed_order', got '"
+             << keyword << "'";
+    values.push_back(*algebra);
+    return success();
+  };
+  if (parser.parseCommaSeparatedList(AsmParser::Delimiter::LessGreater,
+                                     parseOne))
+    return {};
+  return get(parser.getContext(), values);
+}
+
+void AlgebraListAttr::print(AsmPrinter &printer) const {
+  printer << "<";
+  llvm::interleaveComma(getValues(), printer.getStream(), [&](Algebra value) {
+    printer << stringifyAlgebra(value);
+  });
+  printer << ">";
+}
+
+LogicalResult MDExecDialect::verifyOperationAttribute(Operation *op,
+                                                      NamedAttribute attr) {
+  if (attr.getName() == algebra::kAlgebraAttrName)
+    return algebra::verify(op, attr.getValue());
+  if (attr.getName() == algebra::kDeterministicAttrName) {
+    if (!isa<UnitAttr>(attr.getValue()) || !isa<ModuleOp>(op))
+      return op->emitError() << "expects '" << algebra::kDeterministicAttrName
+                             << "' to be a unit attribute of a module";
+    return algebra::verifyDeterministic(op);
+  }
   return success();
 }

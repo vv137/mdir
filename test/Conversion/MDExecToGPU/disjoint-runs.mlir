@@ -1,7 +1,7 @@
 // Runs of loops over disjoint tuples become one kernel (D83), unless a loop
 // reads what an earlier loop of the run writes, or writes what one reads.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s
 
 md.particle_set @atoms
 

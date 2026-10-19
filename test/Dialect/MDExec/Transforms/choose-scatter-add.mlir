@@ -1,9 +1,9 @@
-// RUN: mdir-opt %s --md-exec-choose-scatter | FileCheck %s
-// RUN: mdir-opt %s --md-exec-choose-scatter="scatter-hash=on block-size=256 hash-probes=4" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="scatter-hash=on block-size=256 hash-probes=4" \
 // RUN: | FileCheck %s --check-prefix=ON
-// RUN: mdir-opt %s --md-exec-choose-scatter=scatter-hash=off | FileCheck %s --check-prefix=OFF
-// RUN: mdir-opt %s --md-exec-choose-scatter=deterministic=true | FileCheck %s --check-prefix=OFF
-// RUN: mdir-opt %s --md-exec-choose-scatter="block-size=4096 explain=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=scatter-hash=off | FileCheck %s --check-prefix=OFF
+// RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --md-exec-choose-scatter | FileCheck %s --check-prefix=OFF
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="block-size=4096 explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=WHY
 
 // The strategy of md_exec.scatter_add (D291): `hash(S, P, L)`

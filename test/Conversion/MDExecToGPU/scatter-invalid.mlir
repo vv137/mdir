@@ -1,5 +1,5 @@
-// RUN: mdir-opt %s --convert-md-exec-to-gpu -split-input-file -verify-diagnostics
-// RUN: not mdir-opt %s --convert-md-exec-to-gpu=deterministic=true -split-input-file 2>&1 \
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu -split-input-file -verify-diagnostics
+// RUN: not mdir-opt %s --md-exec-assign-algebra=deterministic=true --convert-md-exec-to-gpu=deterministic=true -split-input-file 2>&1 \
 // RUN: | FileCheck %s --check-prefix=DET
 
 // The lowering checks the preconditions of the strategy of a scatter
@@ -21,7 +21,7 @@ func.func @short(%n: index, %k: index, %cell: !md.cell) {
   %s2 = gpu.alloc (%k) : memref<?xf32, 1>
   %s3 = gpu.alloc (%k) : memref<?xf32, 1>
   %bins = gpu.alloc (%k) : memref<?xi32, 1>
-  // DET: error: 'md_exec.reciprocal' op takes the strategy 'tile', whose precondition does not hold: the deterministic mode adds floating-point values in a fixed order
+  // DET: error: 'md_exec.reciprocal' op takes the strategy 'tile', whose precondition does not hold: the sum's algebra is 'fixed_order': the deterministic mode adds floating-point values in a fixed order
   // expected-error @+1 {{takes the strategy 'tile', whose precondition does not hold: an edge of the grid of 8 points is shorter than a tile of 11}}
   %e, %w = md_exec.reciprocal %x, %q, %cell, %m outs(%f : !frc)
       scratch(%s0, %s1, %s2, %s3, %bins : memref<?xi64, 1>, memref<?xf32, 1>,
