@@ -31,7 +31,7 @@
 # DOUBLE: MDIR:   Lennard-Jones self            75.212733
 # DOUBLE: INFO:         0         0.0000 {{ *}}-2811.4875 {{ *}}-3522.4098
 # DOUBLE: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
-# SIDE: md_exec.reciprocal {{.*}} dispersion {{.*}}{md_exec.side}
+# SIDE: md_exec.reciprocal {{.*}} dispersion {{.*}}md_exec.side}
 # SIDE: md_exec.join
 # SAME: the states are identical
 # MIXED: MDIR:   Lennard-Jones reciprocal      -411.0
