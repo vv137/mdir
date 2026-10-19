@@ -22,6 +22,7 @@ namespace mdir {
 namespace test {
 void registerTestOutlineKernels();
 void registerTestStageAdjoint();
+void registerTestTranspose();
 } // namespace test
 } // namespace mdir
 
@@ -33,6 +34,7 @@ int main(int argc, char **argv) {
   mdir::md_exec::registerMDExecPasses();
   mdir::test::registerTestOutlineKernels();
   mdir::test::registerTestStageAdjoint();
+  mdir::test::registerTestTranspose();
 
   mlir::DialectRegistry registry;
   mlir::registerAllDialects(registry);

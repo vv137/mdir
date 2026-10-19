@@ -3,6 +3,7 @@ add_mlir_dialect_library(MDIRMDTransforms
   CheckExchange.cpp
   CheckDerivatives.cpp
   CheckDerivativeCoverage.cpp
+  CheckTransposes.cpp
   Activity.cpp
   Adjoints.cpp
   Differentiate.cpp
@@ -24,6 +25,7 @@ add_mlir_dialect_library(MDIRMDTransforms
   MDIRDyn
   MDIRMD
   MDIRMDDist
+  MDIRMDExec
   MDIRMDRT
   MLIRFuncDialect
   MLIRMemRefDialect

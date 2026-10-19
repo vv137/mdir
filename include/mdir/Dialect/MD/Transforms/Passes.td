@@ -128,6 +128,18 @@ def CheckDerivativeCoverage : Pass<"md-check-derivative-coverage", "::mlir::Modu
   let summary = "Require a derivative rule or declared zero for every scalar op in potentials";
 }
 
+def CheckTransposes : Pass<"md-check-transposes", "::mlir::ModuleOp"> {
+  let summary = "Require a declared transpose for every op of the structure "
+                "in potentials";
+  let description = [{
+    Refuses a sum, gather, or map of `md`, or a transfer or loop of
+    `md_dist`, in a potential, that does not declare its transpose through
+    `AdjointOpInterface` (D[md-transposes]): the ops through which
+    `md-differentiate` carries adjoints. The scalar ops of kernels are
+    checked by `--md-check-derivative-coverage` (D183).
+  }];
+}
+
 def CheckDerivatives : Pass<"md-check-derivatives", "::mlir::ModuleOp"> {
   let summary = "Check requested derivatives against f64 central differences at evaluation inputs";
   let options = [
