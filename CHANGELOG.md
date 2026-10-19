@@ -12,6 +12,15 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **The spreading of the force on virtual sites derived as the transpose
+  of their placement, behind `MDIR_SITE_SPREAD=derived`**
+  (D[vsite-transpose], #453, PR #465): `md-differentiate` derives the
+  forces on the atoms and the change of the virial from a potential of the
+  placement, through the declared transpose of `md.sum_tuples` (D295).
+  `written`, the transpose written out, stays the default: the derived
+  form agrees to the rounding and took 0.9% more a step in NPT on 16,329
+  OPC waters (RTX 4090), the same in NVE. Another value is refused.
+
 - **MDIR in primitives: the set, its transposes, and the map of the
   parts** (D292, #450,
   [docs/primitives-map.md](docs/primitives-map.md)): the primitives that

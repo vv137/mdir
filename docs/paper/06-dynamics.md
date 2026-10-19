@@ -38,6 +38,30 @@ the forces of the sites and the restraints; the half kick; and the
 projection, waters first. A particle without mass is a virtual site:
 `dyn.kick` leaves it alone.
 
+A site is placed from an owner $o$ and two atoms $j$ and $k$,
+$\mathbf x_s = \mathbf x_o + \mathbf p(\mathbf d_j, \mathbf d_k)$ with
+$\mathbf d_j = \mathbf x_j - \mathbf x_o$: a linear combination, or
+for Amber's extra point a distance along the bisector of the two bonds.
+The energy is $U(\mathbf x, \mathbf x_s(\mathbf x))$, so the force
+$\mathbf f$ on the site moves to its atoms by the transpose of the
+derivative of the placement, $J^\mathsf T\mathbf f$ with $J = \partial
+\mathbf x_s/\partial \mathbf x$, the gradient of
+$\sum_s \mathbf f_s\cdot\mathbf x_s(\mathbf x)$ at a fixed $\mathbf f$.
+The owner takes $\mathbf f$ whole, the transpose of the translation,
+and the three atoms the gradient of $\sum_s \mathbf f_s\cdot\mathbf p_s$.
+By default the program writes that transpose out. With
+`MDIR_SITE_SPREAD=derived` it writes $\sum_s \mathbf f_s\cdot\mathbf p_s$
+as a potential of the positions and takes its forces from
+`md-differentiate`: the declared transpose of the sum over the sites and
+the reverse derivative of the placement (D[vsite-transpose], Section 3.3).
+The virial changes by $\sum_k (\mathbf x_k - \mathbf x_s)\otimes\mathbf F_k$
+over the forces $\mathbf F_k$ moved to the atoms, which the derived form
+takes as the virial of those forces, negated, less
+$\sum_s\mathbf p_s\otimes\mathbf f_s$; for a site linear in its atoms it is
+zero, and the written form leaves it out. The two forms agree to the
+rounding, and the derived one is about 1% slower in a step that needs the
+virial.
+
 **Leapfrog** [[HockneyEastwood1988]](references.md#hockneyeastwood1988) stores $\mathbf v_{n-\frac12}$; its
 plain step is $\mathbf u = \mathbf v_{n-\frac12} + \Delta t\,\mathbf a_n$
 followed by the same drift, constraint, and correction, with no second
