@@ -13,6 +13,7 @@
 // runtime's pool of blocks.
 
 #include "mdir/Conversion/Passes.h"
+#include "mdir/Conversion/ReductionEmitter.h"
 
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -125,9 +126,13 @@ static LogicalResult launchLoop(scf::ParallelOp loop, int64_t blockSize) {
     then.clone(op, mapping);
   gpu::TerminatorOp::create(kernel, loc);
   loop.erase();
+  return success();
+}
 
-  // A global (a constant of the body) is read where the kernel is, so that
-  // the outlining takes it into the kernel's module.
+/// Makes each global (a constant of the body) that a kernel reads be read
+/// where the kernel is, so that the outlining takes it into the kernel's
+/// module.
+static void readGlobalsInside(gpu::LaunchOp launch) {
   launch.getBody().walk([&](Operation *op) {
     for (OpOperand &operand : op->getOpOperands()) {
       auto global = operand.get().getDefiningOp<memref::GetGlobalOp>();
@@ -138,7 +143,6 @@ static LogicalResult launchLoop(scf::ParallelOp loop, int64_t blockSize) {
       operand.set(inner.clone(*global)->getResult(0));
     }
   });
-  return success();
 }
 
 /// Puts the buffers of `function` on the device: an allocation becomes one of
@@ -392,7 +396,7 @@ static bool isAccumulator(linalg::LinalgOp op, Value value, unsigned reduced,
 /// dimensions are one, as IREE treats the three components of PaiNN's
 /// vectors as rows) and then at most one of the other (B, the columns);
 /// each operand indexed by its own loops, the batch, and the reduced loop,
-/// in any order; and a payload that adds the product of the operands to the
+/// in any order; rows or columns (not a dot product); and a payload that adds the product of the operands to the
 /// result (or to zero at the first reduced iteration), or a `linalg.matmul`
 /// or `linalg.batch_matmul`.
 static std::optional<Gemm> matchGemm(linalg::LinalgOp op) {
@@ -461,6 +465,10 @@ static std::optional<Gemm> matchGemm(linalg::LinalgOp op) {
     return sortedIn == sortedExpected;
   };
   if (!reads(inA, gemm.rows) || !reads(inB, gemm.cols))
+    return std::nullopt;
+  // A product of 1 x k by k x 1 for each index of the batch is a dot product
+  // of rows: a sum of rows (`warpRowSums`), not a GEMM.
+  if (gemm.rows.empty() && gemm.cols.empty())
     return std::nullopt;
   if (isa<linalg::MatmulOp, linalg::BatchMatmulOp>(op.getOperation()))
     return gemm;
@@ -715,6 +723,231 @@ static LogicalResult callGemms(func::FuncOp function, ModuleOp bodies) {
     op->erase();
   }
   return success();
+}
+
+/// The threads of a block of a kernel of row reductions: 8 warps, a row each.
+constexpr int64_t kRowsBlock = 256;
+
+/// The least extent of the reduced loop that a warp takes (one term a lane
+/// at least).
+constexpr int64_t kWarp = 32;
+
+/// A sum of rows (D[ml4-body-reductions]): a generic of one result whose one
+/// reduced loop, of `extent` iterations, is the last dimension of each
+/// operand that it indexes, and whose payload yields `start + term`, with
+/// `term` computed from the operands without the accumulator and `start`
+/// the accumulator or, as `startReductionsFromConstants` writes it, the
+/// constant `constant` at the first reduced iteration and the accumulator
+/// after it.
+struct RowSum {
+  unsigned reduced;
+  int64_t extent;
+  Value term;
+  Value constant;
+};
+
+/// `op` as a sum of rows of at least a warp's extent, in f32 or f64, on
+/// buffers.
+static std::optional<RowSum> matchRowSum(linalg::GenericOp op) {
+  if (!op.hasPureBufferSemantics() || op.getNumDpsInits() != 1 ||
+      op.getNumReductionLoops() != 1)
+    return std::nullopt;
+  SmallVector<int64_t> extents = op.getStaticLoopRanges();
+  if (llvm::any_of(extents, ShapedType::isDynamic))
+    return std::nullopt;
+  RowSum sum;
+  for (auto [d, type] : llvm::enumerate(op.getIteratorTypesArray()))
+    if (type == utils::IteratorType::reduction)
+      sum.reduced = d;
+  sum.extent = extents[sum.reduced];
+  if (sum.extent < kWarp)
+    return std::nullopt;
+  OpOperand *init = op.getDpsInitOperand(0);
+  Type element = getElementTypeOrSelf(init->get().getType());
+  if (!element.isF32() && !element.isF64())
+    return std::nullopt;
+  auto out = getDims(op.getMatchingIndexingMap(init));
+  if (!out || out->size() != op.getNumLoops() - 1 ||
+      llvm::is_contained(*out, sum.reduced))
+    return std::nullopt;
+  // The reduced loop runs along the contiguous dimension of what it reads,
+  // so that the lanes of a warp read consecutive elements.
+  for (OpOperand *input : op.getDpsInputOperands()) {
+    auto dims = getDims(op.getMatchingIndexingMap(input));
+    if (!dims)
+      return std::nullopt;
+    if (llvm::is_contained(*dims, sum.reduced) && dims->back() != sum.reduced)
+      return std::nullopt;
+  }
+  Block *body = op.getBody();
+  BlockArgument acc = op.getMatchingBlockArgument(init);
+  auto yield = cast<linalg::YieldOp>(body->getTerminator());
+  auto add = yield.getOperand(0).getDefiningOp<arith::AddFOp>();
+  if (!add || add->getBlock() != body)
+    return std::nullopt;
+  for (auto [start, term] : {std::make_pair(add.getLhs(), add.getRhs()),
+                             std::make_pair(add.getRhs(), add.getLhs())}) {
+    Value constant;
+    if (start != acc) {
+      auto select = start.getDefiningOp<arith::SelectOp>();
+      if (!select || select.getFalseValue() != acc ||
+          !matchPattern(select.getTrueValue(), m_Constant()) ||
+          !select->hasOneUse())
+        continue;
+      auto first = select.getCondition().getDefiningOp<arith::CmpIOp>();
+      if (!first || first.getPredicate() != arith::CmpIPredicate::eq ||
+          !matchPattern(first.getRhs(), m_Zero()))
+        continue;
+      auto index = first.getLhs().getDefiningOp<linalg::IndexOp>();
+      if (!index || index.getDim() != sum.reduced)
+        continue;
+      constant = select.getTrueValue();
+    }
+    // The accumulator is read by `start` alone, and the term does not
+    // depend on it.
+    if (!llvm::all_of(acc.getUsers(), [&](Operation *user) {
+          return user == add || user == start.getDefiningOp();
+        }))
+      continue;
+    sum.term = term;
+    sum.constant = constant;
+    return sum;
+  }
+  return std::nullopt;
+}
+
+/// Replaces each sum of rows of the bufferized body `function` with a kernel
+/// of a warp for each element of the result (D[ml4-body-reductions], the
+/// reductions of the rows that IREE gives a warp each, `VectorDistribute`):
+/// lane l adds the terms l, l + 32, l + 64, ... in that order, the warp
+/// combines its lanes by the butterfly of D301 (`kernels::emitWarpReduce`),
+/// and the first lane stores the start (the init's element, or the
+/// payload's constant) plus that sum. The order is fixed by the lanes, so
+/// the result is the same on every run, in every mode; the sum is taken in
+/// the type of the result, as the loops took it.
+static void warpRowSums(func::FuncOp function) {
+  SmallVector<std::pair<linalg::GenericOp, RowSum>> found;
+  function.walk([&](linalg::GenericOp op) {
+    if (op->getBlock() == &function.getBody().front())
+      if (std::optional<RowSum> sum = matchRowSum(op))
+        found.push_back({op, *sum});
+  });
+  for (auto [op, sum] : found) {
+    Location loc = op.getLoc();
+    SmallVector<int64_t> extents = op.getStaticLoopRanges();
+    unsigned numLoops = op.getNumLoops();
+    int64_t rows = 1;
+    for (unsigned d = 0; d != numLoops; ++d)
+      if (d != sum.reduced)
+        rows *= extents[d];
+    OpBuilder builder(op);
+    if (rows == 0) {
+      op.erase();
+      continue;
+    }
+    int64_t warps = kRowsBlock / kWarp;
+    Value one = index(builder, loc, 1);
+    auto launch = gpu::LaunchOp::create(
+        builder, loc, index(builder, loc, (rows + warps - 1) / warps), one, one,
+        index(builder, loc, kRowsBlock), one, one);
+    OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+    Value thread = launch.getThreadIds().x;
+    Value row = arith::AddIOp::create(
+        kernel, loc,
+        arith::MulIOp::create(kernel, loc, launch.getBlockIds().x,
+                              index(kernel, loc, warps)),
+        arith::DivUIOp::create(kernel, loc, thread, index(kernel, loc, kWarp)));
+    Value lane =
+        arith::RemUIOp::create(kernel, loc, thread, index(kernel, loc, kWarp));
+    // A warp is inside or outside as a whole: every lane of a warp inside
+    // reaches the butterfly.
+    Value inside = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::ult,
+                                         row, index(kernel, loc, rows));
+    auto guard = scf::IfOp::create(kernel, loc, inside, /*withElse=*/false);
+    OpBuilder then = guard.getThenBodyBuilder();
+    // The indices of the parallel loops, the last fastest.
+    SmallVector<Value> at(numLoops);
+    Value rest = row;
+    for (unsigned d = numLoops; d-- != 0;) {
+      if (d == sum.reduced)
+        continue;
+      at[d] = arith::RemUIOp::create(then, loc, rest,
+                                     index(then, loc, extents[d]));
+      rest = arith::DivUIOp::create(then, loc, rest,
+                                    index(then, loc, extents[d]));
+    }
+    // The ops of the payload that the term needs, in their order.
+    Block *body = op.getBody();
+    llvm::SetVector<Operation *> needed;
+    SmallVector<Value> pending{sum.term};
+    while (!pending.empty()) {
+      Value value = pending.pop_back_val();
+      Operation *def = value.getDefiningOp();
+      if (!def || def->getBlock() != body || !needed.insert(def))
+        continue;
+      def->walk([&](Operation *inner) {
+        for (Value operand : inner->getOperands())
+          pending.push_back(operand);
+      });
+    }
+    auto term = [&](OpBuilder &b, Value k) {
+      SmallVector<Value> indices(at);
+      indices[sum.reduced] = k;
+      IRMapping mapping;
+      for (OpOperand *input : op.getDpsInputOperands()) {
+        SmallVector<Value> place;
+        for (unsigned d : *getDims(op.getMatchingIndexingMap(input)))
+          place.push_back(indices[d]);
+        mapping.map(op.getMatchingBlockArgument(input),
+                    memref::LoadOp::create(b, loc, input->get(), place));
+      }
+      for (Operation &inner : body->without_terminator()) {
+        if (!needed.contains(&inner))
+          continue;
+        if (auto idx = dyn_cast<linalg::IndexOp>(inner))
+          mapping.map(idx.getResult(), indices[idx.getDim()]);
+        else
+          b.clone(inner, mapping);
+      }
+      return mapping.lookupOrDefault(sum.term);
+    };
+    // Lane l: the terms l, l + 32, ..., in order (the extent is at least
+    // 32, so each lane has one).
+    Value first = term(then, lane);
+    auto loop = scf::ForOp::create(
+        then, loc, arith::AddIOp::create(then, loc, lane,
+                                         index(then, loc, kWarp)),
+        index(then, loc, sum.extent), index(then, loc, kWarp),
+        ValueRange{first});
+    {
+      OpBuilder inner = OpBuilder::atBlockBegin(loop.getBody());
+      Value next = term(inner, loop.getInductionVar());
+      scf::YieldOp::create(
+          inner, loc,
+          ValueRange{arith::AddFOp::create(inner, loc,
+                                           loop.getRegionIterArgs()[0], next)
+                         .getResult()});
+    }
+    Value total = kernels::emitWarpReduce(then, loc, loop.getResult(0),
+                                          kernels::Combiner::Add);
+    Value isFirst = arith::CmpIOp::create(
+        then, loc, arith::CmpIPredicate::eq, lane, index(then, loc, 0));
+    auto store = scf::IfOp::create(then, loc, isFirst, /*withElse=*/false);
+    OpBuilder last = store.getThenBodyBuilder();
+    OpOperand *init = op.getDpsInitOperand(0);
+    SmallVector<Value> place;
+    for (unsigned d : *getDims(op.getMatchingIndexingMap(init)))
+      place.push_back(at[d]);
+    Value start = sum.constant
+                      ? last.clone(*sum.constant.getDefiningOp())->getResult(0)
+                      : memref::LoadOp::create(last, loc, init->get(), place)
+                            .getResult();
+    memref::StoreOp::create(
+        last, loc, arith::AddFOp::create(last, loc, start, total),
+        init->get(), place);
+    gpu::TerminatorOp::create(kernel, loc);
+    op.erase();
+  }
 }
 
 /// Starts each reduction whose initial value is a `linalg.fill` of a constant
@@ -1110,6 +1343,11 @@ public:
            llvm::to_vector(bodies->getOps<func::FuncOp>()))
         if (!function.isExternal() && failed(callGemms(function, *bodies)))
           return signalPassFailure();
+    // The sums of rows as a warp a row (D[ml4-body-reductions]).
+    if (device)
+      for (func::FuncOp function : bodies->getOps<func::FuncOp>())
+        if (!function.isExternal())
+          warpRowSums(function);
     // A copy into a result's buffer becomes a loop as well, so that it runs
     // where the buffers are.
     bodies->walk([&](memref::CopyOp copy) {
@@ -1138,6 +1376,7 @@ public:
         for (scf::ParallelOp loop : loops)
           if (failed(launchLoop(loop, blockSize)))
             return signalPassFailure();
+        function.walk([](gpu::LaunchOp launch) { readGlobalsInside(launch); });
         if (failed(moveToDevice(function)))
           return signalPassFailure();
       } else {
