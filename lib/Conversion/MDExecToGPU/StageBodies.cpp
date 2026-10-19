@@ -339,7 +339,18 @@ static LogicalResult padsAsGathers(func::FuncOp function) {
     SmallVector<AffineMap> maps = {builder.getMultiDimIdentityMap(rank)};
     SmallVector<utils::IteratorType> iterators(rank,
                                                utils::IteratorType::parallel);
+    // A pad of a slice (an adjoint of a slice) reads the slice's source.
     Value input = pad.getSource();
+    SmallVector<int64_t> offsets(rank, 0);
+    if (auto slice = input.getDefiningOp<tensor::ExtractSliceOp>())
+      if (slice.getSourceType().getRank() == rank &&
+          llvm::all_of(slice.getStaticStrides(),
+                       [](int64_t s) { return s == 1; }) &&
+          !llvm::any_of(slice.getStaticOffsets(), ShapedType::isDynamic)) {
+        offsets.assign(slice.getStaticOffsets().begin(),
+                       slice.getStaticOffsets().end());
+        input = slice.getSource();
+      }
     auto gather = linalg::GenericOp::create(
         builder, loc, result, ValueRange(), ValueRange{empty}, maps, iterators,
         [&](OpBuilder &b, Location l, ValueRange) {
@@ -359,10 +370,14 @@ static LogicalResult padsAsGathers(func::FuncOp function) {
                     arith::ConstantIndexOp::create(b, l, size)));
             inside = inside ? arith::AndIOp::create(b, l, inside, in) : in;
             // Clamped, so that the read stays inside the source.
-            at.push_back(arith::MinSIOp::create(
-                b, l,
-                arith::MaxSIOp::create(b, l, shifted, zero),
-                arith::ConstantIndexOp::create(b, l, size - 1)));
+            Value clamped = arith::MinSIOp::create(
+                b, l, arith::MaxSIOp::create(b, l, shifted, zero),
+                arith::ConstantIndexOp::create(b, l, size - 1));
+            at.push_back(offsets[d] ? arith::AddIOp::create(
+                                          b, l, clamped,
+                                          arith::ConstantIndexOp::create(
+                                              b, l, offsets[d]))
+                                    : clamped);
           }
           Value value = tensor::ExtractOp::create(b, l, input, at);
           Value chosen = arith::SelectOp::create(b, l, inside, value, constant);
