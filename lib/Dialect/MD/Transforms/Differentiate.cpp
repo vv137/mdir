@@ -46,8 +46,17 @@ private:
   /// the result of a sum, or to null if the energy does not depend on it.
   LogicalResult getWeight(Value sum, Value &weight);
 
+  /// The op of the transpose of the structure of `op` for operand `index`,
+  /// from its declared transpose (AdjointOpInterface, D[md-transposes]),
+  /// or null after a diagnostic; `kernel` receives its kernel to complete.
+  Operation *createTranspose(Operation *op, unsigned index, Value cotangent,
+                             Exchange exchange, TypeRange resultTypes,
+                             bool summed, TransposeKernel &kernel);
+
   /// Creates a pair op named `opName` with the operands of `source` and a
-  /// copy of its kernel. The kernel still yields the pair energy.
+  /// copy of its kernel. The kernel still yields the pair energy. A copy of
+  /// the sum itself is the tangent of its structure, which is linear in the
+  /// kernel's values: the virial and the derivative in a parameter.
   Operation *createPairOp(StringRef opName, SumRelationOp source,
                           Exchange exchange, Type resultType);
 
@@ -120,13 +129,6 @@ private:
   LogicalResult emitStageCotangents(Operation *source, Block &block,
                                     IRMapping &mapping, Value cotangent,
                                     SmallVectorImpl<Value> &cotangents);
-  /// The kernel arguments of a new op over pairs that copies the arguments
-  /// of `source`'s kernel, then two values of the adjoint `adjoint`; maps
-  /// them from the center (`forward`) and with the ends exchanged
-  /// (`backward`), in which the displacement is negated.
-  void addPairArguments(GatherRelationOp source, Block &block, Value adjoint,
-                        IRMapping &forward, IRMapping &backward,
-                        Value &adjointI, Value &adjointJ);
   /// The adjoint of the field gathered at place `place` of the stage gather
   /// `gather`, from the adjoint of its result.
   LogicalResult emitStageFieldTerm(GatherRelationOp gather, unsigned place,
@@ -375,6 +377,21 @@ LogicalResult DerivativeBuilder::getWeight(Value sum, Value &weight) {
   };
   ScalarDerivative derivative(builder, sum, leaf);
   return derivative.get(energy, weight);
+}
+
+Operation *DerivativeBuilder::createTranspose(Operation *op, unsigned index,
+                                              Value cotangent,
+                                              Exchange exchange,
+                                              TypeRange resultTypes,
+                                              bool summed,
+                                              TransposeKernel &kernel) {
+  auto declared = dyn_cast<AdjointOpInterface>(op);
+  if (!declared) {
+    op->emitOpError() << "has no declared transpose";
+    return nullptr;
+  }
+  return declared.createTranspose(builder, loc, index, cotangent, exchange,
+                                  resultTypes, summed, kernel);
 }
 
 Operation *DerivativeBuilder::createPairOp(StringRef opName,
@@ -703,60 +720,6 @@ LogicalResult DerivativeBuilder::emitStageCotangents(
   return success();
 }
 
-void DerivativeBuilder::addPairArguments(GatherRelationOp source,
-                                         Block &block, Value adjoint,
-                                         IRMapping &forward,
-                                         IRMapping &backward,
-                                         Value &adjointI, Value &adjointJ) {
-  Block &kernel = source.getKernel().front();
-  Value r = block.addArgument(kernel.getArgument(0).getType(), loc);
-  Value d = block.addArgument(kernel.getArgument(1).getType(), loc);
-  unsigned count = source.getGathered().size();
-  SmallVector<Value> ends;
-  for (unsigned k = 0; k != 2 * count; ++k)
-    ends.push_back(block.addArgument(kernel.getArgument(2 + k).getType(), loc));
-  Type valueType =
-      cast<FieldType>(adjoint.getType()).getKernelValueType();
-  adjointI = block.addArgument(valueType, loc);
-  adjointJ = block.addArgument(valueType, loc);
-  // From the other end the displacement is d_ji = −d_ij, and the values of
-  // the two ends change places.
-  OpBuilder builder = OpBuilder::atBlockEnd(&block);
-  Value negated = arith::NegFOp::create(builder, loc, d);
-  forward.map(kernel.getArgument(0), r);
-  backward.map(kernel.getArgument(0), r);
-  forward.map(kernel.getArgument(1), d);
-  backward.map(kernel.getArgument(1), negated);
-  for (unsigned k = 0; k != count; ++k) {
-    forward.map(kernel.getArgument(2 + 2 * k), ends[2 * k]);
-    forward.map(kernel.getArgument(3 + 2 * k), ends[2 * k + 1]);
-    backward.map(kernel.getArgument(2 + 2 * k), ends[2 * k + 1]);
-    backward.map(kernel.getArgument(3 + 2 * k), ends[2 * k]);
-  }
-}
-
-/// A new op over the pairs of `gather`, with its operands and those of
-/// `extra`, of the type `resultType`, and an empty kernel.
-static Operation *createPairLike(OpBuilder &builder, Location loc,
-                                 StringRef opName, GatherRelationOp gather,
-                                 Value extra, Exchange exchange,
-                                 TypeRange resultTypes) {
-  MLIRContext *context = builder.getContext();
-  OperationState state(loc, opName);
-  state.addOperands(
-      {gather.getRelation(), gather.getPositions(), gather.getCell()});
-  state.addOperands(gather.getGathered());
-  state.addOperands(extra);
-  state.addAttribute("exchange", ExchangeAttr::get(context, exchange));
-  state.addAttribute("exchange_basis",
-                     ExchangeBasisAttr::get(context, ExchangeBasis::Derived));
-  state.addRegion();
-  state.addTypes(resultTypes);
-  Operation *op = builder.create(state);
-  op->getRegion(0).push_back(new Block());
-  return op;
-}
-
 LogicalResult DerivativeBuilder::emitStageFieldTerm(GatherRelationOp gather,
                                                     unsigned place,
                                                     Value adjoint,
@@ -767,17 +730,18 @@ LogicalResult DerivativeBuilder::emitStageFieldTerm(GatherRelationOp gather,
   // sign under exchange, so the gather has no contract.
   Type fieldType = gather.getGathered()[place].getType();
   Type valueType = cast<FieldType>(fieldType).getKernelValueType();
+  TransposeKernel transposed;
   Operation *op =
-      createPairLike(builder, loc, GatherRelationOp::getOperationName(),
-                     gather, adjoint, Exchange::None, TypeRange(fieldType));
-  Block &block = op->getRegion(0).front();
-  IRMapping forward, backward;
-  Value adjointI, adjointJ;
-  addPairArguments(gather, block, adjoint, forward, backward, adjointI,
-                   adjointJ);
+      createTranspose(gather, 3 + place, adjoint, Exchange::None,
+                      TypeRange(fieldType), /*summed=*/false, transposed);
+  if (!op)
+    return failure();
+  Block &block = *transposed.block;
   SmallVector<Value> fromI, fromJ;
-  if (failed(emitStageCotangents(gather, block, forward, adjointI, fromI)) ||
-      failed(emitStageCotangents(gather, block, backward, adjointJ, fromJ)))
+  if (failed(emitStageCotangents(gather, block, transposed.forward,
+                                 transposed.cotangentI, fromI)) ||
+      failed(emitStageCotangents(gather, block, transposed.backward,
+                                 transposed.cotangentJ, fromJ)))
     return failure();
   OpBuilder kernel = OpBuilder::atBlockEnd(&block);
   ScalarEmitter emit(kernel, loc);
@@ -795,31 +759,19 @@ LogicalResult DerivativeBuilder::emitStageParticleTerm(Operation *user,
                                                        Value &result) {
   // h̄_i = (∂k/∂h_i)^T w for a sum S = Σ_i k(h_i, ...), and (∂g/∂h_i)^T Ḡ_i
   // for a map G = g(h, ...): a map of the product.
-  bool isField = isa<FieldType>(cotangent.getType());
   Type fieldType = user->getOperand(place).getType();
   Type valueType = cast<FieldType>(fieldType).getKernelValueType();
-  OperationState state(loc, MapParticlesOp::getOperationName());
-  state.addOperands(user->getOperands());
-  if (isField)
-    state.addOperands(cotangent);
-  state.addRegion();
-  state.addTypes(fieldType);
-  Operation *op = builder.create(state);
-  Block *block = new Block();
-  op->getRegion(0).push_back(block);
-  Block &source = user->getRegion(0).front();
-  IRMapping mapping;
-  for (BlockArgument argument : source.getArguments())
-    mapping.map(argument, block->addArgument(argument.getType(), loc));
   // The weight of a sum is a number outside the kernel, which the kernel
   // takes as a value that it captures.
-  Value seed = isField ? block->addArgument(
-                             cast<FieldType>(cotangent.getType())
-                                 .getKernelValueType(),
-                             loc)
-                       : cotangent;
+  TransposeKernel transposed;
+  Operation *op = createTranspose(user, place, cotangent, Exchange::None,
+                                  fieldType, /*summed=*/false, transposed);
+  if (!op)
+    return failure();
+  Block *block = transposed.block;
   SmallVector<Value> cotangents;
-  if (failed(emitStageCotangents(user, *block, mapping, seed, cotangents)))
+  if (failed(emitStageCotangents(user, *block, transposed.forward,
+                                 transposed.cotangentI, cotangents)))
     return failure();
   OpBuilder kernel = OpBuilder::atBlockEnd(block);
   ScalarEmitter emit(kernel, loc);
@@ -841,20 +793,20 @@ LogicalResult DerivativeBuilder::emitStageGatherTerm(GatherRelationOp gather,
   Type fieldType = body->getArgument(0).getType();
   Type vectorType = cast<FieldType>(fieldType).getKernelValueType();
   Type virialType = VectorType::get({9}, builder.getF64Type());
-  Operation *op = createPairLike(
-      builder, loc,
-      virial ? SumRelationOp::getOperationName()
-             : GatherRelationOp::getOperationName(),
-      gather, adjoint, virial ? Exchange::Symmetric : Exchange::Antisymmetric,
-      TypeRange(virial ? virialType : fieldType));
-  Block &block = op->getRegion(0).front();
-  IRMapping forward, backward;
-  Value adjointI, adjointJ;
-  addPairArguments(gather, block, adjoint, forward, backward, adjointI,
-                   adjointJ);
+  TransposeKernel transposed;
+  Operation *op = createTranspose(
+      gather, /*index=*/1, adjoint,
+      virial ? Exchange::Symmetric : Exchange::Antisymmetric,
+      TypeRange(virial ? virialType : fieldType), /*summed=*/virial,
+      transposed);
+  if (!op)
+    return failure();
+  Block &block = *transposed.block;
   SmallVector<Value> fromI, fromJ;
-  if (failed(emitStageCotangents(gather, block, forward, adjointI, fromI)) ||
-      failed(emitStageCotangents(gather, block, backward, adjointJ, fromJ)))
+  if (failed(emitStageCotangents(gather, block, transposed.forward,
+                                 transposed.cotangentI, fromI)) ||
+      failed(emitStageCotangents(gather, block, transposed.backward,
+                                 transposed.cotangentJ, fromJ)))
     return failure();
   OpBuilder kernel = OpBuilder::atBlockEnd(&block);
   ScalarEmitter emit(kernel, loc);
@@ -925,17 +877,18 @@ LogicalResult DerivativeBuilder::getStageTerms(GatherRelationOp gather,
   terms->fields.assign(gather.getGathered().size(), Value());
   if (types.empty())
     return success();
-  Operation *op =
-      createPairLike(builder, loc, GatherRelationOp::getOperationName(),
-                     gather, adjoint, Exchange::None, types);
-  Block &block = op->getRegion(0).front();
-  IRMapping forward, backward;
-  Value adjointI, adjointJ;
-  addPairArguments(gather, block, adjoint, forward, backward, adjointI,
-                   adjointJ);
+  TransposeKernel transposed;
+  Operation *op = createTranspose(gather, /*index=*/1, adjoint,
+                                  Exchange::None, types, /*summed=*/false,
+                                  transposed);
+  if (!op)
+    return failure();
+  Block &block = *transposed.block;
   SmallVector<Value> fromI, fromJ;
-  if (failed(emitStageCotangents(gather, block, forward, adjointI, fromI)) ||
-      failed(emitStageCotangents(gather, block, backward, adjointJ, fromJ)))
+  if (failed(emitStageCotangents(gather, block, transposed.forward,
+                                 transposed.cotangentI, fromI)) ||
+      failed(emitStageCotangents(gather, block, transposed.backward,
+                                 transposed.cotangentJ, fromJ)))
     return failure();
   OpBuilder kernel = OpBuilder::atBlockEnd(&block);
   ScalarEmitter emit(kernel, loc);
@@ -1077,9 +1030,13 @@ LogicalResult DerivativeBuilder::buildAdjoints() {
           return failure();
         if (!weight)
           continue;
-        Operation *op = createPairOp(GatherRelationOp::getOperationName(),
-                                     sum, Exchange::None, fieldType);
-        Block &block = op->getRegion(0).front();
+        TransposeKernel transposed;
+        Operation *op = createTranspose(sum, operand, weight, Exchange::None,
+                                        fieldType, /*summed=*/false,
+                                        transposed);
+        if (!op)
+          return failure();
+        Block &block = *transposed.block;
         OpBuilder kernel(block.getTerminator());
         Value energy = cast<YieldOp>(block.getTerminator()).getOperand(0);
         ScalarDerivative derivative(kernel, block.getArgument(2 + 2 * place));
@@ -1106,24 +1063,16 @@ LogicalResult DerivativeBuilder::buildAdjoints() {
         if (!weight)
           continue;
         bool isField = isa<MapParticlesOp>(user);
-        OperationState state(loc, MapParticlesOp::getOperationName());
-        state.addOperands(user->getOperands());
-        if (isField)
-          state.addOperands(weight);
-        state.addRegion();
-        state.addTypes(fieldType);
-        Operation *op = builder.create(state);
-        Block *block = new Block();
-        op->getRegion(0).push_back(block);
+        TransposeKernel transposed;
+        Operation *op = createTranspose(user, operand, weight, Exchange::None,
+                                        fieldType, /*summed=*/false,
+                                        transposed);
+        if (!op)
+          return failure();
+        Block *block = transposed.block;
         Block &source = user->getRegion(0).front();
-        IRMapping mapping;
-        for (BlockArgument argument : source.getArguments())
-          mapping.map(argument,
-                      block->addArgument(argument.getType(), loc));
-        Value adjoint;
-        if (isField)
-          adjoint = block->addArgument(valueType, loc);
-        Value value = inlineKernel(source, *block, mapping);
+        Value adjoint = isField ? transposed.cotangentI : Value();
+        Value value = inlineKernel(source, *block, transposed.forward);
         OpBuilder kernel = OpBuilder::atBlockEnd(block);
         ScalarDerivative derivative(kernel, block->getArgument(place));
         Value slope;
@@ -1158,50 +1107,23 @@ LogicalResult DerivativeBuilder::emitGatherTerm(GatherRelationOp gather,
   Type fieldType = body->getArgument(0).getType();
   Type vectorType = cast<FieldType>(fieldType).getKernelValueType();
   Type virialType = VectorType::get({9}, builder.getF64Type());
-  StringRef opName = virial ? SumRelationOp::getOperationName()
-                            : GatherRelationOp::getOperationName();
-  MLIRContext *context = builder.getContext();
-  OperationState state(loc, opName);
-  state.addOperands(
-      {gather.getRelation(), gather.getPositions(), gather.getCell()});
-  state.addOperands(gather.getGathered());
-  state.addOperands(adjoint);
-  state.addAttribute("exchange",
-                     ExchangeAttr::get(context, virial ? Exchange::Symmetric
-                                                       : Exchange::Antisymmetric));
-  state.addAttribute("exchange_basis",
-                     ExchangeBasisAttr::get(context, ExchangeBasis::Derived));
-  state.addRegion();
-  state.addTypes(virial ? virialType : fieldType);
-  Operation *op = builder.create(state);
-  Block *block = new Block();
-  op->getRegion(0).push_back(block);
+  // The kernel with i at its centre, and with j; it does not read the
+  // displacement (checkPositionUses), so that its sign from j is moot.
+  TransposeKernel transposed;
+  Operation *op = createTranspose(
+      gather, /*index=*/1, adjoint,
+      virial ? Exchange::Symmetric : Exchange::Antisymmetric,
+      virial ? virialType : fieldType, /*summed=*/virial, transposed);
+  if (!op)
+    return failure();
+  Block *block = transposed.block;
   Block &source = gather.getKernel().front();
-  Value r = block->addArgument(source.getArgument(0).getType(), loc);
-  Value d = block->addArgument(source.getArgument(1).getType(), loc);
-  unsigned count = gather.getGathered().size();
-  SmallVector<Value> ends;
-  for (unsigned k = 0; k != 2 * count; ++k)
-    ends.push_back(block->addArgument(source.getArgument(2 + k).getType(),
-                                      loc));
-  Type real = builder.getF64Type();
-  Value adjointI = block->addArgument(real, loc);
-  Value adjointJ = block->addArgument(real, loc);
-
-  // The kernel with i at its centre, and with j.
-  IRMapping forward, backward;
-  forward.map(source.getArgument(0), r);
-  backward.map(source.getArgument(0), r);
-  forward.map(source.getArgument(1), d);
-  backward.map(source.getArgument(1), d);
-  for (unsigned k = 0; k != count; ++k) {
-    forward.map(source.getArgument(2 + 2 * k), ends[2 * k]);
-    forward.map(source.getArgument(3 + 2 * k), ends[2 * k + 1]);
-    backward.map(source.getArgument(2 + 2 * k), ends[2 * k + 1]);
-    backward.map(source.getArgument(3 + 2 * k), ends[2 * k]);
-  }
-  Value fromI = inlineKernel(source, *block, forward);
-  Value fromJ = inlineKernel(source, *block, backward);
+  Value r = block->getArgument(0);
+  Value d = block->getArgument(1);
+  Value adjointI = transposed.cotangentI;
+  Value adjointJ = transposed.cotangentJ;
+  Value fromI = inlineKernel(source, *block, transposed.forward);
+  Value fromJ = inlineKernel(source, *block, transposed.backward);
   OpBuilder kernel = OpBuilder::atBlockEnd(block);
   ScalarDerivative derivative(kernel, r);
   Value slopeI, slopeJ;
@@ -1283,10 +1205,13 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
       continue;
 
     // K(i, j) = −weight · u'(r) · d / r
+    TransposeKernel transposed;
     Operation *gather =
-        createPairOp(GatherRelationOp::getOperationName(), sum,
-                     Exchange::Antisymmetric, fieldType);
-    Block &block = gather->getRegion(0).front();
+        createTranspose(sum, /*index=*/1, weight, Exchange::Antisymmetric,
+                        fieldType, /*summed=*/false, transposed);
+    if (!gather)
+      return failure();
+    Block &block = *transposed.block;
     OpBuilder kernel(block.getTerminator());
     Value factor;
     if (failed(emitRadialFactor(gather, weight, kernel, factor)))
@@ -1313,9 +1238,13 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
       continue;
 
     // K(t)[m] = −weight · ∂u/∂x_m
+    TransposeKernel transposed;
     Operation *gather =
-        createTupleOp(GatherTuplesOp::getOperationName(), sum, fieldType);
-    Block &block = gather->getRegion(0).front();
+        createTranspose(sum, /*index=*/1, weight, Exchange::None, fieldType,
+                        /*summed=*/false, transposed);
+    if (!gather)
+      return failure();
+    Block &block = *transposed.block;
     OpBuilder kernel(block.getTerminator());
     SmallVector<Value, 4> memberForces;
     if (failed(emitTupleForces(gather, weight, kernel, memberForces)))
@@ -1357,18 +1286,16 @@ LogicalResult DerivativeBuilder::buildForces(Value &forces) {
       return failure();
     if (!weight)
       continue;
-    OperationState state(loc, MapParticlesOp::getOperationName());
-    state.addOperands(sum.getGathered());
-    state.addRegion();
-    state.addTypes(fieldType);
-    Operation *map = builder.create(state);
-    Block *block = new Block();
-    map->getRegion(0).push_back(block);
+    unsigned index = llvm::find(sum.getGathered(), body->getArgument(0)) -
+                     sum.getGathered().begin();
+    TransposeKernel transposed;
+    Operation *map = createTranspose(sum, index, weight, Exchange::None,
+                                     fieldType, /*summed=*/false, transposed);
+    if (!map)
+      return failure();
+    Block *block = transposed.block;
     Block &source = sum.getKernel().front();
-    IRMapping mapping;
-    for (BlockArgument argument : source.getArguments())
-      mapping.map(argument, block->addArgument(argument.getType(), loc));
-    Value value = inlineKernel(source, *block, mapping);
+    Value value = inlineKernel(source, *block, transposed.forward);
     OpBuilder kernel = OpBuilder::atBlockEnd(block);
     ScalarEmitter emit(kernel, loc);
     Value force;
@@ -2067,8 +1994,11 @@ bool DerivativeBuilder::isPositionValued(Value value) {
 }
 
 LogicalResult DerivativeBuilder::transposeTransfer(Operation *op) {
+  // The transfers of md_dist; the ops of md declare the transposes of
+  // their structure, not of themselves.
   auto transfer = dyn_cast<AdjointOpInterface>(op);
-  if (!transfer || op->getNumResults() != 1)
+  if (!transfer || !isa_and_nonnull<md_dist::MDDistDialect>(op->getDialect()) ||
+      op->getNumResults() != 1)
     return success();
   auto found = distTerms.find(op->getResult(0));
   if (found == distTerms.end())
@@ -2699,10 +2629,20 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
     if (!weight)
       continue;
 
-    if (auto sum = dyn_cast<SumRelationOp>(user)) {
-      Operation *gather = createPairOp(GatherRelationOp::getOperationName(),
-                                       sum, Exchange::None, fieldType);
-      Block &block = gather->getRegion(0).front();
+    // The op of the transpose of the user's structure for the field, from
+    // its declared transpose; its kernel takes the derivative in each
+    // place of the field.
+    TransposeKernel transposed;
+    unsigned operand = (isa<SumParticlesOp>(user) ? 0 : 3) + places.front();
+    Operation *transpose =
+        createTranspose(user, operand, weight, Exchange::None, fieldType,
+                        /*summed=*/false, transposed);
+    if (!transpose)
+      return failure();
+
+    if (isa<SumRelationOp>(user)) {
+      Operation *gather = transpose;
+      Block &block = *transposed.block;
       Value pairEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
       OpBuilder kernel(block.getTerminator());
       ScalarEmitter emit(kernel, loc);
@@ -2727,9 +2667,8 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
     if (auto sum = dyn_cast<SumTuplesOp>(user)) {
       unsigned arity = sum.getArity();
       unsigned first = sum.getCoordinates().size();
-      Operation *gather =
-          createTupleOp(GatherTuplesOp::getOperationName(), sum, fieldType);
-      Block &block = gather->getRegion(0).front();
+      Operation *gather = transpose;
+      Block &block = *transposed.block;
       Value tupleEnergy = cast<YieldOp>(block.getTerminator()).getOperand(0);
       OpBuilder kernel(block.getTerminator());
       ScalarEmitter emit(kernel, loc);
@@ -2761,19 +2700,10 @@ LogicalResult DerivativeBuilder::buildFieldDerivative(int64_t argument,
     }
 
     auto sum = cast<SumParticlesOp>(user);
-    OperationState state(loc, MapParticlesOp::getOperationName());
-    state.addOperands(sum.getGathered());
-    state.addRegion();
-    state.addTypes(fieldType);
-    Operation *map = builder.create(state);
-    Block *block = new Block();
-    map->getRegion(0).push_back(block);
+    Operation *map = transpose;
+    Block *block = transposed.block;
     Block &source = sum.getKernel().front();
-    IRMapping mapping;
-    for (BlockArgument blockArgument : source.getArguments())
-      mapping.map(blockArgument,
-                  block->addArgument(blockArgument.getType(), loc));
-    Value value = inlineKernel(source, *block, mapping);
+    Value value = inlineKernel(source, *block, transposed.forward);
     OpBuilder kernel = OpBuilder::atBlockEnd(block);
     ScalarEmitter emit(kernel, loc);
     Value total;
