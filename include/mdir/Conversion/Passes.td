@@ -247,7 +247,12 @@ def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
     The batched bodies of `md.stage` (D293,
     docs/ml4-ir.md, Section 8.3), functions of `linalg` on tensors with a
     static number of rows, become functions of buffers that the tiles of a
-    loop call: elementwise ops are fused, the bodies are bufferized with
+    loop call: elementwise ops are fused (with `fuse`, D[ml4-fused-bodies]:
+    unit dimensions folded, pads as gathers, reductions started from the
+    constants of their fills, producers of several uses evaluated again in
+    each consumer that reads them once per element, nothing fused into a
+    contraction, and the results written in the caller's buffers), the
+    bodies are bufferized with
     their results as buffers that the caller passes after the operands, and
     the `linalg` ops become parallel loops. With `device`, each parallel
     loop becomes one kernel of a thread for each of its iterations, the
