@@ -661,6 +661,16 @@ format, or the outputs; every such change is listed under **Changed** or
   to 532 and its products of an edge from 1.29 to 1.22 ms per tile of
   4,096 rows on an RTX 4090; the results agree with the JAX composition
   as before. The option `fuse=false` of the pass keeps D293's lowering.
+
+- **A tile of a loop over pairs sums its rows into the centers that meet
+  it** (`D[ml4-tile-sums]`, #462,
+  [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)): a
+  thread for each row of the tile, and for each component of a wide
+  destination, instead of a thread for each particle of the system; the
+  sums and their order are unchanged. nablaDFT's PaiNN in stages at 6,144
+  atoms on an RTX 4090: 2.05 to 0.44 ms per tile of the reverse loops,
+  and a step 1.79, 1.87, and 4.02 times shorter at 6,144, 12,288, and
+  196,608 atoms (5.4 µs a pair at every size).
   Nothing user-visible changes.
 - **The transposes of the `md` ops are declared through
   `AdjointOpInterface`** (D295, #451, PR #459,

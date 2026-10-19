@@ -596,7 +596,19 @@ and the loops of `md_exec` carry them to the lowering for a device:
   particle's pairs within the cutoff first in its slots, counted. A center
   then adds up its rows of the tile within the cutoff, in the order of
   its slots, in one thread: a gather, without atomics, so the results do
-  not depend on the order of the threads. The slots hold every image of a
+  not depend on the order of the threads. The slots are ordered by
+  center, so the centers that meet a tile are those of its rows: the row
+  of a center's first slot in the tile leads its sum, and the other rows
+  do nothing (`D[ml4-tile-sums]`). A wide destination is added up by a
+  thread for each row and component, the threads of a row side by side,
+  so that a center's components are read together; a narrow one by a
+  thread for each row. (D293's sum ran a thread for each particle of the
+  system, which looped over all the components of its rows: at 6,144
+  atoms, 2.05 ms a tile of the reverse loops against 0.44 ms now, and a
+  test of every particle for each tile at 196,608 atoms; a step is 1.79,
+  1.87, and 4.02 times shorter at 6,144, 12,288, and 196,608 atoms, about
+  5.4 µs a pair at every size.) The sums, and
+  their order, are those of D293. The slots hold every image of a
   neighbor (a cell narrower than twice the cutoff included, as the opaque
   call takes it); in a cell wider than twice the cutoff there is one, the
   minimum image of the loop's semantics. The rows beyond the slots and
