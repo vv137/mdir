@@ -640,7 +640,7 @@ grows beyond 50,000 atoms: each tile's sum over the centers launches a
 thread for every particle, which tests whether its slots meet the tile
 (2,579 tiles of 4,096 rows at 196,608 atoms).
 
-- **Memory.** The staged model's peak grows with the atoms, about 72 kB an
+- **Memory.** The staged model's peak grows with the atoms, about 75 kB an
   atom (1.4 kB a pair of liquid water from 49,152 atoms up), against
   61 kB a pair for the opaque call: at 6,144 atoms, the opaque call's
   largest system on 24 GB, 652 MiB against 18.7 GiB, 29 times less. The
