@@ -26,6 +26,10 @@
 #include "mlir/Dialect/GPU/IR/GPUDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Passes.h"
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
+#include "mlir/Dialect/Tensor/Transforms/Transforms.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
@@ -212,18 +216,72 @@ static bool isCheap(linalg::GenericOp op) {
   return count <= 8;
 }
 
+/// Whether fusing the producer of `operand` into its consumer evaluates the
+/// producer no more often than it has elements: the consumer reads the
+/// operand through a permutation of its loops. Otherwise the consumer reads
+/// each element of the operand at several of its iterations, and the fused
+/// producer would be evaluated at each: that is allowed only for a cheap
+/// producer in a consumer without reductions (a broadcast), never into a
+/// contraction, whose operands stay what it reads, so that its loop over
+/// the contracted dimension does not evaluate them again for each column of
+/// the result.
+static bool fusesWithoutRecomputing(OpOperand *operand) {
+  auto producer = operand->get().getDefiningOp<linalg::GenericOp>();
+  auto consumer = dyn_cast<linalg::GenericOp>(operand->getOwner());
+  if (!producer || !consumer)
+    return false;
+  if (consumer.getMatchingIndexingMap(operand).isPermutation())
+    return true;
+  return consumer.getNumReductionLoops() == 0 && isCheap(producer);
+}
+
+/// Elementwise fusion, the patterns of upstream's
+/// `linalg-fuse-elementwise-ops` (its fusion, folding of reshapes by
+/// expansion, and canonicalizations), with a control that fuses a producer
+/// of one use where `fusesWithoutRecomputing` allows it.
+static LogicalResult fuseElementwise(ModuleOp bodies) {
+  MLIRContext *context = bodies.getContext();
+  RewritePatternSet patterns(context);
+  linalg::ControlFusionFn control = [](OpOperand *operand) {
+    Operation *producer = operand->get().getDefiningOp();
+    return producer && producer->hasOneUse() &&
+           fusesWithoutRecomputing(operand);
+  };
+  linalg::ControlFusionFn oneUse = [](OpOperand *operand) {
+    Operation *producer = operand->get().getDefiningOp();
+    return producer && producer->hasOneUse();
+  };
+  linalg::populateElementwiseOpsFusionPatterns(patterns, control);
+  linalg::populateFoldReshapeOpsByExpansionPatterns(patterns, oneUse);
+  tensor::populateBubbleUpExpandShapePatterns(patterns);
+  affine::AffineApplyOp::getCanonicalizationPatterns(patterns, context);
+  linalg::GenericOp::getCanonicalizationPatterns(patterns, context);
+  tensor::ExpandShapeOp::getCanonicalizationPatterns(patterns, context);
+  tensor::CollapseShapeOp::getCanonicalizationPatterns(patterns, context);
+  context->getLoadedDialect<linalg::LinalgDialect>()
+      ->getCanonicalizationPatterns(patterns);
+  linalg::populateConstantFoldLinalgOperations(patterns, oneUse);
+  GreedyRewriteConfig config;
+  config.setUseTopDownTraversal(true);
+  return applyPatternsGreedily(bodies, std::move(patterns), config);
+}
+
 /// Gives each consumer that elementwise fusion would take a copy of its
 /// elementwise producer when the producer has several uses: the fusion
 /// takes a producer of one use only, and a producer of several stays its own
 /// kernel, its result a round trip through global memory. A copy is made
-/// where it does not multiply the producer's work: into a consumer of the
-/// same loops, or of more loops if the producer is cheap. The original stays
-/// for the uses that are not fused (a contraction, a slice, the return).
-/// The idea, a producer that is cheap to recompute cloned into each region
-/// that uses it rather than stored, is IREE's
-/// (iree-org/iree v3.12.0, `compiler/src/iree/compiler/DispatchCreation/
-/// CloneProducersIntoDispatchRegions.cpp`). Returns whether anything was
-/// copied.
+/// where `fusesWithoutRecomputing` allows it; the original stays for the
+/// uses that are not fused (a contraction, a slice, the return).
+/// IREE clones into each dispatch region that uses them only the producers
+/// that cost nothing to recompute (fills, splat constants, scalar
+/// arithmetic; `isCloneableIntoDispatchOp` in iree-org/iree v3.12.0,
+/// `compiler/src/iree/compiler/Dialect/Flow/Transforms/RegionOpUtils.cpp`),
+/// and fuses another elementwise producer of several uses into the consumer
+/// that dominates the others, which then also yields the producer's result
+/// (`DispatchCreation/FuseMultiUseElementwiseProducer.cpp`). Here such a
+/// producer is evaluated again in each consumer instead: it reads its own
+/// operands once per element either way, and the copy saves the write and
+/// the read of its result. Returns whether anything was copied.
 static bool copyProducersOfSeveralUses(func::FuncOp function) {
   // A copy's payload holds at most this many ops, so that repeated rounds of
   // copying and fusing do not grow the bodies without bound.
@@ -242,10 +300,8 @@ static bool copyProducersOfSeveralUses(func::FuncOp function) {
       uses.push_back(&use);
     for (OpOperand *use : uses) {
       auto consumer = dyn_cast<linalg::GenericOp>(use->getOwner());
-      if (!consumer || !linalg::areElementwiseOpsFusable(use))
-        continue;
-      if (consumer.getNumLoops() != producer.getNumLoops() &&
-          !isCheap(producer))
+      if (!consumer || !linalg::areElementwiseOpsFusable(use) ||
+          !fusesWithoutRecomputing(use))
         continue;
       fused.push_back(use);
     }
@@ -544,9 +600,12 @@ public:
     }
     for (unsigned round = 0; round != (fuse ? 8 : 1); ++round) {
       PassManager pm(context);
-      pm.addPass(createLinalgElementwiseOpFusionPass());
+      if (!fuse)
+        pm.addPass(createLinalgElementwiseOpFusionPass());
       pm.addPass(createCanonicalizerPass());
       pm.addPass(createCSEPass());
+      if (fuse && failed(fuseElementwise(*bodies)))
+        return signalPassFailure();
       if (failed(pm.run(*bodies)))
         return signalPassFailure();
       if (!fuse)
