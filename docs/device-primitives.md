@@ -878,14 +878,11 @@ deterministic mode stay in the suite unchanged.
 
 The programs as executed (`mdir emit --stage=lowered` with
 `MDIR_GPU_BINARY=ptx`: the PTX of every kernel and the host's code in the
-LLVM dialect) are byte-identical to those of `main` (0a336ff9) for 32
-inputs, 32 of 32, compared at 965573ba and again at the head: the 25
-inputs in the default mode at 2ed9f8d7 (and JAC NVE on the CPU and on a
-device again at cfaa839d), and the 7 in the deterministic mode at
-cfaa839d, after the mark
-of the deterministic mode, which only those modules carry, was removed by
-the lowerings (with it, the printed module differed in that attribute
-alone):
+LLVM dialect) are byte-identical to those of `main` (24447fb2) for 32
+inputs, 32 of 32, at the branch's head after the rebase (f302e2ed; also
+against 0a336ff9 before it, at each commit of the implementation). The
+mark of the deterministic mode, which the lowerings remove, is the only
+attribute that reached the printed program before they did:
 
 | Inputs | Kernels a program |
 |---|---:|
@@ -902,8 +899,8 @@ programs as executed are the criterion of D285, D291, and D296.
 ### 5.7 Measured effect
 
 None is expected, since the programs are the same. The Amber suite was
-run with the binaries of `main` (0a336ff9) and of the branch (965573ba,
-whose programs are those of the head, Section 5.6) alternated in one job
+run with the binaries of `main` (0a336ff9) and of the branch before the
+rebase (965573ba, whose programs were those of that `main`) alternated in one job
 on an RTX 4090 at 450 W (ada-002, `--idle`), three rounds. The table gives
 the median ns/day of the second half of each run, and the ratio of the
 time of a step to that of `main`:
