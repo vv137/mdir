@@ -692,6 +692,22 @@ format, or the outputs; every such change is listed under **Changed** or
   The programs as executed, with the PTX of every kernel, are those of
   `main`. No key, default, or output changes.
 
+- **The algebra of every sum is a fact of the IR** (D[reduction-algebra],
+  #422 step 1, PR #470,
+  [docs/device-primitives.md §5](docs/device-primitives.md#5-reductions-by-their-algebra)):
+  `md_exec.algebra` gives each value that an op reduces a licence on its
+  order of evaluation, `any_order_exact`, `any_order`, or `fixed_order`
+  (ruled on #470). `md-exec-assign-algebra` states it from the mode on the
+  ops of `md_exec`; `md-distribute` and the passes that create the sums
+  across domains state `fixed_order` (for a given decomposition, #409).
+  `md-exec-choose-scatter` and the lowerings to a device and to the host
+  read it where they read the mode before, and refuse a sum that states
+  none; `--md-exec-check-algebra` refuses one anywhere.
+  `md-exec-choose-scatter` has no option `deterministic` any more. The warp
+  and block reductions are one emitter, `ReductionEmitter.h`. The programs
+  as executed, with the PTX of every kernel, are those of `main` on 32
+  inputs in both modes. No key, default, or output changes.
+
 - **The white paper's comparison with pmemd.cuda is measured again on
   `main` (D285) with the skins that MDIR chooses (D281)** (#437; Section
   10, Tables 10.2 and 10.3, Figure 10.1, and the range quoted in the

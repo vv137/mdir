@@ -346,6 +346,29 @@ or f64 changes. Its sums are in fixed point (D70, D84), where a privatized
 sum would give the same bits; that is the next step of #416. No strategy
 of floating-point values keeps the deterministic mode bitwise.
 
+**The algebra as a stated fact (D[reduction-algebra]).** Which of these
+forms a sum may take is a property of the sum, and the IR states it for
+each value that an op reduces, rather than leaving it to the mode:
+`any_order_exact` (integers and the logical or: any order and grouping gives the
+same bits), `any_order` (the terms may be taken in another order and grouping,
+and the result moves within the bound above; the default mode), or
+`fixed_order` (the result may not depend on the threads: a fixed order, or a
+sum made exact in fixed point; the deterministic mode). The chooser of
+strategies and the lowering read the stated algebra, through one set of
+functions, and refuse a sum that states none. A block reduction whose
+order depends on the count alone, as every global sum on a device is
+(D150), meets all three, so stating the algebra changed no generated code;
+what it changes is where a lowering may reorder. The licence is about
+order only: `any_order` does not permit another precision of the
+accumulator or another growth of its rounding error, such as a tree
+replaced by a serial chain of atomics: the worst-case bound of a sum of
+pairwise sums has the factor $\lceil\log_2 m\rceil\,\mathsf u$ where a
+serial chain has $(m - 1)\,\mathsf u$
+[[Higham2002]](references.md#higham2002) (Section 4.2). The sums across domains of a
+distributed run are `fixed_order` for a given decomposition: the same bits
+on every run with the same decomposition and build, not with another
+(#409).
+
 **The tile: a bounded footprint.** In the spreading, item $j$ with first
 point $s_{aj}$ adds only to the points $s_{aj} + t_a$, $0 \le t_a < n$,
 since $M_n$ vanishes outside $(0, n)$. Binned by $\lfloor s_{aj}/g\rfloor$,

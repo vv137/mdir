@@ -23,7 +23,7 @@ describes how a device implements a primitive.
 | Vectorized and transposed gathers | `BlockLoad`, `WarpLoad`, `BlockExchange` | #419 | Next, on the gathering of PME (tiled gathering at orders 6 and 8 is #411) | — |
 | Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420 | Planned | — |
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
-| Reductions chosen by the algebra of the operator | `BlockReduce` (raking, commutative only) | #422 | Planned | — |
+| Reductions chosen by the algebra of the operator (Section 5) | `BlockReduce` (raking, commutative only) | #422 | Step 1 built, behavior-neutral: the algebra of every sum stated in the IR (`any_order_exact`, `any_order`, `fixed_order`), read by the chooser and the lowerings instead of the mode, with the same PTX; the warp and block reductions one emitter. The strategies it licenses follow only where measured | D[reduction-algebra] |
 | Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D296 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 
@@ -96,7 +96,9 @@ would add a write and a read of every value.
 
 On the CPU the op is a loop with plain additions on one thread, or a
 parallel loop with atomic ones (`convert-md-exec-to-loops{atomic-grid}`).
-A combiner other than addition is to come as `combine(...)`, with #422.
+A combiner other than addition is to come as `combine(...)`. The op
+states the algebra of its sum (`md_exec.algebra`, Section 5): the device
+and the host add with atomics only where it is `any_order`.
 `md-exec-assign-precision` does not take the op yet. A program in mixed
 precision keeps it out of the fields it narrows; #443's transport stays in
 f64.
@@ -601,8 +603,8 @@ The inventory of #432, by the primitive each site takes:
 Left as they are: PME's binning for tiles (`match.any.sync` and a rank by
 key, one atomic for a key: a warp-aggregated atomic, #418), the serial
 partition within a particle's slots of `lowerBuildEdges` (D277), the host's
-scan of `emitEdgeSlots`, and the warp sums by `shuffle xor` (reductions,
-#422).
+scan of `emitEdgeSlots`. The warp sums by `shuffle xor` are the reduction
+emitters of Section 5 (D[reduction-algebra]).
 
 ### 4.4 Tests
 
@@ -669,3 +671,267 @@ of a step to that of `main`:
 No system is slower beyond the spread of the runs: the rounds of JAC NVE
 took 1259.7 to 1272.4 ns/day with `main` and 1253.6 to 1260.3 with the
 branch, whose program is byte for byte that of `main`.
+
+## 5. Reductions by their algebra
+
+### 5.1 What is stated
+
+A reduction or a scatter-accumulate combines values in an order that its
+lowering chooses: a tree, the rows of a matrix, the atomics of the
+threads, a table in block memory. Whether another order is acceptable is a
+property of the sum, not of the lowering, and MDIR states it in the IR for
+every value that an op reduces (D[reduction-algebra], #422, step 1;
+[principles.md](principles.md), principle 1). Each value is a licence to
+the lowering about the order of evaluation, in the words of the
+maintainer's ruling on #470:
+
+| Algebra | Licence |
+|---|---|
+| `any_order_exact` | The lowering may evaluate in any order and grouping, and every order gives the same bits (integers, `or`, fixed point). |
+| `any_order` | The lowering may evaluate in any order and grouping. For floating-point values the result's rounding then depends on that order. This is the floating-point sums of the default mode. |
+| `fixed_order` | The lowering must use the order the IR states, or an exact form of the sum, so that the result is the same on every run of the same build. For `md_dist` this holds for a given decomposition (#409). |
+
+`fixed_order` may be met through an `any_order_exact` form: the
+fixed-point spreading of PME in the deterministic mode (D70, D84) is the
+case.
+
+**The licence is about order only** (the maintainer's guards on #470).
+`any_order` permits any order and grouping. It does not permit changing
+the accumulator's precision (an f64 sum taken in f32) or the order of
+growth of its rounding error (a tree replaced by a serial chain of
+atomics). Such a change is a separate decision, with its own measurement.
+
+The names are licences, not algebraic claims: floating-point
+addition is commutative but not associative, and a sum of $m$ terms in
+another order and grouping differs from the exact sum by at most
+$(m - 1)\,\mathsf u\sum_k\lvert v_k\rvert + O(\mathsf u^2)$
+[[Higham2002]](references.md#higham2002), which bounds the difference
+between two orders and does not make it zero. Exact, by type, and in any
+order:
+- a sum of integers, modulo $2^{32}$ or $2^{64}$ (the fixed point of D70
+  is a sum of integers);
+- a logical or (the flags of D107, D118, D278).
+
+A maximum of floating-point numbers is exact in any order for numbers; the
+lowering's form, `select(cmpf ogt)`, is not where one operand is not a
+number (NaN), since `ogt` with a NaN selects the second operand. The
+maximum of the validity of a structure (D80) is internal to the lowering
+and not stated as an attribute; a position that is not a number is
+reported by the flags of D107.
+
+### 5.2 In the IR
+
+The algebras are the discardable attribute `md_exec.algebra`, one entry for
+each reduced value, in the order of `md_exec::algebra::getReducedTypes`
+(`include/mdir/Dialect/MDExec/Algebra.h`):
+
+| Op | Reduced values |
+|---|---|
+| `md_exec.particle_for` | its `reduce` |
+| `md_exec.pair_for`, `md_exec.tuple_for` | its destinations (each a sum over the pairs or tuples of a particle), then its `reduce` |
+| `md_exec.scatter_add` | its destination |
+| `md_exec.reciprocal` | the spreading into its grid, its energy, its virial |
+| `md_dist.all_reduce`, `md_dist.halo_sum` | the sum |
+
+```mlir
+%k, %bad = md_exec.particle_for ins(%v : !md.field<@atoms, 3 x f32>)
+             reduce(%zero, %no : f64, i1) { ... }
+             {md_exec.algebra = #md_exec.algebra<any_order, any_order_exact>}
+             -> f64, i1
+%u = md_dist.all_reduce %p {md_exec.algebra = #md_exec.algebra<fixed_order>}
+       : !md_dist.partial<f64> -> f64
+```
+
+- **The verifier** (the dialect's hook for `md_exec.algebra`) refuses an
+  attribute on an op that reduces nothing, a count other than that of the
+  reduced values, and `any_order_exact` on a floating-point value.
+  `fixed_order` on an integer is allowed: a stronger licence than needed.
+  A program built for the deterministic mode carries the unit attribute
+  `md_exec.deterministic` on its module, whose verifier refuses
+  `any_order` on a floating-point value anywhere in it; the lowerings
+  remove the mark with the ops it verifies.
+- **`md-exec-assign-algebra{deterministic}`** is the only pass that
+  states an algebra; every other pass carries it unchanged. It states it
+  on the ops of `md_exec` from the mode and the type: `any_order_exact` for an integer;
+  for a floating-point number `fixed_order` in the deterministic mode and
+  `any_order` otherwise. The driver runs it after the precision is
+  assigned (and after the passes that rebuild loops: fusion, the
+  accumulation of destinations, the narrowing of sums), before
+  `md-exec-choose-scatter` on a device and before the storage on the CPU
+  (`getPipeline`, `lib/Compiler/Compile.cpp`). `md-exec-assign-storage`
+  carries it onto the storage form (`algebra::carry`).
+- **The sums across domains** are `fixed_order` in every mode: their
+  lowering, `lowerAllReduce` and `lowerHaloSum`
+  (`lib/Conversion/MDDistToLoops/MDDistToLoops.cpp`), adds the domains,
+  then the rows, in their order. That gives the same bits on every run for
+  the same decomposition and build, not for another decomposition (#409).
+  `md-exec-assign-algebra` states it on every such sum, in either mode
+  (`algebra::stateDistributed`); the passes that create them
+  (`md-distribute`, `md-differentiate`, the transpose of
+  `md_dist.halo_copy`) state nothing.
+- **The check.** `--md-exec-check-algebra` refuses an op that reduces
+  values without stating their algebra, as `--md-check-transposes` (D295)
+  refuses an op without a transpose. `convert-md-exec-to-gpu`,
+  `convert-md-exec-to-loops`, and `convert-md-dist-to-loops` refuse such an
+  op as well, before they lower anything: a lowering reads the algebra and
+  never assumes one.
+
+Why a discardable attribute and not an argument of each op: the ops are
+created at about 140 places with their generated builders, which an argument
+would change at every one; a pass that rebuilds an op without the
+attribute loses the fact, and the lowerings then refuse the op, so a lost
+fact is an error and never a silent default. An op interface was not
+needed for the list of reduced values: one function,
+`algebra::getReducedTypes`, gives it for the seven ops, as
+`isOfTheStructure` lists the ops for `--md-check-transposes`.
+
+### 5.3 Where it is read
+
+The chooser and the lowerings read the algebra through the same functions
+(`Algebra.h`, and `checkReorder`, `checkTile`, `checkHash` of `Scatter.h`,
+which now take the algebras in place of the mode; principle 2). The mode
+still decides what is not a sum: the joined integration kernels'
+displacements (`integration.storedPositions`, #102), `explicit-fma`, and
+`contract=false`.
+
+| Decision | Before | Now | Function |
+|---|---|---|---|
+| A table or a tile adds a block's values first | refused in the deterministic mode | refused unless every destination allows any order | `checkReorder` (`Scatter.h`), called by `md-exec-choose-scatter` and the lowering |
+| A loop over tuples that may share particles evaluates each tuple once, with atomics, or the rows of the particles take its tuples | rows in the deterministic mode | rows unless every value the loop reduces allows any order | `evaluatesOnce` (`MDExecToGPU.cpp`) |
+| The renumbered members of the tuples go to the device (for the loops above) | not in the deterministic mode | not where a loop over tuples of the module states `fixed_order` | `tuplesMayReorder` (`MDExecToGPU.cpp`), at three places |
+| A loop over pairs that adds at both ends, `(directed, atomic)` | refused in the deterministic mode | refused where a destination is `fixed_order` | `lowerPairFor` |
+| A loop over groups, each pair once (D89) | refused in the deterministic mode | refused where any reduced value is `fixed_order` (its global sums come from warps over lists built with atomics) | `lowerGroupPairFor` |
+| The spreading of PME in fixed point, added with integer atomics | in the deterministic mode | where the spreading is `fixed_order` | `lowerReciprocal`, `lowerProlate` |
+| `md_exec.scatter_add` on a device | atomics in either mode | refused where it is `fixed_order`: no fixed-order form exists on a device yet (fixed point is #416, step 2) | `lowerScatterAdd` (`MDExecToGPU.cpp`) |
+| `md_exec.scatter_add` on the host with `atomic-grid` | atomics in either mode | a loop on one thread in the order of the values where it is `fixed_order` | `lowerScatterAdd` (`MDExecToLoops.cpp`) |
+| The global sums of the loops | block trees whose order depends on the count alone (D150) | the same: a fixed order meets every algebra | `emitReductions`, `finishSums` |
+
+`md-exec-choose-scatter` lost its option `deterministic`: it reads the
+algebra of each op.
+
+**Where the result changed outside the pipelines.** Three rows of the
+table decide otherwise than the mode did for an input that no pipeline of
+the driver produces, and none of the compared programs (Section 5.6)
+reaches them:
+- a loop over tuples that may share particles whose only reduced values
+  are flags (`any_order_exact`) evaluates each tuple once in the
+  deterministic mode too, where it was refused
+  (`Conversion/MDExecToGPU/tuple-flags-invalid.mlir` now states
+  `fixed_order` on the flag to keep the refusal);
+- a deterministic module in which no loop over tuples states `fixed_order`
+  copies the members to the device;
+- `md_exec.scatter_add` in the deterministic mode is refused on a device
+  and runs on one thread on the host (no pipeline creates the op on
+  `main`; #443's `halo_sum` is its first site).
+
+### 5.4 The emitters
+
+The reductions of a device are one emitter each,
+`include/mdir/Conversion/ReductionEmitter.h` (`kernels::`, beside
+`ScatterEmitter.h` and `CompactionEmitter.h`):
+
+| Emitter | What it emits | CUB's counterpart |
+|---|---|---|
+| `emitShuffleXor` | a value from the lane whose number differs in the bits of `offset`: one `gpu.shuffle xor` for 32 bits, two halves for 64, element by element for a vector | — |
+| `emitCombine` | a sum (`addf`, or `addi` for integers) or a maximum (`cmpf ogt` and a select) | the reduction operator |
+| `emitWarpReduce` | the butterfly over groups of 2 to 32 lanes: offsets `lanes/2`, ..., 1, every lane with the result | `WarpReduceShfl` [[CUB]](references.md#cub) |
+| `emitBlockReduce` | the warps' butterflies, the first lane of each writing to block memory, one barrier, every thread combining the warps in their order (D150) | `BlockReduce` with `BLOCK_REDUCE_WARP_REDUCTIONS` |
+
+Every one has a fixed order (the lanes and the warps decide it, not the
+timing of the threads), and so meets each of the three algebras. Sites:
+`reduceInBlock` (the global sums and the maximum of validity of
+`emitReductions`), `RowLanes::combine` (the lanes of a row of a matrix),
+the warp totals of the global sums of a loop over groups, and the counts
+of the active units (D268, integers). Left as it is: the half-warp sum of
+`emitGroupPairKernel` (`MDExecKernels.cpp`), which shuffles a 64-bit value
+with `gpu.shuffle` itself rather than as two halves, so that moving it would
+change the code of double precision.
+
+### 5.5 Tests
+
+- `Dialect/MDExec/Transforms/assign-algebra.mlir`,
+  `assign-algebra-loops.mlir`: the pass on every op, in both modes, carried
+  onto the storage form, printed and parsed again.
+- `Dialect/MDExec/Transforms/algebra-distributed.mlir`: the sums across
+  domains, `fixed_order` in both modes.
+- `Dialect/MDExec/algebra-invalid.mlir`: the verifier, with `any_order`
+  refused in a program built for the deterministic mode.
+- `Dialect/MDExec/Transforms/check-algebra.mlir`: the check, and the
+  refusals of `convert-md-exec-to-loops` and `convert-md-exec-to-gpu`.
+- The algebra, not the mode, decides: `Conversion/MDExecToGPU/kept-tuples.mlir`
+  (the rows with a lowering not in the deterministic mode),
+  `Conversion/MDDistToMDExec/deterministic-invalid.mlir` (the two-ended
+  loop refused), `Conversion/MDExecToLoops/scatter-add-algebra.mlir` (the
+  host's scatter on one thread), and the refusals of
+  `Conversion/MDExecToGPU/scatter-invalid.mlir`, `scatter-add.mlir`, and
+  `Dialect/MDExec/Transforms/choose-scatter.mlir`.
+- `Conversion/MDExecToGPU/reductions.mlir`: the code of the block
+  reduction (the butterfly at 16 to 1 in two halves of 32 bits, the
+  barrier, the warps in order), the same in both modes.
+
+The lowering tests run `md-exec-assign-algebra` before the chooser or the
+lowering, and before `convert-md-dist-to-*` (`test/lit.cfg.py` adds it to
+the substitutions of the lowerings). The bitwise tests of the
+deterministic mode stay in the suite unchanged.
+
+### 5.6 The same code
+
+The programs as executed (`mdir emit --stage=lowered` with
+`MDIR_GPU_BINARY=ptx`: the PTX of every kernel and the host's code in the
+LLVM dialect) are byte-identical to those of `main` (0a336ff9) for 32
+inputs, 32 of 32, compared at 965573ba and again at the head: the 25
+inputs in the default mode at 2ed9f8d7 (and JAC NVE on the CPU and on a
+device again at cfaa839d), and the 7 in the deterministic mode at
+cfaa839d, after the mark
+of the deterministic mode, which only those modules carry, was removed by
+the lowerings (with it, the printed module differed in that attribute
+alone):
+
+| Inputs | Kernels a program |
+|---|---:|
+| The nine systems of the Amber suite (default mode, groups), with the pruning fused and in the refresh (`MDIR_FUSED_PRUNE=off`): 18 programs | 245 to 501 |
+| The deterministic mode on a device (the matrix, PME in fixed point, the tuples by rows): JAC NVE, JAC NPT, Factor IX NVE, Cellulose NVE | 211 to 406 |
+| JAC NVE on the CPU in double precision, in the default and the deterministic mode | — |
+| JAC NVE with the matrix; with the tables of the tuples (`MDIR_TUPLE_SUMS=blocks`) and of the loops over groups (`MDIR_PAIR_SUMS=blocks`); with the tiles of PME (`MDIR_PME_SPREAD=tiles`) | 193 to 260 |
+| The prolate kernel (the three OPC waters of `prolate.test`) on a device, default and deterministic | 165, 173 |
+| The listed particles of PME (the OPC dipeptide of `pme-skip-zero.test`, LJ-PME, NPT) on a device, default and deterministic | 418, 439 |
+
+The modules after `convert-md-exec-to-gpu` were not compared; the
+programs as executed are the criterion of D285, D291, and D296.
+
+### 5.7 Measured effect
+
+None is expected, since the programs are the same. The Amber suite was
+run with the binaries of `main` (0a336ff9) and of the branch (965573ba,
+whose programs are those of the head, Section 5.6) alternated in one job
+on an RTX 4090 at 450 W (ada-002, `--idle`), three rounds. The table gives
+the median ns/day of the second half of each run, and the ratio of the
+time of a step to that of `main`:
+
+| System | `main` | Branch | Ratio |
+|---|---:|---:|---:|
+| JAC NVE | 1274.8 | 1275.2 | 1.000 |
+| JAC NPT | 1158.0 | 1154.8 | 1.003 |
+| JAC NVE 4 fs | 2378.6 | 2374.5 | 1.002 |
+| JAC NPT 4 fs | 2222.4 | 2225.7 | 0.999 |
+| Factor IX NVE | 571.1 | 570.3 | 1.001 |
+| Factor IX NPT | 532.9 | 531.0 | 1.004 |
+| Cellulose NVE | 147.9 | 147.2 | 1.005 |
+| Cellulose NPT | 140.3 | 140.1 | 1.001 |
+| STMV NPT 4 fs | 87.0 | 86.6 | 1.005 |
+
+No system is slower beyond the spread of the runs: the rounds of STMV
+took 86.2 to 87.3 ns/day with `main` and 85.0 to 87.8 with the branch, of
+Cellulose NVE 147.7 to 147.9 and 141.9 to 148.1, for programs that are
+byte for byte the same.
+
+### 5.8 Next
+
+Strategies that the stated algebra licenses come as later steps of #422,
+each only on a measured gain, `main` and the branch in one job:
+- `fixed_order` met through `any_order_exact`: fixed-point sums
+  privatized in the deterministic mode (#416, step 2), the tuples
+  evaluated once in fixed point instead of the rows, the loops over
+  groups in fixed point;
+- raking (`BlockReduce`'s commutative-only form) for the global sums
+  where they are `any_order`.
