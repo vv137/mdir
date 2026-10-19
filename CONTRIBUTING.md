@@ -31,6 +31,17 @@ schedule also passes the short runs of the Amber suite
   program names that program and the value it gave in the test's comment.
   A test that writes outputs writes them under `%t` and removes it first
   (`rm -rf %t && mkdir -p %t`); `test/Lit/test-outputs.test` checks it.
+  A test that compares two runs in mixed precision within a tolerance,
+  after a step, either compares where the positions of both are the same
+  (at step 0, or after a step of $10^{-9}$ or $10^{-6}$ ps), or runs both
+  where the sums have a fixed order (the CPU, or the deterministic mode,
+  where a flip, if there is one, fails every run of a build and is found
+  by the change that causes it), or has a tolerance sized for runs that
+  have parted. Otherwise a
+  coordinate that lies near a midpoint between two numbers of f32 can
+  round to either one when the positions are converted for the kernels,
+  and the forces of the two runs then differ by about $2k$ times its ulp:
+  the test fails now and then, whatever the code it tests (#427, #428).
 - **A switch and a comparison** for an optimization: it can be turned off,
   and a test compares both ways, bitwise where the sums have a fixed order.
 - **A decision** in [docs/decisions.md](docs/decisions.md) for a choice

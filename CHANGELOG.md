@@ -1395,6 +1395,14 @@ format, or the outputs; every such change is listed under **Changed** or
   is not a number from the start cannot serve: the topology refuses it
   before any build.
 
+- The tests that compare two runs in mixed precision after a step were
+  audited for the rounding flip of #427 (#428). None other than
+  `pme-tiles-gpu.test`, fixed by #429, can fail now and then from it:
+  each compares at the same positions (a step of $10^{-9}$ ps or step 0),
+  runs both sides where the sums have a fixed order (the CPU, or the
+  deterministic mode), or has a tolerance sized for runs that have
+  parted. `CONTRIBUTING.md` states the rule for new tests.
+
 - `pme-tiles-gpu.test` failed in about 1 of 300 runs at order 8 in mixed
   precision, a relative rms of the forces of 2.46e-6 against 2e-6 (#427).
   The spreading was not at fault. The test compares the forces after one
