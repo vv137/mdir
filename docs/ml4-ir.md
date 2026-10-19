@@ -723,8 +723,43 @@ body on 4,096 rows):
 - **Launches are not the cost**: about 2.6 µs each on the host. The
   fusion of Section 8.3 takes the bodies from 933 kernels to 532 and the
   launches of an evaluation at 6,144 atoms from about 72,000 to about
-  [LAUNCHES]; per call, `edge.b` from 1.29 to 1.22 ms and `node.b` from
-  4.4 to 4.2 (two runs of each in one job).
+  29,500; per call, `edge.b` from 1.29 to 1.22 ms and `node.b` from
+  4.4 to 4.2 (two runs of each in one job). A step (the sweep above, both
+  in one job) goes from 3,247 to 3,195 ms at 6,144 atoms, 6,711 to 6,626
+  at 12,288, and 228,139 to 225,331 at 196,608, 1.2 to 1.6% less, and the
+  peak from 652 to 592 MiB at 6,144 atoms, the bodies' intermediates
+  that the fusion no longer stores.
+
+**Baselines of the same bodies** (#462; not MDIR's path, target times).
+The bodies of layer 0 as `painn-stages.py export` writes them, 4,096 rows,
+ms per call on one RTX 4090: MDIR's lowering with this fusion; IREE
+3.12.0 from its release wheels (`iree-compile` of the exported StableHLO
+for CUDA `sm_89`, timed by `iree-benchmark-module`); XLA through
+`jax.jit` of the same JAX functions (JAX 0.11.2), in full f32
+(`jax_default_matmul_precision = "highest"`), timed from Python, so each
+call carries about 0.05 ms of dispatch.
+
+| Body | MDIR, D293 | MDIR, Section 8.3 | IREE | XLA |
+|---|---|---|---|---|
+| `embed.f` | 0.054 | 0.046 | 0.040 | 0.055 |
+| `ctx.f` | 0.49 | 0.48 | 0.13 | 0.061 |
+| `ctx.b` | 1.14 | 1.12 | 0.26 | 0.065 |
+| `edge.f` | 0.35 | 0.34 | 0.26 | 0.083 |
+| `edge.b` | 1.29 | 1.22 | 0.67 | 0.082 |
+| `node.f` | 1.40 | 1.38 | 0.48 | 0.073 |
+| `node.b` | 4.4 | 4.2 | 1.11 | 0.17 |
+| `readout.f` | 0.077 | 0.077 | 0.036 | 0.062 |
+| `readout.b` | 0.24 | 0.21 | 0.066 | 0.081 |
+
+IREE splits the bodies into about as many dispatches as this fusion gives
+kernels (`edge.b` 21 against 22, `edge.f` 7 against 7, `node.f` 14
+against 16, `node.b` 23 against 29): its advantage is in the code of each
+kernel, not in the grouping. Its contractions take a tile of 32 rows by
+128 columns of the result per workgroup of 256 threads, 16 columns per
+thread, the contracted dimension in steps of 32, in f32 without tensor
+cores or shared-memory staging (`TileAndFuse`); its row reductions take a
+warp per row, 4 elements per lane (`VectorDistribute`). These are the
+starting points of the schedules of 4b.
 
 ### 8.7 What was ruled (the maintainer, 2026-10-19, on #447)
 
