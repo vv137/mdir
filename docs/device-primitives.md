@@ -625,7 +625,8 @@ scan of `emitEdgeSlots`, and the warp sums by `shuffle xor` (reductions,
 
 The programs as executed (`mdir emit --stage=lowered` with
 `MDIR_GPU_BINARY=ptx`, the PTX of every kernel and the host's code in the
-LLVM dialect) are byte-identical to those of `main` (a6fef8b9) on:
+LLVM dialect) are byte-identical to those of `main` (a6fef8b9, and again
+at 075b9411 after a rebase) on:
 - the nine systems of the Amber suite, each with the pruning fused (the
   default) and in the refresh (`MDIR_FUSED_PRUNE=off`): 245 to 501 kernels
   a program;
