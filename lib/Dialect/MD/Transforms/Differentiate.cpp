@@ -49,7 +49,7 @@ private:
   /// The op of the transpose of the structure of `op` for operand `index`,
   /// from its declared transpose (AdjointOpInterface, D295),
   /// or null after a diagnostic; `kernel` receives its kernel to complete.
-  Operation *createTranspose(Operation *op, unsigned index, Value cotangent,
+  Operation *createTranspose(Operation *op, unsigned index, ValueRange cotangents,
                              Exchange exchange, TypeRange resultTypes,
                              bool summed, TransposeKernel &kernel);
 
@@ -380,7 +380,7 @@ LogicalResult DerivativeBuilder::getWeight(Value sum, Value &weight) {
 }
 
 Operation *DerivativeBuilder::createTranspose(Operation *op, unsigned index,
-                                              Value cotangent,
+                                              ValueRange cotangents,
                                               Exchange exchange,
                                               TypeRange resultTypes,
                                               bool summed,
@@ -390,7 +390,7 @@ Operation *DerivativeBuilder::createTranspose(Operation *op, unsigned index,
     op->emitOpError() << "has no declared transpose";
     return nullptr;
   }
-  return declared.createTranspose(builder, loc, index, cotangent, exchange,
+  return declared.createTranspose(builder, loc, index, cotangents, exchange,
                                   resultTypes, summed, kernel);
 }
 

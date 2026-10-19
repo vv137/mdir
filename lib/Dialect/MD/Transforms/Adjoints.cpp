@@ -204,6 +204,11 @@ static bool isPairOrTupleKernelOperand(unsigned index, unsigned gathered) {
   return index == 1 || (index >= 3 && index < 3 + gathered);
 }
 
+/// The one cotangent of an op of md, or null.
+static Value getSingle(ValueRange cotangents) {
+  return cotangents.size() == 1 ? cotangents.front() : Value();
+}
+
 /// Checks that `index` reaches the kernel of `op` and that the summed form
 /// is asked only where `allowSummed`.
 static LogicalResult checkTranspose(Operation *op, unsigned index,
@@ -230,7 +235,7 @@ struct SumRelationTranspose
   // at the center; the relation is symmetric, so that the gather at the
   // center over the directed pairs takes the derivative at both ends.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value, md::Exchange exchange,
+                             unsigned index, ValueRange, md::Exchange exchange,
                              TypeRange resultTypes, bool summed,
                              TransposeKernel &kernel) const {
     auto sum = cast<md::SumRelationOp>(op);
@@ -261,12 +266,13 @@ struct GatherRelationTranspose
   // center (`forward`) and with the ends exchanged (`backward`), where the
   // displacement is d_ji = −d_ij.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value cotangent,
+                             unsigned index, ValueRange cotangents,
                              md::Exchange exchange, TypeRange resultTypes,
                              bool summed, TransposeKernel &kernel) const {
     auto gather = cast<md::GatherRelationOp>(op);
     if (failed(checkTranspose(op, index, summed, /*allowSummed=*/true)))
       return nullptr;
+    Value cotangent = getSingle(cotangents);
     if (!cotangent || !isa<md::FieldType>(cotangent.getType())) {
       op->emitOpError() << "expected the adjoint of its result, a field";
       return nullptr;
@@ -318,7 +324,7 @@ struct SumTuplesTranspose
   // S = Σ_t u(t): the weight at each tuple, the reverse derivative of u in
   // the values of each member, and those added at the members.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value, md::Exchange,
+                             unsigned index, ValueRange, md::Exchange,
                              TypeRange resultTypes, bool summed,
                              TransposeKernel &kernel) const {
     auto sum = cast<md::SumTuplesOp>(op);
@@ -378,14 +384,14 @@ struct SumParticlesTranspose
   // S = Σ_i k(a_i, ...): the weight at each particle, which the kernel
   // captures, and the reverse derivative of k there.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value cotangent, md::Exchange,
+                             unsigned index, ValueRange cotangents, md::Exchange,
                              TypeRange resultTypes, bool summed,
                              TransposeKernel &kernel) const {
     if (failed(checkTranspose(op, index, summed, /*allowSummed=*/false)))
       return nullptr;
     return createParticleTranspose(
         op, cast<md::SumParticlesOp>(op).getKernel().front(), b, loc,
-        cotangent, resultTypes, kernel);
+        getSingle(cotangents), resultTypes, kernel);
   }
 };
 
@@ -399,14 +405,14 @@ struct MapParticlesTranspose
   // B_i = g(a_i, ...): the adjoint B̄_i at each particle, read beside the
   // operands, and the reverse derivative of g there.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value cotangent, md::Exchange,
+                             unsigned index, ValueRange cotangents, md::Exchange,
                              TypeRange resultTypes, bool summed,
                              TransposeKernel &kernel) const {
     if (failed(checkTranspose(op, index, summed, /*allowSummed=*/false)))
       return nullptr;
     return createParticleTranspose(
         op, cast<md::MapParticlesOp>(op).getKernel().front(), b, loc,
-        cotangent, resultTypes, kernel);
+        getSingle(cotangents), resultTypes, kernel);
   }
 };
 
