@@ -1,4 +1,4 @@
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s
 
 !pos = memref<?x3xf64, 1>
 !frc = memref<?x3xf32, 1>

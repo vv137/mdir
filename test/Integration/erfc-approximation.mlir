@@ -2,7 +2,7 @@
 // kernels under fast_math, against erfc in f64, on the host: the relative
 // error on [0, 6] is below 5e-7.
 //
-// RUN: mdir-opt %s --md-exec-approximate --md-exec-assign-storage \
+// RUN: mdir-opt %s --md-exec-approximate --md-exec-assign-algebra --md-exec-assign-storage \
 // RUN:     --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \

@@ -1,25 +1,25 @@
-// RUN: mdir-opt %s --md-exec-choose-scatter=tile-min-points=100000 | FileCheck %s
-// RUN: mdir-opt %s --md-exec-choose-scatter="tile=on tile-edge=16" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=tile-min-points=100000 | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="tile=on tile-edge=16" \
 // RUN: | FileCheck %s --check-prefix=TILES
-// RUN: mdir-opt %s --md-exec-choose-scatter=tile=on \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=tile=on \
 // RUN: | FileCheck %s --check-prefix=T8
-// RUN: mdir-opt %s --md-exec-choose-scatter="tile=off hash=off" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="tile=off hash=off" \
 // RUN: | FileCheck %s --check-prefix=GLOBAL
-// RUN: mdir-opt %s --md-exec-choose-scatter="tile=on hash=on deterministic=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --md-exec-choose-scatter="tile=on hash=on" \
 // RUN: | FileCheck %s --check-prefix=GLOBAL
-// RUN: mdir-opt %s --md-exec-choose-scatter="hash=on hash-probes=4" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="hash=on hash-probes=4" \
 // RUN: | FileCheck %s --check-prefix=ON
-// RUN: mdir-opt %s --md-exec-choose-scatter=tile-min-points=100000 | mdir-opt \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=tile-min-points=100000 | mdir-opt \
 // RUN: | FileCheck %s
-// RUN: mdir-opt %s --md-exec-choose-scatter="tile-min-points=100000 explain=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="tile-min-points=100000 explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=WHY
-// RUN: mdir-opt %s --md-exec-choose-scatter="tile=on tile-edge=16 deterministic=true explain=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --md-exec-choose-scatter="tile=on tile-edge=16 explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=DET
-// RUN: mdir-opt %s --md-exec-choose-scatter="tile=on tile-edge=16 explain=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="tile=on tile-edge=16 explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=E16
-// RUN: not mdir-opt %s --md-exec-choose-scatter=tile=bricks 2>&1 \
+// RUN: not mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=tile=bricks 2>&1 \
 // RUN: | FileCheck %s --check-prefix=SWITCH
-// RUN: not mdir-opt %s --md-exec-choose-scatter=tile-edge=6 2>&1 \
+// RUN: not mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=tile-edge=6 2>&1 \
 // RUN: | FileCheck %s --check-prefix=EDGE
 
 // The strategy of each scatter-accumulate on a device (D285,
@@ -61,7 +61,7 @@ md.tuple_set @waters on(@atoms) arity(3) orientation(ordered) disjoint
 // GLOBAL-NOT: scatter(
 // GLOBAL: return
 // WHY: remark: scatter: tile(8)
-// DET: remark: scatter: no tile: the deterministic mode adds floating-point values in a fixed order
+// DET: remark: scatter: no tile: the sum's algebra is 'fixed_order': the deterministic mode adds floating-point values in a fixed order
 func.func @large(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
     -> (f64, !vec) {
   %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
@@ -157,7 +157,7 @@ func.func @prolate(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !grid)
 // GLOBAL-NOT: scatter(
 // GLOBAL: return
 // WHY: remark: scatter: hash(256, 8, 100000)
-// DET: remark: scatter: no hash: the deterministic mode adds floating-point values in a fixed order
+// DET: remark: scatter: no hash: the sum's algebra is 'fixed_order': the deterministic mode adds floating-point values in a fixed order
 func.func @bond_forces(%inc: !bonds, %x: !vec, %cell: !md.cell) -> !vec {
   %f0 = md_exec.zeros : !vec
   %f = md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))

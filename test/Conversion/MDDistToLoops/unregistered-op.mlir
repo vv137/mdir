@@ -4,7 +4,7 @@
 // as one of another dialect: one that does not use a value of md_dist is
 // left as it is, and one that does is refused with the pass's diagnostic.
 //
-// RUN: mdir-opt --allow-unregistered-dialect --convert-md-dist-to-loops %s \
+// RUN: mdir-opt --allow-unregistered-dialect --md-exec-assign-algebra --convert-md-dist-to-loops %s \
 // RUN:   --split-input-file -verify-diagnostics | FileCheck %s
 
 md.particle_set @atoms

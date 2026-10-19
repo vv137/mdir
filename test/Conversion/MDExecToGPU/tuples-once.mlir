@@ -9,13 +9,13 @@
 // the table is added to the destination once. A run of fewer tuples than
 // L keeps the atomics, chosen on the host by the count.
 //
-// RUN: mdir-opt %s --md-exec-choose-scatter=hash=off --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s
-// RUN: mdir-opt %s --md-exec-choose-scatter=hash=on --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=BLOCKS
-// RUN: mdir-opt %s --md-exec-choose-scatter --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=CHOOSE
-// RUN: mdir-opt %s --md-exec-choose-scatter --convert-md-exec-to-gpu="tuples-once=false" | FileCheck %s --check-prefix=ROWS
-// RUN: mdir-opt %s --md-exec-choose-scatter --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CENTERS
-// RUN: mdir-opt %s --md-exec-choose-scatter --convert-md-exec-to-gpu="fuse-centers=false" | FileCheck %s --check-prefix=APART
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=hash=off --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=hash=on --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=BLOCKS
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter --convert-md-exec-to-gpu="tuples-once=true" | FileCheck %s --check-prefix=CHOOSE
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter --convert-md-exec-to-gpu="tuples-once=false" | FileCheck %s --check-prefix=ROWS
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CENTERS
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter --convert-md-exec-to-gpu="fuse-centers=false" | FileCheck %s --check-prefix=APART
 
 md.particle_set @atoms
 

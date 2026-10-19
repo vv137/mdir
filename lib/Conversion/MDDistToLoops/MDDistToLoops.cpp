@@ -17,6 +17,7 @@
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDDist/MDDistDialect.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"
+#include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
@@ -519,7 +520,19 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   return success();
 }
 
+/// The lowering of a sum across domains adds the domains, then the rows, in
+/// their order: the same bits on every run for the same decomposition and
+/// build, which meets every algebra (`fixed_order` as md_dist defines it,
+/// #409). The sum must state one (D[reduction-algebra]).
+static LogicalResult checkAlgebra(Operation *op) {
+  if (md_exec::algebra::getAlgebras(op))
+    return success();
+  return op->emitOpError() << md_exec::algebra::getMissingMessage();
+}
+
 LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
+  if (failed(checkAlgebra(op)))
+    return failure();
   OpBuilder b(op);
   Storage &halo = storage[op.getHalo()];
   Storage &layout = storage[layoutOf(op.getHalo())];
@@ -933,6 +946,8 @@ LogicalResult Lowering::lowerMapParticles(MapParticlesOp op) {
 }
 
 LogicalResult Lowering::lowerAllReduce(AllReduceOp op) {
+  if (failed(checkAlgebra(op)))
+    return failure();
   OpBuilder b(op);
   Type type = op.getResult().getType();
   auto vector = dyn_cast<VectorType>(type);

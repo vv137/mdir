@@ -1,21 +1,21 @@
-// RUN: mdir-opt %s --md-exec-choose-scatter | FileCheck %s --check-prefix=OFF
-// RUN: mdir-opt %s --md-exec-choose-scatter=pair-hash=auto | FileCheck %s --check-prefix=OFF
-// RUN: mdir-opt %s --md-exec-choose-scatter="pair-hash=auto explain=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter | FileCheck %s --check-prefix=OFF
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=pair-hash=auto | FileCheck %s --check-prefix=OFF
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=auto explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=AUTO
-// RUN: mdir-opt %s --md-exec-choose-scatter=pair-hash=on | FileCheck %s
-// RUN: mdir-opt %s --md-exec-choose-scatter=pair-hash=on | mdir-opt \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=pair-hash=on | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=pair-hash=on | mdir-opt \
 // RUN: | FileCheck %s
-// RUN: mdir-opt %s --md-exec-choose-scatter="pair-hash=on block-size=256 hash-probes=4 pair-hash-least=1000" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on block-size=256 hash-probes=4 pair-hash-least=1000" \
 // RUN: | FileCheck %s --check-prefix=WIDE
-// RUN: mdir-opt %s --md-exec-choose-scatter="pair-hash=on deterministic=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --md-exec-choose-scatter="pair-hash=on" \
 // RUN: | FileCheck %s --check-prefix=OFF
-// RUN: mdir-opt %s --md-exec-choose-scatter="pair-hash=on explain=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=WHY
-// RUN: mdir-opt %s --md-exec-choose-scatter="explain=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=WHYOFF
-// RUN: mdir-opt %s --md-exec-choose-scatter="pair-hash=on block-size=1024 explain=true" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on block-size=1024 explain=true" \
 // RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=BIG
-// RUN: not mdir-opt %s --md-exec-choose-scatter=pair-hash=yes 2>&1 \
+// RUN: not mdir-opt %s --md-exec-assign-algebra --md-exec-choose-scatter=pair-hash=yes 2>&1 \
 // RUN: | FileCheck %s --check-prefix=SWITCH
 
 // The loops over pairs that add the value of a pair at both of its

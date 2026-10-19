@@ -11,7 +11,7 @@
 // RUN: mdir-opt %S/eam.mlir %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
-// RUN:     --md-exec-choose-scatter="pair-hash=off" \
+// RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=off" \
 // RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -21,7 +21,7 @@
 // RUN: mdir-opt %S/eam.mlir %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
-// RUN:     --md-exec-choose-scatter="pair-hash=on" \
+// RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on" \
 // RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -34,7 +34,7 @@
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-choose-scatter="pair-hash=off" \
+// RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=off" \
 // RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -47,7 +47,7 @@
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-choose-scatter="pair-hash=on" \
+// RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on" \
 // RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -62,6 +62,6 @@
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-choose-scatter="pair-hash=on" \
+// RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=on" \
 // RUN: | FileCheck %s --check-prefix=CHOSEN
 // CHOSEN: md_exec.pair_for {{.*}} policy(unique, atomic) scatter(hash(512, 8, 0))

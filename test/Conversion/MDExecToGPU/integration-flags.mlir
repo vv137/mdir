@@ -6,7 +6,7 @@
 // the run. One event after them; the host reads the flag before the first
 // op that uses it.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s
 
 md.particle_set @atoms
 

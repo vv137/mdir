@@ -113,8 +113,6 @@ static std::string getScatterOptions(const Control &control) {
     options += "pair-hash=off ";
   else if (pairs == "blocks")
     options += "pair-hash=on ";
-  if (control.deterministic)
-    options += "deterministic=true";
   return options;
 }
 
@@ -191,6 +189,11 @@ std::string mdir::compiler::getPipeline(const Control &control,
      << (control.deterministic ? " deterministic=true" : "") << "},";
   if (control.fastMath)
     os << "md-exec-approximate,md-exec-expand-radial,canonicalize,cse,";
+  // The algebra of every sum, from the mode (D[reduction-algebra]): in the
+  // deterministic mode a floating-point sum is `fixed_order`, otherwise
+  // `any_order`. The strategies and the lowerings read it, not the mode.
+  os << "md-exec-assign-algebra"
+     << (control.deterministic ? "{deterministic=true}" : "") << ",";
 
   if (control.target == Target::GPU) {
     // The strategy of each scatter-accumulate: the tiles of the spreading

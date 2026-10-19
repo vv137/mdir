@@ -15,7 +15,7 @@
 // RUN: mdir-opt %S/../../examples/argon/argon.mlir %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.1 width=160" %md_exec_transforms \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_openmp \
 // RUN: | env OMP_NUM_THREADS=4 mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%openmp \

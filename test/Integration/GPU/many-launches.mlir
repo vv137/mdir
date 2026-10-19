@@ -7,7 +7,7 @@
 //
 // REQUIRES: cuda
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu \
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -15,7 +15,7 @@
 
 // With MDRT_WAIT, the host waits after every launch.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu \
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | env MDRT_WAIT=1 mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \

@@ -1,4 +1,5 @@
 add_mlir_dialect_library(MDIRMDExec
+  Algebra.cpp
   MDExecDialect.cpp
   Independence.cpp
   MDExecOps.cpp
@@ -14,6 +15,7 @@ add_mlir_dialect_library(MDIRMDExec
 
   LINK_LIBS PUBLIC
   MDIRMD
+  MDIRMDDist
   MDIRMDRT
   MLIRControlFlowInterfaces
   MLIRFunctionInterfaces

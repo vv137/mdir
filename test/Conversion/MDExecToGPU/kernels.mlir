@@ -1,9 +1,9 @@
 // The storage form on a device, lowered to kernels.
 //
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="contract=false" | FileCheck %s
-// RUN: mdir-opt %s --convert-md-exec-to-gpu="block-size=64 contract=false" \
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu="contract=false" | FileCheck %s
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu="block-size=64 contract=false" \
 // RUN: | FileCheck %s --check-prefix=SMALL
-// RUN: mdir-opt %s --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CONTRACT
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s --check-prefix=CONTRACT
 
 // By default the arithmetic of a kernel may contract into fused
 // multiply-adds.

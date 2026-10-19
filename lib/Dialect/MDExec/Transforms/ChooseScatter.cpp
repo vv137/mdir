@@ -91,7 +91,7 @@ private:
     if (tile == "off")
       return explainRefused(op, "tile", "tile=off");
     if (scatter::Refusal refused =
-            scatter::checkTile(op, tileEdge, deterministic))
+            scatter::checkTile(op, tileEdge))
       return explainRefused(op, "tile", *refused);
     // With `auto`, a grid in f64 keeps the spreading of before, which is
     // faster there on the devices measured (their f64 is slow, and the
@@ -149,7 +149,8 @@ private:
                               "the loop overwrites a destination");
     int64_t slots = scatter::getHashSlots(blockSize, op.getArity());
     if (scatter::Refusal refused = scatter::checkHash(
-            slots, op.getOuts().getTypes(), deterministic))
+            slots, op.getOuts().getTypes(),
+            algebra::getDestinationAlgebras(op)))
       return explainRefused(op, "hash", *refused);
     ScatterAttr chosen = ScatterAttr::getHash(
         &getContext(), slots, hashProbes, hash == "on" ? 0 : hashLeast);
@@ -177,7 +178,8 @@ private:
                             "(pair-hash=auto)");
     int64_t slots = scatter::getHashSlots(blockSize, scatter::kPairHashReach);
     if (scatter::Refusal refused = scatter::checkHash(
-            slots, op.getOuts().getTypes(), deterministic))
+            slots, op.getOuts().getTypes(),
+            algebra::getDestinationAlgebras(op)))
       return explainRefused(op, "hash", *refused);
     ScatterAttr chosen =
         ScatterAttr::getHash(&getContext(), slots, hashProbes, pairHashLeast);
@@ -192,7 +194,8 @@ private:
       return explainRefused(op, "hash", "scatter-hash=off");
     int64_t slots = scatter::getHashSlots(blockSize, 1);
     if (scatter::Refusal refused = scatter::checkHash(
-            slots, TypeRange{op.getDest().getType()}, deterministic))
+            slots, TypeRange{op.getDest().getType()},
+            algebra::getDestinationAlgebras(op)))
       return explainRefused(op, "hash", *refused);
     ScatterAttr chosen = ScatterAttr::getHash(
         &getContext(), slots, hashProbes, scatterHash == "on" ? 0 : hashLeast);

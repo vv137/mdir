@@ -1,4 +1,4 @@
-// RUN: mdir-opt %s --convert-md-exec-to-gpu -split-input-file -verify-diagnostics
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu -split-input-file -verify-diagnostics
 
 // The lowering checks again that the ops before a join are independent of
 // the op that runs on a second stream (D87), so that it holds of any

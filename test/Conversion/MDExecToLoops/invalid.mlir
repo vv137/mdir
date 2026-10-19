@@ -1,4 +1,4 @@
-// RUN: mdir-opt %s --convert-md-exec-to-loops -split-input-file \
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-loops -split-input-file \
 // RUN:     -verify-diagnostics
 
 md.particle_set @atoms

@@ -16,7 +16,7 @@
 //               ghosts from domains that are not neighbors
 //
 // RUN: sed 's/GRID/2, 1, 1/' %s \
-// RUN: | mdir-opt --convert-md-dist-to-loops %md_passes \
+// RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -24,7 +24,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: sed 's/GRID/1, 1, 1/' %s \
-// RUN: | mdir-opt --convert-md-dist-to-loops %md_passes \
+// RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -32,7 +32,7 @@
 // RUN: | FileCheck %s
 //
 // RUN: sed 's/GRID/3, 2, 1/' %s \
-// RUN: | mdir-opt --convert-md-dist-to-loops %md_passes \
+// RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
@@ -43,7 +43,7 @@
 // 2 of the 16 own nothing.
 //
 // RUN: sed 's/GRID/16, 1, 1/' %s \
-// RUN: | mdir-opt --convert-md-dist-to-loops %md_passes \
+// RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | env MDRT_DIST_TRACE=1 mlir-runner -e main --entry-point-result=void \

@@ -10,10 +10,10 @@
 // RUN: sed 's/GRID/2, 1, 1/; s/TOLERANCE/1.0e-10/' %s \
 // RUN: | mdir-opt --md-distribute="grid=2,1,1 traversal=directed potentials=many_body" \
 // RUN:     %md_passes \
-// RUN:     --convert-md-dist-to-md-exec="functions=derived,energy" \
+// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
@@ -22,10 +22,10 @@
 // RUN: sed 's/GRID/2, 1, 1/; s/TOLERANCE/1.0e-10/' %s \
 // RUN: | mdir-opt --md-distribute="grid=2,1,1 traversal=directed potentials=many_body" \
 // RUN:     %md_passes --md-dist-owner-computes \
-// RUN:     --convert-md-dist-to-md-exec="functions=derived,energy" \
+// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
@@ -34,10 +34,10 @@
 // RUN: sed 's/GRID/3, 2, 1/; s/TOLERANCE/1.0e-10/' %s \
 // RUN: | mdir-opt --md-distribute="grid=3,2,1 traversal=directed potentials=many_body" \
 // RUN:     %md_passes \
-// RUN:     --convert-md-dist-to-md-exec="functions=derived,energy" \
+// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
@@ -46,10 +46,10 @@
 // RUN: sed 's/GRID/3, 2, 1/; s/TOLERANCE/1.0e-10/' %s \
 // RUN: | mdir-opt --md-distribute="grid=3,2,1 traversal=directed potentials=many_body" \
 // RUN:     %md_passes --md-dist-owner-computes \
-// RUN:     --convert-md-dist-to-md-exec="functions=derived,energy" \
+// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
@@ -58,10 +58,10 @@
 // RUN: sed 's/GRID/16, 1, 1/; s/TOLERANCE/1.0e-10/' %s \
 // RUN: | mdir-opt --md-distribute="grid=16,1,1 traversal=directed potentials=many_body" \
 // RUN:     %md_passes \
-// RUN:     --convert-md-dist-to-md-exec="functions=derived,energy" \
+// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
@@ -70,10 +70,10 @@
 // RUN: sed 's/GRID/16, 1, 1/; s/TOLERANCE/1.0e-10/' %s \
 // RUN: | mdir-opt --md-distribute="grid=16,1,1 traversal=directed potentials=many_body" \
 // RUN:     %md_passes --md-dist-owner-computes \
-// RUN:     --convert-md-dist-to-md-exec="functions=derived,energy" \
+// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
@@ -82,11 +82,11 @@
 // RUN: sed 's/GRID/3, 2, 1/; s/TOLERANCE/1.0e-5/' %s \
 // RUN: | mdir-opt --md-distribute="grid=3,2,1 traversal=directed potentials=many_body" \
 // RUN:     %md_passes --md-dist-owner-computes \
-// RUN:     --convert-md-dist-to-md-exec="functions=derived,energy" \
+// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy" \
 // RUN:     --convert-md-dist-to-loops \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
-// RUN:     --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \

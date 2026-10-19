@@ -67,4 +67,50 @@ def MDExec_ScatterAttr : AttrDef<MDExec_Dialect, "Scatter"> {
   let genVerifyDecl = 1;
 }
 
+def MDExec_AlgebraListAttr : AttrDef<MDExec_Dialect, "AlgebraList"> {
+  let mnemonic = "algebra";
+  let summary = "The algebra of each value that an op reduces";
+  let description = [{
+    One algebra for each value that an op reduces, in the order of
+    `md_exec::algebra::getReducedTypes` (D[reduction-algebra],
+    include/mdir/Dialect/MDExec/Algebra.h): a loop's destinations, then its
+    `reduce`; the destination of `md_exec.scatter_add`; the spreading, the
+    energy, and the virial of `md_exec.reciprocal`; the sum of
+    `md_dist.all_reduce` and of `md_dist.halo_sum`.
+
+    Each is a licence to the lowering about the order of evaluation
+    (ruled on #470):
+
+    - `any_order_exact`: the lowering may evaluate in any order and
+      grouping, and every order gives the same bits (integers, `or`, fixed
+      point).
+    - `any_order`: the lowering may evaluate in any order and grouping. For
+      floating-point values the result's rounding then depends on that
+      order. This is the floating-point sums of the default mode.
+    - `fixed_order`: the lowering must use the order the IR states, or an
+      exact form of the sum, so that the result is the same on every run of
+      the same build. For `md_dist` this holds for a given decomposition
+      (#409).
+
+    `fixed_order` may be met through an `any_order_exact` form: the
+    fixed-point spreading of PME in the deterministic mode is the case.
+
+    The licence is about order only. `any_order` permits any order and
+    grouping; it does not permit changing the accumulator's precision (an
+    f64 sum taken in f32) or the order of growth of its rounding error (a
+    tree replaced by a serial chain of atomics). Such a change is a
+    separate decision, with its own measurement.
+
+    `md-exec-assign-algebra` states it as `md_exec.algebra`, a discardable
+    attribute: a pass that rebuilds the op without it loses the fact, and
+    the lowerings then refuse the op rather than assume an algebra.
+
+    ```mlir
+    {md_exec.algebra = #md_exec.algebra<any_order, any_order_exact>}
+    ```
+  }];
+  let parameters = (ins ArrayRefParameter<"::mdir::md_exec::Algebra">:$values);
+  let hasCustomAssemblyFormat = 1;
+}
+
 #endif // MDIR_DIALECT_MDEXEC_MDEXECATTRS_TD

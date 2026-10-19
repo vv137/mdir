@@ -73,6 +73,36 @@ def MDExec_ScatterStrategy : I32EnumAttr<"ScatterStrategy",
   let cppNamespace = "::mdir::md_exec";
 }
 
+// The algebra of a reduced value: a licence to the lowering about the
+// order of evaluation of its sum (D[reduction-algebra], ruled on #470;
+// docs/device-primitives.md, Section 5). It is not an algebraic claim:
+// floating-point addition is not associative. `fixed_order` may be met
+// through an `any_order_exact` form: the fixed-point spreading of PME in the
+// deterministic mode is the case. The licence is about order only:
+// `any_order` does not permit changing the accumulator's precision (an f64
+// sum taken in f32) or the order of growth of its rounding error (a tree
+// replaced by a serial chain of atomics); such a change is a separate
+// decision, with its own measurement (the maintainer's guards on #470).
+// Only md-exec-assign-algebra states an algebra; every other pass carries
+// it unchanged.
+def MDExec_Algebra : I32EnumAttr<"Algebra", "algebra of a reduced value", [
+    // any_order_exact: the lowering may evaluate in any order and grouping,
+    // and every order gives the same bits (integers, `or`, fixed point).
+    I32EnumAttrCase<"AnyOrderExact", 0, "any_order_exact">,
+    // any_order: the lowering may evaluate in any order and grouping. For
+    // floating-point values the result's rounding then depends on that
+    // order. This is the floating-point sums of the default mode.
+    I32EnumAttrCase<"AnyOrder", 1, "any_order">,
+    // fixed_order: the lowering must use the order the IR states, or an
+    // exact form of the sum, so that the result is the same on every run of
+    // the same build. For md_dist this holds for a given decomposition
+    // (#409).
+    I32EnumAttrCase<"FixedOrder", 2, "fixed_order">
+  ]> {
+  let cppNamespace = "::mdir::md_exec";
+  let genSpecializedAttr = 0;
+}
+
 // When a neighbor structure is rebuilt.
 def MDExec_RebuildPolicy : I32EnumAttr<"RebuildPolicy",
     "when a neighbor structure is rebuilt", [

@@ -2,7 +2,7 @@
 // ghost rows, the inner product of the adjoint test, which the reference
 // executor runs.
 //
-// RUN: mdir-opt %s --convert-md-dist-to-md-exec -verify-diagnostics
+// RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-dist-to-md-exec -verify-diagnostics
 
 !vec  = !md.field<@atoms, 3 x f64>
 !own  = !md_dist.field<@dd, owned, 3 x f64>

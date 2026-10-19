@@ -65,7 +65,12 @@ def ConvertMDExecToLoops
     | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
 
     The pass decides nothing about buffers; `md-exec-assign-storage` has
-    done that. It rejects ops in the value form.
+    done that. It rejects ops in the value form, and an op that reduces
+    values without stating their algebra (`md-exec-assign-algebra`,
+    D[reduction-algebra]). A `md_exec.scatter_add` whose sum is `fixed_order`
+    is a loop on one thread, even with `atomic-grid`; every other sum is
+    combined in an order that does not depend on the threads
+    (`fixed-order-reductions`, D171), which meets every algebra.
 
     With `kept-tuples`, the members that `md_exec.renumber` puts at their
     places, and the incidence structure that `md_exec.build_incidence`
@@ -292,7 +297,7 @@ def ConvertMDExecToGPU
     | `md_exec.particle_for` | One `gpu.launch` with a thread for each particle, which writes only to its own particle. |
     | `md_exec.pair_for` over a neighbor matrix | `row-lanes` threads share the row of a particle and add their values by shuffles; the first writes the particle. No atomics. |
     | `md_exec.pair_for` over groups | A warp for each block of 64 entries of the lists of groups of 16; each pair once, added to the particle of the entry with an atomic addition and to the group once for the block (D89). |
-    | `md_exec.tuple_for`, not disjoint | A thread evaluates each tuple once and adds to its members with atomics (`tuples-once`, D103), or, with `scatter(hash(S, P, L))`, through a table of the particles of its block in block memory (D283, D285); in the deterministic mode, the rows of the particles take the tuples they belong to. |
+    | `md_exec.tuple_for`, not disjoint | A thread evaluates each tuple once and adds to its members with atomics (`tuples-once`, D103), or, with `scatter(hash(S, P, L))`, through a table of the particles of its block in block memory (D283, D285); where the destinations' stated algebra is `fixed_order` (the deterministic mode), the rows of the particles take the tuples they belong to. |
     | `md_exec.tuple_for`, disjoint | A thread for each particle; the member at place 0 evaluates the tuple and writes every member, which no other thread writes (D83). |
     | Consecutive loops of the same positions | One kernel, where no loop reads what another writes (`fuse-rows`); a loop over particles, the loops over the tuples of a disjoint union that read it, and the loop over particles that reads them become one integration kernel, in which a warp takes whole groups of constraints (`fuse-integration`, D110, D111). |
     | The global sums of a loop | Each thread adds up the particles that it takes, and a block adds up its threads by a tree (`gpu.all_reduce`) into partial sums in `scratch`; one block adds up the partial sums. The order depends only on the number of particles. The host reads the results with one copy for each type of number. Sums over tuples evaluated once that reach only a later loop over tuples evaluated once, through arithmetic, are computed with one part by a block of the kernel of that loop, which then does the arithmetic and the later loop; several parts keep their kernels, launched only for several, which leave the totals in a buffer for that block (`fuse-centers`, #66). |
@@ -301,6 +306,17 @@ def ConvertMDExecToGPU
     | `md_exec.refresh_neighbors` | A branch on the flag of the test of validity to the build of its kind, a template that the pass adds to the module; with `prune_skin`, on the flag of the inner list to a pruning of the inner list from the outer one (D114) |
     | `md_exec.reciprocal` | The kernels of the template of particle mesh Ewald on a device and the transforms of cuFFT, with `scatter(tile(E))` those of the tiles (D282); with `md_exec.side`, on the second stream |
     | A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell |
+
+    Where it chooses how to combine values, the pass reads the algebra
+    that each op states for them (`md_exec.algebra`, from
+    `md-exec-assign-algebra`; D[reduction-algebra],
+    include/mdir/Dialect/MDExec/Algebra.h), not the mode, and it refuses
+    an op that reduces values without stating it. A sum whose algebra is
+    `fixed_order` takes no atomics in floating point: the tuples take the rows
+    of their particles, the spreading of PME is in fixed point, and a loop
+    over pairs that adds at both ends, a loop over groups, and
+    `md_exec.scatter_add` are refused. The global sums are trees whose
+    order depends on the count alone, which meets every algebra.
 
     A constant that a kernel uses is a constant of the kernel, not an
     argument.
@@ -343,18 +359,20 @@ def ConvertMDExecToGPU
            "other uses (the deterministic mode, #102)">,
     Option<"tuplesOnce", "tuples-once", "bool", /*default=*/"true",
            "Whether a loop over tuples that may share particles evaluates "
-           "each tuple once and adds to its members with atomics, outside "
-           "the deterministic mode (JAC: 526 against 505 ns/day for the "
-           "rows of the particles)">,
+           "each tuple once and adds to its members with atomics, where the "
+           "algebra of its destinations allows it (JAC: 526 against 505 "
+           "ns/day for the rows of the particles)">,
     Option<"fuseCenters", "fuse-centers", "bool", /*default=*/"true",
            "Whether the sums of a loop over few tuples evaluated once, which "
            "reach only a later such loop through arithmetic, are computed by "
            "one block of the kernel of that loop, as for the centers of a "
            "term over the centers of groups (#66)">,
     Option<"deterministic", "deterministic", "bool", /*default=*/"false",
-           "Whether sums are added in an order that does not depend on the "
-           "threads (D84): the charges of PME in fixed point, not with "
-           "floating-point atomics">,
+           "The deterministic mode (D84) for what is not a sum: the joined "
+           "integration kernels compute the displacements of the tuples as "
+           "the loops alone do (#102). How sums are combined follows the "
+           "algebra that each op states (md-exec-assign-algebra, "
+           "D[reduction-algebra])">,
     Option<"keptTuples", "kept-tuples", "bool", /*default=*/"false",
            "Whether the renumbered members of the tuples, their incidence "
            "structures, and the copies of the members on the device are "
