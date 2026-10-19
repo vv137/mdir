@@ -749,7 +749,9 @@ each reduced value, in the order of `md_exec::algebra::getReducedTypes`
   A program built for the deterministic mode carries the unit attribute
   `md_exec.deterministic` on its module, whose verifier refuses
   `any_order` on a floating-point value anywhere in it; the lowerings
-  remove the mark with the ops it verifies.
+  remove the mark with the ops it verifies. That verifier walks the module
+  at each verification, a pass over its ops, which is cheap beside the
+  passes that run between two verifications.
 - **`md-exec-assign-algebra{deterministic}`** is the only pass that
   states an algebra; every other pass carries it unchanged. It states it
   on the ops of `md_exec` from the mode and the type: `any_order_exact` for an integer;
@@ -879,10 +881,12 @@ deterministic mode stay in the suite unchanged.
 The programs as executed (`mdir emit --stage=lowered` with
 `MDIR_GPU_BINARY=ptx`: the PTX of every kernel and the host's code in the
 LLVM dialect) are byte-identical to those of `main` (24447fb2) for 32
-inputs, 32 of 32, at the branch's head after the rebase (f302e2ed; also
-against 0a336ff9 before it, at each commit of the implementation). The
-mark of the deterministic mode, which the lowerings remove, is the only
-attribute that reached the printed program before they did:
+inputs, 32 of 32, at the branch's head after the rebase (f302e2ed). Before
+the rebase, against `main` at 0a336ff9, all 32 were identical at 965573ba
+and at cfaa839d; at 2ed9f8d7 the 25 inputs of the default mode were, and
+the 7 of the deterministic mode differed only in the mark
+`md_exec.deterministic` on the module, which the lowerings remove since
+cfaa839d:
 
 | Inputs | Kernels a program |
 |---|---:|
