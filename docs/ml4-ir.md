@@ -618,9 +618,19 @@ and the loops of `md_exec` carry them to the lowering for a device:
     not read their init take an empty tensor, so that a fill shared
     through CSE does not stay for them;
   - the weights that a product reads, globals of the body, are copied to
-    the device by the runtime once (`mdrtDeviceConstant`, by their host
-    address), and the copy is waited for, since the stream of the kernels
-    does not wait for the null stream;
+    the device by the runtime when first read (`mdrtDeviceConstant`), and
+    the copy is waited for, since the stream of the kernels does not wait
+    for the null stream. A copy is found again by the host address and
+    size of the weights and by its owner, the activation of the embedding
+    program that made it (D215), or none outside one. It is freed with its
+    owner: an activation's copies when the activation closes, the others
+    when a program unloads its modules, and all of them, with the handle of
+    cuBLAS, when the device changes (`mgpuSetDefaultDevice`). A host
+    address names the weights only while their program is loaded: after
+    it is released, another program may put its own weights there
+    (`model-stages-programs-gpu.test`: with the copies keyed by the
+    address alone, a second model of the same shapes read the first
+    one's weights);
   - f32 in both precision modes (the bodies are f32, #447), cuBLAS's
     default math mode: no TF32 (the maintainer's ruling on #463).
 
