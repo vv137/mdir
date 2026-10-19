@@ -214,7 +214,7 @@ opaque call's 61 kB, at about 20 times the opaque call's time, since
 MDIR's lowering of `linalg` does not tile the products, each tile's sum
 over its centers runs a thread for each particle, and the tiles run on a
 device only; the fusion of the bodies' elementwise ops
-(D[ml4-fused-bodies]) cut their kernels from 933 to 532 and their time
+(D299) cut their kernels from 933 to 532 and their time
 by 6 to 7%, which is in the products. What is left on one
 GPU is MACE in stages, AOTInductor's bodies against these, a scatter that
 evaluates each product once, and the choice between storing and

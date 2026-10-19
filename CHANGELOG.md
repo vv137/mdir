@@ -651,7 +651,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **The batched bodies of neural stages are fused further**
-  (`D[ml4-fused-bodies]`, #462,
+  (`D299`, #462,
   [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)):
   `md-exec-lower-stage-bodies` folds unit dimensions, turns pads into
   gathers, starts reductions from their constant initial values, fuses

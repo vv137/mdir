@@ -1,4 +1,4 @@
-// The fusion of the batched bodies of neural stages (D[ml4-fused-bodies],
+// The fusion of the batched bodies of neural stages (D299,
 // docs/ml4-ir.md, Section 8.3): a producer of several uses, a pad of a
 // slice, a reduction from a fill, and a result, in the forms that
 // stablehlo-legalize-to-linalg gives them. With `fuse=false` (D293's

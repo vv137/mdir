@@ -452,7 +452,7 @@ the stages of a pretrained PaiNN, nablaDFT's `painn_100k` of D286,
 exported from its weights and lowered through MDIR's pipeline, against
 the opaque call of the same checkpoint. Status: **4a built**; **4b in
 progress** (#462): the fusion of the bodies is built
-(`D[ml4-fused-bodies]`). Section 8.7 says what was ruled; Section 8.8
+(`D299`). Section 8.7 says what was ruled; Section 8.8
 what 4b takes.
 
 ### 8.1 The stages of PaiNN
@@ -542,7 +542,7 @@ and the loops of `md_exec` carry them to the lowering for a device:
   bodies' intermediate buffers are taken from the runtime's pool for the
   call. The 39 bodies of nablaDFT's PaiNN become 532 kernels (933 with
   upstream's elementwise fusion alone, D293).
-- **The fusion of a body** (`D[ml4-fused-bodies]`; option `fuse` of the
+- **The fusion of a body** (`D299`; option `fuse` of the
   pass, true by default; `fuse=false` is D293's lowering). The
   legalization of StableHLO is one op for one op, and upstream's
   `linalg-fuse-elementwise-ops` fuses a producer of one use only. The pass
@@ -777,7 +777,7 @@ starting points of the schedules of 4b.
 - The AOTInductor form (`torch.export` of each stage from SchNetPack's
   modules) and its time against 4a's on the same weights.
 - The time of the `linalg` form (#462), in this order: the fusion of the
-  bodies (`D[ml4-fused-bodies]`, Section 8.3, built); the sums over the
+  bodies (`D299`, Section 8.3, built); the sums over the
   centers of a tile over the range of centers whose slots meet it, a
   thread for each center and component; schedules of the contractions
   and of the row reductions in the Transform dialect (tiles to blocks and
