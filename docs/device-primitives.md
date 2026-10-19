@@ -24,7 +24,7 @@ describes how a device implements a primitive.
 | Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420 | Planned | — |
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
 | Reductions chosen by the algebra of the operator | `BlockReduce` (raking, commutative only) | #422 | Planned | — |
-| Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D[compaction-emitters] |
+| Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D296 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 
 The order follows #415: #421 first, then #419 on the gathering of PME,

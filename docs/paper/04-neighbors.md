@@ -603,7 +603,7 @@ The ranks come from a ballot and a population count, so the order of the
 inner list is the order of the outer list: the pruning adds no order of
 its own. This warp compaction, the scans, and the counting sorts of the
 builds are one emitter each, which the lowering and the templates of the
-builds share (D[compaction-emitters]; [device-primitives.md](../device-primitives.md),
+builds share (D296; [device-primitives.md](../device-primitives.md),
 Section 4). (The outer list's blocks come from an atomic pool, and the loop
 adds with atomics, so the sums depend on the order of the threads as
 before; the deterministic mode does not use groups.) A loop over pairs

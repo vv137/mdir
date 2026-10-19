@@ -653,7 +653,7 @@ format, or the outputs; every such change is listed under **Changed** or
   output of the pass is the same for every test and driver input compared.
 
 - **Compaction, scans, and counting sorts are shared device emitters**
-  (D[compaction-emitters], #432, PR #460,
+  (D296, #432, PR #460,
   [docs/device-primitives.md §4](docs/device-primitives.md#4-compaction-scans-and-counting-sorts)):
   the warp compaction (ballot and rank), the warp and block scans, the
   device scan in its two forms, the scatter of a counting sort, the

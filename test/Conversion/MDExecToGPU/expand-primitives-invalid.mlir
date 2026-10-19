@@ -1,5 +1,5 @@
 // The refusals of the expansion of the device primitives
-// (D[compaction-emitters]).
+// (D296).
 //
 // RUN: mdir-opt %s --split-input-file --verify-diagnostics \
 // RUN:     --expand-device-primitives

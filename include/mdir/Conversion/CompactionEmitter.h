@@ -1,5 +1,5 @@
 // The emitters of compaction, scans, and counting sorts on a device
-// (D[compaction-emitters], docs/device-primitives.md, Section 4).
+// (D296, docs/device-primitives.md, Section 4).
 //
 // A compaction keeps the items whose predicate holds and packs them in their
 // order: item i goes to place r(i), the number of kept items before it. At

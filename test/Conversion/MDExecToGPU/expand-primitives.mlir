@@ -1,5 +1,5 @@
 // The expansion of the calls of the device primitives
-// (D[compaction-emitters]): each call becomes the code of its emitter where
+// (D296): each call becomes the code of its emitter where
 // it stands, in the order of the sites that the emitters replaced, and the
 // declarations go.
 //

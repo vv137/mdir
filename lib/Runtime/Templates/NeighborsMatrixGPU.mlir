@@ -45,7 +45,7 @@
 // compaction of the device primitives.
 
 // The device primitives that the build calls (include/mdir/Conversion/
-// CompactionEmitter.h, D[compaction-emitters]): the lowering replaces each
+// CompactionEmitter.h, D296): the lowering replaces each
 // call with the code of the primitive's emitter when it parses this
 // template.
 func.func private @mdir.primitive.warp_lanes_below(i32, i32) -> i32

@@ -1,5 +1,5 @@
 // The emitters of compaction, scans, and counting sorts
-// (CompactionEmitter.h, D[compaction-emitters]) called by name in kernels
+// (CompactionEmitter.h, D296) called by name in kernels
 // written for the test, expanded by `expand-device-primitives`, and run on
 // a device by device-primitives-gpu.test. Each case compares with a result
 // written out here (the small ones) or computed on the host in this file

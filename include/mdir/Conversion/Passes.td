@@ -394,7 +394,7 @@ def ExpandDevicePrimitives
   let description = [{
     A template of the device lowering calls a primitive of
     `CompactionEmitter.h` by name, `func.call @mdir.primitive.<name>(...)`,
-    with a declaration of its own (D[compaction-emitters],
+    with a declaration of its own (D296,
     docs/device-primitives.md, Section 4). `convert-md-exec-to-gpu`
     replaces each call with the code of the primitive's emitter where it
     stands when it parses a template, so that every site of a primitive,

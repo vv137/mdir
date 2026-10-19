@@ -1,5 +1,5 @@
 // The calls of the templates to the emitters of CompactionEmitter.h
-// (D[compaction-emitters]): `func.call @mdir.primitive.<name>(...)`, each
+// (D296): `func.call @mdir.primitive.<name>(...)`, each
 // replaced by the code of its emitter where it stands.
 
 #include "mdir/Conversion/CompactionEmitter.h"

@@ -1,5 +1,5 @@
 // The emitters of compaction, scans, and counting sorts on a device
-// (D[compaction-emitters]); see include/mdir/Conversion/CompactionEmitter.h.
+// (D296); see include/mdir/Conversion/CompactionEmitter.h.
 
 #include "mdir/Conversion/CompactionEmitter.h"
 

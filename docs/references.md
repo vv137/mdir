@@ -280,7 +280,7 @@ in block memory and one atomic for each index (D285,
 [device-primitives.md](device-primitives.md)); the plan of lowering
 strategies after CUB's primitives (#415); the warp compaction, the warp and
 block scans, and the scans of counting sorts of the shared emitters
-(D[compaction-emitters], [device-primitives.md](device-primitives.md),
+(D296, [device-primitives.md](device-primitives.md),
 Section 4).
 
 ### CUDAGuideL2
@@ -575,7 +575,7 @@ W. D. Hillis and G. L. Steele Jr., "Data parallel algorithms,"
 [doi:10.1145/7902.7903](https://doi.org/10.1145/7902.7903)
 
 Used for: the scan of a warp in log2 rounds, each lane adding the partial
-sum of the lane 2^k below it (D[compaction-emitters],
+sum of the lane 2^k below it (D296,
 [device-primitives.md](device-primitives.md), Section 4).
 
 ### HockneyEastwood1988

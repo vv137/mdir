@@ -1,4 +1,4 @@
-# The test of device-primitives.mlir on a device (D[compaction-emitters]):
+# The test of device-primitives.mlir on a device (D296):
 # each emitter of CompactionEmitter.h, called by name, expanded, and run:
 # the warp compaction, the warp scans, the block scan, the device scan
 # with and without the cursor, the chunked scan, and the counting sort
