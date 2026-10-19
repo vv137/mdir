@@ -540,7 +540,7 @@ and the loops of `md_exec` carry them to the lowering for a device:
   and on a device one kernel of a thread for each iteration of each
   parallel loop; the constants go into the kernels that read them, and the
   bodies' intermediate buffers are taken from the runtime's pool for the
-  call. The 39 bodies of nablaDFT's PaiNN become 369 kernels and 106
+  call. The 39 bodies of nablaDFT's PaiNN become 363 kernels and 112
   calls of cuBLAS (532 kernels with loops for the products, 933 with
   upstream's elementwise fusion alone, D293).
 - **The fusion of a body** (`D299`; option `fuse` of the
@@ -590,14 +590,26 @@ and the loops of `md_exec` carry them to the lowering for a device:
   every op of a body of the shape of a GEMM in f32 becomes a call of
   cuBLAS's `cublasSgemm` through the runtime (`mdrtGemmF32`), on the
   stream of the kernels and in their order:
-  - the shape: one reduced loop; the result indexed by the other loops in
-    order, its last the columns and the others its rows (several rows
-    dimensions are one, as the three components of PaiNN's vectors in
-    `node.b`: 12,288 rows); one operand indexed by the rows and the
-    reduced loop, or by the reduced loop and a single rows dimension
-    (transposed); the other by the reduced loop and the columns, or
-    transposed; a payload that adds the product of the operands to the
-    result (or a `linalg.matmul`); every buffer with contiguous rows;
+  - the shape: one reduced loop; every other loop indexes the result and
+    either both operands (the batch, at most one, the result's first
+    dimension) or one of them; after the batch, the result's dimensions
+    are those of the first operand that indexes them (A: the rows; several
+    rows dimensions are one, as the three components of PaiNN's vectors in
+    `node.b`: 12,288 rows) and then at most one of the other (B: the
+    columns); rows or columns (a product of $1\times k$ by $k\times 1$
+    is a dot product, a sum of rows below); a payload that adds the
+    product of the operands to the result, or to zero at the first reduced
+    iteration (the form in which the reductions that start from a constant
+    reach it), or a `linalg.matmul` or `linalg.batch_matmul`;
+  - the layout is read from the buffers: each matrix needs one contiguous
+    dimension (it is passed transposed when that is its rows), rows
+    dimensions that lie one after the other in A and in C, and C's columns
+    contiguous; a product whose buffers do not allow it stays loops;
+  - a product with a batch is one call of `cublasSgemmStridedBatched`,
+    the matrices of each index of the batch the previous ones' moved by
+    their distance along it: in `edge.b`,
+    $y_{r,c} = \sum_f x_{r,f}\, v_{r,c,f}$, 4,096 products of
+    $3\times128$ by $128\times1$ (the maintainer's ruling on #472);
   - the matching runs on the operands as the legalization gives them: the
     fusion keeps contractions free of fused operands (above), and the
     reductions that it starts from their constants exclude these;
@@ -612,9 +624,38 @@ and the loops of `md_exec` carry them to the lowering for a device:
   - f32 in both precision modes (the bodies are f32, #447), cuBLAS's
     default math mode: no TF32 (the maintainer's ruling on #463).
 
-  The bodies of nablaDFT's PaiNN make 106 calls and 369 kernels (532
-  with loops). The products that are not GEMMs (the contractions over the
-  three components of a vector, the reductions of rows) stay loops.
+  The bodies of nablaDFT's PaiNN make 112 calls, 6 of them batched, and
+  363 kernels (532 with loops).
+- **Sums of rows as a warp a row** (`D[ml4-body-reductions]`, the
+  maintainer's ruling on #472; on a device, after the products). A
+  generic of one result, f32 or f64, whose one reduced loop has at least
+  32 iterations and runs along the contiguous dimension of every operand
+  it indexes, and whose payload yields the accumulator (or a constant at
+  the first reduced iteration) plus a term that does not read it, becomes
+  a kernel of a warp for each element of the result, 8 warps a block, as
+  IREE gives its row reductions a warp each (`VectorDistribute`):
+  - lane $l$ adds the terms $l, l+32, l+64, \dots$ in that order, the
+    payload evaluated for each term in the lane;
+  - the warp combines its lanes by the butterfly of D301
+    (`kernels::emitWarpReduce`, offsets 16 to 1);
+  - the first lane stores the start (the init's element, or the
+    constant) plus the warp's sum.
+
+  The order is fixed by the lanes, not by the timing of the threads, so a
+  body gives the same bits on every run, in every mode, as the loops did.
+  The sum is taken in the type of the result (f32 in PaiNN's bodies), as
+  the loops took it. The order differs from the loops' order (term by
+  term), so the rounding differs. The sums inside a body state no
+  `md_exec.algebra`: `algebra::reduces` covers the loops and sums of
+  `md_exec` and `md_dist`, not `linalg` in a body. The fixed order is what
+  lets this lowering stand in every algebra, including `fixed_order`
+  (D301, Section 5.4 of [device-primitives.md](device-primitives.md)).
+  In PaiNN these are `edge.b`'s sums over 384 and over 100. The sums over
+  the three components of a vector,
+  $z_{r,f} = \sum_c a_{r,c,f}\, b_{r,c,f}$, have fewer than 32 terms. They
+  are not matrix products either: $f$ indexes both operands and the
+  result, a second batch dimension whose distance cannot join $r$'s in one
+  stride. They stay a thread for each element.
 - **`convert-md-exec-to-gpu`** splits each loop whose kernel applies
   batched stages into a host loop over tiles of $T$ rows. For each level of
   the applications (0 for those whose operands depend on no other, one
@@ -782,6 +823,24 @@ body on 4,096 rows):
   times to 0.1%. The peak grows by 30 MiB, cuBLAS's workspace and the
   weights on the device. In the 81-atom NVE run of Section 8.5, a step
   goes from 95 to 27 ms.
+- **The batched products and the sums of rows** (Section 8.3; the
+  maintainer's ruling on #472). The sweep above, measured in one `--idle`
+  job on one RTX 4090 with:
+  - `main` at D301, which carries the tile sums of #464 (D300);
+  - the products as cuBLAS calls before this step ("before");
+  - the same with the batched products and the warp sums ("after").
+
+  | Atoms | `main` (ms) | before (ms) | after (ms) | before / after | Peak (MiB): `main`, before, after |
+  |---|---|---|---|---|---|
+  | 6,144 | 1,713 | 696 | 488 | 1.43 | 592, 622, 622 |
+  | 12,288 | 3,392 | 1,399 | 982 | 1.43 | 1,021, 1,051, 1,051 |
+  | 196,608 | 54,009 | 22,222 | 15,623 | 1.42 | 13,951, 13,951, 13,951 |
+
+  With #464's tile sums, the step at 196,608 atoms is 1.48 µs a pair
+  after this step, the same as at 6,144 atoms: the time per pair no longer
+  grows with the system. In the 81-atom NVE run of Section 8.5 a step
+  takes 16 ms (the opaque call: 8.9 ms). That run shared its node with the
+  sweep, on another device of the node.
 
 **Baselines of the same bodies** (#462; not MDIR's path, target times).
 The bodies of layer 0 as `painn-stages.py export` writes them, 4,096 rows,
@@ -823,6 +882,34 @@ cores or shared-memory staging (`TileAndFuse`); its row reductions take a
 warp per row, 4 elements per lane (`VectorDistribute`). These are the
 starting points of the schedules of 4b.
 
+**The batched products and the sums of rows, per call** (Section 8.3;
+ms per call of 4,096 rows, layer 0, the mean of two runs in the `--idle`
+job of the sweep above; XLA in the same job, as above, with its 0.05 ms
+of dispatch from Python):
+
+| Body | before | after | XLA |
+|---|---|---|---|
+| `embed.f` | 0.041 | 0.043 | 0.031 |
+| `ctx.f` | 0.052 | 0.053 | 0.038 |
+| `ctx.b` | 0.073 | 0.073 | 0.044 |
+| `edge.f` | 0.062 | 0.062 | 0.044 |
+| `edge.b` | 0.363 | 0.143 | 0.073 |
+| `node.f` | 0.127 | 0.129 | 0.072 |
+| `node.b` | 0.315 | 0.316 | 0.168 |
+| `readout.f` | 0.015 | 0.015 | 0.037 |
+| `readout.b` | 0.047 | 0.047 | 0.045 |
+
+In `edge.b` (nsys, one call before this step), the kernel of the sum over
+384 took 205 µs of about 0.37 ms: a thread for each of the 4,096 rows,
+whose neighbors in a warp read elements 384 apart. The batched product
+replaced a kernel of 22.8 µs, and per call `edge.b` went from 0.364 to
+0.345 ms with it alone. `node.b` is unchanged. Its sums are all over the
+three components. Of about 281 µs of its kernels (nsys), about 117 are
+cuBLAS calls, about 31 the sums over the components, and the rest
+elementwise kernels over $4096\times3\times128$ values. These kernels
+write intermediates that XLA's fusions do not write, so what is left
+there is a question of fusion, not of products.
+
 ### 8.7 What was ruled (the maintainer, 2026-10-19, on #447)
 
 - **The split**: 4a in PR #447, 4b next.
@@ -849,7 +936,12 @@ starting points of the schedules of 4b.
   MDIR's own for dense products), the fusion of Section 8.3 keeping the
   elementwise ops around them; then AOTInductor's bodies measured against
   them, the choice a strategy with a switch, by measurement (#444); MDIR's
-  own schedules only for contractions that neither serves.
+  own schedules only for contractions that neither serves. Built: the
+  batched products as strided-batched calls of cuBLAS and the sums of rows
+  as a warp a row through D301's butterfly (`D[ml4-body-reductions]`, the
+  maintainer's ruling on #472, Section 8.3). AOTInductor's bodies stay a
+  baseline: its package does not export the VJP. Open: the sums over the
+  three components and the elementwise kernels of `node.b` (Section 8.6).
 - Store against recompute; the two-ended scatter (one product per pair).
 - Rows compacted to the pairs within the cutoff; the fields in f64 in
   `mixed`.
