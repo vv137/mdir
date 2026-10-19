@@ -402,6 +402,12 @@ struct Control {
     int64_t centersPerCall = 0;
   };
   std::vector<ModelTerm> models;
+  /// The models of [[energy.model]] with `backend = "STAGES"`
+  /// (D[ml4-painn-stages], docs/ml4-ir.md, Section 8): an MLIR module of
+  /// `md.stage` declarations, their batched bodies, and an `md.potential`
+  /// of the positions, the cell, and the atomic numbers, which the program
+  /// adds to its energy and differentiates.
+  std::vector<ModelTerm> stagedModels;
   /// Whether an expression of a term of the topology takes the time `t`
   /// in ps (D145).
   bool usesTime = false;

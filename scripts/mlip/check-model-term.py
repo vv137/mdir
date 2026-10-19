@@ -11,7 +11,7 @@ Prints one JSON object: the largest differences, the reference's scale, and,
 for `--steps`, the total energy of every step.
 
 usage: check-model-term.py DIR ARTIFACT [--precision Double|Mixed]
-           [--backend METATOMIC|AOTI (by default AOTI for a .pt2)]
+           [--backend METATOMIC|AOTI|STAGES (by default AOTI for a .pt2)]
            [--centers-per-call N] [--steps N] [--timestep 0.0005]
            [--temperature 300] [--forces OUT.npy]
 """
@@ -67,11 +67,13 @@ def main():
                 a.temperature)
     sim.run(0, energy=True)
     state = sim.state()
-    model = sim.model_energies()
+    # A model in stages is a potential of the program: the run gives the
+    # trace of its virial, not the tensor (D[ml4-painn-stages]).
+    model = sim.model_energies() if backend != "STAGES" else None
     result = {"precision": a.precision, "centers_per_call": a.centers_per_call,
               "particles": int(len(state.positions)),
               "energy": state.energies["potential"],
-              "virial": model["virial"].tolist()}
+              "virial": model["virial"].tolist() if model else None}
     if a.forces:
         np.save(a.forces, state.forces)
     reference = os.path.join(a.directory, "reference.npz")
@@ -82,7 +84,8 @@ def main():
             energy_reference=float(r["energy"]),
             force_difference=float(np.abs(state.forces - r["forces"]).max()),
             force_scale=float(np.abs(r["forces"]).max()),
-            virial_difference=float(np.abs(model["virial"] - r["virial"]).max()),
+            virial_difference=(float(np.abs(model["virial"] - r["virial"]).max())
+                               if model else None),
             virial_scale=float(np.abs(r["virial"]).max()),
             virial_trace_difference=abs(state.energies["virial"]
                                         - float(np.trace(r["virial"]))))

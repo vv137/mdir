@@ -202,7 +202,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
     // Kernels in f32 look their tables up in f32.
     os << "md-exec-assign-storage{memory=device"
        << (control.precision == Precision::Double ? "" : " tables=f32")
-       << "},md-exec-assign-streams,convert-md-exec-to-gpu{"
+       << "},md-exec-assign-streams,"
+       // The batched bodies of models in stages (D[ml4-batched-bodies]).
+       << (control.stagedModels.empty() ? "" : "md-exec-lower-stage-bodies,")
+       << "convert-md-exec-to-gpu{"
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes. LLVM contracts a product
        // into a fused multiply-add only where it has one use, and the

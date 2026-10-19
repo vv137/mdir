@@ -19,9 +19,14 @@ mode = sys.argv[1]
 if mode == "json":
     scale = float(sys.argv[2])
     r = json.loads(sys.stdin.read().strip().splitlines()[-1])
+    # A model in stages gives the trace of its virial, not the tensor
+    # (check-model-term.py with backend STAGES).
+    virial = r["virial_difference"]
+    if virial is None:
+        virial = r["virial_trace_difference"]
     checks = {"energy": (r["energy_difference"], 5e-5 * EV),
               "forces": (r["force_difference"], 2e-5 * EV * 10),
-              "virial": (r["virial_difference"], 5e-5 * EV)}
+              "virial": (virial, 5e-5 * EV)}
     for name, (value, tolerance) in checks.items():
         verdict = "ok" if value <= scale * tolerance else "FAILED"
         print(f"{name} {verdict}: {value:.3g} (tolerance {scale * tolerance:.3g})")

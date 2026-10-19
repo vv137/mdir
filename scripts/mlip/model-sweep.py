@@ -16,6 +16,12 @@ writes the system to OUT/w<count>/ and
   `MDIR_MLIP_TIMING=1` adds the model's own time per evaluation, apart from
   its pair list, from the plugin's standard error, as a mean over every
   evaluation after the first;
+- with `--stages MODEL.mlir` (a model in stages, `painn-stages.py export`,
+  D[ml4-painn-stages]): runs `mdir run` with `backend = "STAGES"`, and reads
+  the peak of MDIR's own allocator (`MDIR_DEVICE_MEMORY`), which holds the
+  model's fields, the rows of its tiles, and its bodies' buffers; the pairs
+  are counted within the cutoff (ASE's neighbor list). A run through the
+  plugin reports MDIR's peak beside the plugin's;
 - with `--package KIND:PATH` (`mace:MODEL`, `painn:CHECKPOINT`): evaluates
   the energy, the forces, and the stress with the package's calculator
   (`water-box.py --kind`), and reports `torch.cuda.max_memory_allocated` above
@@ -26,7 +32,8 @@ A size that fails (out of memory, or any error) is reported as such and ends
 the sweep, since the larger ones would fail too. One JSON object per size is
 printed, and the table at the end.
 
-usage: model-sweep.py OUT --waters 8 16 32 ... (--artifact A.pt | --package KIND:PATH)
+usage: model-sweep.py OUT --waters 8 16 32 ...
+           (--artifact A.pt | --stages MODEL.mlir | --package KIND:PATH)
            [--precision mixed|double] [--steps 60] [--mdir mdir]
            [--seed 1]
 """
@@ -65,7 +72,7 @@ electrostatics = "CUTOFF"
 
 [[energy.model]]
 name = "model"
-backend = "METATOMIC"
+backend = "{backend}"
 path = "{artifact}"
 
 [dynamics]
@@ -89,8 +96,10 @@ precision = "{precision}"
 def run_mdir(directory, args):
     with open(os.path.join(directory, "run.toml"), "w") as f:
         f.write(RUN.format(steps=args.steps, interval=max(1, args.steps // 10),
-                           artifact=os.path.abspath(args.artifact), precision=args.precision))
-    env = dict(os.environ, MDIR_MLIP_TIMING="1")
+                           artifact=os.path.abspath(args.artifact or args.stages),
+                           backend="STAGES" if args.stages else "METATOMIC",
+                           precision=args.precision))
+    env = dict(os.environ, MDIR_MLIP_TIMING="1", MDIR_DEVICE_MEMORY="1")
     begin = time.perf_counter()
     p = subprocess.run([args.mdir, "run", "run.toml"], cwd=directory, env=env,
                        capture_output=True, text=True)
@@ -110,6 +119,13 @@ def run_mdir(directory, args):
     if m:
         out.update(pairs=int(m.group(1)), calls=int(m.group(2)),
                    peak_allocated_MiB=float(m.group(3)), peak_reserved_MiB=float(m.group(4)))
+    m = re.search(r"device memory \(MDIR_DEVICE_MEMORY\): peak ([\d.]+) MiB allocated, "
+                  r"([\d.]+) MiB with the pool", text)
+    if m:
+        out.update(mdir_peak_MiB=float(m.group(1)), mdir_reserved_MiB=float(m.group(2)))
+        if args.stages:
+            out.update(peak_allocated_MiB=float(m.group(1)),
+                       peak_reserved_MiB=float(m.group(2)))
     m = re.search(r"from step \d+ to step \d+, ([\d.]+) ms per step", text)
     if m:
         out["ms_per_step"] = float(m.group(1))
@@ -168,14 +184,15 @@ def main():
     p.add_argument("out")
     p.add_argument("--waters", type=int, nargs="+", required=True)
     p.add_argument("--artifact")
+    p.add_argument("--stages")
     p.add_argument("--package")
     p.add_argument("--precision", default="mixed")
     p.add_argument("--steps", type=int, default=60)
     p.add_argument("--mdir", default="mdir")
     p.add_argument("--seed", type=int, default=1)
     args = p.parse_args()
-    if bool(args.artifact) == bool(args.package):
-        sys.exit("give one of --artifact and --package")
+    if (bool(args.artifact) + bool(args.package) + bool(args.stages)) != 1:
+        sys.exit("give one of --artifact, --stages, and --package")
     wb = water_box()
     rows = []
     for count in args.waters:
@@ -185,8 +202,13 @@ def main():
         positions = np.round(wb.wrap(positions, cell) / 10.0, 7) * 10.0
         wb.write(directory, positions, cell)
         row = {"waters": count, "atoms": 3 * count}
-        row.update(run_mdir(directory, args) if args.artifact
+        row.update(run_mdir(directory, args) if args.artifact or args.stages
                    else run_package(positions, cell, args))
+        if args.stages and "pairs" not in row:
+            from ase import Atoms
+            from ase.neighborlist import neighbor_list
+            atoms = Atoms(["O", "H", "H"] * count, positions=positions, cell=cell, pbc=True)
+            row["pairs"] = int(len(neighbor_list("i", atoms, 5.0)))
         if "pairs" in row and "peak_allocated_MiB" in row:
             row["kB_per_pair"] = row["peak_allocated_MiB"] * 1048.576 / row["pairs"]
         # Through mdir run, the time per step of the second half (the model's

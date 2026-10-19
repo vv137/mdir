@@ -104,6 +104,10 @@ public:
                             << "' does not name a stage";
         return signalPassFailure();
       }
+      // A batched body is called by the tiles of the loop that the kernel
+      // becomes (D[ml4-batched-bodies]); the application stays.
+      if (stage.getRows())
+        continue;
       FlatSymbolRefAttr name =
           apply.getVjp() ? stage.getVjpAttr() : stage.getForwardAttr();
       auto body = dyn_cast_or_null<FunctionOpInterface>(

@@ -600,10 +600,14 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
         !llvm::all_of(term.name, [](char ch) { return llvm::isAlnum(ch) || ch == '_'; }))
       return input("a model term needs a name of letters, digits, and '_'");
     if (!termNames.insert(term.name).second) return input("duplicate model term name '" + term.name + "'");
-    if (term.backend != "METATOMIC" && term.backend != "AOTI")
+    if (term.backend != "METATOMIC" && term.backend != "AOTI" && term.backend != "STAGES")
       return input("the model term '" + term.name + "': backend takes \"METATOMIC\", a "
-                   "TorchScript artifact of metatomic, or \"AOTI\", an AOTInductor "
-                   "package of the `nequip` package");
+                   "TorchScript artifact of metatomic, \"AOTI\", an AOTInductor "
+                   "package of the `nequip` package, or \"STAGES\", a model in stages "
+                   "of MDIR's IR");
+    if (term.backend == "STAGES" && term.centersPerCall != 0)
+      return input("the model term '" + term.name + "': a model in stages takes no "
+                   "centers_per_call");
     if (term.path.empty()) return input("the model term '" + term.name + "' needs a path");
     if (term.centersPerCall < 0)
       return input("the model term '" + term.name + "': centers_per_call is 0 or more");
@@ -612,9 +616,14 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     if (std::error_code ec = llvm::sys::fs::make_absolute(full))
       return input("the model term '" + term.name + "': " + ec.message());
     copy.path = std::string(full);
-    c.models.push_back(std::move(copy));
+    // A model in stages is a potential of the program (D[ml4-painn-stages]).
+    if (copy.backend == "STAGES")
+      c.stagedModels.push_back(std::move(copy));
+    else
+      c.models.push_back(std::move(copy));
   }
-  if (!c.models.empty() && s.topology.atomicNumbers.size() != s.topology.getNumParticles())
+  if ((!c.models.empty() || !c.stagedModels.empty()) &&
+      s.topology.atomicNumbers.size() != s.topology.getNumParticles())
     return input("a model term needs the elements of the particles, which the topology does "
                  "not give");
   // The restraints become those of the control structure, whose constants

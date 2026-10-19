@@ -1,0 +1,25 @@
+# nablaDFT's PaiNN (`painn_100k.ckpt`, D286) in stages (D[ml4-painn-stages],
+# docs/ml4-ir.md, Section 8): its stages in JAX from SchNetPack's weights,
+# checked against SchNetPack's modules and its calculator in float64, then
+# exported with 4096 rows a tile and evaluated through the Python model
+# (`backend = "STAGES"`) on 8 waters in a cell of 6.2 Å, narrower than
+# twice the cutoff, so that the slots hold several images of a particle;
+# against SchNetPack's calculator in float64, within ten times ML1's
+# tolerances, as the opaque call of model-term-ml4-gpu.test (the virial by
+# its trace: the run gives the program's virial). Nothing is fetched here.
+#
+# REQUIRES: cuda, stages-export, ml4-python, ml4-artifacts
+#
+# RUN: rm -rf %t && mkdir -p %t/box
+# RUN: %ml4_python %S/../../scripts/mlip/painn-stages.py weights %ml4_artifacts/painn_100k.ckpt %t/painn.npz
+# RUN: %ml4_python %S/../../scripts/mlip/water-box.py %t/box --n 2 --spacing 3.1 --seed 2 --kind painn --painn-dtype float64 --reference %ml4_artifacts/painn_100k.ckpt --device cpu
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py check %t/painn.npz %t/box/reference.npz | FileCheck %s --check-prefix=STAGES
+# STAGES: stage ctx0 forward
+# STAGES: stage readout forward
+# STAGES: PASS
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py export %t/painn.npz %t/model.mlir --rows 4096 --stablehlo-opt %stablehlo_opt --workdir %t
+# RUN: %ml4_python %S/../../scripts/mlip/check-model-term.py %t/box %t/model.mlir --backend STAGES --precision Double | %ml4_python %S/Inputs/model-term/compare.py json 10 | FileCheck %s
+# RUN: %ml4_python %S/../../scripts/mlip/check-model-term.py %t/box %t/model.mlir --backend STAGES --precision Mixed | %ml4_python %S/Inputs/model-term/compare.py json 10 | FileCheck %s
+# CHECK: energy ok
+# CHECK: forces ok
+# CHECK: virial ok

@@ -206,8 +206,14 @@ that the models in stages are measured against. M3 closes with PaiNN and
 MACE in stages on one GPU, both required, and M4 with them on two GPUs
 (D287). The IR of the stages is built (Section 3.3,
 D288): a stage binds its body and its vector-Jacobian product,
-from AOTInductor or from StableHLO, which lowers through `linalg`; what is
-left on one GPU is lowering the bodies of the two models, a scatter that
+from AOTInductor or from StableHLO, which lowers through `linalg`. PaiNN
+in stages runs on one GPU (D[ml4-painn-stages],
+D[ml4-batched-bodies]): its bodies of `linalg` run in tiles of rows, and
+it takes 1.4 to 2.1 kB of device memory a pair of liquid water against the
+opaque call's 61 kB, at about 20 times the opaque call's time, since
+MDIR's lowering of `linalg` neither tiles the products nor fuses the
+bodies' kernels, and the tiles run on a device only. What is left on one
+GPU is MACE in stages, AOTInductor's bodies against these, a scatter that
 evaluates each product once, and the choice between storing and
 recomputing what a product takes. The distributed work has begun beside it (D275),
 with ownership and halos as IR. A domain $d$ owns particles $O_d$ and holds

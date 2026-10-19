@@ -1274,6 +1274,10 @@ void mdir::driver::resolveNeighborStructure(Control &control,
     return matrix("the target is the CPU");
   if (control.deterministic)
     return matrix("the deterministic mode");
+  // A model in stages runs over the slots of the pairs of images that a
+  // matrix keeps (D[ml4-painn-stages]).
+  if (!control.stagedModels.empty())
+    return matrix("a model in stages runs over the slots of a matrix");
   // Loops over pairs without an exchange contract, which cannot take each
   // pair once and would keep a matrix beside the groups.
   if (control.implicitSolvent != Control::ImplicitSolvent::None)

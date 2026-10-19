@@ -1024,8 +1024,41 @@ LogicalResult StageOp::verify() {
   return success();
 }
 
+/// Whether `type`, the type of a function, is that of a batched body: its
+/// values are tensors (D[ml4-batched-bodies]).
+static bool isBatchedType(Type type) {
+  auto function = dyn_cast<FunctionType>(type);
+  return function && llvm::any_of(function.getInputs(), [](Type input) {
+           return isa<RankedTensorType>(input);
+         });
+}
+
+/// Checks that `actual` is the batched form of the value `declared` of one
+/// element: `f64` as `tensor<T x E>`, `vector<N x f64>` as
+/// `tensor<T x N x E>` with E f32 or f64 (a body may compute in a narrower
+/// type than the declaration, as a model of float32 does), and an integer as
+/// `tensor<T x iK>`. Sets `rows` to T, or checks it against T.
+static bool isBatchedValue(Type declared, Type actual, int64_t &rows) {
+  auto tensor = dyn_cast<RankedTensorType>(actual);
+  if (!tensor || tensor.getRank() < 1 || ShapedType::isDynamic(tensor.getDimSize(0)) ||
+      tensor.getDimSize(0) < 1 || !tensor.hasStaticShape())
+    return false;
+  if (rows && tensor.getDimSize(0) != rows)
+    return false;
+  rows = tensor.getDimSize(0);
+  Type element = tensor.getElementType();
+  if (declared.isSignlessInteger())
+    return tensor.getRank() == 1 && element == declared;
+  if (!element.isF32() && !element.isF64())
+    return false;
+  if (auto vector = dyn_cast<VectorType>(declared))
+    return tensor.getRank() == 2 && tensor.getDimSize(1) == vector.getDimSize(0);
+  return tensor.getRank() == 1;
+}
+
 /// Verifies that `name` names a body of the type `type` in the module: a
-/// function with a body of ops without memory effects.
+/// function with a body of ops without memory effects, of one element or
+/// batched (D[ml4-batched-bodies]).
 static LogicalResult verifyStageBody(StageOp stage, StringRef role,
                                      FlatSymbolRefAttr name, FunctionType type,
                                      SymbolTableCollection &symbolTable) {
@@ -1035,16 +1068,38 @@ static LogicalResult verifyStageBody(StageOp stage, StringRef role,
     return stage.emitOpError()
            << "'" << name.getValue() << "', its " << role
            << " body, does not name a function";
-  if (body.getFunctionType() != type)
+  // A batched body that md-exec-lower-stage-bodies has lowered to buffers
+  // was checked in its form of tensors.
+  if (body->hasAttr("md.stage_body"))
+    return success();
+  if (isBatchedType(body.getFunctionType())) {
+    auto actual = cast<FunctionType>(body.getFunctionType());
+    int64_t rows = 0;
+    bool fits = actual.getNumInputs() == type.getNumInputs() &&
+                actual.getNumResults() == type.getNumResults();
+    for (unsigned i = 0, e = fits ? type.getNumInputs() : 0; i != e; ++i)
+      fits = fits && isBatchedValue(type.getInput(i), actual.getInput(i), rows);
+    for (unsigned i = 0, e = fits ? type.getNumResults() : 0; i != e; ++i)
+      fits =
+          fits && isBatchedValue(type.getResult(i), actual.getResult(i), rows);
+    if (!fits)
+      return stage.emitOpError()
+             << "expected its " << role << " body '" << name.getValue()
+             << "' of the type " << type
+             << " or its batched form, a tensor of a static number of rows "
+                "for each value, got "
+             << actual;
+  } else if (body.getFunctionType() != type) {
     return stage.emitOpError()
            << "expected its " << role << " body '" << name.getValue()
            << "' of the type " << type << ", got " << body.getFunctionType();
+  }
   if (body.isExternal())
     return stage.emitOpError()
            << "cannot bind the declaration '" << name.getValue()
            << "' as its " << role
            << " body: only a body in the module is lowered (an external "
-              "body, such as an AOTInductor export, is step 4 of #377)";
+              "body, such as an AOTInductor export, is step 4b of #377)";
   WalkResult walk = body.getFunctionBody().walk([&](Operation *op) {
     if (op->hasTrait<OpTrait::ReturnLike>() || isMemoryEffectFree(op))
       return WalkResult::advance();
@@ -1060,19 +1115,54 @@ LogicalResult StageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   if (failed(verifyStageBody(*this, "forward", getForwardAttr(),
                              getFunctionType(), symbolTable)))
     return failure();
-  if (FlatSymbolRefAttr vjp = getVjpAttr())
-    return verifyStageBody(*this, "vjp", vjp, getVjpType(), symbolTable);
+  if (FlatSymbolRefAttr vjp = getVjpAttr()) {
+    if (failed(verifyStageBody(*this, "vjp", vjp, getVjpType(), symbolTable)))
+      return failure();
+    // A tile calls both bodies on the same rows.
+    auto rowsOf = [&](FlatSymbolRefAttr name) -> int64_t {
+      auto body = cast<FunctionOpInterface>(
+          symbolTable.lookupNearestSymbolFrom(*this, name));
+      if (auto rows = body->getAttrOfType<IntegerAttr>("md.stage_rows"))
+        return rows.getInt();
+      if (!isBatchedType(body.getFunctionType()))
+        return 0;
+      return cast<RankedTensorType>(
+                 cast<FunctionType>(body.getFunctionType()).getInput(0))
+          .getDimSize(0);
+    };
+    if (rowsOf(getForwardAttr()) != rowsOf(vjp))
+      return emitOpError() << "expected its forward body and its "
+                              "vector-Jacobian product of the same form and "
+                              "the same number of rows";
+  }
   return success();
+}
+
+int64_t StageOp::getRows() {
+  auto body = dyn_cast_or_null<FunctionOpInterface>(
+      SymbolTable::lookupNearestSymbolFrom(*this, getForwardAttr()));
+  if (!body)
+    return 0;
+  // A body lowered to buffers keeps its rows (md-exec-lower-stage-bodies).
+  if (auto rows = body->getAttrOfType<IntegerAttr>("md.stage_rows"))
+    return rows.getInt();
+  if (!isBatchedType(body.getFunctionType()))
+    return 0;
+  return cast<RankedTensorType>(
+             cast<FunctionType>(body.getFunctionType()).getInput(0))
+      .getDimSize(0);
 }
 
 LogicalResult ApplyStageOp::verify() {
   // A kernel of the md dialect or of md_dist holds the op: its operands are
-  // the values of one element.
+  // the values of one element. A batched body stays in the kernel of the
+  // md_exec loop until the loop is lowered to tiles (D[ml4-batched-bodies]).
   Operation *parent = (*this)->getParentOp();
   if (!parent || isa<FunctionOpInterface>(parent) ||
       !parent->getDialect() ||
       (parent->getDialect()->getNamespace() != "md" &&
-       parent->getDialect()->getNamespace() != "md_dist"))
+       parent->getDialect()->getNamespace() != "md_dist" &&
+       parent->getDialect()->getNamespace() != "md_exec"))
     return emitOpError() << "expected to be in a kernel of the md dialect";
   return success();
 }
@@ -1090,7 +1180,26 @@ ApplyStageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       getVjp() ? stage.getVjpType() : stage.getFunctionType();
   FunctionType actual = FunctionType::get(
       getContext(), getOperands().getTypes(), getResults().getTypes());
-  if (actual != expected)
+  // Precision assignment may give the kernel's values in f32 where the
+  // declaration, at the reference precision, says f64 (D[ml4-batched-bodies]).
+  auto fits = [](Type declared, Type given) {
+    if (declared == given)
+      return true;
+    auto narrow = [](Type type) -> Type {
+      if (auto vector = dyn_cast<VectorType>(type))
+        return VectorType::get(vector.getShape(),
+                               Float32Type::get(type.getContext()));
+      return Float32Type::get(type.getContext());
+    };
+    return isStageReal(declared) && given == narrow(declared);
+  };
+  bool matches = actual.getNumInputs() == expected.getNumInputs() &&
+                 actual.getNumResults() == expected.getNumResults();
+  for (unsigned i = 0, e = matches ? expected.getNumInputs() : 0; i != e; ++i)
+    matches = matches && fits(expected.getInput(i), actual.getInput(i));
+  for (unsigned i = 0, e = matches ? expected.getNumResults() : 0; i != e; ++i)
+    matches = matches && fits(expected.getResult(i), actual.getResult(i));
+  if (!matches)
     return emitOpError() << "expected the type " << expected << " of "
                          << (getVjp() ? "the vector-Jacobian product of " : "")
                          << "the stage '" << getStage() << "', got "

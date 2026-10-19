@@ -17,7 +17,9 @@ forces (kJ/mol/nm), and the virial W = -dE/d(strain) (kJ/mol) to
 reference.npz. That needs the environment of the plugin (torch, nequip, ase).
 With `--kind mace` the reference is mace-torch's MACECalculator of the
 model file given (in float64), and with `--kind painn`
-(always float32, the checkpoint's type)
+(float32, the checkpoint's type, unless `--painn-dtype float64` evaluates
+the same weights in float64, the reference of the staged model's check in
+painn-stages.py)
 SchNetPack's SpkCalculator of the PaiNN checkpoint given, built as
 painn-to-metatomic.py builds it with SchNetPack's `Strain` input added for
 the stress (ML4's baselines, docs/ml4-baselines.md); these need the
@@ -29,7 +31,7 @@ validation.
 usage: water-box.py OUTDIR [--n 3] [--spacing 5.0] [--tilt bx cx cy]
                            [--liquid N] [--seed 1]
                            [--reference PACKAGE.nequip.zip | MODEL]
-                           [--kind nequip|mace|painn]
+                           [--kind nequip|mace|painn] [--painn-dtype float32|float64]
                            [--device cuda]
                            [--minimize STEPS]
 """
@@ -116,6 +118,7 @@ def write(outdir, positions, cell, velocities=None):
 
 
 KIND = "nequip"
+PAINN_DTYPE = "float32"
 
 
 def calculator(package, device):
@@ -136,6 +139,8 @@ def calculator(package, device):
         wrapper = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(wrapper)
         net = wrapper.load_potential(package, 6, 128, 100, 5.0)
+        dtype = getattr(torch, PAINN_DTYPE)
+        net = net.to(dtype)
         # The same modules and weights with SchNetPack's strain input, for the stress.
         net = spk.model.NeuralNetworkPotential(
             representation=net.representation,
@@ -146,7 +151,7 @@ def calculator(package, device):
             model=net, neighbor_list=trn.MatScipyNeighborList(cutoff=5.0),
             energy_key="energy", force_key="forces", stress_key="stress",
             energy_unit="Hartree", position_unit="Ang", device=device,
-            dtype=torch.float32)  # the checkpoint's type, as the package evaluates it
+            dtype=dtype)  # float32, the checkpoint's type, as the package evaluates it
     from nequip.integrations.ase import NequIPCalculator
 
     return NequIPCalculator._from_saved_model(package, device=device)
@@ -186,14 +191,16 @@ def main():
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--reference")
     parser.add_argument("--kind", choices=["nequip", "mace", "painn"], default="nequip")
+    parser.add_argument("--painn-dtype", choices=["float32", "float64"], default="float32")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--minimize", type=int, default=0)
     parser.add_argument("--temperature", type=float, default=0.0,
                         help="writes velocities of this temperature (K) to the .gro, "
                         "without the motion of the center of mass")
     args = parser.parse_args()
-    global KIND
+    global KIND, PAINN_DTYPE
     KIND = args.kind
+    PAINN_DTYPE = args.painn_dtype
     os.makedirs(args.outdir, exist_ok=True)
     if args.liquid:
         positions, cell = liquid(args.liquid, args.seed)

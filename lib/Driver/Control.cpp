@@ -506,12 +506,18 @@ Error Reader::readModel(const toml::table &table) {
   // and 11).
   if (const toml::node *node = table.get("backend")) {
     std::optional<std::string> value = node->value<std::string>();
-    if (!value || (*value != "METATOMIC" && *value != "AOTI"))
+    if (!value ||
+        (*value != "METATOMIC" && *value != "AOTI" && *value != "STAGES"))
       return fail(*node, "expected 'backend' as \"METATOMIC\", a "
-                         "TorchScript artifact of metatomic, or \"AOTI\", an "
-                         "AOTInductor package of the `nequip` package");
+                         "TorchScript artifact of metatomic, \"AOTI\", an "
+                         "AOTInductor package of the `nequip` package, or "
+                         "\"STAGES\", a model in stages of MDIR's IR");
     term.backend = *value;
   }
+  for (const Control::ModelTerm &other : control.stagedModels)
+    if (other.name == term.name)
+      return fail(*table.get("name"),
+                  "another model has the name '" + term.name + "'");
   if (Error error = readPath(table, "path", term.path))
     return error;
   if (term.path.empty())
@@ -520,6 +526,17 @@ Error Reader::readModel(const toml::table &table) {
   if (Error error = readCount(table, "centers_per_call", term.centersPerCall,
                               0))
     return error;
+  // A model in stages (D[ml4-painn-stages], docs/ml4-ir.md, Section 8) is
+  // a potential of the program, which MDIR differentiates; the plugin does
+  // not take it.
+  if (term.backend == "STAGES") {
+    if (term.centersPerCall != 0)
+      return fail(*table.get("centers_per_call"),
+                  "a model in stages takes no 'centers_per_call': its tiles "
+                  "are rows of pairs");
+    control.stagedModels.push_back(std::move(term));
+    return Error::success();
+  }
   control.models.push_back(std::move(term));
   return Error::success();
 }
@@ -3255,6 +3272,30 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
       return refuse("is one of several models; ML1 takes one");
     if (!control.periodic)
       return refuse("takes a periodic cell");
+  }
+  // A model in stages (D[ml4-painn-stages]): its tiles run on a device
+  // over the slots of the pairs of images of a neighbor matrix (D277).
+  for (const Control::ModelTerm &term : control.stagedModels) {
+    auto refuse = [&](const char *what) {
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "%s: the model '%s' of [[energy.model]] in stages %s",
+          path.str().c_str(), term.name.c_str(), what);
+    };
+    if (control.target != Target::GPU)
+      return refuse("runs on a GPU only yet; give 'target = \"GPU\"'");
+    if (!control.periodic)
+      return refuse("takes a periodic cell");
+    if (control.neighborStructure == NeighborStructure::Groups)
+      return refuse("runs over a neighbor matrix; give "
+                    "'neighbor_structure = \"MATRIX\"' or \"AUTO\"");
+    if (control.hasFreeEnergy)
+      return refuse("has no derivative in lambda: [free_energy] is refused");
+    if (control.tunables || control.tunableGradient)
+      return refuse("has no derivative in a tunable parameter: tunables "
+                    "are refused");
+    if (!control.models.empty())
+      return refuse("cannot run beside a model through the plugin yet");
   }
   // Under a barostat a term of the absolute positions says whether it
   // stays fixed in space or scales with the cell, which its virial follows

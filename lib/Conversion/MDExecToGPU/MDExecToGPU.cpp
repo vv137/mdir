@@ -392,6 +392,20 @@ private:
                      const Neighbors &structure, Value positions, Value box,
                      double reach);
   LogicalResult lowerBuildEdges(md_exec::BuildEdgesOp op);
+  /// Writes the slots of the pairs of images of `structure` within `cutoff`
+  /// at `positions` (D277), as `md_exec.build_edges` does.
+  void emitEdgesWithin(OpBuilder &builder, Location loc,
+                     const Neighbors &structure, Value positions, Value box,
+                     double cutoff);
+
+  /// A loop whose kernel applies batched stages runs in tiles of rows
+  /// (D[ml4-batched-bodies], docs/ml4-ir.md, Section 8.3): for each level
+  /// of the stages, a kernel packs the operands of the tile's rows and the
+  /// bodies are called on them; a last kernel unpacks the results and runs
+  /// the rest of the kernel. Over pairs, the rows are the slots of the pairs
+  /// of images, and a center adds up its rows in one thread.
+  LogicalResult lowerStagedPairFor(md_exec::PairForOp op);
+  LogicalResult lowerStagedParticleFor(md_exec::ParticleForOp op);
   LogicalResult lowerTupleFor(md_exec::TupleForOp op);
   void lowerBuildIncidence(md_exec::BuildIncidenceOp op);
   void lowerRenumber(md_exec::RenumberOp op);
@@ -724,6 +738,25 @@ static MemRefType getDeviceType(ArrayRef<int64_t> shape, Type element) {
   return MemRefType::get(
       shape, element, MemRefLayoutAttrInterface(),
       IntegerAttr::get(IntegerType::get(element.getContext(), 64), 1));
+}
+
+/// The applications of batched stages in the kernel of `loop`
+/// (D[ml4-batched-bodies]).
+static SmallVector<md::ApplyStageOp> getBatchedApplications(Operation *loop) {
+  SmallVector<md::ApplyStageOp> applications;
+  if (!isa<md_exec::PairForOp, md_exec::ParticleForOp>(loop))
+    return applications;
+  loop->walk([&](md::ApplyStageOp apply) {
+    auto stage = SymbolTable::lookupNearestSymbolFrom<md::StageOp>(
+        apply, apply.getStageAttr());
+    if (stage && stage.getRows())
+      applications.push_back(apply);
+  });
+  return applications;
+}
+
+static bool appliesBatchedStage(Operation *loop) {
+  return !getBatchedApplications(loop).empty();
 }
 
 static bool isDeviceType(Type type) {
@@ -2088,9 +2121,11 @@ void Lowering::findRows(func::FuncOp function) {
       return !tuple.getDisjoint() && !evaluatesOnce(tuple) &&
              !hasFlags(tuple);
     // A loop that takes each pair once runs over groups, not rows (D89). A
-    // loop over the rows of a domain is lowered alone (D290).
+    // loop over the rows of a domain is lowered alone (D290), and so is a
+    // loop of batched stages (D[ml4-batched-bodies]).
     auto pair = dyn_cast<md_exec::PairForOp>(op);
-    return pair && pair.getTraversal() == md_exec::Traversal::Directed &&
+    return pair && !appliesBatchedStage(pair) &&
+           pair.getTraversal() == md_exec::Traversal::Directed &&
            pair.getConflict() == md_exec::Conflict::OwnerOnly &&
            !pair.getCenters() &&
            pair.getImages() == md_exec::Images::Minimum;
@@ -2891,6 +2926,611 @@ LogicalResult Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
     Value total = arith::AddFOp::create(builder, loc, start, sums[place]);
     op.getResult(index).replaceAllUsesWith(total);
   }
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Neural stages in tiles (D[ml4-batched-bodies])
+//===----------------------------------------------------------------------===//
+
+namespace {
+/// One application of a batched stage in a kernel and the buffers of the
+/// rows of a tile that its body takes and gives.
+struct StageCall {
+  md::ApplyStageOp apply;
+  func::FuncOp body;
+  /// 0 if its operands depend on no other application, else one more than
+  /// the highest level of those they depend on.
+  unsigned level = 0;
+  SmallVector<Value> inputs, outputs;
+};
+
+/// The tiles of a loop: the applications of its kernel and their rows.
+struct Tiling {
+  int64_t rows = 0;
+  unsigned levels = 0;
+  SmallVector<StageCall> calls;
+  llvm::DenseMap<Operation *, unsigned> callOf;
+};
+} // namespace
+
+/// The value `value` of a kernel converted for a buffer of rows of the
+/// element type `element`, or back.
+static Value convertRow(OpBuilder &builder, Location loc, Value value,
+                        Type element) {
+  Type type = value.getType();
+  Type from = getElementTypeOrSelf(type);
+  if (from == element || !isa<FloatType>(from))
+    return value;
+  Type to = element;
+  if (auto vector = dyn_cast<VectorType>(type))
+    to = VectorType::get(vector.getShape(), element);
+  if (element.getIntOrFloatBitWidth() < from.getIntOrFloatBitWidth())
+    return arith::TruncFOp::create(builder, loc, to, value);
+  return arith::ExtFOp::create(builder, loc, to, value);
+}
+
+/// Finds the applications of batched stages in the kernel of `loop`, their
+/// levels, and their bodies, and allocates the rows of a tile for each.
+static LogicalResult planTiles(Operation *loop, OpBuilder &builder,
+                               Tiling &tiling) {
+  Block &kernel = loop->getRegion(0).front();
+  ModuleOp module = loop->getParentOfType<ModuleOp>();
+  // The level of each value: -1 if it depends on no application.
+  llvm::DenseMap<Value, int> depth;
+  auto depthOf = [&](Value value) { return depth.lookup(value) - 1; };
+  for (Operation &op : kernel.without_terminator()) {
+    int deepest = -1;
+    op.walk([&](Operation *inner) {
+      for (Value operand : inner->getOperands())
+        deepest = std::max(deepest, depthOf(operand));
+    });
+    auto apply = dyn_cast<md::ApplyStageOp>(&op);
+    if (!apply) {
+      for (Value result : op.getResults())
+        depth[result] = deepest + 1;
+      continue;
+    }
+    auto stage = SymbolTable::lookupNearestSymbolFrom<md::StageOp>(
+        apply, apply.getStageAttr());
+    if (!stage || !stage.getRows())
+      return apply.emitOpError()
+             << "applies a stage whose body is not batched, in a loop of "
+                "batched stages; run 'md-inline' first";
+    FlatSymbolRefAttr name =
+        apply.getVjp() ? stage.getVjpAttr() : stage.getForwardAttr();
+    auto body = module.lookupSymbol<func::FuncOp>(name.getAttr());
+    if (!body || !body->hasAttr("md.stage_body"))
+      return apply.emitOpError()
+             << "applies the body '" << name.getValue()
+             << "', which is not lowered; run 'md-exec-lower-stage-bodies' "
+                "first";
+    FunctionType type = body.getFunctionType();
+    if (type.getNumInputs() != apply.getNumOperands() + apply.getNumResults() ||
+        type.getNumResults() != 0)
+      return apply.emitOpError()
+             << "expected the lowered body '" << name.getValue()
+             << "' to take the operands and then a buffer for each result";
+    if (tiling.rows && tiling.rows != stage.getRows())
+      return apply.emitOpError()
+             << "applies a stage of " << stage.getRows()
+             << " rows in a kernel whose other stages take " << tiling.rows;
+    tiling.rows = stage.getRows();
+    StageCall call;
+    call.apply = apply;
+    call.body = body;
+    call.level = deepest + 1;
+    tiling.levels = std::max(tiling.levels, call.level + 1);
+    for (Type input : type.getInputs()) {
+      auto buffer = cast<MemRefType>(input);
+      Value rows = createDeviceBuffer(
+          builder, loop->getLoc(),
+          getDeviceType(buffer.getShape(), buffer.getElementType()),
+          ValueRange());
+      if (call.inputs.size() < apply.getNumOperands())
+        call.inputs.push_back(rows);
+      else
+        call.outputs.push_back(rows);
+    }
+    for (Value result : apply.getResults())
+      depth[result] = call.level + 1;
+    tiling.callOf[apply] = tiling.calls.size();
+    tiling.calls.push_back(call);
+  }
+  return success();
+}
+
+namespace {
+/// Where the kernel's argument of a field finds its value: a buffer and the
+/// particle.
+struct ArgumentSource {
+  Value buffer, particle;
+};
+
+/// Emits what the kernel of a loop of batched stages does for one row of a
+/// tile. A value is emitted only where something needs it: an application
+/// of a lower level takes its results from its rows, and the fields of the
+/// kernel's arguments are loaded where they are read. A vector of more than
+/// `kWide` components (features) is not built as one value: a copy into a
+/// row goes component by component, and the components of a wide value
+/// that the kernel yields are computed one at a time, through the
+/// elementwise ops that make it; LLVM takes vectors of hundreds of
+/// components to the device slowly and spills them.
+class StagedEmitter {
+public:
+  static constexpr int64_t kWide = 16;
+
+  StagedEmitter(OpBuilder &builder, Location loc, Block &kernel,
+                Tiling &tiling, Value row,
+                llvm::DenseMap<Value, ArgumentSource> sources,
+                IRMapping mapping)
+      : builder(builder), loc(loc), kernel(kernel), tiling(tiling), row(row),
+        sources(std::move(sources)), mapping(std::move(mapping)) {}
+
+  static bool isWide(Type type) {
+    auto vector = dyn_cast<VectorType>(type);
+    return vector && vector.getNumElements() > kWide;
+  }
+
+  /// Stores the operands of the applications of the level `level` to their
+  /// rows.
+  void emitPack(unsigned level) {
+    for (StageCall &call : tiling.calls) {
+      if (call.level != level)
+        continue;
+      for (auto [operand, buffer] :
+           llvm::zip(call.apply.getOperands(), call.inputs)) {
+        Type element = cast<MemRefType>(buffer.getType()).getElementType();
+        if (!isWide(operand.getType())) {
+          storeElement(builder, loc,
+                       convertRow(builder, loc, get(operand), element), buffer,
+                       row);
+          continue;
+        }
+        forComponents(operand.getType(), [&](OpBuilder &b, Value c) {
+          OpBuilder::InsertionGuard guard(builder);
+          builder.setInsertionPoint(b.getInsertionBlock(),
+                                    b.getInsertionPoint());
+          Value value = component(operand, c);
+          memref::StoreOp::create(builder, loc,
+                                  convertRow(builder, loc, value, element),
+                                  buffer, ValueRange{row, c});
+        });
+      }
+    }
+  }
+
+  /// The value that the kernel yields at `index`, which must not be wide.
+  Value yielded(unsigned index) {
+    return get(kernel.getTerminator()->getOperand(index));
+  }
+
+  /// The component `c` of the value that the kernel yields at `index`.
+  Value yieldedComponent(unsigned index, Value c) {
+    return component(kernel.getTerminator()->getOperand(index), c);
+  }
+
+  /// Runs `body` for each component of the vector type `type`, in a loop.
+  void forComponents(Type type, function_ref<void(OpBuilder &, Value)> body) {
+    int64_t n = cast<VectorType>(type).getNumElements();
+    auto loop = scf::ForOp::create(builder, loc, createIndex(builder, loc, 0),
+                                   createIndex(builder, loc, n),
+                                   createIndex(builder, loc, 1));
+    OpBuilder inner(loop.getBody()->getTerminator());
+    // What the loop's body emits stays in it.
+    IRMapping saved = mapping;
+    body(inner, loop.getInductionVar());
+    mapping = saved;
+  }
+
+  /// The value `value` of the kernel, emitted with what it needs.
+  Value get(Value value) {
+    if (Value known = mapping.lookupOrNull(value))
+      return known;
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      if (argument.getOwner() != &kernel)
+        return value;
+      auto found = sources.find(value);
+      assert(found != sources.end() && "an argument without its source");
+      Value loaded = loadElement(builder, loc, found->second.buffer,
+                                 found->second.particle);
+      mapping.map(value, loaded);
+      return loaded;
+    }
+    Operation *op = value.getDefiningOp();
+    // Defined outside the kernel: the launch brings it in.
+    if (!op || !kernel.getParentOp()->isProperAncestor(op))
+      return value;
+    if (auto apply = dyn_cast<md::ApplyStageOp>(op)) {
+      StageCall &call = tiling.calls[tiling.callOf.lookup(apply)];
+      for (auto [result, buffer] : llvm::zip(apply.getResults(), call.outputs))
+        mapping.map(result,
+                    convertRow(builder, loc, loadElement(builder, loc, buffer, row),
+                               getElementTypeOrSelf(result)));
+      return mapping.lookup(value);
+    }
+    // The values that the op reads, in it and in its regions, first.
+    op->walk([&](Operation *inner) {
+      for (Value operand : inner->getOperands())
+        if (!op->isAncestor(operand.getParentRegion()->getParentOp()))
+          get(operand);
+    });
+    builder.clone(*op, mapping);
+    return mapping.lookup(value);
+  }
+
+  /// The component `c` of the wide value `value`, a number.
+  Value component(Value value, Value c) {
+    Type real = getElementTypeOrSelf(value.getType());
+    if (auto argument = dyn_cast<BlockArgument>(value)) {
+      auto found = sources.find(value);
+      if (argument.getOwner() == &kernel && found != sources.end())
+        return memref::LoadOp::create(
+            builder, loc, found->second.buffer,
+            ValueRange{found->second.particle, c});
+    } else if (Operation *op = value.getDefiningOp()) {
+      if (auto apply = dyn_cast<md::ApplyStageOp>(op)) {
+        StageCall &call = tiling.calls[tiling.callOf.lookup(apply)];
+        unsigned index = cast<OpResult>(value).getResultNumber();
+        Value loaded = memref::LoadOp::create(builder, loc,
+                                              call.outputs[index],
+                                              ValueRange{row, c});
+        return convertRow(builder, loc, loaded, real);
+      }
+      if (isa<arith::AddFOp, arith::SubFOp, arith::MulFOp, arith::DivFOp,
+              arith::MaximumFOp, arith::MinimumFOp>(op)) {
+        Value lhs = component(op->getOperand(0), c);
+        Value rhs = component(op->getOperand(1), c);
+        OperationState state(loc, op->getName(), ValueRange{lhs, rhs},
+                             TypeRange{real}, op->getAttrs());
+        return builder.create(state)->getResult(0);
+      }
+      if (isa<arith::NegFOp>(op)) {
+        Value operand = component(op->getOperand(0), c);
+        OperationState state(loc, op->getName(), ValueRange{operand},
+                             TypeRange{real}, op->getAttrs());
+        return builder.create(state)->getResult(0);
+      }
+      if (isa<arith::ExtFOp, arith::TruncFOp>(op))
+        return convertRow(builder, loc, component(op->getOperand(0), c), real);
+      if (auto broadcast = dyn_cast<vector::BroadcastOp>(op))
+        if (!isa<VectorType>(broadcast.getSource().getType()))
+          return get(broadcast.getSource());
+      DenseElementsAttr constant;
+      if (matchPattern(value, m_Constant(&constant)) && constant.isSplat())
+        return arith::ConstantOp::create(
+            builder, loc, real, constant.getSplatValue<TypedAttr>());
+    }
+    // Anything else: the whole value, and its component.
+    return vector::ExtractOp::create(builder, loc, get(value),
+                                     ArrayRef<OpFoldResult>{c});
+  }
+
+private:
+  OpBuilder &builder;
+  Location loc;
+  Block &kernel;
+  Tiling &tiling;
+  Value row;
+  llvm::DenseMap<Value, ArgumentSource> sources;
+  IRMapping mapping;
+};
+} // namespace
+
+/// Calls the bodies of the level `level` on the rows of the tile.
+static void callBodies(OpBuilder &builder, Location loc, Tiling &tiling,
+                       unsigned level) {
+  for (StageCall &call : tiling.calls) {
+    if (call.level != level)
+      continue;
+    SmallVector<Value> arguments;
+    for (auto [buffer, type] :
+         llvm::zip(llvm::concat<Value>(call.inputs, call.outputs),
+                   call.body.getFunctionType().getInputs())) {
+      auto device = cast<MemRefType>(buffer.getType());
+      Value generic = memref::MemorySpaceCastOp::create(
+          builder, loc,
+          MemRefType::get(device.getShape(), device.getElementType()), buffer);
+      arguments.push_back(memref::CastOp::create(builder, loc, type, generic));
+    }
+    func::CallOp::create(builder, loc, call.body, arguments);
+  }
+}
+
+static void releaseTiles(OpBuilder &builder, Location loc, Tiling &tiling) {
+  // Back to the runtime's pool (mgpuMemFree), which takes a pointer of the
+  // generic space.
+  for (StageCall &call : tiling.calls)
+    for (Value buffer : llvm::concat<Value>(call.inputs, call.outputs)) {
+      auto device = cast<MemRefType>(buffer.getType());
+      gpu::DeallocOp::create(
+          builder, loc, TypeRange(), ValueRange(),
+          memref::MemorySpaceCastOp::create(
+              builder, loc,
+              MemRefType::get(device.getShape(), device.getElementType()),
+              buffer));
+    }
+}
+
+LogicalResult Lowering::lowerStagedParticleFor(md_exec::ParticleForOp op) {
+  Location loc = op.getLoc();
+  OpBuilder builder(op);
+  for (Value value : op.getReduce())
+    if (value.getType().isInteger(1))
+      return op.emitOpError() << "applies batched stages and tells whether "
+                                 "the kernel yields true, which a loop in "
+                                 "tiles does not do";
+  unsigned numSums = op.getReduce().size();
+  if (failed(checkScratch(op, numSums, op.getScratch().size())))
+    return failure();
+  Tiling tiling;
+  if (failed(planTiles(op, builder, tiling)))
+    return failure();
+  Block &kernel = op.getKernel().front();
+  Value size = createSize(builder, loc, op.getIns().empty()
+                                            ? op.getOuts().front()
+                                            : op.getIns().front());
+  Value rows = createIndex(builder, loc, tiling.rows);
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  auto sourcesAt = [&](Value particle) {
+    llvm::DenseMap<Value, ArgumentSource> sources;
+    for (auto [argument, field] :
+         llvm::zip(kernel.getArguments(), op.getIns()))
+      sources[argument] = {field, particle};
+    return sources;
+  };
+  // The loop over the tiles is in place before the kernels go into it.
+  auto tiles = scf::ForOp::create(builder, loc, zero, size, rows);
+  {
+    OpBuilder tile(tiles.getBody()->getTerminator());
+    Value start = tiles.getInductionVar();
+    Value last = arith::SubIOp::create(tile, loc, size, one);
+    for (unsigned level = 0; level != tiling.levels; ++level) {
+      launchOver(tile, loc, rows, [&](OpBuilder &body, Value row) {
+        // The rows beyond the particles repeat the last one; their
+        // results are not read.
+        Value particle = arith::MinUIOp::create(
+            body, loc, arith::AddIOp::create(body, loc, start, row), last);
+        StagedEmitter emitter(body, loc, kernel, tiling, row,
+                              sourcesAt(particle), IRMapping());
+        emitter.emitPack(level);
+      });
+      callBodies(tile, loc, tiling, level);
+    }
+    Value count = arith::MinUIOp::create(
+        tile, loc, rows, arith::SubIOp::create(tile, loc, size, start));
+    launchOver(tile, loc, count, [&](OpBuilder &body, Value row) {
+      Value particle = arith::AddIOp::create(body, loc, start, row);
+      StagedEmitter emitter(body, loc, kernel, tiling, row, sourcesAt(particle),
+                            IRMapping());
+      unsigned numOuts = op.getOuts().size();
+      for (unsigned k = 0; k != numOuts; ++k) {
+        Value field = op.getOuts()[k];
+        Type type = kernel.getTerminator()->getOperand(k).getType();
+        if (!StagedEmitter::isWide(type)) {
+          storeElement(body, loc, emitter.yielded(k), field, particle);
+          continue;
+        }
+        emitter.forComponents(type, [&](OpBuilder &inner, Value c) {
+          OpBuilder::InsertionGuard guard(body);
+          body.setInsertionPoint(inner.getInsertionBlock(),
+                                 inner.getInsertionPoint());
+          memref::StoreOp::create(body, loc, emitter.yieldedComponent(k, c),
+                                  field, ValueRange{particle, c});
+        });
+      }
+      for (unsigned i = 0; i != numSums; ++i)
+        storeElement(body, loc, emitter.yielded(numOuts + i),
+                     op.getScratch()[2 * i], particle);
+    });
+  }
+  releaseTiles(builder, loc, tiling);
+
+  if (numSums) {
+    SmallVector<Value> contributions, partials;
+    for (unsigned i = 0; i != numSums; ++i) {
+      contributions.push_back(op.getScratch()[2 * i]);
+      partials.push_back(op.getScratch()[2 * i + 1]);
+    }
+    SmallVector<Value> sums = emitReductions(builder, loc, contributions,
+                                             partials, size, /*isSum=*/true);
+    for (auto [index, start] : llvm::enumerate(op.getReduce()))
+      op.getResult(index).replaceAllUsesWith(
+          arith::AddFOp::create(builder, loc, start, sums[index]));
+  }
+  return success();
+}
+
+LogicalResult Lowering::lowerStagedPairFor(md_exec::PairForOp op) {
+  Location loc = op.getLoc();
+  if (op.getTraversal() != md_exec::Traversal::Directed ||
+      op.getConflict() != md_exec::Conflict::OwnerOnly || op.getCenters() ||
+      op.getImages() != md_exec::Images::Minimum || !op.getReduce().empty())
+    return op.emitOpError()
+           << "applies batched stages: a loop in tiles takes the directed "
+              "pairs of every particle, gathers, and has no global sums";
+  Neighbors structure;
+  if (failed(getNeighbors(op, op.getNeighbors(), structure)))
+    return failure();
+  if (!structure.edges)
+    return op.emitOpError() << "applies batched stages over a structure that "
+                               "is not a matrix keeping the slots of the "
+                               "pairs of images; choose the matrix";
+  OpBuilder builder(op);
+  Tiling tiling;
+  if (failed(planTiles(op, builder, tiling)))
+    return failure();
+  Block &kernel = op.getKernel().front();
+  Value positions = op.getPositions();
+  Value box = op.getCellMutable().get();
+  double cutoff = op.getCutoff().convertToDouble();
+
+  // The slots of the pairs of images at these positions: those within the
+  // cutoff first in the slots of each particle, counted (D277). Every image
+  // of a neighbor is a pair; within a cell wider than twice the cutoff
+  // there is one, the minimum image of the loop.
+  emitEdgesWithin(builder, loc, structure, positions, box, cutoff);
+  Value slots = getEdgesBuffer(builder, loc, structure.edgesHandle, 1);
+  Value offsets = structure.edgeOffsets, counts = structure.edgeCounts;
+  Value numSlots = memref::DimOp::create(builder, loc, slots,
+                                         createIndex(builder, loc, 0));
+  Value size = structure.size;
+  Value rows = createIndex(builder, loc, tiling.rows);
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+
+  // The destinations that the loop overwrites start from zero.
+  for (unsigned index = 0, e = op.getOuts().size(); index != e; ++index) {
+    if (!op.overwrites(index))
+      continue;
+    Value out = op.getOuts()[index];
+    launchOver(builder, loc, size, [&](OpBuilder &body, Value particle) {
+      Type type = md_exec::getKernelValueType(out.getType());
+      storeElement(body, loc, createZero(body, loc, type), out, particle);
+    });
+  }
+
+  // The kernel's arguments for the slot `slot`: r², d = x_i − x_j − s H,
+  // and the fields at both ends.
+  auto emitterAt = [&](OpBuilder &body, Value slot,
+                       Value row) -> std::unique_ptr<StagedEmitter> {
+    auto column = [&](int64_t c) {
+      return memref::LoadOp::create(body, loc, slots,
+                                    ValueRange{slot, createIndex(body, loc, c)})
+          .getResult();
+    };
+    Type indexType = body.getIndexType();
+    Value i = arith::IndexCastOp::create(body, loc, indexType, column(0));
+    Value j = arith::IndexCastOp::create(body, loc, indexType, column(1));
+    SmallVector<Value, 3> cells;
+    for (int64_t c = 2; c != 5; ++c)
+      cells.push_back(
+          arith::SIToFPOp::create(body, loc, body.getF64Type(), column(c)));
+    Value shift = emitLatticeShift(
+        body, loc,
+        vector::FromElementsOp::create(
+            body, loc, VectorType::get({3}, body.getF64Type()), cells),
+        box);
+    Value xi = loadElement(body, loc, positions, i);
+    Value xj = loadElement(body, loc, positions, j);
+    Type real = getElementTypeOrSelf(xi.getType());
+    Value d = arith::SubFOp::create(
+        body, loc, arith::SubFOp::create(body, loc, xi, xj),
+        convertReal(body, loc, shift, real));
+    Value r2 = vector::ReductionOp::create(
+        body, loc, vector::CombiningKind::ADD,
+        arith::MulFOp::create(body, loc, d, d));
+    IRMapping mapping;
+    mapping.map(kernel.getArgument(0), r2);
+    mapping.map(kernel.getArgument(1), d);
+    // The fields at both ends are loaded where the kernel reads them.
+    llvm::DenseMap<Value, ArgumentSource> sources;
+    for (auto [index, field] : llvm::enumerate(op.getIns())) {
+      sources[kernel.getArgument(2 + 2 * index)] = {field, i};
+      sources[kernel.getArgument(3 + 2 * index)] = {field, j};
+    }
+    return std::make_unique<StagedEmitter>(body, loc, kernel, tiling, row,
+                                           std::move(sources),
+                                           std::move(mapping));
+  };
+
+  // The loop over the tiles is in place before the kernels go into it.
+  auto tiles = scf::ForOp::create(builder, loc, zero, numSlots, rows);
+  {
+    OpBuilder tile(tiles.getBody()->getTerminator());
+    Value start = tiles.getInductionVar();
+    Value last = arith::SubIOp::create(tile, loc, numSlots, one);
+    for (unsigned level = 0; level != tiling.levels; ++level) {
+      launchOver(tile, loc, rows, [&](OpBuilder &body, Value row) {
+        // The rows beyond the slots repeat the last one, and the slots
+        // beyond the cutoff are evaluated too; their results are not read.
+        Value slot = arith::MinUIOp::create(
+            body, loc, arith::AddIOp::create(body, loc, start, row), last);
+        emitterAt(body, slot, row)->emitPack(level);
+      });
+      callBodies(tile, loc, tiling, level);
+    }
+    // Each center adds up its rows of the tile that are within the cutoff,
+    // in the order of its slots: a gather, with no atomics. A wide
+    // destination (features) is added up component by component.
+    Value end = arith::AddIOp::create(tile, loc, start, rows);
+    SmallVector<unsigned> narrow, wide;
+    for (unsigned k = 0, e = op.getOuts().size(); k != e; ++k)
+      (StagedEmitter::isWide(kernel.getTerminator()->getOperand(k).getType())
+           ? wide
+           : narrow)
+          .push_back(k);
+    launchOver(tile, loc, size, [&](OpBuilder &body, Value center) {
+      Type indexType = body.getIndexType();
+      Value begin = arith::IndexCastOp::create(
+          body, loc, indexType,
+          memref::LoadOp::create(body, loc, offsets, ValueRange{center}));
+      Value within = arith::IndexCastOp::create(
+          body, loc, indexType,
+          memref::LoadOp::create(body, loc, counts, ValueRange{center}));
+      Value from = arith::MaxUIOp::create(body, loc, begin, start);
+      Value to = arith::MaxUIOp::create(
+          body, loc, from,
+          arith::MinUIOp::create(
+              body, loc, arith::AddIOp::create(body, loc, begin, within), end));
+      if (!narrow.empty()) {
+        SmallVector<Value> inits;
+        for (unsigned k : narrow)
+          inits.push_back(createZero(
+              body, loc, md_exec::getKernelValueType(op.getOuts()[k].getType())));
+        auto sum = scf::ForOp::create(
+            body, loc, from, to, one, inits,
+            [&](OpBuilder &inner, Location, Value slot, ValueRange totals) {
+              Value row = arith::SubIOp::create(inner, loc, slot, start);
+              auto emitter = emitterAt(inner, slot, row);
+              SmallVector<Value> next;
+              for (auto [total, k] : llvm::zip(totals, narrow))
+                next.push_back(arith::AddFOp::create(inner, loc, total,
+                                                     emitter->yielded(k)));
+              scf::YieldOp::create(inner, loc, next);
+            });
+        for (auto [total, k] : llvm::zip(sum.getResults(), narrow)) {
+          Value out = op.getOuts()[k];
+          Value old = loadElement(body, loc, out, center);
+          storeElement(body, loc, arith::AddFOp::create(body, loc, old, total),
+                       out, center);
+        }
+      }
+      for (unsigned k : wide) {
+        Value out = op.getOuts()[k];
+        int64_t n = cast<VectorType>(kernel.getTerminator()->getOperand(k).getType())
+                        .getNumElements();
+        Type element = cast<MemRefType>(out.getType()).getElementType();
+        scf::ForOp::create(
+            body, loc, createIndex(body, loc, 0), createIndex(body, loc, n),
+            one, ValueRange(),
+            [&](OpBuilder &outer, Location, Value c, ValueRange) {
+              auto sum = scf::ForOp::create(
+                  outer, loc, from, to, one,
+                  ValueRange{createZero(outer, loc, element)},
+                  [&](OpBuilder &inner, Location, Value slot,
+                      ValueRange totals) {
+                    Value row = arith::SubIOp::create(inner, loc, slot, start);
+                    auto emitter = emitterAt(inner, slot, row);
+                    Value value = emitter->yieldedComponent(k, c);
+                    scf::YieldOp::create(
+                        inner, loc,
+                        ValueRange{arith::AddFOp::create(inner, loc, totals[0],
+                                                         value)});
+                  });
+              Value old = memref::LoadOp::create(outer, loc, out,
+                                                 ValueRange{center, c});
+              memref::StoreOp::create(
+                  outer, loc,
+                  arith::AddFOp::create(outer, loc, old, sum.getResult(0)), out,
+                  ValueRange{center, c});
+              scf::YieldOp::create(outer, loc);
+            });
+      }
+    });
+  }
+  releaseTiles(builder, loc, tiling);
   return success();
 }
 
@@ -5045,6 +5685,9 @@ static bool feedsEdges(Value value) {
       Operation *user = use.getOwner();
       if (isa<md_exec::BuildEdgesOp>(user))
         return true;
+      // A loop of batched stages runs over the slots (D[ml4-batched-bodies]).
+      if (isa<md_exec::PairForOp>(user) && appliesBatchedStage(user))
+        return true;
       if (auto refresh = dyn_cast<md_exec::RefreshNeighborsOp>(user))
         pending.push_back(refresh.getResult());
       if (auto loop = dyn_cast<scf::ForOp>(user)) {
@@ -5774,13 +6417,24 @@ LogicalResult Lowering::lowerBuildEdges(md_exec::BuildEdgesOp op) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
   setPurpose(op);
+  emitEdgesWithin(builder, loc, structure, op.getPositions(),
+                op.getCellMutable().get(), op.getCutoff().convertToDouble());
+  op.getResult(0).replaceAllUsesWith(
+      getEdgesBuffer(builder, loc, structure.edgesHandle, 1));
+  op.getResult(1).replaceAllUsesWith(structure.edgeCounts);
+  op.getResult(2).replaceAllUsesWith(structure.edgeOffsets);
+  op.getResult(3).replaceAllUsesWith(
+      memref::LoadOp::create(builder, loc, structure.edgeSerial, ValueRange{}));
+  return success();
+}
+
+void Lowering::emitEdgesWithin(OpBuilder &builder, Location loc,
+                             const Neighbors &structure, Value positions,
+                             Value box, double cutoff) {
   Type narrow = builder.getI32Type();
-  Value positions = op.getPositions();
-  Value box = op.getCellMutable().get();
   Value candidates = getEdgesBuffer(builder, loc, structure.edgesHandle, 0);
   Value slots = getEdgesBuffer(builder, loc, structure.edgesHandle, 1);
   Value offsets = structure.edgeOffsets, counts = structure.edgeCounts;
-  double cutoff = op.getCutoff().convertToDouble();
 
   // Each particle's candidates, those within the cutoff now first, in the
   // order of the candidates, then the others from the end of its slots.
@@ -5817,10 +6471,15 @@ LogicalResult Lowering::lowerBuildEdges(md_exec::BuildEdgesOp op) {
               vector::FromElementsOp::create(
                   b, loc, VectorType::get({3}, b.getF64Type()), cells),
               box);
+          // In f64, whatever the type of the positions: a loop of batched
+          // stages in mixed precision takes them in f32.
+          Type f64 = b.getF64Type();
           Value d = arith::AddFOp::create(
               b, loc,
-              arith::SubFOp::create(b, loc, loadElement(b, loc, positions, j),
-                                    xi),
+              arith::SubFOp::create(
+                  b, loc,
+                  convertReal(b, loc, loadElement(b, loc, positions, j), f64),
+                  convertReal(b, loc, xi, f64)),
               shift);
           Value d2 = arith::MulFOp::create(b, loc, d, d);
           Value r2 = vector::ReductionOp::create(
@@ -5846,13 +6505,6 @@ LogicalResult Lowering::lowerBuildEdges(md_exec::BuildEdgesOp op) {
         body, loc, arith::IndexCastOp::create(body, loc, narrow, strict),
         counts, ValueRange{i});
   });
-
-  op.getResult(0).replaceAllUsesWith(slots);
-  op.getResult(1).replaceAllUsesWith(counts);
-  op.getResult(2).replaceAllUsesWith(offsets);
-  op.getResult(3).replaceAllUsesWith(
-      memref::LoadOp::create(builder, loc, structure.edgeSerial, ValueRange{}));
-  return success();
 }
 
 GroupBuffers Lowering::getGroupsBuffers(OpBuilder &builder, Location loc,
@@ -7339,10 +7991,12 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     if (failed(lowerScatterAdd(scatter)))
       return failure();
   } else if (auto loop = dyn_cast<md_exec::ParticleForOp>(op)) {
-    if (failed(lowerParticleFor(loop)))
+    if (failed(appliesBatchedStage(loop) ? lowerStagedParticleFor(loop)
+                                         : lowerParticleFor(loop)))
       return failure();
   } else if (auto loop = dyn_cast<md_exec::PairForOp>(op)) {
-    if (failed(lowerPairFor(loop)))
+    if (failed(appliesBatchedStage(loop) ? lowerStagedPairFor(loop)
+                                         : lowerPairFor(loop)))
       return failure();
   } else if (auto loop = dyn_cast<md_exec::TupleForOp>(op)) {
     if (failed(lowerTupleFor(loop)))
@@ -7899,10 +8553,13 @@ LogicalResult Lowering::run() {
            << "expected a power of two up to 32 that divides the block for "
               "'row-lanes'";
 
+  // The batched bodies of stages are lowered already
+  // (md-exec-lower-stage-bodies).
   SmallVector<func::FuncOp> functions;
   for (Operation &op : module)
     if (auto function = dyn_cast<func::FuncOp>(&op))
-      functions.push_back(function);
+      if (!function->hasAttr("md.stage_body"))
+        functions.push_back(function);
   for (func::FuncOp function : functions)
     if (failed(lowerFunction(function)))
       return failure();
@@ -7918,6 +8575,11 @@ LogicalResult Lowering::run() {
         op.getName().getDialectNamespace() != "dyn")
       continue;
     if (isa<md::ParticleSetOp, md::TupleSetOp, md::DisjointUnionOp>(op)) {
+      op.erase();
+      continue;
+    }
+    // A stage whose batched bodies the tiles call (D[ml4-batched-bodies]).
+    if (auto stage = dyn_cast<md::StageOp>(op); stage && stage.getRows()) {
       op.erase();
       continue;
     }

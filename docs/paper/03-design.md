@@ -375,6 +375,27 @@ energy, forces, and virial agree with an independent reverse sweep of the
 whole energy to $2\times10^{-15}$ on the CPU and $5\times10^{-16}$ on an
 RTX 4090 in double ([ml4-ir.md](../ml4-ir.md)).
 
+**Bodies in tiles (D[ml4-batched-bodies], D[ml4-painn-stages]).** A body
+from external AD is batched: a function of tensors whose leading dimension
+is the rows of a tile, exported by JAX to StableHLO and legalized to
+`linalg` when the model is exported. Its semantics stay those of one
+element, since the leading dimension is parallel in every op of the body:
+row $t$ of the result is the body applied to row $t$ of the operands, and
+no row reads another. A loop whose kernel applies such a body therefore
+runs as a host loop over tiles, each packing the operands of its rows,
+calling the body, and unpacking the results into the rest of the kernel;
+the sum over the pairs of a center, $\mathbf A_i = \sum_j\phi(i,j)$, is
+the same sum taken in the order of the center's slots, one thread a
+center, so it stays a gather without atomics. Every product recomputes
+its forward, so the device holds, besides a constant for the tile, only
+the fields of the particles: nablaDFT's PaiNN (128 features, $N_\text{layer}
+= 6$) re-implemented in JAX from SchNetPack's weights agrees with
+SchNetPack's calculator in float64 to $5\times10^{-6}$ of the largest
+force and takes 1.4 to 2.1 kB of device memory a pair of liquid water from
+6,144 atoms up, against 61 kB for the opaque call, at about 10 µs a pair,
+about 20 times the opaque call's time with MDIR's naive lowering of
+`linalg` ([ml4-ir.md](../ml4-ir.md), Section 8).
+
 **Parameters.** `derivative(n)` asks $\partial U/\partial\theta_n$ of a
 scalar argument $\theta_n$ of the potential (D2), such as a component of
 $\boldsymbol\lambda$ of `[free_energy]` (Section 6.8, D161). The

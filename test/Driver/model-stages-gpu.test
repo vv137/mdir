@@ -1,0 +1,64 @@
+# A model in stages from the control file (D[ml4-painn-stages],
+# docs/ml4-ir.md, Section 8): a PaiNN of 4 features and 2 layers with random
+# weights, exported by scripts/mlip/painn-stages.py with 64 rows a tile, in
+# `[[energy.model]]` with `backend = "STAGES"`. `mdir run` takes the
+# neighbor matrix, whose slots the tiles of the pairs run over, and its
+# energy at the start agrees with the stages composed in JAX
+# (`painn-stages.py reference`) to the 4 decimals of kcal/mol of the log, in
+# double and mixed precision.
+#
+# REQUIRES: cuda, stages-export
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py weights --synthetic 4 2 %t/w.npz
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py export %t/w.npz %t/model.mlir --rows 64 --stablehlo-opt %stablehlo_opt --workdir %t
+# RUN: %jax_python %S/../../scripts/mlip/water-box.py %t --n 3 --spacing 3.4
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py reference %t/w.npz %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t && mdir run run.toml > %t/double.log
+# RUN: FileCheck %s < %t/double.log
+# RUN: %jax_python %S/Inputs/model-term/compare.py log %t/reference.npz < %t/double.log | FileCheck %s --check-prefix=START
+# RUN: sed 's/precision = "double"/precision = "mixed"/' %t/run.toml > %t/mixed.toml
+# RUN: cd %t && mdir run mixed.toml > %t/mixed.log
+# RUN: %jax_python %S/Inputs/model-term/compare.py log %t/reference.npz < %t/mixed.log | FileCheck %s --check-prefix=START
+# CHECK: MDIR: neighbor structure: the matrix {{.*}}(AUTO: a model in stages runs over the slots of a matrix)
+# START: mdir run energy ok
+
+#--- run.toml
+[input]
+topology    = "system.top"
+coordinates = "system.gro"
+
+[output]
+energy_interval = 1
+
+[energy]
+cutoff = 0.2
+pairlist_distance = 0.25
+electrostatics = "CUTOFF"
+
+[[energy.model]]
+name = "painn"
+backend = "STAGES"
+path = "model.mlir"
+
+[constraints]
+hydrogen_bonds = false
+rigid_water = false
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps      = 2
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target = "GPU"
+precision = "double"
+#--- end
