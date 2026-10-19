@@ -261,6 +261,10 @@ def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
            "Run the bodies' loops as kernels of the device">,
     Option<"blockSize", "block-size", "int64_t", /*default=*/"256",
            "The threads of a block of a body's kernel">,
+    Option<"fuse", "fuse", "bool", /*default=*/"true",
+           "Fold unit dimensions and fuse elementwise producers of several "
+           "uses into their consumers; false fuses producers of one use only "
+           "(D293)">,
   ];
   let dependentDialects = [
     "::mlir::arith::ArithDialect", "::mlir::bufferization::BufferizationDialect",

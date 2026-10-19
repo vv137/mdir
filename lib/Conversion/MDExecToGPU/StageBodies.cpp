@@ -191,6 +191,248 @@ static LogicalResult moveToDevice(func::FuncOp function) {
   return success();
 }
 
+/// Whether `op` is elementwise: a generic of parallel loops only, with one
+/// result whose indexing map is a permutation, on tensors.
+static bool isElementwise(linalg::GenericOp op) {
+  return op.hasPureTensorSemantics() && op.getNumResults() == 1 &&
+         op.getNumReductionLoops() == 0 &&
+         op.getMatchingIndexingMap(op.getDpsInitOperand(0)).isPermutation();
+}
+
+/// Whether the payload of `op` is cheap to evaluate again: a few ops of
+/// `arith`, none of `math` (the exponentials and the trigonometric functions
+/// of the radial basis and of the cutoff).
+static bool isCheap(linalg::GenericOp op) {
+  unsigned count = 0;
+  for (Operation &inner : op.getBody()->without_terminator()) {
+    if (inner.getDialect() && inner.getDialect()->getNamespace() == "math")
+      return false;
+    ++count;
+  }
+  return count <= 8;
+}
+
+/// Gives each consumer that elementwise fusion would take a copy of its
+/// elementwise producer when the producer has several uses: the fusion
+/// takes a producer of one use only, and a producer of several stays its own
+/// kernel, its result a round trip through global memory. A copy is made
+/// where it does not multiply the producer's work: into a consumer of the
+/// same loops, or of more loops if the producer is cheap. The original stays
+/// for the uses that are not fused (a contraction, a slice, the return).
+/// The idea, a producer that is cheap to recompute cloned into each region
+/// that uses it rather than stored, is IREE's
+/// (iree-org/iree v3.12.0, `compiler/src/iree/compiler/DispatchCreation/
+/// CloneProducersIntoDispatchRegions.cpp`). Returns whether anything was
+/// copied.
+static bool copyProducersOfSeveralUses(func::FuncOp function) {
+  // A copy's payload holds at most this many ops, so that repeated rounds of
+  // copying and fusing do not grow the bodies without bound.
+  constexpr unsigned kLargest = 64;
+  SmallVector<linalg::GenericOp> producers;
+  function.walk([&](linalg::GenericOp op) {
+    if (isElementwise(op) && !op->getResult(0).hasOneUse() &&
+        !op->getResult(0).use_empty() &&
+        op.getBody()->getOperations().size() <= kLargest)
+      producers.push_back(op);
+  });
+  bool changed = false;
+  for (linalg::GenericOp producer : producers) {
+    SmallVector<OpOperand *> uses, fused;
+    for (OpOperand &use : producer->getResult(0).getUses())
+      uses.push_back(&use);
+    for (OpOperand *use : uses) {
+      auto consumer = dyn_cast<linalg::GenericOp>(use->getOwner());
+      if (!consumer || !linalg::areElementwiseOpsFusable(use))
+        continue;
+      if (consumer.getNumLoops() != producer.getNumLoops() &&
+          !isCheap(producer))
+        continue;
+      fused.push_back(use);
+    }
+    if (fused.empty())
+      continue;
+    // The original serves the last of them if every use is fused.
+    if (fused.size() == uses.size())
+      fused.pop_back();
+    for (OpOperand *use : fused) {
+      OpBuilder builder(producer);
+      use->set(builder.clone(*producer)->getResult(0));
+      changed = true;
+    }
+  }
+  return changed;
+}
+
+/// Starts each reduction whose initial value is a `linalg.fill` of a constant
+/// from that constant, read at the first iteration of its reduced loops,
+/// instead of from a buffer that a kernel of its own fills: the init becomes
+/// `tensor.empty`, whose contents the payload no longer reads. This is the
+/// meaning of the generic unchanged: at the first reduced iteration the
+/// accumulator is the fill's value, and after it the partial sum.
+static void startReductionsFromConstants(func::FuncOp function) {
+  SmallVector<linalg::GenericOp> reductions;
+  function.walk([&](linalg::GenericOp op) {
+    if (op.hasPureTensorSemantics() && op.getNumReductionLoops() != 0)
+      reductions.push_back(op);
+  });
+  for (linalg::GenericOp op : reductions) {
+    SmallVector<unsigned> reduced;
+    for (auto [d, type] : llvm::enumerate(op.getIteratorTypesArray()))
+      if (type == utils::IteratorType::reduction)
+        reduced.push_back(d);
+    for (OpOperand &init : op.getDpsInitsMutable()) {
+      auto fill = init.get().getDefiningOp<linalg::FillOp>();
+      if (!fill)
+        continue;
+      Value constant = fill.getInputs()[0];
+      if (!matchPattern(constant, m_Constant()))
+        continue;
+      Block *body = op.getBody();
+      BlockArgument accumulator = op.getMatchingBlockArgument(&init);
+      OpBuilder builder = OpBuilder::atBlockBegin(body);
+      Location loc = op.getLoc();
+      Value first;
+      for (unsigned d : reduced) {
+        Value index = linalg::IndexOp::create(builder, loc, d);
+        Value zero = arith::CmpIOp::create(
+            builder, loc, arith::CmpIPredicate::eq, index,
+            arith::ConstantIndexOp::create(builder, loc, 0));
+        first = first ? arith::AndIOp::create(builder, loc, first, zero)
+                      : zero;
+      }
+      // The constant, defined outside the payload, is captured by it.
+      Value start = arith::SelectOp::create(builder, loc, first, constant,
+                                            accumulator);
+      accumulator.replaceAllUsesExcept(start, start.getDefiningOp());
+      OpBuilder outside(op);
+      auto type = cast<RankedTensorType>(init.get().getType());
+      init.set(tensor::EmptyOp::create(outside, loc, type.getShape(),
+                                       type.getElementType()));
+    }
+  }
+}
+
+/// Rewrites each `tensor.pad` of a constant with static sizes as an
+/// elementwise generic that reads its source where the index falls inside
+/// it and gives the constant elsewhere, so that elementwise fusion takes it
+/// into its consumer: the legalization makes the adjoint of a slice a pad
+/// (a 512-wide adjoint of the three slices of a 384-wide input, added up),
+/// which bufferizes to a fill and a copy, two kernels each.
+static LogicalResult padsAsGathers(func::FuncOp function) {
+  SmallVector<tensor::PadOp> pads;
+  function.walk([&](tensor::PadOp pad) { pads.push_back(pad); });
+  for (tensor::PadOp pad : pads) {
+    Value constant = pad.getConstantPaddingValue();
+    auto source = cast<RankedTensorType>(pad.getSource().getType());
+    auto result = cast<RankedTensorType>(pad.getResult().getType());
+    if (!constant || !source.hasStaticShape() || !result.hasStaticShape())
+      continue;
+    SmallVector<int64_t> low(pad.getStaticLow());
+    if (llvm::any_of(low, ShapedType::isDynamic) ||
+        llvm::any_of(pad.getStaticHigh(), ShapedType::isDynamic))
+      continue;
+    OpBuilder builder(pad);
+    Location loc = pad.getLoc();
+    unsigned rank = result.getRank();
+    Value empty = tensor::EmptyOp::create(builder, loc, result.getShape(),
+                                          result.getElementType());
+    SmallVector<AffineMap> maps = {builder.getMultiDimIdentityMap(rank)};
+    SmallVector<utils::IteratorType> iterators(rank,
+                                               utils::IteratorType::parallel);
+    Value input = pad.getSource();
+    auto gather = linalg::GenericOp::create(
+        builder, loc, result, ValueRange(), ValueRange{empty}, maps, iterators,
+        [&](OpBuilder &b, Location l, ValueRange) {
+          Value inside, zero = arith::ConstantIndexOp::create(b, l, 0);
+          SmallVector<Value> at;
+          for (unsigned d = 0; d != rank; ++d) {
+            Value index = linalg::IndexOp::create(b, l, d);
+            Value shifted = arith::SubIOp::create(
+                b, l, index, arith::ConstantIndexOp::create(b, l, low[d]));
+            int64_t size = source.getDimSize(d);
+            Value in = arith::AndIOp::create(
+                b, l,
+                arith::CmpIOp::create(b, l, arith::CmpIPredicate::sge, shifted,
+                                      zero),
+                arith::CmpIOp::create(
+                    b, l, arith::CmpIPredicate::slt, shifted,
+                    arith::ConstantIndexOp::create(b, l, size)));
+            inside = inside ? arith::AndIOp::create(b, l, inside, in) : in;
+            // Clamped, so that the read stays inside the source.
+            at.push_back(arith::MinSIOp::create(
+                b, l,
+                arith::MaxSIOp::create(b, l, shifted, zero),
+                arith::ConstantIndexOp::create(b, l, size - 1)));
+          }
+          Value value = tensor::ExtractOp::create(b, l, input, at);
+          Value chosen = arith::SelectOp::create(b, l, inside, value, constant);
+          linalg::YieldOp::create(b, l, chosen);
+        });
+    pad.replaceAllUsesWith(gather.getResult(0));
+    pad.erase();
+  }
+  return success();
+}
+
+/// Rewrites each `linalg.fill` that is not the initial value of a named op
+/// (a product) as a generic, which elementwise fusion takes into its
+/// consumers like any other elementwise producer.
+static void generalizeFills(func::FuncOp function) {
+  SmallVector<linalg::FillOp> fills;
+  function.walk([&](linalg::FillOp fill) {
+    bool initOfNamed = llvm::any_of(fill->getUses(), [](OpOperand &use) {
+      auto user = dyn_cast<linalg::LinalgOp>(use.getOwner());
+      return user && !isa<linalg::GenericOp>(user) && user.isDpsInit(&use);
+    });
+    if (!initOfNamed && fill.hasPureTensorSemantics())
+      fills.push_back(fill);
+  });
+  IRRewriter rewriter(function.getContext());
+  for (linalg::FillOp fill : fills) {
+    rewriter.setInsertionPoint(fill);
+    (void)linalg::generalizeNamedOp(rewriter, fill);
+  }
+}
+
+/// Writes each result in the buffer that the caller passes for it, where the
+/// bufferization allocated a buffer of the same type and copied it there at
+/// the end (`buffer-results-to-out-params`): the allocation is replaced by
+/// the caller's buffer and the copy, a kernel, goes. A buffer that is copied
+/// to two results, or that is not an allocation of the function, is left.
+/// (The option of that pass that does this, hoisting static allocations,
+/// crashed in LLVM 23.1.2 on these bodies.)
+static void writeResultsInPlace(func::FuncOp function) {
+  llvm::DenseMap<Value, unsigned> copiesOf;
+  SmallVector<memref::CopyOp> copies;
+  function.walk([&](memref::CopyOp copy) {
+    copies.push_back(copy);
+    ++copiesOf[copy.getSource()];
+  });
+  for (memref::CopyOp copy : copies) {
+    // The caller's buffer of a result: an argument that is only written,
+    // by this copy (the operands are not written in place).
+    Block &entry = function.getBody().front();
+    auto target = dyn_cast<BlockArgument>(copy.getTarget());
+    if (!target || target.getOwner() != &entry || !target.hasOneUse() ||
+        copy->getBlock() != &entry)
+      continue;
+    auto alloc = copy.getSource().getDefiningOp<memref::AllocOp>();
+    if (!alloc || alloc.getType() != target.getType() ||
+        copiesOf.lookup(alloc) != 1 || alloc->getBlock() != &entry)
+      continue;
+    // Nothing reads, writes, or releases the allocation after the copy.
+    if (llvm::any_of(alloc->getUsers(), [&](Operation *user) {
+          return user != copy &&
+                 (isa<memref::DeallocOp>(user) ||
+                  copy->isBeforeInBlock(entry.findAncestorOpInBlock(*user)));
+        }))
+      continue;
+    alloc.replaceAllUsesWith(Value(target));
+    copy.erase();
+    alloc.erase();
+  }
+}
+
 /// On the host, the intermediate buffers are released at the return.
 static void releaseOnHost(func::FuncOp function) {
   SmallVector<Value> buffers;
@@ -266,10 +508,42 @@ public:
       bodies->push_back(function);
     }
 
+    // Elementwise fusion. The unit dimensions that the legalization leaves
+    // (`4096x1`, `1x100`, reductions over one element) are folded first, so
+    // that the reshapes around them do not stop the fusion; the pads become
+    // gathers, the reductions start from their constants, and the other
+    // fills become generics; then producers of several uses are copied into
+    // their consumers and fused, until nothing changes.
+    if (fuse) {
+      PassManager unit(context);
+      unit.addPass(createLinalgFoldUnitExtentDimsPass());
+      unit.addPass(createCanonicalizerPass());
+      if (failed(unit.run(*bodies)))
+        return signalPassFailure();
+      for (func::FuncOp function : bodies->getOps<func::FuncOp>()) {
+        if (failed(padsAsGathers(function)))
+          return signalPassFailure();
+        startReductionsFromConstants(function);
+        generalizeFills(function);
+      }
+    }
+    for (unsigned round = 0; round != (fuse ? 8 : 1); ++round) {
+      PassManager pm(context);
+      pm.addPass(createLinalgElementwiseOpFusionPass());
+      pm.addPass(createCanonicalizerPass());
+      pm.addPass(createCSEPass());
+      if (failed(pm.run(*bodies)))
+        return signalPassFailure();
+      if (!fuse)
+        break;
+      bool copied = false;
+      for (func::FuncOp function : bodies->getOps<func::FuncOp>())
+        copied |= copyProducersOfSeveralUses(function);
+      if (!copied)
+        break;
+    }
+
     PassManager pm(context);
-    pm.addPass(createLinalgElementwiseOpFusionPass());
-    pm.addPass(createCanonicalizerPass());
-    pm.addPass(createCSEPass());
     bufferization::OneShotBufferizePassOptions options;
     options.bufferizeFunctionBoundaries = true;
     // The caller passes buffers of the rows of a tile, of their own.
@@ -284,6 +558,9 @@ public:
     pm.addPass(createCanonicalizerPass());
     if (failed(pm.run(*bodies)))
       return signalPassFailure();
+    if (fuse)
+      for (func::FuncOp function : bodies->getOps<func::FuncOp>())
+        writeResultsInPlace(function);
     // A copy into a result's buffer becomes a loop as well, so that it runs
     // where the buffers are.
     bodies->walk([&](memref::CopyOp copy) {
