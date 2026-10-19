@@ -47,7 +47,7 @@ private:
   LogicalResult getWeight(Value sum, Value &weight);
 
   /// The op of the transpose of the structure of `op` for operand `index`,
-  /// from its declared transpose (AdjointOpInterface, D[md-transposes]),
+  /// from its declared transpose (AdjointOpInterface, D295),
   /// or null after a diagnostic; `kernel` receives its kernel to complete.
   Operation *createTranspose(Operation *op, unsigned index, Value cotangent,
                              Exchange exchange, TypeRange resultTypes,

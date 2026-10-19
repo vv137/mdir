@@ -44,7 +44,7 @@ modeled scalar operation rather than trusting its dialect namespace.
 including kernel operations that happen to be inactive at an evaluation.
 It reports the missing operation and potential name.
 
-## Declared transposes (D[md-transposes])
+## Declared transposes (D295)
 
 `md-differentiate` carries adjoints back through the ops that move and
 reduce the values of fields by their declared transposes,

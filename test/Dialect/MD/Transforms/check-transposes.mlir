@@ -1,4 +1,4 @@
-// --md-check-transposes (D[md-transposes]): every op of the structure of a
+// --md-check-transposes (D295): every op of the structure of a
 // potential declares its transpose through AdjointOpInterface.
 //
 // The potentials of the derivative's tests pass: the sums and gathers over

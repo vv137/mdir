@@ -665,7 +665,7 @@ void mdir::md::registerDerivativeInterfaces(DialectRegistry &registry) {
     ApplyStageOp::attachInterface<StageRule>(*context);
   });
   // The declared transposes: the transfers of md_dist (D276) and the
-  // structure of the ops of md with a kernel (D[md-transposes]).
+  // structure of the ops of md with a kernel (D295).
   registerAdjointInterfaces(registry);
 }
 

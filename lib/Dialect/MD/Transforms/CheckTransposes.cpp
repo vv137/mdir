@@ -1,5 +1,5 @@
 // The check that every op of the structure of a potential declares its
-// transpose (D[md-transposes]).
+// transpose (D295).
 //
 // md-differentiate carries adjoints back through the ops that move and
 // reduce the values of fields: the sums, gathers, and maps of md, and the

@@ -1,4 +1,4 @@
-// The declared transpose of md_exec.scatter_add (D291, D[md-transposes]):
+// The declared transpose of md_exec.scatter_add (D291, D295):
 // a' = a + Σ_{k : idx_k = i} v_k is linear in the values and in the
 // destination. The transpose in the destination is the identity; that in
 // the values, a gather by the indices, waits for an op of md_exec (the

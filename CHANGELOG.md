@@ -642,7 +642,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **The transposes of the `md` ops are declared through
-  `AdjointOpInterface`** (D[md-transposes], #451, PR #459,
+  `AdjointOpInterface`** (D295, #451, PR #459,
   [docs/ad-robust.md](docs/ad-robust.md#declared-transposes-dmd-transposes)):
   the sums and gathers over relations and tuples and the sums and maps
   over particles declare the transpose of their structure, and

@@ -1,5 +1,5 @@
 // A test pass that asks the declared transpose of an op that is linear in
-// some operands (AdjointOpInterface, D276, D[md-transposes]) for the
+// some operands (AdjointOpInterface, D276, D295) for the
 // adjoint of one operand, with the op's own result as the adjoint of the
 // result, and remarks on what it gives. md-differentiate takes the
 // transposes of md and md_dist itself; this reaches those of other

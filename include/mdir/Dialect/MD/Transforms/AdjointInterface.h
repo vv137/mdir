@@ -1,5 +1,5 @@
 // The declared transposes of the ops that md-differentiate carries
-// adjoints through (D276, D[md-transposes]).
+// adjoints through (D276, D295).
 
 #ifndef MDIR_DIALECT_MD_TRANSFORMS_ADJOINTINTERFACE_H
 #define MDIR_DIALECT_MD_TRANSFORMS_ADJOINTINTERFACE_H

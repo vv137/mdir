@@ -452,7 +452,7 @@ ends instead. `docs/primitives-map.md` (D292) takes every part
 of MDIR apart into such primitives and their transposes.
 
 **Declared transposes.** The rules above are facts of the ops, not of the
-pass (D[md-transposes]). An op with a kernel is a gather, the kernel, and
+pass (D295). An op with a kernel is a gather, the kernel, and
 a reduction; its derivative in an operand that reaches the kernel is the
 transpose of its linearization, which is the transpose of the reduction
 (the adjoint of the result broadcast to each pair, tuple, or particle),

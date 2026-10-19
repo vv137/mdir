@@ -3,7 +3,7 @@ include "mlir/IR/OpBase.td"
 def AdjointOpInterface : OpInterface<"AdjointOpInterface"> {
   let cppNamespace = "::mdir::md";
   let description = [{
-    A declared transpose (D276, D[md-transposes]). `md-differentiate`
+    A declared transpose (D276, D295). `md-differentiate`
     carries the adjoint of an op's result back to its operands through it,
     in one of two forms.
 

@@ -1,5 +1,5 @@
 // The adjoint identity of each declared transpose of the structure of the
-// md ops (D[md-transposes], docs/primitives-map.md, Section 1.3), through
+// md ops (D295, docs/primitives-map.md, Section 1.3), through
 // md-differentiate, compiled and run on the host in double precision.
 //
 // md-differentiate takes the transpose of an op's structure from the op

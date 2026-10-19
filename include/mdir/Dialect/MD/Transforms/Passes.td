@@ -134,7 +134,7 @@ def CheckTransposes : Pass<"md-check-transposes", "::mlir::ModuleOp"> {
   let description = [{
     Refuses a sum, gather, or map of `md`, or a transfer or loop of
     `md_dist`, in a potential, that does not declare its transpose through
-    `AdjointOpInterface` (D[md-transposes]): the ops through which
+    `AdjointOpInterface` (D295): the ops through which
     `md-differentiate` carries adjoints. The scalar ops of kernels are
     checked by `--md-check-derivative-coverage` (D183).
   }];

@@ -1,5 +1,5 @@
 // The declared transposes of the transfers of md_dist (D276) and of the
-// structure of the ops of md with a kernel (D[md-transposes]).
+// structure of the ops of md with a kernel (D295).
 //
 // See docs/distributed-ml2.md, Sections 3, 4.5, and 11. G, the copy of
 // owned values to the ghosts, and G^T, the sum of the ghosts' values at
