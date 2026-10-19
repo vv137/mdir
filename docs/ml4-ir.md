@@ -540,7 +540,8 @@ and the loops of `md_exec` carry them to the lowering for a device:
   and on a device one kernel of a thread for each iteration of each
   parallel loop; the constants go into the kernels that read them, and the
   bodies' intermediate buffers are taken from the runtime's pool for the
-  call. The 39 bodies of nablaDFT's PaiNN become 532 kernels (933 with
+  call. The 39 bodies of nablaDFT's PaiNN become 369 kernels and 106
+  calls of cuBLAS (532 kernels with loops for the products, 933 with
   upstream's elementwise fusion alone, D293).
 - **The fusion of a body** (`D299`; option `fuse` of the
   pass, true by default; `fuse=false` is D293's lowering). The
@@ -583,6 +584,37 @@ and the loops of `md_exec` carry them to the lowering for a device:
 
   In `edge.b`, for example, 58 kernels become 22, and in `node.b` 50
   become 29.
+- **Products as calls of cuBLAS** (`D[ml4-body-gemm]`; option
+  `contractions` of the pass, `gemm` by default, `loops` for D293's loops;
+  `MDIR_STAGE_CONTRACTIONS` overrides it for comparisons). On a device,
+  every op of a body of the shape of a GEMM in f32 becomes a call of
+  cuBLAS's `cublasSgemm` through the runtime (`mdrtGemmF32`), on the
+  stream of the kernels and in their order:
+  - the shape: one reduced loop; the result indexed by the other loops in
+    order, its last the columns and the others its rows (several rows
+    dimensions are one, as the three components of PaiNN's vectors in
+    `node.b`: 12,288 rows); one operand indexed by the rows and the
+    reduced loop, or by the reduced loop and a single rows dimension
+    (transposed); the other by the reduced loop and the columns, or
+    transposed; a payload that adds the product of the operands to the
+    result (or a `linalg.matmul`); every buffer with contiguous rows;
+  - the matching runs on the operands as the legalization gives them: the
+    fusion keeps contractions free of fused operands (above), and the
+    reductions that it starts from their constants exclude these;
+  - a product that starts from a fill of zero gets a fill of its own and
+    calls cuBLAS with beta 0 instead (no fill kernel); the payloads that do
+    not read their init take an empty tensor, so that a fill shared
+    through CSE does not stay for them;
+  - the weights that a product reads, globals of the body, are copied to
+    the device by the runtime once (`mdrtDeviceConstant`, by their host
+    address), and the copy is waited for, since the stream of the kernels
+    does not wait for the null stream;
+  - f32 in both precision modes (the bodies are f32, #447), cuBLAS's
+    default math mode: no TF32 (the maintainer's ruling on #463).
+
+  The bodies of nablaDFT's PaiNN make 106 calls and 369 kernels (532
+  with loops). The products that are not GEMMs (the contractions over the
+  three components of a vector, the reductions of rows) stay loops.
 - **`convert-md-exec-to-gpu`** splits each loop whose kernel applies
   batched stages into a host loop over tiles of $T$ rows. For each level of
   the applications (0 for those whose operands depend on no other, one
@@ -744,24 +776,33 @@ body on 4,096 rows):
 
 **Baselines of the same bodies** (#462; not MDIR's path, target times).
 The bodies of layer 0 as `painn-stages.py export` writes them, 4,096 rows,
-ms per call on one RTX 4090: MDIR's lowering with this fusion; IREE
+ms per call on one RTX 4090: MDIR's lowering with this fusion, with
+the products as loops and as calls of cuBLAS; IREE
 3.12.0 from its release wheels (`iree-compile` of the exported StableHLO
 for CUDA `sm_89`, timed by `iree-benchmark-module`); XLA through
 `jax.jit` of the same JAX functions (JAX 0.11.2), in full f32
 (`jax_default_matmul_precision = "highest"`), timed from Python, so each
 call carries about 0.05 ms of dispatch.
 
-| Body | MDIR, D293 | MDIR, Section 8.3 | IREE | XLA |
-|---|---|---|---|---|
-| `embed.f` | 0.054 | 0.046 | 0.040 | 0.055 |
-| `ctx.f` | 0.49 | 0.48 | 0.13 | 0.061 |
-| `ctx.b` | 1.14 | 1.12 | 0.26 | 0.065 |
-| `edge.f` | 0.35 | 0.34 | 0.26 | 0.083 |
-| `edge.b` | 1.29 | 1.22 | 0.67 | 0.082 |
-| `node.f` | 1.40 | 1.38 | 0.48 | 0.073 |
-| `node.b` | 4.4 | 4.2 | 1.11 | 0.17 |
-| `readout.f` | 0.077 | 0.077 | 0.036 | 0.062 |
-| `readout.b` | 0.24 | 0.21 | 0.066 | 0.081 |
+| Body | MDIR, D293 | MDIR, fused, loops | MDIR, fused, cuBLAS | IREE | XLA |
+|---|---|---|---|---|---|
+| `embed.f` | 0.054 | 0.046 | 0.046 | 0.040 | 0.055 |
+| `ctx.f` | 0.49 | 0.48 | 0.058 | 0.13 | 0.061 |
+| `ctx.b` | 1.14 | 1.12 | 0.076 | 0.26 | 0.065 |
+| `edge.f` | 0.35 | 0.34 | 0.066 | 0.26 | 0.083 |
+| `edge.b` | 1.29 | 1.22 | 0.35 | 0.67 | 0.082 |
+| `node.f` | 1.40 | 1.38 | 0.13 | 0.48 | 0.073 |
+| `node.b` | 4.4 | 4.2 | 0.31 | 1.11 | 0.17 |
+| `readout.f` | 0.077 | 0.077 | 0.015 | 0.036 | 0.062 |
+| `readout.b` | 0.24 | 0.21 | 0.052 | 0.066 | 0.081 |
+
+With the products as cuBLAS calls (`D[ml4-body-gemm]`, two runs of each
+in one job, their mean), the bodies take less time than IREE's and,
+except `edge.b` and `node.b`, about XLA's, whose times carry 0.05 ms of
+dispatch from Python. What is left in `edge.b` and `node.b` is the
+products that are not GEMMs: the contractions over the three components
+of a vector and the reductions of rows, a thread per element of the
+result.
 
 IREE splits the bodies into about as many dispatches as this fusion gives
 kernels (`edge.b` 21 against 22, `edge.f` 7 against 7, `node.f` 14
