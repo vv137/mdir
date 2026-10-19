@@ -7,6 +7,7 @@
 // REQUIRES: cuda
 //
 // RUN: cat %S/../../lib/Runtime/Templates/NeighborsGroupsGPUTriclinic.mlir %s \
+// RUN: | mdir-opt --expand-device-primitives \
 // RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
 // RUN:     --reconcile-unrealized-casts \
 // RUN: | mlir-runner -e main --entry-point-result=void \
