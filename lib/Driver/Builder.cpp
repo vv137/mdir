@@ -8,6 +8,7 @@
 #include "mdir/Driver/Profile.h"
 #include "mdir/Driver/Prolate.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/raw_ostream.h"
 
 #include <array>
@@ -721,6 +722,12 @@ private:
                              StringRef prefix, StringRef f, StringRef fResult,
                              StringRef u, StringRef uResult, StringRef w,
                              StringRef tag);
+
+  /// Copies the module of each model in stages into the program, its
+  /// potential renamed `@staged_<name>` (D[ml4-painn-stages]); `@energy`
+  /// calls them.
+  llvm::Error emitStagedModels();
+  std::vector<std::string> stagedPotentials, stagedResults;
 
   /// Whether the topology has virtual sites.
   bool hasSites() const { return !getSiteSets().empty(); }
@@ -1842,8 +1849,9 @@ void Builder::collectTopologyArrays() {
   program.fields.push_back(std::move(types));
   // The atomic numbers that a learned potential takes
   // (D270), in the order of the particles that the program
-  // keeps, as the other fields.
-  if (!control.models.empty()) {
+  // keeps, as the other fields; a model in stages takes them too
+  // (D[ml4-painn-stages]).
+  if (!control.models.empty() || !control.stagedModels.empty()) {
     Program::Field numbers;
     numbers.name = "model_z";
     numbers.isInteger = true;
@@ -5679,6 +5687,20 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "  } : !rel_cmap, !vec -> f64\n";
     add("cmap");
   }
+  // The models in stages, which md-inline brings in and md-differentiate
+  // differentiates with the rest (D[ml4-painn-stages]).
+  if (terms == AllTerms)
+    for (size_t k = 0; k != stagedPotentials.size(); ++k) {
+      os << stagedPotentials[k];
+      if (total.empty()) {
+        total = stagedResults[k];
+        continue;
+      }
+      std::string sum = "%total_staged" + std::to_string(k);
+      os << "  " << sum << " = arith.addf " << total << ", "
+         << stagedResults[k] << " : f64\n";
+      total = sum;
+    }
   if (total.empty()) {
     os << "  %zero = arith.constant 0.0 : f64\n";
     total = "%zero";
@@ -9491,6 +9513,83 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   return {newPositions, "%vc" + t, newForces};
 }
 
+llvm::Error Builder::emitStagedModels() {
+  stagedPotentials.clear();
+  stagedResults.clear();
+  for (const Control::ModelTerm &term : control.stagedModels) {
+    auto buffer = llvm::MemoryBuffer::getFile(term.path);
+    if (!buffer)
+      return makeError("cannot read the model in stages '" + term.name +
+                       "' from '" + term.path +
+                       "': " + buffer.getError().message());
+    StringRef text = (*buffer)->getBuffer();
+    // The module's one potential takes the positions, the cell, and the
+    // atomic numbers (scripts/mlip/painn-stages.py export).
+    static const char *const head = "md.potential @";
+    size_t at = text.find(head);
+    if (at == StringRef::npos || text.find(head, at + 1) != StringRef::npos)
+      return makeError("the model in stages '" + term.name +
+                       "' must hold one 'md.potential'");
+    // The potential's body goes into `@energy`, where md-differentiate
+    // differentiates it with the other terms; its values are renamed apart,
+    // and its arguments are the positions, the cell, and the atomic numbers
+    // of the program. The rest of the module (the stages and their bodies)
+    // goes to the top of the program.
+    size_t open = text.find("{\n", at);
+    size_t close = text.find("\n}", open);
+    llvm::SmallVector<StringRef, 3> parameters;
+    StringRef header = text.slice(text.find('(', at) + 1, open);
+    for (StringRef part : llvm::split(header, ','))
+      if (part.trim().starts_with("%"))
+        parameters.push_back(part.trim().take_until([](char c) {
+          return c == ':' || c == ' ';
+        }));
+    if (open == StringRef::npos || close == StringRef::npos ||
+        parameters.size() != 3)
+      return makeError("the potential of the model in stages '" + term.name +
+                       "' must take the positions, the cell, and the atomic "
+                       "numbers");
+    std::string prefix = "%sm" + std::to_string(stagedPotentials.size()) + "_";
+    std::string body;
+    StringRef rest = text.slice(open + 2, close + 1);
+    std::string result;
+    while (!rest.empty()) {
+      size_t percent = rest.find('%');
+      body += rest.take_front(percent).str();
+      if (percent == StringRef::npos)
+        break;
+      rest = rest.drop_front(percent);
+      size_t length = 1;
+      while (length < rest.size() &&
+             (llvm::isAlnum(rest[length]) || rest[length] == '_' ||
+              rest[length] == '.' || rest[length] == '$'))
+        ++length;
+      StringRef value = rest.take_front(length);
+      rest = rest.drop_front(length);
+      if (value == parameters[0])
+        body += "%x";
+      else if (value == parameters[1])
+        body += "%cell";
+      else if (value == parameters[2])
+        body += "%p_model_z";
+      else
+        body += prefix + value.drop_front().str();
+    }
+    size_t ret = body.rfind("md.return ");
+    if (ret == std::string::npos)
+      return makeError("the potential of the model in stages '" + term.name +
+                       "' has no 'md.return'");
+    StringRef returned = StringRef(body).drop_front(ret + 10);
+    result = returned.take_until([](char c) { return c == ' '; }).str();
+    body.erase(body.rfind('\n', ret) + 1);
+    os << "// The model in stages '" << term.name << "' (D[ml4-painn-stages])\n"
+       << text.take_front(at) << text.drop_front(close + 2) << "\n";
+    stagedPotentials.push_back(body);
+    stagedResults.push_back(result);
+  }
+  return llvm::Error::success();
+}
+
 std::string Builder::emitModelTerms(StringRef indent, StringRef x,
                                     StringRef cell, StringRef prefix,
                                     StringRef f, StringRef fResult,
@@ -11798,6 +11897,13 @@ llvm::Error Builder::build() {
   // A learned potential takes every particle with its element, and ML1 has
   // no constraints and no virtual sites beside it
   // (docs/metatomic-ml1.md, Section 6.9).
+  if (!control.stagedModels.empty()) {
+    if (!system.topology)
+      return makeError("a model in stages of [[energy.model]] needs a "
+                       "topology, which gives the elements of the particles");
+    if (hasSites() || !system.topology->virtualSites.empty())
+      return makeError("a model in stages takes no virtual sites yet");
+  }
   if (!control.models.empty()) {
     if (!system.topology)
       return makeError("a term of [[energy.model]] needs a topology, which "
@@ -11894,6 +12000,8 @@ llvm::Error Builder::build() {
   }
   os << "\n";
   mark.next("rebuild.build.text");
+  if (llvm::Error error = emitStagedModels())
+    return error;
   if (system.topology) {
     emitTopologyPotential("energy", AllTerms);
     // Each term on its own, for the log at the start.
