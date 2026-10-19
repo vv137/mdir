@@ -791,10 +791,15 @@ starting points of the schedules of 4b.
 - The time of the `linalg` form (#462), in this order: the fusion of the
   bodies (`D299`, Section 8.3, built); the sums over the
   centers of a tile over the range of centers whose slots meet it, a
-  thread for each center and component; schedules of the contractions
-  and of the row reductions in the Transform dialect (tiles to blocks and
-  threads, the accumulator in registers, shared-memory staging; TF32 only
-  where the mode allows, the bodies being f32 in both modes).
+  thread for each center and component (`D[ml4-tile-sums]`); the
+  products of the shape of a matrix product (`linalg.matmul`, and the
+  generic contractions with one contracted dimension) as calls of
+  cuBLAS's f32 GEMM on the runtime's stream and buffers, without TF32
+  (`D[ml4-body-gemm]`, the maintainer's ruling on #462: no schedules of
+  MDIR's own for dense products), the fusion of Section 8.3 keeping the
+  elementwise ops around them; then AOTInductor's bodies measured against
+  them, the choice a strategy with a switch, by measurement (#444); MDIR's
+  own schedules only for contractions that neither serves.
 - Store against recompute; the two-ended scatter (one product per pair).
 - Rows compacted to the pairs within the cutoff; the fields in f64 in
   `mixed`.
