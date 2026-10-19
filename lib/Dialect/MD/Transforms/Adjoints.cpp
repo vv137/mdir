@@ -204,6 +204,11 @@ static bool isPairOrTupleKernelOperand(unsigned index, unsigned gathered) {
   return index == 1 || (index >= 3 && index < 3 + gathered);
 }
 
+/// The one cotangent of an op of md, or null.
+static Value getSingle(ValueRange cotangents) {
+  return cotangents.size() == 1 ? cotangents.front() : Value();
+}
+
 /// Checks that `index` reaches the kernel of `op` and that the summed form
 /// is asked only where `allowSummed`.
 static LogicalResult checkTranspose(Operation *op, unsigned index,
@@ -230,7 +235,7 @@ struct SumRelationTranspose
   // at the center; the relation is symmetric, so that the gather at the
   // center over the directed pairs takes the derivative at both ends.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value, md::Exchange exchange,
+                             unsigned index, ValueRange, md::Exchange exchange,
                              TypeRange resultTypes, bool summed,
                              TransposeKernel &kernel) const {
     auto sum = cast<md::SumRelationOp>(op);
@@ -261,12 +266,13 @@ struct GatherRelationTranspose
   // center (`forward`) and with the ends exchanged (`backward`), where the
   // displacement is d_ji = −d_ij.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value cotangent,
+                             unsigned index, ValueRange cotangents,
                              md::Exchange exchange, TypeRange resultTypes,
                              bool summed, TransposeKernel &kernel) const {
     auto gather = cast<md::GatherRelationOp>(op);
     if (failed(checkTranspose(op, index, summed, /*allowSummed=*/true)))
       return nullptr;
+    Value cotangent = getSingle(cotangents);
     if (!cotangent || !isa<md::FieldType>(cotangent.getType())) {
       op->emitOpError() << "expected the adjoint of its result, a field";
       return nullptr;
@@ -318,7 +324,7 @@ struct SumTuplesTranspose
   // S = Σ_t u(t): the weight at each tuple, the reverse derivative of u in
   // the values of each member, and those added at the members.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value, md::Exchange,
+                             unsigned index, ValueRange, md::Exchange,
                              TypeRange resultTypes, bool summed,
                              TransposeKernel &kernel) const {
     auto sum = cast<md::SumTuplesOp>(op);
@@ -378,14 +384,14 @@ struct SumParticlesTranspose
   // S = Σ_i k(a_i, ...): the weight at each particle, which the kernel
   // captures, and the reverse derivative of k there.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value cotangent, md::Exchange,
+                             unsigned index, ValueRange cotangents, md::Exchange,
                              TypeRange resultTypes, bool summed,
                              TransposeKernel &kernel) const {
     if (failed(checkTranspose(op, index, summed, /*allowSummed=*/false)))
       return nullptr;
     return createParticleTranspose(
         op, cast<md::SumParticlesOp>(op).getKernel().front(), b, loc,
-        cotangent, resultTypes, kernel);
+        getSingle(cotangents), resultTypes, kernel);
   }
 };
 
@@ -399,14 +405,201 @@ struct MapParticlesTranspose
   // B_i = g(a_i, ...): the adjoint B̄_i at each particle, read beside the
   // operands, and the reverse derivative of g there.
   Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
-                             unsigned index, Value cotangent, md::Exchange,
+                             unsigned index, ValueRange cotangents, md::Exchange,
                              TypeRange resultTypes, bool summed,
                              TransposeKernel &kernel) const {
     if (failed(checkTranspose(op, index, summed, /*allowSummed=*/false)))
       return nullptr;
     return createParticleTranspose(
         op, cast<md::MapParticlesOp>(op).getKernel().front(), b, loc,
-        cotangent, resultTypes, kernel);
+        getSingle(cotangents), resultTypes, kernel);
+  }
+};
+
+//===----------------------------------------------------------------------===//
+// The structure of the loops of md_dist (D[md-dist-transposes])
+//===----------------------------------------------------------------------===//
+//
+// The loops over the rows of domains have the structure of those of md:
+// operand 0 is the relation, 1 the owned positions, 2 their ghosts, and
+// the fields that a pair op gathers follow, each as its owned rows and
+// their copy to the ghosts (docs/distributed-ml2.md, Sections 14 and 15).
+// The premises that make a form of the derivative valid on domains (the
+// traversal, the coverage, the contract) are the pass's.
+
+/// Whether `index` is the positions, their ghosts, or a gathered field of
+/// a pair op of md_dist.
+static bool isDistPairKernelOperand(unsigned index, unsigned gathered) {
+  return index == 1 || index == 2 || (index >= 3 && index < 3 + gathered);
+}
+
+struct DistSumPairsTranspose
+    : md::AdjointOpInterface::ExternalModel<DistSumPairsTranspose,
+                                            md_dist::SumPairsOp> {
+  bool isKernelOperand(Operation *op, unsigned index) const {
+    return isDistPairKernelOperand(
+        index, cast<md_dist::SumPairsOp>(op).getGathered().size());
+  }
+
+  // S = Σ_d S_d over the pairs of each domain: the weight of each domain's
+  // part at each pair, the reverse derivative of the kernel, and the values
+  // gathered at the rows of the pair over the same relation. For the
+  // positions, at the owned and at the ghost rows, two partial results that
+  // G^T completes; for a field on the directed traversal, at the owners
+  // alone (Section 15.4), which the caller asks by the result types.
+  Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
+                             unsigned index, ValueRange,
+                             md::Exchange exchange, TypeRange resultTypes,
+                             bool summed, TransposeKernel &kernel) const {
+    auto sum = cast<md_dist::SumPairsOp>(op);
+    if (failed(checkTranspose(op, index, summed, /*allowSummed=*/false)))
+      return nullptr;
+    MLIRContext *context = b.getContext();
+    OperationState state(loc, md_dist::GatherPairsOp::getOperationName());
+    state.addOperands(op->getOperands());
+    state.addAttribute("exchange", md::ExchangeAttr::get(context, exchange));
+    state.addTypes(resultTypes);
+    state.addRegion();
+    Operation *gather = b.create(state);
+    IRMapping mapping;
+    sum.getKernel().cloneInto(&gather->getRegion(0), mapping);
+    kernel.block = &gather->getRegion(0).front();
+    kernel.cloned = true;
+    return gather;
+  }
+};
+
+struct DistGatherPairsTranspose
+    : md::AdjointOpInterface::ExternalModel<DistGatherPairsTranspose,
+                                            md_dist::GatherPairsOp> {
+  bool isKernelOperand(Operation *op, unsigned index) const {
+    return isDistPairKernelOperand(
+        index, cast<md_dist::GatherPairsOp>(op).getGathered().size());
+  }
+
+  // ρ_i = Σ_k f(i, k): the adjoint of ρ at both rows of each pair, its owned
+  // rows and their copy to the ghosts (`cotangents`), the reverse
+  // derivative of f from each end, and the values gathered at the rows of
+  // the pair (Section 15.2); with `summed`, their sum over the pairs, the
+  // virial's form.
+  Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
+                             unsigned index, ValueRange cotangents,
+                             md::Exchange exchange, TypeRange resultTypes,
+                             bool summed, TransposeKernel &kernel) const {
+    auto gather = cast<md_dist::GatherPairsOp>(op);
+    if (failed(checkTranspose(op, index, summed, /*allowSummed=*/true)))
+      return nullptr;
+    if (cotangents.size() != 2 ||
+        !isa<md_dist::FieldType>(cotangents[0].getType())) {
+      op->emitOpError() << "expected the adjoint of its result at the owned "
+                           "rows and its copy to the ghosts";
+      return nullptr;
+    }
+    MLIRContext *context = b.getContext();
+    OperationState state(loc, summed
+                                  ? md_dist::SumPairsOp::getOperationName()
+                                  : md_dist::GatherPairsOp::getOperationName());
+    state.addOperands(
+        {gather.getRelation(), gather.getPositions(), gather.getGhosts()});
+    state.addOperands(gather.getGathered());
+    state.addOperands(cotangents);
+    state.addAttribute("exchange", md::ExchangeAttr::get(context, exchange));
+    state.addTypes(resultTypes);
+    state.addRegion();
+    Operation *result = b.create(state);
+    Block *block = new Block();
+    result->getRegion(0).push_back(block);
+    Block &source = gather.getKernel().front();
+    Value r = block->addArgument(source.getArgument(0).getType(), loc);
+    Value d = block->addArgument(source.getArgument(1).getType(), loc);
+    unsigned ends = source.getNumArguments() - 2;
+    SmallVector<Value> values;
+    for (unsigned k = 0; k != ends; ++k)
+      values.push_back(
+          block->addArgument(source.getArgument(2 + k).getType(), loc));
+    Type valueType =
+        cast<md_dist::FieldType>(cotangents[0].getType()).getKernelValueType();
+    kernel.cotangentI = block->addArgument(valueType, loc);
+    kernel.cotangentJ = block->addArgument(valueType, loc);
+    OpBuilder inside = OpBuilder::atBlockEnd(block);
+    Value negated = arith::NegFOp::create(inside, loc, d);
+    kernel.forward.map(source.getArgument(0), r);
+    kernel.backward.map(source.getArgument(0), r);
+    kernel.forward.map(source.getArgument(1), d);
+    kernel.backward.map(source.getArgument(1), negated);
+    for (unsigned k = 0; k + 1 < ends; k += 2) {
+      kernel.forward.map(source.getArgument(2 + k), values[k]);
+      kernel.forward.map(source.getArgument(3 + k), values[k + 1]);
+      kernel.backward.map(source.getArgument(2 + k), values[k + 1]);
+      kernel.backward.map(source.getArgument(3 + k), values[k]);
+    }
+    kernel.block = block;
+    return result;
+  }
+};
+
+/// A map of md_dist over the operands of `op`, a sum or a map over rows,
+/// then the cotangent if it is a field, as `createParticleTranspose`.
+static Operation *createRowTranspose(Operation *op, Block &source,
+                                     OpBuilder &b, Location loc,
+                                     Value cotangent, TypeRange resultTypes,
+                                     TransposeKernel &kernel) {
+  bool isField = cotangent && isa<md_dist::FieldType>(cotangent.getType());
+  OperationState state(loc, md_dist::MapParticlesOp::getOperationName());
+  state.addOperands(op->getOperands());
+  if (isField)
+    state.addOperands(cotangent);
+  state.addRegion();
+  state.addTypes(resultTypes);
+  Operation *map = b.create(state);
+  Block *block = new Block();
+  map->getRegion(0).push_back(block);
+  for (BlockArgument argument : source.getArguments())
+    kernel.forward.map(argument, block->addArgument(argument.getType(), loc));
+  kernel.cotangentI =
+      isField ? block->addArgument(cast<md_dist::FieldType>(cotangent.getType())
+                                       .getKernelValueType(),
+                                   loc)
+              : cotangent;
+  kernel.block = block;
+  return map;
+}
+
+struct DistSumParticlesTranspose
+    : md::AdjointOpInterface::ExternalModel<DistSumParticlesTranspose,
+                                            md_dist::SumParticlesOp> {
+  bool isKernelOperand(Operation *op, unsigned index) const {
+    return index < op->getNumOperands();
+  }
+
+  Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
+                             unsigned index, ValueRange cotangents,
+                             md::Exchange, TypeRange resultTypes, bool summed,
+                             TransposeKernel &kernel) const {
+    if (failed(checkTranspose(op, index, summed, /*allowSummed=*/false)))
+      return nullptr;
+    return createRowTranspose(
+        op, cast<md_dist::SumParticlesOp>(op).getKernel().front(), b, loc,
+        getSingle(cotangents), resultTypes, kernel);
+  }
+};
+
+struct DistMapParticlesTranspose
+    : md::AdjointOpInterface::ExternalModel<DistMapParticlesTranspose,
+                                            md_dist::MapParticlesOp> {
+  bool isKernelOperand(Operation *op, unsigned index) const {
+    return index < op->getNumOperands();
+  }
+
+  Operation *createTranspose(Operation *op, OpBuilder &b, Location loc,
+                             unsigned index, ValueRange cotangents,
+                             md::Exchange, TypeRange resultTypes, bool summed,
+                             TransposeKernel &kernel) const {
+    if (failed(checkTranspose(op, index, summed, /*allowSummed=*/false)))
+      return nullptr;
+    return createRowTranspose(
+        op, cast<md_dist::MapParticlesOp>(op).getKernel().front(), b, loc,
+        getSingle(cotangents), resultTypes, kernel);
   }
 };
 
@@ -458,6 +651,13 @@ void mdir::md::registerAdjointInterfaces(DialectRegistry &registry) {
         md_dist::DistributeOp::attachInterface<DistributeAdjoint>(*context);
         md_dist::CollectOp::attachInterface<CollectAdjoint>(*context);
         md_dist::AllReduceOp::attachInterface<AllReduceAdjoint>(*context);
+        md_dist::SumPairsOp::attachInterface<DistSumPairsTranspose>(*context);
+        md_dist::GatherPairsOp::attachInterface<DistGatherPairsTranspose>(
+            *context);
+        md_dist::SumParticlesOp::attachInterface<DistSumParticlesTranspose>(
+            *context);
+        md_dist::MapParticlesOp::attachInterface<DistMapParticlesTranspose>(
+            *context);
       });
   registry.addExtension(+[](MLIRContext *context, md::MDDialect *) {
     md::SumRelationOp::attachInterface<SumRelationTranspose>(*context);

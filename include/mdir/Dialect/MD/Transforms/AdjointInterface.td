@@ -60,10 +60,13 @@ def AdjointOpInterface : OpInterface<"AdjointOpInterface"> {
       /*defaultImplementation=*/"return false;">,
     InterfaceMethod<[{
         Creates, at the builder's place and at `loc`, the op of the
-        transpose of the structure for operand `index` and returns it, or null after a
-        diagnostic. `cotangent` is the adjoint of the result: a number,
-        which the kernel captures, for a sum over everything, or a field,
-        which the new op reads, for a field. `kernel` receives the kernel
+        transpose of the structure for operand `index` and returns it, or
+        null after a diagnostic. `cotangents` is the adjoint of the result:
+        a number, which the kernel captures, for a sum over everything; a
+        field, which the new op reads, for a field of md; and for a field
+        on domains that a pair op of md_dist reads at both ends of each
+        pair, its owned rows and their copy to the ghosts, of exactly the
+        version that the derivative computed (D279). `kernel` receives the kernel
         of the new op (see `TransposeKernel`), which the caller completes
         with the reverse derivative of the source kernel and a terminator.
         `exchange` is the contract of what the caller's kernel will yield
@@ -75,7 +78,7 @@ def AdjointOpInterface : OpInterface<"AdjointOpInterface"> {
       }],
       "::mlir::Operation *", "createTranspose",
       (ins "::mlir::OpBuilder &":$builder, "::mlir::Location":$loc,
-           "unsigned":$index, "::mlir::Value":$cotangent,
+           "unsigned":$index, "::mlir::ValueRange":$cotangents,
            "::mdir::md::Exchange":$exchange,
            "::mlir::TypeRange":$resultTypes, "bool":$summed,
            "::mdir::md::TransposeKernel &":$kernel),

@@ -26,6 +26,10 @@
 // sum_relation -> gather_relation (positions, forces; a field, a gather):
 // RUN: mlir-runner %t.ll.mlir -e sum_relation --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=TWO
+// sum_relation -> gather_relation in a field of the positions, read at
+// both ends of each pair, then gather_relation from both ends:
+// RUN: mlir-runner %t.ll.mlir -e pair_of_field --entry-point-result=void \
+// RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
 // gather_relation -> gather_relation from both ends (positions):
 // RUN: mlir-runner %t.ll.mlir -e gather_relation --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
@@ -122,6 +126,76 @@ md.potential @pair_q(%x: !vec, %cell: !md.cell, %q: !sca) -> f64 {
     %t2 = arith.mulf %t, %t : f64
     %qs = arith.addf %qi, %qj : f64
     %k = arith.mulf %t2, %qs : f64
+    md.yield %k : f64
+  } : !pairs, !vec -> f64
+  md.return %u : f64
+}
+
+// A field of the positions read at both ends of each pair:
+// S = Σ_{i<j} g(r_ij) (ρ_i + ρ_j), g(r) = (r − 2)², ρ as in @density.
+md.potential @pair_field(%x: !vec, %cell: !md.cell) -> f64 {
+  %n = md.neighborhood %x, %cell cutoff(2.0) : !vec -> !pairs
+  %rho = md.gather_relation %n, %x, %cell exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c2 = arith.constant 2.0 : f64
+    %t = arith.subf %r, %c2 : f64
+    %f = arith.mulf %t, %t : f64
+    md.yield %f : f64
+  } : !pairs, !vec -> !sca
+  %u = md.sum_relation %n, %x, %cell gather(%rho : !sca) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>, %ri: f64, %rj: f64):
+    %c2 = arith.constant 2.0 : f64
+    %t = arith.subf %r, %c2 : f64
+    %g = arith.mulf %t, %t : f64
+    %s = arith.addf %ri, %rj : f64
+    %k = arith.mulf %g, %s : f64
+    md.yield %k : f64
+  } : !pairs, !vec -> f64
+  md.return %u : f64
+}
+
+// δS[v] = Σ_{i<j} [g'(r) d_ij · (v_i − v_j) / r (ρ_i + ρ_j)
+//                  + g(r) ((J v)_i + (J v)_j)], with J v as in @density_jvp.
+md.potential @pair_field_jvp(%x: !vec, %cell: !md.cell, %v: !vec) -> f64 {
+  %n = md.neighborhood %x, %cell cutoff(2.0) : !vec -> !pairs
+  %rho = md.gather_relation %n, %x, %cell exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c2 = arith.constant 2.0 : f64
+    %t = arith.subf %r, %c2 : f64
+    %f = arith.mulf %t, %t : f64
+    md.yield %f : f64
+  } : !pairs, !vec -> !sca
+  %jv = md.gather_relation %n, %x, %cell gather(%v : !vec)
+          exchange(symmetric, asserted) {
+  ^bb0(%r: f64, %d: vector<3xf64>, %vi: vector<3xf64>, %vj: vector<3xf64>):
+    %c2 = arith.constant 2.0 : f64
+    %t = arith.subf %r, %c2 : f64
+    %slope = arith.mulf %c2, %t : f64
+    %dv = arith.subf %vi, %vj : vector<3xf64>
+    %p = arith.mulf %d, %dv : vector<3xf64>
+    %dot = vector.reduction <add>, %p : vector<3xf64> into f64
+    %q = arith.divf %dot, %r : f64
+    %k = arith.mulf %slope, %q : f64
+    md.yield %k : f64
+  } : !pairs, !vec -> !sca
+  %u = md.sum_relation %n, %x, %cell gather(%rho, %jv, %v : !sca, !sca, !vec)
+         exchange(symmetric, asserted) {
+  ^bb0(%r: f64, %d: vector<3xf64>, %ri: f64, %rj: f64, %gi: f64, %gj: f64,
+       %vi: vector<3xf64>, %vj: vector<3xf64>):
+    %c2 = arith.constant 2.0 : f64
+    %t = arith.subf %r, %c2 : f64
+    %g = arith.mulf %t, %t : f64
+    %slope = arith.mulf %c2, %t : f64
+    %dv = arith.subf %vi, %vj : vector<3xf64>
+    %p = arith.mulf %d, %dv : vector<3xf64>
+    %dot = vector.reduction <add>, %p : vector<3xf64> into f64
+    %q = arith.divf %dot, %r : f64
+    %s = arith.addf %ri, %rj : f64
+    %a0 = arith.mulf %slope, %q : f64
+    %a = arith.mulf %a0, %s : f64
+    %h = arith.addf %gi, %gj : f64
+    %b = arith.mulf %g, %h : f64
+    %k = arith.addf %a, %b : f64
     md.yield %k : f64
   } : !pairs, !vec -> f64
   md.return %u : f64
@@ -584,6 +658,22 @@ func.func @sum_relation() {
       : (!vec, !md.cell, !sca) -> (f64, !sca)
   %gb = mdrt.to_buffer %g : !sca to !sbuf
   call @compare_field(%uq, %qb, %gb) : (f64, !sbuf, !sbuf) -> ()
+  return
+}
+
+func.func @pair_of_field() {
+  %xb, %vb = call @system() : () -> (!buf, !buf)
+  %x = mdrt.from_buffer %xb : !buf to !vec
+  %vf = call @copy_vectors(%vb) : (!buf) -> !buf
+  %v = mdrt.from_buffer %vf : !buf to !vec
+  %edge = arith.constant 4.8 : f64
+  %cell = md.orthorhombic_cell %edge, %edge, %edge
+  %u, %f = md.evaluate @pair_field(%x, %cell) request [energy, forces]
+      : (!vec, !md.cell) -> (f64, !vec)
+  %jvp = md.evaluate @pair_field_jvp(%x, %cell, %v) request [energy]
+      : (!vec, !md.cell, !vec) -> f64
+  %fb = mdrt.to_buffer %f : !vec to !buf
+  call @compare_forces(%jvp, %fb, %vb) : (f64, !buf, !buf) -> ()
   return
 }
 
