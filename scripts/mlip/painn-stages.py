@@ -48,6 +48,9 @@ Subcommands, each in its own environment:
       `stablehlo-legalize-to-linalg`, and the md.stage declarations and the
       md.potential of the model's structure, in one MLIR module: the file
       that `[[energy.model]]` with `backend = "STAGES"` names.
+  reference OUT.npz DIR                  JAX
+      DIR/reference.npz (energy, forces, virial in kJ/mol and nm) of the
+      stages composed in JAX for DIR/system.gro, as water-box.py writes it.
   harness OUT.npz [--waters 27]          JAX
       A `main` for mlir-runner that evaluates the exported potential on a
       water lattice and compares it with the stages composed in JAX (the
@@ -711,6 +714,25 @@ def cmd_harness(a):
 }}""")
 
 
+def cmd_reference(a):
+    """reference.npz of the stages composed in JAX for the system.gro of DIR
+    (water-box.py's waters), as water-box.py --reference writes it."""
+    w = dict(np.load(a.weights, allow_pickle=True))
+    S = Stages(w)
+    with open(os.path.join(a.directory, "system.gro")) as f:
+        lines = f.read().splitlines()
+    count = int(lines[1])
+    positions = np.array([[float(l[20:32]), float(l[32:44]), float(l[44:56])]
+                          for l in lines[2:2 + count]])
+    box = [float(v) for v in lines[2 + count].split()]
+    cell = np.diag(box[:3])
+    z = np.array([8, 1, 1] * (count // 3), np.int32)
+    e, f, v, _ = compose(S, z, positions, cell)
+    np.savez(os.path.join(a.directory, "reference.npz"), energy=e, forces=f, virial=v,
+             positions=positions, cell=cell)
+    print(f"reference energy {e:.6f} kJ/mol, {count} particles")
+
+
 def main():
     p = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -738,8 +760,15 @@ def main():
     s.add_argument("--tolerance", type=float, default=1e-5)
     s.add_argument("--set", default="atoms")
     s.add_argument("--name", default="painn")
+    s = sub.add_parser("reference")
+    s.add_argument("weights")
+    s.add_argument("directory")
     a = p.parse_args()
-    if a.cmd == "harness":
+    if a.cmd == "reference":
+        import jax
+        jax.config.update("jax_platforms", "cpu")
+        cmd_reference(a)
+    elif a.cmd == "harness":
         import jax
         jax.config.update("jax_platforms", "cpu")
         cmd_harness(a)

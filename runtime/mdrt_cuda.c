@@ -621,6 +621,32 @@ static int numFree = 0;
    record, for want of room. */
 static int untracked = 0;
 
+/* The bytes of the blocks in use and of those in the pool, and their peaks
+   since the program started (D[ml4-painn-stages]): with MDIR_DEVICE_MEMORY
+   set, they are printed when the process ends. */
+static uint64_t liveBytes = 0, poolBytes = 0, peakLive = 0, peakReserved = 0;
+static void noteBytes(void) {
+  if (liveBytes > peakLive)
+    peakLive = liveBytes;
+  if (liveBytes + poolBytes > peakReserved)
+    peakReserved = liveBytes + poolBytes;
+}
+static void printDeviceMemory(void) {
+  fprintf(stderr,
+          "mdrt: device memory (MDIR_DEVICE_MEMORY): peak %.1f MiB allocated, "
+          "%.1f MiB with the pool\n",
+          peakLive / 1048576.0, peakReserved / 1048576.0);
+}
+static void watchDeviceMemory(void) {
+  static int registered = 0;
+  if (registered)
+    return;
+  registered = 1;
+  const char *value = getenv("MDIR_DEVICE_MEMORY");
+  if (value && *value && strcmp(value, "0") != 0)
+    atexit(printDeviceMemory);
+}
+
 /* Makes the room of a list that grows twice as large. */
 static void *growList(void *list, size_t *room, size_t size) {
   *room = *room ? 2 * *room : 8;
@@ -651,15 +677,19 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
     end(ALLOCATE, start);
     return (void *)pointer;
   }
+  watchDeviceMemory();
   for (int i = numFree; i-- != 0;) {
     if (freeBlocks[i].size != size)
       continue;
     pointer = freeBlocks[i].pointer;
     freeBlocks[i] = freeBlocks[--numFree];
+    poolBytes -= size;
     break;
   }
   if (!pointer)
     check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+  liveBytes += size;
+  noteBytes();
   if (numLive < MAX_BLOCKS)
     liveBlocks[numLive++] = (struct Block){pointer, size, currentActivation};
   else
@@ -679,8 +709,10 @@ void mgpuMemFree(void *pointer, CUstream stream) {
       continue;
     struct Block block = liveBlocks[i];
     liveBlocks[i] = liveBlocks[--numLive];
+    liveBytes -= block.size;
     if (numFree < MAX_BLOCKS) {
       freeBlocks[numFree++] = block;
+      poolBytes += block.size;
       end(ALLOCATE, start);
       return;
     }
@@ -1320,9 +1352,11 @@ void mdrtDeviceActivationClose(void *activation) {
     struct Block block = liveBlocks[i];
     liveBlocks[i] = liveBlocks[--numLive];
     block.owner = NULL;
-    if (numFree < MAX_BLOCKS)
+    liveBytes -= block.size;
+    if (numFree < MAX_BLOCKS) {
       freeBlocks[numFree++] = block;
-    else if (!gone)
+      poolBytes += block.size;
+    } else if (!gone)
       check(cuMemFree(block.pointer), "cuMemFree");
   }
   for (size_t i = 0; i != a->numManaged && !gone; ++i)
