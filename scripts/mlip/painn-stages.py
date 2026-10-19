@@ -46,7 +46,29 @@ Subcommands, each in its own environment:
       jax.export of each stage's forward and jax.vjp with T rows to
       StableHLO, legalized to linalg on tensors by StableHLO's
       `stablehlo-legalize-to-linalg`, and the md.stage declarations and the
-      md.potential of the model's structure, in one MLIR module.
+      md.potential of the model's structure, in one MLIR module: the file
+      that `[[energy.model]]` with `backend = "STAGES"` names.
+  harness OUT.npz [--waters 27]          JAX
+      A `main` for mlir-runner that evaluates the exported potential on a
+      water lattice and compares it with the stages composed in JAX (the
+      lit test Integration/stages-batched-gpu.test).
+
+The legalization runs here, at export, so that MDIR's build takes no
+dependency on StableHLO (the ruling of 2026-10-19 on #447): the module that
+MDIR reads holds linalg on tensors. stablehlo-opt is built from
+openxla/stablehlo at commit 965c4289 (2026-08-04; its pinned LLVM is
+b713aaed of 2026-06-23, three weeks before the LLVM 23 branch) against the
+LLVM 23.1.2 that MDIR builds with, unchanged:
+
+  cmake -G Ninja -S stablehlo -B build -DCMAKE_BUILD_TYPE=Release \\
+    -DMLIR_DIR=<llvm 23.1.2>/lib/cmake/mlir -DLLVM_DIR=<llvm 23.1.2>/lib/cmake/llvm \\
+    -DSTABLEHLO_ENABLE_BINDINGS_PYTHON=OFF
+  ninja -C build stablehlo-opt
+
+The bodies are exported with a static number of rows: the legalization of
+JAX's symbolic shapes left `stablehlo.dynamic_gather` and
+`dynamic_broadcast_in_dim` behind. Tested with JAX 0.11.2 (jaxlib 0.11.2) on
+Python 3.12.
 
 Neither the weights nor the exported module is part of MDIR.
 """

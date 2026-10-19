@@ -216,6 +216,22 @@ if config.mdir_metatomic:
         config.available_features.add("ml4-artifacts")
         config.substitutions.append(("%ml4_artifacts", artifacts))
 
+# Models in stages (D[ml4-painn-stages], docs/ml4-ir.md, Section 8):
+# "stages-export" where the interpreter of -Djax_python= or MDIR_JAX_PYTHON
+# imports JAX and NumPy, and -Dstablehlo_opt= or MDIR_STABLEHLO_OPT names
+# StableHLO's stablehlo-opt, which legalizes the exported bodies to linalg
+# (scripts/mlip/painn-stages.py export).
+import subprocess as _subprocess
+
+jax_python = lit_config.params.get("jax_python", os.environ.get("MDIR_JAX_PYTHON", ""))
+stablehlo_opt = lit_config.params.get("stablehlo_opt",
+                                      os.environ.get("MDIR_STABLEHLO_OPT", ""))
+if jax_python and stablehlo_opt and os.access(stablehlo_opt, os.X_OK) and _subprocess.run(
+        [jax_python, "-c", "import jax, numpy"], capture_output=True).returncode == 0:
+    config.available_features.add("stages-export")
+    config.substitutions.append(("%jax_python", jax_python))
+    config.substitutions.append(("%stablehlo_opt", stablehlo_opt))
+
 # The tests that a release adds to the default suite: the whole matrix of
 # a test whose default form runs a part of its cases, on every target and
 # in every precision. They are named *-release.test and

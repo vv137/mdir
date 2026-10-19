@@ -129,12 +129,15 @@ the declaration is the same for all forms:
 | Form | The symbol names | Lowering |
 |---|---|---|
 | A body in the module (step 3) | a `func.func` of `arith`, `math`, and `vector` ops over the element's values | `md-inline` inlines it into the kernel before `md_exec`, so it lowers on the CPU and on a device as any kernel does |
-| StableHLO (the ruling of 2026-10-17; step 4) | a `func.func` of `stablehlo` ops over tensors with a leading batch dimension, `jax.export` of the stage and of its `jax.vjp` | the tile of the loop calls it with the tile's rows; the body lowers through `stablehlo` to `linalg` and MDIR's pipeline (Section 7, Q3) |
+| StableHLO, legalized to `linalg` (the rulings of 2026-10-17 and of 2026-10-19 on #447; step 4, D[ml4-batched-bodies]) | a `func.func` of `linalg` on tensors with a static leading dimension, the rows of a tile: `jax.export` of the stage and of its `jax.vjp` to StableHLO, legalized by StableHLO's `stablehlo-legalize-to-linalg` when the model is exported, so that MDIR's build takes no dependency on StableHLO; a body may compute in f32 where the declaration says f64 | the tile of the loop calls it with the tile's rows; `md-exec-lower-stage-bodies` lowers it with MDIR's pipeline (Section 8.3) |
 | AOTInductor (step 4) | a `func.func private` declaration with `md.aoti = {package = "...", entry = "..."}`, batched as the StableHLO form | a call of the package's entry with the tile's rows, as the model term calls one today (D273) |
 
-A batched body takes `tensor<? x ...>` for each value of the declaration
-and the verifier checks that its element types are the declaration's. Step
-3 implements the first form only and refuses the others with a diagnostic.
+A batched body takes `tensor<T x ...>` for each value of the declaration,
+`T` static and the same for every value and for both bodies of a stage:
+`f64` as `tensor<T x E>`, `vector<N x f64>` as `tensor<T x N x E>`, with
+`E` f32 or f64, and an integer as `tensor<T x iK>`. Step 3 implemented the
+first form; step 4a adds the second (Section 8); an external declaration
+(AOTInductor, step 4b) is still refused with a diagnostic.
 
 ### 2.2 `md.apply_stage`: one element
 
