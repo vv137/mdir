@@ -2171,11 +2171,14 @@ static int checkBlas(cublasStatus_t status, const char *what) {
 /* C = A B + beta C in f32, for row-major matrices: C is m x n with rows ldc
    apart, A is m x k (k x m with transA) with rows lda apart, and B is k x n
    (n x k with transB) with rows ldb apart; the pointers are the device's.
-   cuBLAS takes column-major matrices, as which a row-major one is its
-   transpose: C^T = B^T A^T. */
+   With batch > 1, `batch` such products, the matrices of each the previous
+   ones' moved by strideA, strideB, and strideC elements: cuBLAS's
+   strided-batched GEMM. cuBLAS takes column-major matrices, as which a
+   row-major one is its transpose: C^T = B^T A^T. */
 void mdrtGemmF32(int64_t m, int64_t n, int64_t k, int64_t a, int64_t lda,
-                 int32_t transA, int64_t b, int64_t ldb, int32_t transB,
-                 int64_t c, int64_t ldc, float beta) {
+                 int64_t strideA, int32_t transA, int64_t b, int64_t ldb,
+                 int64_t strideB, int32_t transB, int64_t c, int64_t ldc,
+                 int64_t strideC, float beta, int64_t batch) {
   enter();
   double start = begin();
   if (!blasHandle) {
@@ -2189,12 +2192,22 @@ void mdrtGemmF32(int64_t m, int64_t n, int64_t k, int64_t a, int64_t lda,
                  "cublasSetStream"))
     return;
   float one = 1.0f;
-  checkBlas(cublasSgemm(blasHandle, transB ? CUBLAS_OP_T : CUBLAS_OP_N,
-                        transA ? CUBLAS_OP_T : CUBLAS_OP_N, (int)n, (int)m,
-                        (int)k, &one, (const float *)(intptr_t)b, (int)ldb,
-                        (const float *)(intptr_t)a, (int)lda, &beta,
-                        (float *)(intptr_t)c, (int)ldc),
-            "cublasSgemm");
+  cublasOperation_t opA = transA ? CUBLAS_OP_T : CUBLAS_OP_N;
+  cublasOperation_t opB = transB ? CUBLAS_OP_T : CUBLAS_OP_N;
+  if (batch == 1)
+    checkBlas(cublasSgemm(blasHandle, opB, opA, (int)n, (int)m, (int)k, &one,
+                          (const float *)(intptr_t)b, (int)ldb,
+                          (const float *)(intptr_t)a, (int)lda, &beta,
+                          (float *)(intptr_t)c, (int)ldc),
+              "cublasSgemm");
+  else
+    checkBlas(cublasSgemmStridedBatched(
+                  blasHandle, opB, opA, (int)n, (int)m, (int)k, &one,
+                  (const float *)(intptr_t)b, (int)ldb, (long long)strideB,
+                  (const float *)(intptr_t)a, (int)lda, (long long)strideA,
+                  &beta, (float *)(intptr_t)c, (int)ldc, (long long)strideC,
+                  (int)batch),
+              "cublasSgemmStridedBatched");
   isPending = 1;
   end(LAUNCH, start);
 }

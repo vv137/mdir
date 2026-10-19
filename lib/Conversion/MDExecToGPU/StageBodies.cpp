@@ -331,27 +331,75 @@ static func::FuncOp getOrDeclareRuntime(ModuleOp bodies, StringRef name,
 }
 
 /// A product of the shape of a matrix product in f32 (D[ml4-body-gemm]):
-/// C (m x n) += A B over k, row-major, A read as m x k or, with `transA`, as
-/// k x m, and B as k x n or, with `transB`, as n x k.
+/// for each index of the batch dimension (if any), C (m x n) += A B over k,
+/// A m x k and B k x n. Each of m and n is the product of the extents of the
+/// loops it stands for, 1 for none; how each matrix lies in memory is read
+/// from its buffer by `callGemms`.
 struct Gemm {
-  int64_t m, n, k;
+  /// The input that is A, and the one that is B.
   unsigned a, b;
-  bool transA, transB;
+  /// The loops: the batch (at most one), the rows of C (those of A), the
+  /// columns of C (those of B, at most one), and the reduced loop.
+  SmallVector<unsigned> batch, rows, cols;
+  unsigned reduced;
+  /// Whether the payload starts the sum from zero at the first reduced
+  /// iteration instead of reading the init (`startReductionsFromConstants`).
+  bool fromZero = false;
 };
 
-/// `op` as a GEMM: two operands of f32 and one result, of static shapes,
-/// one reduced loop, the result indexed by the other loops in order, its
-/// last the columns and the others the rows (several rows dimensions are
-/// one, as IREE treats the three components of PaiNN's vectors as rows),
-/// the first operand A by the rows and the reduced loop (or, with a single
-/// rows dimension, the reduced loop and the rows: `transA`), the other B by
-/// the reduced loop and the columns (or the columns and the reduced loop:
-/// `transB`), and a payload that adds the product of the operands to the
-/// result (or a `linalg.matmul`).
+/// The loop dimensions that `map` reads, in its order, if each of its
+/// results is a dimension.
+static std::optional<SmallVector<unsigned>> getDims(AffineMap map) {
+  SmallVector<unsigned> out;
+  for (AffineExpr expr : map.getResults()) {
+    auto dim = dyn_cast<AffineDimExpr>(expr);
+    if (!dim)
+      return std::nullopt;
+    out.push_back(dim.getPosition());
+  }
+  return out;
+}
+
+/// Whether `value`, in the payload of `op`, is the accumulator read from the
+/// init, or (with `fromZero` set) a select of zero at the first iteration of
+/// the reduced loop `reduced` and of the accumulator after it, as
+/// `startReductionsFromConstants` writes it.
+static bool isAccumulator(linalg::LinalgOp op, Value value, unsigned reduced,
+                          bool &fromZero) {
+  Value acc = op.getBlock()->getArgument(2);
+  if (value == acc)
+    return true;
+  auto select = value.getDefiningOp<arith::SelectOp>();
+  if (!select || select.getFalseValue() != acc ||
+      !matchPattern(select.getTrueValue(), m_AnyZeroFloat()))
+    return false;
+  auto first = select.getCondition().getDefiningOp<arith::CmpIOp>();
+  if (!first || first.getPredicate() != arith::CmpIPredicate::eq ||
+      !matchPattern(first.getRhs(), m_Zero()))
+    return false;
+  auto index = first.getLhs().getDefiningOp<linalg::IndexOp>();
+  if (!index || index.getDim() != reduced)
+    return false;
+  fromZero = true;
+  return true;
+}
+
+/// `op` as a GEMM, batched or not: two operands of f32 and one result, of
+/// static shapes; one reduced loop; every other loop indexes the result,
+/// and either both operands (the batch: at most one, the result's first
+/// dimension) or one of them; the result's dimensions after the batch are
+/// those of the first operand that indexes them (A, the rows: several rows
+/// dimensions are one, as IREE treats the three components of PaiNN's
+/// vectors as rows) and then at most one of the other (B, the columns);
+/// each operand indexed by its own loops, the batch, and the reduced loop,
+/// in any order; and a payload that adds the product of the operands to the
+/// result (or to zero at the first reduced iteration), or a `linalg.matmul`
+/// or `linalg.batch_matmul`.
 static std::optional<Gemm> matchGemm(linalg::LinalgOp op) {
   if (op.getNumDpsInputs() != 2 || op.getNumDpsInits() != 1 ||
-      op.getNumLoops() < 3 || op.getNumReductionLoops() != 1 ||
-      !isa<linalg::GenericOp, linalg::MatmulOp>(op.getOperation()))
+      op.getNumLoops() < 2 || op.getNumReductionLoops() != 1 ||
+      !isa<linalg::GenericOp, linalg::MatmulOp, linalg::BatchMatmulOp>(
+          op.getOperation()))
     return std::nullopt;
   for (OpOperand &operand : op->getOpOperands()) {
     auto shaped = dyn_cast<ShapedType>(operand.get().getType());
@@ -362,100 +410,103 @@ static std::optional<Gemm> matchGemm(linalg::LinalgOp op) {
   SmallVector<int64_t> extents = op.getStaticLoopRanges();
   if (llvm::any_of(extents, ShapedType::isDynamic))
     return std::nullopt;
-  auto dims = [](AffineMap map) -> std::optional<SmallVector<unsigned>> {
-    SmallVector<unsigned> out;
-    for (AffineExpr expr : map.getResults()) {
-      auto dim = dyn_cast<AffineDimExpr>(expr);
-      if (!dim)
-        return std::nullopt;
-      out.push_back(dim.getPosition());
-    }
-    return out;
-  };
   unsigned numLoops = op.getNumLoops();
-  auto out = dims(op.getMatchingIndexingMap(op.getDpsInitOperand(0)));
-  if (!out || out->size() != numLoops - 1)
+  auto out = getDims(op.getMatchingIndexingMap(op.getDpsInitOperand(0)));
+  auto in0 = getDims(op.getMatchingIndexingMap(op.getDpsInputOperand(0)));
+  auto in1 = getDims(op.getMatchingIndexingMap(op.getDpsInputOperand(1)));
+  if (!out || !in0 || !in1 || out->size() != numLoops - 1)
     return std::nullopt;
+  Gemm gemm;
+  gemm.reduced = numLoops;
   SmallVector<utils::IteratorType> types = op.getIteratorTypesArray();
-  unsigned reduced = numLoops;
   for (unsigned d = 0; d != numLoops; ++d)
     if (types[d] == utils::IteratorType::reduction)
-      reduced = d;
-  if (llvm::is_contained(*out, reduced))
+      gemm.reduced = d;
+  if (llvm::is_contained(*out, gemm.reduced) ||
+      !llvm::is_contained(*in0, gemm.reduced) ||
+      !llvm::is_contained(*in1, gemm.reduced))
     return std::nullopt;
-  SmallVector<unsigned> rows(out->begin(), out->end() - 1);
-  unsigned cols = out->back();
-  Gemm gemm{1, extents[cols], extents[reduced], 0, 0, false, false};
-  for (unsigned d : rows)
-    gemm.m *= extents[d];
-  SmallVector<unsigned> rowsThenReduced(rows), reducedThenRow{reduced};
-  rowsThenReduced.push_back(reduced);
-  if (rows.size() == 1)
-    reducedThenRow.push_back(rows.front());
-  SmallVector<unsigned> reducedThenCols{reduced, cols}, colsThenReduced{
-                                                             cols, reduced};
-  bool haveA = false, haveB = false;
-  for (unsigned i = 0; i != 2; ++i) {
-    auto in = dims(op.getMatchingIndexingMap(op.getDpsInputOperand(i)));
-    if (!in)
-      return std::nullopt;
-    if (!haveA && (*in == rowsThenReduced ||
-                   (rows.size() == 1 && *in == reducedThenRow))) {
-      haveA = true;
-      gemm.a = i;
-      gemm.transA = *in != rowsThenReduced;
-    } else if (!haveB && (*in == reducedThenCols || *in == colsThenReduced)) {
-      haveB = true;
-      gemm.b = i;
-      gemm.transB = *in == colsThenReduced;
-    } else {
-      return std::nullopt;
-    }
+  // The loops of the result: the batch, then those of A, then those of B.
+  ArrayRef<unsigned> rest(*out);
+  if (!rest.empty() && llvm::is_contained(*in0, rest.front()) &&
+      llvm::is_contained(*in1, rest.front())) {
+    gemm.batch.push_back(rest.front());
+    rest = rest.drop_front();
   }
-  if (!haveA || !haveB)
+  gemm.a = 0;
+  if (!rest.empty() && !llvm::is_contained(*in0, rest.front()))
+    gemm.a = 1;
+  gemm.b = 1 - gemm.a;
+  ArrayRef<unsigned> inA = gemm.a == 0 ? *in0 : *in1;
+  ArrayRef<unsigned> inB = gemm.a == 0 ? *in1 : *in0;
+  for (unsigned d : rest) {
+    bool inAOnly = llvm::is_contained(inA, d) && !llvm::is_contained(inB, d);
+    bool inBOnly = llvm::is_contained(inB, d) && !llvm::is_contained(inA, d);
+    if (inAOnly && gemm.cols.empty())
+      gemm.rows.push_back(d);
+    else if (inBOnly && gemm.cols.empty())
+      gemm.cols.push_back(d);
+    else
+      return std::nullopt;
+  }
+  // Each operand reads its own loops, the batch, and the reduced loop, each
+  // once.
+  auto reads = [&](ArrayRef<unsigned> in, ArrayRef<unsigned> own) {
+    SmallVector<unsigned> expected(gemm.batch);
+    expected.append(own.begin(), own.end());
+    expected.push_back(gemm.reduced);
+    SmallVector<unsigned> sortedIn(in), sortedExpected(expected);
+    llvm::sort(sortedIn);
+    llvm::sort(sortedExpected);
+    return sortedIn == sortedExpected;
+  };
+  if (!reads(inA, gemm.rows) || !reads(inB, gemm.cols))
     return std::nullopt;
-  if (isa<linalg::MatmulOp>(op.getOperation()))
+  if (isa<linalg::MatmulOp, linalg::BatchMatmulOp>(op.getOperation()))
     return gemm;
-  // The payload: out + a * b, in either order of each.
+  // The payload: (out or zero at the first reduced iteration) + a * b, in
+  // either order of each.
   Block *body = op.getBlock();
-  auto ops = body->without_terminator();
-  if (std::distance(ops.begin(), ops.end()) != 2)
-    return std::nullopt;
-  auto mul = dyn_cast<arith::MulFOp>(&*ops.begin());
-  auto add = dyn_cast<arith::AddFOp>(&*std::next(ops.begin()));
-  if (!mul || !add)
-    return std::nullopt;
-  Value x = body->getArgument(0), y = body->getArgument(1),
-        acc = body->getArgument(2);
-  bool operands = (mul.getLhs() == x && mul.getRhs() == y) ||
-                  (mul.getLhs() == y && mul.getRhs() == x);
-  bool sum = (add.getLhs() == acc && add.getRhs() == mul) ||
-             (add.getLhs() == mul && add.getRhs() == acc);
   auto yield = cast<linalg::YieldOp>(body->getTerminator());
-  if (!operands || !sum || yield.getNumOperands() != 1 ||
-      yield.getOperand(0) != add.getResult())
+  if (yield.getNumOperands() != 1)
     return std::nullopt;
-  return gemm;
+  auto add = yield.getOperand(0).getDefiningOp<arith::AddFOp>();
+  if (!add || add->getBlock() != body)
+    return std::nullopt;
+  Value x = body->getArgument(0), y = body->getArgument(1);
+  for (auto [product, start] : {std::make_pair(add.getLhs(), add.getRhs()),
+                                std::make_pair(add.getRhs(), add.getLhs())}) {
+    auto mul = product.getDefiningOp<arith::MulFOp>();
+    if (!mul || !((mul.getLhs() == x && mul.getRhs() == y) ||
+                  (mul.getLhs() == y && mul.getRhs() == x)))
+      continue;
+    bool fromZero = false;
+    if (!isAccumulator(op, start, gemm.reduced, fromZero))
+      continue;
+    gemm.fromZero = fromZero;
+    // Nothing else in the payload: the ops of the select, if any.
+    for (Operation &inner : body->without_terminator())
+      if (!isa<arith::MulFOp, arith::AddFOp, arith::SelectOp, arith::CmpIOp,
+               arith::ConstantOp, linalg::IndexOp>(inner))
+        return std::nullopt;
+    return gemm;
+  }
+  return std::nullopt;
 }
 
-/// The device's address of the first element of the buffer `buffer` and
-/// its rows' distance, as i64; a constant of the body (a global) is copied
-/// to the device once by the runtime. Fails on a buffer whose rows are not
-/// contiguous.
-static FailureOr<std::pair<Value, Value>>
+/// The device's address of the first element of the buffer `buffer` and the
+/// distance in elements between consecutive indices of each of its
+/// dimensions, as i64; a constant of the body (a global) is copied to the
+/// device once by the runtime. Fails on a buffer whose layout is not static.
+static FailureOr<std::pair<Value, SmallVector<int64_t>>>
 deviceAddress(OpBuilder &builder, Location loc, Value buffer,
               ModuleOp bodies) {
   auto type = cast<MemRefType>(buffer.getType());
   SmallVector<int64_t> strides;
   int64_t offset;
-  unsigned rank = type.getRank();
-  if (rank < 2 || failed(type.getStridesAndOffset(strides, offset)) ||
-      strides[rank - 1] != 1 || ShapedType::isDynamic(strides[rank - 2]))
+  if (failed(type.getStridesAndOffset(strides, offset)) ||
+      llvm::any_of(strides, ShapedType::isDynamic))
     return failure();
-  // The dimensions before the last are rows, one after the other.
-  for (unsigned d = 0; d + 2 < rank; ++d)
-    if (strides[d] != strides[d + 1] * type.getDimSize(d + 1))
-      return failure();
   Type i64 = builder.getI64Type();
   auto metadata =
       memref::ExtractStridedMetadataOp::create(builder, loc, buffer);
@@ -493,15 +544,45 @@ deviceAddress(OpBuilder &builder, Location loc, Value buffer,
       builder, loc, base,
       arith::MulIOp::create(builder, loc, elements,
                             arith::ConstantIntOp::create(builder, loc, i64, 4)));
-  Value rows =
-      arith::ConstantIntOp::create(builder, loc, i64, strides[rank - 2]);
-  return std::make_pair(address, rows);
+  return std::make_pair(address, strides);
+}
+
+/// One matrix of a GEMM as cuBLAS takes it: row-major p x q with rows `ld`
+/// apart, or (`transposed`) its transpose stored row-major, q x p.
+struct Matrix {
+  int64_t ld;
+  bool transposed;
+};
+
+/// The matrix of extents p x q whose rows' and columns' distances in memory
+/// are `rowStride` and `colStride` (nothing for an extent made of no loop),
+/// or nothing if neither is contiguous. A dimension of extent 1 is
+/// contiguous whatever its distance; cuBLAS requires the leading dimension
+/// to be at least the extent of the contiguous one.
+static std::optional<Matrix> asMatrix(int64_t p, std::optional<int64_t> rowStride,
+                                      int64_t q,
+                                      std::optional<int64_t> colStride,
+                                      bool allowTranspose) {
+  if (q == 1 || colStride == 1) {
+    int64_t ld = p == 1 ? q : *rowStride;
+    if (ld >= q)
+      return Matrix{ld, false};
+  }
+  if (allowTranspose && (p == 1 || rowStride == 1)) {
+    int64_t ld = q == 1 ? p : *colStride;
+    if (ld >= p)
+      return Matrix{ld, true};
+  }
+  return std::nullopt;
 }
 
 /// Replaces each GEMM of the bufferized body `function` with a call of
-/// cuBLAS's f32 GEMM through the runtime, on the stream of the kernels. A
-/// result that a `linalg.fill` of zero initializes just before is not
-/// filled: the call overwrites it (beta 0).
+/// cuBLAS's f32 GEMM through the runtime, strided-batched for a GEMM with a
+/// batch, on the stream of the kernels. A result that a `linalg.fill` of
+/// zero initializes just before is not filled: the call overwrites it (beta
+/// 0), as it does where the payload starts the sum from zero. A product
+/// whose buffers cuBLAS cannot take (rows dimensions that are not one after
+/// the other, neither dimension of a matrix contiguous) stays loops.
 static LogicalResult callGemms(func::FuncOp function, ModuleOp bodies) {
   SmallVector<std::pair<linalg::LinalgOp, Gemm>> found;
   function.walk([&](linalg::LinalgOp op) {
@@ -514,17 +595,75 @@ static LogicalResult callGemms(func::FuncOp function, ModuleOp bodies) {
   Type i32 = IntegerType::get(function.getContext(), 32);
   Type f32 = Float32Type::get(function.getContext());
   for (auto [op, gemm] : found) {
-    OpBuilder builder(op);
     Location loc = op.getLoc();
-    Value c = op.getDpsInitOperand(0)->get();
+    SmallVector<int64_t> extents = op.getStaticLoopRanges();
+    // The distance of each loop in each operand, from its type.
+    auto distances = [&](OpOperand *operand)
+        -> std::optional<llvm::DenseMap<unsigned, int64_t>> {
+      auto type = cast<MemRefType>(operand->get().getType());
+      SmallVector<int64_t> strides;
+      int64_t offset;
+      if (failed(type.getStridesAndOffset(strides, offset)) ||
+          llvm::any_of(strides, ShapedType::isDynamic))
+        return std::nullopt;
+      llvm::DenseMap<unsigned, int64_t> of;
+      for (auto [i, d] : llvm::enumerate(
+               *getDims(op.getMatchingIndexingMap(operand))))
+        of[d] = strides[i];
+      return of;
+    };
+    auto inA = distances(op.getDpsInputOperand(gemm.a));
+    auto inB = distances(op.getDpsInputOperand(gemm.b));
+    auto inC = distances(op.getDpsInitOperand(0));
+    if (!inA || !inB || !inC)
+      continue;
+    // Several loops of rows are one if they lie one after the other in A
+    // and in C; the distance of the rows is then that of the last.
+    int64_t m = 1, n = 1, k = extents[gemm.reduced], batch = 1;
+    bool joined = true;
+    for (auto [i, d] : llvm::enumerate(gemm.rows)) {
+      m *= extents[d];
+      if (i + 1 == gemm.rows.size())
+        continue;
+      unsigned next = gemm.rows[i + 1];
+      for (auto *of : {&*inA, &*inC})
+        joined &= of->lookup(d) == of->lookup(next) * extents[next];
+    }
+    for (unsigned d : gemm.cols)
+      n *= extents[d];
+    for (unsigned d : gemm.batch)
+      batch *= extents[d];
+    if (!joined)
+      continue;
+    auto at = [](const llvm::DenseMap<unsigned, int64_t> &of,
+                 ArrayRef<unsigned> dims) -> std::optional<int64_t> {
+      if (dims.empty())
+        return std::nullopt;
+      return of.lookup(dims.back());
+    };
+    SmallVector<unsigned> reduced{gemm.reduced};
+    std::optional<Matrix> a =
+        asMatrix(m, at(*inA, gemm.rows), k, at(*inA, reduced), true);
+    std::optional<Matrix> b =
+        asMatrix(k, at(*inB, reduced), n, at(*inB, gemm.cols), true);
+    std::optional<Matrix> c =
+        asMatrix(m, at(*inC, gemm.rows), n, at(*inC, gemm.cols), false);
+    if (!a || !b || !c)
+      continue;
+    auto batchStride = [&](const llvm::DenseMap<unsigned, int64_t> &of) {
+      return gemm.batch.empty() ? int64_t(0) : of.lookup(gemm.batch.front());
+    };
+
+    OpBuilder builder(op);
+    Value cBuffer = op.getDpsInitOperand(0)->get();
     // The fill of zero just before, of the same buffer, becomes beta 0.
-    float beta = 1.0f;
+    float beta = gemm.fromZero ? 0.0f : 1.0f;
     linalg::FillOp fill;
-    for (Operation *user : c.getUsers())
+    for (Operation *user : cBuffer.getUsers())
       if (auto candidate = dyn_cast<linalg::FillOp>(user))
         if (candidate->getBlock() == op->getBlock() &&
             candidate->isBeforeInBlock(op) &&
-            candidate.getOutputs()[0] == c &&
+            candidate.getOutputs()[0] == cBuffer &&
             matchPattern(candidate.getInputs()[0], m_AnyZeroFloat()))
           fill = candidate;
     // Nothing else touches the buffer between the fill and the product: a
@@ -540,18 +679,18 @@ static LogicalResult callGemms(func::FuncOp function, ModuleOp bodies) {
         return true;
       });
     };
-    if (fill && !touchedBetween(c)) {
+    if (!gemm.fromZero && fill && !touchedBetween(cBuffer)) {
       beta = 0.0f;
       fill.erase();
     }
-    auto a = deviceAddress(builder, loc,
-                           op.getDpsInputOperand(gemm.a)->get(), bodies);
-    auto b = deviceAddress(builder, loc,
-                           op.getDpsInputOperand(gemm.b)->get(), bodies);
-    auto out = deviceAddress(builder, loc, c, bodies);
-    if (failed(a) || failed(b) || failed(out))
+    auto addrA = deviceAddress(builder, loc,
+                               op.getDpsInputOperand(gemm.a)->get(), bodies);
+    auto addrB = deviceAddress(builder, loc,
+                               op.getDpsInputOperand(gemm.b)->get(), bodies);
+    auto addrC = deviceAddress(builder, loc, cBuffer, bodies);
+    if (failed(addrA) || failed(addrB) || failed(addrC))
       return op.emitOpError() << "is a product of the shape of a GEMM over "
-                                 "a buffer whose rows are not contiguous";
+                                 "a buffer of a layout that is not static";
     auto constant = [&](int64_t value) {
       return arith::ConstantIntOp::create(builder, loc, i64, value).getResult();
     };
@@ -560,15 +699,19 @@ static LogicalResult callGemms(func::FuncOp function, ModuleOp bodies) {
     };
     auto declare = getOrDeclareRuntime(
         bodies, "mdrtGemmF32",
-        builder.getFunctionType(
-            {i64, i64, i64, i64, i64, i32, i64, i64, i32, i64, i64, f32}, {}));
+        builder.getFunctionType({i64, i64, i64, i64, i64, i64, i32, i64, i64,
+                                 i64, i32, i64, i64, i64, f32, i64},
+                                {}));
     func::CallOp::create(
         builder, loc, declare,
-        ValueRange{constant(gemm.m), constant(gemm.n), constant(gemm.k),
-                   a->first, a->second, flag(gemm.transA), b->first,
-                   b->second, flag(gemm.transB), out->first, out->second,
+        ValueRange{constant(m), constant(n), constant(k), addrA->first,
+                   constant(a->ld), constant(batchStride(*inA)),
+                   flag(a->transposed), addrB->first, constant(b->ld),
+                   constant(batchStride(*inB)), flag(b->transposed),
+                   addrC->first, constant(c->ld), constant(batchStride(*inC)),
                    arith::ConstantOp::create(builder, loc, f32,
-                                             builder.getF32FloatAttr(beta))});
+                                             builder.getF32FloatAttr(beta)),
+                   constant(batch)});
     op->erase();
   }
   return success();

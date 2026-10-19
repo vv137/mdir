@@ -3,8 +3,9 @@
 // and a generic contraction with the second operand transposed, each from a
 // fill of zero, in the forms that stablehlo-legalize-to-linalg gives them.
 // By default (`contractions=gemm`) each becomes a call of cuBLAS's f32 GEMM
-// through the runtime, row-major (m, n, k, A, lda, transA, B, ldb, transB,
-// C, ldc, beta), with beta 0 in place of the fill, and the weights (globals
+// through the runtime, row-major (m, n, k, A, lda, strideA, transA, B, ldb,
+// strideB, transB, C, ldc, strideC, beta, batch; the strides 0 and the batch
+// 1 here), with beta 0 in place of the fill, and the weights (globals
 // of the body) copied to the device by the runtime; one kernel is left, the
 // elementwise op after them. With `contractions=loops` they are loops.
 // cuBLAS against the loops on these values: the same results (measured on
@@ -60,16 +61,16 @@ func.func @s.f(%x: tensor<8x4xf32>) -> tensor<8x6xf32> {
 // CHECK-NOT: gpu.launch
 // CHECK: memref.extract_aligned_pointer_as_index %[[W]]
 // CHECK: call @mdrtDeviceConstant({{.*}}, %c96_i64)
-// CHECK: call @mdrtGemmF32(%c8_i64, %c6_i64, %c4_i64, %{{.*}}, %c4_i64, %c0_i32, %{{.*}}, %c6_i64, %c0_i32, %{{.*}}, %c6_i64, %[[ZERO]])
+// CHECK: call @mdrtGemmF32(%c8_i64, %c6_i64, %c4_i64, %{{.*}}, %c4_i64, %c0_i64, %c0_i32, %{{.*}}, %c6_i64, %c0_i64, %c0_i32, %{{.*}}, %c6_i64, %c0_i64, %[[ZERO]], %c1_i64)
 // CHECK: memref.extract_aligned_pointer_as_index %[[WT]]
 // CHECK: call @mdrtDeviceConstant({{.*}}, %c96_i64)
-// CHECK: call @mdrtGemmF32(%c8_i64, %c6_i64, %c4_i64, %{{.*}}, %c4_i64, %c0_i32, %{{.*}}, %c4_i64, %c1_i32, %{{.*}}, %c6_i64, %[[ZERO]])
+// CHECK: call @mdrtGemmF32(%c8_i64, %c6_i64, %c4_i64, %{{.*}}, %c4_i64, %c0_i64, %c0_i32, %{{.*}}, %c4_i64, %c0_i64, %c1_i32, %{{.*}}, %c6_i64, %c0_i64, %[[ZERO]], %c1_i64)
 // CHECK: gpu.launch
 // CHECK: memref.store {{.*}}, %[[R]]
 // CHECK-NOT: gpu.launch
 // CHECK: return
 // CHECK: func.func private @mdrtDeviceConstant(i64, i64) -> i64
-// CHECK: func.func private @mdrtGemmF32(i64, i64, i64, i64, i64, i32, i64, i64, i32, i64, i64, f32)
+// CHECK: func.func private @mdrtGemmF32(i64, i64, i64, i64, i64, i64, i32, i64, i64, i64, i32, i64, i64, i64, f32, i64)
 
 // LOOPS-LABEL: func.func @md_stage_s_f(
 // LOOPS-NOT: mdrtGemmF32
