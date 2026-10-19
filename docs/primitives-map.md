@@ -34,6 +34,7 @@ of the fields (of the owned rows, for the transfers of domains).
 | **scan** | $y_i = \sum_{k < i} x_k$ (exclusive) | reverse scan: $\bar x_k = \sum_{i > k} \bar y_i$ | no op; hand-written in the build of the groups (`scan`, `block_scan` in `scripts/generate-groups-gpu-template.py`) and in `lowerNonzero` |
 | **permutation** | $y_k = x_{\pi(k)}$ | inverse permutation | `md_exec.permute`; the members relabeled by `md_exec.renumber`; the host writing a frame by the numbers of the particles; `md_dist.distribute` and `md_dist.collect`, declared transposes of each other |
 | **compaction** | the elements with $p(i)$, packed: $y_{r(i)} = x_i$ | expansion: $\bar x_i = \bar y_{r(i)}$ where $p(i)$, else 0 | `md_exec.nonzero` (D262); the pruning, the active units, and the builds, written by hand (#432's inventory) |
+| **linear transform** (the FFT first) | $\hat x = F x$, the unnormalized discrete Fourier transform | the unnormalized inverse transform: $F^\mathsf T = F^\mathsf H$ for the real inner product of the complex values; for the real-to-half-complex form, with the weights of the Hermitian symmetry | none in the IR yet: cuFFT (`mdrtCudaFFTForward3D`, `runtime/mdrt_cuda.c`) and pocketfft (`runtime/mdrt_fft.c`) called inside the lowering of `md_exec.reciprocal`. Added to the set by the maintainer's ruling on #452 (2026-10-19) |
 | **sort, neighbor build** | a permutation, or a relation, from the positions | none: structural, piecewise constant, not differentiated | `md_exec.spatial_order`, `md_exec.build_neighbors`, `refresh_neighbors`, `build_incidence`, `build_edges`, `build_triplets`; `md_dist.partition`, `md_dist.halo` |
 
 Two members are special cases kept apart. A halo copy is a gather whose
@@ -41,7 +42,12 @@ indices cross domains, and a halo sum a scatter-accumulate that does; they
 stay separate because their transport is another (a call of the
 transport's ABI, `runtime/mdrt_dist.c`), not a loop. A permutation is a
 gather whose transpose is again a gather (by $\pi^{-1}$), with no
-accumulation.
+accumulation. The linear transform is a member because a sum over all
+pairs of the periodic system, PME's reciprocal sum, is spread, transform,
+map, inverse transform, gather (Section 3.3), and with the transform's
+adjoint declared, that chain is closed: read backward, it is its own
+transpose in the charges, since the spreading and the gathering are
+transposes and the influence function is a real diagonal map.
 
 ### 1.1 Properties
 
@@ -69,6 +75,7 @@ domains (#422, D285).
 | scan | yes | integers: yes | — | — | Offsets of counting sorts, slots, lists |
 | permutation | — | yes | — | — | The state put in order (D44, D86) |
 | compaction | — | yes | when stated: `md_exec.nonzero` (ascending), the pruning (the outer list's order) | — | The inner list in the outer list's order, so that the loop over pairs is deterministic (#432, site 1) |
+| linear transform | — (no combiner: a fixed linear map) | no (f32, f64); the same bits for any number of threads on the host (D271) | — | yes: a library's fixed algorithm for a given size | The reciprocal sum's results to the bit for a given grid on the host (D271) |
 | sort | — | yes | the order by cell and number (D44) | — | A run continued from a checkpoint is exact (D44) |
 
 The properties are stated today in the code of each site and in the
@@ -143,16 +150,19 @@ as a gap (#451).
 
 ### 1.4 What the set does not contain
 
-Three things that MDIR computes are not primitives of the set:
+The set had no linear transform until the maintainer's ruling on #452
+(2026-10-19), which adds one with a declared adjoint, the fast Fourier
+transform first: the adjoint of the unnormalized forward transform is the
+unnormalized backward transform (for the real form, with the weights of
+the Hermitian symmetry). It is in the set, but not yet in the IR:
+`md.reciprocal` is one op whose forces are a result (Section 3.3), so the
+derivative uses the closed form, spreading and gathering with the slopes
+of the splines. #452 writes the reciprocal sum as spread, FFT, the
+influence map, inverse FFT, and gather, with the transform's adjoint
+declared.
 
-- **The fast Fourier transform** of PME. It is linear, and the transpose of
-  an unnormalized discrete Fourier transform is the unnormalized inverse
-  transform (for the real form, with the weights of the Hermitian
-  symmetry). MDIR never transposes it in the IR: `md.reciprocal` is one op
-  whose forces are a result (Section 3.3), so the derivative uses the
-  closed form, spreading and gathering with the slopes of the splines.
-  The set closes over PME only if it gains a linear transform with a
-  declared adjoint (#452).
+Two things that MDIR computes are not primitives of the set:
+
 - **An opaque model** (the model term of ML1, D270, D273): one call for the
   whole system, whose derivative comes from automatic differentiation
   inside the model. It is the baseline of ML4 by design (#377).
@@ -219,15 +229,15 @@ not merged.
 
 | Part | Primitives | Properties | Strategies today, and measurements | State | Gaps |
 |---|---|---|---|---|---|
-| PME: spreading | map (the splines of each particle), scatter-accumulate into the grid. Its transpose in the charges is the gathering with weights (D231) | default: associative and commutative; deterministic and host: exact (fixed point, D70) | Device: tiles of $8^3$ in block memory for grids in f32 of at least 500,000 points (D282: 0.947 of the step on Cellulose, 0.943 on STMV on an RTX 4090; JAC 1.007, not chosen); bricks for order 4 in f32 (D85, D108); floating-point atomics; fixed point with integer atomics in the deterministic mode (D70, D84). Host: fixed point, parallel, the same bits for any number of threads (D271) | hand-written: templates (`spread`, `weights_kernels`, `tile_kernel` in `scripts/generate-pme-gpu-template.py`; `PME.mlir`); the choice and preconditions shared (`md-exec-choose-scatter`, `Scatter.h`, D285) | #416 step 2, #417, #418, #422 |
+| PME: spreading | map (the splines of each particle), scatter-accumulate into the grid. Its transpose in the charges is the gathering with weights (D231) | default: associative and commutative; deterministic and host: exact (fixed point, D70) | Device: tiles of $8^3$ in block memory for grids in f32 of at least 500,000 points (D282: 0.947 of the step on Cellulose, 0.943 on STMV on an RTX 4090; JAC 1.007, not chosen); bricks for order 4 in f32 (D85, D108); floating-point atomics; fixed point with integer atomics in the deterministic mode (D70, D84). Host: fixed point, parallel, the same bits for any number of threads (D271) | hand-written: templates (`spread`, `weights_kernels`, `tile_kernel` in `scripts/generate-pme-gpu-template.py`; `PME.mlir`); the choice and preconditions shared (`md-exec-choose-scatter`, `Scatter.h`, D285) | #416 step 2, #417, #418, #422, #452 |
 | PME: binning for tiles (D282) | warp-aggregated scatter of counts (`match.any.sync`, one atomic a key), compaction into runs, an overflow list | unordered by design (the deterministic mode does not bin) | 0.71% of the kernel time on Cellulose, 0.59% on STMV (#432, site 5) | hand-written: template (`bin_kernels`) | #420 (an exact scan in place of the overflow list) |
-| PME: the transforms | FFT forward and backward | — | cuFFT on the device (`mdrtCudaFFTForward3D` and the F32 forms, `runtime/mdrt_cuda.c`); pocketfft on the host by lines, the same for any number of threads (`runtime/mdrt_fft.c`, D271) | does not fit: not in the set (Section 1.4); a library call | #452 |
-| PME: the convolution | map (the product with the influence function, from factors along the edges, D104), reductions of the energy and the virial | ordered: block trees whose order depends on the size of the grid alone (D104) | `convolve` and `scale` (`generate-pme-gpu-template.py`); `scale` alone where the energy and virial are not needed | hand-written: template | #422 |
-| PME: gathering | gather from the grid, map (splines and slopes), reduction a particle (shuffles). It is the transpose of the spreading: with the slopes, the forces; with the weights, the potential at the particles, $\partial E/\partial q_i$ (D231) | exact (no accumulation across particles) | A thread for each particle and point along z (`gather`); the places from the weights (D102); the listed particles, or every particle with `gather_all` (D262). Tiled gathering at orders 6 and 8 is #411 | hand-written: templates (`gather`, `gather_weights`) | #419, #411 |
+| PME: the transforms | linear transform: FFT forward and backward, each the other's adjoint (unnormalized) | the same bits for any number of threads on the host (D271) | cuFFT on the device (`mdrtCudaFFTForward3D` and the F32 forms, `runtime/mdrt_cuda.c`); pocketfft on the host by lines, the same for any number of threads (`runtime/mdrt_fft.c`, D271) | missing in the IR: a library call inside the lowering of `md_exec.reciprocal`, with no op and no declared adjoint (Section 1.4) | #452 |
+| PME: the convolution | map (the product with the influence function, from factors along the edges, D104), reductions of the energy and the virial | ordered: block trees whose order depends on the size of the grid alone (D104) | `convolve` and `scale` (`generate-pme-gpu-template.py`); `scale` alone where the energy and virial are not needed | hand-written: template | #422, #452 |
+| PME: gathering | gather from the grid, map (splines and slopes), reduction a particle (shuffles). It is the transpose of the spreading: with the slopes, the forces; with the weights, the potential at the particles, $\partial E/\partial q_i$ (D231) | exact (no accumulation across particles) | A thread for each particle and point along z (`gather`); the places from the weights (D102); the listed particles, or every particle with `gather_all` (D262). Tiled gathering at orders 6 and 8 is #411 | hand-written: templates (`gather`, `gather_weights`) | #419, #411, #452 |
 | PME: listed particles (D262) | stable partition (`md_exec.nonzero`); the gathering over a list writes zero at the others, the expansion | stable, exact | Made again where the particles take a new order, not each step: 58 and 69 µs a call on 127k and 413k particles (D262) | hand-written in the lowering: `lowerNonzero` (`ToGPU`, a scan of chunk counts on one thread), `lowerNonzero` (`ToLoops`) | #420, #432 |
-| LJ-PME (D162) | as PME, with the coefficients $c_i$ and an influence function of its own | as PME | The same kernels with `_dispersion` instances; tiles apply (D282) | hand-written: templates | as PME |
-| The prolate kernel (D266) | as PME, with the window of the prolate function | as PME | Kernels of its own (`lowerProlate`, `scripts/generate-pme-prolate-gpu-template.py`); bricks, fixed point, or tiles: at 27 to 112 bins the tiles took 1.98 and 1.17 times the bricks (D282) | hand-written: templates | as PME, #392 |
-| Derivative of a reciprocal sum | none in the IR: `md.reciprocal` yields its forces, and `md-differentiate` scales them by the weight of the energy (`buildForces`); the charge derivative is the fourth result (D231) | — | — | does not fit the rules of the structure: the op is opaque to the derivative, so its parameters, its cell, and its kernels are differentiated by hand | #452, #451 |
+| LJ-PME (D162) | as PME, with the coefficients $c_i$ and an influence function of its own | as PME | The same kernels with `_dispersion` instances; tiles apply (D282) | hand-written: templates | as PME, #452 |
+| The prolate kernel (D266) | as PME, with the window of the prolate function | as PME | Kernels of its own (`lowerProlate`, `scripts/generate-pme-prolate-gpu-template.py`); bricks, fixed point, or tiles: at 27 to 112 bins the tiles took 1.98 and 1.17 times the bricks (D282) | hand-written: templates | as PME, #392, #452 |
+| Derivative of a reciprocal sum | none in the IR: `md.reciprocal` yields its forces, and `md-differentiate` scales them by the weight of the energy (`buildForces`); the charge derivative is the fourth result (D231) | — | — | missing: the op is one unit to the derivative, so its forces and the potential at the particles are written in the templates, and its other parameters are differentiated by hand or refused; with the chain of #452 they would be derived | #452, #451 |
 
 ### 3.4 Constraints and dynamics
 
@@ -290,18 +300,18 @@ pays across the most parts, not a ruling on priority.
 | 1 | The algebra of each reduction and scatter as a fact of the IR | #422 | 10 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; PME: spreading; PME: the convolution; Energies and the virial; Sums from edges to nodes, and the two-ended scatter; Halo copy $G$ and halo sum $G^\mathsf T$; Loops of a domain; All-reduce |
 | 2 | Transposes of the `md` ops declared through `AdjointOpInterface` (new) | #451 | 10 | Pair loop over the matrix, `(directed, owner_only)`; Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; Tables: `md.lookup`, `md.chebyshev`, CMAP, folded tables; Derivative of a reciprocal sum; Virtual sites; Tunables and their gradient; Neural stages; Sums from edges to nodes, and the two-ended scatter |
 | 3 | The scatter op and the shared emitter of the table (open PR) | #445 | 8 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; Tables: `md.lookup`, `md.chebyshev`, CMAP, folded tables; Tunables and their gradient; Sums from edges to nodes, and the two-ended scatter; Halo copy $G$ and halo sum $G^\mathsf T$; Loops of a domain |
-| 4 | Fixed-point privatization in the deterministic mode | #416 step 2 | 6 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; PME: spreading; Halo copy $G$ and halo sum $G^\mathsf T$; Loops of a domain |
-| 5 | Compaction, scans, and counting sorts as shared emitters | #432 | 6 | Cells and the matrix; Groups and their build; Dual list: pruning; Pair list of a model term; PME: listed particles; Migration |
-| 6 | A pair kernel evaluated at both ends | #391 | 5 | Pair loop over groups, `(unique, atomic)`; Fields computed from the positions: EAM; Neural stages; Sums from edges to nodes, and the two-ended scatter; Loops of a domain |
-| 7 | Gathers by vectorized and transposed loads | #419 | 5 | Pair loop over the matrix, `(directed, owner_only)`; Pair loop over groups, `(unique, atomic)`; PME: gathering; Fields of features; Halo copy $G$ and halo sum $G^\mathsf T$ |
-| 8 | Single-pass prefix sums | #420 | 5 | Groups and their build; Pair list of a model term; Incidence of tuples; PME: binning for tiles; PME: listed particles |
-| 9 | Radix sorts | #421 | 4 | Spatial order; Groups and their build; Incidence of tuples; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME |
-| 10 | Warp-aggregated atomics | #418 | 3 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; PME: spreading |
-| 11 | Partition and migration on domains | #38 | 2 | Decomposition and layout; Migration |
-| 12 | ML4 step 4b: the two-ended scatter | #377 | 2 | Neural stages; Sums from edges to nodes, and the two-ended scatter |
-| 13 | Deterministic sums independent of the reach and the decomposition | #409 | 2 | Energies and the virial; All-reduce |
-| 14 | Sorted scatter without atomics | #417 | 2 | Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; PME: spreading |
-| 15 | The reciprocal sum in primitives, with the FFT (new) | #452 | 2 | PME: the transforms; Derivative of a reciprocal sum |
+| 4 | The reciprocal sum in primitives: spread, FFT, influence map, inverse FFT, gather, with the FFT's adjoint declared (new; ruled 2026-10-19) | #452 | 7 | PME: spreading; PME: the transforms; PME: the convolution; PME: gathering; LJ-PME; The prolate kernel; Derivative of a reciprocal sum |
+| 5 | Fixed-point privatization in the deterministic mode | #416 step 2 | 6 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; PME: spreading; Halo copy $G$ and halo sum $G^\mathsf T$; Loops of a domain |
+| 6 | Compaction, scans, and counting sorts as shared emitters | #432 | 6 | Cells and the matrix; Groups and their build; Dual list: pruning; Pair list of a model term; PME: listed particles; Migration |
+| 7 | A pair kernel evaluated at both ends | #391 | 5 | Pair loop over groups, `(unique, atomic)`; Fields computed from the positions: EAM; Neural stages; Sums from edges to nodes, and the two-ended scatter; Loops of a domain |
+| 8 | Gathers by vectorized and transposed loads | #419 | 5 | Pair loop over the matrix, `(directed, owner_only)`; Pair loop over groups, `(unique, atomic)`; PME: gathering; Fields of features; Halo copy $G$ and halo sum $G^\mathsf T$ |
+| 9 | Single-pass prefix sums | #420 | 5 | Groups and their build; Pair list of a model term; Incidence of tuples; PME: binning for tiles; PME: listed particles |
+| 10 | Radix sorts | #421 | 4 | Spatial order; Groups and their build; Incidence of tuples; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME |
+| 11 | Warp-aggregated atomics | #418 | 3 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; PME: spreading |
+| 12 | Partition and migration on domains | #38 | 2 | Decomposition and layout; Migration |
+| 13 | ML4 step 4b: the two-ended scatter | #377 | 2 | Neural stages; Sums from edges to nodes, and the two-ended scatter |
+| 14 | Deterministic sums independent of the reach and the decomposition | #409 | 2 | Energies and the virial; All-reduce |
+| 15 | Sorted scatter without atomics | #417 | 2 | Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; PME: spreading |
 | 16 | Derivatives into tables by a scatter into bins (new) | #454 | 2 | Tables: `md.lookup`, `md.chebyshev`, CMAP, folded tables; Tunables and their gradient |
 | 17 | Virtual sites: the spreading derived (new) | #453 | 1 | Virtual sites |
 
@@ -318,10 +328,12 @@ scatter-accumulate of integer counts, exact in any order.
 
 ## 5. Not fitting, and why
 
+The FFT and the derivative of a reciprocal sum were here until the
+ruling on #452 added the linear transform to the set; they are now
+missing (Section 3.3), not unfitting.
+
 | Part | Why it does not fit |
 |---|---|
-| The FFT of PME | Not in the set; linear, with the inverse transform as adjoint. Fits once the set has a linear transform with a declared adjoint, which also lets the reciprocal sum be differentiated through its parts (#452) |
-| The derivative of a reciprocal sum | The op is one unit: its forces and the potential at the particles (D231) are written in the templates, not derived (#452) |
 | The opaque model term | The model's structure is outside the IR by design; ML4 replaces it by stages, and it stays as the baseline |
 | Skins and other choices by measurement | A choice among programs, not a computation |
 | Reweighting | Reductions over frames on the host, outside the step and its lowering |

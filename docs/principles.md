@@ -128,11 +128,13 @@ Status: a design goal (D[primitives-map], #450), not yet a checked rule.
 
 MDIR is written as a composition of a small set of primitives: map,
 gather, scatter-accumulate, halo copy and halo sum, reduction, broadcast,
-scan, permutation, compaction, and the structural sorts and builds. The
-goal is that the adjoint of each primitive is again a primitive of the
-set: gather and scatter-accumulate, $G$ and $G^\mathsf T$, reduction and
-broadcast, scan and reverse scan, a permutation and its inverse,
-compaction and expansion, a map and its transposed Jacobian. Then the
+scan, permutation, compaction, a linear transform with a declared adjoint
+(the FFT first; the maintainer's ruling on #452), and the structural sorts
+and builds. The goal is that the adjoint of each primitive is again a
+primitive of the set: gather and scatter-accumulate, $G$ and
+$G^\mathsf T$, reduction and broadcast, scan and reverse scan, a
+permutation and its inverse, compaction and expansion, the forward FFT and
+the unnormalized backward FFT, a map and its transposed Jacobian. Then the
 derivative of any part is a composition of the same primitives, lowered
 by the same strategies, and every strategy written for one direction
 serves the other: a privatized scatter (D285) is also the transpose of

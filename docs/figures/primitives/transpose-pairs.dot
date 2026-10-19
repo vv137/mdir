@@ -35,6 +35,10 @@ graph transpose_pairs {
   expand  [label="expansion\n(zeros at the others)"];
   compact -- expand;
 
+  fft_forward  [label="linear transform: FFT\nmdrtCudaFFTForward3D\n(no op yet, #452)"];
+  fft_backward [label="unnormalized inverse FFT\nmdrtCudaFFTBackward3D"];
+  fft_forward -- fft_backward [label="declared adjoint"];
+
   structural [label="sort, neighbor build\nmd_exec.spatial_order\nmd_exec.build_neighbors\nmd_exec.build_incidence", style="rounded,dashed"];
   none [label="no transpose\n(structural)", shape=plaintext];
   structural -- none [style=dashed];
