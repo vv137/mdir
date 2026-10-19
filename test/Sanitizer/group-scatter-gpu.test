@@ -32,3 +32,26 @@
 # CHECK-NOT: {{^0$}}
 # CHECK: ERROR SUMMARY: 0 errors
 # RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
+
+# The table in the two-ended loops over the rows of a matrix, `(directed,
+# atomic)` (D290): the EAM of Integration/dist-eam-exec.mlir on 3x2x1
+# domains in the derivative's form, in mixed precision.
+# RUN: sed 's/GRID/3, 2, 1/; s/TOLERANCE/1.0e-5/' %S/../Integration/dist-eam-exec.mlir \
+# RUN: | mdir-opt --md-distribute="grid=3,2,1 traversal=directed potentials=eam,linear" \
+# RUN:     %md_passes \
+# RUN:     --convert-md-dist-to-md-exec="functions=derived,energy,vjp" \
+# RUN:     --convert-md-dist-to-loops \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-choose-scatter=pair-hash=on \
+# RUN:     --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm > %t.matrix.mlir
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 mlir-runner %t.matrix.mlir \
+# RUN:     -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN: | FileCheck %s --check-prefix=MATRIX
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 mlir-runner %t.matrix.mlir \
+# RUN:     -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN: | FileCheck %s --check-prefix=RACE
+# MATRIX: ERROR SUMMARY: 0 errors

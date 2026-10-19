@@ -13,7 +13,7 @@ switches ([principles.md](principles.md), principles 2 and 3; issue #415).
 
 | Primitive | CUB's counterpart | Issue | Status | Decision |
 |---|---|---|---|---|
-| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. One attribute, one pass, and one set of preconditions (step 1). The table `hash` is one emitter that every site calls (`ScatterEmitter.h`, step 3). Its sites are the tuples, the op `md_exec.scatter_add`, and the loops over groups, where it was measured slower and is off by default (Section 2.7). The tile of PME keeps its template. Fixed point in the deterministic mode (step 2) is planned | D282 (`tile`), D283 (`hash`), D285 (the attribute and the pass), D[scatter-op] (the op, the emitter, the groups) |
+| Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. One attribute, one pass, and one set of preconditions (step 1). The table `hash` is one emitter that every site calls (`ScatterEmitter.h`, step 3). Its sites are the tuples, the op `md_exec.scatter_add`, and the loops over pairs that add at both ends (over groups, and `(directed, atomic)` over a matrix), where it was measured slower and is off by default (Section 2.7). The tile of PME keeps its template. Fixed point in the deterministic mode (step 2) is planned | D282 (`tile`), D283 (`hash`), D285 (the attribute and the pass), D[scatter-op] (the op, the emitter, the groups) |
 | Sorted scatter: runs reduced without atomics | `BlockHistogram`, sort specialization; `BlockDiscontinuity` | #417 | Planned. `sorted` is reserved in the attribute and refused | — |
 | Warp-aggregated atomics | `WarpReduce`, matching by key | #418 | Planned | — |
 | Vectorized and transposed gathers | `BlockLoad`, `WarpLoad`, `BlockExchange` | #419 | Next, on the gathering of PME (tiled gathering at orders 6 and 8 is #411) | — |
@@ -106,8 +106,8 @@ lowering does not have:
   kernels of tiles alone;
 - `hash` on a `pair_for` whose conflict is not `atomic`: a loop that
   writes only at its centers scatters nothing. Both `(unique, atomic)`
-  and #443's `(directed, atomic)` take it. The lowering applies it over
-  groups only, so the pass sets it there only.
+  and `(directed, atomic)` (D290) take it, over groups and over the rows
+  of a matrix.
 
 The pass `md-exec-choose-scatter` sets the attribute on programs for a
 device, after the precision is assigned and before the storage, which
@@ -134,7 +134,7 @@ The pass calls it to choose, and the lowering calls it again to apply.
 | The footprint of a tile is bounded and wraps around the grid once at most: every edge of the grid has at least $E + P - 1$ points. The template has kernels of $E$ = 4, 8, and 16 | `tile` | `checkTile` | refuses | fails |
 | The copy fits 48 KiB of block memory, the static limit of a block from compute capability 7.0 on, which neither kernel exceeds: $(s^3 + 4T)\,b + 12T$ bytes for a tile ($s = E + P - 1$, $T$ = 128 threads, or 512 for $E$ = 16, $b$ the bytes of a value, with the particles of a round); $4S + \sum_d S\,c_d\,b_d$ for a table of $S$ slots and destinations of $c_d$ components | `tile`, `hash` | `getTileBytes`, `getHashBytes` | refuses | a tile fails. The table of a *run* of loops, launched as one kernel with the union of their destinations, is checked with the same function and keeps the atomics where it does not fit: runs are formed in the lowering, after the pass |
 | A fallback exists: every destination of a table is a number or a row of a static length of f32 or f64, which have an atomic of the device | `hash` | `getHashDestination` | refuses | fails |
-| The site scatters: a `pair_for` whose conflict is `atomic`, over groups; a `scatter_add` always | `hash` | the verifier, the pass | refuses, with the reason | — |
+| The site scatters: a `pair_for` whose conflict is `atomic`; a `scatter_add` always | `hash` | the verifier, the pass | refuses, with the reason | — |
 | Occupancy: bounded by the 48 KiB above. Neither strategy asks for dynamic block memory, and the measurements below were taken at that bound | `tile`, `hash` | — | — | — |
 
 The strategy applies only where the lowering scatters at all. A loop over
@@ -175,8 +175,9 @@ Where the preconditions hold, the pass chooses by cost:
 
 - **`hash` on `scatter_add`**: $S$ = 128 slots (one value a thread) and
   $L$ = 100,000 (`hash-least`).
-- **`hash` on the loops over groups**: off (`pair-hash=off`). It was
-  measured slower on every system (Section 2.7). The slots would be
+- **`hash` on the loops over pairs that add at both ends** (over groups, and
+  `(directed, atomic)` over a matrix): off (`pair-hash=off`), measured
+  slower on every system (Section 2.7). The slots would be
   $\mathrm{PowerOf2Ceil}(3T)$: one particle of the group and two entries
   a thread for each unit of work.
 
@@ -215,6 +216,10 @@ lowering's refusals. The tests of D[scatter-op]:
 - `Integration/eam.mlir` (CPU) and `eam-groups-gpu.test` run EAM over
   groups with each strategy, in double and mixed precision, against
   `Inputs/eam_reference.py`.
+- `Integration/dist-exec-scatter-gpu.test` runs the EAM of
+  `dist-eam-exec.mlir` on 3x2x1 domains with the table in its two-ended
+  loops over a matrix, in double and mixed precision, against the
+  references of that test.
 - `Integration/scatter-add.mlir` and `scatter-add-gpu.test` run the op
   sequentially, under OpenMP, and on a device with each strategy. They
   compare exactly against the sum written out.
@@ -230,6 +235,7 @@ lowering's refusals. The tests of D[scatter-op]:
 | The kernel of the tuples evaluated once: the bonded terms, the 1-4 pairs, the excluded pairs of the reciprocal sum | `hash(512, 8, 100000)` for a run with dihedrals | `launchTupleBlocks` in `MDExecToGPU.cpp`, through the emitter | [device-tuples.md](device-tuples.md), Section 11 |
 | `md_exec.scatter_add`: no site on `main` yet; `halo_sum` of #443 is the first | `hash(128, 8, 100000)` | `lowerScatterAdd` in `MDExecToGPU.cpp`, through the emitter | Section 2.2 |
 | The loops over groups, each pair once (D89): the nonbonded forces, EAM's density and its forces | none by default; `hash(512, 8, 0)` with `pair-hash=on` | `lowerGroupPairFor` and `emitGroupPairKernel`, through the emitter | [groups-m1.md](groups-m1.md) |
+| The two-ended loops over the rows of a matrix, `(directed, atomic)` (D290): the domains of `md_dist`, the edge scatter of #377 step 4 | none by default; `hash(512, 8, 0)` with `pair-hash=on` | `lowerPairFor`, `launchRows`, and `emitPairKernel`, through the emitter | [distributed-ml2.md](distributed-ml2.md), Section 7.2 |
 
 **The emitter** (D[scatter-op]). The table is one class,
 `kernels::BlockHashTable` (`include/mdir/Conversion/ScatterEmitter.h`, in
@@ -314,6 +320,8 @@ with the atomics; above 1 is slower.
 | EAM, 262,144 particles, mixed (ms an evaluation, 3 rounds) | 0.415 | 0.616 | 1.49 |
 | EAM, the same, double | 6.19 | 6.49 | 1.05 |
 | EAM, mixed, blocks of 512 threads (2048 slots) | 0.586 | 0.931 | 1.59 |
+| EAM on one domain through `md_dist` (D290), 110,592 particles: the two loops `(directed, atomic)` over the rows of a matrix, mixed (µs a call, the two kernels, Nsight Systems, 11 calls) | 423 | 873 | 2.06 |
+| The same, double | 908 | 1522 | 1.68 |
 
 EAM is the potential of `Integration/eam.mlir` on $64^3$ sites of a
 lattice of spacing 1.0, each moved by up to 0.1 along each axis, which
@@ -335,10 +343,20 @@ almost no index in common:
 With nothing to merge, the table only adds its compare-and-swap. The
 compare-and-swap returns a value that the thread waits for, while the
 device's `red` would have been issued without waiting. Blocks of 512
-threads, which span more groups, were slower still. The tuples differ:
-each particle is a member of many tuples of a block (above), so there the
-table merges values. The switch stays for comparison and is off by
-default.
+threads, which span more groups, were slower still.
+
+The two-ended loop over the rows of a matrix (#443's `(directed,
+atomic)`, the form of #377 step 4's two-ended scatter) does merge: the 8
+rows of a block are neighbors in the order of the cells and share most of
+their entries. It was slower all the same, 2.06 times in mixed precision
+and 1.68 times in double. Reuse alone does not make a table pay. The
+device's atomics are cheap where the values of the threads go to
+different addresses at a time, as the entries of the rows do, and the
+table's lookup is paid on every value. The tuples are the case where it
+pays: there the atomics contend, since the members of the tuples of a
+block are a few particles each named by several threads at once (above).
+The switch stays for comparison and is off by default at both loops over
+pairs.
 
 ### 2.8 Results and the deterministic mode
 

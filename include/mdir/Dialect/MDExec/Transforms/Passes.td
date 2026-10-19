@@ -138,11 +138,13 @@ def ChooseScatter
       never.
     - `md_exec.pair_for`: `hash(S, P, L)` on a loop whose conflict is
       `atomic`, which adds the value of a pair at both of its particles:
-      the loops over groups, each pair once (D[scatter-op]). `S` is the
+      the loops over groups, each pair once, and the two-ended loops over
+      the rows of a matrix, `(directed, atomic)` (D[scatter-op]). `S` is the
       slots for `block-size` threads that each add to 3 particles a unit
       of work (one of the group, two of the entries), `L` =
-      `pair-hash-least` the fewest units of work of a launch that take the
-      table. A loop takes it where the run is not in the deterministic
+      `pair-hash-least` the fewest units of work of a launch over groups
+      that take the table (a loop over a matrix takes it at any count). A
+      loop takes it where the run is not in the deterministic
       mode, it has destinations, each a number or a row of a static length
       of f32 or f64, and the table fits 48 KiB. `pair-hash=on` takes the
       table where it applies, `pair-hash=off` (the default) never.

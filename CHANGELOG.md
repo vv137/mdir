@@ -51,11 +51,14 @@ format, or the outputs; every such change is listed under **Changed** or
     path.
   - The table of a block is one emitter (`ScatterEmitter.h`). The tuples'
     table moved onto it with byte-identical generated code.
-  - The loops over groups take `scatter(...)` as well (`pair-hash` of
-    `md-exec-choose-scatter`, `MDIR_PAIR_SUMS`). This is off by default:
-    on an RTX 4090 the table made the step of the Amber suite 1.18 to 1.32
-    times as long, and an evaluation of EAM 1.49 times as long in mixed
-    precision.
+  - The loops over pairs that add at both ends take `scatter(...)` as
+    well, over groups and as `(directed, atomic)` over a matrix
+    (`pair-hash` of `md-exec-choose-scatter`, `MDIR_PAIR_SUMS`). This is
+    off by default. On an RTX 4090 the table made:
+    - the step of the Amber suite 1.18 to 1.32 times as long;
+    - an evaluation of EAM over groups 1.49 times as long in mixed
+      precision;
+    - the two-ended loops of EAM on a domain 2.06 times as long.
 
   No key of the control file and no output changes.
 

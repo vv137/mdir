@@ -132,13 +132,20 @@ struct PairLayout {
 /// particle for its destinations are returned there, in every thread of
 /// the group, and not stored: the caller stores them. With `layout`,
 /// `central` and the entries of the matrix are places in its order.
+///
+/// With the policy `(directed, atomic)` and `add`, the values at the
+/// neighbors and at the center go to `add` in place of the device's atomics
+/// (the table of a block, D[scatter-op]).
+using AddToMember = llvm::function_ref<void(mlir::OpBuilder &, unsigned out,
+                                            mlir::Value member,
+                                            mlir::Value value)>;
 llvm::SmallVector<mlir::Value>
 emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                mlir::Value counts, mlir::Value index, mlir::Value box,
                mlir::Value inverse, mlir::Value central,
                mlir::IRMapping &local, const RowLanes *lanes = nullptr,
                llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr,
-               const PairLayout *layout = nullptr);
+               const PairLayout *layout = nullptr, AddToMember add = nullptr);
 
 /// Where a loop over pairs over groups of 16 (D89, docs/groups-m1.md) finds
 /// its work: the lists of the groups in blocks of 64 entries (`entries` and
@@ -182,12 +189,6 @@ struct GroupStream {
 /// them over the warp. With `stream`, `unit` is a group and the warp takes
 /// the entries of its stream, 32 at a time as from the blocks.
 ///
-/// What a kernel adds to destination `out` of the particle `member`; given
-/// to a kernel, it takes the value in place of the atomic addition to the
-/// destination (the table of a block, D283, D[scatter-op]).
-using AddToMember = llvm::function_ref<void(mlir::OpBuilder &, unsigned out,
-                                            mlir::Value member,
-                                            mlir::Value value)>;
 /// With `add`, the values of the particles go to it, converted to the type
 /// of the destination, in place of the atomics.
 llvm::SmallVector<mlir::Value>

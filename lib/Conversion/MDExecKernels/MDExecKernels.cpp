@@ -271,7 +271,8 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                                            IRMapping &local,
                                            const RowLanes *lanes,
                                            SmallVectorImpl<Value> *outTotals,
-                                           const PairLayout *layout) {
+                                           const PairLayout *layout,
+                                           AddToMember add) {
   Location loc = op.getLoc();
   Value positions = layout ? layout->positions : op.getPositions();
   SmallVector<Value> insBuffers(op.getIns().begin(), op.getIns().end());
@@ -400,7 +401,9 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
                 value = arith::NegFOp::create(then, loc, value);
               Value destination = op.getOuts()[i];
               auto type = cast<MemRefType>(destination.getType());
-              if (type.getMemorySpace())
+              if (add)
+                add(then, i, neighbor, value);
+              else if (type.getMemorySpace())
                 emitAtomicAdd(then, loc, value, destination, neighbor);
               else
                 emitHostAtomicAdd(then, loc, value, destination, neighbor);
@@ -444,7 +447,9 @@ SmallVector<Value> kernels::emitPairKernel(OpBuilder &builder,
       // Other rows add to this one at their neighbors at the same time:
       // the center adds atomically as well (D290).
       if (twoEnded) {
-        if (cast<MemRefType>(destination.getType()).getMemorySpace())
+        if (add)
+          add(writer, i, particle, total);
+        else if (cast<MemRefType>(destination.getType()).getMemorySpace())
           emitAtomicAdd(writer, loc, total, destination, particle);
         else
           emitHostAtomicAdd(writer, loc, total, destination, particle);

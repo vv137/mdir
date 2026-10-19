@@ -166,13 +166,6 @@ private:
       return;
     if (pairHash == "off")
       return explainRefused(op, "hash", "pair-hash=off");
-    // The table is applied by the lowering of the loops over groups; a loop
-    // over the rows of a matrix that adds at its neighbors as well keeps the
-    // atomics until its lowering takes the table.
-    if (op.getTraversal() != Traversal::Unique)
-      return explainRefused(op, "hash",
-                            "the lowering of a loop over the rows of a "
-                            "matrix has no table yet");
     int64_t slots = scatter::getHashSlots(blockSize, scatter::kPairHashReach);
     if (scatter::Refusal refused = scatter::checkHash(
             slots, op.getOuts().getTypes(), deterministic))

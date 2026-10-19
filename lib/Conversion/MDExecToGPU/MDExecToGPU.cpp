@@ -427,10 +427,18 @@ private:
   /// particles, which share its row (RowLanes). With `order`, the order of
   /// the cells of a neighbor matrix, an item is a place, and a place that
   /// the build left empty (D107) is not valid.
+  /// What a launch of rows holds besides its rows: block memory, and what
+  /// its kernel does before and after them (the table of a block,
+  /// D[scatter-op]).
+  struct RowExtras {
+    ArrayRef<Type> attributions;
+    function_ref<void(OpBuilder &, gpu::LaunchOp)> before;
+    function_ref<void(OpBuilder &)> after;
+  };
   void launchRows(
       OpBuilder &builder, Location loc, Value count,
       function_ref<void(OpBuilder &, Value, const RowLanes &)> body,
-      Value order = Value());
+      Value order = Value(), const RowExtras *extras = nullptr);
 
 
   /// Gives the kernel of `launch` the values from outside as it can take
@@ -2936,15 +2944,21 @@ static Value shuffleXor(OpBuilder &builder, Location loc, Value value,
 void Lowering::launchRows(
     OpBuilder &builder, Location loc, Value count,
     function_ref<void(OpBuilder &, Value, const RowLanes &)> body,
-    Value order) {
+    Value order, const RowExtras *extras) {
   Value lanes = createIndex(builder, loc, rowLanes);
   Value threads = arith::MulIOp::create(builder, loc, count, lanes);
   Value one = createIndex(builder, loc, 1);
   Value block = createIndex(builder, loc, blockSize);
   Value grid = createGroups(builder, loc, threads, blockSize);
-  auto launch =
-      gpu::LaunchOp::create(builder, loc, grid, one, one, block, one, one);
+  auto launch = gpu::LaunchOp::create(
+      builder, loc, grid, one, one, block, one, one,
+      /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
+      /*asyncDependencies=*/{},
+      /*workgroupAttributions=*/extras ? TypeRange(extras->attributions)
+                                       : TypeRange());
   OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+  if (extras)
+    extras->before(kernel, launch);
   Value base = arith::MulIOp::create(kernel, loc, launch.getBlockIds().x,
                                      createIndex(kernel, loc, blockSize));
   Value thread =
@@ -2977,6 +2991,8 @@ void Lowering::launchRows(
     sharing.valid = arith::AndIOp::create(kernel, loc, sharing.valid, placed);
   }
   body(kernel, particle, sharing);
+  if (extras)
+    extras->after(kernel);
   gpu::TerminatorOp::create(kernel, loc);
   bringIn(launch);
 }
@@ -3045,6 +3061,44 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
   PairLayout layout = gatherInOrder(builder, loc, structure, positions,
                                     op.getIns(), op);
   Value entries = getMatrixEntries(builder, loc, structure.handle);
+  // The table of a block for the values at the neighbors and at the
+  // centers of a loop that adds at both (`scatter(hash(S, P, L))`,
+  // D[scatter-op]): the rows of a block are neighbors in the order of the
+  // cells, and share most of their entries. Its precondition is checked
+  // again with the chooser's function (Scatter.h).
+  md_exec::ScatterAttr scatter = op.getScatterAttr();
+  bool tabled = scatter && scatter.isHash() &&
+                op.getConflict() == md_exec::Conflict::Atomic &&
+                !op.getOuts().empty() &&
+                isDeviceType(op.getOuts().front().getType());
+  SmallVector<md_exec::scatter::Destination> destinations;
+  SmallVector<Type> attributions;
+  SmallVector<Value> outs(op.getOuts());
+  if (tabled) {
+    if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
+            scatter.getSlots(), op.getOuts().getTypes(), deterministic,
+            &destinations))
+      return op.emitOpError()
+             << "takes the strategy 'hash', whose precondition does not "
+                "hold: "
+             << *refused;
+    attributions =
+        kernels::getHashAttributions(context, scatter.getSlots(), destinations);
+  }
+  std::optional<kernels::BlockHashTable> table;
+  auto openTable = [&](OpBuilder &kernel, gpu::LaunchOp launch) {
+    table.emplace(kernel, loc, scatter.getSlots(), scatter.getProbes(),
+                  launch.getWorkgroupAttributionBBArgs(), outs, destinations,
+                  launch.getThreadIds().x,
+                  createIndex(kernel, loc, blockSize));
+    table->emitClear(kernel);
+  };
+  auto closeTable = [&](OpBuilder &kernel) { table->emitFlush(kernel); };
+  auto addToTable = [&](OpBuilder &b, unsigned out, Value member,
+                        Value value) {
+    table->add(b, outs[out], member, value);
+  };
+  RowExtras extras{attributions, openTable, closeTable};
   launchRows(builder, loc, size, [&](OpBuilder &body, Value central,
                                      const RowLanes &sharing) {
     IRMapping local;
@@ -3063,12 +3117,13 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     }
     SmallVector<Value> contributions = emitPairKernel(
         body, op, structure.counts, entries, box, inverse, central,
-        local, &lanes, /*outTotals=*/nullptr, &layout);
+        local, &lanes, /*outTotals=*/nullptr, &layout,
+        tabled ? AddToMember(addToTable) : AddToMember());
     // A place that is not a center contributes zeros to the sums, which
     // its slot of the scratch must hold.
     storeContributions(body, loc, contributions, op.getScratch(), central,
                        sharing);
-  }, structure.order);
+  }, structure.order, tabled ? &extras : nullptr);
   return finishSums(op, builder, op.getReduce(), op.getScratch(), size);
 }
 
