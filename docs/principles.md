@@ -124,7 +124,7 @@ rate of Factor IX up to D132 was of another model than pmemd's (D133).
 
 ## 9. The primitives are closed under transposition
 
-Status: a design goal (D[primitives-map], #450), not yet a checked rule.
+Status: a design goal (D292, #450), not yet a checked rule.
 
 MDIR is written as a composition of a small set of primitives: map,
 gather, scatter-accumulate, halo copy and halo sum, reduction, broadcast,

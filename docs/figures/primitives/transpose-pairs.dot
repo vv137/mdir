@@ -1,5 +1,5 @@
 // The primitives of docs/primitives-map.md and their transposes
-// (D[primitives-map]). Each edge joins a primitive to its transpose; the
+// (D292). Each edge joins a primitive to its transpose; the
 // lines below a name are the ops and functions of the code that take that
 // form today. Regenerate the SVG with scripts/render/primitives-figures.sh.
 graph transpose_pairs {

@@ -427,7 +427,7 @@ destination of the loop has a contract. In terms of primitives, the
 transpose of a gather is a scatter-accumulate; over the directed expansion
 $D$, which is its own transpose, that scatter is again a gather over $D$,
 and the contract is what lets the lowering write it as a scatter to both
-ends instead. `docs/primitives-map.md` (D[primitives-map]) takes every part
+ends instead. `docs/primitives-map.md` (D292) takes every part
 of MDIR apart into such primitives and their transposes.
 
 ## 3.4 From sums to loops, and the passes over loops

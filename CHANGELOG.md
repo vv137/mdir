@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - **MDIR in primitives: the set, its transposes, and the map of the
-  parts** (D[primitives-map], #450,
+  parts** (D292, #450,
   [docs/primitives-map.md](docs/primitives-map.md)): the primitives that
   every part of MDIR is composed of, each with its transpose and its
   stated properties, and a map of 45 parts (neighbors, short and long
