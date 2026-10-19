@@ -1,0 +1,30 @@
+# The spreading of the force on virtual sites derived as the transpose of
+# their placement (MDIR_SITE_SPREAD=derived, D[vsite-transpose]) against
+# the transpose written out (written): the forces after the steps, and
+# the energies and the virial of every step, on the CPU in double
+# precision. Three OPC waters with Amber's extra point (virtual-sites.test),
+# whose virial changes when its force moves, and the linear sites of
+# gromacs-sites.test. Measured: the forces within 1e-16 of the largest; the
+# columns of the energy file agree to their printed digits.
+#
+# RUN: rm -rf %t && mkdir -p %t/amber %t/linear
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t/amber
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/virtual-sites.test | sed '1d;$d' \
+# RUN:   | sed -e 's/^steps .*/steps = 50/' -e 's/^energy_interval .*/energy_interval = 1/' \
+# RUN:   > %t/amber/run.toml
+# RUN: %python %S/Inputs/compare_site_spread.py mdir %t/amber/run.toml 1e-12 1e-6 \
+# RUN: | FileCheck %s
+# RUN: split-file %S/gromacs-sites.test %t/linear
+# RUN: sed -i -e 's/^steps .*/steps = 50/' -e 's/^energy_interval .*/energy_interval = 1/' \
+# RUN:   %t/linear/run.toml
+# RUN: %python %S/Inputs/compare_site_spread.py mdir %t/linear/run.toml 1e-12 1e-6 \
+# RUN: | FileCheck %s
+#
+# An unknown form is refused.
+# RUN: env MDIR_SITE_SPREAD=transposed not mdir emit %t/amber/run.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=UNKNOWN
+#
+# CHECK: forces: {{[0-9]+}} particles
+# CHECK: energy columns: 51 rows
+# CHECK: spread ok
+# UNKNOWN: MDIR_SITE_SPREAD is 'transposed'; expected 'derived' or 'written'

@@ -1,0 +1,25 @@
+# virtual-sites-spread.test on a GPU (D[vsite-transpose]): the derived
+# spreading against the written one, three OPC waters with Amber's extra
+# point, in double precision (forces within 1e-12 of the largest) and in
+# mixed precision (within 1e-6; measured 6.7e-8 here, 9e-8 on alanine
+# dipeptide in 387 OPC waters), the columns of the energy file to 1e-5
+# in double and 1e-4 in mixed (measured 1.1e-5 over the 50 steps).
+#
+# REQUIRES: cuda
+# RUN: rm -rf %t && mkdir -p %t/double %t/mixed
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t/double
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t/mixed
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/virtual-sites.test | sed '1d;$d' \
+# RUN:   | sed -e 's/^steps .*/steps = 50/' -e 's/^energy_interval .*/energy_interval = 1/' \
+# RUN:   > %t/run.toml
+# RUN: cp %t/run.toml %t/double/run.toml && cp %t/run.toml %t/mixed/run.toml
+# RUN: printf '\n[execution]\ntarget = "GPU"\nprecision = "DOUBLE"\n' >> %t/double/run.toml
+# RUN: printf '\n[execution]\ntarget = "GPU"\nprecision = "MIXED"\n' >> %t/mixed/run.toml
+# RUN: %python %S/Inputs/compare_site_spread.py mdir %t/double/run.toml 1e-12 1e-5 \
+# RUN: | FileCheck %s
+# RUN: %python %S/Inputs/compare_site_spread.py mdir %t/mixed/run.toml 1e-6 1e-4 \
+# RUN: | FileCheck %s
+#
+# CHECK: forces: 12 particles
+# CHECK: energy columns: 51 rows
+# CHECK: spread ok
