@@ -53,7 +53,7 @@ By default the program writes that transpose out. With
 `MDIR_SITE_SPREAD=derived` it writes $\sum_s \mathbf f_s\cdot\mathbf p_s$
 as a potential of the positions and takes its forces from
 `md-differentiate`: the declared transpose of the sum over the sites and
-the reverse derivative of the placement (D[vsite-transpose], Section 3.3).
+the reverse derivative of the placement (D298, Section 3.3).
 The virial changes by $\sum_k (\mathbf x_k - \mathbf x_s)\otimes\mathbf F_k$
 over the forces $\mathbf F_k$ moved to the atoms, which the derived form
 takes as the virial of those forces, negated, less

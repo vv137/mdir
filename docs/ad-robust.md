@@ -81,7 +81,7 @@ an op of the structure of a potential (a sum, gather, or map of `md`; a
 transfer or loop of `md_dist`) that declares no transpose:
 `no declared transpose for 'md.gather_tuples' in potential 'p'`.
 `md.gather_tuples` has none yet. The loops of `md_dist` declare the
-transposes of their structure as those of `md` do (D[md-dist-transposes]):
+transposes of their structure as those of `md` do (D297):
 `sum_pairs` to `gather_pairs` (two partial results for the positions, the
 gather at the owners for a field on the directed traversal),
 `gather_pairs` to `gather_pairs` from both ends of each pair (or its sum,

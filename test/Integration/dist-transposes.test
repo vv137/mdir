@@ -1,4 +1,4 @@
-# The adjoint identities of transposes.mlir on domains (D[md-dist-transposes]):
+# The adjoint identities of transposes.mlir on domains (D297):
 # md-distribute rewrites the potentials whose derivatives are checked into
 # md_dist, and md-differentiate takes the transposes of the loops of md_dist
 # (sum_pairs, gather_pairs, sum_particles, map_particles) and of the

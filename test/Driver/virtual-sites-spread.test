@@ -1,5 +1,5 @@
 # The spreading of the force on virtual sites derived as the transpose of
-# their placement (MDIR_SITE_SPREAD=derived, D[vsite-transpose]) against
+# their placement (MDIR_SITE_SPREAD=derived, D298) against
 # the transpose written out (written): the forces after the steps, and
 # the energies and the virial of every step, on the CPU in double
 # precision. Three OPC waters with Amber's extra point (virtual-sites.test),

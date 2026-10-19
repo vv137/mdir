@@ -417,7 +417,7 @@ struct MapParticlesTranspose
 };
 
 //===----------------------------------------------------------------------===//
-// The structure of the loops of md_dist (D[md-dist-transposes])
+// The structure of the loops of md_dist (D297)
 //===----------------------------------------------------------------------===//
 //
 // The loops over the rows of domains have the structure of those of md:

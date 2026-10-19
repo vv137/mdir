@@ -236,7 +236,7 @@ private:
   void emitPullPotentials();
   /// Whether the force on each virtual site is spread by the derivative of
   /// its placement (`MDIR_SITE_SPREAD=derived`) or by the transpose written
-  /// out in `emitSpreadSites` (`written`), D[vsite-transpose].
+  /// out in `emitSpreadSites` (`written`), D298.
   bool spreadsSitesDerived() const;
   /// For each set of virtual sites, with the derived spreading, the
   /// potential `@spread_<set>`: Σ_t f_t · p(t), the force on each site

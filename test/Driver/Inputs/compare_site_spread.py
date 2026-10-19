@@ -1,5 +1,5 @@
 """Compares the two forms of the spreading of the force on virtual sites
-(D[vsite-transpose]): MDIR_SITE_SPREAD=written, the transpose of the
+(D298): MDIR_SITE_SPREAD=written, the transpose of the
 placement written out, and derived, the transpose that md-differentiate
 derives from the placement.
 

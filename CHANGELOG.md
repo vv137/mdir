@@ -14,7 +14,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 - **The spreading of the force on virtual sites derived as the transpose
   of their placement, behind `MDIR_SITE_SPREAD=derived`**
-  (D[vsite-transpose], #453, PR #465): `md-differentiate` derives the
+  (D298, #453, PR #465): `md-differentiate` derives the
   forces on the atoms and the change of the virial from a potential of the
   placement, through the declared transpose of `md.sum_tuples` (D295).
   `written`, the transpose written out, stays the default: the derived
@@ -661,7 +661,7 @@ format, or the outputs; every such change is listed under **Changed** or
   potential without a declared transpose. No generated code changes: the
   output of the pass is the same for every test and driver input compared.
 - **The transposes of the loops of `md_dist` are declared through
-  `AdjointOpInterface`** (D[md-dist-transposes], #451, PR #461): `sum_pairs`,
+  `AdjointOpInterface`** (D297, #451, PR #461): `sum_pairs`,
   `gather_pairs`, `sum_particles`, and `map_particles` declare the
   transpose of their structure, and `md-differentiate` takes it from them;
   the cotangent of `createTranspose` is a range, for the owned rows of an

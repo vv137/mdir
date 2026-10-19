@@ -1,4 +1,4 @@
-# virtual-sites-spread.test on a GPU (D[vsite-transpose]): the derived
+# virtual-sites-spread.test on a GPU (D298): the derived
 # spreading against the written one, three OPC waters with Amber's extra
 # point, in double precision (forces within 1e-12 of the largest) and in
 # mixed precision (within 1e-6; measured 6.7e-8 here, 9e-8 on alanine
