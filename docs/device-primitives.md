@@ -647,4 +647,24 @@ The step was timed against `main` on an RTX 4090 (Section 4.6).
 
 ### 4.6 Measured effect
 
-None is expected, since the kernels are the same.
+None is expected, since the programs are the same. The Amber suite was run
+with the binaries of `main` (a6fef8b9) and of the branch alternated in one
+job on an RTX 4090 at 450 W (ada-001), three rounds. The table gives the
+median ns/day of the second half of each run, and the ratio of the time
+of a step to that of `main`:
+
+| System | `main` | Branch | Ratio |
+|---|---:|---:|---:|
+| JAC NVE | 1264.7 | 1255.3 | 1.007 |
+| JAC NPT | 1143.9 | 1142.6 | 1.001 |
+| JAC NVE 4 fs | 2356.2 | 2359.0 | 0.999 |
+| JAC NPT 4 fs | 2208.0 | 2205.8 | 1.001 |
+| Factor IX NVE | 569.0 | 568.0 | 1.002 |
+| Factor IX NPT | 530.3 | 529.9 | 1.001 |
+| Cellulose NVE | 148.8 | 148.7 | 1.001 |
+| Cellulose NPT | 141.0 | 140.6 | 1.003 |
+| STMV NPT 4 fs | 87.5 | 87.6 | 0.999 |
+
+No system is slower beyond the spread of the runs: the rounds of JAC NVE
+took 1259.7 to 1272.4 ns/day with `main` and 1253.6 to 1260.3 with the
+branch, whose program is byte for byte that of `main`.
