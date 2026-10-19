@@ -350,13 +350,27 @@ atomic)`, the form of #377 step 4's two-ended scatter) does merge: the 8
 rows of a block are neighbors in the order of the cells and share most of
 their entries. It was slower all the same, 2.06 times in mixed precision
 and 1.68 times in double. Reuse alone does not make a table pay. The
-device's atomics are cheap where the values of the threads go to
-different addresses at a time, as the entries of the rows do, and the
-table's lookup is paid on every value. The tuples are the case where it
-pays: there the atomics contend, since the members of the tuples of a
-block are a few particles each named by several threads at once (above).
+measurements point to contention as the condition: the entries of the
+rows send the atomics of a warp to different addresses, which the device
+handles cheaply, and the table's lookup is paid on every value. The
+tuples, where the table pays, have the members of a block's tuples
+named by several threads at once (above). Contention itself was not
+measured: Nsight Compute's counters are refused on the cluster's nodes.
 The switch stays for comparison and is off by default at both loops over
 pairs.
+
+**The emitter and the op against `main` (D[scatter-op]).** By default
+the branch generates the code of `main`. The Amber suite was run with
+`main` (0f6da67d) and the branch alternated in one job on an RTX 4090,
+three rounds. The table gives the median ns/day of the second half of
+each run, and the ratio of the time a step to that of `main`:
+
+| System | `main` | Branch | Ratio |
+|---|---:|---:|---:|
+| JAC NVE | 1310.1 | 1310.2 | 1.000 |
+| Factor IX NVE | 586.7 | 586.5 | 1.000 |
+| Cellulose NVE | 152.0 | 152.0 | 1.000 |
+| STMV NPT 4 fs | 89.2 | 89.3 | 0.999 |
 
 ### 2.8 Results and the deterministic mode
 

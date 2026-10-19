@@ -348,6 +348,11 @@ correction of the excluded pairs of the reciprocal sum) are one kernel
 to the destination of its member with an atomic of its own: three for the
 force on each member.
 
+The table is now emitted by the emitter that every site of the strategy
+shares, `kernels::BlockHashTable` (D[scatter-op],
+[device-primitives.md](device-primitives.md), Section 2.6), with the same
+generated code.
+
 **What the kernel spent its time on.** Cellulose NVE (408,609 atoms,
 1,700,480 tuples, of which 862,209 excluded pairs), mixed precision, one
 RTX 4090, Nsight Systems, µs a step of the steady part of 3,000 steps:
