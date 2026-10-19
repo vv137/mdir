@@ -641,6 +641,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **A tile of a loop over pairs sums its rows into the centers that meet
+  it** (`D[ml4-tile-sums]`, #462,
+  [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)): a
+  thread for each row of the tile, and for each component of a wide
+  destination, instead of a thread for each particle of the system; the
+  sums and their order are unchanged. nablaDFT's PaiNN in stages at 6,144
+  atoms on an RTX 4090: 2.05 to 0.44 ms per tile of the reverse loops.
+  Nothing user-visible changes.
 - **The transposes of the `md` ops are declared through
   `AdjointOpInterface`** (D295, #451, PR #459,
   [docs/ad-robust.md](docs/ad-robust.md#declared-transposes-dmd-transposes)):
