@@ -432,14 +432,16 @@ def export_stage(fn, specs, rows, symbol, stablehlo_opt, workdir):
     src = os.path.join(workdir, symbol + ".stablehlo.mlir")
     with open(src, "w") as f:
         f.write(text)
-    out = subprocess.run([stablehlo_opt, src, "--stablehlo-legalize-to-linalg",
+    out = subprocess.run([stablehlo_opt, src, "--stablehlo-legalize-to-linalg", "--inline",
+                          "--symbol-dce",
                           "--canonicalize", "--mlir-print-local-scope"],
                          check=True, capture_output=True, text=True).stdout
     if "stablehlo." in out:
         bad = sorted(set(re.findall(r"stablehlo\.[a-z_]+", out)))
         raise SystemExit(f"{symbol}: not legalized to linalg: {', '.join(bad)}")
     # The module's body, its functions renamed apart.
-    body = out[out.index("{", out.index("module")) + 1:out.rstrip().rindex("}")]
+    start = out.index("module")
+    body = out[out.index("\n", start) + 1:out.rstrip().rindex("}")]
     names = re.findall(r"func\.func (?:public |private )?@([\w.$-]+)", body)
     for name in names:
         new = symbol if name == "main" else f"{symbol}.{name}"
@@ -474,15 +476,215 @@ def cmd_export(a):
         else:
             decls.append(f"md.stage @{name} forward(@{name}.f) "
                          f": ({sig_in}) -> {sig_out}")
-    maps = "\n".join(sorted(set(l for h in heads for l in h.splitlines() if l.startswith("#"))))
     with open(a.output, "w") as f:
         f.write(f"// PaiNN in stages, written by scripts/mlip/painn-stages.py export\n")
         f.write(f"// F = {F}, L = {S.L}, cutoff {S.cutoff} A, {a.rows} rows a tile\n")
-        f.write(maps + "\n")
         f.write("\n".join(decls) + "\n")
         for b in bodies:
             f.write(b + "\n")
+        f.write(structure(S, a.set, a.name))
     print(f"wrote {a.output}: {len(decls)} stages, {a.rows} rows a tile")
+
+
+def structure(S, particles, name):
+    """The md.potential of PaiNN's structure (docs/ml4-ir.md, Section 8.1):
+    the embedding, the layers' context maps, edge gathers, and node maps,
+    and the readout. Takes the positions, the cell, and the atomic numbers."""
+    F = S.F
+    h = f"!md.field<@{particles}, irreps<{F}x0e + {F}x1o, ir_mul>, f64>"
+    x = f"!md.field<@{particles}, {3 * F} x f64>"
+    vh, vx = f"vector<{4 * F}xf64>", f"vector<{3 * F}xf64>"
+    lines = [
+        f"md.potential @{name}(%x: !md.field<@{particles}, 3 x f64>, %cell: !md.cell,",
+        f"                     %z: !md.field<@{particles}, i32>) -> f64 {{",
+        f"  %n = md.neighborhood %x, %cell cutoff({S.cutoff / ANGSTROM_PER_NM})"
+        f" : !md.field<@{particles}, 3 x f64> -> !md.relation<@{particles}, 2, unordered>",
+        f"  %h0 = md.map_particles gather(%z : !md.field<@{particles}, i32>) {{",
+        f"  ^bb0(%zi: i32):",
+        f"    %e = md.apply_stage @embed(%zi) : (i32) -> {vh}",
+        f"    md.yield %e : {vh}",
+        f"  }} : {h}",
+    ]
+    for k in range(S.L):
+        lines += [
+            f"  %x{k} = md.map_particles gather(%h{k} : {h}) {{",
+            f"  ^bb0(%hi: {vh}):",
+            f"    %c = md.apply_stage @ctx{k}(%hi) : ({vh}) -> {vx}",
+            f"    md.yield %c : {vx}",
+            f"  }} : {x}",
+            f"  %a{k} = md.gather_relation %n, %x, %cell gather(%x{k}, %h{k} : {x}, {h})"
+            f" exchange(none) {{",
+            f"  ^bb0(%r: f64, %d: vector<3xf64>, %xi: {vx}, %xj: {vx}, %hi: {vh}, %hj: {vh}):",
+            f"    %m = md.apply_stage @edge{k}(%r, %d, %xj, %hj)"
+            f" : (f64, vector<3xf64>, {vx}, {vh}) -> {vh}",
+            f"    md.yield %m : {vh}",
+            f"  }} : !md.relation<@{particles}, 2, unordered>, !md.field<@{particles}, 3 x f64>"
+            f" -> {h}",
+            f"  %h{k + 1} = md.map_particles gather(%h{k}, %a{k} : {h}, {h}) {{",
+            f"  ^bb0(%hi: {vh}, %ai: {vh}):",
+            f"    %u = md.apply_stage @node{k}(%hi, %ai) : ({vh}, {vh}) -> {vh}",
+            f"    md.yield %u : {vh}",
+            f"  }} : {h}",
+        ]
+    lines += [
+        f"  %u = md.sum_particles gather(%h{S.L} : {h}) {{",
+        f"  ^bb0(%hi: {vh}):",
+        f"    %e = md.apply_stage @readout(%hi) : ({vh}) -> f64",
+        f"    md.yield %e : f64",
+        f"  }} : f64",
+        f"  md.return %u : f64",
+        f"}}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+HARNESS_HELPERS = """
+func.func private @printF64(f64)
+func.func private @printNewline()
+
+// 1 if every element of `values` is within `tolerance` of `reference`,
+// relative to the largest element of the reference; then the largest
+// difference, relative to it.
+func.func @agrees(%values: memref<?xf64>, %reference: memref<?xf64>,
+                  %tolerance: f64) -> (f64, f64) {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %zero = arith.constant 0.0 : f64
+  %n = memref.dim %values, %c0 : memref<?xf64>
+  %largest = scf.for %i = %c0 to %n step %c1 iter_args(%m = %zero) -> (f64) {
+    %v = memref.load %reference[%i] : memref<?xf64>
+    %a = math.absf %v : f64
+    %b = arith.maximumf %m, %a : f64
+    scf.yield %b : f64
+  }
+  %worst = scf.for %i = %c0 to %n step %c1 iter_args(%m = %zero) -> (f64) {
+    %v = memref.load %values[%i] : memref<?xf64>
+    %r = memref.load %reference[%i] : memref<?xf64>
+    %d = arith.subf %v, %r : f64
+    %a = math.absf %d : f64
+    %b = arith.maximumf %m, %a : f64
+    scf.yield %b : f64
+  }
+  %bound = arith.mulf %tolerance, %largest : f64
+  %ok = arith.cmpf ole, %worst, %bound : f64
+  %flag = arith.uitofp %ok : i1 to f64
+  %relative = arith.divf %worst, %largest : f64
+  return %flag, %relative : f64, f64
+}
+
+func.func @report(%flag: f64, %difference: f64) {
+  func.call @printF64(%flag) : (f64) -> ()
+  func.call @printNewline() : () -> ()
+  func.call @printF64(%difference) : (f64) -> ()
+  func.call @printNewline() : () -> ()
+  return
+}
+"""
+
+
+def dense(values, ty):
+    return "dense<[" + ", ".join(format(float(v), ".17e") if ty == "f64" else str(int(v))
+                                 for v in np.ravel(values)) + f"]> : vector<{np.size(values)}x{ty}>"
+
+
+def cmd_harness(a):
+    """A `main` that evaluates the potential on a water lattice through
+    md.evaluate and prints, for the energy, the forces, and the virial,
+    1 if they agree with `compose` (the JAX stages with MDIR's reverse
+    rules, independently of MDIR) within the tolerance, and the largest
+    difference relative to the largest value."""
+    w = dict(np.load(a.weights, allow_pickle=True))
+    S = Stages(w)
+    rng = np.random.default_rng(a.seed)
+    n = a.waters
+    side = int(np.ceil(n ** (1 / 3)))
+    length = side * a.spacing  # Angstrom
+    h2o = np.array([[0.0, 0.0, 0.119262], [0.0, 0.763239, -0.477047],
+                    [0.0, -0.763239, -0.477047]])
+    sites = [(i, j, k) for i in range(side) for j in range(side) for k in range(side)][:n]
+    pos = []
+    for s in sites:
+        q, _ = np.linalg.qr(rng.normal(size=(3, 3)))
+        pos.extend((np.array(s) + 0.5) * a.spacing + rng.normal(0, 0.15, 3) + (h2o - h2o[0]) @ q.T)
+    pos = np.round(np.array(pos) / ANGSTROM_PER_NM, 7)
+    cell = np.diag([length / ANGSTROM_PER_NM] * 3)
+    z = np.array([8, 1, 1] * n, np.int32)
+    e, f, v, npairs = compose(S, z, pos, cell)
+    count = len(z)
+    p = a.set
+    print(f"// The harness of painn-stages.py: {count} atoms, {npairs} directed pairs,")
+    print(f"// a cubic cell of {cell[0, 0]:.4f} nm; references from the JAX stages.")
+    print(f"!hvec = !md.field<@{p}, 3 x f64>")
+    print(f"!hz = !md.field<@{p}, i32>")
+    print(HARNESS_HELPERS)
+    print(f"""func.func @main() {{
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %c9 = arith.constant 9 : index
+  %cf = arith.constant {3 * count} : index
+  %count = arith.constant {count} : index
+  %xb = memref.alloc(%count) : memref<?x3xf64>
+  %zb = memref.alloc(%count) : memref<?xi32>
+  %xs = arith.constant {dense(pos, "f64")}
+  %zs = arith.constant {dense(z, "i32")}
+  scf.for %i = %c0 to %count step %c1 {{
+    %zi = vector.extract %zs[%i] : i32 from vector<{count}xi32>
+    memref.store %zi, %zb[%i] : memref<?xi32>
+    %base = arith.muli %i, %c3 : index
+    scf.for %k = %c0 to %c3 step %c1 {{
+      %q = arith.addi %base, %k : index
+      %v = vector.extract %xs[%q] : f64 from vector<{3 * count}xf64>
+      memref.store %v, %xb[%i, %k] : memref<?x3xf64>
+    }}
+  }}
+  %x = mdrt.from_buffer %xb : memref<?x3xf64> to !hvec
+  %z = mdrt.from_buffer %zb : memref<?xi32> to !hz
+  %edge = arith.constant {float(cell[0, 0]):.17e} : f64
+  %cell = md.orthorhombic_cell %edge, %edge, %edge
+  %u, %f, %w = md.evaluate @{a.name}(%x, %cell, %z)
+      request [energy, forces, virial]
+      : (!hvec, !md.cell, !hz) -> (f64, !hvec, vector<9xf64>)
+  %fb = mdrt.to_buffer %f : !hvec to memref<?x3xf64>
+  %ub = memref.alloc(%c1) : memref<?xf64>
+  %ur = memref.alloc(%c1) : memref<?xf64>
+  memref.store %u, %ub[%c0] : memref<?xf64>
+  %u_ref = arith.constant {float(e):.17e} : f64
+  memref.store %u_ref, %ur[%c0] : memref<?xf64>
+  %fv = memref.alloc(%cf) : memref<?xf64>
+  %fr = memref.alloc(%cf) : memref<?xf64>
+  %f_ref = arith.constant {dense(f, "f64")}
+  scf.for %i = %c0 to %count step %c1 {{
+    scf.for %k = %c0 to %c3 step %c1 {{
+      %p0 = arith.muli %i, %c3 : index
+      %q = arith.addi %p0, %k : index
+      %v = memref.load %fb[%i, %k] : memref<?x3xf64>
+      memref.store %v, %fv[%q] : memref<?xf64>
+      %r = vector.extract %f_ref[%q] : f64 from vector<{3 * count}xf64>
+      memref.store %r, %fr[%q] : memref<?xf64>
+    }}
+  }}
+  %wv = memref.alloc(%c9) : memref<?xf64>
+  %wr = memref.alloc(%c9) : memref<?xf64>
+  %w_ref = arith.constant {dense(v, "f64")}
+  scf.for %k = %c0 to %c9 step %c1 {{
+    %v = vector.extract %w[%k] : f64 from vector<9xf64>
+    memref.store %v, %wv[%k] : memref<?xf64>
+    %r = vector.extract %w_ref[%k] : f64 from vector<9xf64>
+    memref.store %r, %wr[%k] : memref<?xf64>
+  }}
+  %tolerance = arith.constant {a.tolerance:.17e} : f64
+  %e_ok, %e_d = func.call @agrees(%ub, %ur, %tolerance)
+      : (memref<?xf64>, memref<?xf64>, f64) -> (f64, f64)
+  %f_ok, %f_d = func.call @agrees(%fv, %fr, %tolerance)
+      : (memref<?xf64>, memref<?xf64>, f64) -> (f64, f64)
+  %w_ok, %w_d = func.call @agrees(%wv, %wr, %tolerance)
+      : (memref<?xf64>, memref<?xf64>, f64) -> (f64, f64)
+  func.call @report(%e_ok, %e_d) : (f64, f64) -> ()
+  func.call @report(%f_ok, %f_d) : (f64, f64) -> ()
+  func.call @report(%w_ok, %w_d) : (f64, f64) -> ()
+  return
+}}""")
 
 
 def main():
@@ -502,8 +704,22 @@ def main():
     s.add_argument("--rows", type=int, required=True)
     s.add_argument("--stablehlo-opt", default="stablehlo-opt")
     s.add_argument("--workdir", default=None)
+    s.add_argument("--set", default="atoms", help="the particle set of the fields")
+    s.add_argument("--name", default="painn", help="the name of the potential")
+    s = sub.add_parser("harness")
+    s.add_argument("weights")
+    s.add_argument("--waters", type=int, default=27)
+    s.add_argument("--spacing", type=float, default=3.4, help="Angstrom")
+    s.add_argument("--seed", type=int, default=1)
+    s.add_argument("--tolerance", type=float, default=1e-5)
+    s.add_argument("--set", default="atoms")
+    s.add_argument("--name", default="painn")
     a = p.parse_args()
-    if a.cmd == "weights":
+    if a.cmd == "harness":
+        import jax
+        jax.config.update("jax_platforms", "cpu")
+        cmd_harness(a)
+    elif a.cmd == "weights":
         w = (synthetic_weights(*a.synthetic) if a.synthetic
              else weights_from_checkpoint(a.checkpoint))
         np.savez(a.output, **w)

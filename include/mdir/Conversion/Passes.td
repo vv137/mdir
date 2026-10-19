@@ -240,6 +240,35 @@ def SeparateSinCos : Pass<"separate-sin-cos", "::mlir::ModuleOp"> {
                            "::mlir::vector::VectorDialect"];
 }
 
+def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
+  let summary = "Lowers the batched bodies of neural stages to buffers";
+  let description = [{
+    The batched bodies of `md.stage` (D[ml4-batched-bodies],
+    docs/ml4-ir.md, Section 8.3), functions of `linalg` on tensors with a
+    static number of rows, become functions of buffers that the tiles of a
+    loop call: elementwise ops are fused, the bodies are bufferized with
+    their results as buffers that the caller passes after the operands, and
+    the `linalg` ops become parallel loops. With `device`, each parallel
+    loop becomes one kernel of a thread for each of its iterations, the
+    constants of the body go into the kernels that read them, and the
+    body's intermediate buffers are allocated on the device for the call.
+    The bodies are marked `md.stage_body`, which the lowerings of the loops
+    do not lower further. Run it before `convert-md-exec-to-gpu`.
+  }];
+  let options = [
+    Option<"device", "device", "bool", /*default=*/"true",
+           "Run the bodies' loops as kernels of the device">,
+    Option<"blockSize", "block-size", "int64_t", /*default=*/"256",
+           "The threads of a block of a body's kernel">,
+  ];
+  let dependentDialects = [
+    "::mlir::arith::ArithDialect", "::mlir::bufferization::BufferizationDialect",
+    "::mlir::gpu::GPUDialect", "::mlir::linalg::LinalgDialect",
+    "::mlir::memref::MemRefDialect", "::mlir::scf::SCFDialect",
+    "::mlir::tensor::TensorDialect"
+  ];
+}
+
 def ConvertMDExecToGPU
     : Pass<"convert-md-exec-to-gpu", "::mlir::ModuleOp"> {
   let summary = "Converts md_exec loops in the storage form to GPU kernels";

@@ -58,7 +58,7 @@ func.func @b(%x: f64, %z: i32, %y: vector<2xf64>) -> (f64, i32) {
 
 // -----
 
-// expected-error@+1 {{cannot bind the declaration 'f' as its forward body: only a body in the module is lowered (an external body, such as an AOTInductor export, is step 4 of #377)}}
+// expected-error@+1 {{cannot bind the declaration 'f' as its forward body: only a body in the module is lowered (an external body, such as an AOTInductor export, is step 4b of #377)}}
 md.stage @s forward(@f) : (f64) -> f64
 func.func private @f(f64) -> f64
 

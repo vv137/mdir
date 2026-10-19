@@ -37,6 +37,7 @@ configure_file(
 
 add_mlir_conversion_library(MDIRMDExecToGPU
   MDExecToGPU.cpp
+  StageBodies.cpp
   ${CMAKE_CURRENT_BINARY_DIR}/Templates.cpp
 
   ADDITIONAL_HEADER_DIRS
@@ -51,6 +52,15 @@ add_mlir_conversion_library(MDIRMDExecToGPU
   MDIRMDExecKernels
   MDIRMDRT
   MLIRArithDialect
+  MLIRArithTransforms
+  MLIRBufferizationDialect
+  MLIRBufferizationTransforms
+  MLIRFuncTransforms
+  MLIRLinalgDialect
+  MLIRLinalgTransforms
+  MLIRTensorDialect
+  MLIRTensorTransforms
+  MLIRTransforms
   MLIRFuncDialect
   MLIRGPUDialect
   MLIRGPUTransforms
