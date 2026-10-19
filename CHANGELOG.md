@@ -650,6 +650,18 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The prolate kernel against the Gaussian, measured again with tiled
+  spreading** (D266, D282; `docs/pme-m1.md`, Section 7; documentation
+  only). MDIR's whole step on JAC, Cellulose, and STMV, on an RTX 4090 and
+  an RTX PRO 6000, each comparison within one job. The prolate kernel takes:
+  - 1.17 to 1.44 times the Gaussian default's time at the standard
+    accuracy ($\Delta \approx 10^{-3}$);
+  - 0.94 to 1.15 times that of order 6 at $10^{-4}$;
+  - 0.84 to 1.02 times that of the faster of orders 6 and 8 at $10^{-5}$.
+
+  The measurement without tiles gave 1.21 to 1.41, 1.04 to 1.21, and 0.85
+  to 1.07. The Gaussian kernel stays the default.
+
 - **The batched bodies of neural stages are fused further**
   (`D299`, #462,
   [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)):

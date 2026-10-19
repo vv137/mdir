@@ -880,14 +880,15 @@ $P - 1$ layers beyond a domain on each side, 5 for $P = 6$, as many as
 order 6 and two more than order 4. On one device the smaller grid saves the
 transform, a small part of the step, and the spreading of $P^3$ points
 costs more. MDIR's whole step in mixed precision (JAC, Cellulose, STMV;
-an RTX 4090 and an RTX PRO 6000, each comparison on one device) takes 1.2
-to 1.4 times as long with the prolate kernel at $\Delta \approx 10^{-3}$,
-the tier of the standard settings of pmemd, GROMACS, and MDIR, 1.04 to 1.21 times at $\Delta \approx 10^{-4}$, and 0.85 to 1.07
-times at $10^{-5}$ against the faster of orders 6 and 8 (the table, with
-the grids, is in `docs/pme-m1.md`, Section 7). The
-Gaussian kernel stays the default. Spreading through tiles of block memory
-(Section 5.3, D282) serves both kernels: with it the prolate
-default takes 0.83 to 0.87 times the step without tiles on Factor IX,
-Cellulose, and STMV (RTX 4090), its spreading 72, 209, and 540 µs a step
-against 137, 585, and 1640; the ratios to the Gaussian above were measured
-without tiles.
+an RTX 4090 and an RTX PRO 6000, each comparison within one job on one
+device; `main` at 0a336ff9, with tiled spreading where its rule takes it,
+Section 5.3, D282) takes 1.17 to 1.44 times as long with the prolate kernel
+at $\Delta \approx 10^{-3}$, the tier of the standard settings of pmemd,
+GROMACS, and MDIR, as with the Gaussian default (order 4); 0.94 to 1.15
+times as long at $\Delta \approx 10^{-4}$ as order 6; and 0.84 to 1.02
+times at $10^{-5}$ as the faster of orders 6 and 8, faster on Cellulose and
+STMV (the table, with the grids, is in `docs/pme-m1.md`, Section 7). The
+Gaussian kernel stays the default. The tiles serve both kernels: with them
+the prolate default took 0.83 to 0.87 times the step without tiles on
+Factor IX, Cellulose, and STMV (RTX 4090), its spreading 72, 209, and
+540 µs a step against 137, 585, and 1640.

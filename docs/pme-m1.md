@@ -538,49 +538,71 @@ falls only to 6.4 × 10⁻¹⁰ on 500³). STMV takes 180³ at the default.
 
 **The whole step at the same $\Delta$.** MDIR's step in mixed precision
 (JAC NVE 2 fs, Cellulose NVE 2 fs, STMV NPT 4 fs; the settings of the
-Amber suite but `[pme]`), ms/step, the mean of the rounds alternated in
-one job after the first (5 on JAC and Cellulose; 4 or 5 on STMV, whose
-jobs reached their time limit; the spread of the rounds is 0.1 to 0.5%), each column on one device kind. $\Delta$ is that
-of the kernel in double at the grid that ran; on STMV it is not measured
-(its grids follow by the spacing of JAC). The binary is that of b449357f (5506216c after the rebase on `main`), the head of the branch before
-the grid rule and the window were changed, with the grids given by their
-spacing (the window's change costs no time). "Points" is the size of the grid, the data that the transposes of a
+Amber suite but `[pme]`, with the fixed reaches of the suite, 11 and 8.6 Å,
+9.2 Å for STMV), ms/step. Each system on each device kind is one job that
+alternates the cases in 5 rounds; the first is dropped and the mean of
+the other 4 is given. The relative standard deviation of the rounds is at most 2.1%
+(JAC, prolate $10^{-3}$, RTX 4090) and below 1% for 44 of the 48
+cases. The STMV job on the RTX PRO 6000 reached its time limit before it
+wrote the summary of its last case; that case's four rounds are read from
+the job's log. The binary is `main` at 0a336ff9, with tiled spreading
+(Section 3.3, D282) where its rule takes it: on grids in f32 of at least
+500,000 points, for both kernels. The control files are those of
+`scripts/benchmarks/prolate-ewald/perf_cases.py`, each grid given by its
+spacing. The prolate grid is the one that the current rule takes with that
+spacing as its bound, so two grids are finer than in the measurement
+before the rule changed: Cellulose at $10^{-4}$ (140×70×64, was
+126×64×60) and STMV at the default (180×180×192, was 180³). $\Delta$ is
+that of the kernel in double at the grid that ran (from the sweeps above);
+it is not measured for those two grids, nor for STMV. The Gaussian grids
+follow from the same spacings as before; the run does not print them.
+"Points" is the size of the grid: the data that the transposes of a
 distributed transform move.
 
 | System | Tier (measured Δ) | Kernel, tolerance | Grid | Points | Δ | RTX 4090 | RTX PRO 6000 |
 |---|---|---|---|---|---|---|---|
-| JAC | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 54³ | 157,464 | 1.4 × 10⁻³ | 0.132 | 0.114 |
-| JAC | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 64³ | 262,144 | 7.3 × 10⁻⁴ | 0.133 | 0.114 |
-| JAC | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 28³ | 21,952 | 7.4 × 10⁻⁴ | 0.160 | 0.144 |
-| JAC | ≈ 10⁻⁴ | Gaussian order 4, erfc 10⁻⁵ | 98³ | 941,192 | 1.1 × 10⁻⁴ | 0.175 | 0.143 |
-| JAC | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 70³ | 343,000 | 6.7 × 10⁻⁵ | 0.166 | 0.133 |
-| JAC | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 32³ | 32,768 | 7.8 × 10⁻⁵ | 0.189 | 0.161 |
-| JAC | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 96³ | 884,736 | 8.5 × 10⁻⁶ | 0.182 | 0.147 |
-| JAC | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 70³ | 343,000 | 1.1 × 10⁻⁵ | 0.197 | 0.152 |
-| JAC | ≈ 10⁻⁵ | **Prolate default, P = 6** | 50³ | 125,000 | 1.04 × 10⁻⁵ | 0.177 | 0.152 |
-| JAC | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 42³ | 74,088 | 7.2 × 10⁻⁶ | 0.200 | 0.163 |
-| JAC | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 40³ | 64,000 | 7.1 × 10⁻⁶ | 0.225 | 0.182 |
-| Cellulose | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 224×108×108 | 2,612,736 | 1.5 × 10⁻³ | 1.449 | 1.105 |
-| Cellulose | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 256×128×128 | 4,194,304 | 7.9 × 10⁻⁴ | 1.478 | 1.107 |
-| Cellulose | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 100×50×48 | 240,000 | 9.7 × 10⁻⁴ | 1.939 | 1.558 |
-| Cellulose | ≈ 10⁻⁴ | Gaussian order 4, erfc 10⁻⁵ | 400×196×192 | 15,052,800 | 1.2 × 10⁻⁴ | 2.258 | 1.475 |
-| Cellulose | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 294×144×140 | 5,927,040 | 6.1 × 10⁻⁵ | 2.072 | 1.495 |
-| Cellulose | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 126×64×60 | 483,840 | 9.0 × 10⁻⁵ | 2.193 | 1.688 |
-| Cellulose | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 378×192×180 | 13,063,680 | 1.05 × 10⁻⁵ | 2.282 | 1.651 |
-| Cellulose | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 294×144×140 | 5,927,040 | 1.0 × 10⁻⁵ | 2.621 | 1.817 |
-| Cellulose | ≈ 10⁻⁵ | **Prolate 10⁻⁵, P = 6** | 210×108×100 | 2,268,000 | 1.06 × 10⁻⁵ | 2.155 | 1.765 |
-| Cellulose | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 168×84×80 | 1,128,960 | 8.0 × 10⁻⁶ | 2.695 | 2.010 |
-| Cellulose | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 150×80×72 | 864,000 | 8.0 × 10⁻⁶ | 2.914 | 2.141 |
-| STMV | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 192³ | 7,077,888 | — | 4.489 | 3.432 |
-| STMV | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 224×224×240 | 12,042,240 | — | 4.836 | 3.656 |
-| STMV | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 90³ | 729,000 | — | 5.714 | 4.644 |
-| STMV | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 6.191 | 4.437 |
-| STMV | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 120³ | 1,728,000 | — | 6.424 | 5.060 |
-| STMV | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 320×324×336 | 34,836,480 | — | 8.062 | 5.572 |
-| STMV | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 7.572 | 5.278 |
-| STMV | ≈ 10⁻⁵ | **Prolate default, P = 6** | 180³ | 5,832,000 | — | 6.439 | 5.279 |
-| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 7 | 144×144×150 | 3,110,400 | — | 7.592 | 5.689 |
-| STMV | ≈ 10⁻⁵ | Prolate 10⁻⁵, P = 8 | 128×140×140 | 2,508,800 | — | 8.267 | 5.973 |
+| JAC | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 54³ | 157,464 | 1.4 × 10⁻³ | 0.135 | 0.116 |
+| JAC | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 64³ | 262,144 | 7.3 × 10⁻⁴ | 0.136 | 0.117 |
+| JAC | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 28³ | 21,952 | 7.4 × 10⁻⁴ | 0.162 | 0.136 |
+| JAC | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 70³ | 343,000 | 6.7 × 10⁻⁵ | 0.170 | 0.135 |
+| JAC | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 32³ | 32,768 | 7.8 × 10⁻⁵ | 0.191 | 0.155 |
+| JAC | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 96³ | 884,736 | 8.5 × 10⁻⁶ | 0.177 | 0.153 |
+| JAC | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 70³ | 343,000 | 1.1 × 10⁻⁵ | 0.202 | 0.154 |
+| JAC | ≈ 10⁻⁵ | **Prolate default, P = 6** | 50³ | 125,000 | 1.04 × 10⁻⁵ | 0.180 | 0.146 |
+| Cellulose | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 224×108×108 | 2,612,736 | 1.5 × 10⁻³ | 1.117 | 1.005 |
+| Cellulose | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 256×128×128 | 4,194,304 | 7.9 × 10⁻⁴ | 1.153 | 1.031 |
+| Cellulose | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 100×50×48 | 240,000 | 9.7 × 10⁻⁴ | 1.613 | 1.324 |
+| Cellulose | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 294×144×140 | 5,927,040 | 6.1 × 10⁻⁵ | 1.511 | 1.379 |
+| Cellulose | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 140×70×64 | 627,200 | not measured | 1.600 | 1.397 |
+| Cellulose | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 378×192×180 | 13,063,680 | 1.05 × 10⁻⁵ | 1.801 | 1.594 |
+| Cellulose | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 294×144×140 | 5,927,040 | 1.0 × 10⁻⁵ | 1.888 | 1.664 |
+| Cellulose | ≈ 10⁻⁵ | **Prolate 10⁻⁵, P = 6** | 210×108×100 | 2,268,000 | 1.06 × 10⁻⁵ | 1.506 | 1.397 |
+| STMV | ≈ 10⁻³, standard | Gaussian default, erfc 10⁻⁵ | 192³ | 7,077,888 | — | 3.620 | 3.071 |
+| STMV | ≈ 10⁻³, standard | Gaussian, the suite's (pmemd's) | 224×224×240 | 12,042,240 | — | 3.974 | 3.321 |
+| STMV | ≈ 10⁻³, standard | Prolate 10⁻³, P = 5 | 90³ | 729,000 | — | 4.286 | 3.644 |
+| STMV | ≈ 10⁻⁴ | Gaussian order 6, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 4.790 | 3.963 |
+| STMV | ≈ 10⁻⁴ | Prolate 10⁻⁴, P = 6 | 120³ | 1,728,000 | — | 4.480 | 3.941 |
+| STMV | ≈ 10⁻⁵ | Gaussian order 6, erfc 10⁻⁶ | 320×324×336 | 34,836,480 | — | 6.711 | 5.128 |
+| STMV | ≈ 10⁻⁵ | Gaussian order 8, erfc 10⁻⁶ | 250×252×256 | 16,128,000 | — | 5.878 | 4.731 |
+| STMV | ≈ 10⁻⁵ | **Prolate default, P = 6** | 180×180×192 | 6,220,800 | — | 4.934 | 4.305 |
+
+The ratios of the prolate kernel's step to the Gaussian's, each within one
+job:
+
+| Tier | Against | JAC 4090 | JAC 6000 | Cellulose 4090 | Cellulose 6000 | STMV 4090 | STMV 6000 |
+|---|---|---|---|---|---|---|---|
+| ≈ 10⁻³ | the Gaussian default (order 4) | 1.20 | 1.17 | 1.44 | 1.32 | 1.18 | 1.19 |
+| ≈ 10⁻⁴ | order 6 | 1.12 | 1.15 | 1.06 | 1.01 | 0.94 | 0.99 |
+| ≈ 10⁻⁵ | the faster of orders 6 and 8 | 1.02 | 0.95 | 0.84 | 0.88 | 0.84 | 0.91 |
+
+The measurement of b449357f, without tiles and before the grid rule and
+the window changed, gave 1.21 to 1.41, 1.04 to 1.21, and 0.85 to 1.07 for
+the three tiers; it also had the Gaussian of order 4 at $10^{-4}$, slower
+than order 6 on JAC and on Cellulose except on the RTX PRO 6000 (not
+measured on STMV), and $P$ = 7 and 8 at $10^{-5}$, slower than $P = 6$ everywhere. Those
+cases were not measured again. Between the two measurements the times of
+every case moved with `main` (the Gaussian default on Cellulose, RTX 4090:
+1.449 to 1.117 ms), so only the ratios within one job are compared.
 
 **The grid points at the same $\Delta$.** The prolate kernel has 7.1
 (JAC), 5.8 (Cellulose; 6.6 at its automatic 210×98×96), and 6.0 (STMV)
@@ -595,21 +617,20 @@ spreading reaches $P - 1$ layers of the grid beyond a domain on each side:
 
 **Reading.** The standard production settings of pmemd, GROMACS, and
 MDIR all lie in the tier $\Delta \approx 10^{-3}$, where the prolate
-kernel's step is 21 to 41% slower on one device than the Gaussian's; it is
-1.04 to 1.2 times
-slower at $10^{-4}$ (against order 6), and from 15% faster (STMV, RTX 4090)
-to 7% slower (Cellulose, RTX PRO 6000) at $10^{-5}$ against the faster of
-orders 6 and 8. $P$ = 7 and 8, on their smaller grids, are slower than
-$P = 6$ everywhere, which stays the default. The order-4 path is unchanged:
-the Gaussian default and the suite's settings take the time of `main`
-within 1% on every system and device. The loop over pairs takes 44.2 µs on
-JAC (RTX 4090) against 42.4 µs with the Gaussian, since its tables read 4
-coefficients a pair in f32. These timings are without tiles. Tiled
-spreading (Section 3.3, D282) serves both kernels: on a grid in
-f32 of at least 500,000 points the prolate default takes 0.83 to 0.87
-times the step without tiles on Factor IX, Cellulose, and STMV (RTX
-4090), and the Gaussian of orders 6 and 8 0.79 to 0.85; the comparison of
-the kernels is still to be made again with the tiles.
+kernel's step is 1.17 to 1.44 times the Gaussian default's on one device.
+At $10^{-4}$ it is 0.94 to 1.15 times that of order 6, and at $10^{-5}$
+0.84 to 1.02 times the faster of orders 6 and 8: faster on Cellulose and
+STMV on both device kinds, 1.02 (RTX 4090) and 0.95 (RTX PRO 6000) on JAC.
+The tiles serve both kernels (on Cellulose the Gaussian default is tiled
+too, its grid having 2.6 million points). Against the measurement without
+tiles, the ratio at $10^{-3}$ on Cellulose rose on the RTX 4090 (1.34 to
+1.44) and fell on the RTX PRO 6000 (1.41 to 1.32); at $10^{-4}$ and
+$10^{-5}$ it fell on Cellulose and STMV in every case but Cellulose at
+$10^{-4}$ on the RTX 4090 (1.06 in both). The cause of each change is not
+separated: the binaries differ in more than the tiles. The loop over pairs
+of the prolate kernel took 44.2 µs on JAC (RTX 4090, b449357f) against
+42.4 µs with the Gaussian, its tables reading 4 coefficients a pair in f32.
+The Gaussian kernel stays the default.
 
 **On the CPU target (issue #371).** With PME on the host in parallel
 (D271), the comparison was repeated on the CPU target. The runs are
