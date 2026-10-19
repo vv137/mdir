@@ -1,0 +1,68 @@
+# The adjoint identities of transposes.mlir on domains (D[md-dist-transposes]):
+# md-distribute rewrites the potentials whose derivatives are checked into
+# md_dist, and md-differentiate takes the transposes of the loops of md_dist
+# (sum_pairs, gather_pairs, sum_particles, map_particles) and of the
+# transfers (D276) from their declarations. The directions δU[v] stay
+# global, written by hand: an independent reference. Each check prints 1 if
+# δU[v] = −<F, v> to a relative 1e-12 of the larger.
+#
+# Grids of 2 and 3x2 domains, on the directed traversal, with and without
+# md-dist-owner-computes, and on the unique traversal, which refuses a pair
+# sum of a field of the positions (D279) and so leaves @pair_field out.
+#
+# RUN: mdir-opt %S/transposes.mlir \
+# RUN:     --md-distribute="grid=2,1,1 traversal=directed potentials=pair,density,embed,pair_field" \
+# RUN:     %md_passes --convert-md-dist-to-loops \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm > %t.directed.mlir
+# RUN: mdir-opt %S/transposes.mlir \
+# RUN:     --md-distribute="grid=3,2,1 traversal=directed potentials=pair,density,embed,pair_field" \
+# RUN:     %md_passes --md-dist-owner-computes --convert-md-dist-to-loops \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm > %t.owner.mlir
+# RUN: mdir-opt %S/transposes.mlir \
+# RUN:     --md-distribute="grid=3,2,1 traversal=unique potentials=pair,density,embed" \
+# RUN:     %md_passes --convert-md-dist-to-loops \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm > %t.unique.mlir
+#
+# The forces of each pair on domains: sum_pairs (the positions), gather_pairs
+# with sum_particles and with map_particles (a density), and sum_pairs of a
+# density read at both ends (its derivative in the field at the owners).
+# RUN: mlir-runner %t.directed.mlir -e sum_relation --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=TWO
+# RUN: mlir-runner %t.directed.mlir -e gather_relation --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
+# RUN: mlir-runner %t.directed.mlir -e map_particles --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
+# RUN: mlir-runner %t.directed.mlir -e pair_of_field --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
+# RUN: mlir-runner %t.owner.mlir -e sum_relation --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=TWO
+# RUN: mlir-runner %t.owner.mlir -e gather_relation --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
+# RUN: mlir-runner %t.owner.mlir -e map_particles --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
+# RUN: mlir-runner %t.owner.mlir -e pair_of_field --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
+# RUN: mlir-runner %t.unique.mlir -e sum_relation --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=TWO
+# RUN: mlir-runner %t.unique.mlir -e gather_relation --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
+# RUN: mlir-runner %t.unique.mlir -e map_particles --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s --check-prefix=ONE
+#
+# The second check of sum_relation is the derivative of @pair_q in a field,
+# which stays global (md_dist has no derivative in a field yet, D276).
+#
+# ONE: 1
+# ONE-NOT: {{.}}
+# TWO: 1
+# TWO-NEXT: 1
+# TWO-NOT: {{.}}
+#
+# The declared transposes cover the loops of md_dist: the check passes on
+# the potentials on domains.
+# RUN: mdir-opt %S/transposes.mlir \
+# RUN:     --md-distribute="grid=3,2,1 traversal=directed potentials=pair,density,embed,pair_field" \
+# RUN:     --md-check-transposes -o /dev/null
