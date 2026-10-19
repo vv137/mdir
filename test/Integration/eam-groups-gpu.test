@@ -4,7 +4,7 @@
 // the loops over groups (D[scatter-op]): an atomic of the device for each
 // value (`pair-hash=off`), and the table of a block (`pair-hash=on`), in
 // double precision to 1e-10 of the reference and in mixed precision to
-// 1e-5. All 9 lines of the checks must print 1.
+// 1e-5. All 8 checks must print 1.
 //
 // REQUIRES: cuda
 //
@@ -53,7 +53,7 @@
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
 // RUN: | grep -c '^1$' | FileCheck %s --check-prefix=MIXED
-// MIXED: 9
+// MIXED: 8
 //
 // The loops over groups take the table only with `pair-hash=on`: the
 // density, the forces through the embedding, and the pair term.

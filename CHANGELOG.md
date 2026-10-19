@@ -42,6 +42,23 @@ format, or the outputs; every such change is listed under **Changed** or
   policy `(directed, atomic)`, which adds at the neighbor as well. No
   control-file key or output changes, and the modules of existing programs
   are unchanged.
+- **`md_exec.scatter_add`, a scatter-accumulate of its own, and one
+  emitter of the privatized table** (D[scatter-op], #416 step 3, PR #445,
+  [docs/device-primitives.md](docs/device-primitives.md)):
+  - `md_exec.scatter_add %values at %indices into %dest`, with
+    `overwrite(...)` and `scatter(atomic | hash(S, P, L))`, lowered on the
+    CPU and on a device. Its first site is `halo_sum` of the distributed
+    path.
+  - The table of a block is one emitter (`ScatterEmitter.h`). The tuples'
+    table moved onto it with byte-identical generated code.
+  - The loops over groups take `scatter(...)` as well (`pair-hash` of
+    `md-exec-choose-scatter`, `MDIR_PAIR_SUMS`). This is off by default:
+    on an RTX 4090 the table made the step of the Amber suite 1.18 to 1.32
+    times as long, and an evaluation of EAM 1.49 times as long in mixed
+    precision.
+
+  No key of the control file and no output changes.
+
 - **Baselines of ML4: a pretrained PaiNN and a pretrained MACE through the
   model term** (D286, #377, PR #436,
   [docs/ml4-baselines.md](docs/ml4-baselines.md)):
