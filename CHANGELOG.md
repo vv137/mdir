@@ -25,8 +25,9 @@ format, or the outputs; every such change is listed under **Changed** or
   SchNetPack, and exports it through StableHLO, which `stablehlo-opt`
   legalizes to `linalg` at export. On an RTX 4090 it takes 1.4 to 2.1 kB
   of device memory a pair of liquid water from 6,144 atoms up, against
-  61 kB for the opaque call, and about 10 µs a pair, 13 to 20 times the
-  opaque call's. `MDIR_DEVICE_MEMORY` prints the peaks of the runtime's
+  61 kB for the opaque call, and about 10 µs a pair, about 20 times the
+  opaque call's; it ran 196,608 atoms in 13.6 GiB, 32 times the opaque
+  call's largest system on 24 GB. `MDIR_DEVICE_MEMORY` prints the peaks of the runtime's
   device allocator; `scripts/mlip/water-box.py --painn-dtype float64`
   gives SchNetPack's reference in float64; `check-model-term.py` and
   `model-sweep.py` take models in stages. No existing key changes.

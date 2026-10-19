@@ -393,7 +393,7 @@ the fields of the particles: nablaDFT's PaiNN (128 features, $N_\text{layer}
 SchNetPack's calculator in float64 to $5\times10^{-6}$ of the largest
 force and takes 1.4 to 2.1 kB of device memory a pair of liquid water from
 6,144 atoms up, against 61 kB for the opaque call, at about 10 µs a pair,
-13 to 20 times the opaque call's time with MDIR's naive lowering of
+about 20 times the opaque call's time with MDIR's naive lowering of
 `linalg` ([ml4-ir.md](../ml4-ir.md), Section 8).
 
 **Parameters.** `derivative(n)` asks $\partial U/\partial\theta_n$ of a

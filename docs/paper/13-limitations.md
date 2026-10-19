@@ -210,7 +210,7 @@ from AOTInductor or from StableHLO, which lowers through `linalg`. PaiNN
 in stages runs on one GPU (D[ml4-painn-stages],
 D[ml4-batched-bodies]): its bodies of `linalg` run in tiles of rows, and
 it takes 1.4 to 2.1 kB of device memory a pair of liquid water against the
-opaque call's 61 kB, at 13 to 20 times the opaque call's time, since
+opaque call's 61 kB, at about 20 times the opaque call's time, since
 MDIR's lowering of `linalg` neither tiles the products nor fuses the
 bodies' kernels, and the tiles run on a device only. What is left on one
 GPU is MACE in stages, AOTInductor's bodies against these, a scatter that

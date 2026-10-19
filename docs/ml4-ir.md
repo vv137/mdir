@@ -10,7 +10,7 @@ the bodies (D167); `md-differentiate` derives the rest from the structure.
 
 Status: **built** (PR #441), as ruled by the maintainer on 2026-10-19
 (Section 7). Steps 4 and 5 (PaiNN and MACE in stages) lower these ops onto
-real artifacts; step 6 distributes them. Step 4 is in **design**
+real artifacts; step 6 distributes them. Step 4a is **built**
 (Section 8).
 
 ## 1. A model in stages
@@ -447,10 +447,11 @@ belong to step 4: step 3 adds no user-visible key.
 
 ## 8. PaiNN in stages (step 4)
 
-Step 4 of #377 (`D[ml4-painn-stages]`, `D[ml4-batched-bodies]`;
-**design**, draft PR): the stages of a pretrained PaiNN, nablaDFT's
-`painn_100k` of D286, exported from its weights and lowered through
-MDIR's pipeline, against the opaque call of the same checkpoint.
+Step 4 of #377 (`D[ml4-painn-stages]`, `D[ml4-batched-bodies]`, PR #447):
+the stages of a pretrained PaiNN, nablaDFT's `painn_100k` of D286,
+exported from its weights and lowered through MDIR's pipeline, against
+the opaque call of the same checkpoint. Status: **4a built** (Section
+8.7 says what was ruled; Section 8.8 what 4b takes).
 
 ### 8.1 The stages of PaiNN
 
@@ -478,27 +479,48 @@ atom, as in SchNetPack, not per pair: the edge stage takes $\mathbf x_j$
 gathered. The conversions of units (nm to Å, Hartree to kJ/mol) are inside
 the bodies, so that they are differentiated with them. SchNetPack's pair
 vector is $\mathbf r_{ij} = \mathbf x_j - \mathbf x_i = -\mathbf d_{ij}$.
+The 20 stages (the embedding, 6 times three, the readout) and their 19
+products make one MLIR module of 22 MB with 4,096 rows a tile.
 
 ### 8.2 Bodies from the checkpoint
 
 `scripts/mlip/painn-stages.py` reads the Lightning checkpoint with
 SchNetPack (as `painn-to-metatomic.py` does) and writes:
 
-- **The weights** and reference evaluations, in the environment of
+- **The weights** and SchNetPack's own modules evaluated on random rows,
+  with their products for random cotangents, in the environment of
   `ml4-requirements.lock`.
 - **A re-implementation of each stage in JAX**, batched over rows, its
   forward and its `jax.vjp`, from the same weights. It is the same model
-  only once shown equal (D167): each stage against SchNetPack's modules
-  on random rows, and the whole energy, forces, and virial composed from
-  the stages (with MDIR's reverse rules of Section 4.1 applied to the
-  stages' products) against SchNetPack's calculator on the 81-atom water
-  lattice of D286.
-- **The exported bodies**: `jax.export` of each stage's forward and VJP
-  as StableHLO, with a static number of rows (the tile), legalized to
-  `linalg` on tensors by StableHLO's `stablehlo-legalize-to-linalg`; the
-  weights are constants of the bodies.
+  only once shown equal (D167), which `painn-stages.py check` does:
+  - each stage against SchNetPack's modules on 64 random rows (layers 1
+    and 6): the forward to $5.0\times10^{-7}$ and the product to
+    $6.5\times10^{-7}$ of the largest value, float32's rounding;
+  - the energy, the forces, and the virial composed from the stages, with
+    the reverse rules of Section 4.1 applied to the stages' products,
+    against SchNetPack's calculator with its `Strain` input in float64
+    (`water-box.py --painn-dtype float64`), on the CPU:
+
+    | System | $\lvert\Delta E\rvert / \lvert E\rvert$ | max $\lvert\Delta F\rvert$ / max $\lvert F\rvert$ | max $\lvert\Delta W\rvert$ / max $\lvert W\rvert$ |
+    |---|---|---|---|
+    | 27 waters, cubic 15 Å, 810 directed pairs | $1.6\times10^{-8}$ | $5.4\times10^{-6}$ of 847 | $2.0\times10^{-6}$ of 571 |
+    | the same, triclinic | $6.1\times10^{-8}$ | $6.1\times10^{-6}$ | $1.8\times10^{-6}$ |
+    | 64 waters, liquid, 10,410 pairs | $4.6\times10^{-8}$ | $3.1\times10^{-6}$ of 2,227 | $1.1\times10^{-6}$ of 1,100 |
+    | 8 waters in 6.2 Å, several images | $7.3\times10^{-8}$ | $3.2\times10^{-6}$ | $9.9\times10^{-6}$ |
+
+    The stages compute in float32 and sum in float64; SchNetPack's own
+    float32 evaluation is $3.4\times10^{-5}$ of the largest force from its
+    float64 one on the first system, so the comparison is with float64.
+- **The exported bodies**: each stage's forward and product exported with
+  a static number of rows (the tile) to StableHLO, legalized to `linalg`
+  on tensors by StableHLO's `stablehlo-legalize-to-linalg` in
+  `stablehlo-opt` when the model is exported (the ruling of 2026-10-19;
+  the pinned commit and its build are in the script's documentation).
+  The weights that a body reads are its constants: a body holds its
+  layer's rows of the filter network, not the whole network.
 - **The model** as one MLIR module: the `md.stage` declarations, the
-  bodies, and an `md.potential` of the structure of Section 8.1.
+  bodies, and an `md.potential` of the structure of Section 8.1, of the
+  positions, the cell, and the atomic numbers.
 
 Weights and exported bodies are never committed.
 
@@ -506,65 +528,153 @@ Weights and exported bodies are never committed.
 
 A body of the batched form takes `tensor<T x ...>` for each value of the
 declaration (Section 2.1); it cannot run inside one thread of a fused
-kernel. A pass over `md_exec` (after `md-differentiate`, before the
-lowering to loops or a device) splits each loop whose kernel applies a
-batched stage into a host loop over tiles of $T$ rows, each in three
-phases:
+kernel. `md-inline` leaves the applications of batched stages in the
+kernels, `md-differentiate` differentiates them as any stage (Section 4),
+and the loops of `md_exec` carry them to the lowering for a device:
 
-1. **Pack**: a loop over the rows of the tile evaluates the kernel up to
-   the operands of `md.apply_stage` and writes them to row buffers;
-2. **Call**: the body, on the row buffers (`func.call` of the lowered
-   `linalg` function; an AOTInductor entry in 4b);
-3. **Unpack**: a loop over the rows evaluates the rest of the kernel
-   from the results and adds it into the destinations.
+- **`md-exec-lower-stage-bodies`** lowers the bodies to functions of
+  buffers: elementwise fusion, one-shot bufferization with the results as
+  buffers that the caller passes, `linalg` to parallel loops, and on a
+  device one kernel of a thread for each iteration of each parallel loop;
+  the constants go into the kernels that read them, and the bodies'
+  intermediate buffers are taken from the runtime's pool for the call.
+  The bodies of nablaDFT's PaiNN become 1,136 kernels.
+- **`convert-md-exec-to-gpu`** splits each loop whose kernel applies
+  batched stages into a host loop over tiles of $T$ rows. For each level of
+  the applications (0 for those whose operands depend on no other, one
+  more than the highest they depend on), a kernel packs the operands of
+  the tile's rows into buffers and the bodies are called on them; a last
+  kernel unpacks the results and runs the rest of the kernel. The fused
+  loops of `md-exec-fuse-loops` put the embedding and the first context
+  map in one kernel, two levels.
+- **The rows of a loop over pairs** are the slots of the pairs of images
+  of D277 (`md.edges`), which the loop finds at its positions: each
+  particle's pairs within the cutoff first in its slots, counted. A center
+  then adds up its rows of the tile within the cutoff, in the order of
+  its slots, in one thread: a gather, without atomics, so the results do
+  not depend on the order of the threads. The slots hold every image of a
+  neighbor (a cell narrower than twice the cutoff included, as the opaque
+  call takes it); in a cell wider than twice the cutoff there is one, the
+  minimum image of the loop's semantics. The rows beyond the slots and
+  the slots beyond the cutoff are evaluated and not read. The rows of a
+  loop over particles are particles.
+- **Wide values** (the 384 and 512 components of the features) are not
+  built as vectors in these kernels: a copy into a row and the components
+  of a wide value that the kernel yields go component by component,
+  through the elementwise ops that make it. With vectors of 512
+  components, LLVM took 18 minutes to compile the kernels of PaiNN; it
+  takes 11 seconds this way.
+- **Precision**: a body may compute in a narrower type than the
+  declaration (PaiNN's float32); the pack converts, as the opaque call
+  converts at the model's boundary, and the fields and sums keep the
+  precision of the mode. In `mixed`, the kernel's values are f32.
 
-The rows of a `pair_for` are the slots of a block of centers in the
-neighbor matrix (masked slots are padded rows whose distance the pack sets
-to the cutoff, where every body vanishes with its product); the unpack sums
-a center's rows in one thread, so the gather stays a gather (no atomics,
-deterministic). The two evaluations of the product per directed pair
-(Section 4.3) are two calls on the rows $(m, b)$ and $(b, m)$. The rows of
-a `particle_for` are particles. The form of the body changes the call
-only.
-
-The body's element type may be narrower than the declaration's (PaiNN
-is float32): the pack converts, as the opaque call converts at the
-model's boundary, and MDIR's fields and sums keep the precision of the
-mode.
+The two products of each directed pair of the gather of Section 4.3 are
+two calls on the same rows. On the CPU the loops of batched stages are
+not lowered: the slots of D277 are found on a device only.
 
 ### 8.4 Memory: what is stored
 
 Every product recomputes its forward (a VJP exported from `jax.vjp`
-does), so in 4a nothing is stored per pair: per atom, the fields of each
-layer that the backward reads ($\mathbf h$, $\mathbf x$, $\mathbf a$: 1,408
-components a layer, 34 kB an atom in float32 over six layers, about 0.65
-kB per pair of liquid water); per tile, the row buffers and the bodies'
-intermediates, a constant in the size of the system. The opaque call holds
-about 61 kB per pair (Section 2.2 of [ml4-baselines.md](ml4-baselines.md)),
-among them all six layers' filters ($6 \times 384$ values a pair).
+does), so nothing is stored per pair: per atom, the fields of each layer
+that the backward reads ($\mathbf h$, $\mathbf x$, $\mathbf a$: 1,408
+components a layer); per tile, the rows of the operands and the results
+and the bodies' intermediates, a constant in the size of the system. The
+opaque call holds about 61 kB per pair (Section 2.2 of
+[ml4-baselines.md](ml4-baselines.md)), among them all six layers'
+filters ($6 \times 384$ values a pair).
 
-### 8.5 Validation plan
+### 8.5 Validation
 
-- Each stage in JAX against SchNetPack's modules, and the composed model
-  against SchNetPack's calculator (CPU, the 81-atom lattice).
-- Energy, forces, and virial against the opaque model term of D286 on the
-  systems of Section 2.1 of ml4-baselines.md, in `double` and `mixed`, on
-  an RTX 4090, with ml4-baselines.md's relative tolerances for PaiNN.
-- Forces and strains against central differences (`md-check-derivatives`)
-  on a small system; the drift of a short NVE run.
-- Peak device memory and µs per pair from 192 atoms up, beyond the
-  opaque call's largest system (6,144 atoms on 24 GB), in one job on one
-  node against the opaque call.
-- The lowering of the tile on the CPU and a device with a small synthetic
-  model, in lit, without the checkpoint.
+| Check | Reference | Result | Tolerance |
+|---|---|---|---|
+| The synthetic PaiNN (4 features, 2 layers, random weights), energy, forces, virial tensor (`Integration/stages-batched-gpu.test`, RTX 4090, 81 atoms) | the JAX stages composed with Section 4.1's rules, float32 bodies and float64 sums | double: 0, $2.5\times10^{-7}$, $6.6\times10^{-8}$; mixed: $5.5\times10^{-9}$, $7.9\times10^{-7}$, $1.9\times10^{-7}$ of the largest value | $10^{-5}$ |
+| nablaDFT's PaiNN, the same through `mdir-opt` and the runner, 27 waters in 1.02 nm (an `mdir-opt` harness, not in the suite) | the same | double: $3.7\times10^{-8}$, $3.4\times10^{-6}$, $2.2\times10^{-6}$; mixed: $6.2\times10^{-8}$, $1.9\times10^{-5}$, $2.8\times10^{-6}$ | $3\times10^{-5}$ |
+| nablaDFT's PaiNN through the Python model (`backend = "STAGES"`), 27 waters in 15 Å, RTX 4090 | SchNetPack's calculator in float64 | double: $\lvert\Delta E\rvert$ $1.8\times10^{-4}$ kJ/mol of 24,385, max $\lvert\Delta F\rvert$ $4.6\times10^{-3}$ of 847 ($5.4\times10^{-6}$), trace of the virial $2.5\times10^{-3}$ of 1,242; mixed: $1.6\times10^{-3}$, $5.4\times10^{-2}$ ($6.4\times10^{-5}$), $4.9\times10^{-3}$ | ten times ML1's (as the opaque call, D286): 0.048, 0.193, 0.048 |
+| The opaque call, the same | the same | double: $1.5\times10^{-3}$, $5.9\times10^{-3}$, $1.0\times10^{-3}$; mixed: $4.8\times10^{-4}$, $4.9\times10^{-3}$, $1.3\times10^{-3}$ | the same |
+| The staged forces against the opaque call's | | double $8.6\times10^{-6}$, mixed $6.3\times10^{-5}$ of the largest force | |
+| The same on 8 waters in 6.2 Å, several images (`Driver/model-stages-ml4-gpu.test`) | SchNetPack's calculator in float64 | within the tolerances in double and mixed | the same |
+| Forces and the trace of the virial, central differences of MDIR's own energy (`scripts/mlip/check-stages-fd.py`, double, the 6 largest force components, 27 waters in 15 Å) | Richardson's extrapolation to $h^4$, $h$ = 0.002 nm, and an isotropic strain of 0.002 | $4.2\times10^{-3}$ of the largest force; the trace $1.7\times10^{-3}$ of 1,242 | the energy is a float32 sum: with $h = 10^{-4}$ nm its rounding made the differences $1.9\times10^{-2}$ |
+| NVE, 1,000 steps of 0.1 fs from 300 K, 27 waters 5 Å apart, double | the opaque call's run from the same state | total energy within 1.53 kJ/mol of 24,085 (the opaque call 1.54), a drift of $-2.4$ kJ/mol/ps ($-2.7$); the two runs' totals within 0.099 kJ/mol of each other | |
+| The same at 0.5 fs, double and mixed | the same | both runs leave conservation together (28 kJ/mol within 50 steps, then they blow up); their totals agree to 0.006 kJ/mol over 50 steps, 0.015 over 100 | |
 
-### 8.6 What step 4 is split into
+In `mixed` the staged forces are $6.4\times10^{-5}$ of the largest from
+the float64 reference, the opaque call's $5.8\times10^{-6}$: the staged
+model's fields and their adjoints are f32 in that mode, and the opaque
+call's float32 network keeps its own sums. Both are within the tolerance;
+the fields in f64 in `mixed` are a choice for 4b. On liquid water at 300 K
+(64 waters, unrelaxed), the staged model and the opaque call follow the
+same trajectory to the third decimal of kJ/mol for 30 steps and leave it
+together at step 38, where both runs blow up: the checkpoint was trained
+on molecules in vacuum (D286), so liquid water is a test of the interface
+and of memory, not of dynamics.
 
-- **4a** (this PR): the stages and their export, the batched body of
-  `linalg` in tiles on the CPU and a device, the model from the control
-  file, and the validation and measurements above.
-- **4b**: the AOTInductor form (`torch.export` of each stage from
-  SchNetPack's modules) and its measurement against 4a's on the same
-  weights; store against recompute; the two-ended scatter; rows compacted
-  to the pairs within the cutoff; the tile from the control file and
-  Python; the RTX PRO 6000.
+### 8.6 Peak device memory and time
+
+Liquid water as in Section 2.2 of [ml4-baselines.md](ml4-baselines.md)
+(`model-sweep.py`, `mixed`, 4 steps of NVE at 0.5 fs, an RTX 4090 in one
+job of one node, `--idle`). The staged model's peak is that of MDIR's own
+allocator (`MDIR_DEVICE_MEMORY`), which holds every buffer of the program:
+the positions, the neighbor structures and the slots, the fields, the rows
+of the tiles, and the bodies' buffers. The opaque call's is the plugin's
+allocator (MDIR's own beside it is 11 to 193 MiB). 4,096 rows a tile.
+
+| Atoms | Pairs | Staged: peak (MiB) | Staged: kB per pair | Opaque: peak, plugin + MDIR (MiB) | Opaque: kB per pair | Staged: ms per step | Staged: µs per pair |
+|---|---|---|---|---|---|---|---|
+| 192 | 10,410 | 235 | 23.7 | 628 + 11 | 63.3 | 175 | 16.8 |
+| 768 | 40,572 | 276 | 7.1 | 2,384 + 44 | 61.6 | 473 | 11.7 |
+| 1,536 | 83,146 | 329 | 4.2 | 4,870 + 89 | 61.3 | 843 | 10.1 |
+| 3,072 | 163,128 | 437 | 2.8 | 9,521 + 179 | 61.2 | 1,602 | 9.8 |
+| 6,144 | 328,944 | 652 | 2.1 | 19,171 + 193 | 61.2 | 3,222 | 9.8 |
+| 12,288 | 665,312 | 1,081 | 1.7 | out of memory (an allocation of 976 MiB) | | 6,685 | 10.0 |
+| 24,576 | 1,309,400 | 1,941 | 1.6 | | | 14,251 | 10.9 |
+| 49,152 | 2,632,674 | 3,659 | 1.5 | | | 32,097 | 12.2 |
+| 98,304 | 5,323,064 | 7,099 | 1.4 | | | 80,076 | 15.0 |
+| 196,608 | 10,562,124 | 13,975 | 1.4 | | | 227,054 | 21.5 |
+
+The opaque call's time is that of D286 (0.50 to 0.79 µs a pair, 8.2 ms a
+step at 192 atoms, 44.4 at 1,536, 167 at 6,144; Section 2.3 of
+ml4-baselines.md): the 4 steps of this sweep include TorchScript's
+specialization of the first evaluations. The staged model's time per pair
+grows beyond 50,000 atoms: each tile's sum over the centers launches a
+thread for every particle, which tests whether its slots meet the tile
+(2,579 tiles of 4,096 rows at 196,608 atoms).
+
+- **Memory.** The staged model's peak grows with the atoms, about 72 kB an
+  atom (1.4 kB a pair of liquid water from 49,152 atoms up), against
+  61 kB a pair for the opaque call: at 6,144 atoms, the opaque call's
+  largest system on 24 GB, 652 MiB against 18.7 GiB, 29 times less. The
+  staged model ran 196,608 atoms (10.6 million pairs) in 13.6 GiB, 32
+  times the opaque call's largest system on the same device.
+- **Time.** The staged step takes about 10 µs a pair up to 25,000 atoms,
+  against 0.5 to 0.8 for the opaque call: about 20 times longer (3.2 s a
+  step against 167 ms at 6,144 atoms). The bodies are MDIR's naive
+  lowering of `linalg` (a thread for each output, no tiling of the
+  products, no tensor cores), 1,136 kernels and their launches for each
+  tile, and every product recomputes its forward twice per pair (Section
+  4.3). 4b measures this form against AOTInductor's kernels on the same
+  weights; the memory does not depend on the body's form.
+
+### 8.7 What was ruled (the maintainer, 2026-10-19, on #447)
+
+- **The split**: 4a in PR #447, 4b next.
+- **Q1**: StableHLO through `linalg` and MDIR's own lowering is the first
+  body form; its step time is measured against AOTInductor in 4b.
+- **Q2**: the export script legalizes StableHLO to `linalg` with
+  `stablehlo-opt`; MDIR's build takes no dependency on StableHLO.
+- **Q3**: `[[energy.model]]` with `backend = "STAGES"` and `path` naming
+  the one MLIR module; the rows of a tile are fixed by the export in 4a,
+  and `rows_per_tile` comes in 4b.
+
+### 8.8 What 4b takes
+
+- The AOTInductor form (`torch.export` of each stage from SchNetPack's
+  modules) and its time against 4a's on the same weights.
+- The time of the `linalg` form: tiling of the products, fusion of the
+  bodies' kernels, fewer launches.
+- Store against recompute; the two-ended scatter (one product per pair).
+- Rows compacted to the pairs within the cutoff; the fields in f64 in
+  `mixed`.
+- `rows_per_tile` from the control file and Python, with bodies of a
+  dynamic number of rows.
+- The RTX PRO 6000; a CPU lowering of the tiles.
