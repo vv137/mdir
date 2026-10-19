@@ -36,7 +36,12 @@ Subcommands, each in its own environment:
       and the energy, forces, and virial composed from the JAX stages, with
       MDIR's reverse rules (docs/ml4-ir.md, Section 4.1) applied to the
       stages' products, against references of water-box.py
-      (`--kind painn`: SchNetPack's calculator with its Strain input).
+      (`--kind painn --painn-dtype float64`: SchNetPack's calculator with
+      its Strain input, the same weights in float64), within 1e-6 of the
+      energy, 3e-5 of the largest force, and 1e-5 of the largest virial
+      component. The stages compute in float32 and sum in float64; the
+      package's own float32 evaluation is 3.4e-5 of the largest force from
+      its float64 one on the 81-atom lattice, the stages 5.4e-6.
   export OUT.npz MODEL.mlir --rows T [--stablehlo-opt PATH]   JAX
       jax.export of each stage's forward and jax.vjp with T rows to
       StableHLO, legalized to linalg on tensors by StableHLO's
