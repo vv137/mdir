@@ -1180,7 +1180,26 @@ ApplyStageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
       getVjp() ? stage.getVjpType() : stage.getFunctionType();
   FunctionType actual = FunctionType::get(
       getContext(), getOperands().getTypes(), getResults().getTypes());
-  if (actual != expected)
+  // Precision assignment may give the kernel's values in f32 where the
+  // declaration, at the reference precision, says f64 (D[ml4-batched-bodies]).
+  auto fits = [](Type declared, Type given) {
+    if (declared == given)
+      return true;
+    auto narrow = [](Type type) -> Type {
+      if (auto vector = dyn_cast<VectorType>(type))
+        return VectorType::get(vector.getShape(),
+                               Float32Type::get(type.getContext()));
+      return Float32Type::get(type.getContext());
+    };
+    return isStageReal(declared) && given == narrow(declared);
+  };
+  bool matches = actual.getNumInputs() == expected.getNumInputs() &&
+                 actual.getNumResults() == expected.getNumResults();
+  for (unsigned i = 0, e = matches ? expected.getNumInputs() : 0; i != e; ++i)
+    matches = matches && fits(expected.getInput(i), actual.getInput(i));
+  for (unsigned i = 0, e = matches ? expected.getNumResults() : 0; i != e; ++i)
+    matches = matches && fits(expected.getResult(i), actual.getResult(i));
+  if (!matches)
     return emitOpError() << "expected the type " << expected << " of "
                          << (getVjp() ? "the vector-Jacobian product of " : "")
                          << "the stage '" << getStage() << "', got "

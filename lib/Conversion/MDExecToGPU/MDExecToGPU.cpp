@@ -6293,10 +6293,15 @@ void Lowering::emitEdgesWithin(OpBuilder &builder, Location loc,
               vector::FromElementsOp::create(
                   b, loc, VectorType::get({3}, b.getF64Type()), cells),
               box);
+          // In f64, whatever the type of the positions: a loop of batched
+          // stages in mixed precision takes them in f32.
+          Type f64 = b.getF64Type();
           Value d = arith::AddFOp::create(
               b, loc,
-              arith::SubFOp::create(b, loc, loadElement(b, loc, positions, j),
-                                    xi),
+              arith::SubFOp::create(
+                  b, loc,
+                  convertReal(b, loc, loadElement(b, loc, positions, j), f64),
+                  convertReal(b, loc, xi, f64)),
               shift);
           Value d2 = arith::MulFOp::create(b, loc, d, d);
           Value r2 = vector::ReductionOp::create(
