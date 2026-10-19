@@ -1,4 +1,4 @@
-// The verifier of `md_exec.algebra` (D[reduction-algebra]): one entry a
+// The verifier of `md_exec.algebra` (D301): one entry a
 // reduced value, `any_order_exact` only on an integer, and only on an op that
 // reduces values.
 //

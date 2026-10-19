@@ -289,7 +289,7 @@ md_exec_fast_transforms = (
     " --md-exec-simplify-distance --canonicalize --cse"
 )
 # The lowerings read the algebra of each sum, which md-exec-assign-algebra
-# states (D[reduction-algebra]); these pipelines are in the default mode.
+# states (D301); these pipelines are in the default mode.
 md_exec_lowering = (
     " --md-exec-assign-algebra --md-exec-assign-storage"
     " --convert-md-exec-to-loops"

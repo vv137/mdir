@@ -8,7 +8,7 @@
 //
 // RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu="kept-tuples=true" | FileCheck %s
 // RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --convert-md-exec-to-gpu="kept-tuples=true deterministic=true" | FileCheck %s --check-prefix=ROWS
-// The algebra, not the mode, decides (D[reduction-algebra]): ordered sums
+// The algebra, not the mode, decides (D301): ordered sums
 // take the rows in a lowering that is not in the deterministic mode.
 // RUN: mdir-opt %s --md-exec-assign-algebra=deterministic=true --convert-md-exec-to-gpu="kept-tuples=true" | FileCheck %s --check-prefix=ROWS
 // RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-exec-to-gpu | FileCheck %s --check-prefix=LOOPS

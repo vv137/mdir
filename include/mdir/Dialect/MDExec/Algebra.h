@@ -1,5 +1,5 @@
 // The algebra of each reduced value as a fact of the IR
-// (D[reduction-algebra], docs/device-primitives.md, Section 5).
+// (D301, docs/device-primitives.md, Section 5).
 //
 // A reduction or a scatter-accumulate combines values in an order that its
 // lowering chooses. Whether another order is acceptable is a property of

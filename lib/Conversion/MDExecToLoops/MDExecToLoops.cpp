@@ -208,7 +208,7 @@ void Lowering::createReduction(OpBuilder &builder, Location loc,
 /// A scatter-accumulate on the host (D291): with `atomic-grid`, a
 /// parallel loop whose additions are atomic, as the threads of OpenMP
 /// share the rows of the destination, where the stated algebra of the sum
-/// allows that order (D[reduction-algebra]); otherwise a loop on one
+/// allows that order (D301); otherwise a loop on one
 /// thread with plain additions, in the order of the values. The strategy
 /// of the op is for a device and is not used.
 void Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
@@ -1497,7 +1497,7 @@ public:
       ConvertMDExecToLoops>::ConvertMDExecToLoopsBase;
 
   void runOnOperation() final {
-    // The algebra of every sum is stated (D[reduction-algebra]): the
+    // The algebra of every sum is stated (D301): the
     // lowering reads it, and refuses an op that reduces without one.
     bool stated = true;
     getOperation()->walk([&](Operation *op) {
@@ -1513,7 +1513,7 @@ public:
     if (failed(lowering.run()))
       return signalPassFailure();
     // The ops whose algebras the mark of the deterministic mode verifies
-    // are lowered (D[reduction-algebra]).
+    // are lowered (D301).
     getOperation()->removeAttr(md_exec::algebra::kDeterministicAttrName);
   }
 };

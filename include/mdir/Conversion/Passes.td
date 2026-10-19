@@ -67,7 +67,7 @@ def ConvertMDExecToLoops
     The pass decides nothing about buffers; `md-exec-assign-storage` has
     done that. It rejects ops in the value form, and an op that reduces
     values without stating their algebra (`md-exec-assign-algebra`,
-    D[reduction-algebra]). A `md_exec.scatter_add` whose sum is `fixed_order`
+    D301). A `md_exec.scatter_add` whose sum is `fixed_order`
     is a loop on one thread, even with `atomic-grid`; every other sum is
     combined in an order that does not depend on the threads
     (`fixed-order-reductions`, D171), which meets every algebra.
@@ -309,7 +309,7 @@ def ConvertMDExecToGPU
 
     Where it chooses how to combine values, the pass reads the algebra
     that each op states for them (`md_exec.algebra`, from
-    `md-exec-assign-algebra`; D[reduction-algebra],
+    `md-exec-assign-algebra`; D301,
     include/mdir/Dialect/MDExec/Algebra.h), not the mode, and it refuses
     an op that reduces values without stating it. A sum whose algebra is
     `fixed_order` takes no atomics in floating point: the tuples take the rows
@@ -372,7 +372,7 @@ def ConvertMDExecToGPU
            "integration kernels compute the displacements of the tuples as "
            "the loops alone do (#102). How sums are combined follows the "
            "algebra that each op states (md-exec-assign-algebra, "
-           "D[reduction-algebra])">,
+           "D301)">,
     Option<"keptTuples", "kept-tuples", "bool", /*default=*/"false",
            "Whether the renumbered members of the tuples, their incidence "
            "structures, and the copies of the members on the device are "

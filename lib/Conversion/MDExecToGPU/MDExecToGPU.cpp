@@ -264,7 +264,7 @@ public:
   /// in the order of the threads: no loop over tuples states `fixed_order` for
   /// a value it reduces. The members of the tuples go to the device for such
   /// loops, which evaluate each tuple once; this is the module-wide form of
-  /// `evaluatesOnce`, which the mode decided before D[reduction-algebra].
+  /// `evaluatesOnce`, which the mode decided before D301.
   bool tuplesMayReorder = true;
 
 private:
@@ -483,7 +483,7 @@ private:
   /// Whether a loop over tuples evaluates each tuple once, adding to its
   /// members with atomics: by default, for a loop that is not over disjoint
   /// tuples and adds to its destinations, where the stated algebra of every
-  /// value it reduces allows another order (D[reduction-algebra]). Its
+  /// value it reduces allows another order (D301). Its
   /// global sums are summed by a thread a particle over the tuples it takes
   /// (D103), which groups them otherwise than the rows of the particles do:
   /// a `fixed_order` sum (the deterministic mode) takes the rows.
@@ -499,7 +499,7 @@ private:
 
   /// Whether the stated algebra of every destination of `op` (a loop over
   /// pairs or tuples, or `scatter_add`) allows its values to be added in
-  /// an order that the threads decide (D[reduction-algebra]). The pass
+  /// an order that the threads decide (D301). The pass
   /// refuses an op without an algebra before it lowers any.
   static bool destinationsAllowReorder(Operation *op) {
     std::optional<SmallVector<md_exec::Algebra>> algebras =
@@ -1723,7 +1723,7 @@ LogicalResult Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
     });
   };
   // The atomics and the table add in an order that the threads decide,
-  // which the stated algebra of the sum must allow (D[reduction-algebra]);
+  // which the stated algebra of the sum must allow (D301);
   // a `fixed_order` sum has no form on a device yet (fixed point is #416,
   // step 2).
   if (!destinationsAllowReorder(op))
@@ -3662,7 +3662,7 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
     return op.emitOpError()
            << "writes not every value of a destination once, which it "
               "cannot overwrite";
-  // A destination whose stated algebra is `fixed_order` (D[reduction-algebra]).
+  // A destination whose stated algebra is `fixed_order` (D301).
   if (op.getConflict() == md_exec::Conflict::Atomic &&
       !destinationsAllowReorder(op))
     return op.emitOpError()
@@ -3757,7 +3757,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   // come.
   // Its destinations take atomics, and its global sums the partial sums of
   // warps over units of lists built with atomics: every value it reduces
-  // must allow reordering (D[reduction-algebra]).
+  // must allow reordering (D301).
   if (!everythingAllowsReorder(op))
     return op.emitOpError()
            << "takes each pair once with atomic additions in floating "
@@ -4286,7 +4286,7 @@ LogicalResult Lowering::lowerTupleForWithFlags(md_exec::TupleForOp op) {
            << "takes a flag in 'reduce' over tuples that may share "
               "particles, which a device evaluates once per tuple only "
               "where the algebra of every value it reduces allows another "
-              "order (D[reduction-algebra]); an 'fixed_order' sum takes the "
+              "order (D301); an 'fixed_order' sum takes the "
               "rows of the particles";
   SmallVector<Flag, 2> used;
   for (unsigned i = 0; i != numFlags; ++i)
@@ -5213,7 +5213,7 @@ static Value getBins(md_exec::ReciprocalOp op) {
 /// The reciprocal sum of the prolate kernel on a device (D266):
 /// the coefficients of the table into the type of the grid, the places, the
 /// spreading (into bricks, or in fixed point where the spreading is
-/// `fixed_order` (D[reduction-algebra]) and in f64), the transforms, the
+/// `fixed_order` (D301) and in f64), the transforms, the
 /// factors of the edges and the product with
 /// the influence function, and the gathering or the potential. With
 /// `listed`, the spreading takes the listed particles alone, and so does
@@ -5352,7 +5352,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // The spreading adds in an order that the threads decide unless its
   // stated algebra is `fixed_order` (the deterministic mode): then its charges
   // are added in fixed point, exact in any order (D70, D84,
-  // D[reduction-algebra]).
+  // D301).
   bool fixedPoint =
       md_exec::algebra::getAlgebra(op, 0) == md_exec::Algebra::FixedOrder;
   // The spreading into tiles (D282): where the preconditions of
@@ -8595,7 +8595,7 @@ public:
       return signalPassFailure();
     }
     // The lowering reads the algebra of each sum, not the mode, where it
-    // chooses how to combine (D[reduction-algebra]): an op that reduces
+    // chooses how to combine (D301): an op that reduces
     // without stating it is refused, rather than given an algebra here.
     bool stated = true;
     bool tuplesMayReorder = true;
@@ -8627,7 +8627,7 @@ public:
     if (failed(lowering.run()))
       return signalPassFailure();
     // The ops whose algebras the mark of the deterministic mode verifies
-    // are lowered (D[reduction-algebra]).
+    // are lowered (D301).
     getOperation()->removeAttr(md_exec::algebra::kDeterministicAttrName);
     // Products and sums in the kernels may become fused multiply-adds, as
     // nvcc makes them by default: the backend fuses only what is marked.

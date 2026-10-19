@@ -131,7 +131,7 @@ ScatterAttr::verify(function_ref<InFlightDiagnostic()> emitError,
 }
 
 //===----------------------------------------------------------------------===//
-// #md_exec.algebra (D[reduction-algebra])
+// #md_exec.algebra (D301)
 //===----------------------------------------------------------------------===//
 
 Attribute AlgebraListAttr::parse(AsmParser &parser, Type) {

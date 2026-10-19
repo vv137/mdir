@@ -189,7 +189,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
      << (control.deterministic ? " deterministic=true" : "") << "},";
   if (control.fastMath)
     os << "md-exec-approximate,md-exec-expand-radial,canonicalize,cse,";
-  // The algebra of every sum, from the mode (D[reduction-algebra]): in the
+  // The algebra of every sum, from the mode (D301): in the
   // deterministic mode a floating-point sum is `fixed_order`, otherwise
   // `any_order`. The strategies and the lowerings read it, not the mode.
   os << "md-exec-assign-algebra"

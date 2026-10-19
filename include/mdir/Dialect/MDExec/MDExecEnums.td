@@ -74,7 +74,7 @@ def MDExec_ScatterStrategy : I32EnumAttr<"ScatterStrategy",
 }
 
 // The algebra of a reduced value: a licence to the lowering about the
-// order of evaluation of its sum (D[reduction-algebra], ruled on #470;
+// order of evaluation of its sum (D301, ruled on #470;
 // docs/device-primitives.md, Section 5). It is not an algebraic claim:
 // floating-point addition is not associative. `fixed_order` may be met
 // through an `any_order_exact` form: the fixed-point spreading of PME in the

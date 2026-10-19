@@ -1,5 +1,5 @@
 // The algebra of each reduced value, stated, and the check that every op
-// that reduces states it (D[reduction-algebra]).
+// that reduces states it (D301).
 //
 // See the descriptions of the passes in Passes.td and
 // include/mdir/Dialect/MDExec/Algebra.h. The mode decides which algebra a

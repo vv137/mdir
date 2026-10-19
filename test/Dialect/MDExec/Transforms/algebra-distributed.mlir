@@ -1,4 +1,4 @@
-// The sums across domains state their algebra too (D[reduction-algebra],
+// The sums across domains state their algebra too (D301,
 // ruled on #470): `fixed_order` in every mode, the domains added in their
 // order, which gives the same bits on every run for the same decomposition
 // and build, not for another decomposition (#409). md-exec-assign-algebra

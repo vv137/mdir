@@ -1,5 +1,5 @@
 // The reductions of a device through the shared emitters
-// (D[reduction-algebra], ReductionEmitter.h): a global sum of a loop is a
+// (D301, ReductionEmitter.h): a global sum of a loop is a
 // block reduction in each of the parts (each warp by a butterfly of
 // `shuffle xor` at offsets 16, 8, 4, 2, 1, then the warps in their order
 // through block memory after one barrier), and one block over the parts

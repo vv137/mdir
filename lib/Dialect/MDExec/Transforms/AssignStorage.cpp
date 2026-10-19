@@ -571,7 +571,7 @@ LogicalResult Assignment::convertScatterAdd(ScatterAddOp op, Scope &scope,
       scope.builder, op.getLoc(), TypeRange(), values, indices, dest,
       scope.builder.getBoolAttr(!accumulates),
       onDevice ? op.getScatterAttr() : ScatterAttr());
-  // The algebra of the sum (D[reduction-algebra]).
+  // The algebra of the sum (D301).
   algebra::carry(op, created);
   buffers[op.getResult()] = dest;
   scope.owned.insert(dest);

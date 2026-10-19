@@ -346,7 +346,7 @@ or f64 changes. Its sums are in fixed point (D70, D84), where a privatized
 sum would give the same bits; that is the next step of #416. No strategy
 of floating-point values keeps the deterministic mode bitwise.
 
-**The algebra as a stated fact (D[reduction-algebra]).** Which of these
+**The algebra as a stated fact (D301).** Which of these
 forms a sum may take is a property of the sum, and the IR states it for
 each value that an op reduces, rather than leaving it to the mode:
 `any_order_exact` (integers and the logical or: any order and grouping gives the

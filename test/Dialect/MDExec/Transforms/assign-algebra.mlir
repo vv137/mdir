@@ -1,4 +1,4 @@
-// md-exec-assign-algebra (D[reduction-algebra]): the algebra of each value
+// md-exec-assign-algebra (D301): the algebra of each value
 // that an op reduces, `any_order_exact` for an integer, and for a floating-point
 // number `any_order` by default and `fixed_order` in the deterministic mode;
 // md-exec-assign-storage carries it onto the storage form, and the printed

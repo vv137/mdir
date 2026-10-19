@@ -714,7 +714,7 @@ format, or the outputs; every such change is listed under **Changed** or
   The programs as executed, with the PTX of every kernel, are those of
   `main`. No key, default, or output changes.
 
-- **The algebra of every sum is a fact of the IR** (D[reduction-algebra],
+- **The algebra of every sum is a fact of the IR** (D301,
   #422 step 1, PR #470,
   [docs/device-primitives.md §5](docs/device-primitives.md#5-reductions-by-their-algebra)):
   `md_exec.algebra` gives each value that an op reduces a licence on its

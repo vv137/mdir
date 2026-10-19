@@ -24,7 +24,7 @@ def MDExec_Dialect : Dialect {
   let dependentDialects = ["::mdir::md::MDDialect",
                            "::mdir::mdrt::MDRTDialect"];
   let useDefaultAttributePrinterParser = 1;
-  // `md_exec.algebra` (D[reduction-algebra]).
+  // `md_exec.algebra` (D301).
   let hasOperationAttrVerify = 1;
   let extraClassDeclaration = [{
     void registerAttributes();

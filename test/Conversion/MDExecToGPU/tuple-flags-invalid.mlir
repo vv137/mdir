@@ -1,5 +1,5 @@
 // A flag of a loop over tuples that may share particles, where a value the
-// loop reduces is `fixed_order` (D278, D[reduction-algebra]).
+// loop reduces is `fixed_order` (D278, D301).
 //
 // RUN: mdir-opt %s --convert-md-exec-to-gpu -verify-diagnostics
 

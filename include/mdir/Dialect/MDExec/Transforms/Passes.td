@@ -112,7 +112,7 @@ def ChooseScatter
     the storage, which sizes the bins of the tiles from it. A strategy that
     adds in another order needs the algebra of the sums to allow it: a sum
     whose algebra is `fixed_order` (the deterministic mode), or that states
-    none, is refused (D[reduction-algebra]).
+    none, is refused (D301).
 
     - `md_exec.reciprocal`: `tile(E)`, the charges spread through tiles of
       block memory, one for each bin of $E^3$ points of the grid (D282).
@@ -212,7 +212,7 @@ def AssignAlgebra
   let description = [{
     Sets `md_exec.algebra` (`#md_exec.algebra`) on every op that reduces
     values, one entry for each value in the order of
-    `md_exec::algebra::getReducedTypes` (D[reduction-algebra],
+    `md_exec::algebra::getReducedTypes` (D301,
     include/mdir/Dialect/MDExec/Algebra.h): `any_order_exact` for an
     integer or an
     `or`, and for a floating-point number `any_order` (any order; its
@@ -259,7 +259,7 @@ def CheckAlgebra
     over particles, pairs, and tuples, `md_exec.scatter_add`, and
     `md_exec.reciprocal`; `md_dist.all_reduce` and `md_dist.halo_sum`)
     must state the algebra of each, as
-    `md_exec.algebra` (D[reduction-algebra]); the verifier of the
+    `md_exec.algebra` (D301); the verifier of the
     attribute checks its count and its entries. Like
     `--md-check-transposes` (D295), the check fails at each op that states
     none, naming it.

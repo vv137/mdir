@@ -38,7 +38,7 @@ constexpr int64_t kBlockMemoryBytes = 48 * 1024;
 /// for floating-point numbers another rounding, which the stated algebra
 /// `any_order` allows (the atomics already add in an order the threads
 /// decide) and `fixed_order` (the deterministic mode) does not; nothing is
-/// assumed where the op states no algebra (D[reduction-algebra],
+/// assumed where the op states no algebra (D301,
 /// Algebra.h). Fixed point is not privatized yet (#416, step 2), so every
 /// element type other than f32 and f64 is refused.
 Refusal checkReorder(mlir::Type element, std::optional<Algebra> algebra);

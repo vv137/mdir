@@ -1,4 +1,4 @@
-// md-exec-assign-algebra (D[reduction-algebra]) on the loops over pairs and
+// md-exec-assign-algebra (D301) on the loops over pairs and
 // tuples: their destinations, then their sums (the storage form of these
 // loops is covered by the tests of the lowerings, which refuse an op
 // without an algebra).

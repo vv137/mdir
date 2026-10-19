@@ -72,7 +72,7 @@ def MDExec_AlgebraListAttr : AttrDef<MDExec_Dialect, "AlgebraList"> {
   let summary = "The algebra of each value that an op reduces";
   let description = [{
     One algebra for each value that an op reduces, in the order of
-    `md_exec::algebra::getReducedTypes` (D[reduction-algebra],
+    `md_exec::algebra::getReducedTypes` (D301,
     include/mdir/Dialect/MDExec/Algebra.h): a loop's destinations, then its
     `reduce`; the destination of `md_exec.scatter_add`; the spreading, the
     energy, and the virial of `md_exec.reciprocal`; the sum of

@@ -523,7 +523,7 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
 /// The lowering of a sum across domains adds the domains, then the rows, in
 /// their order: the same bits on every run for the same decomposition and
 /// build, which meets every algebra (`fixed_order` as md_dist defines it,
-/// #409). The sum must state one (D[reduction-algebra]).
+/// #409). The sum must state one (D301).
 static LogicalResult checkAlgebra(Operation *op) {
   if (md_exec::algebra::getAlgebras(op))
     return success();

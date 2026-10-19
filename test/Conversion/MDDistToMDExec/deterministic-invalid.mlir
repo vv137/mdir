@@ -6,7 +6,7 @@
 // RUN:     --md-exec-assign-algebra=deterministic=true --md-exec-assign-storage=memory=device \
 // RUN:     --convert-md-exec-to-gpu=deterministic=true -verify-diagnostics
 // The ordered algebra refuses it whatever the option of the lowering
-// (D[reduction-algebra]):
+// (D301):
 // RUN: mdir-opt %s --md-exec-assign-algebra --convert-md-dist-to-md-exec \
 // RUN:     --md-exec-assign-algebra=deterministic=true --md-exec-assign-storage=memory=device \
 // RUN:     --convert-md-exec-to-gpu -verify-diagnostics

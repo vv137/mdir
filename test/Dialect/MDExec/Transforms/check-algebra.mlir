@@ -1,4 +1,4 @@
-// --md-exec-check-algebra (D[reduction-algebra]): every op that reduces
+// --md-exec-check-algebra (D301): every op that reduces
 // values states their algebra; the lowerings refuse one that does not, on
 // the CPU and on a device.
 //

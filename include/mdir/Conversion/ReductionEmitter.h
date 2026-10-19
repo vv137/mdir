@@ -1,5 +1,5 @@
 // The emitters of reductions on a device: the butterfly of a warp and the
-// reduction of a block (D[reduction-algebra], docs/device-primitives.md,
+// reduction of a block (D301, docs/device-primitives.md,
 // Section 5).
 //
 // A warp combines a value of each lane by a butterfly of `shuffle xor`:

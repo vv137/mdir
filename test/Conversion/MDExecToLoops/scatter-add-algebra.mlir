@@ -1,5 +1,5 @@
 // md_exec.scatter_add on the host by its stated algebra
-// (D[reduction-algebra]): an `any_order` sum adds in a parallel loop with
+// (D301): an `any_order` sum adds in a parallel loop with
 // atomics (`atomic-grid`, the default), a `fixed_order` one in a loop on one
 // thread in the order of the values, whatever the option.
 //

@@ -1,4 +1,4 @@
-// The emitters of reductions on a device (D[reduction-algebra]); see
+// The emitters of reductions on a device (D301); see
 // include/mdir/Conversion/ReductionEmitter.h.
 
 #include "mdir/Conversion/ReductionEmitter.h"

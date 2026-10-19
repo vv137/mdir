@@ -23,7 +23,7 @@ describes how a device implements a primitive.
 | Vectorized and transposed gathers | `BlockLoad`, `WarpLoad`, `BlockExchange` | #419 | Next, on the gathering of PME (tiled gathering at orders 6 and 8 is #411) | — |
 | Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420 | Planned | — |
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
-| Reductions chosen by the algebra of the operator (Section 5) | `BlockReduce` (raking, commutative only) | #422 | Step 1 built, behavior-neutral: the algebra of every sum stated in the IR (`any_order_exact`, `any_order`, `fixed_order`), read by the chooser and the lowerings instead of the mode, with the same PTX; the warp and block reductions one emitter. The strategies it licenses follow only where measured | D[reduction-algebra] |
+| Reductions chosen by the algebra of the operator (Section 5) | `BlockReduce` (raking, commutative only) | #422 | Step 1 built, behavior-neutral: the algebra of every sum stated in the IR (`any_order_exact`, `any_order`, `fixed_order`), read by the chooser and the lowerings instead of the mode, with the same PTX; the warp and block reductions one emitter. The strategies it licenses follow only where measured | D301 |
 | Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D296 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 
@@ -604,7 +604,7 @@ Left as they are: PME's binning for tiles (`match.any.sync` and a rank by
 key, one atomic for a key: a warp-aggregated atomic, #418), the serial
 partition within a particle's slots of `lowerBuildEdges` (D277), the host's
 scan of `emitEdgeSlots`. The warp sums by `shuffle xor` are the reduction
-emitters of Section 5 (D[reduction-algebra]).
+emitters of Section 5 (D301).
 
 ### 4.4 Tests
 
@@ -680,7 +680,7 @@ A reduction or a scatter-accumulate combines values in an order that its
 lowering chooses: a tree, the rows of a matrix, the atomics of the
 threads, a table in block memory. Whether another order is acceptable is a
 property of the sum, not of the lowering, and MDIR states it in the IR for
-every value that an op reduces (D[reduction-algebra], #422, step 1;
+every value that an op reduces (D301, #422, step 1;
 [principles.md](principles.md), principle 1). Each value is a licence to
 the lowering about the order of evaluation, in the words of the
 maintainer's ruling on #470:

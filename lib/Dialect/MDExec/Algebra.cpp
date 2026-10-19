@@ -1,4 +1,4 @@
-// The algebra of each reduced value (D[reduction-algebra]); see
+// The algebra of each reduced value (D301); see
 // include/mdir/Dialect/MDExec/Algebra.h.
 
 #include "mdir/Dialect/MDExec/Algebra.h"
