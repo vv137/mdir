@@ -27,7 +27,7 @@ of the fields (of the owned rows, for the transfers of domains).
 |---|---|---|---|
 | **map** | $y_i = f(x_i, c)$, an element at a time, with captured values $c$ | map: $\bar x_i = J_f(x_i)^\mathsf T\,\bar y_i$ | `md.map_particles`, `md_exec.particle_for`, the kernels of every loop, `md.apply_stage` in a map (D288) |
 | **gather** | $y_k = x_{\mathrm{idx}(k)}$ | scatter-accumulate: $\bar x_i \mathrel{+}= \sum_{k : \mathrm{idx}(k) = i} \bar y_k$ | the reads of the members of a tuple and of the neighbor of a pair in every loop; the reads of the grid in PME's gathering |
-| **scatter-accumulate** | $a_i \mathrel{+}= \sum_{k : \mathrm{idx}(k) = i} v_k$ | gather | the `outs` of `md_exec.tuple_for` and of `md_exec.pair_for` with the conflict `atomic`; the spreading of PME; `md_dist.halo_sum`; `md_exec.scatter_add` (D[scatter-op], PR #445, not merged) |
+| **scatter-accumulate** | $a_i \mathrel{+}= \sum_{k : \mathrm{idx}(k) = i} v_k$ | gather | the `outs` of `md_exec.tuple_for` and of `md_exec.pair_for` with the conflict `atomic`; the spreading of PME; `md_dist.halo_sum`; `md_exec.scatter_add` (PR #445, not merged) |
 | **halo copy** $G$ | $(G a)_g = a_{s(g)}$ (plus a whole period of the cell for positions: affine) | halo sum $G^\mathsf T$: $a_s \mathrel{+}= \sum_{g : s(g) = s} b_g$ | `md_dist.halo_copy`, `md_dist.halo_sum`, declared adjoints (D275, D276; `lib/Dialect/MD/Transforms/Adjoints.cpp`) |
 | **reduction** | $s = \bigoplus_i x_i$ | broadcast (for $\oplus = +$): $\bar x_i = \bar s$ | `md.sum_particles`, `md.sum_relation`, `md.sum_tuples`; the `reduce` of the `md_exec` loops; `md_dist.all_reduce`; maxima and flags |
 | **broadcast** | $y_i = s$ | reduction | no op: a number that a map captures (`scaleField` in `Differentiate.cpp`; the factors of thermostats and barostats); the transpose of `md_dist.all_reduce` gives each domain's partial the cotangent once (`AllReduceAdjoint`) |
@@ -181,11 +181,12 @@ Device code is in `lib/Conversion/MDExecToGPU/MDExecToGPU.cpp` (written
 (`Kernels`), and the runtime templates of `lib/Runtime/Templates`, which
 the scripts `scripts/generate-*-template.py` write. Host code is in
 `lib/Conversion/MDExecToLoops/MDExecToLoops.cpp` (`ToLoops`) and
-`runtime/`. On `main`, the only shared piece of the device lowering is
-the set of preconditions of the privatized scatter-accumulate
+`runtime/`. On `main`, the shared pieces of the device lowering are
+`emitReductions`, for every global sum and maximum, and the set of
+preconditions of the privatized scatter-accumulate
 (`Scatter.h`, D285); the shared emitter of its table,
-`include/mdir/Conversion/ScatterEmitter.h`, is in PR #445
-(D[scatter-op]), not merged.
+`include/mdir/Conversion/ScatterEmitter.h`, is in PR #445,
+not merged.
 
 ## 3. The map
 
@@ -249,7 +250,7 @@ None of these parts is differentiated. They are written by the driver
 | Energies and the virial | reduction: contributions a particle or a row, a block tree on the device, a copy to the host | ordered in both modes (the order depends on the count alone, D150; on the CPU fixed chunks, D171) | `emitReductions`, `finishSums` (`ToGPU`); readbacks deferred to where the host needs them (D87); the sums of rows of a loop over tuples (D103) | shared: one function, `emitReductions`, for every global sum and maximum; host `createReduction` and `fixed-order-reductions` (`ToLoops`) | #422, #409 |
 | Flags: positions that are not numbers, constraint failures (D107, D278) | or-reduction and counts | exact | Mapped memory of the host for each loop's flag (D118) | hand-written in the lowering | — |
 | Frames and checkpoints | copy to the host; inverse permutation by the numbers of the particles | exact | Synchronous today; the host writes each particle at its number (`_mlir_ciface_mdrtWriteFrameForces`, `lib/Driver/Output.cpp`; `Checkpoint.cpp`) | hand-written: host | #113 |
-| Observables of frames (D189; the radial distribution function, #320) | reductions over particles; a histogram of pair distances is a scatter-accumulate of integer counts into bins | exact (integer counts) | The histogram is not built (#320) | missing | #320 |
+| Observables of frames (the radial distribution function, #320) | reductions over particles; a histogram of pair distances is a scatter-accumulate of integer counts into bins | exact (integer counts) | The histogram is not built (#320) | missing | #320 |
 
 ### 3.6 The Python front end (M2)
 
@@ -288,7 +289,7 @@ pays across the most parts, not a ruling on priority.
 |---:|---|---|---:|---|
 | 1 | The algebra of each reduction and scatter as a fact of the IR | #422 | 10 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; PME: spreading; PME: the convolution; Energies and the virial; Sums from edges to nodes, and the two-ended scatter; Halo copy $G$ and halo sum $G^\mathsf T$; Loops of a domain; All-reduce |
 | 2 | Transposes of the `md` ops declared through `AdjointOpInterface` (new) | #451 | 10 | Pair loop over the matrix, `(directed, owner_only)`; Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; Tables: `md.lookup`, `md.chebyshev`, CMAP, folded tables; Derivative of a reciprocal sum; Virtual sites; Tunables and their gradient; Neural stages; Sums from edges to nodes, and the two-ended scatter |
-| 3 | The scatter op and the shared emitter of the table (open PR, D[scatter-op]) | #445 | 8 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; Tables: `md.lookup`, `md.chebyshev`, CMAP, folded tables; Tunables and their gradient; Sums from edges to nodes, and the two-ended scatter; Halo copy $G$ and halo sum $G^\mathsf T$; Loops of a domain |
+| 3 | The scatter op and the shared emitter of the table (open PR) | #445 | 8 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; Tables: `md.lookup`, `md.chebyshev`, CMAP, folded tables; Tunables and their gradient; Sums from edges to nodes, and the two-ended scatter; Halo copy $G$ and halo sum $G^\mathsf T$; Loops of a domain |
 | 4 | Fixed-point privatization in the deterministic mode | #416 step 2 | 6 | Pair loop over groups, `(unique, atomic)`; Tuples: bonded terms, 1-4 pairs, excluded pairs of PME; Fields computed from the positions: EAM; PME: spreading; Halo copy $G$ and halo sum $G^\mathsf T$; Loops of a domain |
 | 5 | Compaction, scans, and counting sorts as shared emitters | #432 | 6 | Cells and the matrix; Groups and their build; Dual list: pruning; Pair list of a model term; PME: listed particles; Migration |
 | 6 | A pair kernel evaluated at both ends | #391 | 5 | Pair loop over groups, `(unique, atomic)`; Fields computed from the positions: EAM; Neural stages; Sums from edges to nodes, and the two-ended scatter; Loops of a domain |
