@@ -234,6 +234,21 @@ private:
   /// Emits for each term over centers its energy as a function of its
   /// coordinates, `@pullterm<k>`, whose derivatives give its forces.
   void emitPullPotentials();
+  /// Whether the force on each virtual site is spread by the derivative of
+  /// its placement (`MDIR_SITE_SPREAD=derived`) or by the transpose written
+  /// out in `emitSpreadSites` (`written`), D[vsite-transpose].
+  bool spreadsSitesDerived() const;
+  /// For each set of virtual sites, with the derived spreading, the
+  /// potential `@spread_<set>`: Σ_t f_t · p(t), the force on each site
+  /// against the place of the site from its owner, whose forces are the
+  /// transpose of the derivative of the placement.
+  void emitSitePotentials();
+  /// Emits what `emitSpreadSites` does for one set of sites, by the
+  /// derivative of `@spread_<set>`, and returns the virial as it does.
+  std::string emitDerivedSpread(StringRef indent, const Program::TupleSet &set,
+                                StringRef x, StringRef current,
+                                StringRef next, StringRef relations,
+                                StringRef virial, StringRef virialResult);
   /// The number of arguments of a potential, before those of its own.
   unsigned getNumPotentialArguments() const;
   /// Emits the evaluation of the columns at the positions `x` in the cell
@@ -6939,6 +6954,19 @@ struct AmberFrame {
     return {owner, first, second};
   }
 };
+/// The place of a site from its owner, p(d_j, d_k), in a kernel whose
+/// arguments `%vs_j` and `%vs_k` are the displacements of the other two
+/// atoms from the owner and `%vs_a` and `%vs_b` the parameters of the site:
+/// a d_j + b d_k, or for Amber's extra point a along the bisector of the
+/// two bonds.
+static std::string emitPlacement(SiteKernel &k, bool amber) {
+  if (amber) {
+    AmberFrame frame(k, "%vs_j", "%vs_k");
+    return k.scale(k.real("divf", "%vs_a", frame.lengthSum), frame.sum);
+  }
+  return k.vector("addf", k.scale("%vs_a", "%vs_j"),
+                  k.scale("%vs_b", "%vs_k"));
+}
 } // namespace
 
 void Builder::emitPlaceSites(StringRef indent, StringRef x, StringRef result,
@@ -6962,14 +6990,7 @@ void Builder::emitPlaceSites(StringRef indent, StringRef x, StringRef result,
        << indent << "^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
                     "%vs_s: vector<3xf64>, %vs_a: f64, %vs_b: f64):\n";
     SiteKernel k(os, inner);
-    std::string placed;
-    if (amber) {
-      AmberFrame frame(k, "%vs_j", "%vs_k");
-      placed = k.scale(k.real("divf", "%vs_a", frame.lengthSum), frame.sum);
-    } else {
-      placed = k.vector("addf", k.scale("%vs_a", "%vs_j"),
-                        k.scale("%vs_b", "%vs_k"));
-    }
+    std::string placed = emitPlacement(k, amber);
     std::string change = k.vector("subf", placed, "%vs_s");
     std::string zero = k.zero();
     os << inner << "md.yield " << change << ", " << zero << ", " << zero
@@ -6999,6 +7020,17 @@ std::string Builder::emitSpreadSites(StringRef indent, StringRef x,
     const Program::TupleSet &set = *each;
     bool amber = set.name == "sites_amber";
     bool last = each == sets.back();
+    if (spreadsSitesDerived()) {
+      std::string next =
+          last ? result.str() : (result + "_" + set.name + "_f").str();
+      std::string changed =
+          last ? virialResult.str()
+               : (virialResult + "_" + set.name + "_w").str();
+      currentVirial = emitDerivedSpread(indent, set, x, current, next,
+                                        relations, currentVirial, changed);
+      current = next;
+      continue;
+    }
     std::string delta = (result + "_" + set.name).str();
     os << indent << delta << " = md.gather_tuples " << relations << set.name
        << ", " << x << ", %cell\n"
@@ -7081,6 +7113,137 @@ std::string Builder::emitSpreadSites(StringRef indent, StringRef x,
     current = next;
   }
   return currentVirial;
+}
+
+bool Builder::spreadsSitesDerived() const {
+  const char *value = std::getenv("MDIR_SITE_SPREAD");
+  return value && StringRef(value) == "derived";
+}
+
+void Builder::emitSitePotentials() {
+  if (!spreadsSitesDerived())
+    return;
+  // x_s = x_o + p(d_j, d_k) places a site from its owner o and two atoms j
+  // and k, d_j = x_j − x_o. The force f on the site moves to the atoms by
+  // the transpose of the derivative of the placement, Jᵀ f, which is the
+  // gradient in the positions of Σ_t f_t · x_s(t) at a fixed f: the forces
+  // of this potential, −∇(Σ_t f_t · p(t)), are −Jᵀ f less its part along
+  // the owner's translation, which emitDerivedSpread adds. md-differentiate
+  // takes them from the declared transpose of md.sum_tuples and the
+  // reverse derivative of the kernel (D295).
+  for (const Program::TupleSet *each : getSiteSets()) {
+    const Program::TupleSet &set = *each;
+    bool amber = set.name == "sites_amber";
+    os << "md.potential @spread_" << set.name
+       << "(%x: !vec, %cell: !md.cell, %rel: !rel_" << set.name
+       << ", %a: !of_" << set.name << ", %b: !of_" << set.name
+       << ", %fs: !vec) -> f64 {\n"
+       << "  %u = md.sum_tuples %rel, %x, %cell\n"
+       << "      coordinates(displacement(2, 1), displacement(3, 1))\n"
+       << "      gather(%fs : !vec) tuple(%a, %b : !of_" << set.name
+       << ", !of_" << set.name << ") {\n"
+       << "  ^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
+          "%vs_f0: vector<3xf64>, %vs_f1: vector<3xf64>, "
+          "%vs_f2: vector<3xf64>, %vs_f3: vector<3xf64>, "
+          "%vs_a: f64, %vs_b: f64):\n";
+    SiteKernel k(os, "    ");
+    std::string placed = emitPlacement(k, amber);
+    std::string work = k.dot("%vs_f0", placed);
+    os << "    md.yield " << work << " : f64\n"
+       << "  } : !rel_" << set.name << ", !vec -> f64\n"
+       << "  md.return %u : f64\n}\n\n";
+  }
+}
+
+std::string Builder::emitDerivedSpread(StringRef indent,
+                                       const Program::TupleSet &set,
+                                       StringRef x, StringRef current,
+                                       StringRef next, StringRef relations,
+                                       StringRef virial,
+                                       StringRef virialResult) {
+  std::string inner = (indent + "  ").str();
+  std::string base = (next + "_" + set.name + "_d").str();
+  std::string types = "(!vec, !md.cell, !rel_" + set.name + ", !of_" +
+                      set.name + ", !of_" + set.name + ", !vec)";
+  std::string arguments = (x + ", %cell, " + relations + set.name + ", %f_" +
+                           set.name + "_a, %f_" + set.name + "_b, " + current)
+                              .str();
+  // The forces of the placement, −Jᵀ f without the owner's translation,
+  // and with the virial, their virial Σ_m (x_m − x_o) ⊗ F_m.
+  std::string forces = base + "f";
+  std::string work = base + "w";
+  if (!virial.empty())
+    os << indent << forces << ", " << work << " = md.evaluate @spread_"
+       << set.name << "(" << arguments << ")\n"
+       << indent << "    request [forces, virial]\n"
+       << indent << "    : " << types << " -> (!vec, vector<9xf64>)\n";
+  else
+    os << indent << forces << " = md.evaluate @spread_" << set.name << "("
+       << arguments << ") request [forces]\n"
+       << indent << "    : " << types << " -> !vec\n";
+  // The translation x_s = x_o + p: the force on the site moves to the
+  // owner whole, the transpose of the copy of x_o to x_s.
+  std::string moved = base + "t";
+  os << indent << moved << " = md.gather_tuples " << relations << set.name
+     << ", " << x << ", %cell\n"
+     << indent << "    coordinates(displacement(2, 1))\n"
+     << indent << "    gather(" << current << " : !vec) {\n"
+     << indent << "^bb0(%vs_j: vector<3xf64>, %vs_f0: vector<3xf64>, "
+                  "%vs_f1: vector<3xf64>, %vs_f2: vector<3xf64>, "
+                  "%vs_f3: vector<3xf64>):\n";
+  SiteKernel t(os, inner);
+  std::string removed = t.negate("%vs_f0"), zero = t.zero();
+  os << inner << "md.yield " << removed << ", %vs_f0, " << zero << ", "
+     << zero
+     << " : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>\n"
+     << indent << "} : !rel_" << set.name << ", !vec -> !vec\n";
+  // f + (translation) + Jᵀ f.
+  os << indent << next << " = md.map_particles gather(" << current << ", "
+     << moved << ", " << forces << " : !vec, !vec, !vec) {\n"
+     << indent
+     << "^bb0(%vs_x: vector<3xf64>, %vs_t: vector<3xf64>, "
+        "%vs_p: vector<3xf64>):\n"
+     << inner << "%vs_s = arith.addf %vs_x, %vs_t : vector<3xf64>\n"
+     << inner << "%vs_sum = arith.subf %vs_s, %vs_p : vector<3xf64>\n"
+     << inner << "md.yield %vs_sum : vector<3xf64>\n"
+     << indent << "} : !vec\n";
+  if (virial.empty())
+    return "";
+  // The virial with the forces on the atoms instead of that on the site:
+  // Σ_k (x_k − x_s) ⊗ F_k = Σ_k (x_k − x_o) ⊗ F_k − p ⊗ f, with F_k the
+  // moved forces, whose part from the placement is −Jᵀ f: the virial of
+  // the placement's forces, negated, less Σ_t p ⊗ f. For a site linear in
+  // the atoms the two cancel, to the rounding.
+  std::string arm = base + "a";
+  os << indent << arm << " = md.sum_tuples " << relations << set.name << ", "
+     << x << ", %cell\n"
+     << indent << "    coordinates(displacement(2, 1), displacement(3, 1))\n"
+     << indent << "    gather(" << current << " : !vec)\n"
+     << indent << "    tuple(%f_" << set.name << "_a, %f_" << set.name
+     << "_b : !of_" << set.name << ", !of_" << set.name << ") {\n"
+     << indent << "^bb0(%vs_j: vector<3xf64>, %vs_k: vector<3xf64>, "
+                  "%vs_f0: vector<3xf64>, %vs_f1: vector<3xf64>, "
+                  "%vs_f2: vector<3xf64>, %vs_f3: vector<3xf64>, "
+                  "%vs_a: f64, %vs_b: f64):\n";
+  SiteKernel w(os, inner);
+  bool amber = set.name == "sites_amber";
+  std::string placed = emitPlacement(w, amber);
+  std::string elements;
+  for (int a = 0; a != 3; ++a)
+    for (int b = 0; b != 3; ++b)
+      elements += (elements.empty() ? "" : ", ") +
+                  w.real("mulf", w.component(placed, a),
+                         w.component("%vs_f0", b));
+  os << inner << "%vs_w = vector.from_elements " << elements
+     << " : vector<9xf64>\n"
+     << inner << "md.yield %vs_w : vector<9xf64>\n"
+     << indent << "} : !rel_" << set.name << ", !vec -> vector<9xf64>\n";
+  std::string total = base + "s";
+  os << indent << total << " = arith.addf " << work << ", " << arm
+     << " : vector<9xf64>\n"
+     << indent << virialResult << " = arith.subf " << virial << ", " << total
+     << " : vector<9xf64>\n";
+  return virialResult.str();
 }
 
 void Builder::emitSettlePositions(StringRef indent, StringRef old,
@@ -11726,6 +11889,11 @@ llvm::Error Builder::build() {
   if (control.neighborStructure == NeighborStructure::Auto)
     return makeError("the neighbor structure 'AUTO' was not resolved; this "
                      "is a defect of mdir");
+  if (const char *spread = std::getenv("MDIR_SITE_SPREAD");
+      spread && *spread && StringRef(spread) != "derived" &&
+      StringRef(spread) != "written")
+    return makeError("MDIR_SITE_SPREAD is '" + llvm::Twine(spread) +
+                     "'; expected 'derived' or 'written'");
   // The neighbor matrix of a triclinic cell holds every pair that has an
   // image within its reach, whatever the reach: its build tests the images
   // beyond that of the one pass where the reach is more than half of the
@@ -12072,6 +12240,7 @@ llvm::Error Builder::build() {
   emitObservedPotentials();
   shiftsAtCutoff = false;
   emitPullPotentials();
+  emitSitePotentials();
   emitPrograms();
   emitEntry();
   if (!frameLoopError.empty())
