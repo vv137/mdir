@@ -662,6 +662,18 @@ format, or the outputs; every such change is listed under **Changed** or
   The measurement without tiles gave 1.21 to 1.41, 1.04 to 1.21, and 0.85
   to 1.07. The Gaussian kernel stays the default.
 
+- **The products of the batched bodies of neural stages are calls of
+  cuBLAS** (`D[ml4-body-gemm]`, #462,
+  [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)): on a
+  device, `md-exec-lower-stage-bodies` lowers every op of the shape of a
+  GEMM in f32 to `cublasSgemm` on the stream of the kernels, without TF32.
+  nablaDFT's PaiNN at 6,144 atoms of liquid water on an RTX 4090: a step
+  from 3,193 to 2,160 ms; `edge.b` from 1.22 to 0.35 ms and `node.b` from
+  4.2 to 0.31 ms per call of 4,096 rows. `MDIR_STAGE_CONTRACTIONS=loops`
+  (and the pass option `contractions=loops`) keeps the loops, for
+  comparison. The GPU runtime now links cuBLAS (`libcublas`, which the
+  installed tree carries, and `nvidia-cublas` in the `cuda` extra of the
+  wheel). No key of the control file changes.
 - **The batched bodies of neural stages are fused further**
   (`D299`, #462,
   [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)):

@@ -773,6 +773,15 @@ body on 4,096 rows):
   at 12,288, and 228,139 to 225,331 at 196,608, 1.2 to 1.6% less, and the
   peak from 652 to 592 MiB at 6,144 atoms, the bodies' intermediates
   that the fusion no longer stores.
+- **The products as cuBLAS calls** (`D[ml4-body-gemm]`, Section 8.3; the
+  same sweep, `main` at D299 and this lowering, and the same build with
+  `MDIR_STAGE_CONTRACTIONS=loops`, in one job): a step from 3,193 to
+  2,160 ms at 6,144 atoms (1.48 times shorter), 6,622 to 4,633 at
+  12,288 (1.43), and 225,377 to 193,063 at 196,608 (1.17), where the sum
+  over the centers of each tile (#464) dominates; `loops` gives D299's
+  times to 0.1%. The peak grows by 30 MiB, cuBLAS's workspace and the
+  weights on the device. In the 81-atom NVE run of Section 8.5, a step
+  goes from 95 to 27 ms.
 
 **Baselines of the same bodies** (#462; not MDIR's path, target times).
 The bodies of layer 0 as `painn-stages.py export` writes them, 4,096 rows,
@@ -832,7 +841,7 @@ starting points of the schedules of 4b.
 - The time of the `linalg` form (#462), in this order: the fusion of the
   bodies (`D299`, Section 8.3, built); the sums over the
   centers of a tile over the range of centers whose slots meet it, a
-  thread for each center and component (`D[ml4-tile-sums]`); the
+  thread for each center and component (#464); the
   products of the shape of a matrix product (`linalg.matmul`, and the
   generic contractions with one contracted dimension) as calls of
   cuBLAS's f32 GEMM on the runtime's stream and buffers, without TF32
