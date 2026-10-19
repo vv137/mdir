@@ -4957,6 +4957,9 @@ LogicalResult Lowering::addTemplates(Type real) {
   if (!templates)
     return module.emitError()
            << "cannot parse the neighbor build template for devices";
+  // The template's calls of the device primitives (CompactionEmitter.h).
+  if (failed(kernels::expandPrimitiveCalls(*templates)))
+    return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
     module.push_back(&op);
@@ -4976,6 +4979,9 @@ LogicalResult Lowering::addGroupsTemplates(bool tilted) {
   if (!templates)
     return module.emitError()
            << "cannot parse the template that builds groups of neighbors";
+  // The template's calls of the device primitives (CompactionEmitter.h).
+  if (failed(kernels::expandPrimitiveCalls(*templates)))
+    return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
     module.push_back(&op);
@@ -7794,19 +7800,10 @@ void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
     memref::StoreOp::create(body, loc, loop.getResult(0), counts,
                             ValueRange{c});
   });
+  // The counts of the chunks become their offsets, on one thread
+  // (CompactionEmitter.h).
   launchOver(builder, loc, one, [&](OpBuilder &body, Value) {
-    auto loop = scf::ForOp::create(
-        body, loc, createIndex(body, loc, 0), chunks, createIndex(body, loc, 1),
-        ValueRange{constant(body, 0)},
-        [&](OpBuilder &inner, Location, Value c, ValueRange args) {
-          Value count =
-              memref::LoadOp::create(inner, loc, counts, ValueRange{c});
-          memref::StoreOp::create(inner, loc, args[0], counts, ValueRange{c});
-          Value next = arith::AddIOp::create(inner, loc, args[0], count);
-          scf::YieldOp::create(inner, loc, ValueRange{next});
-        });
-    memref::StoreOp::create(body, loc, loop.getResult(0), counts,
-                            ValueRange{chunks});
+    kernels::emitSerialScan(body, loc, counts, chunks, counts, chunks);
   });
   launchOver(builder, loc, chunks, [&](OpBuilder &body, Value c) {
     auto [from, to] = bounds(body, c);
