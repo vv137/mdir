@@ -95,8 +95,8 @@ amended by #305, where the rows of the observed columns grew the stack by
 32 bytes a step of energy); on a GPU the lowering releases the stack of
 each iteration of a loop of the host. An allocation whose size is not a
 constant is one that the pass cannot move; no program has one, and the
-lowering of a program of frames, whose rows stand in its loop over frames
-(#309), refuses a module that would keep one outside the first block of a
+lowering of every program for the CPU, of segments as of frames (#309,
+#312), refuses a module that would keep one outside the first block of a
 function (`hoist-static-allocas{refuse-rest=true}`). `python-stack-rows.test`
 and `python-frames-loop.test` read the depth (`Simulation._stack_in_use`,
 private) to the byte. The

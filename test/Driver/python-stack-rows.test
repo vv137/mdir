@@ -10,17 +10,23 @@
 # the rows of a reporter, for programs without observed columns, with 4 and
 # with 5, with tunables and their derivative, and under a barostat; and no
 # allocation of the stack of the lowered module of each is outside the first
-# block of its function.
+# block of its function, and the lowering of each refuses a module that would
+# keep one there (`refuse-rest`, #312).
 # RUN: %mdir_python %S/Inputs/python_stack.py %S/Inputs/dipeptide CPU Double | FileCheck %s -DMODE="CPU Double"
 # RUN: %mdir_python %S/Inputs/python_stack.py %S/Inputs/dipeptide CPU Mixed | FileCheck %s -DMODE="CPU Mixed"
 # CHECK: [[MODE]]: no observed column: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
 # CHECK: [[MODE]]: no observed column: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: no observed column: the lowering refuses an allocation of the stack that it cannot take once: True
 # CHECK: [[MODE]]: 4 observed columns: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
 # CHECK: [[MODE]]: 4 observed columns: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: 4 observed columns: the lowering refuses an allocation of the stack that it cannot take once: True
 # CHECK: [[MODE]]: 5 observed columns: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
 # CHECK: [[MODE]]: 5 observed columns: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: 5 observed columns: the lowering refuses an allocation of the stack that it cannot take once: True
 # CHECK: [[MODE]]: 2 observed columns, a tunable, and the derivative in the tunables: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
 # CHECK: [[MODE]]: 2 observed columns, a tunable, and the derivative in the tunables: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: 2 observed columns, a tunable, and the derivative in the tunables: the lowering refuses an allocation of the stack that it cannot take once: True
 # CHECK: [[MODE]]: 4 observed columns under a barostat, coupled every 5 steps: the stack of the entry at the boundary after 1 step of energy: {{[0-9]+}} bytes; after 8 and 16 more as last steps of parts +0 and +0 bytes, and after 8 and 16 more at the rows of a reporter +0 and +0 bytes (bound 0): True
 # CHECK: [[MODE]]: 4 observed columns under a barostat, coupled every 5 steps: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: 4 observed columns under a barostat, coupled every 5 steps: the lowering refuses an allocation of the stack that it cannot take once: True
 # CHECK: python stack passed

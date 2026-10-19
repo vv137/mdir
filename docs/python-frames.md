@@ -647,7 +647,8 @@ the kernels with the neighbor build are 0.8 ms.
   allocation whose size is not a constant. No program has one: the
   builder, the templates, and the passes allocate static shapes alone. So
   that this is a check and not a reading, the lowering of a program of
-  frames for the CPU runs the pass with `refuse-rest`: a module in which
+  frames for the CPU runs the pass with `refuse-rest`, as that of every
+  program for the CPU does since #312: a module in which
   an allocation would be left outside the first block of a function (and
   outside OpenMP, where each thread has its own) does not compile, and a
   program of frames that compiles has none

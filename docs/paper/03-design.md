@@ -527,8 +527,8 @@ where it writes them (the observed columns, pulling, the free energy): an
 allocation in a loop is given back only when its function returns, and the
 entry of a simulation does not return (Section 3.6). The pass cannot move
 an allocation whose size is not a constant; no program has one, and the
-lowering of a program of frames, whose rows stand in a loop that never
-ends, refuses a module that would keep one outside the first block of a
+lowering of every program, whose rows stand in loops over steps or frames,
+refuses a module that would keep one outside the first block of a
 function, so that the absence is checked and not assumed. `convert-md-exec-to-gpu`
 releases the stack of each iteration of a loop of the host instead, and lowers
 to kernels of the `gpu` dialect (Section 8), and the upstream

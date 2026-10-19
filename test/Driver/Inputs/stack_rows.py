@@ -186,6 +186,14 @@ for index, (name, (output, terms, more, files, row)) in enumerate(CASES.items())
         clean = outside == 0
         print(f"{mode}: {name}: the lowered module has {outside} allocations of the stack "
               f"outside the first block of a function: {clean}")
+        # Not only read: the lowering refuses a module that would keep one
+        # (#312).
+        pipeline = subprocess.run([cli, "emit", "--stage=pipeline", f"{tag}.toml"], cwd=work,
+                                  check=True, capture_output=True, text=True).stdout
+        guarded = "hoist-static-allocas{refuse-rest=true}" in pipeline
+        print(f"{mode}: {name}: the lowering refuses an allocation of the stack that it "
+              f"cannot take once: {guarded}")
+        clean &= guarded
     else:
         clean = outside == 0 or saves > 0
         print(f"{mode}: {name}: the lowered module has no allocation of the stack outside "

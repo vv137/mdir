@@ -164,11 +164,12 @@ def HoistStaticAllocas : Pass<"hoist-static-allocas", "::mlir::ModuleOp"> {
     With `refuse-rest` the pass fails where it would leave an `llvm.alloca`
     outside the first block of its function and outside every op of OpenMP:
     one whose size is not a constant, which it cannot take once. The
-    lowering of a program of frames runs it so where the lowering ends
-    (#309): the entry of such a program is a loop over frames that never
-    returns, and the builder no longer moves the rows of a frame before
-    that loop, so a module that the pass accepts has no allocation of the
-    stack that a frame could take again, and one that it cannot prove so is
+    lowering for the CPU runs it so where it ends, for every program
+    (#309, #312): the entry of a program of frames is a loop over frames
+    that never returns, that of a program of segments never returns either,
+    and the loops over steps of `mdir run` keep what they take until the run
+    ends. A module that the pass accepts has no allocation of the stack that
+    a step or a frame could take again, and one that it cannot prove so is
     an error that names the allocation, not a stack that grows.
   }];
   let options = [

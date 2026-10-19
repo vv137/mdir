@@ -1432,6 +1432,17 @@ format, or the outputs; every such change is listed under **Changed** or
   deterministic mode), or has a tolerance sized for runs that have
   parted. `CONTRIBUTING.md` states the rule for new tests.
 
+- The lowering of every program for the CPU, not only that of a program of
+  frames, refuses a module that would keep an allocation of the stack of a
+  size that is not a constant outside the first block of a function
+  (`hoist-static-allocas{refuse-rest=true}`, D117 as amended by #312). The
+  entry of a Python simulation never returns, and the loops over steps of
+  `mdir run` keep what they take until the run ends; for them the absence
+  of such an allocation was read from the code, not checked. No program
+  has one, so nothing that compiled before is refused. The pipeline text of
+  every CPU program (`Program.pipeline`, `mdir emit --stage=pipeline`)
+  names the option, so the kept code of each is compiled anew once.
+
 - `pme-tiles-gpu.test` failed in about 1 of 300 runs at order 8 in mixed
   precision, a relative rms of the forces of 2.46e-6 against 2e-6 (#427).
   The spreading was not at fault. The test compares the forces after one
