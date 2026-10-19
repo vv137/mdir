@@ -663,7 +663,7 @@ format, or the outputs; every such change is listed under **Changed** or
   as before. The option `fuse=false` of the pass keeps D293's lowering.
 
 - **A tile of a loop over pairs sums its rows into the centers that meet
-  it** (`D[ml4-tile-sums]`, #462,
+  it** (`D300`, #462,
   [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)): a
   thread for each row of the tile, and for each component of a wide
   destination, instead of a thread for each particle of the system; the

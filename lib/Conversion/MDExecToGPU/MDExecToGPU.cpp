@@ -3456,7 +3456,7 @@ LogicalResult Lowering::lowerStagedPairFor(md_exec::PairForOp op) {
     // in the order of its slots: a gather, with no atomics. The slots are
     // ordered by center, so the centers that meet the tile are those of its
     // rows: the row of a center's first slot in the tile leads, and the
-    // others do nothing (D[ml4-tile-sums]). A wide destination (features)
+    // others do nothing (D300). A wide destination (features)
     // is added up by a thread for each row and component, the threads of a
     // row next to each other, so that a center's components are read
     // together; the narrow ones by a thread for each row.

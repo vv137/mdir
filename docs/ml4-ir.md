@@ -599,7 +599,7 @@ and the loops of `md_exec` carry them to the lowering for a device:
   not depend on the order of the threads. The slots are ordered by
   center, so the centers that meet a tile are those of its rows: the row
   of a center's first slot in the tile leads its sum, and the other rows
-  do nothing (`D[ml4-tile-sums]`). A wide destination is added up by a
+  do nothing (`D300`). A wide destination is added up by a
   thread for each row and component, the threads of a row side by side,
   so that a center's components are read together; a narrow one by a
   thread for each row. (D293's sum ran a thread for each particle of the
