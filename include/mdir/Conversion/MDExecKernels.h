@@ -181,12 +181,22 @@ struct GroupStream {
 /// the lane to the global sums, each pair once (no weight): the caller sums
 /// them over the warp. With `stream`, `unit` is a group and the warp takes
 /// the entries of its stream, 32 at a time as from the blocks.
+///
+/// What a kernel adds to destination `out` of the particle `member`; given
+/// to a kernel, it takes the value in place of the atomic addition to the
+/// destination (the table of a block, D283, D[scatter-op]).
+using AddToMember = llvm::function_ref<void(mlir::OpBuilder &, unsigned out,
+                                            mlir::Value member,
+                                            mlir::Value value)>;
+/// With `add`, the values of the particles go to it, converted to the type
+/// of the destination, in place of the atomics.
 llvm::SmallVector<mlir::Value>
 emitGroupPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                     const GroupLists &lists, const PairLayout &layout,
                     mlir::Value box, mlir::Value inverse, mlir::Value unit,
                     mlir::Value lane, mlir::IRMapping &local,
-                    const GroupStream *stream = nullptr);
+                    const GroupStream *stream = nullptr,
+                    AddToMember add = nullptr);
 
 /// Emits what a loop over tuples does for the particle `particle`: the loop
 /// over the tuples in its row of `incidence`, with the displacements in the
@@ -278,9 +288,6 @@ void emitIntegrationThread(
 /// `add`, if given, takes the value for destination `out` of the member
 /// `member` in place of the atomic addition to the destination (the sums of
 /// a block, D283).
-using AddToMember = llvm::function_ref<void(mlir::OpBuilder &, unsigned out,
-                                            mlir::Value member,
-                                            mlir::Value value)>;
 void emitTupleOnce(mlir::OpBuilder &builder, md_exec::TupleForOp op,
                    mlir::Value members, mlir::Value tuple, mlir::Value box,
                    mlir::Value inverse, mlir::IRMapping &local,

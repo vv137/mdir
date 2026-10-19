@@ -121,7 +121,9 @@ static void fuse(PairForOp first, PairForOp second) {
       first.getCutoffAttr(), weightsAttr,
       /*overwrite=*/DenseBoolArrayAttr(), first.getTraversalAttr(),
       first.getConflictAttr(), exchangeAttr, first.getCenters(),
-      first.getImagesAttr());
+      first.getImagesAttr(),
+      // Chosen later, for the fused loop (md-exec-choose-scatter).
+      /*scatter=*/ScatterAttr());
 
   // The kernel: the first kernel, then the second.
   Block *block = new Block();

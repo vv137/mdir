@@ -3161,20 +3161,50 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   Value one = createIndex(builder, loc, 1);
   Value warp32 = createIndex(builder, loc, 32);
   Value block = createIndex(builder, loc, blockSize);
+  // The table of a block for the values at the particles
+  // (`scatter(hash(S, P, L))`, D[scatter-op]), its precondition checked again
+  // with the chooser's function (Scatter.h).
+  md_exec::ScatterAttr scatter = op.getScatterAttr();
+  bool hashed = scatter && scatter.isHash();
+  SmallVector<Value> outs(op.getOuts());
+  SmallVector<md_exec::scatter::Destination> destinations;
+  if (hashed)
+    if (md_exec::scatter::Refusal refused = md_exec::scatter::checkHash(
+            scatter.getSlots(), op.getOuts().getTypes(), deterministic,
+            &destinations))
+      return op.emitOpError()
+             << "takes the strategy 'hash', whose precondition does not "
+                "hold: "
+             << *refused;
+  using WarpBody =
+      function_ref<SmallVector<Value>(OpBuilder &, Value, Value, AddToMember)>;
   // A loop of `count` units of work, `body` emitting each: returns the
-  // number of warps whose sums are in the scratch.
+  // number of warps whose sums are in the scratch. With `tabled`, what the
+  // warps of a block add to the particles goes to the table of the block,
+  // flushed once after the loop.
   auto emitWarps = [&](OpBuilder &at, Value count,
                        function_ref<Value(OpBuilder &, Value)> first,
-                       function_ref<SmallVector<Value>(OpBuilder &, Value,
-                                                       Value)>
-                           body) -> Value {
+                       WarpBody body, bool tabled) -> Value {
     Value warps = arith::MaxUIOp::create(
         at, loc, arith::MinUIOp::create(at, loc, count, size), one);
     Value threads = arith::MulIOp::create(at, loc, warps, warp32);
     Value grid = createGroups(at, loc, threads, blockSize);
-    auto launch = gpu::LaunchOp::create(at, loc, grid, one, one, block, one,
-                                        one);
+    SmallVector<Type> attributions;
+    if (tabled)
+      attributions = kernels::getHashAttributions(context, scatter.getSlots(),
+                                                  destinations);
+    auto launch = gpu::LaunchOp::create(
+        at, loc, grid, one, one, block, one, one,
+        /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
+        /*asyncDependencies=*/{}, /*workgroupAttributions=*/attributions);
     OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+    std::optional<kernels::BlockHashTable> table;
+    if (tabled) {
+      table.emplace(kernel, loc, scatter.getSlots(), scatter.getProbes(),
+                    launch.getWorkgroupAttributionBBArgs(), outs, destinations,
+                    launch.getThreadIds().x, block);
+      table->emitClear(kernel);
+    }
     Value thread = arith::AddIOp::create(
         kernel, loc,
         arith::MulIOp::create(kernel, loc, launch.getBlockIds().x, block),
@@ -3189,10 +3219,14 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
     for (unsigned i = numOuts, e = yield->getNumOperands(); i != e; ++i)
       initial.push_back(
           createZero(kernel, loc, yield->getOperand(i).getType()));
+    auto add = [&](OpBuilder &b, unsigned out, Value member, Value value) {
+      table->add(b, outs[out], member, value);
+    };
     auto loop = scf::ForOp::create(
         kernel, loc, start, end, warps, initial,
         [&](OpBuilder &b, Location, Value unit, ValueRange sums) {
-          SmallVector<Value> contributions = body(b, unit, lane);
+          SmallVector<Value> contributions =
+              body(b, unit, lane, tabled ? AddToMember(add) : AddToMember());
           SmallVector<Value> next;
           for (auto [sum, contribution] : llvm::zip(sums, contributions))
             next.push_back(arith::AddFOp::create(b, loc, sum, contribution));
@@ -3214,9 +3248,33 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
         scf::YieldOp::create(then, loc);
       });
     }
+    if (table)
+      table->emitFlush(kernel);
     gpu::TerminatorOp::create(kernel, loc);
     bringIn(launch);
     return warps;
+  };
+  // The loop with the table where the loop takes it: from `L` units of
+  // work on (the count on the host), both kernels emitted and the host
+  // choosing, as for the tuples (D283).
+  auto emitWarpsChosen = [&](OpBuilder &at, Value count,
+                             function_ref<Value(OpBuilder &, Value)> first,
+                             WarpBody body) -> Value {
+    if (!hashed)
+      return emitWarps(at, count, first, body, false);
+    if (scatter.getLeast() == 0)
+      return emitWarps(at, count, first, body, true);
+    Value many = arith::CmpIOp::create(
+        at, loc, arith::CmpIPredicate::uge, count,
+        createIndex(at, loc, scatter.getLeast()));
+    auto choice = scf::IfOp::create(at, loc, TypeRange{at.getIndexType()},
+                                    many, /*withElseRegion=*/true);
+    OpBuilder then = OpBuilder::atBlockEnd(choice.thenBlock());
+    scf::YieldOp::create(then, loc, emitWarps(then, count, first, body, true));
+    OpBuilder otherwise = OpBuilder::atBlockEnd(choice.elseBlock());
+    scf::YieldOp::create(otherwise, loc,
+                         emitWarps(otherwise, count, first, body, false));
+    return choice.getResult(0);
   };
 
   // The loop over the units of work: of a dual list, the warps take the
@@ -3227,7 +3285,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
       memref::LoadOp::create(builder, loc, structure.sizes,
                              ValueRange{createIndex(builder, loc, 2)}));
   auto emitLoop = [&](OpBuilder &at) -> Value {
-    return emitWarps(
+    return emitWarpsChosen(
         at, units,
         [&](OpBuilder &kernel, Value count) -> Value {
           if (!activeCount)
@@ -3237,7 +3295,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
               memref::LoadOp::create(kernel, loc, activeCount,
                                      ValueRange{createIndex(kernel, loc, 0)}));
         },
-        [&](OpBuilder &body, Value unit, Value lane) {
+        [&](OpBuilder &body, Value unit, Value lane, AddToMember add) {
           if (activeUnits)
             unit = arith::IndexCastOp::create(
                 body, loc, body.getIndexType(),
@@ -3245,7 +3303,8 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
                                        ValueRange{unit}));
           IRMapping local;
           return kernels::emitGroupPairKernel(body, op, lists, layout, box,
-                                              inverse, unit, lane, local);
+                                              inverse, unit, lane, local,
+                                              /*stream=*/nullptr, add);
         });
   };
 
@@ -3281,10 +3340,10 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
       // The warp stores the inner list and loads it back through the same
       // buffers, one argument of the kernel each.
       ctx.inner = {lists.entries, lists.masks, lists.blockCounts};
-      Value groupWarps = emitWarps(
+      Value groupWarps = emitWarpsChosen(
           then, ctx.groups,
           [&](OpBuilder &, Value count) -> Value { return count; },
-          [&](OpBuilder &body, Value group, Value lane) {
+          [&](OpBuilder &body, Value group, Value lane, AddToMember add) {
             Value kept = emitPruneGroup(
                 body, loc, ctx, group,
                 arith::IndexCastOp::create(body, loc, body.getI32Type(),
@@ -3299,7 +3358,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
             IRMapping local;
             return kernels::emitGroupPairKernel(body, op, inner, layout, box,
                                                 inverse, group, lane, local,
-                                                &stream);
+                                                &stream, add);
           });
       emitActiveUnits(then, loc, ctx);
       scf::YieldOp::create(then, loc, groupWarps);

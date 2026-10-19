@@ -518,7 +518,8 @@ static Value fromComponents(OpBuilder &b, Location loc, Type type,
 SmallVector<Value> kernels::emitGroupPairKernel(
     OpBuilder &builder, md_exec::PairForOp op, const GroupLists &lists,
     const PairLayout &layout, Value box, Value inverse, Value unit,
-    Value lane, IRMapping &local, const GroupStream *stream) {
+    Value lane, IRMapping &local, const GroupStream *stream,
+    AddToMember add) {
   Location loc = op.getLoc();
   Block &kernel = op.getKernel().front();
   Operation *yield = kernel.getTerminator();
@@ -815,10 +816,12 @@ SmallVector<Value> kernels::emitGroupPairKernel(
           for (unsigned i = 0; i != numOuts; ++i) {
             Value destination = op.getOuts()[i];
             Type stored = getElementTypeOrSelf(destination.getType());
-            emitAtomicAdd(then, loc,
-                          convertReal(then, loc, results[2 + numIns + i],
-                                      stored),
-                          destination, particle);
+            Value value = convertReal(then, loc, results[2 + numIns + i],
+                                      stored);
+            if (add)
+              add(then, i, particle, value);
+            else
+              emitAtomicAdd(then, loc, value, destination, particle);
           }
           scf::YieldOp::create(then, loc);
         });
@@ -861,8 +864,11 @@ SmallVector<Value> kernels::emitGroupPairKernel(
       for (unsigned i = 0; i != numOuts; ++i) {
         Value destination = op.getOuts()[i];
         Type stored = getElementTypeOrSelf(destination.getType());
-        emitAtomicAdd(then, loc, convertReal(then, loc, totals[i], stored),
-                      destination, particle);
+        Value value = convertReal(then, loc, totals[i], stored);
+        if (add)
+          add(then, i, particle, value);
+        else
+          emitAtomicAdd(then, loc, value, destination, particle);
       }
       scf::YieldOp::create(then, loc);
     });

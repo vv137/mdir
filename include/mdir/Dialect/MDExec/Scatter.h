@@ -75,6 +75,11 @@ Refusal checkTile(ReciprocalOp op, int64_t edge, bool deterministic);
 /// members: room for every member, rounded up to a power of two, so that a
 /// slot is a mask of the hash.
 int64_t getHashSlots(int64_t blockSize, int64_t arity);
+/// The particles that a thread of a loop over groups adds to for a unit of
+/// work, in place of the arity of a tuple: the particle of its group and
+/// those of two entries, a unit holding 64 entries for 32 lanes
+/// (D[scatter-op]).
+constexpr int64_t kPairHashReach = 3;
 
 /// A destination of a table: a number or a row of `components` numbers of
 /// `element` for each slot.

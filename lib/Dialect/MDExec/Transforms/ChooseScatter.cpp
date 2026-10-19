@@ -32,11 +32,16 @@ public:
     auto isSwitch = [](StringRef value) {
       return value == "auto" || value == "on" || value == "off";
     };
-    if (!isSwitch(tile) || !isSwitch(hash)) {
-      module->emitError() << "expected 'auto', 'on', or 'off' for 'tile' and "
-                             "'hash', got '"
-                          << static_cast<std::string>(tile) << "' and '"
-                          << static_cast<std::string>(hash) << "'";
+    if (!isSwitch(tile) || !isSwitch(hash) || !isSwitch(pairHash)) {
+      module->emitError() << "expected 'auto', 'on', or 'off' for 'tile', "
+                             "'hash', and 'pair-hash', got '"
+                          << static_cast<std::string>(tile) << "', '"
+                          << static_cast<std::string>(hash) << "', and '"
+                          << static_cast<std::string>(pairHash) << "'";
+      return signalPassFailure();
+    }
+    if (pairHashLeast < 0) {
+      module->emitError() << "expected pair-hash-least of 0 or more";
       return signalPassFailure();
     }
     if (!scatter::isTileEdge(tileEdge)) {
@@ -55,6 +60,8 @@ public:
         chooseTile(sum);
       else if (auto loop = dyn_cast<TupleForOp>(op))
         chooseHash(loop);
+      else if (auto pairs = dyn_cast<PairForOp>(op))
+        choosePairHash(pairs);
     });
   }
 
@@ -142,6 +149,32 @@ private:
       return explainRefused(op, "hash", *refused);
     ScatterAttr chosen = ScatterAttr::getHash(
         &getContext(), slots, hashProbes, hash == "on" ? 0 : hashLeast);
+    op.setScatterAttr(chosen);
+    explainChosen(op, chosen);
+  }
+
+  /// The tables of the loops over pairs that add at both ends of a pair
+  /// (D[scatter-op]): the loops over groups, each pair once.
+  void choosePairHash(PairForOp op) {
+    // A loop that writes only at its centers, each by its own thread,
+    // scatters nothing; nor does one with only global sums.
+    if (op.getConflict() != Conflict::Atomic || op.getOuts().empty())
+      return;
+    if (pairHash == "off")
+      return explainRefused(op, "hash", "pair-hash=off");
+    // The table is applied by the lowering of the loops over groups; a loop
+    // over the rows of a matrix that adds at its neighbors as well keeps the
+    // atomics until its lowering takes the table.
+    if (op.getTraversal() != Traversal::Unique)
+      return explainRefused(op, "hash",
+                            "the lowering of a loop over the rows of a "
+                            "matrix has no table yet");
+    int64_t slots = scatter::getHashSlots(blockSize, scatter::kPairHashReach);
+    if (scatter::Refusal refused = scatter::checkHash(
+            slots, op.getOuts().getTypes(), deterministic))
+      return explainRefused(op, "hash", *refused);
+    ScatterAttr chosen =
+        ScatterAttr::getHash(&getContext(), slots, hashProbes, pairHashLeast);
     op.setScatterAttr(chosen);
     explainChosen(op, chosen);
   }

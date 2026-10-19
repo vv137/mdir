@@ -756,6 +756,20 @@ static SmallVector<Type, 2> getPairGeometryTypes(PairForOp op) {
 }
 
 LogicalResult PairForOp::verify() {
+  // The table of a block (D[scatter-op]) is for a loop that adds at both
+  // ends of a pair; a loop that writes only at its centers scatters
+  // nothing.
+  if (failed(verifyScatter(*this, getScatterAttr(), ScatterStrategy::Hash,
+                           "the entries of a list may be anywhere, so the "
+                           "footprint of a block is not bounded")))
+    return failure();
+  if (ScatterAttr scatter = getScatterAttr())
+    if (scatter.isHash() && getConflict() != Conflict::Atomic)
+      return emitOpError() << "cannot take the strategy 'hash' with the "
+                              "conflict '"
+                           << stringifyConflict(getConflict())
+                           << "': the loop adds only at its centers, each "
+                              "by its own thread";
   auto neighbors = cast<NeighborsType>(getNeighbors().getType());
   if (failed(verifyPositions(getOperation(), getPositions(),
                              neighbors.getParticleSet())))

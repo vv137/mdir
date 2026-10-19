@@ -212,7 +212,9 @@ LogicalResult Converter::convertPairOp(OpTy op, bool isSum) {
                                   md_exec::Traversal::Directed),
       md_exec::ConflictAttr::get(builder.getContext(),
                                  md_exec::Conflict::OwnerOnly),
-      exchange, /*centers=*/Value(), /*images=*/md_exec::ImagesAttr());
+      exchange, /*centers=*/Value(), /*images=*/md_exec::ImagesAttr(),
+      // Chosen on a device (md-exec-choose-scatter, D[scatter-op]).
+      /*scatter=*/md_exec::ScatterAttr());
 
   // The kernel receives the squared distance; the semantic kernel is
   // written in terms of the distance.

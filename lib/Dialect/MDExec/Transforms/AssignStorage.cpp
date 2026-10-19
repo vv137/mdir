@@ -683,7 +683,10 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
       mapping.lookup(op.getCell()), ins, outs, reduce, scratch,
       op.getCutoffAttr(), op.getWeightsAttr(), overwriteAttr,
       op.getTraversalAttr(), op.getConflictAttr(), op.getExchangeAttr(),
-      mapCenters(op.getCenters()), op.getImagesAttr());
+      mapCenters(op.getCenters()), op.getImagesAttr(),
+      // The strategy of the scatter (D[scatter-op]): a loop that overwrites
+      // a destination clears it first and then adds to it as well.
+      op.getScatterAttr());
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
     scope.release(buffer);
