@@ -186,9 +186,21 @@ static void enter(void) {
   check(cuCtxSetCurrent(context), "cuCtxSetCurrent");
 }
 
+/* What the products of the bodies of neural stages hold on the device
+   (D[ml4-body-gemm], at the end of this file): the copies of the constants
+   that `owner` made (an activation, or null outside one; every owner with
+   `all`), and the handle of cuBLAS. `gone` says that the driver has shut
+   down, and the memory of the device with it. */
+static void releaseDeviceConstants(void *owner, int all, int gone);
+static void releaseBlas(int gone);
+
 void mgpuSetDefaultDevice(int32_t device) {
   defaultDevice = device;
   if (context) {
+    /* The handle and the copies belong to the context that is released. */
+    int gone = cuCtxSetCurrent(context) != CUDA_SUCCESS;
+    releaseDeviceConstants(NULL, 1, gone);
+    releaseBlas(gone);
     CUdevice old;
     check(cuCtxGetDevice(&old), "cuCtxGetDevice");
     check(cuDevicePrimaryCtxRelease(old), "cuDevicePrimaryCtxRelease");
@@ -289,6 +301,15 @@ void mgpuModuleUnload(CUmodule module) {
   if (isPending && sharedStream)
     cuStreamSynchronize(sharedStream);
   isPending = 0;
+  /* The program ends: the copies of its constants made outside an
+     activation go with it, since another program may later put its own
+     constants at the same addresses of the host. A program that is still
+     loaded copies its own again when it next needs them. */
+  {
+    CUresult current = context ? cuCtxSetCurrent(context) : CUDA_SUCCESS;
+    releaseDeviceConstants(NULL, 0,
+                           !context || current != CUDA_SUCCESS);
+  }
   CUresult result = cuModuleUnload(module);
   if (result != CUDA_ERROR_DEINITIALIZED &&
       result != CUDA_ERROR_INVALID_CONTEXT &&
@@ -1361,6 +1382,8 @@ void mdrtDeviceActivationClose(void *activation) {
   }
   for (size_t i = 0; i != a->numManaged && !gone; ++i)
     check(cuMemFree(a->managed[i]), "cuMemFree");
+  /* The copies of the constants of the bodies that the activation made. */
+  releaseDeviceConstants(a, 0, gone);
   for (size_t i = 0; i != a->numHandles; ++i)
     free(a->handles[i]);
   free(a->managed);
@@ -2213,18 +2236,45 @@ void mdrtGemmF32(int64_t m, int64_t n, int64_t k, int64_t a, int64_t lda,
 }
 
 /* The constants that the products read (the weights of the bodies), copied
-   once to the device, found by the address and size of their host copy. */
+   to the device when first read, and found again by the address and size
+   of their host copy and by their owner: the activation of the embedding
+   program that made the copy (D215), or none outside an activation. An
+   address of the host identifies a constant only while its program is
+   loaded: after the program is released, another one may put its own
+   constants there. So the copies go with their owner: an activation's when
+   it closes, those made outside one when a program unloads its modules
+   (mgpuModuleUnload), and all of them with the context
+   (mgpuSetDefaultDevice). */
 struct DeviceConstant {
+  void *owner;
   int64_t host, bytes;
   CUdeviceptr device;
 };
 static struct DeviceConstant *deviceConstants = NULL;
 static int64_t numDeviceConstants = 0, deviceConstantsCapacity = 0;
 
+static void releaseDeviceConstants(void *owner, int all, int gone) {
+  for (int64_t i = numDeviceConstants; i-- != 0;) {
+    if (!all && deviceConstants[i].owner != owner)
+      continue;
+    if (!gone)
+      check(cuMemFree(deviceConstants[i].device), "cuMemFree");
+    deviceConstants[i] = deviceConstants[--numDeviceConstants];
+  }
+}
+
+static void releaseBlas(int gone) {
+  if (blasHandle && !gone)
+    cublasDestroy(blasHandle);
+  blasHandle = NULL;
+}
+
 int64_t mdrtDeviceConstant(int64_t host, int64_t bytes) {
   enter();
+  void *owner = currentActivation;
   for (int64_t i = 0; i != numDeviceConstants; ++i)
-    if (deviceConstants[i].host == host && deviceConstants[i].bytes == bytes)
+    if (deviceConstants[i].owner == owner && deviceConstants[i].host == host &&
+        deviceConstants[i].bytes == bytes)
       return (int64_t)deviceConstants[i].device;
   if (numDeviceConstants == deviceConstantsCapacity) {
     int64_t capacity =
@@ -2248,6 +2298,7 @@ int64_t mdrtDeviceConstant(int64_t host, int64_t bytes) {
      products that read the constant would race with its copy. */
   check(cuCtxSynchronize(), "cuCtxSynchronize");
   struct DeviceConstant *entry = &deviceConstants[numDeviceConstants++];
+  entry->owner = owner;
   entry->host = host;
   entry->bytes = bytes;
   entry->device = device;

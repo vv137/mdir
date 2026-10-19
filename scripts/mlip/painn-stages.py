@@ -28,9 +28,9 @@ Subcommands, each in its own environment:
       and writes its weights and, for the check, each stage of SchNetPack's
       own modules on random rows (outputs and products with random
       cotangents).
-  weights --synthetic F L OUT.npz   any Python with NumPy
+  weights --synthetic F L OUT.npz [--seed N]   any Python with NumPy
       A model of the same structure with F features, L layers, and random
-      weights from a fixed seed, for MDIR's tests.
+      weights from a fixed seed (3, or N), for MDIR's tests.
   check OUT.npz [REFERENCE.npz ...] JAX
       Each JAX stage against SchNetPack's modules (the rows of `weights`),
       and the energy, forces, and virial composed from the JAX stages, with
@@ -740,6 +740,7 @@ def main():
     s.add_argument("checkpoint", nargs="?")
     s.add_argument("output")
     s.add_argument("--synthetic", type=int, nargs=2, metavar=("F", "L"))
+    s.add_argument("--seed", type=int, default=3, help="of the synthetic weights")
     s = sub.add_parser("check")
     s.add_argument("weights")
     s.add_argument("references", nargs="*")
@@ -773,7 +774,7 @@ def main():
         jax.config.update("jax_platforms", "cpu")
         cmd_harness(a)
     elif a.cmd == "weights":
-        w = (synthetic_weights(*a.synthetic) if a.synthetic
+        w = (synthetic_weights(*a.synthetic, seed=a.seed) if a.synthetic
              else weights_from_checkpoint(a.checkpoint))
         np.savez(a.output, **w)
         print(f"wrote {a.output}: F = {int(w['F'])}, L = {int(w['L'])}")
