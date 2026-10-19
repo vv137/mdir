@@ -1,4 +1,5 @@
 add_mlir_conversion_library(MDIRMDExecKernels
+  CompactionEmitter.cpp
   MDExecKernels.cpp
   ScatterEmitter.cpp
 
