@@ -147,7 +147,8 @@ def ChooseScatter
       loop takes it where the run is not in the deterministic
       mode, it has destinations, each a number or a row of a static length
       of f32 or f64, and the table fits 48 KiB. `pair-hash=on` takes the
-      table where it applies, `pair-hash=off` (the default) never.
+      table where it applies, `pair-hash=off` (the default) and
+      `pair-hash=auto` never.
       Measured on an RTX 4090, the table made these loops slower (the
       entries of a block are distinct particles; docs/device-primitives.md,
       Section 2.7).
@@ -182,7 +183,7 @@ def ChooseScatter
            "table; a launch of fewer keeps the atomics">,
     Option<"pairHash", "pair-hash", "std::string", /*default=*/"\"off\"",
            "The tables of the loops over pairs that add at both ends: "
-           "auto, on, or off">,
+           "auto (the atomics, as measured faster), on, or off">,
     Option<"pairHashLeast", "pair-hash-least", "int64_t", /*default=*/"0",
            "The fewest units of work of a launch of a loop over pairs that "
            "take the table; a launch of fewer keeps the atomics">,

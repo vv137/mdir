@@ -1,4 +1,7 @@
 // RUN: mdir-opt %s --md-exec-choose-scatter | FileCheck %s --check-prefix=OFF
+// RUN: mdir-opt %s --md-exec-choose-scatter=pair-hash=auto | FileCheck %s --check-prefix=OFF
+// RUN: mdir-opt %s --md-exec-choose-scatter="pair-hash=auto explain=true" \
+// RUN:   -o /dev/null 2>&1 | FileCheck %s --check-prefix=AUTO
 // RUN: mdir-opt %s --md-exec-choose-scatter=pair-hash=on | FileCheck %s
 // RUN: mdir-opt %s --md-exec-choose-scatter=pair-hash=on | mdir-opt \
 // RUN: | FileCheck %s
@@ -20,7 +23,8 @@
 // take the table of a block, `hash(S, P, L)` (D[scatter-op]), with S the
 // slots for `block-size` threads that each add to 3 particles a unit of
 // work, rounded up to a power of two: 512 for 128 threads, 1024 for 256.
-// `pair-hash=off` is the default. A loop that writes only at its centers,
+// `pair-hash=off` is the default, and `pair-hash=auto` chooses the atomics
+// as well (measured faster at every loop over pairs). A loop that writes only at its centers,
 // one with only global sums, one whose table would not fit 48 KiB, and the
 // deterministic mode take none.
 //
@@ -46,6 +50,7 @@ md.particle_set @atoms
 // WHY: remark: scatter: hash(512, 8, 0)
 // WHY: remark: scatter: hash(512, 8, 0)
 // WHYOFF: remark: scatter: no hash: pair-hash=off
+// AUTO: remark: scatter: no hash: the table was measured slower at every loop over pairs, 1.18 to 2.06 times the atomics (pair-hash=auto)
 func.func @groups(%x: !vec, %cell: !md.cell, %nl: !nl, %f0: !vec,
                   %rho0: !real) -> (!vec, !real) {
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)

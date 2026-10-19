@@ -174,10 +174,12 @@ Where the preconditions hold, the pass chooses by cost:
   the kernel from 12 to 42 µs; with the bound, 13.2.
 
 - **`hash` on `scatter_add`**: $S$ = 128 slots (one value a thread) and
-  $L$ = 100,000 (`hash-least`).
+  $L$ = 100,000 (`hash-least`), the threshold of the tuples, since no site
+  of the op has been measured yet; below $L$ values a launch keeps the
+  atomics.
 - **`hash` on the loops over pairs that add at both ends** (over groups, and
-  `(directed, atomic)` over a matrix): off (`pair-hash=off`), measured
-  slower on every system (Section 2.7). The slots would be
+  `(directed, atomic)` over a matrix): off (`pair-hash=off`), and `auto`
+  chooses the atomics too, measured faster on every system (Section 2.7). The slots would be
   $\mathrm{PowerOf2Ceil}(3T)$: one particle of the group and two entries
   a thread for each unit of work.
 
@@ -192,8 +194,8 @@ or the reason for a refusal.
 | `tile-edge`, `tile-min-points` | The points of an edge of a bin (4, 8, 16; 8 by default) and the threshold of `auto` |
 | `hash=auto\|on\|off` | `on` takes the table at any count ($L$ = 0) |
 | `hash-least`, `hash-probes`, `block-size` | $L$, the slots tried `P`, and the threads of a block, as `convert-md-exec-to-gpu` launches them |
-| `pair-hash=auto\|on\|off`, `pair-hash-least` | The table of the loops over groups: `off` by default, and `auto` acts as `on`. $L$ counts units of work |
-| `scatter-hash=auto\|on\|off` | The table of `md_exec.scatter_add`; `on` takes it at any count |
+| `pair-hash=auto\|on\|off`, `pair-hash-least` | The table of the loops over pairs that add at both ends: `off` by default. `auto` chooses the atomics at every such loop, with a remark that cites the measurement (Section 2.7), so that `auto` and the default agree; `on` takes the table for comparison. $L$ counts units of work |
+| `scatter-hash=auto\|on\|off` | The table of `md_exec.scatter_add`. `auto`, the default, sets `hash(128, 8, L)` with $L$ = `hash-least` (100,000): a launch of fewer values keeps the atomics, chosen on the host by the count. No site of the op has been measured yet, so $L$ is the threshold of the tuples (D283), whose values per index are similar for `halo_sum`; it is to be measured with #443's site. `on` takes the table at any count, `off` never |
 | `deterministic`, `explain` | The mode, which privatizes no floating-point sum; the remarks |
 | `MDIR_PME_SPREAD` | `global` is `tile=off`; `tiles` is `tile=on`; `tiles4`, `tiles8`, `tiles16` set the edge as well; `auto` is the default ([environment.md](environment.md)) |
 | `MDIR_TUPLE_SUMS` | `atomics` is `hash=off`; `blocks` is `hash=on`, which the tests of small systems use |

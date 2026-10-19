@@ -166,6 +166,15 @@ private:
       return;
     if (pairHash == "off")
       return explainRefused(op, "hash", "pair-hash=off");
+    // With `auto`, the atomics: the table was measured slower at every
+    // loop over pairs (on an RTX 4090, 1.18 to 1.32 times the step of the
+    // Amber suite over groups and 2.06 times the two-ended loops of EAM
+    // over a matrix; docs/device-primitives.md, Section 2.7).
+    if (pairHash == "auto")
+      return explainRefused(op, "hash",
+                            "the table was measured slower at every loop "
+                            "over pairs, 1.18 to 2.06 times the atomics "
+                            "(pair-hash=auto)");
     int64_t slots = scatter::getHashSlots(blockSize, scatter::kPairHashReach);
     if (scatter::Refusal refused = scatter::checkHash(
             slots, op.getOuts().getTypes(), deterministic))
