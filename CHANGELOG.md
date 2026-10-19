@@ -12,6 +12,24 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **PaiNN in stages on one GPU** (D[ml4-painn-stages],
+  D[ml4-batched-bodies], #377 step 4a, PR #447,
+  [docs/ml4-ir.md](docs/ml4-ir.md), Section 8): `[[energy.model]]` and
+  `mdir.ModelTerm` take `backend = "STAGES"`, an MLIR module of neural
+  stages whose bodies are batched functions of `linalg` on tensors; the
+  program adds the model to its energy and differentiates it. The bodies
+  run in tiles of rows on a device (`md-exec-lower-stage-bodies`, and the
+  tiles in `convert-md-exec-to-gpu`), the pairs over the slots of the
+  pairs of images. `scripts/mlip/painn-stages.py` re-implements
+  nablaDFT's PaiNN in JAX from SchNetPack's weights, checks it against
+  SchNetPack, and exports it through StableHLO, which `stablehlo-opt`
+  legalizes to `linalg` at export. On an RTX 4090 it takes 1.4 to 2.1 kB
+  of device memory a pair of liquid water from 6,144 atoms up, against
+  61 kB for the opaque call, and about 10 µs a pair, 13 to 20 times the
+  opaque call's. `MDIR_DEVICE_MEMORY` prints the peaks of the runtime's
+  device allocator; `scripts/mlip/water-box.py --painn-dtype float64`
+  gives SchNetPack's reference in float64; `check-model-term.py` and
+  `model-sweep.py` take models in stages. No existing key changes.
 - **The IR of ML4: neural stages, fields of features, and their
   derivative** (D288, D289, #377 step 3,
   PR #441, [docs/ml4-ir.md](docs/ml4-ir.md)): `md.stage` declares a pure
