@@ -561,7 +561,9 @@ and the loops of `md_exec` carry them to the lowering for a device:
   thread for each row. (D293's sum ran a thread for each particle of the
   system, which looped over all the components of its rows: at 6,144
   atoms, 2.05 ms a tile of the reverse loops against 0.44 ms now, and a
-  test of every particle for each tile at 196,608 atoms.) The sums, and
+  test of every particle for each tile at 196,608 atoms; a step is 1.79,
+  1.87, and 4.02 times shorter at 6,144, 12,288, and 196,608 atoms, about
+  5.4 µs a pair at every size.) The sums, and
   their order, are those of D293. The slots hold every image of a
   neighbor (a cell narrower than twice the cutoff included, as the opaque
   call takes it); in a cell wider than twice the cutoff there is one, the

@@ -647,7 +647,9 @@ format, or the outputs; every such change is listed under **Changed** or
   thread for each row of the tile, and for each component of a wide
   destination, instead of a thread for each particle of the system; the
   sums and their order are unchanged. nablaDFT's PaiNN in stages at 6,144
-  atoms on an RTX 4090: 2.05 to 0.44 ms per tile of the reverse loops.
+  atoms on an RTX 4090: 2.05 to 0.44 ms per tile of the reverse loops,
+  and a step 1.79, 1.87, and 4.02 times shorter at 6,144, 12,288, and
+  196,608 atoms (5.4 µs a pair at every size).
   Nothing user-visible changes.
 - **The transposes of the `md` ops are declared through
   `AdjointOpInterface`** (D295, #451, PR #459,
