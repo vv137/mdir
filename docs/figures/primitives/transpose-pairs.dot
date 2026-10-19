@@ -12,7 +12,7 @@ graph transpose_pairs {
   map_forward -- map_reverse;
 
   gather  [label="gather\nreads of md_exec.pair_for\nand md_exec.tuple_for"];
-  scatter [label="scatter-accumulate\nouts of md_exec.tuple_for\nmd_exec.pair_for (atomic)\nmd_exec.scatter_add (PR #445)"];
+  scatter [label="scatter-accumulate\nouts of md_exec.tuple_for\nmd_exec.pair_for (atomic)\nmd_exec.scatter_add (D291)"];
   gather -- scatter;
 
   halo_copy [label="halo copy G\nmd_dist.halo_copy"];
