@@ -44,6 +44,49 @@ modeled scalar operation rather than trusting its dialect namespace.
 including kernel operations that happen to be inactive at an evaluation.
 It reports the missing operation and potential name.
 
+## Declared transposes (D[md-transposes])
+
+`md-differentiate` carries adjoints back through the ops that move and
+reduce the values of fields by their declared transposes,
+`AdjointOpInterface` (`include/mdir/Dialect/MD/Transforms/AdjointInterface.td`;
+the models in `lib/Dialect/MD/Transforms/Adjoints.cpp`). It has two forms:
+
+- An op linear in some operands declares the op of its transpose
+  (`isLinearOperand`, `emitTranspose`): the transfers of `md_dist`, $G$ and
+  $G^\mathsf T$, `distribute` and `collect`, `all_reduce` (D276), and
+  `md_exec.scatter_add` in its destination (the identity; its transpose in
+  the values, a gather by the indices, waits for that op).
+- An op with a kernel is a gather, a map, and a reduction
+  ([primitives-map.md](primitives-map.md), Section 1.2); what is linear is
+  its structure, not the op. It declares, for each operand that reaches
+  its kernel (`isKernelOperand`), the op of the transpose of its
+  structure (`createTranspose`), and the pass fills that op's kernel with
+  the reverse derivative of the source kernel by the scalar rules above.
+
+| Op | Op of the transpose of its structure |
+|---|---|
+| `md.sum_relation` | `md.gather_relation` over the same relation, the kernel copied, the weight captured |
+| `md.gather_relation` | `md.gather_relation` (or, for the virial, `md.sum_relation`) over the same relation, the kernel from both ends of each pair, the adjoint read at both ends |
+| `md.sum_tuples` | `md.gather_tuples` over the same tuples, the kernel copied, the weight captured |
+| `md.sum_particles` | `md.map_particles` over the same operands, the weight captured |
+| `md.map_particles` | `md.map_particles` over the same operands and the adjoint |
+
+The exchange contract of the new op is the caller's (antisymmetric for
+forces, none for the adjoint of a field). The copies of a sum that the
+virial and the derivative in a parameter take are its tangent, not a
+transpose, and stay in the pass.
+
+`--md-check-transposes`, beside `--md-check-derivative-coverage`, refuses
+an op of the structure of a potential (a sum, gather, or map of `md`; a
+transfer or loop of `md_dist`) that declares no transpose:
+`no declared transpose for 'md.gather_tuples' in potential 'p'`.
+`md.gather_tuples` and the loops of `md_dist` have none yet.
+`test/Integration/transposes.mlir` checks the adjoint identity of each
+pair numerically: $U(q) = \langle q, \partial U/\partial q\rangle$ for a
+field in which the op is linear, and
+$\delta U[\mathbf v] = -\langle\mathbf F, \mathbf v\rangle$ for the
+positions, with $\delta U$ written by hand.
+
 ## Numerical checking (D184)
 
 Run `--md-check-derivatives` before differentiation. The pass instruments

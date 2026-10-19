@@ -622,6 +622,16 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The transposes of the `md` ops are declared through
+  `AdjointOpInterface`** (D[md-transposes], #451, PR #459,
+  [docs/ad-robust.md](docs/ad-robust.md#declared-transposes-dmd-transposes)):
+  the sums and gathers over relations and tuples and the sums and maps
+  over particles declare the transpose of their structure, and
+  `md-differentiate` takes it from them instead of building the op itself;
+  `md_exec.scatter_add` declares its transpose in the destination. A
+  check, `--md-check-transposes`, refuses an op of the structure of a
+  potential without a declared transpose. No generated code changes: the
+  output of the pass is the same for every test and driver input compared.
 - **The white paper's comparison with pmemd.cuda is measured again on
   `main` (D285) with the skins that MDIR chooses (D281)** (#437; Section
   10, Tables 10.2 and 10.3, Figure 10.1, and the range quoted in the

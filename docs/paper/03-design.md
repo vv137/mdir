@@ -430,6 +430,23 @@ and the contract is what lets the lowering write it as a scatter to both
 ends instead. `docs/primitives-map.md` (D292) takes every part
 of MDIR apart into such primitives and their transposes.
 
+**Declared transposes.** The rules above are facts of the ops, not of the
+pass (D[md-transposes]). An op with a kernel is a gather, the kernel, and
+a reduction; its derivative in an operand that reaches the kernel is the
+transpose of its linearization, which is the transpose of the reduction
+(the adjoint of the result broadcast to each pair, tuple, or particle),
+the reverse derivative of the kernel, and the transpose of the gather (the
+values added at the particles that were read). Each op declares the first
+and the last, the transpose of its structure, through an op interface:
+the op that the derivative creates, over the same relation, tuples, or
+particles. `md-differentiate` fills that op's kernel by the scalar rules.
+Ops that are linear themselves, the transfers between domains of
+`md_dist` and the scatter-accumulate of `md_exec`, declare the op of their
+transpose in full. A check refuses an op of the structure without a
+declared transpose, and a test checks each pair by the adjoint identity:
+for the positions, the derivative along a direction $\mathbf v$, written
+by hand, against $-\sum_i \mathbf F_i\cdot\mathbf v_i$.
+
 ## 3.4 From sums to loops, and the passes over loops
 
 `convert-md-to-md-exec` lowers a neighborhood to a build of cells and of a
