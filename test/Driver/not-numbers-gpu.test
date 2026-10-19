@@ -1,24 +1,38 @@
-# A run whose positions are no longer numbers stops with a word, on a
-# device, with either neighbor structure (D107): a time step of 0.5 ps
-# sends the particles beyond any cell within a few steps. The run has no
-# constraints: with them, their test stops it at the first step
-# (D278, constraint-failure-gpu.test).
+# A run whose positions are no longer numbers, or are beyond any cell,
+# stops with a word, on a device, with either neighbor structure (D107).
+# The first particle starts with a velocity of 1e110 (in the restart's
+# unit of Å per 1/20.455 ps): the first step sends it about 4e108 Å away,
+# beyond the 1e100 that a build counts, whatever the forces, so the build
+# within the loop over steps finds it at the first step. Before #425 the
+# test took a time step of 0.5 ps and relied on the run's blow-up reaching
+# a NaN or 1e100 within 100 steps, which about 5 runs of the matrix in 100
+# did not: their positions stayed finite, of the order of 1e17 Å, and no
+# stop was due. An input that is not a number from the start is refused by
+# the reader of the topology before any build. The run has no constraints:
+# with them, their test stops it at the first step (D278,
+# constraint-failure-gpu.test).
 #
 # REQUIRES: cuda
 #
 # RUN: rm -rf %t && mkdir -p %t
-# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %S/Inputs/ff19sb/ff19.inpcrd %t
+# RUN: cp %S/Inputs/ff19sb/ff19.prmtop %t
+# The restart: the positions and box of ff19.inpcrd, with a block of
+# velocities in between, zero but for the first.
+# RUN: awk 'NR <= 1168 { print; next } { box = $0 } END { for (i = 0; i < 1166; ++i) printf "%%12s%%12s%%12s%%12s%%12s%%12s\n", i ? "0.0" : "1.0e110", "0.0", "0.0", "0.0", "0.0", "0.0"; print box }' %S/Inputs/ff19sb/ff19.inpcrd > %t/fast.rst7
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/groups.toml
 # RUN: sed 's/neighbor_structure = "GROUPS"/neighbor_structure = "MATRIX"/' %t/groups.toml > %t/matrix.toml
 # RUN: not mdir run %t/groups.toml 2>&1 | FileCheck %s
 # RUN: not mdir run %t/matrix.toml 2>&1 | FileCheck %s
 
+# The row of step 0 is written; the run stops at the build of step 1.
+# CHECK: INFO: 0 0.0000
+# CHECK-NOT: INFO: 10
 # CHECK: mdir: {{(a position is not a number or is|[0-9]+ positions are not numbers or are)}} far outside the cell at a build of the neighbor structure; the run has failed
 
 #--- run.toml
 [input]
 topology   = "ff19.prmtop"
-coordinates = "ff19.inpcrd"
+coordinates = "fast.rst7"
 
 [output]
 energy_interval = 10
@@ -30,8 +44,8 @@ electrostatics = "PME"
 
 [dynamics]
 integrator        = "VELOCITY_VERLET"
-time_step         = 0.5
-steps             = 100
+time_step         = 0.002
+steps             = 20
 
 [ensemble]
 ensemble    = "NVE"

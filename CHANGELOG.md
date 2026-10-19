@@ -1362,6 +1362,19 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- `not-numbers-gpu.test` ended now and then without the stop it checks:
+  its run of a matrix went to the last step with energies that were
+  `nan` or huge and exited 0 (#425). The detection was not at fault. The
+  test took a step of 0.5 ps and relied on the blow-up reaching a NaN or
+  a coordinate beyond 1e100 within 100 steps, and in some runs, depending
+  on the order of the atomic additions of the forces, the positions stayed
+  finite, of the order of 1e17 Å. The first particle of the input now
+  starts with a velocity of 1e110 (in the unit of the restart), which
+  sends it about 4e108 Å away in the first step of 0.002 ps whatever the
+  forces, and both structures stop at the build of step 1. An input that
+  is not a number from the start cannot serve: the topology refuses it
+  before any build.
+
 - `pme-tiles-gpu.test` failed in about 1 of 300 runs at order 8 in mixed
   precision, a relative rms of the forces of 2.46e-6 against 2e-6 (#427).
   The spreading was not at fault. The test compares the forces after one
