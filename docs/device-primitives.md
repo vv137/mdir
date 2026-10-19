@@ -8,6 +8,10 @@ generates its device code through MLIR and does not link CUB. It reads
 CUB's block and warp algorithms (part of CCCL, which ships with CUDA) and
 implements them as lowering strategies with stated preconditions and
 switches ([principles.md](principles.md), principles 2 and 3; issue #415).
+Which part of MDIR uses which primitive, with the primitive's transpose
+and the properties the part relies on, is in
+[primitives-map.md](primitives-map.md) (D[primitives-map]); this document
+describes how a device implements a primitive.
 
 ## 1. Status
 
