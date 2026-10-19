@@ -284,12 +284,15 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // ends instead (`releaseStack`), since the arguments of its launches are
   // on the stack as well.
   //
-  // The entry of a program of frames is a loop over frames that never
-  // returns, with the rows of the evaluation in it (#309): there the pass
-  // refuses what it cannot move, an allocation whose size is not a constant,
-  // so that a program of frames that compiles takes nothing of its stack
-  // again at a frame.
-  os << "hoist-static-allocas" << (control.frames ? "{refuse-rest=true}," : ",");
+  // The pass refuses what it cannot move, an allocation whose size is not a
+  // constant outside the first block, in every program: the entry of a
+  // program of frames is a loop over frames that never returns (#309), that
+  // of a program of segments (a Python simulation) never returns either, and
+  // the loops over steps of `mdir run` keep what they take until the run
+  // ends (#305). So a program that compiles takes nothing of its stack again
+  // at a step or a frame (#312). No program has such an allocation: the
+  // builder, the templates, and the passes allocate static shapes alone.
+  os << "hoist-static-allocas{refuse-rest=true},";
   if (threaded)
     os << "convert-openmp-to-llvm,";
   os << "reconcile-unrealized-casts";

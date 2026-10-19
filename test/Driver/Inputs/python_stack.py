@@ -139,6 +139,12 @@ for name, (build, columns, last, period) in PROGRAMS.items():
         clean = outside == 0
         print(f"{mode}: {name}: the lowered module has {outside} allocations of the stack "
               f"outside the first block of a function: {clean}")
+        # Not only read: the lowering refuses a module that would keep one
+        # (#312).
+        guarded = "hoist-static-allocas{refuse-rest=true}" in compiled.pipeline
+        print(f"{mode}: {name}: the lowering refuses an allocation of the stack that it "
+              f"cannot take once: {guarded}")
+        clean &= guarded
     else:
         clean = outside == 0 or saves > 0
         print(f"{mode}: {name}: the lowered module has no allocation of the stack outside "

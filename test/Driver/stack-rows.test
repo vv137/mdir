@@ -9,16 +9,21 @@
 # steps as would take three times its limit of 2 MiB, and must end with the
 # status 0 and its last rows in its files; a run with the energies alone is
 # the control. No allocation of the stack of the lowered module of each is
-# outside the first block of its function.
+# outside the first block of its function, and the lowering of each refuses
+# a module that would keep one there (`refuse-rest`, #312).
 # RUN: rm -rf %t
 # RUN: %python %S/Inputs/stack_rows.py mdir %t/double CPU DOUBLE | FileCheck %s -DMODE="CPU Double"
 # RUN: %python %S/Inputs/stack_rows.py mdir %t/mixed CPU MIXED | FileCheck %s -DMODE="CPU Mixed"
 # CHECK: [[MODE]]: the energies alone: 131072 rows under a stack of 2 MiB {{.*}}: status 0, the last rows at 131072: True
 # CHECK: [[MODE]]: the energies alone: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: the energies alone: the lowering refuses an allocation of the stack that it cannot take once: True
 # CHECK: [[MODE]]: observe, 6 columns: 131072 rows under a stack of 2 MiB (48 bytes a row taken in the loop would be 3.0 of it): status 0, the last rows at 131072, 131072: True
 # CHECK: [[MODE]]: observe, 6 columns: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: observe, 6 columns: the lowering refuses an allocation of the stack that it cannot take once: True
 # CHECK: [[MODE]]: pull, 2 terms over two centers: 43690 rows under a stack of 2 MiB (144 bytes a row taken in the loop would be 3.0 of it): status 0, the last rows at 43690, 43690: True
 # CHECK: [[MODE]]: pull, 2 terms over two centers: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: pull, 2 terms over two centers: the lowering refuses an allocation of the stack that it cannot take once: True
 # CHECK: [[MODE]]: free energy, 11 states: 32768 rows under a stack of 2 MiB (192 bytes a row taken in the loop would be 3.0 of it): status 0, the last rows at 32768, 32768: True
 # CHECK: [[MODE]]: free energy, 11 states: the lowered module has 0 allocations of the stack outside the first block of a function: True
+# CHECK: [[MODE]]: free energy, 11 states: the lowering refuses an allocation of the stack that it cannot take once: True
 # CHECK: stack rows passed
