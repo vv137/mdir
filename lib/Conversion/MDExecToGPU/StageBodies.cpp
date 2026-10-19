@@ -339,63 +339,75 @@ struct Gemm {
   bool transA, transB;
 };
 
-/// `op` as a GEMM: two operands of f32 and one result, three loops of
-/// static extents of which one is reduced, the result indexed by the two
-/// parallel ones (its rows, then its columns), each operand by the reduced
-/// one and one of the parallel ones, and a payload that adds the product of
-/// the operands to the result (or a `linalg.matmul`).
+/// `op` as a GEMM: two operands of f32 and one result, of static shapes,
+/// one reduced loop, the result indexed by the other loops in order, its
+/// last the columns and the others the rows (several rows dimensions are
+/// one, as IREE treats the three components of PaiNN's vectors as rows),
+/// the first operand A by the rows and the reduced loop (or, with a single
+/// rows dimension, the reduced loop and the rows: `transA`), the other B by
+/// the reduced loop and the columns (or the columns and the reduced loop:
+/// `transB`), and a payload that adds the product of the operands to the
+/// result (or a `linalg.matmul`).
 static std::optional<Gemm> matchGemm(linalg::LinalgOp op) {
   if (op.getNumDpsInputs() != 2 || op.getNumDpsInits() != 1 ||
-      op.getNumLoops() != 3 || op.getNumReductionLoops() != 1 ||
+      op.getNumLoops() < 3 || op.getNumReductionLoops() != 1 ||
       !isa<linalg::GenericOp, linalg::MatmulOp>(op.getOperation()))
     return std::nullopt;
   for (OpOperand &operand : op->getOpOperands()) {
     auto shaped = dyn_cast<ShapedType>(operand.get().getType());
     if (!shaped || !shaped.getElementType().isF32() ||
-        !shaped.hasStaticShape() || shaped.getRank() != 2)
+        !shaped.hasStaticShape())
       return std::nullopt;
   }
   SmallVector<int64_t> extents = op.getStaticLoopRanges();
   if (llvm::any_of(extents, ShapedType::isDynamic))
     return std::nullopt;
-  auto dims = [](AffineMap map) -> std::optional<std::pair<unsigned, unsigned>> {
-    if (map.getNumResults() != 2)
-      return std::nullopt;
-    auto first = dyn_cast<AffineDimExpr>(map.getResult(0));
-    auto second = dyn_cast<AffineDimExpr>(map.getResult(1));
-    if (!first || !second)
-      return std::nullopt;
-    return std::make_pair(first.getPosition(), second.getPosition());
+  auto dims = [](AffineMap map) -> std::optional<SmallVector<unsigned>> {
+    SmallVector<unsigned> out;
+    for (AffineExpr expr : map.getResults()) {
+      auto dim = dyn_cast<AffineDimExpr>(expr);
+      if (!dim)
+        return std::nullopt;
+      out.push_back(dim.getPosition());
+    }
+    return out;
   };
+  unsigned numLoops = op.getNumLoops();
   auto out = dims(op.getMatchingIndexingMap(op.getDpsInitOperand(0)));
-  if (!out)
+  if (!out || out->size() != numLoops - 1)
     return std::nullopt;
-  unsigned rows = out->first, cols = out->second, reduced = 3 - rows - cols;
   SmallVector<utils::IteratorType> types = op.getIteratorTypesArray();
-  if (rows == cols || reduced > 2 ||
-      types[reduced] != utils::IteratorType::reduction)
+  unsigned reduced = numLoops;
+  for (unsigned d = 0; d != numLoops; ++d)
+    if (types[d] == utils::IteratorType::reduction)
+      reduced = d;
+  if (llvm::is_contained(*out, reduced))
     return std::nullopt;
-  Gemm gemm{extents[rows], extents[cols], extents[reduced], 0, 0, false,
-            false};
+  SmallVector<unsigned> rows(out->begin(), out->end() - 1);
+  unsigned cols = out->back();
+  Gemm gemm{1, extents[cols], extents[reduced], 0, 0, false, false};
+  for (unsigned d : rows)
+    gemm.m *= extents[d];
+  SmallVector<unsigned> rowsThenReduced(rows), reducedThenRow{reduced};
+  rowsThenReduced.push_back(reduced);
+  if (rows.size() == 1)
+    reducedThenRow.push_back(rows.front());
+  SmallVector<unsigned> reducedThenCols{reduced, cols}, colsThenReduced{
+                                                             cols, reduced};
   bool haveA = false, haveB = false;
   for (unsigned i = 0; i != 2; ++i) {
     auto in = dims(op.getMatchingIndexingMap(op.getDpsInputOperand(i)));
     if (!in)
       return std::nullopt;
-    if (*in == std::make_pair(rows, reduced) ||
-        *in == std::make_pair(reduced, rows)) {
-      if (haveA)
-        return std::nullopt;
+    if (!haveA && (*in == rowsThenReduced ||
+                   (rows.size() == 1 && *in == reducedThenRow))) {
       haveA = true;
       gemm.a = i;
-      gemm.transA = in->first == reduced;
-    } else if (*in == std::make_pair(reduced, cols) ||
-               *in == std::make_pair(cols, reduced)) {
-      if (haveB)
-        return std::nullopt;
+      gemm.transA = *in != rowsThenReduced;
+    } else if (!haveB && (*in == reducedThenCols || *in == colsThenReduced)) {
       haveB = true;
       gemm.b = i;
-      gemm.transB = in->first == cols;
+      gemm.transB = *in == colsThenReduced;
     } else {
       return std::nullopt;
     }
@@ -436,9 +448,14 @@ deviceAddress(OpBuilder &builder, Location loc, Value buffer,
   auto type = cast<MemRefType>(buffer.getType());
   SmallVector<int64_t> strides;
   int64_t offset;
-  if (failed(type.getStridesAndOffset(strides, offset)) || strides[1] != 1 ||
-      ShapedType::isDynamic(strides[0]))
+  unsigned rank = type.getRank();
+  if (rank < 2 || failed(type.getStridesAndOffset(strides, offset)) ||
+      strides[rank - 1] != 1 || ShapedType::isDynamic(strides[rank - 2]))
     return failure();
+  // The dimensions before the last are rows, one after the other.
+  for (unsigned d = 0; d + 2 < rank; ++d)
+    if (strides[d] != strides[d + 1] * type.getDimSize(d + 1))
+      return failure();
   Type i64 = builder.getI64Type();
   auto metadata =
       memref::ExtractStridedMetadataOp::create(builder, loc, buffer);
@@ -476,7 +493,8 @@ deviceAddress(OpBuilder &builder, Location loc, Value buffer,
       builder, loc, base,
       arith::MulIOp::create(builder, loc, elements,
                             arith::ConstantIntOp::create(builder, loc, i64, 4)));
-  Value rows = arith::ConstantIntOp::create(builder, loc, i64, strides[0]);
+  Value rows =
+      arith::ConstantIntOp::create(builder, loc, i64, strides[rank - 2]);
   return std::make_pair(address, rows);
 }
 
