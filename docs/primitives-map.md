@@ -153,11 +153,15 @@ forms:
 
 `--md-check-transposes` refuses an op of the structure of a potential
 without a declared transpose, and `test/Integration/transposes.mlir` checks
-the adjoint identity of each pair numerically. Without one today:
-`md.gather_tuples`, through which no derivative passes, and the loops of
-`md_dist` (`sum_pairs`, `gather_pairs`, `sum_particles`, `map_particles`),
-whose transposes are still built in the pass. The reciprocal sum is one op
-to the derivative (Section 1.4).
+the adjoint identity of each pair numerically, on one domain and on
+domains (`dist-transposes.test`). The loops of `md_dist` (`sum_pairs`,
+`gather_pairs`, `sum_particles`, `map_particles`) declare theirs as those
+of `md` do, with the adjoint of a field read at both ends of each pair as
+its owned rows and their copy to the ghosts (D[md-dist-transposes]); the
+premises of each form on domains (the traversal, the coverage, the
+contract) stay in the pass. Without one today: `md.gather_tuples`, through
+which no derivative passes. The reciprocal sum is one op to the derivative
+(Section 1.4).
 
 
 ### 1.4 What the set does not contain
@@ -300,7 +304,7 @@ None of these parts is differentiated. They are written by the driver
 |---|---|---|---|---|---|
 | Decomposition and layout (D275) | partition of the particles by domain (a histogram, a scan, a stable scatter), owned rows then ghosts; `distribute` and `collect` as permutations, declared transposes of each other | stable (the rows of a domain in the order of the set) | `_mlir_ciface_mdrtDistPartition`, `mdrtDistLayoutRows` (`runtime/mdrt_dist.c`), on the host, in one process | hand-written: host runtime | #38 |
 | Halo copy $G$ and halo sum $G^\mathsf T$ (D275, D276, D279) | gather and scatter-accumulate across domains; declared adjoints of each other | $G$ exact; $G^\mathsf T$ ordered (domains, then rows) | The in-process transport: `_mlir_ciface_mdrtDistHaloCopy`, `_mlir_ciface_mdrtDistHaloSum`; both executors keep it (D290) | hand-written: host runtime; on a device missing. `halo_sum` is the first planned site of `md_exec.scatter_add` (D291), the packing of messages a gather (#419) | #445, #419, #35, #422, #416 step 2 |
-| Loops of a domain (D290) | as the pair loops; `(directed, atomic)` adds at the center and at the neighbor (two-ended scatter); the unique traversal as the directed list with the value taken where the center's identity is the lesser | atomics: default mode only (refused in the deterministic mode) | The table measured slower at the two-ended loop, 2.06 and 1.68 times (#445). Rows with explicit images are 2.1 to 5.5 times as long as needed (D290) | hand-written in the lowering: `lowerPairFor` (`ToGPU`), `--convert-md-dist-to-md-exec` (`lib/Conversion/MDDistToLoops/MDDistToLoops.cpp`) | #391, #416 step 2, #422, #445 |
+| Loops of a domain (D290) | as the pair loops; `(directed, atomic)` adds at the center and at the neighbor (two-ended scatter); the unique traversal as the directed list with the value taken where the center's identity is the lesser | atomics: default mode only (refused in the deterministic mode) | The table measured slower at the two-ended loop, 2.06 and 1.68 times (#445). Rows with explicit images are 2.1 to 5.5 times as long as needed (D290) | hand-written in the lowering: `lowerPairFor` (`ToGPU`), `--convert-md-dist-to-md-exec` (`lib/Conversion/MDDistToLoops/MDDistToLoops.cpp`); their transposes in the derivative declared (D[md-dist-transposes]) | #391, #416 step 2, #422, #445 |
 | Migration (#38) | histogram of destinations (at most 27), scan, stable rank by key and scatter, gather to pack | stable: the order of rows decides the order of sums in the deterministic mode | — | missing | #38, #432 |
 | All-reduce (D276) | reduction across domains; its transpose a broadcast (each partial takes the cotangent once) | ordered (domains in order, `lowerAllReduce`); the sum depends on the decomposition | Host, one process | hand-written: host; a transport between processes missing | #409, #422, #31 |
 

@@ -80,12 +80,21 @@ transpose, and stay in the pass.
 an op of the structure of a potential (a sum, gather, or map of `md`; a
 transfer or loop of `md_dist`) that declares no transpose:
 `no declared transpose for 'md.gather_tuples' in potential 'p'`.
-`md.gather_tuples` and the loops of `md_dist` have none yet.
+`md.gather_tuples` has none yet. The loops of `md_dist` declare the
+transposes of their structure as those of `md` do (D[md-dist-transposes]):
+`sum_pairs` to `gather_pairs` (two partial results for the positions, the
+gather at the owners for a field on the directed traversal),
+`gather_pairs` to `gather_pairs` from both ends of each pair (or its sum,
+for the virial), whose cotangent is the adjoint's owned rows and their
+copy to the ghosts (D279), and `sum_particles` and `map_particles` to
+`map_particles`. The premises of each form on domains stay in the pass.
 `test/Integration/transposes.mlir` checks the adjoint identity of each
 pair numerically: $U(q) = \langle q, \partial U/\partial q\rangle$ for a
 field in which the op is linear, and
 $\delta U[\mathbf v] = -\langle\mathbf F, \mathbf v\rangle$ for the
-positions, with $\delta U$ written by hand.
+positions, with $\delta U$ written by hand;
+`test/Integration/dist-transposes.test` checks the same identities on
+domains, through `md-distribute`.
 
 ## Numerical checking (D184)
 

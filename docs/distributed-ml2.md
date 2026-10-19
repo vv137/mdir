@@ -869,6 +869,15 @@ attached to the ops of `md_dist` in
 | `collect` | The field | `distribute` |
 | `all_reduce` | The partial sum | Each domain's part takes $\bar r$, once |
 
+The loops over the rows of domains (`sum_pairs`, `gather_pairs`,
+`sum_particles`, `map_particles`) are not linear; they declare the
+transpose of their structure through the same interface, as the ops of
+`md` do (D[md-dist-transposes]; [ad-robust.md](ad-robust.md)), and
+`md-differentiate` fills the kernel of the op they create. The adjoint of a
+field that a pair op reads at both ends of each pair is its owned rows and
+their copy to the ghosts (Section 15.2). The premises of each form, the
+traversal, the coverage (V4), and the contract (V8), stay in the pass.
+
 $G_{\mathbf x}$ is affine in $\mathbf x$, so its transpose in the positions is
 that of $G$; the wrapping of `distribute` is a translation by a lattice
 vector, whose derivative is the identity. Layouts, halos, and relations are

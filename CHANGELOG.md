@@ -651,7 +651,13 @@ format, or the outputs; every such change is listed under **Changed** or
   check, `--md-check-transposes`, refuses an op of the structure of a
   potential without a declared transpose. No generated code changes: the
   output of the pass is the same for every test and driver input compared.
-
+- **The transposes of the loops of `md_dist` are declared through
+  `AdjointOpInterface`** (D[md-dist-transposes], #451, PR #461): `sum_pairs`,
+  `gather_pairs`, `sum_particles`, and `map_particles` declare the
+  transpose of their structure, and `md-differentiate` takes it from them;
+  the cotangent of `createTranspose` is a range, for the owned rows of an
+  adjoint and their copy to the ghosts. `--md-check-transposes` passes on
+  potentials on domains. No generated code changes.
 - **Compaction, scans, and counting sorts are shared device emitters**
   (D296, #432, PR #460,
   [docs/device-primitives.md §4](docs/device-primitives.md#4-compaction-scans-and-counting-sorts)):
