@@ -6,6 +6,7 @@
 #include "mdir/Conversion/Passes.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Conversion/CompactionEmitter.h"
 #include "mdir/Conversion/ScatterEmitter.h"
 #include "mdir/Dialect/MD/MDDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
@@ -4956,6 +4957,9 @@ LogicalResult Lowering::addTemplates(Type real) {
   if (!templates)
     return module.emitError()
            << "cannot parse the neighbor build template for devices";
+  // The template's calls of the device primitives (CompactionEmitter.h).
+  if (failed(kernels::expandPrimitiveCalls(*templates)))
+    return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
     module.push_back(&op);
@@ -4975,6 +4979,9 @@ LogicalResult Lowering::addGroupsTemplates(bool tilted) {
   if (!templates)
     return module.emitError()
            << "cannot parse the template that builds groups of neighbors";
+  // The template's calls of the device primitives (CompactionEmitter.h).
+  if (failed(kernels::expandPrimitiveCalls(*templates)))
+    return failure();
   for (Operation &op : llvm::make_early_inc_range(*templates)) {
     op.remove();
     module.push_back(&op);
@@ -6915,9 +6922,7 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
     members.push_back(
         vector::FromElementsOp::create(b, loc, vector3, parts));
   }
-  Value below = arith::SubIOp::create(
-      b, loc, arith::ShLIOp::create(b, loc, constant32(b, 1), lane),
-      constant32(b, 1));
+  Value below = kernels::emitLanesBelow(b, loc, lane);
   // The slot of entry `e` of the list of the group.
   auto slotOf = [&](OpBuilder &c, Value e) -> Value {
     Value block = memref::LoadOp::create(
@@ -6997,9 +7002,9 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
         }
         Value keep = arith::CmpIOp::create(
             c, loc, arith::CmpIPredicate::ne, kept16, constant32(c, 0));
-        Value ballot = gpu::BallotOp::create(c, loc, i32, keep);
-        Value before = math::CtPopOp::create(
-            c, loc, arith::AndIOp::create(c, loc, ballot, below));
+        // A warp compaction (CompactionEmitter.h).
+        Value ballot = kernels::emitWarpBallot(c, loc, keep);
+        Value before = kernels::emitWarpRank(c, loc, ballot, below);
         scf::IfOp::create(c, loc, keep, [&](OpBuilder &d, Location) {
           Value to = slotOf(d, arith::AddIOp::create(d, loc, kept,
                                                      before));
@@ -7018,7 +7023,7 @@ Value Lowering::emitPruneGroup(OpBuilder &b, Location loc,
         scf::YieldOp::create(
             c, loc,
             ValueRange{arith::AddIOp::create(
-                c, loc, kept, math::CtPopOp::create(c, loc, ballot))});
+                c, loc, kept, kernels::emitWarpCount(c, loc, ballot))});
       });
   // The entries that each block of the group keeps: its blocks fill
   // in order.
@@ -7103,12 +7108,10 @@ void Lowering::emitActiveUnits(OpBuilder &builder, Location loc,
             b, loc, inside,
             arith::CmpIOp::create(b, loc, arith::CmpIPredicate::sgt, held,
                                   constant32(b, 0)));
-        Value ballot = gpu::BallotOp::create(b, loc, i32, active);
-        Value below = arith::SubIOp::create(
-            b, loc, arith::ShLIOp::create(b, loc, constant32(b, 1), lane),
-            constant32(b, 1));
-        Value rank = math::CtPopOp::create(
-            b, loc, arith::AndIOp::create(b, loc, ballot, below));
+        // A warp compaction (CompactionEmitter.h).
+        Value ballot = kernels::emitWarpBallot(b, loc, active);
+        Value below = kernels::emitLanesBelow(b, loc, lane);
+        Value rank = kernels::emitWarpRank(b, loc, ballot, below);
         // The runs of 1024 blocks before this one, a lane each in turn.
         Value earlier =
             scf::ForOp::create(
@@ -7159,7 +7162,7 @@ void Lowering::emitActiveUnits(OpBuilder &builder, Location loc,
           memref::StoreOp::create(
               c, loc,
               arith::AddIOp::create(c, loc, earlier,
-                                    math::CtPopOp::create(c, loc, ballot)),
+                                    kernels::emitWarpCount(c, loc, ballot)),
               prune.activeCount, ValueRange{createIndex(c, loc, 0)});
           scf::YieldOp::create(c, loc);
         });
@@ -7797,19 +7800,10 @@ void Lowering::lowerNonzero(md_exec::NonzeroOp op) {
     memref::StoreOp::create(body, loc, loop.getResult(0), counts,
                             ValueRange{c});
   });
+  // The counts of the chunks become their offsets, on one thread
+  // (CompactionEmitter.h).
   launchOver(builder, loc, one, [&](OpBuilder &body, Value) {
-    auto loop = scf::ForOp::create(
-        body, loc, createIndex(body, loc, 0), chunks, createIndex(body, loc, 1),
-        ValueRange{constant(body, 0)},
-        [&](OpBuilder &inner, Location, Value c, ValueRange args) {
-          Value count =
-              memref::LoadOp::create(inner, loc, counts, ValueRange{c});
-          memref::StoreOp::create(inner, loc, args[0], counts, ValueRange{c});
-          Value next = arith::AddIOp::create(inner, loc, args[0], count);
-          scf::YieldOp::create(inner, loc, ValueRange{next});
-        });
-    memref::StoreOp::create(body, loc, loop.getResult(0), counts,
-                            ValueRange{chunks});
+    kernels::emitSerialScan(body, loc, counts, chunks, counts, chunks);
   });
   launchOver(builder, loc, chunks, [&](OpBuilder &body, Value c) {
     auto [from, to] = bounds(body, c);

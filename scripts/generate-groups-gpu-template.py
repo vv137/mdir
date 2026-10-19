@@ -79,6 +79,20 @@ HEADER = """\
 """
 
 HELPERS = """\
+// The device primitives that the build calls (include/mdir/Conversion/
+// CompactionEmitter.h, D[compaction-emitters]): the lowering replaces each
+// call with the code of the primitive's emitter when it parses this
+// template.
+func.func private @mdir.primitive.warp_lanes_below(i32, i32) -> i32
+func.func private @mdir.primitive.warp_ballot(i1) -> i32
+func.func private @mdir.primitive.warp_rank(i32, i32) -> i32
+func.func private @mdir.primitive.warp_count(i32) -> i32
+func.func private @mdir.primitive.warp_scan(i32, i32, i32, i32) -> i32
+func.func private @mdir.primitive.device_scan(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index)
+func.func private @mdir.primitive.device_scan_cursor(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index, memref<?xi32, 1>)
+func.func private @mdir.primitive.cursor_scatter(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
+func.func private @mdir.primitive.sort_bins(memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
+
 // The number of blocks of `block` threads that hold `count` threads.
 func.func private @mdrt_gpu_groups_grid(%count: index, %block: index) -> index {
   %c1 = arith.constant 1 : index
@@ -197,210 +211,49 @@ def clear(grid, buffer, count, value="0"):
 memref.store %v, {buffer}[%item] : memref<?xi32, 1>"""))
 
 
-def block_scan(p, value, wg):
-    """The exclusive sum of the i32 `value` over the threads of a block of
-    256 before this one, `%{p}before`, and the sum over the block,
-    `%{p}total`, in every thread: a scan of each warp by shuffles, and of
-    the 8 sums of the warps by the first warp, through `wg`
-    (workgroup memory of 9 i32)."""
-    lines = [f"""\
-%{p}zero = arith.constant 0 : i32
-%{p}i0 = arith.constant 0 : index
-%{p}i7 = arith.constant 7 : index
-%{p}i8 = arith.constant 8 : index
-%{p}i31 = arith.constant 31 : index
-%{p}i32x = arith.constant 32 : index
-%{p}width = arith.constant 32 : i32
-%{p}lane = arith.remui %tx, %{p}i32x : index
-%{p}warp = arith.divui %tx, %{p}i32x : index
-%{p}lane32 = arith.index_cast %{p}lane : index to i32
-%{p}x0 = arith.addi {value}, %{p}zero : i32"""]
-    for k, o in enumerate([1, 2, 4, 8, 16]):
-        lines.append(f"""\
-%{p}o{k} = arith.constant {o} : i32
-%{p}y{k}, %{p}v{k} = gpu.shuffle up %{p}x{k}, %{p}o{k}, %{p}width : i32
-%{p}h{k} = arith.cmpi sge, %{p}lane32, %{p}o{k} : i32
-%{p}a{k} = arith.select %{p}h{k}, %{p}y{k}, %{p}zero : i32
-%{p}x{k + 1} = arith.addi %{p}x{k}, %{p}a{k} : i32""")
-    lines.append(f"""\
-%{p}last = arith.cmpi eq, %{p}lane, %{p}i31 : index
-scf.if %{p}last {{
-  memref.store %{p}x5, {wg}[%{p}warp] : memref<9xi32, #gpu.address_space<workgroup>>
-}}
-gpu.barrier
-%{p}first = arith.cmpi eq, %{p}warp, %{p}i0 : index
-scf.if %{p}first {{
-  %{p}in8 = arith.cmpi ult, %{p}lane, %{p}i8 : index
-  // Only the lanes of the 8 sums read them: a lane past them that read
-  // the first would race with the lane that writes it below.
-  %{p}u0 = scf.if %{p}in8 -> (i32) {{
-    %{p}w = memref.load {wg}[%{p}lane] : memref<9xi32, #gpu.address_space<workgroup>>
-    scf.yield %{p}w : i32
-  }} else {{
-    scf.yield %{p}zero : i32
-  }}""")
-    for k, o in enumerate([1, 2, 4]):
-        lines.append(f"""\
-  %{p}wo{k} = arith.constant {o} : i32
-  %{p}wy{k}, %{p}wv{k} = gpu.shuffle up %{p}u{k}, %{p}wo{k}, %{p}width : i32
-  %{p}wh{k} = arith.cmpi sge, %{p}lane32, %{p}wo{k} : i32
-  %{p}wa{k} = arith.select %{p}wh{k}, %{p}wy{k}, %{p}zero : i32
-  %{p}u{k + 1} = arith.addi %{p}u{k}, %{p}wa{k} : i32""")
-    lines.append(f"""\
-  %{p}uex = arith.subi %{p}u3, %{p}u0 : i32
-  %{p}t7 = arith.cmpi eq, %{p}lane, %{p}i7 : index
-  scf.if %{p}in8 {{
-    memref.store %{p}uex, {wg}[%{p}lane] : memref<9xi32, #gpu.address_space<workgroup>>
-  }}
-  scf.if %{p}t7 {{
-    memref.store %{p}u3, {wg}[%{p}i8] : memref<9xi32, #gpu.address_space<workgroup>>
-  }}
-}}
-gpu.barrier
-%{p}woff = memref.load {wg}[%{p}warp] : memref<9xi32, #gpu.address_space<workgroup>>
-%{p}total = memref.load {wg}[%{p}i8] : memref<9xi32, #gpu.address_space<workgroup>>
-%{p}inwarp = arith.subi %{p}x5, {value} : i32
-%{p}before = arith.addi %{p}inwarp, %{p}woff : i32""")
-    return "\n".join(lines) + "\n"
-
-
 def scan(p, counts, start, cursor, n):
     """The exclusive sums of `counts` (`n` of them, i32) into `start` (n + 1)
-    and, unless it is None, `cursor` (n): blocks of 256 threads, 4 counts a
-    thread, sum their 1024 counts; one block scans the sums of the blocks;
-    then each block scans its counts from the sum before it."""
-    wg = f"%{p}wg : memref<9xi32, #gpu.address_space<workgroup>>"
-    sums = f"""\
-%i0 = arith.constant 0 : index
-%i1 = arith.constant 1 : index
-%i4 = arith.constant 4 : index
-%none = arith.constant 0 : i32
-%per_block = arith.constant 1024 : index
-%block_base = arith.muli %bx, %per_block : index
-%thread_base = arith.muli %tx, %i4 : index
-%first = arith.addi %block_base, %thread_base : index
-%mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {{
-  %c = arith.addi %first, %k : index
-  %in = arith.cmpi ult, %c, {n} : index
-  %safe = arith.select %in, %c, %i0 : index
-  %v0 = memref.load {counts}[%safe] : memref<?xi32, 1>
-  %v = arith.select %in, %v0, %none : i32
-  %t = arith.addi %s, %v : i32
-  scf.yield %t : i32
-}}
-{block_scan("b_", "%mine", f"%{p}wg")}\
-%lead = arith.cmpi eq, %tx, %i0 : index
-scf.if %lead {{
-  memref.store %b_total, %{p}sums[%bx] : memref<?xi32, 1>
-}}"""
-    blocks = f"""\
-%i0 = arith.constant 0 : index
-%i1 = arith.constant 1 : index
-%none = arith.constant 0 : i32
-%threads = arith.constant 256 : index
-%span0 = arith.addi %{p}blocks, %threads : index
-%span1 = arith.subi %span0, %i1 : index
-%span = arith.divui %span1, %threads : index
-%begin0 = arith.muli %tx, %span : index
-%begin = arith.minui %begin0, %{p}blocks : index
-%end0 = arith.addi %begin, %span : index
-%end = arith.minui %end0, %{p}blocks : index
-%mine = scf.for %b = %begin to %end step %i1 iter_args(%s = %none) -> (i32) {{
-  %v = memref.load %{p}sums[%b] : memref<?xi32, 1>
-  %t = arith.addi %s, %v : i32
-  scf.yield %t : i32
-}}
-{block_scan("c_", "%mine", f"%{p}wg")}\
-%last = scf.for %b = %begin to %end step %i1 iter_args(%before = %c_before) -> (i32) {{
-  %v = memref.load %{p}sums[%b] : memref<?xi32, 1>
-  memref.store %before, %{p}sums[%b] : memref<?xi32, 1>
-  %t = arith.addi %before, %v : i32
-  scf.yield %t : i32
-}}
-%lead = arith.cmpi eq, %tx, %i0 : index
-scf.if %lead {{
-  memref.store %c_total, {start}[{n}] : memref<?xi32, 1>
-}}"""
-    cursor_store = (f"\n  memref.store %before, {cursor}[%c] : memref<?xi32, 1>"
-                    if cursor else "")
-    within = f"""\
-%i0 = arith.constant 0 : index
-%i1 = arith.constant 1 : index
-%i4 = arith.constant 4 : index
-%none = arith.constant 0 : i32
-%per_block = arith.constant 1024 : index
-%block_base = arith.muli %bx, %per_block : index
-%thread_base = arith.muli %tx, %i4 : index
-%first = arith.addi %block_base, %thread_base : index
-%mine = scf.for %k = %i0 to %i4 step %i1 iter_args(%s = %none) -> (i32) {{
-  %c = arith.addi %first, %k : index
-  %in = arith.cmpi ult, %c, {n} : index
-  %safe = arith.select %in, %c, %i0 : index
-  %v0 = memref.load {counts}[%safe] : memref<?xi32, 1>
-  %v = arith.select %in, %v0, %none : i32
-  %t = arith.addi %s, %v : i32
-  scf.yield %t : i32
-}}
-{block_scan("d_", "%mine", f"%{p}wg")}\
-%offset = memref.load %{p}sums[%bx] : memref<?xi32, 1>
-%from = arith.addi %offset, %d_before : i32
-%end = scf.for %k = %i0 to %i4 step %i1 iter_args(%before = %from) -> (i32) {{
-  %c = arith.addi %first, %k : index
-  %in = arith.cmpi ult, %c, {n} : index
-  %safe = arith.select %in, %c, %i0 : index
-  %v0 = memref.load {counts}[%safe] : memref<?xi32, 1>
-  %v = arith.select %in, %v0, %none : i32
-  scf.if %in {{
-    memref.store %before, {start}[%c] : memref<?xi32, 1>{cursor_store}
-  }}
-  %t = arith.addi %before, %v : i32
-  scf.yield %t : i32
-}}"""
-    head = (f"  %{p}per_block = arith.constant 1024 : index\n"
+    and, unless it is None, `cursor` (n): the device scan of the primitives
+    (`device_scan`, or `device_scan_cursor` with a cursor;
+    CompactionEmitter.h), in blocks of 256 threads with 4
+    counts a thread, whose sums of the blocks this allocates."""
+    buffer = "memref<?xi32, 1>"
+    operands = f"{counts}, {start}, {n}, %{p}sums, %{p}blocks, %{p}threads, %c1"
+    types = f"{buffer}, {buffer}, index, {buffer}, index, index, index"
+    name = "device_scan"
+    if cursor:
+        name = "device_scan_cursor"
+        operands += f", {cursor}"
+        types += f", {buffer}"
+    return (f"  %{p}per_block = arith.constant 1024 : index\n"
             f"  %{p}threads = arith.constant 256 : index\n"
             f"  %{p}blocks0 = func.call @mdrt_gpu_groups_grid({n}, %{p}per_block) : (index, index) -> index\n"
             f"  %{p}blocks = arith.maxui %{p}blocks0, %c1 : index\n"
-            f"  %{p}sums = gpu.alloc (%{p}blocks) : memref<?xi32, 1>\n")
-    return (head
-            + launch(f"%{p}blocks", sums, threads=f"%{p}threads", workgroup=wg)
-            + launch("%c1", blocks, threads=f"%{p}threads", workgroup=wg)
-            + launch(f"%{p}blocks", within, threads=f"%{p}threads",
-                     workgroup=wg)
-            + f"  %{p}sums_plain = memref.memory_space_cast %{p}sums : memref<?xi32, 1> to memref<?xi32>\n"
-            + f"  gpu.dealloc %{p}sums_plain : memref<?xi32>\n")
+            f"  %{p}sums = gpu.alloc (%{p}blocks) : memref<?xi32, 1>\n"
+            f"  func.call @mdir.primitive.{name}({operands}) : ({types}) -> ()\n"
+            f"  %{p}sums_plain = memref.memory_space_cast %{p}sums : memref<?xi32, 1> to memref<?xi32>\n"
+            f"  gpu.dealloc %{p}sums_plain : memref<?xi32>\n")
+
+
+def cursor_scatter(keys, cursor, out, n, grid):
+    """The scatter of a counting sort (`cursor_scatter`, CompactionEmitter.h):
+    each of the `n` items with a key that is not negative takes the next
+    slot of its key from `cursor`, with an atomic, and writes its number
+    there in `out`."""
+    buffer = "memref<?xi32, 1>"
+    return (f"  func.call @mdir.primitive.cursor_scatter({keys}, {cursor}, {out}, "
+            f"{n}, {grid}, %block, %c1) : ({buffer}, {buffer}, {buffer}, index, "
+            f"index, index, index) -> ()\n")
 
 
 def sort_bins(grid, start, items, n):
     """Sorts the items (i32) of each of the `n` bins of `start` ascending,
-    by insertion: the bins hold few items, whose order after the atomics is
-    not fixed."""
-    return launch(grid, per_item(n, f'''\
-%i1 = arith.constant 1 : index
-%next = arith.addi %item, %i1 : index
-%begin32 = memref.load {start}[%item] : memref<?xi32, 1>
-%end32 = memref.load {start}[%next] : memref<?xi32, 1>
-%begin = arith.index_cast %begin32 : i32 to index
-%end = arith.index_cast %end32 : i32 to index
-%first = arith.addi %begin, %i1 : index
-scf.for %p = %first to %end step %i1 {{
-  %value = memref.load {items}[%p] : memref<?xi32, 1>
-  %hole = scf.while (%q = %p) : (index) -> index {{
-    %more = arith.cmpi ugt, %q, %begin : index
-    %before = arith.subi %q, %i1 : index
-    %safe = arith.select %more, %before, %begin : index
-    %left = memref.load {items}[%safe] : memref<?xi32, 1>
-    %larger = arith.cmpi sgt, %left, %value : i32
-    %go = arith.andi %more, %larger : i1
-    scf.condition(%go) %q : index
-  }} do {{
-  ^bb0(%q: index):
-    %before = arith.subi %q, %i1 : index
-    %left = memref.load {items}[%before] : memref<?xi32, 1>
-    memref.store %left, {items}[%q] : memref<?xi32, 1>
-    scf.yield %before : index
-  }}
-  memref.store %value, {items}[%hole] : memref<?xi32, 1>
-}}'''))
+    by insertion (`sort_bins`, CompactionEmitter.h): the bins hold few
+    items, whose order after the atomics is not fixed."""
+    buffer = "memref<?xi32, 1>"
+    return (f"  func.call @mdir.primitive.sort_bins({start}, {items}, {n}, "
+            f"{grid}, %block, %c1) : ({buffer}, {buffer}, index, index, index, "
+            f"index) -> ()\n")
 
 
 class Lines:
@@ -796,26 +649,7 @@ scf.if %real_group {{
   // excluded pairs).
   %wexcl = arith.constant 32 : i32
   %pre0 = arith.addi %count32e, %zero_i : i32
-  %d1 = arith.constant 1 : i32
-  %up1, %upv1 = gpu.shuffle up %pre0, %d1, %wexcl : i32
-  %xfrom1 = arith.cmpi uge, %u16_32, %d1 : i32
-  %add1 = arith.select %xfrom1, %up1, %zero_i : i32
-  %pre1 = arith.addi %pre0, %add1 : i32
-  %d2 = arith.constant 2 : i32
-  %up2, %upv2 = gpu.shuffle up %pre1, %d2, %wexcl : i32
-  %xfrom2 = arith.cmpi uge, %u16_32, %d2 : i32
-  %add2 = arith.select %xfrom2, %up2, %zero_i : i32
-  %pre2 = arith.addi %pre1, %add2 : i32
-  %d4 = arith.constant 4 : i32
-  %up4, %upv4 = gpu.shuffle up %pre2, %d4, %wexcl : i32
-  %xfrom4 = arith.cmpi uge, %u16_32, %d4 : i32
-  %add4 = arith.select %xfrom4, %up4, %zero_i : i32
-  %pre3 = arith.addi %pre2, %add4 : i32
-  %d8 = arith.constant 8 : i32
-  %up8, %upv8 = gpu.shuffle up %pre3, %d8, %wexcl : i32
-  %xfrom8 = arith.cmpi uge, %u16_32, %d8 : i32
-  %add8 = arith.select %xfrom8, %up8, %zero_i : i32
-  %pre4 = arith.addi %pre3, %add8 : i32
+  %pre4 = func.call @mdir.primitive.warp_scan(%pre0, %u16_32, %zero_i, %wexcl) {{lanes = 16 : i64, unsigned}} : (i32, i32, i32, i32) -> i32
   %start32e = arith.subi %pre4, %count32e : i32
   %starte = arith.index_cast %start32e : i32 to index
   %c15i = arith.constant 15 : i32
@@ -940,8 +774,7 @@ scf.if %real_group {{
   %fy1 = arith.select %wide_y, %gny1, %c1y0 : i32
   %fz1 = arith.select %wide_z, %gnz1, %c1z0 : i32
   %reach2 = arith.mulf %freach, %freach : f32
-  %lane_bit = arith.shli %one_i, %lane32 : i32
-  %below = arith.subi %lane_bit, %one_i : i32
+  %below = func.call @mdir.primitive.warp_lanes_below(%lane32, %one_i) : (i32, i32) -> i32
   %first16 = arith.addi %first32, %c16i : i32
   %unit_capacity_w = memref.dim %units, %c0w : memref<?xi32, 1>
   %none_block = arith.constant -1 : i32
@@ -1033,10 +866,9 @@ scf.if %real_group {{
             scf.yield %none_q : i32
           }}
           %is_near = arith.cmpi sge, %nearq, %zero_i : i32
-          %near_bits = gpu.ballot %is_near : i32
-          %near_before = arith.andi %near_bits, %below : i32
-          %near_rank = math.ctpop %near_before : i32
-          %near_n = math.ctpop %near_bits : i32
+          %near_bits = func.call @mdir.primitive.warp_ballot(%is_near) : (i1) -> i32
+          %near_rank = func.call @mdir.primitive.warp_rank(%near_bits, %below) : (i32, i32) -> i32
+          %near_n = func.call @mdir.primitive.warp_count(%near_bits) : (i32) -> i32
           scf.if %is_near {{
             %qslot0 = arith.addi %qn, %near_rank : i32
             %qslot1 = arith.index_cast %qslot0 : i32 to index
@@ -1267,11 +1099,10 @@ scf.if %real_group {{
           // The entries of the lanes that kept a candidate, in the order
           // of the lanes.
           %keep = arith.cmpi ne, %bits, %zero_i : i32
-          %kept = gpu.ballot %keep : i32
-          %before_bits = arith.andi %kept, %below : i32
-          %rank = math.ctpop %before_bits : i32
+          %kept = func.call @mdir.primitive.warp_ballot(%keep) : (i1) -> i32
+          %rank = func.call @mdir.primitive.warp_rank(%kept, %below) : (i32, i32) -> i32
           %slot = arith.addi %cs, %rank : i32
-          %n_kept = math.ctpop %kept : i32
+          %n_kept = func.call @mdir.primitive.warp_count(%kept) : (i32) -> i32
           %next = arith.addi %cs, %n_kept : i32
           // The blocks of the slots of this round: the block of slot cs,
           // new if cs begins one, and the next if the round runs into it.
@@ -1586,11 +1417,10 @@ scf.if %real_group {{
           // The entries of the lanes that kept a candidate, in the order
           // of the lanes.
           %keep = arith.cmpi ne, %bits, %zero_i : i32
-          %kept = gpu.ballot %keep : i32
-          %before_bits = arith.andi %kept, %below : i32
-          %rank = math.ctpop %before_bits : i32
+          %kept = func.call @mdir.primitive.warp_ballot(%keep) : (i1) -> i32
+          %rank = func.call @mdir.primitive.warp_rank(%kept, %below) : (i32, i32) -> i32
           %slot = arith.addi %cs, %rank : i32
-          %n_kept = math.ctpop %kept : i32
+          %n_kept = func.call @mdir.primitive.warp_count(%kept) : (i32) -> i32
           %next = arith.addi %cs, %n_kept : i32
           // The blocks of the slots of this round: the block of slot cs,
           // new if cs begins one, and the next if the round runs into it.
@@ -2331,18 +2161,7 @@ scf.if %bad {{
 }}""")))
     t.append(scan("ks_", "%key_count", "%key_start", "%key_cursor", "%keys"))
     t.append("  // Each particle takes the next slot of its key; the particles of a\n  // key are then sorted by number.\n")
-    t.append(launch("%grid_of_n", per_item("%n", f"""\
-%one = arith.constant 1 : i32
-%zero_k = arith.constant 0 : i32
-%k32 = memref.load %key[%item] : memref<?xi32, 1>
-%has_key = arith.cmpi sge, %k32, %zero_k : i32
-scf.if %has_key {{
-%k = arith.index_cast %k32 : i32 to index
-{atomic_add("kc_", "%key_cursor", "%k", "%one", "%slot32")}\
-%slot = arith.index_cast %slot32 : i32 to index
-%i32v = arith.index_cast %item : index to i32
-memref.store %i32v, %sorted[%slot] : memref<?xi32, 1>
-}}""")))
+    t.append(cursor_scatter("%key", "%key_cursor", "%sorted", "%n", "%grid_of_n"))
     t.append(sort_bins("%grid_of_keys", "%key_start", "%sorted", "%keys"))
     t.append("  // The chunks of each column, the first chunk of each, and the places.\n")
     t.append(launch("%grid_of_columns", per_item("%columns", f"""\
@@ -2461,18 +2280,8 @@ scf.if %real {{
   memref.store %big, %xp[%item, %i2] : memref<?x4xf32, 1>
 }}""")))
     t.append(scan("gs_", "%gcount", "%gstart", "%gcursor", "%gcells"))
-    t.append(launch("%grid_of_capacity", per_item("%capacity", f"""\
-%zero = arith.constant 0 : i32
-%one = arith.constant 1 : i32
-%k = memref.load %gkey[%item] : memref<?xi32, 1>
-%real = arith.cmpi sge, %k, %zero : i32
-scf.if %real {{
-  %ki = arith.index_cast %k : i32 to index
-{indent(atomic_add("gc_", "%gcursor", "%ki", "%one", "%slot32"), 2).rstrip()}
-  %slot = arith.index_cast %slot32 : i32 to index
-  %p32 = arith.index_cast %item : index to i32
-  memref.store %p32, %gplace[%slot] : memref<?xi32, 1>
-}}""")))
+    t.append(cursor_scatter("%gkey", "%gcursor", "%gplace", "%capacity",
+                            "%grid_of_capacity"))
     t.append(sort_bins("%grid_of_gcells", "%gstart", "%gplace", "%gcells"))
     t.append("""\
   //===--------------------------------------------------------------------===//

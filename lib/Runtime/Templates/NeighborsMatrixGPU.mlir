@@ -41,7 +41,25 @@
 // place in the row in the order in which that thread would find it. The
 // excluded pairs of `excluded`, an incidence structure of pairs (a buffer
 // with no rows where there are none), are entered as the particle itself,
-// which the loops over pairs skip.
+// which the loops over pairs skip. The ballot and the ranks are the warp
+// compaction of the device primitives.
+
+// The device primitives that the build calls (include/mdir/Conversion/
+// CompactionEmitter.h, D[compaction-emitters]): the lowering replaces each
+// call with the code of the primitive's emitter when it parses this
+// template.
+func.func private @mdir.primitive.warp_lanes_below(i32, i32) -> i32
+func.func private @mdir.primitive.warp_ballot(i1) -> i32
+func.func private @mdir.primitive.warp_rank(i32, i32) -> i32
+func.func private @mdir.primitive.warp_count(i32) -> i32
+func.func private @mdir.primitive.chunked_scan(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+    memref<?xi32, 1>, index, index, index, index, index, index)
+func.func private @mdir.primitive.cursor_scatter(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+    index, index, index, index)
+func.func private @mdir.primitive.sort_bins_by(memref<?xi32, 1>, memref<?xi32, 1>, index, index,
+    index, index, memref<?xi32, 1>)
+func.func private @mdir.primitive.rank_in_bins(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
+    index, index, index, index)
 
 func.func private @mdrt_gpu_cell_count(%length: f64, %width: f64) -> index {
   %c1 = arith.constant 1 : index
@@ -213,98 +231,15 @@ func.func private @mdrt_gpu_matrix_sort(
   // The counts become the offsets of the cells: the sums of chunks of 256
   // cells, the offsets of the chunks in one thread, and the offsets of the
   // cells of each chunk.
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cell_chunks, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %b = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %b, %cell_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %none = arith.constant 0 : i32
-      %begin = arith.muli %b, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %cells, %full : index
-      %end = arith.select %short, %cells, %full : index
-      %sum = scf.for %c = %begin to %end step %i1
-          iter_args(%partial_sum = %none) -> (i32) {
-        %count = memref.load %held[%c] : memref<?xi32, 1>
-        %next = arith.addi %partial_sum, %count : i32
-        scf.yield %next : i32
-      }
-      memref.store %sum, %cell_sums[%b] : memref<?xi32, 1>
-    }
-    gpu.terminator
-  }
-
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
-    %i0 = arith.constant 0 : index
-    %i1 = arith.constant 1 : index
-    %none = arith.constant 0 : i32
-    %total = scf.for %b = %i0 to %cell_chunks step %i1
-        iter_args(%before = %none) -> (i32) {
-      %sum = memref.load %cell_sums[%b] : memref<?xi32, 1>
-      memref.store %before, %cell_sums[%b] : memref<?xi32, 1>
-      %next = arith.addi %before, %sum : i32
-      scf.yield %next : i32
-    }
-    memref.store %total, %start[%cells] : memref<?xi32, 1>
-    gpu.terminator
-  }
-
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cell_chunks, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %b = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %b, %cell_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %begin = arith.muli %b, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %cells, %full : index
-      %end = arith.select %short, %cells, %full : index
-      %first = memref.load %cell_sums[%b] : memref<?xi32, 1>
-      %last = scf.for %c = %begin to %end step %i1
-          iter_args(%before = %first) -> (i32) {
-        %count = memref.load %held[%c] : memref<?xi32, 1>
-        memref.store %before, %start[%c] : memref<?xi32, 1>
-        memref.store %before, %cursor[%c] : memref<?xi32, 1>
-        %next = arith.addi %before, %count : i32
-        scf.yield %next : i32
-      }
-    }
-    gpu.terminator
-  }
+  func.call @mdir.primitive.chunked_scan(%held, %start, %cursor, %cell_sums,
+      %cells, %cell_chunks, %chunk, %grid_cell_chunks, %block, %c1)
+      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index,
+         index, index) -> ()
 
   // Each particle takes the next slot of its cell.
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %i = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %i, %n : index
-    scf.if %inside {
-      %one = arith.constant 1 : i32
-      %k32 = memref.load %key[%i] : memref<?xi32, 1>
-      %zero_key = arith.constant 0 : i32
-      %has_cell = arith.cmpi sge, %k32, %zero_key : i32
-      scf.if %has_cell {
-      %k = arith.index_cast %k32 : i32 to index
-      // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
-      %rx2_base = memref.extract_aligned_pointer_as_index %cursor : memref<?xi32, 1> -> index
-      %rx2_bi = arith.index_cast %rx2_base : index to i64
-      %rx2_ki = arith.index_cast %k : index to i64
-      %rx2_four = arith.constant 4 : i64
-      %rx2_off = arith.muli %rx2_ki, %rx2_four : i64
-      %rx2_addr = arith.addi %rx2_bi, %rx2_off : i64
-      %rx2_ptr = llvm.inttoptr %rx2_addr : i64 to !llvm.ptr<1>
-      %slot32 = llvm.atomicrmw add %rx2_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
-      %slot = arith.index_cast %slot32 : i32 to index
-      %narrow = arith.index_cast %i : index to i32
-      memref.store %narrow, %order[%slot] : memref<?xi32, 1>
-      }
-    }
-    gpu.terminator
-  }
+  func.call @mdir.primitive.cursor_scatter(%key, %cursor, %order, %n, %grid_n,
+      %block, %c1)
+      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index) -> ()
 
   // The particles of each cell, sorted by index, and their positions in
   // that order. The place of a particle within its cell is the number of
@@ -315,40 +250,9 @@ func.func private @mdrt_gpu_matrix_sort(
   // simulation cell of 25 Å with a reach of 10 Å have 8 cells of 176, which
   // one thread each sorted in 0.85 ms of an RTX 3090 at every build (#231).
   %ranked = gpu.alloc (%n) : memref<?xi32, 1>
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %p = arith.addi %base, %tx : index
-    // The places beyond the particles that have a cell hold no particle.
-    %total32 = memref.load %start[%cells] : memref<?xi32, 1>
-    %total = arith.index_cast %total32 : i32 to index
-    %inside = arith.cmpi ult, %p, %total : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %none = arith.constant 0 : i32
-      %value = memref.load %order[%p] : memref<?xi32, 1>
-      %i = arith.index_cast %value : i32 to index
-      %k32 = memref.load %key[%i] : memref<?xi32, 1>
-      %k = arith.index_cast %k32 : i32 to index
-      %next = arith.addi %k, %i1 : index
-      %begin32 = memref.load %start[%k] : memref<?xi32, 1>
-      %end32 = memref.load %start[%next] : memref<?xi32, 1>
-      %begin = arith.index_cast %begin32 : i32 to index
-      %end = arith.index_cast %end32 : i32 to index
-      %rank32 = scf.for %q = %begin to %end step %i1
-          iter_args(%before = %none) -> (i32) {
-        %other = memref.load %order[%q] : memref<?xi32, 1>
-        %smaller = arith.cmpi slt, %other, %value : i32
-        %one_more = arith.extui %smaller : i1 to i32
-        %after = arith.addi %before, %one_more : i32
-        scf.yield %after : i32
-      }
-      %rank = arith.index_cast %rank32 : i32 to index
-      %slot = arith.addi %begin, %rank : index
-      memref.store %value, %ranked[%slot] : memref<?xi32, 1>
-    }
-    gpu.terminator
-  }
+  func.call @mdir.primitive.rank_in_bins(%order, %key, %start, %ranked, %cells,
+      %grid_n, %block, %c1)
+      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index) -> ()
 
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
@@ -716,8 +620,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %low = arith.select %overflow, %all_low, %low0 : i32
       %high = arith.select %overflow, %all_high, %high0 : i32
 
-      %lane_bit = arith.shli %one32, %lane32 : i32
-      %below_mask = arith.subi %lane_bit, %one32 : i32
+      %below_mask = func.call @mdir.primitive.warp_lanes_below(%lane32, %one32)
+          : (i32, i32) -> i32
 
       %found = scf.for %r = %zero32 to %rows32 step %one32
           iter_args(%count_r = %zero32) -> (i32) : i32 {
@@ -796,9 +700,10 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
             %near_other = arith.andi %near, %other : i1
             %neighbor = arith.andi %near_other, %in_run : i1
 
-            %ballot = gpu.ballot %neighbor : i32
-            %before_bits = arith.andi %ballot, %below_mask : i32
-            %before = math.ctpop %before_bits : i32
+            %ballot = func.call @mdir.primitive.warp_ballot(%neighbor)
+                : (i1) -> i32
+            %before = func.call @mdir.primitive.warp_rank(%ballot, %below_mask)
+                : (i32, i32) -> i32
             %slot = arith.addi %count, %before : i32
             %fits = arith.cmpi ult, %slot, %row_width32 : i32
             %keep = arith.andi %neighbor, %fits : i1
@@ -846,7 +751,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
               memref.store %entered, %index[%p, %slot_index] : memref<?x?xi32, 1>
             }
 
-            %found_here = math.ctpop %ballot : i32
+            %found_here = func.call @mdir.primitive.warp_count(%ballot)
+                : (i32) -> i32
             %next = arith.addi %count, %found_here : i32
             scf.yield %next : i32
           }
@@ -1284,8 +1190,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
       %low = arith.select %overflow, %all_low, %low0 : i32
       %high = arith.select %overflow, %all_high, %high0 : i32
 
-      %lane_bit = arith.shli %one32, %lane32 : i32
-      %below_mask = arith.subi %lane_bit, %one32 : i32
+      %below_mask = func.call @mdir.primitive.warp_lanes_below(%lane32, %one32)
+          : (i32, i32) -> i32
 
       %found = scf.for %r = %zero32 to %rows32 step %one32
           iter_args(%count_r = %zero32) -> (i32) : i32 {
@@ -1370,9 +1276,10 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
             %near_other = arith.andi %near, %other : i1
             %neighbor = arith.andi %near_other, %in_run : i1
 
-            %ballot = gpu.ballot %neighbor : i32
-            %before_bits = arith.andi %ballot, %below_mask : i32
-            %before = math.ctpop %before_bits : i32
+            %ballot = func.call @mdir.primitive.warp_ballot(%neighbor)
+                : (i1) -> i32
+            %before = func.call @mdir.primitive.warp_rank(%ballot, %below_mask)
+                : (i32, i32) -> i32
             %slot = arith.addi %count, %before : i32
             %fits = arith.cmpi ult, %slot, %row_width32 : i32
             %keep = arith.andi %neighbor, %fits : i1
@@ -1420,7 +1327,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
               memref.store %entered, %index[%p, %slot_index] : memref<?x?xi32, 1>
             }
 
-            %found_here = math.ctpop %ballot : i32
+            %found_here = func.call @mdir.primitive.warp_count(%ballot)
+                : (i32) -> i32
             %next = arith.addi %count, %found_here : i32
             scf.yield %next : i32
           }
@@ -1947,8 +1855,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
       %low = arith.select %overflow, %all_low, %low0 : i32
       %high = arith.select %overflow, %all_high, %high0 : i32
 
-      %lane_bit = arith.shli %one32, %lane32 : i32
-      %below_mask = arith.subi %lane_bit, %one32 : i32
+      %below_mask = func.call @mdir.primitive.warp_lanes_below(%lane32, %one32)
+          : (i32, i32) -> i32
 
       %found = scf.for %r = %zero32 to %rows32 step %one32
           iter_args(%count_r = %zero32) -> (i32) : i32 {
@@ -2051,9 +1959,10 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
             %near_other = arith.andi %near, %other : i1
             %neighbor = arith.andi %near_other, %in_run : i1
 
-            %ballot = gpu.ballot %neighbor : i32
-            %before_bits = arith.andi %ballot, %below_mask : i32
-            %before = math.ctpop %before_bits : i32
+            %ballot = func.call @mdir.primitive.warp_ballot(%neighbor)
+                : (i1) -> i32
+            %before = func.call @mdir.primitive.warp_rank(%ballot, %below_mask)
+                : (i32, i32) -> i32
             %slot = arith.addi %count, %before : i32
             %fits = arith.cmpi ult, %slot, %row_width32 : i32
             %keep = arith.andi %neighbor, %fits : i1
@@ -2101,7 +2010,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
               memref.store %entered, %index[%p, %slot_index] : memref<?x?xi32, 1>
             }
 
-            %found_here = math.ctpop %ballot : i32
+            %found_here = func.call @mdir.primitive.warp_count(%ballot)
+                : (i32) -> i32
             %next = arith.addi %count, %found_here : i32
             scf.yield %next : i32
           }
@@ -2330,134 +2240,19 @@ func.func private @mdrt_gpu_spatial_order(
     gpu.terminator
   }
 
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cell_chunks, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %b = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %b, %cell_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %none = arith.constant 0 : i32
-      %begin = arith.muli %b, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %cells, %full : index
-      %end = arith.select %short, %cells, %full : index
-      %sum = scf.for %c = %begin to %end step %i1
-          iter_args(%partial_sum = %none) -> (i32) {
-        %count = memref.load %held[%c] : memref<?xi32, 1>
-        %next = arith.addi %partial_sum, %count : i32
-        scf.yield %next : i32
-      }
-      memref.store %sum, %cell_sums[%b] : memref<?xi32, 1>
-    }
-    gpu.terminator
-  }
+  func.call @mdir.primitive.chunked_scan(%held, %start, %cursor, %cell_sums,
+      %cells, %cell_chunks, %chunk, %grid_cell_chunks, %block, %c1)
+      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index,
+         index, index) -> ()
 
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
-    %i0 = arith.constant 0 : index
-    %i1 = arith.constant 1 : index
-    %none = arith.constant 0 : i32
-    %total = scf.for %b = %i0 to %cell_chunks step %i1
-        iter_args(%before = %none) -> (i32) {
-      %sum = memref.load %cell_sums[%b] : memref<?xi32, 1>
-      memref.store %before, %cell_sums[%b] : memref<?xi32, 1>
-      %next = arith.addi %before, %sum : i32
-      scf.yield %next : i32
-    }
-    memref.store %total, %start[%cells] : memref<?xi32, 1>
-    gpu.terminator
-  }
-
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cell_chunks, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %b = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %b, %cell_chunks : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %begin = arith.muli %b, %chunk : index
-      %full = arith.addi %begin, %chunk : index
-      %short = arith.cmpi ult, %cells, %full : index
-      %end = arith.select %short, %cells, %full : index
-      %first = memref.load %cell_sums[%b] : memref<?xi32, 1>
-      %last = scf.for %c = %begin to %end step %i1
-          iter_args(%before = %first) -> (i32) {
-        %count = memref.load %held[%c] : memref<?xi32, 1>
-        memref.store %before, %start[%c] : memref<?xi32, 1>
-        memref.store %before, %cursor[%c] : memref<?xi32, 1>
-        %next = arith.addi %before, %count : i32
-        scf.yield %next : i32
-      }
-    }
-    gpu.terminator
-  }
-
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_n, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %i = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %i, %n : index
-    scf.if %inside {
-      %one = arith.constant 1 : i32
-      %k32 = memref.load %key[%i] : memref<?xi32, 1>
-      %k = arith.index_cast %k32 : i32 to index
-      // A relaxed atomic at the scope of the device (see PMEGPU.mlir).
-      %rx4_base = memref.extract_aligned_pointer_as_index %cursor : memref<?xi32, 1> -> index
-      %rx4_bi = arith.index_cast %rx4_base : index to i64
-      %rx4_ki = arith.index_cast %k : index to i64
-      %rx4_four = arith.constant 4 : i64
-      %rx4_off = arith.muli %rx4_ki, %rx4_four : i64
-      %rx4_addr = arith.addi %rx4_bi, %rx4_off : i64
-      %rx4_ptr = llvm.inttoptr %rx4_addr : i64 to !llvm.ptr<1>
-      %slot32 = llvm.atomicrmw add %rx4_ptr, %one syncscope("device") monotonic : !llvm.ptr<1>, i32
-      %slot = arith.index_cast %slot32 : i32 to index
-      %narrow = arith.index_cast %i : index to i32
-      memref.store %narrow, %order[%slot] : memref<?xi32, 1>
-    }
-    gpu.terminator
-  }
+  func.call @mdir.primitive.cursor_scatter(%key, %cursor, %order, %n, %grid_n,
+      %block, %c1) {every_key}
+      : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index) -> ()
 
   // The particles of each cell in the order of `ids`, by insertion.
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_cells, %gy = %c1, %gz = %c1)
-             threads(%tx, %ty, %tz) in (%sx = %block, %sy = %c1, %sz = %c1) {
-    %base = arith.muli %bx, %block : index
-    %c = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %c, %cells : index
-    scf.if %inside {
-      %i1 = arith.constant 1 : index
-      %next = arith.addi %c, %i1 : index
-      %begin32 = memref.load %start[%c] : memref<?xi32, 1>
-      %end32 = memref.load %start[%next] : memref<?xi32, 1>
-      %begin = arith.index_cast %begin32 : i32 to index
-      %end = arith.index_cast %end32 : i32 to index
-      %first = arith.addi %begin, %i1 : index
-      scf.for %p = %first to %end step %i1 {
-        %value = memref.load %order[%p] : memref<?xi32, 1>
-        %particle = arith.index_cast %value : i32 to index
-        %id = memref.load %ids[%particle] : memref<?xi32, 1>
-        %hole = scf.while (%q = %p) : (index) -> index {
-          %more = arith.cmpi ugt, %q, %begin : index
-          %before = arith.subi %q, %i1 : index
-          %safe = arith.select %more, %before, %begin : index
-          %left = memref.load %order[%safe] : memref<?xi32, 1>
-          %left_particle = arith.index_cast %left : i32 to index
-          %left_id = memref.load %ids[%left_particle] : memref<?xi32, 1>
-          %larger = arith.cmpi sgt, %left_id, %id : i32
-          %go = arith.andi %more, %larger : i1
-          scf.condition(%go) %q : index
-        } do {
-        ^bb0(%q: index):
-          %before = arith.subi %q, %i1 : index
-          %left = memref.load %order[%before] : memref<?xi32, 1>
-          memref.store %left, %order[%q] : memref<?xi32, 1>
-          scf.yield %before : index
-        }
-        memref.store %value, %order[%hole] : memref<?xi32, 1>
-      }
-    }
-    gpu.terminator
-  }
+  func.call @mdir.primitive.sort_bins_by(%start, %order, %cells, %grid_cells,
+      %block, %c1, %ids)
+      : (memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index, memref<?xi32, 1>) -> ()
 
   %key0 = memref.memory_space_cast %key
       : memref<?xi32, 1> to memref<?xi32>

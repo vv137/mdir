@@ -24,6 +24,7 @@ describes how a device implements a primitive.
 | Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420 | Planned | — |
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
 | Reductions chosen by the algebra of the operator | `BlockReduce` (raking, commutative only) | #422 | Planned | — |
+| Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D[compaction-emitters] |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 
 The order follows #415: #421 first, then #419 on the gathering of PME,
@@ -517,3 +518,154 @@ on STMV.
 - **No hit rates.** Nsight Compute's counters are refused on the cluster's
   nodes (`ERR_NVGPUCTRPERM`; the driver's `RmProfilingAdminOnly` is 1),
   so the measurement has kernel times, not L2 hit rates.
+
+## 4. Compaction, scans, and counting sorts
+
+### 4.1 What they are, and why they are shared
+
+The builds of the neighbor structures and the pruning of the dual list
+pack items, sum counts, and sort items by keys, each with code written for
+its site. Issue #432 counted these sites and measured them: none reaches 3%
+of a step, and they already use the cheapest form at the level of a warp,
+so no faster strategy was found. The primitives are shared all the same, for
+reuse (the maintainer, 2026-10-19; #444's rule of two sites): the code of a
+primitive is written once, tested on its own, and taken by the sites to
+come, the migration of a device (#38) and the groups on domains first.
+Moving the sites changed no kernel (Section 4.5).
+
+The emitters are in `include/mdir/Conversion/CompactionEmitter.h`
+(`kernels::`, in the library of the kernels, beside `ScatterEmitter.h`):
+
+| Emitter | What it emits | Preconditions | CUB's counterpart |
+|---|---|---|---|
+| `emitLanesBelow`, `emitWarpBallot`, `emitWarpRank`, `emitWarpCount` | The warp compaction: the vote of the warp on a predicate, $b = \mathrm{ballot}(p)$; the rank of lane $\ell$ among the lanes that keep, $r_\ell = \mathrm{popc}(b \wedge (2^\ell - 1))$; the count, $\mathrm{popc}(b)$. A kept lane writes its item at the count of the round plus $r_\ell$, so the items keep the order of the lanes | Every lane of the warp reaches the ballot; warps of 32 | a `WarpScan` over flags, done in the bits of one vote [[CUB]](references.md#cub) |
+| `emitWarpScan` | The inclusive sum over segments of 2 to 32 lanes, in $\log_2$ rounds of `shuffle up` by $1, 2, 4, \ldots$ [[HillisSteele1986]](references.md#hillissteele1986) | Every lane reaches it. The lane is compared with the offset as a signed or an unsigned number, as the site has it | `WarpScanShfl` |
+| `emitBlockScan` | The exclusive sum over a block, and its total in every thread: a warp scan in each warp, the sums of the warps through block memory, a warp scan of those by the first warp | A buffer of one i32 a warp and one for the total in block memory (`memref<9xi32>` for 256 threads); every thread reaches its two barriers | `BlockScan`, `BLOCK_SCAN_WARP_SCANS` |
+| `emitDeviceScan` | The exclusive sums of $n$ counts into `start` ($n + 1$, the total last) and a cursor: blocks of 256 threads with 4 counts a thread sum their 1024 counts; one block scans the sums of the blocks; each block scans its counts from its offset. Three launches | The caller gives the buffer of the sums of the blocks, $\max(\lceil n/1024 \rceil, 1)$ of them | `DeviceScan` is one pass with decoupled look-back, #420; this is the reduce-then-scan form |
+| `emitChunkedScan`, `emitSerialScan` | The same sums for a few thousand counts: a thread sums each chunk of 256, one thread scans the sums of the chunks (`emitSerialScan`), a thread writes the offsets of each chunk | — | — |
+| `emitCursorScatter` | The scatter of a counting sort: each item takes the next slot of its key from the cursor with a device atomic and writes its number there; an item with a negative key has no bin, unless every key is one | The cursor holds the offsets of the keys (a scan above) | `BlockHistogram`'s atomic histogram, by key |
+| `emitSortBins` | The items of each bin sorted by insertion, by the item or by a value of the item; a thread a bin | Bins of a few items | — |
+| `emitRankInBins` | The stable rank: a thread for each item counts the smaller items of its bin and writes its item at that place | The items of a bin are distinct | — |
+| `emitDeviceAtomicAdd` | A relaxed atomic addition of an i32 at the scope of the device, with its old value | — | — |
+
+A counting sort is the site's histogram (one device atomic for each item
+where the site computes its key), a scan of the counts, the scatter, and an
+order within each bin, since the order of the atomics is not fixed: the
+insertion sort for bins of a few items, the rank for bins of many (#231)
+and for the partitions to come (#38, with the ghost flag in the key).
+
+### 4.2 How the sites call them
+
+The lowering calls the emitters where it builds its kernels. The templates
+(`NeighborsGroupsGPU.mlir`, written by
+`scripts/generate-groups-gpu-template.py`, and `NeighborsMatrixGPU.mlir`)
+call them by name, with a declaration in the template:
+
+```mlir
+func.func private @mdir.primitive.warp_rank(i32, i32) -> i32
+...
+%rank = func.call @mdir.primitive.warp_rank(%kept, %below) : (i32, i32) -> i32
+func.call @mdir.primitive.sort_bins(%key_start, %sorted, %keys, %grid_of_keys,
+    %block, %c1) : (memref<?xi32, 1>, memref<?xi32, 1>, index, index, index,
+    index) -> ()
+```
+
+`convert-md-exec-to-gpu` replaces each call with the code of the emitter
+where it stands, when it parses the template (`expandPrimitiveCalls`), and
+removes the declarations; the pass `expand-device-primitives` does the same
+on a module. A primitive that does not exist, or a call whose operands or
+results the primitive does not have, is an error that names it. The
+parameters that are not values are attributes of the call: `lanes` and
+`unsigned` of `warp_scan`, `every_key` of `cursor_scatter`. The names are
+those of the emitters: `warp_lanes_below`, `warp_ballot`, `warp_rank`,
+`warp_count`, `warp_scan`, `block_scan`, `device_scan`,
+`device_scan_cursor`, `chunked_scan`, `cursor_scatter`, `sort_bins`,
+`sort_bins_by`, `rank_in_bins`.
+
+### 4.3 Sites
+
+The inventory of #432, by the primitive each site takes:
+
+| Site | Primitives | Where |
+|---|---|---|
+| The pruning, fused into the loop over pairs and in the refresh (D284, D114) | warp compaction | `emitPruneGroup` (lowering) |
+| The active units (D268) | warp compaction | `emitActiveUnits` (lowering) |
+| The groups build: the queue of near candidates, the kept entries, and those of the build of all images | warp compaction | `lists_body`, `images_body` (the groups template) |
+| The groups build: the excluded partners of a group (D106) | warp scan, 16 lanes, unsigned | `lists_body` |
+| The groups build: particles by column and z-bin key; places by cell of the search grid; the chunks of the columns | device scan (three kernels, block scan within), scatter, insertion sort; the third a scan alone | `build` (the groups template) |
+| The matrix build: the rows, orthorhombic, triclinic of one pass, and of all images (D241) | warp compaction | `mdrt_gpu_build_neighbors_matrix*` (the matrix template; the images part generated by `scripts/generate-matrix-images-template.py`) |
+| The matrix build: particles by cell | chunked scan, scatter, stable rank | `mdrt_gpu_matrix_sort` |
+| The spatial order (D44, D86) | chunked scan, scatter (every key), insertion sort by the numbers of the input | `mdrt_gpu_spatial_order` |
+| The listed particles of PME (D262, `md_exec.nonzero`) | the serial scan of the counts of the chunks | `lowerNonzero` (lowering) |
+
+Left as they are: PME's binning for tiles (`match.any.sync` and a rank by
+key, one atomic for a key: a warp-aggregated atomic, #418), the serial
+partition within a particle's slots of `lowerBuildEdges` (D277), the host's
+scan of `emitEdgeSlots`, and the warp sums by `shuffle xor` (reductions,
+#422).
+
+### 4.4 Tests
+
+- `Integration/device-primitives.mlir` calls every emitter from kernels
+  written for the test; `device-primitives-gpu.test` runs it on a device
+  and compares exactly: the compaction of 2 warps and the warp scans with
+  results written out, and the block scan of 256 threads, the device scan
+  of 5000 counts with and without the cursor, the chunked scan of 1000, and
+  the counting sort of 3000 items by 50 keys (with the insertion sort, the
+  stable rank, and the order by another buffer) with results computed on
+  the host by the definition. With `-Dsanitize=1` it runs under memcheck
+  and racecheck.
+- `Conversion/MDExecToGPU/expand-primitives.mlir` checks the code of the
+  warp compaction and of the warp scans; `expand-primitives-invalid.mlir`
+  the refusals.
+- The sites' own tests run them as before (the builds of groups and of the
+  matrix, the dual list, the listed particles of PME).
+
+### 4.5 The same code
+
+The programs as executed (`mdir emit --stage=lowered` with
+`MDIR_GPU_BINARY=ptx`, the PTX of every kernel and the host's code in the
+LLVM dialect) are byte-identical to those of `main` (a6fef8b9, and again
+at 075b9411 after a rebase) on:
+- the nine systems of the Amber suite, each with the pruning fused (the
+  default) and in the refresh (`MDIR_FUSED_PRUNE=off`): 245 to 501 kernels
+  a program;
+- JAC NVE with the matrix (193 kernels, the matrix sort and the spatial
+  order among them), the rhombic dodecahedron of `triclinic-gpu.test`
+  with the groups and the dual list (133 and 137 kernels), and the OPC
+  dipeptide of `pme-skip-zero.test` on a device (457 kernels, with
+  `md_exec.nonzero`).
+
+The modules after `convert-md-exec-to-gpu` differ from those of `main` in
+the place of one constant at each of three sites, which an emitter creates
+in its own order: before or after a load in the scatter of the matrix sort
+and of the groups build's grid cells, and in the serial scan of
+`lowerNonzero`. The constants leave no trace in the PTX, as the identical
+programs show. No kernel changes its name: the expansion puts each
+primitive's code where the call stands, in the function of the site.
+
+The step was timed against `main` on an RTX 4090 (Section 4.6).
+
+### 4.6 Measured effect
+
+None is expected, since the programs are the same. The Amber suite was run
+with the binaries of `main` (a6fef8b9) and of the branch alternated in one
+job on an RTX 4090 at 450 W (ada-001), three rounds. The table gives the
+median ns/day of the second half of each run, and the ratio of the time
+of a step to that of `main`:
+
+| System | `main` | Branch | Ratio |
+|---|---:|---:|---:|
+| JAC NVE | 1264.7 | 1255.3 | 1.007 |
+| JAC NPT | 1143.9 | 1142.6 | 1.001 |
+| JAC NVE 4 fs | 2356.2 | 2359.0 | 0.999 |
+| JAC NPT 4 fs | 2208.0 | 2205.8 | 1.001 |
+| Factor IX NVE | 569.0 | 568.0 | 1.002 |
+| Factor IX NPT | 530.3 | 529.9 | 1.001 |
+| Cellulose NVE | 148.8 | 148.7 | 1.001 |
+| Cellulose NPT | 141.0 | 140.6 | 1.003 |
+| STMV NPT 4 fs | 87.5 | 87.6 | 0.999 |
+
+No system is slower beyond the spread of the runs: the rounds of JAC NVE
+took 1259.7 to 1272.4 ns/day with `main` and 1253.6 to 1260.3 with the
+branch, whose program is byte for byte that of `main`.

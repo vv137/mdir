@@ -387,6 +387,31 @@ def ConvertMDExecToGPU
                            "::mlir::vector::VectorDialect"];
 }
 
+def ExpandDevicePrimitives
+    : Pass<"expand-device-primitives", "::mlir::ModuleOp"> {
+  let summary = "Replaces the calls of the device primitives with the code "
+                "of their emitters";
+  let description = [{
+    A template of the device lowering calls a primitive of
+    `CompactionEmitter.h` by name, `func.call @mdir.primitive.<name>(...)`,
+    with a declaration of its own (D[compaction-emitters],
+    docs/device-primitives.md, Section 4). `convert-md-exec-to-gpu`
+    replaces each call with the code of the primitive's emitter where it
+    stands when it parses a template, so that every site of a primitive,
+    in a template or in the lowering, runs the code of one emitter. This
+    pass does the same on a module, for the tests of the emitters. A call
+    of a primitive that does not exist, or with operands or results that
+    the primitive does not have, is an error.
+  }];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::func::FuncDialect",
+                           "::mlir::gpu::GPUDialect",
+                           "::mlir::LLVM::LLVMDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect"];
+}
+
 def GpuModuleToBinary
     : Pass<"mdir-gpu-module-to-binary", "::mlir::ModuleOp"> {
   let summary = "Serialize the GPU modules to binaries in parallel";

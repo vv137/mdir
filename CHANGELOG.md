@@ -651,6 +651,20 @@ format, or the outputs; every such change is listed under **Changed** or
   check, `--md-check-transposes`, refuses an op of the structure of a
   potential without a declared transpose. No generated code changes: the
   output of the pass is the same for every test and driver input compared.
+
+- **Compaction, scans, and counting sorts are shared device emitters**
+  (D[compaction-emitters], #432, PR #460,
+  [docs/device-primitives.md §4](docs/device-primitives.md#4-compaction-scans-and-counting-sorts)):
+  the warp compaction (ballot and rank), the warp and block scans, the
+  device scan in its two forms, the scatter of a counting sort, the
+  insertion sort of bins, and the stable rank are one emitter each in
+  `CompactionEmitter.h`. The pruning and the active units call them in the
+  lowering; the templates of the groups and of the matrix call them by name
+  (`func.call @mdir.primitive.<name>`), expanded when the lowering parses a
+  template, and `expand-device-primitives` does the same for the tests.
+  The programs as executed, with the PTX of every kernel, are those of
+  `main`. No key, default, or output changes.
+
 - **The white paper's comparison with pmemd.cuda is measured again on
   `main` (D285) with the skins that MDIR chooses (D281)** (#437; Section
   10, Tables 10.2 and 10.3, Figure 10.1, and the range quoted in the
