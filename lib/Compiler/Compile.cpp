@@ -80,6 +80,19 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
     *options += " cache=false";
   return options;
 }
+/// md-exec-lower-stage-bodies with the strategy of the products of the
+/// shape of a GEMM in the bodies (D[ml4-body-gemm]) from
+/// `MDIR_STAGE_CONTRACTIONS`, for comparing the strategies: `gemm` calls of
+/// cuBLAS, `loops` MDIR's loops; another value, or none, is the default.
+static std::string getStageBodiesPass() {
+  StringRef chosen = std::getenv("MDIR_STAGE_CONTRACTIONS")
+                         ? std::getenv("MDIR_STAGE_CONTRACTIONS")
+                         : "";
+  if (chosen == "gemm" || chosen == "loops")
+    return ("md-exec-lower-stage-bodies{contractions=" + chosen + "},").str();
+  return "md-exec-lower-stage-bodies,";
+}
+
 /// The options of md-exec-choose-scatter (D285) from the
 /// switches of the environment, for comparing the strategies and for
 /// tests: `MDIR_PME_SPREAD` the tiles of PME (D282; `global` none,
@@ -207,7 +220,7 @@ std::string mdir::compiler::getPipeline(const Control &control,
        << (control.precision == Precision::Double ? "" : " tables=f32")
        << "},md-exec-assign-streams,"
        // The batched bodies of models in stages (D293).
-       << (control.stagedModels.empty() ? "" : "md-exec-lower-stage-bodies,")
+       << (control.stagedModels.empty() ? "" : getStageBodiesPass())
        << "convert-md-exec-to-gpu{"
        // In the deterministic mode the arithmetic of a step does not
        // depend on what else the step computes. LLVM contracts a product

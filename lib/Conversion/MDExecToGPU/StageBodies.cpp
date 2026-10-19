@@ -527,12 +527,20 @@ static LogicalResult callGemms(func::FuncOp function, ModuleOp bodies) {
             candidate.getOutputs()[0] == c &&
             matchPattern(candidate.getInputs()[0], m_AnyZeroFloat()))
           fill = candidate;
-    // Nothing else touches the buffer between the fill and the product.
-    if (fill && llvm::none_of(c.getUsers(), [&](Operation *user) {
-          Operation *at = op->getBlock()->findAncestorOpInBlock(*user);
-          return user != fill && user != op && at &&
-                 fill->isBeforeInBlock(at) && at->isBeforeInBlock(op);
-        })) {
+    // Nothing else touches the buffer between the fill and the product: a
+    // view of it made there counts only if something there uses the view.
+    std::function<bool(Value)> touchedBetween = [&](Value buffer) {
+      return llvm::any_of(buffer.getUsers(), [&](Operation *user) {
+        Operation *at = op->getBlock()->findAncestorOpInBlock(*user);
+        if (user == fill || user == op || !at || !fill->isBeforeInBlock(at) ||
+            !at->isBeforeInBlock(op))
+          return false;
+        if (isa<ViewLikeOpInterface>(user) && user->getNumResults() == 1)
+          return touchedBetween(user->getResult(0));
+        return true;
+      });
+    };
+    if (fill && !touchedBetween(c)) {
       beta = 0.0f;
       fill.erase();
     }
@@ -878,6 +886,63 @@ public:
         break;
     }
 
+    // Each GEMM that starts from a fill of zero gets a fill of its own, of a
+    // tensor of its own, which bufferizes to a buffer that only the fill
+    // and the product write: `callGemms` then drops the fill (beta 0). CSE
+    // merges the fills of equal operands, and the product that would share
+    // one would start from a copy of it instead.
+    // An init whose values the payload does not read (an elementwise op's)
+    // is any tensor of its shape: an empty one, so that a fill shared with
+    // it through CSE does not stay for it alone.
+    if (fuse)
+      bodies->walk([&](linalg::GenericOp op) {
+        if (!op.hasPureTensorSemantics())
+          return;
+        for (OpOperand &init : op.getDpsInitsMutable()) {
+          if (!op.getMatchingBlockArgument(&init).use_empty() ||
+              init.get().getDefiningOp<tensor::EmptyOp>())
+            continue;
+          OpBuilder builder(op);
+          auto type = cast<RankedTensorType>(init.get().getType());
+          init.set(tensor::EmptyOp::create(builder, op.getLoc(),
+                                           type.getShape(),
+                                           type.getElementType()));
+        }
+      });
+    if (gemm)
+      bodies->walk([&](linalg::LinalgOp op) {
+        if (!op.hasPureTensorSemantics() || !matchGemm(op))
+          return;
+        OpOperand *init = op.getDpsInitOperand(0);
+        auto fill = init->get().getDefiningOp<linalg::FillOp>();
+        if (!fill || !matchPattern(fill.getInputs()[0], m_AnyZeroFloat()))
+          return;
+        OpBuilder builder(op);
+        auto type = cast<RankedTensorType>(init->get().getType());
+        Value empty = tensor::EmptyOp::create(builder, op.getLoc(),
+                                              type.getShape(),
+                                              type.getElementType());
+        init->set(linalg::FillOp::create(builder, op.getLoc(),
+                                         fill.getInputs()[0], empty)
+                      .getResult(0));
+      });
+    // The fills and empty tensors that the above left without a use, which
+    // the bufferization would still allocate and fill.
+    SmallVector<Operation *> dead;
+    bodies->walk([&](linalg::FillOp op) {
+      if (op->use_empty())
+        dead.push_back(op);
+    });
+    for (Operation *op : dead)
+      op->erase();
+    dead.clear();
+    bodies->walk([&](tensor::EmptyOp op) {
+      if (op->use_empty())
+        dead.push_back(op);
+    });
+    for (Operation *op : dead)
+      op->erase();
+
     PassManager pm(context);
     bufferization::OneShotBufferizePassOptions options;
     options.bufferizeFunctionBoundaries = true;
@@ -918,6 +983,9 @@ public:
       return signalPassFailure();
 
     for (func::FuncOp function : bodies->getOps<func::FuncOp>()) {
+      // The runtime's functions that the bodies call.
+      if (function.isExternal())
+        continue;
       if (device) {
         SmallVector<scf::ParallelOp> loops;
         function.walk([&](scf::ParallelOp loop) {
