@@ -103,8 +103,9 @@ BlockScan emitBlockScan(mlir::OpBuilder &builder, mlir::Location loc,
 /// sum of all at n) and, unless it is null, into `cursor` (n): blocks of
 /// `threads` = 256 threads, each thread 4 counts, sum their 1024 counts
 /// into `sums` (emitBlockScan); one block scans the sums of the blocks;
-/// then each block scans its counts from the sum before it. This is the
-/// reduce-then-scan of CUB's device scan before its single pass (#420).
+/// then each block scans its counts from the sum before it: a
+/// reduce-then-scan in three passes over the counts. CUB's device scan is
+/// a single pass with decoupled look-back [CUB], which is #420.
 /// The caller gives `blocks`, at least ceil(n / 1024) and 1, `sums`, a
 /// buffer of `blocks` i32 on the device, `threads`, and `one`, the index
 /// 1 of the launches' other dimensions. Three launches.

@@ -266,14 +266,22 @@ NVIDIA, "CUB," the block, warp, and device primitives of the CUDA C++ Core
 Libraries (CCCL), version 3.2.0 as shipped with CUDA 13.2 (`CUB_VERSION`
 300200), under the 3-clause BSD license: `cub::BlockHistogram` with the
 algorithm `BLOCK_HISTO_ATOMIC`, `cub/block/block_histogram.cuh` and
-`cub/block/specializations/block_histogram_atomic.cuh`. No paper;
+`cub/block/specializations/block_histogram_atomic.cuh`; `cub::WarpScan`
+(`cub/warp/specializations/warp_scan_shfl.cuh`), `cub::BlockScan` with
+the algorithm `BLOCK_SCAN_WARP_SCANS`
+(`cub/block/specializations/block_scan_warp_scans.cuh`), and the single
+pass of `cub::DeviceScan` with decoupled look-back
+(`cub/agent/single_pass_scan_operators.cuh`). No paper;
 [github.com/NVIDIA/cccl](https://github.com/NVIDIA/cccl) (read 2026-10-18,
 against the headers of CUDA 13.2).
 
 Used for: the privatized scatter-accumulate of a device, a sum of a block
 in block memory and one atomic for each index (D285,
 [device-primitives.md](device-primitives.md)); the plan of lowering
-strategies after CUB's primitives (#415).
+strategies after CUB's primitives (#415); the warp compaction, the warp and
+block scans, and the scans of counting sorts of the shared emitters
+(D[compaction-emitters], [device-primitives.md](device-primitives.md),
+Section 4).
 
 ### CUDAGuideL2
 
@@ -559,6 +567,16 @@ N. J. Higham, *Accuracy and Stability of Numerical Algorithms*, 2nd ed.
 Used for: the bound of the rounding of a floating-point sum in any order
 (Section 4.2), by which a privatized sum agrees with atomics
 (D285, white paper Section 8.5).
+
+### HillisSteele1986
+
+W. D. Hillis and G. L. Steele Jr., "Data parallel algorithms,"
+*Commun. ACM* **29**(12), 1170–1183 (1986).
+[doi:10.1145/7902.7903](https://doi.org/10.1145/7902.7903)
+
+Used for: the scan of a warp in log2 rounds, each lane adding the partial
+sum of the lane 2^k below it (D[compaction-emitters],
+[device-primitives.md](device-primitives.md), Section 4).
 
 ### HockneyEastwood1988
 
