@@ -3453,83 +3453,126 @@ LogicalResult Lowering::lowerStagedPairFor(md_exec::PairForOp op) {
       callBodies(tile, loc, tiling, level);
     }
     // Each center adds up its rows of the tile that are within the cutoff,
-    // in the order of its slots: a gather, with no atomics. A wide
-    // destination (features) is added up component by component.
+    // in the order of its slots: a gather, with no atomics. The slots are
+    // ordered by center, so the centers that meet the tile are those of its
+    // rows: the row of a center's first slot in the tile leads, and the
+    // others do nothing (D[ml4-tile-sums]). A wide destination (features)
+    // is added up by a thread for each row and component, the threads of a
+    // row next to each other, so that a center's components are read
+    // together; the narrow ones by a thread for each row.
     Value end = arith::AddIOp::create(tile, loc, start, rows);
+    Value count = arith::MinUIOp::create(
+        tile, loc, rows, arith::SubIOp::create(tile, loc, numSlots, start));
     SmallVector<unsigned> narrow, wide;
     for (unsigned k = 0, e = op.getOuts().size(); k != e; ++k)
       (StagedEmitter::isWide(kernel.getTerminator()->getOperand(k).getType())
            ? wide
            : narrow)
           .push_back(k);
-    launchOver(tile, loc, size, [&](OpBuilder &body, Value center) {
-      Type indexType = body.getIndexType();
-      Value begin = arith::IndexCastOp::create(
-          body, loc, indexType,
-          memref::LoadOp::create(body, loc, offsets, ValueRange{center}));
-      Value within = arith::IndexCastOp::create(
-          body, loc, indexType,
-          memref::LoadOp::create(body, loc, counts, ValueRange{center}));
-      Value from = arith::MaxUIOp::create(body, loc, begin, start);
-      Value to = arith::MaxUIOp::create(
-          body, loc, from,
-          arith::MinUIOp::create(
-              body, loc, arith::AddIOp::create(body, loc, begin, within), end));
-      if (!narrow.empty()) {
-        SmallVector<Value> inits;
-        for (unsigned k : narrow)
-          inits.push_back(createZero(
-              body, loc, md_exec::getKernelValueType(op.getOuts()[k].getType())));
-        auto sum = scf::ForOp::create(
-            body, loc, from, to, one, inits,
-            [&](OpBuilder &inner, Location, Value slot, ValueRange totals) {
-              Value row = arith::SubIOp::create(inner, loc, slot, start);
-              auto emitter = emitterAt(inner, slot, row);
-              SmallVector<Value> next;
-              for (auto [total, k] : llvm::zip(totals, narrow))
-                next.push_back(arith::AddFOp::create(inner, loc, total,
-                                                     emitter->yielded(k)));
-              scf::YieldOp::create(inner, loc, next);
-            });
-        for (auto [total, k] : llvm::zip(sum.getResults(), narrow)) {
-          Value out = op.getOuts()[k];
-          Value old = loadElement(body, loc, out, center);
-          storeElement(body, loc, arith::AddFOp::create(body, loc, old, total),
-                       out, center);
-        }
-      }
-      for (unsigned k : wide) {
-        Value out = op.getOuts()[k];
-        int64_t n = cast<VectorType>(kernel.getTerminator()->getOperand(k).getType())
-                        .getNumElements();
-        Type element = cast<MemRefType>(out.getType()).getElementType();
-        scf::ForOp::create(
-            body, loc, createIndex(body, loc, 0), createIndex(body, loc, n),
-            one, ValueRange(),
-            [&](OpBuilder &outer, Location, Value c, ValueRange) {
+    Type indexType = tile.getIndexType();
+    // For the row `row` of the tile, whether it leads its center's rows and,
+    // if it does, the body of the sum over the center's slots in the tile
+    // within the cutoff, from its own.
+    auto ifLeads = [&](OpBuilder &body, Value row,
+                       function_ref<void(OpBuilder &, Value, Value, Value)>
+                           sum) {
+      Value slot = arith::AddIOp::create(body, loc, start, row);
+      auto centerAt = [&](OpBuilder &b, Value at) {
+        return memref::LoadOp::create(
+                   b, loc, slots, ValueRange{at, createIndex(b, loc, 0)})
+            .getResult();
+      };
+      Value center32 = centerAt(body, slot);
+      Value first = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
+                                          row, createIndex(body, loc, 0));
+      // The slot before, or the slot itself for the first row.
+      Value previous = arith::SelectOp::create(
+          body, loc, first, slot,
+          arith::SubIOp::create(body, loc, slot, createIndex(body, loc, 1)));
+      Value leads = arith::OrIOp::create(
+          body, loc, first,
+          arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ne,
+                                centerAt(body, previous), center32));
+      scf::IfOp::create(
+          body, loc, leads, [&](OpBuilder &then, Location) {
+            Value center =
+                arith::IndexCastOp::create(then, loc, indexType, center32);
+            Value begin = arith::IndexCastOp::create(
+                then, loc, indexType,
+                memref::LoadOp::create(then, loc, offsets, ValueRange{center}));
+            Value within = arith::IndexCastOp::create(
+                then, loc, indexType,
+                memref::LoadOp::create(then, loc, counts, ValueRange{center}));
+            Value to = arith::MaxUIOp::create(
+                then, loc, slot,
+                arith::MinUIOp::create(
+                    then, loc, arith::AddIOp::create(then, loc, begin, within),
+                    end));
+            sum(then, center, slot, to);
+            scf::YieldOp::create(then, loc);
+          });
+    };
+    if (!narrow.empty())
+      launchOver(tile, loc, count, [&](OpBuilder &body, Value row) {
+        ifLeads(body, row, [&](OpBuilder &b, Value center, Value from,
+                               Value to) {
+          SmallVector<Value> inits;
+          for (unsigned k : narrow)
+            inits.push_back(createZero(
+                b, loc, md_exec::getKernelValueType(op.getOuts()[k].getType())));
+          auto sum = scf::ForOp::create(
+              b, loc, from, to, one, inits,
+              [&](OpBuilder &inner, Location, Value slot, ValueRange totals) {
+                Value row = arith::SubIOp::create(inner, loc, slot, start);
+                auto emitter = emitterAt(inner, slot, row);
+                SmallVector<Value> next;
+                for (auto [total, k] : llvm::zip(totals, narrow))
+                  next.push_back(arith::AddFOp::create(inner, loc, total,
+                                                       emitter->yielded(k)));
+                scf::YieldOp::create(inner, loc, next);
+              });
+          for (auto [total, k] : llvm::zip(sum.getResults(), narrow)) {
+            Value out = op.getOuts()[k];
+            Value old = loadElement(b, loc, out, center);
+            storeElement(b, loc, arith::AddFOp::create(b, loc, old, total), out,
+                         center);
+          }
+        });
+      });
+    for (unsigned k : wide) {
+      Value out = op.getOuts()[k];
+      int64_t n =
+          cast<VectorType>(kernel.getTerminator()->getOperand(k).getType())
+              .getNumElements();
+      Value width = createIndex(tile, loc, n);
+      Type element = cast<MemRefType>(out.getType()).getElementType();
+      launchOver(
+          tile, loc, arith::MulIOp::create(tile, loc, count, width),
+          [&](OpBuilder &body, Value item) {
+            Value row = arith::DivUIOp::create(body, loc, item, width);
+            Value c = arith::RemUIOp::create(body, loc, item, width);
+            ifLeads(body, row, [&](OpBuilder &b, Value center, Value from,
+                                   Value to) {
               auto sum = scf::ForOp::create(
-                  outer, loc, from, to, one,
-                  ValueRange{createZero(outer, loc, element)},
+                  b, loc, from, to, one, ValueRange{createZero(b, loc, element)},
                   [&](OpBuilder &inner, Location, Value slot,
                       ValueRange totals) {
-                    Value row = arith::SubIOp::create(inner, loc, slot, start);
-                    auto emitter = emitterAt(inner, slot, row);
+                    Value at = arith::SubIOp::create(inner, loc, slot, start);
+                    auto emitter = emitterAt(inner, slot, at);
                     Value value = emitter->yieldedComponent(k, c);
                     scf::YieldOp::create(
                         inner, loc,
                         ValueRange{arith::AddFOp::create(inner, loc, totals[0],
                                                          value)});
                   });
-              Value old = memref::LoadOp::create(outer, loc, out,
-                                                 ValueRange{center, c});
+              Value old =
+                  memref::LoadOp::create(b, loc, out, ValueRange{center, c});
               memref::StoreOp::create(
-                  outer, loc,
-                  arith::AddFOp::create(outer, loc, old, sum.getResult(0)), out,
-                  ValueRange{center, c});
-              scf::YieldOp::create(outer, loc);
+                  b, loc, arith::AddFOp::create(b, loc, old, sum.getResult(0)),
+                  out, ValueRange{center, c});
             });
-      }
-    });
+          });
+    }
   }
   releaseTiles(builder, loc, tiling);
   return success();
