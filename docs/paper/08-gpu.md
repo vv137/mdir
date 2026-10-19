@@ -382,3 +382,37 @@ counted on the host. Below these thresholds the blocks are too few to
 occupy the device, and the privatized form is slower (Section 5.3, D283).
 Moving both kernels onto the attribute and the pass left the generated
 code as it was.
+
+**When a table pays.** Let a block add $m$ values to $d \le m$ distinct
+indices. With atomics it issues $m$ additions to device memory. With the
+table it issues $m$ lookups and additions in block memory and $d$ device
+atomics, plus one for each value whose search fails. The table therefore
+saves device atomics in proportion to the reuse $m/d$, and costs a lookup
+for every value. A lookup is a compare-and-swap whose result the thread
+waits for, while a device `red` is issued without waiting. With $m/d$
+near 1 the table can only lose, and the measurements below show that a
+large $m/d$ is not enough. We attribute the difference to contention: the
+table paid where many threads of a block add to one address at once, and
+not where their atomics spread over addresses. No counters were available
+to measure the contention itself. The tuples of a block share their members,
+about four values to an index on Cellulose (D283), and gain. A loop over
+groups gives the warps of a block consecutive blocks of one group's list
+(Section 4), which name each particle once, so its $m/d$ is near 1. The
+table made those loops slower on every system measured, 1.18 to 1.32
+times the step of the Amber suite and 1.49 times an evaluation of an EAM
+potential in mixed precision. A loop over the rows of a matrix that adds
+at both ends of each pair (the domains of D290) has rows in the order of the cells,
+which share their entries, so its $m/d$ is large. Yet the table took 2.06
+times its time in mixed precision. Each row adds to an entry once, so the
+atomics of a warp go to different addresses. The table is off at both
+(D[scatter-op]).
+
+**One op, one emitter.** The table is one emitter that every site calls.
+The tuples' table moved onto it with byte-identical PTX. A value that no
+loop computes, such as the contributions of the ghost rows of a domain to
+their owners ($G^\mathsf T$, Section 2), is added by
+`md_exec.scatter_add`, which computes $a_i' = a_i + \sum_{k : i_k = i}
+v_k$ with the strategies and the conditions above. A loop that computes
+its values in registers keeps them there and states the strategy of its
+own destinations, since a separate op would store every value and read it
+again.

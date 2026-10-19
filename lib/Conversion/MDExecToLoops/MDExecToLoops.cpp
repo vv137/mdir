@@ -98,6 +98,7 @@ private:
   void lowerNonzero(md_exec::NonzeroOp op);
   LogicalResult lowerRefreshNeighbors(md_exec::RefreshNeighborsOp op);
   void lowerParticleFor(md_exec::ParticleForOp op);
+  void lowerScatterAdd(md_exec::ScatterAddOp op);
   LogicalResult lowerPairFor(md_exec::PairForOp op);
   void lowerTupleFor(md_exec::TupleForOp op);
   LogicalResult lowerBuildTriplets(md_exec::BuildTripletsOp op);
@@ -202,6 +203,74 @@ void Lowering::createReduction(OpBuilder &builder, Location loc,
 //===----------------------------------------------------------------------===//
 // Loops over particles
 //===----------------------------------------------------------------------===//
+
+/// A scatter-accumulate on the host (D[scatter-op]): with `atomic-grid`, a
+/// parallel loop whose additions are atomic, as the threads of OpenMP
+/// share the rows of the destination; without, a loop on one thread with
+/// plain additions. The strategy of the op is for a device and is not used.
+void Lowering::lowerScatterAdd(md_exec::ScatterAddOp op) {
+  OpBuilder builder(op);
+  Location loc = op.getLoc();
+  Value values = op.getValues(), indices = op.getIndices(),
+        dest = op.getDest();
+  auto valuesType = cast<MemRefType>(values.getType());
+  auto destType = cast<MemRefType>(dest.getType());
+  Type element = destType.getElementType();
+  int64_t components = destType.getRank() == 1 ? 1 : destType.getDimSize(1);
+  Value zero = createIndex(builder, loc, 0);
+  Value one = createIndex(builder, loc, 1);
+  if (op.overwrites()) {
+    Value rows = createSize(builder, loc, dest);
+    scf::ParallelOp::create(
+        builder, loc, ValueRange{zero}, ValueRange{rows}, ValueRange{one},
+        [&](OpBuilder &body, Location, ValueRange ivs) {
+          Type row = destType.getRank() == 1
+                         ? element
+                         : VectorType::get({components}, element);
+          storeElement(body, loc, createZero(body, loc, row), dest, ivs[0]);
+        });
+  }
+  Value count = createSize(builder, loc, values);
+  auto add = [&](OpBuilder &body, Value k) {
+    Value index = memref::LoadOp::create(
+        body, loc, indices,
+        cast<MemRefType>(indices.getType()).getRank() == 1
+            ? ValueRange{k}
+            : ValueRange{k, zero});
+    Value row =
+        arith::IndexCastOp::create(body, loc, body.getIndexType(), index);
+    for (int64_t c = 0; c != components; ++c) {
+      Value at = createIndex(body, loc, c);
+      SmallVector<Value, 2> from{k}, to{row};
+      if (valuesType.getRank() == 2)
+        from.push_back(at);
+      if (destType.getRank() == 2)
+        to.push_back(at);
+      Value value = memref::LoadOp::create(body, loc, values, from);
+      if (atomicGrid) {
+        memref::AtomicRMWOp::create(body, loc, arith::AtomicRMWKind::addf,
+                                    value, dest, to);
+      } else {
+        Value old = memref::LoadOp::create(body, loc, dest, to);
+        memref::StoreOp::create(
+            body, loc, arith::AddFOp::create(body, loc, old, value), dest,
+            to);
+      }
+    }
+  };
+  if (atomicGrid)
+    scf::ParallelOp::create(builder, loc, ValueRange{zero}, ValueRange{count},
+                            ValueRange{one},
+                            [&](OpBuilder &body, Location, ValueRange ivs) {
+                              add(body, ivs[0]);
+                            });
+  else
+    scf::ForOp::create(builder, loc, zero, count, one, ValueRange(),
+                       [&](OpBuilder &body, Location, Value k, ValueRange) {
+                         add(body, k);
+                         scf::YieldOp::create(body, loc);
+                       });
+}
 
 void Lowering::lowerParticleFor(md_exec::ParticleForOp op) {
   Location loc = op.getLoc();
@@ -1213,6 +1282,12 @@ LogicalResult Lowering::lowerOp(Operation *op) {
         builder, op->getLoc(), structure.builds, ValueRange{}));
   } else if (auto loop = dyn_cast<md_exec::ParticleForOp>(op)) {
     lowerParticleFor(loop);
+  } else if (auto scatter = dyn_cast<md_exec::ScatterAddOp>(op)) {
+    if (!scatter.isStorageForm())
+      return op->emitOpError()
+             << "is not in the storage form; run 'md-exec-assign-storage' "
+                "first";
+    lowerScatterAdd(scatter);
   } else if (auto loop = dyn_cast<md_exec::PairForOp>(op)) {
     if (failed(lowerPairFor(loop)))
       return failure();

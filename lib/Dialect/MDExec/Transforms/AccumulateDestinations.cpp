@@ -184,7 +184,9 @@ static void mergeOuts(PairForOp loop, unsigned into, unsigned from) {
       /*scratch=*/ValueRange(), loop.getCutoffAttr(), loop.getWeightsAttr(),
       /*overwrite=*/DenseBoolArrayAttr(), loop.getTraversalAttr(),
       loop.getConflictAttr(), exchange, loop.getCenters(),
-      loop.getImagesAttr());
+      loop.getImagesAttr(),
+      // Chosen later, for the loop as it is then (md-exec-choose-scatter).
+      /*scatter=*/ScatterAttr());
   merged.getKernel().takeBody(loop.getKernel());
 
   auto yield = cast<YieldOp>(merged.getKernel().front().getTerminator());

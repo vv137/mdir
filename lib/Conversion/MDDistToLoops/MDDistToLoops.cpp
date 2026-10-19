@@ -1176,7 +1176,8 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, int64_t d,
                                               ? md_exec::Conflict::Atomic
                                               : md_exec::Conflict::OwnerOnly),
       exchangeAttr, nOwned,
-      md_exec::ImagesAttr::get(context, md_exec::Images::Explicit));
+      md_exec::ImagesAttr::get(context, md_exec::Images::Explicit),
+      /*scatter=*/md_exec::ScatterAttr());
   addPairKernel(loop, op, unique, scale);
   return loop;
 }

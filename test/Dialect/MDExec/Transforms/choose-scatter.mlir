@@ -272,5 +272,5 @@ func.func @storage(%inc: memref<?x?xi32>, %x: memref<?x3xf32>,
   return
 }
 
-// SWITCH: expected 'auto', 'on', or 'off' for 'tile' and 'hash', got 'bricks' and 'auto'
+// SWITCH: expected 'auto', 'on', or 'off' for 'tile', 'hash', 'pair-hash', and 'scatter-hash', got 'bricks', 'auto', 'off', and 'auto'
 // EDGE: expected an edge of the tiles of 4, 8, or 16 points, got 6

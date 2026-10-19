@@ -84,8 +84,9 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
 /// switches of the environment, for comparing the strategies and for
 /// tests: `MDIR_PME_SPREAD` the tiles of PME (D282; `global` none,
 /// `tiles` or `tilesN` every sum that can be tiled, with bins of N points),
-/// and `MDIR_TUPLE_SUMS` the tables of the tuples (D283; `atomics` none,
-/// `blocks` at any count, which the tests of small systems need).
+/// `MDIR_TUPLE_SUMS` the tables of the tuples (D283; `atomics` none,
+/// `blocks` at any count, which the tests of small systems need), and
+/// `MDIR_PAIR_SUMS` those of the loops over groups (D[scatter-op]).
 static std::string getScatterOptions(const Control &control) {
   std::string options;
   if (const char *spread = std::getenv("MDIR_PME_SPREAD")) {
@@ -104,6 +105,14 @@ static std::string getScatterOptions(const Control &control) {
     options += "hash=off ";
   else if (sums == "blocks")
     options += "hash=on ";
+  // `MDIR_PAIR_SUMS` the tables of the loops over groups (D[scatter-op];
+  // `atomics` none, `blocks` every loop that can take one).
+  StringRef pairs = std::getenv("MDIR_PAIR_SUMS") ? std::getenv("MDIR_PAIR_SUMS")
+                                                  : "";
+  if (pairs == "atomics")
+    options += "pair-hash=off ";
+  else if (pairs == "blocks")
+    options += "pair-hash=on ";
   if (control.deterministic)
     options += "deterministic=true";
   return options;

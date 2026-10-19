@@ -32,11 +32,18 @@ public:
     auto isSwitch = [](StringRef value) {
       return value == "auto" || value == "on" || value == "off";
     };
-    if (!isSwitch(tile) || !isSwitch(hash)) {
-      module->emitError() << "expected 'auto', 'on', or 'off' for 'tile' and "
-                             "'hash', got '"
-                          << static_cast<std::string>(tile) << "' and '"
-                          << static_cast<std::string>(hash) << "'";
+    if (!isSwitch(tile) || !isSwitch(hash) || !isSwitch(pairHash) ||
+        !isSwitch(scatterHash)) {
+      module->emitError() << "expected 'auto', 'on', or 'off' for 'tile', "
+                             "'hash', 'pair-hash', and 'scatter-hash', got '"
+                          << static_cast<std::string>(tile) << "', '"
+                          << static_cast<std::string>(hash) << "', '"
+                          << static_cast<std::string>(pairHash) << "', and '"
+                          << static_cast<std::string>(scatterHash) << "'";
+      return signalPassFailure();
+    }
+    if (pairHashLeast < 0) {
+      module->emitError() << "expected pair-hash-least of 0 or more";
       return signalPassFailure();
     }
     if (!scatter::isTileEdge(tileEdge)) {
@@ -55,6 +62,10 @@ public:
         chooseTile(sum);
       else if (auto loop = dyn_cast<TupleForOp>(op))
         chooseHash(loop);
+      else if (auto pairs = dyn_cast<PairForOp>(op))
+        choosePairHash(pairs);
+      else if (auto add = dyn_cast<ScatterAddOp>(op))
+        chooseScatterHash(add);
     });
   }
 
@@ -142,6 +153,49 @@ private:
       return explainRefused(op, "hash", *refused);
     ScatterAttr chosen = ScatterAttr::getHash(
         &getContext(), slots, hashProbes, hash == "on" ? 0 : hashLeast);
+    op.setScatterAttr(chosen);
+    explainChosen(op, chosen);
+  }
+
+  /// The tables of the loops over pairs that add at both ends of a pair
+  /// (D[scatter-op]): the loops over groups, each pair once.
+  void choosePairHash(PairForOp op) {
+    // A loop that writes only at its centers, each by its own thread,
+    // scatters nothing; nor does one with only global sums.
+    if (op.getConflict() != Conflict::Atomic || op.getOuts().empty())
+      return;
+    if (pairHash == "off")
+      return explainRefused(op, "hash", "pair-hash=off");
+    // With `auto`, the atomics: the table was measured slower at every
+    // loop over pairs (on an RTX 4090, 1.18 to 1.32 times the step of the
+    // Amber suite over groups and 2.06 times the two-ended loops of EAM
+    // over a matrix; docs/device-primitives.md, Section 2.7).
+    if (pairHash == "auto")
+      return explainRefused(op, "hash",
+                            "the table was measured slower at every loop "
+                            "over pairs, 1.18 to 2.06 times the atomics "
+                            "(pair-hash=auto)");
+    int64_t slots = scatter::getHashSlots(blockSize, scatter::kPairHashReach);
+    if (scatter::Refusal refused = scatter::checkHash(
+            slots, op.getOuts().getTypes(), deterministic))
+      return explainRefused(op, "hash", *refused);
+    ScatterAttr chosen =
+        ScatterAttr::getHash(&getContext(), slots, hashProbes, pairHashLeast);
+    op.setScatterAttr(chosen);
+    explainChosen(op, chosen);
+  }
+
+  /// The table of a scatter-accumulate on its own (D[scatter-op]): a
+  /// thread a value.
+  void chooseScatterHash(ScatterAddOp op) {
+    if (scatterHash == "off")
+      return explainRefused(op, "hash", "scatter-hash=off");
+    int64_t slots = scatter::getHashSlots(blockSize, 1);
+    if (scatter::Refusal refused = scatter::checkHash(
+            slots, TypeRange{op.getDest().getType()}, deterministic))
+      return explainRefused(op, "hash", *refused);
+    ScatterAttr chosen = ScatterAttr::getHash(
+        &getContext(), slots, hashProbes, scatterHash == "on" ? 0 : hashLeast);
     op.setScatterAttr(chosen);
     explainChosen(op, chosen);
   }
