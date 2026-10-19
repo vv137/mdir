@@ -1,0 +1,41 @@
+// The primitives of docs/primitives-map.md and their transposes
+// (D[primitives-map]). Each edge joins a primitive to its transpose; the
+// lines below a name are the ops and functions of the code that take that
+// form today. Regenerate the SVG with scripts/render/primitives-figures.sh.
+graph transpose_pairs {
+  graph [rankdir=LR, fontname="DejaVu Sans", fontsize=11, nodesep=0.25, ranksep=0.9];
+  node  [shape=box, style="rounded", fontname="DejaVu Sans", fontsize=10];
+  edge  [fontname="DejaVu Sans", fontsize=9];
+
+  map_forward [label="map\nmd.map_particles\nmd_exec.particle_for\nmd.apply_stage"];
+  map_reverse [label="map (transposed Jacobian)\nDerivativeOpInterface\nemitAdjoint"];
+  map_forward -- map_reverse;
+
+  gather  [label="gather\nreads of md_exec.pair_for\nand md_exec.tuple_for"];
+  scatter [label="scatter-accumulate\nouts of md_exec.tuple_for\nmd_exec.pair_for (atomic)\nmd_exec.scatter_add (PR #445)"];
+  gather -- scatter;
+
+  halo_copy [label="halo copy G\nmd_dist.halo_copy"];
+  halo_sum  [label="halo sum G^T\nmd_dist.halo_sum"];
+  halo_copy -- halo_sum [label="AdjointOpInterface"];
+
+  reduction [label="reduction\nmd.sum_particles\nmd.sum_relation\nmd.sum_tuples\nmd_dist.all_reduce"];
+  broadcast [label="broadcast\n(a value captured by a map)"];
+  reduction -- broadcast;
+
+  scan  [label="scan\n(no op)"];
+  rscan [label="reverse scan\n(no op)"];
+  scan -- rscan;
+
+  permute [label="permutation\nmd_exec.permute\nmd_dist.distribute"];
+  inverse [label="inverse permutation\nmd_exec.renumber\nmd_dist.collect"];
+  permute -- inverse;
+
+  compact [label="compaction\nmd_exec.nonzero"];
+  expand  [label="expansion\n(zeros at the others)"];
+  compact -- expand;
+
+  structural [label="sort, neighbor build\nmd_exec.spatial_order\nmd_exec.build_neighbors\nmd_exec.build_incidence", style="rounded,dashed"];
+  none [label="no transpose\n(structural)", shape=plaintext];
+  structural -- none [style=dashed];
+}

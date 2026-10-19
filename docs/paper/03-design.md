@@ -423,7 +423,12 @@ the force is `antisymmetric` and the virial `symmetric` by construction.
 The contracts are what makes each pair once legal: a loop over groups
 (Section 4.4) computes $\mathbf K(i,j)$ once and adds $\pm$ it to both
 particles, and `md-exec-choose-neighbors` chooses groups only when every
-destination of the loop has a contract.
+destination of the loop has a contract. In terms of primitives, the
+transpose of a gather is a scatter-accumulate; over the directed expansion
+$D$, which is its own transpose, that scatter is again a gather over $D$,
+and the contract is what lets the lowering write it as a scatter to both
+ends instead. `docs/primitives-map.md` (D[primitives-map]) takes every part
+of MDIR apart into such primitives and their transposes.
 
 ## 3.4 From sums to loops, and the passes over loops
 

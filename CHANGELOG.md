@@ -12,6 +12,16 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **MDIR in primitives: the set, its transposes, and the map of the
+  parts** (D[primitives-map], #450,
+  [docs/primitives-map.md](docs/primitives-map.md)): the primitives that
+  every part of MDIR is composed of, each with its transpose and its
+  stated properties, and a map of 45 parts (neighbors, short and long
+  range, dynamics, output, the Python front end, learned potentials, and
+  distribution) to the primitives they use, the properties they rely on,
+  their strategies with the measurements behind them, and the state of
+  their code. Closure under transposition is stated as a design goal in
+  [docs/principles.md](docs/principles.md), Section 9. Documentation only.
 - **The IR of ML4: neural stages, fields of features, and their
   derivative** (D288, D289, #377 step 3,
   PR #441, [docs/ml4-ir.md](docs/ml4-ir.md)): `md.stage` declares a pure
