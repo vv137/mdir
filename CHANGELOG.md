@@ -650,6 +650,18 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The batched bodies of neural stages are fused further**
+  (`D[ml4-fused-bodies]`, #462,
+  [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)):
+  `md-exec-lower-stage-bodies` folds unit dimensions, turns pads into
+  gathers, starts reductions from their constant initial values, fuses
+  elementwise producers of several uses into each consumer that reads them
+  once per element, keeps contractions free of fused operands, and writes
+  results in the caller's buffers. nablaDFT's PaiNN goes from 933 kernels
+  to 532 and its products of an edge from 1.29 to 1.22 ms per tile of
+  4,096 rows on an RTX 4090; the results agree with the JAX composition
+  as before. The option `fuse=false` of the pass keeps D293's lowering.
+  Nothing user-visible changes.
 - **The transposes of the `md` ops are declared through
   `AdjointOpInterface`** (D295, #451, PR #459,
   [docs/ad-robust.md](docs/ad-robust.md#declared-transposes-dmd-transposes)):

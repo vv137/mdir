@@ -450,8 +450,10 @@ belong to step 4: step 3 adds no user-visible key.
 Step 4 of #377 (`D294`, `D293`, PR #447):
 the stages of a pretrained PaiNN, nablaDFT's `painn_100k` of D286,
 exported from its weights and lowered through MDIR's pipeline, against
-the opaque call of the same checkpoint. Status: **4a built** (Section
-8.7 says what was ruled; Section 8.8 what 4b takes).
+the opaque call of the same checkpoint. Status: **4a built**; **4b in
+progress** (#462): the fusion of the bodies is built
+(`D[ml4-fused-bodies]`). Section 8.7 says what was ruled; Section 8.8
+what 4b takes.
 
 ### 8.1 The stages of PaiNN
 
@@ -533,12 +535,54 @@ kernels, `md-differentiate` differentiates them as any stage (Section 4),
 and the loops of `md_exec` carry them to the lowering for a device:
 
 - **`md-exec-lower-stage-bodies`** lowers the bodies to functions of
-  buffers: elementwise fusion, one-shot bufferization with the results as
-  buffers that the caller passes, `linalg` to parallel loops, and on a
-  device one kernel of a thread for each iteration of each parallel loop;
-  the constants go into the kernels that read them, and the bodies'
-  intermediate buffers are taken from the runtime's pool for the call.
-  The bodies of nablaDFT's PaiNN become 1,136 kernels.
+  buffers: elementwise fusion (below), one-shot bufferization with the
+  results as buffers that the caller passes, `linalg` to parallel loops,
+  and on a device one kernel of a thread for each iteration of each
+  parallel loop; the constants go into the kernels that read them, and the
+  bodies' intermediate buffers are taken from the runtime's pool for the
+  call. The 39 bodies of nablaDFT's PaiNN become 532 kernels (933 with
+  upstream's elementwise fusion alone, D293).
+- **The fusion of a body** (`D[ml4-fused-bodies]`; option `fuse` of the
+  pass, true by default; `fuse=false` is D293's lowering). The
+  legalization of StableHLO is one op for one op, and upstream's
+  `linalg-fuse-elementwise-ops` fuses a producer of one use only. The pass
+  therefore, on tensors and before bufferization:
+  - folds the unit dimensions (`4096x1`, `1x100`, reductions over one
+    element) with upstream's `linalg-fold-unit-extent-dims`, so that the
+    reshapes around them do not stop the fusion;
+  - rewrites each `tensor.pad` of a constant (the adjoint of a slice: the
+    512 components of $\bar{\mathbf h}$ as the sum of three pads of its
+    slices) as an elementwise generic that reads the source, or the
+    source of the slice it pads, where the index falls inside it and gives
+    the constant elsewhere; the fusion takes it into its consumer instead
+    of a fill and a copy;
+  - starts a reduction whose initial value is a `linalg.fill` of a
+    constant from that constant at its first reduced iteration (a select
+    on the indices of the reduced loops), instead of from a buffer that a
+    kernel of its own fills; the other fills become generics;
+  - fuses an elementwise producer into its consumer when the consumer
+    reads it through a permutation of its loops, or when the producer is
+    cheap (at most 8 ops, none of `math`) and the consumer has no
+    reduction; never into a contraction, which would evaluate its operand
+    again for each column of its result, so that a contraction keeps its
+    operands as it reads them (the schedules of 4b match it);
+  - fuses a producer of several uses into each such consumer by
+    evaluating it again there, up to 64 ops in its payload, in rounds
+    until nothing changes. IREE clones into each dispatch region only
+    producers that cost nothing to recompute (fills, splat constants,
+    scalar arithmetic: `isCloneableIntoDispatchOp`, iree-org/iree v3.12.0,
+    `compiler/src/iree/compiler/Dialect/Flow/Transforms/RegionOpUtils.cpp`)
+    and fuses another producer of several uses into the consumer that
+    dominates the others, which then also yields it
+    (`DispatchCreation/FuseMultiUseElementwiseProducer.cpp`). A body's
+    intermediates are rows of a tile in global memory, so here the
+    producer is evaluated again: it reads its operands once per element
+    either way, and the copy saves the write and the read of its result;
+  - writes each result in the buffer that the caller passes for it, where
+    the bufferization allocated a buffer and copied it there.
+
+  In `edge.b`, for example, 58 kernels become 22, and in `node.b` 50
+  become 29.
 - **`convert-md-exec-to-gpu`** splits each loop whose kernel applies
   batched stages into a host loop over tiles of $T$ rows. For each level of
   the applications (0 for those whose operands depend on no other, one
@@ -655,6 +699,68 @@ thread for every particle, which tests whether its slots meet the tile
   4.3). 4b measures this form against AOTInductor's kernels on the same
   weights; the memory does not depend on the body's form.
 
+**Where the time goes** (#462; `main` at D295, 6,144 atoms, the runtime's
+own profile, `MDRT_PROFILE` with `MDRT_WAIT`; a benchmark that calls one
+body on 4,096 rows):
+
+- **The sums over the centers of each tile, about half of the step.** The
+  last kernel of a tile of a loop over pairs, a thread for each particle
+  that adds up the center's rows, takes 2.05 ms a tile in the reverse
+  loops and 1.2 ms in the forward loops, against 2.6 ms for the two
+  products of a tile: about 1.6 s of the 3.2 s step. A center's thread
+  adds its rows one component at a time (512 components, about 54 rows
+  within the cutoff), so only the few dozen centers whose slots meet a
+  tile work, each serially; at 196,608 atoms it also tests 196,608
+  particles for each of 2,579 tiles.
+- **The bodies, the other half, in three loop shapes.** A call of 4,096
+  rows takes 1.29 ms for `edge.b`, 0.35 for `edge.f`, 4.4 for `node.b`,
+  1.40 for `node.f`, 1.14 for `ctx.b`, and 0.49 for `ctx.f`. In `edge.b`,
+  three kernels are 86% of the time: a contraction over 384 with a
+  4096 x 100 result (712 µs), the 4096 x 100 x 384 `linalg.matmul` of the
+  filter (286 µs), both a thread per element of the result with the
+  accumulator loaded from and stored to global memory at each term, and a
+  reduction of each row in a thread of its own (4,096 threads, 209 µs).
+- **Launches are not the cost**: about 2.6 µs each on the host. The
+  fusion of Section 8.3 takes the bodies from 933 kernels to 532 and the
+  launches of an evaluation at 6,144 atoms from about 72,000 to about
+  29,500; per call, `edge.b` from 1.29 to 1.22 ms and `node.b` from
+  4.4 to 4.2 (two runs of each in one job). A step (the sweep above, both
+  in one job) goes from 3,247 to 3,195 ms at 6,144 atoms, 6,711 to 6,626
+  at 12,288, and 228,139 to 225,331 at 196,608, 1.2 to 1.6% less, and the
+  peak from 652 to 592 MiB at 6,144 atoms, the bodies' intermediates
+  that the fusion no longer stores.
+
+**Baselines of the same bodies** (#462; not MDIR's path, target times).
+The bodies of layer 0 as `painn-stages.py export` writes them, 4,096 rows,
+ms per call on one RTX 4090: MDIR's lowering with this fusion; IREE
+3.12.0 from its release wheels (`iree-compile` of the exported StableHLO
+for CUDA `sm_89`, timed by `iree-benchmark-module`); XLA through
+`jax.jit` of the same JAX functions (JAX 0.11.2), in full f32
+(`jax_default_matmul_precision = "highest"`), timed from Python, so each
+call carries about 0.05 ms of dispatch.
+
+| Body | MDIR, D293 | MDIR, Section 8.3 | IREE | XLA |
+|---|---|---|---|---|
+| `embed.f` | 0.054 | 0.046 | 0.040 | 0.055 |
+| `ctx.f` | 0.49 | 0.48 | 0.13 | 0.061 |
+| `ctx.b` | 1.14 | 1.12 | 0.26 | 0.065 |
+| `edge.f` | 0.35 | 0.34 | 0.26 | 0.083 |
+| `edge.b` | 1.29 | 1.22 | 0.67 | 0.082 |
+| `node.f` | 1.40 | 1.38 | 0.48 | 0.073 |
+| `node.b` | 4.4 | 4.2 | 1.11 | 0.17 |
+| `readout.f` | 0.077 | 0.077 | 0.036 | 0.062 |
+| `readout.b` | 0.24 | 0.21 | 0.066 | 0.081 |
+
+IREE splits the bodies into about as many dispatches as this fusion gives
+kernels (`edge.b` 21 against 22, `edge.f` 7 against 7, `node.f` 14
+against 16, `node.b` 23 against 29): its advantage is in the code of each
+kernel, not in the grouping. Its contractions take a tile of 32 rows by
+128 columns of the result per workgroup of 256 threads, 16 columns per
+thread, the contracted dimension in steps of 32, in f32 without tensor
+cores or shared-memory staging (`TileAndFuse`); its row reductions take a
+warp per row, 4 elements per lane (`VectorDistribute`). These are the
+starting points of the schedules of 4b.
+
 ### 8.7 What was ruled (the maintainer, 2026-10-19, on #447)
 
 - **The split**: 4a in PR #447, 4b next.
@@ -670,8 +776,13 @@ thread for every particle, which tests whether its slots meet the tile
 
 - The AOTInductor form (`torch.export` of each stage from SchNetPack's
   modules) and its time against 4a's on the same weights.
-- The time of the `linalg` form: tiling of the products, fusion of the
-  bodies' kernels, fewer launches.
+- The time of the `linalg` form (#462), in this order: the fusion of the
+  bodies (`D[ml4-fused-bodies]`, Section 8.3, built); the sums over the
+  centers of a tile over the range of centers whose slots meet it, a
+  thread for each center and component; schedules of the contractions
+  and of the row reductions in the Transform dialect (tiles to blocks and
+  threads, the accumulator in registers, shared-memory staging; TF32 only
+  where the mode allows, the bodies being f32 in both modes).
 - Store against recompute; the two-ended scatter (one product per pair).
 - Rows compacted to the pairs within the cutoff; the fields in f64 in
   `mixed`.
