@@ -138,6 +138,11 @@ pocketfft line routines. Neither call waits for the whole step. The op
 names its input and output buffers, with a write effect on the backward
 input because cuFFT may overwrite it. A later distributed PME lowering can
 schedule grid transfer and local work around those buffer dependencies.
+The backward input must be a valid half-spectrum of a real grid, with
+Hermitian symmetry across the first two axes on the last-axis zero and,
+for even lengths, Nyquist planes. The declared adjoint identity is on
+this subspace; the lowering does not project an arbitrary complex buffer
+onto it.
 The current `md_exec.reciprocal` template remains in use until #452
 decomposes its semantic `md` counterpart.
 

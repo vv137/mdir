@@ -177,14 +177,18 @@ The set had no linear transform until the maintainer's ruling on #452
 (2026-10-19), which adds one with a declared adjoint, the fast Fourier
 transform first: the adjoint of the unnormalized forward transform is the
 unnormalized backward transform (for the real form, with the weights of
-the Hermitian symmetry). It is in the set, but not yet in the IR:
+the Hermitian symmetry). The execution form is now in the IR, while the
+semantic form visible to differentiation is missing:
 `md.reciprocal` is one op whose forces are a result (Section 3.3), so the
 derivative uses the closed form, spreading and gathering with the slopes
 of the splines. D[pme-primitives] gives `md_exec.linear_transform` an
 inspectable FFT adjoint declaration and independent lowerings, but
 `md-differentiate` runs at the `md` level and does not yet see it. #452
 adds the semantic transform and writes the reciprocal sum as spread, FFT,
-the influence map, inverse FFT, and gather.
+the influence map, inverse FFT, and gather. The adjoint identity holds on
+the valid Hermitian half-spectrum of a real grid: its last-axis zero and,
+when present, Nyquist planes have Hermitian symmetry across the other two
+axes. An arbitrary packed complex buffer does not meet this contract.
 
 Two things that MDIR computes are not primitives of the set:
 

@@ -183,10 +183,11 @@ def MDExec_LinearTransformOp : MDExec_Op<"linear_transform", [
     real part of the complex product on the packed grid, with weight 1 at
     last-axis frequency zero and the Nyquist frequency (when present),
     and weight 2 at the other frequencies. The verifier checks both
-    declarations. The transforms are adjoints under these products. The
-    half-spectrum must represent a real grid: the zero-frequency and
-    Nyquist planes obey Hermitian symmetry across the first two axes. The
-    backward transform may overwrite its input, so users retain a copy
+    declarations. The adjoint identity holds on the half-spectra of real
+    grids: the zero-frequency and, when present, Nyquist planes obey
+    Hermitian symmetry across the first two axes. An arbitrary packed
+    complex buffer is outside this contract. The backward transform may
+    overwrite its input, so users retain a copy
     when its spectrum has another consumer.
 
     The input and output are explicit buffers. A lowering may schedule
