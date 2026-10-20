@@ -1,5 +1,10 @@
 # Appendix A. The control file
 
+D[pme-primitives] adds the execution-level linear FFT transform used for
+future reciprocal-sum composition. It introduces no control-file key,
+checkpoint or output format, or overwrite behavior change; the existing
+`[pme]` and `[lj_pme]` entries below remain the user interface.
+
 M2 Python API preparation (D187) is described in
 [python-m2.md](../python-m2.md). It introduces no control-file keys or
 changes to the checkpoint and output contracts listed here.

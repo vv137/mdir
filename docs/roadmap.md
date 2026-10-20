@@ -431,6 +431,16 @@ backend for classical runs. LJ/EAM are initial distributed validation
 models; realistic molecular systems remain part of validation and the
 long-term distributed scope.
 
+For distributed classical PME, #452 composes spreading, a linear FFT,
+the influence map, the inverse FFT, and gathering from the primitive set.
+D[pme-primitives] (#480) introduces the execution-level transform first:
+the forward and backward unnormalized transforms declare each other as
+adjoints under the weighted Hermitian pairing, with explicit buffer
+dependencies. The semantic `md` transform, its use by `md-differentiate`,
+the reciprocal decomposition, and distributed grid transfer remain in
+#452. The transfer and local work may overlap where their data dependencies
+permit it; no whole-step wait is part of the transform.
+
 Direction adopted in D166 and refined in D167 (2026-10-03); all milestones
 below are planned, not implemented. [The architecture plan](future-architecture-plan.md#adopted-scope-and-first-deliverable)
 holds the contracts and detailed sequence. The first deliverable is **one
