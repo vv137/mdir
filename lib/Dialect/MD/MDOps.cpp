@@ -599,6 +599,9 @@ LogicalResult ReciprocalOp::verify() {
     return emitOpError() << "expected a positive beta";
   if (getProlate() && getDispersion())
     return emitOpError() << "the prolate kernel is for the Coulomb sum alone";
+  if (getP3m() && (getProlate() || getDispersion()))
+    return emitOpError()
+           << "'p3m' is for the Coulomb sum with the Gaussian alone";
   if (getProlate() && (getOrder() < 5 || getOrder() > 8))
     return emitOpError() << "expected 5 to 8 points of the prolate window";
   if (cast<TableType>(getModuli().getType()).getRank() != 2)

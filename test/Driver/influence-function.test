@@ -1,0 +1,27 @@
+# The influence functions of particle mesh Ewald on the host
+# (lib/Driver/Influence.cpp, D[p3m-influence]) against sums over the aliases
+# written out in the test (test/Driver/InfluenceTest.cpp):
+#
+# - influence "OPTIMAL" is eq. 4.2 of Ballenegger et al. (2012) per edge, to
+#   the truncation of its sums at |j| <= 50 (3e-7 at order 4, rounding at
+#   order 8), and within 3.3e-6 of eq. 4.2 with the sums at |j| <= 2; in 3D
+#   with the Gaussian, the builder's eq. 4.2 (getEnergyOptimal, |j| <= 50) is
+#   OPTIMAL to 9.4e-7 at order 4 and 1e-14 at order 8;
+# - eq. 2.28 (influence "P3M") in a rectangular cell, as the kernels compute
+#   it from the rows of the edges, is the direct sum over the aliases
+#   max_a |J_a| <= 2 to rounding, and so are the sums its virial takes;
+# - the virial of a point is -dE/de of the direct sum under each of the nine
+#   strains of the cell, to 1e-9 of the energy of the point;
+# - the truncation at |j| <= 2 changes eq. 2.28 by at most 5e-5 of it at
+#   order 4 (against |j| <= 12), where it is above 1e-6 of its largest value;
+# - reported: eq. 4.1, eq. 2.28 without the aliases of its numerator, is
+#   within 9e-10 of eq. 2.28 on 64^3 points at 0.39467 / A, and differs by up
+#   to 0.78 of it on 32^3 (2 A) where G is above 1e-6 of its largest value.
+#
+# RUN: mdir-influence-test | FileCheck %s
+# CHECK-NOT: FAIL
+# CHECK: K 64 order 4: max |OPTIMAL / eq. 4.2 - 1|, |j| <= 50: {{.*}} ok
+# CHECK: 64x64x64 order 4 beta 0.3947: eq. 2.28, edges against the direct sum: {{.*}} ok
+# CHECK: 64x64x64 order 4: virial against -dE/de: {{.*}} ok
+# CHECK: 20x18x16 order 8: max |G(|j|<=2) / G(|j|<=12) - 1| {{.*}} ok
+# CHECK: 0 failures

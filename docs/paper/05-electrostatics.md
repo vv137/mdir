@@ -112,7 +112,51 @@ recursion of $M_n$ and passes them as a table. Under `influence =
 $S_p(x) = \sum_{j=-50}^{50}\big(x/(x+\pi j)\big)^p$, and $x = \pi k/K$, a
 factor of the aliasing of the B-splines that brings the energy of the grid
 closer to the Ewald sum [[Ballenegger2012]](references.md#ballenegger2012); the default is the influence
-function of [[Essmann1995]](references.md#essmann1995). Both front ends select it,
+function of [[Essmann1995]](references.md#essmann1995). With $\hat U(t) =
+(\sin\pi t/\pi t)^n$, the transform of the B-spline over a spacing, Poisson
+summation gives $\lvert b_a(k)\rvert^2 = 1/(\hat U^2 S_n^2)$ at every order,
+so that $\lvert b_a\rvert^2\lambda^2 = \hat U^2(k/K)/\big(\sum_j\hat U^2(k/K + j)\big)^2$:
+`"OPTIMAL"` is eq. 4.2 of [[Ballenegger2012]](references.md#ballenegger2012),
+to the truncation of its sums at $\lvert j\rvert \le 50$ ($3.2\times10^{-7}$ at order
+4, $4\times10^{-15}$ at order 8).
+
+**The influence function optimal for the forces** (D[p3m-influence]).
+Analytic differentiation gives the exact gradient of the energy of the grid
+for any influence function $G$, so $G$ may be chosen for the accuracy of
+the forces alone. For two unit charges, the mesh force is a sum over the
+points $\mathbf k$ of the grid and the aliases $\boldsymbol\nu = \mathbf k +
+\mathbf J\odot\mathbf K$, $\mathbf J\in\mathbb Z^3$, of the wave vectors
+$\tilde{\mathbf m}_\mathbf J$. Its mean-square deviation from the force of
+the Ewald sum, averaged over the place of the pair relative to the grid and
+integrated over their separation, is quadratic in each $G(\mathbf k)$; its
+minimum is eq. 2.28 of [[Ballenegger2012]](references.md#ballenegger2012),
+
+$$
+G(\mathbf k) = \frac{f}{\pi V}\,
+\frac{\sum_\mathbf J\hat U^2(\boldsymbol\nu)\,e^{-\pi^2\tilde m_\mathbf J^2/\beta^2}}
+{\big(\sum_\mathbf J\hat U^2(\boldsymbol\nu)\big)\big(\sum_\mathbf J\hat U^2(\boldsymbol\nu)\,\tilde m_\mathbf J^2\big)},
+$$
+
+with $\hat U^2(\boldsymbol\nu) = \prod_a\hat U^2(\nu_a/K_a)$, which `influence =
+"P3M"` takes with $\max_a\lvert J_a\rvert \le 2$. The average is that of
+uncorrelated charges: it leaves out the force of a charge on itself and
+the correlations of a liquid. In an orthorhombic cell the three sums
+factor over the axes, $G = (f/\pi V)\prod_aF_a/\sum_a\langle\tilde m_a^2\rangle$
+with $F_a = \sum_ju_{a,j}e^{-\pi^2\tilde m_{a,j}^2/\beta^2}/S_a$ and
+$\langle\tilde m_a^2\rangle = \sum_ju_{a,j}\tilde m_{a,j}^2$, the weights
+$u_{a,j} = \hat U^2(\nu_{a,j}/K_a)/S_a$ normalized by $S_a = \sum_j\hat
+U^2(\nu_{a,j}/K_a)$: the arithmetic of the separable factors below, with
+$\langle\tilde m_a^2\rangle$ in the place of $m_a^2$. The virial follows by
+the same argument as below, each alias moving under the strain:
+$W_{ab} = \sum E_\mathbf k\big(\delta_{ab} - (2\pi^2/\beta^2)A_{ab} -
+2B_{ab}/\mathrm{tr}\,B\big)$, $A$ and $B$ the means of $\tilde m_a\tilde m_b$
+under the weights $u\,e^{-\pi^2\tilde m^2/\beta^2}$ and $u$. On JAC and
+Cellulose at $\beta$ = 0.39467 Å⁻¹ it lowers the relative force error
+$\Delta$ (Section 5.6) of `"OPTIMAL"` by 0.05% at about 1 Å and by up to 2%
+on grids of 2 Å, and that of `"SPME"` by 2 to 3% at about 1 Å and by 2 to
+6% at order 6, but raises it by 3 to 4% on grids of order 4 of 1.5 to 2 Å
+(`docs/pme-m1.md`, Section 1.1). A triclinic cell is refused (#475). Both
+front ends select the influence function,
 and the order of the splines: the control file with `influence` and
 `order` of `[pme]`, the Python model with `System.pme_influence` and
 `System.pme_order` (D246).

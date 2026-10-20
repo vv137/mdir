@@ -1,0 +1,26 @@
+# The run of pme-p3m.test on a GPU (D[p3m-influence]): influence "P3M" in
+# the kernels of the device, @mdrt_gpu_pme_tables_p3m and
+# @mdrt_gpu_pme_convolve_p3m. In double precision the reciprocal sum is
+# that of the CPU to the digits of the log, and the virial passes the
+# checks of pme-p3m.test; in mixed precision the energy is conserved as
+# well.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %S/pme-p3m.test | sed '1d;$d' > %t/run.toml
+# RUN: sed -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "double"|' %t/run.toml > %t/double.toml
+# RUN: sed -e 's|^type = "PERIODIC"|type = "PERIODIC"\n[execution]\ntarget = "gpu"\nprecision = "mixed"|' %t/run.toml > %t/mixed.toml
+# RUN: mdir run %t/double.toml | FileCheck %s --check-prefix=DOUBLE
+# RUN: mdir run %t/mixed.toml | FileCheck %s --check-prefix=MIXED
+# RUN: %python %S/Inputs/check_virial.py mdir %t/double.toml %t/three.inpcrd 8e-3 3e-5 \
+# RUN: | FileCheck %s --check-prefix=VIRIAL
+# RUN: %python %S/Inputs/check_virial_axes.py mdir %t/double.toml %t/three.inpcrd 8e-3 3e-5 \
+# RUN: | FileCheck %s --check-prefix=VIRIAL
+
+# DOUBLE: MDIR:   Coulomb reciprocal 4.586208
+# DOUBLE: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+# MIXED:  MDIR:   Coulomb reciprocal 4.5862
+# MIXED:  MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
+# VIRIAL: {{virial( of the axes)? ok}}

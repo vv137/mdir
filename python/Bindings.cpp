@@ -267,7 +267,8 @@ PYBIND11_MODULE(_core, m) {
   // `[pme] influence` (D134, D246).
   py::enum_<model::PMEInfluence>(m, "PMEInfluence")
     .value("SPME", model::PMEInfluence::SPME)
-    .value("Optimal", model::PMEInfluence::Optimal);
+    .value("Optimal", model::PMEInfluence::Optimal)
+    .value("P3M", model::PMEInfluence::P3M);
   // The kernel of PME: the Gaussian, or the prolate spheroidal wave
   // function of Ewald summation with prolates (D266).
   py::enum_<driver::PMEKernel>(m, "PMEKernel")

@@ -25,6 +25,12 @@ TILTED = False
 # axes: named with `_dispersion`, for tables, convolve, and scale only.
 DISPERSION = False
 
+# Whether the kernels being written are those of influence "P3M"
+# (D[p3m-influence]): eq. 2.28 of [Ballenegger2012] in a rectangular cell,
+# whose factors of the edges take five values a point, named with `_p3m`,
+# for tables and convolve; scale is that of the Gaussian.
+P3M = False
+
 HEADER = """\
 // The reciprocal sum of smooth particle mesh Ewald on a device
 // [Essmann1995] (docs/pme-m1.md). The keys are those of
@@ -615,6 +621,87 @@ VIRIAL_DISPERSION = """\
 """
 
 
+VIRIAL_P3M = """\
+// The virial of influence "P3M" (D[p3m-influence]): the derivative of the
+// energy of the point under a strain through every alias in the sums of
+// eq. 2.28, E (δ_ab − 2 (π²/β²) A_ab − 2 B_ab / D), with A_ab = ⟨μ_a⟩_g
+// ⟨μ_b⟩_g off the diagonal and ⟨μ_a²⟩_g on it, B likewise of the plain
+// means (%m1, %m1s, ...), D = %msqr (docs/pme-m1.md, Section 1.1).
+%xa0 = arith.addi %extra, %a : index
+%xa1 = arith.addi %xa0, %k1 : index
+%xb0 = arith.addi %xy0, %b : index
+%xb1 = arith.addi %xb0, %k2 : index
+%xz0 = arith.addi %xz, %z : index
+%xz1 = arith.addi %xz0, %k3 : index
+%ga1 = memref.load %tables[%xa0] : memref<?x!pme_real, 1>
+%gs1 = memref.load %tables[%xa1] : memref<?x!pme_real, 1>
+%ga2 = memref.load %tables[%xb0] : memref<?x!pme_real, 1>
+%gs2 = memref.load %tables[%xb1] : memref<?x!pme_real, 1>
+%ga3 = memref.load %tables[%xz0] : memref<?x!pme_real, 1>
+%gs3 = memref.load %tables[%xz1] : memref<?x!pme_real, 1>
+%cga = arith.mulf %rtwo, %gaussr : !pme_real
+%cgb = arith.mulf %rtwo, %inverse : !pme_real
+%efa = arith.mulf %em, %cga : !pme_real
+%efb = arith.mulf %em, %cgb : !pme_real
+%qa12 = arith.mulf %ga1, %ga2 : !pme_real
+%qa13 = arith.mulf %ga1, %ga3 : !pme_real
+%qa23 = arith.mulf %ga2, %ga3 : !pme_real
+%qb12 = arith.mulf %m1, %m2 : !pme_real
+%qb13 = arith.mulf %m1, %m3 : !pme_real
+%qb23 = arith.mulf %m2, %m3 : !pme_real
+%ua11 = arith.mulf %efa, %gs1 : !pme_real
+%ua12 = arith.mulf %efa, %qa12 : !pme_real
+%ua13 = arith.mulf %efa, %qa13 : !pme_real
+%ua22 = arith.mulf %efa, %gs2 : !pme_real
+%ua23 = arith.mulf %efa, %qa23 : !pme_real
+%ua33 = arith.mulf %efa, %gs3 : !pme_real
+%ub11 = arith.mulf %efb, %m1s : !pme_real
+%ub12 = arith.mulf %efb, %qb12 : !pme_real
+%ub13 = arith.mulf %efb, %qb13 : !pme_real
+%ub22 = arith.mulf %efb, %m2s : !pme_real
+%ub23 = arith.mulf %efb, %qb23 : !pme_real
+%ub33 = arith.mulf %efb, %m3s : !pme_real
+%t11 = arith.addf %ua11, %ub11 : !pme_real
+%t12 = arith.addf %ua12, %ub12 : !pme_real
+%t13 = arith.addf %ua13, %ub13 : !pme_real
+%t22 = arith.addf %ua22, %ub22 : !pme_real
+%t23 = arith.addf %ua23, %ub23 : !pme_real
+%t33 = arith.addf %ua33, %ub33 : !pme_real
+"""
+
+
+def virial_terms(m1, m2):
+    """%t11 .. %t33, what the energy of the point times δ_ab less the
+    virial of the point is."""
+    if P3M:
+        return VIRIAL_P3M
+    return f"""{VIRIAL_DISPERSION if DISPERSION else VIRIAL_COULOMB}%p11 = arith.mulf {m1}, {m1} : !pme_real
+%p12 = arith.mulf {m1}, {m2} : !pme_real
+%p13 = arith.mulf {m1}, %m3 : !pme_real
+%p22 = arith.mulf {m2}, {m2} : !pme_real
+%p23 = arith.mulf {m2}, %m3 : !pme_real
+%p33 = arith.mulf %m3, %m3 : !pme_real
+%t11 = arith.mulf %ef, %p11 : !pme_real
+%t12 = arith.mulf %ef, %p12 : !pme_real
+%t13 = arith.mulf %ef, %p13 : !pme_real
+%t22 = arith.mulf %ef, %p22 : !pme_real
+%t23 = arith.mulf %ef, %p23 : !pme_real
+%t33 = arith.mulf %ef, %p33 : !pme_real
+"""
+
+
+P3M_EXTRA = """\
+  %k12x = arith.addi %k1, %k2 : index
+  %k123x = arith.addi %k12x, %k3 : index
+  %extra = arith.muli %k123x, %c3t : index
+  %c2x = arith.constant 2 : index
+  %xy0a = arith.muli %k1, %c2x : index
+  %xy0 = arith.addi %extra, %xy0a : index
+  %xza = arith.muli %k12x, %c2x : index
+  %xz = arith.addi %extra, %xza : index
+"""
+
+
 def convolve():
     """The product with the influence function where the energy and the
     virial are needed (D104): a thread for points of the grid, as `scale`
@@ -675,19 +762,7 @@ def convolve():
 %hw = arith.select %single, %rhalf, %rone : !pme_real
 %hwb = arith.mulf %hw, %bc : !pme_real
 %em = arith.mulf %hwb, %g2 : !pme_real
-{VIRIAL_DISPERSION if DISPERSION else VIRIAL_COULOMB}%p11 = arith.mulf {m1}, {m1} : !pme_real
-%p12 = arith.mulf {m1}, {m2} : !pme_real
-%p13 = arith.mulf {m1}, %m3 : !pme_real
-%p22 = arith.mulf {m2}, {m2} : !pme_real
-%p23 = arith.mulf {m2}, %m3 : !pme_real
-%p33 = arith.mulf %m3, %m3 : !pme_real
-%t11 = arith.mulf %ef, %p11 : !pme_real
-%t12 = arith.mulf %ef, %p12 : !pme_real
-%t13 = arith.mulf %ef, %p13 : !pme_real
-%t22 = arith.mulf %ef, %p22 : !pme_real
-%t23 = arith.mulf %ef, %p23 : !pme_real
-%t33 = arith.mulf %ef, %p33 : !pme_real
-%d11 = arith.subf %em, %t11 : !pme_real
+{virial_terms(m1, m2)}%d11 = arith.subf %em, %t11 : !pme_real
 %d22 = arith.subf %em, %t22 : !pme_real
 %d33 = arith.subf %em, %t33 : !pme_real
 %n00 = arith.addf %a00, %d11 : !pme_real
@@ -797,7 +872,7 @@ func.func private @mdrt_gpu_pme_convolve(%c: memref<?x!pme_real, 1>, %tables: me
   %ty0 = arith.muli %k1, %c3t : index
   %k2_3 = arith.muli %k2, %c3t : index
   %tz0 = arith.addi %ty0, %k2_3 : index
-  %half = arith.divui %k3, %c2 : index
+{P3M_EXTRA if P3M else ""}  %half = arith.divui %k3, %c2 : index
   %depth = arith.addi %half, %c1 : index
   %odd = arith.remui %k3, %c2 : index
   %even = arith.cmpi eq, %odd, %c0 : index
@@ -863,6 +938,161 @@ TABLE_FACTOR_TRICLINIC = """\
 %mod = memref.load %moduli[%axis, %k] : memref<?x?xf64, 1>
 %fzero = arith.constant 0.0 : f64
 %factor0 = arith.addf %mod, %fzero : f64
+"""
+
+
+def tables_p3m():
+    """The tables of influence "P3M" (D[p3m-influence]): what `tables`
+    stores, three values a point of an edge in the layout of the Gaussian
+    (Σ u μ, Σ u μ², Σ u g / S, docs/pme-m1.md, Section 1.1), and after them the
+    means under the Gaussian. Eight threads a point: thread j < 5 takes the
+    alias j − 2 (J = 2, as the driver writes the rows, P3MAliases of
+    Builder.cpp), the others add zeros, the eight add their sums by
+    shuffles, and the first stores. Every thread takes part in the
+    shuffles; those beyond the last point take the last point and store
+    nothing. With a thread a point and a loop over the aliases, JAC took
+    4 us a step more than with "OPTIMAL" (RTX 4090), five exponentials in
+    f64 in a row; with eight threads, 2 us."""
+    sums = "".join(f"""\
+    %t{i}a, %v{i}a = gpu.shuffle xor %t{i}, %o1, %width : f64
+    %t{i}b = arith.addf %t{i}, %t{i}a : f64
+    %t{i}c, %v{i}c = gpu.shuffle xor %t{i}b, %o2, %width : f64
+    %t{i}d = arith.addf %t{i}b, %t{i}c : f64
+    %t{i}e, %v{i}e = gpu.shuffle xor %t{i}d, %o4, %width : f64
+    %s{i} = arith.addf %t{i}d, %t{i}e : f64
+""" for i in range(5))
+    return """
+// The factors of the influence function along the edges of influence "P3M":
+// see tables_p3m in the script.
+func.func private @mdrt_gpu_pme_tables_p3m(%moduli: memref<?x?xf64, 1>, %tables: memref<?x!pme_real, 1>,
+                                           %box: vector<3xf64>, %beta: f64, %coulomb: f64,
+                                           %k1: index, %k2: index, %k3: index) {
+  %c1 = arith.constant 1 : index
+  %c3 = arith.constant 3 : index
+  %c8 = arith.constant 8 : index
+  %c128 = arith.constant 128 : index
+  %pi2 = arith.constant 9.869604401089358 : f64
+  %lx = vector.extract %box[0] : f64 from vector<3xf64>
+  %ly = vector.extract %box[1] : f64 from vector<3xf64>
+  %lz = vector.extract %box[2] : f64 from vector<3xf64>
+  %unit = arith.constant 1.0 : f64
+  %ilx = arith.divf %unit, %lx : f64
+  %ily = arith.divf %unit, %ly : f64
+  %ilz = arith.divf %unit, %lz : f64
+  %beta2 = arith.mulf %beta, %beta : f64
+  %gauss = arith.divf %pi2, %beta2 : f64
+  %pi = arith.constant 3.141592653589793 : f64
+  %lxy = arith.mulf %lx, %ly : f64
+  %volume = arith.mulf %lxy, %lz : f64
+  %piv = arith.mulf %pi, %volume : f64
+  %prefactor = arith.divf %coulomb, %piv : f64
+  %k12a = arith.addi %k1, %k2 : index
+  %entries = arith.addi %k12a, %k3 : index
+  %threads = arith.muli %entries, %c8 : index
+  %blocks = func.call @mdrt_gpu_pme_blocks(%threads) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks, %gy = %c1, %gz = %c1)
+             threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %c0t = arith.constant 0 : index
+    %c1t = arith.constant 1 : index
+    %c2t = arith.constant 2 : index
+    %c5t = arith.constant 5 : index
+    %c8t = arith.constant 8 : index
+    %zero = arith.constant 0.0 : f64
+    %base = arith.muli %bx, %c128 : index
+    %thread = arith.addi %base, %tx : index
+    %item0 = arith.divui %thread, %c8t : index
+    %lane = arith.remui %thread, %c8t : index
+    %inside = arith.cmpi ult, %item0, %entries : index
+    %last = arith.subi %entries, %c1t : index
+    %item = arith.select %inside, %item0, %last : index
+    %k12 = arith.addi %k1, %k2 : index
+    %on_y = arith.cmpi uge, %item, %k1 : index
+    %on_z = arith.cmpi uge, %item, %k12 : index
+    %axis0 = arith.select %on_y, %c1t, %c0t : index
+    %axis = arith.select %on_z, %c2t, %axis0 : index
+    %from0 = arith.select %on_y, %k1, %c0t : index
+    %from = arith.select %on_z, %k12, %from0 : index
+    %kk0 = arith.select %on_y, %k2, %k1 : index
+    %kk = arith.select %on_z, %k3, %kk0 : index
+    %l0 = arith.select %on_y, %ily, %ilx : f64
+    %l = arith.select %on_z, %ilz, %l0 : f64
+    %k = arith.subi %item, %from : index
+    %half = arith.divui %kk, %c2t : index
+    %ki = arith.index_cast %k : index to i64
+    %ni = arith.index_cast %kk : index to i64
+    %beyond = arith.cmpi ugt, %k, %half : index
+    %shifted = arith.subi %ki, %ni : i64
+    %signed = arith.select %beyond, %shifted, %ki : i64
+    %sf = arith.sitofp %signed : i64 to f64
+    // The alias of the thread, ν = n + (j − 2) K, and its terms.
+    %alias = arith.cmpi ult, %lane, %c5t : index
+    %j = arith.select %alias, %lane, %c0t : index
+    %ji = arith.index_cast %j : index to i64
+    %two64 = arith.constant 2 : i64
+    %js = arith.subi %ji, %two64 : i64
+    %jf = arith.sitofp %js : i64 to f64
+    %cf = arith.sitofp %ni : i64 to f64
+    %jk = arith.mulf %jf, %cf : f64
+    %nu = arith.addf %sf, %jk : f64
+    %mu = arith.mulf %nu, %l : f64
+    %mu2 = arith.mulf %mu, %mu : f64
+    %gmu = arith.mulf %gauss, %mu2 : f64
+    %ngmu = arith.negf %gmu : f64
+    %g = math.exp %ngmu : f64
+    %first = arith.muli %axis, %c5t : index
+    %row0 = arith.addi %first, %c3 : index
+    %row = arith.addi %row0, %j : index
+    %u0 = memref.load %moduli[%row, %k] : memref<?x?xf64, 1>
+    %u = arith.select %alias, %u0, %zero : f64
+    %t0 = arith.mulf %u, %mu : f64
+    %t1 = arith.mulf %u, %mu2 : f64
+    %t2 = arith.mulf %u, %g : f64
+    %t3 = arith.mulf %t2, %mu : f64
+    %t4 = arith.mulf %t2, %mu2 : f64
+    %width = arith.constant 32 : i32
+    %o1 = arith.constant 1 : i32
+    %o2 = arith.constant 2 : i32
+    %o4 = arith.constant 4 : i32
+""" + sums + """\
+    %leader = arith.cmpi eq, %lane, %c0t : index
+    %store = arith.andi %inside, %leader : i1
+    scf.if %store {
+      %unit1 = arith.constant 1.0 : f64
+      %inverse = memref.load %moduli[%axis, %k] : memref<?x?xf64, 1>
+      %factor0 = arith.mulf %s2, %inverse : f64
+      %some = arith.cmpf ogt, %s2, %zero : f64
+      %sgs = arith.select %some, %s2, %unit1 : f64
+      %gm0 = arith.divf %s3, %sgs : f64
+      %gq0 = arith.divf %s4, %sgs : f64
+      %gmean = arith.select %some, %gm0, %zero : f64
+      %gsquare = arith.select %some, %gq0, %zero : f64
+      %first_axis = arith.cmpi eq, %axis, %c0t : index
+      %scaled = arith.mulf %factor0, %prefactor : f64
+      %factor = arith.select %first_axis, %scaled, %factor0 : f64
+      %tstart = arith.muli %from, %c3 : index
+      %at0 = arith.addi %tstart, %k : index
+      %at1 = arith.addi %at0, %kk : index
+      %at2 = arith.addi %at1, %kk : index
+      %mr = PME_F64_TO_REAL %s0 : f64 to !pme_real
+      %m2r = PME_F64_TO_REAL %s1 : f64 to !pme_real
+      %fr = PME_F64_TO_REAL %factor : f64 to !pme_real
+      memref.store %mr, %tables[%at0] : memref<?x!pme_real, 1>
+      memref.store %m2r, %tables[%at1] : memref<?x!pme_real, 1>
+      memref.store %fr, %tables[%at2] : memref<?x!pme_real, 1>
+      %xstart0 = arith.muli %entries, %c3 : index
+      %xfrom = arith.muli %from, %c2t : index
+      %xstart = arith.addi %xstart0, %xfrom : index
+      %xat0 = arith.addi %xstart, %k : index
+      %xat1 = arith.addi %xat0, %kk : index
+      %gmr = PME_F64_TO_REAL %gmean : f64 to !pme_real
+      %gqr = PME_F64_TO_REAL %gsquare : f64 to !pme_real
+      memref.store %gmr, %tables[%xat0] : memref<?x!pme_real, 1>
+      memref.store %gqr, %tables[%xat1] : memref<?x!pme_real, 1>
+    }
+    gpu.terminator
+  }
+  return
+}
 """
 
 
@@ -2436,6 +2666,27 @@ def dispersion():
     return text
 
 
+def p3m():
+    """The tables and the product with the energy and the virial of
+    influence "P3M" (D[p3m-influence]), named with `_p3m`, after all the
+    others, so that the kernels of a module without it are those of
+    before; the product without them is `scale`."""
+    global P3M
+    P3M = True
+    text = convolve()
+    P3M = False
+    text = tables_p3m() + re.sub(r"func\.func private @mdrt_gpu_pme_(\w+)\(",
+                                 r"func.func private @mdrt_gpu_pme_\1_p3m(", text)
+    text = """
+// Influence "P3M" (D[p3m-influence]): the tables of the edges hold Σ u μ,
+// Σ u μ², and Σ u g / S over the aliases of each point (see tables_p3m in
+// the script), so that @mdrt_gpu_pme_scale computes eq. 2.28 of
+// [Ballenegger2012] from them unchanged, and after them the means under the
+// Gaussian, which the virial of @mdrt_gpu_pme_convolve_p3m takes.
+""" + text
+    return text
+
+
 def main():
     # The templates of the repository, or with a directory as the argument
     # the same files there, which generated-templates.test compares with
@@ -2447,7 +2698,7 @@ def main():
         file.write(HEADER + spread() + spread(fixed=False) + weights_kernels() + real() +
                    tables() + convolve() + scale() + dispersion() + gather() +
                    gather_weights() + gather(potential=True) +
-                   listed_kernels(weights_kernels(listed=True)) + tiles_kernels())
+                   listed_kernels(weights_kernels(listed=True)) + tiles_kernels() + p3m())
     with open(os.path.join(templates, "PMEGPUTriclinic.mlir"), "w") as file:
         file.write(triclinic())
 

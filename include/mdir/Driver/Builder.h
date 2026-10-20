@@ -299,6 +299,8 @@ struct Program {
   /// The prolate kernel (D266): its bandwidths c and c₁, the
   /// points P of the window, and the aliasing estimate of the grid.
   bool pmeProlate = false;
+  /// Influence "P3M" (D[p3m-influence]): `md.reciprocal` takes `p3m`.
+  bool pmeP3M = false;
   double pmeBandwidth = 0.0, pmeWindowBandwidth = 0.0, pmeAliasing = 0.0;
   int64_t pmeOrder = 4;
   /// (1 − Φ(x))/(1 − x) of the prolate kernel as a Chebyshev series in

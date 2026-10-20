@@ -52,14 +52,207 @@ with $u_{ai}$ the fractional coordinates of particle $i$ along edge $a$.
 
 ### 1.1 The influence function
 
-Two influence functions are in use, and `influence` chooses:
+Three influence functions are in use, and `influence` chooses. The
+equation numbers are those of [[Ballenegger2012]](references.md#ballenegger2012),
+checked against the article; its $\mathbf k$ is $2\pi\mathbf m$ here, its
+$\alpha$ is $\beta$, and its $\hat\varphi(\mathbf k)$ is
+$4\pi e^{-\pi^2m^2/\beta^2}/(4\pi^2m^2)$, so that $k^2\hat\varphi(k) \propto
+e^{-\pi^2m^2/\beta^2}$.
 
 | `influence` | Influence function | Engine |
 |---|---|---|
-| `"SPME"`, the default | $BC$ as above [[Essmann1995]](references.md#essmann1995) | GROMACS |
-| `\"OPTIMAL\"` | $BC$ times $\lambda_1(m_1)^2\, \lambda_2(m_2)^2\, \lambda_3(m_3)^2$, with $\lambda(m) = S_n(x) / S_{2n}(x)$, $S_p(x) = \sum_{j=-50}^{50} \big(x / (x + \pi j)\big)^p$, $x = \pi m / K$, and $\lambda(0) = 1$: a factor for each edge from the sums over the aliases of $m$ of the B-splines of order $n$ and $2n$, which brings the energy of the grid toward that of the Ewald sum in the mean (on influence functions of mesh Ewald, [[Ballenegger2012]](references.md#ballenegger2012)) | sander, by default |
+| `"SPME"`, the default | $BC$ as above [[Essmann1995]](references.md#essmann1995); eq. 3.7 | GROMACS |
+| `"OPTIMAL"` | $BC$ times $\lambda_1(m_1)^2\, \lambda_2(m_2)^2\, \lambda_3(m_3)^2$, with $\lambda(m) = S_n(x) / S_{2n}(x)$, $S_p(x) = \sum_{j=-50}^{50} \big(x / (x + \pi j)\big)^p$, $x = \pi m / K$, and $\lambda(0) = 1$: eq. 4.2, the energy-optimal function of eq. 2.25 without the sum over the aliases of its numerator (below) | sander, by default |
+| `"P3M"` | Eq. 2.28, the function that minimizes the error of the forces of analytic differentiation, with the sums over the aliases $\max_a\lvert J_a\rvert \le 2$ (below; D[p3m-influence]). A rectangular cell only (#475 for a triclinic one) | |
 
-Neither is more accurate for every system. On the dipeptide in OPC with
+**Notation.** A point of the grid has the signed indices $n_a$ ($-K_a/2 <
+n_a \le K_a/2$; for an odd $K_a$, as the last paragraph of this section says), and its
+aliases $\nu_{a,j} = n_a + jK_a$, $j \in \mathbb Z$, the wave numbers
+$\mu_{a,j} = \nu_{a,j}/L_a$ in a rectangular cell. The window of the
+B-spline of order $n$ is $\hat U(t) = \big(\sin(\pi t)/(\pi t)\big)^n$ of
+$t = \nu/K$ (eq. 2.21), exactly 0 at every nonzero integer $t$, and
+$\hat U^2(\boldsymbol\nu) = \prod_a\hat U^2(\nu_a/K_a)$.
+
+**`"OPTIMAL"` is eq. 4.2** (derived, and checked numerically). Per edge:
+
+- The moduli of SPME are the discrete Fourier transform of $M_n$; by
+  Poisson summation, $\lvert b(m)\rvert^2 = 1/\big(\hat U(x/\pi)^2 S_n(x)^2\big)$
+  with $S_n$ summed over all $j$, at every order $n$, odd ones included:
+  the phase $e^{-i\pi n\xi}$ of $\hat M_n$ cancels the sign $(-1)^{nj}$ of
+  $\sin^n$ at the aliases, so that $S_n$ carries no alternating sign.
+  Measured: `getSplineModuli` equals it to $3\times10^{-15}$ (issue #468).
+- $\lvert b\rvert^2\lambda^2 = 1/(\hat U^2S_{2n}^2) = \hat U^2(n)/\big(\sum_j\hat U^2(n + jK)\big)^2$,
+  since $\hat U^2(n + jK)/\hat U^2(n) = \big(x/(x + \pi j)\big)^{2n}$ with no
+  sign at the even power. The product over the edges times $C$ is the
+  second line of eq. 2.25, which is eq. 4.2; the sum over $\mathbf J \in
+  \mathbb Z^3$ of the denominator is the product of the sums along the
+  edges (eq. 2.27).
+- Where MDIR differs from that equality: (i) the sums of $\lambda$ stop at
+  $\lvert j\rvert \le 50$; measured (`test/Driver/influence-function.test`),
+  `OPTIMAL` is eq. 4.2 with sums to $\lvert j\rvert\le 50$ to $3.2\times10^{-7}$
+  at order 4 (the tail of $S_4$, whose terms fall as $j^{-4}$), $1.9\times10^{-11}$
+  at order 6, and $4.1\times10^{-15}$ at order 8, against eq. 4.2 with
+  sums to $\lvert j\rvert \le 2$ to $3.3\times10^{-6}$ at order 4; in three
+  dimensions, with the Gaussian, the builder's eq. 4.2 (sums to
+  $\lvert j\rvert \le 50$) is `OPTIMAL` to $9.4\times10^{-7}$ at order 4 and
+  $10^{-14}$ at order 8. (ii) $\lambda(0) = 1$,
+  where the factor is 1 exactly. (iii) The numbering of odd grids below.
+- The closed forms of eq. 2.26 are exact sums, which MDIR does not use.
+  As printed, the form for $P = 4$, $1 - 4z^2/3 + 2z^4/5 + 4z^6/315$, is
+  not the sum: at $z = 1$ it gives 0.079365, the direct sum
+  $\sum_j(\sin x_j/x_j)^8$ gives 0.053968, and $-4z^6/315$ gives it to
+  $10^{-15}$ (also at $z^2 = \sin^2 0.3\pi$ and $\sin^2 0.1\pi$); the forms
+  for $P = 2$, 3, and 5 agree with the direct sums as printed, to
+  $3\times10^{-15}$ at four values of $z$ (measured here).
+
+**`"P3M"`, eq. 2.28.** For unit charges at $\mathbf x_1$ and $\mathbf x_2 = \mathbf x_1 - \mathbf r$,
+the mesh force of analytic differentiation (eq. 2.19) is a sum over
+$\mathbf k$ of the grid and the aliases $\mathbf J_1$, $\mathbf J_2$ of
+$G(\mathbf k)\hat U(\mathbf k_{\mathbf J_1})\hat U(\mathbf k_{\mathbf J_2})\, i\mathbf k_{\mathbf J_1}
+e^{i\mathbf k_{\mathbf J_1}\cdot\mathbf x_1 - i\mathbf k_{\mathbf J_2}\cdot\mathbf x_2}$.
+Averaged over $\mathbf x_1$ in a cell of the grid at fixed $\mathbf r$, the
+terms of $\mathbf J_1 \ne \mathbf J_2$ are orthogonal, and the
+mean-square difference from the reference force $\mathbf R(\mathbf r) =
+-\nabla\varphi$, integrated over $\mathbf r$ (Parseval), is
+
+$$Q = \frac1V\sum_{\mathbf k}\Big[G^2\Big(\sum_\mathbf J\hat U^2\Big)\Big(\sum_\mathbf J\hat U^2k_\mathbf J^2\Big) - 2G\sum_\mathbf J\hat U^2k_\mathbf J^2\hat\varphi(k_\mathbf J) + \sum_\mathbf J k_\mathbf J^2\hat\varphi^2\Big],$$
+
+quadratic in each $G(\mathbf k)$, whose minimum is eq. 2.28,
+
+$$G(\mathbf n) = \frac{f}{\pi V}\,\frac{\sum_\mathbf J \hat U^2(\boldsymbol\nu)\,e^{-\pi^2 m_\mathbf J^2/\beta^2}}{\big(\sum_\mathbf J\hat U^2(\boldsymbol\nu)\big)\big(\sum_\mathbf J\hat U^2(\boldsymbol\nu)\,m_\mathbf J^2\big)},\qquad G(\mathbf 0) = 0,$$
+
+in MDIR's units, $m_\mathbf J = \lVert\mathbf m(\boldsymbol\nu)\rVert$. Eq. 4.1 is
+eq. 2.28 with $\mathbf J = 0$ alone in the numerator (its second line);
+MDIR keeps the sum. What is guaranteed and what is not:
+
+- *Guaranteed, for any $G$:* the forces of analytic differentiation are
+  the exact gradient of the energy of the grid, $\tfrac12\sum G\lvert\hat
+  Q\rvert^2$, so a run conserves the energy as with `"SPME"`.
+- *Derived:* eq. 2.28 minimizes $Q$, the error of the force between two
+  charges averaged over their positions relative to the grid, with every
+  separation weighted alike. That is the error of uncorrelated charges.
+  It does not hold the self-force of analytic differentiation (the force
+  of a charge on itself, which depends on its place in a cell of the
+  grid; #468 step 2), nor the correlations of the charges of a real
+  system. It is not the function of least error for a given system, nor
+  for the energy.
+- *Measured* (below): on JAC and Cellulose `"P3M"` gives a smaller
+  $\Delta$ than `"OPTIMAL"` at every grid and order measured, and a
+  smaller one than `"SPME"` at the standard spacing (order 4) and at
+  order 6, but a larger one than `"SPME"` on coarse grids of order 4.
+
+**The truncation.** The sums take $\max_a\lvert J_a\rvert \le 2$ (125
+aliases of each point), as the article truncates them below its eq.
+2.28. Measured (`influence-function.test`, $G$ above $10^{-6}$ of its
+largest value): against $\lvert J_a\rvert \le 12$, $4.8\times10^{-5}$ of $G$
+at order 4, $5\times10^{-8}$ at order 6, $10^{-10}$ at order 8. Eq. 4.1 differs
+from eq. 2.28 by up to $9\times10^{-10}$ of it on JAC's 64³ points at
+$\beta$ = 0.39467 Å⁻¹, and by up to 0.78 on 32³ points, at the points of
+large $\lvert\mathbf m\rvert$ where $G$ is small.
+
+**The form of the edges.** In a rectangular cell the Gaussian, $\hat U^2$,
+and $m^2 = \sum_a\mu_a^2$ are products or sums over the edges, so that,
+exactly to the same truncation (the sum over $\mathbf J$ of a product is
+the product of the sums),
+
+$$G(\mathbf n) = \frac{f}{\pi V}\,\frac{\prod_a F_a(n_a)}{\sum_a\langle\mu_a^2\rangle(n_a)},\qquad
+F_a = \frac{\sum_j u_{a,j}g_{a,j}}{S_a},\quad
+\langle\mu_a^2\rangle = \sum_ju_{a,j}\mu_{a,j}^2,$$
+
+with $S_a = \sum_j\hat U^2(\nu_{a,j}/K_a)$, the weights $u_{a,j} =
+\hat U^2(\nu_{a,j}/K_a)/S_a$, and $g_{a,j} = e^{-\pi^2\mu_{a,j}^2/\beta^2}$. The
+driver writes $1/S_a$ and $u_{a,j}$, which depend on the grid and the order
+alone, as $3 + 3\cdot5$ rows of the table of the op (`md.reciprocal`'s
+`p3m`); the program computes $F_a$ and $\langle\mu_a^2\rangle$ from the
+cell at every evaluation, in f64, each rounded once to the type of the
+grid, as it computes the factors of the Gaussian (Section 2, D104). The
+product with the transform is then that of `"SPME"`, a product of three
+factors over a sum of three squares: the kernel without the energy and
+the virial is the same kernel. Measured: this form equals the direct sum
+over $\mathbf J \in \mathbb Z^3$ to $1.1\times10^{-14}$ (four grids of orders 4,
+6, and 8, one of them odd).
+
+**The virial.** Under a strain of the cell every alias moves,
+$\partial m_\mathbf J^2/\partial\varepsilon_{ab} = -2m_{\mathbf J,a}m_{\mathbf J,b}$,
+while $\hat U$ and the transform of the charges do not. So
+
+$$W_{ab} = \sum_\mathbf n E_\mathbf n\Big(\delta_{ab} - \frac{2\pi^2}{\beta^2}A_{ab} - \frac{2B_{ab}}{D}\Big),$$
+
+with $A_{ab}$ the mean of $\mu_a\mu_b$ under the weights $u\,g$, $B_{ab}$
+under $u$, $D = \mathrm{tr}\,B = \sum_a\langle\mu_a^2\rangle$; along the edges,
+$A_{ab} = \langle\mu_a\rangle_g\langle\mu_b\rangle_g$ for $a \ne b$ and
+$\langle\mu_a^2\rangle_g$ for $a = b$, and $B$ likewise. It is the formula of
+Section 1.2 when the aliases vanish. The tables hold
+$\langle\mu_a\rangle$, $\langle\mu_a^2\rangle$, and $F_a$ where `"SPME"`
+holds $m_a$, $m_a^2$, and its factor, and $\langle\mu_a\rangle_g$ and
+$\langle\mu_a^2\rangle_g$ after them. Measured: against central
+differences of the energy of the direct sum under each of the nine strains,
+to $1.1\times10^{-10}$ of the energy of the point; in runs (`pme-p3m.test`,
+`pme-p3m-gpu.test`), the trace against $-dU/d\lambda$ and each diagonal
+element against $-dU/d\varepsilon_{aa}$ at the noise of the coordinates of
+the files, as for `"SPME"` ($2.2\times10^{-5}$ and $1.3\times10^{-5}$).
+
+**A change of cell and the compile cache.** The rows of the table do not
+depend on the cell, and the factors are computed from the cell at every
+evaluation: a barostat changes nothing else. `p3m` is an attribute of the
+op, so a program with `"P3M"` is another module for the compile cache; the
+cell is not in the module.
+
+**Validation of the sum.** An independent NumPy program,
+`scripts/validation/p3m/mesh_numpy.py` (spreading, FFT, product, gathering
+written from Section 1, eq. 2.28 by the direct sum over $\mathbf J \in
+\mathbb Z^3$), gives the reciprocal energy of JAC
+with 32³ and 64³ points of order 4 of MDIR on the CPU in double, for each
+of the three functions, to $3.4\times10^{-10}$ of it (the Coulomb constant's
+digits); a GPU in double gives $\Delta$ of the CPU to $10^{-10}$ of it.
+
+**$\Delta$** (relative rms force error over the Coulomb forces of the
+topology, Section 7; the cases of `scripts/validation/p3m/sweep.py`)
+against the reference of `scripts/benchmarks/prolate-ewald/grid_sweep.py` (the Gaussian at
+$\mathrm{erfc}(\beta r_c) = 10^{-13}$, 0.33 Å, order 8), at $\beta$ =
+0.39467 Å⁻¹ and $r_c$ = 8 Å (the suite's, D134), CPU in double; the
+reference reproduces the earlier $\Delta$ of `"OPTIMAL"` at the suite's
+grids to $10^{-14}$:
+
+| System, points, order | Spacing (Å) | `"SPME"` | `"OPTIMAL"` | `"P3M"` | P3M / OPTIMAL | P3M / SPME |
+|---|---|---|---|---|---|---|
+| JAC, 64³, 4 | 0.97 | 7.467e-4 | 7.302e-4 | 7.298e-4 | 0.9995 | 0.977 |
+| JAC, 54³, 4 | 1.15 | 1.521e-3 | 1.502e-3 | 1.499e-3 | 0.998 | 0.985 |
+| JAC, 42³, 4 | 1.48 | 5.127e-3 | 5.390e-3 | 5.350e-3 | 0.992 | 1.043 |
+| JAC, 32³, 4 | 1.94 | 1.118e-2 | 1.179e-2 | 1.164e-2 | 0.988 | 1.041 |
+| JAC, 32³, 6 | 1.94 | 4.681e-3 | 4.641e-3 | 4.579e-3 | 0.987 | 0.978 |
+| JAC, 28³, 6 | 2.22 | 7.752e-3 | 7.431e-3 | 7.283e-3 | 0.980 | 0.940 |
+| Cellulose, 256 × 128 × 128, 4 | 1.01, 0.97, 0.96 | 8.135e-4 | 7.885e-4 | 7.881e-4 | 0.9994 | 0.969 |
+| Cellulose, 180 × 84 × 84, 4 | 1.44, 1.48, 1.47 | 4.996e-3 | 5.185e-3 | 5.147e-3 | 0.993 | 1.030 |
+| Cellulose, 140 × 64 × 64, 4 | 1.85, 1.95, 1.93 | 1.166e-2 | 1.211e-2 | 1.198e-2 | 0.989 | 1.028 |
+| Cellulose, 140 × 64 × 64, 6 | 1.85, 1.95, 1.93 | 4.742e-3 | 4.641e-3 | 4.576e-3 | 0.986 | 0.965 |
+
+The CPU and a GPU in mixed precision (both measured) add about $7\times10^{-6}$ at JAC's 64³ points and
+$5\times10^{-5}$ at Cellulose's, and leave the ratios within $3\times10^{-3}$
+of these (within $4\times10^{-4}$ but at Cellulose's 256 × 128 × 128 points). The gain over `"OPTIMAL"` grows on coarse grids, as the article
+reports, but is at most 2%. The ordering against `"SPME"` on coarse
+grids of order 4 is the opposite of that of uncorrelated charges: in
+`mesh_numpy.py random`, 300 charges ±1 at random in a cube of 20 Å, or 150
+dipoles of ±0.8 e at 1 Å, 4 configurations each, $\beta$ = 0.4 Å⁻¹, order
+4, the reciprocal $\Delta$ of `"P3M"` is below that of `"SPME"` by 8 to 21% at
+spacings of 1.25 to 2 Å, as the derivation says. Why the measured order
+differs on water is not established; the correlations of the charges of a
+liquid, which the derivation leaves out, are one candidate.
+
+**The cost.** The tables of the edges take eight threads a point on a
+device, one for each alias, added by shuffles ($K_1 + K_2 + K_3$ points
+an evaluation); the product with the transform is unchanged, and the one
+with the energy and the virial reads two more values an edge. Measured on
+one RTX 4090 (mixed precision, the suite's settings of D134 but the
+influence, `main` and the branch in one job, median of three runs, ms a
+step): JAC at constant energy (20,000 steps of 2 fs), `"SPME"` and
+`"OPTIMAL"` 0.134 on both, `"P3M"` 0.136 (1.5% more, the tables);
+Cellulose at constant pressure (1000 steps), 1.201 to 1.205 for all five.
+With a thread a point and a loop over the aliases, `"P3M"` took 4 µs a
+step more than `"OPTIMAL"` on JAC (two jobs), with the count of the loop
+read from the table or constant.
+
+Neither `"SPME"` nor `"OPTIMAL"` is more accurate for every system. On the dipeptide in OPC with
 ff19SB and a grid of 30 × 36 × 25 points of order 4 the reciprocal sum of
 `"SPME"` is below the Ewald sum by 1.8 × 10⁻³ of it, that of `"OPTIMAL"` by
 2 × 10⁻⁴; on the three waters of `test/Driver/pme.test` with 35³ points,
@@ -98,7 +291,7 @@ pairs does.
 | $E_\text{rec}$ | One new op, `md.reciprocal %x, %q, %cell, %moduli`, with the grid, the order, $\beta$, and the Coulomb constant as attributes, that yields the energy, the forces, and the virial at once, all from the grid. Differentiation takes the forces and the virial from it; it is not differentiated through. |
 | The lowering of `md.reciprocal` | Templates in IR, as the build of neighbor structures is (`lib/Runtime/Templates`): spreading, the product with the influence function with the sums of the energy and the virial, and gathering the forces, for the CPU and for a GPU. The FFT is a call of the runtime. A triclinic cell takes functions of its own, `_triclinic` in `PME.mlir` and the kernels of `PMEGPUTriclinic.mlir` on a device (D123, D125). With a fourth result, the op also yields the potential of the grid at the particles, $\partial E/\partial q_i$, gathered with the weights of the splines (`pme_potential`), for the derivative in the charges (D231, [python-gradient.md](python-gradient.md#the-charges-with-particle-mesh-ewald)) |
 | FFT | On the host, pocketfft [[Reinecke2019]](references.md#reinecke2019) under the BSD license, in `libmdrt`; on a device, cuFFT of the CUDA toolkit, in `libmdrt_cuda`, with a plan kept for each size of grid, direction, and precision until the process ends, in a table that grows; a plan that cannot be made stops the run, as a failure of the simulation in Python (#323) (D64). |
-| The influence function | Computed where it is used, from $\beta$, the cell, and the factors of the three edges, $\lvert b_a(k)\rvert^2$ (times the factor of the aliasing with `"OPTIMAL"`), which the driver passes as a table of three rows: the factors do not depend on the cell, so a cell that changes (the barostat, M1j) needs nothing new. On a device a kernel multiplies them, at each evaluation, by $\exp(-\pi^2 m^2/\beta^2)$ along each edge in f64, and keeps the wave numbers and their squares beside them, each rounded once to the type of the grid (D104) |
+| The influence function | Computed where it is used, from $\beta$, the cell, and the factors of the three edges, $\lvert b_a(k)\rvert^2$ (times the factor of the aliasing with `"OPTIMAL"`; with `"P3M"`, $1/S_a$ and the weights of the aliases, Section 1.1), which the driver passes as a table of three rows (18 with `"P3M"`): the factors do not depend on the cell, so a cell that changes (the barostat, M1j) needs nothing new. On a device a kernel multiplies them, at each evaluation, by $\exp(-\pi^2 m^2/\beta^2)$ along each edge in f64, and keeps the wave numbers and their squares beside them, each rounded once to the type of the grid (D104) |
 
 ## 3. Spreading that does not depend on the order (D70)
 
@@ -343,7 +536,7 @@ zeroing the grid, 8 for the binning, and 71 for the tiles; on STMV
 | `grid` in `[pme]` | The numbers of points of the grid along the three edges, `[nx, ny, nz]`, each 8 or more | From `max_spacing` |
 | `max_spacing` in `[pme]` | The largest spacing of the grid, in Å; each number of points is the smallest even product of 2, 3, 5, and 7 that gives no wider spacing in the cell of the file of coordinates. The grid stays as a barostat changes the cell, finer as it shrinks and coarser as it grows, and a run that continues from a checkpoint has the grid it began with | 1.2 |
 | `order` in `[pme]` | The order of the B-splines: 4, 6, or 8; prolate: the points $P$ of the window, 5 to 8 | 4; prolate 6 |
-| `influence` in `[pme]` | `"SPME"` or `"OPTIMAL"` (Section 1.1); refused with `kernel = "PROLATE"` | `"SPME"` |
+| `influence` in `[pme]` | `"SPME"`, `"OPTIMAL"`, or `"P3M"` (Section 1.1); refused with `kernel = "PROLATE"`; `"P3M"` refused in a triclinic cell (#475) | `"SPME"` |
 
 With `kernel = "PROLATE"` and neither `grid` nor `max_spacing` given, the
 grid has the modes of eq. 15 of [[Liang2026]](references.md#liang2026),

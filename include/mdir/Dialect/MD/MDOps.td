@@ -451,6 +451,20 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     E = f / (2π V) Σ_{m ≠ 0} χ̂(2π r_c |m|) / m² · |S(m)|²
     ```
 
+    With `p3m`, the influence function is the one optimal for the forces
+    of analytic differentiation, eq. 2.28 of [Ballenegger2012], with the
+    Gaussian in a rectangular cell (D[p3m-influence], docs/pme-m1.md,
+    Section 1.1): `moduli` has 3 + 3 (2J + 1) rows, row `a` holds
+    `1 / S_a(k)` with `S_a(k) = Σ_j Û²(ν_j)`, and row `3 + a (2J + 1) + j
+    + J` the weight `u_j = Û²(ν_j) / S_a(k)` of the alias `ν_j = n + j
+    K_a` of index `k` (signed `n`), `|j| ≤ J`, `Û(t) = (sin πt / πt)ⁿ`.
+    J is 2: 18 rows, which the kernels of a device take as a constant.
+    With `μ_j = ν_j / L_a` and `g_j = exp(−π² μ_j² / β²)`:
+
+    ```text
+    G(m) = f / (π V) · Π_a (Σ_j u_j g_j / S_a) / Σ_a Σ_j u_j μ_j²
+    ```
+
     The op yields the energy, the forces, and the virial `Σ d ⊗ F` of the
     sum. Differentiation takes the forces and the virial from the op; it
     does not differentiate through it.
@@ -513,6 +527,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     F64Attr:$coulomb,
     UnitAttr:$dispersion,
     UnitAttr:$prolate,
+    UnitAttr:$p3m,
     UnitAttr:$gather_all
   );
   let results = (outs
@@ -527,6 +542,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     `grid` `(` $grid `)` `order` `(` $order `)` `beta` `(` $beta `)`
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
     (`prolate` $prolate^)?
+    (`p3m` $p3m^)?
     (`gather_all` $gather_all^)?
     attr-dict `:` qualified(type($positions)) `,` qualified(type($charges))
     `,` qualified(type($moduli)) (`,` qualified(type($listed))^)?

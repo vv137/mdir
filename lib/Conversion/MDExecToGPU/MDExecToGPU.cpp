@@ -5557,7 +5557,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // The sum of the dispersion multiplies by an influence function of its
   // own (D162); it spreads and gathers as the Coulomb sum does.
   std::string kind = op.getDispersion() ? "_dispersion" : "";
-  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + kind),
+  // Influence "P3M" (D[p3m-influence]) takes tables and a product with the
+  // virial of its own; its tables give `scale` eq. 2.28 as they are.
+  std::string tabled = op.getP3m() ? "_p3m" : kind;
+  func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
                        ValueRange{op.getModuli(), tables, box, beta, coulomb,
                                   k1, k2, k3});
   func::CallOp convolve;
@@ -5567,7 +5570,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
                                     k2, k3});
   else
     convolve = func::CallOp::create(
-        builder, loc, instance("mdrt_gpu_pme_convolve" + kind),
+        builder, loc, instance("mdrt_gpu_pme_convolve" + tabled),
         ValueRange{complex, tables, rows, box, beta, coulomb, k1, k2, k3});
   func::CallOp::create(builder, loc, backward,
                        ValueRange{complex, real, sizes[0], sizes[1], sizes[2]});

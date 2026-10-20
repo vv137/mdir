@@ -966,10 +966,11 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       allocate(IntegerType::get(context, 64), points),
       allocate(gridType, points), allocate(gridType, 2 * half)};
   // On the host, the factors of the influence function along the edges,
-  // three for each point of each edge (D104), after the transform.
+  // three for each point of each edge (D104), five with `p3m`
+  // (D[p3m-influence]), after the transform.
   if (!onDevice)
-    scratch.push_back(
-        allocate(gridType, 3 * (grid[0] + grid[1] + grid[2])));
+    scratch.push_back(allocate(gridType, (op.getP3m() ? 5 : 3) *
+                                             (grid[0] + grid[1] + grid[2])));
   if (onDevice) {
     scratch.push_back(
         allocate(Float64Type::get(context), grid[0] * grid[1] * 10));
@@ -989,12 +990,13 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
                                            /*symbolOperands=*/ValueRange())
                           .getMemref());
     // The factors of the influence function along the edges, three for
-    // each point of each edge (D104).
+    // each point of each edge (D104), five with `p3m` (D[p3m-influence]).
     // The prolate kernel keeps its coefficients after them: at most
     // 3 + 2 * 64 + 2 * 8 * 64 (D266).
     Value entries = arith::ConstantIndexOp::create(
         root->builder, loc,
-        3 * (grid[0] + grid[1] + grid[2]) + (op.getProlate() ? 1280 : 0));
+        (op.getP3m() ? 5 : 3) * (grid[0] + grid[1] + grid[2]) +
+            (op.getProlate() ? 1280 : 0));
     scratch.push_back(gpu::AllocOp::create(root->builder, loc, type,
                                            /*asyncToken=*/Type(),
                                            /*asyncDependencies=*/ValueRange(),
@@ -1070,7 +1072,8 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       /*forces=*/Type(), positions, charges, mapping.lookup(op.getCell()),
       moduli, out, scratch, listed, op.getGridAttr(), op.getOrderAttr(),
       op.getBetaAttr(), op.getCoulombAttr(), op.getDispersionAttr(),
-      op.getPotentialAttr(), op.getProlateAttr(), op.getGatherAllAttr(),
+      op.getPotentialAttr(), op.getProlateAttr(), op.getP3mAttr(),
+      op.getGatherAllAttr(),
       onDevice ? op.getScatterAttr() : ScatterAttr());
   algebra::carry(op, created);
   mapping.map(op.getEnergy(), created.getEnergy());
