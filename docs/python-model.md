@@ -353,7 +353,7 @@ alone.
 
 | Python | Control file | Values |
 |---|---|---|
-| `System.pme_influence` | `[pme] influence` | `mdir.PMEInfluence.SPME` (the default), `mdir.PMEInfluence.Optimal` (D134) |
+| `System.pme_influence` | `[pme] influence` | `mdir.PMEInfluence.SPME` (the default), `mdir.PMEInfluence.Optimal` (D134), `mdir.PMEInfluence.P3M` (D[p3m-influence]; a rectangular cell only) |
 | `System.analytic_bonds` | `[constraints] analytic_bonds` | `False` (the default), `True`: a group of SHAKE of one bond is projected in closed form |
 | `System.pme_order` | `[pme] order` | 4 (the default), 6, or 8; before, 4 alone |
 | `System.pme_kernel` | `[pme] kernel` | `mdir.PMEKernel.Gaussian` (the default), `mdir.PMEKernel.Prolate` (D266); with `Prolate`, `pme_order` takes 5 to 8 and is 6 unless set, and `pme_spacing` follows the bandwidth unless set, as the control file |

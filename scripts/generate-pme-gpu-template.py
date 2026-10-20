@@ -950,7 +950,9 @@ def tables_p3m():
     Builder.cpp), the others add zeros, the eight add their sums by
     shuffles, and the first stores. Every thread takes part in the
     shuffles; those beyond the last point take the last point and store
-    nothing."""
+    nothing. With a thread a point and a loop over the aliases, JAC took
+    4 us a step more than with "OPTIMAL" (RTX 4090), five exponentials in
+    f64 in a row; with eight threads, 2 us."""
     sums = "".join(f"""\
     %t{i}a, %v{i}a = gpu.shuffle xor %t{i}, %o1, %width : f64
     %t{i}b = arith.addf %t{i}, %t{i}a : f64

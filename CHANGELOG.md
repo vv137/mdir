@@ -12,6 +12,18 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **`[pme] influence = "P3M"`, the influence function optimal for the
+  forces** (`D[p3m-influence]`, #468 step 1,
+  [docs/pme-m1.md](docs/pme-m1.md#11-the-influence-function)): eq. 2.28 of
+  Ballenegger, Cerdà, and Holm (2012) for analytic differentiation, with
+  the sums over the aliases at $\lvert J_a\rvert \le 2$, from tables of the
+  edges computed at every evaluation (no table of the grid; a barostat
+  needs nothing more). Opt-in, a rectangular cell only (#475); Python
+  `mdir.PMEInfluence.P3M`. On JAC and Cellulose its relative force error
+  is below `"OPTIMAL"`'s at every grid measured (by up to 2%), and below
+  `"SPME"`'s at about 1 Å and at order 6 but above it by 3 to 4% on coarse
+  grids of order 4. JAC on an RTX 4090: 0.136 ms a step against 0.134.
+
 - **The spreading of the force on virtual sites derived as the transpose
   of their placement, behind `MDIR_SITE_SPREAD=derived`**
   (D298, #453, PR #465): `md-differentiate` derives the
