@@ -12,6 +12,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **A linear FFT transform primitive with an inspectable adjoint**
+  (D[pme-primitives], #480): `md_exec.linear_transform` exposes the grid
+  buffers, direction, opposite adjoint, and Hermitian half-spectrum pairing.
+  It lowers through the existing pocketfft and cuFFT implementations.
+  Current PME behavior and control-file keys are unchanged; the semantic
+  reciprocal composition and its derivative remain #452.
+
 - **`[pme] influence = "P3M"`, the influence function optimal for the
   forces** (`D304`, #468 step 1,
   [docs/pme-m1.md](docs/pme-m1.md#11-the-influence-function)): eq. 2.28 of

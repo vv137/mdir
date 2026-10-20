@@ -1,0 +1,21 @@
+# The linear FFT transform's forward and declared adjoint on the host,
+# compared with NumPy's FFT and the weighted half-spectrum inner product.
+# Test an odd and an even last axis in mixed and double precision.
+# D[pme-primitives].
+#
+# RUN: %mdir_python %S/Inputs/linear_transform_oracle.py emit --length 5 --precision double \
+# RUN: | mdir-opt --convert-md-exec-to-loops | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | %mdir_python %S/Inputs/linear_transform_oracle.py check --length 5 --precision double
+# RUN: %mdir_python %S/Inputs/linear_transform_oracle.py emit --length 6 --precision double \
+# RUN: | mdir-opt --convert-md-exec-to-loops | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | %mdir_python %S/Inputs/linear_transform_oracle.py check --length 6 --precision double
+# RUN: %mdir_python %S/Inputs/linear_transform_oracle.py emit --length 5 --precision mixed \
+# RUN: | mdir-opt --convert-md-exec-to-loops | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | %mdir_python %S/Inputs/linear_transform_oracle.py check --length 5 --precision mixed
+# RUN: %mdir_python %S/Inputs/linear_transform_oracle.py emit --length 6 --precision mixed \
+# RUN: | mdir-opt --convert-md-exec-to-loops | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | %mdir_python %S/Inputs/linear_transform_oracle.py check --length 6 --precision mixed

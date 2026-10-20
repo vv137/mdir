@@ -17,6 +17,10 @@
 
 #include "pocketfft.h"
 
+/* The FFT oracle test prints enough digits to check f64 rounding against
+   an independently evaluated DFT. */
+void mdrtPrintFFTValue(double value) { printf("%.17g\n", value); }
+
 /* The plans of the lengths that a run uses, kept for the run. pocketfft
    reads a plan and allocates its own scratch when it transforms, so threads
    may share one; making a plan is not safe in parallel, so

@@ -178,8 +178,14 @@ def MDExec_LinearTransformOp : MDExec_Op<"linear_transform", [
     values are interleaved, with the last Fourier axis stored in half.
     `forward` uses the negative exponent and `backward` the positive
     exponent; neither divides by the number of grid points. Their
-    declared adjoints are each other under the real-grid inner product
-    and the Hermitian-weighted inner product of the packed grid. The
+    `adjoint` declares the opposite direction, and `pairing` declares
+    `real_hermitian_half`: the Euclidean real-grid inner product and the
+    real part of the complex product on the packed grid, with weight 1 at
+    last-axis frequency zero and the Nyquist frequency (when present),
+    and weight 2 at the other frequencies. The verifier checks both
+    declarations. The transforms are adjoints under these products. The
+    half-spectrum must represent a real grid: the zero-frequency and
+    Nyquist planes obey Hermitian symmetry across the first two axes. The
     backward transform may overwrite its input, so users retain a copy
     when its spectrum has another consumer.
 
@@ -190,20 +196,24 @@ def MDExec_LinearTransformOp : MDExec_Op<"linear_transform", [
 
     ```mlir
     md_exec.linear_transform %real outs(%spectrum : memref<?xf64>)
-      grid([8, 8, 8]) kind("fft3d") direction("forward") : memref<?xf64>
+      grid([8, 8, 8]) kind("fft3d") direction("forward")
+      adjoint("backward") pairing("real_hermitian_half") : memref<?xf64>
     ```
   }];
   let arguments = (ins
-    MDExec_Buffer:$input,
-    MDExec_Buffer:$out,
+    AnyType:$input,
+    AnyType:$out,
     DenseI64ArrayAttr:$grid,
     StrAttr:$kind,
-    StrAttr:$direction
+    StrAttr:$direction,
+    StrAttr:$adjoint,
+    StrAttr:$pairing
   );
   let assemblyFormat = [{
     $input `outs` `(` $out `:` type($out) `)`
     `grid` `(` $grid `)` `kind` `(` $kind `)`
-    `direction` `(` $direction `)` attr-dict `:` type($input)
+    `direction` `(` $direction `)` `adjoint` `(` $adjoint `)`
+    `pairing` `(` $pairing `)` attr-dict `:` type($input)
   }];
   let hasVerifier = 1;
 }

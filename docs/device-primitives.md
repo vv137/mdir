@@ -130,6 +130,17 @@ the addition to the tile. Moving it onto the op would mean generating the
 spreading instead of the template, and storing a value for every point of
 every stencil.
 
+The FFT is an independent `md_exec.linear_transform` primitive
+(D[pme-primitives], #480), with `kind("fft3d")`, `direction`, the opposite
+`adjoint`, and `pairing("real_hermitian_half")` visible in the IR. The
+lowering calls cuFFT on the current stream; the host calls the existing
+pocketfft line routines. Neither call waits for the whole step. The op
+names its input and output buffers, with a write effect on the backward
+input because cuFFT may overwrite it. A later distributed PME lowering can
+schedule grid transfer and local work around those buffer dependencies.
+The current `md_exec.reciprocal` template remains in use until #452
+decomposes its semantic `md` counterpart.
+
 ### 2.3 Preconditions, and where they are checked
 
 Each precondition is one function of `include/mdir/Dialect/MDExec/Scatter.h`.

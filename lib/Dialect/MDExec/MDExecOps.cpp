@@ -6,6 +6,7 @@
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/OpImplementation.h"
+#include <limits>
 
 using namespace mlir;
 using namespace mdir::md_exec;
@@ -378,17 +379,46 @@ LogicalResult LinearTransformOp::verify() {
   if (getDirection() != "forward" && getDirection() != "backward")
     return emitOpError() << "expected direction 'forward' or 'backward', got '"
                          << getDirection() << "'";
+  StringRef expected = getDirection() == "forward" ? "backward" : "forward";
+  if (getAdjoint() != expected)
+    return emitOpError() << "expected declared adjoint '" << expected
+                         << "', got '" << getAdjoint() << "'";
+  if (getPairing() != "real_hermitian_half")
+    return emitOpError()
+           << "expected pairing 'real_hermitian_half', got '"
+           << getPairing() << "'";
   ArrayRef<int64_t> grid = getGrid();
   if (grid.size() != 3 || llvm::any_of(grid, [](int64_t n) { return n < 2; }))
     return emitOpError() << "expected three grid dimensions of at least 2";
-  auto input = cast<MemRefType>(getInput().getType());
-  auto out = cast<MemRefType>(getOut().getType());
-  if (input.getRank() != 1 || out.getRank() != 1 ||
+  int64_t realSize = 1;
+  for (int64_t n : grid) {
+    if (n > std::numeric_limits<int32_t>::max() ||
+        realSize > std::numeric_limits<int64_t>::max() / n)
+      return emitOpError() << "the grid dimensions or their product overflow";
+    realSize *= n;
+  }
+  int64_t halfSize = 2;
+  for (int64_t n : {grid[0], grid[1], grid[2] / 2 + 1}) {
+    if (halfSize > std::numeric_limits<int64_t>::max() / n)
+      return emitOpError() << "the packed half-spectrum size overflows";
+    halfSize *= n;
+  }
+  auto input = dyn_cast<MemRefType>(getInput().getType());
+  auto out = dyn_cast<MemRefType>(getOut().getType());
+  if (!input || !out || input.getRank() != 1 || out.getRank() != 1 ||
       input.getElementType() != out.getElementType() ||
       !isReal(input.getElementType()))
     return emitOpError()
            << "expected rank-one input and output buffers of the same "
               "f32 or f64 type";
+  int64_t expectedInput = getDirection() == "forward" ? realSize : halfSize;
+  int64_t expectedOut = getDirection() == "forward" ? halfSize : realSize;
+  if (!input.isDynamicDim(0) && input.getDimSize(0) != expectedInput)
+    return emitOpError() << "expected " << expectedInput
+                         << " input values, got " << input.getDimSize(0);
+  if (!out.isDynamicDim(0) && out.getDimSize(0) != expectedOut)
+    return emitOpError() << "expected " << expectedOut
+                         << " output values, got " << out.getDimSize(0);
   if (getInput() == getOut())
     return emitOpError() << "the input and output must be distinct buffers";
   return success();

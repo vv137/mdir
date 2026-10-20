@@ -106,6 +106,23 @@ B = \prod_a\lvert b_a(k_a)\rvert^2,\quad
 C = \frac{f}{\pi V}\,\frac{e^{-\pi^2 m^2/\beta^2}}{m^2},\quad C(0) = 0 .
 $$
 
+The energy is a quadratic form in the spread grid: with
+$\hat Q = \mathcal F Q$ and the real diagonal influence map $D$ of
+$B C$, it is $E_\text{rec} = \tfrac12\langle\mathcal F Q,
+D\mathcal F Q\rangle_\mathrm H$ when the last axis is stored as a
+half-spectrum. The pairing weights each interior last-axis frequency
+twice, its zero frequency once, and its Nyquist frequency once when
+$K_3$ is even. The variation is
+$\delta E_\text{rec} = \langle D\mathcal F Q,
+\mathcal F\delta Q\rangle_\mathrm H
+= \langle\mathcal F^\dagger D\mathcal F Q,
+\delta Q\rangle$, so the inverse transform is the transpose needed to
+return the grid potential to the particles. Both directions are
+unnormalized, as the quadratic form above requires.
+This derivation underlies the declared `md_exec.linear_transform`
+adjoint (D[pme-primitives], #480). Its current execution-level form does
+not yet put this chain into the semantic `md` potential; that is #452.
+
 The driver computes the moduli $\lvert b_a\rvert^2$ in f64 from the
 recursion of $M_n$ and passes them as a table. Under `influence =
 "OPTIMAL"` it multiplies them by $\lambda^2$ with $\lambda = S_n(x)/S_{2n}(x)$,
