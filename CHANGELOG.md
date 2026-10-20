@@ -18,6 +18,12 @@ format, or the outputs; every such change is listed under **Changed** or
   It lowers through the existing pocketfft and cuFFT implementations.
   Current PME behavior and control-file keys are unchanged; the semantic
   reciprocal composition and its derivative remain #452.
+- **Static Cartesian factor-grid selection for `md-distribute`**
+  (D[ml2-cartesian-async], #476): `domains=N box=Lx,Ly,Lz` chooses the
+  positive factor triple minimizing a geometric exchange-area estimate;
+  `grid=gx,gy,gz` remains the explicit choice. The chosen grid is recorded
+  in `md_dist.decomposition`. This pass-level option does not add a
+  control-file or Python key; the runtime cell does not reselect it.
 
 - **`[pme] influence = "P3M"`, the influence function optimal for the
   forces** (`D304`, #468 step 1,

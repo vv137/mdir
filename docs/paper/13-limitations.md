@@ -264,6 +264,16 @@ the minimum image, finds a superset of these pairs, since the
 minimum-image distance of two rows never exceeds their plain distance,
 and the loops are those of one domain on the CPU and, one domain after
 another, on one GPU.
+For an orthorhombic cell, a static choice of the factor grid
+$(g_x,g_y,g_z)$ minimizes an estimate of the area across which halos may
+move (D[ml2-cartesian-async]). A domain's sides have lengths $L_a/g_a$;
+with $D=g_xg_yg_z$ fixed, the sum of its three face areas is
+$V/D\,(g_x/L_x+g_y/L_y+g_z/L_z)$. The pass enumerates the positive factor
+triples of $D$ and takes the least sum, with a fixed tie rule. The explicit
+grid is the baseline strategy. This estimate has no latency, halo reach,
+or uneven particle density in it; it is a compile-time grid choice for
+the same `md_dist.decomposition` op, and a cell change at run time does not
+replan it.
 Topology across domains follows, with the disjoint union of the
 constraints as the unit of ownership (D83).
 

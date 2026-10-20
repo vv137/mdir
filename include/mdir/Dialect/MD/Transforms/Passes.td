@@ -78,7 +78,13 @@ def Distribute : Pass<"md-distribute", "::mlir::ModuleOp"> {
   }];
   let options = [
     ListOption<"grid", "grid", "int64_t",
-               "The number of domains along each axis of the cell (three)">,
+               "Explicit numbers of domains along the three cell axes; "
+               "alternative to domains with box">,
+    Option<"domains", "domains", "int64_t", /*default=*/"0",
+           "Total domains to factor into a Cartesian grid; requires box">,
+    ListOption<"box", "box", "double",
+               "Compile-time orthorhombic edge lengths for selecting a "
+               "factor grid from domains (three positive finite numbers)">,
     Option<"traversal", "traversal", "std::string", /*default=*/"\"directed\"",
            "The traversal of the pairs: 'directed' (every pair at both of "
            "its owners) or 'unique' (every pair once, the ghosts' "

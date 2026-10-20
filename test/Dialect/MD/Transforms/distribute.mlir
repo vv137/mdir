@@ -3,6 +3,14 @@
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1" | FileCheck %s --check-prefixes=CHECK,DIRECTED
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=unique" | FileCheck %s --check-prefixes=CHECK,UNIQUE
 // RUN: mdir-opt %s --md-distribute="grid=3,2,1 reach=2.5 potentials=lj" | FileCheck %s --check-prefix=NAMED
+// The automatic choice and an explicit override produce the same IR.
+// RUN: mdir-opt %s --md-distribute="domains=6 box=6,3,1 potentials=lj" > %t.auto
+// RUN: mdir-opt %s --md-distribute="grid=3,2,1 potentials=lj" > %t.grid
+// RUN: diff %t.auto %t.grid
+// RUN: mdir-opt %s --md-distribute="domains=6 box=6,3,1 potentials=lj" | FileCheck %s --check-prefix=FACTOR
+// RUN: mdir-opt %s --md-distribute="domains=6 box=1,3,6 potentials=lj" | FileCheck %s --check-prefix=PERMUTED
+// RUN: mdir-opt %s --md-distribute="domains=2 box=1,1,1 potentials=lj" | FileCheck %s --check-prefix=TIE
+// RUN: mdir-opt %s --md-distribute="domains=7 box=4,8,2 potentials=lj" | FileCheck %s --check-prefix=PRIME
 // Every op of the result has a rule for the derivative or is semantic.
 // RUN: mdir-opt %s --md-distribute="grid=2,1,1" --md-check-derivative-coverage -o /dev/null
 
@@ -14,6 +22,10 @@ md.particle_set @atoms
 
 // CHECK: md_dist.decomposition @lj.domains on(@atoms) grid([2, 1, 1])
 // NAMED: md_dist.decomposition @lj.domains on(@atoms) grid([3, 2, 1])
+// FACTOR: md_dist.decomposition @lj.domains on(@atoms) grid([3, 2, 1])
+// PERMUTED: md_dist.decomposition @lj.domains on(@atoms) grid([1, 2, 3])
+// TIE: md_dist.decomposition @lj.domains on(@atoms) grid([1, 1, 2])
+// PRIME: md_dist.decomposition @lj.domains on(@atoms) grid([1, 7, 1])
 // CHECK-LABEL: md.potential @lj
 // The layout, the owned positions wrapped into the cell, one halo of the
 // cutoff, and the ghost positions with their images.

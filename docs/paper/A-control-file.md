@@ -61,6 +61,12 @@ jobs as it takes (A.3);
 start from. The table below lists every keyword; the example after it is
 the output of `mdir template amber` at the commit of this paper.
 
+The research pass `md-distribute` may select a static Cartesian grid from
+`domains=N box=Lx,Ly,Lz` or take `grid=gx,gy,gz` explicitly
+(D[ml2-cartesian-async], #476). These are compiler-pass options and add no
+control-file keyword. A distributed run through the control file remains
+planned (Section 13 of the paper).
+
 ## A.1 Keywords
 
 An unknown keyword reports the file, line, and table, lists the table's
