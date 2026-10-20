@@ -6,6 +6,21 @@
 // The options.
 // RUN: not mdir-opt %s --md-distribute="grid=2,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=GRID
 // GRID: md-distribute needs a grid of three positive numbers of domains, 'grid=gx,gy,gz'
+// RUN: not mdir-opt %s --md-distribute -split-input-file 2>&1 | FileCheck %s --check-prefix=CHOICE
+// RUN: not mdir-opt %s --md-distribute="grid=2,1,1 domains=2 box=2,1,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=CHOICE
+// RUN: not mdir-opt %s --md-distribute="domains=0 box=2,1,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=CHOICE
+// CHOICE: md-distribute needs exactly one of 'grid=gx,gy,gz' or 'domains=N box=Lx,Ly,Lz'
+// RUN: not mdir-opt %s --md-distribute="domains=-1 box=2,1,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// RUN: not mdir-opt %s --md-distribute="domains=2" -split-input-file 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// RUN: not mdir-opt %s --md-distribute="domains=2 box=1,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// RUN: not mdir-opt %s --md-distribute="domains=2 box=0,1,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// RUN: not mdir-opt %s --md-distribute="domains=2 box=-1,1,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// RUN: not mdir-opt %s --md-distribute="domains=2 box=inf,1,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// RUN: not mdir-opt %s --md-distribute="domains=2 box=nan,1,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// RUN: not mdir-opt %s --md-distribute="grid=2,1,1 box=2,1,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=DOMAIN
+// DOMAIN: md-distribute: 'domains=N' needs a positive N and 'box=Lx,Ly,Lz' with three positive finite lengths; 'box' is only for 'domains'
+// RUN: not mdir-opt %s --md-distribute="grid=9223372036854775807,2,1" -split-input-file 2>&1 | FileCheck %s --check-prefix=OVERFLOW
+// OVERFLOW: the product of grid divisions overflows i64
 // RUN: not mdir-opt %s --md-distribute="grid=2,1,1 traversal=half" -split-input-file 2>&1 | FileCheck %s --check-prefix=TRAVERSAL
 // TRAVERSAL: md-distribute: the traversal is 'directed' or 'unique', not 'half'
 // RUN: not mdir-opt %s --md-distribute="grid=2,1,1 potentials=nothing" -split-input-file 2>&1 | FileCheck %s --check-prefix=NAME

@@ -87,8 +87,8 @@
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s --check-prefixes=CHECK,DOUBLE
 //
-// RUN: sed 's/GRID/3, 2, 1/; s/TOLERANCE/1.0e-10/' %s \
-// RUN: | mdir-opt --md-distribute="grid=3,2,1 traversal=unique potentials=lj" \
+// RUN: sed 's/GRID/1, 2, 3/; s/TOLERANCE/1.0e-10/' %s \
+// RUN: | mdir-opt --md-distribute="domains=6 box=4.8,4.8,4.8 traversal=unique potentials=lj" \
 // RUN:     %md_passes \
 // RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
 // RUN:     --convert-md-dist-to-loops \
@@ -159,8 +159,8 @@
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s --check-prefixes=CHECK,DOUBLE
 //
-// RUN: sed 's/GRID/3, 2, 1/; s/TOLERANCE/1.0e-5/' %s \
-// RUN: | mdir-opt --md-distribute="grid=3,2,1 traversal=unique potentials=lj" \
+// RUN: sed 's/GRID/1, 2, 3/; s/TOLERANCE/1.0e-5/' %s \
+// RUN: | mdir-opt --md-distribute="domains=6 box=4.8,4.8,4.8 traversal=unique potentials=lj" \
 // RUN:     %md_passes \
 // RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
 // RUN:     --convert-md-dist-to-loops \

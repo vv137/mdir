@@ -15,6 +15,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <limits>
 
 using namespace mlir;
 using namespace mdir::md_dist;
@@ -381,9 +382,14 @@ LogicalResult DecompositionOp::verify() {
   if (getGrid().size() != 3)
     return emitOpError() << "expected a grid of 3 divisions, got "
                          << getGrid().size();
-  for (int64_t n : getGrid())
+  int64_t count = 1;
+  for (int64_t n : getGrid()) {
     if (n < 1)
       return emitOpError() << "expected divisions of at least 1, got " << n;
+    if (count > std::numeric_limits<int64_t>::max() / n)
+      return emitOpError() << "the product of grid divisions overflows i64";
+    count *= n;
+  }
   return success();
 }
 
