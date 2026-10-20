@@ -173,6 +173,19 @@ parallel (`test/mdir_lit.py`, `-Dgpu_workers=N`), so the suite needs no
 `-j 1`. Most of these tests are bound by compilation on the host, not by the
 device; a smaller device or a host with fewer cores takes a smaller N.
 
+On a Slurm machine that permits two MDIR GPU jobs at once, one full-suite
+validation may be run as two lit shards (D[suite-shards]). Configure and build
+two separate trees from the same source commit, then submit each through the
+machine's `suite-run --batch` helper with `--num-shards=2` and respectively
+`--run-shard=1` or `--run-shard=2`. Give both jobs `--skip-test-time-recording`:
+the recorded times of only one shard would be incomplete for a later full
+suite. Keep both trees and their source untouched until both jobs end. Record
+both job exit statuses and add their passed, unsupported, and failed counts;
+the two shards together, with no skipped selection, are one full-suite gate.
+This uses two GPU and CPU allocations at once, so the one-job suite remains
+appropriate when the scheduler or other users need the capacity. The
+one-suite lock on a workstation still applies.
+
 ## Permissions
 
 A contributor that is refused an action, such as a push or a run on a GPU,
