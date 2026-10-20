@@ -746,9 +746,10 @@ struct RowSum {
   Value constant;
 };
 
-/// `op` as a sum of rows of at least a warp's extent, in f32 or f64, on
-/// buffers.
-static std::optional<RowSum> matchRowSum(linalg::GenericOp op) {
+/// `op` as a sum of rows in f32 or f64, on buffers. Short sums are kept
+/// in one thread, while long sums require contiguous operands for a warp.
+static std::optional<RowSum> matchRowSum(linalg::GenericOp op,
+                                          bool shortSum = false) {
   if (!op.hasPureBufferSemantics() || op.getNumDpsInits() != 1 ||
       op.getNumReductionLoops() != 1)
     return std::nullopt;
@@ -760,7 +761,8 @@ static std::optional<RowSum> matchRowSum(linalg::GenericOp op) {
     if (type == utils::IteratorType::reduction)
       sum.reduced = d;
   sum.extent = extents[sum.reduced];
-  if (sum.extent < kWarp)
+  if (shortSum ? (sum.extent < 2 || sum.extent >= kWarp)
+               : (sum.extent < kWarp))
     return std::nullopt;
   OpOperand *init = op.getDpsInitOperand(0);
   Type element = getElementTypeOrSelf(init->get().getType());
@@ -776,7 +778,8 @@ static std::optional<RowSum> matchRowSum(linalg::GenericOp op) {
     auto dims = getDims(op.getMatchingIndexingMap(input));
     if (!dims)
       return std::nullopt;
-    if (llvm::is_contained(*dims, sum.reduced) && dims->back() != sum.reduced)
+    if (!shortSum && llvm::is_contained(*dims, sum.reduced) &&
+        dims->back() != sum.reduced)
       return std::nullopt;
   }
   Block *body = op.getBody();
@@ -945,6 +948,101 @@ static void warpRowSums(func::FuncOp function) {
     memref::StoreOp::create(
         last, loc, arith::AddFOp::create(last, loc, start, total),
         init->get(), place);
+    gpu::TerminatorOp::create(kernel, loc);
+    op.erase();
+  }
+}
+
+/// A short reduction (in PaiNN, the three vector components) needs one
+/// thread for each result. Unroll its terms into that thread so that its
+/// accumulator stays in a register instead of being loaded and stored at
+/// each iteration of the loop lowering. The order of the additions is the
+/// original order, including the first term's constant initial value.
+static void shortRowSums(func::FuncOp function) {
+  SmallVector<std::pair<linalg::GenericOp, RowSum>> found;
+  function.walk([&](linalg::GenericOp op) {
+    if (op->getBlock() == &function.getBody().front())
+      if (std::optional<RowSum> sum = matchRowSum(op, /*shortSum=*/true))
+        found.push_back({op, *sum});
+  });
+  for (auto [op, sum] : found) {
+    Location loc = op.getLoc();
+    SmallVector<int64_t> extents = op.getStaticLoopRanges();
+    int64_t rows = 1;
+    for (unsigned d = 0; d != op.getNumLoops(); ++d)
+      if (d != sum.reduced)
+        rows *= extents[d];
+    OpBuilder builder(op);
+    if (rows == 0) {
+      op.erase();
+      continue;
+    }
+    Value one = index(builder, loc, 1);
+    auto launch = gpu::LaunchOp::create(
+        builder, loc, index(builder, loc, (rows + kRowsBlock - 1) / kRowsBlock),
+        one, one, index(builder, loc, kRowsBlock), one, one);
+    OpBuilder kernel = OpBuilder::atBlockEnd(&launch.getBody().front());
+    Value row = arith::AddIOp::create(
+        kernel, loc,
+        arith::MulIOp::create(kernel, loc, launch.getBlockIds().x,
+                              index(kernel, loc, kRowsBlock)),
+        launch.getThreadIds().x);
+    Value inside = arith::CmpIOp::create(kernel, loc, arith::CmpIPredicate::ult,
+                                         row, index(kernel, loc, rows));
+    auto guard = scf::IfOp::create(kernel, loc, inside, /*withElse=*/false);
+    OpBuilder then = guard.getThenBodyBuilder();
+    SmallVector<Value> at(op.getNumLoops());
+    Value rest = row;
+    for (unsigned d = op.getNumLoops(); d-- != 0;) {
+      if (d == sum.reduced)
+        continue;
+      at[d] = arith::RemUIOp::create(then, loc, rest,
+                                     index(then, loc, extents[d]));
+      rest = arith::DivUIOp::create(then, loc, rest, index(then, loc, extents[d]));
+    }
+    Block *body = op.getBody();
+    llvm::SetVector<Operation *> needed;
+    SmallVector<Value> pending{sum.term};
+    while (!pending.empty()) {
+      Value value = pending.pop_back_val();
+      Operation *def = value.getDefiningOp();
+      if (!def || def->getBlock() != body || !needed.insert(def))
+        continue;
+      for (Value operand : def->getOperands())
+        pending.push_back(operand);
+    }
+    auto term = [&](int64_t k) {
+      SmallVector<Value> indices(at);
+      indices[sum.reduced] = index(then, loc, k);
+      IRMapping mapping;
+      for (OpOperand *input : op.getDpsInputOperands()) {
+        SmallVector<Value> place;
+        for (unsigned d : *getDims(op.getMatchingIndexingMap(input)))
+          place.push_back(indices[d]);
+        mapping.map(op.getMatchingBlockArgument(input),
+                    memref::LoadOp::create(then, loc, input->get(), place));
+      }
+      for (Operation &inner : body->without_terminator()) {
+        if (!needed.contains(&inner))
+          continue;
+        if (auto idx = dyn_cast<linalg::IndexOp>(inner))
+          mapping.map(idx.getResult(), indices[idx.getDim()]);
+        else
+          then.clone(inner, mapping);
+      }
+      return mapping.lookupOrDefault(sum.term);
+    };
+    OpOperand *init = op.getDpsInitOperand(0);
+    SmallVector<Value> place;
+    for (unsigned d : *getDims(op.getMatchingIndexingMap(init)))
+      place.push_back(at[d]);
+    Value value = sum.constant
+                      ? then.clone(*sum.constant.getDefiningOp())->getResult(0)
+                      : memref::LoadOp::create(then, loc, init->get(), place)
+                            .getResult();
+    for (int64_t k = 0; k != sum.extent; ++k)
+      value = arith::AddFOp::create(then, loc, value, term(k));
+    memref::StoreOp::create(then, loc, value, init->get(), place);
     gpu::TerminatorOp::create(kernel, loc);
     op.erase();
   }
@@ -1343,11 +1441,15 @@ public:
            llvm::to_vector(bodies->getOps<func::FuncOp>()))
         if (!function.isExternal() && failed(callGemms(function, *bodies)))
           return signalPassFailure();
-    // The sums of rows as a warp a row (D303).
+    // The sums of rows as a warp a row (D303), or a register-held
+    // accumulator per result when the sum is short.
     if (device)
       for (func::FuncOp function : bodies->getOps<func::FuncOp>())
-        if (!function.isExternal())
+        if (!function.isExternal()) {
           warpRowSums(function);
+          if (shortReductions)
+            shortRowSums(function);
+        }
     // A copy into a result's buffer becomes a loop as well, so that it runs
     // where the buffers are.
     bodies->walk([&](memref::CopyOp copy) {
