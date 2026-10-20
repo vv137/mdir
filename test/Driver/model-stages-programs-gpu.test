@@ -6,7 +6,7 @@
 # whose weights land at the same host addresses reads its own. Each energy
 # at the start agrees with the stages composed in JAX for its weights
 # (synthetic PaiNNs of 4 features and 2 layers, seeds 3 and 5; within
-# 2e-3 kcal/mol, as model-stages-gpu.test), and the
+# 0.013 kJ/mol, D[ml4-jax-oracle]), and the
 # first model run again after the second gives its first energy.
 #
 # REQUIRES: cuda, stages-export, python-api
