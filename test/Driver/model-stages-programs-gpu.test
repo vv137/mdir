@@ -1,6 +1,6 @@
 # Two models in stages of the same shapes and different weights, compiled
 # and run one after the other in one process through the Python API, each
-# program released before the next (D[ml4-body-gemm], docs/ml4-ir.md,
+# program released before the next (D302, docs/ml4-ir.md,
 # Section 8.3). The products of the bodies read device copies of their
 # weights; those belong to the program that made them, so a later program
 # whose weights land at the same host addresses reads its own. Each energy

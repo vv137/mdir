@@ -1,5 +1,5 @@
 // The sums of rows in the batched bodies of neural stages
-// (D[ml4-body-reductions], docs/ml4-ir.md, Section 8.3): a sum over the 64
+// (D303, docs/ml4-ir.md, Section 8.3): a sum over the 64
 // components of a product, in the form of stablehlo-legalize-to-linalg (a
 // product, and a sum of one operand from a fill of zero), becomes a kernel
 // of a warp for each of the 8 rows. Lane l adds the terms l and l + 32 in

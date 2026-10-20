@@ -584,7 +584,7 @@ and the loops of `md_exec` carry them to the lowering for a device:
 
   In `edge.b`, for example, 58 kernels become 22, and in `node.b` 50
   become 29.
-- **Products as calls of cuBLAS** (`D[ml4-body-gemm]`; option
+- **Products as calls of cuBLAS** (`D302`; option
   `contractions` of the pass, `gemm` by default, `loops` for D293's loops;
   `MDIR_STAGE_CONTRACTIONS` overrides it for comparisons). On a device,
   every op of a body of the shape of a GEMM in f32 becomes a call of
@@ -636,7 +636,7 @@ and the loops of `md_exec` carry them to the lowering for a device:
 
   The bodies of nablaDFT's PaiNN make 112 calls, 6 of them batched, and
   363 kernels (532 with loops).
-- **Sums of rows as a warp a row** (`D[ml4-body-reductions]`, the
+- **Sums of rows as a warp a row** (`D303`, the
   maintainer's ruling on #472; on a device, after the products). A
   generic of one result, f32 or f64, whose one reduced loop has at least
   32 iterations and runs along the contiguous dimension of every operand
@@ -824,7 +824,7 @@ body on 4,096 rows):
   at 12,288, and 228,139 to 225,331 at 196,608, 1.2 to 1.6% less, and the
   peak from 652 to 592 MiB at 6,144 atoms, the bodies' intermediates
   that the fusion no longer stores.
-- **The products as cuBLAS calls** (`D[ml4-body-gemm]`, Section 8.3; the
+- **The products as cuBLAS calls** (`D302`, Section 8.3; the
   same sweep, `main` at D299 and this lowering, and the same build with
   `MDIR_STAGE_CONTRACTIONS=loops`, in one job): a step from 3,193 to
   2,160 ms at 6,144 atoms (1.48 times shorter), 6,622 to 4,633 at
@@ -874,7 +874,7 @@ call carries about 0.05 ms of dispatch.
 | `readout.f` | 0.077 | 0.077 | 0.015 | 0.036 | 0.062 |
 | `readout.b` | 0.24 | 0.21 | 0.052 | 0.066 | 0.081 |
 
-With the products as cuBLAS calls (`D[ml4-body-gemm]`, two runs of each
+With the products as cuBLAS calls (`D302`, two runs of each
 in one job, their mean), the bodies take less time than IREE's and,
 except `edge.b` and `node.b`, about XLA's, whose times carry 0.05 ms of
 dispatch from Python. What is left in `edge.b` and `node.b` is the
@@ -942,13 +942,13 @@ there is a question of fusion, not of products.
   products of the shape of a matrix product (`linalg.matmul`, and the
   generic contractions with one contracted dimension) as calls of
   cuBLAS's f32 GEMM on the runtime's stream and buffers, without TF32
-  (`D[ml4-body-gemm]`, the maintainer's ruling on #462: no schedules of
+  (`D302`, the maintainer's ruling on #462: no schedules of
   MDIR's own for dense products), the fusion of Section 8.3 keeping the
   elementwise ops around them; then AOTInductor's bodies measured against
   them, the choice a strategy with a switch, by measurement (#444); MDIR's
   own schedules only for contractions that neither serves. Built: the
   batched products as strided-batched calls of cuBLAS and the sums of rows
-  as a warp a row through D301's butterfly (`D[ml4-body-reductions]`, the
+  as a warp a row through D301's butterfly (`D303`, the
   maintainer's ruling on #472, Section 8.3). AOTInductor's bodies stay a
   baseline: its package does not export the VJP. Open: the sums over the
   three components and the elementwise kernels of `node.b` (Section 8.6).

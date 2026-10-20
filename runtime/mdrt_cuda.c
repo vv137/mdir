@@ -187,7 +187,7 @@ static void enter(void) {
 }
 
 /* What the products of the bodies of neural stages hold on the device
-   (D[ml4-body-gemm], at the end of this file): the copies of the constants
+   (D302, at the end of this file): the copies of the constants
    that `owner` made (an activation, or null outside one; every owner with
    `all`), and the handle of cuBLAS. `gone` says that the driver has shut
    down, and the memory of the device with it. */
@@ -2171,7 +2171,7 @@ void mdrtDeviceTuplesDone(int64_t handle) {
 }
 
 /*===----------------------------------------------------------------------===
-  Matrix products of the bodies of neural stages (D[ml4-body-gemm])
+  Matrix products of the bodies of neural stages (D302)
   ===----------------------------------------------------------------------===*/
 
 #include <cublas_v2.h>

@@ -33,7 +33,7 @@ if(MDIR_CUDA_FOUND)
   add_library(mdrt_cuda SHARED mdrt_cuda.c)
   # The FFT of particle mesh Ewald takes cuFFT of the toolkit.
   # The products of the bodies of neural stages take cuBLAS
-  # (D[ml4-body-gemm]).
+  # (D302).
   target_link_libraries(mdrt_cuda PRIVATE CUDA::cuda_driver CUDA::cufft
     CUDA::cublas)
   set_target_properties(mdrt_cuda PROPERTIES
@@ -123,7 +123,7 @@ if(MDIR_BUNDLE_LIBRARIES)
     set_target_properties(mdrt_cuda PROPERTIES INSTALL_RPATH "$ORIGIN")
     get_target_property(cufft CUDA::cufft IMPORTED_LOCATION)
     mdir_install_soname("${cufft}")
-    # cuBLAS and the cuBLASLt that it loads (D[ml4-body-gemm]).
+    # cuBLAS and the cuBLASLt that it loads (D302).
     get_target_property(cublas CUDA::cublas IMPORTED_LOCATION)
     mdir_install_soname("${cublas}")
     get_target_property(cublaslt CUDA::cublasLt IMPORTED_LOCATION)

@@ -1,4 +1,4 @@
-// A batched product in a body of a neural stage (D[ml4-body-gemm],
+// A batched product in a body of a neural stage (D302,
 // docs/ml4-ir.md, Section 8.3): for each row r, y[r, c] = sum_f x[r, f]
 // v[r, c, f], PaiNN's contraction of a vector's three components with a
 // row of weights (`edge.b`), x and v slices of one operand. It becomes a

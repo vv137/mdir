@@ -334,7 +334,7 @@ static func::FuncOp getOrDeclareRuntime(ModuleOp bodies, StringRef name,
   return declared;
 }
 
-/// A product of the shape of a matrix product in f32 (D[ml4-body-gemm]):
+/// A product of the shape of a matrix product in f32 (D302):
 /// for each index of the batch dimension (if any), C (m x n) += A B over k,
 /// A m x k and B k x n. Each of m and n is the product of the extents of the
 /// loops it stands for, 1 for none; how each matrix lies in memory is read
@@ -732,7 +732,7 @@ constexpr int64_t kRowsBlock = 256;
 /// at least).
 constexpr int64_t kWarp = 32;
 
-/// A sum of rows (D[ml4-body-reductions]): a generic of one result whose one
+/// A sum of rows (D303): a generic of one result whose one
 /// reduced loop, of `extent` iterations, is the last dimension of each
 /// operand that it indexes, and whose payload yields `start + term`, with
 /// `term` computed from the operands without the accumulator and `start`
@@ -817,7 +817,7 @@ static std::optional<RowSum> matchRowSum(linalg::GenericOp op) {
 }
 
 /// Replaces each sum of rows of the bufferized body `function` with a kernel
-/// of a warp for each element of the result (D[ml4-body-reductions], the
+/// of a warp for each element of the result (D303, the
 /// reductions of the rows that IREE gives a warp each, `VectorDistribute`):
 /// lane l adds the terms l, l + 32, l + 64, ... in that order, the warp
 /// combines its lanes by the butterfly of D301 (`kernels::emitWarpReduce`),
@@ -1216,7 +1216,7 @@ public:
     }
 
     // The strategy of the products of the shape of a GEMM: calls of cuBLAS
-    // on a device, or loops (D[ml4-body-gemm]).
+    // on a device, or loops (D302).
     if (contractions != "gemm" && contractions != "loops") {
       module.emitError() << "md-exec-lower-stage-bodies: contractions is '"
                          << contractions << "'; expected 'gemm' or 'loops'";
@@ -1337,13 +1337,13 @@ public:
     if (fuse)
       for (func::FuncOp function : bodies->getOps<func::FuncOp>())
         writeResultsInPlace(function);
-    // The GEMMs as calls of cuBLAS (D[ml4-body-gemm]).
+    // The GEMMs as calls of cuBLAS (D302).
     if (gemm)
       for (func::FuncOp function :
            llvm::to_vector(bodies->getOps<func::FuncOp>()))
         if (!function.isExternal() && failed(callGemms(function, *bodies)))
           return signalPassFailure();
-    // The sums of rows as a warp a row (D[ml4-body-reductions]).
+    // The sums of rows as a warp a row (D303).
     if (device)
       for (func::FuncOp function : bodies->getOps<func::FuncOp>())
         if (!function.isExternal())

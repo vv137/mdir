@@ -663,7 +663,7 @@ format, or the outputs; every such change is listed under **Changed** or
   to 1.07. The Gaussian kernel stays the default.
 
 - **The products of the batched bodies of neural stages are calls of
-  cuBLAS** (`D[ml4-body-gemm]`, #462,
+  cuBLAS** (`D302`, #462,
   [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)): on a
   device, `md-exec-lower-stage-bodies` lowers every op of the shape of a
   GEMM in f32 to `cublasSgemm` on the stream of the kernels, without TF32.
@@ -675,7 +675,7 @@ format, or the outputs; every such change is listed under **Changed** or
   installed tree carries, and `nvidia-cublas` in the `cuda` extra of the
   wheel). No key of the control file changes.
 - **Batched products and sums of rows in the bodies of neural stages**
-  (`D[ml4-body-gemm]`, `D[ml4-body-reductions]`, #462,
+  (`D302`, `D303`, #462,
   [docs/ml4-ir.md](docs/ml4-ir.md#83-a-batched-body-in-a-tile)): a
   product with a batch is one call of `cublasSgemmStridedBatched`, and a
   sum of rows of 32 terms or more is a kernel of a warp a row through

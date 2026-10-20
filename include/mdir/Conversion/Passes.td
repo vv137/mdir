@@ -279,7 +279,7 @@ def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
            /*default=*/"\"gemm\"",
            "The products of the shape of a GEMM in f32, batched or not: "
            "'gemm', calls of cuBLAS on a device, or 'loops', MDIR's loops "
-           "(D[ml4-body-gemm])">,
+           "(D302)">,
   ];
   let dependentDialects = [
     "::mlir::arith::ArithDialect", "::mlir::bufferization::BufferizationDialect",

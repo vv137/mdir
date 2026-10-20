@@ -1,7 +1,7 @@
 """Compiles and runs the models in stages named on the command line one
 after the other in one process, each program released before the next is
 compiled, and prints the potential energy at the start of each, in kJ/mol
-(D[ml4-body-gemm]: the device's copies of a body's weights belong to the
+(D302: the device's copies of a body's weights belong to the
 program that made them, not to the host addresses of the weights, which a
 later program may reuse).
 

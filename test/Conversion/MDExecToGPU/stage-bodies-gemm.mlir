@@ -1,5 +1,5 @@
 // The products of the shape of a GEMM in the batched bodies of neural
-// stages (D[ml4-body-gemm], docs/ml4-ir.md, Section 8.3): a `linalg.matmul`
+// stages (D302, docs/ml4-ir.md, Section 8.3): a `linalg.matmul`
 // and a generic contraction with the second operand transposed, each from a
 // fill of zero, in the forms that stablehlo-legalize-to-linalg gives them.
 // By default (`contractions=gemm`) each becomes a call of cuBLAS's f32 GEMM

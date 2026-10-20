@@ -845,7 +845,7 @@ timing of the threads), and so meets each of the three algebras. Sites:
 `emitReductions`), `RowLanes::combine` (the lanes of a row of a matrix),
 the warp totals of the global sums of a loop over groups, the counts
 of the active units (D268, integers), and the sums of rows of the batched
-bodies of neural stages, a warp a row (D[ml4-body-reductions],
+bodies of neural stages, a warp a row (D303,
 `warpRowSums` in `StageBodies.cpp`). Left as it is: the half-warp sum of
 `emitGroupPairKernel` (`MDExecKernels.cpp`), which shuffles a 64-bit value
 with `gpu.shuffle` itself rather than as two halves, so that moving it would

@@ -81,7 +81,7 @@ mdir::compiler::getGpuOptions(const Control &control, int64_t device,
   return options;
 }
 /// md-exec-lower-stage-bodies with the strategy of the products of the
-/// shape of a GEMM in the bodies (D[ml4-body-gemm]) from
+/// shape of a GEMM in the bodies (D302) from
 /// `MDIR_STAGE_CONTRACTIONS`, for comparing the strategies: `gemm` calls of
 /// cuBLAS, `loops` MDIR's loops; another value, or none, is the default.
 static std::string getStageBodiesPass() {
