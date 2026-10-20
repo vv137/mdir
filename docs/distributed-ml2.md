@@ -119,6 +119,19 @@ numbered $d = a + g_a(b + g_b c)$. A grid of 1 along an axis keeps that axis
 whole in each domain; its periodic images are ghosts as well, so no
 domain ever takes a minimum image (Section 4.3).
 
+For the compiler pass `md-distribute`, `grid=gx,gy,gz` states that grid
+explicitly. The alternative `domains=N box=Lx,Ly,Lz` chooses a static
+factor grid for an orthorhombic box known at compile time. Among positive
+integer triples with product $N$, it minimizes
+$g_x/L_x + g_y/L_y + g_z/L_z$, the common-factor-free surface area of the
+domain boxes; a tie takes the lexicographically smaller triple. This is a
+geometric estimate of exchange area, not a measurement of communication
+cost. Exactly one of `grid` or `domains` is given, and `box` accompanies
+`domains`. The selected grid appears in `md_dist.decomposition`. The cell
+passed to a potential remains a runtime value; changing it does not
+reselect this static grid. This pass-level selection precedes the future
+`[distribute]` control-file path of Section 13.
+
 ### 4.2 Layouts: ownership and identity
 
 ```mlir
