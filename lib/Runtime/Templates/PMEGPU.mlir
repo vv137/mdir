@@ -8261,18 +8261,19 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
 }
 
 // Influence "P3M" (D[p3m-influence]): the tables of the edges hold Σ u μ,
-// Σ u μ², and Σ u g / S over the aliases of each point (see TABLE_FACTOR_P3M
-// in the script), so that @mdrt_gpu_pme_scale computes eq. 4.1 of
+// Σ u μ², and Σ u g / S over the aliases of each point (see tables_p3m in
+// the script), so that @mdrt_gpu_pme_scale computes eq. 2.28 of
 // [Ballenegger2012] from them unchanged, and after them the means under the
 // Gaussian, which the virial of @mdrt_gpu_pme_convolve_p3m takes.
 
-// The factors of the influence function along the edges, for
-// @mdrt_gpu_pme_scale and @mdrt_gpu_pme_convolve: see tables in the script.
+// The factors of the influence function along the edges of influence "P3M":
+// see tables_p3m in the script.
 func.func private @mdrt_gpu_pme_tables_p3m(%moduli: memref<?x?xf64, 1>, %tables: memref<?x!pme_real, 1>,
-                                       %box: vector<3xf64>, %beta: f64, %coulomb: f64,
-                                       %k1: index, %k2: index, %k3: index) {
+                                           %box: vector<3xf64>, %beta: f64, %coulomb: f64,
+                                           %k1: index, %k2: index, %k3: index) {
   %c1 = arith.constant 1 : index
   %c3 = arith.constant 3 : index
+  %c8 = arith.constant 8 : index
   %c128 = arith.constant 128 : index
   %pi2 = arith.constant 9.869604401089358 : f64
   %lx = vector.extract %box[0] : f64 from vector<3xf64>
@@ -8291,85 +8292,113 @@ func.func private @mdrt_gpu_pme_tables_p3m(%moduli: memref<?x?xf64, 1>, %tables:
   %prefactor = arith.divf %coulomb, %piv : f64
   %k12a = arith.addi %k1, %k2 : index
   %entries = arith.addi %k12a, %k3 : index
-  %blocks_entries = func.call @mdrt_gpu_pme_blocks(%entries) : (index) -> index
-  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks_entries, %gy = %c1, %gz = %c1)
+  %threads = arith.muli %entries, %c8 : index
+  %blocks = func.call @mdrt_gpu_pme_blocks(%threads) : (index) -> index
+  gpu.launch blocks(%bx, %by, %bz) in (%gx = %blocks, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %c128, %sy = %c1, %sz = %c1) {
+    %c0t = arith.constant 0 : index
+    %c1t = arith.constant 1 : index
+    %c2t = arith.constant 2 : index
+    %c5t = arith.constant 5 : index
+    %c8t = arith.constant 8 : index
+    %zero = arith.constant 0.0 : f64
     %base = arith.muli %bx, %c128 : index
-    %item = arith.addi %base, %tx : index
-    %inside = arith.cmpi ult, %item, %entries : index
-    scf.if %inside {
-      %c0t = arith.constant 0 : index
-      %c1t = arith.constant 1 : index
-      %c2t = arith.constant 2 : index
-      %k12 = arith.addi %k1, %k2 : index
-      %on_y = arith.cmpi uge, %item, %k1 : index
-      %on_z = arith.cmpi uge, %item, %k12 : index
-      %axis0 = arith.select %on_y, %c1t, %c0t : index
-      %axis = arith.select %on_z, %c2t, %axis0 : index
-      %from0 = arith.select %on_y, %k1, %c0t : index
-      %from = arith.select %on_z, %k12, %from0 : index
-      %kk0 = arith.select %on_y, %k2, %k1 : index
-      %kk = arith.select %on_z, %k3, %kk0 : index
-      %l0 = arith.select %on_y, %ily, %ilx : f64
-      %l = arith.select %on_z, %ilz, %l0 : f64
-      %k = arith.subi %item, %from : index
-      %half = arith.divui %kk, %c2t : index
-      %ki = arith.index_cast %k : index to i64
-      %ni = arith.index_cast %kk : index to i64
-      %beyond = arith.cmpi ugt, %k, %half : index
-      %shifted = arith.subi %ki, %ni : i64
-      %signed = arith.select %beyond, %shifted, %ki : i64
-      %sf = arith.sitofp %signed : i64 to f64
-      %m = arith.mulf %sf, %l : f64
-      %m2 = arith.mulf %m, %m : f64
-      %zero = arith.constant 0.0 : f64
+    %thread = arith.addi %base, %tx : index
+    %item0 = arith.divui %thread, %c8t : index
+    %lane = arith.remui %thread, %c8t : index
+    %inside = arith.cmpi ult, %item0, %entries : index
+    %last = arith.subi %entries, %c1t : index
+    %item = arith.select %inside, %item0, %last : index
+    %k12 = arith.addi %k1, %k2 : index
+    %on_y = arith.cmpi uge, %item, %k1 : index
+    %on_z = arith.cmpi uge, %item, %k12 : index
+    %axis0 = arith.select %on_y, %c1t, %c0t : index
+    %axis = arith.select %on_z, %c2t, %axis0 : index
+    %from0 = arith.select %on_y, %k1, %c0t : index
+    %from = arith.select %on_z, %k12, %from0 : index
+    %kk0 = arith.select %on_y, %k2, %k1 : index
+    %kk = arith.select %on_z, %k3, %kk0 : index
+    %l0 = arith.select %on_y, %ily, %ilx : f64
+    %l = arith.select %on_z, %ilz, %l0 : f64
+    %k = arith.subi %item, %from : index
+    %half = arith.divui %kk, %c2t : index
+    %ki = arith.index_cast %k : index to i64
+    %ni = arith.index_cast %kk : index to i64
+    %beyond = arith.cmpi ugt, %k, %half : index
+    %shifted = arith.subi %ki, %ni : i64
+    %signed = arith.select %beyond, %shifted, %ki : i64
+    %sf = arith.sitofp %signed : i64 to f64
+    // The alias of the thread, ν = n + (j − 2) K, and its terms.
+    %alias = arith.cmpi ult, %lane, %c5t : index
+    %j = arith.select %alias, %lane, %c0t : index
+    %ji = arith.index_cast %j : index to i64
+    %two64 = arith.constant 2 : i64
+    %js = arith.subi %ji, %two64 : i64
+    %jf = arith.sitofp %js : i64 to f64
+    %cf = arith.sitofp %ni : i64 to f64
+    %jk = arith.mulf %jf, %cf : f64
+    %nu = arith.addf %sf, %jk : f64
+    %mu = arith.mulf %nu, %l : f64
+    %mu2 = arith.mulf %mu, %mu : f64
+    %gmu = arith.mulf %gauss, %mu2 : f64
+    %ngmu = arith.negf %gmu : f64
+    %g = math.exp %ngmu : f64
+    %first = arith.muli %axis, %c5t : index
+    %row0 = arith.addi %first, %c3 : index
+    %row = arith.addi %row0, %j : index
+    %u0 = memref.load %moduli[%row, %k] : memref<?x?xf64, 1>
+    %u = arith.select %alias, %u0, %zero : f64
+    %t0 = arith.mulf %u, %mu : f64
+    %t1 = arith.mulf %u, %mu2 : f64
+    %t2 = arith.mulf %u, %g : f64
+    %t3 = arith.mulf %t2, %mu : f64
+    %t4 = arith.mulf %t2, %mu2 : f64
+    %width = arith.constant 32 : i32
+    %o1 = arith.constant 1 : i32
+    %o2 = arith.constant 2 : i32
+    %o4 = arith.constant 4 : i32
+    %t0a, %v0a = gpu.shuffle xor %t0, %o1, %width : f64
+    %t0b = arith.addf %t0, %t0a : f64
+    %t0c, %v0c = gpu.shuffle xor %t0b, %o2, %width : f64
+    %t0d = arith.addf %t0b, %t0c : f64
+    %t0e, %v0e = gpu.shuffle xor %t0d, %o4, %width : f64
+    %s0 = arith.addf %t0d, %t0e : f64
+    %t1a, %v1a = gpu.shuffle xor %t1, %o1, %width : f64
+    %t1b = arith.addf %t1, %t1a : f64
+    %t1c, %v1c = gpu.shuffle xor %t1b, %o2, %width : f64
+    %t1d = arith.addf %t1b, %t1c : f64
+    %t1e, %v1e = gpu.shuffle xor %t1d, %o4, %width : f64
+    %s1 = arith.addf %t1d, %t1e : f64
+    %t2a, %v2a = gpu.shuffle xor %t2, %o1, %width : f64
+    %t2b = arith.addf %t2, %t2a : f64
+    %t2c, %v2c = gpu.shuffle xor %t2b, %o2, %width : f64
+    %t2d = arith.addf %t2b, %t2c : f64
+    %t2e, %v2e = gpu.shuffle xor %t2d, %o4, %width : f64
+    %s2 = arith.addf %t2d, %t2e : f64
+    %t3a, %v3a = gpu.shuffle xor %t3, %o1, %width : f64
+    %t3b = arith.addf %t3, %t3a : f64
+    %t3c, %v3c = gpu.shuffle xor %t3b, %o2, %width : f64
+    %t3d = arith.addf %t3b, %t3c : f64
+    %t3e, %v3e = gpu.shuffle xor %t3d, %o4, %width : f64
+    %s3 = arith.addf %t3d, %t3e : f64
+    %t4a, %v4a = gpu.shuffle xor %t4, %o1, %width : f64
+    %t4b = arith.addf %t4, %t4a : f64
+    %t4c, %v4c = gpu.shuffle xor %t4b, %o2, %width : f64
+    %t4d = arith.addf %t4b, %t4c : f64
+    %t4e, %v4e = gpu.shuffle xor %t4d, %o4, %width : f64
+    %s4 = arith.addf %t4d, %t4e : f64
+    %leader = arith.cmpi eq, %lane, %c0t : index
+    %store = arith.andi %inside, %leader : i1
+    scf.if %store {
       %unit1 = arith.constant 1.0 : f64
-      %rowsm = memref.dim %moduli, %c0t : memref<?x?xf64, 1>
-      %rows3 = arith.subi %rowsm, %c3 : index
-      %span = arith.divui %rows3, %c3 : index
-      %span1 = arith.subi %span, %c1t : index
-      %aliases = arith.divui %span1, %c2t : index
-      %ai = arith.index_cast %aliases : index to i64
-      %cf = arith.sitofp %ni : i64 to f64
-      %first = arith.muli %axis, %span : index
-      %row0 = arith.addi %first, %c3 : index
-      %sm, %sq, %sg, %sgm, %sgm2 = scf.for %j = %c0t to %span step %c1t
-          iter_args(%a0 = %zero, %a1 = %zero, %a2 = %zero, %a3 = %zero, %a4 = %zero)
-          -> (f64, f64, f64, f64, f64) {
-        %ji = arith.index_cast %j : index to i64
-        %js = arith.subi %ji, %ai : i64
-        %jf = arith.sitofp %js : i64 to f64
-        %jk = arith.mulf %jf, %cf : f64
-        %nu = arith.addf %sf, %jk : f64
-        %mu = arith.mulf %nu, %l : f64
-        %mu2 = arith.mulf %mu, %mu : f64
-        %gmu = arith.mulf %gauss, %mu2 : f64
-        %ngmu = arith.negf %gmu : f64
-        %g = math.exp %ngmu : f64
-        %row = arith.addi %row0, %j : index
-        %u = memref.load %moduli[%row, %k] : memref<?x?xf64, 1>
-        %umu = arith.mulf %u, %mu : f64
-        %umu2 = arith.mulf %u, %mu2 : f64
-        %ug = arith.mulf %u, %g : f64
-        %ugmu = arith.mulf %ug, %mu : f64
-        %ugmu2 = arith.mulf %ug, %mu2 : f64
-        %b0 = arith.addf %a0, %umu : f64
-        %b1 = arith.addf %a1, %umu2 : f64
-        %b2 = arith.addf %a2, %ug : f64
-        %b3 = arith.addf %a3, %ugmu : f64
-        %b4 = arith.addf %a4, %ugmu2 : f64
-        scf.yield %b0, %b1, %b2, %b3, %b4 : f64, f64, f64, f64, f64
-      }
       %inverse = memref.load %moduli[%axis, %k] : memref<?x?xf64, 1>
-      %factor0 = arith.mulf %sg, %inverse : f64
-      %some = arith.cmpf ogt, %sg, %zero : f64
-      %sgs = arith.select %some, %sg, %unit1 : f64
-      %gm0 = arith.divf %sgm, %sgs : f64
-      %gq0 = arith.divf %sgm2, %sgs : f64
+      %factor0 = arith.mulf %s2, %inverse : f64
+      %some = arith.cmpf ogt, %s2, %zero : f64
+      %sgs = arith.select %some, %s2, %unit1 : f64
+      %gm0 = arith.divf %s3, %sgs : f64
+      %gq0 = arith.divf %s4, %sgs : f64
       %gmean = arith.select %some, %gm0, %zero : f64
       %gsquare = arith.select %some, %gq0, %zero : f64
-      %pmean = arith.addf %sm, %zero : f64
-      %psquare = arith.addf %sq, %zero : f64
       %first_axis = arith.cmpi eq, %axis, %c0t : index
       %scaled = arith.mulf %factor0, %prefactor : f64
       %factor = arith.select %first_axis, %scaled, %factor0 : f64
@@ -8377,8 +8406,8 @@ func.func private @mdrt_gpu_pme_tables_p3m(%moduli: memref<?x?xf64, 1>, %tables:
       %at0 = arith.addi %tstart, %k : index
       %at1 = arith.addi %at0, %kk : index
       %at2 = arith.addi %at1, %kk : index
-      %mr = PME_F64_TO_REAL %pmean : f64 to !pme_real
-      %m2r = PME_F64_TO_REAL %psquare : f64 to !pme_real
+      %mr = PME_F64_TO_REAL %s0 : f64 to !pme_real
+      %m2r = PME_F64_TO_REAL %s1 : f64 to !pme_real
       %fr = PME_F64_TO_REAL %factor : f64 to !pme_real
       memref.store %mr, %tables[%at0] : memref<?x!pme_real, 1>
       memref.store %m2r, %tables[%at1] : memref<?x!pme_real, 1>
@@ -8535,7 +8564,7 @@ func.func private @mdrt_gpu_pme_convolve_p3m(%c: memref<?x!pme_real, 1>, %tables
         %em = arith.mulf %hwb, %g2 : !pme_real
         // The virial of influence "P3M" (D[p3m-influence]): the derivative of the
         // energy of the point under a strain through every alias in the sums of
-        // eq. 4.1, E (δ_ab − 2 (π²/β²) A_ab − 2 B_ab / D), with A_ab = ⟨μ_a⟩_g
+        // eq. 2.28, E (δ_ab − 2 (π²/β²) A_ab − 2 B_ab / D), with A_ab = ⟨μ_a⟩_g
         // ⟨μ_b⟩_g off the diagonal and ⟨μ_a²⟩_g on it, B likewise of the plain
         // means (%m1, %m1s, ...), D = %msqr (docs/pme-m1.md, Section 1.1).
         %xa0 = arith.addi %extra, %a : index

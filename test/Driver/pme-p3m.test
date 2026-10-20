@@ -1,5 +1,5 @@
 # Influence "P3M" of particle mesh Ewald on the CPU (D[p3m-influence]): eq.
-# 4.1 of Ballenegger et al. (2012), optimal for the forces of analytic
+# 2.28 of Ballenegger et al. (2012), optimal for the forces of analytic
 # differentiation, on the three OPC waters of pme.test with a grid of
 # 16 x 20 x 24 points of order 4 in the cube of 40 A, so that the three
 # edges differ.
@@ -21,7 +21,7 @@
 
 # The reciprocal sum, against the Ewald sum of Inputs/ewald_reference.py,
 # 4.6972413 kcal/mol (pme.test): "SPME" gives 4.459840 on this grid,
-# "OPTIMAL" 4.586860, and "P3M" 4.586208. Eq. 4.1 minimizes the error of
+# "OPTIMAL" 4.586860, and "P3M" 4.586208. Eq. 2.28 minimizes the error of
 # the forces, not of the energy; its energy is within 1.4e-4 of that of
 # eq. 4.2 ("OPTIMAL") here.
 #
@@ -36,7 +36,7 @@
 # MODULE: md.reciprocal
 # MODULE-NEXT: grid([16, 20, 24]) order(4) {{.*}} p3m
 
-# The virial of the influence function through every alias of eq. 4.1
+# The virial of the influence function through every alias of eq. 2.28
 # (docs/pme-m1.md, Section 1.1): its trace against -dU/dlambda under a
 # uniform scaling (2.2e-5) and each diagonal component against -dU/de_aa
 # under a strain of axis a alone (1.3e-5 of the largest), at the noise of

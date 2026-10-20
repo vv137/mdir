@@ -43,7 +43,7 @@ enum class PMEKernel { Gaussian, Prolate };
 /// The influence function of particle mesh Ewald with the Gaussian
 /// (docs/pme-m1.md, Section 1.1): that of Essmann et al., the separable
 /// one that the aliasing of the B-splines sets (as sander), or the one
-/// optimal for the forces of analytic differentiation, eq. 4.1 of
+/// optimal for the forces of analytic differentiation, eq. 2.28 of
 /// Ballenegger et al. (2012) (D[p3m-influence]).
 enum class PMEInfluence { SPME, Optimal, P3M };
 

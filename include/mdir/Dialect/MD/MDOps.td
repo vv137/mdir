@@ -452,7 +452,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     ```
 
     With `p3m`, the influence function is the one optimal for the forces
-    of analytic differentiation, eq. 4.1 of [Ballenegger2012], with the
+    of analytic differentiation, eq. 2.28 of [Ballenegger2012], with the
     Gaussian in a rectangular cell (D[p3m-influence], docs/pme-m1.md,
     Section 1.1): `moduli` has 3 + 3 (2J + 1) rows, row `a` holds
     `1 / S_a(k)` with `S_a(k) = Σ_j Û²(ν_j)`, and row `3 + a (2J + 1) + j

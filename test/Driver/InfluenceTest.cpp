@@ -8,14 +8,16 @@
 //     eq. 4.2 of [Ballenegger2012], per edge, Û²(n) / (Σ_j Û²(n + jK))²,
 //     to the truncation of its sums at |j| ≤ 50; and how far eq. 4.2 with
 //     the sums of "P3M" (|j| ≤ 2) is from it.
-//  2. eq. 4.1 in a rectangular cell, as the kernels compute it from the
+//  2. eq. 2.28 in a rectangular cell, as the kernels compute it from the
 //     rows of the edges (getEdgeSums: a product of factors over a sum of
 //     mean squares), equals the direct sum over J ∈ ℤ³ with max|J_a| ≤ 2
 //     to rounding, and its sums for the virial too.
 //  3. the virial of a point, E (δ − 2 (π²/β²) A − 2 B / D), is −∂E/∂ε of
 //     the direct sum under a strain of the cell, by central differences
 //     extrapolated to a step of 0, on the diagonal and off it.
-//  4. the truncation: eq. 4.1 with |j| ≤ 2 against |j| ≤ 12.
+//  4. the truncation: eq. 2.28 with |j| ≤ 2 against |j| ≤ 12; and,
+//     reported, how far eq. 4.1 (eq. 2.28 without the aliases of its
+//     numerator) is from eq. 2.28.
 //
 // Prints each quantity, its reference, and "FAIL" beyond its tolerance.
 //
@@ -132,7 +134,7 @@ int main() {
     for (int a = 0; a != 3; ++a)
       rows[a] = getEdgeWeights(window, grid[a], aliases);
     double worstValue = 0.0, worstSums = 0.0, worstVirial = 0.0,
-           worstTruncation = 0.0, largest = 0.0;
+           worstTruncation = 0.0, worstNumerator = 0.0, largest = 0.0;
     // Every point of a grid of the coarse cases, a lattice of points of
     // the others, the half-complex part (k3 ≤ K3 / 2), m = 0 left out.
     for (int64_t k0 = 0; k0 < grid[0]; k0 += grid[0] > 32 ? 9 : 2)
@@ -157,6 +159,16 @@ int main() {
             squares += e[a].square;
           }
           double separable = product / squares;
+          // Eq. 4.1: eq. 2.28 without the sum over the aliases in its
+          // numerator, Û²(n) m² φ̂(m) at J = 0 alone.
+          double numerator = 1.0;
+          for (int a = 0; a != 3; ++a) {
+            double mu = double(n[a]) / lengths[a];
+            numerator *= rows[a].weights[aliases * grid[a] + ks[a]] *
+                         std::exp(-gaussian.gauss * mu * mu) *
+                         rows[a].inverse[ks[a]];
+          }
+          double eq41 = numerator / squares;
           // Relative where the value matters: against the largest value of
           // the function on the grid, 2e-16 per operation, and relative
           // to the value itself beyond 1e-12 of the largest.
@@ -208,10 +220,13 @@ int main() {
           if (direct.value > 1e-6 * largest)
             worstTruncation = std::max(
                 worstTruncation, std::fabs(direct.value / wide.value - 1.0));
+          if (direct.value > 1e-6 * largest)
+            worstNumerator =
+                std::max(worstNumerator, std::fabs(eq41 / direct.value - 1.0));
         }
     char what[160];
     std::snprintf(what, sizeof what,
-                  "%lldx%lldx%lld order %lld beta %.4f: eq. 4.1, edges "
+                  "%lldx%lldx%lld order %lld beta %.4f: eq. 2.28, edges "
                   "against the direct sum",
                   (long long)c.kx, (long long)c.ky, (long long)c.kz,
                   (long long)c.order, c.beta);
@@ -233,6 +248,13 @@ int main() {
                   (long long)c.kx, (long long)c.ky, (long long)c.kz,
                   (long long)c.order);
     report(what, worstTruncation, 1e-4);
+    // Not a tolerance: how far eq. 4.1 is from eq. 2.28 (reported).
+    std::snprintf(what, sizeof what,
+                  "%lldx%lldx%lld order %lld: max |eq. 4.1 / eq. 2.28 - 1| "
+                  "where G > 1e-6 of its largest",
+                  (long long)c.kx, (long long)c.ky, (long long)c.kz,
+                  (long long)c.order);
+    std::printf("%s: %.1e (reported)\n", what, worstNumerator);
   }
   std::printf("%d failures\n", failures);
   return failures != 0;

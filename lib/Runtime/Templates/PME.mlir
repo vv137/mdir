@@ -51,7 +51,7 @@ func.func private @PME_FFTColumns(memref<?x!pme_real>, i64, i64, i64, i64, i64, 
     attributes {llvm.emit_c_interface}
 
 // Raises the weights `a` of the B-spline at the fraction `w` from order
-// k − 1 to order k, in place (the recursion of Essmann et al., Eq. 4.1).
+// k − 1 to order k, in place (the recursion of Essmann et al., Eq. 2.28).
 func.func private @mdrt.pme_raise(%w: !pme_real, %k: index, %a: memref<8x!pme_real>) {
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
@@ -607,7 +607,7 @@ func.func private @mdrt.pme_wave(%k: index, %count: index, %length: f64) -> f64 
 // then the product of three of them over m².
 //
 // With the rows of influence "P3M" in `moduli` (more than five,
-// D[p3m-influence]), eq. 4.1 of [Ballenegger2012] in its form for the
+// D[p3m-influence]), eq. 2.28 of [Ballenegger2012] in its form for the
 // edges (docs/pme-m1.md, Section 1.1): with the weights u_j of the aliases
 // ν_j = n + j K of the point, μ_j = ν_j / L, g_j = exp(−π² μ_j² / β²),
 // the three values are Σ u μ, Σ u μ², and Σ u g / S times the prefactor
@@ -911,7 +911,7 @@ func.func private @mdrt.pme_point_sums(%re: !pme_real, %im: !pme_real, %m1: !pme
 
 // As pme_point_sums, for influence "P3M" (D[p3m-influence]): the virial of
 // the point is the derivative of its energy under a strain of the cell,
-// through every alias in the sums of eq. 4.1 (docs/pme-m1.md, Section 1.1),
+// through every alias in the sums of eq. 2.28 (docs/pme-m1.md, Section 1.1),
 //
 //   W_ab = E_m (δ_ab − 2 (π²/β²) A_ab − 2 B_ab / D),
 //

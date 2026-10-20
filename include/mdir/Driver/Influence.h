@@ -13,12 +13,15 @@
 // Gaussian splitting is exp(−π² m² / β²). With the sums over the aliases
 // J taken over max_a |J_a| ≤ J_max:
 //
-//   eq. 4.1 (AD, optimal for the forces)
+//   eq. 2.28 (AD, optimal for the forces; its eq. 4.1 is this without
+//   the sum over J in the numerator, J = 0 alone)
 //     G(n) = Σ_J Û²(ν) m² φ̂(m) / ([Σ_J Û²(ν)] [Σ_J Û²(ν) m²])
 //   eq. 4.2 (separable, = influence "OPTIMAL")
 //     G(n) = Û²(n) φ̂(m₀) / [Σ_J Û²(ν)]²
 //
-// (equation numbers of [Ballenegger2012] as cited in issue #468.) The
+// (equation numbers of [Ballenegger2012], J. Chem. Theory Comput. 8, 936,
+// 2012, checked against the article; it truncates the sums at |J_a| = 2
+// too, below its eq. 2.28.) The
 // functions here are on the host, in f64. The direct sums over J ∈ ℤ³ are
 // the reference; the separable forms are what the driver tabulates for the
 // kernels.
@@ -88,7 +91,7 @@ double getEnergyOptimal(const Window &window, const Splitting &splitting,
                         const Basis &basis, const std::array<int64_t, 3> &grid,
                         const std::array<int64_t, 3> &n, int64_t aliases);
 
-/// The rows of the table of an edge of `count` points for eq. 4.1 with a
+/// The rows of the table of an edge of `count` points for eq. 2.28 with a
 /// separable splitting in a rectangular cell, which do not depend on the
 /// cell: `inverse`[k] = 1 / Σ_j Û²(ν_j) and `weights`[(j + aliases) count
 /// + k] = Û²(ν_j) / Σ_j Û²(ν_j), ν_j = getSigned(k) + j count, for

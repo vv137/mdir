@@ -5558,7 +5558,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // own (D162); it spreads and gathers as the Coulomb sum does.
   std::string kind = op.getDispersion() ? "_dispersion" : "";
   // Influence "P3M" (D[p3m-influence]) takes tables and a product with the
-  // virial of its own; its tables give `scale` eq. 4.1 as they are.
+  // virial of its own; its tables give `scale` eq. 2.28 as they are.
   std::string tabled = op.getP3m() ? "_p3m" : kind;
   func::CallOp::create(builder, loc, instance("mdrt_gpu_pme_tables" + tabled),
                        ValueRange{op.getModuli(), tables, box, beta, coulomb,

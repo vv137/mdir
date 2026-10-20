@@ -3156,7 +3156,7 @@ llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
   table.name = name.str();
   table.columns = longest;
   if (kind == PMEInfluence::P3M) {
-    // Eq. 4.1 of [Ballenegger2012], optimal for the forces of analytic
+    // Eq. 2.28 of [Ballenegger2012], optimal for the forces of analytic
     // differentiation, with the Gaussian in a rectangular cell: a product
     // of factors of the edges over a sum of their mean squares, whose
     // weights over the aliases |j| ≤ P3MAliases of each index do not
