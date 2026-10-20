@@ -1,5 +1,6 @@
 add_mlir_conversion_library(MDIRMDDistToLoops
   MDDistToLoops.cpp
+  PrintSchedule.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Conversion

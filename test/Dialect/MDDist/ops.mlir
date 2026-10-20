@@ -1,5 +1,10 @@
 // The ops of md_dist parse, verify, and print back (D275).
 // RUN: mdir-opt %s | mdir-opt | FileCheck %s
+// RUN: mdir-opt %s --md-dist-print-schedule -o /dev/null 2>&1 | FileCheck %s --check-prefix=SCHEDULE
+
+// SCHEDULE: md_dist schedule @directed G source=%2,%0,%3 halo=%3 reach=2.5 layout=%1 result=%4 start-after=[%0,%2,%3] ready-at-entry=[] complete-before=[%6,%7,%9,%10] first-completion=%6 independent-owned=[%5]
+// SCHEDULE: md_dist schedule @unique G source={{.*}} reach=2.5
+// SCHEDULE: md_dist schedule @unique G^T source=%8#0,%8#1,%4 halo=%4 reach=2.5 layout=%1 result=%9 start-after=[%4,%8#0] ready-at-entry=[] complete-before=[%10] first-completion=%10 independent-owned=[]
 
 !vec = !md.field<@atoms, 3 x f64>
 !own = !md_dist.field<@dd, owned, 3 x f64>
@@ -21,6 +26,11 @@ func.func @directed(%x: !vec, %l: f64) -> (f64, !vec, vector<9xf64>) {
   %h = md_dist.halo %lay, %xo, %cell : !own -> !halo
   // CHECK: md_dist.halo_copy %{{.*}}, %{{.*}} image(%{{.*}})
   %xg = md_dist.halo_copy %xo, %h image(%cell) : !own, !halo -> !gho
+  // An owned-only map can be scheduled while the position copy is in flight.
+  %independent = md_dist.map_particles gather(%xo : !own) {
+  ^bb0(%v: vector<3xf64>):
+    md_dist.yield %v : vector<3xf64>
+  } : !own
   // CHECK: md_dist.neighborhood {{.*}} cutoff(2.000000e+00) : {{.*}} -> !md_dist.relation<@dd, directed>
   %n = md_dist.neighborhood %xo, %xg, %h cutoff(2.0)
          : !own, !gho, !halo -> !md_dist.relation<@dd, directed>

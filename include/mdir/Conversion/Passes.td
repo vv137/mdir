@@ -477,6 +477,19 @@ def GpuModuleToBinary
   ];
 }
 
+def MDDistPrintSchedule
+    : Pass<"md-dist-print-schedule", "::mlir::ModuleOp"> {
+  let summary = "Prove and print semantic halo transfer dependencies";
+  let description = [{
+    Prints the reusable schedule proof of D[ml2-schedule-proof] for every
+    `md_dist.halo_copy` and `md_dist.halo_sum`: exact SSA source versions,
+    halo and ownership epoch, producer prerequisites, result consumers that
+    require completion, and independent owned particle work. Rejects a
+    transfer whose same-block ordering or provenance cannot be proved.
+    This pass makes no runtime transfer asynchronous.
+  }];
+}
+
 def ConvertMDDistToLoops
     : Pass<"convert-md-dist-to-loops", "::mlir::ModuleOp"> {
   let summary = "Runs every domain of md_dist in one process";

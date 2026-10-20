@@ -5,6 +5,11 @@ future reciprocal-sum composition. It introduces no control-file key,
 checkpoint or output format, or overwrite behavior change; the existing
 `[pme]` and `[lj_pme]` entries below remain the user interface.
 
+D[ml2-schedule-proof] adds `mdir-opt --md-dist-print-schedule`, a compiler
+inspection pass over distributed halo dependencies. It adds no control-file
+key and changes no output file or overwrite behavior. Distributed execution
+continues to use the synchronous in-process transport.
+
 M2 Python API preparation (D187) is described in
 [python-m2.md](../python-m2.md). It introduces no control-file keys or
 changes to the checkpoint and output contracts listed here.

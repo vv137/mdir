@@ -24,6 +24,12 @@ format, or the outputs; every such change is listed under **Changed** or
   `grid=gx,gy,gz` remains the explicit choice. The chosen grid is recorded
   in `md_dist.decomposition`. This pass-level option does not add a
   control-file or Python key; the runtime cell does not reselect it.
+- **Inspectable distributed halo schedule proof** (D[ml2-schedule-proof],
+  #483): `mdir-opt --md-dist-print-schedule` reports the SSA source
+  versions, halo/reach, ownership epoch, start prerequisites, completion
+  consumers, and independent owned particle work for each $G$ or
+  $G^\mathsf T$ transfer. Execution remains synchronous. No control-file
+  key, output-file format, or overwrite behavior changes.
 
 - **`[pme] influence = "P3M"`, the influence function optimal for the
   forces** (`D304`, #468 step 1,
