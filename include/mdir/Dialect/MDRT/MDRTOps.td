@@ -85,6 +85,61 @@ def MDRT_ToBufferOp : MDRT_Op<"to_buffer", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MDRT_HaloCopyStartOp : MDRT_Op<"halo_copy_start"> {
+  let summary = "Starts an owner-to-ghost buffer transfer";
+  let description = [{
+    Starts the physical transfer of the existing `md_dist.halo_copy` (G).
+    `source` and `destination` remain live through `mdrt.halo_wait`.
+    `image` is one for a position copy with periodic images, zero otherwise.
+    The event has exactly one same-block wait. The reference lowering calls
+    the synchronous in-process transport at this op.
+  }];
+  let arguments = (ins I64:$halo, AnyMemRef:$source,
+                       AnyMemRef:$destination, I64:$image);
+  let results = (outs MDRT_EventType:$event);
+  let assemblyFormat = [{
+    $halo `,` $source `,` $destination `,` $image attr-dict
+    `:` type($source) `,` type($destination)
+  }];
+  let hasVerifier = 1;
+}
+
+def MDRT_HaloSumStartOp : MDRT_Op<"halo_sum_start"> {
+  let summary = "Starts a ghost-to-owner buffer sum";
+  let description = [{
+    Starts the physical transfer of the existing `md_dist.halo_sum`
+    (G^T). The destination already holds the owned contribution.
+    Its event and buffers have the same completion contract as
+    `mdrt.halo_copy_start`.
+  }];
+  let arguments = (ins I64:$halo, AnyMemRef:$source,
+                       AnyMemRef:$destination);
+  let results = (outs MDRT_EventType:$event);
+  let assemblyFormat = [{
+    $halo `,` $source `,` $destination attr-dict
+    `:` type($source) `,` type($destination)
+  }];
+  let hasVerifier = 1;
+}
+
+def MDRT_HaloWaitOp : MDRT_Op<"halo_wait"> {
+  let summary = "Completes a halo transfer and yields its destination";
+  let description = [{
+    Waits for one halo start event, retaining its exact halo handle and
+    source/destination buffers until completion. The result is the
+    destination as a completed SSA buffer version; consumers of the
+    transferred value use this result.
+  }];
+  let arguments = (ins MDRT_EventType:$event, I64:$halo,
+                       AnyMemRef:$source, AnyMemRef:$destination);
+  let results = (outs AnyMemRef:$result);
+  let assemblyFormat = [{
+    $event `,` $halo `,` $source `,` $destination attr-dict
+    `:` type($source) `,` type($destination) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def MDRT_HostCallOp : MDRT_Op<"host_call", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<SymbolUserOpInterface>,

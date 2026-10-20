@@ -411,9 +411,14 @@ An opt-in lowering of the existing $G$ and $G^\mathsf T$ operations emits
 source and destination buffers and yields `!mdrt.event`. The wait consumes
 the event, those same buffers, and the handle, and yields the completed
 destination buffer as an SSA version. The verifier requires one matching
-wait in the same block, forbids a destination read and buffer or halo
-release before it, and rejects unproved aliases or control flow. A start
-with no semantic consumers is still completed before the function ends.
+wait later in the same block and direct, distinct `memref.alloc` buffers
+of the same three-dimensional f64 type. It forbids access to either buffer
+or the halo handle between start and wait, destination access after start
+except through the completed result, deallocation before completion,
+double deallocation of either allocation, and deallocation through the
+completed alias. It refuses unproved aliases and intervening nested
+control flow. A start with no semantic consumers is still completed
+before the function ends; an empty consumer set alone proves no lifetime.
 
 `halo-events=true` on `--convert-md-dist-to-loops` and
 `--convert-md-dist-to-md-exec` selects this form; it defaults to false.

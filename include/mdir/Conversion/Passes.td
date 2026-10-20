@@ -522,6 +522,11 @@ def ConvertMDDistToLoops
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
                            "::mlir::vector::VectorDialect"];
+  let options = [
+    Option<"haloEvents", "halo-events", "bool", /*default=*/"false",
+           "emit start and immediate wait for each halo transfer; "
+           "lower with --lower-mdrt-halo-events">
+  ];
 }
 
 def ConvertMDDistToMDExec
@@ -559,6 +564,9 @@ def ConvertMDDistToMDExec
            "the number of neighbors that a row of a structure holds at first">,
     Option<"cells", "cells", "int64_t", /*default=*/"3",
            "the number of cells that the reach of a structure spans">,
+    Option<"haloEvents", "halo-events", "bool", /*default=*/"false",
+           "emit start and immediate wait for each halo transfer; "
+           "lower with --lower-mdrt-halo-events">,
     ListOption<"functions", "functions", "std::string",
                "the functions to run; all if empty. The ops of md_dist of "
                "the others, and the decompositions they need, are left to "
@@ -574,6 +582,18 @@ def ConvertMDDistToMDExec
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
                            "::mlir::vector::VectorDialect"];
+}
+
+def LowerMDRTHaloEvents
+    : Pass<"lower-mdrt-halo-events", "::mlir::ModuleOp"> {
+  let summary = "Lowers halo start/wait events to synchronous transport calls";
+  let description = [{
+    The reference strategy of D[ml2-halo-events]. The start calls the
+    existing in-process transport and the wait yields its completed
+    destination buffer. The verifier of the event ops proves the buffer
+    lifetime and completion dependencies before this pass runs.
+  }];
+  let dependentDialects = ["::mlir::func::FuncDialect"];
 }
 
 #endif // MDIR_CONVERSION_PASSES_TD

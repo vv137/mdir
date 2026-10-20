@@ -10,5 +10,6 @@ add_mlir_dialect_library(MDIRMDRT
   LINK_LIBS PUBLIC
   MDIRMD
   MLIRIR
+  MLIRMemRefDialect
   MLIRSideEffectInterfaces
   )

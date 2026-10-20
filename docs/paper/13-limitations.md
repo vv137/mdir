@@ -283,6 +283,16 @@ grid is the baseline strategy. This estimate has no latency, halo reach,
 or uneven particle density in it; it is a compile-time grid choice for
 the same `md_dist.decomposition` op, and a cell change at run time does not
 replan it.
+
+At the storage level, $G$ and $G^\mathsf T$ can yield an event at the
+start of a transfer (D[ml2-halo-events]). A matching wait yields the
+destination buffer's completed SSA version. The source, destination, and
+halo handle must remain live until that wait; direct allocation and
+same-block use restrictions let the verifier check this claim. The
+current reference strategy completes the transfer synchronously at the
+start and places the wait immediately after it. No numerical operation
+or order of summation changes. Independent interior work can later be
+placed between start and wait after its dependencies have been proved.
 Topology across domains follows, with the disjoint union of the
 constraints as the unit of ownership (D83).
 
