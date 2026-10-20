@@ -364,6 +364,29 @@ of each domain and the rows each transfer moves. Both are part of stage 1;
 the static print is the "inspectable schedule" of #31, and the trace is
 what a test checks a schedule against.
 
+### Schedule proof for halo transfers
+
+The schedule proof (D[ml2-schedule-proof]) is an analysis of the existing
+`halo_copy` and `halo_sum` SSA graph. A transfer record retains the exact
+source field values, halo and ownership layout, direction, result value,
+and every result consumer. Its start prerequisite is the producer of each
+source value and of the halo; completion precedes every read of the result.
+The proof also records operations between these points whose operands do
+not depend on that result. Such operations may run during a future
+asynchronous transfer; the proof alone does not move or overlap them.
+An unproved provenance, incompatible ownership epoch, stale ghost copy, or
+unsupported control-flow relation rejects the schedule. Both the print
+pass and future transfer lowerings consume the same proof.
+
+The current IR has no operation that partitions owned centers into an
+interior and a boundary set. A later decision under #481 must add a
+relation partition whose interior rows have no ghost neighbors, along
+with a start operation yielding a completion event and a wait operation
+consuming it before boundary work or a returned owner value. The event
+keeps every source and destination buffer alive until completion. The
+in-process executor remains the synchronous baseline until that lowering
+is implemented; this schedule proof does not claim runtime overlap.
+
 ## 6. The in-process reference executor
 
 The first executor runs all domains in one process
