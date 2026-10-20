@@ -209,3 +209,44 @@ int64_t mdrtFFTColumnBlocks(int64_t planes, int64_t k3) {
    y along x. */
 MDRT_FFT_FUNCTIONS(double, 64)
 MDRT_FFT_FUNCTIONS(float, 32)
+
+/* The execution-level linear transform uses the same line transforms as
+   the PME lowering. Its contiguous buffers expose the transform as one
+   schedulable operation without making spread, influence, or gather part
+   of it (D[pme-primitives]; Reinecke2019). */
+#define MDRT_FFT_3D(T, SUFFIX)                                                \
+  void _mlir_ciface_mdrtFFT##SUFFIX##Forward3D(                               \
+      Buffer##SUFFIX *real, Buffer##SUFFIX *complex, int64_t k1,              \
+      int64_t k2, int64_t k3) {                                               \
+    mdrtFFTPrepare(k1, k2, k3);                                               \
+    for (int64_t x = 0; x < k1; ++x)                                           \
+      _mlir_ciface_mdrtFFT##SUFFIX##RowsForward(                               \
+          real, complex, k3, x * k2, (x + 1) * k2);                           \
+    int64_t ny = mdrtFFTColumnBlocks(k1, k3);                                 \
+    for (int64_t u = 0; u < ny; ++u)                                           \
+      _mlir_ciface_mdrtFFT##SUFFIX##Columns(                                   \
+          complex, k1, k2, k3, 1, 1, u, u + 1);                               \
+    int64_t nx = mdrtFFTColumnBlocks(k2, k3);                                 \
+    for (int64_t u = 0; u < nx; ++u)                                           \
+      _mlir_ciface_mdrtFFT##SUFFIX##Columns(                                   \
+          complex, k1, k2, k3, 0, 1, u, u + 1);                               \
+  }                                                                            \
+  void _mlir_ciface_mdrtFFT##SUFFIX##Backward3D(                              \
+      Buffer##SUFFIX *complex, Buffer##SUFFIX *real, int64_t k1,              \
+      int64_t k2, int64_t k3) {                                               \
+    mdrtFFTPrepare(k1, k2, k3);                                               \
+    int64_t ny = mdrtFFTColumnBlocks(k1, k3);                                 \
+    for (int64_t u = 0; u < ny; ++u)                                           \
+      _mlir_ciface_mdrtFFT##SUFFIX##Columns(                                   \
+          complex, k1, k2, k3, 1, 0, u, u + 1);                               \
+    int64_t nx = mdrtFFTColumnBlocks(k2, k3);                                 \
+    for (int64_t u = 0; u < nx; ++u)                                           \
+      _mlir_ciface_mdrtFFT##SUFFIX##Columns(                                   \
+          complex, k1, k2, k3, 0, 0, u, u + 1);                               \
+    for (int64_t x = 0; x < k1; ++x)                                           \
+      _mlir_ciface_mdrtFFT##SUFFIX##RowsBackward(                              \
+          complex, real, k3, x * k2, (x + 1) * k2);                           \
+  }
+
+MDRT_FFT_3D(double, 64)
+MDRT_FFT_3D(float, 32)

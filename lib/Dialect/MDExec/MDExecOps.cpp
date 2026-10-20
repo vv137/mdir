@@ -371,6 +371,38 @@ LogicalResult PermuteOp::verify() {
   return success();
 }
 
+LogicalResult LinearTransformOp::verify() {
+  if (getKind() != "fft3d")
+    return emitOpError() << "expected a supported transform kind, got '"
+                         << getKind() << "'";
+  if (getDirection() != "forward" && getDirection() != "backward")
+    return emitOpError() << "expected direction 'forward' or 'backward', got '"
+                         << getDirection() << "'";
+  ArrayRef<int64_t> grid = getGrid();
+  if (grid.size() != 3 || llvm::any_of(grid, [](int64_t n) { return n < 2; }))
+    return emitOpError() << "expected three grid dimensions of at least 2";
+  auto input = cast<MemRefType>(getInput().getType());
+  auto out = cast<MemRefType>(getOut().getType());
+  if (input.getRank() != 1 || out.getRank() != 1 ||
+      input.getElementType() != out.getElementType() ||
+      !isReal(input.getElementType()))
+    return emitOpError()
+           << "expected rank-one input and output buffers of the same "
+              "f32 or f64 type";
+  if (getInput() == getOut())
+    return emitOpError() << "the input and output must be distinct buffers";
+  return success();
+}
+
+void LinearTransformOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  addEffect<MemoryEffects::Read>(effects, getInputMutable());
+  if (getDirection() == "backward")
+    addEffect<MemoryEffects::Write>(effects, getInputMutable());
+  addEffect<MemoryEffects::Write>(effects, getOutMutable());
+}
+
 LogicalResult ReciprocalOp::verify() {
   return verifyScatter(*this, getScatterAttr(), ScatterStrategy::Tile,
                        "the template of the spreading has the kernels of "

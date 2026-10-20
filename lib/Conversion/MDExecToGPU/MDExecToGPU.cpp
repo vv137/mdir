@@ -700,6 +700,7 @@ private:
                                     int64_t order, bool listed,
                                     int64_t tiles = 0);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
+  LogicalResult lowerLinearTransform(md_exec::LinearTransformOp op);
 
   ModuleOp module;
   MLIRContext *context;
@@ -5329,6 +5330,32 @@ static LogicalResult lowerProlate(
   return success();
 }
 
+LogicalResult Lowering::lowerLinearTransform(md_exec::LinearTransformOp op) {
+  if (!isDeviceType(op.getInput().getType()) ||
+      !isDeviceType(op.getOut().getType()))
+    return op->emitOpError()
+           << "expected buffers on the device; run 'md-exec-assign-storage' "
+              "with 'memory=device'";
+  OpBuilder builder(op);
+  Location loc = op.getLoc();
+  Type buffer = op.getInput().getType();
+  Type wide = builder.getI64Type();
+  bool narrow = cast<MemRefType>(buffer).getElementType().isF32();
+  std::string name = "mdrtCudaFFT";
+  name += op.getDirection() == "forward" ? "Forward3D" : "Backward3D";
+  if (narrow)
+    name += "F32";
+  auto type = builder.getFunctionType({buffer, buffer, wide, wide, wide}, {});
+  func::FuncOp function = getOrDeclare(name, type);
+  function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  SmallVector<Value> operands{op.getInput(), op.getOut()};
+  for (int64_t n : op.getGrid())
+    operands.push_back(arith::ConstantOp::create(
+        builder, loc, wide, builder.getI64IntegerAttr(n)));
+  func::CallOp::create(builder, loc, function, operands);
+  return success();
+}
+
 LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (!op.isStorageForm() || !isDeviceType(op.getPositions().getType()))
     return op->emitOpError()
@@ -8001,6 +8028,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
     lowerBuildIncidence(build);
   } else if (auto renumber = dyn_cast<md_exec::RenumberOp>(op)) {
     lowerRenumber(renumber);
+  } else if (auto transform = dyn_cast<md_exec::LinearTransformOp>(op)) {
+    if (failed(lowerLinearTransform(transform)))
+      return failure();
   } else if (auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(op)) {
     if (failed(lowerReciprocal(reciprocal)))
       return failure();

@@ -163,6 +163,51 @@ def MDExec_SpatialOrderOp : MDExec_Op<"spatial_order", [
   let hasVerifier = 1;
 }
 
+// A linear transform is a primitive independent of the sums that use it.
+// The first kind is a three-dimensional real FFT. The backward direction
+// is the adjoint of forward under the Hermitian half-spectrum inner product;
+// both transforms are unnormalized (D[pme-primitives]).
+def MDExec_LinearTransformOp : MDExec_Op<"linear_transform", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "A linear transform with a declared adjoint";
+  let description = [{
+    Transforms a real grid of `grid[0] * grid[1] * grid[2]` values to or
+    from a packed Hermitian half-spectrum of
+    `2 * grid[0] * grid[1] * (grid[2] / 2 + 1)` real values. The complex
+    values are interleaved, with the last Fourier axis stored in half.
+    `forward` uses the negative exponent and `backward` the positive
+    exponent; neither divides by the number of grid points. Their
+    declared adjoints are each other under the real-grid inner product
+    and the Hermitian-weighted inner product of the packed grid. The
+    backward transform may overwrite its input, so users retain a copy
+    when its spectrum has another consumer.
+
+    The input and output are explicit buffers. A lowering may schedule
+    this transform after the data it reads and before consumers of its
+    output without synchronizing unrelated work. `fft3d` is the first
+    transform kind; later kinds use the same operation and adjoint rule.
+
+    ```mlir
+    md_exec.linear_transform %real outs(%spectrum : memref<?xf64>)
+      grid([8, 8, 8]) kind("fft3d") direction("forward") : memref<?xf64>
+    ```
+  }];
+  let arguments = (ins
+    MDExec_Buffer:$input,
+    MDExec_Buffer:$out,
+    DenseI64ArrayAttr:$grid,
+    StrAttr:$kind,
+    StrAttr:$direction
+  );
+  let assemblyFormat = [{
+    $input `outs` `(` $out `:` type($out) `)`
+    `grid` `(` $grid `)` `kind` `(` $kind `)`
+    `direction` `(` $direction `)` attr-dict `:` type($input)
+  }];
+  let hasVerifier = 1;
+}
+
 def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     AttrSizedOperandSegments,
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>

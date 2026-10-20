@@ -136,6 +136,7 @@ private:
   LogicalResult addPMETemplates(Type position, Type charge, Type force,
                                 int64_t order, bool potential, bool listed);
   LogicalResult lowerReciprocal(md_exec::ReciprocalOp op);
+  LogicalResult lowerLinearTransform(md_exec::LinearTransformOp op);
   func::FuncOp getOrDeclare(StringRef name, FunctionType type);
   /// The rows of the neighbor matrix `handle`, as they are where `builder`
   /// is.
@@ -617,6 +618,31 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
     op.remove();
     module.push_back(&op);
   }
+  return success();
+}
+
+LogicalResult Lowering::lowerLinearTransform(md_exec::LinearTransformOp op) {
+  OpBuilder builder(op);
+  Location loc = op.getLoc();
+  Type buffer = op.getInput().getType();
+  Type wide = builder.getI64Type();
+  std::string name = "mdrtFFT";
+  name += cast<MemRefType>(buffer).getElementType().isF32() ? "32" : "64";
+  name += op.getDirection() == "forward" ? "Forward3D" : "Backward3D";
+  auto type = builder.getFunctionType({buffer, buffer, wide, wide, wide}, {});
+  func::FuncOp function = module.lookupSymbol<func::FuncOp>(name);
+  if (!function) {
+    OpBuilder::InsertionGuard guard(builder);
+    builder.setInsertionPointToStart(module.getBody());
+    function = func::FuncOp::create(builder, loc, name, type);
+    function.setPrivate();
+    function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+  }
+  SmallVector<Value> operands{op.getInput(), op.getOut()};
+  for (int64_t n : op.getGrid())
+    operands.push_back(arith::ConstantOp::create(
+        builder, loc, wide, builder.getI64IntegerAttr(n)));
+  func::CallOp::create(builder, loc, function, operands);
   return success();
 }
 
@@ -1329,6 +1355,9 @@ LogicalResult Lowering::lowerOp(Operation *op) {
       build.getResult().replaceAllUsesWith(incidence);
       freeAtEndOfBlock(op, incidence);
     }
+  } else if (auto transform = dyn_cast<md_exec::LinearTransformOp>(op)) {
+    if (failed(lowerLinearTransform(transform)))
+      return failure();
   } else if (auto reciprocal = dyn_cast<md_exec::ReciprocalOp>(op)) {
     if (failed(lowerReciprocal(reciprocal)))
       return failure();
