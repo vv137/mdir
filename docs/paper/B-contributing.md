@@ -34,6 +34,12 @@ image, on CUDA's runtime image with libdevice from the toolkit.
 | Scale | `MDIR_BENCH_DIR=<dir> lit test/Scale` | Short runs of the Amber benchmark suite |
 | Host sanitizers | `scripts/build-sanitized.sh <dir>` | All tests with the driver and runtimes under AddressSanitizer and UndefinedBehaviorSanitizer |
 
+Where two GPU allocations are available, the default tier can run as two
+lit shards on independent build trees of one commit (D[suite-shards]). Both
+shards must pass; their disjoint selections together contain every default
+test. This changes elapsed validation time and uses two allocations, not the
+tests or the numerical oracle.
+
 A test that writes outputs puts them under its own `%t` and removes it
 first, `rm -rf %t && mkdir -p %t` on its first line: `mdir` keeps an output
 that exists as a numbered backup and stops after 99 of them, so a test that
