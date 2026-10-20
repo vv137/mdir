@@ -44,6 +44,10 @@ add_llvm_executable(mdir-prolate-test Driver/ProlateTest.cpp)
 llvm_update_compile_flags(mdir-prolate-test)
 target_link_libraries(mdir-prolate-test PRIVATE MDIRDriver MDIRMD)
 
+add_llvm_executable(mdir-influence-test Driver/InfluenceTest.cpp)
+llvm_update_compile_flags(mdir-influence-test)
+target_link_libraries(mdir-influence-test PRIVATE MDIRDriver)
+
 add_llvm_executable(mdir-output-rows-test Driver/OutputRowsTest.cpp)
 llvm_update_compile_flags(mdir-output-rows-test)
 target_link_libraries(mdir-output-rows-test PRIVATE MDIRDriver)
@@ -68,6 +72,7 @@ set(MDIR_TEST_DEPENDS
   mdir-model-test
   mdir-output-rows-test
   mdir-prolate-test
+  mdir-influence-test
   mdir
   mdir-opt
   mdrt

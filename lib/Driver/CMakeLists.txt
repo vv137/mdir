@@ -46,6 +46,7 @@ add_mlir_library(MDIRDriver
   Fingerprint.cpp
   Gromacs.cpp
   H5MD.cpp
+  Influence.cpp
   HDF5.cpp
   Model.cpp
   ModelTerm.cpp
