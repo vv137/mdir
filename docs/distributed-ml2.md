@@ -398,12 +398,31 @@ pass and future transfer lowerings consume the same proof.
 
 The current IR has no operation that partitions owned centers into an
 interior and a boundary set. A later decision under #481 must add a
-relation partition whose interior rows have no ghost neighbors, along
-with a start operation yielding a completion event and a wait operation
-consuming it before boundary work or a returned owner value. The event
-keeps every source and destination buffer alive until completion. The
-in-process executor remains the synchronous baseline until that lowering
-is implemented; this schedule proof does not claim runtime overlap.
+relation partition whose interior rows have no ghost neighbors, then
+schedule the storage-level event below so its wait precedes boundary
+work or a returned owner value. The in-process executor remains the
+synchronous baseline; this schedule proof does not claim runtime overlap.
+
+### Storage-level completion events (D[ml2-halo-events])
+
+An opt-in lowering of the existing $G$ and $G^\mathsf T$ operations emits
+`mdrt.halo_copy_start` or `mdrt.halo_sum_start`, followed by
+`mdrt.halo_wait`. A start takes the halo handle and the exact physical
+source and destination buffers and yields `!mdrt.event`. The wait consumes
+the event, those same buffers, and the handle, and yields the completed
+destination buffer as an SSA version. The verifier requires one matching
+wait in the same block, forbids a destination read and buffer or halo
+release before it, and rejects unproved aliases or control flow. A start
+with no semantic consumers is still completed before the function ends.
+
+`halo-events=true` on `--convert-md-dist-to-loops` and
+`--convert-md-dist-to-md-exec` selects this form; it defaults to false.
+`--lower-mdrt-halo-events` lowers the starts to the current synchronous
+in-process transport calls and replaces each wait result with its
+destination buffer. The two lowerings therefore have the same numerical
+order. These events expose dependencies in the storage IR; they do not
+overlap communication with computation. Interior/boundary row work and
+runtime asynchronous transport remain separate decisions under #481.
 
 ## 6. The in-process reference executor
 
