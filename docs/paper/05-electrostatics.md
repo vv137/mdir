@@ -120,7 +120,7 @@ so that $\lvert b_a\rvert^2\lambda^2 = \hat U^2(k/K)/\big(\sum_j\hat U^2(k/K + j
 to the truncation of its sums at $\lvert j\rvert \le 50$ ($3.2\times10^{-7}$ at order
 4, $4\times10^{-15}$ at order 8).
 
-**The influence function optimal for the forces** (D[p3m-influence]).
+**The influence function optimal for the forces** (D304).
 Analytic differentiation gives the exact gradient of the energy of the grid
 for any influence function $G$, so $G$ may be chosen for the accuracy of
 the forces alone. For two unit charges, the mesh force is a sum over the

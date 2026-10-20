@@ -607,7 +607,7 @@ func.func private @mdrt.pme_wave(%k: index, %count: index, %length: f64) -> f64 
 // then the product of three of them over m².
 //
 // With the rows of influence "P3M" in `moduli` (more than five,
-// D[p3m-influence]), eq. 2.28 of [Ballenegger2012] in its form for the
+// D304), eq. 2.28 of [Ballenegger2012] in its form for the
 // edges (docs/pme-m1.md, Section 1.1): with the weights u_j of the aliases
 // ν_j = n + j K of the point, μ_j = ν_j / L, g_j = exp(−π² μ_j² / β²),
 // the three values are Σ u μ, Σ u μ², and Σ u g / S times the prefactor
@@ -635,7 +635,7 @@ func.func private @mdrt.pme_tables(%moduli: memref<?x?xf64>, %tables: memref<?x!
   %prefactor = arith.divf %coulomb, %piv : f64
   %k12 = arith.addi %k1, %k2 : index
   // Influence "P3M": 2J + 1 rows of weights for each edge after the three
-  // rows of 1 / S (D[p3m-influence]).
+  // rows of 1 / S (D304).
   %c5 = arith.constant 5 : index
   %rows = memref.dim %moduli, %c0 : memref<?x?xf64>
   %p3m = arith.cmpi ugt, %rows, %c5 : index
@@ -909,7 +909,7 @@ func.func private @mdrt.pme_point_sums(%re: !pme_real, %im: !pme_real, %m1: !pme
   return %en, %wn : !pme_real, vector<9x!pme_real>
 }
 
-// As pme_point_sums, for influence "P3M" (D[p3m-influence]): the virial of
+// As pme_point_sums, for influence "P3M" (D304): the virial of
 // the point is the derivative of its energy under a strain of the cell,
 // through every alias in the sums of eq. 2.28 (docs/pme-m1.md, Section 1.1),
 //
@@ -1001,7 +1001,7 @@ func.func private @mdrt.pme_convolve_row(%c: memref<?x!pme_real>, %tables: memre
   %prolate = arith.cmpi eq, %rows, %c5 : index
   %other = arith.ori %dispersion, %prolate : i1
   %separable = arith.xori %other, %true : i1
-  // Influence "P3M" (D[p3m-influence]): the separable product, and the
+  // Influence "P3M" (D304): the separable product, and the
   // virial from the means of the edges after the 3 (k1 + k2 + k3) values.
   %p3m = arith.cmpi ugt, %rows, %c5 : index
   %k12e = arith.addi %k1, %k2 : index

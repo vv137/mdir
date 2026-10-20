@@ -31,7 +31,7 @@ enum class CoulombModifier { None, PotentialShift };
 enum class EnsembleKind { NVE, NVT, NPT };
 /// The `[pme] influence` of the control file: the influence function of
 /// smooth PME, the one that is optimal for the splines of the grid
-/// (D134), or the one optimal for the forces (D[p3m-influence]).
+/// (D134), or the one optimal for the forces (D304).
 enum class PMEInfluence { SPME, Optimal, P3M };
 /// The `[barostat] coupling` of the control file: one strain for the three
 /// axes; x and y together and z by its own (D119); or each axis by its own

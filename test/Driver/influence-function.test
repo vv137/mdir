@@ -1,5 +1,5 @@
 # The influence functions of particle mesh Ewald on the host
-# (lib/Driver/Influence.cpp, D[p3m-influence]) against sums over the aliases
+# (lib/Driver/Influence.cpp, D304) against sums over the aliases
 # written out in the test (test/Driver/InfluenceTest.cpp):
 #
 # - influence "OPTIMAL" is eq. 4.2 of Ballenegger et al. (2012) per edge, to

@@ -44,7 +44,7 @@ enum class PMEKernel { Gaussian, Prolate };
 /// (docs/pme-m1.md, Section 1.1): that of Essmann et al., the separable
 /// one that the aliasing of the B-splines sets (as sander), or the one
 /// optimal for the forces of analytic differentiation, eq. 2.28 of
-/// Ballenegger et al. (2012) (D[p3m-influence]).
+/// Ballenegger et al. (2012) (D304).
 enum class PMEInfluence { SPME, Optimal, P3M };
 
 /// A term of the potential energy over pairs, given by an expression in the
@@ -497,7 +497,7 @@ struct Control {
   /// each edge that the aliasing of the B-splines sets, as sander has it,
   /// or that of Essmann et al. alone, as GROMACS has it
   /// (docs/pme-m1.md, Section 1.1); or the one optimal for the forces
-  /// (D[p3m-influence]).
+  /// (D304).
   PMEInfluence pmeInfluence = PMEInfluence::SPME;
   /// The kernel of the splitting and the spreading (D266): the
   /// Gaussian with B-splines, or the prolate spheroidal wave function of

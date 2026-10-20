@@ -8260,7 +8260,7 @@ func.func private @mdrt_gpu_pme_spread_tiles16(%q: memref<?x!pme_chg, 1>, %place
   return
 }
 
-// Influence "P3M" (D[p3m-influence]): the tables of the edges hold Σ u μ,
+// Influence "P3M" (D304): the tables of the edges hold Σ u μ,
 // Σ u μ², and Σ u g / S over the aliases of each point (see tables_p3m in
 // the script), so that @mdrt_gpu_pme_scale computes eq. 2.28 of
 // [Ballenegger2012] from them unchanged, and after them the means under the
@@ -8562,7 +8562,7 @@ func.func private @mdrt_gpu_pme_convolve_p3m(%c: memref<?x!pme_real, 1>, %tables
         %hw = arith.select %single, %rhalf, %rone : !pme_real
         %hwb = arith.mulf %hw, %bc : !pme_real
         %em = arith.mulf %hwb, %g2 : !pme_real
-        // The virial of influence "P3M" (D[p3m-influence]): the derivative of the
+        // The virial of influence "P3M" (D304): the derivative of the
         // energy of the point under a strain through every alias in the sums of
         // eq. 2.28, E (δ_ab − 2 (π²/β²) A_ab − 2 B_ab / D), with A_ab = ⟨μ_a⟩_g
         // ⟨μ_b⟩_g off the diagonal and ⟨μ_a²⟩_g on it, B likewise of the plain

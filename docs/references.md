@@ -75,7 +75,7 @@ influence functions and error estimates," *J. Chem. Theory Comput.* **8**,
 Used for: influence functions of mesh Ewald other than that of smooth
 particle mesh Ewald: `influence = "OPTIMAL"` is its eq. 4.2, a factor for
 each edge, and `influence = "P3M"` its eq. 2.28, optimal for the forces of
-analytic differentiation (pme-m1.md, Section 1.1; D[p3m-influence]).
+analytic differentiation (pme-m1.md, Section 1.1; D304).
 
 ### Barker1973
 

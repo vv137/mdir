@@ -201,7 +201,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
                    -> f64, vector<9xf64>, !md.field<@atoms, f64>
     ```
 
-    With `p3m` (that of `md.reciprocal`, D[p3m-influence]), the influence
+    With `p3m` (that of `md.reciprocal`, D304), the influence
     function is eq. 2.28 of [Ballenegger2012], from the rows of `moduli`
     that `md.reciprocal` describes; the factors of the edges take five
     values a point instead of three.

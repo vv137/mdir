@@ -1,4 +1,4 @@
-# The run of pme-p3m.test on a GPU (D[p3m-influence]): influence "P3M" in
+# The run of pme-p3m.test on a GPU (D304): influence "P3M" in
 # the kernels of the device, @mdrt_gpu_pme_tables_p3m and
 # @mdrt_gpu_pme_convolve_p3m. In double precision the reciprocal sum is
 # that of the CPU to the digits of the log, and the virial passes the

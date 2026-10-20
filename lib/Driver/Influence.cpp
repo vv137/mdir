@@ -1,6 +1,6 @@
 //===- Influence.cpp - Influence functions of mesh Ewald ------------------===//
 //
-// See Influence.h and docs/pme-m1.md, Section 1.1 (D[p3m-influence]).
+// See Influence.h and docs/pme-m1.md, Section 1.1 (D304).
 //
 //===----------------------------------------------------------------------===//
 

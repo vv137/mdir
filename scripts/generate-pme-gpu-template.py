@@ -26,7 +26,7 @@ TILTED = False
 DISPERSION = False
 
 # Whether the kernels being written are those of influence "P3M"
-# (D[p3m-influence]): eq. 2.28 of [Ballenegger2012] in a rectangular cell,
+# (D304): eq. 2.28 of [Ballenegger2012] in a rectangular cell,
 # whose factors of the edges take five values a point, named with `_p3m`,
 # for tables and convolve; scale is that of the Gaussian.
 P3M = False
@@ -622,7 +622,7 @@ VIRIAL_DISPERSION = """\
 
 
 VIRIAL_P3M = """\
-// The virial of influence "P3M" (D[p3m-influence]): the derivative of the
+// The virial of influence "P3M" (D304): the derivative of the
 // energy of the point under a strain through every alias in the sums of
 // eq. 2.28, E (δ_ab − 2 (π²/β²) A_ab − 2 B_ab / D), with A_ab = ⟨μ_a⟩_g
 // ⟨μ_b⟩_g off the diagonal and ⟨μ_a²⟩_g on it, B likewise of the plain
@@ -942,7 +942,7 @@ TABLE_FACTOR_TRICLINIC = """\
 
 
 def tables_p3m():
-    """The tables of influence "P3M" (D[p3m-influence]): what `tables`
+    """The tables of influence "P3M" (D304): what `tables`
     stores, three values a point of an edge in the layout of the Gaussian
     (Σ u μ, Σ u μ², Σ u g / S, docs/pme-m1.md, Section 1.1), and after them the
     means under the Gaussian. Eight threads a point: thread j < 5 takes the
@@ -2668,7 +2668,7 @@ def dispersion():
 
 def p3m():
     """The tables and the product with the energy and the virial of
-    influence "P3M" (D[p3m-influence]), named with `_p3m`, after all the
+    influence "P3M" (D304), named with `_p3m`, after all the
     others, so that the kernels of a module without it are those of
     before; the product without them is `scale`."""
     global P3M
@@ -2678,7 +2678,7 @@ def p3m():
     text = tables_p3m() + re.sub(r"func\.func private @mdrt_gpu_pme_(\w+)\(",
                                  r"func.func private @mdrt_gpu_pme_\1_p3m(", text)
     text = """
-// Influence "P3M" (D[p3m-influence]): the tables of the edges hold Σ u μ,
+// Influence "P3M" (D304): the tables of the edges hold Σ u μ,
 // Σ u μ², and Σ u g / S over the aliases of each point (see tables_p3m in
 // the script), so that @mdrt_gpu_pme_scale computes eq. 2.28 of
 // [Ballenegger2012] from them unchanged, and after them the means under the

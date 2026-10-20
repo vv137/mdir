@@ -1,4 +1,4 @@
-# Influence "P3M" of PME (D[p3m-influence]) under compute-sanitizer: the
+# Influence "P3M" of PME (D304) under compute-sanitizer: the
 # tables of the edges of eight threads a point with their shuffles
 # (@mdrt_gpu_pme_tables_p3m), which read 18 rows of the table of the op and
 # write five values a point into a scratch of 5 (k1 + k2 + k3) values, and

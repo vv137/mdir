@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - **`[pme] influence = "P3M"`, the influence function optimal for the
-  forces** (`D[p3m-influence]`, #468 step 1,
+  forces** (`D304`, #468 step 1,
   [docs/pme-m1.md](docs/pme-m1.md#11-the-influence-function)): eq. 2.28 of
   Ballenegger, Cerdà, and Holm (2012) for analytic differentiation, with
   the sums over the aliases at $\lvert J_a\rvert \le 2$, from tables of the

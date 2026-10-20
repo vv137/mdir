@@ -1,7 +1,7 @@
 //===- InfluenceTest.cpp - Influence functions against direct alias sums -===//
 //
 // Checks the builder of influence functions (lib/Driver/Influence.cpp,
-// D[p3m-influence]) against sums over the aliases written out here, a
+// D304) against sums over the aliases written out here, a
 // different arrangement of the same series:
 //
 //  1. influence "OPTIMAL" (|b|² λ², getSplineModuli × getAliasFactors) is

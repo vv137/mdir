@@ -967,7 +967,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       allocate(gridType, points), allocate(gridType, 2 * half)};
   // On the host, the factors of the influence function along the edges,
   // three for each point of each edge (D104), five with `p3m`
-  // (D[p3m-influence]), after the transform.
+  // (D304), after the transform.
   if (!onDevice)
     scratch.push_back(allocate(gridType, (op.getP3m() ? 5 : 3) *
                                              (grid[0] + grid[1] + grid[2])));
@@ -990,7 +990,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
                                            /*symbolOperands=*/ValueRange())
                           .getMemref());
     // The factors of the influence function along the edges, three for
-    // each point of each edge (D104), five with `p3m` (D[p3m-influence]).
+    // each point of each edge (D104), five with `p3m` (D304).
     // The prolate kernel keeps its coefficients after them: at most
     // 3 + 2 * 64 + 2 * 8 * 64 (D266).
     Value entries = arith::ConstantIndexOp::create(

@@ -1,4 +1,4 @@
-# Influence "P3M" of particle mesh Ewald on the CPU (D[p3m-influence]): eq.
+# Influence "P3M" of particle mesh Ewald on the CPU (D304): eq.
 # 2.28 of Ballenegger et al. (2012), optimal for the forces of analytic
 # differentiation, on the three OPC waters of pme.test with a grid of
 # 16 x 20 x 24 points of order 4 in the cube of 40 A, so that the three

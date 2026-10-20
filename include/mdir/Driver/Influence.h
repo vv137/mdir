@@ -3,7 +3,7 @@
 // The influence functions (lattice Green functions) of particle mesh Ewald
 // with analytic differentiation (AD), built from a splitting and a window
 // by sums over the aliases of each point of the grid [Ballenegger2012]
-// (docs/pme-m1.md, Section 1.1; D[p3m-influence]).
+// (docs/pme-m1.md, Section 1.1; D304).
 //
 // The notation is that of docs/pme-m1.md: a wave vector is m = H⁻ᵀ ν, with
 // ν = n + J K the signed index n of a point of the grid shifted by J ∈ ℤ³

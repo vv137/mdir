@@ -2838,7 +2838,7 @@ void Builder::collectFreeEnergyConstants() {
 }
 
 /// The aliases |j| ≤ P3MAliases of each index of an edge in the sums of
-/// influence "P3M" (D[p3m-influence]; docs/pme-m1.md, Section 1.1). The
+/// influence "P3M" (D304; docs/pme-m1.md, Section 1.1). The
 /// kernels of a device take it as a constant (tables_p3m of
 /// scripts/generate-pme-gpu-template.py): change both together.
 static constexpr int64_t P3MAliases = 2;
@@ -3162,7 +3162,7 @@ llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
     // differentiation, with the Gaussian in a rectangular cell: a product
     // of factors of the edges over a sum of their mean squares, whose
     // weights over the aliases |j| ≤ P3MAliases of each index do not
-    // depend on the cell (docs/pme-m1.md, Section 1.1; D[p3m-influence]).
+    // depend on the cell (docs/pme-m1.md, Section 1.1; D304).
     // Row a holds 1 / Σ_j Û², row 3 + a (2J + 1) + j + J the weight
     // Û²(n + jK) / Σ_j Û² of alias j of edge a.
     if (isTriclinic())

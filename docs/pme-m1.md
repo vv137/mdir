@@ -63,7 +63,7 @@ e^{-\pi^2m^2/\beta^2}$.
 |---|---|---|
 | `"SPME"`, the default | $BC$ as above [[Essmann1995]](references.md#essmann1995); eq. 3.7 | GROMACS |
 | `"OPTIMAL"` | $BC$ times $\lambda_1(m_1)^2\, \lambda_2(m_2)^2\, \lambda_3(m_3)^2$, with $\lambda(m) = S_n(x) / S_{2n}(x)$, $S_p(x) = \sum_{j=-50}^{50} \big(x / (x + \pi j)\big)^p$, $x = \pi m / K$, and $\lambda(0) = 1$: eq. 4.2, the energy-optimal function of eq. 2.25 without the sum over the aliases of its numerator (below) | sander, by default |
-| `"P3M"` | Eq. 2.28, the function that minimizes the error of the forces of analytic differentiation, with the sums over the aliases $\max_a\lvert J_a\rvert \le 2$ (below; D[p3m-influence]). A rectangular cell only (#475 for a triclinic one) | |
+| `"P3M"` | Eq. 2.28, the function that minimizes the error of the forces of analytic differentiation, with the sums over the aliases $\max_a\lvert J_a\rvert \le 2$ (below; D304). A rectangular cell only (#475 for a triclinic one) | |
 
 **Notation.** A point of the grid has the signed indices $n_a$ ($-K_a/2 <
 n_a \le K_a/2$; for an odd $K_a$, as the last paragraph of this section says), and its
