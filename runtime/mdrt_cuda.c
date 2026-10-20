@@ -186,9 +186,21 @@ static void enter(void) {
   check(cuCtxSetCurrent(context), "cuCtxSetCurrent");
 }
 
+/* What the products of the bodies of neural stages hold on the device
+   (D[ml4-body-gemm], at the end of this file): the copies of the constants
+   that `owner` made (an activation, or null outside one; every owner with
+   `all`), and the handle of cuBLAS. `gone` says that the driver has shut
+   down, and the memory of the device with it. */
+static void releaseDeviceConstants(void *owner, int all, int gone);
+static void releaseBlas(int gone);
+
 void mgpuSetDefaultDevice(int32_t device) {
   defaultDevice = device;
   if (context) {
+    /* The handle and the copies belong to the context that is released. */
+    int gone = cuCtxSetCurrent(context) != CUDA_SUCCESS;
+    releaseDeviceConstants(NULL, 1, gone);
+    releaseBlas(gone);
     CUdevice old;
     check(cuCtxGetDevice(&old), "cuCtxGetDevice");
     check(cuDevicePrimaryCtxRelease(old), "cuDevicePrimaryCtxRelease");
@@ -289,6 +301,15 @@ void mgpuModuleUnload(CUmodule module) {
   if (isPending && sharedStream)
     cuStreamSynchronize(sharedStream);
   isPending = 0;
+  /* The program ends: the copies of its constants made outside an
+     activation go with it, since another program may later put its own
+     constants at the same addresses of the host. A program that is still
+     loaded copies its own again when it next needs them. */
+  {
+    CUresult current = context ? cuCtxSetCurrent(context) : CUDA_SUCCESS;
+    releaseDeviceConstants(NULL, 0,
+                           !context || current != CUDA_SUCCESS);
+  }
   CUresult result = cuModuleUnload(module);
   if (result != CUDA_ERROR_DEINITIALIZED &&
       result != CUDA_ERROR_INVALID_CONTEXT &&
@@ -1361,6 +1382,8 @@ void mdrtDeviceActivationClose(void *activation) {
   }
   for (size_t i = 0; i != a->numManaged && !gone; ++i)
     check(cuMemFree(a->managed[i]), "cuMemFree");
+  /* The copies of the constants of the bodies that the activation made. */
+  releaseDeviceConstants(a, 0, gone);
   for (size_t i = 0; i != a->numHandles; ++i)
     free(a->handles[i]);
   free(a->managed);
@@ -2145,4 +2168,139 @@ void mdrtDeviceTuplesDone(int64_t handle) {
   struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
   if (e->held > 0)
     --e->held;
+}
+
+/*===----------------------------------------------------------------------===
+  Matrix products of the bodies of neural stages (D[ml4-body-gemm])
+  ===----------------------------------------------------------------------===*/
+
+#include <cublas_v2.h>
+
+/* One handle, on the stream of the kernels, in the order of their launches.
+   The default math mode: f32 products are computed in f32, without TF32. */
+static cublasHandle_t blasHandle = NULL;
+
+static int checkBlas(cublasStatus_t status, const char *what) {
+  if (status == CUBLAS_STATUS_SUCCESS)
+    return 1;
+  char message[160];
+  snprintf(message, sizeof message,
+           "%s failed with the cuBLAS status %d; the run has failed", what,
+           (int)status);
+  stopWith(message);
+  return 0;
+}
+
+/* C = A B + beta C in f32, for row-major matrices: C is m x n with rows ldc
+   apart, A is m x k (k x m with transA) with rows lda apart, and B is k x n
+   (n x k with transB) with rows ldb apart; the pointers are the device's.
+   With batch > 1, `batch` such products, the matrices of each the previous
+   ones' moved by strideA, strideB, and strideC elements: cuBLAS's
+   strided-batched GEMM. cuBLAS takes column-major matrices, as which a
+   row-major one is its transpose: C^T = B^T A^T. */
+void mdrtGemmF32(int64_t m, int64_t n, int64_t k, int64_t a, int64_t lda,
+                 int64_t strideA, int32_t transA, int64_t b, int64_t ldb,
+                 int64_t strideB, int32_t transB, int64_t c, int64_t ldc,
+                 int64_t strideC, float beta, int64_t batch) {
+  enter();
+  double start = begin();
+  if (!blasHandle) {
+    if (!checkBlas(cublasCreate(&blasHandle), "cublasCreate"))
+      return;
+    if (!checkBlas(cublasSetMathMode(blasHandle, CUBLAS_DEFAULT_MATH),
+                   "cublasSetMathMode"))
+      return;
+  }
+  if (!checkBlas(cublasSetStream(blasHandle, (cudaStream_t)mgpuStreamCreate()),
+                 "cublasSetStream"))
+    return;
+  float one = 1.0f;
+  cublasOperation_t opA = transA ? CUBLAS_OP_T : CUBLAS_OP_N;
+  cublasOperation_t opB = transB ? CUBLAS_OP_T : CUBLAS_OP_N;
+  if (batch == 1)
+    checkBlas(cublasSgemm(blasHandle, opB, opA, (int)n, (int)m, (int)k, &one,
+                          (const float *)(intptr_t)b, (int)ldb,
+                          (const float *)(intptr_t)a, (int)lda, &beta,
+                          (float *)(intptr_t)c, (int)ldc),
+              "cublasSgemm");
+  else
+    checkBlas(cublasSgemmStridedBatched(
+                  blasHandle, opB, opA, (int)n, (int)m, (int)k, &one,
+                  (const float *)(intptr_t)b, (int)ldb, (long long)strideB,
+                  (const float *)(intptr_t)a, (int)lda, (long long)strideA,
+                  &beta, (float *)(intptr_t)c, (int)ldc, (long long)strideC,
+                  (int)batch),
+              "cublasSgemmStridedBatched");
+  isPending = 1;
+  end(LAUNCH, start);
+}
+
+/* The constants that the products read (the weights of the bodies), copied
+   to the device when first read, and found again by the address and size
+   of their host copy and by their owner: the activation of the embedding
+   program that made the copy (D215), or none outside an activation. An
+   address of the host identifies a constant only while its program is
+   loaded: after the program is released, another one may put its own
+   constants there. So the copies go with their owner: an activation's when
+   it closes, those made outside one when a program unloads its modules
+   (mgpuModuleUnload), and all of them with the context
+   (mgpuSetDefaultDevice). */
+struct DeviceConstant {
+  void *owner;
+  int64_t host, bytes;
+  CUdeviceptr device;
+};
+static struct DeviceConstant *deviceConstants = NULL;
+static int64_t numDeviceConstants = 0, deviceConstantsCapacity = 0;
+
+static void releaseDeviceConstants(void *owner, int all, int gone) {
+  for (int64_t i = numDeviceConstants; i-- != 0;) {
+    if (!all && deviceConstants[i].owner != owner)
+      continue;
+    if (!gone)
+      check(cuMemFree(deviceConstants[i].device), "cuMemFree");
+    deviceConstants[i] = deviceConstants[--numDeviceConstants];
+  }
+}
+
+static void releaseBlas(int gone) {
+  if (blasHandle && !gone)
+    cublasDestroy(blasHandle);
+  blasHandle = NULL;
+}
+
+int64_t mdrtDeviceConstant(int64_t host, int64_t bytes) {
+  enter();
+  void *owner = currentActivation;
+  for (int64_t i = 0; i != numDeviceConstants; ++i)
+    if (deviceConstants[i].owner == owner && deviceConstants[i].host == host &&
+        deviceConstants[i].bytes == bytes)
+      return (int64_t)deviceConstants[i].device;
+  if (numDeviceConstants == deviceConstantsCapacity) {
+    int64_t capacity =
+        deviceConstantsCapacity ? 2 * deviceConstantsCapacity : 64;
+    struct DeviceConstant *grown = realloc(
+        deviceConstants, (size_t)capacity * sizeof(struct DeviceConstant));
+    if (!grown) {
+      stopWith("no memory of the host for the constants of a body's "
+               "products; the run has failed");
+      return 0;
+    }
+    deviceConstants = grown;
+    deviceConstantsCapacity = capacity;
+  }
+  CUdeviceptr device = 0;
+  check(cuMemAlloc(&device, (size_t)bytes), "cuMemAlloc");
+  check(cuMemcpyHtoD(device, (const void *)(intptr_t)host, (size_t)bytes),
+        "cuMemcpyHtoD");
+  /* From pageable memory the copy may still be under way when it returns,
+     and the stream of the kernels does not wait for the null stream: the
+     products that read the constant would race with its copy. */
+  check(cuCtxSynchronize(), "cuCtxSynchronize");
+  struct DeviceConstant *entry = &deviceConstants[numDeviceConstants++];
+  entry->owner = owner;
+  entry->host = host;
+  entry->bytes = bytes;
+  entry->device = device;
+  return (int64_t)device;
 }

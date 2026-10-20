@@ -32,7 +32,10 @@ if(MDIR_CUDA_FOUND)
   message(STATUS "CUDA toolkit: ${CUDAToolkit_TARGET_DIR}")
   add_library(mdrt_cuda SHARED mdrt_cuda.c)
   # The FFT of particle mesh Ewald takes cuFFT of the toolkit.
-  target_link_libraries(mdrt_cuda PRIVATE CUDA::cuda_driver CUDA::cufft)
+  # The products of the bodies of neural stages take cuBLAS
+  # (D[ml4-body-gemm]).
+  target_link_libraries(mdrt_cuda PRIVATE CUDA::cuda_driver CUDA::cufft
+    CUDA::cublas)
   set_target_properties(mdrt_cuda PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/lib
     C_VISIBILITY_PRESET default
@@ -120,6 +123,11 @@ if(MDIR_BUNDLE_LIBRARIES)
     set_target_properties(mdrt_cuda PROPERTIES INSTALL_RPATH "$ORIGIN")
     get_target_property(cufft CUDA::cufft IMPORTED_LOCATION)
     mdir_install_soname("${cufft}")
+    # cuBLAS and the cuBLASLt that it loads (D[ml4-body-gemm]).
+    get_target_property(cublas CUDA::cublas IMPORTED_LOCATION)
+    mdir_install_soname("${cublas}")
+    get_target_property(cublaslt CUDA::cublasLt IMPORTED_LOCATION)
+    mdir_install_soname("${cublaslt}")
     install(FILES "${CUDAToolkit_LIBRARY_ROOT}/nvvm/libdevice/libdevice.10.bc"
       DESTINATION share/mdir/cuda/nvvm/libdevice COMPONENT mdir)
     install(FILES "${CUDAToolkit_LIBRARY_ROOT}/EULA.txt"
@@ -134,9 +142,9 @@ endif()
 # A wheel of the Python package (pyproject.toml, scikit-build-core sets
 # SKBUILD; D228): the component `python` carries the runtime
 # in mdir/lib and libdevice with the CUDA EULA in mdir/cuda, where the
-# extension looks beside itself. cuFFT is not carried: the GPU runtime
-# takes it from NVIDIA's wheel (nvidia-cufft) in the same site-packages,
-# else from the system's search path.
+# extension looks beside itself. cuFFT and cuBLAS are not carried: the GPU
+# runtime takes them from NVIDIA's wheels (nvidia-cufft, nvidia-cublas) in
+# the same site-packages, else from the system's search path.
 if(SKBUILD)
   install(TARGETS mdrt LIBRARY DESTINATION mdir/lib COMPONENT python)
   if(EXISTS "${LLVM_LIBRARY_DIR}/libomp.so")

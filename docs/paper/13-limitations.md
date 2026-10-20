@@ -210,12 +210,18 @@ from AOTInductor or from StableHLO, which lowers through `linalg`. PaiNN
 in stages runs on one GPU (D294,
 D293): its bodies of `linalg` run in tiles of rows, and
 it takes 1.4 to 2.1 kB of device memory a pair of liquid water against the
-opaque call's 61 kB, at about 20 times the opaque call's time, since
-MDIR's lowering of `linalg` does not tile the products, each tile's sum
-over its centers runs a thread for each particle, and the tiles run on a
-device only; the fusion of the bodies' elementwise ops
-(D299) cut their kernels from 933 to 532 and their time
-by 6 to 7%, which is in the products. What is left on one
+opaque call's 61 kB. It took about 20 times the opaque call's time with
+MDIR's first lowering of `linalg`; the fusion of the bodies' elementwise
+ops (D299) cut their kernels from 933 to 532 and their time by 6 to 7%,
+and their products as calls of cuBLAS (D[ml4-body-gemm]) a step at 6,144
+atoms by a third. With each tile's sum taken over the centers that meet
+it (D300), a step at 6,144 atoms takes 1,713 ms with loops for the
+products, 696 with them as calls of cuBLAS, and 488 with the batched
+products as well and the sums of rows as a warp a row
+(D[ml4-body-reductions]), on an RTX 4090. What remains in the bodies is
+the sums over the three components of a vector and elementwise kernels
+whose intermediates XLA's fusions do not write; the tiles run on a device
+only. What is left on one
 GPU is MACE in stages, AOTInductor's bodies against these, a scatter that
 evaluates each product once, and the choice between storing and
 recomputing what a product takes. The distributed work has begun beside it (D275),

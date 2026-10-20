@@ -1,0 +1,28 @@
+# Two models in stages of the same shapes and different weights, compiled
+# and run one after the other in one process through the Python API, each
+# program released before the next (D[ml4-body-gemm], docs/ml4-ir.md,
+# Section 8.3). The products of the bodies read device copies of their
+# weights; those belong to the program that made them, so a later program
+# whose weights land at the same host addresses reads its own. Each energy
+# at the start agrees with the stages composed in JAX for its weights
+# (synthetic PaiNNs of 4 features and 2 layers, seeds 3 and 5; within
+# 2e-3 kcal/mol, as model-stages-gpu.test), and the
+# first model run again after the second gives its first energy.
+#
+# REQUIRES: cuda, stages-export, python-api
+#
+# RUN: rm -rf %t && mkdir -p %t/a %t/b
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py weights --synthetic 4 2 %t/a/w.npz --seed 3
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py weights --synthetic 4 2 %t/b/w.npz --seed 5
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py export %t/a/w.npz %t/a.mlir --rows 64 --stablehlo-opt %stablehlo_opt --workdir %t/a
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py export %t/b/w.npz %t/b.mlir --rows 64 --stablehlo-opt %stablehlo_opt --workdir %t/b
+# RUN: %jax_python %S/../../scripts/mlip/water-box.py %t/a --n 3 --spacing 3.4
+# RUN: %jax_python %S/../../scripts/mlip/water-box.py %t/b --n 3 --spacing 3.4
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py reference %t/a/w.npz %t/a
+# RUN: %jax_python %S/../../scripts/mlip/painn-stages.py reference %t/b/w.npz %t/b
+# RUN: %mdir_python %S/Inputs/model-stages/two-programs.py %t/a %t/a.mlir %t/b.mlir %t/a.mlir > %t/energies.txt
+# RUN: %mdir_python %S/Inputs/model-stages/check-energies.py %t/energies.txt %t/a/reference.npz %t/b/reference.npz | FileCheck %s
+# CHECK: a.mlir ok
+# CHECK: b.mlir ok
+# CHECK: a.mlir ok
+# CHECK: the weights differ: ok

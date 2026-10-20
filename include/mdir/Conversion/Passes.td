@@ -275,6 +275,11 @@ def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
            "Fold unit dimensions and fuse elementwise producers of several "
            "uses into their consumers; false fuses producers of one use only "
            "(D293)">,
+    Option<"contractions", "contractions", "std::string",
+           /*default=*/"\"gemm\"",
+           "The products of the shape of a GEMM in f32, batched or not: "
+           "'gemm', calls of cuBLAS on a device, or 'loops', MDIR's loops "
+           "(D[ml4-body-gemm])">,
   ];
   let dependentDialects = [
     "::mlir::arith::ArithDialect", "::mlir::bufferization::BufferizationDialect",
