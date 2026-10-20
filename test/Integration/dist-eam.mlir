@@ -11,6 +11,18 @@
 // of them empty) runs with the unique traversal, with the directed
 // traversal in the derivative's form, and with the directed traversal
 // after md-dist-owner-computes.
+
+// RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=unique potentials=eam,linear" \
+// RUN:     --md-dist-print-schedule -o /dev/null 2>&1 \
+// RUN: | FileCheck %s --check-prefix=SCHEDULE-ENTRY
+// SCHEDULE-ENTRY: md_dist schedule @eam G source={{.*}} ready-at-entry=[%arg1]
+
+// RUN: mdir-opt %s --md-distribute="grid=2,1,1 traversal=unique potentials=eam,linear" \
+// RUN:     %md_passes --md-dist-print-schedule -o /dev/null 2>&1 \
+// RUN: | FileCheck %s --check-prefix=SCHEDULE
+// SCHEDULE: md_dist schedule @derived G source={{.*}} reach=2 {{.*}} complete-before=[{{.*}}]
+// SCHEDULE: md_dist schedule @derived G^T source={{.*}} reach=2
+// SCHEDULE: md_dist schedule @derived G source={{.*}} reach=2
 //
 // RUN: mdir-opt %s --md-distribute="grid=1,1,1 traversal=unique potentials=eam,linear" \
 // RUN:     %md_passes --md-exec-assign-algebra --convert-md-dist-to-loops \

@@ -14,12 +14,33 @@
 #include "mdir/Dialect/MD/MDEnums.h"
 #include "mdir/Dialect/MD/MDTypes.h"
 #include "mdir/Dialect/MDDist/MDDistTypes.h"
+#include "llvm/ADT/SmallVector.h"
 
 #define GET_OP_CLASSES
 #include "mdir/Dialect/MDDist/MDDistOps.h.inc"
 
 namespace mdir {
 namespace md_dist {
+
+/// A proof of the ordering edges around one semantic halo transfer. The
+/// values and operations belong to the original IR; no storage is assigned
+/// here. A later start/wait lowering can use the same record as the printer.
+struct HaloScheduleRecord {
+  mlir::Operation *transfer;
+  mlir::Value halo, layout, result;
+  llvm::SmallVector<mlir::Value> sources;
+  llvm::SmallVector<mlir::Value> readyAtEntry;
+  llvm::SmallVector<mlir::Operation *> startAfter, completeBefore;
+  mlir::Operation *firstCompletion = nullptr;
+  llvm::SmallVector<mlir::Operation *> independentOwnedWork;
+};
+
+/// Proves a straight-line block's halo copy/sum dependencies, using the
+/// dialect verifiers and SSA provenance. Rejects transfers crossing a block
+/// boundary; later async lowering must not silently schedule such a case.
+mlir::LogicalResult
+proveHaloSchedule(mlir::Block &block,
+                  llvm::SmallVectorImpl<HaloScheduleRecord> &records);
 
 // The provenance of distributed values (docs/distributed-ml2.md, Section
 // 4.8). Ownership, halos, and versions are SSA values; these functions

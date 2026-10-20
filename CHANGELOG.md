@@ -12,6 +12,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **Inspectable distributed halo schedule proof** (D[ml2-schedule-proof],
+  #483): `mdir-opt --md-dist-print-schedule` reports the SSA source
+  versions, halo/reach, ownership epoch, start prerequisites, completion
+  consumers, and independent owned particle work for each $G$ or
+  $G^\mathsf T$ transfer. Execution remains synchronous. No control-file
+  key, output-file format, or overwrite behavior changes.
+
 - **`[pme] influence = "P3M"`, the influence function optimal for the
   forces** (`D304`, #468 step 1,
   [docs/pme-m1.md](docs/pme-m1.md#11-the-influence-function)): eq. 2.28 of

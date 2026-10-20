@@ -492,6 +492,13 @@ one GPU, in `double` and `mixed`. Migration, MPI on CPU ranks, and
 several GPUs follow, then the classical track of #31 (topology, PME,
 ensembles, the Amber suite on several GPUs).
 
+The schedule proof (D[ml2-schedule-proof], #483) records source versions,
+start prerequisites, completion-before-use edges, and owned-only work
+for each $G$ or $G^\mathsf T$ transfer, and prints them with
+`--md-dist-print-schedule`. It does not yet overlap communication with
+computation. The interior/boundary relation split, start/wait events,
+and buffer lifetime are the next part of #481.
+
 A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
 not required to complete that first deliverable, nor is support for all
 three architectures. ML5 can begin with the first validated staged model.

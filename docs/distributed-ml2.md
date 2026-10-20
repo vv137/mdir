@@ -370,7 +370,9 @@ The schedule proof (D[ml2-schedule-proof]) is an analysis of the existing
 `halo_copy` and `halo_sum` SSA graph. A transfer record retains the exact
 source field values, halo and ownership layout, direction, result value,
 and every result consumer. Its start prerequisite is the producer of each
-source value and of the halo; completion precedes every read of the result.
+source value and of the halo, or the block entry for an argument. Completion
+precedes every read of the result; the first such consumer is named
+separately. A source or consumer crossing the block boundary is rejected.
 The proof also records operations between these points whose operands do
 not depend on that result. Such operations may run during a future
 asynchronous transfer; the proof alone does not move or overlap them.

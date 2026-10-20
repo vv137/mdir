@@ -10,6 +10,13 @@
 // directed traversal after md-dist-owner-computes (every pair at both of
 // its owners, nothing returned). The grid of the hand-written program comes
 // from sed and that of md-distribute from its option.
+
+// RUN: sed 's/GRID/2, 1, 1/' %s \
+// RUN: | mdir-opt --md-distribute="grid=2,1,1 traversal=unique potentials=lj" \
+// RUN:     %md_passes --md-dist-print-schedule -o /dev/null 2>&1 \
+// RUN: | FileCheck %s --check-prefix=SCHEDULE
+// SCHEDULE: md_dist schedule @derived G source={{.*}} reach=2
+// SCHEDULE: md_dist schedule @derived G^T source={{.*}} reach=2
 //
 // RUN: sed 's/GRID/1, 1, 1/' %s \
 // RUN: | mdir-opt --md-distribute="grid=1,1,1 traversal=unique potentials=lj" \

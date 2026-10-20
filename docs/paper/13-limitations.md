@@ -254,6 +254,15 @@ $-(\bar\rho_i + \bar\rho_j)f'(r_{ij})\,\mathbf d_{ij}/r_{ij}$, needs $\bar\rho$ 
 both particles, so the derivative copies $\bar\rho$ to the ghosts between
 the pass of the density and that of the forces, and the verifier rejects a
 copy of any other version of it.
+
+The schedule proof (D[ml2-schedule-proof]) records, for each $G$ or
+$G^\mathsf T$, the exact SSA source versions and ownership epoch, the
+operations after which a transfer may start, and every result read that
+must follow completion. Owned-only particle operations between these
+points are candidate work for overlap. The current lowering still runs
+transfers synchronously: the proof orders the semantic operations, while
+events and the lifetime of their physical buffers remain to be lowered.
+
 The loops of each domain then run through the execution level of one
 domain (D290): the rows of its neighbor list are those of its owned
 particles $O_d$ and their entries any of its rows, owned or in $\Gamma_d$;
