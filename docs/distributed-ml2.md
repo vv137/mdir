@@ -382,7 +382,7 @@ what a test checks a schedule against.
 
 ### Schedule proof for halo transfers
 
-The schedule proof (D[ml2-schedule-proof]) is an analysis of the existing
+The schedule proof (D308) is an analysis of the existing
 `halo_copy` and `halo_sum` SSA graph. A transfer record retains the exact
 source field values, halo and ownership layout, direction, result value,
 and every result consumer. Its start prerequisite is the producer of each

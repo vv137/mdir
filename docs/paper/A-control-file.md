@@ -1,11 +1,11 @@
 # Appendix A. The control file
 
-D[pme-primitives] adds the execution-level linear FFT transform used for
+D306 adds the execution-level linear FFT transform used for
 future reciprocal-sum composition. It introduces no control-file key,
 checkpoint or output format, or overwrite behavior change; the existing
 `[pme]` and `[lj_pme]` entries below remain the user interface.
 
-D[ml2-schedule-proof] adds `mdir-opt --md-dist-print-schedule`, a compiler
+D308 adds `mdir-opt --md-dist-print-schedule`, a compiler
 inspection pass over distributed halo dependencies. It adds no control-file
 key and changes no output file or overwrite behavior. Distributed execution
 continues to use the synchronous in-process transport.
@@ -18,7 +18,7 @@ The optional Python lowering interface (D192,
 [contract](../python-compile.md)) uses the same compiler pipeline and adds
 no control keys, format changes or output side effects.
 
-The optional two-shard validation workflow (D[suite-shards]) changes only
+The optional two-shard validation workflow (D309) changes only
 how the test suite is scheduled; it adds no control keys or changes to file
 formats and overwrite behavior.
 
@@ -72,7 +72,7 @@ the output of `mdir template amber` at the commit of this paper.
 
 The research pass `md-distribute` may select a static Cartesian grid from
 `domains=N box=Lx,Ly,Lz` or take `grid=gx,gy,gz` explicitly
-(D[ml2-cartesian-async], #476). These are compiler-pass options and add no
+(D307, #476). These are compiler-pass options and add no
 control-file keyword. A distributed run through the control file remains
 planned (Section 13 of the paper).
 

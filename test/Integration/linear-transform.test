@@ -1,7 +1,7 @@
 # The linear FFT transform's forward and declared adjoint on the host,
 # compared with NumPy's FFT and the weighted half-spectrum inner product.
 # Test an odd and an even last axis in mixed and double precision.
-# D[pme-primitives].
+# D306.
 #
 # RUN: %mdir_python %S/Inputs/linear_transform_oracle.py emit --length 5 --precision double \
 # RUN: | mdir-opt --convert-md-exec-to-loops | mlir-opt %lower_loops_to_llvm \

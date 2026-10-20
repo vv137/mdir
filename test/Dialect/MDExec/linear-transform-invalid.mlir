@@ -1,5 +1,5 @@
 // The declared adjoint, pairing, grid, and static buffer sizes are part of
-// the linear transform's IR contract (D[pme-primitives]).
+// the linear transform's IR contract (D306).
 // RUN: mdir-opt %s -verify-diagnostics
 
 func.func @wrong_adjoint(%x: memref<20xf64>, %y: memref<24xf64>) {

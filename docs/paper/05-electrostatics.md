@@ -124,7 +124,7 @@ and, for even $K_3$, the Nyquist plane obey Hermitian symmetry across the
 first two axes. The inverse of an arbitrary packed complex array is outside
 this contract.
 This derivation underlies the declared `md_exec.linear_transform`
-adjoint (D[pme-primitives], #480). Its current execution-level form does
+adjoint (D306, #480). Its current execution-level form does
 not yet put this chain into the semantic `md` potential; that is #452.
 
 The driver computes the moduli $\lvert b_a\rvert^2$ in f64 from the

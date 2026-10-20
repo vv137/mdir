@@ -35,7 +35,7 @@ image, on CUDA's runtime image with libdevice from the toolkit.
 | Host sanitizers | `scripts/build-sanitized.sh <dir>` | All tests with the driver and runtimes under AddressSanitizer and UndefinedBehaviorSanitizer |
 
 Where two GPU allocations are available, the default tier can run as two
-lit shards on independent build trees of one commit (D[suite-shards]). Both
+lit shards on independent build trees of one commit (D309). Both
 shards must pass; their disjoint selections together contain every default
 test. This changes elapsed validation time and uses two allocations, not the
 tests or the numerical oracle.

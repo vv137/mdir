@@ -1,4 +1,4 @@
-// Inspection of the md_dist halo schedule proof (D[ml2-schedule-proof]).
+// Inspection of the md_dist halo schedule proof (D308).
 
 #include "mdir/Conversion/Passes.h"
 #include "mdir/Dialect/MDDist/MDDistOps.h"

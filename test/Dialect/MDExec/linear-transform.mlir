@@ -1,4 +1,4 @@
-// The execution-level linear transform (D[pme-primitives]) has a direction
+// The execution-level linear transform (D306) has a direction
 // and an adjoint in the same primitive family. Its buffers expose the data
 // dependencies of the transform to later scheduling passes.
 // RUN: mdir-opt %s | FileCheck %s

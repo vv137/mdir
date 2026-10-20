@@ -1,5 +1,5 @@
 // A reusable proof of start and completion edges for semantic halo transfers
-// (D[ml2-schedule-proof], docs/distributed-ml2.md, Section 5).
+// (D308, docs/distributed-ml2.md, Section 5).
 
 #include "mdir/Dialect/MDDist/MDDistOps.h"
 

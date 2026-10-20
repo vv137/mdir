@@ -217,7 +217,7 @@ MDRT_FFT_FUNCTIONS(float, 32)
 /* The execution-level linear transform uses the same line transforms as
    the PME lowering. Its contiguous buffers expose the transform as one
    schedulable operation without making spread, influence, or gather part
-   of it (D[pme-primitives]; Reinecke2019). */
+   of it (D306; Reinecke2019). */
 #define MDRT_FFT_3D(T, SUFFIX)                                                \
   void _mlir_ciface_mdrtFFT##SUFFIX##Forward3D(                               \
       Buffer##SUFFIX *real, Buffer##SUFFIX *complex, int64_t k1,              \

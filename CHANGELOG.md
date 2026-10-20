@@ -13,18 +13,18 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - **A linear FFT transform primitive with an inspectable adjoint**
-  (D[pme-primitives], #480): `md_exec.linear_transform` exposes the grid
+  (D306, #480): `md_exec.linear_transform` exposes the grid
   buffers, direction, opposite adjoint, and Hermitian half-spectrum pairing.
   It lowers through the existing pocketfft and cuFFT implementations.
   Current PME behavior and control-file keys are unchanged; the semantic
   reciprocal composition and its derivative remain #452.
 - **Static Cartesian factor-grid selection for `md-distribute`**
-  (D[ml2-cartesian-async], #476): `domains=N box=Lx,Ly,Lz` chooses the
+  (D307, #476): `domains=N box=Lx,Ly,Lz` chooses the
   positive factor triple minimizing a geometric exchange-area estimate;
   `grid=gx,gy,gz` remains the explicit choice. The chosen grid is recorded
   in `md_dist.decomposition`. This pass-level option does not add a
   control-file or Python key; the runtime cell does not reselect it.
-- **Inspectable distributed halo schedule proof** (D[ml2-schedule-proof],
+- **Inspectable distributed halo schedule proof** (D308,
   #483): `mdir-opt --md-dist-print-schedule` reports the SSA source
   versions, halo/reach, ownership epoch, start prerequisites, completion
   consumers, and independent owned particle work for each $G$ or
@@ -1553,7 +1553,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Fixed
 
 - `model-stages-programs-gpu.test` now pins its independent JAX reference
-  to the CPU backend (`D[ml4-jax-oracle]`, #486). CPU and GPU JAX f32
+  to the CPU backend (`D305`, #486). CPU and GPU JAX f32
   compositions gave different energies for the same fixed synthetic PaiNN,
   making its previous tight bound depend on the backend selected during a
   suite. A 0.013 kJ/mol bound covers the measured f32 body error against a

@@ -174,7 +174,7 @@ parallel (`test/mdir_lit.py`, `-Dgpu_workers=N`), so the suite needs no
 device; a smaller device or a host with fewer cores takes a smaller N.
 
 On a Slurm machine that permits two MDIR GPU jobs at once, one full-suite
-validation may be run as two lit shards (D[suite-shards]). Configure and build
+validation may be run as two lit shards (D309). Configure and build
 two separate trees from the same source commit, then submit each through the
 machine's `suite-run --batch` helper with `--num-shards=2` and respectively
 `--run-shard=1` or `--run-shard=2`. Give both jobs `--skip-test-time-recording`:

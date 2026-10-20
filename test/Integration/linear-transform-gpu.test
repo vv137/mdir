@@ -1,5 +1,5 @@
 # The same linear FFT transform and independent NumPy oracle on a device.
-# The GPU library transform is enqueued on the current stream. D[pme-primitives].
+# The GPU library transform is enqueued on the current stream. D306.
 # REQUIRES: cuda
 #
 # RUN: %mdir_python %S/Inputs/linear_transform_oracle.py emit --length 5 --precision double --backend gpu \

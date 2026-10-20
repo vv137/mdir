@@ -23,7 +23,7 @@ Features of classical MD (Section 5) continue between milestones.
 | Robust differentiation (#15) | Activity analysis shared by positions, cell variables, and parameters (D182); scalar rule interfaces and coverage (D183); CPU f64 central-difference checker and expression fuzzer (D184); singular-point conventions and direct tests (D185); control-file term diagnostic locations (D186). All five parts are implemented for review in separate PRs. The transposes of the structure of the ops of `md` declared through `AdjointOpInterface`, with `--md-check-transposes` (D295, #451) |
 | Principles of development | Done ([principles.md](principles.md)) |
 | Tests under compute-sanitizer; short runs of the Amber suite | Done (`test/Sanitizer`, `test/Scale`) |
-| Full-suite wall time (#485) | Optional two-shard Slurm run from independent build trees (D[suite-shards]); the test set and oracle are unchanged. Continue profiling long Python driver tests. |
+| Full-suite wall time (#485) | Optional two-shard Slurm run from independent build trees (D309); the test set and oracle are unchanged. Continue profiling long Python driver tests. |
 | Kernels named after their op and line | Done |
 | Reports of defects that can be reproduced: `mdir bug-report`, crash reproducers of the passes, versions, a template for issues | Done ([debugging.md](debugging.md)) |
 | The set of each buffer in the type of the storage form; memory planning as a pass of its own | Design first, then implementation |
@@ -434,7 +434,7 @@ long-term distributed scope.
 
 For distributed classical PME, #452 composes spreading, a linear FFT,
 the influence map, the inverse FFT, and gathering from the primitive set.
-D[pme-primitives] (#480) introduces the execution-level transform first:
+D306 (#480) introduces the execution-level transform first:
 the forward and backward unnormalized transforms declare each other as
 adjoints under the weighted Hermitian pairing, with explicit buffer
 dependencies. The semantic `md` transform, its use by `md-differentiate`,
@@ -501,11 +501,11 @@ density copied to the ghosts between the two passes. Its fourth part
 extent and explicit images, on the CPU and, one domain after another, on
 one GPU, in `double` and `mixed`. The static factor-grid selection of
 `md-distribute` takes an orthorhombic compile-time box or an explicit grid
-(D[ml2-cartesian-async], #476). Migration, MPI on CPU ranks, and
+(D307, #476). Migration, MPI on CPU ranks, and
 several GPUs follow, then the classical track of #31 (topology, PME,
 ensembles, the Amber suite on several GPUs).
 
-The schedule proof (D[ml2-schedule-proof], #483) records source versions,
+The schedule proof (D308, #483) records source versions,
 start prerequisites, completion-before-use edges, and owned-only work
 for each $G$ or $G^\mathsf T$ transfer, and prints them with
 `--md-dist-print-schedule`. It does not yet overlap communication with

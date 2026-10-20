@@ -255,7 +255,7 @@ both particles, so the derivative copies $\bar\rho$ to the ghosts between
 the pass of the density and that of the forces, and the verifier rejects a
 copy of any other version of it.
 
-The schedule proof (D[ml2-schedule-proof]) records, for each $G$ or
+The schedule proof (D308) records, for each $G$ or
 $G^\mathsf T$, the exact SSA source versions and ownership epoch, the
 operations after which a transfer may start, and every result read that
 must follow completion. Owned-only particle operations between these
@@ -275,7 +275,7 @@ and the loops are those of one domain on the CPU and, one domain after
 another, on one GPU.
 For an orthorhombic cell, a static choice of the factor grid
 $(g_x,g_y,g_z)$ minimizes an estimate of the area across which halos may
-move (D[ml2-cartesian-async]). A domain's sides have lengths $L_a/g_a$;
+move (D307). A domain's sides have lengths $L_a/g_a$;
 with $D=g_xg_yg_z$ fixed, the sum of its three face areas is
 $V/D\,(g_x/L_x+g_y/L_y+g_z/L_z)$. The pass enumerates the positive factor
 triples of $D$ and takes the least sum, with a fixed tie rule. The explicit

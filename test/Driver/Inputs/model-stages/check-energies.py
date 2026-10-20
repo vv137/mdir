@@ -13,7 +13,7 @@ import numpy as np
 # kJ/mol and from an f64-body composition by 0.010218 kJ/mol. This bound is
 # approximately 1e-5 of that model's 1291.75 kJ/mol energy, as used for
 # the independent batched-stage composition test, while keeping the large
-# first model's comparison equally strict. D[ml4-jax-oracle].
+# first model's comparison equally strict. D305.
 TOLERANCE = 0.013  # kJ/mol
 
 lines = [l.split() for l in open(sys.argv[1]).read().splitlines()]

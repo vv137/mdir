@@ -166,7 +166,7 @@ def MDExec_SpatialOrderOp : MDExec_Op<"spatial_order", [
 // A linear transform is a primitive independent of the sums that use it.
 // The first kind is a three-dimensional real FFT. The backward direction
 // is the adjoint of forward under the Hermitian half-spectrum inner product;
-// both transforms are unnormalized (D[pme-primitives]).
+// both transforms are unnormalized (D306).
 def MDExec_LinearTransformOp : MDExec_Op<"linear_transform", [
     DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
   ]> {

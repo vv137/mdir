@@ -131,7 +131,7 @@ spreading instead of the template, and storing a value for every point of
 every stencil.
 
 The FFT is an independent `md_exec.linear_transform` primitive
-(D[pme-primitives], #480), with `kind("fft3d")`, `direction`, the opposite
+(D306, #480), with `kind("fft3d")`, `direction`, the opposite
 `adjoint`, and `pairing("real_hermitian_half")` visible in the IR. The
 lowering calls cuFFT on the current stream; the host calls the existing
 pocketfft line routines. Neither call waits for the whole step. The op
