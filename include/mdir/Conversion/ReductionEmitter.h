@@ -17,6 +17,7 @@
 #define MDIR_CONVERSION_REDUCTIONEMITTER_H
 
 #include "mlir/IR/Builders.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 
 namespace mdir {
 namespace kernels {
@@ -38,6 +39,15 @@ mlir::Value emitShuffleXor(mlir::OpBuilder &builder, mlir::Location loc,
 /// maximum (numbers of floating point).
 mlir::Value emitCombine(mlir::OpBuilder &builder, mlir::Location loc,
                         Combiner combiner, mlir::Value lhs, mlir::Value rhs);
+
+/// Fold `count` terms into `initial` in their original order in one
+/// thread. The caller supplies the value of each term at a constant index.
+/// This is the register strategy of a short row reduction; it keeps the
+/// addition order fixed and makes no intermediate buffer writes.
+mlir::Value emitOrderedRegisterSum(
+    mlir::OpBuilder &builder, mlir::Location loc, mlir::Value initial,
+    int64_t count,
+    llvm::function_ref<mlir::Value(mlir::OpBuilder &, int64_t)> emitTerm);
 
 /// The combination of `value` over groups of `lanes` adjacent lanes (a
 /// power of two up to 32), in every lane of the group: the butterfly at

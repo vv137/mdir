@@ -36,6 +36,7 @@
 #include "mlir/Dialect/Tensor/IR/Tensor.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/Passes.h"
 #include "llvm/ADT/SetVector.h"
@@ -783,6 +784,11 @@ static std::optional<RowSum> matchRowSum(linalg::GenericOp op,
       return std::nullopt;
   }
   Block *body = op.getBody();
+  // The explicit kernel clones only the term's dependencies. A payload
+  // with an effect or a nested region must retain the loop lowering.
+  for (Operation &inner : body->without_terminator())
+    if (!isMemoryEffectFree(&inner) || inner.getNumRegions() != 0)
+      return std::nullopt;
   BlockArgument acc = op.getMatchingBlockArgument(init);
   auto yield = cast<linalg::YieldOp>(body->getTerminator());
   auto add = yield.getOperand(0).getDefiningOp<arith::AddFOp>();
@@ -817,6 +823,45 @@ static std::optional<RowSum> matchRowSum(linalg::GenericOp op,
     return sum;
   }
   return std::nullopt;
+}
+
+/// The pure operations of a row-sum term, shared by the register and warp
+/// strategies. The matcher has already checked that the accumulator is not
+/// one of their dependencies.
+static llvm::SetVector<Operation *> rowTermOps(RowSum sum, Block *body) {
+  llvm::SetVector<Operation *> needed;
+  SmallVector<Value> pending{sum.term};
+  while (!pending.empty()) {
+    Value value = pending.pop_back_val();
+    Operation *def = value.getDefiningOp();
+    if (!def || def->getBlock() != body || !needed.insert(def))
+      continue;
+    for (Value operand : def->getOperands())
+      pending.push_back(operand);
+  }
+  return needed;
+}
+
+static Value emitRowTerm(OpBuilder &builder, Location loc, linalg::GenericOp op,
+                         RowSum sum, ArrayRef<Value> indices,
+                         const llvm::SetVector<Operation *> &needed) {
+  IRMapping mapping;
+  for (OpOperand *input : op.getDpsInputOperands()) {
+    SmallVector<Value> place;
+    for (unsigned d : *getDims(op.getMatchingIndexingMap(input)))
+      place.push_back(indices[d]);
+    mapping.map(op.getMatchingBlockArgument(input),
+                memref::LoadOp::create(builder, loc, input->get(), place));
+  }
+  for (Operation &inner : op.getBody()->without_terminator()) {
+    if (!needed.contains(&inner))
+      continue;
+    if (auto idx = dyn_cast<linalg::IndexOp>(inner))
+      mapping.map(idx.getResult(), indices[idx.getDim()]);
+    else
+      builder.clone(inner, mapping);
+  }
+  return mapping.lookupOrDefault(sum.term);
 }
 
 /// Replaces each sum of rows of the bufferized body `function` with a kernel
@@ -880,39 +925,11 @@ static void warpRowSums(func::FuncOp function) {
                                     index(then, loc, extents[d]));
     }
     // The ops of the payload that the term needs, in their order.
-    Block *body = op.getBody();
-    llvm::SetVector<Operation *> needed;
-    SmallVector<Value> pending{sum.term};
-    while (!pending.empty()) {
-      Value value = pending.pop_back_val();
-      Operation *def = value.getDefiningOp();
-      if (!def || def->getBlock() != body || !needed.insert(def))
-        continue;
-      def->walk([&](Operation *inner) {
-        for (Value operand : inner->getOperands())
-          pending.push_back(operand);
-      });
-    }
+    llvm::SetVector<Operation *> needed = rowTermOps(sum, op.getBody());
     auto term = [&](OpBuilder &b, Value k) {
       SmallVector<Value> indices(at);
       indices[sum.reduced] = k;
-      IRMapping mapping;
-      for (OpOperand *input : op.getDpsInputOperands()) {
-        SmallVector<Value> place;
-        for (unsigned d : *getDims(op.getMatchingIndexingMap(input)))
-          place.push_back(indices[d]);
-        mapping.map(op.getMatchingBlockArgument(input),
-                    memref::LoadOp::create(b, loc, input->get(), place));
-      }
-      for (Operation &inner : body->without_terminator()) {
-        if (!needed.contains(&inner))
-          continue;
-        if (auto idx = dyn_cast<linalg::IndexOp>(inner))
-          mapping.map(idx.getResult(), indices[idx.getDim()]);
-        else
-          b.clone(inner, mapping);
-      }
-      return mapping.lookupOrDefault(sum.term);
+      return emitRowTerm(b, loc, op, sum, indices, needed);
     };
     // Lane l: the terms l, l + 32, ..., in order (the extent is at least
     // 32, so each lane has one).
@@ -1000,37 +1017,11 @@ static void shortRowSums(func::FuncOp function) {
                                      index(then, loc, extents[d]));
       rest = arith::DivUIOp::create(then, loc, rest, index(then, loc, extents[d]));
     }
-    Block *body = op.getBody();
-    llvm::SetVector<Operation *> needed;
-    SmallVector<Value> pending{sum.term};
-    while (!pending.empty()) {
-      Value value = pending.pop_back_val();
-      Operation *def = value.getDefiningOp();
-      if (!def || def->getBlock() != body || !needed.insert(def))
-        continue;
-      for (Value operand : def->getOperands())
-        pending.push_back(operand);
-    }
-    auto term = [&](int64_t k) {
+    llvm::SetVector<Operation *> needed = rowTermOps(sum, op.getBody());
+    auto term = [&](OpBuilder &b, int64_t k) {
       SmallVector<Value> indices(at);
-      indices[sum.reduced] = index(then, loc, k);
-      IRMapping mapping;
-      for (OpOperand *input : op.getDpsInputOperands()) {
-        SmallVector<Value> place;
-        for (unsigned d : *getDims(op.getMatchingIndexingMap(input)))
-          place.push_back(indices[d]);
-        mapping.map(op.getMatchingBlockArgument(input),
-                    memref::LoadOp::create(then, loc, input->get(), place));
-      }
-      for (Operation &inner : body->without_terminator()) {
-        if (!needed.contains(&inner))
-          continue;
-        if (auto idx = dyn_cast<linalg::IndexOp>(inner))
-          mapping.map(idx.getResult(), indices[idx.getDim()]);
-        else
-          then.clone(inner, mapping);
-      }
-      return mapping.lookupOrDefault(sum.term);
+      indices[sum.reduced] = index(b, loc, k);
+      return emitRowTerm(b, loc, op, sum, indices, needed);
     };
     OpOperand *init = op.getDpsInitOperand(0);
     SmallVector<Value> place;
@@ -1040,8 +1031,7 @@ static void shortRowSums(func::FuncOp function) {
                       ? then.clone(*sum.constant.getDefiningOp())->getResult(0)
                       : memref::LoadOp::create(then, loc, init->get(), place)
                             .getResult();
-    for (int64_t k = 0; k != sum.extent; ++k)
-      value = arith::AddFOp::create(then, loc, value, term(k));
+    value = kernels::emitOrderedRegisterSum(then, loc, value, sum.extent, term);
     memref::StoreOp::create(then, loc, value, init->get(), place);
     gpu::TerminatorOp::create(kernel, loc);
     op.erase();

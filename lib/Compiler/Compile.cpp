@@ -94,10 +94,10 @@ static std::string getStageBodiesPass() {
   std::string options;
   if (chosen == "gemm" || chosen == "loops")
     options = ("contractions=" + chosen).str();
-  if (shortSums == "loops") {
+  if (shortSums == "registers") {
     if (!options.empty())
       options += " ";
-    options += "short-reductions=false";
+    options += "short-reductions=true";
   }
   if (!options.empty())
     return "md-exec-lower-stage-bodies{" + options + "},";

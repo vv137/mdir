@@ -3,7 +3,8 @@
 # scripts/mlip/painn-stages.py exports each stage and its jax.vjp to
 # StableHLO with 8 rows a tile, legalized to linalg by stablehlo-opt; the
 # loops run in tiles on a device, the pairs over the slots of the pairs of
-# images. The energy, the forces, and the virial of 27 waters in a cubic
+# images. This runs the opt-in short register reduction strategy. The energy,
+# the forces, and the virial of 27 waters in a cubic
 # cell of 1.02 nm (81 atoms) against the same stages in JAX composed with
 # the reverse rules of Section 4.1 of the design, in float32 bodies and
 # float64 sums (`painn-stages.py harness`), within 1e-5 of the largest
@@ -20,7 +21,7 @@
 # RUN: cat %t/head.mlir %t/model.mlir %t/harness.mlir > %t/m.mlir
 # RUN: mdir-opt %t/m.mlir %md_passes \
 # RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
-# RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies='short-reductions=true' \
 # RUN:     --convert-md-exec-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
@@ -29,7 +30,7 @@
 # RUN: mdir-opt %t/m.mlir %md_passes \
 # RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 # RUN:     --md-exec-assign-precision="mode=mixed" \
-# RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies='short-reductions=true' \
 # RUN:     --convert-md-exec-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
 # RUN: | mlir-runner -e main --entry-point-result=void \
