@@ -40,6 +40,12 @@ enum class DispersionCorrection { None, EnergyPressure };
 /// the Gaussian with B-splines, or the prolate spheroidal wave function
 /// (D266).
 enum class PMEKernel { Gaussian, Prolate };
+/// The influence function of particle mesh Ewald with the Gaussian
+/// (docs/pme-m1.md, Section 1.1): that of Essmann et al., the separable
+/// one that the aliasing of the B-splines sets (as sander), or the one
+/// optimal for the forces of analytic differentiation, eq. 4.1 of
+/// Ballenegger et al. (2012) (D[p3m-influence]).
+enum class PMEInfluence { SPME, Optimal, P3M };
 
 /// A term of the potential energy over pairs, given by an expression in the
 /// distance `r`.
@@ -490,8 +496,9 @@ struct Control {
   /// The influence function: that of Essmann et al. times a factor for
   /// each edge that the aliasing of the B-splines sets, as sander has it,
   /// or that of Essmann et al. alone, as GROMACS has it
-  /// (docs/pme-m1.md, Section 1.1).
-  bool pmeOptimal = false;
+  /// (docs/pme-m1.md, Section 1.1); or the one optimal for the forces
+  /// (D[p3m-influence]).
+  PMEInfluence pmeInfluence = PMEInfluence::SPME;
   /// The kernel of the splitting and the spreading (D266): the
   /// Gaussian with B-splines, or the prolate spheroidal wave function of
   /// order zero for both, "Ewald summation with prolates" [Liang2026]. For

@@ -2427,8 +2427,11 @@ Error Reader::readPME(const toml::table &table) {
   if (Error error = readPositive(table, "window_bandwidth",
                                  control.pmeWindowBandwidth))
     return error;
-  if (Error error = readChoice<bool>(table, "influence", control.pmeOptimal,
-                                     {{"OPTIMAL", true}, {"SPME", false}}))
+  if (Error error = readChoice<PMEInfluence>(
+          table, "influence", control.pmeInfluence,
+          {{"SPME", PMEInfluence::SPME},
+           {"OPTIMAL", PMEInfluence::Optimal},
+           {"P3M", PMEInfluence::P3M}}))
     return error;
   return Error::success();
 }
@@ -3681,7 +3684,8 @@ coulomb_modifier  = "POTENTIAL_SHIFT"  # NONE, POTENTIAL_SHIFT: the direct
 # grid        = [48, 48, 48]    # the grid, instead
 # order       = 4               # of the B-splines: 4, 6, 8; PROLATE:
                                 # points of the window, 5 to 8 (6)
-# influence   = "SPME"          # SPME, OPTIMAL (as sander; GAUSSIAN)
+# influence   = "SPME"          # SPME, OPTIMAL (as sander), P3M
+                                # (optimal for the forces); GAUSSIAN
 
 # Particle mesh Ewald of the dispersion, with lennard_jones = "PME";
 # every entry has a default.

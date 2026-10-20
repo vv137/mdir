@@ -605,6 +605,16 @@ func.func private @mdrt.pme_wave(%k: index, %count: index, %length: f64) -> f64 
 // `moduli`), along x also times f / (π V); each computed in f64 and
 // rounded once to !pme_real. The Gaussian influence function of a point is
 // then the product of three of them over m².
+//
+// With the rows of influence "P3M" in `moduli` (more than five,
+// D[p3m-influence]), eq. 4.1 of [Ballenegger2012] in its form for the
+// edges (docs/pme-m1.md, Section 1.1): with the weights u_j of the aliases
+// ν_j = n + j K of the point, μ_j = ν_j / L, g_j = exp(−π² μ_j² / β²),
+// the three values are Σ u μ, Σ u μ², and Σ u g / S times the prefactor
+// along x, so that the influence is again the product of the third over
+// the sum of the second; after the 3 (k1 + k2 + k3) values, at
+// 3 (k1 + k2 + k3) + 2 (o_a + k), Σ u g μ / Σ u g and Σ u g μ² / Σ u g,
+// which the virial takes.
 func.func private @mdrt.pme_tables(%moduli: memref<?x?xf64>, %tables: memref<?x!pme_real>,
                                    %box: vector<3xf64>, %beta: f64, %coulomb: f64,
                                    %k1: index, %k2: index, %k3: index) {
@@ -624,6 +634,17 @@ func.func private @mdrt.pme_tables(%moduli: memref<?x?xf64>, %tables: memref<?x!
   %piv = arith.mulf %pi, %volume : f64
   %prefactor = arith.divf %coulomb, %piv : f64
   %k12 = arith.addi %k1, %k2 : index
+  // Influence "P3M": 2J + 1 rows of weights for each edge after the three
+  // rows of 1 / S (D[p3m-influence]).
+  %c5 = arith.constant 5 : index
+  %rows = memref.dim %moduli, %c0 : memref<?x?xf64>
+  %p3m = arith.cmpi ugt, %rows, %c5 : index
+  %rows3 = arith.subi %rows, %c3 : index
+  %span = arith.divui %rows3, %c3 : index
+  %span1 = arith.subi %span, %c1 : index
+  %aliases = arith.divui %span1, %c2 : index
+  %entries0 = arith.addi %k12, %k3 : index
+  %extra = arith.muli %entries0, %c3 : index
   scf.for %axis = %c0 to %c3 step %c1 {
     %on_x = arith.cmpi eq, %axis, %c0 : index
     %on_y = arith.cmpi eq, %axis, %c1 : index
@@ -634,21 +655,78 @@ func.func private @mdrt.pme_tables(%moduli: memref<?x?xf64>, %tables: memref<?x!
     %offset0 = arith.select %on_y, %k1, %k12 : index
     %offset = arith.select %on_x, %c0, %offset0 : index
     scf.for %k = %c0 to %count step %c1 {
+      %point = arith.addi %offset, %k : index
       %m = func.call @mdrt.pme_wave(%k, %count, %length) : (index, index, f64) -> f64
-      %m2 = arith.mulf %m, %m : f64
-      %gm = arith.mulf %gauss, %m2 : f64
-      %ngm = arith.negf %gm : f64
-      %ex = math.exp %ngm : f64
-      %mod = memref.load %moduli[%axis, %k] : memref<?x?xf64>
-      %factor0 = arith.mulf %ex, %mod : f64
+      %v0, %v1, %factor0 = scf.if %p3m -> (f64, f64, f64) {
+        %zero = arith.constant 0.0 : f64
+        %unit = arith.constant 1.0 : f64
+        %n = func.call @mdrt.pme_wave(%k, %count, %unit) : (index, index, f64) -> f64
+        %ci = arith.index_cast %count : index to i64
+        %cf = arith.sitofp %ci : i64 to f64
+        %ai = arith.index_cast %aliases : index to i64
+        %first = arith.muli %axis, %span : index
+        %row0 = arith.addi %first, %c3 : index
+        %sm, %sq, %sg, %sgm, %sgm2 = scf.for %j = %c0 to %span step %c1
+            iter_args(%a0 = %zero, %a1 = %zero, %a2 = %zero, %a3 = %zero, %a4 = %zero)
+            -> (f64, f64, f64, f64, f64) {
+          %ji = arith.index_cast %j : index to i64
+          %js = arith.subi %ji, %ai : i64
+          %jf = arith.sitofp %js : i64 to f64
+          %jk = arith.mulf %jf, %cf : f64
+          %nu = arith.addf %n, %jk : f64
+          %mu = arith.divf %nu, %length : f64
+          %mu2 = arith.mulf %mu, %mu : f64
+          %gmu = arith.mulf %gauss, %mu2 : f64
+          %ngmu = arith.negf %gmu : f64
+          %g = math.exp %ngmu : f64
+          %row = arith.addi %row0, %j : index
+          %u = memref.load %moduli[%row, %k] : memref<?x?xf64>
+          %umu = arith.mulf %u, %mu : f64
+          %umu2 = arith.mulf %u, %mu2 : f64
+          %ug = arith.mulf %u, %g : f64
+          %ugmu = arith.mulf %ug, %mu : f64
+          %ugmu2 = arith.mulf %ug, %mu2 : f64
+          %b0 = arith.addf %a0, %umu : f64
+          %b1 = arith.addf %a1, %umu2 : f64
+          %b2 = arith.addf %a2, %ug : f64
+          %b3 = arith.addf %a3, %ugmu : f64
+          %b4 = arith.addf %a4, %ugmu2 : f64
+          scf.yield %b0, %b1, %b2, %b3, %b4 : f64, f64, f64, f64, f64
+        }
+        %inverse = memref.load %moduli[%axis, %k] : memref<?x?xf64>
+        %f0 = arith.mulf %sg, %inverse : f64
+        // The means under the Gaussian, 0 where it underflows.
+        %some = arith.cmpf ogt, %sg, %zero : f64
+        %sgs = arith.select %some, %sg, %unit : f64
+        %gm0 = arith.divf %sgm, %sgs : f64
+        %gq0 = arith.divf %sgm2, %sgs : f64
+        %gm = arith.select %some, %gm0, %zero : f64
+        %gq = arith.select %some, %gq0, %zero : f64
+        %two = arith.constant 2 : index
+        %at3a = arith.muli %point, %two : index
+        %at3 = arith.addi %extra, %at3a : index
+        %at4 = arith.addi %at3, %c1 : index
+        %gmr = PME_F64_TO_REAL %gm : f64 to !pme_real
+        %gqr = PME_F64_TO_REAL %gq : f64 to !pme_real
+        memref.store %gmr, %tables[%at3] : memref<?x!pme_real>
+        memref.store %gqr, %tables[%at4] : memref<?x!pme_real>
+        scf.yield %sm, %sq, %f0 : f64, f64, f64
+      } else {
+        %m2 = arith.mulf %m, %m : f64
+        %gm = arith.mulf %gauss, %m2 : f64
+        %ngm = arith.negf %gm : f64
+        %ex = math.exp %ngm : f64
+        %mod = memref.load %moduli[%axis, %k] : memref<?x?xf64>
+        %f0 = arith.mulf %ex, %mod : f64
+        scf.yield %m, %m2, %f0 : f64, f64, f64
+      }
       %scaled = arith.mulf %factor0, %prefactor : f64
       %factor = arith.select %on_x, %scaled, %factor0 : f64
-      %point = arith.addi %offset, %k : index
       %at0 = arith.muli %point, %c3 : index
       %at1 = arith.addi %at0, %c1 : index
       %at2 = arith.addi %at0, %c2 : index
-      %mr = PME_F64_TO_REAL %m : f64 to !pme_real
-      %m2r = PME_F64_TO_REAL %m2 : f64 to !pme_real
+      %mr = PME_F64_TO_REAL %v0 : f64 to !pme_real
+      %m2r = PME_F64_TO_REAL %v1 : f64 to !pme_real
       %fr = PME_F64_TO_REAL %factor : f64 to !pme_real
       memref.store %mr, %tables[%at0] : memref<?x!pme_real>
       memref.store %m2r, %tables[%at1] : memref<?x!pme_real>
@@ -831,6 +909,64 @@ func.func private @mdrt.pme_point_sums(%re: !pme_real, %im: !pme_real, %m1: !pme
   return %en, %wn : !pme_real, vector<9x!pme_real>
 }
 
+// As pme_point_sums, for influence "P3M" (D[p3m-influence]): the virial of
+// the point is the derivative of its energy under a strain of the cell,
+// through every alias in the sums of eq. 4.1 (docs/pme-m1.md, Section 1.1),
+//
+//   W_ab = E_m (δ_ab − 2 (π²/β²) A_ab − 2 B_ab / D),
+//
+// with A_ab = ⟨μ_a⟩_g ⟨μ_b⟩_g off the diagonal and ⟨μ_a²⟩_g on it (`ga`,
+// `gs`), B likewise of the plain means (`pa`, `ps`), D = Σ_a ⟨μ_a²⟩, and
+// `inverse` 1 / D.
+func.func private @mdrt.pme_point_sums_p3m(%re: !pme_real, %im: !pme_real,
+                                           %pa: vector<3x!pme_real>, %ps: vector<3x!pme_real>,
+                                           %ga: vector<3x!pme_real>, %gs: vector<3x!pme_real>,
+                                           %bc: !pme_real, %inverse: !pme_real, %gauss: !pme_real,
+                                           %single: i1, %e: !pme_real, %w: vector<9x!pme_real>)
+    -> (!pme_real, vector<9x!pme_real>) {
+  %half = arith.constant 0.5 : !pme_real
+  %one = arith.constant 1.0 : !pme_real
+  %two = arith.constant 2.0 : !pme_real
+  %identity = arith.constant dense<[1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]> : vector<9x!pme_real>
+  %re2 = arith.mulf %re, %re : !pme_real
+  %im2 = arith.mulf %im, %im : !pme_real
+  %g2 = arith.addf %re2, %im2 : !pme_real
+  %hw = arith.select %single, %half, %one : !pme_real
+  %hwb = arith.mulf %hw, %bc : !pme_real
+  %em = arith.mulf %hwb, %g2 : !pme_real
+  // The outer products, with their diagonals replaced by the means of
+  // the squares.
+  %aa = vector.outerproduct %ga, %ga : vector<3x!pme_real>, vector<3x!pme_real>
+  %bb = vector.outerproduct %pa, %pa : vector<3x!pme_real>, vector<3x!pme_real>
+  %gs0 = vector.extract %gs[0] : !pme_real from vector<3x!pme_real>
+  %gs1 = vector.extract %gs[1] : !pme_real from vector<3x!pme_real>
+  %gs2 = vector.extract %gs[2] : !pme_real from vector<3x!pme_real>
+  %ps0 = vector.extract %ps[0] : !pme_real from vector<3x!pme_real>
+  %ps1 = vector.extract %ps[1] : !pme_real from vector<3x!pme_real>
+  %ps2 = vector.extract %ps[2] : !pme_real from vector<3x!pme_real>
+  %aa0 = vector.insert %gs0, %aa[0, 0] : !pme_real into vector<3x3x!pme_real>
+  %aa1 = vector.insert %gs1, %aa0[1, 1] : !pme_real into vector<3x3x!pme_real>
+  %aa2 = vector.insert %gs2, %aa1[2, 2] : !pme_real into vector<3x3x!pme_real>
+  %bb0 = vector.insert %ps0, %bb[0, 0] : !pme_real into vector<3x3x!pme_real>
+  %bb1 = vector.insert %ps1, %bb0[1, 1] : !pme_real into vector<3x3x!pme_real>
+  %bb2 = vector.insert %ps2, %bb1[2, 2] : !pme_real into vector<3x3x!pme_real>
+  %af = vector.shape_cast %aa2 : vector<3x3x!pme_real> to vector<9x!pme_real>
+  %bf = vector.shape_cast %bb2 : vector<3x3x!pme_real> to vector<9x!pme_real>
+  %ca = arith.mulf %two, %gauss : !pme_real
+  %cb = arith.mulf %two, %inverse : !pme_real
+  %cav = vector.broadcast %ca : !pme_real to vector<9x!pme_real>
+  %cbv = vector.broadcast %cb : !pme_real to vector<9x!pme_real>
+  %ta = arith.mulf %cav, %af : vector<9x!pme_real>
+  %tb = arith.mulf %cbv, %bf : vector<9x!pme_real>
+  %t = arith.addf %ta, %tb : vector<9x!pme_real>
+  %diff = arith.subf %identity, %t : vector<9x!pme_real>
+  %eb9 = vector.broadcast %em : !pme_real to vector<9x!pme_real>
+  %wm = arith.mulf %eb9, %diff : vector<9x!pme_real>
+  %wn = arith.addf %w, %wm : vector<9x!pme_real>
+  %en = arith.addf %e, %em : !pme_real
+  return %en, %wn : !pme_real, vector<9x!pme_real>
+}
+
 // Multiplies the row `row` = a k2 + b of the half-complex transform `c` by
 // the influence function, and returns its energy and virial (with `sums`),
 // summed along the row in !pme_real and returned in f64. The Gaussian sum
@@ -865,6 +1001,12 @@ func.func private @mdrt.pme_convolve_row(%c: memref<?x!pme_real>, %tables: memre
   %prolate = arith.cmpi eq, %rows, %c5 : index
   %other = arith.ori %dispersion, %prolate : i1
   %separable = arith.xori %other, %true : i1
+  // Influence "P3M" (D[p3m-influence]): the separable product, and the
+  // virial from the means of the edges after the 3 (k1 + k2 + k3) values.
+  %p3m = arith.cmpi ugt, %rows, %c5 : index
+  %k12e = arith.addi %k1, %k2 : index
+  %entries = arith.addi %k12e, %k3 : index
+  %extra = arith.muli %entries, %c3 : index
   %a = arith.divui %row, %k2 : index
   %b = arith.remui %row, %k2 : index
   %h = arith.divui %k3, %c2 : index
@@ -940,14 +1082,52 @@ func.func private @mdrt.pme_convolve_row(%c: memref<?x!pme_real>, %tables: memre
     %middle = arith.cmpi eq, %z, %h : index
     %middle_even = arith.andi %middle, %even : i1
     %single = arith.ori %first, %middle_even : i1
-    %en, %wn = scf.if %sums -> (!pme_real, vector<9x!pme_real>) {
+    %sums_p3m = arith.andi %sums, %p3m : i1
+    %sums_plain = arith.xori %p3m, %true : i1
+    %sums_other = arith.andi %sums, %sums_plain : i1
+    %en, %wn = scf.if %sums_other -> (!pme_real, vector<9x!pme_real>) {
       %es, %ws = func.call @mdrt.pme_point_sums(%re, %im, %m1, %m2, %m3, %bc, %factor, %vd,
                                                 %single, %e3, %w3)
           : (!pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real, !pme_real,
              !pme_real, i1, !pme_real, vector<9x!pme_real>) -> (!pme_real, vector<9x!pme_real>)
       scf.yield %es, %ws : !pme_real, vector<9x!pme_real>
     } else {
-      scf.yield %e3, %w3 : !pme_real, vector<9x!pme_real>
+      %ep, %wp = scf.if %sums_p3m -> (!pme_real, vector<9x!pme_real>) {
+        %c2p = arith.constant 2 : index
+        %xa = arith.muli %a, %c2p : index
+        %xa0 = arith.addi %extra, %xa : index
+        %xa1 = arith.addi %xa0, %c1 : index
+        %pbx = arith.addi %k1, %b : index
+        %xb = arith.muli %pbx, %c2p : index
+        %xb0 = arith.addi %extra, %xb : index
+        %xb1 = arith.addi %xb0, %c1 : index
+        %xz = arith.muli %pz, %c2p : index
+        %xz0 = arith.addi %extra, %xz : index
+        %xz1 = arith.addi %xz0, %c1 : index
+        %ga1 = memref.load %tables[%xa0] : memref<?x!pme_real>
+        %gs1 = memref.load %tables[%xa1] : memref<?x!pme_real>
+        %ga2 = memref.load %tables[%xb0] : memref<?x!pme_real>
+        %gs2 = memref.load %tables[%xb1] : memref<?x!pme_real>
+        %ga3 = memref.load %tables[%xz0] : memref<?x!pme_real>
+        %gs3 = memref.load %tables[%xz1] : memref<?x!pme_real>
+        %pav = vector.from_elements %m1, %m2, %m3 : vector<3x!pme_real>
+        %psv = vector.from_elements %m1s, %m2s, %m3s : vector<3x!pme_real>
+        %gav = vector.from_elements %ga1, %ga2, %ga3 : vector<3x!pme_real>
+        %gsv = vector.from_elements %gs1, %gs2, %gs3 : vector<3x!pme_real>
+        %msqp = arith.addf %m12s, %m3s : !pme_real
+        %originp = arith.cmpf oeq, %msqp, %rzero : !pme_real
+        %safep = arith.select %originp, %rone, %msqp : !pme_real
+        %inversep = arith.divf %rone, %safep : !pme_real
+        %es, %ws = func.call @mdrt.pme_point_sums_p3m(%re, %im, %pav, %psv, %gav, %gsv, %bc,
+                                                      %inversep, %gaussr, %single, %e3, %w3)
+            : (!pme_real, !pme_real, vector<3x!pme_real>, vector<3x!pme_real>,
+               vector<3x!pme_real>, vector<3x!pme_real>, !pme_real, !pme_real, !pme_real, i1,
+               !pme_real, vector<9x!pme_real>) -> (!pme_real, vector<9x!pme_real>)
+        scf.yield %es, %ws : !pme_real, vector<9x!pme_real>
+      } else {
+        scf.yield %e3, %w3 : !pme_real, vector<9x!pme_real>
+      }
+      scf.yield %ep, %wp : !pme_real, vector<9x!pme_real>
     }
     // The product with the influence function, for the forces.
     %reb = arith.mulf %re, %bc : !pme_real

@@ -271,7 +271,8 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
     return input("expected 5, 6, 7, or 8 points of the window for 'order' with kernel = \"PROLATE\"");
   if (!prolate && s.pmeOrder != 4 && s.pmeOrder != 6 && s.pmeOrder != 8)
     return input("model: expected 4, 6, or 8 for 'order'");
-  if (s.pmeInfluence != PMEInfluence::SPME && s.pmeInfluence != PMEInfluence::Optimal)
+  if (s.pmeInfluence != PMEInfluence::SPME && s.pmeInfluence != PMEInfluence::Optimal &&
+      s.pmeInfluence != PMEInfluence::P3M)
     return unsupported("unsupported influence function of PME");
   if (!positive(s.pmeSpacing) || !std::isfinite(s.pmeAlpha) || s.pmeAlpha < 0 ||
       !positive(s.pmeTolerance) || s.pmeTolerance >= 1)
@@ -324,7 +325,9 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   c.pmeBandwidth = s.pmeBandwidth;
   c.pmeWindowBandwidth = s.pmeWindowBandwidth;
   if (prolate && !s.pmeSpacingGiven) c.pmeMaxSpacing = 0.0;
-  c.pmeOptimal = s.pmeInfluence == PMEInfluence::Optimal;
+  c.pmeInfluence = s.pmeInfluence == PMEInfluence::Optimal ? driver::PMEInfluence::Optimal
+                   : s.pmeInfluence == PMEInfluence::P3M   ? driver::PMEInfluence::P3M
+                                                           : driver::PMEInfluence::SPME;
   c.analyticBonds = s.analyticBonds;
   for (int k = 0; k != 3; ++k) c.pmeGrid[k] = s.pmeGrid[k];
   c.rigidBonds = s.rigidHydrogenBonds;

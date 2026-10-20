@@ -523,7 +523,7 @@ LogicalResult Converter::convert(Operation *op) {
           reciprocal.getBetaAttr(), reciprocal.getCoulombAttr(),
           reciprocal.getDispersionAttr(),
           yieldsPotential ? builder.getUnitAttr() : UnitAttr(),
-          reciprocal.getProlateAttr(),
+          reciprocal.getProlateAttr(), reciprocal.getP3mAttr(),
           yieldsPotential ? UnitAttr() : reciprocal.getGatherAllAttr(),
           // The strategy of the spreading is chosen later, on a device
           // (md-exec-choose-scatter, D285).

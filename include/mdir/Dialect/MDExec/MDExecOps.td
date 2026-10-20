@@ -201,6 +201,11 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
                    -> f64, vector<9xf64>, !md.field<@atoms, f64>
     ```
 
+    With `p3m` (that of `md.reciprocal`, D[p3m-influence]), the influence
+    function is eq. 4.1 of [Ballenegger2012], from the rows of `moduli`
+    that `md.reciprocal` describes; the factors of the edges take five
+    values a point instead of three.
+
     With `listed`, the field of the places of the particles whose charge
     can be nonzero that `md.reciprocal` takes (`md_exec.nonzero`,
     D262), the spreading and the gathering
@@ -242,6 +247,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     UnitAttr:$dispersion,
     UnitAttr:$potential,
     UnitAttr:$prolate,
+    UnitAttr:$p3m,
     UnitAttr:$gather_all,
     OptionalAttr<MDExec_ScatterAttr>:$scatter
   );
@@ -258,6 +264,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     `coulomb` `(` $coulomb `)` (`dispersion` $dispersion^)?
     (`potential` $potential^)?
     (`prolate` $prolate^)?
+    (`p3m` $p3m^)?
     (`listed` `(` $listed^ `:` qualified(type($listed)) `)`)?
     (`gather_all` $gather_all^)?
     custom<Scatter>($scatter)

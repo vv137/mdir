@@ -3,6 +3,7 @@
 #include "mdir/Driver/Builder.h"
 
 #include "mdir/Driver/Expression.h"
+#include "mdir/Driver/Influence.h"
 #include "mdir/Driver/ModelTerm.h"
 #include "mdir/MLIP/Plugin.h"
 #include "mdir/Driver/Profile.h"
@@ -19,6 +20,7 @@
 
 using namespace mdir::driver;
 namespace prolate = mdir::prolate;
+namespace influence = mdir::influence;
 
 /// The cells and the terms of the tables of the splitting of the prolate
 /// kernel (D266): within 1e-14 for kernels in f64
@@ -297,8 +299,8 @@ private:
   /// Å; and the table `name` of the factors of its influence function along
   /// each edge.
   llvm::Error collectMesh(StringRef name, const int64_t (&given)[3],
-                          double spacing, int64_t order, bool optimal,
-                          int64_t (&grid)[3]);
+                          double spacing, int64_t order,
+                          PMEInfluence kind, int64_t (&grid)[3]);
   /// β, the grid, the coefficients, and the self term of particle mesh
   /// Ewald for the dispersion (D162).
   llvm::Error collectLJPME();
@@ -2835,6 +2837,10 @@ void Builder::collectFreeEnergyConstants() {
   }
 }
 
+/// The aliases |j| ≤ P3MAliases of each index of an edge in the sums of
+/// influence "P3M" (D[p3m-influence]; docs/pme-m1.md, Section 1.1).
+static constexpr int64_t P3MAliases = 2;
+
 /// The smallest even number of points, at least `least`, whose prime
 /// factors are 2, 3, 5, and 7, which the FFT handles fast. On an even grid
 /// the influence function of sander agrees with MDIR's (docs/pme-m1.md,
@@ -2850,59 +2856,6 @@ static int64_t getSmoothSize(int64_t least) {
     if (rest == 1)
       return size;
   }
-}
-
-/// |b(m)|² of the Euler exponential spline of order `order` for each index
-/// of a grid of `count` points: 1 / |Σ_{k=0}^{n−2} M_n(k + 1)
-/// exp(2π i m k / K)|² [Essmann1995].
-static std::vector<double> getSplineModuli(int64_t count, int64_t order) {
-  // M_n at 1 .. n − 1, from the recursion M_n(x) = (x M_{n−1}(x) + (n − x)
-  // M_{n−1}(x − 1)) / (n − 1), with M_2(x) = 1 − |x − 1|.
-  std::vector<double> m(order + 1, 0.0), next(order + 1, 0.0);
-  m[1] = 1.0;
-  for (int64_t n = 3; n <= order; ++n) {
-    std::fill(next.begin(), next.end(), 0.0);
-    for (int64_t x = 1; x < n; ++x)
-      next[x] = (x * m[x] + (n - x) * m[x - 1]) / (n - 1);
-    m.swap(next);
-  }
-  std::vector<double> moduli(count);
-  for (int64_t k = 0; k != count; ++k) {
-    double re = 0.0, im = 0.0;
-    for (int64_t j = 0; j <= order - 2; ++j) {
-      double angle = 2.0 * M_PI * k * j / count;
-      re += m[j + 1] * std::cos(angle);
-      im += m[j + 1] * std::sin(angle);
-    }
-    moduli[k] = 1.0 / (re * re + im * im);
-  }
-  return moduli;
-}
-
-/// The square of the factor λ(m) of each index of a grid of `count` points
-/// for B-splines of order `order`: the ratio of the sums over the aliases
-/// of m, S_n(x) / S_2n(x) with S_p(x) = Σ_j (x / (x + π j))^p and
-/// x = π m / K, for m from −K/2 to K/2 (docs/pme-m1.md, Section 1.1). It
-/// scales the influence function so that the energy that the grid gives
-/// comes closer to the Ewald sum.
-static std::vector<double> getAliasFactors(int64_t count, int64_t order) {
-  std::vector<double> factors(count, 1.0);
-  for (int64_t k = 0; k != count; ++k) {
-    int64_t m = k <= count / 2 ? k : k - count;
-    if (m == 0)
-      continue;
-    double x = M_PI * static_cast<double>(m) / static_cast<double>(count);
-    double single = 1.0, twice = 1.0;
-    for (int64_t j = 1; j <= 50; ++j)
-      for (double sign : {1.0, -1.0}) {
-        double s = x / (x + sign * M_PI * j);
-        single += std::pow(s, order);
-        twice += std::pow(s, 2 * order);
-      }
-    double lambda = single / twice;
-    factors[k] = lambda * lambda;
-  }
-  return factors;
 }
 
 llvm::Error Builder::collectPME() {
@@ -2939,9 +2892,10 @@ llvm::Error Builder::collectPME() {
   } else {
     if (llvm::Error error = collectMesh("pme_moduli", control.pmeGrid,
                                         control.pmeMaxSpacing,
-                                        control.pmeOrder, control.pmeOptimal,
+                                        control.pmeOrder, control.pmeInfluence,
                                         grid))
       return error;
+    program.pmeP3M = control.pmeInfluence == PMEInfluence::P3M;
     program.pmeOrder = control.pmeOrder;
     program.pmeSelfFactor = beta / std::sqrt(M_PI);
     program.pmeBackgroundFactor = 1.0 / (2.0 * beta * beta);
@@ -3168,8 +3122,8 @@ void Builder::collectListed(StringRef name, llvm::ArrayRef<double> values,
 }
 
 llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
-                                 double spacing, int64_t order, bool optimal,
-                                 int64_t (&grid)[3]) {
+                                 double spacing, int64_t order,
+                                 PMEInfluence kind, int64_t (&grid)[3]) {
   // The grid: given, or no wider than the largest spacing in the cell of
   // the file of coordinates. The grid stays as the barostat changes the
   // cell, finer as the cell shrinks and coarser as it grows.
@@ -3200,13 +3154,42 @@ llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
   int64_t longest = std::max({grid[0], grid[1], grid[2]});
   Program::Table table;
   table.name = name.str();
-  table.count = 3;
   table.columns = longest;
+  if (kind == PMEInfluence::P3M) {
+    // Eq. 4.1 of [Ballenegger2012], optimal for the forces of analytic
+    // differentiation, with the Gaussian in a rectangular cell: a product
+    // of factors of the edges over a sum of their mean squares, whose
+    // weights over the aliases |j| ≤ P3MAliases of each index do not
+    // depend on the cell (docs/pme-m1.md, Section 1.1; D[p3m-influence]).
+    // Row a holds 1 / Σ_j Û², row 3 + a (2J + 1) + j + J the weight
+    // Û²(n + jK) / Σ_j Û² of alias j of edge a.
+    if (isTriclinic())
+      return llvm::createStringError(
+          llvm::inconvertibleErrorCode(),
+          "influence = \"P3M\" takes a rectangular cell");
+    int64_t span = 2 * P3MAliases + 1;
+    table.count = 3 + 3 * span;
+    table.values.assign(table.count * longest, 0.0);
+    influence::Window window = influence::getBSpline(order);
+    for (int k = 0; k != 3; ++k) {
+      influence::EdgeWeights rows =
+          influence::getEdgeWeights(window, grid[k], P3MAliases);
+      std::copy(rows.inverse.begin(), rows.inverse.end(),
+                table.values.begin() + k * longest);
+      for (int64_t j = 0; j != span; ++j)
+        std::copy(rows.weights.begin() + j * grid[k],
+                  rows.weights.begin() + (j + 1) * grid[k],
+                  table.values.begin() + (3 + k * span + j) * longest);
+    }
+    program.tables.push_back(std::move(table));
+    return llvm::Error::success();
+  }
+  table.count = 3;
   table.values.assign(3 * longest, 0.0);
   for (int k = 0; k != 3; ++k) {
-    std::vector<double> moduli = getSplineModuli(grid[k], order);
-    if (optimal) {
-      std::vector<double> factors = getAliasFactors(grid[k], order);
+    std::vector<double> moduli = influence::getSplineModuli(grid[k], order);
+    if (kind == PMEInfluence::Optimal) {
+      std::vector<double> factors = influence::getAliasFactors(grid[k], order);
       for (int64_t i = 0; i != grid[k]; ++i)
         moduli[i] *= factors[i];
     }
@@ -3250,7 +3233,7 @@ llvm::Error Builder::collectLJPME() {
   if (llvm::Error error =
           collectMesh("ljpme_moduli", control.ljpmeGrid,
                       control.ljpmeMaxSpacing, control.ljpmeOrder,
-                      /*optimal=*/false, grid))
+                      PMEInfluence::SPME, grid))
     return error;
 
   // The coefficient of each type, c = 2 √ε σ³ of the type with itself, so
@@ -5377,6 +5360,7 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << ") beta(" << formatReal(program.pmeBeta) << ") coulomb("
        << formatReal(coulombInternal) << ")"
        << (program.pmeProlate ? " prolate" : "")
+       << (program.pmeP3M ? " p3m" : "")
        << (listed && gathersAll("pme_listed") ? " gather_all" : "") << "\n"
        << "      : !vec, !real, !grid" << (listed ? ", !ids" : "")
        << " -> f64, !vec, vector<9xf64>\n";
