@@ -458,6 +458,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     `1 / S_a(k)` with `S_a(k) = Σ_j Û²(ν_j)`, and row `3 + a (2J + 1) + j
     + J` the weight `u_j = Û²(ν_j) / S_a(k)` of the alias `ν_j = n + j
     K_a` of index `k` (signed `n`), `|j| ≤ J`, `Û(t) = (sin πt / πt)ⁿ`.
+    J is 2: 18 rows, which the kernels of a device take as a constant.
     With `μ_j = ν_j / L_a` and `g_j = exp(−π² μ_j² / β²)`:
 
     ```text

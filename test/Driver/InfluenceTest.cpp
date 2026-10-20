@@ -131,10 +131,17 @@ int main() {
     std::array<int64_t, 3> grid = {c.kx, c.ky, c.kz};
     double lengths[3] = {c.lx, c.ly, c.lz};
     EdgeWeights rows[3];
-    for (int a = 0; a != 3; ++a)
+    std::vector<double> optimal[3];
+    for (int a = 0; a != 3; ++a) {
       rows[a] = getEdgeWeights(window, grid[a], aliases);
+      optimal[a] = getSplineModuli(grid[a], c.order);
+      std::vector<double> factors = getAliasFactors(grid[a], c.order);
+      for (int64_t k = 0; k != grid[a]; ++k)
+        optimal[a][k] *= factors[k];
+    }
     double worstValue = 0.0, worstSums = 0.0, worstVirial = 0.0,
-           worstTruncation = 0.0, worstNumerator = 0.0, largest = 0.0;
+           worstTruncation = 0.0, worstNumerator = 0.0, worstOptimal = 0.0,
+           largest = 0.0;
     // Every point of a grid of the coarse cases, a lattice of points of
     // the others, the half-complex part (k3 ≤ K3 / 2), m = 0 left out.
     for (int64_t k0 = 0; k0 < grid[0]; k0 += grid[0] > 32 ? 9 : 2)
@@ -169,6 +176,17 @@ int main() {
                          rows[a].inverse[ks[a]];
           }
           double eq41 = numerator / squares;
+          // Eq. 4.2 of the builder, with its sums at |j| <= 50, against
+          // the influence function of "OPTIMAL" at the point.
+          double eq42 = getEnergyOptimal(window, gaussian, basis, grid, n, 50);
+          double msq = 0.0;
+          for (int a = 0; a != 3; ++a) {
+            double mu = double(n[a]) / lengths[a];
+            msq += mu * mu;
+          }
+          double table = optimal[0][ks[0]] * optimal[1][ks[1]] *
+                         optimal[2][ks[2]] * gaussian.weighted(msq) / msq;
+          worstOptimal = std::max(worstOptimal, std::fabs(table / eq42 - 1.0));
           // Relative where the value matters: against the largest value of
           // the function on the grid, 2e-16 per operation, and relative
           // to the value itself beyond 1e-12 of the largest.
@@ -255,6 +273,12 @@ int main() {
                   (long long)c.kx, (long long)c.ky, (long long)c.kz,
                   (long long)c.order);
     std::printf("%s: %.1e (reported)\n", what, worstNumerator);
+    std::snprintf(what, sizeof what,
+                  "%lldx%lldx%lld order %lld: max |OPTIMAL / eq. 4.2 - 1| in "
+                  "3D, |j| <= 50",
+                  (long long)c.kx, (long long)c.ky, (long long)c.kz,
+                  (long long)c.order);
+    report(what, worstOptimal, c.order == 4 ? 2e-6 : 1e-9);
   }
   std::printf("%d failures\n", failures);
   return failures != 0;

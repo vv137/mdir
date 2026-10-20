@@ -92,14 +92,18 @@ $\hat U^2(\boldsymbol\nu) = \prod_a\hat U^2(\nu_a/K_a)$.
   `OPTIMAL` is eq. 4.2 with sums to $\lvert j\rvert\le 50$ to $3.2\times10^{-7}$
   at order 4 (the tail of $S_4$, whose terms fall as $j^{-4}$), $1.9\times10^{-11}$
   at order 6, and $4.1\times10^{-15}$ at order 8, against eq. 4.2 with
-  sums to $\lvert j\rvert \le 2$ to $3.3\times10^{-6}$ at order 4. (ii) $\lambda(0) = 1$,
+  sums to $\lvert j\rvert \le 2$ to $3.3\times10^{-6}$ at order 4; in three
+  dimensions, with the Gaussian, the builder's eq. 4.2 (sums to
+  $\lvert j\rvert \le 50$) is `OPTIMAL` to $9.4\times10^{-7}$ at order 4 and
+  $10^{-14}$ at order 8. (ii) $\lambda(0) = 1$,
   where the factor is 1 exactly. (iii) The numbering of odd grids below.
 - The closed forms of eq. 2.26 are exact sums, which MDIR does not use.
   As printed, the form for $P = 4$, $1 - 4z^2/3 + 2z^4/5 + 4z^6/315$, is
   not the sum: at $z = 1$ it gives 0.079365, the direct sum
   $\sum_j(\sin x_j/x_j)^8$ gives 0.053968, and $-4z^6/315$ gives it to
   $10^{-15}$ (also at $z^2 = \sin^2 0.3\pi$ and $\sin^2 0.1\pi$); the forms
-  for $P = 2$, 3, and 5 agree as printed.
+  for $P = 2$, 3, and 5 agree with the direct sums as printed, to
+  $3\times10^{-15}$ at four values of $z$ (measured here).
 
 **`"P3M"`, eq. 2.28.** For unit charges at $\mathbf x_1$ and $\mathbf x_2 = \mathbf x_1 - \mathbf r$,
 the mesh force of analytic differentiation (eq. 2.19) is a sum over
@@ -194,16 +198,17 @@ evaluation: a barostat changes nothing else. `p3m` is an attribute of the
 op, so a program with `"P3M"` is another module for the compile cache; the
 cell is not in the module.
 
-**Validation of the sum.** An independent NumPy program
-(spreading, FFT, product, gathering written from Section 1, eq. 2.28 by the
-direct sum over $\mathbf J \in \mathbb Z^3$) gives the reciprocal energy of JAC
+**Validation of the sum.** An independent NumPy program,
+`scripts/validation/p3m/mesh_numpy.py` (spreading, FFT, product, gathering
+written from Section 1, eq. 2.28 by the direct sum over $\mathbf J \in
+\mathbb Z^3$), gives the reciprocal energy of JAC
 with 32³ and 64³ points of order 4 of MDIR on the CPU in double, for each
 of the three functions, to $3.4\times10^{-10}$ of it (the Coulomb constant's
 digits); a GPU in double gives $\Delta$ of the CPU to $10^{-10}$ of it.
 
 **$\Delta$** (relative rms force error over the Coulomb forces of the
-topology, Section 7) against the reference of
-`scripts/benchmarks/prolate-ewald/grid_sweep.py` (the Gaussian at
+topology, Section 7; the cases of `scripts/validation/p3m/sweep.py`)
+against the reference of `scripts/benchmarks/prolate-ewald/grid_sweep.py` (the Gaussian at
 $\mathrm{erfc}(\beta r_c) = 10^{-13}$, 0.33 Å, order 8), at $\beta$ =
 0.39467 Å⁻¹ and $r_c$ = 8 Å (the suite's, D134), CPU in double; the
 reference reproduces the earlier $\Delta$ of `"OPTIMAL"` at the suite's
@@ -222,12 +227,12 @@ grids to $10^{-14}$:
 | Cellulose, 140 × 64 × 64, 4 | 1.85, 1.95, 1.93 | 1.166e-2 | 1.211e-2 | 1.198e-2 | 0.989 | 1.028 |
 | Cellulose, 140 × 64 × 64, 6 | 1.85, 1.95, 1.93 | 4.742e-3 | 4.641e-3 | 4.576e-3 | 0.986 | 0.965 |
 
-A GPU in mixed precision adds about $7\times10^{-6}$ at JAC's 64³ points and
-$5\times10^{-5}$ at Cellulose's, and leaves the ratios within $3\times10^{-3}$
+The CPU and a GPU in mixed precision (both measured) add about $7\times10^{-6}$ at JAC's 64³ points and
+$5\times10^{-5}$ at Cellulose's, and leave the ratios within $3\times10^{-3}$
 of these (within $4\times10^{-4}$ but at Cellulose's 256 × 128 × 128 points). The gain over `"OPTIMAL"` grows on coarse grids, as the article
 reports, but is at most 2%. The ordering against `"SPME"` on coarse
 grids of order 4 is the opposite of that of uncorrelated charges: in
-the NumPy program, 300 charges ±1 at random in a cube of 20 Å, or 150
+`mesh_numpy.py random`, 300 charges ±1 at random in a cube of 20 Å, or 150
 dipoles of ±0.8 e at 1 Å, 4 configurations each, $\beta$ = 0.4 Å⁻¹, order
 4, the reciprocal $\Delta$ of `"P3M"` is below that of `"SPME"` by 8 to 21% at
 spacings of 1.25 to 2 Å, as the derivation says. Why the measured order
