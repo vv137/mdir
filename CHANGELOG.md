@@ -725,6 +725,13 @@ format, or the outputs; every such change is listed under **Changed** or
   atoms) now runs in 22,789 MiB. The deterministic mode gives the same
   bits as before, and the Amber suite's rates are unchanged. No
   control-file key or output change.
+- **Opt-in register strategy for short reductions in neural stage bodies**
+  (`D[ml4-short-reductions]`, #477, part of #462): sums of 2 to 31 terms
+  can use one thread per output and write the accumulator once with
+  `MDIR_STAGE_SHORT_REDUCTIONS=registers`. The loop lowering remains the
+  default. The reduction
+  semantics, control file, model artifact, and CPU lowering are unchanged;
+  the long sums still use D303's warp strategy.
 
 - **The design documents are named by topic** (#390): `docs/ops.md`,
   `runtime.md`, `driver.md`, `neighbors.md`, `neighbor-groups.md`,

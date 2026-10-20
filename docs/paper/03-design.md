@@ -396,6 +396,14 @@ force and takes 1.4 to 2.1 kB of device memory a pair of liquid water from
 about 20 times the opaque call's time with MDIR's naive lowering of
 `linalg` ([ml4-ir.md](../ml4-ir.md), Section 8).
 
+The body then chooses a strategy for each reduction of its tensor
+components (D[ml4-short-reductions]): for a sum of 2 to 31 terms, an
+opt-in strategy uses one thread to add them in source order, keeps the
+partial sum in a register, and writes only the final value; for a contiguous sum of at least 32
+terms, a warp combines them by D303's fixed butterfly. The former loop
+lowering remains the default. Both implement the same
+reduction; neither changes the stage's function or its adjoint.
+
 **Parameters.** `derivative(n)` asks $\partial U/\partial\theta_n$ of a
 scalar argument $\theta_n$ of the potential (D2), such as a component of
 $\boldsymbol\lambda$ of `[free_energy]` (Section 6.8, D161). The

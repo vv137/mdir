@@ -477,3 +477,10 @@ object lengths and energies use nm and kJ/mol, whereas this reference keeps
 Å and kcal/mol. Both input paths share topology validation, constraint
 preparation and semantic IR construction. CHARMM loading retains its explicit
 cell and symmetric-frame rotation. No Python bindings are provided yet.
+
+For `[[energy.model]]` with `backend = "STAGES"`, short sums inside
+the model's exported bodies can use a register-held accumulator on a GPU
+(D[ml4-short-reductions]); the body remains the same MLIR artifact named
+by `path`. No key of this control file selects that opt-in lowering. The
+strategy switch is `MDIR_STAGE_SHORT_REDUCTIONS`, documented in
+[environment.md](../environment.md).

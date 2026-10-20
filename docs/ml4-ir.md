@@ -951,11 +951,40 @@ there is a question of fusion, not of products.
   batched products as strided-batched calls of cuBLAS and the sums of rows
   as a warp a row through D301's butterfly (`D303`, the
   maintainer's ruling on #472, Section 8.3). AOTInductor's bodies stay a
-  baseline: its package does not export the VJP. Open: the sums over the
-  three components and the elementwise kernels of `node.b` (Section 8.6).
+  baseline: its package does not export the VJP. The sums over the three
+  components can opt into D[ml4-short-reductions] (Section 8.9); the
+  elementwise kernels of `node.b` remain open (Section 8.6).
 - Store against recompute; the two-ended scatter (one product per pair).
 - Rows compacted to the pairs within the cutoff; the fields in f64 in
   `mixed`.
 - `rows_per_tile` from the control file and Python, with bodies of a
   dynamic number of rows.
 - The RTX PRO 6000; a CPU lowering of the tiles.
+
+### 8.9 Short reductions of a stage body (D[ml4-short-reductions])
+
+The sums over the three vector components in PaiNN's `node.b` are the
+same reduction primitive as D303's sums over 32 or more components. One
+`RowSum` matcher accepts a bufferized `linalg.generic` with one reduced
+loop and a term independent of the accumulator. It rejects a payload with
+side effects or nested regions. A sum of 2 to 31 terms uses one thread per
+output, combining the terms in their source order through
+`emitOrderedRegisterSum`; the accumulator stays in a register until the
+single store. A longer sum whose inputs are contiguous along the reduced
+dimension uses D303's warp strategy. Other reductions retain the loop
+lowering. The two strategies share the term emitter and the reduction
+operator of `ReductionEmitter.h`; the body pass chooses the strategy.
+
+The loop strategy remains the default. The opt-in pass option
+`md-exec-lower-stage-bodies{short-reductions=true}` or environment value
+`MDIR_STAGE_SHORT_REDUCTIONS=registers` selects the register strategy.
+No control-file key, Python API, or exported body changes.
+
+On one RTX 4090 at 4,096 rows, `node.b` took 0.308144 ms with registers
+and 0.313950 ms with loops. Each body had 21 GPU launches and six GEMM
+calls. At 6,144 atoms, one paired 20-step mixed-precision run took
+649.936 ms/step with registers and 653.337 ms/step with loops, both with
+621.5 MiB peak device allocation. An earlier four-step pair reversed
+the order (676.040 versus 652.077 ms/step), which shows that the
+whole-step difference is small relative to short-run variation. One
+longer pair does not establish a robust default gain; hence the opt-in.
