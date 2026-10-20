@@ -1533,6 +1533,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- `model-stages-programs-gpu.test` now pins its independent JAX reference
+  to the CPU backend (`D[ml4-jax-oracle]`, #486). CPU and GPU JAX f32
+  compositions gave different energies for the same fixed synthetic PaiNN,
+  making its previous tight bound depend on the backend selected during a
+  suite. A 0.013 kJ/mol bound covers the measured f32 body error against a
+  higher-precision composition while still checking both programs' weights
+  and their lifetime.
+
 - `not-numbers-gpu.test` ended now and then without the stop it checks:
   its run of a matrix went to the last step with energies that were
   `nan` or huge and exited 0 (#425). The detection was not at fault. The
