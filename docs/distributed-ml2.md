@@ -119,18 +119,21 @@ numbered $d = a + g_a(b + g_b c)$. A grid of 1 along an axis keeps that axis
 whole in each domain; its periodic images are ghosts as well, so no
 domain ever takes a minimum image (Section 4.3).
 
-For the compiler pass `md-distribute`, `grid=gx,gy,gz` states that grid
-explicitly. The alternative `domains=N box=Lx,Ly,Lz` chooses a static
-factor grid for an orthorhombic box known at compile time. Among positive
-integer triples with product $N$, it minimizes
-$g_x/L_x + g_y/L_y + g_z/L_z$, the common-factor-free surface area of the
-domain boxes; a tie takes the lexicographically smaller triple. This is a
-geometric estimate of exchange area, not a measurement of communication
-cost. Exactly one of `grid` or `domains` is given, and `box` accompanies
-`domains`. The selected grid appears in `md_dist.decomposition`. The cell
-passed to a potential remains a runtime value; changing it does not
-reselect this static grid. This pass-level selection precedes the future
-`[distribute]` control-file path of Section 13.
+The grid is a property of the existing `md_dist.decomposition` semantic
+primitive. `md-distribute` has two strategies for choosing its static
+triple; neither changes the partition, halo, or transfer ops:
+
+| Pass option | Preconditions | Choice and check |
+|---|---|---|
+| `grid=gx,gy,gz` | Three positive integers with a product representable in `i64` | Explicit triple; the baseline and override |
+| `domains=N box=Lx,Ly,Lz` | Positive $N$; three positive finite edge lengths of an orthorhombic compile-time box | Among positive factor triples of $N$, minimize $g_x/L_x + g_y/L_y + g_z/L_z$; break equal-score ties lexicographically. Compare its emitted decomposition and results with the explicit triple. |
+
+Exactly one strategy is given. The score is the common-factor-free surface
+area of the domain boxes, a geometric estimate of exchange area rather
+than a measurement of communication cost. The selected triple appears in
+`md_dist.decomposition`; the potential's cell stays a runtime value and a
+change to it does not reselect the static grid. This pass-level choice
+precedes the future `[distribute]` control-file path of Section 13.
 
 ### 4.2 Layouts: ownership and identity
 
