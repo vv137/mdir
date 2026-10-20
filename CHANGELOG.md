@@ -10,6 +10,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Changed
+
+- **The test suite shares only its allocated CPUs among concurrent compiles**
+  (D[suite-affinity], #487). Lit uses its process CPU affinity to set the
+  default `MDIR_COMPILE_THREADS` for each test. `-Dcompile_threads=N` still
+  overrides the default; control files and simulation results are unchanged.
+
 ### Added
 
 - **`[pme] influence = "P3M"`, the influence function optimal for the

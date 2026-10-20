@@ -34,6 +34,11 @@ image, on CUDA's runtime image with libdevice from the toolkit.
 | Scale | `MDIR_BENCH_DIR=<dir> lit test/Scale` | Short runs of the Amber benchmark suite |
 | Host sanitizers | `scripts/build-sanitized.sh <dir>` | All tests with the driver and runtimes under AddressSanitizer and UndefinedBehaviorSanitizer |
 
+Lit divides the CPUs in its process affinity mask among the concurrent GPU
+tests when it sets their compile thread limit (D[suite-affinity]). In a
+16-core Slurm allocation with 16 GPU workers, each test compiles on one
+thread unless `-Dcompile_threads=N` overrides the limit.
+
 A test that writes outputs puts them under its own `%t` and removes it
 first, `rm -rf %t && mkdir -p %t` on its first line: `mdir` keeps an output
 that exists as a numbered backup and stops after 99 of them, so a test that

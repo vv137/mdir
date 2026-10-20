@@ -172,6 +172,9 @@ at most sixteen tests that need the device at once and the others in
 parallel (`test/mdir_lit.py`, `-Dgpu_workers=N`), so the suite needs no
 `-j 1`. Most of these tests are bound by compilation on the host, not by the
 device; a smaller device or a host with fewer cores takes a smaller N.
+The suite bounds each test's compile threads by the CPUs available to its
+process, divided by `gpu_workers` (D[suite-affinity]); a Slurm allocation
+of 16 cores and 16 workers gives one compile thread per test by default.
 
 ## Permissions
 

@@ -73,11 +73,17 @@ def limit_compile_threads(config, lit_config, workers):
     """Bound the threads with which each test lowers its programs. A process
     lowers with as many threads as the host has (D211), so the tests that
     need the device, `workers` of them at once, would ask for `workers`
-    times the cores. Each takes its share of the cores, or compile_threads
+    times the cores available to the suite. Each takes its share of its
+    CPU affinity mask, or compile_threads
     when lit is given -Dcompile_threads=N. A suite took 285, 252, and 262 s
     with 128, 8, and 1 threads to a process (one RTX 3090, 128 cores
     shared with other jobs)."""
-    cores = os.cpu_count() or 1
+    # A Slurm job can see the node's CPUs in os.cpu_count() while its
+    # process may run on only the CPUs in its affinity mask.
+    try:
+        cores = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        cores = os.cpu_count() or 1
     value = lit_config.params.get("compile_threads",
                                   str(max(1, cores // workers)))
     try:

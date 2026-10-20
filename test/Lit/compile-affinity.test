@@ -1,0 +1,6 @@
+# A suite in a 16-core Slurm allocation must not divide the whole node's
+# CPU count among its tests. An explicit compile_threads still wins.
+# RUN: %python %S/Inputs/compile_affinity.py | FileCheck %s
+# CHECK: affinity: 1 thread per test
+# CHECK-NEXT: fallback: 4 threads per test
+# CHECK-NEXT: override: 8 threads per test

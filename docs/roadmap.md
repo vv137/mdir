@@ -23,6 +23,7 @@ Features of classical MD (Section 5) continue between milestones.
 | Robust differentiation (#15) | Activity analysis shared by positions, cell variables, and parameters (D182); scalar rule interfaces and coverage (D183); CPU f64 central-difference checker and expression fuzzer (D184); singular-point conventions and direct tests (D185); control-file term diagnostic locations (D186). All five parts are implemented for review in separate PRs. The transposes of the structure of the ops of `md` declared through `AdjointOpInterface`, with `--md-check-transposes` (D295, #451) |
 | Principles of development | Done ([principles.md](principles.md)) |
 | Tests under compute-sanitizer; short runs of the Amber suite | Done (`test/Sanitizer`, `test/Scale`) |
+| Full-suite throughput (#485) | The lit compile thread budget follows the suite's CPU affinity (D[suite-affinity]); next, profile the long Python driver tests before changing their coverage. |
 | Kernels named after their op and line | Done |
 | Reports of defects that can be reproduced: `mdir bug-report`, crash reproducers of the passes, versions, a template for issues | Done ([debugging.md](debugging.md)) |
 | The set of each buffer in the type of the storage form; memory planning as a pass of its own | Design first, then implementation |
