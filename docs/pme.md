@@ -592,6 +592,17 @@ floating-point atomic spreading and ordinary gathering. Thus omitting the
 bricks from a tiled sum changes the allocation and its one-time zeroing,
 not its arithmetic.
 
+On an RTX 4090, STMV from the GROMACS topology (NPT, 4 fs, mixed,
+groups, 1,000 steps) used 2,567 → 2,521 MiB at one replica and
+22,789 → 22,283 MiB at eleven replicas (11.74 million atoms), against
+main at 54038420 in the same job. Steady step times were 4.063 →
+4.071 and 57.038 → 57.100 ms, respectively, one run of each. Twelve
+replicas still ran out of device memory during preparation. In a
+200-step deterministic JAC run, main and this change produced identical
+final checkpoints to the bit; the independent PME and prolate GPU
+oracles pass in mixed and double precision. Preparation latency on large
+systems remains tracked by #520.
+
 ## 4. Parameters (D71)
 
 | Keyword | Meaning | Default |
