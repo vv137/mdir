@@ -53,3 +53,34 @@ func.func @scan32(%v: i32, %lane: i32, %zero: i32, %width: i32) -> i32 {
   %s = func.call @mdir.primitive.warp_scan(%v, %lane, %zero, %width) : (i32, i32, i32, i32) -> i32
   return %s : i32
 }
+
+// The accessor of ragged rows (D[ragged-incidence], RaggedRows.h): the row,
+// checked against a buffer of no elements and against the number of rows
+// at element 0, from the offsets at elements i + 1 and i + 2 past the
+// header of N + 2 elements; then a value of an entry of the row.
+func.func private @mdir.primitive.ragged_row(memref<?xi32, 1>, index, index) -> (index, index)
+func.func private @mdir.primitive.ragged_entry(memref<?xi32, 1>, index, index, index, index) -> i32
+// CHECK-LABEL: func.func @ragged(
+// CHECK-SAME:    %[[ROWS:[a-z0-9]+]]: memref<?xi32, 1>, %[[I:[a-z0-9]+]]: index, %[[E:[a-z0-9]+]]: index, %[[K:[a-z0-9]+]]: index, %[[C:[a-z0-9]+]]: index)
+// CHECK:         %[[SIZE:.+]] = memref.dim %[[ROWS]], %{{.+}} : memref<?xi32, 1>
+// CHECK:         %[[SOME:.+]] = arith.cmpi ne, %[[SIZE]]
+// CHECK:         %[[ROW:.+]]:2 = scf.if %[[SOME]] -> (index, index)
+// CHECK:           memref.load %[[ROWS]][%{{.+}}] : memref<?xi32, 1>
+// CHECK:           arith.cmpi ult, %[[I]]
+// CHECK:           scf.if
+// CHECK:             %[[AT:.+]] = arith.addi %[[I]], %{{.+}} : index
+// CHECK:             memref.load %[[ROWS]][%[[AT]]] : memref<?xi32, 1>
+// CHECK:             arith.muli %{{.+}}, %[[E]] : index
+// CHECK:         %[[STEP:.+]] = arith.muli %[[K]], %[[E]] : index
+// CHECK:         %[[ENTRY:.+]] = arith.addi %[[ROW]]#0, %[[STEP]] : index
+// CHECK:         %[[VALUE:.+]] = arith.addi %[[ENTRY]], %[[C]] : index
+// CHECK:         %[[V:.+]] = memref.load %[[ROWS]][%[[VALUE]]] : memref<?xi32, 1>
+// CHECK:         return %[[ROW]]#1, %[[V]]
+func.func @ragged(%rows: memref<?xi32, 1>, %i: index, %e: index, %k: index,
+                  %c: index) -> (index, i32) {
+  %first, %count = func.call @mdir.primitive.ragged_row(%rows, %i, %e)
+      : (memref<?xi32, 1>, index, index) -> (index, index)
+  %v = func.call @mdir.primitive.ragged_entry(%rows, %first, %k, %c, %e)
+      : (memref<?xi32, 1>, index, index, index, index) -> i32
+  return %count, %v : index, i32
+}

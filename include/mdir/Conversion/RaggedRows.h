@@ -1,6 +1,6 @@
 // Ragged rows: a relation from each of N rows to a variable number of
 // entries of E values, in one buffer of i32 (D[ragged-incidence],
-// docs/device-primitives.md, Section 5).
+// docs/device-primitives.md, Section 4.7).
 //
 // The layout, for N rows and M entries:
 //

@@ -63,7 +63,7 @@ def runtime():
                 getattr(lib, name).argtypes = [ctypes.c_void_p]
             lib.mdrtTuplesCounts.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_int64)]
             lib._mlir_ciface_mdrtTuplesIncidence.argtypes = [
-                ctypes.POINTER(Memref2), ctypes.POINTER(Memref2), ctypes.c_int64]
+                ctypes.POINTER(Memref1), ctypes.POINTER(Memref2), ctypes.c_int64]
             return lib
     raise SystemExit("cannot find libmdrt.so")
 
@@ -78,9 +78,32 @@ def memref2(array):
 
 
 def view(buffer):
-    shape = (buffer.sizes[0], buffer.sizes[1])
+    if isinstance(buffer, Memref1):
+        shape = (buffer.size,)
+    else:
+        shape = (buffer.sizes[0], buffer.sizes[1])
     return np.ctypeslib.as_array(ctypes.cast(buffer.aligned, ctypes.POINTER(ctypes.c_int32)),
                                  shape=shape)
+
+
+def release(lib, buffer):
+    if isinstance(buffer, Memref1):
+        lib._mlir_ciface_mdrtTuplesReleaseRows(ctypes.byref(buffer))
+    else:
+        lib._mlir_ciface_mdrtTuplesRelease(ctypes.byref(buffer))
+
+
+def ragged_rows(structure, arity):
+    """The rows of an incidence structure in ragged rows (RaggedRows.h,
+    D[ragged-incidence]): the number of rows, the offsets in entries, the
+    entries of arity + 2 values, and an entry of zeros."""
+    entry = arity + 2
+    rows = int(structure[0])
+    offsets = structure[1:rows + 2]
+    entries = structure[rows + 2:].reshape(-1, entry)
+    assert np.all(entries[-1] == 0)
+    assert offsets[0] == 0 and offsets[-1] == len(entries) - 1
+    return [entries[offsets[p]:offsets[p + 1]] for p in range(rows)]
 
 
 def renumber(lib, members, ids):
@@ -91,7 +114,7 @@ def renumber(lib, members, ids):
 
 
 def incidence(lib, members, particles):
-    result = Memref2()
+    result = Memref1()
     given = members if isinstance(members, Memref2) else memref2(members)
     lib._mlir_ciface_mdrtTuplesIncidence(ctypes.byref(result), ctypes.byref(given), particles)
     return result
@@ -119,12 +142,13 @@ def reference(members, ids):
 
 
 def check_structure(structure, rows, arity):
-    widest = max(len(row) for row in rows)
-    assert structure.shape == (len(rows), 1 + widest * (arity + 2)), structure.shape
+    memberships = sum(len(row) for row in rows)
+    assert structure.shape == (len(rows) + 2 + (arity + 2) * (memberships + 1),), structure.shape
+    got = ragged_rows(structure, arity)
+    assert len(got) == len(rows)
     for particle, row in enumerate(rows):
-        assert structure[particle, 0] == len(row), particle
-        got = structure[particle, 1:1 + len(row) * (arity + 2)].reshape(len(row), arity + 2)
-        assert np.array_equal(got, np.array(row, dtype=np.int32).reshape(len(row), arity + 2)), particle
+        assert np.array_equal(got[particle],
+                              np.array(row, dtype=np.int32).reshape(len(row), arity + 2)), particle
 
 
 def run_store():
@@ -147,7 +171,7 @@ def run_store():
         again = renumber(lib, members, order)
         assert again.allocated != taken.allocated
         for buffer in (structure, again, taken):
-            lib._mlir_ciface_mdrtTuplesRelease(ctypes.byref(buffer))
+            release(lib, buffer)
     print("without a store: the renumbered members and the incidence structures of tuples of "
           "2, 3, and 4 equal the reference, each built for its caller")
 
@@ -163,20 +187,16 @@ def run_store():
         files = incidence(lib, members, particles)
         taken = renumber(lib, members, order)
         moved = incidence(lib, taken, particles)
-        a, b = view(files), view(moved)
-        assert a.shape == b.shape, (a.shape, b.shape)
+        assert view(files).shape == view(moved).shape
+        a, b = ragged_rows(view(files), arity), ragged_rows(view(moved), arity)
         assert max(np.bincount(members.ravel(), minlength=particles)) > 2, arity
         for p in range(particles):
-            row = a[order[p]]
-            count = row[0]
-            assert b[p, 0] == count, p
-            entries = row[1:1 + count * (arity + 2)].reshape(count, arity + 2).copy()
+            entries = a[order[p]].copy()
             entries[:, 2:] = place[entries[:, 2:]]
-            got = b[p, 1:1 + count * (arity + 2)].reshape(count, arity + 2)
-            assert np.array_equal(got, entries), p
+            assert np.array_equal(b[p], entries), p
             assert np.all(np.diff(entries[:, 0]) >= 0), p
         for buffer in (moved, taken, files):
-            lib._mlir_ciface_mdrtTuplesRelease(ctypes.byref(buffer))
+            release(lib, buffer)
     print("the row of a place in a new order is the row of its particle in the order of the "
           "files, its members relabeled, for tuples of 2, 3, and 4")
 
@@ -231,7 +251,7 @@ def run_store():
     second = renumber(lib, sets[2], other)
     assert second.allocated != held.allocated
     assert np.array_equal(view(held), reference(sets[2], order)[0])
-    lib._mlir_ciface_mdrtTuplesRelease(ctypes.byref(second))
+    release(lib, second)
     third = renumber(lib, sets[2], other)
     assert third.allocated == second.allocated
     lib.mdrtTuplesClose(store)
@@ -254,7 +274,9 @@ def run_loud():
         if sys.argv[2] == "members":
             view(taken)[1, 0] ^= 1
         else:
-            view(structure)[2, 2] ^= 1
+            # A member of the first entry of particle 2's row.
+            rows = view(structure)
+            rows[rows[0] + 2 + 4 * rows[3] + 2] ^= 1
         lib.mdrtTuplesBegin(store)
         taken = renumber(lib, members, ids)
         incidence(lib, taken, 4)
