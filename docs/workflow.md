@@ -52,8 +52,12 @@ thermostat are not.
    `changes-requested`, remove that label and say so in a comment; the
    coordinator then reviews the new head.
 4. **Ready.** When the implementation, its documents, and its validation
-   are complete and the full suite passes locally, rebase on `main` and
-   mark the PR ready (`gh pr ready`).
+   are complete, rebase on the current `main` immediately before marking
+   the PR ready (`gh pr ready`), resolve every conflict there, and run the
+   full suite at that head. The comment that marks it ready names the head
+   commit, the commit of `main` it is based on, and the suite's counts. A
+   PR whose head does not contain the current `main` is not ready (see
+   [Staying current](#staying-current)).
 5. **Review.** The coordinator builds the PR's head commit and runs the
    full suite on a GPU. There is no GPU continuous integration, so this run
    is part of the review. The coordinator checks the rules below, posts the
@@ -193,18 +197,46 @@ reports it. No other contributor, and not the coordinator, performs the
 refused action for it or reaches the same outcome another way. The
 maintainer decides whether to allow it.
 
+## Staying current
+
+The author, not the coordinator, brings a PR up to date with `main`:
+
+- A PR is reviewed only when its head contains the current `main`. If
+  `main` has moved, the coordinator does not resolve the conflicts itself;
+  it asks the author to rebase, with the label `changes-requested`.
+- After every push to `main`, the author of each open ready PR rebases on
+  the new `main`, resolves the conflicts, runs the full suite at the new
+  head, and says so in a comment naming the head and its base. The new head
+  is then reviewed again, as any head that moves after `merge-recommended`.
+- Conflicts in prose and code are always resolved by the author, who knows
+  what both sides mean. Rows of tables are no exception: the author keeps
+  the rows of `main` and adds its own at the end.
+
+A PR merged this way adds nothing to the tree its review suite tested: the
+merge commit has the tree of the reviewed head, so the review suite is also
+the suite of the merge.
+
 ## Merging
 
-The coordinator merges only PRs labeled `approved` by the maintainer:
+The coordinator merges only PRs labeled `approved` by the maintainer, at
+the commit named in the review:
 
 1. Branch `review-<name>` from `origin/main`.
-2. Merge the approved PRs one at a time with `--no-ff`, resolving
-   conflicts: rows of `decisions.md` stay in the order of the merges, lists
-   of keywords take the union, and rows of the control-file reference keep
-   both changes.
+2. Merge the approved PR with `--no-ff`. Its head contains `main`, so the
+   merge has no conflicts and its tree is the tree of the reviewed head;
+   the coordinator checks that with `git diff` against the head before
+   going on. A merge with a conflict, or with a tree that differs, stops:
+   the author rebases and the PR is reviewed again.
 3. Assign the decision numbers and run `scripts/decision-number.sh check`.
-4. Build and run the full suite, on a GPU. A merge never proceeds on a
-   failing suite.
+   The numbering commit changes labels into numbers and nothing else; the
+   coordinator checks that its diff is limited to that.
+4. The review suite at the merged head is the suite of the merge. A merge
+   never proceeds on a failing suite. Several approved PRs that are merged
+   in one sequence form the one exception: only the first matches its
+   reviewed tree, so the coordinator merges the others only when their
+   conflicts are limited to rows of `decisions.md` and `CHANGELOG.md`
+   (resolved by keeping both rows, in the order of the merges), and builds
+   and runs the full suite on a GPU at the combined head before pushing.
 5. Fast-forward `main` and push it. The PRs then show as merged; the
    label `approved` is the maintainer's approval of this push.
 6. Rebuild the white paper (`scripts/paper/build-pdf.sh`).
