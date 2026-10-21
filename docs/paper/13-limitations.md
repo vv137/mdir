@@ -256,7 +256,7 @@ the pass of the density and that of the forces, and the verifier rejects a
 copy of any other version of it.
 
 An ownership epoch is the SSA layout of a configuration. Moving positions
-through `md_dist.migrate` forms a new epoch (D[dist-migration], #494): each
+through `md_dist.migrate` forms a new epoch (D313, #494): each
 global particle identity has exactly one owner and a stable row at that
 owner, with rows in identity order. For any complete owned field, the
 separate `md_dist.redistribute` carries its values by identity to the new

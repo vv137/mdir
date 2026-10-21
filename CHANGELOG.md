@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - **Distributed ownership-epoch migration primitives**
-  (D[dist-migration], #494): `md_dist.migrate` computes a new stable layout
+  (D313, #494): `md_dist.migrate` computes a new stable layout
   from current owned positions, and `md_dist.redistribute` moves a complete
   owned field by global particle identity. The in-process CPU executor
   supports empty domains and rejects stale epoch use. Production trajectory

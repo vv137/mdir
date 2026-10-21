@@ -1,6 +1,6 @@
 # Appendix A. The control file
 
-D[dist-migration] adds execution-level ownership-epoch migration and field
+D313 adds execution-level ownership-epoch migration and field
 redistribution to `md_dist`. It adds no `[distribute]` table, Python option,
 checkpoint or output format, or overwrite behavior. The production driver's
 distributed step state and the approved `[distribute]` keys remain #38.

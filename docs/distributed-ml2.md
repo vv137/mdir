@@ -710,7 +710,7 @@ redistribute, rebuild the halo. Migration between rebuilds (particles
 that leave their region while the halo still covers them) is not needed,
 since ghosts of the old layout are still exact.
 
-The first migration slice, D[dist-migration] (#494), implements the new
+The first migration slice, D313 (#494), implements the new
 ownership epoch and redistribution of complete owned fields in the
 in-process executor. The epoch is the new layout SSA value, not the
 decomposition's grid, which remains the same. Within each destination,
