@@ -725,6 +725,16 @@ format, or the outputs; every such change is listed under **Changed** or
   atoms) now runs in 22,789 MiB. The deterministic mode gives the same
   bits as before, and the Amber suite's rates are unchanged. No
   control-file key or output change.
+- **The setup counts the most neighbors at the start by cells and
+  threads** (D[neighbor-count], #471): the count that sizes the rows of a
+  neighbor structure when no `neighbor_capacity` is given sweeps the
+  candidates of a cell once for all its members, vectorized, over the
+  cores that the process may run on (at most `MDIR_COMPILE_THREADS`). The
+  count is the same integer as before, so the compiled program is the
+  same. `mdir run` to its first row of energies on an RTX 4090 node with
+  16 cores: STMV from 61 to 18 s, STMV ×4 from 216 to 41 s, ×8 from 446
+  to 73 s, and ×11 (11.74 million atoms) from 569 to 97 s. No
+  control-file key or output change.
 
 - **The design documents are named by topic** (#390): `docs/ops.md`,
   `runtime.md`, `driver.md`, `neighbors.md`, `neighbor-groups.md`,
