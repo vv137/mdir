@@ -24,6 +24,10 @@ func.func private @mdrt_gpu_pme_blocks_triclinic(%count: index) -> index {
   %result = arith.divui %padded, %c128 : index
   return %result : index
 }
+func.func private @mdir.primitive.wrapped_grid_axis_index(index, index, index) -> index
+func.func private @mdir.primitive.wrapped_grid_axis_i32(i32, i32, i32) -> i32
+func.func private @mdir.primitive.grid_gather_index(memref<?x!pme_real, 1>, index, index) -> !pme_real
+func.func private @mdir.primitive.grid_gather_i32(memref<?x!pme_real, 1>, i32, i32) -> !pme_real
 
 // Spreads the charges to `grid`, in fixed point, so that the sum does not depend on the order of
 // the threads (D70; the deterministic mode, D84).
@@ -2848,10 +2852,7 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
       %gzero = arith.constant 0.0 : !pme_real
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
-      %g3s = arith.addi %pz_start, %j3 : index
-      %g3w = arith.subi %g3s, %k3 : index
-      %g3over = arith.cmpi uge, %g3s, %k3 : index
-      %g3 = arith.select %g3over, %g3w, %g3s : index
+      %g3 = func.call @mdir.primitive.wrapped_grid_axis_index(%pz_start, %j3, %k3) : (index, index, index) -> index
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %g1s = arith.addi %px_start, %j1 : index
@@ -2871,8 +2872,7 @@ func.func private @mdrt_gpu_pme_gather_triclinic(%x: memref<?x3x!pme_pos, 1>, %q
           %row1 = arith.muli %g1, %k2 : index
           %row = arith.addi %row1, %g2 : index
           %gbase = arith.muli %row, %k3 : index
-          %at = arith.addi %gbase, %g3 : index
-          %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
+          %p = func.call @mdir.primitive.grid_gather_index(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, index, index) -> !pme_real
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real
@@ -3354,10 +3354,7 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %j3t = arith.index_cast %j3 : index to i32
-      %g3s = arith.addi %zstart, %j3t : i32
-      %g3w = arith.subi %g3s, %k3t : i32
-      %g3over = arith.cmpi uge, %g3s, %k3t : i32
-      %g3 = arith.select %g3over, %g3w, %g3s : i32
+      %g3 = func.call @mdir.primitive.wrapped_grid_axis_i32(%zstart, %j3t, %k3t) : (i32, i32, i32) -> i32
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %j1t = arith.index_cast %j1 : index to i32
@@ -3379,9 +3376,7 @@ func.func private @mdrt_gpu_pme_gather_weights_triclinic(%x: memref<?x3x!pme_pos
           %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
           %row = arith.addi %row1, %g2 : i32
           %gbase = arith.muli %row, %k3t : i32
-          %at32 = arith.addi %gbase, %g3 : i32
-          %at = arith.index_cast %at32 : i32 to index
-          %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
+          %p = func.call @mdir.primitive.grid_gather_i32(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, i32, i32) -> !pme_real
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real
@@ -3929,10 +3924,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
       %gzero = arith.constant 0.0 : !pme_real
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
-      %g3s = arith.addi %pz_start, %j3 : index
-      %g3w = arith.subi %g3s, %k3 : index
-      %g3over = arith.cmpi uge, %g3s, %k3 : index
-      %g3 = arith.select %g3over, %g3w, %g3s : index
+      %g3 = func.call @mdir.primitive.wrapped_grid_axis_index(%pz_start, %j3, %k3) : (index, index, index) -> index
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %g1s = arith.addi %px_start, %j1 : index
@@ -3952,8 +3944,7 @@ func.func private @mdrt_gpu_pme_potential_triclinic(%x: memref<?x3x!pme_pos, 1>,
           %row1 = arith.muli %g1, %k2 : index
           %row = arith.addi %row1, %g2 : index
           %gbase = arith.muli %row, %k3 : index
-          %at = arith.addi %gbase, %g3 : index
-          %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
+          %p = func.call @mdir.primitive.grid_gather_index(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, index, index) -> !pme_real
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real
@@ -5447,10 +5438,7 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
       %gzero = arith.constant 0.0 : !pme_real
       %j0 = arith.constant 0 : index
       %j1c = arith.constant 1 : index
-      %g3s = arith.addi %pz_start, %j3 : index
-      %g3w = arith.subi %g3s, %k3 : index
-      %g3over = arith.cmpi uge, %g3s, %k3 : index
-      %g3 = arith.select %g3over, %g3w, %g3s : index
+      %g3 = func.call @mdir.primitive.wrapped_grid_axis_index(%pz_start, %j3, %k3) : (index, index, index) -> index
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %g1s = arith.addi %px_start, %j1 : index
@@ -5470,8 +5458,7 @@ func.func private @mdrt_gpu_pme_gather_listed_triclinic(%x: memref<?x3x!pme_pos,
           %row1 = arith.muli %g1, %k2 : index
           %row = arith.addi %row1, %g2 : index
           %gbase = arith.muli %row, %k3 : index
-          %at = arith.addi %gbase, %g3 : index
-          %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
+          %p = func.call @mdir.primitive.grid_gather_index(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, index, index) -> !pme_real
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real
@@ -5990,10 +5977,7 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
       %k2t = arith.index_cast %k2 : index to i32
       %k3t = arith.index_cast %k3 : index to i32
       %j3t = arith.index_cast %j3 : index to i32
-      %g3s = arith.addi %zstart, %j3t : i32
-      %g3w = arith.subi %g3s, %k3t : i32
-      %g3over = arith.cmpi uge, %g3s, %k3t : i32
-      %g3 = arith.select %g3over, %g3w, %g3s : i32
+      %g3 = func.call @mdir.primitive.wrapped_grid_axis_i32(%zstart, %j3t, %k3t) : (i32, i32, i32) -> i32
       %sumx, %sumy, %sumz = scf.for %j1 = %j0 to %order step %j1c
           iter_args(%ax = %gzero, %ay = %gzero, %az = %gzero) -> (!pme_real, !pme_real, !pme_real) {
         %j1t = arith.index_cast %j1 : index to i32
@@ -6015,9 +5999,7 @@ func.func private @mdrt_gpu_pme_gather_weights_listed_triclinic(%x: memref<?x3x!
           %d2 = memref.load %dy[%j2] : memref<8x!pme_real>
           %row = arith.addi %row1, %g2 : i32
           %gbase = arith.muli %row, %k3t : i32
-          %at32 = arith.addi %gbase, %g3 : i32
-          %at = arith.index_cast %at32 : i32 to index
-          %p = memref.load %phi[%at] : memref<?x!pme_real, 1>
+          %p = func.call @mdir.primitive.grid_gather_i32(%phi, %gbase, %g3) : (memref<?x!pme_real, 1>, i32, i32) -> !pme_real
           %d1w2 = arith.mulf %d1, %w2 : !pme_real
           %w1d2 = arith.mulf %w1, %d2 : !pme_real
           %w1w2 = arith.mulf %w1, %w2 : !pme_real

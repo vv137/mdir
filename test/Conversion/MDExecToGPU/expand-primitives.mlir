@@ -84,3 +84,65 @@ func.func @ragged(%rows: memref<?xi32, 1>, %i: index, %e: index, %k: index,
       : (memref<?xi32, 1>, index, index, index, index) -> i32
   return %count, %v : index, i32
 }
+
+// Both PME gather paths use one wrapped-axis emitter and one grid-read
+// emitter. The order-4 stored-weight path keeps its i32 address arithmetic.
+func.func private @mdir.primitive.wrapped_grid_axis_index(index, index, index) -> index
+func.func private @mdir.primitive.wrapped_grid_axis_i32(i32, i32, i32) -> i32
+func.func private @mdir.primitive.grid_gather_index(memref<?xf64, 1>, index, index) -> f64
+func.func private @mdir.primitive.grid_gather_i32(memref<?xf32, 1>, i32, i32) -> f32
+
+// CHECK-LABEL: func.func @grid_index(
+// CHECK: arith.addi %{{.+}}, %{{.+}} : index
+// CHECK: arith.subi %{{.+}}, %{{.+}} : index
+// CHECK: arith.cmpi uge
+// CHECK: arith.select
+// CHECK: arith.addi %{{.+}}, %{{.+}} : index
+// CHECK: memref.load %{{.+}}[%{{.+}}] : memref<?xf64, 1>
+func.func @grid_index(%grid: memref<?xf64, 1>, %base: index,
+                      %z: index, %lane: index, %size: index) -> f64 {
+  %wrapped = func.call @mdir.primitive.wrapped_grid_axis_index(%z, %lane, %size)
+      : (index, index, index) -> index
+  %value = func.call @mdir.primitive.grid_gather_index(%grid, %base, %wrapped)
+      : (memref<?xf64, 1>, index, index) -> f64
+  return %value : f64
+}
+
+// CHECK-LABEL: func.func @grid_i32(
+// CHECK: arith.addi %{{.+}}, %{{.+}} : i32
+// CHECK: arith.subi %{{.+}}, %{{.+}} : i32
+// CHECK: arith.cmpi uge
+// CHECK: arith.select
+// CHECK: arith.addi %{{.+}}, %{{.+}} : i32
+// CHECK: arith.index_cast %{{.+}} : i32 to index
+// CHECK: memref.load %{{.+}}[%{{.+}}] : memref<?xf32, 1>
+func.func @grid_i32(%grid: memref<?xf32, 1>, %base: i32,
+                    %z: i32, %lane: i32, %size: i32) -> f32 {
+  %wrapped = func.call @mdir.primitive.wrapped_grid_axis_i32(%z, %lane, %size)
+      : (i32, i32, i32) -> i32
+  %value = func.call @mdir.primitive.grid_gather_i32(%grid, %base, %wrapped)
+      : (memref<?xf32, 1>, i32, i32) -> f32
+  return %value : f32
+}
+
+func.func private @mdir.primitive.grid_gather_masked_i32(memref<?xf64, 1>, i32, i32, i1) -> f64
+
+// An inactive prolate lane reads the start of its row, retaining the
+// existing in-bounds load and the signed coordinate comparison.
+// CHECK-LABEL: func.func @grid_prolate(
+// CHECK: arith.cmpi sge
+// CHECK: arith.select
+// CHECK: arith.addi %{{.+}}, %{{.+}} : i32
+// CHECK: arith.select %{{.+}}, %{{.+}}, %{{.+}} : i32
+// CHECK: arith.index_cast %{{.+}} : i32 to index
+// CHECK: memref.load %{{.+}}[%{{.+}}] : memref<?xf64, 1>
+func.func @grid_prolate(%grid: memref<?xf64, 1>, %base: i32,
+                        %z: i32, %lane: i32, %size: i32,
+                        %active: i1) -> f64 {
+  %wrapped = func.call @mdir.primitive.wrapped_grid_axis_i32(%z, %lane, %size)
+      {signed} : (i32, i32, i32) -> i32
+  %value = func.call @mdir.primitive.grid_gather_masked_i32(
+      %grid, %base, %wrapped, %active)
+      : (memref<?xf64, 1>, i32, i32, i1) -> f64
+  return %value : f64
+}

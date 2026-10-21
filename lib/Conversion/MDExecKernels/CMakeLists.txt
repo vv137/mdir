@@ -1,6 +1,7 @@
 add_mlir_conversion_library(MDIRMDExecKernels
   CompactionEmitter.cpp
   ExpandPrimitives.cpp
+  GatherEmitter.cpp
   MDExecKernels.cpp
   RaggedRows.cpp
   ReductionEmitter.cpp
