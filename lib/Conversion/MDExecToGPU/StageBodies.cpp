@@ -864,6 +864,41 @@ static Value emitRowTerm(OpBuilder &builder, Location loc, linalg::GenericOp op,
   return mapping.lookupOrDefault(sum.term);
 }
 
+/// An elementwise epilogue that reads only this short sum, at the same
+/// output indices. The sum is still stored in its buffer: another reader or
+/// a later reuse of the allocation therefore sees the original value. The
+/// epilogue writes a fresh buffer, so running it in each sum thread cannot
+/// overwrite an operand needed by another thread.
+static linalg::GenericOp matchShortRowEpilogue(linalg::GenericOp sum) {
+  Operation *next = sum->getNextNode();
+  while (next && (isa<memref::AllocOp>(next) || isa<gpu::AllocOp>(next)))
+    next = next->getNextNode();
+  auto epilogue = dyn_cast_or_null<linalg::GenericOp>(next);
+  if (!epilogue || !epilogue.hasPureBufferSemantics() ||
+      epilogue.getNumDpsInputs() != 1 || epilogue.getNumDpsInits() != 1 ||
+      epilogue.getNumReductionLoops() != 0 ||
+      epilogue.getDpsInputOperand(0)->get() !=
+          sum.getDpsInitOperand(0)->get())
+    return {};
+  OpOperand *input = epilogue.getDpsInputOperand(0);
+  OpOperand *output = epilogue.getDpsInitOperand(0);
+  if (!epilogue.getMatchingIndexingMap(input).isIdentity() ||
+      !epilogue.getMatchingIndexingMap(output).isIdentity() ||
+      epilogue.getNumLoops() !=
+          cast<MemRefType>(output->get().getType()).getRank() ||
+      !epilogue.getMatchingBlockArgument(output).use_empty() ||
+      !isa_and_nonnull<memref::AllocOp, gpu::AllocOp>(
+          output->get().getDefiningOp()))
+    return {};
+  if (cast<MemRefType>(input->get().getType()).getShape() !=
+      cast<MemRefType>(output->get().getType()).getShape())
+    return {};
+  for (Operation &inner : epilogue.getBody()->without_terminator())
+    if (!isMemoryEffectFree(&inner) || inner.getNumRegions() != 0)
+      return {};
+  return epilogue;
+}
+
 /// Replaces each sum of rows of the bufferized body `function` with a kernel
 /// of a warp for each element of the result (D303, the
 /// reductions of the rows that IREE gives a warp each, `VectorDistribute`):
@@ -975,21 +1010,28 @@ static void warpRowSums(func::FuncOp function) {
 /// accumulator stays in a register instead of being loaded and stored at
 /// each iteration of the loop lowering. The order of the additions is the
 /// original order, including the first term's constant initial value.
-static void shortRowSums(func::FuncOp function) {
-  SmallVector<std::pair<linalg::GenericOp, RowSum>> found;
+static void shortRowSums(func::FuncOp function, bool fuseElementwise) {
+  struct Candidate {
+    linalg::GenericOp op;
+    RowSum sum;
+    linalg::GenericOp epilogue;
+  };
+  SmallVector<Candidate> found;
   function.walk([&](linalg::GenericOp op) {
     if (op->getBlock() == &function.getBody().front())
       if (std::optional<RowSum> sum = matchRowSum(op, /*shortSum=*/true))
-        found.push_back({op, *sum});
+        found.push_back(
+            {op, *sum, fuseElementwise ? matchShortRowEpilogue(op)
+                                       : linalg::GenericOp{}});
   });
-  for (auto [op, sum] : found) {
+  for (auto [op, sum, epilogue] : found) {
     Location loc = op.getLoc();
     SmallVector<int64_t> extents = op.getStaticLoopRanges();
     int64_t rows = 1;
     for (unsigned d = 0; d != op.getNumLoops(); ++d)
       if (d != sum.reduced)
         rows *= extents[d];
-    OpBuilder builder(op);
+    OpBuilder builder(epilogue ? epilogue.getOperation() : op.getOperation());
     if (rows == 0) {
       op.erase();
       continue;
@@ -1033,8 +1075,27 @@ static void shortRowSums(func::FuncOp function) {
                             .getResult();
     value = kernels::emitOrderedRegisterSum(then, loc, value, sum.extent, term);
     memref::StoreOp::create(then, loc, value, init->get(), place);
+    if (epilogue) {
+      IRMapping mapping;
+      mapping.map(epilogue.getMatchingBlockArgument(
+                      epilogue.getDpsInputOperand(0)),
+                  value);
+      for (Operation &inner : epilogue.getBody()->without_terminator()) {
+        if (auto idx = dyn_cast<linalg::IndexOp>(inner))
+          mapping.map(idx.getResult(), place[idx.getDim()]);
+        else
+          then.clone(inner, mapping);
+      }
+      Value result = mapping.lookupOrDefault(
+          cast<linalg::YieldOp>(epilogue.getBody()->getTerminator())
+              .getOperand(0));
+      memref::StoreOp::create(then, loc, result,
+                              epilogue.getDpsInitOperand(0)->get(), place);
+    }
     gpu::TerminatorOp::create(kernel, loc);
     op.erase();
+    if (epilogue)
+      epilogue.erase();
   }
 }
 
@@ -1224,6 +1285,100 @@ static void writeResultsInPlace(func::FuncOp function) {
       continue;
     alloc.replaceAllUsesWith(Value(target));
     copy.erase();
+    alloc.erase();
+  }
+}
+
+/// A final pointwise producer can write identical results to two caller
+/// buffers in one launch. Bufferization otherwise copies its temporary to
+/// each result in two further launches. Restrict the source reads to local
+/// allocations: the caller may alias an output with one of its inputs.
+static void writeDuplicatedResultsInPlace(func::FuncOp function) {
+  auto localAllocation = [](Value value) {
+    while (Operation *def = value.getDefiningOp()) {
+      if (auto view = dyn_cast<memref::SubViewOp>(def))
+        value = view.getSource();
+      else if (auto view = dyn_cast<memref::ExpandShapeOp>(def))
+        value = view.getSrc();
+      else if (auto view = dyn_cast<memref::CollapseShapeOp>(def))
+        value = view.getSrc();
+      else if (auto view = dyn_cast<memref::CastOp>(def))
+        value = view.getSource();
+      else
+        return isa<memref::AllocOp, gpu::AllocOp>(def);
+    }
+    return false;
+  };
+  SmallVector<memref::AllocOp> allocations;
+  function.walk([&](memref::AllocOp alloc) { allocations.push_back(alloc); });
+  for (memref::AllocOp alloc : allocations) {
+    SmallVector<memref::CopyOp> copies;
+    linalg::GenericOp producer;
+    bool valid = true;
+    for (Operation *user : alloc->getUsers()) {
+      if (auto copy = dyn_cast<memref::CopyOp>(user)) {
+        if (copy.getSource() != alloc)
+          valid = false;
+        copies.push_back(copy);
+      } else if (auto generic = dyn_cast<linalg::GenericOp>(user)) {
+        if (producer || generic.getNumDpsInits() != 1 ||
+            generic.getDpsInitOperand(0)->get() != alloc)
+          valid = false;
+        producer = generic;
+      } else {
+        valid = false;
+      }
+    }
+    if (!valid || !producer || copies.size() != 2 ||
+        !producer.hasPureBufferSemantics() ||
+        producer.getNumReductionLoops() != 0 ||
+        !producer.getMatchingIndexingMap(producer.getDpsInitOperand(0))
+             .isIdentity() ||
+        !producer.getMatchingBlockArgument(producer.getDpsInitOperand(0))
+             .use_empty())
+      continue;
+    Block &entry = function.getBody().front();
+    for (memref::CopyOp copy : copies) {
+      auto target = dyn_cast<BlockArgument>(copy.getTarget());
+      if (!target || target.getOwner() != &entry || !target.hasOneUse() ||
+          target.getType() != alloc.getType() ||
+          copy->getBlock() != &entry ||
+          !producer->isBeforeInBlock(copy))
+        valid = false;
+    }
+    for (Value input : producer.getDpsInputs())
+      valid &= localAllocation(input);
+    for (Operation &inner : producer.getBody()->without_terminator()) {
+      if (auto load = dyn_cast<memref::LoadOp>(inner))
+        valid &= localAllocation(load.getMemRef());
+      else if (!isMemoryEffectFree(&inner) || inner.getNumRegions() != 0)
+        valid = false;
+    }
+    if (!valid)
+      continue;
+    OpBuilder builder(producer);
+    SmallVector<AffineMap> maps(producer.getIndexingMapsArray());
+    maps.push_back(maps.back());
+    SmallVector<Value> outputs{copies[0].getTarget(), copies[1].getTarget()};
+    auto original = producer.getBody();
+    auto replacement = linalg::GenericOp::create(
+        builder, producer.getLoc(), TypeRange{}, producer.getDpsInputs(),
+        outputs, maps, producer.getIteratorTypesArray(),
+        [&](OpBuilder &bodyBuilder, Location loc, ValueRange arguments) {
+          IRMapping mapping;
+          for (auto [oldArg, newArg] :
+               llvm::zip(original->getArguments(), arguments))
+            mapping.map(oldArg, newArg);
+          for (Operation &inner : original->without_terminator())
+            bodyBuilder.clone(inner, mapping);
+          Value result = mapping.lookupOrDefault(
+              cast<linalg::YieldOp>(original->getTerminator()).getOperand(0));
+          linalg::YieldOp::create(bodyBuilder, loc, ValueRange{result, result});
+        });
+    (void)replacement;
+    for (memref::CopyOp copy : copies)
+      copy.erase();
+    producer.erase();
     alloc.erase();
   }
 }
@@ -1425,6 +1580,9 @@ public:
     if (fuse)
       for (func::FuncOp function : bodies->getOps<func::FuncOp>())
         writeResultsInPlace(function);
+    if (device && fuse && shortReductions)
+      for (func::FuncOp function : bodies->getOps<func::FuncOp>())
+        writeDuplicatedResultsInPlace(function);
     // The GEMMs as calls of cuBLAS (D302).
     if (gemm)
       for (func::FuncOp function :
@@ -1438,7 +1596,7 @@ public:
         if (!function.isExternal()) {
           warpRowSums(function);
           if (shortReductions)
-            shortRowSums(function);
+            shortRowSums(function, fuse);
         }
     // A copy into a result's buffer becomes a loop as well, so that it runs
     // where the buffers are.
