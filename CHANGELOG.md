@@ -805,8 +805,9 @@ format, or the outputs; every such change is listed under **Changed** or
   RTX 4090 (1,000 steps): the device peak from 2,521 to 2,045 MiB, ×11
   from 22,283 to 17,151 MiB, and ×14 (14.94 million atoms) now runs in
   22,985 MiB. The deterministic mode gives the same bits as before, the
-  CPU program is unchanged, and the Amber suite's rates are within 0.4%.
-  No control-file key or output change.
+  CPU program is unchanged. The Amber suite's rates are unchanged within
+  0.3%, except Factor IX NPT and Cellulose NPT, which are 0.35% and 0.5%
+  slower. No control-file key or output change.
 
 - **The design documents are named by topic** (#390): `docs/ops.md`,
   `runtime.md`, `driver.md`, `neighbors.md`, `neighbor-groups.md`,
