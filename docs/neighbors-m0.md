@@ -253,7 +253,7 @@ memory.
 
 | Parameter | Option | Default |
 |---|---|---|
-| The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlist_distance − cutoff` | 0 for the pass; in a control file `pairlist_distance = "AUTO"`, chosen by the run (Section 6, D281), else the cutoff plus 1.5 Å for the matrix |
+| The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlist_distance − cutoff` | 0 for the pass; in a control file `pairlist_distance = "AUTO"`: for the matrix the cutoff plus 1.5 Å, which is not searched; for the groups the cutoff plus 3 Å, or the choice of a search (Section 6, D261, D281) |
 | The width of a row of the matrix | `width` of `convert-md-to-md-exec`; in a control file `neighbor_capacity`, in Python `Execution.neighbor_capacity` | 64 for the pass; the driver always gives one, from `neighbor_capacity` or estimated from the start: half as many again as the most neighbors of a particle, plus 16, rounded up to four significant bits (D227) |
 | The least width of the cells | `cells` of `convert-md-to-md-exec` | A third of the reach |
 
