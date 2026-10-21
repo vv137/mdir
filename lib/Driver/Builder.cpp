@@ -5,6 +5,7 @@
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Influence.h"
 #include "mdir/Driver/ModelTerm.h"
+#include "mdir/Driver/NeighborCount.h"
 #include "mdir/MLIP/Plugin.h"
 #include "mdir/Driver/Profile.h"
 #include "mdir/Driver/Prolate.h"
@@ -11770,63 +11771,6 @@ std::string Builder::emitSegmentEnergyStep(StringRef x, StringRef v,
   return "p";
 }
 
-/// The largest number of particles within `reach` of a particle, found
-/// with cells of the width of the reach.
-static int64_t countMostNeighbors(const System &system, double reach) {
-  size_t count = system.getNumParticles();
-  int cells[3];
-  for (int k = 0; k != 3; ++k)
-    cells[k] = std::max(1, static_cast<int>(system.box[k] / reach));
-  auto wrap = [&](double x, int k) {
-    double length = system.box[k];
-    return x - length * std::floor(x / length);
-  };
-  auto cellOf = [&](size_t i, int k) {
-    int c = static_cast<int>(wrap(system.positions[3 * i + k], k) /
-                             system.box[k] * cells[k]);
-    return std::min(c, cells[k] - 1);
-  };
-  std::vector<std::vector<size_t>> members(cells[0] * cells[1] * cells[2]);
-  for (size_t i = 0; i != count; ++i)
-    members[(cellOf(i, 0) * cells[1] + cellOf(i, 1)) * cells[2] +
-            cellOf(i, 2)]
-        .push_back(i);
-
-  double reach2 = reach * reach;
-  int64_t most = 0;
-  for (size_t i = 0; i != count; ++i) {
-    int64_t found = 0;
-    int home[3] = {cellOf(i, 0), cellOf(i, 1), cellOf(i, 2)};
-    // Each cell once, where the cells on the two sides coincide.
-    std::vector<int> seen;
-    for (int dx = -1; dx <= 1; ++dx)
-      for (int dy = -1; dy <= 1; ++dy)
-        for (int dz = -1; dz <= 1; ++dz) {
-          int c[3] = {home[0] + dx, home[1] + dy, home[2] + dz};
-          for (int k = 0; k != 3; ++k)
-            c[k] = (c[k] % cells[k] + cells[k]) % cells[k];
-          int cell = (c[0] * cells[1] + c[1]) * cells[2] + c[2];
-          if (llvm::is_contained(seen, cell))
-            continue;
-          seen.push_back(cell);
-          for (size_t j : members[cell]) {
-            if (j == i)
-              continue;
-            double r2 = 0.0;
-            for (int k = 0; k != 3; ++k) {
-              double d = system.positions[3 * i + k] -
-                         system.positions[3 * j + k];
-              d -= system.box[k] * std::round(d / system.box[k]);
-              r2 += d * d;
-            }
-            found += r2 < reach2;
-          }
-        }
-    most = std::max(most, found);
-  }
-  return most;
-}
-
 void Builder::setSchedule() {
   // A period of zero means no output of that kind, and no loop for it.
   int64_t steps = control.numSteps;
@@ -11995,7 +11939,10 @@ llvm::Error Builder::build() {
     // the start, and a few more. A uniform density would underestimate a
     // box with room in it, such as a solvated molecule that tleap makes.
     double reach = control.pairlistDistance * units::length;
-    int64_t most = countMostNeighbors(system, reach);
+    int64_t most = countMostNeighbors(
+        llvm::ArrayRef(system.positions)
+            .take_front(3 * system.getNumParticles()),
+        system.box, reach);
     int64_t width = static_cast<int64_t>(std::ceil(1.5 * most)) + 16;
     // Rounded up to four significant bits, a multiple of an eighth of the
     // power of two below it and of 8: at most an eighth more room. The

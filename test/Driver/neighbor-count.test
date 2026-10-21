@@ -1,0 +1,111 @@
+# The most neighbors of a particle at the start, from which the driver
+# sizes the rows of a neighbor structure when no neighbor_capacity is given
+# (D227), are found by cells and threads (D[neighbor-count]) and are the
+# integer of the serial search over particles that it replaces, which the
+# test keeps as the reference: on inputs made to find a difference (1, 2,
+# and 3 cells along an axis, positions outside the box and on its faces,
+# pairs at the reach exactly, copies, vacuum, a tilt, enough particles for
+# threads, which are compared with 1, 2, 3, and 8 threads) and on the
+# systems of control files as `mdir run` reads them: the solvated dipeptide,
+# the same without a cell, the peptide alone in a cell of 60 Å, and the
+# rhombic dodecahedron of prolate-skip-zero.test, whose count takes the
+# diagonal of the cell alone. The counts are pinned, so that the widths of
+# the programs of these inputs do not move.
+#
+# RUN: rm -rf %t && split-file %s %t
+# RUN: cp %S/Inputs/dipeptide/dipeptide.prmtop %S/Inputs/dipeptide/dipeptide.inpcrd %S/Inputs/ff19sb/vacuum.prmtop %S/Inputs/ff19sb/vacuum.inpcrd %S/Inputs/triclinic/dodecahedron.gro %S/Inputs/triclinic/water.top %t
+# RUN: mdir-neighbor-count-test | FileCheck %s --check-prefix=MADE
+# RUN: cd %t && mdir-neighbor-count-test dipeptide.toml open.toml vacuum.toml dodec.toml | FileCheck %s
+
+# MADE: uniform, 3 cells: 3000 particles, most 522
+# MADE-NEXT: 1, 2, 4 cells: 2000 particles, most 616
+# MADE-NEXT: 1 cell: 1500 particles, most 954
+# MADE-NEXT: 2 cells: 1500 particles, most 434
+# MADE-NEXT: outside the box: 3000 particles, most 392
+# MADE-NEXT: lattice at the reach: 734 particles, most 63
+# MADE-NEXT: lattice, reach of 1 cell: 734 particles, most 412
+# MADE-NEXT: lattice, reach of 2 cells: 734 particles, most 183
+# MADE-NEXT: copies: 540 particles, most 129
+# MADE-NEXT: cluster and vacuum: 4000 particles, most 2050
+# MADE-NEXT: slab: 4000 particles, most 511
+# MADE-NEXT: triclinic: 3000 particles, most 488
+# MADE-NEXT: threads: 42000 particles, most 2562
+# MADE-NEXT: no particles: 0 particles, most 0
+# MADE-NEXT: one particle: 1 particles, most 0
+# MADE-NEXT: 15 made inputs agree with the reference
+
+# CHECK: dipeptide.toml: {{.*}}, most 377, as the reference
+# CHECK: open.toml: {{.*}}, most 377, as the reference
+# CHECK: vacuum.toml: {{.*}}, most 39, as the reference
+# CHECK: dodec.toml: {{.*}}, most 435, as the reference
+
+#--- dipeptide.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+
+[dynamics]
+time_step = 0.001
+steps     = 10
+
+[boundary]
+type = "PERIODIC"
+#--- open.toml
+[input]
+topology    = "dipeptide.prmtop"
+coordinates = "dipeptide.inpcrd"
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "CUTOFF"
+
+[dynamics]
+time_step = 0.001
+steps     = 10
+
+[boundary]
+type = "NONE"
+#--- vacuum.toml
+[input]
+topology    = "vacuum.prmtop"
+coordinates = "vacuum.inpcrd"
+
+[energy]
+cutoff            = 28.0
+pairlist_distance = 29.0
+electrostatics    = "CUTOFF"
+
+[dynamics]
+time_step = 0.001
+steps     = 10
+
+[boundary]
+type = "PERIODIC"
+#--- dodec.toml
+[input]
+topology    = "water.top"
+coordinates = "dodecahedron.gro"
+format      = "GROMACS"
+defines     = ["FLEXIBLE"]
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+
+[dynamics]
+time_step = 0.0005
+steps     = 10
+
+[constraints]
+hydrogen_bonds = false
+rigid_water    = false
+
+[boundary]
+type = "PERIODIC"

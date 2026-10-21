@@ -51,6 +51,7 @@ add_mlir_library(MDIRDriver
   Model.cpp
   ModelTerm.cpp
   ModelFingerprint.cpp
+  NeighborCount.cpp
   Tunables.cpp
   Output.cpp
   Prolate.cpp
