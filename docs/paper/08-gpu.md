@@ -268,6 +268,15 @@ falls from 3.7 to 2.6 GB, the sevenfold replica takes 15.4 GB, and the
 elevenfold (11.7 million atoms) runs in 22.8 GB, with the deterministic
 mode unchanged to the bit and the rates of the suite unchanged.
 
+**Only the scratch a spreading uses** (D[pme-tiled-no-bricks]). With the
+tile strategy (D282), particles are binned and spread directly through
+tiles; the bricks of D108 are neither read nor written. The storage pass
+therefore omits their allocation and initial zeroing. The gathering of
+order 4 in f32 still takes the particle weights, chosen from the order,
+grid type, and algebra rather than from the presence of bricks. A
+non-tiled f32 sum retains bricks where its spreading consumes them, and
+the fixed-order path retains its fixed-point grid and its addition order.
+
 **Flags read without waiting for the stream** (D113). The test of validity
 (Section 4.1) sets a flag on the device, and the host must read it to
 decide whether to build. A copy to pageable memory waits for everything

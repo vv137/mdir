@@ -573,8 +573,22 @@ for the process (`runtime/mdrt_cuda.c`). Measured on an RTX 4090 (1,000
 steps, NPT, 4 fs, mixed): the device peak of STMV from 3,665 to 2,567
 MiB, of STMV ×7 from 22,883 to 15,367 MiB, and STMV ×11 (11,738,045
 atoms) runs in 22,789 MiB, with the deterministic mode unchanged to the
-bit and the rates of the Amber suite unchanged. With tiles the bricks are
-still allocated but not read (#517).
+bit and the rates of the Amber suite unchanged.
+
+### 3.5 Scratch required by each spreading strategy (D[pme-tiled-no-bricks])
+
+The storage assignment gives bricks only to a non-tiled f32 spreading
+that consumes them: order 4 with B-splines (D108), or the prolate window
+(D266). A tiled sum instead takes the bins of D282 and no bricks; an
+f64 or fixed-order sum takes no bricks. The bins may occupy the scratch
+position at which a non-tiled f32 sum has its bricks, so the lowering
+checks the element type when it finds either buffer.
+
+The order-4 f32 gathering still reads the places and fractions written
+by the weights kernel (D102, D109). Its choice follows the sum's order,
+grid type, algebra, and result, independent of whether spreading took
+tiles or bricks. Thus omitting the bricks changes the allocation and its
+one-time zeroing, not the arithmetic of the tiled sum.
 
 ## 4. Parameters (D71)
 
