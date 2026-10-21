@@ -26,7 +26,8 @@ The distributed level now includes `md_dist.partition_centers`
 relation, $R_i^\mathrm{ghost}$ contains its pairs whose neighbor is a
 ghost row. The operation's two `i32` indicators identify $I_d$ and $B_d$,
 with $I_d\cap B_d=\varnothing$ and $I_d\cup B_d=O_d$ for the relation's
-layout epoch. This
+layout epoch, whether it comes from initial partitioning or a completed
+migration. This
 classification follows completion of the position halo used to construct
 $R$; it does not move a transfer wait. The sets allow a later lowering to
 put pair work that reads only owned fields between a later transfer's

@@ -407,7 +407,9 @@ boundary set is the complement. Both results retain the relation's exact
 layout and halo epoch. The verifier and a reusable proof reject a stale or
 mismatched relation and unsupported cross-block provenance. This is a
 membership property of the relation actually traversed, not a bound from
-the shape of a domain or from owned field operands. In particular, the
+the shape of a domain or from owned field operands. The layout can be an
+initial partition or a completed migration in the same block; the proof
+keeps the exact resulting ownership epoch. The
 partition follows the completion of the position halo used to build that
 relation and cannot justify overlapping that same transfer. The CPU
 reference materializes membership from completed positions. Scheduling

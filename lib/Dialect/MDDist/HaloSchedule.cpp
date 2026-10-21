@@ -28,9 +28,10 @@ mdir::md_dist::proveCenterPartition(PartitionCentersOp op) {
         "relation, halo, and layout must have the same ownership epoch");
     return failure();
   }
-  auto layout = op.getLayout().getDefiningOp<PartitionOp>();
+  Operation *layout = op.getLayout().getDefiningOp();
   auto halo = op.getHalo().getDefiningOp<HaloOp>();
-  if (!layout || !halo || layout->getBlock() != op->getBlock() ||
+  if (!layout || !isa<PartitionOp, MigrateOp>(layout) || !halo ||
+      layout->getBlock() != op->getBlock() ||
       halo->getBlock() != op->getBlock() ||
       !layout->isBeforeInBlock(op) || !halo->isBeforeInBlock(op)) {
     op.emitOpError("cannot prove layout and halo in the same block");
