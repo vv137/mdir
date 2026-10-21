@@ -749,7 +749,6 @@ LogicalResult RefreshNeighborsOp::verify() {
   if (failed(verifyPositions(getOperation(), getPositions(),
                              neighbors.getParticleSet())))
     return failure();
-
   double cutoff = getCutoff().convertToDouble();
   double skin = getSkin().convertToDouble();
   double width = getCellWidth().convertToDouble();
@@ -973,6 +972,29 @@ LogicalResult PairForOp::verify() {
   if (failed(verifyPositions(getOperation(), getPositions(),
                              neighbors.getParticleSet())))
     return failure();
+  if (getGhostFree() && !getCenterSet())
+    return emitOpError() << "ghostFree requires center_set";
+  if (Value selected = getCenterSet()) {
+    if (!getCenters() || getImages() != Images::Explicit)
+      return emitOpError()
+             << "center_set requires centers and images(explicit)";
+    auto field = dyn_cast<FieldType>(selected.getType());
+    auto buffer = dyn_cast<MemRefType>(selected.getType());
+    if (isStorageForm()) {
+      if (!buffer || buffer.getRank() != 1 ||
+          !buffer.isDynamicDim(0) ||
+          !buffer.getElementType().isSignlessInteger(32))
+        return emitOpError()
+               << "expected center_set to be a rank-1 i32 buffer";
+    } else if (!field || field.getParticleSet() != neighbors.getParticleSet() ||
+               field.getNumComponents() != 1 ||
+               !field.getElementType().isSignlessInteger(32)) {
+      return emitOpError()
+             << "expected center_set to be a scalar i32 field over the "
+                "neighbor structure's set";
+    }
+  }
+
 
   double cutoff = getCutoff().convertToDouble();
   if (!(cutoff > 0.0))
@@ -1089,6 +1111,8 @@ void PairForOp::getEffects(
     return;
   addEffect<MemoryEffects::Read>(effects, getNeighborsMutable());
   addEffect<MemoryEffects::Read>(effects, getPositionsMutable());
+  for (OpOperand &operand : getCenterSetMutable())
+    addEffect<MemoryEffects::Read>(effects, operand);
   getLoopEffects(*this, effects,
                  [&](unsigned index) { return !overwrites(index); });
 }

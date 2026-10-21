@@ -449,8 +449,11 @@ struct MapParticlesTranspose
 
 /// Whether `index` is the positions, their ghosts, or a gathered field of
 /// a pair op of md_dist.
-static bool isDistPairKernelOperand(unsigned index, unsigned gathered) {
-  return index == 1 || index == 2 || (index >= 3 && index < 3 + gathered);
+static bool isDistPairKernelOperand(unsigned index, unsigned gathered,
+                                    bool filtered) {
+  unsigned first = filtered ? 4 : 3;
+  return index == 1 || index == 2 ||
+         (index >= first && index < first + gathered);
 }
 
 struct DistSumPairsTranspose
@@ -458,7 +461,8 @@ struct DistSumPairsTranspose
                                             md_dist::SumPairsOp> {
   bool isKernelOperand(Operation *op, unsigned index) const {
     return isDistPairKernelOperand(
-        index, cast<md_dist::SumPairsOp>(op).getGathered().size());
+        index, cast<md_dist::SumPairsOp>(op).getGathered().size(),
+        static_cast<bool>(cast<md_dist::SumPairsOp>(op).getCenterSet()));
   }
 
   // S = Σ_d S_d over the pairs of each domain: the weight of each domain's
@@ -477,6 +481,8 @@ struct DistSumPairsTranspose
     MLIRContext *context = b.getContext();
     OperationState state(loc, md_dist::GatherPairsOp::getOperationName());
     state.addOperands(op->getOperands());
+    state.getOrAddProperties<md_dist::GatherPairsOp::Properties>()
+        .setOperandSegmentSizes(sum.getProperties().operandSegmentSizes);
     state.addAttribute("exchange", md::ExchangeAttr::get(context, exchange));
     state.addTypes(resultTypes);
     state.addRegion();
@@ -494,7 +500,8 @@ struct DistGatherPairsTranspose
                                             md_dist::GatherPairsOp> {
   bool isKernelOperand(Operation *op, unsigned index) const {
     return isDistPairKernelOperand(
-        index, cast<md_dist::GatherPairsOp>(op).getGathered().size());
+        index, cast<md_dist::GatherPairsOp>(op).getGathered().size(),
+        static_cast<bool>(cast<md_dist::GatherPairsOp>(op).getCenterSet()));
   }
 
   // ρ_i = Σ_k f(i, k): the adjoint of ρ at both rows of each pair, its owned
@@ -521,8 +528,20 @@ struct DistGatherPairsTranspose
                                   : md_dist::GatherPairsOp::getOperationName());
     state.addOperands(
         {gather.getRelation(), gather.getPositions(), gather.getGhosts()});
+    if (gather.getCenterSet())
+      state.addOperands(gather.getCenterSet());
     state.addOperands(gather.getGathered());
     state.addOperands(cotangents);
+    SmallVector<int32_t> segments = {
+        1, 1, 1, gather.getCenterSet() ? 1 : 0,
+        static_cast<int32_t>(gather.getGathered().size() +
+                             cotangents.size())};
+    if (summed)
+      state.getOrAddProperties<md_dist::SumPairsOp::Properties>()
+          .setOperandSegmentSizes(segments);
+    else
+      state.getOrAddProperties<md_dist::GatherPairsOp::Properties>()
+          .setOperandSegmentSizes(segments);
     state.addAttribute("exchange", md::ExchangeAttr::get(context, exchange));
     state.addTypes(resultTypes);
     state.addRegion();

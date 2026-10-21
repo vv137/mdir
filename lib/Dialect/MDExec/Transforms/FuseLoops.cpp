@@ -23,7 +23,10 @@ static bool haveSameDomain(PairForOp a, PairForOp b) {
          a.getCutoffAttr() == b.getCutoffAttr() &&
          a.getTraversal() == b.getTraversal() &&
          a.getConflict() == b.getConflict() &&
-         a.getCenters() == b.getCenters() && a.getImages() == b.getImages();
+         a.getCenters() == b.getCenters() &&
+         a.getCenterSet() == b.getCenterSet() &&
+         a.getGhostFree() == b.getGhostFree() &&
+         a.getImages() == b.getImages();
 }
 
 /// Returns true if `op` or an op nested in it uses a result of `producer`.
@@ -121,6 +124,7 @@ static void fuse(PairForOp first, PairForOp second) {
       first.getCutoffAttr(), weightsAttr,
       /*overwrite=*/DenseBoolArrayAttr(), first.getTraversalAttr(),
       first.getConflictAttr(), exchangeAttr, first.getCenters(),
+      first.getCenterSet(), first.getGhostFreeAttr(),
       first.getImagesAttr(),
       // Chosen later, for the fused loop (md-exec-choose-scatter).
       /*scatter=*/ScatterAttr());

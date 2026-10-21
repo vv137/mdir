@@ -793,6 +793,12 @@ static void emitPairs(
   Storage &layout = storage[layoutOf(haloValue)];
   Value xo = storage[op.getPositions()].buffer;
   Value xg = storage[op.getGhosts()].buffer;
+  Value selected = op.getCenterSet();
+  Value centerMask = selected ? storage[selected].buffer : Value();
+  bool ghostFree = selected &&
+                   selected ==
+                       selected.template getDefiningOp<PartitionCentersOp>()
+                           .getInterior();
   SmallVector<Value> ownedFields, ghostFields;
   SmallVector<Type> types;
   for (unsigned g = 0; g < op.getGathered().size(); g += 2) {
@@ -822,6 +828,16 @@ static void emitPairs(
             bd, loc, c(bd, 0), owned, c(bd, 1),
             ValueRange{zero(bd, accumulator)},
             [&](OpBuilder &bi, Location, Value i, ValueRange domainSum) {
+              Value rowEnd = ghostFree ? owned : local;
+              if (centerMask) {
+                Value bit = memref::LoadOp::create(
+                    bi, loc, centerMask, ValueRange{d, i, c(bi, 0)});
+                Value active = arith::CmpIOp::create(
+                    bi, loc, arith::CmpIPredicate::ne, bit,
+                    arith::ConstantIntOp::create(bi, loc, 0, 32));
+                rowEnd = arith::SelectOp::create(bi, loc, active, rowEnd,
+                                                c(bi, 0));
+              }
               Value xi = load(bi, xo, d, i, vec3);
               SmallVector<Value> gi;
               for (unsigned g = 0; g < ownedFields.size(); ++g)
@@ -830,7 +846,7 @@ static void emitPairs(
                                        bi, loc, layout.ids, ValueRange{d, i}))
                                  : Value();
               auto rows = scf::ForOp::create(
-                  bi, loc, c(bi, 0), local, c(bi, 1),
+                  bi, loc, c(bi, 0), rowEnd, c(bi, 1),
                   ValueRange{zero(bi, accumulator)},
                   [&](OpBuilder &bk, Location, Value k, ValueRange acc) {
                     Value isOwned = arith::CmpIOp::create(
@@ -1329,6 +1345,17 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, int64_t d,
   FlatSymbolRefAttr set = getSet(d, /*local=*/true);
   Value nOwned = relation.centers[d];
   Value nGhosts = countOf(b, halo, d);
+  Value selected = isa<SumPairsOp>(op)
+                       ? cast<SumPairsOp>(op).getCenterSet()
+                       : cast<GatherPairsOp>(op).getCenterSet();
+  Value centerSet;
+  bool ghostFree = false;
+  if (selected) {
+    centerSet = makeField(b, set, 1, b.getI32Type(), d,
+                          {storage[selected].buffer}, {nOwned});
+    ghostFree = selected ==
+                selected.getDefiningOp<PartitionCentersOp>().getInterior();
+  }
 
   // Each gathered field as one field of the local rows: its owned rows and
   // its copy at the ghosts.
@@ -1363,7 +1390,7 @@ Lowering::createPairLoop(OpBuilder &b, Operation *op, int64_t d,
       md_exec::ConflictAttr::get(context, atomic
                                               ? md_exec::Conflict::Atomic
                                               : md_exec::Conflict::OwnerOnly),
-      exchangeAttr, nOwned,
+      exchangeAttr, nOwned, centerSet, b.getBoolAttr(ghostFree),
       md_exec::ImagesAttr::get(context, md_exec::Images::Explicit),
       /*scatter=*/md_exec::ScatterAttr());
   addPairKernel(loop, op, unique, scale);

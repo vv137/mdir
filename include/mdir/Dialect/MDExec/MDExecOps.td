@@ -1065,6 +1065,8 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     OptionalAttr<TypedArrayAttrBase<MD_Exchange,
                  "exchange contracts">>:$exchange,
     Optional<Index>:$centers,
+    Optional<MDExec_FieldOrBuffer>:$centerSet,
+    DefaultValuedAttr<BoolAttr, "false">:$ghostFree,
     DefaultValuedAttr<MDExec_Images,
                       "::mdir::md_exec::Images::Minimum">:$images,
     OptionalAttr<MDExec_ScatterAttr>:$scatter
@@ -1073,6 +1075,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
   let results = (outs Variadic<AnyType>:$results);
   let assemblyFormat = [{
     $neighbors `,` $positions `,` $cell (`centers` `(` $centers^ `)`)?
+    (`center_set` `(` $centerSet^ `:` qualified(type($centerSet)) `)`)?
     (`ins` `(` $ins^ `:` qualified(type($ins)) `)`)?
     (`outs` `(` $outs^ `:` qualified(type($outs)) `)`)?
     (`reduce` `(` $reduce^ `:` type($reduce) `)`)?

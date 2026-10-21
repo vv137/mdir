@@ -3744,11 +3744,63 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
       Value isCenter = arith::CmpIOp::create(
           body, loc, arith::CmpIPredicate::ult, particle, centers);
       lanes.valid = arith::AndIOp::create(body, loc, sharing.valid, isCenter);
+      if (Value selected = op.getCenterSet()) {
+        auto member = scf::IfOp::create(
+            body, loc, TypeRange{body.getI1Type()}, lanes.valid,
+            /*withElseRegion=*/true);
+        {
+          OpBuilder then = OpBuilder::atBlockEnd(member.thenBlock());
+          Value bit = memref::LoadOp::create(then, loc, selected,
+                                            ValueRange{particle});
+          Value active = arith::CmpIOp::create(
+              then, loc, arith::CmpIPredicate::ne, bit,
+              arith::ConstantIntOp::create(then, loc, 0, 32));
+          scf::YieldOp::create(then, loc, active);
+        }
+        {
+          OpBuilder otherwise = OpBuilder::atBlockEnd(member.elseBlock());
+          scf::YieldOp::create(
+              otherwise, loc,
+              arith::ConstantIntOp::create(otherwise, loc, 0, 1));
+        }
+        lanes.valid = member.getResult(0);
+      }
     }
-    SmallVector<Value> contributions = emitPairKernel(
-        body, op, structure.counts, entries, box, inverse, central,
-        local, &lanes, /*outTotals=*/nullptr, &layout,
-        tabled ? AddToMember(addToTable) : AddToMember());
+    SmallVector<Value> contributions;
+    if (op.getCenterSet()) {
+      auto filtered = scf::IfOp::create(
+          body, loc, TypeRange(op.getReduce()), lanes.valid,
+          /*withElseRegion=*/true);
+      if (!filtered.thenBlock()->empty() &&
+          isa<scf::YieldOp>(filtered.thenBlock()->back()))
+        filtered.thenBlock()->back().erase();
+      if (!filtered.elseBlock()->empty() &&
+          isa<scf::YieldOp>(filtered.elseBlock()->back()))
+        filtered.elseBlock()->back().erase();
+      {
+        OpBuilder then = OpBuilder::atBlockEnd(filtered.thenBlock());
+        scf::YieldOp::create(
+            then, loc,
+            emitPairKernel(then, op, structure.counts, entries, box,
+                           inverse, central, local, &lanes,
+                           /*outTotals=*/nullptr, &layout,
+                           tabled ? AddToMember(addToTable) : AddToMember()));
+      }
+      {
+        OpBuilder otherwise = OpBuilder::atBlockEnd(filtered.elseBlock());
+        SmallVector<Value> zeros;
+        for (Value init : op.getReduce())
+          zeros.push_back(createZero(otherwise, loc, init.getType()));
+        scf::YieldOp::create(otherwise, loc, zeros);
+      }
+      contributions.assign(filtered.getResults().begin(),
+                           filtered.getResults().end());
+    } else {
+      contributions = emitPairKernel(
+          body, op, structure.counts, entries, box, inverse, central,
+          local, &lanes, /*outTotals=*/nullptr, &layout,
+          tabled ? AddToMember(addToTable) : AddToMember());
+    }
     // A place that is not a center contributes zeros to the sums, which
     // its slot of the scratch must hold.
     storeContributions(body, loc, contributions, op.getScratch(), central,

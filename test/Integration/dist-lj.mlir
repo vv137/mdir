@@ -226,6 +226,33 @@ func.func @main() {
     %k   = arith.mulf %e4, %t : f64
     md_dist.yield %k : f64
   } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<f64>
+  %uip = md_dist.sum_pairs %nd, %xo, %xg center_set(%id : !md_dist.field<@dd, owned, i32>) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %t   = arith.subf %s12, %s6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %k   = arith.mulf %e4, %t : f64
+    md_dist.yield %k : f64
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<f64>
+  %ui = md_dist.all_reduce %uip : !md_dist.partial<f64> -> f64
+  %ubp = md_dist.sum_pairs %nd, %xo, %xg center_set(%bd : !md_dist.field<@dd, owned, i32>) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %t   = arith.subf %s12, %s6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %k   = arith.mulf %e4, %t : f64
+    md_dist.yield %k : f64
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<f64>
+  %ub = md_dist.all_reduce %ubp : !md_dist.partial<f64> -> f64
+  %uf = arith.addf %ui, %ub : f64
   %ud = md_dist.all_reduce %udp : !md_dist.partial<f64> -> f64
   // The force on the center: 4 eps (12 s^12 - 6 s^6) / r^2 times d.
   %fdo = md_dist.gather_pairs %nd, %xo, %xg exchange(antisymmetric) {
@@ -248,6 +275,52 @@ func.func @main() {
     %f   = arith.mulf %sv, %d : vector<3xf64>
     md_dist.yield %f : vector<3xf64>
   } : !md_dist.relation<@dd, directed>, !own, !gho -> !own
+  %fio = md_dist.gather_pairs %nd, %xo, %xg center_set(%id : !md_dist.field<@dd, owned, i32>) exchange(antisymmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %c6  = arith.constant 6.0 : f64
+    %c12 = arith.constant 12.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %a12 = arith.mulf %c12, %s12 : f64
+    %a6  = arith.mulf %c6, %s6 : f64
+    %a   = arith.subf %a12, %a6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %num = arith.mulf %e4, %a : f64
+    %r2  = arith.mulf %r, %r : f64
+    %s   = arith.divf %num, %r2 : f64
+    %sv  = vector.broadcast %s : f64 to vector<3xf64>
+    %f   = arith.mulf %sv, %d : vector<3xf64>
+    md_dist.yield %f : vector<3xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !own
+  %fbo = md_dist.gather_pairs %nd, %xo, %xg center_set(%bd : !md_dist.field<@dd, owned, i32>) exchange(antisymmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %c6  = arith.constant 6.0 : f64
+    %c12 = arith.constant 12.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %a12 = arith.mulf %c12, %s12 : f64
+    %a6  = arith.mulf %c6, %s6 : f64
+    %a   = arith.subf %a12, %a6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %num = arith.mulf %e4, %a : f64
+    %r2  = arith.mulf %r, %r : f64
+    %s   = arith.divf %num, %r2 : f64
+    %sv  = vector.broadcast %s : f64 to vector<3xf64>
+    %f   = arith.mulf %sv, %d : vector<3xf64>
+    md_dist.yield %f : vector<3xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !own
+  %ffo = md_dist.map_particles gather(%fio, %fbo : !own, !own) {
+  ^bb0(%a: vector<3xf64>, %b: vector<3xf64>):
+    %sum = arith.addf %a, %b : vector<3xf64>
+    md_dist.yield %sum : vector<3xf64>
+  } : !own
+  %ffd = md_dist.collect %ffo, %lay : !own -> !vec
   %fd = md_dist.collect %fdo, %lay : !own -> !vec
   // The virial: the force on the center times d, as an outer product.
   %wdp = md_dist.sum_pairs %nd, %xo, %xg exchange(symmetric) {
@@ -273,6 +346,55 @@ func.func @main() {
     %w   = arith.mulf %sv, %dd : vector<9xf64>
     md_dist.yield %w : vector<9xf64>
   } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<vector<9xf64>>
+  %wip = md_dist.sum_pairs %nd, %xo, %xg center_set(%id : !md_dist.field<@dd, owned, i32>) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %c6  = arith.constant 6.0 : f64
+    %c12 = arith.constant 12.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %a12 = arith.mulf %c12, %s12 : f64
+    %a6  = arith.mulf %c6, %s6 : f64
+    %a   = arith.subf %a12, %a6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %num = arith.mulf %e4, %a : f64
+    %r2  = arith.mulf %r, %r : f64
+    %s   = arith.divf %num, %r2 : f64
+    %left = vector.shuffle %d, %d [0, 0, 0, 1, 1, 1, 2, 2, 2] : vector<3xf64>, vector<3xf64>
+    %right = vector.shuffle %d, %d [0, 1, 2, 0, 1, 2, 0, 1, 2] : vector<3xf64>, vector<3xf64>
+    %dd  = arith.mulf %left, %right : vector<9xf64>
+    %sv  = vector.broadcast %s : f64 to vector<9xf64>
+    %w   = arith.mulf %sv, %dd : vector<9xf64>
+    md_dist.yield %w : vector<9xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<vector<9xf64>>
+  %wi = md_dist.all_reduce %wip : !md_dist.partial<vector<9xf64>> -> vector<9xf64>
+  %wbp = md_dist.sum_pairs %nd, %xo, %xg center_set(%bd : !md_dist.field<@dd, owned, i32>) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %c6  = arith.constant 6.0 : f64
+    %c12 = arith.constant 12.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %a12 = arith.mulf %c12, %s12 : f64
+    %a6  = arith.mulf %c6, %s6 : f64
+    %a   = arith.subf %a12, %a6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %num = arith.mulf %e4, %a : f64
+    %r2  = arith.mulf %r, %r : f64
+    %s   = arith.divf %num, %r2 : f64
+    %left = vector.shuffle %d, %d [0, 0, 0, 1, 1, 1, 2, 2, 2] : vector<3xf64>, vector<3xf64>
+    %right = vector.shuffle %d, %d [0, 1, 2, 0, 1, 2, 0, 1, 2] : vector<3xf64>, vector<3xf64>
+    %dd  = arith.mulf %left, %right : vector<9xf64>
+    %sv  = vector.broadcast %s : f64 to vector<9xf64>
+    %w   = arith.mulf %sv, %dd : vector<9xf64>
+    md_dist.yield %w : vector<9xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<vector<9xf64>>
+  %wb = md_dist.all_reduce %wbp : !md_dist.partial<vector<9xf64>> -> vector<9xf64>
+  %wf = arith.addf %wi, %wb : vector<9xf64>
   %wd = md_dist.all_reduce %wdp : !md_dist.partial<vector<9xf64>> -> vector<9xf64>
 
   // Unique: every pair once, the forces of the ghosts returned by G^T.
@@ -352,6 +474,7 @@ func.func @main() {
   %fine = arith.constant 1.0e-12 : f64
   %fr = mdrt.to_buffer %f : !vec to memref<?x3xf64>
   %fdb = mdrt.to_buffer %fd : !vec to memref<?x3xf64>
+  %ffdb = mdrt.to_buffer %ffd : !vec to memref<?x3xf64>
   %fub = mdrt.to_buffer %fu : !vec to memref<?x3xf64>
 
   // The energy on one domain, and against Inputs/lj_reference.py with the
@@ -366,8 +489,11 @@ func.func @main() {
   // CHECK-NEXT: 1
   // CHECK-NEXT: 1
   // CHECK-NEXT: 1
+  call @check(%uf, %ud, %ud, %tol) : (f64, f64, f64, f64) -> ()
   call @check(%ud, %u, %u, %tol) : (f64, f64, f64, f64) -> ()
+  call @check_forces(%ffdb, %fdb) : (memref<?x3xf64>, memref<?x3xf64>) -> ()
   call @check_forces(%fdb, %fr) : (memref<?x3xf64>, memref<?x3xf64>) -> ()
+  call @check_virial(%wf, %wd) : (vector<9xf64>, vector<9xf64>) -> ()
   call @check_virial(%wd, %w) : (vector<9xf64>, vector<9xf64>) -> ()
   // Unique: energy and forces.
   // CHECK-NEXT: 1

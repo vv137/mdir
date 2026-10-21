@@ -621,6 +621,24 @@ static LogicalResult verifyPairOperands(OpTy op) {
                                "relation: it does not come from "
                                "md_dist.neighborhood";
   Value halo = neighborhood.getHalo();
+  if (Value selected = op.getCenterSet()) {
+    auto partition = selected.template getDefiningOp<PartitionCentersOp>();
+    if (!partition ||
+        (selected != partition.getInterior() &&
+         selected != partition.getBoundary()))
+      return op.emitOpError()
+             << "center_set must be a direct interior or boundary result "
+                "of md_dist.partition_centers";
+    if (partition.getRelation() != op.getRelation())
+      return op.emitOpError()
+             << "center_set must partition the exact traversed relation";
+    if (partition->getBlock() != op->getBlock() ||
+        !partition->isBeforeInBlock(op))
+      return op.emitOpError()
+             << "center_set must be proved earlier in the same block";
+    if (failed(proveCenterPartition(partition)))
+      return failure();
+  }
   // V9: the relation is of the positions the op reads.
   if (neighborhood.getPositions() != op.getPositions() ||
       neighborhood.getGhosts() != op.getGhosts()) {

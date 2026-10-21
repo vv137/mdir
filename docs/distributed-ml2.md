@@ -430,9 +430,9 @@ traversal, with the directed or unique pair weights unchanged.
 
 The lowering carries the selection into `md_exec.pair_for` and checks
 membership before reading the selected center's pair data. For an interior
-center the physical loop does not inspect ghost candidates, including
-their positions, fields, or IDs; its relation has already proved none of
-them can contribute. A boundary center uses the full relation. The CPU
+center the physical loop checks neighbor indices but does not read ghost
+positions, fields, or IDs; its relation has already proved none of those
+pairs can contribute. A boundary center uses the full relation. The CPU
 reference and device path implement the same selection. The compiler does
 not move a halo wait in this decision; #536 handles that schedule.
 

@@ -310,6 +310,9 @@ LogicalResult Distributor::rewrite(SumRelationOp op) {
   OperationState state(op.getLoc(), md_dist::SumPairsOp::getOperationName());
   state.addOperands({relation, ownedPositions, ghostPositions});
   state.addOperands(gathered);
+  state.getOrAddProperties<md_dist::SumPairsOp::Properties>()
+      .setOperandSegmentSizes(
+          {1, 1, 1, 0, static_cast<int32_t>(gathered.size())});
   state.addAttribute("exchange", op.getExchangeAttr());
   state.addTypes(md_dist::PartialType::get(builder.getContext(), valueType));
   state.addRegion();
@@ -349,6 +352,9 @@ LogicalResult Distributor::rewrite(GatherRelationOp op) {
   OperationState state(op.getLoc(), md_dist::GatherPairsOp::getOperationName());
   state.addOperands({relation, ownedPositions, ghostPositions});
   state.addOperands(gathered);
+  state.getOrAddProperties<md_dist::GatherPairsOp::Properties>()
+      .setOperandSegmentSizes(
+          {1, 1, 1, 0, static_cast<int32_t>(gathered.size())});
   state.addAttribute("exchange", op.getExchangeAttr());
   if (traversal == md_dist::Traversal::Directed) {
     state.addTypes(type);
