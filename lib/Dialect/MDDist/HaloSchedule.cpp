@@ -9,6 +9,65 @@
 using namespace mlir;
 using namespace mdir::md_dist;
 
+FailureOr<CenterPartitionRecord>
+mdir::md_dist::proveCenterPartition(PartitionCentersOp op) {
+  auto relation = op.getRelation().getDefiningOp<NeighborhoodOp>();
+  if (!relation) {
+    op.emitOpError("expected a direct md_dist.neighborhood relation");
+    return failure();
+  }
+  if (relation->getBlock() != op->getBlock() ||
+      !relation->isBeforeInBlock(op)) {
+    op.emitOpError(
+        "cannot prove relation in the same block before partition");
+    return failure();
+  }
+  if (relation.getHalo() != op.getHalo() ||
+      layoutOf(relation.getHalo()) != op.getLayout()) {
+    op.emitOpError(
+        "relation, halo, and layout must have the same ownership epoch");
+    return failure();
+  }
+  auto layout = op.getLayout().getDefiningOp<PartitionOp>();
+  auto halo = op.getHalo().getDefiningOp<HaloOp>();
+  if (!layout || !halo || layout->getBlock() != op->getBlock() ||
+      halo->getBlock() != op->getBlock() ||
+      !layout->isBeforeInBlock(op) || !halo->isBeforeInBlock(op)) {
+    op.emitOpError("cannot prove layout and halo in the same block");
+    return failure();
+  }
+  auto copy = relation.getGhosts().getDefiningOp<HaloCopyOp>();
+  Operation *owned = relation.getPositions().getDefiningOp();
+  if (!copy || !owned || copy->getBlock() != op->getBlock() ||
+      owned->getBlock() != op->getBlock() ||
+      !copy->isBeforeInBlock(relation) ||
+      !owned->isBeforeInBlock(relation)) {
+    op.emitOpError("cannot prove completed relation positions in the same block");
+    return failure();
+  }
+  auto validIndicator = [&](FieldType type) {
+    return type.isOwned() && !type.getPartial() &&
+           type.getDecomposition() ==
+               op.getRelation().getType().getDecomposition() &&
+           type.getNumComponents() == 1 &&
+           type.getElementType().isSignlessInteger(32);
+  };
+  if (!validIndicator(op.getInterior().getType()) ||
+      !validIndicator(op.getBoundary().getType())) {
+    op.emitOpError("expected complete owned scalar i32 indicators of the "
+                   "relation decomposition");
+    return failure();
+  }
+  for (Value result : op->getResults())
+    for (Operation *user : result.getUsers())
+      if (user->getBlock() != op->getBlock()) {
+        op.emitOpError("cannot prove partition use in the same block");
+        return failure();
+      }
+  return CenterPartitionRecord{relation, op.getLayout(), op.getHalo(),
+                               op.getInterior(), op.getBoundary()};
+}
+
 LogicalResult mdir::md_dist::proveHaloSchedule(
     Block &block, SmallVectorImpl<HaloScheduleRecord> &records) {
   records.clear();

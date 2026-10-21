@@ -397,7 +397,11 @@ unsupported control-flow relation rejects the schedule. Both the print
 pass and future transfer lowerings consume the same proof.
 
 The center partition (D[ml2-center-partition], #496) is a semantic
-operation on one neighborhood relation. Its interior set contains exactly
+operation on one neighborhood relation. It returns two complete owned
+`i32` indicator fields: one means membership and zero means absence. A
+future pair filter must require a direct result of this operation on its
+exact relation; arithmetic on an indicator is not a partition proof. Its
+interior set contains exactly
 those owned centers whose pairs in that relation read no ghost row; its
 boundary set is the complement. Both results retain the relation's exact
 layout and halo epoch. The verifier and a reusable proof reject a stale or
@@ -408,7 +412,7 @@ partition follows the completion of the position halo used to build that
 relation and cannot justify overlapping that same transfer. The CPU
 reference materializes membership from completed positions. Scheduling
 center-filtered pair work between a later transfer's start and wait, and
-the MDExec/GPU row-set lowering, remain under #481; this partition alone
+the MDExec/GPU row-set lowering, remain in #499 under #481; this partition alone
 does not overlap communication with computation.
 
 ### Storage-level completion events (D310)

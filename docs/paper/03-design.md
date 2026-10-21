@@ -23,10 +23,10 @@ of runs (`ensemble`) are designs, not code (Section 13).
 
 The distributed level now includes `md_dist.partition_centers`
 (D[ml2-center-partition]). For each owned center $i$ of a neighborhood
-relation $R$, let $G_i$ be the pairs of $R$ at $i$ whose neighbor is a
-ghost row. Its interior set is $I=\{i:G_i=\varnothing\}$ and its boundary
-set is $B=\{i:G_i\ne\varnothing\}$. Thus $I\cap B=\varnothing$ and
-$I\cup B=O$, the owned centers of that relation's layout epoch. This
+relation, $R_i^\mathrm{ghost}$ contains its pairs whose neighbor is a
+ghost row. The operation's two `i32` indicators identify $I_d$ and $B_d$,
+with $I_d\cap B_d=\varnothing$ and $I_d\cup B_d=O_d$ for the relation's
+layout epoch. This
 classification follows completion of the position halo used to construct
 $R$; it does not move a transfer wait. The sets allow a later lowering to
 put pair work that reads only owned fields between a later transfer's

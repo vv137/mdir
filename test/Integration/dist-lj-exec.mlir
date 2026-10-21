@@ -538,6 +538,9 @@ func.func @handwritten(%buffer: !buf, %edge: f64)
 
   %nd = md_dist.neighborhood %xo, %xg, %h cutoff(2.0)
           : !own, !gho, !halo -> !md_dist.relation<@dd, directed>
+  %id, %bd = md_dist.partition_centers %nd, %lay, %h
+      : !md_dist.relation<@dd, directed>, !md_dist.layout<@dd>, !halo
+      -> !md_dist.field<@dd, owned, i32>, !md_dist.field<@dd, owned, i32>
   %udp = md_dist.sum_pairs %nd, %xo, %xg exchange(symmetric) {
   ^bb0(%r: f64, %d: vector<3xf64>):
     %c4  = arith.constant 4.0 : f64
@@ -599,6 +602,9 @@ func.func @handwritten(%buffer: !buf, %edge: f64)
 
   %nu = md_dist.neighborhood %xo, %xg, %h cutoff(2.0)
           : !own, !gho, !halo -> !md_dist.relation<@dd, unique>
+  %iu, %bu = md_dist.partition_centers %nu, %lay, %h
+      : !md_dist.relation<@dd, unique>, !md_dist.layout<@dd>, !halo
+      -> !md_dist.field<@dd, owned, i32>, !md_dist.field<@dd, owned, i32>
   %uup = md_dist.sum_pairs %nu, %xo, %xg exchange(symmetric) {
   ^bb0(%r: f64, %d: vector<3xf64>):
     %c4  = arith.constant 4.0 : f64

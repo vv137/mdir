@@ -137,6 +137,7 @@ private:
   LogicalResult lowerHaloSum(HaloSumOp op);
   LogicalResult lowerZeros(ZerosOp op);
   LogicalResult lowerNeighborhood(NeighborhoodOp op);
+  LogicalResult lowerPartitionCenters(PartitionCentersOp op);
   LogicalResult lowerSumPairs(SumPairsOp op);
   LogicalResult lowerGatherPairs(GatherPairsOp op);
   LogicalResult lowerSumParticles(SumParticlesOp op);
@@ -665,6 +666,91 @@ LogicalResult Lowering::lowerNeighborhood(NeighborhoodOp op) {
               b.getFunctionType({f64, f64, f64, f64}, {}), false),
       ValueRange{real(b, op.getCutoff().convertToDouble()), edges[0],
                  edges[1], edges[2]});
+  return success();
+}
+
+LogicalResult Lowering::lowerPartitionCenters(PartitionCentersOp op) {
+  if (failed(proveCenterPartition(op)))
+    return failure();
+  // Materialize the relation's ghost membership after the position copy.
+  // The reference relation is otherwise traversed lazily by emitPairs. Its
+  // ghost pair predicate below is identical to that traversal's predicate;
+  // the two stored bits are complements, giving exact disjoint coverage.
+  auto relation = op.getRelation().getDefiningOp<NeighborhoodOp>();
+  OpBuilder b(op);
+  Storage &layout = storage[op.getLayout()];
+  Storage &halo = storage[op.getHalo()];
+  auto maskType = MemRefType::get(
+      {ShapedType::kDynamic, ShapedType::kDynamic, ShapedType::kDynamic},
+      b.getI32Type());
+  Value interior = allocate(b, maskType,
+                            {index(b, domains), layout.capacity, index(b, 1)});
+  Value boundary = allocate(b, maskType,
+                            {index(b, domains), layout.capacity, index(b, 1)});
+  Value xo = storage[relation.getPositions()].buffer;
+  Value xg = storage[relation.getGhosts()].buffer;
+  bool unique = relation.getResult().getType().getTraversal() ==
+                Traversal::Unique;
+  double cutoff = relation.getCutoff().convertToDouble();
+  auto c = [&](OpBuilder &at, int64_t v) -> Value {
+    return arith::ConstantIndexOp::create(at, loc, v);
+  };
+  scf::ForOp::create(
+      b, loc, c(b, 0), c(b, domains), c(b, 1), ValueRange(),
+      [&](OpBuilder &bd, Location, Value d, ValueRange) {
+        Value nOwned = toIndex(
+            bd, memref::LoadOp::create(bd, loc, layout.rows, ValueRange{d}));
+        Value nGhost = toIndex(
+            bd, memref::LoadOp::create(bd, loc, halo.rows, ValueRange{d}));
+        scf::ForOp::create(
+            bd, loc, c(bd, 0), nOwned, c(bd, 1), ValueRange(),
+            [&](OpBuilder &bi, Location, Value i, ValueRange) {
+              Value xi = loadValue(bi, xo, d, i,
+                                   VectorType::get({3}, bi.getF64Type()));
+              Value idi = unique
+                              ? Value(memref::LoadOp::create(
+                                    bi, loc, layout.ids, ValueRange{d, i}))
+                              : Value();
+              Value no = arith::ConstantIntOp::create(bi, loc, 0, 1);
+              auto scan = scf::ForOp::create(
+                  bi, loc, c(bi, 0), nGhost, c(bi, 1), ValueRange{no},
+                  [&](OpBuilder &bg, Location, Value k, ValueRange found) {
+                    Value xk = loadValue(bg, xg, d, k,
+                                         VectorType::get({3}, bg.getF64Type()));
+                    Value delta = arith::SubFOp::create(bg, loc, xi, xk);
+                    Value r2 = vector::ReductionOp::create(
+                        bg, loc, vector::CombiningKind::ADD,
+                        arith::MulFOp::create(bg, loc, delta, delta));
+                    Value inside = arith::CmpFOp::create(
+                        bg, loc, arith::CmpFPredicate::OLT, r2,
+                        real(bg, cutoff * cutoff));
+                    if (unique) {
+                      Value idk = memref::LoadOp::create(
+                          bg, loc, halo.ids, ValueRange{d, k});
+                      inside = arith::AndIOp::create(
+                          bg, loc, inside,
+                          arith::CmpIOp::create(
+                              bg, loc, arith::CmpIPredicate::slt, idi, idk));
+                    }
+                    Value any = arith::OrIOp::create(bg, loc, found[0], inside);
+                    scf::YieldOp::create(bg, loc, any);
+                  });
+              Value one = arith::ConstantIntOp::create(bi, loc, 1, 32);
+              Value zero = arith::ConstantIntOp::create(bi, loc, 0, 32);
+              Value interiorBit = arith::SelectOp::create(
+                  bi, loc, scan.getResult(0), zero, one);
+              Value boundaryBit = arith::SelectOp::create(
+                  bi, loc, scan.getResult(0), one, zero);
+              memref::StoreOp::create(bi, loc, interiorBit, interior,
+                                      ValueRange{d, i, c(bi, 0)});
+              memref::StoreOp::create(bi, loc, boundaryBit, boundary,
+                                      ValueRange{d, i, c(bi, 0)});
+              scf::YieldOp::create(bi, loc);
+            });
+        scf::YieldOp::create(bd, loc);
+      });
+  storage[op.getInterior()].buffer = interior;
+  storage[op.getBoundary()].buffer = boundary;
   return success();
 }
 
@@ -1482,6 +1568,7 @@ LogicalResult Lowering::lower(Operation *op) {
       .Case([&](HaloSumOp o) { return lowerHaloSum(o); })
       .Case([&](ZerosOp o) { return lowerZeros(o); })
       .Case([&](NeighborhoodOp o) { return lowerNeighborhood(o); })
+      .Case([&](PartitionCentersOp o) { return lowerPartitionCenters(o); })
       .Case([&](SumPairsOp o) { return lowerSumPairs(o); })
       .Case([&](GatherPairsOp o) { return lowerGatherPairs(o); })
       .Case([&](SumParticlesOp o) { return lowerSumParticles(o); })

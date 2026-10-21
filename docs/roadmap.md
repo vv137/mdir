@@ -524,7 +524,7 @@ work and an asynchronous transport are further parts of #481.
 
 The center partition (D[ml2-center-partition], #496) classifies owned
 centers from actual relation membership for one layout/halo epoch. It
-provides the proof needed before a later center-filtered pair lowering can
+provides the proof needed before a later center-filtered pair lowering (#499) can
 place ghost-independent work between transfer start and wait. There is no
 runtime overlap in this step.
 
