@@ -6,4 +6,4 @@ https://gitlab.mpcdf.mpg.de/mtr/pocketfft (branch `master`, commit
 under the 3-clause BSD license in `LICENSE.md`.
 
 MDIR uses it for the FFT of particle mesh Ewald on the host
-(`runtime/mdrt.c`, docs/pme-m1.md).
+(`runtime/mdrt.c`, docs/pme.md).
