@@ -27,7 +27,7 @@ md.particle_set @atoms
 // CHECK:           call @stop(
 // CHECK-NOT:     md_exec
 func.func private @stop(i64)
-func.func @integrate(%pairs: memref<?x?xi32, 1>, %x: memref<?x3xf64, 1>,
+func.func @integrate(%pairs: memref<?xi32, 1>, %x: memref<?x3xf64, 1>,
                      %v: memref<?x3xf64, 1>, %y: memref<?x3xf64, 1>,
                      %d: memref<?x3xf64, 1>, %cell: !md.cell) {
   %no = arith.constant false
@@ -47,7 +47,7 @@ func.func @integrate(%pairs: memref<?x?xi32, 1>, %x: memref<?x3xf64, 1>,
     %bad = arith.cmpf ugt, %r2, %limit : f64
     %n = arith.negf %r : vector<3xf64>
     md_exec.yield %n, %r, %bad : vector<3xf64>, vector<3xf64>, i1
-  } : memref<?x?xi32, 1>, memref<?x3xf64, 1> -> i1
+  } : memref<?xi32, 1>, memref<?x3xf64, 1> -> i1
   md_exec.particle_for ins(%y, %d : memref<?x3xf64, 1>, memref<?x3xf64, 1>)
       outs(%x : memref<?x3xf64, 1>) {
   ^bb0(%y_i: vector<3xf64>, %d_i: vector<3xf64>):

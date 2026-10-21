@@ -250,7 +250,7 @@ DEVICE = {
 // narrower cell, the others within the reach as well.
 func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
     %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
-    %reach: f64, %cell_width: f64, %excluded: memref<?x?xi32, 1>,
+    %reach: f64, %cell_width: f64, %excluded: memref<?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
     %order: memref<?xi32, 1>) -> (index, index) {
   %lx = vector.extract %box[0] : f64 from vector<6xf64>
@@ -266,7 +266,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
         %x, %box, %widths, %reach, %cell_width, %excluded, %counts, %index,
         %order)
         : (memref<?x3xf64, 1>, vector<6xf64>, vector<3xf64>, f64, f64,
-           memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
+           memref<?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
            memref<?xi32, 1>) -> (index, index)
     scf.yield %one, %one_not : index, index
   } else {
@@ -274,7 +274,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
         %x, %box, %widths, %reach, %cell_width, %excluded, %counts, %index,
         %order)
         : (memref<?x3xf64, 1>, vector<6xf64>, vector<3xf64>, f64, f64,
-           memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
+           memref<?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
            memref<?xi32, 1>) -> (index, index)
     scf.yield %all, %all_not : index, index
   }

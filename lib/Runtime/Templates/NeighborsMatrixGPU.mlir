@@ -39,8 +39,9 @@
 // particles of a run of cells at once, which a thread for each particle
 // would test one after the other, and a ballot gives each neighbor its
 // place in the row in the order in which that thread would find it. The
-// excluded pairs of `excluded`, an incidence structure of pairs (a buffer
-// with no rows where there are none), are entered as the particle itself,
+// excluded pairs of `excluded`, an incidence structure of pairs in ragged
+// rows (include/mdir/Conversion/RaggedRows.h; a buffer of no elements where
+// there are none), are entered as the particle itself,
 // which the loops over pairs skip. The ballot and the ranks are the warp
 // compaction of the device primitives.
 
@@ -58,6 +59,10 @@ func.func private @mdir.primitive.cursor_scatter(memref<?xi32, 1>, memref<?xi32,
     index, index, index, index)
 func.func private @mdir.primitive.sort_bins_by(memref<?xi32, 1>, memref<?xi32, 1>, index, index,
     index, index, memref<?xi32, 1>)
+func.func private @mdir.primitive.ragged_row(memref<?xi32, 1>, index, index)
+    -> (index, index)
+func.func private @mdir.primitive.ragged_entry(memref<?xi32, 1>, index, index,
+    index, index) -> i32
 func.func private @mdir.primitive.rank_in_bins(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
     index, index, index, index)
 
@@ -187,26 +192,24 @@ func.func private @mdrt_gpu_grid(%count: index, %block: index) -> index {
   return %result : index
 }
 
-// The other member of the excluded pair `k` of the particle `i` in the
-// incidence structure `excluded`: the member at place 1 − s, for the place
-// s of the particle. A row holds the number of pairs, then for each its
-// number, the place of the particle, and its two members.
-func.func private @mdrt_gpu_excluded_partner(%excluded: memref<?x?xi32, 1>,
-    %i: index, %k: index) -> i32 {
+// The other member of the excluded pair `k` of the row that begins at
+// `first` in the incidence structure `excluded`, a buffer of ragged rows
+// (include/mdir/Conversion/RaggedRows.h): the member at place 1 − s, for
+// the place s of the particle. An entry holds the number of the pair, the
+// place of the particle, and its two members.
+func.func private @mdrt_gpu_excluded_partner(%excluded: memref<?xi32, 1>,
+    %first: index, %k: index) -> i32 {
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
   %c3 = arith.constant 3 : index
   %c4 = arith.constant 4 : index
   %zero = arith.constant 0 : i32
-  %entry0 = arith.muli %k, %c4 : index
-  %entry = arith.addi %entry0, %c1 : index
-  %place_column = arith.addi %entry, %c1 : index
-  %place = memref.load %excluded[%i, %place_column] : memref<?x?xi32, 1>
+  %place = func.call @mdir.primitive.ragged_entry(%excluded, %first, %k, %c1, %c4)
+      : (memref<?xi32, 1>, index, index, index, index) -> i32
   %at_first = arith.cmpi eq, %place, %zero : i32
-  %first = arith.addi %entry, %c2 : index
-  %second = arith.addi %entry, %c3 : index
-  %column = arith.select %at_first, %second, %first : index
-  %partner = memref.load %excluded[%i, %column] : memref<?x?xi32, 1>
+  %column = arith.select %at_first, %c3, %c2 : index
+  %partner = func.call @mdir.primitive.ragged_entry(%excluded, %first, %k, %column, %c4)
+      : (memref<?xi32, 1>, index, index, index, index) -> i32
   return %partner : i32
 }
 
@@ -286,7 +289,7 @@ func.func private @mdrt_gpu_matrix_sort(
 
 func.func private @mdrt_gpu_build_neighbors_matrix(
     %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
-    %cell_width: f64, %excluded: memref<?x?xi32, 1>,
+    %cell_width: f64, %excluded: memref<?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
     %order: memref<?xi32, 1>) -> (index, index) {
   %c0 = arith.constant 0 : index
@@ -582,14 +585,11 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %cz = arith.divui %rest, %ny32 : i32
 
       // The excluded pairs of the particle, if the structure has any.
-      %rows_excluded = memref.dim %excluded, %i0 : memref<?x?xi32, 1>
-      %has_excluded = arith.cmpi ult, %i, %rows_excluded : index
-      %num_excluded = scf.if %has_excluded -> (i32) {
-        %e32 = memref.load %excluded[%i, %i0] : memref<?x?xi32, 1>
-        scf.yield %e32 : i32
-      } else {
-        scf.yield %zero32 : i32
-      }
+      %entry_excluded = arith.constant 4 : index
+      %first_excluded, %count_excluded = func.call @mdir.primitive.ragged_row(
+          %excluded, %i, %entry_excluded)
+          : (memref<?xi32, 1>, index, index) -> (index, index)
+      %num_excluded = arith.index_cast %count_excluded : index to i32
 
       // The other member of each excluded pair of the particle: lane k
       // holds that of the pair k, for the first 32; a neighbor is compared
@@ -597,8 +597,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
       %lane_excluded = arith.cmpi ult, %lane32, %num_excluded : i32
       %my_partner = scf.if %lane_excluded -> (i32) {
         %lane = arith.index_cast %lane32 : i32 to index
-        %mine = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %lane)
-            : (memref<?x?xi32, 1>, index, index) -> i32
+        %mine = func.call @mdrt_gpu_excluded_partner(%excluded, %first_excluded, %lane)
+            : (memref<?xi32, 1>, index, index) -> i32
         scf.yield %mine : i32
       } else {
         scf.yield %none32 : i32
@@ -740,8 +740,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
               %is_excluded = scf.for %e = %in_registers to %num_excluded
                   step %one32 iter_args(%found_e = %shuffled) -> (i1) : i32 {
                 %e_index = arith.index_cast %e : i32 to index
-                %partner = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %e_index)
-                    : (memref<?x?xi32, 1>, index, index) -> i32
+                %partner = func.call @mdrt_gpu_excluded_partner(%excluded, %first_excluded, %e_index)
+                    : (memref<?xi32, 1>, index, index) -> i32
                 %same = arith.cmpi eq, %partner, %j32 : i32
                 %any_e = arith.ori %found_e, %same : i1
                 scf.yield %any_e : i1
@@ -826,7 +826,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
 // reach, which a script writes from this one.
 func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
     %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
-    %reach: f64, %cell_width: f64, %excluded: memref<?x?xi32, 1>,
+    %reach: f64, %cell_width: f64, %excluded: memref<?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
     %order: memref<?xi32, 1>) -> (index, index) {
   %c0 = arith.constant 0 : index
@@ -1152,14 +1152,11 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
       %cz = arith.divui %rest, %ny32 : i32
 
       // The excluded pairs of the particle, if the structure has any.
-      %rows_excluded = memref.dim %excluded, %i0 : memref<?x?xi32, 1>
-      %has_excluded = arith.cmpi ult, %i, %rows_excluded : index
-      %num_excluded = scf.if %has_excluded -> (i32) {
-        %e32 = memref.load %excluded[%i, %i0] : memref<?x?xi32, 1>
-        scf.yield %e32 : i32
-      } else {
-        scf.yield %zero32 : i32
-      }
+      %entry_excluded = arith.constant 4 : index
+      %first_excluded, %count_excluded = func.call @mdir.primitive.ragged_row(
+          %excluded, %i, %entry_excluded)
+          : (memref<?xi32, 1>, index, index) -> (index, index)
+      %num_excluded = arith.index_cast %count_excluded : index to i32
 
       // The other member of each excluded pair of the particle: lane k
       // holds that of the pair k, for the first 32; a neighbor is compared
@@ -1167,8 +1164,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
       %lane_excluded = arith.cmpi ult, %lane32, %num_excluded : i32
       %my_partner = scf.if %lane_excluded -> (i32) {
         %lane = arith.index_cast %lane32 : i32 to index
-        %mine = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %lane)
-            : (memref<?x?xi32, 1>, index, index) -> i32
+        %mine = func.call @mdrt_gpu_excluded_partner(%excluded, %first_excluded, %lane)
+            : (memref<?xi32, 1>, index, index) -> i32
         scf.yield %mine : i32
       } else {
         scf.yield %none32 : i32
@@ -1316,8 +1313,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
               %is_excluded = scf.for %e = %in_registers to %num_excluded
                   step %one32 iter_args(%found_e = %shuffled) -> (i1) : i32 {
                 %e_index = arith.index_cast %e : i32 to index
-                %partner = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %e_index)
-                    : (memref<?x?xi32, 1>, index, index) -> i32
+                %partner = func.call @mdrt_gpu_excluded_partner(%excluded, %first_excluded, %e_index)
+                    : (memref<?xi32, 1>, index, index) -> i32
                 %same = arith.cmpi eq, %partner, %j32 : i32
                 %any_e = arith.ori %found_e, %same : i1
                 scf.yield %any_e : i1
@@ -1489,7 +1486,7 @@ func.func private @mdrt_gpu_matrix_image_within(
 // candidate at every image within the reach, as on the host.
 func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
     %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
-    %reach: f64, %cell_width: f64, %excluded: memref<?x?xi32, 1>,
+    %reach: f64, %cell_width: f64, %excluded: memref<?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
     %order: memref<?xi32, 1>) -> (index, index) {
   %c0 = arith.constant 0 : index
@@ -1817,14 +1814,11 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
       %cz = arith.divui %rest, %ny32 : i32
 
       // The excluded pairs of the particle, if the structure has any.
-      %rows_excluded = memref.dim %excluded, %i0 : memref<?x?xi32, 1>
-      %has_excluded = arith.cmpi ult, %i, %rows_excluded : index
-      %num_excluded = scf.if %has_excluded -> (i32) {
-        %e32 = memref.load %excluded[%i, %i0] : memref<?x?xi32, 1>
-        scf.yield %e32 : i32
-      } else {
-        scf.yield %zero32 : i32
-      }
+      %entry_excluded = arith.constant 4 : index
+      %first_excluded, %count_excluded = func.call @mdir.primitive.ragged_row(
+          %excluded, %i, %entry_excluded)
+          : (memref<?xi32, 1>, index, index) -> (index, index)
+      %num_excluded = arith.index_cast %count_excluded : index to i32
 
       // The other member of each excluded pair of the particle: lane k
       // holds that of the pair k, for the first 32; a neighbor is compared
@@ -1832,8 +1826,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
       %lane_excluded = arith.cmpi ult, %lane32, %num_excluded : i32
       %my_partner = scf.if %lane_excluded -> (i32) {
         %lane = arith.index_cast %lane32 : i32 to index
-        %mine = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %lane)
-            : (memref<?x?xi32, 1>, index, index) -> i32
+        %mine = func.call @mdrt_gpu_excluded_partner(%excluded, %first_excluded, %lane)
+            : (memref<?xi32, 1>, index, index) -> i32
         scf.yield %mine : i32
       } else {
         scf.yield %none32 : i32
@@ -1999,8 +1993,8 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
               %is_excluded = scf.for %e = %in_registers to %num_excluded
                   step %one32 iter_args(%found_e = %shuffled) -> (i1) : i32 {
                 %e_index = arith.index_cast %e : i32 to index
-                %partner = func.call @mdrt_gpu_excluded_partner(%excluded, %i, %e_index)
-                    : (memref<?x?xi32, 1>, index, index) -> i32
+                %partner = func.call @mdrt_gpu_excluded_partner(%excluded, %first_excluded, %e_index)
+                    : (memref<?xi32, 1>, index, index) -> i32
                 %same = arith.cmpi eq, %partner, %j32 : i32
                 %any_e = arith.ori %found_e, %same : i1
                 scf.yield %any_e : i1
@@ -2082,7 +2076,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
 // narrower cell, the others within the reach as well.
 func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
     %x: memref<?x3xf64, 1>, %box: vector<6xf64>, %widths: vector<3xf64>,
-    %reach: f64, %cell_width: f64, %excluded: memref<?x?xi32, 1>,
+    %reach: f64, %cell_width: f64, %excluded: memref<?xi32, 1>,
     %counts: memref<?xi32, 1>, %index: memref<?x?xi32, 1>,
     %order: memref<?xi32, 1>) -> (index, index) {
   %lx = vector.extract %box[0] : f64 from vector<6xf64>
@@ -2098,7 +2092,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
         %x, %box, %widths, %reach, %cell_width, %excluded, %counts, %index,
         %order)
         : (memref<?x3xf64, 1>, vector<6xf64>, vector<3xf64>, f64, f64,
-           memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
+           memref<?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
            memref<?xi32, 1>) -> (index, index)
     scf.yield %one, %one_not : index, index
   } else {
@@ -2106,7 +2100,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic(
         %x, %box, %widths, %reach, %cell_width, %excluded, %counts, %index,
         %order)
         : (memref<?x3xf64, 1>, vector<6xf64>, vector<3xf64>, f64, f64,
-           memref<?x?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
+           memref<?xi32, 1>, memref<?xi32, 1>, memref<?x?xi32, 1>,
            memref<?xi32, 1>) -> (index, index)
     scf.yield %all, %all_not : index, index
   }

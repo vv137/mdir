@@ -25,6 +25,7 @@ describes how a device implements a primitive.
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
 | Reductions chosen by the algebra of the operator (Section 5) | `BlockReduce` (raking, commutative only) | #422 | Step 1 built, behavior-neutral: the algebra of every sum stated in the IR (`any_order_exact`, `any_order`, `fixed_order`), read by the chooser and the lowerings instead of the mode, with the same PTX; the warp and block reductions one emitter. The strategies it licenses follow only where measured | D301 |
 | Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D296 |
+| Ragged rows: a relation in compressed rows, its accessor, and its build from the row of each item (Section 4.7) | none (a CSR matrix [[Saad2003]](references.md#saad2003), built with the counting sort above) | #471 | Built; its first user is the incidence structure of the tuples | D[ragged-incidence] |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 
 The order follows #415: #421 first, then #419 on the gathering of PME,
@@ -598,7 +599,9 @@ parameters that are not values are attributes of the call: `lanes` and
 those of the emitters: `warp_lanes_below`, `warp_ballot`, `warp_rank`,
 `warp_count`, `warp_scan`, `block_scan`, `device_scan`,
 `device_scan_cursor`, `chunked_scan`, `cursor_scatter`, `sort_bins`,
-`sort_bins_by`, `rank_in_bins`.
+`sort_bins_by`, `rank_in_bins`, and the accessor of ragged rows,
+`ragged_row` and `ragged_entry` (Section 4.7), whose results may be
+`index`.
 
 ### 4.3 Sites
 
@@ -615,6 +618,7 @@ The inventory of #432, by the primitive each site takes:
 | The matrix build: particles by cell | chunked scan, scatter, stable rank | `mdrt_gpu_matrix_sort` |
 | The spatial order (D44, D86) | chunked scan, scatter (every key), insertion sort by the numbers of the input | `mdrt_gpu_spatial_order` |
 | The listed particles of PME (D262, `md_exec.nonzero`) | the serial scan of the counts of the chunks | `lowerNonzero` (lowering) |
+| The incidence structure of the tuples, built on a device (D257, D[ragged-incidence]) | the ragged rows of Section 4.7: a count with a device atomic, the device scan, the scatter (every key), the insertion sort | `buildOnDevice` (lowering) |
 
 Left as they are: PME's binning for tiles (`match.any.sync` and a rank by
 key, one atomic for a key: a warp-aggregated atomic, #418), the serial
@@ -624,8 +628,8 @@ emitters of Section 5 (D301).
 
 ### 4.4 Tests
 
-- `Integration/device-primitives.mlir` calls every emitter from kernels
-  written for the test; `device-primitives-gpu.test` runs it on a device
+- `Integration/device-primitives.mlir` calls every emitter of
+  `CompactionEmitter.h` from kernels written for the test; `device-primitives-gpu.test` runs it on a device
   and compares exactly: the compaction of 2 warps and the warp scans with
   results written out, and the block scan of 256 threads, the device scan
   of 5000 counts with and without the cursor, the chunked scan of 1000, and
@@ -634,10 +638,17 @@ emitters of Section 5 (D301).
   the host by the definition. With `-Dsanitize=1` it runs under memcheck
   and racecheck.
 - `Conversion/MDExecToGPU/expand-primitives.mlir` checks the code of the
-  warp compaction and of the warp scans; `expand-primitives-invalid.mlir`
-  the refusals.
+  warp compaction, of the warp scans, and of the accessor of ragged rows;
+  `expand-primitives-invalid.mlir` the refusals.
 - The sites' own tests run them as before (the builds of groups and of the
   matrix, the dual list, the listed particles of PME).
+- The ragged rows (Section 4.7) have no case of their own in
+  `device-primitives.mlir`. Their build on a device is compared element
+  for element with the host's build of the same structure, by its
+  definition, under `MDRT_CHECK_KEPT_TUPLES` in `python-kept-tuples-gpu.test`
+  and `python-start-arguments-gpu.test`; the host's build is checked
+  against a NumPy reference in `python-kept-tuples.test`; the accessor is
+  read by every test of the tuples and of the excluded pairs.
 
 ### 4.5 The same code
 
@@ -687,6 +698,49 @@ of a step to that of `main`:
 No system is slower beyond the spread of the runs: the rounds of JAC NVE
 took 1259.7 to 1272.4 ns/day with `main` and 1253.6 to 1260.3 with the
 branch, whose program is byte for byte that of `main`.
+
+### 4.7 Ragged rows (D[ragged-incidence])
+
+A relation from each of $N$ rows to a varying number of entries of $E$
+values is one buffer of i32 in compressed rows (CSR, the compressed sparse
+row form of a sparse matrix [[Saad2003]](references.md#saad2003),
+Chapter 3), stated in `include/mdir/Conversion/RaggedRows.h`:
+
+| Elements | Hold |
+|---|---|
+| $[0]$ | $N$ |
+| $[1, N + 2)$ | the offsets $o_0 = 0 \le o_1 \le \dots \le o_N = M$, in entries |
+| $[N + 2 + E j, N + 2 + E(j + 1))$ | entry $j$ |
+| the last $E$ | an entry of zeros |
+
+Row $i$ is the entries $o_i$ to $o_{i+1}$. It replaces a dense
+$N \times W$ table whose rows are padded to the longest one. The entry of
+zeros keeps a read of the first entry of an empty last row inside the
+buffer, for a kernel that reads the first entry of every row and keeps it
+only where the row has one (#347). A buffer of no elements has no rows and
+stands for an absent relation. The offsets are i32: a relation holds at
+most $2^{31} - 1$ entries (the runtime refuses more, `mdrtTuplesSize`).
+
+| Emitter | What it emits | Preconditions |
+|---|---|---|
+| `emitRaggedRow` | Row $i$: the element where its first entry begins, $N + 2 + E\,o_i$, and its count $o_{i+1} - o_i$ (three loads). Checked, a row past $N$ or of a buffer of no elements has none; unchecked, no test | Unchecked: $i < N$ |
+| `emitRaggedEntry` | Value $c$ of entry $k$ of a row: one load at $\mathrm{first} + E k + c$ | $k$ below the row's count |
+| `emitRaggedSize` | $N + 2 + E(M + 1)$ | — |
+| `emitDeviceRaggedRows` | The rows from the row of each of $M$ items: the counts cleared, a count with a device atomic for each item, `emitDeviceScan` into the offsets and a cursor, `emitCursorScatter` (every key) of the items' numbers, `emitSortBins` of each row. The items of a row end ascending, whatever order the atomics took. Six launches; the caller writes the entries from the items | Blocks of 256 threads (`emitDeviceScan`); scratch for the counts and the cursor ($N$), the offsets ($N + 1$), the items ($M$), the sums of the blocks |
+
+Every reader goes through `emitRaggedRow` and `emitRaggedEntry`: the
+loops over tuples (`emitTupleKernel`, the rows of an integration run), the
+host's filter of the excluded pairs (`emitExclusionFilter`), and the
+templates of the neighbor builds, which call them by name
+(`ragged_row`, checked, and `ragged_entry`) for the excluded pairs.
+
+The first user is the incidence structure of the tuples ($E = a + 2$: the
+tuple, the place of the particle, the members). On STMV it took 2,096 MiB
+in its dense form, the dihedrals' rows padded to 247 values; see
+[device-tuples.md](device-tuples.md), Section 3, for its build, and
+D[ragged-incidence] for the memory and the rates measured. The neighbor
+matrix, the scatter table of D291, and ML2's lists keep their layouts
+until a measurement shows a gain (#471).
 
 ## 5. Reductions by their algebra
 

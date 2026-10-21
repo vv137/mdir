@@ -257,18 +257,18 @@ func.func @water_forces(%inc: !waters, %x: !vec, %cell: !md.cell) -> !vec {
 // CHECK: md_exec.tuple_for {{.*}} arity(2) scatter(hash(256, 8, 100000))
 // WHY: remark: scatter: no hash: the loop overwrites a destination
 // WHY: remark: scatter: hash(256, 8, 100000)
-func.func @storage(%inc: memref<?x?xi32>, %x: memref<?x3xf32>,
+func.func @storage(%inc: memref<?xi32>, %x: memref<?x3xf32>,
                    %cell: !md.cell, %f: memref<?x3xf32>) {
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32>) arity(2) overwrite [true] {
   ^bb0(%d: vector<3xf32>):
     md_exec.yield %d, %d : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32>, memref<?x3xf32>
+  } : memref<?xi32>, memref<?x3xf32>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32>) arity(2) {
   ^bb0(%d: vector<3xf32>):
     md_exec.yield %d, %d : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32>, memref<?x3xf32>
+  } : memref<?xi32>, memref<?x3xf32>
   return
 }
 

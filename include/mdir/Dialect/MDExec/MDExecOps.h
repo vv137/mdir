@@ -45,7 +45,9 @@ mlir::MemRefType getScratchType(mlir::Type value, mlir::MemRefType like);
 bool isMembersType(mlir::Type type);
 
 /// Returns true if `type` is the type of a buffer that holds the tuples of
-/// each particle: `memref<?x?xi32>`.
+/// each particle, in ragged rows (include/mdir/Conversion/RaggedRows.h):
+/// `memref<?xi32>`. A buffer of i32 of a field has the same type; the
+/// operands of the ops tell them apart.
 bool isIncidenceBufferType(mlir::Type type);
 
 /// The type of the buffer that holds the tuples of each particle, on the

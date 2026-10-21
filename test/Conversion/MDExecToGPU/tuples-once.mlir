@@ -51,13 +51,13 @@ func.func @bonds(%members: memref<?x2xi32>, %n: index,
                  %x: memref<?x3xf32, 1>, %cell: !md.cell,
                  %f: memref<?x3xf32, 1>) {
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32, 1>
+      : memref<?x2xi32> -> memref<?xi32, 1>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32, 1>) arity(2) {
   ^bb0(%d: vector<3xf32>):
     %n0 = arith.negf %d : vector<3xf32>
     md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  } : memref<?xi32, 1>, memref<?x3xf32, 1>
   return
 }
 
@@ -91,7 +91,7 @@ func.func @energy(%members: memref<?x2xi32>, %n: index,
                   %f: memref<?x3xf32, 1>, %a: memref<?xf64, 1>,
                   %b: memref<?xf64, 1>) -> f64 {
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32, 1>
+      : memref<?x2xi32> -> memref<?xi32, 1>
   %u0 = arith.constant 0.0 : f64
   %u = md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32, 1>) reduce(%u0 : f64)
@@ -101,7 +101,7 @@ func.func @energy(%members: memref<?x2xi32>, %n: index,
     %s = vector.reduction <add>, %d : vector<3xf32> into f32
     %e = arith.extf %s : f32 to f64
     md_exec.yield %d, %n0, %e : vector<3xf32>, vector<3xf32>, f64
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1> -> f64
+  } : memref<?xi32, 1>, memref<?x3xf32, 1> -> f64
   return %u : f64
 }
 
@@ -125,21 +125,21 @@ func.func @two(%m1: memref<?x2xi32>, %m2: memref<?x2xi32>, %n: index,
                %x: memref<?x3xf32, 1>, %cell: !md.cell,
                %f: memref<?x3xf32, 1>) {
   %i1 = md_exec.build_incidence %m1 size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32, 1>
+      : memref<?x2xi32> -> memref<?xi32, 1>
   %i2 = md_exec.build_incidence %m2 size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32, 1>
+      : memref<?x2xi32> -> memref<?xi32, 1>
   md_exec.tuple_for %i1, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32, 1>) arity(2) {
   ^bb0(%d: vector<3xf32>):
     %n0 = arith.negf %d : vector<3xf32>
     md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  } : memref<?xi32, 1>, memref<?x3xf32, 1>
   md_exec.tuple_for %i2, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32, 1>) arity(2) {
   ^bb0(%d: vector<3xf32>):
     %n0 = arith.negf %d : vector<3xf32>
     md_exec.yield %n0, %d : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  } : memref<?xi32, 1>, memref<?x3xf32, 1>
   return
 }
 
@@ -171,7 +171,7 @@ func.func @centers(%members: memref<?x2xi32>, %n: index,
                    %f: memref<?x3xf32, 1>, %w: memref<?xf64, 1>,
                    %a: memref<?xf64, 1>, %b: memref<?xf64, 1>) {
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32, 1>
+      : memref<?x2xi32> -> memref<?xi32, 1>
   %zero = arith.constant 0.0 : f64
   %s = md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       tuple(%w : memref<?xf64, 1>) reduce(%zero : f64)
@@ -181,7 +181,7 @@ func.func @centers(%members: memref<?x2xi32>, %n: index,
     %e = arith.extf %dx : f32 to f64
     %c = arith.mulf %wt, %e : f64
     md_exec.yield %c : f64
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1> -> f64
+  } : memref<?xi32, 1>, memref<?x3xf32, 1> -> f64
   %k = arith.constant 2.0 : f64
   %g = arith.mulf %s, %k : f64
   %g32 = arith.truncf %g : f64 to f32
@@ -191,6 +191,6 @@ func.func @centers(%members: memref<?x2xi32>, %n: index,
     %v = vector.broadcast %g32 : f32 to vector<3xf32>
     %m = arith.negf %v : vector<3xf32>
     md_exec.yield %v, %m : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  } : memref<?xi32, 1>, memref<?x3xf32, 1>
   return
 }

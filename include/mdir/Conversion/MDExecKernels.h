@@ -314,10 +314,10 @@ emitTuplesOnceWithSums(mlir::OpBuilder &builder, md_exec::TupleForOp op,
 
 /// Emits, on the host, the build of the incidence structure of the tuples
 /// that `members` holds, for `size` particles, and returns it in a new
-/// buffer of the host. A row holds the number of tuples of the particle,
-/// then for each tuple its number, the place of the particle in it, and
-/// its members. The tuples of a row are in the order of their numbers, and
-/// a row is as wide as the particle with the most tuples needs.
+/// buffer of the host, in ragged rows (RaggedRows.h): for each particle
+/// a row of an entry for each of its tuples, the tuple's number, the place
+/// of the particle in it, and its members. The tuples of a row are in the
+/// order of their numbers, and of the places within one tuple.
 mlir::Value emitBuildIncidence(mlir::OpBuilder &builder, mlir::Location loc,
                                mlir::Value members, mlir::Value size);
 

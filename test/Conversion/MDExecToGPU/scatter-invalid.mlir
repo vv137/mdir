@@ -38,7 +38,7 @@ func.func @wide(%members: memref<?x2xi32>, %n: index,
                 %x: memref<?x3xf32, 1>, %cell: !md.cell,
                 %f: memref<?x3xf64, 1>, %g: memref<?x3xf64, 1>) {
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32, 1>
+      : memref<?x2xi32> -> memref<?xi32, 1>
   // expected-error @+1 {{takes the strategy 'hash', whose precondition does not hold: a table of 4096 slots takes 212992 bytes of block memory, more than 49152}}
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f, %g : memref<?x3xf64, 1>, memref<?x3xf64, 1>) arity(2)
@@ -47,6 +47,6 @@ func.func @wide(%members: memref<?x2xi32>, %n: index,
     %w = arith.extf %d : vector<3xf32> to vector<3xf64>
     md_exec.yield %w, %w, %w, %w
         : vector<3xf64>, vector<3xf64>, vector<3xf64>, vector<3xf64>
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  } : memref<?xi32, 1>, memref<?x3xf32, 1>
   return
 }

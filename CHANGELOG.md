@@ -700,6 +700,20 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **The incidence structures of the tuples are stored in ragged rows**
+  (D[ragged-incidence], #471,
+  [docs/device-primitives.md](docs/device-primitives.md), Section 4.7):
+  one buffer of the offsets of the rows and their entries (CSR), in
+  place of a table whose rows were padded to the longest one, on the CPU
+  and on a device. A device builds it from the members with a count, a
+  scan, a scatter, and a sort of each row, so the tuples of a row keep
+  their order and the deterministic mode gives the same bits as before.
+  STMV on an RTX 4090 (1,000 steps): its structures from 2,096 to 228
+  MiB, the device peak from 5,641 to 3,663 MiB; STMV ×4 from 20,771 to
+  12,939 MiB, and ×7 (7.47 million atoms) now runs in 22,883 MiB. The
+  Amber suite's rates: JAC NVE 0.7% slower, the larger systems 1% to 4%
+  faster. No control-file key or output change.
+
 - **The prolate kernel against the Gaussian, measured again with tiled
   spreading** (D266, D282; `docs/pme-m1.md`, Section 7; documentation
   only). MDIR's whole step on JAC, Cellulose, and STMV, on an RTX 4090 and

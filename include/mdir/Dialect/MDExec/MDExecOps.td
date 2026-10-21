@@ -35,7 +35,8 @@ def MDExec_Members : Type<
     CPred<"::mdir::md_exec::isMembersType($_self)">,
     "buffer of the members of tuples", "::mlir::MemRefType">;
 
-// The tuples by particle: `memref<?x?xi32>`.
+// The tuples by particle, in ragged rows: `memref<?xi32>`
+// (include/mdir/Conversion/RaggedRows.h).
 def MDExec_IncidenceBuffer : Type<
     CPred<"::mdir::md_exec::isIncidenceBufferType($_self)">,
     "buffer of the tuples of each particle", "::mlir::MemRefType">;
@@ -1261,15 +1262,27 @@ def MDExec_BuildIncidenceOp : MDExec_Op<"build_incidence", [
     result holds as long as the particles keep their places.
 
     In the storage form the op takes the buffer of the members and the
-    number of particles, and it returns a new buffer. For every particle
-    the buffer has a row: the number of tuples of the particle, then for
-    each tuple its number, the place of the particle in it, and its
-    members. A row holds as many tuples as the particle with the most
-    tuples has.
+    number of particles, and it returns a new buffer of ragged rows
+    (compressed sparse rows), one row for each particle. For $N$ particles
+    and $M$ memberships (the number of tuples times the arity $a$), each
+    an entry of $E = a + 2$ values, the buffer holds $N + 2 + E(M + 1)$
+    elements:
+
+    | Elements | Hold |
+    |---|---|
+    | `[0]` | $N$ |
+    | `[1, N + 2)` | the offsets $o_0 = 0 \le \dots \le o_N = M$, in entries |
+    | `[N + 2 + E j, N + 2 + E (j + 1))` | entry $j$: the number of the tuple, the place of the particle in it, and its members |
+    | the last $E$ | an entry of zeros |
+
+    The row of particle $i$ is the entries $o_i$ to $o_{i+1}$, its tuples
+    in ascending order of their numbers (and of the place, for a particle
+    at two places of one tuple). Code reads a row through one accessor
+    (`include/mdir/Conversion/RaggedRows.h`).
 
     ```mlir
     %incidence = md_exec.build_incidence %members size(%n)
-        : memref<?x3xi32> -> memref<?x?xi32>
+        : memref<?x3xi32> -> memref<?xi32>
     ```
 
     The buffer of the members is on the host. The result is where its type

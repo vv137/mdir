@@ -1,8 +1,10 @@
 // The calls of the templates to the emitters of CompactionEmitter.h
-// (D296): `func.call @mdir.primitive.<name>(...)`, each
-// replaced by the code of its emitter where it stands.
+// (D296) and RaggedRows.h (D[ragged-incidence]):
+// `func.call @mdir.primitive.<name>(...)`, each replaced by the code of its
+// emitter where it stands.
 
 #include "mdir/Conversion/CompactionEmitter.h"
+#include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/Passes.h"
 
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -25,7 +27,7 @@ namespace mdir {
 namespace {
 
 /// What an operand of a primitive must be.
-enum class Kind { I1, I32, Index, Buffer, SharedBuffer };
+enum class Kind { I1, I32, Index, Buffer, DynamicBuffer, SharedBuffer };
 
 bool hasKind(Type type, Kind kind) {
   switch (kind) {
@@ -38,6 +40,11 @@ bool hasKind(Type type, Kind kind) {
   case Kind::Buffer: {
     auto memref = dyn_cast<MemRefType>(type);
     return memref && memref.getRank() == 1 &&
+           memref.getElementType().isInteger(32);
+  }
+  case Kind::DynamicBuffer: {
+    auto memref = dyn_cast<MemRefType>(type);
+    return memref && memref.getRank() == 1 && memref.isDynamicDim(0) &&
            memref.getElementType().isInteger(32);
   }
   case Kind::SharedBuffer: {
@@ -60,9 +67,10 @@ struct Primitive {
   /// The operands; those past `least` may be left out.
   SmallVector<Kind> operands;
   unsigned least;
-  /// The results, all i32.
+  /// The number of results, all i32 unless `resultKinds` says otherwise.
   unsigned results;
   Expander expand;
+  SmallVector<Kind> resultKinds = {};
 };
 
 std::optional<Primitive> getPrimitive(StringRef name) {
@@ -183,6 +191,28 @@ std::optional<Primitive> getPrimitive(StringRef name) {
                                       a[3], a[4], a[5], a[6], a[7]);
                        return SmallVector<Value>{};
                      }};
+  // ragged_row(rows, row, entry size) -> (first, count): the row of a
+  // buffer of ragged rows, checked (RaggedRows.h).
+  if (name == "ragged_row")
+    return Primitive{{K::DynamicBuffer, K::Index, K::Index},
+                     3,
+                     2,
+                     [](OpBuilder &b, func::CallOp call, ValueRange a) {
+                       RaggedRow row = emitRaggedRow(b, call.getLoc(), a[0],
+                                                     a[1], a[2],
+                                                     /*checked=*/true);
+                       return SmallVector<Value>{row.first, row.count};
+                     },
+                     {K::Index, K::Index}};
+  // ragged_entry(rows, first, k, column, entry size) -> i32.
+  if (name == "ragged_entry")
+    return Primitive{{K::DynamicBuffer, K::Index, K::Index, K::Index,
+                      K::Index},
+                     5, 1,
+                     [](OpBuilder &b, func::CallOp call, ValueRange a) {
+                       return SmallVector<Value>{emitRaggedEntry(
+                           b, call.getLoc(), a[0], a[1], a[2], a[3], a[4])};
+                     }};
   return std::nullopt;
 }
 
@@ -203,9 +233,13 @@ LogicalResult check(func::CallOp call, StringRef name,
       return call.emitOpError() << "gives the device primitive '" << name
                                 << "' an operand " << k << " of the type "
                                 << operand.getType() << ", which it does not take";
-  if (call.getNumResults() != primitive.results ||
-      !llvm::all_of(call.getResultTypes(),
-                    [](Type type) { return type.isInteger(32); }))
+  bool resultsMatch = call.getNumResults() == primitive.results;
+  for (auto [k, type] : llvm::enumerate(call.getResultTypes()))
+    resultsMatch =
+        resultsMatch && (primitive.resultKinds.empty()
+                             ? type.isInteger(32)
+                             : hasKind(type, primitive.resultKinds[k]));
+  if (!resultsMatch)
     return call.emitOpError() << "declares results of the device primitive '"
                               << name << "' that it does not have";
   return success();

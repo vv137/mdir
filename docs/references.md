@@ -1243,6 +1243,16 @@ molecular dynamics of n-alkanes," *J. Comput. Phys.* **23**, 327–341
 
 Used for: SHAKE, the constraints of the bonds of hydrogen (M1).
 
+### Saad2003
+
+Y. Saad, *Iterative Methods for Sparse Linear Systems*, 2nd ed. (SIAM,
+Philadelphia, 2003).
+[doi:10.1137/1.9780898718003](https://doi.org/10.1137/1.9780898718003)
+
+Used for: the compressed sparse row form (CSR) of a sparse matrix, among
+the storage schemes of Chapter 3: the ragged rows of a relation, the incidence structure of the tuples
+in them (D[ragged-incidence], `include/mdir/Conversion/RaggedRows.h`).
+
 ### Salmon2011
 
 J. K. Salmon, M. A. Moraes, R. O. Dror, D. E. Shaw, "Parallel random

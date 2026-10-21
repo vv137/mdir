@@ -738,7 +738,7 @@ void _mlir_ciface_mdrtTuplesRenumber(struct MdrtMemref2 *result,
   mdrtTuplesSpent(currentTuples, start);
 }
 
-static void tuplesIncidence(struct MdrtMemref2 *result,
+static void tuplesIncidence(struct MdrtMemref1 *result,
                             struct MdrtMemref2 *members, int64_t particles) {
   const int32_t *given = mdrtTuplesMembersOf(members);
   int64_t tuples = members->sizes[0], arity = members->sizes[1];
@@ -752,41 +752,35 @@ static void tuplesIncidence(struct MdrtMemref2 *result,
   }
   if (e && e->particles != particles)
     e = NULL;
-  /* The width does not depend on the order: an entry that has had a
-     structure has the width of the next. */
-  int64_t width = e && e->width
-                      ? e->width
-                      : mdrtTuplesWidth(given, tuples, arity, particles);
-  size_t bytes = (size_t)(particles * width) * sizeof(int32_t);
+  /* The size does not depend on the order. */
+  int64_t elements = mdrtTuplesSize(tuples, arity, particles);
+  size_t bytes = (size_t)elements * sizeof(int32_t);
   if (!e) {
     int32_t *fresh = mdrtTuplesAllocate(bytes);
-    mdrtTuplesFill(given, tuples, arity, particles, width, fresh);
-    mdrtTuplesSetMemref2(result, fresh, particles, width);
+    mdrtTuplesFill(given, tuples, arity, particles, fresh);
+    mdrtTuplesSetMemref1(result, fresh, elements);
     return;
   }
   if (!e->hasIncidence) {
-    if (!e->incidence || e->width != width) {
+    if (!e->incidence || e->elements != elements) {
       free(e->incidence);
       e->incidence = mdrtTuplesAllocate(bytes);
     }
-    e->width = width;
-    mdrtTuplesFill(given, tuples, arity, particles, width, e->incidence);
+    e->elements = elements;
+    mdrtTuplesFill(given, tuples, arity, particles, e->incidence);
     e->hasIncidence = 1;
   } else if (mdrtTuplesChecks()) {
-    int64_t anewWidth = mdrtTuplesWidth(given, tuples, arity, particles);
-    int32_t *anew =
-        mdrtTuplesAllocate((size_t)(particles * anewWidth) * sizeof(int32_t));
-    mdrtTuplesFill(given, tuples, arity, particles, anewWidth, anew);
-    if (anewWidth != width ||
-        !mdrtTuplesSameRows(anew, e->incidence, arity, particles, width))
+    int32_t *anew = mdrtTuplesAllocate(bytes);
+    mdrtTuplesFill(given, tuples, arity, particles, anew);
+    if (memcmp(anew, e->incidence, bytes) != 0)
       mdrtTuplesDiffer("the incidence structure of a tuple set");
     free(anew);
   }
   ++e->held;
-  mdrtTuplesSetMemref2(result, e->incidence, particles, width);
+  mdrtTuplesSetMemref1(result, e->incidence, elements);
 }
 
-void _mlir_ciface_mdrtTuplesIncidence(struct MdrtMemref2 *result,
+void _mlir_ciface_mdrtTuplesIncidence(struct MdrtMemref1 *result,
                                       struct MdrtMemref2 *members,
                                       int64_t particles) {
   double start = mdrtTuplesNow();
@@ -796,6 +790,12 @@ void _mlir_ciface_mdrtTuplesIncidence(struct MdrtMemref2 *result,
 
 /* Where the code would free the members or the structure that it took. */
 void _mlir_ciface_mdrtTuplesRelease(struct MdrtMemref2 *buffer) {
+  if (!mdrtTupleStoreGiveBack(currentTuples, buffer->allocated))
+    free(buffer->allocated);
+}
+
+/* Where the code would free an incidence structure that it took. */
+void _mlir_ciface_mdrtTuplesReleaseRows(struct MdrtMemref1 *buffer) {
   if (!mdrtTupleStoreGiveBack(currentTuples, buffer->allocated))
     free(buffer->allocated);
 }

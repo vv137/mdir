@@ -1,6 +1,7 @@
 // What the lowerings of md_exec have in common.
 
 #include "mdir/Conversion/MDExecKernels.h"
+#include "mdir/Conversion/RaggedRows.h"
 
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 
@@ -959,39 +960,45 @@ static void evaluateMembers(OpBuilder &b, md_exec::TupleForOp op,
                             const IRMapping &local,
                             LoadMember loadMember = nullptr);
 
-/// Loads the entry `number` of the row of `particle` in `incidence`: the
-/// tuple, the place of the particle in it, and its members.
+/// The row of `particle` in `incidence`, a buffer of ragged rows
+/// (RaggedRows.h): where its entries begin and how many tuples it has.
+static RaggedRow loadRow(OpBuilder &b, md_exec::TupleForOp op,
+                         Value incidence, Value particle) {
+  return emitRaggedRow(b, op.getLoc(), incidence, particle,
+                       md_exec::getIncidenceEntrySize(op.getArity()),
+                       /*checked=*/false);
+}
+
+/// Loads the entry `number` of the row `row` of `incidence`: the tuple,
+/// the place of the particle in it, and its members.
 static EvaluatedTuple loadTuple(OpBuilder &b, md_exec::TupleForOp op,
-                                Value incidence, Value particle,
+                                Value incidence, const RaggedRow &row,
                                 Value number) {
   Location loc = op.getLoc();
   int64_t arity = op.getArity();
   int64_t entry = md_exec::getIncidenceEntrySize(arity);
-  Value one = createIndex(b, loc, 1);
-  Value offset =
-      arith::MulIOp::create(b, loc, number, createIndex(b, loc, entry));
-  Value base = arith::AddIOp::create(b, loc, offset, one);
   auto column = [&](int64_t c) -> Value {
-    return arith::AddIOp::create(b, loc, base, createIndex(b, loc, c));
+    return arith::IndexCastOp::create(
+        b, loc, b.getIndexType(),
+        emitRaggedEntry(b, loc, incidence, row.first, number, c, entry));
   };
   EvaluatedTuple result;
-  result.tuple = loadIndex(b, loc, incidence, particle, column(0));
-  result.place = loadIndex(b, loc, incidence, particle, column(1));
+  result.tuple = column(0);
+  result.place = column(1);
   for (int64_t q = 0; q != arity; ++q)
-    result.members.push_back(
-        loadIndex(b, loc, incidence, particle, column(2 + q)));
+    result.members.push_back(column(2 + q));
   return result;
 }
 
-/// Loads the entry `number` of the row of `particle` in `incidence` and
-/// emits the kernel of `op` for it: the displacements in the minimum image,
-/// taken in the type of the positions and imaged in `computed`, the values
-/// of `ins` for each member and of `parameters` for the tuple.
+/// Loads the entry `number` of the row `row` of `incidence` and emits the
+/// kernel of `op` for it: the displacements in the minimum image, taken in
+/// the type of the positions and imaged in `computed`, the values of `ins`
+/// for each member and of `parameters` for the tuple.
 static EvaluatedTuple evaluateTuple(OpBuilder &b, md_exec::TupleForOp op,
-                                    Value incidence, Value particle,
+                                    Value incidence, const RaggedRow &row,
                                     Value number, Value box, Value inverse,
                                     const IRMapping &local) {
-  EvaluatedTuple result = loadTuple(b, op, incidence, particle, number);
+  EvaluatedTuple result = loadTuple(b, op, incidence, row, number);
   evaluateMembers(b, op, result, box, inverse, local);
   return result;
 }
@@ -1097,14 +1104,14 @@ static SmallVector<Value> emitOwnedTupleKernel(OpBuilder &builder,
     return values;
   };
 
-  Value count = loadIndex(builder, loc, incidence, particle, zero);
+  RaggedRow row = loadRow(builder, op, incidence, particle);
   Value member = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
-                                       count, zero);
+                                       row.count, zero);
   auto branch = scf::IfOp::create(
       builder, loc, member,
       [&](OpBuilder &b, Location) {
-        EvaluatedTuple evaluated = evaluateTuple(
-            b, op, incidence, particle, zero, box, inverse, local);
+        EvaluatedTuple evaluated =
+            evaluateTuple(b, op, incidence, row, zero, box, inverse, local);
         Value owner = arith::CmpIOp::create(
             b, loc, arith::CmpIPredicate::eq, evaluated.place, zero);
         auto owned = scf::IfOp::create(
@@ -1193,7 +1200,8 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
         narrow ? narrow.getType() : yield->getOperand(i).getType()));
   }
 
-  Value count = loadIndex(builder, loc, incidence, particle, zero);
+  RaggedRow row = loadRow(builder, op, incidence, particle);
+  Value count = row.count;
   Value first = zero, step = one;
   if (lanes) {
     count = arith::SelectOp::create(builder, loc, lanes->valid, count, zero);
@@ -1204,7 +1212,7 @@ SmallVector<Value> kernels::emitTupleKernel(OpBuilder &builder,
       builder, loc, first, count, step, sums,
       [&](OpBuilder &b, Location, Value number, ValueRange partial) {
         EvaluatedTuple evaluated =
-            evaluateTuple(b, op, incidence, particle, number, boxComputed,
+            evaluateTuple(b, op, incidence, row, number, boxComputed,
                           inverseComputed, local);
         IRMapping &inside = evaluated.inside;
         Value place = evaluated.place;
@@ -1618,12 +1626,15 @@ void kernels::emitIntegrationThread(
     SmallVector<Row> rows;
     for (auto [i, loop] : llvm::enumerate(loops)) {
       Row row;
-      Value count = loadIndex(b, loc, loop.getIncidence(), particle, zero);
+      // The first entry of a row of no tuples is read as well, and not
+      // kept: it is that of the next row, or the entry of zeros at the end
+      // (RaggedRows.h, #347).
+      RaggedRow ragged = loadRow(b, loop, loop.getIncidence(), particle);
       row.inTuple = arith::AndIOp::create(
           b, loc, valid,
-          arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne, count,
-                                zero));
-      row.tuple = loadTuple(b, loop, loop.getIncidence(), particle, zero);
+          arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+                                ragged.count, zero));
+      row.tuple = loadTuple(b, loop, loop.getIncidence(), ragged, zero);
       Value inWarp;
       for (Value member : row.tuple.members) {
         Value in = arith::AndIOp::create(
@@ -1754,9 +1765,10 @@ void kernels::emitIntegrationThread(
     Value at = arith::SelectOp::create(b, loc, inside, n, last);
     Value moved = at;
     for (md_exec::TupleForOp loop : loops) {
-      Value count = loadIndex(b, loc, loop.getIncidence(), at, zero);
+      RaggedRow ragged = loadRow(b, loop, loop.getIncidence(), at);
+      Value count = ragged.count;
       EvaluatedTuple tuple =
-          loadTuple(b, loop, loop.getIncidence(), at, zero);
+          loadTuple(b, loop, loop.getIncidence(), ragged, zero);
       Value low = tuple.members[0], high = tuple.members[0];
       for (Value member : ArrayRef(tuple.members).drop_front()) {
         low = arith::MinUIOp::create(b, loc, low, member);
@@ -2069,10 +2081,9 @@ void kernels::emitExclusionFilter(OpBuilder &builder, Location loc,
   Value fits =
       arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ule, found,
                             width);
-  Value numExcluded = arith::IndexCastOp::create(
-      builder, loc, builder.getIndexType(),
-      memref::LoadOp::create(builder, loc, excluded,
-                             ValueRange{particle, zero}));
+  RaggedRow pairs =
+      emitRaggedRow(builder, loc, excluded, particle, entry, /*checked=*/false);
+  Value numExcluded = pairs.count;
   Value any = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ne,
                                     numExcluded, zero);
   Value filter = arith::AndIOp::create(builder, loc, fits, any);
@@ -2081,23 +2092,15 @@ void kernels::emitExclusionFilter(OpBuilder &builder, Location loc,
     // The other member of each excluded pair of the particle: the member at
     // place 1 − s, for the place s of the particle.
     auto partnerOf = [&](OpBuilder &c, Value k) -> Value {
-      Value offset =
-          arith::MulIOp::create(c, loc, k, createIndex(c, loc, entry));
-      Value base = arith::AddIOp::create(c, loc, offset, one);
-      Value placeColumn =
-          arith::AddIOp::create(c, loc, base, createIndex(c, loc, 1));
-      Value place = memref::LoadOp::create(c, loc, excluded,
-                                           ValueRange{particle, placeColumn});
+      Value place =
+          emitRaggedEntry(c, loc, excluded, pairs.first, k, 1, entry);
       Value isFirst = arith::CmpIOp::create(
           c, loc, arith::CmpIPredicate::eq, place,
           arith::ConstantOp::create(c, loc, narrow, c.getI32IntegerAttr(0)));
-      Value first =
-          arith::AddIOp::create(c, loc, base, createIndex(c, loc, 2));
-      Value second =
-          arith::AddIOp::create(c, loc, base, createIndex(c, loc, 3));
-      Value column = arith::SelectOp::create(c, loc, isFirst, second, first);
-      return memref::LoadOp::create(c, loc, excluded,
-                                    ValueRange{particle, column});
+      Value column = arith::SelectOp::create(
+          c, loc, isFirst, createIndex(c, loc, 3), createIndex(c, loc, 2));
+      return emitRaggedEntry(c, loc, excluded, pairs.first, k, column,
+                             createIndex(c, loc, entry));
     };
 
     auto kept = scf::ForOp::create(
@@ -2413,30 +2416,45 @@ Value kernels::emitBuildIncidence(OpBuilder &builder, Location loc,
         scf::YieldOp::create(b, loc);
       });
 
-  // The width of a row.
-  auto widest = scf::ForOp::create(
-      builder, loc, zero, size, one, ValueRange{zero},
-      [&](OpBuilder &b, Location, Value i, ValueRange largest) {
-        Value count =
-            toIndex(b, memref::LoadOp::create(b, loc, counts, ValueRange{i}));
-        Value larger = arith::MaxUIOp::create(b, loc, count, largest[0]);
-        scf::YieldOp::create(b, loc, larger);
-      });
-  Value slots = arith::MulIOp::create(builder, loc, widest.getResult(0),
-                                      createIndex(builder, loc, entry));
-  Value width = arith::AddIOp::create(builder, loc, slots, one);
+  // The ragged rows (RaggedRows.h): the number of particles, the offsets
+  // of their rows, the entries, and an entry of zeros.
+  Value entries = arith::MulIOp::create(builder, loc, numTuples,
+                                        createIndex(builder, loc, arity));
+  Value elements = emitRaggedSize(builder, loc, size, entries, entry);
   Value incidence = memref::AllocOp::create(
-      builder, loc,
-      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, narrow),
-      ValueRange{size, width});
-
-  // The rows, in the order of the tuples.
-  scf::ForOp::create(builder, loc, zero, size, one, ValueRange(),
+      builder, loc, MemRefType::get({ShapedType::kDynamic}, narrow),
+      ValueRange{elements});
+  Value header = arith::AddIOp::create(builder, loc, size,
+                                       createIndex(builder, loc, 2));
+  memref::StoreOp::create(builder, loc, toNarrow(builder, size), incidence,
+                          ValueRange{zero});
+  // The offsets, and in `counts` where the next entry of each row goes.
+  auto total = scf::ForOp::create(
+      builder, loc, zero, size, one, ValueRange{none},
+      [&](OpBuilder &b, Location, Value i, ValueRange before) {
+        Value at = arith::AddIOp::create(b, loc, i, one);
+        memref::StoreOp::create(b, loc, before[0], incidence, ValueRange{at});
+        Value count = memref::LoadOp::create(b, loc, counts, ValueRange{i});
+        memref::StoreOp::create(b, loc, before[0], counts, ValueRange{i});
+        scf::YieldOp::create(
+            b, loc, ValueRange{arith::AddIOp::create(b, loc, before[0], count)});
+      });
+  memref::StoreOp::create(
+      builder, loc, total.getResult(0), incidence,
+      ValueRange{arith::AddIOp::create(builder, loc, size, one)});
+  Value last = arith::AddIOp::create(
+      builder, loc, header,
+      arith::MulIOp::create(builder, loc, entries,
+                            createIndex(builder, loc, entry)));
+  scf::ForOp::create(builder, loc, last, elements, one, ValueRange(),
                      [&](OpBuilder &b, Location, Value i, ValueRange) {
                        memref::StoreOp::create(b, loc, none, incidence,
-                                               ValueRange{i, zero});
+                                               ValueRange{i});
                        scf::YieldOp::create(b, loc);
                      });
+
+  // The entries, in the order of the tuples and, within a tuple, of the
+  // places.
   scf::ForOp::create(
       builder, loc, zero, numTuples, one, ValueRange(),
       [&](OpBuilder &b, Location, Value t, ValueRange) {
@@ -2446,16 +2464,16 @@ Value kernels::emitBuildIncidence(OpBuilder &builder, Location loc,
               b, loc, members, ValueRange{t, createIndex(b, loc, q)}));
         for (int64_t s = 0; s != arity; ++s) {
           Value particle = toIndex(b, tupleMembers[s]);
-          Value filled = memref::LoadOp::create(b, loc, incidence,
-                                                ValueRange{particle, zero});
-          Value offset = arith::MulIOp::create(
-              b, loc, toIndex(b, filled), createIndex(b, loc, entry));
-          Value base = arith::AddIOp::create(b, loc, offset, one);
+          Value filled =
+              memref::LoadOp::create(b, loc, counts, ValueRange{particle});
+          Value base = arith::AddIOp::create(
+              b, loc, header,
+              arith::MulIOp::create(b, loc, toIndex(b, filled),
+                                    createIndex(b, loc, entry)));
           auto store = [&](Value value, int64_t c) {
-            Value column =
+            Value at =
                 arith::AddIOp::create(b, loc, base, createIndex(b, loc, c));
-            memref::StoreOp::create(b, loc, value, incidence,
-                                    ValueRange{particle, column});
+            memref::StoreOp::create(b, loc, value, incidence, ValueRange{at});
           };
           store(toNarrow(b, t), 0);
           store(arith::ConstantOp::create(b, loc, narrow,
@@ -2464,8 +2482,7 @@ Value kernels::emitBuildIncidence(OpBuilder &builder, Location loc,
           for (int64_t q = 0; q != arity; ++q)
             store(tupleMembers[q], 2 + q);
           Value more = arith::AddIOp::create(b, loc, filled, increment);
-          memref::StoreOp::create(b, loc, more, incidence,
-                                  ValueRange{particle, zero});
+          memref::StoreOp::create(b, loc, more, counts, ValueRange{particle});
         }
         scf::YieldOp::create(b, loc);
       });

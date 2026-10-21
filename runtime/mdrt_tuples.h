@@ -3,9 +3,10 @@
 
    When the particles are put in an order, the members of every tuple set
    are renumbered to their places and the incidence structure of the set is
-   built from them: for every particle a row with the number of its tuples
-   and, for each, the number of the tuple, the place of the particle in it,
-   and its members (md_exec.build_incidence). Both are functions of two
+   built from them: for every particle a row with, for each of its tuples,
+   the number of the tuple, the place of the particle in it, and its
+   members, in ragged rows (md_exec.build_incidence,
+   include/mdir/Conversion/RaggedRows.h, D[ragged-incidence]). Both are functions of two
    inputs alone: the members in the order of the files, and the particle at
    each place (the identities). A start of an activation that orders the
    particles as the last one did (an update of the tunables, a commit of a
@@ -70,6 +71,15 @@ static const int32_t *mdrtTuplesMembersOf(const struct MdrtMemref2 *buffer) {
   return (const int32_t *)buffer->aligned + buffer->offset;
 }
 
+static void mdrtTuplesSetMemref1(struct MdrtMemref1 *result, void *memory,
+                                 int64_t size) {
+  result->allocated = memory;
+  result->aligned = memory;
+  result->offset = 0;
+  result->size = size;
+  result->stride = 1;
+}
+
 static void mdrtTuplesSetMemref2(struct MdrtMemref2 *result, void *memory,
                                  int64_t rows, int64_t columns) {
   result->allocated = memory;
@@ -89,9 +99,9 @@ struct MdrtTuples {
   /* The members at their places; null for the order of the files, where
      they are the members given. */
   int32_t *members;
-  /* The incidence structure: its row width, 0 before it is built, and where
-     it is, on the host or on the device. */
-  int64_t width;
+  /* The incidence structure: its number of elements (mdrtTuplesSize), 0
+     before it is built, and where it is, on the host or on the device. */
+  int64_t elements;
   int32_t *incidence;
   void *deviceIncidence;
   /* The copy of the members on the device, for the loops that evaluate
@@ -107,13 +117,13 @@ struct MdrtTuples {
   /* Built on the device (D257, mdrt_cuda.c): whether the
      entry is of that kind and in a new order (`ordered`) or in the order
      of the files; the number of the store's order it was built in; the
-     members in the order of the files and the index of the tuples of each
-     particle on the device, shared by the entries of one tuple set (owned
-     by the first); the renumbered members on the device; whether the code
-     has said that the structure is built, and whether it is building it. */
+     members in the order of the files on the device, shared by the entries
+     of one tuple set (owned by the first); the renumbered members on the
+     device; whether the code has said that the structure is built, and
+     whether it is building it. */
   int device, ordered, ownsSet, deviceValid, building;
-  int64_t order, widest;
-  void *deviceFile, *deviceFirst, *deviceEntries, *deviceRenumbered;
+  int64_t order;
+  void *deviceFile, *deviceRenumbered;
 };
 
 struct MdrtTupleStore {
@@ -194,33 +204,33 @@ static void mdrtTuplesRenumber(const int32_t *file, int64_t tuples,
   free(place);
 }
 
-/* The width of a row of the incidence structure: one number, and for each
-   tuple of the particle with the most tuples its number, the place of the
-   particle in it, and its members. It does not depend on the order of the
-   particles. */
-static int64_t mdrtTuplesWidth(const int32_t *members, int64_t tuples,
-                               int64_t arity, int64_t particles) {
-  int32_t *counts = calloc(particles ? (size_t)particles : 1, sizeof(int32_t));
-  if (!counts) {
-    fprintf(stderr, "mdrt: out of memory of the host\n");
+/* The number of elements of the incidence structure of `tuples` tuples of
+   `arity` members over `particles` particles, in ragged rows
+   (include/mdir/Conversion/RaggedRows.h): the number of rows, the
+   particles + 1 offsets, an entry of arity + 2 values for each membership,
+   and an entry of zeros. It does not depend on the order of the particles.
+   The offsets and the numbers are i32: a set of more memberships, or more
+   particles, than an i32 holds ends the program. */
+static int64_t mdrtTuplesSize(int64_t tuples, int64_t arity,
+                              int64_t particles) {
+  int64_t memberships = tuples * arity;
+  if (memberships > INT32_MAX || particles > INT32_MAX) {
+    fprintf(stderr,
+            "mdrt: a tuple set of %lld memberships over %lld particles has "
+            "more than the incidence structure numbers in 32 bits (%d)\n",
+            (long long)memberships, (long long)particles, INT32_MAX);
     abort();
   }
-  for (int64_t i = 0, e = tuples * arity; i != e; ++i)
-    ++counts[members[i]];
-  int64_t widest = 0;
-  for (int64_t p = 0; p != particles; ++p)
-    if (counts[p] > widest)
-      widest = counts[p];
-  free(counts);
-  return widest * (arity + 2) + 1;
+  return particles + 2 + (arity + 2) * (memberships + 1);
 }
 
 /* The tuples of each particle, in the order of the tuples: for the particle
    p, `entries` holds from 2 first[p] to 2 first[p + 1] the number of each of
-   its tuples and its place in it. The rows of an incidence structure are
-   written from it one after another, a range of particles at a time, where
-   writing them tuple by tuple would visit the rows of a structure of
-   hundreds of megabytes in the order of the members (#294). */
+   its tuples and its place in it; `first` holds the offsets of the ragged
+   rows. The entries of an incidence structure are written from it in the
+   order of the rows, a range at a time, where writing them tuple by tuple
+   would visit a structure of hundreds of megabytes in the order of the
+   members (#294). */
 struct MdrtTupleIndex {
   int64_t *first;
   int32_t *entries;
@@ -257,53 +267,42 @@ static void mdrtTupleIndexFree(struct MdrtTupleIndex *index) {
   free(index->entries);
 }
 
-/* The rows of the particles from `begin` to `end`, at `rows`: the number of
-   tuples of the particle and, for each in the order of the tuples, its
-   number, the place of the particle in it, and its members. Of a row, the
-   entries after the tuples of its particle are not written. */
-static void mdrtTuplesRows(const struct MdrtTupleIndex *index,
-                           const int32_t *members, int64_t arity,
-                           int64_t width, int64_t begin, int64_t end,
-                           int32_t *rows) {
-  for (int64_t p = begin; p != end; ++p) {
-    int32_t *row = rows + (p - begin) * width;
-    int64_t from = index->first[p], count = index->first[p + 1] - from;
-    row[0] = (int32_t)count;
-    int32_t *at = row + 1;
-    for (int64_t k = 0; k != count; ++k, at += arity + 2) {
-      int32_t tuple = index->entries[2 * (from + k)];
-      at[0] = tuple;
-      at[1] = index->entries[2 * (from + k) + 1];
-      memcpy(at + 2, members + (int64_t)tuple * arity,
-             (size_t)arity * sizeof(int32_t));
-    }
+/* The elements from `begin` to `end` of the incidence structure, at `out`:
+   the number of rows, the offsets, the entries in the order of the rows
+   (each the number of the tuple, the place of the particle in it, and its
+   members), and the entry of zeros. Written a range at a time, so that a
+   caller may hold a part of the structure only. */
+static void mdrtTuplesRange(const struct MdrtTupleIndex *index,
+                            const int32_t *members, int64_t tuples,
+                            int64_t arity, int64_t particles, int64_t begin,
+                            int64_t end, int32_t *out) {
+  int64_t entry = arity + 2, header = particles + 2;
+  int64_t entries = header + entry * tuples * arity;
+  int64_t i = begin;
+  for (; i < end && i < header; ++i)
+    out[i - begin] = i == 0 ? (int32_t)particles
+                            : (int32_t)index->first[i - 1];
+  while (i < end && i < entries) {
+    int64_t j = (i - header) / entry, c = (i - header) % entry;
+    int32_t tuple = index->entries[2 * j];
+    for (; c < entry && i < end; ++c, ++i)
+      out[i - begin] = c == 0   ? tuple
+                       : c == 1 ? index->entries[2 * j + 1]
+                                : members[(int64_t)tuple * arity + (c - 2)];
   }
+  for (; i < end; ++i)
+    out[i - begin] = 0;
 }
 
-/* The whole structure on the host. */
+/* The whole structure on the host, of mdrtTuplesSize elements. */
 static void mdrtTuplesFill(const int32_t *members, int64_t tuples,
-                           int64_t arity, int64_t particles, int64_t width,
+                           int64_t arity, int64_t particles,
                            int32_t *incidence) {
   struct MdrtTupleIndex index;
   mdrtTupleIndexBuild(&index, members, tuples, arity, particles);
-  mdrtTuplesRows(&index, members, arity, width, 0, particles, incidence);
+  mdrtTuplesRange(&index, members, tuples, arity, particles, 0,
+                  mdrtTuplesSize(tuples, arity, particles), incidence);
   mdrtTupleIndexFree(&index);
-}
-
-/* Whether two incidence structures hold the same rows, in what a loop over
-   tuples reads of them. */
-static int mdrtTuplesSameRows(const int32_t *a, const int32_t *b,
-                              int64_t arity, int64_t particles,
-                              int64_t width) {
-  for (int64_t p = 0; p != particles; ++p) {
-    const int32_t *x = a + p * width, *y = b + p * width;
-    if (x[0] != y[0] || x[0] < 0 || 1 + (int64_t)x[0] * (arity + 2) > width)
-      return 0;
-    if (memcmp(x, y, (size_t)(1 + (int64_t)x[0] * (arity + 2)) *
-                         sizeof(int32_t)) != 0)
-      return 0;
-  }
-  return 1;
 }
 
 static struct MdrtTupleStore *mdrtTupleStoreOpen(void) {

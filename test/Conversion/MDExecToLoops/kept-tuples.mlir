@@ -16,12 +16,12 @@ md.particle_set @atoms
 // CHECK:         %[[TAKEN:[a-z0-9_]+]] = call @mdrtTuplesRenumber(%[[WIDE]], %[[IDS]]) : (memref<?x?xi32>, memref<?xi32>) -> memref<?x?xi32>
 // CHECK:         %[[MEMBERS:[a-z0-9_]+]] = memref.cast %[[TAKEN]] : memref<?x?xi32> to memref<?x2xi32>
 // CHECK:         %[[AGAIN:[a-z0-9_]+]] = memref.cast %[[MEMBERS]] : memref<?x2xi32> to memref<?x?xi32>
-// CHECK:         %[[INC:[a-z0-9_]+]] = call @mdrtTuplesIncidence(%[[AGAIN]], %[[N]]) : (memref<?x?xi32>, index) -> memref<?x?xi32>
+// CHECK:         %[[INC:[a-z0-9_]+]] = call @mdrtTuplesIncidence(%[[AGAIN]], %[[N]]) : (memref<?x?xi32>, index) -> memref<?xi32>
 // CHECK-NOT:     memref.alloc
 // CHECK:         scf.parallel
 // CHECK-NOT:     dealloc
 // CHECK:         call @mdrtTuplesRelease(%[[TAKEN]]) : (memref<?x?xi32>) -> ()
-// CHECK:         call @mdrtTuplesRelease(%[[INC]]) : (memref<?x?xi32>) -> ()
+// CHECK:         call @mdrtTuplesReleaseRows(%[[INC]]) : (memref<?xi32>) -> ()
 // CHECK:         return
 // LOOPS-LABEL: func.func @renumbered(
 // LOOPS-NOT:     call @mdrtTuples
@@ -34,13 +34,13 @@ func.func @renumbered(%file: memref<?x2xi32>, %ids: memref<?xi32>, %n: index,
                       %f: memref<?x3xf64>) {
   %members = md_exec.renumber %file, %ids : memref<?x2xi32>, memref<?xi32>
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32>
+      : memref<?x2xi32> -> memref<?xi32>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf64>) arity(2) {
   ^bb0(%d: vector<3xf64>):
     %n0 = arith.negf %d : vector<3xf64>
     md_exec.yield %d, %n0 : vector<3xf64>, vector<3xf64>
-  } : memref<?x?xi32>, memref<?x3xf64>
+  } : memref<?xi32>, memref<?x3xf64>
   return
 }
 
@@ -49,18 +49,18 @@ func.func @renumbered(%file: memref<?x2xi32>, %ids: memref<?xi32>, %n: index,
 // CHECK-LABEL: func.func @given(
 // CHECK-NOT:     call @mdrtTuplesRenumber(
 // CHECK:         %[[INC:[a-z0-9_]+]] = call @mdrtTuplesIncidence(
-// CHECK:         call @mdrtTuplesRelease(%[[INC]])
+// CHECK:         call @mdrtTuplesReleaseRows(%[[INC]])
 // CHECK:         return
 func.func @given(%members: memref<?x2xi32>, %n: index, %x: memref<?x3xf64>,
                  %cell: !md.cell, %f: memref<?x3xf64>) {
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32>
+      : memref<?x2xi32> -> memref<?xi32>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf64>) arity(2) {
   ^bb0(%d: vector<3xf64>):
     %n0 = arith.negf %d : vector<3xf64>
     md_exec.yield %d, %n0 : vector<3xf64>, vector<3xf64>
-  } : memref<?x?xi32>, memref<?x3xf64>
+  } : memref<?xi32>, memref<?x3xf64>
   return
 }
 
@@ -75,13 +75,13 @@ func.func @found(%count: index, %n: index, %x: memref<?x3xf64>,
                  %cell: !md.cell, %f: memref<?x3xf64>) {
   %members = memref.alloc(%count) : memref<?x2xi32>
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32>
+      : memref<?x2xi32> -> memref<?xi32>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf64>) arity(2) {
   ^bb0(%d: vector<3xf64>):
     %n0 = arith.negf %d : vector<3xf64>
     md_exec.yield %d, %n0 : vector<3xf64>, vector<3xf64>
-  } : memref<?x?xi32>, memref<?x3xf64>
+  } : memref<?xi32>, memref<?x3xf64>
   memref.dealloc %members : memref<?x2xi32>
   return
 }

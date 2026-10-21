@@ -150,14 +150,14 @@ bool mdir::md_exec::isMembersType(Type type) {
 
 bool mdir::md_exec::isIncidenceBufferType(Type type) {
   auto buffer = dyn_cast<MemRefType>(type);
-  return buffer && buffer.getRank() == 2 && buffer.isDynamicDim(0) &&
-         buffer.isDynamicDim(1) &&
+  return buffer && buffer.getRank() == 1 && buffer.isDynamicDim(0) &&
+         buffer.getLayout().isIdentity() &&
          buffer.getElementType().isSignlessInteger(32);
 }
 
 MemRefType mdir::md_exec::getIncidenceBufferType(MLIRContext *context,
                                                  Attribute memorySpace) {
-  return MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
+  return MemRefType::get({ShapedType::kDynamic},
                          IntegerType::get(context, 32),
                          MemRefLayoutAttrInterface(), memorySpace);
 }

@@ -16,7 +16,7 @@
 # RUN: cd %t && env MDIR_DEVICE_MEMORY=1 mdir run run.toml > peaks.log 2>&1
 # RUN: FileCheck %s --check-prefix=PEAKS < %t/peaks.log
 #
-# CHECK: mdrt: device memory: the incidence structure of {{[0-9]+}} tuples of {{[0-9]}}: 1168 particles, rows of {{[0-9]+}} entries
+# CHECK: mdrt: device memory: the incidence structure of {{[0-9]+}} tuples of {{[0-9]}}: 1168 particles, ragged rows of {{[0-9]+}} entries of {{[0-9]}} values, {{[0-9]+}} bytes
 # CHECK: mdrt: device memory (MDIR_DEVICE_MEMORY): peak {{[0-9.]+}} MiB allocated, {{[0-9.]+}} MiB with the pool
 # CHECK-NEXT: mdrt: device memory: {{[0-9]+}} allocations of blocks, {{[0-9]+}} from the pool, {{[0-9]+}} returned to the driver
 # CHECK-NEXT: mdrt: device memory: the driver's use of the device: {{[0-9.]+}} MiB once the context was made, {{[0-9.]+}} MiB at the peak with the pool
