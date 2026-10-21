@@ -5,7 +5,7 @@
 // value (`pair-hash=off`), and the table of a block (`pair-hash=on`), in
 // double precision to 1e-10 of the reference and in mixed precision to
 // 1e-5. The first double and mixed runs select the single-pass group scan
-// (D[device-single-pass-scan]); the other runs keep the default scan.
+// (D321); the other runs keep the default scan.
 // All 8 checks must print 1.
 //
 // REQUIRES: cuda

@@ -181,7 +181,7 @@ The PME spreading strategy does not add a control-file key: tiled
 spreading omits unused bricks while keeping the order-4 f32 gathering
 unchanged (D320, Section 8).
 The group build's integer bin offsets can use the single-pass device scan
-of D[device-single-pass-scan] through an internal compiler pass option.
+of D321 through an internal compiler pass option.
 The three-launch scan stays the default. This changes no `[execution]`
 key, precision choice, output format, or overwrite behavior.
 

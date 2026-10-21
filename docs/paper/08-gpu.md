@@ -249,7 +249,7 @@ kernels of the integration runs, which read the first entry of every
 particle's row, now read adjacent entries: Cellulose and STMV step 2% and
 4% faster.
 
-**Offsets of the groups** (D[device-single-pass-scan]). The counting sorts
+**Offsets of the groups** (D321). The counting sorts
 that build groups require an exclusive prefix of their integer bin counts.
 Their previous scan reduced the counts by tile, scanned the tile totals,
 then read the counts again to write the offsets, in three launches. A

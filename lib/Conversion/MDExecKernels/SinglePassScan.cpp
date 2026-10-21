@@ -1,4 +1,4 @@
-// Single-pass device scan (D[device-single-pass-scan]).
+// Single-pass device scan (D321).
 // Merrill and Garland, NVR-2016-002, Sections 4 and 4.4.
 
 #include "mdir/Conversion/CompactionEmitter.h"

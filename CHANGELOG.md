@@ -13,7 +13,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Added
 
 - **An opt-in single-pass device scan for group neighbor builds**
-  (D[device-single-pass-scan], #524, part of #420):
+  (D321, #524, part of #420):
   `convert-md-exec-to-gpu="single-pass-group-scan=true"` selects decoupled
   look-back for the group's three integer counting-sort scans. Exact prefix
   offsets and cursors match the CPU reference. On an RTX 4090 the scan

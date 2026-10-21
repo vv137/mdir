@@ -291,7 +291,7 @@ Look-back*, NVIDIA Technical Report NVR-2016-002 (March 2016).
 [NVIDIA Research](https://research.nvidia.com/sites/default/files/pubs/2016-03_Single-pass-Parallel-Prefix/nvr-2016-002.pdf)
 
 Used for: the device scan strategy with dynamically assigned tiles, aggregate
-and prefix descriptors, and decoupled look-back (D[device-single-pass-scan]).
+and prefix descriptors, and decoupled look-back (D321).
 
 ### CUDAGuideL2
 

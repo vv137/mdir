@@ -414,7 +414,7 @@ def ConvertMDExecToGPU
     Option<"singlePassGroupScan", "single-pass-group-scan", "bool",
            /*default=*/"false",
            "Use the decoupled look-back scan for the three counting sorts "
-           "of the group neighbor build (D[device-single-pass-scan]); "
+           "of the group neighbor build (D321); "
            "the default retains the three-launch scan">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
