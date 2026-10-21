@@ -193,6 +193,28 @@ static int madeInputs() {
     report("lattice, reach of 1 cell", system, 10.0);
     report("lattice, reach of 2 cells", system, 7.5);
   }
+  // Pairs half a box apart along an axis, and an ulp either side, where
+  // the minimum image rounds a half away from zero, both ways round; and
+  // particles so far out that the quotient of a difference by the box is
+  // beyond 2^52.
+  {
+    System system = makeSystem(16.0, 17.0, 18.0);
+    fill(system, 300, 0.0, 1.0);
+    for (double base : {0.0, 3.0, -5.0, 15.9})
+      for (double half : {8.0, std::nextafter(8.0, 0.0),
+                          std::nextafter(8.0, 9.0), -8.0})
+        for (int k = 0; k != 3; ++k) {
+          double a[3] = {base, base + 0.25, base + 0.5};
+          double b[3] = {a[0], a[1], a[2]};
+          b[k] += half;
+          add(system, a[0], a[1], a[2]);
+          add(system, b[0], b[1], b[2]);
+        }
+    add(system, 1.0e17, 2.0, 3.0);
+    add(system, -3.0e17, 2.5, 3.5);
+    add(system, 4.0, 5.0e16, 6.0);
+    report("half a box", system, 9.0);
+  }
   // Particles at the same position.
   {
     System system = makeSystem(30.0, 30.0, 30.0);

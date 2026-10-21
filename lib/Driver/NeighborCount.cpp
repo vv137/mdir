@@ -54,6 +54,59 @@ unsigned getThreads(unsigned given) {
   return std::max(threads, 1u);
 }
 
+/// std::round (halfway cases away from zero) in operations that a vector
+/// unit has, without branches: below 2^52 in magnitude, x - trunc(x) is
+/// the fraction of x exactly (the two are within a factor of 2, or
+/// trunc(x) is a zero of the sign of x), and the step to the next integer
+/// is exact; from 2^52 x is an integer and its fraction 0; an infinity or
+/// not a number is returned as it is, since its comparisons are false. It
+/// differs from std::round only in the sign of a zero (+0 for x in
+/// (-0.5, -0]), which a pair cannot see: d - L t is d itself for d other
+/// than zero whatever the sign of t, and its square is +0 for d = ±0.
+inline double roundHalfAway(double x) {
+  double t = std::trunc(x);
+  double fraction = x - t;
+  double step = static_cast<double>(fraction >= 0.5) -
+                static_cast<double>(fraction <= -0.5);
+  return t + step;
+}
+
+// The sweep is compiled also for AVX2 and chosen at run time where the
+// processor has it. A vector of the same IEEE operations gives the same
+// bits as one at a time; AVX2 does not bring FMA, so no product and sum
+// are fused, as in the default build.
+#if defined(__x86_64__) && defined(__GNUC__) && !defined(__AVX2__) &&         \
+    !defined(__FMA__)
+#define MDIR_SWEEP_CLONES __attribute__((target_clones("avx2", "default")))
+#else
+#define MDIR_SWEEP_CLONES
+#endif
+
+/// The particles q from `begin` to `end` within the reach of (xi, yi, zi):
+/// the test of a pair of the search it replaces, in the same operations,
+/// the difference of the positions as given, its minimum image along each
+/// axis in turn, and the sum of the squares in the order x, y, z.
+MDIR_SWEEP_CLONES
+int64_t countWithin(const double *xs, const double *ys, const double *zs,
+                    size_t begin, size_t end, double xi, double yi, double zi,
+                    double lx, double ly, double lz, double reach2) {
+  int64_t found = 0;
+  for (size_t q = begin; q != end; ++q) {
+    double r2 = 0.0;
+    double d = xi - xs[q];
+    d -= lx * roundHalfAway(d / lx);
+    r2 += d * d;
+    d = yi - ys[q];
+    d -= ly * roundHalfAway(d / ly);
+    r2 += d * d;
+    d = zi - zs[q];
+    d -= lz * roundHalfAway(d / lz);
+    r2 += d * d;
+    found += r2 < reach2;
+  }
+  return found;
+}
+
 } // namespace
 
 int64_t driver::countMostNeighbors(llvm::ArrayRef<double> positions,
@@ -110,23 +163,6 @@ int64_t driver::countMostNeighbors(llvm::ArrayRef<double> positions,
   const double *xs = cells.x.data(), *ys = cells.y.data(),
                *zs = cells.z.data();
   const size_t *offsets = cells.offsets.data();
-  // The pair test of the search it replaces, in the same operations: the
-  // difference of the positions as given, its minimum image along each
-  // axis in turn, and the sum of the squares in the order x, y, z.
-  auto within = [&](double xi, double yi, double zi, size_t q) -> bool {
-    double r2 = 0.0;
-    double d = xi - xs[q];
-    d -= lx * std::round(d / lx);
-    r2 += d * d;
-    d = yi - ys[q];
-    d -= ly * std::round(d / ly);
-    r2 += d * d;
-    d = zi - zs[q];
-    d -= lz * std::round(d / lz);
-    r2 += d * d;
-    return r2 < reach2;
-  };
-
   // The most neighbors of the members of the cells from `first` to `last`.
   auto search = [&](size_t first, size_t last) -> int64_t {
     int64_t most = 0;
@@ -161,11 +197,12 @@ int64_t driver::countMostNeighbors(llvm::ArrayRef<double> positions,
         double xi = xs[p], yi = ys[p], zi = zs[p];
         int64_t found = 0;
         for (int r = 0; r != numRanges; ++r)
-          for (size_t q = ranges[r][0], qe = ranges[r][1]; q != qe; ++q)
-            found += within(xi, yi, zi, q);
+          found += countWithin(xs, ys, zs, ranges[r][0], ranges[r][1], xi, yi,
+                               zi, lx, ly, lz, reach2);
         // The particle itself is among the candidates of its own cell, once;
         // the search it replaces skipped it, so its own test is taken back.
-        found -= within(xi, yi, zi, p);
+        found -= countWithin(xs, ys, zs, p, p + 1, xi, yi, zi, lx, ly, lz,
+                             reach2);
         most = std::max(most, found);
       }
     }

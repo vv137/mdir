@@ -4,7 +4,8 @@
 # integer of the serial search over particles that it replaces, which the
 # test keeps as the reference: on inputs made to find a difference (1, 2,
 # and 3 cells along an axis, positions outside the box and on its faces,
-# pairs at the reach exactly, copies, vacuum, a tilt, enough particles for
+# pairs at the reach exactly and half a box apart, particles beyond
+# 2^52 boxes, copies, vacuum, a tilt, enough particles for
 # threads, which are compared with 1, 2, 3, and 8 threads) and on the
 # systems of control files as `mdir run` reads them: the solvated dipeptide,
 # the same without a cell, the peptide alone in a cell of 60 Å, and the
@@ -25,14 +26,15 @@
 # MADE-NEXT: lattice at the reach: 734 particles, most 63
 # MADE-NEXT: lattice, reach of 1 cell: 734 particles, most 412
 # MADE-NEXT: lattice, reach of 2 cells: 734 particles, most 183
-# MADE-NEXT: copies: 540 particles, most 129
-# MADE-NEXT: cluster and vacuum: 4000 particles, most 2050
-# MADE-NEXT: slab: 4000 particles, most 511
-# MADE-NEXT: triclinic: 3000 particles, most 488
-# MADE-NEXT: threads: 42000 particles, most 2562
+# MADE-NEXT: half a box: 399 particles, most 328
+# MADE-NEXT: copies: 540 particles, most 128
+# MADE-NEXT: cluster and vacuum: 4000 particles, most 2044
+# MADE-NEXT: slab: 4000 particles, most 518
+# MADE-NEXT: triclinic: 3000 particles, most 496
+# MADE-NEXT: threads: 42000 particles, most 2558
 # MADE-NEXT: no particles: 0 particles, most 0
 # MADE-NEXT: one particle: 1 particles, most 0
-# MADE-NEXT: 15 made inputs agree with the reference
+# MADE-NEXT: 16 made inputs agree with the reference
 
 # CHECK: dipeptide.toml: {{.*}}, most 377, as the reference
 # CHECK: open.toml: {{.*}}, most 377, as the reference
