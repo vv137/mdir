@@ -1008,3 +1008,24 @@ each only on a measured gain, `main` and the branch in one job:
   groups in fixed point;
 - raking (`BlockReduce`'s commutative-only form) for the global sums
   where they are `any_order`.
+
+### 5.9 Proposed raking strategy (D[reduction-raking])
+
+The global sums of a loop may use a block raking reduction when every sum
+in the fused reduction kernel states `any_order`. The first warp gathers
+the partials of the other warps from block memory, combines a short segment
+per lane, and reduces those lane totals with a warp butterfly. This follows
+the strategy of CUB's `BLOCK_REDUCE_RAKING_COMMUTATIVE_ONLY`
+[[CUB]](references.md#cub); the implementation uses MDIR's reduction
+emitter and preserves each accumulator's type. A kernel containing a
+`fixed_order` sum keeps D150's block tree. An `any_order_exact` integer sum
+could use either strategy, but this first measured implementation keeps
+the existing tree for it.
+
+The lowering pass offers `reduction-strategy=fixed|raking`, with `fixed`
+the default until the measurements show a gain. This is an internal pass
+option. It changes no control-file key, output format, or overwrite rule.
+The existing `MDIR_PIPELINE` override can compare both strategies in a
+driver run. The benchmark includes the energy and virial on STMV against
+the f64 `fixed_order` result, in addition to step time against `main` on
+the same device.
