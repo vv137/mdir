@@ -1564,6 +1564,19 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- **The device pool no longer grows with the number of builds**
+  (D[pool-retention], #471). A loop over the groups gathered its
+  positions and fields into buffers sized by the number of places that
+  the last build occupied, which changes at nearly every build, and the
+  pool reuses a block only for the same size: each new number left its
+  blocks in the pool for the rest of the run. The buffers now take the
+  room of the structure's places, and a buffer of the runtime that a
+  growth replaces goes back to the driver. STMV on an RTX 4090 (1,000
+  steps): the device peak from 6,529 to 5,641 MiB (×1) and from 12,963
+  to 10,707 MiB (×2), the same after 4,000 steps; STMV ×4 (4,268,380
+  atoms) now runs in 20,771 MiB, where it was out of memory. The rates
+  are unchanged. No control-file or output change.
+
 - `model-stages-programs-gpu.test` now pins its independent JAX reference
   to the CPU backend (`D305`, #486). CPU and GPU JAX f32
   compositions gave different energies for the same fixed synthetic PaiNN,
