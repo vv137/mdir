@@ -504,6 +504,11 @@ one GPU, in `double` and `mixed`. The static factor-grid selection of
 (D307, #476). Migration, MPI on CPU ranks, and
 several GPUs follow, then the classical track of #31 (topology, PME,
 ensembles, the Amber suite on several GPUs).
+The storage lowering can expose each $G$ or $G^\mathsf T$ as a start event
+and a completed destination SSA value at a matching wait
+(D[ml2-halo-events], #490). Its first transport strategy waits
+immediately through the existing synchronous call; scheduling interior
+work and an asynchronous transport are further parts of #481.
 
 The schedule proof (D308, #483) records source versions,
 start prerequisites, completion-before-use edges, and owned-only work

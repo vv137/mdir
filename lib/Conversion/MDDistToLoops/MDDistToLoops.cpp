@@ -30,6 +30,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/IRMapping.h"
 #include "mlir/IR/SymbolTable.h"
+#include "mlir/IR/Verifier.h"
 #include "llvm/ADT/DenseMap.h"
 
 using namespace mlir;
@@ -41,6 +42,7 @@ using namespace mdir::md_dist;
 namespace mdir {
 #define GEN_PASS_DEF_CONVERTMDDISTTOLOOPS
 #define GEN_PASS_DEF_CONVERTMDDISTTOMDEXEC
+#define GEN_PASS_DEF_LOWERMDRTHALOEVENTS
 #include "mdir/Conversion/Passes.h.inc"
 } // namespace mdir
 
@@ -74,9 +76,10 @@ public:
   /// (D290): a structure holds `width` neighbors of a row at first,
   /// in cells of 1/`cellsPerReach` of its reach.
   Lowering(ModuleOp module, bool throughExec = false, int64_t width = 64,
-           int64_t cellsPerReach = 3)
+           int64_t cellsPerReach = 3, bool haloEvents = false)
       : module(module), loc(UnknownLoc::get(module.getContext())),
-        throughExec(throughExec), width(width), cellsPerReach(cellsPerReach) {}
+        throughExec(throughExec), width(width), cellsPerReach(cellsPerReach),
+        haloEvents(haloEvents) {}
 
   LogicalResult run(func::FuncOp function);
 
@@ -186,6 +189,7 @@ private:
 
   bool throughExec;
   int64_t width, cellsPerReach;
+  bool haloEvents;
   llvm::DenseMap<Value, DomainRelation> relations;
 };
 
@@ -508,15 +512,25 @@ LogicalResult Lowering::lowerHaloCopy(HaloCopyOp op) {
   int64_t k = op.getResult().getType().getNumComponents();
   Value ghosts = allocate(b, halo.capacity, k);
   Type i64 = b.getI64Type();
-  func::FuncOp copy = declare(
-      "mdrtDistHaloCopy",
-      b.getFunctionType({i64, owned.getType(), ghosts.getType(), i64}, {}),
-      true);
   Value image = arith::ConstantOp::create(
       b, loc, b.getI64IntegerAttr(op.getImage() ? 1 : 0));
-  func::CallOp::create(b, loc, copy,
-                       ValueRange{halo.handle, owned, ghosts, image});
-  storage[op.getResult()].buffer = ghosts;
+  if (haloEvents) {
+    auto start = mdrt::HaloCopyStartOp::create(
+        b, loc, mdrt::EventType::get(module.getContext()), halo.handle, owned,
+        ghosts, image);
+    auto wait = mdrt::HaloWaitOp::create(b, loc, ghosts.getType(),
+                                         start.getEvent(), halo.handle, owned,
+                                         ghosts);
+    storage[op.getResult()].buffer = wait.getResult();
+  } else {
+    func::FuncOp copy = declare(
+        "mdrtDistHaloCopy",
+        b.getFunctionType({i64, owned.getType(), ghosts.getType(), i64}, {}),
+        true);
+    func::CallOp::create(b, loc, copy,
+                         ValueRange{halo.handle, owned, ghosts, image});
+    storage[op.getResult()].buffer = ghosts;
+  }
   return success();
 }
 
@@ -541,13 +555,23 @@ LogicalResult Lowering::lowerHaloSum(HaloSumOp op) {
   int64_t k = op.getResult().getType().getNumComponents();
   Value result = allocate(b, layout.capacity, k);
   memref::CopyOp::create(b, loc, owned, result);
-  func::FuncOp sum = declare(
-      "mdrtDistHaloSum",
-      b.getFunctionType({b.getI64Type(), ghosts.getType(), result.getType()},
-                        {}),
-      true);
-  func::CallOp::create(b, loc, sum, ValueRange{halo.handle, ghosts, result});
-  storage[op.getResult()].buffer = result;
+  if (haloEvents) {
+    auto start = mdrt::HaloSumStartOp::create(
+        b, loc, mdrt::EventType::get(module.getContext()), halo.handle, ghosts,
+        result);
+    auto wait = mdrt::HaloWaitOp::create(b, loc, result.getType(),
+                                         start.getEvent(), halo.handle, ghosts,
+                                         result);
+    storage[op.getResult()].buffer = wait.getResult();
+  } else {
+    func::FuncOp sum = declare(
+        "mdrtDistHaloSum",
+        b.getFunctionType({b.getI64Type(), ghosts.getType(), result.getType()},
+                          {}),
+        true);
+    func::CallOp::create(b, loc, sum, ValueRange{halo.handle, ghosts, result});
+    storage[op.getResult()].buffer = result;
+  }
   return success();
 }
 
@@ -1482,9 +1506,10 @@ namespace {
 class ConvertMDDistToLoops
     : public mdir::impl::ConvertMDDistToLoopsBase<ConvertMDDistToLoops> {
 public:
+  using ConvertMDDistToLoopsBase::ConvertMDDistToLoopsBase;
   void runOnOperation() final {
     ModuleOp module = getOperation();
-    Lowering lowering(module);
+    Lowering lowering(module, false, 64, 3, haloEvents);
     SmallVector<func::FuncOp> functions(module.getOps<func::FuncOp>());
     for (func::FuncOp function : functions)
       if (failed(lowering.run(function)))
@@ -1507,7 +1532,7 @@ public:
       module.emitError() << "expected a positive width and number of cells";
       return signalPassFailure();
     }
-    Lowering lowering(module, /*throughExec=*/true, width, cells);
+    Lowering lowering(module, /*throughExec=*/true, width, cells, haloEvents);
     SmallVector<func::FuncOp> all(module.getOps<func::FuncOp>());
     bool left = false;
     for (func::FuncOp function : all) {
@@ -1531,6 +1556,70 @@ public:
       for (auto op :
            llvm::make_early_inc_range(module.getOps<DecompositionOp>()))
         op.erase();
+  }
+};
+
+/// The reference strategy completes transport at start. Keep the event
+/// schedule visible until this separate pass, so a later transport can
+/// replace the implementation without changing the dependency contract.
+class LowerMDRTHaloEvents
+    : public mdir::impl::LowerMDRTHaloEventsBase<LowerMDRTHaloEvents> {
+public:
+  void runOnOperation() final {
+    ModuleOp module = getOperation();
+    SmallVector<Operation *> starts;
+    module.walk([&](Operation *op) {
+      if (isa<mdrt::HaloCopyStartOp, mdrt::HaloSumStartOp>(op))
+        starts.push_back(op);
+    });
+    for (Operation *start : starts) {
+      // A malformed event must never be translated into a transport call.
+      if (failed(mlir::verify(start))) {
+        signalPassFailure();
+        return;
+      }
+      Value event, halo, source, destination;
+      StringRef name;
+      SmallVector<Value> operands;
+      if (auto copy = dyn_cast<mdrt::HaloCopyStartOp>(start)) {
+        event = copy.getEvent();
+        halo = copy.getHalo();
+        source = copy.getSource();
+        destination = copy.getDestination();
+        name = "mdrtDistHaloCopy";
+        operands.append({halo, source, destination, copy.getImage()});
+      } else {
+        auto sum = cast<mdrt::HaloSumStartOp>(start);
+        event = sum.getEvent();
+        halo = sum.getHalo();
+        source = sum.getSource();
+        destination = sum.getDestination();
+        name = "mdrtDistHaloSum";
+        operands.append({halo, source, destination});
+      }
+      auto wait = cast<mdrt::HaloWaitOp>(*event.getUsers().begin());
+      OpBuilder builder(start);
+      SmallVector<Type> types;
+      for (Value operand : operands)
+        types.push_back(operand.getType());
+      auto type = builder.getFunctionType(types, {});
+      auto function = module.lookupSymbol<func::FuncOp>(name);
+      if (!function) {
+        function = func::FuncOp::create(start->getLoc(), name, type);
+        function.setPrivate();
+        function->setAttr("llvm.emit_c_interface",
+                          UnitAttr::get(module.getContext()));
+        module.push_back(function);
+      } else if (function.getFunctionType() != type) {
+        start->emitOpError() << "transport declaration has a different type";
+        signalPassFailure();
+        return;
+      }
+      func::CallOp::create(builder, start->getLoc(), function, operands);
+      wait.getResult().replaceAllUsesWith(destination);
+      wait.erase();
+      start->erase();
+    }
   }
 };
 } // namespace

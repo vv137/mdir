@@ -90,8 +90,8 @@
 // RUN: sed 's/GRID/1, 2, 3/; s/TOLERANCE/1.0e-10/' %s \
 // RUN: | mdir-opt --md-distribute="domains=6 box=4.8,4.8,4.8 traversal=unique potentials=lj" \
 // RUN:     %md_passes \
-// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
-// RUN:     --convert-md-dist-to-loops \
+// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten halo-events=true" \
+// RUN:     --convert-md-dist-to-loops="halo-events=true" --lower-mdrt-halo-events \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
 // RUN: | mlir-opt %lower_loops_to_llvm \
@@ -162,8 +162,8 @@
 // RUN: sed 's/GRID/1, 2, 3/; s/TOLERANCE/1.0e-5/' %s \
 // RUN: | mdir-opt --md-distribute="domains=6 box=4.8,4.8,4.8 traversal=unique potentials=lj" \
 // RUN:     %md_passes \
-// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten" \
-// RUN:     --convert-md-dist-to-loops \
+// RUN:     --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=derived,energy,handwritten halo-events=true" \
+// RUN:     --convert-md-dist-to-loops="halo-events=true" --lower-mdrt-halo-events \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
 // RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \

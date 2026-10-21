@@ -4,6 +4,7 @@
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mdir/Dialect/MDRT/MDRTTypes.h"
 
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "mlir/Interfaces/FunctionInterfaces.h"
@@ -104,6 +105,120 @@ LogicalResult FromBufferOp::verify() {
 LogicalResult ToBufferOp::verify() {
   return verifyBufferType(getOperation(), getResult().getType(),
                           getField().getType());
+}
+
+/// Proves the physical lifetime of a halo event before a transport strategy
+/// lowers it. The immediate-wait reference meets these same preconditions.
+static LogicalResult verifyHaloStart(Operation *start, Value event, Value halo,
+                                     Value source, Value destination) {
+  auto sourceType = dyn_cast<MemRefType>(source.getType());
+  if (!sourceType || sourceType != destination.getType() ||
+      sourceType.getRank() != 3 || !sourceType.getElementType().isF64())
+    return start->emitOpError()
+           << "expected matching three-dimensional f64 transfer buffers";
+  if (source == destination)
+    return start->emitOpError() << "source and destination must be distinct";
+  if (!source.getDefiningOp<memref::AllocOp>() ||
+      !destination.getDefiningOp<memref::AllocOp>())
+    return start->emitOpError()
+           << "cannot prove unique transfer buffers: both must come from "
+              "memref.alloc";
+  if (!event.hasOneUse())
+    return start->emitOpError()
+           << "event must have exactly one use by mdrt.halo_wait";
+  auto wait = dyn_cast<HaloWaitOp>(*event.getUsers().begin());
+  if (!wait || wait->getBlock() != start->getBlock() ||
+      !start->isBeforeInBlock(wait))
+    return start->emitOpError()
+           << "event must be consumed by a later mdrt.halo_wait in the "
+              "same block";
+  if (wait.getHalo() != halo || wait.getSource() != source ||
+      wait.getDestination() != destination)
+    return wait.emitOpError()
+           << "halo handle and transfer buffers do not match the start";
+
+  // A view can hide a write or a deallocation behind another SSA value.
+  // Until alias analysis is part of the strategy, refuse every such view.
+  for (Value buffer : {source, destination})
+    for (Operation *user : buffer.getUsers()) {
+      if (user == start || user == wait)
+        continue;
+      for (Value result : user->getResults())
+        if (isa<MemRefType>(result.getType()))
+          return user->emitOpError()
+                 << "creates an unproved alias of a halo transfer buffer";
+    }
+
+  for (Operation *between = start->getNextNode(); between != wait;
+       between = between->getNextNode()) {
+    if (!between)
+      return start->emitOpError() << "wait is not reachable in the block";
+    if (between->getNumRegions())
+      return between->emitOpError()
+             << "control flow between halo start and wait is not proved";
+    for (Value operand : between->getOperands())
+      if (operand == source || operand == destination || operand == halo)
+        return between->emitOpError()
+               << "uses a halo transfer buffer or handle before completion";
+  }
+  // All reads of the destination after the start must use the wait's
+  // completed SSA result. The original allocation may only be deallocated
+  // after the wait. This also protects against motion across the wait.
+  for (Operation *user : destination.getUsers()) {
+    if (user == start || user == wait)
+      continue;
+    if (user->getBlock() != start->getBlock())
+      return user->emitOpError()
+             << "destination use crosses the halo event block";
+    if (user->isBeforeInBlock(start))
+      continue;
+    if (isa<memref::DeallocOp>(user) && wait->isBeforeInBlock(user))
+      continue;
+    return user->emitOpError()
+           << "destination use must take the completed mdrt.halo_wait "
+              "result, or deallocate it after the wait";
+  }
+  // The completed result aliases the allocation; deallocating both SSA
+  // names would free the same storage twice. Keep deallocation on the
+  // original allocation and after completion.
+  for (Operation *user : wait.getResult().getUsers())
+    if (isa<memref::DeallocOp>(user))
+      return user->emitOpError()
+             << "deallocate the original destination after halo wait";
+  for (Value buffer : {source, destination}) {
+    unsigned deallocations = 0;
+    for (Operation *user : buffer.getUsers()) {
+      if (!isa<memref::DeallocOp>(user))
+        continue;
+      if (++deallocations > 1)
+        return user->emitOpError()
+               << "halo transfer buffer has multiple deallocations";
+      if (user->getBlock() != wait->getBlock() ||
+          !wait->isBeforeInBlock(user))
+        return user->emitOpError()
+               << "halo transfer buffer is deallocated before completion";
+    }
+  }
+  return success();
+}
+
+LogicalResult HaloCopyStartOp::verify() {
+  return verifyHaloStart(getOperation(), getEvent(), getHalo(), getSource(),
+                         getDestination());
+}
+
+LogicalResult HaloSumStartOp::verify() {
+  return verifyHaloStart(getOperation(), getEvent(), getHalo(), getSource(),
+                         getDestination());
+}
+
+LogicalResult HaloWaitOp::verify() {
+  if (getResult().getType() != getDestination().getType())
+    return emitOpError() << "completed buffer must have the destination type";
+  Operation *start = getEvent().getDefiningOp();
+  if (!isa_and_nonnull<HaloCopyStartOp, HaloSumStartOp>(start))
+    return emitOpError() << "event must come from a halo transfer start";
+  return success();
 }
 
 /// The type of the buffer of the host that takes `number`, a result of
