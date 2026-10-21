@@ -930,7 +930,8 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   if (!pointer) {
     int64_t before = beginAccount();
     check(cuMemAlloc(&pointer, size), "cuMemAlloc");
-    endAccount(ACCOUNT_BLOCKS, before, (int64_t)size);  }
+    endAccount(ACCOUNT_BLOCKS, before, (int64_t)size);
+  }
   liveBytes += size;
   if (numLive < MAX_BLOCKS)
     liveBlocks[numLive++] =
