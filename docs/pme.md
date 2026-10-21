@@ -527,6 +527,52 @@ disturbed one. On Cellulose (RTX 4090) the spreading of 95 µs is 16 for
 zeroing the grid, 8 for the binning, and 71 for the tiles; on STMV
 (RTX 4090) 44, 26, and 209 (the zeroing of a grid of 12 million points).
 
+### 3.4 One set of buffers for every sum (D[pme-shared-buffers])
+
+A program evaluates the reciprocal sum in several places: before the
+first step, and in each copy of the step that the loop nest specializes
+by what the step must produce (the energy of a row of the log, the virial
+for the barostat, or neither). A run at constant pressure has 7, and 14
+with the dispersion on a grid of its own (D162). On a device each sum
+takes, besides its forces, the real grid, the half-complex transform, the
+sums of the rows, the places of the particles (D109), the factors of the
+influence function (D104), the bricks (D108) in f32, and the bins of the
+tiles (D282) where it spreads through them; in the deterministic mode
+also the grid in fixed point. At STMV (grid 224 × 224 × 240, 1,067,095
+atoms) that is about 179 MiB for a sum outside the deterministic mode.
+
+`md-exec-assign-storage` allocates these buffers in the body of the
+function, before the loops, and gives every sum of the function the
+buffers of an earlier sum of the same shape: the type, the formula of the
+length with its count (and the number of particles, for the places and
+the bins), and whether the buffer must hold zeros between evaluations. A
+sum on another grid takes its own grids and shares the places. No sum
+takes one buffer twice.
+
+This is correct because a sum writes each of these buffers before it
+reads it within one evaluation, except the bricks, which it finds zero and
+leaves zero: the bricks are shared only with bricks and set to zero once.
+That held before, since each sum runs again at the next step on what its
+previous evaluation left, and no result is read from the buffers after the
+sum: the energy and the virial are summed from the rows and copied to the
+host within it, and the forces go to their own buffer. Two sums that share
+a buffer must not run at once. On one stream they do not, since the stream
+runs its work in the order in which it was issued. A sum on the second
+stream (`md-exec-assign-streams{reciprocal=true}`, D87) runs beside the
+ops up to its join, and the op declares that it reads and writes its
+buffers, so the next sum that shares them is not independent of it: the
+join goes before that sum, and the lowering checks the window again. A
+sum moved before the test of a neighbor structure (D113) may cross a sum
+that moves with it.
+
+The plans of cuFFT were already one per grid, direction, and precision
+for the process (`runtime/mdrt_cuda.c`). Measured on an RTX 4090 (1,000
+steps, NPT, 4 fs, mixed): the device peak of STMV from 3,665 to 2,567
+MiB, of STMV ×7 from 22,883 to 15,367 MiB, and STMV ×11 (11,738,045
+atoms) runs in 22,789 MiB, with the deterministic mode unchanged to the
+bit and the rates of the Amber suite unchanged. With tiles the bricks are
+still allocated but not read (#517).
+
 ## 4. Parameters (D71)
 
 | Keyword | Meaning | Default |

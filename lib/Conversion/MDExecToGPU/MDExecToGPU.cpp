@@ -8485,9 +8485,17 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
       for (Value operand : reciprocal->getOperands())
         independent &= !llvm::is_contained(refresh->getResults(), operand) &&
                        dominance.properlyDominates(operand, refresh);
+      // A sum that moves as well keeps its place before this one, so this
+      // one need not be independent of it: sums of one function share
+      // their scratch (D[pme-shared-buffers]).
       for (Operation *crossed = refresh->getNextNode();
            independent && crossed != next; crossed = crossed->getNextNode())
-        independent = md_exec::areIndependent(crossed, reciprocal, aliases);
+        independent =
+            llvm::any_of(sums,
+                         [&](md_exec::ReciprocalOp moved) {
+                           return moved.getOperation() == crossed;
+                         }) ||
+            md_exec::areIndependent(crossed, reciprocal, aliases);
       if (independent)
         sums.push_back(reciprocal);
     }

@@ -240,7 +240,13 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     In the storage form the fields and the table are buffers, the forces
     are written to the buffer in `outs`, and `scratch` holds the grid: the
     charges in fixed point, the grid in f64, and the half-complex grid of
-    its transform, then on a device the sums of the rows of the grid.
+    its transform, then on a device the sums of the rows of the grid. The
+    op writes each buffer of `scratch` before it reads it, and what they
+    hold after it is unspecified, except the bricks of the spreading
+    (D108), which it finds zero and leaves zero; so the sums of a function
+    share the buffers of the same shape (D[pme-shared-buffers]). The op
+    reads and writes its scratch, so two sums that share a buffer are not
+    independent.
 
     With `potential`, the field that the op yields is not the forces but
     the derivative of the energy in the charge of each particle, one
