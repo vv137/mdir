@@ -1,8 +1,10 @@
 # Roadmap
 
-Status: 2026-10-03. The stages of the first milestone are in
-[design-m1.md](design-m1.md), Section 18; the principles that the work
-follows are in [principles.md](principles.md).
+Status: each row carries the date or the decisions of its own state (the
+row of M4 was brought current on 2026-10-21). The stages of the
+first milestone are recorded in [design-m1.md](design-m1.md), Section 18,
+as history; the principles that the work follows are in
+[principles.md](principles.md).
 
 **Milestones** (D169; M2 split into M2a and M2b by D195):
 
@@ -12,7 +14,7 @@ follows are in [principles.md](principles.md).
 | M2a | The Python API (Section 6) | Items 1 to 8 of [python-m2.md](python-m2.md), Section 4, are done: item 8, `observe` in the Python model (#188, D232), was the last |
 | M2b | Differentiable simulation: parameters as tunable buffers, a frame evaluator with derivative rules, PyTorch then JAX adapters, and trajectory reweighting [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) (Section 6.1) | Under way beside the last item of M2a (maintainer, 2026-10-08): the derivative of the energy in the tunables is the first step (#203) |
 | M3 | Learned potentials on one GPU: ML1 steps 1 to 3, the IR of ML4, PaiNN in stages, and MACE in stages (Section 7, D287) | In progress: ML1's TorchScript backend through the metatomic plugin with chunks, from the control file and Python (D270), its AOTInductor backend (D273), the pair list from MDIR's neighbor structures (D277), ML4's opaque baselines of a pretrained PaiNN and MACE (D286), the IR of ML4: neural stages, fields of features, and their derivative (D288, D289), and PaiNN in stages on one GPU, step 4a (D294, D293), and the fusion of its bodies, the first part of step 4b (D299), and their products as calls of cuBLAS (D302), batched ones included, with their sums of rows as a warp a row (D303) |
-| M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | Planned |
+| M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | ML2 under way in parallel with M3 (Section 7): the dialect `md_dist` and its verifier (D275), the program derived from the global potential (D276), EAM on domains (D279), each domain's loops through `md_exec` (D290), the factor grid of the domains (D307), the record of the dependencies of the halos (D308), and their start and wait events (D310); ML3, ML5, and distributed particle mesh Ewald planned |
 
 Features of classical MD (Section 5) continue between milestones.
 
