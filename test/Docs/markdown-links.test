@@ -5,7 +5,7 @@
 # nowhere.
 #
 # RUN: %python %S/../../scripts/check-markdown-links.py %S/../.. | FileCheck %s --check-prefix=REPO
-# REPO: 0 broken link(s)
+# REPO: {{^}}0 broken link(s)
 #
 # The checker itself, on a small tree: a missing file, a missing heading,
 # a link that misses a directory, and a reference definition are reported;
