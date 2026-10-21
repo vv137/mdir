@@ -580,13 +580,17 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
 
 ```text
 /h5md                         version [1, 1]; author/name; creator/name
-                              "MDIR", creator/version "0.1.0 (<commit>)"
+                              "MDIR", creator/version: from mdir run
+                              "<version> (<commit>)", "<version>
+                              (<commit>, with changes)" from a tree with
+                              uncommitted changes; from Python "<version>"
 /particles/all/box            dimension, boundary ("periodic" or "none"),
                               edges: three, or the 3x3 matrix of a
                               triclinic cell, a row per vector (nm)
 /particles/all/position       step, time, value (1, N, 3)   nm
 /particles/all/velocity       step, time, value (1, N, 3)   nm ps-1
 /particles/all/force          step, time, value (1, N, 3)   kJ mol-1 nm-1
+                              only where the state has forces
 /particles/all/id             the numbers of the particles, from 0
 /particles/all/species        the types of the particles
 /particles/all/mass                                         u
@@ -603,6 +607,10 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
                               the run that wrote it (D129, D130, D149)
     periodic                  1, or 0 for a run without a periodic cell
                               (D142)
+    extras_sha256, front_end, model_sha256, plan_sha256
+                              the additional entries (D223): their hash,
+                              the front end that wrote the file, and the
+                              hashes of the model and of the plan
 /parameters/mdir/barostat_state    9 numbers, with a barostat that
                               scales every step (D92, D119)
 /parameters/mdir/thermostat_state  the positions, then the velocities,
@@ -614,6 +622,10 @@ A checkpoint is a file in the H5MD format [[deBuyl2014]](references.md#debuyl201
                               the state of the run, with the attributes
                               free_energy (the states in one line) and
                               free_energy_state (D161)
+/parameters/mdir/tunables     with tunables (D223): declarations, names,
+                              values<k> for the k-th name, and history
+                              (pairs of a step and a version); the
+                              attribute version
 ```
 
 This layout is the contract of release 0.1.0, format 1
@@ -621,9 +633,17 @@ This layout is the contract of release 0.1.0, format 1
 as written by a newer MDIR, and a file of a development build before the
 release, without the fingerprint and the hash, is refused. A later format
 comes with a function that converts a file of the format before, so that
-every released format stays readable. `state_sha256` is SHA-256 of
-everything above but `/h5md` and the ids, in a fixed order; a file whose
-bytes changed after it was written is refused, with a pointer to `.prev`.
+every released format stays readable. `state_sha256` is SHA-256, in a
+fixed order, of the step and the time, the positions, velocities, forces,
+masses, and species, the cell, the attributes of `/parameters/mdir` from
+`integrator` to `periodic` above, the states of the barostat and the thermostat,
+and the three texts of the fingerprint; it leaves out `/h5md`, the ids,
+`free_energy`, `free_energy_state`, and `free_energy_lambda`, and the
+entries of D223. `extras_sha256` is SHA-256 of those entries (the front
+end, the hashes of the model and the plan, and the tunables), apart from
+`state_sha256` so that a reader of release 0.1.0, which does not know them,
+still reads the file. A reader checks both: a file whose state or entries
+changed after it was written is refused, with a pointer to `.prev`.
 
 The units are those inside MDIR and are written with the data: nm, ps, u,
 and kJ/mol.
