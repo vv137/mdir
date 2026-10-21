@@ -54,51 +54,23 @@ The semantic dialects are not stacked. They form an **object graph** in which
 ops reference each other. Lowering starts only below them, in the
 **lowering pipeline**.
 
-```text
-       ┌────────────────────────────┐
-       │   Semantic dialect graph   │
-       │                            │
-       │ md     dyn     ensemble    │
-       │  \      |        /         │
-       │       mlff                 │
-       └────────────┬───────────────┘
-                    │
-          semantic differentiation
-                    │
-                    ▼
-       ┌────────────────────────────┐
-       │      Semantic analyses     │
-       │                            │
-       │ locality                   │
-       │ field dependencies         │
-       │ state and effects          │
-       │ parameter dependencies     │
-       └────────────┬───────────────┘
-                    │
-                    ▼
-       ┌────────────────────────────┐
-       │        Joint planner       │
-       │                            │
-       │ decomposition              │
-       │ neighbor strategy          │
-       │ skin                       │
-       │ force conflict strategy    │
-       │ precision                  │
-       │ communication schedule     │
-       └────────────┬───────────────┘
-                    │
-              ┌─────┴─────┐
-              ▼           ▼
-          md_dist       md_exec
-              └─────┬─────┘
-                    ▼
-            mdrt (runtime ABI)
-                    +
-        scf / vector / gpu / linalg
-                    │
-           ┌────────┴────────┐
-           ▼                 ▼
-       LLVM (CPU)       NVVM / ROCDL
+```mermaid
+flowchart TD
+    subgraph SEM["Semantic dialect graph"]
+        direction LR
+        md --- mlff
+        dyn --- mlff
+        ensemble --- mlff
+    end
+    SEM -- "semantic differentiation" --> AN["Semantic analyses<br/>locality, field dependencies,<br/>state and effects, parameter dependencies"]
+    AN --> JP["Joint planner<br/>decomposition, neighbor strategy, skin,<br/>force conflict strategy, precision,<br/>communication schedule"]
+    JP --> DIST["md_dist"]
+    JP --> EXEC["md_exec"]
+    DIST --> LOW
+    EXEC --> LOW
+    LOW["mdrt (runtime ABI)<br/>+ scf / vector / gpu / linalg"]
+    LOW --> CPU["LLVM (CPU)"]
+    LOW --> GPU["NVVM / ROCDL"]
 ```
 
 `md_dist` and `md_exec` are peer dialects (A8). Distributed lowering is
@@ -108,16 +80,12 @@ and the pipeline reduces to `md → md_exec`.
 
 How the semantic objects reference each other:
 
-```text
-ensemble state
-      │
-      ├─────────┐
-      ▼         ▼
- potential     dynamics program
-      │         │
-      └────┬────┘
-           ▼
-      simulation
+```mermaid
+flowchart TD
+    ES["ensemble state"] --> POT["potential"]
+    ES --> DP["dynamics program"]
+    POT --> SIM["simulation"]
+    DP --> SIM
 ```
 
 ## 3. Compilation model
@@ -340,12 +308,10 @@ Forces, the virial, and parameter derivatives are derivatives of the
 potential energy. They are produced
 by an `md`-to-`md` transformation (D2):
 
-```text
-md / mlff forward graph
-        ↓  semantic differentiation
-md / mlff derivative graph
-        ↓  dependency analysis
-distributed planning
+```mermaid
+flowchart TD
+    FWD["md / mlff forward graph"] -- "semantic differentiation" --> DER["md / mlff derivative graph"]
+    DER -- "dependency analysis" --> DP["distributed planning"]
 ```
 
 - Closed-form pair and bonded terms are differentiated symbolically.
@@ -401,8 +367,9 @@ ExecutionPlan                         ExecutionTuningState
 
 The run alternates between segments and retuning:
 
-```text
-run_segment → profiling feedback → retune numeric parameters → run_segment
+```mermaid
+flowchart LR
+    RS["run_segment"] --> PF["profiling feedback"] --> RT["retune numeric parameters"] --> RS
 ```
 
 The plan is serializable, can be overridden by the user, and is attached to
@@ -618,14 +585,16 @@ CUDA event, or an NVSHMEM signal.
 
 The schedule the IR must be able to express:
 
-```text
-interior kernel ─────────────┐
-                             │
-halo exchange ───────────────┤ overlap
-                             │
-                      halo arrived
-                             │
-                      boundary kernel
+```mermaid
+flowchart LR
+    subgraph OV["overlap"]
+        direction TB
+        IK["interior kernel"]
+        HE["halo exchange"]
+    end
+    HE --> HA["halo arrived"]
+    IK --> BK["boundary kernel"]
+    HA --> BK
 ```
 
 ## 9. Runtime: `mdrt`
@@ -712,21 +681,20 @@ run keeps them in (D44).
 
 Development order (D1):
 
-```text
-1. md
-2. md_exec, with the CPU back end
-3. minimal dyn
+1. `md`
+2. `md_exec`, with the CPU back end
+3. minimal `dyn`
 4. GPU back end
-5. md_dist
-6. mlff
-7. ensemble
-```
+5. `md_dist`
+6. `mlff`
+7. `ensemble`
 
 The first deliverable is a vertical slice that runs and is validated end to
 end on a single node:
 
-```text
-md → semantic differentiation → md_exec → scf / vector → llvm
+```mermaid
+flowchart LR
+    MD["md"] --> SD["semantic differentiation"] --> EX["md_exec"] --> SV["scf / vector"] --> LL["llvm"]
 ```
 
 Milestones (P3, as amended by D169) and what each one adds:
