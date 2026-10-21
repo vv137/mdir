@@ -573,8 +573,35 @@ for the process (`runtime/mdrt_cuda.c`). Measured on an RTX 4090 (1,000
 steps, NPT, 4 fs, mixed): the device peak of STMV from 3,665 to 2,567
 MiB, of STMV ×7 from 22,883 to 15,367 MiB, and STMV ×11 (11,738,045
 atoms) runs in 22,789 MiB, with the deterministic mode unchanged to the
-bit and the rates of the Amber suite unchanged. With tiles the bricks are
-still allocated but not read (#517).
+bit and the rates of the Amber suite unchanged.
+
+### 3.5 Scratch required by each spreading strategy (D[pme-tiled-no-bricks])
+
+The storage assignment gives bricks only to a non-tiled f32 spreading
+that consumes them: order 4 with B-splines (D108), or the prolate window
+(D266). A tiled sum instead takes the bins of D282 and no bricks; an
+f64 or fixed-order sum takes no bricks. The bins may occupy the scratch
+position at which a non-tiled f32 sum has its bricks, so the lowering
+checks the element type when it finds either buffer.
+
+For tiled order-4 f32 spreading, gathering still reads the places and
+fractions written by the weights kernel (D102, D109), even though no
+bricks exist. A non-tiled sum with bricks uses that gathering too; a
+manually formed non-tiled B-spline sum without bricks retains its
+floating-point atomic spreading and ordinary gathering. Thus omitting the
+bricks from a tiled sum changes the allocation and its one-time zeroing,
+not its arithmetic.
+
+On an RTX 4090, STMV from the GROMACS topology (NPT, 4 fs, mixed,
+groups, 1,000 steps) used 2,567 → 2,521 MiB at one replica and
+22,789 → 22,283 MiB at eleven replicas (11.74 million atoms), against
+main at 54038420 in the same job. Steady step times were 4.063 →
+4.071 and 57.038 → 57.100 ms, respectively, one run of each. Twelve
+replicas still ran out of device memory during preparation. In a
+200-step deterministic JAC run, main and this change produced identical
+final checkpoints to the bit; the independent PME and prolate GPU
+oracles pass in mixed and double precision. Preparation latency on large
+systems remains tracked by #520.
 
 ## 4. Parameters (D71)
 

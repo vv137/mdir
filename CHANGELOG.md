@@ -758,6 +758,12 @@ format, or the outputs; every such change is listed under **Changed** or
   about 1.5% less time per step on one RTX 4090. The reduction semantics,
   control file, model artifact, and CPU lowering are unchanged; long sums
   still use D303's warp strategy.
+- **Tiled PME does not allocate unused spreading bricks**
+  (D[pme-tiled-no-bricks], #517): its scratch contains bins for the tiles,
+  while the order-4 f32 gathering still takes the particle weights.
+  Non-tiled spreading retains bricks where it uses them; fixed-order
+  spreading retains its fixed-point path. No control-file or output
+  format change.
 
 - **The design documents are named by topic** (#390): `docs/ops.md`,
   `runtime.md`, `driver.md`, `neighbors.md`, `neighbor-groups.md`,

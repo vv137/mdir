@@ -177,6 +177,10 @@ uses in the expression. This check does not change keys or file formats.
 | | `neighbor_structure` | `AUTO` (the default): the groups with a dual list on a GPU, outside the deterministic mode, for a system of at least 23,000 particles (virtual sites counted) whose loops over pairs all take each pair once (not with implicit solvent or the derivative in the tunables), without `rebuild_interval`, and whose cell is wider than the reach of the groups over 0.999; the matrix otherwise (D261). The log, `mdir check`, and the manifest state the choice and why. `MATRIX`: a row of neighbors for each particle, each pair computed for both. `GROUPS`: groups of 16 particles that share a list, each pair computed once, for the loops whose values all have an exchange contract (D89); on a device, not in the deterministic mode; one list and the reach of 1.5 Å beyond the cutoff unless the keys say otherwise. In Python, `Execution.neighbor_structure` (`NeighborStructure.Auto`, the default, `Matrix`, `Groups`; D245). |
 | | `deterministic` | Whether every sum is added in an order that the threads do not decide, so that a run gives the same bits from run to run on the same binary and hardware (D84). A step that writes energies then moves the particles as one that does not, and in mixed precision the forces that the steps carry, and those of the checkpoints, are stored in f64; on a device a sum with a product as an operand is a fused multiply-add by the formula alone, and on the CPU a sine and a cosine of one argument are two calls of the C library, not one of `sincos` (D201, D204). The default is `false`: a device then adds the charges of PME with floating-point atomics. On the CPU every sum has a fixed order in either mode, independent of `threads` (D171). |
 
+The PME spreading strategy does not add a control-file key: tiled
+spreading omits unused bricks while keeping the order-4 f32 gathering
+unchanged (D[pme-tiled-no-bricks], Section 8).
+
 **File-backed grids (D178).** The last argument varies
 fastest, exactly as in inline nested lists. For a 2×3 grid,
 `values_file = "surface.dat"` and `shape = [2, 3]` read this file:

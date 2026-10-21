@@ -1015,6 +1015,9 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   // kernels of a device and the templates of the host compute in: f32 in
   // the mixed mode (D271).
   Type gridType = cast<MemRefType>(out.getType()).getElementType();
+  ScatterAttr scatter = op.getScatterAttr();
+  bool tiled = scatter && scatter.isTile();
+  bool fixedOrder = algebra::getAlgebra(op, 0) == Algebra::FixedOrder;
   SmallVector<Value> scratch = {
       allocate(IntegerType::get(context, 64), points),
       allocate(gridType, points), allocate(gridType, 2 * half)};
@@ -1047,10 +1050,13 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
         allocate(gridType, (op.getP3m() ? 5 : 3) *
                                    (grid[0] + grid[1] + grid[2]) +
                                (op.getProlate() ? 1280 : 0)));
-    // The bricks of the spreading of order 4 in f32 (D85): 16 values for
-    // each z of each brick of 4 x 4 points in x-y, zero at the start and
-    // left zero by each spreading (D108).
-    if (gridType.isF32()) {
+    // Bricks are used only by the non-tiled f32 spreading of order 4, or
+    // by the non-tiled prolate spreading. The tiled and fixed-order paths
+    // never read them (D108, D282, D301).
+    bool usesBricks = !tiled && !fixedOrder && gridType.isF32() &&
+                      (op.getProlate() ||
+                       (op.getOrder() == 4 && !op.getPotential()));
+    if (usesBricks) {
       int64_t bricks =
           (grid[0] + 3) / 4 * ((grid[1] + 3) / 4) * 16 * grid[2];
       scratch.push_back(share(
@@ -1081,8 +1087,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // the mean number of particles of a bin and 8 more, and n places for
     // those that overflow (bin_header of
     // scripts/generate-pme-gpu-template.py, which computes the same).
-    ScatterAttr scatter = op.getScatterAttr();
-    if (scatter && scatter.isTile()) {
+    if (tiled) {
       int64_t edge = scatter.getEdge();
       int64_t bins = 1;
       for (int64_t points : grid)
