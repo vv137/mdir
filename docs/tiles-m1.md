@@ -1,12 +1,17 @@
 # Tile Neighbor Structure for M1: Design
 
-Status: superseded (2026-10-01) by D89, groups of neighbors
-([groups-m1.md](groups-m1.md)). Proposed (2026-09-30), D82; not implemented. A prototype
-(Section 11) did not bear out the premise of stage T1 on an RTX 3090: at
+Status: superseded (2026-10-01) by D89; kept as the record of D82 and of
+its prototype (last checked 2026-10-21). The current design is the
+structure of groups of 16, [groups-m1.md](groups-m1.md): it computes each
+pair once (traversal `unique` of `md_exec.pair_for`), keeps the dual list
+of Section 6 (D114, `prune_skin` of `md_exec.refresh_neighbors`), and is
+the default on a GPU for large systems (D261). The tiles of this document
+were proposed (2026-09-30), D82, and never implemented: a prototype
+(Section 11) did not bear out the premise of stage T1 on an RTX 3090, at
 equal reach the tile kernels were slower than the neighbor matrix. The
-stages are on hold until the reach of the list and the cost of a build,
-which the prototype found to decide the rate, are addressed. The
-keys in brackets are those of [references.md](references.md).
+IR of Section 7 and the plan of Sections 9 and 10 are those of the
+proposal, not of the code. The keys in brackets are those of
+[references.md](references.md).
 
 This document describes a second kind of neighbor structure, `tiles`, for
 the loops over pairs on a device. The structure of M0, the neighbor matrix
@@ -253,6 +258,14 @@ to keep the inner list short, which never makes it invalid.
 
 ## 7. In the IR
 
+History: the column "Now" is the IR of 2026-09-30, and the column "With
+tiles" was never built. The structure of groups that replaced it is
+`kind(groups)`; a loop over each pair once is the traversal `unique` of
+`md_exec.pair_for`, not `policy(once, ...)`; and the inner list is the
+attribute `prune_skin` of `md_exec.refresh_neighbors`, with
+`md_exec.reference_positions pruned`, not an op `md_exec.prune_neighbors`
+([groups-m1.md](groups-m1.md), [ops-m0.md](ops-m0.md), Section 8.1).
+
 | Part | Now | With tiles |
 |---|---|---|
 | The structure | `md_exec.empty_neighbors kind(matrix) width(W)` | `kind(tiles) tile(8) capacity(C)`; `C` is the number of records, grown and rebuilt when a build needs more |
@@ -286,6 +299,8 @@ particle has a fixed order (Section 5.1).
 
 ## 9. Plan and measurements
 
+History: the plan of the proposal; only the prototype of Section 11 ran.
+
 Each stage is measured before the next one begins, on JAC, FactorIX,
 Cellulose, and STMV (the Amber suite, `scripts/benchmarks/amber`), one run
 each (the benchmark policy of the project), with the times of the kernels
@@ -304,6 +319,11 @@ against the size of the system, which measures the argument of GROMACS
 against displacement tests (Section 3).
 
 ## 10. Open questions
+
+History: the questions of the proposal, left with the tiles. Cells that are
+not orthorhombic have since been built for the matrix and the groups
+(D123, [triclinic-m2.md](triclinic-m2.md)), and the decomposition into
+domains is the plan of [distributed-ml2.md](distributed-ml2.md).
 
 - The size of a tile on other devices (AMD wavefronts of 64) and whether
   the lowering chooses it from the target.
