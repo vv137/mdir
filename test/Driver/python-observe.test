@@ -22,8 +22,8 @@
 # CHECK-SAME: 10 steps: the energy file byte for byte and the positions, velocities, and forces of the checkpoint of mdir run to the bit
 # CHECK: CPU Mixed external terms: 1146 particles
 # CHECK-SAME: to the bit
-# CHECK: CPU Double cutoff: the mixture's rows equal to mdir run's file byte for byte; the correction adds, as its closed forms, nbfix.energy -1.921376, nbfix.d_sig -43.801428, nbfix.d_eps -1.291884
-# CHECK: CPU Mixed shift: the mixture's rows equal to mdir run's file byte for byte
+# CHECK: CPU Double shift: the mixture's rows equal to mdir run's file byte for byte; the correction adds, as its closed forms, nbfix.energy -1.921376, nbfix.d_sig -43.801428, nbfix.d_eps -1.291884
+# CHECK: CPU Mixed cutoff: the mixture's rows equal to mdir run's file byte for byte
 # CHECK: CPU Double NPT: 5 rows equal to mdir run's file byte for byte
 # CHECK: CPU Mixed NPT: 5 rows
 # CHECK: CPU Double tunables: the columns follow an update, with its version in the row; an observed tunable of one entry: soft.d_l 13365.9{{[0-9]+}} kJ/mol/nm against gradient()

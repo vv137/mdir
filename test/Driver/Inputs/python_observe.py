@@ -653,7 +653,9 @@ def run_mixture():
     # shift (D209, D210), in the energy and in both derivatives.
     for precision in ("Double", "Mixed"):
         for shift in (False, True):
-            if scenario != "matrix" and shift != (precision == "Mixed"):
+            # Use the other diagonal so all four combinations occur in the
+            # default suite across the two independent models.
+            if scenario != "matrix" and shift != (precision == "Double"):
                 continue
             name = f"mix-{precision}-{'shift' if shift else 'cutoff'}".lower()
             run_cli(mixture_control(name, precision, shift, "NVE", 20, 5))
