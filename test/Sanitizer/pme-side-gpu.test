@@ -1,0 +1,93 @@
+# The reciprocal sums of PME on the second stream (md-exec-assign-streams
+# {reciprocal=true}, D87) under compute-sanitizer: the NPT run of
+# npt-velocity-verlet-gpu.test on examples/ala3 (V-RESCALE and energies
+# every 10 steps, C-RESCALE, PME), 20 steps in mixed precision. Its sites
+# of the sum (the start, and the specializations of the step) share one
+# set of scratch (D[pme-shared-buffers]); on the second stream each runs
+# beside the main stream up to its join, and the next sum, which takes the
+# same buffers, is issued after it on the same stream.
+#
+# REQUIRES: cuda, compute-sanitizer, hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: cp %S/../../examples/ala3/ala3.prmtop %S/../../examples/ala3/ala3.inpcrd %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t && mdir emit run.toml --stage=pipeline \
+# RUN:   | sed 's|md-exec-assign-streams,|md-exec-assign-streams{reciprocal=true},|' > pipeline
+# RUN: cd %t && env MDIR_PRINT_AFTER=md-exec-assign-streams sh -c 'MDIR_PIPELINE="$(cat pipeline)" mdir emit run.toml --stage=lowered' 2>&1 >/dev/null \
+# RUN:   | FileCheck %s --check-prefix=SIDE
+# RUN: cd %t && sh -c 'MDIR_PIPELINE="$(cat pipeline)" %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run run.toml' 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: rm -f %t/out.h5 && cd %t && sh -c 'MDIR_PIPELINE="$(cat pipeline)" %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run run.toml' 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+# RUN: rm -f %t/out.h5 && cd %t && sh -c 'MDIR_PIPELINE="$(cat pipeline)" %compute_sanitizer --tool synccheck --error-exitcode 1 mdir run run.toml' 2>&1 \
+# RUN:   | FileCheck %s
+
+# Every sum is on the second stream, and every sum takes the scratch of
+# the first.
+# SIDE: md_exec.reciprocal {{.*}} scratch(%[[S0:[a-z0-9_]+]], %[[S1:[a-z0-9_]+]],
+# SIDE-SAME: md_exec.side}
+# SIDE: md_exec.join
+# SIDE: md_exec.reciprocal {{.*}} scratch(%[[S0]], %[[S1]],
+# SIDE-SAME: md_exec.side}
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
+
+#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
+# RUN: cd %t && %compute_sanitizer --tool initcheck --error-exitcode 1 mdir run run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: rm -f %t/out.h5 && cd %t && %compute_sanitizer --tool memcheck --error-exitcode 1 mdir run run.toml 2>&1 \
+# RUN:   | FileCheck %s
+# RUN: rm -f %t/out.h5 && cd %t && %compute_sanitizer --tool racecheck --error-exitcode 1 mdir run run.toml 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+
+# CHECK: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
+
+#--- run.toml
+[input]
+topology    = "ala3.prmtop"
+coordinates = "ala3.inpcrd"
+
+[output]
+checkpoint          = "out.h5"
+energy_interval     = 10
+checkpoint_interval = 10
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+coulomb_modifier  = "POTENTIAL_SHIFT"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 20
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 1.0
+
+[thermostat]
+method        = "V-RESCALE"
+time_constant = 0.5
+interval      = 10
+
+[barostat]
+method        = "C-RESCALE"
+time_constant = 2.0
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "GPU"
+precision = "MIXED"
+#--- end
