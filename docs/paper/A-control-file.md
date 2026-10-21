@@ -9,6 +9,10 @@ D306 adds the execution-level linear FFT transform used for
 future reciprocal-sum composition. It introduces no control-file key,
 checkpoint or output format, or overwrite behavior change; the existing
 `[pme]` and `[lj_pme]` entries below remain the user interface.
+D[pme-semantic-transform] adds its pure `md` value-level form and declared
+transpose. It also adds no control-file key, checkpoint or output format,
+or overwrite behavior change. The composed reciprocal potential remains
+future work.
 
 D308 adds `mdir-opt --md-dist-print-schedule`, a compiler
 inspection pass over distributed halo dependencies. It adds no control-file

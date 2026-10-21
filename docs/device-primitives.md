@@ -144,6 +144,13 @@ Hermitian symmetry across the first two axes on the last-axis zero and,
 for even lengths, Nyquist planes. The declared adjoint identity is on
 this subspace; the lowering does not project an arbitrary complex buffer
 onto it.
+At the semantic level, `md.linear_transform` (D[pme-semantic-transform],
+#502) has the same direction, adjoint, and pairing contract over pure
+static three-dimensional tensor values. It requires a real `f64` grid and
+a `complex<f64>` half-spectrum whose last extent is $K_3/2+1$.
+Its declared transpose creates the opposite transform. The semantic
+value-to-buffer bridge is a separate part of #452; the pure operation
+does not yet call these host or device strategies.
 The current `md_exec.reciprocal` template remains in use until #452
 decomposes its semantic `md` counterpart.
 

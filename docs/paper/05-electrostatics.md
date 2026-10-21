@@ -124,8 +124,20 @@ and, for even $K_3$, the Nyquist plane obey Hermitian symmetry across the
 first two axes. The inverse of an arbitrary packed complex array is outside
 this contract.
 This derivation underlies the declared `md_exec.linear_transform`
-adjoint (D306, #480). Its current execution-level form does
-not yet put this chain into the semantic `md` potential; that is #452.
+adjoint (D306, #480) and the pure `md.linear_transform` with the
+opposite transform as its declared transpose (D[pme-semantic-transform],
+#502). The semantic operand and result are respectively the real grid
+`tensor<K1xK2xK3xf64>` and the half-spectrum
+`tensor<K1xK2x(K3/2+1)xcomplex<f64>>`, reversed for the backward direction.
+The shapes, directions, and pairing are checked before lowering. For a
+variation $\delta Q$ and a valid half-spectrum $Y$, the chain rule gives
+$\delta\langle\mathcal F Q,Y\rangle_\mathrm H
+=\langle\delta Q,\mathcal F^\dagger Y\rangle$; thus the cotangent of
+the forward transform is the backward transform without a factor of the
+grid size. Reversing the roles gives the forward transform as the
+backward one's transpose. The value-to-buffer bridge and the composition
+with spreading, influence mapping, and gathering remain #452; the
+current potential is still `md.reciprocal`.
 
 The driver computes the moduli $\lvert b_a\rvert^2$ in f64 from the
 recursion of $M_n$ and passes them as a table. Under `influence =

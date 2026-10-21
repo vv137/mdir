@@ -19,6 +19,12 @@ format, or the outputs; every such change is listed under **Changed** or
   supports empty domains and rejects stale epoch use. Production trajectory
   migration and `[distribute]` control keys remain #38; this change adds no
   control key, file format, or overwrite behavior.
+- **A semantic linear FFT transform with a declared transpose**
+  (D[pme-semantic-transform], #502): `md.linear_transform` carries a pure
+  real grid or Hermitian half-spectrum value with statically checked shapes,
+  direction, opposite adjoint, and weighted pairing. This IR-only slice
+  adds no control-file key, Python API, checkpoint or output change; the
+  value-to-buffer bridge and reciprocal composition remain #452.
 - **A linear FFT transform primitive with an inspectable adjoint**
   (D306, #480): `md_exec.linear_transform` exposes the grid
   buffers, direction, opposite adjoint, and Hermitian half-spectrum pairing.

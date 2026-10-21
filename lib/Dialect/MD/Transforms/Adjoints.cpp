@@ -59,6 +59,26 @@ namespace {
 
 using mdir::md::AdjointOpInterface;
 
+struct LinearTransformAdjoint
+    : AdjointOpInterface::ExternalModel<LinearTransformAdjoint,
+                                        md::LinearTransformOp> {
+  bool isLinearOperand(Operation *, unsigned index) const { return index == 0; }
+
+  Value emitTranspose(Operation *op, OpBuilder &b, unsigned index,
+                      Value adjoint, Value partner) const {
+    auto transform = cast<md::LinearTransformOp>(op);
+    if (index != 0 || partner ||
+        adjoint.getType() != transform.getResult().getType()) {
+      op->emitOpError() << "expected a single cotangent of the transform result";
+      return Value();
+    }
+    return md::LinearTransformOp::create(
+        b, op->getLoc(), transform.getInput().getType(), adjoint,
+        transform.getKindAttr(), transform.getAdjointAttr(),
+        transform.getDirectionAttr(), transform.getPairingAttr());
+  }
+};
+
 /// The owned rows of the layout of `halo`, zero, of the type of `like`
 /// with owned rows.
 static Value ownedZeros(OpBuilder &b, Location loc, Value halo,
@@ -660,6 +680,7 @@ void mdir::md::registerAdjointInterfaces(DialectRegistry &registry) {
             *context);
       });
   registry.addExtension(+[](MLIRContext *context, md::MDDialect *) {
+    md::LinearTransformOp::attachInterface<LinearTransformAdjoint>(*context);
     md::SumRelationOp::attachInterface<SumRelationTranspose>(*context);
     md::GatherRelationOp::attachInterface<GatherRelationTranspose>(*context);
     md::SumTuplesOp::attachInterface<SumTuplesTranspose>(*context);
