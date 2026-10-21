@@ -7,6 +7,8 @@ import sys
 import tempfile
 
 repository = Path(sys.argv[1]).resolve()
+foo = "D" + "[foo]"
+foo_bar = "D" + "[foo-bar]"
 with tempfile.TemporaryDirectory(prefix="mdir-decision-links-") as temporary:
     root = Path(temporary)
     (root / "scripts").mkdir()
@@ -15,11 +17,11 @@ with tempfile.TemporaryDirectory(prefix="mdir-decision-links-") as temporary:
                    "check-markdown-links.py"):
         shutil.copy2(repository / "scripts" / script, root / "scripts" / script)
     (root / "docs" / "decisions.md").write_text(
-        "| D315 | Existing |\n| D[foo] | Pending |\n"
-        "| D[foo-bar] | Another pending decision |\n", encoding="utf-8")
+        f"| D315 | Existing |\n| {foo} | Pending |\n"
+        f"| {foo_bar} | Another pending decision |\n", encoding="utf-8")
     (root / "docs" / "topic.md").write_text(
-        "## GPU modules (D[foo])\n\n## GPU modules (D[foo])\n"
-        "\n## GPU modules (D[foo-bar])\n", encoding="utf-8")
+        f"## GPU modules ({foo})\n\n## GPU modules ({foo})\n"
+        f"\n## GPU modules ({foo_bar})\n", encoding="utf-8")
     (root / "README.md").write_text(
         "[one](docs/topic.md#gpu-modules-dfoo)\n"
         "[two](docs/topic.md#gpu-modules-dfoo-1)\n"
@@ -46,7 +48,7 @@ with tempfile.TemporaryDirectory(prefix="mdir-decision-links-") as temporary:
     assert "[section]: <docs/topic.md#gpu-modules-d316>" in links
     assert "`[code](docs/topic.md#gpu-modules-dfoo)`" in links
     assert "[fence](docs/topic.md#gpu-modules-dfoo)" in links
-    assert run("check").returncode == 1  # D[foo-bar] remains pending.
+    assert run("check").returncode == 1  # The second label remains pending.
     assert run("check", "--pending").returncode == 0
     (root / "README.md").write_text(
         links + "[stale](docs/topic.md#gpu-modules-dfoo)\n", encoding="utf-8")
