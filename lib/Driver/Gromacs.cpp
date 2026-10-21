@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <cmath>
 #include <cstdio>
 #include <map>
@@ -457,6 +458,20 @@ static std::vector<std::string> tokenize(StringRef text) {
 
 static bool readReal(StringRef token, double &value) {
   return !token.trim().getAsDouble(value);
+}
+
+// A .gro has three fixed-width decimal coordinates per particle and may
+// have three velocities. The general reader also accepts uncommon numeric
+// forms, so retain it when the direct decimal conversion cannot consume the
+// complete field. Both conversions round directly to binary64.
+static bool readGroReal(StringRef token, double &value) {
+  token = token.trim();
+  auto [end, error] =
+      std::from_chars(token.begin(), token.end(), value,
+                      std::chars_format::general);
+  if (error == std::errc{} && end == token.end() && std::isfinite(value))
+    return true;
+  return readReal(token, value);
 }
 
 static bool readInteger(StringRef token, long &value) {
@@ -1707,7 +1722,7 @@ llvm::Error mdir::driver::readGromacsCoordinates(StringRef path,
       return fail(path, number, "the line is too short for the coordinates");
     for (int k = 0; k != 3; ++k) {
       double value;
-      if (!readReal(line.substr(20 + k * width, width), value))
+      if (!readGroReal(line.substr(20 + k * width, width), value))
         return fail(path, number, "cannot read a coordinate in '" + line +
                                       "'");
       topology.positions.push_back(value);
@@ -1730,7 +1745,7 @@ llvm::Error mdir::driver::readGromacsCoordinates(StringRef path,
                       "coordinates");
     for (int k = 0; k != 3; ++k) {
       double value;
-      if (!readReal(rest.substr(k * width, width), value))
+      if (!readGroReal(rest.substr(k * width, width), value))
         return fail(path, number,
                     "cannot read the velocity " + llvm::Twine(k + 1) +
                         " in a field of " + llvm::Twine(width) +

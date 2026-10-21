@@ -882,6 +882,9 @@ in fields as wide as the coordinates with one more decimal (`%8.3f` and
 fields or none, and every line alike; anything else, such as velocities
 wider than the coordinates, is an error that names the line, where
 GROMACS takes a field that does not read as 0 (#365).
+The common finite decimal coordinate and velocity fields use a direct
+binary64 conversion (D[gro-startup]); other numeric forms retain the
+general parser, with the same accepted input and diagnostics.
 
 A dihedral without parameters takes those of the first entry of
 `[ dihedraltypes ]` of its function with the most types that are not
