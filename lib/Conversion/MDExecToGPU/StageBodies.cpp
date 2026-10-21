@@ -1059,7 +1059,8 @@ static void shortRowSums(func::FuncOp function, bool fuseElementwise) {
         continue;
       at[d] = arith::RemUIOp::create(then, loc, rest,
                                      index(then, loc, extents[d]));
-      rest = arith::DivUIOp::create(then, loc, rest, index(then, loc, extents[d]));
+      rest = arith::DivUIOp::create(then, loc, rest,
+                                    index(then, loc, extents[d]));
     }
     llvm::SetVector<Operation *> needed = rowTermOps(sum, op.getBody());
     auto term = [&](OpBuilder &b, int64_t k) {
