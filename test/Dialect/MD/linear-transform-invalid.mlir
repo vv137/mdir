@@ -1,5 +1,5 @@
 // Verifier failures distinguish an invalid declaration from a valid zero or
-// unused transform (D[pme-semantic-transform]).
+// unused transform (D319).
 // RUN: mdir-opt %s --split-input-file -verify-diagnostics -o /dev/null
 
 func.func @direction(%x: tensor<3x2x5xf64>) {

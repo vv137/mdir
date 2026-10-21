@@ -125,7 +125,7 @@ first two axes. The inverse of an arbitrary packed complex array is outside
 this contract.
 This derivation underlies the declared `md_exec.linear_transform`
 adjoint (D306, #480) and the pure `md.linear_transform` with the
-opposite transform as its declared transpose (D[pme-semantic-transform],
+opposite transform as its declared transpose (D319,
 #502). The semantic operand and result are respectively the real grid
 `tensor<K1xK2xK3xf64>` and the half-spectrum
 `tensor<K1xK2x(K3/2+1)xcomplex<f64>>`, reversed for the backward direction.

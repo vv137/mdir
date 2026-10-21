@@ -1,4 +1,4 @@
-// D[ml2-center-partition]: relation membership, not a domain-width bound.
+// D317: relation membership, not a domain-width bound.
 // Four particles on a diagonal in a periodic 8-cube. Only particles 1 and
 // 2 form a pair at cutoff 2; their displacement crosses a face, edge, or
 // corner as the grid changes. The independent pair oracle is their distance

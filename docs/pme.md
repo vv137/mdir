@@ -575,7 +575,7 @@ MiB, of STMV ×7 from 22,883 to 15,367 MiB, and STMV ×11 (11,738,045
 atoms) runs in 22,789 MiB, with the deterministic mode unchanged to the
 bit and the rates of the Amber suite unchanged.
 
-### 3.5 Scratch required by each spreading strategy (D[pme-tiled-no-bricks])
+### 3.5 Scratch required by each spreading strategy (D320)
 
 The storage assignment gives bricks only to a non-tiled f32 spreading
 that consumes them: order 4 with B-splines (D108), or the prolate window

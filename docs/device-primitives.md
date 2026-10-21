@@ -144,7 +144,7 @@ Hermitian symmetry across the first two axes on the last-axis zero and,
 for even lengths, Nyquist planes. The declared adjoint identity is on
 this subspace; the lowering does not project an arbitrary complex buffer
 onto it.
-At the semantic level, `md.linear_transform` (D[pme-semantic-transform],
+At the semantic level, `md.linear_transform` (D319,
 #502) has the same direction, adjoint, and pairing contract over pure
 static three-dimensional tensor values. It requires a real `f64` grid and
 a `complex<f64>` half-spectrum whose last extent is $K_3/2+1$.
@@ -925,7 +925,7 @@ the warp totals of the global sums of a loop over groups, the counts
 of the active units (D268, integers), and the sums of rows of the batched
 bodies of neural stages: a warp a row for 32 or more contiguous terms
 (D303, `warpRowSums`), or one register-held accumulator per result for
-2 to 31 terms (D[ml4-short-reductions], `shortRowSums`). Both use the
+2 to 31 terms (D318, `shortRowSums`). Both use the
 same semantic matcher and term emitter in `StageBodies.cpp`, and the
 same `emitCombine` in this reduction emitter. Left as it is: the half-warp sum of
 `emitGroupPairKernel` (`MDExecKernels.cpp`), which shuffles a 64-bit value

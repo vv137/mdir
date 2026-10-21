@@ -952,7 +952,7 @@ there is a question of fusion, not of products.
   as a warp a row through D301's butterfly (`D303`, the
   maintainer's ruling on #472, Section 8.3). AOTInductor's bodies stay a
   baseline: its package does not export the VJP. The sums over the three
-  components can opt into D[ml4-short-reductions] (Section 8.9); the
+  components can opt into D318 (Section 8.9); the
   remaining elementwise kernels of `node.b` remain open (Section 8.6).
 - Store against recompute; the two-ended scatter (one product per pair).
 - Rows compacted to the pairs within the cutoff; the fields in f64 in
@@ -961,7 +961,7 @@ there is a question of fusion, not of products.
   dynamic number of rows.
 - The RTX PRO 6000; a CPU lowering of the tiles.
 
-### 8.9 Short reductions of a stage body (D[ml4-short-reductions])
+### 8.9 Short reductions of a stage body (D318)
 
 The sums over the three vector components in PaiNN's `node.b` are the
 same reduction primitive as D303's sums over 32 or more components. One

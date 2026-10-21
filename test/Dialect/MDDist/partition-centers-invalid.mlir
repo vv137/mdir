@@ -1,4 +1,4 @@
-// D[ml2-center-partition]: no ownership-epoch inference from matching types.
+// D317: no ownership-epoch inference from matching types.
 // RUN: mdir-opt %s -verify-diagnostics
 
 !vec = !md.field<@atoms, 3 x f64>

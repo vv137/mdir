@@ -9,7 +9,7 @@ D306 adds the execution-level linear FFT transform used for
 future reciprocal-sum composition. It introduces no control-file key,
 checkpoint or output format, or overwrite behavior change; the existing
 `[pme]` and `[lj_pme]` entries below remain the user interface.
-D[pme-semantic-transform] adds its pure `md` value-level form and declared
+D319 adds its pure `md` value-level form and declared
 transpose. It also adds no control-file key, checkpoint or output format,
 or overwrite behavior change. The composed reciprocal potential remains
 future work.
@@ -25,7 +25,7 @@ D310 adds the opt-in compiler pass option
 same synchronous halo transport as the default. There is no control-file
 key, Python option, output format, checkpoint change, or overwrite change.
 
-D[ml2-center-partition] adds a compiler-level partition of owned centers
+D317 adds a compiler-level partition of owned centers
 for a distributed neighborhood relation. It introduces no control-file or
 Python key, and changes no output format or overwrite behavior. The
 synchronous transfer schedule remains the default.
@@ -179,7 +179,7 @@ uses in the expression. This check does not change keys or file formats.
 
 The PME spreading strategy does not add a control-file key: tiled
 spreading omits unused bricks while keeping the order-4 f32 gathering
-unchanged (D[pme-tiled-no-bricks], Section 8).
+unchanged (D320, Section 8).
 
 **File-backed grids (D178).** The last argument varies
 fastest, exactly as in inline nested lists. For a 2×3 grid,
@@ -493,7 +493,7 @@ cell and symmetric-frame rotation. No Python bindings are provided yet.
 
 For `[[energy.model]]` with `backend = "STAGES"`, short sums inside
 the model's exported bodies can use a register-held accumulator and fuse
-eligible pointwise work on a GPU (D[ml4-short-reductions]); the body remains
+eligible pointwise work on a GPU (D318); the body remains
 the same MLIR artifact named
 by `path`. No key of this control file selects that opt-in lowering. The
 strategy switch is `MDIR_STAGE_SHORT_REDUCTIONS`, documented in

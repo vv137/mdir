@@ -1,6 +1,6 @@
 # Semantic linear transform for reciprocal sums
 
-D[pme-semantic-transform] (#502, a slice of #452) adds a pure `md` operation
+D319 (#502, a slice of #452) adds a pure `md` operation
 for a linear transform whose transpose is declared in the IR. The first
 kind is the three-dimensional real FFT. D306 supplies its separate
 execution-level operation over explicit buffers. The semantic operation

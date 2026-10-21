@@ -20,7 +20,7 @@ format, or the outputs; every such change is listed under **Changed** or
   migration and `[distribute]` control keys remain #38; this change adds no
   control key, file format, or overwrite behavior.
 - **A semantic linear FFT transform with a declared transpose**
-  (D[pme-semantic-transform], #502): `md.linear_transform` carries a pure
+  (D319, #502): `md.linear_transform` carries a pure
   real grid or Hermitian half-spectrum value with statically checked shapes,
   direction, opposite adjoint, and weighted pairing. This IR-only slice
   adds no control-file key, Python API, checkpoint or output change; the
@@ -55,7 +55,7 @@ format, or the outputs; every such change is listed under **Changed** or
   of the tuples took outside the runtime's pool, and the pool's blocks at
   its peaks by size and use. `MDIR_DEVICE_MEMORY=1` prints what it did.
   No control-file or output change.
-- **Semantic owned-center partition** (D[ml2-center-partition], #496):
+- **Semantic owned-center partition** (D317, #496):
   `md_dist.partition_centers` classifies every owned center from actual
   relation membership for one layout/halo epoch. The in-process CPU
   reference materializes the classification; the verifier rejects stale
@@ -748,7 +748,7 @@ format, or the outputs; every such change is listed under **Changed** or
   to 73 s, and ×11 (11.74 million atoms) from 569 to 97 s. No
   control-file key or output change.
 - **Opt-in register and pointwise-fusion strategy for short reductions in neural stage bodies**
-  (`D[ml4-short-reductions]`, #477, part of #462): sums of 2 to 31 terms
+  (`D318`, #477, part of #462): sums of 2 to 31 terms
   can use one thread per output, write the accumulator once, and fuse an
   adjacent pure pointwise map with `MDIR_STAGE_SHORT_REDUCTIONS=registers`.
   A final duplicated result can write directly to both disjoint caller
@@ -759,7 +759,7 @@ format, or the outputs; every such change is listed under **Changed** or
   control file, model artifact, and CPU lowering are unchanged; long sums
   still use D303's warp strategy.
 - **Tiled PME does not allocate unused spreading bricks**
-  (D[pme-tiled-no-bricks], #517): its scratch contains bins for the tiles,
+  (D320, #517): its scratch contains bins for the tiles,
   while the order-4 f32 gathering still takes the particle weights.
   Non-tiled spreading retains bricks where it uses them; fixed-order
   spreading retains its fixed-point path. No control-file or output

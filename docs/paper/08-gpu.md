@@ -268,7 +268,7 @@ falls from 3.7 to 2.6 GB, the sevenfold replica takes 15.4 GB, and the
 elevenfold (11.7 million atoms) runs in 22.8 GB, with the deterministic
 mode unchanged to the bit and the rates of the suite unchanged.
 
-**Only the scratch a spreading uses** (D[pme-tiled-no-bricks]). With the
+**Only the scratch a spreading uses** (D320). With the
 tile strategy (D282), particles are binned and spread directly through
 tiles; the bricks of D108 are neither read nor written. The storage pass
 therefore omits their allocation and initial zeroing. The gathering of

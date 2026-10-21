@@ -6,7 +6,7 @@
 // order, the warp combines its lanes by the butterfly of D301 (offsets 16,
 // 8, 4, 2, 1), and the first lane stores zero plus the sum. A sum over 3
 // components (fewer than a warp's lanes) can opt into a thread for each
-// element, with its accumulator held in a register (D[ml4-short-reductions]).
+// element, with its accumulator held in a register (D318).
 //
 // RUN: mdir-opt %s --md-exec-lower-stage-bodies='short-reductions=true' | FileCheck %s
 // RUN: mdir-opt %s --md-exec-lower-stage-bodies | FileCheck %s --check-prefix=LOOPS

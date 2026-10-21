@@ -423,7 +423,7 @@ def MD_LinearTransformOp : MD_Op<"linear_transform", [Pure]> {
     real grid and the Hermitian-weighted real pairing on the half-spectrum.
     Neither direction normalizes by the grid size. The `adjoint` and
     `pairing` attributes make this contract inspectable before storage is
-    assigned. D[pme-semantic-transform].
+    assigned. D319.
 
     ```mlir
     %s = md.linear_transform %grid kind("fft3d") direction("forward")

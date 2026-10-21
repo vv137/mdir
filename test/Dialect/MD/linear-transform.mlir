@@ -1,5 +1,5 @@
 // The semantic transform is a pure value operation. Its declared transpose
-// reverses direction while preserving the Hermitian pairing (D[pme-semantic-transform]).
+// reverses direction while preserving the Hermitian pairing (D319).
 // RUN: mdir-opt %s --test-md-transpose --verify-each -o - 2>&1 | FileCheck %s
 // CHECK: remark: transpose in operand 0: 'md.linear_transform'
 // CHECK: remark: transpose in operand 0: 'md.linear_transform'

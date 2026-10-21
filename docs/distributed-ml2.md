@@ -396,7 +396,7 @@ An unproved provenance, incompatible ownership epoch, stale ghost copy, or
 unsupported control-flow relation rejects the schedule. Both the print
 pass and future transfer lowerings consume the same proof.
 
-The center partition (D[ml2-center-partition], #496) is a semantic
+The center partition (D317, #496) is a semantic
 operation on one neighborhood relation. It returns two complete owned
 `i32` indicator fields: one means membership and zero means absence. A
 future pair filter must require a direct result of this operation on its

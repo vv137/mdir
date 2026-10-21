@@ -22,7 +22,7 @@ distributed runs (`md_dist`), learned potentials (`mlff`), and ensembles
 of runs (`ensemble`) are designs, not code (Section 13).
 
 The distributed level now includes `md_dist.partition_centers`
-(D[ml2-center-partition]). For each owned center $i$ of a neighborhood
+(D317). For each owned center $i$ of a neighborhood
 relation, $R_i^\mathrm{ghost}$ contains its pairs whose neighbor is a
 ghost row. The operation's two `i32` indicators identify $I_d$ and $B_d$,
 with $I_d\cap B_d=\varnothing$ and $I_d\cup B_d=O_d$ for the relation's
@@ -409,7 +409,7 @@ about 20 times the opaque call's time with MDIR's naive lowering of
 `linalg` ([ml4-ir.md](../ml4-ir.md), Section 8).
 
 The body then chooses a strategy for each reduction of its tensor
-components (D[ml4-short-reductions]): for a sum of 2 to 31 terms, an
+components (D318): for a sum of 2 to 31 terms, an
 opt-in strategy uses one thread to add them in source order, keeps the
 partial sum in a register, and writes only the final value; for a contiguous
 sum of at least 32 terms, a warp combines them by D303's fixed butterfly.
