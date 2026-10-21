@@ -32,6 +32,12 @@
 // CHECK-NEXT: 1
 // CHECK-NEXT: 1
 // CHECK-NEXT: 1
+// CHECK-NEXT: 1
+// CHECK-NEXT: 1
+// CHECK-NEXT: 1
+// The single-pass scan with 129 tiles and with no counts.
+// CHECK-NEXT: 1
+// CHECK-NEXT: 1
 // The counting sort of 3000 items by 50 keys, a tenth of them with none:
 // the scatter and the insertion sort; the scatter and the stable rank;
 // every item a key, sorted by the reverse of the item.
@@ -42,6 +48,7 @@
 
 !h = memref<?xi32>
 !d = memref<?xi32, 1>
+!wide = memref<?xi64, 1>
 !wg = memref<9xi32, #gpu.address_space<workgroup>>
 
 func.func private @mdir.primitive.warp_lanes_below(i32) -> i32
@@ -52,6 +59,8 @@ func.func private @mdir.primitive.warp_scan(i32, i32, i32, i32) -> i32
 func.func private @mdir.primitive.block_scan(i32, !wg, index) -> (i32, i32)
 func.func private @mdir.primitive.device_scan(!d, !d, index, !d, index, index, index)
 func.func private @mdir.primitive.device_scan_cursor(!d, !d, index, !d, index, index, index, !d)
+func.func private @mdir.primitive.single_pass_scan(!d, !d, index, !wide, index, index, index)
+func.func private @mdir.primitive.single_pass_scan_cursor(!d, !d, index, !wide, index, index, index, !d)
 func.func private @mdir.primitive.chunked_scan(!d, !d, !d, !d, index, index, index, index, index, index)
 func.func private @mdir.primitive.cursor_scatter(!d, !d, !d, index, index, index, index)
 func.func private @mdir.primitive.sort_bins(!d, !d, index, index, index, index)
@@ -300,6 +309,16 @@ func.func @scans() {
   %start2 = func.call @filled(%n1, %none) : (index, i32) -> !d
   func.call @mdir.primitive.device_scan(%dc, %start2, %n, %sums, %blocks, %threads, %c1) : (!d, !d, index, !d, index, index, index) -> ()
   call @same(%start2, %expect, %n1) : (!d, !h, index) -> ()
+  %state_size = arith.addi %blocks, %c1 : index
+  %state = gpu.alloc (%state_size) : !wide
+  %start4 = func.call @filled(%n1, %none) : (index, i32) -> !d
+  %cursor4 = func.call @filled(%n, %none) : (index, i32) -> !d
+  func.call @mdir.primitive.single_pass_scan_cursor(%dc, %start4, %n, %state, %blocks, %threads, %c1, %cursor4) : (!d, !d, index, !wide, index, index, index, !d) -> ()
+  call @same(%start4, %expect, %n1) : (!d, !h, index) -> ()
+  call @same(%cursor4, %expect, %n) : (!d, !h, index) -> ()
+  %start5 = func.call @filled(%n1, %none) : (index, i32) -> !d
+  func.call @mdir.primitive.single_pass_scan(%dc, %start5, %n, %state, %blocks, %threads, %c1) : (!d, !d, index, !wide, index, index, index) -> ()
+  call @same(%start5, %expect, %n1) : (!d, !h, index) -> ()
   // 4 chunks of 256 counts, a thread a chunk in one block of 128.
   %chunks = arith.constant 4 : index
   %chunk = arith.constant 256 : index
@@ -309,6 +328,43 @@ func.func @scans() {
   %cursor3 = func.call @filled(%m, %none) : (index, i32) -> !d
   func.call @mdir.primitive.chunked_scan(%dc, %start3, %cursor3, %chunk_sums, %m, %chunks, %chunk, %c1, %block, %c1) : (!d, !d, !d, !d, index, index, index, index, index, index) -> ()
   call @same(%start3, %expect_m, %m1) : (!d, !h, index) -> ()
+  return
+}
+
+func.func @scans_long_and_empty() {
+  %c0 = arith.constant 0 : index
+  %c1 = arith.constant 1 : index
+  %n = arith.constant 131083 : index
+  %n1 = arith.constant 131084 : index
+  %blocks = arith.constant 129 : index
+  %state_size = arith.constant 130 : index
+  %threads = arith.constant 256 : index
+  %zero = arith.constant 0 : i32
+  %minus_one = arith.constant -1 : i32
+  %h = memref.alloc (%n) : !h
+  scf.for %i = %c0 to %n step %c1 {
+    %v = arith.index_cast %i : index to i32
+    %c7 = arith.constant 7 : i32
+    %c5 = arith.constant 5 : i32
+    %a = arith.muli %v, %c7 : i32
+    %count = arith.remui %a, %c5 : i32
+    memref.store %count, %h[%i] : !h
+  }
+  %expected = func.call @prefix(%h, %n) : (!h, index) -> !h
+  %counts = func.call @to_device(%h) : (!h) -> !d
+  %state = gpu.alloc (%state_size) : !wide
+  %start = func.call @filled(%n1, %minus_one) : (index, i32) -> !d
+  func.call @mdir.primitive.single_pass_scan(%counts, %start, %n, %state, %blocks, %threads, %c1) : (!d, !d, index, !wide, index, index, index) -> ()
+  call @same(%start, %expected, %n1) : (!d, !h, index) -> ()
+
+  %empty_host = memref.alloc (%c1) : !h
+  memref.store %zero, %empty_host[%c0] : !h
+  %empty_device = func.call @to_device(%empty_host) : (!h) -> !d
+  %empty_start = func.call @filled(%c1, %minus_one) : (index, i32) -> !d
+  %empty_state_size = arith.constant 2 : index
+  %empty_state = gpu.alloc (%empty_state_size) : !wide
+  func.call @mdir.primitive.single_pass_scan(%empty_device, %empty_start, %c0, %empty_state, %c1, %threads, %c1) : (!d, !d, index, !wide, index, index, index) -> ()
+  call @same(%empty_start, %empty_host, %c1) : (!d, !h, index) -> ()
   return
 }
 
@@ -448,6 +504,7 @@ func.func @main() {
   call @warps() : () -> ()
   call @block() : () -> ()
   call @scans() : () -> ()
+  call @scans_long_and_empty() : () -> ()
   call @sorts() : () -> ()
   return
 }

@@ -1,7 +1,7 @@
 # The test of device-primitives.mlir on a device (D296):
 # each emitter of CompactionEmitter.h, called by name, expanded, and run:
-# the warp compaction, the warp scans, the block scan, the device scan
-# with and without the cursor, the chunked scan, and the counting sort
+# the warp compaction, the warp scans, the block scan, both device scan
+# strategies with and without the cursor, the chunked scan, and the counting sort
 # with the insertion sort, the stable rank, and the order by another
 # buffer. The results are integers, compared exactly.
 #
@@ -14,7 +14,8 @@
 # RUN: | FileCheck %S/device-primitives.mlir
 #
 # Under compute-sanitizer (with -Dsanitize=1): memcheck and racecheck,
-# for the barriers of the block scan and the atomics of the scatter.
+# for the barriers of the block scan, the scan's state, and the atomics
+# of the scatter.
 # RUN: %if compute-sanitizer %{ mdir-opt %S/device-primitives.mlir \
 # RUN:     --expand-device-primitives \
 # RUN:   | mlir-opt %lower_gpu_to_llvm > %t.mlir %}

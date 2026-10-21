@@ -249,6 +249,24 @@ kernels of the integration runs, which read the first entry of every
 particle's row, now read adjacent entries: Cellulose and STMV step 2% and
 4% faster.
 
+**Offsets of the groups** (D[device-single-pass-scan]). The counting sorts
+that build groups require an exclusive prefix of their integer bin counts.
+Their previous scan reduced the counts by tile, scanned the tile totals,
+then read the counts again to write the offsets, in three launches. A
+single-pass scan reads each count once. Running blocks claim consecutive
+tile numbers and publish an aggregate of their counts; a block obtains the
+prefix of its tile by looking back over aggregates until it reaches a
+completed prefix [[MerrillGarland2016]](../references.md#merrillgarland2016).
+The claim order prevents a block from waiting for an unscheduled
+predecessor. An initialization launch clears the state before the scan
+launch, so an opt-in compiler strategy makes the three group scans use
+two launches each. All offsets remain exact integers, and the permutation
+of each bin is still sorted after scatter. In an RTX 4090 measurement the
+scan kernels of a JAC group build fell from 52.65 to 38.41 µs, but the
+ordinary Amber runs did not gain end to end and STMV slowed by 0.55%.
+With an outer skin of 0.5 Å, JAC rebuilt every 2.2 steps and ran 1.02%
+faster. The three-launch strategy remains the default.
+
 **One set of buffers for the reciprocal sum** (D315). A
 program evaluates the reciprocal sum in several places: before the first
 step, and in each copy of the step that the loop nest specializes by what

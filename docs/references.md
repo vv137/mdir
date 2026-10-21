@@ -284,6 +284,15 @@ block scans, and the scans of counting sorts of the shared emitters
 (D296, [device-primitives.md](device-primitives.md),
 Section 4).
 
+### MerrillGarland2016
+
+D. Merrill and M. Garland, *Single-pass Parallel Prefix Scan with Decoupled
+Look-back*, NVIDIA Technical Report NVR-2016-002 (March 2016).
+[NVIDIA Research](https://research.nvidia.com/sites/default/files/pubs/2016-03_Single-pass-Parallel-Prefix/nvr-2016-002.pdf)
+
+Used for: the device scan strategy with dynamically assigned tiles, aggregate
+and prefix descriptors, and decoupled look-back (D[device-single-pass-scan]).
+
 ### CUDAGuideL2
 
 NVIDIA, *CUDA Programming Guide*, Section 4.14, "L2 Cache Control"

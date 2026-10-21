@@ -25,4 +25,13 @@ extern const char *const neighborsGroupsGPUTriclinicTemplate;
 const char *const neighborsGroupsGPUTriclinicTemplate = R"MDIRTEMPLATE(
 @NEIGHBORS_GROUPS_GPU_TRICLINIC_TEMPLATE@
 )MDIRTEMPLATE";
+extern const char *const neighborsGroupsSinglePassGPUTemplate;
+const char *const neighborsGroupsSinglePassGPUTemplate = R"MDIRTEMPLATE(
+@NEIGHBORS_GROUPS_SINGLE_PASS_GPU_TEMPLATE@
+)MDIRTEMPLATE";
+extern const char *const neighborsGroupsSinglePassGPUTriclinicTemplate;
+const char *const neighborsGroupsSinglePassGPUTriclinicTemplate =
+    R"MDIRTEMPLATE(
+@NEIGHBORS_GROUPS_SINGLE_PASS_GPU_TRICLINIC_TEMPLATE@
+)MDIRTEMPLATE";
 } // namespace mdir
