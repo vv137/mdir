@@ -240,7 +240,7 @@ private:
 
   /// The scratch of the reciprocal sums of the function, allocated once
   /// in its body and shared by every sum that takes a buffer of the same
-  /// shape (D[pme-shared-buffers]): the type, the number of particles that
+  /// shape (D315): the type, the number of particles that
   /// the length is computed from (null for a fixed length), the count of
   /// the formula, the formula, and whether the buffer must hold zeros
   /// between evaluations (the bricks of D108). A sum reads nothing of its
@@ -952,7 +952,7 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   // transform; on a device also the sums of its rows.
   //
   // Every buffer of the scratch is shared with the other sums of the
-  // function that take one of the same shape (D[pme-shared-buffers]): a
+  // function that take one of the same shape (D315): a
   // program evaluates the sum at several sites (the start, and each
   // specialization of the step), and each site held a grid of its own
   // for the whole run. A sum writes each buffer of its scratch before it

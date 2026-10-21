@@ -527,7 +527,7 @@ disturbed one. On Cellulose (RTX 4090) the spreading of 95 µs is 16 for
 zeroing the grid, 8 for the binning, and 71 for the tiles; on STMV
 (RTX 4090) 44, 26, and 209 (the zeroing of a grid of 12 million points).
 
-### 3.4 One set of buffers for every sum (D[pme-shared-buffers])
+### 3.4 One set of buffers for every sum (D315)
 
 A program evaluates the reciprocal sum in several places: before the
 first step, and in each copy of the step that the loop nest specializes

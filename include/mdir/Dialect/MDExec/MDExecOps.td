@@ -244,7 +244,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
     op writes each buffer of `scratch` before it reads it, and what they
     hold after it is unspecified, except the bricks of the spreading
     (D108), which it finds zero and leaves zero; so the sums of a function
-    share the buffers of the same shape (D[pme-shared-buffers]). The op
+    share the buffers of the same shape (D315). The op
     reads and writes its scratch, so two sums that share a buffer are not
     independent.
 

@@ -3,7 +3,7 @@
 # npt-velocity-verlet-gpu.test on examples/ala3 (V-RESCALE and energies
 # every 10 steps, C-RESCALE, PME), 20 steps in mixed precision. Its sites
 # of the sum (the start, and the specializations of the step) share one
-# set of scratch (D[pme-shared-buffers]); on the second stream each runs
+# set of scratch (D315); on the second stream each runs
 # beside the main stream up to its join, and the next sum, which takes the
 # same buffers, is issued after it on the same stream.
 #

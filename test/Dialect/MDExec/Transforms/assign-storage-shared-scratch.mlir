@@ -2,7 +2,7 @@
 // RUN: mdir-opt %s --md-exec-assign-storage | FileCheck %s --check-prefix=HOST
 
 // The reciprocal sums of a function share their scratch
-// (D[pme-shared-buffers]): each buffer is allocated once in the body of
+// (D315): each buffer is allocated once in the body of
 // the function and taken by every sum that needs one of its shape. Two
 // sums on the grid of 8^3 points take the same buffers; the sum on the
 // grid of 6^3 points takes grids of its own and shares the buffers whose

@@ -8487,7 +8487,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
                        dominance.properlyDominates(operand, refresh);
       // A sum that moves as well keeps its place before this one, so this
       // one need not be independent of it: sums of one function share
-      // their scratch (D[pme-shared-buffers]).
+      // their scratch (D315).
       for (Operation *crossed = refresh->getNextNode();
            independent && crossed != next; crossed = crossed->getNextNode())
         independent =

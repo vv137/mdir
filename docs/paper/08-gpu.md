@@ -249,7 +249,7 @@ kernels of the integration runs, which read the first entry of every
 particle's row, now read adjacent entries: Cellulose and STMV step 2% and
 4% faster.
 
-**One set of buffers for the reciprocal sum** (D[pme-shared-buffers]). A
+**One set of buffers for the reciprocal sum** (D315). A
 program evaluates the reciprocal sum in several places: before the first
 step, and in each copy of the step that the loop nest specializes by what
 the step must produce (the energy for the log, the virial for the

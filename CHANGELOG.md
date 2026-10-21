@@ -714,7 +714,7 @@ format, or the outputs; every such change is listed under **Changed** or
   Amber suite's rates: JAC NVE 0.7% slower, the larger systems 1% to 4%
   faster. No control-file key or output change.
 - **The reciprocal sums of a program share one set of PME buffers**
-  (D[pme-shared-buffers], #471): the grids, the transform, the places,
+  (D315, #471): the grids, the transform, the places,
   the bricks, and the bins of particle mesh Ewald are allocated once for
   every sum of the same shape, where each of the 7 places in the program
   that evaluates the sum (the start and the specializations of the step)
