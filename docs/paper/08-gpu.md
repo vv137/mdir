@@ -237,6 +237,18 @@ goes back to the driver, after the wait that the growth makes anyway. With
 both, STMV takes 5.6 GB of an RTX 4090 against 6.5 GB, and its fourfold
 replica (4.27 million atoms) runs in 20.8 GB, where it ran out of memory.
 
+**Ragged rows** (D[ragged-incidence]). The incidence structure of a tuple
+set (Section 3.6) was a table of $N$ rows, each as long as the row of the
+particle with the most tuples: 247 values for the dihedrals of STMV,
+where most particles have a few. It is now one buffer of the offsets of
+the rows and their entries, and every kernel and template reads a row
+through one accessor. STMV's ten structures take 228 MiB instead of
+2,096; the device peak falls from 5.6 to 3.7 GB, the fourfold replica
+takes 12.9 GB, and the sevenfold (7.47 million atoms) runs in 22.9 GB. The
+kernels of the integration runs, which read the first entry of every
+particle's row, now read adjacent entries: Cellulose and STMV step 2% and
+4% faster.
+
 **Flags read without waiting for the stream** (D113). The test of validity
 (Section 4.1) sets a flag on the device, and the host must read it to
 decide whether to build. A copy to pageable memory waits for everything
