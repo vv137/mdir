@@ -726,7 +726,7 @@ format, or the outputs; every such change is listed under **Changed** or
   bits as before, and the Amber suite's rates are unchanged. No
   control-file key or output change.
 - **The setup counts the most neighbors at the start by cells and
-  threads** (D[neighbor-count], #471): the count that sizes the rows of a
+  threads** (D316, #471): the count that sizes the rows of a
   neighbor structure when no `neighbor_capacity` is given sweeps the
   candidates of a cell once for all its members, vectorized, over the
   cores that the process may run on (at most `MDIR_COMPILE_THREADS`). The

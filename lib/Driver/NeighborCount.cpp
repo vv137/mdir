@@ -3,7 +3,7 @@
 // A search with cells as wide as the reach (cell lists,
 // [AllenTildesley2017]), which visits the candidates of a cell once for all its
 // members, from positions gathered in the order of the cells, and spreads
-// the cells over threads (D[neighbor-count]).
+// the cells over threads (D316).
 //
 // Its result is that of the serial search over particles that it replaces,
 // to the integer: the same cells (the same wrapping of a position and the

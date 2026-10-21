@@ -4,7 +4,7 @@
 // the driver sizes the rows of a neighbor structure when no
 // `neighbor_capacity` is given (D227). The count is exact: the same set of
 // candidates and the same test of each pair as the serial search that it
-// replaces (D[neighbor-count]), so the width of the lowered program is the
+// replaces (D316), so the width of the lowered program is the
 // same integer.
 //
 //===----------------------------------------------------------------------===//

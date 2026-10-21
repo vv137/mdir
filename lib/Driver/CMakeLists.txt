@@ -67,7 +67,7 @@ add_mlir_library(MDIRDriver
   LINK_COMPONENTS
   Support
   )
-# The sweep of the count of neighbors (D[neighbor-count]) is vectorized only
+# The sweep of the count of neighbors (D316) is vectorized only
 # where a comparison may be evaluated before it is needed, which
 # -fno-trapping-math allows; it changes no value, only whether the flags of
 # floating-point exceptions are raised as written.

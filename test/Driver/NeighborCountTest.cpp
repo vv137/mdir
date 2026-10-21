@@ -1,4 +1,4 @@
-// The most neighbors of a particle (D[neighbor-count]): the search by
+// The most neighbors of a particle (D316): the search by
 // cells and threads gives the integer of the serial search over particles
 // that the driver used before (kept here, as it was in Builder.cpp, as the
 // reference), on inputs made to find a difference and on the systems of
@@ -25,7 +25,7 @@
 using namespace mdir;
 using namespace mdir::driver;
 
-/// The search of the driver before D[neighbor-count], as it was.
+/// The search of the driver before D316, as it was.
 static int64_t countMostNeighborsReference(const System &system,
                                            double reach) {
   size_t count = system.getNumParticles();

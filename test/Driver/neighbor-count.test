@@ -1,6 +1,6 @@
 # The most neighbors of a particle at the start, from which the driver
 # sizes the rows of a neighbor structure when no neighbor_capacity is given
-# (D227), are found by cells and threads (D[neighbor-count]) and are the
+# (D227), are found by cells and threads (D316) and are the
 # integer of the serial search over particles that it replaces, which the
 # test keeps as the reference: on inputs made to find a difference (1, 2,
 # and 3 cells along an axis, positions outside the box and on its faces,
