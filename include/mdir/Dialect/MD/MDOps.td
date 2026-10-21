@@ -411,6 +411,37 @@ def MD_ChebyshevOp : MD_Op<"chebyshev", [Pure, SameOperandsAndResultType]> {
 // Particle mesh Ewald
 //===----------------------------------------------------------------------===//
 
+def MD_LinearTransformOp : MD_Op<"linear_transform", [Pure]> {
+  let summary = "A value-level linear transform with a declared adjoint";
+  let description = [{
+    The first kind is the unnormalized three-dimensional real FFT. Forward
+    maps `tensor<K0 x K1 x K2 x f64>` to
+    `tensor<K0 x K1 x (K2/2+1) x complex<f64>>`; backward maps the latter
+    to the former. The half-spectrum represents a real grid and obeys
+    Hermitian symmetry on its zero and, for even K2, Nyquist planes.
+    Forward and backward are adjoints under the Euclidean pairing on the
+    real grid and the Hermitian-weighted real pairing on the half-spectrum.
+    Neither direction normalizes by the grid size. The `adjoint` and
+    `pairing` attributes make this contract inspectable before storage is
+    assigned. D[pme-semantic-transform].
+
+    ```mlir
+    %s = md.linear_transform %grid kind("fft3d") direction("forward")
+      adjoint("backward") pairing("real_hermitian_half") :
+      tensor<4x4x6xf64> -> tensor<4x4x4xcomplex<f64>>
+    ```
+  }];
+  let arguments = (ins AnyRankedTensor:$input, StrAttr:$kind,
+                       StrAttr:$direction, StrAttr:$adjoint, StrAttr:$pairing);
+  let results = (outs AnyRankedTensor:$result);
+  let assemblyFormat = [{
+    $input `kind` `(` $kind `)` `direction` `(` $direction `)`
+    `adjoint` `(` $adjoint `)` `pairing` `(` $pairing `)` attr-dict
+    `:` type($input) `->` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
   let summary = "The reciprocal sum of particle mesh Ewald";
   let description = [{
