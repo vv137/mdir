@@ -1,0 +1,2 @@
+# RUN: %python %S/Inputs/decision-number-anchors.py %S/../.. | FileCheck %s
+# CHECK: decision heading links: ok
