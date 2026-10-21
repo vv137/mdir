@@ -1,0 +1,55 @@
+# Three moving snapshots with face, edge, and corner ownership crossings.
+# The last snapshot is the independent one-domain LJ force oracle already
+# checked in dist-lj.mlir. The extra checks cover two intermediate position
+# copies and a live vector field across three ownership epochs.
+#
+# RUN: %python %S/Inputs/migrate_lj_snapshot.py %S/dist-lj.mlir '2, 2, 2' \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s --check-prefix=MIG
+
+# RUN: %python %S/Inputs/migrate_lj_snapshot.py %S/dist-lj.mlir '2, 2, 2' mixed \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s --check-prefix=MIG-MIX
+#
+# The 16-domain grid has empty owners both before and after migration.
+# RUN: %python %S/Inputs/migrate_lj_snapshot.py %S/dist-lj.mlir '16, 1, 1' \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s --check-prefix=MIG
+
+# MIG: -226
+# MIG-NEXT: 1
+# MIG-NEXT: 1
+# MIG-NEXT: 1
+# MIG-NEXT: 1
+# MIG-NEXT: 1
+# MIG-NEXT: 1
+# MIG-NEXT: 1
+# MIG-NEXT: 1
+# MIG-NEXT: 1
+# MIG-NEXT: 1
+
+# MIG-MIX: -226
+# MIG-MIX-NEXT: 1
+# MIG-MIX-NEXT: 1
+# MIG-MIX-NEXT: 1
+# MIG-MIX-NEXT: 1
+# MIG-MIX-NEXT: 1
+# MIG-MIX-NEXT: 1
+# MIG-MIX-NEXT: 1
+# MIG-MIX-NEXT: 1
+# MIG-MIX-NEXT: 1

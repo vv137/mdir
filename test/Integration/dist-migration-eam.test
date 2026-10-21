@@ -1,0 +1,40 @@
+# The force path of the distributed EAM oracle receives positions carried
+# from an earlier ownership epoch across a corner. The original one-domain
+# EAM energy, forces, and virial remain the independent reference. This is
+# one migration snapshot, not a trajectory.
+# RUN: %python %S/Inputs/migrate_eam_snapshot.py source %S/dist-eam.mlir \
+# RUN: | mdir-opt --md-distribute="grid=2,2,2 traversal=directed potentials=eam,linear" \
+# RUN:     %md_passes \
+# RUN: | %python %S/Inputs/migrate_eam_snapshot.py inject \
+# RUN: | mdir-opt --md-exec-assign-algebra --convert-md-dist-to-loops \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %S/dist-eam.mlir
+
+# The mixed path compares energy, forces, and virial. The existing
+# finite-difference checks use double-only tolerance and are covered by
+# the double run above.
+# EAM-MIX: 31.8605
+# EAM-MIX-NEXT: 1
+# EAM-MIX-NEXT: 1
+# EAM-MIX-NEXT: 1
+# EAM-MIX-NEXT: 1
+# EAM-MIX-NEXT: 1
+# EAM-MIX-NEXT: 1
+
+# RUN: %python %S/Inputs/migrate_eam_snapshot.py source %S/dist-eam.mlir mixed \
+# RUN: | mdir-opt --md-distribute="grid=2,2,2 traversal=directed potentials=eam,linear" \
+# RUN:     %md_passes \
+# RUN: | %python %S/Inputs/migrate_eam_snapshot.py inject \
+# RUN: | mdir-opt --md-exec-assign-algebra \
+# RUN:     --convert-md-dist-to-md-exec="functions=derived" \
+# RUN:     --convert-md-dist-to-loops \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | FileCheck %s --check-prefix=EAM-MIX

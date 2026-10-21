@@ -218,6 +218,8 @@ Value mdir::md_dist::layoutOf(Value value) {
     return {};
   if (auto op = dyn_cast<DistributeOp>(def))
     return op.getLayout();
+  if (auto op = dyn_cast<RedistributeOp>(def))
+    return op.getNewLayout();
   if (auto op = dyn_cast<HaloSumOp>(def))
     return layoutOf(op.getHalo());
   if (auto op = dyn_cast<ZerosOp>(def))
@@ -419,6 +421,18 @@ PartitionOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
+LogicalResult MigrateOp::verify() {
+  if (getOldLayout().getType() != getLayout().getType())
+    return emitOpError() << "the new layout must have the old decomposition";
+  if (failed(verifyOwnedComplete(*this, "the positions", getPositions())) ||
+      failed(verifySameLayout(*this, "the positions", getPositions(),
+                              getOldLayout())))
+    return failure();
+  if (getPositions().getType().getNumComponents() != 3)
+    return emitOpError() << "expected positions with 3 components";
+  return success();
+}
+
 LogicalResult DistributeOp::verify() {
   auto field = cast<md::FieldType>(getField().getType());
   FieldType result = getResult().getType();
@@ -444,6 +458,27 @@ LogicalResult CollectOp::verify() {
   if (field.getNumComponents() != result.getNumComponents() ||
       field.getElementType() != result.getElementType())
     return emitOpError() << "the result is not of the type of the field";
+  return success();
+}
+
+LogicalResult RedistributeOp::verify() {
+  if (failed(verifyOwnedComplete(*this, "the field", getField())) ||
+      failed(verifySameLayout(*this, "the field", getField(),
+                              getOldLayout())))
+    return failure();
+  if (getOldLayout().getType() != getNewLayout().getType())
+    return emitOpError() << "the layouts must have one decomposition";
+  auto migrate = getNewLayout().getDefiningOp<MigrateOp>();
+  if (!migrate || migrate.getOldLayout() != getOldLayout())
+    return emitOpError()
+           << "the new layout must come from migration of the field's old "
+              "layout";
+  if (getResult().getType() != getField().getType())
+    return emitOpError() << "the result must have the field's type";
+  if (getImage() && getField().getType().getNumComponents() != 3)
+    return emitOpError() << "'image' wraps positions, of 3 components";
+  if (getImage() && getImage() != migrate.getCell())
+    return emitOpError() << "'image' must use the migration's cell";
   return success();
 }
 
