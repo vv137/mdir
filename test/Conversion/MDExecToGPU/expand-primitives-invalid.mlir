@@ -44,3 +44,13 @@ func.func @results(%v: i32) -> i64 {
 func.func private @mdir.primitive.warp_count(%v: i32) -> i32 {
   return %v : i32
 }
+
+// -----
+
+func.func private @mdir.primitive.grid_gather_i32(memref<?xf32, 1>, i32, i32) -> f64
+func.func @grid_result(%grid: memref<?xf32, 1>, %row: i32, %z: i32) -> f64 {
+  // expected-error @+1 {{declares a grid gather result unlike the grid element type}}
+  %v = func.call @mdir.primitive.grid_gather_i32(%grid, %row, %z)
+      : (memref<?xf32, 1>, i32, i32) -> f64
+  return %v : f64
+}
