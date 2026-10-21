@@ -54,21 +54,20 @@ thermostat are not.
 4. **Ready.** When the implementation, its documents, and its validation
    are complete, rebase on the current `main` immediately before marking
    the PR ready (`gh pr ready`), resolve every conflict there, and run the
-   full suite at that head if source, runtime, tests, or build configuration
-   changed since the last passing suite. Changes confined to documentation
-   files do not require another full suite; test inputs and build files do.
-   The comment that marks it ready names the head commit and the commit of
-   `main` it is based on. When a suite is required, it also names the suite's
-   counts. When reusing a suite result, it names the tested commit and
-   confirms that the intervening diff changes documentation only. A
-   PR whose head does not contain the current `main` is not ready (see
+   full suite at that head, unless an earlier passing suite carries over
+   (see [Reusing a suite](#reusing-a-suite)). The comment that marks it
+   ready names the head commit, the commit of `main` it is based on, and
+   either the suite's counts or what the reuse requires. A PR whose head
+   does not contain the current `main` is not ready (see
    [Staying current](#staying-current)).
 5. **Review.** The coordinator builds the PR's head commit and runs the
-   full suite on a GPU when required by the rule above. A passing suite at an
-   earlier commit can be reused after the coordinator checks that the diff
-   to the reviewed head changes documentation files only. There is no GPU
-   continuous integration, so this run
-   is part of the review. The coordinator checks the rules below, posts the
+   full suite on a GPU, or verifies the author's suite at that same head
+   (the build recorded that commit with no uncommitted changes and was not
+   rebuilt after the run, and the log shows no failure), or checks that an
+   earlier suite carries over (see [Reusing a suite](#reusing-a-suite)). The
+   review comment names the job that tested the head. There is no GPU
+   continuous integration, so this check is part of the review. The
+   coordinator checks the rules below, posts the
    result as a PR comment naming the commit tested, and labels the PR
    `merge-recommended` or `changes-requested`. Before labeling, the
    coordinator checks the other open PRs: files both change (conflicts to
@@ -213,12 +212,11 @@ The author, not the coordinator, brings a PR up to date with `main`:
   `main` has moved, the coordinator does not resolve the conflicts itself;
   it asks the author to rebase, with the label `changes-requested`.
 - After every push to `main`, the author of each open ready PR rebases on
-  the new `main` and resolves the conflicts. Run the full suite at the new
-  head when source, runtime, tests, or build configuration changed since the
-  last passing suite. For a documentation-only diff, retain the passing
-  suite, check the diff, and name both the tested commit and the new head in
-  a comment. The new head is then reviewed again, as any head that moves
-  after `merge-recommended`.
+  the new `main` and resolves the conflicts. It runs the full suite at the
+  new head unless the earlier suite carries over (see
+  [Reusing a suite](#reusing-a-suite)), and says so in a comment naming the
+  head and its base. The new head is then reviewed again, as any head that
+  moves after `merge-recommended`.
 - Conflicts in prose and code are always resolved by the author, who knows
   what both sides mean. Rows of tables are no exception: the author keeps
   the rows of `main` and adds its own at the end.
@@ -226,6 +224,32 @@ The author, not the coordinator, brings a PR up to date with `main`:
 A PR merged this way adds nothing to the tree its review suite tested: the
 merge commit has the tree of the reviewed head, so the review suite is also
 the suite of the merge.
+
+## Reusing a suite
+
+A passing full suite at an earlier commit carries over to a new head when
+the two trees differ only in documentation:
+
+- **The diff.** The comparison is `git diff --name-only <tested commit>
+  <new head>`, tree against tree. After a rebase it includes everything
+  `main` gained in between. A head whose own new commits change only
+  documentation does not qualify when `main` gained anything else.
+- **Documentation.** Documentation means files under `docs/` (the white
+  paper included), `README.md`, and `CHANGELOG.md`. Code comments and
+  TableGen descriptions do not count, because they are compiled; nor do
+  tests and their inputs and comments, which FileCheck and the tests read;
+  nor `examples/`, some of which tests run; nor generated templates and
+  their generator scripts. Any other path in the diff calls for a full suite.
+- **Documentation that tests read.** Some documents are inputs of tests on
+  the CPU, among them `docs/environment.md` (the checks of the environment
+  and script paths), `docs/decisions.md` (`scripts/decision-number.sh
+  check`), and every Markdown file (`test/Docs`, where it exists). The CPU
+  tests that read a changed document run again at the new head:
+  `test/Docs`, `test/Lit`, and every test that names a changed file.
+- **The record.** The comment names the tested commit, its suite job and
+  counts, the new head, the files of the diff, and the CPU tests run again
+  with their results. The reviewer checks them before relying on the
+  earlier suite.
 
 ## Merging
 
