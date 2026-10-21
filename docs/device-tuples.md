@@ -1,6 +1,8 @@
 # The structures of the tuples built on the device (D257)
 
-Issue #295; the design as ruled by the maintainer on PR #329 (all three questions as proposed). It builds on
+Issue #295; the design as ruled by the maintainer on PR #329 (all three questions as proposed). The
+structure is stored in ragged rows and built on the device from the
+members since D[ragged-incidence] (#471, Sections 2 and 3). It builds on
 the store of D253 (`runtime/mdrt_tuples.h`), which a Python simulation and
 a frame evaluator keep across their activations and, with #316
 (D255, #316), `mdir run` across its segments. Section
@@ -45,8 +47,8 @@ place $p$ lists the same $(t, s)$, in the same order, as the row of
 particle $\mathrm{id}_p$ in the order of the files, and only the members
 that it copies change, to $m'_{t,\cdot} = \mathrm{place}[m_{t,\cdot}]$.
 The number of tuples of a row is the count of particle $\mathrm{id}_p$, so
-the width of the structure, the largest count, does not depend on the
-order (D253 relies on this already).
+the size of the structure does not depend on the order (D253 relies on
+this already).
 
 The index of the tuples of each particle in the order of the files (the
 `MdrtTupleIndex` of `mdrt_tuples.h`: for particle $q$ the entries
@@ -57,12 +59,15 @@ start in a new order then needs no count, no prefix sum, no atomic, and no
 sort on the device: three loops in which every element is written by
 exactly one thread.
 
-**What is borrowed.** Nothing new. The kernels are gathers and a scatter
-through a permutation. The one construction of the usual kind is the
-index itself, a count of the tuples of each particle, a prefix sum of the
-counts, and a fill in the order of the tuples (the compressed rows of a
-sparse matrix, built by distribution counting); it exists already on the
-host (`mdrtTupleIndexBuild`, D253) and is not moved to the device.
+**What is borrowed.** The structure is the compressed rows of a sparse
+matrix (CSR, [[Saad2003]](references.md#saad2003), Section 3.4), the
+incidence matrix of particles by tuples, built by distribution counting.
+Until D[ragged-incidence] the index above was built on the host
+(`mdrtTupleIndexBuild`, D253), uploaded once for each tuple set, and the
+rows of the dense structure gathered from it on the device. Since then the
+device builds the ragged rows from the members directly (Section 3), with
+the counting sort of the primitives of D296, and the index exists on the
+host only, for the host's own builds.
 
 ## 3. The kernels
 
@@ -74,25 +79,39 @@ For each tuple set whose structures are to be built, the lowering
 2. **renumber**, one thread an element of the members:
    $m'_i = \mathrm{place}[m_i]$, into the renumbered members on the
    device;
-3. **rows**, one thread a pair (place $p$, slot $k$) over $N \times W_k$,
-   $W_k$ the largest count (one launch over the product, the index
-   decomposed in the kernel): with $q = \mathrm{id}_p$ and
-   $c = \mathrm{first}_{q+1} - \mathrm{first}_q$, the thread of $k = 0$
-   writes $c$ at the head of the row, and a thread with $k < c$ reads
-   $(t, s)$ from entry $\mathrm{first}_q + k$ and writes $t$, $s$, and
-   $m'_{t,0..a-1}$ at $1 + k(a + 2)$. Threads with $k \ge c$ write zeros
-   in their slot. A kernel of an integration run (D110) reads the first
-   slot of every particle and keeps it only where $c \ne 0$; before #347
-   these slots were left as the allocation found them, which
-   compute-sanitizer's initcheck reported as reads of memory that nothing
-   had written.
+3. **rows** (D[ragged-incidence], `buildOnDevice`), the structure in ragged
+   rows ([ops-m0.md](ops-m0.md), `md_exec.build_incidence`;
+   `include/mdir/Conversion/RaggedRows.h`) from the members $m'$ (or $m$
+   in the order of the files), by `emitDeviceRaggedRows` and two kernels
+   of its own:
+   - a thread for each membership $j = a t + s$ adds 1 to the count of its
+     place $m'_j$ (a device atomic), after a kernel clears the counts;
+   - the exclusive scan of the counts gives the offsets $o_p$ of the rows
+     (`emitDeviceScan`, three launches);
+   - a thread for each membership takes the next slot of its place from
+     the cursor (`emitCursorScatter`) and writes $j$ there;
+   - a thread for each place sorts the $j$ of its row ascending
+     (`emitSortBins`, an insertion sort; a row holds at most a few dozen);
+   - a thread for each row writes its offset (and the first thread the
+     number of rows, the first $a + 2$ threads the entry of zeros at the
+     end), and a thread for each slot writes the entry of its $j$:
+     $t = \lfloor j/a \rfloor$, $s = j \bmod a$, and $m'_{t,0..a-1}$.
 
-**Determinism.** No element is written by two threads and no element is
-read after it is written in the same kernel, so the structure does not
-depend on the order in which threads run: its rows hold the tuples of each
-particle in the order of the tuples, as the host's do, and every element
-that a loop over tuples keeps equals the host's, element for element. The
-same kernels run in and outside the deterministic mode.
+   The counts, the cursor, the offsets, the slots, and the sums of the
+   scan's blocks are scratch of the pool, freed after the build: $4(3N +
+   M)$ bytes for $N$ places and $M$ memberships.
+
+**Determinism.** The atomics of the count and of the scatter run in any
+order, but the order within a row is fixed by the sort: ascending $j$ is
+ascending $t$, and $s$ within one tuple, which is the order in which the
+host's build (`mdrtTupleIndexBuild`, a loop over $t$ then $s$) fills a
+row. So the structure does not depend on the order in which threads run,
+and equals the host's element for element; `MDRT_CHECK_KEPT_TUPLES`
+compares the whole buffer (Section 6). The same kernels run in and outside
+the deterministic mode. A kernel of an integration run (D110) reads the
+first entry of every particle's row and keeps it only where the row has
+one: that read is the first entry of the next row or the entry of zeros at
+the end, inside the buffer (#347).
 
 **Where they come from.** The kernels are emitted by the lowering, as the
 loops of the program are, not written in the runtime library, which is
@@ -138,13 +157,13 @@ are compared and where the structure is built:
   carried over from #327's tests.)
 - **A start whose order did not change** takes what is kept, with no
   launch and no copy but the flag.
-- **A start in a new order** launches the three kernels of Section 3 into
-  the memory of the entry; nothing is copied between the host and the
-  device but the flag.
+- **A start in a new order** launches the kernels of Section 3 into the
+  memory of the entry; nothing is copied between the host and the device
+  but the flag.
 - **The call protocol** (one call before, one after, for each set): the
   code calls the store with the members and the identities and gets back
-  the buffers of the entry (the members and the index on the device, the
-  renumbered members, the structure) and whether to build; it launches the
+  the buffers of the entry (the members on the device, the renumbered
+  members, the structure) and whether to build; it launches the
   kernels under an `scf.if` on that answer, then tells the store that the
   structure is built. **An entry becomes valid only at that second call**,
   never at the first: an activation that fails between the launches and
@@ -170,13 +189,10 @@ are compared and where the structure is built:
 
 - The members in the order of the files: they are the program's input,
   and the comparison with the kept copy reads them there.
-- The index of the tuples of each particle in the order of the files: it
-  is a function of the members alone, so it is kept once for each tuple
-  set (not for each entry), built on the host as now, in $O(T a)$, and
-  uploaded once with the members, for the whole simulation or run, and
-  again only if the members change. Building it on the device would need a
-  count, a prefix sum, and a fill in the order of the tuples, for something
-  that is built once.
+- Until D[ragged-incidence], the index of the tuples of each particle in
+  the order of the files, built on the host and uploaded once for each
+  tuple set. The device now builds the rows from the members (Section 3),
+  so the index and its $N + 1 + 2M$ i32 on the device are gone.
 - The decisions of the store (which entry, take or build), and the check.
 - The renumbered members are no longer needed on the host: the only
   consumers of `md_exec.renumber` on a GPU are `md_exec.build_incidence`
@@ -187,8 +203,9 @@ are compared and where the structure is built:
 ## 5. Memory on the device
 
 For each tuple set, new on the device and shared by its entries: the
-members in the order of the files (4 bytes an element) and the index
-(8 bytes an element, and 4 bytes a particle and one). For each entry, in
+members in the order of the files (4 bytes an element) and, until
+D[ragged-incidence], the index (8 bytes an element, and 4 bytes a particle
+and one). For each entry, in
 the deterministic mode, the renumbered members (outside it they are the
 copy that exists now). For the store, one copy of the identities and one
 array $\mathrm{place}$ (4 bytes a particle each), shared by the sets. From
@@ -255,7 +272,7 @@ evaluation, the arguments of the entry, and the rest of D253's list.
   a part that is not numbers, a stop) leaves the entry invalid, since it
   becomes valid only at that call, and `mdrtTupleStoreBegin` does not
   change that: the next start in that order builds it again.
-- **The order of the stream.** The comparison, the three kernels, the
+- **The order of the stream.** The comparison, the kernels of Section 3, the
   copy of the identities into the store (`cuMemcpyDtoDAsync`), and every
   kernel of the program run on the one stream of the runtime. The
   renumbered members that the loops over tuples once read are therefore
@@ -263,9 +280,10 @@ evaluation, the arguments of the entry, and the rest of D253's list.
   loops over the incidence structure; no wait is needed.
 - **The deterministic mode** has no loops that evaluate each tuple once
   (D84), so nothing reads the renumbered members there but the kernel of
-  the rows, on the same stream. The kernels are the same in both modes,
-  and none uses an atomic: the flag of the comparison is written with the
-  same value by every thread that writes it.
+  the rows, on the same stream. The kernels are the same in both modes.
+  The count and the scatter of the rows use device atomics, whose order
+  the sort of each row removes (Section 3); the flag of the comparison is
+  written with the same value by every thread that writes it.
 
 ## 6. The check, and the CPU
 
@@ -273,7 +291,9 @@ evaluation, the arguments of the entry, and the rest of D253's list.
   structure that a start takes is also built on the host and compared with
   the one read back from the device, as now, and every structure that the
   kernels build is compared in the same way when the code says it is
-  built. A difference ends the program and names the structure. No new
+  built. Since D[ragged-incidence] the whole buffer is compared, the
+  offsets and the entry of zeros included. A difference ends the program
+  and names the structure. No new
   variable. Under the check the identities are read back from the device,
   since the host's build needs them; the claim of no copy is for a run
   without it.
@@ -326,6 +346,9 @@ of its own, and frees them.
   atomics puts the tuples of a row in the order in
   which threads run, and the rows would have to be sorted afterwards to
   equal the host's; with the index of Section 2 nothing is counted.
+  *Taken by D[ragged-incidence]* (#471), with the sort of each row, when
+  the rows became ragged: it builds from the primitives of D296 and needs
+  no index on the device.
 - **Sorting the pairs (particle, tuple, slot) by key on the device** at
   every start: correct and deterministic with a stable sort, but a sort of
   $T a$ keys where a gather suffices, and a sort that the lowering would
