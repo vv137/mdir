@@ -57,10 +57,10 @@ thermostat are not.
    full suite at that head if source, runtime, tests, or build configuration
    changed since the last passing suite. Changes confined to documentation
    files do not require another full suite; test inputs and build files do.
-   The comment that marks it ready names the
-   head commit, the commit of `main` it is based on, and the suite's counts;
-   when reusing a suite result, it also names the tested commit and confirms
-   that the intervening diff changes documentation only. A
+   The comment that marks it ready names the head commit and the commit of
+   `main` it is based on. When a suite is required, it also names the suite's
+   counts. When reusing a suite result, it names the tested commit and
+   confirms that the intervening diff changes documentation only. A
    PR whose head does not contain the current `main` is not ready (see
    [Staying current](#staying-current)).
 5. **Review.** The coordinator builds the PR's head commit and runs the
