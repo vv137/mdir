@@ -31,7 +31,7 @@
 # of the Coulomb constant of CODATA 2018 to that of Amber, and the
 # correction for the dispersion is N² times the mean of C6 over the pairs
 # of distinct particles that are not excluded, as GROMACS takes it, where
-# sander sums over all pairs of types (design-m1.md, Section 7.2).
+# sander sums over all pairs of types (nonbonded.md, Section 1.2).
 #
 # CHECK:      MDIR: the terms at the start, in kcal/mol:
 # CHECK-NEXT: MDIR:   Lennard-Jones                386.7447

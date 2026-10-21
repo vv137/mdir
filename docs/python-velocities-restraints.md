@@ -80,7 +80,7 @@ system.restraint_reference = reference_positions   # optional, (N, 3) nm
 
 | Attribute | Type | Unit | Control file |
 |---|---|---|---|
-| `selection` | str | | `selection`: the mask of Amber of Section 22 of [design-m1.md](design-m1.md) |
+| `selection` | str | | `selection`: the mask of Amber of Section 5 of [dynamics.md](dynamics.md) |
 | `force_constant` | float | kJ/mol/nm² | `force_constant` in kcal/mol/Å²: 1 kcal/mol/Å² is 418.4 kJ/mol/nm² (the public units of D191) |
 | `reference_scaling` | `ReferenceScaling.Center` (default) or `.All` | | `reference_scaling = "CENTER"` or `"ALL"` (D124) |
 

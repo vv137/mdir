@@ -23,8 +23,8 @@
 #   correction), CMAP 0.0963
 #
 # They agree but for the conventions of docs/conventions.md, as in
-# amber.test. A model of CMAP written from the rules of design-m1.md,
-# Section 20, gives 0.096326461457 kcal/mol; MDIR gives 0.09632646145701.
+# amber.test. A model of CMAP written from the rules of tuples.md,
+# Section 6, gives 0.096326461457 kcal/mol; MDIR gives 0.09632646145701.
 #
 # CHECK:      MDIR:   Lennard-Jones                887.0589
 # CHECK-NEXT: MDIR:   Coulomb                    -2478.9494

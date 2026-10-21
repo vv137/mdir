@@ -23,7 +23,7 @@ Section 4. The Python interface loads the same files by the same readers
 | Angles with a Urey–Bradley term between the outer atoms | `[ angles ]`, function 5: θ0, kθ, r13, k_UB | `angles` and `Urey-Bradley`, ½ k_UB (r₁₃ − r13)²; a term with k_UB = 0 is dropped |
 | Proper dihedrals, several terms on one set of atoms | `[ dihedrals ]`, function 9 | `dihedrals` |
 | Harmonic impropers | `[ dihedrals ]`, function 2: ξ0, k | `harmonic impropers`, ½ k (ξ − ξ0)², the difference taken in [−π, π) |
-| CMAP | `[ cmaptypes ]`, `[ cmap ]` | `CMAP` [[MacKerell2004]](references.md#mackerell2004) (Section 20 of design-m1.md) |
+| CMAP | `[ cmaptypes ]`, `[ cmap ]` | `CMAP` [[MacKerell2004]](references.md#mackerell2004) (Section 6 of [tuples.md](tuples.md)) |
 | Special Lennard-Jones of pairs three bonds apart | `[ pairtypes ]` | `Lennard-Jones 1-4` |
 | Pair-specific Lennard-Jones (NBFIX) | `[ nonbond_params ]` | the table of the types |
 | TIP3P with Lennard-Jones on its hydrogens | the parameters of the topology | nothing particular |

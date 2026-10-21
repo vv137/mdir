@@ -1,4 +1,4 @@
-// mdir: the command line of MDIR. See docs/design-m1.md, Section 14.
+// mdir: the command line of MDIR. See docs/driver.md, Section 2.9.
 
 #include "Commands.h"
 

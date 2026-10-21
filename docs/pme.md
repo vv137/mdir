@@ -6,7 +6,8 @@ Status: decided (2026-09-30), D69 to D71, and kept current (last checked
 coefficient (D262), the host in parallel (D271), the spreading through
 tiles (D282, D285), the prolate kernel (D266), and the influence function
 of P3M (D304); the dispersion on a grid of its own, LJ-PME, is D162. Stage
-M1h of [design-m1.md](design-m1.md), whose Section 8.2 lists the parts.
+M1h of M1; the other terms of the electrostatics are in
+[nonbonded.md](nonbonded.md), Section 2.
 The keys in brackets are those of [references.md](references.md).
 
 ## 1. The sum
@@ -32,7 +33,7 @@ $$
 | $\mathbf m$ | A vector of the reciprocal lattice, $(k_x / L_x, k_y / L_y, k_z / L_z)$ with whole $k$, in nm⁻¹; $m = \lVert\mathbf m\rVert$ |
 | $S(\mathbf m)$ | The structure factor $\sum_i q_i \exp(2\pi i\, \mathbf m \cdot \mathbf x_i)$ |
 | $s$ | The shift of the direct sum: $\mathrm{erfc}(\beta r_c) / r_c$, or $0$ |
-| excluded | The pairs of the relation `excluded` of the topology: one, two, and three bonds apart, with the sites of Section 19 of design-m1.md. The pairs three bonds apart are among them; their scaled Coulomb is the term `pairs14`, as before, and $E_\text{excl}$ takes their share of $E_\text{rec}$ out again. |
+| excluded | The pairs of the relation `excluded` of the topology: one, two, and three bonds apart, with the sites of Section 2 of [constraints.md](constraints.md). The pairs three bonds apart are among them; their scaled Coulomb is the term `pairs14`, as before, and $E_\text{excl}$ takes their share of $E_\text{rec}$ out again. |
 | $Q$ | The net charge $\sum_i q_i$; $E_Q$ is the energy of the uniform background that neutralizes it [[Hub2014]](references.md#hub2014) |
 
 $E_\text{rec}$ is computed by smooth particle mesh Ewald
@@ -54,6 +55,8 @@ C(\mathbf m) &= \frac{f}{\pi V}\, \frac{\exp(-\pi^2 m^2/\beta^2)}{m^2}, \qquad C
 $$
 
 with $u_{ai}$ the fractional coordinates of particle $i$ along edge $a$.
+Methods of other kinds, such as fast multipole or multilevel summation,
+are not planned.
 
 ### 1.1 The influence function
 
@@ -623,7 +626,7 @@ of sander (`ew_coeff`, `nfft1` to `nfft3`, `order`) or of GROMACS
 
 | Test | Compared with | Tolerance |
 |---|---|---|
-| The three waters of Section 19 of design-m1.md, energy and forces | An Ewald sum in a script: the direct sum over periodic images, many wave vectors, $E_\text{self}$, $E_\text{excl}$ | 10⁻⁶ with a fine grid |
+| The three waters of Section 2 of [constraints.md](constraints.md), energy and forces | An Ewald sum in a script: the direct sum over periodic images, many wave vectors, $E_\text{self}$, $E_\text{excl}$ | 10⁻⁶ with a fine grid |
 | The virial | $-dU/d\lambda$ under a uniform scaling of the positions and the cell at fixed numbers of points (`test/Driver/Inputs/check_virial.py`) | 10⁻⁵ |
 | Dipeptide in OPC | sander with `ew_coeff`, `nfft`, and `order` of MDIR | The ratio of the Coulomb constants |
 | A peptide in water | GROMACS with the same $\beta$, grid, and order, with the shift | 10⁻⁶ (mixed precision) |

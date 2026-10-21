@@ -46,7 +46,7 @@ def barostat(work, coupling="ISOTROPIC"):
 # The name, the ensemble, the tables of the couplings, whether the bonds
 # are constrained, and whether velocity Verlet takes the same steps: it
 # does not where a thermostat alone scales the stored velocities, those of
-# the half step under leapfrog (design-m1.md, Section 23).
+# the half step under leapfrog (dynamics.md, Section 6).
 #
 # What the two runs of a case take at step 10: without a barostat a step
 # of energy against a plain step; with one, whose period is 10 steps, the

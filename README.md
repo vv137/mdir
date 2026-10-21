@@ -193,7 +193,12 @@ apptainer run --nv mdir-0.1.0.sif doctor
 | [docs/runtime.md](docs/runtime.md) | Proposal for the runtime and execution of the first milestone |
 | [docs/driver.md](docs/driver.md) | The driver and its control file |
 | [docs/neighbors.md](docs/neighbors.md) | How neighbor structures are built and kept valid, with measurements |
-| [docs/design-m1.md](docs/design-m1.md) | The design of the first milestone: bonded terms, exclusions, PME, constraints, virtual sites, thermostat, barostat, and their validation |
+| [docs/tuples.md](docs/tuples.md) | Terms over the tuples of a topology: tuple sets, internal coordinates and their derivatives, execution, exclusions and pairs three bonds apart, CMAP |
+| [docs/nonbonded.md](docs/nonbonded.md) | Parameters of pairs of types, the correction for the dispersion, and the electrostatics |
+| [docs/pme.md](docs/pme.md) | Particle mesh Ewald |
+| [docs/constraints.md](docs/constraints.md) | Constraints (SETTLE, SHAKE, RATTLE) and virtual sites |
+| [docs/dynamics.md](docs/dynamics.md) | The removal of the motion of the center of mass, thermostats and barostat, a cell that changes, minimization, restraints, and leapfrog |
+| [docs/validation.md](docs/validation.md) | How the terms, integrators, and ensembles were compared with the reference engines |
 | [docs/charmm.md](docs/charmm.md) | CHARMM force fields: what CHARMM computes (measured with CHARMM 51b1), the force switch of Steinbach and Brooks, converting CHARMM files, and the validation against CHARMM |
 | [docs/paper/](docs/paper/README.md) | The white paper of the first milestone, with derivations and measurements (`scripts/paper/build-pdf.sh` builds the PDF) |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release |

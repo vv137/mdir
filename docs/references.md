@@ -624,7 +624,7 @@ different approach," *J. Phys. Chem. Lett.* **5**, 3863–3871 (2014).
 [doi:10.1021/jz501780a](https://doi.org/10.1021/jz501780a)
 
 Used for: OPC, a water model with four sites, whose extra point is a
-virtual site (design-m1.md, Section 19).
+virtual site (constraints.md, Section 2).
 
 ### Jones1924
 
@@ -900,7 +900,7 @@ molecular dynamics simulations," *J. Comput. Chem.* **25**, 1400–1415
 [doi:10.1002/jcc.20065](https://doi.org/10.1002/jcc.20065)
 
 Used for: CMAP, the correction map of two backbone dihedrals, a bicubic
-patch in each cell of a grid (design-m1.md, Section 20).
+patch in each cell of a grid (tuples.md, Section 6).
 
 ### LuoRoux2010
 
@@ -1502,7 +1502,7 @@ under periodic boundary conditions," *J. Chem. Phys.* **131**, 154107
 
 Used for: the virial and the pressure of terms of more than two particles
 under periodic boundaries, from the forces and the displacements within
-a tuple (M1, Section 4.1 of [design-m1.md](design-m1.md)).
+a tuple (M1, Section 3.1 of [tuples.md](tuples.md)).
 
 ### Thompson2022
 

@@ -1,7 +1,7 @@
 // The bicubic patches of correction maps (CMAP) of two dihedrals
 // [MacKerell2004]. The derivatives at the points of a grid, and the patch
 // of each cell, follow what sander and GROMACS compute
-// (docs/design-m1.md, Section 20).
+// (docs/tuples.md, Section 6).
 
 #include "mdir/Driver/Topology.h"
 
