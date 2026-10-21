@@ -21,6 +21,11 @@ D310 adds the opt-in compiler pass option
 same synchronous halo transport as the default. There is no control-file
 key, Python option, output format, checkpoint change, or overwrite change.
 
+D[ml2-center-partition] adds a compiler-level partition of owned centers
+for a distributed neighborhood relation. It introduces no control-file or
+Python key, and changes no output format or overwrite behavior. The
+synchronous transfer schedule remains the default.
+
 M2 Python API preparation (D187) is described in
 [python.md](../python.md). It introduces no control-file keys or
 changes to the checkpoint and output contracts listed here.
