@@ -12,6 +12,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **Distributed ownership-epoch migration primitives**
+  (D[dist-migration], #494): `md_dist.migrate` computes a new stable layout
+  from current owned positions, and `md_dist.redistribute` moves a complete
+  owned field by global particle identity. The in-process CPU executor
+  supports empty domains and rejects stale epoch use. Production trajectory
+  migration and `[distribute]` control keys remain #38; this change adds no
+  control key, file format, or overwrite behavior.
 - **A linear FFT transform primitive with an inspectable adjoint**
   (D306, #480): `md_exec.linear_transform` exposes the grid
   buffers, direction, opposite adjoint, and Hermitian half-spectrum pairing.
