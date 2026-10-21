@@ -738,6 +738,19 @@ format, or the outputs; every such change is listed under **Changed** or
   exist; the links it found broken are fixed, and the four references of
   the prolate kernel are added to the white paper's list. Documentation
   only.
+- **The design of M1 is split by topic** (#390): the last design document
+  named by its milestone becomes `docs/tuples.md` (tuple sets, internal
+  coordinates and their derivatives, execution, exclusions and pairs three
+  bonds apart, CMAP), `docs/nonbonded.md` (pairs of types, the correction
+  for the dispersion, the electrostatics), `docs/constraints.md`
+  (constraints and virtual sites), `docs/dynamics.md` (the couplings,
+  minimization, restraints, leapfrog), and `docs/validation.md`, with the
+  command line and the readers of topologies in `docs/driver.md`, Sections
+  2.9 and 2.10. Its history, the decisions, the open questions, and the
+  order of work of M1, is removed: the decisions are in
+  `docs/decisions.md`, the questions were answered by D64 and D70, and the
+  results of the stages that no other document recorded are in
+  `docs/validation.md`, Section 1. Documentation and code comments only.
 - **The prolate kernel against the Gaussian, measured again with tiled
   spreading** (D266, D282; `docs/pme.md`, Section 7; documentation
   only). MDIR's whole step on JAC, Cellulose, and STMV, on an RTX 4090 and
