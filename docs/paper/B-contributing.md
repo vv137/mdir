@@ -34,6 +34,13 @@ image, on CUDA's runtime image with libdevice from the toolkit.
 | Scale | `MDIR_BENCH_DIR=<dir> lit test/Scale` | Short runs of the Amber benchmark suite |
 | Host sanitizers | `scripts/build-sanitized.sh <dir>` | All tests with the driver and runtimes under AddressSanitizer and UndefinedBehaviorSanitizer |
 
+The Python `observe` tests use Double with cutoff and Mixed with shift
+for the dipeptide and Double with shift and Mixed with cutoff for the
+mixture in the default CPU and GPU tier. Their release twins test the
+full precision and modifier matrix with the same independent CLI file
+oracles and closed-form dispersion checks (D[suite-runtime], #530). Both
+tiers keep the NPT checks in Double and Mixed precision.
+
 Where two GPU allocations are available, the default tier can run as two
 lit shards on independent build trees of one commit (D309). Both
 shards must pass; their disjoint selections together contain every default

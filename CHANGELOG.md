@@ -10,6 +10,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Changed
+
+- **A shorter default Python `observe` test matrix** (D[suite-runtime],
+  #530): the CPU and GPU default tests keep Double/cutoff and Mixed/shift
+  for the dipeptide, and Double/shift and Mixed/cutoff for the mixture; release tests run the full precision/modifier
+  matrix. This changes no control key, API, file format, or simulation
+  result.
+
 ### Added
 
 - **An opt-in single-pass device scan for group neighbor builds**
