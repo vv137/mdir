@@ -33,6 +33,8 @@ func.func private @mdir.primitive.warp_count(i32) -> i32
 func.func private @mdir.primitive.warp_scan(i32, i32, i32, i32) -> i32
 func.func private @mdir.primitive.device_scan(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index)
 func.func private @mdir.primitive.device_scan_cursor(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index, memref<?xi32, 1>)
+func.func private @mdir.primitive.single_pass_scan(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index)
+func.func private @mdir.primitive.single_pass_scan_cursor(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index, memref<?xi32, 1>)
 func.func private @mdir.primitive.cursor_scatter(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
 func.func private @mdir.primitive.sort_bins(memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
 func.func private @mdir.primitive.ragged_row(memref<?xi32, 1>, index, index) -> (index, index)
@@ -456,10 +458,11 @@ func.func private @mdrt_gpu_build_neighbors_groups_triclinic(
   %ks_threads = arith.constant 256 : index
   %ks_blocks0 = func.call @mdrt_gpu_groups_grid(%keys, %ks_per_block) : (index, index) -> index
   %ks_blocks = arith.maxui %ks_blocks0, %c1 : index
-  %ks_sums = gpu.alloc (%ks_blocks) : memref<?xi32, 1>
-  func.call @mdir.primitive.device_scan_cursor(%key_count, %key_start, %keys, %ks_sums, %ks_blocks, %ks_threads, %c1, %key_cursor) : (memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index, memref<?xi32, 1>) -> ()
-  %ks_sums_plain = memref.memory_space_cast %ks_sums : memref<?xi32, 1> to memref<?xi32>
-  gpu.dealloc %ks_sums_plain : memref<?xi32>
+  %ks_state_size = arith.addi %ks_blocks, %c1 : index
+  %ks_state = gpu.alloc (%ks_state_size) : memref<?xi64, 1>
+  func.call @mdir.primitive.single_pass_scan_cursor(%key_count, %key_start, %keys, %ks_state, %ks_blocks, %ks_threads, %c1, %key_cursor) : (memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index, memref<?xi32, 1>) -> ()
+  %ks_state_plain = memref.memory_space_cast %ks_state : memref<?xi64, 1> to memref<?xi64>
+  gpu.dealloc %ks_state_plain : memref<?xi64>
   // Each particle takes the next slot of its key; the particles of a
   // key are then sorted by number.
   func.call @mdir.primitive.cursor_scatter(%key, %key_cursor, %sorted, %n, %grid_of_n, %block, %c1) : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index) -> ()
@@ -490,10 +493,11 @@ func.func private @mdrt_gpu_build_neighbors_groups_triclinic(
   %cs_threads = arith.constant 256 : index
   %cs_blocks0 = func.call @mdrt_gpu_groups_grid(%columns, %cs_per_block) : (index, index) -> index
   %cs_blocks = arith.maxui %cs_blocks0, %c1 : index
-  %cs_sums = gpu.alloc (%cs_blocks) : memref<?xi32, 1>
-  func.call @mdir.primitive.device_scan(%column_chunks, %chunk_base, %columns, %cs_sums, %cs_blocks, %cs_threads, %c1) : (memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index) -> ()
-  %cs_sums_plain = memref.memory_space_cast %cs_sums : memref<?xi32, 1> to memref<?xi32>
-  gpu.dealloc %cs_sums_plain : memref<?xi32>
+  %cs_state_size = arith.addi %cs_blocks, %c1 : index
+  %cs_state = gpu.alloc (%cs_state_size) : memref<?xi64, 1>
+  func.call @mdir.primitive.single_pass_scan(%column_chunks, %chunk_base, %columns, %cs_state, %cs_blocks, %cs_threads, %c1) : (memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index) -> ()
+  %cs_state_plain = memref.memory_space_cast %cs_state : memref<?xi64, 1> to memref<?xi64>
+  gpu.dealloc %cs_state_plain : memref<?xi64>
   gpu.launch blocks(%bx, %by, %bz) in (%gx = %c1, %gy = %c1, %gz = %c1)
              threads(%tx, %ty, %tz) in (%sx = %c1, %sy = %c1, %sz = %c1) {
     %i0 = arith.constant 0 : index
@@ -2628,10 +2632,11 @@ func.func private @mdrt_gpu_build_neighbors_groups_triclinic(
   %gs_threads = arith.constant 256 : index
   %gs_blocks0 = func.call @mdrt_gpu_groups_grid(%gcells, %gs_per_block) : (index, index) -> index
   %gs_blocks = arith.maxui %gs_blocks0, %c1 : index
-  %gs_sums = gpu.alloc (%gs_blocks) : memref<?xi32, 1>
-  func.call @mdir.primitive.device_scan_cursor(%gcount, %gstart, %gcells, %gs_sums, %gs_blocks, %gs_threads, %c1, %gcursor) : (memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index, memref<?xi32, 1>) -> ()
-  %gs_sums_plain = memref.memory_space_cast %gs_sums : memref<?xi32, 1> to memref<?xi32>
-  gpu.dealloc %gs_sums_plain : memref<?xi32>
+  %gs_state_size = arith.addi %gs_blocks, %c1 : index
+  %gs_state = gpu.alloc (%gs_state_size) : memref<?xi64, 1>
+  func.call @mdir.primitive.single_pass_scan_cursor(%gcount, %gstart, %gcells, %gs_state, %gs_blocks, %gs_threads, %c1, %gcursor) : (memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index, memref<?xi32, 1>) -> ()
+  %gs_state_plain = memref.memory_space_cast %gs_state : memref<?xi64, 1> to memref<?xi64>
+  gpu.dealloc %gs_state_plain : memref<?xi64>
   func.call @mdir.primitive.cursor_scatter(%gkey, %gcursor, %gplace, %capacity, %grid_of_capacity, %block, %c1) : (memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index) -> ()
   func.call @mdir.primitive.sort_bins(%gstart, %gplace, %gcells, %grid_of_gcells, %block, %c1) : (memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index) -> ()
   //===--------------------------------------------------------------------===//

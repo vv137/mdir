@@ -16,6 +16,9 @@ import sys
 # Whether the build being written is that of a triclinic cell
 # (docs/triclinic.md); main writes it to a template of its own.
 TILTED = False
+# Internal lowering choice for the three counting-sort scans. Keep the
+# reduce-then-scan template path available for same-build comparisons.
+SCAN_STRATEGY = "single_pass"
 
 HEADER = """\
 // Builds groups of 16 particles that share a list of neighbors on a device
@@ -90,6 +93,8 @@ func.func private @mdir.primitive.warp_count(i32) -> i32
 func.func private @mdir.primitive.warp_scan(i32, i32, i32, i32) -> i32
 func.func private @mdir.primitive.device_scan(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index)
 func.func private @mdir.primitive.device_scan_cursor(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index, memref<?xi32, 1>)
+func.func private @mdir.primitive.single_pass_scan(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index)
+func.func private @mdir.primitive.single_pass_scan_cursor(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index, memref<?xi32, 1>)
 func.func private @mdir.primitive.cursor_scatter(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
 func.func private @mdir.primitive.sort_bins(memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
 func.func private @mdir.primitive.ragged_row(memref<?xi32, 1>, index, index) -> (index, index)
@@ -216,21 +221,28 @@ def scan(p, counts, start, cursor, n):
     CompactionEmitter.h), in blocks of 256 threads with 4
     counts a thread, whose sums of the blocks this allocates."""
     buffer = "memref<?xi32, 1>"
-    operands = f"{counts}, {start}, {n}, %{p}sums, %{p}blocks, %{p}threads, %c1"
-    types = f"{buffer}, {buffer}, index, {buffer}, index, index, index"
-    name = "device_scan"
+    single = SCAN_STRATEGY == "single_pass"
+    scratch_type = "memref<?xi64, 1>" if single else buffer
+    scratch = "state" if single else "sums"
+    operands = f"{counts}, {start}, {n}, %{p}{scratch}, %{p}blocks, %{p}threads, %c1"
+    types = f"{buffer}, {buffer}, index, {scratch_type}, index, index, index"
+    name = "single_pass_scan" if single else "device_scan"
     if cursor:
-        name = "device_scan_cursor"
+        name += "_cursor"
         operands += f", {cursor}"
         types += f", {buffer}"
+    scratch_size = (f"  %{p}state_size = arith.addi %{p}blocks, %c1 : index\n"
+                    if single else "")
+    allocation_size = f"%{p}state_size" if single else f"%{p}blocks"
     return (f"  %{p}per_block = arith.constant 1024 : index\n"
             f"  %{p}threads = arith.constant 256 : index\n"
             f"  %{p}blocks0 = func.call @mdrt_gpu_groups_grid({n}, %{p}per_block) : (index, index) -> index\n"
             f"  %{p}blocks = arith.maxui %{p}blocks0, %c1 : index\n"
-            f"  %{p}sums = gpu.alloc (%{p}blocks) : memref<?xi32, 1>\n"
+            f"{scratch_size}"
+            f"  %{p}{scratch} = gpu.alloc ({allocation_size}) : {scratch_type}\n"
             f"  func.call @mdir.primitive.{name}({operands}) : ({types}) -> ()\n"
-            f"  %{p}sums_plain = memref.memory_space_cast %{p}sums : memref<?xi32, 1> to memref<?xi32>\n"
-            f"  gpu.dealloc %{p}sums_plain : memref<?xi32>\n")
+            f"  %{p}{scratch}_plain = memref.memory_space_cast %{p}{scratch} : {scratch_type} to {scratch_type.replace(', 1>', '>')}\n"
+            f"  gpu.dealloc %{p}{scratch}_plain : {scratch_type.replace(', 1>', '>')}\n")
 
 
 def cursor_scatter(keys, cursor, out, n, grid):
