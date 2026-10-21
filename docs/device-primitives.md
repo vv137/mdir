@@ -628,8 +628,8 @@ emitters of Section 5 (D301).
 
 ### 4.4 Tests
 
-- `Integration/device-primitives.mlir` calls every emitter from kernels
-  written for the test; `device-primitives-gpu.test` runs it on a device
+- `Integration/device-primitives.mlir` calls every emitter of
+  `CompactionEmitter.h` from kernels written for the test; `device-primitives-gpu.test` runs it on a device
   and compares exactly: the compaction of 2 warps and the warp scans with
   results written out, and the block scan of 256 threads, the device scan
   of 5000 counts with and without the cursor, the chunked scan of 1000, and
@@ -638,10 +638,17 @@ emitters of Section 5 (D301).
   the host by the definition. With `-Dsanitize=1` it runs under memcheck
   and racecheck.
 - `Conversion/MDExecToGPU/expand-primitives.mlir` checks the code of the
-  warp compaction and of the warp scans; `expand-primitives-invalid.mlir`
-  the refusals.
+  warp compaction, of the warp scans, and of the accessor of ragged rows;
+  `expand-primitives-invalid.mlir` the refusals.
 - The sites' own tests run them as before (the builds of groups and of the
   matrix, the dual list, the listed particles of PME).
+- The ragged rows (Section 4.7) have no case of their own in
+  `device-primitives.mlir`. Their build on a device is compared element
+  for element with the host's build of the same structure, by its
+  definition, under `MDRT_CHECK_KEPT_TUPLES` in `python-kept-tuples-gpu.test`
+  and `python-start-arguments-gpu.test`; the host's build is checked
+  against a NumPy reference in `python-kept-tuples.test`; the accessor is
+  read by every test of the tuples and of the excluded pairs.
 
 ### 4.5 The same code
 
@@ -697,7 +704,7 @@ branch, whose program is byte for byte that of `main`.
 A relation from each of $N$ rows to a varying number of entries of $E$
 values is one buffer of i32 in compressed rows (CSR, the compressed sparse
 row form of a sparse matrix [[Saad2003]](references.md#saad2003),
-Section 3.4), stated in `include/mdir/Conversion/RaggedRows.h`:
+Chapter 3), stated in `include/mdir/Conversion/RaggedRows.h`:
 
 | Elements | Hold |
 |---|---|

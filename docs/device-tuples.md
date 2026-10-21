@@ -60,7 +60,7 @@ sort on the device: three loops in which every element is written by
 exactly one thread.
 
 **What is borrowed.** The structure is the compressed rows of a sparse
-matrix (CSR, [[Saad2003]](references.md#saad2003), Section 3.4), the
+matrix (CSR, [[Saad2003]](references.md#saad2003), Chapter 3), the
 incidence matrix of particles by tuples, built by distribution counting.
 Until D[ragged-incidence] the index above was built on the host
 (`mdrtTupleIndexBuild`, D253), uploaded once for each tuple set, and the

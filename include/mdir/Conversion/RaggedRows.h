@@ -11,7 +11,7 @@
 //   the last E elements          an entry of zeros past the last row
 //
 // Row i is the entries o_i to o_{i+1}. This is the compressed sparse row
-// form (CSR) of the incidence matrix [Saad2003, Section 3.4]. The entry of
+// form (CSR) of the incidence matrix [Saad2003, Chapter 3]. The entry of
 // zeros at the end keeps a read of the first entry of an empty last row
 // inside the buffer (a kernel that reads the first entry of every row and
 // keeps it only where the row has one, #347). A buffer of no elements has
