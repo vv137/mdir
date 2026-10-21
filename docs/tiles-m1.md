@@ -321,8 +321,8 @@ against displacement tests (Section 3).
 ## 10. Open questions
 
 History: the questions of the proposal, left with the tiles. Cells that are
-not orthorhombic have since been built for the matrix and the groups
-(D123, [triclinic-m2.md](triclinic-m2.md)), and the decomposition into
+not orthorhombic have since been built for the matrix (D123 on the CPU,
+D125 on a device) and the groups (D126, [triclinic-m2.md](triclinic-m2.md)), and the decomposition into
 domains is the plan of [distributed-ml2.md](distributed-ml2.md).
 
 - The size of a tile on other devices (AMD wavefronts of 64) and whether
