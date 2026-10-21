@@ -5281,6 +5281,10 @@ static LogicalResult lowerProlate(
            << "expected buffers for the places and the tables";
   Value places = op.getScratch()[4], tables = op.getScratch()[5];
   Value bricks = getBricks(op);
+  if (!getTileEdge(op) && !fixedPoint &&
+      cast<MemRefType>(real.getType()).getElementType().isF32() && !bricks)
+    return op->emitOpError()
+           << "needs bricks for non-tiled f32 prolate spreading";
   func::CallOp::create(builder, loc,
                        instance("mdrt_gpu_pme_prolate_coefficients"),
                        ValueRange{op.getModuli(), tables, k1, k2, k3});
@@ -5467,16 +5471,21 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Value box = op.getCellMutable().get();
   Value fixed = op.getScratch()[0], real = op.getScratch()[1],
         complex = op.getScratch()[2], rows = op.getScratch()[3];
-  // Splines of order 4 in f32 are spread from the weights of the
-  // particles into bricks of their own, which each spreading leaves zero
-  // (D85, D108).
+  // Splines of order 4 in f32 use the particle weights for gathering
+  // whether their spreading takes tiles or bricks (D85, D108, D282).
   Value weights = op.getScratch().size() > 4 ? op.getScratch()[4] : Value();
   Value bricks = getBricks(op);
   // The potential at the particles (the fourth result of md.reciprocal)
   // has the kernel of its own, which takes no weights.
-  bool usesWeights = weights && bricks && !fixedPoint &&
-                     op.getOrder() == 4 && force.isF32() &&
+  bool narrowGrid = cast<MemRefType>(real.getType()).getElementType().isF32();
+  bool usesWeights = !fixedPoint && op.getOrder() == 4 && narrowGrid &&
                      !op.getPotential();
+  if (usesWeights && !weights)
+    return op->emitOpError()
+           << "needs particle weights for f32 order-4 gathering";
+  if (!tiles && usesWeights && !bricks)
+    return op->emitOpError()
+           << "needs bricks for non-tiled f32 order-4 spreading";
 
   // Marked, the sum runs on a second stream, beside the ops up to its join
   // (md_exec.join, D87). All the work that it issues goes there, and none
