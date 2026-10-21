@@ -1,0 +1,52 @@
+# The pool of device blocks does not grow with the length of a run
+# (D[pool-retention], #471): the dipeptide in water with groups, 100 and
+# 1,000 steps. A loop over the groups takes its positions and fields in the
+# order of the places, in buffers sized by the room of the structure's
+# places. Sized by the number of places that a build occupied, which
+# changes by 64 from one build to another, they left three blocks in the
+# pool for each new number, since the pool reuses a block only for a
+# request of the same size: the run of 1,000 steps took 6 blocks more from
+# the driver than that of 100 steps (measured on an RTX 4090). A buffer of
+# the runtime that a growth of the structure replaces goes back to the
+# driver, so the blocks held from the driver (taken less returned) are the
+# same in both runs.
+#
+# REQUIRES: cuda
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' | sed 's|INPUTS|%S/Inputs/dipeptide|' > %t/run.toml
+# RUN: sed 's/^steps = 100$/steps = 1000/' %t/run.toml > %t/long.toml
+# RUN: cd %t && env MDIR_DEVICE_MEMORY=2 mdir run run.toml > short.log 2>&1
+# RUN: cd %t && env MDIR_DEVICE_MEMORY=2 mdir run long.toml > long.log 2>&1
+# RUN: %python %S/Inputs/check_pool_retention.py %t/short.log %t/long.log | FileCheck %s
+#
+# CHECK: short run: {{[0-9]+}} blocks of the driver
+# CHECK: long run: {{[0-9]+}} blocks of the driver
+# CHECK: the pool did not grow with the length of the run
+
+#--- run.toml
+[input]
+topology = "INPUTS/dipeptide.prmtop"
+coordinates = "INPUTS/dipeptide.inpcrd"
+[energy]
+cutoff = 8.0
+pairlist_distance = 8.5
+electrostatics = "PME"
+[constraints]
+hydrogen_bonds = true
+rigid_water = true
+[dynamics]
+time_step = 0.002
+steps = 100
+[output]
+energy_interval = 100
+[ensemble]
+ensemble = "NVE"
+temperature = 300.0
+[boundary]
+type = "PERIODIC"
+[execution]
+target = "GPU"
+precision = "MIXED"
+neighbor_structure = "GROUPS"
+#--- end
