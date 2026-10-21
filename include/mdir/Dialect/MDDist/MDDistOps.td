@@ -65,6 +65,32 @@ def MDDist_PartitionOp : MDDist_Op<"partition", [
   }];
 }
 
+def MDDist_MigrateOp : MDDist_Op<"migrate", [Pure]> {
+  let summary = "A new ownership epoch from current owned positions";
+  let description = [{
+    Reassign every global particle identity to the domain containing its
+    current position, wrapped into `cell`. The result is a new layout SSA
+    value even if no owner changes. Rows within each destination are ordered
+    by global identity. Fields of `old_layout` must be redistributed before
+    use with the result; the old epoch remains valid for its existing users.
+
+    ```mlir
+    %l2 = md_dist.migrate %l, %xo, %cell
+            : !md_dist.layout<@dd>, !md_dist.field<@dd, owned, 3 x f64>
+              -> !md_dist.layout<@dd>
+    ```
+  }];
+  let arguments = (ins MDDist_LayoutType:$old_layout,
+                       MDDist_FieldType:$positions, MD_CellType:$cell);
+  let results = (outs MDDist_LayoutType:$layout);
+  let assemblyFormat = [{
+    $old_layout `,` $positions `,` $cell attr-dict `:`
+    qualified(type($old_layout)) `,` qualified(type($positions))
+    `->` qualified(type($layout))
+  }];
+  let hasVerifier = 1;
+}
+
 // The layout operand of an op whose type the assembly does not print: of
 // the decomposition of `source`.
 class MDDist_LayoutOf<string source> : TypesMatchWith<
@@ -117,6 +143,35 @@ def MDDist_CollectOp : MDDist_Op<"collect", [
   let assemblyFormat = [{
     $field `,` $layout attr-dict `:` qualified(type($field)) `->`
     qualified(type($result))
+  }];
+  let hasVerifier = 1;
+}
+
+def MDDist_RedistributeOp : MDDist_Op<"redistribute", [Pure]> {
+  let summary = "Carry a complete owned field to a new ownership epoch";
+  let description = [{
+    Copy each value by its stable global particle identity from `old_layout`
+    to `new_layout`. With `image`, wrap a three-component position field into
+    the new cell. The result belongs to `new_layout`; no old field or layout
+    buffer is modified or retired by this op.
+
+    ```mlir
+    %x2 = md_dist.redistribute %xo, %l, %l2 image(%cell)
+            : !md_dist.field<@dd, owned, 3 x f64>,
+              !md_dist.layout<@dd>, !md_dist.layout<@dd>
+              -> !md_dist.field<@dd, owned, 3 x f64>
+    ```
+  }];
+  let arguments = (ins MDDist_FieldType:$field,
+                       MDDist_LayoutType:$old_layout,
+                       MDDist_LayoutType:$new_layout,
+                       Optional<MD_CellType>:$image);
+  let results = (outs MDDist_FieldType:$result);
+  let assemblyFormat = [{
+    $field `,` $old_layout `,` $new_layout
+    (`image` `(` $image^ `)`)? attr-dict `:` qualified(type($field))
+    `,` qualified(type($old_layout)) `,` qualified(type($new_layout))
+    `->` qualified(type($result))
   }];
   let hasVerifier = 1;
 }

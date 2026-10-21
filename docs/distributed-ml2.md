@@ -710,6 +710,23 @@ redistribute, rebuild the halo. Migration between rebuilds (particles
 that leave their region while the halo still covers them) is not needed,
 since ghosts of the old layout are still exact.
 
+The first migration slice, D[dist-migration] (#494), implements the new
+ownership epoch and redistribution of complete owned fields in the
+in-process executor. The epoch is the new layout SSA value, not the
+decomposition's grid, which remains the same. Within each destination,
+rows are ordered by global particle identity; redistribution looks up
+the old row of each identity and produces a new field for the new layout.
+The old fields and buffers remain valid until their existing users finish.
+Every live field needed after migration must be redistributed before it is
+used with the new layout; the verifier rejects an old-epoch field there.
+This slice does not make the step loop of Section 8 executable: the current
+executor requires all `md_dist` ops of a function in one block. A later
+part of #38 adds `covered`, a collective branch over all domains (including
+empty ones), loop-carried layout and field state, completion of halo events
+before buffer retirement, and the production driver's `[distribute]`
+boundary. Repeated independent snapshots in tests are not an integrated
+trajectory.
+
 ## 9. Transports
 
 The ABI below `md_dist` is a small set of collective calls: partition,

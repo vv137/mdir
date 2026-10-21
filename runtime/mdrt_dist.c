@@ -141,6 +141,112 @@ void mdrtDistReleaseLayout(int64_t handle) {
   free(l);
 }
 
+/* A migration is a new ownership epoch. Prove that the source's identity
+   table is a bijection before any field can be copied into that epoch. */
+static void checkIdentities(struct Layout *l) {
+  int64_t n = l->count, cap = n > 0 ? n : 1;
+  unsigned char *seen = calloc((size_t)cap, 1);
+  if (!seen)
+    fail("out of memory");
+  int64_t visited = 0;
+  for (int64_t d = 0; d < l->domains; ++d) {
+    if (l->rows[d] < 0 || l->rows[d] > n)
+      fail("invalid number of owned rows in a layout");
+    for (int64_t r = 0; r < l->rows[d]; ++r) {
+      int64_t j = l->ids[d * cap + r];
+      if (j < 0 || j >= n || seen[j])
+        fail("duplicate or invalid global particle identity in a layout");
+      if (l->owner[j] != d || l->row[j] != r)
+        fail("layout identity and owner/row tables disagree");
+      seen[j] = 1;
+      ++visited;
+    }
+  }
+  if (visited != n)
+    fail("missing global particle identity in a layout");
+  free(seen);
+}
+
+int64_t _mlir_ciface_mdrtDistMigrate(int64_t oldHandle,
+                                     struct Memref3D *positions, double lx,
+                                     double ly, double lz) {
+  struct Layout *old = (struct Layout *)(intptr_t)oldHandle;
+  if (!old || !positions || positions->sizes[0] != old->domains ||
+      positions->sizes[1] < old->count || positions->sizes[2] != 3)
+    fail("migration positions do not cover the old layout");
+  checkIdentities(old);
+  double edges[3] = {lx, ly, lz};
+  for (int k = 0; k < 3; ++k)
+    if (!(isfinite(edges[k]) && edges[k] > 0.0))
+      fail("migration requires positive finite cell edges");
+  struct Layout *next = calloc(1, sizeof *next);
+  if (!next)
+    fail("out of memory");
+  next->domains = old->domains;
+  next->count = old->count;
+  for (int k = 0; k < 3; ++k) {
+    next->grid[k] = old->grid[k];
+    next->edges[k] = edges[k];
+  }
+  int64_t n = next->count, cap = n > 0 ? n : 1;
+  next->owner = malloc(sizeof(int64_t) * cap);
+  next->row = malloc(sizeof(int64_t) * cap);
+  next->rows = calloc(next->domains, sizeof(int64_t));
+  next->ids = malloc(sizeof(int64_t) * next->domains * cap);
+  if (!next->owner || !next->row || !next->rows || !next->ids)
+    fail("out of memory");
+  for (int64_t j = 0; j < n; ++j) {
+    int64_t cell[3];
+    for (int k = 0; k < 3; ++k) {
+      double coordinate = *at3(positions, old->owner[j], old->row[j], k);
+      if (!isfinite(coordinate))
+        fail("migration requires finite positions");
+      double u = coordinate / edges[k];
+      if (!isfinite(u))
+        fail("migration coordinate exceeds cell range");
+      cell[k] = division(u - floor(u), next->grid[k]);
+    }
+    int64_t d = cell[0] + next->grid[0] *
+                            (cell[1] + next->grid[1] * cell[2]);
+    next->owner[j] = d;
+    next->row[j] = next->rows[d];
+    next->ids[d * cap + next->rows[d]] = j;
+    ++next->rows[d];
+  }
+  checkIdentities(next);
+  return (int64_t)(intptr_t)next;
+}
+
+void _mlir_ciface_mdrtDistRedistribute(int64_t oldHandle, int64_t newHandle,
+                                       struct Memref3D *source,
+                                       struct Memref3D *destination,
+                                       int64_t image) {
+  struct Layout *old = (struct Layout *)(intptr_t)oldHandle;
+  struct Layout *next = (struct Layout *)(intptr_t)newHandle;
+  if (!old || !next || !source || !destination ||
+      old->count != next->count ||
+      old->domains != next->domains || source == destination ||
+      source->aligned == destination->aligned ||
+      source->sizes[0] != old->domains ||
+      destination->sizes[0] != next->domains ||
+      source->sizes[1] < old->count ||
+      destination->sizes[1] < next->count ||
+      source->sizes[2] != destination->sizes[2] ||
+      (image && source->sizes[2] != 3))
+    fail("redistribution requires matching, distinct field buffers");
+  int64_t components = source->sizes[2];
+  for (int64_t j = 0; j < old->count; ++j)
+    for (int64_t k = 0; k < components; ++k) {
+      double value = *at3(source, old->owner[j], old->row[j], k);
+      if (image) {
+        if (!isfinite(value))
+          fail("redistributed positions must be finite");
+        value -= next->edges[k] * floor(value / next->edges[k]);
+      }
+      *at3(destination, next->owner[j], next->row[j], k) = value;
+    }
+}
+
 /* The box of domain `d`: its region of the grid, widened to hold its owned
    positions, so that every owned particle lies in it whatever the rounding
    of its division (the coverage argument of Section 4.3 needs x_i in it). */

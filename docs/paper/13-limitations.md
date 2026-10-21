@@ -255,6 +255,19 @@ both particles, so the derivative copies $\bar\rho$ to the ghosts between
 the pass of the density and that of the forces, and the verifier rejects a
 copy of any other version of it.
 
+An ownership epoch is the SSA layout of a configuration. Moving positions
+through `md_dist.migrate` forms a new epoch (D[dist-migration], #494): each
+global particle identity has exactly one owner and a stable row at that
+owner, with rows in identity order. For any complete owned field, the
+separate `md_dist.redistribute` carries its values by identity to the new
+epoch, so a field of the old epoch cannot be read with the new halo or
+relation. This is a structural permutation; no derivative of the
+ownership decision is taken. The in-process executor can evaluate
+independent moving snapshots with LJ and EAM after this transfer. A
+production trajectory still needs a collective coverage decision, a step
+state that carries every live field with the layout, completed transfers
+before it retires buffers, and the `[distribute]` driver boundary (#38).
+
 The schedule proof (D308) records, for each $G$ or
 $G^\mathsf T$, the exact SSA source versions and ownership epoch, the
 operations after which a transfer may start, and every result read that

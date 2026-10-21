@@ -128,8 +128,10 @@ private:
                                     ValueRange reduce, DenseF64ArrayAttr weights,
                                     bool atomic, double scale);
   LogicalResult lowerPartition(PartitionOp op);
+  LogicalResult lowerMigrate(MigrateOp op);
   LogicalResult lowerDistribute(DistributeOp op);
   LogicalResult lowerCollect(CollectOp op);
+  LogicalResult lowerRedistribute(RedistributeOp op);
   LogicalResult lowerHalo(HaloOp op);
   LogicalResult lowerHaloCopy(HaloCopyOp op);
   LogicalResult lowerHaloSum(HaloSumOp op);
@@ -378,6 +380,45 @@ LogicalResult Lowering::lowerPartition(PartitionOp op) {
   return success();
 }
 
+LogicalResult Lowering::lowerMigrate(MigrateOp op) {
+  OpBuilder b(op);
+  if (!op.getPositions().getType().getElementType().isF64())
+    return op.emitOpError() << "the in-process executor runs f64 fields only";
+  Value edges[3];
+  if (failed(getEdges(op, op.getCell(), edges)))
+    return failure();
+  Storage &old = storage[op.getOldLayout()];
+  Value positions = storage[op.getPositions()].buffer;
+  Type i64 = b.getI64Type(), f64 = b.getF64Type();
+  func::FuncOp migrate = declare(
+      "mdrtDistMigrate",
+      b.getFunctionType({i64, positions.getType(), f64, f64, f64}, {i64}),
+      true);
+  Value handle = func::CallOp::create(
+                     b, loc, migrate,
+                     ValueRange{old.handle, positions, edges[0], edges[1],
+                                edges[2]})
+                     .getResult(0);
+  auto rowsType = MemRefType::get({ShapedType::kDynamic}, i64);
+  auto idsType =
+      MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic}, i64);
+  Value rows = allocate(b, rowsType, {index(b, domains)});
+  Value ids = allocate(b, idsType, {index(b, domains), old.capacity});
+  func::CallOp::create(
+      b, loc,
+      declare("mdrtDistLayoutRows", b.getFunctionType({i64, rowsType, idsType},
+                                                       {}), true),
+      ValueRange{handle, rows, ids});
+  OpBuilder atEnd(end);
+  func::CallOp::create(
+      atEnd, loc,
+      declare("mdrtDistReleaseLayout", b.getFunctionType({i64}, {}), false),
+      ValueRange{handle});
+  storage[op.getLayout()] = {handle, rows, ids, old.capacity, old.count,
+                             Value()};
+  return success();
+}
+
 LogicalResult Lowering::lowerDistribute(DistributeOp op) {
   OpBuilder b(op);
   auto fieldType = cast<md::FieldType>(op.getField().getType());
@@ -463,6 +504,28 @@ LogicalResult Lowering::lowerCollect(CollectOp op) {
       });
   Value field = mdrt::FromBufferOp::create(b, loc, fieldType, global);
   op.getResult().replaceAllUsesWith(field);
+  return success();
+}
+
+LogicalResult Lowering::lowerRedistribute(RedistributeOp op) {
+  OpBuilder b(op);
+  if (!op.getField().getType().getElementType().isF64())
+    return op.emitOpError() << "the in-process executor runs f64 fields only";
+  Storage &old = storage[op.getOldLayout()];
+  Storage &next = storage[op.getNewLayout()];
+  Value source = storage[op.getField()].buffer;
+  int64_t components = op.getField().getType().getNumComponents();
+  Value destination = allocate(b, next.capacity, components);
+  Type i64 = b.getI64Type();
+  Value image = arith::ConstantOp::create(
+      b, loc, b.getI64IntegerAttr(op.getImage() ? 1 : 0));
+  func::CallOp::create(
+      b, loc,
+      declare("mdrtDistRedistribute",
+              b.getFunctionType({i64, i64, source.getType(),
+                                 destination.getType(), i64}, {}), true),
+      ValueRange{old.handle, next.handle, source, destination, image});
+  storage[op.getResult()].buffer = destination;
   return success();
 }
 
@@ -1410,8 +1473,10 @@ LogicalResult Lowering::lower(Operation *op) {
   }
   return TypeSwitch<Operation *, LogicalResult>(op)
       .Case([&](PartitionOp o) { return lowerPartition(o); })
+      .Case([&](MigrateOp o) { return lowerMigrate(o); })
       .Case([&](DistributeOp o) { return lowerDistribute(o); })
       .Case([&](CollectOp o) { return lowerCollect(o); })
+      .Case([&](RedistributeOp o) { return lowerRedistribute(o); })
       .Case([&](HaloOp o) { return lowerHalo(o); })
       .Case([&](HaloCopyOp o) { return lowerHaloCopy(o); })
       .Case([&](HaloSumOp o) { return lowerHaloSum(o); })

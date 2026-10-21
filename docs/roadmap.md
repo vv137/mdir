@@ -435,6 +435,14 @@ backend for classical runs. LJ/EAM are initial distributed validation
 models; realistic molecular systems remain part of validation and the
 long-term distributed scope.
 
+D[dist-migration] (#494, a first slice of #38) gives `md_dist` an
+ownership-epoch transition and a generic complete-field redistribution by
+stable particle identity. Moving-snapshot LJ and EAM checks exercise the
+in-process CPU path, including empty domains. #38 still owns the collective
+skin/coverage witness, loop-carried live state and completed transfers at
+retirement, and the first production-driver `[distribute]` path. These
+snapshot checks are not a distributed trajectory.
+
 For distributed classical PME, #452 composes spreading, a linear FFT,
 the influence map, the inverse FFT, and gathering from the primitive set.
 D306 (#480) introduces the execution-level transform first:

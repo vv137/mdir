@@ -1,5 +1,10 @@
 # Appendix A. The control file
 
+D[dist-migration] adds execution-level ownership-epoch migration and field
+redistribution to `md_dist`. It adds no `[distribute]` table, Python option,
+checkpoint or output format, or overwrite behavior. The production driver's
+distributed step state and the approved `[distribute]` keys remain #38.
+
 D306 adds the execution-level linear FFT transform used for
 future reciprocal-sum composition. It introduces no control-file key,
 checkpoint or output format, or overwrite behavior change; the existing
