@@ -15,6 +15,7 @@
 md.particle_set @atoms
 md.stage @s forward(@s.f) : (vector<64xf64>, vector<64xf64>) -> (f64, vector<16xf64>)
 md.stage @dependent forward(@dependent.f) : (vector<3xf64>) -> f64
+md.stage @capture forward(@capture.f) : (vector<64xf64>, vector<64xf64>) -> f64
 
 #id = affine_map<(r, f) -> (r, f)>
 #row = affine_map<(r, f) -> (r)>
@@ -74,6 +75,26 @@ func.func @dependent.f(%x: tensor<8x3xf32>) -> tensor<8xf32> {
   return %sum : tensor<8xf32>
 }
 
+// A captured tensor.extract bufferizes to a read-only memref.load inside the
+// term. It must retain D303's warp strategy in the default path.
+func.func @capture.f(%x: tensor<8x64xf32>, %y: tensor<8x64xf32>) -> tensor<8xf32> {
+  %zero = arith.constant 0.0 : f32
+  %empty = tensor.empty() : tensor<8xf32>
+  %init = linalg.fill ins(%zero : f32) outs(%empty : tensor<8xf32>) -> tensor<8xf32>
+  %sum = linalg.generic {indexing_maps = [#id, #row],
+                         iterator_types = ["parallel", "reduction"]}
+      ins(%x : tensor<8x64xf32>) outs(%init : tensor<8xf32>) {
+  ^bb0(%a: f32, %o: f32):
+    %r = linalg.index 0 : index
+    %f = linalg.index 1 : index
+    %captured = tensor.extract %y[%r, %f] : tensor<8x64xf32>
+    %product = arith.mulf %a, %captured : f32
+    %next = arith.addf %o, %product : f32
+    linalg.yield %next : f32
+  } -> tensor<8xf32>
+  return %sum : tensor<8xf32>
+}
+
 
 // CHECK-LABEL: func.func @md_stage_s_f(
 // CHECK-SAME: %[[X:[^:]*]]: memref<8x64xf32>, %[[Y:[^:]*]]: memref<8x64xf32>, %[[S:[^:]*]]: memref<8xf32>, %[[N:[^:]*]]: memref<8x16xf32>)
@@ -115,11 +136,18 @@ func.func @dependent.f(%x: tensor<8x3xf32>) -> tensor<8xf32> {
 // CHECK: gpu.launch
 // CHECK: scf.for %{{.*}} = %c0 to %c3 step %c1
 // CHECK: return
+// CHECK-LABEL: func.func @md_stage_capture_f(
+// CHECK: gpu.launch
+// CHECK: memref.load %{{.*}}
+// CHECK: gpu.shuffle xor
+// CHECK: return
 
 // LOOPS-LABEL: func.func @md_stage_s_f(
 // LOOPS: scf.for %{{.*}} = %c0 to %c3 step %c1
 // LOOPS-LABEL: func.func @md_stage_dependent_f(
 // LOOPS: scf.for %{{.*}} = %c0 to %c3 step %c1
+// LOOPS-LABEL: func.func @md_stage_capture_f(
+// LOOPS: gpu.shuffle xor
 
 // CPU-LABEL: func.func @md_stage_s_f(
 // CPU-NOT: gpu.launch

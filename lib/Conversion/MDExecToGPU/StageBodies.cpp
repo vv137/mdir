@@ -784,10 +784,12 @@ static std::optional<RowSum> matchRowSum(linalg::GenericOp op,
       return std::nullopt;
   }
   Block *body = op.getBody();
-  // The explicit kernel clones only the term's dependencies. A payload
-  // with an effect or a nested region must retain the loop lowering.
+  // The explicit kernel clones only the term's dependencies. Reads are part
+  // of a row term (including captured buffer loads in long PaiNN sums);
+  // writes, unknown effects, and nested regions retain the loop lowering.
   for (Operation &inner : body->without_terminator())
-    if (!isMemoryEffectFree(&inner) || inner.getNumRegions() != 0)
+    if ((!isMemoryEffectFree(&inner) && !isa<memref::LoadOp>(inner)) ||
+        inner.getNumRegions() != 0)
       return std::nullopt;
   BlockArgument acc = op.getMatchingBlockArgument(init);
   auto yield = cast<linalg::YieldOp>(body->getTerminator());
@@ -1294,6 +1296,11 @@ static void writeResultsInPlace(func::FuncOp function) {
 /// each result in two further launches. Restrict the source reads to local
 /// allocations: the caller may alias an output with one of its inputs.
 static void writeDuplicatedResultsInPlace(func::FuncOp function) {
+  // This promise is established only for stage references that have no
+  // direct callers. The tiled stage lowering allocates a fresh device buffer
+  // for each result in planTiles; arbitrary calls need not do so.
+  if (!function->hasAttr("md.stage_disjoint_results"))
+    return;
   auto localAllocation = [](Value value) {
     while (Operation *def = value.getDefiningOp()) {
       if (auto view = dyn_cast<memref::SubViewOp>(def))
@@ -1447,6 +1454,21 @@ public:
       function->setAttr("md.stage_rows",
                         IntegerAttr::get(IntegerType::get(context, 64),
                                          first.getDimSize(0)));
+      // A body used only through md.stage is called by the tiled lowering,
+      // whose planTiles allocates a separate buffer for every result. Do not
+      // assume that contract when another symbol user can call this body.
+      if (auto uses = SymbolTable::getSymbolUses(function, module)) {
+        bool onlyStages = !uses->empty();
+        for (const SymbolTable::SymbolUse &use : *uses) {
+          auto stage = dyn_cast<md::StageOp>(use.getUser());
+          if (!stage || (use.getSymbolRef() != stage.getForwardAttr() &&
+                         use.getSymbolRef() != stage.getVjpAttr()))
+            onlyStages = false;
+        }
+        if (onlyStages)
+          function->setAttr("md.stage_disjoint_results",
+                            UnitAttr::get(context));
+      }
       // A name that the kernels made from it can carry in PTX: letters,
       // digits, and underscores.
       std::string fresh = "md_stage_" + identifier(name.getValue());
@@ -1633,6 +1655,7 @@ public:
         releaseOnHost(function);
       }
       function->setAttr("md.stage_body", UnitAttr::get(context));
+      function->removeAttr("md.stage_disjoint_results");
     }
 
     // Back into the module, the globals of the bodies' constants under names
