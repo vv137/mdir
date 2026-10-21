@@ -171,7 +171,7 @@ static int joinPending = 0;
 /* Whether the device may still be running work that was issued. */
 static int isPending = 0;
 
-/* With MDIR_DEVICE_MEMORY=2 (D[device-memory-report]), the runtime also
+/* With MDIR_DEVICE_MEMORY=2 (D311), the runtime also
    keeps accounts of the device memory that its pool of blocks does not
    hold: at each event that may take memory of the device outside the pool,
    how much the driver's use of the device grew (cuMemGetInfo, the total

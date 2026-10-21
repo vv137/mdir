@@ -1,4 +1,4 @@
-# The breakdown of the device memory (D[device-memory-report], #471): with
+# The breakdown of the device memory (D311, #471): with
 # MDIR_DEVICE_MEMORY=2 a run on a device of the dipeptide in water with PME
 # and groups reports, after the two peaks of D294, the driver's use of the
 # device, the accounts outside the pool (the modules, cuFFT's plans, the

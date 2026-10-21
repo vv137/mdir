@@ -36,7 +36,7 @@ format, or the outputs; every such change is listed under **Changed** or
   source, destination, and handle lifetime, and
   `--lower-mdrt-halo-events` preserves the synchronous transport and
   numerical path. No control-file or output change.
-- **A breakdown of the device memory** (D[device-memory-report], #471):
+- **A breakdown of the device memory** (D311, #471):
   `MDIR_DEVICE_MEMORY=2` reports, at the end of a run on a device, what
   the CUDA context, the modules, cuFFT, and the store of the structures
   of the tuples took outside the runtime's pool, and the pool's blocks at
