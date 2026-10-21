@@ -749,6 +749,29 @@ D314 for the memory and the rates measured. The neighbor
 matrix, the scatter table of D291, and ML2's lists keep their layouts
 until a measurement shows a gain (#471).
 
+### 4.8 Single-pass scan strategy (D[device-single-pass-scan])
+
+The three-launch `emitDeviceScan` reads the counts in both its reduction
+and output passes. The proposed single-pass strategy reads each count once
+and writes its exclusive offset once. Each running block first claims a
+tile number from a device counter, scans its 1024 counts locally, and
+publishes its aggregate. Its leader looks back over earlier tiles' published
+aggregates until it finds a complete prefix, then publishes its own complete
+prefix. A block can read an earlier tile's aggregate while that tile is
+still finding its prefix. This is the decoupled look-back method of
+[[MerrillGarland2016]](references.md#merrillgarland2016), Section 4.
+
+The tile numbers must be claimed by active blocks, rather than taken from
+their grid indices: otherwise active blocks could wait for unscheduled
+predecessors and deadlock. Each descriptor packs its status and i32 sum in
+one atomic i64 word, so that a reader never sees a status paired with an
+older sum. A short initialization launch clears the descriptors and the
+counter before the scan launch. The existing three-launch strategy remains
+available through an internal primitive attribute for direct comparison.
+The choice at each real site follows measurements of its scan time and of
+the whole step; the exact integer offsets and deterministic mode must agree.
+No control-file key or output format changes.
+
 ## 5. Reductions by their algebra
 
 ### 5.1 What is stated
