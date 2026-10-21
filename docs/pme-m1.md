@@ -1,8 +1,13 @@
 # Particle Mesh Ewald in M1
 
-Status: decided (2026-09-30), D69 to D71. Stage M1h of
-[design-m1.md](design-m1.md), whose Section 8.2 lists the parts. The keys
-in brackets are those of [references.md](references.md).
+Status: decided (2026-09-30), D69 to D71, and kept current (last checked
+2026-10-21). Since then: the second stream, an option (D81, D87), triclinic cells
+(D123, D125), the derivative in the charges (D231), the particles without a
+coefficient (D262), the host in parallel (D271), the spreading through
+tiles (D282, D285), the prolate kernel (D266), and the influence function
+of P3M (D304); the dispersion on a grid of its own, LJ-PME, is D162. Stage
+M1h of [design-m1.md](design-m1.md), whose Section 8.2 lists the parts.
+The keys in brackets are those of [references.md](references.md).
 
 ## 1. The sum
 
@@ -289,8 +294,8 @@ pairs does.
 | $E_\text{excl}$ | An `md.sum_tuples` over the relation `excluded` with `distance(0, 1)` and the charges gathered: no new op |
 | $E_\text{self}$, $E_Q$ | Numbers from the driver |
 | $E_\text{rec}$ | One new op, `md.reciprocal %x, %q, %cell, %moduli`, with the grid, the order, $\beta$, and the Coulomb constant as attributes, that yields the energy, the forces, and the virial at once, all from the grid. Differentiation takes the forces and the virial from it; it is not differentiated through. |
-| The lowering of `md.reciprocal` | Templates in IR, as the build of neighbor structures is (`lib/Runtime/Templates`): spreading, the product with the influence function with the sums of the energy and the virial, and gathering the forces, for the CPU and for a GPU. The FFT is a call of the runtime. A triclinic cell takes functions of its own, `_triclinic` in `PME.mlir` and the kernels of `PMEGPUTriclinic.mlir` on a device (D123, D125). With a fourth result, the op also yields the potential of the grid at the particles, $\partial E/\partial q_i$, gathered with the weights of the splines (`pme_potential`), for the derivative in the charges (D231, [python-gradient.md](python-gradient.md#the-charges-with-particle-mesh-ewald)) |
-| FFT | On the host, pocketfft [[Reinecke2019]](references.md#reinecke2019) under the BSD license, in `libmdrt`; on a device, cuFFT of the CUDA toolkit, in `libmdrt_cuda`, with a plan kept for each size of grid, direction, and precision until the process ends, in a table that grows; a plan that cannot be made stops the run, as a failure of the simulation in Python (#323) (D64). |
+| The lowering of `md.reciprocal` | Templates in IR, as the build of neighbor structures is (`lib/Runtime/Templates`): spreading, the product with the influence function with the sums of the energy and the virial, and gathering the forces, for the CPU and for a GPU. The FFT is a call of the runtime. A triclinic cell takes functions of its own, `_triclinic` in `PME.mlir` and the kernels of `PMEGPUTriclinic.mlir` on a device (D123, D125). With a fourth result, the op also yields the potential of the grid at the particles, $\partial E/\partial q_i$, gathered with the weights of the splines (`pme_potential`), for the derivative in the charges (D231, [python-gradient.md](python-gradient.md#the-charges-with-particle-mesh-ewald)). On a device the sum may run on a second stream beside the ops that are proven independent of it (D81, D87; `md-exec-assign-streams{reciprocal=true}`); off by default since D81 was amended, as it slowed the steps once the kernels of PME were cheaper |
+| FFT | On the host, pocketfft [[Reinecke2019]](references.md#reinecke2019) under the BSD license, in `libmdrt`; on a device, cuFFT of the CUDA toolkit, in `libmdrt_cuda`, with a plan kept for each size of grid, direction, and precision until the process ends, in a table that grows; a plan that cannot be made stops the run, as a failure of the simulation in Python (#323) (D64). The transform is also an execution primitive with its adjoint declared, `md_exec.linear_transform` (D306, [primitives-map.md](primitives-map.md)); the lowering of `md.reciprocal` does not take it yet (#452) |
 | The influence function | Computed where it is used, from $\beta$, the cell, and the factors of the three edges, $\lvert b_a(k)\rvert^2$ (times the factor of the aliasing with `"OPTIMAL"`; with `"P3M"`, $1/S_a$ and the weights of the aliases, Section 1.1), which the driver passes as a table of three rows (18 with `"P3M"`): the factors do not depend on the cell, so a cell that changes (the barostat, M1j) needs nothing new. On a device a kernel multiplies them, at each evaluation, by $\exp(-\pi^2 m^2/\beta^2)$ along each edge in f64, and keeps the wave numbers and their squares beside them, each rounded once to the type of the grid (D104) |
 
 ## 3. Spreading that does not depend on the order (D70)
