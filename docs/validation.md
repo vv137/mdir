@@ -68,9 +68,6 @@ parameters after `[ nonbond_params ]`, scales ε by `fudgeLJ`, and then
 applies `[ pairtypes ]` as they are; the reader does the same, and the
 three agree with a rerun of GROMACS 2026.3 (`gromacs-nbfix-pairs.test`).
 
-Neither engine is installed on the development machine. Both are built
-into the home directory.
-
 **Forces on every particle** (2026-10-02, `scripts/validation/forces/run.sh`).
 MDIR in double precision on the CPU writes the forces of the input
 coordinates into a checkpoint after one step of $10^{-9}$ ps from zero

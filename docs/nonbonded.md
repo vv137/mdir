@@ -102,9 +102,11 @@ plain `q_i q_j / r`, cut at the cutoff with no shift, in a periodic system
 with `eedmeth = 4` of `&ewald`; it then leaves out the self term, the
 reciprocal sum, and the correction of the excluded pairs. The stage takes
 that form, and the comparison with sander is of the energy of each term.
-Whether GROMACS has the same form for a periodic system is settled before
-the stage begins; otherwise the comparison with GROMACS covers every term
-but the Coulomb one.
+The comparison with GROMACS takes another form instead: the reaction
+field of both programs at a permittivity of 78.5, whose `Coulomb`,
+`Coulomb excluded`, and `Coulomb self` MDIR compares with GROMACS's
+Coulomb (SR) (D140; [validation.md](validation.md), Section 2;
+`scripts/validation/gromacs`).
 
 A plain cutoff of the Coulomb term does not conserve the energy: a pair
 of charged particles that crosses the cutoff changes the energy by
