@@ -801,7 +801,11 @@ def MDExec_ResetNeighborsOp : MDExec_Op<"reset_neighbors"> {
     Belongs to the storage form. The storage of a structure is allocated in
     the body of the function. Where the value form has an empty structure
     inside a loop, the storage form resets the structure, so that every
-    iteration begins with a structure that the first refresh builds.
+    iteration begins with a structure that the first refresh builds. On a
+    device a structure may take the storage of an earlier one of the same
+    shape that nothing uses any more, such as the structure of the
+    evaluation at the start for that of the steps; it is reset where it
+    begins (D[start-structures]).
 
     The count of builds starts again from zero.
 

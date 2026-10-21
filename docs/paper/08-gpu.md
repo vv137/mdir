@@ -307,6 +307,22 @@ triclinic instances. The thread layout and summation order stay as
 before; the remaining spline or prolate window work belongs to each
 instance. The scalar gather has no extra storage or control key.
 
+**One storage for the neighbors of the start and of the steps**
+(D[start-structures]). The evaluation before the first step builds a
+neighbor structure that the steps do not continue: they begin with a
+structure of their own, built at step 1, so that a run builds at the same
+steps whether or not it is cut into segments (D218). The two structures
+have the same shape, and the first is no longer used when the second
+begins, yet each kept its lists and buffers for the whole run: 466 MiB at
+STMV. The storage pass now gives the steps the start's storage when
+nothing uses it any more, and resets it, as every segment of a run with
+checkpoints already does. A reset structure is valid for no
+configuration, so the first refresh builds whatever the storage held, and
+a build writes everything its loops read. The device peak of STMV falls
+from 2.5 to 2.0 GB and that of the elevenfold replica from 22.3 to 17.2
+GB. The fourteenfold replica (14.9 million atoms) runs in 23.0 GB on the
+24 GB device. The deterministic mode is unchanged to the bit.
+
 **Flags read without waiting for the stream** (D113). The test of validity
 (Section 4.1) sets a flag on the device, and the host must read it to
 decide whether to build. A copy to pageable memory waits for everything
