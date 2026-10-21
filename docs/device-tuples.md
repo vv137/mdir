@@ -80,7 +80,7 @@ For each tuple set whose structures are to be built, the lowering
    $m'_i = \mathrm{place}[m_i]$, into the renumbered members on the
    device;
 3. **rows** (D314, `buildOnDevice`), the structure in ragged
-   rows ([ops-m0.md](ops-m0.md), `md_exec.build_incidence`;
+   rows ([ops.md](ops.md), `md_exec.build_incidence`;
    `include/mdir/Conversion/RaggedRows.h`) from the members $m'$ (or $m$
    in the order of the files), by `emitDeviceRaggedRows` and two kernels
    of its own:
