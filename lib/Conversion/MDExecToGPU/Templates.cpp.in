@@ -30,7 +30,8 @@ const char *const neighborsGroupsSinglePassGPUTemplate = R"MDIRTEMPLATE(
 @NEIGHBORS_GROUPS_SINGLE_PASS_GPU_TEMPLATE@
 )MDIRTEMPLATE";
 extern const char *const neighborsGroupsSinglePassGPUTriclinicTemplate;
-const char *const neighborsGroupsSinglePassGPUTriclinicTemplate = R"MDIRTEMPLATE(
+const char *const neighborsGroupsSinglePassGPUTriclinicTemplate =
+    R"MDIRTEMPLATE(
 @NEIGHBORS_GROUPS_SINGLE_PASS_GPU_TRICLINIC_TEMPLATE@
 )MDIRTEMPLATE";
 } // namespace mdir

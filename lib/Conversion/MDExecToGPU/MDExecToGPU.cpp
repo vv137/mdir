@@ -5001,11 +5001,13 @@ LogicalResult Lowering::addGroupsTemplates(bool tilted) {
                          : std::string(buildGroupsName)))
     return success();
   ParserConfig config(context);
-  const char *source = singlePassGroupScan
-                           ? (tilted ? neighborsGroupsSinglePassGPUTriclinicTemplate
-                                     : neighborsGroupsSinglePassGPUTemplate)
-                           : (tilted ? neighborsGroupsGPUTriclinicTemplate
-                                     : neighborsGroupsGPUTemplate);
+  const char *source;
+  if (singlePassGroupScan)
+    source = tilted ? neighborsGroupsSinglePassGPUTriclinicTemplate
+                    : neighborsGroupsSinglePassGPUTemplate;
+  else
+    source = tilted ? neighborsGroupsGPUTriclinicTemplate
+                    : neighborsGroupsGPUTemplate;
   OwningOpRef<ModuleOp> templates =
       parseSourceString<ModuleOp>(source, config);
   if (!templates)

@@ -13,6 +13,13 @@
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt_cuda \
 // RUN: | FileCheck %s
+// RUN: cat %S/../../lib/Runtime/Templates/NeighborsGroupsSinglePassGPUTriclinic.mlir %s \
+// RUN: | mdir-opt --expand-device-primitives \
+// RUN: | mlir-opt --gpu-lower-to-nvvm-pipeline="cubin-format=isa" \
+// RUN:     --reconcile-unrealized-casts \
+// RUN: | mlir-runner -e main --entry-point-result=void \
+// RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt_cuda \
+// RUN: | FileCheck %s
 
 // Each case places 2000 particles, or as many as it says, in a triclinic
 // cell H, of the diagonal a_x, b_y, c_z and the tilts b_x, c_x, c_y, at fractional coordinates from

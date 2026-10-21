@@ -27,6 +27,8 @@ static Value i64c(OpBuilder &b, Location loc, int64_t v) {
 }
 
 static Value wordPointer(OpBuilder &b, Location loc, Value buffer, Value slot) {
+  // The state is a fresh gpu.alloc with zero memref offset; only its base
+  // pointer and the word index are needed by the device atomic.
   Type i64 = b.getI64Type();
   Value base = arith::IndexCastOp::create(
       b, loc, i64,
@@ -68,6 +70,10 @@ void mdir::kernels::emitSinglePassScan(OpBuilder &b, Location loc,
       {9}, i32, MemRefLayoutAttrInterface(),
       gpu::AddressSpaceAttr::get(b.getContext(),
                                  gpu::GPUDialect::getWorkgroupAddressSpace()));
+  auto prefixShared = MemRefType::get(
+      {1}, i32, MemRefLayoutAttrInterface(),
+      gpu::AddressSpaceAttr::get(b.getContext(),
+                                 gpu::GPUDialect::getWorkgroupAddressSpace()));
 
   // The first word is a ticket counter; tile t's descriptor is word t + 1.
   Value words = arith::AddIOp::create(b, loc, blocks, one);
@@ -96,10 +102,12 @@ void mdir::kernels::emitSinglePassScan(OpBuilder &b, Location loc,
   auto op = gpu::LaunchOp::create(
       b, loc, blocks, one, one, threads, one, one,
       /*dynamicSharedMemorySize=*/nullptr, /*asyncTokenType=*/nullptr,
-      /*asyncDependencies=*/{}, /*workgroupAttributions=*/TypeRange{shared});
+      /*asyncDependencies=*/{},
+      /*workgroupAttributions=*/TypeRange{shared, prefixShared});
   OpBuilder k = OpBuilder::atBlockEnd(&op.getBody().front());
   Value thread = op.getThreadIds().x;
   Value scratch = op.getWorkgroupAttributionBBArgs().front();
+  Value prefixScratch = op.getWorkgroupAttributionBBArgs()[1];
   Value zero = at(k, loc, 0);
   Value leader = arith::CmpIOp::create(k, loc, arith::CmpIPredicate::eq,
                                        thread, zero);
@@ -190,8 +198,10 @@ void mdir::kernels::emitSinglePassScan(OpBuilder &b, Location loc,
                     arith::AddIOp::create(tail, loc, base, local.total));
       scf::YieldOp::create(tail, loc, base);
     }
-    memref::StoreOp::create(t, loc, prefix.getResult(0), scratch,
-                            ValueRange{at(t, loc, 8)});
+    // Keep the prefix separate from the block scan's total in scratch[8]:
+    // other warps can still load that total after the leader finishes.
+    memref::StoreOp::create(t, loc, prefix.getResult(0), prefixScratch,
+                            ValueRange{at(t, loc, 0)});
     Value last = arith::CmpIOp::create(
         t, loc, arith::CmpIPredicate::eq, tile,
         arith::SubIOp::create(t, loc, blocks, at(t, loc, 1)));
@@ -205,8 +215,8 @@ void mdir::kernels::emitSinglePassScan(OpBuilder &b, Location loc,
   });
   gpu::BarrierOp::create(k, loc);
   Value before = arith::AddIOp::create(
-      k, loc, memref::LoadOp::create(k, loc, scratch,
-                                     ValueRange{at(k, loc, 8)}),
+      k, loc, memref::LoadOp::create(k, loc, prefixScratch,
+                                     ValueRange{at(k, loc, 0)}),
       local.before);
   for (int64_t j = 0; j != 4; ++j) {
     Value slot = arith::AddIOp::create(k, loc, first, at(k, loc, j));

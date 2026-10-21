@@ -27,7 +27,9 @@ namespace mdir {
 namespace {
 
 /// What an operand of a primitive must be.
-enum class Kind { I1, I32, Index, Buffer, WideBuffer, DynamicBuffer, SharedBuffer };
+enum class Kind {
+  I1, I32, Index, Buffer, WideBuffer, DynamicBuffer, SharedBuffer
+};
 
 bool hasKind(Type type, Kind kind) {
   switch (kind) {

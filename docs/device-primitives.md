@@ -772,7 +772,8 @@ older sum. A short initialization launch clears the descriptors and the
 counter before the scan launch. The three-launch primitive remains the
 default. The compiler pass `convert-md-exec-to-gpu` selects the alternate
 group template with `single-pass-group-scan=true`; both templates come from
-one generator. This is an internal compiler strategy, with no control-file
+one generator and are checked in so configuration requires no Python.
+This is an internal compiler strategy, with no control-file
 key or output format change.
 
 The inventory for #420 separates scans with different shapes:
@@ -796,6 +797,9 @@ frequency. On STMV NPT (100 mixed-precision steps), the scan kernels are
 
 The whole-step Amber comparisons used the same RTX 4090, alternated main
 and the single-pass variant, and took the median of two warmed rounds.
+The measured variant was built at feature commit `f6775d94`, when the
+generator emitted the single-pass group template as the default; the
+final branch offers that same template through the compiler pass option.
 Times in ms/step were JAC NVE 0.135785 → 0.136091 (+0.23%), Cellulose
 NVE 1.136844 → 1.135727 (−0.10%), and STMV NPT 4 fs 3.797802 →
 3.818826 (+0.55%). With a valid but short outer and inner skin (0.5 and
