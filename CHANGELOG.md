@@ -714,6 +714,18 @@ format, or the outputs; every such change is listed under **Changed** or
   Amber suite's rates: JAC NVE 0.7% slower, the larger systems 1% to 4%
   faster. No control-file key or output change.
 
+- **The design documents are named by topic** (#390): `docs/ops.md`,
+  `runtime.md`, `driver.md`, `neighbors.md`, `neighbor-groups.md`,
+  `neighbor-tiles.md`, `pme.md`, `charmm.md`, `triclinic.md`, and
+  `python.md`, which were named by their milestone (the runtime's as
+  `mdrt`, the groups and the tiles without `neighbor-`). Section 1.1 of
+  `docs/driver.md` points to Appendix A of the white paper instead of
+  copying its table of keywords. A CPU test
+  (`test/Docs/markdown-links.test`) checks that every relative link of
+  `README.md`, `CHANGELOG.md`, and `docs/` names a file and a heading that
+  exist; the links it found broken are fixed, and the four references of
+  the prolate kernel are added to the white paper's list. Documentation
+  only.
 - **The prolate kernel against the Gaussian, measured again with tiled
   spreading** (D266, D282; `docs/pme.md`, Section 7; documentation
   only). MDIR's whole step on JAC, Cellulose, and STMV, on an RTX 4090 and
@@ -771,7 +783,7 @@ format, or the outputs; every such change is listed under **Changed** or
   Nothing user-visible changes.
 - **The transposes of the `md` ops are declared through
   `AdjointOpInterface`** (D295, #451, PR #459,
-  [docs/ad-robust.md](docs/ad-robust.md#declared-transposes-dmd-transposes)):
+  [docs/ad-robust.md](docs/ad-robust.md#declared-transposes-d295)):
   the sums and gathers over relations and tuples and the sums and maps
   over particles declare the transpose of their structure, and
   `md-differentiate` takes it from them instead of building the op itself;

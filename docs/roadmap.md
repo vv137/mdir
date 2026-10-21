@@ -282,7 +282,7 @@ and external terms `observe`, writes the file of `[output] observables`
 through `ObservablesReporter`, and gives the values to a script in
 `State.observables`; D233 adds the terms of the positions
 (`mdir.ExternalTerm`). D214 (#148,
-[GPU modules](compile-cache.md#the-gpu-modules-dgpu-module-compile))
+[GPU modules](compile-cache.md#the-gpu-modules-d214))
 serializes the GPU modules in parallel, caches their PTX and cubins, and
 loads cubins compiled for the device instead of PTX.
 D215 (#135,

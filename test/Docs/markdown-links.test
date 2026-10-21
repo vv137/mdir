@@ -1,0 +1,21 @@
+# Every relative link of README.md, CHANGELOG.md, and the documents under
+# docs/ names a file that exists, and its #anchor a heading of that file by
+# GitHub's rule (scripts/check-markdown-links.py). Renamed documents and
+# headings whose labels became decision numbers left links that pointed
+# nowhere.
+#
+# RUN: %python %S/../../scripts/check-markdown-links.py %S/../.. | FileCheck %s --check-prefix=REPO
+# REPO: 0 broken link(s)
+#
+# The checker itself, on a small tree: a missing file, a missing heading,
+# a link that misses a directory, and a reference definition are reported;
+# links in fenced code and code spans, numbered duplicate headings, headings
+# with code, HTML anchors, and docs/diagrams/ are not.
+#
+# RUN: not %python %S/../../scripts/check-markdown-links.py %S/Inputs/links | FileCheck %s --check-prefix=TREE
+# TREE: README.md:5: docs/missing.md: no such file
+# TREE-NEXT: README.md:5: docs/topic.md#3-absent: no such heading
+# TREE-NEXT: docs/topic.md:22: #2-the-cell-dcell: no such heading
+# TREE-NEXT: docs/topic.md:24: paper/gone.md: no such file
+# TREE-NEXT: docs/paper/ok.md:3: topic.md: no such file
+# TREE-NEXT: 5 broken link(s)

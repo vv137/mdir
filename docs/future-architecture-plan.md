@@ -738,7 +738,7 @@ These are contribution candidates, not established novelty claims. “MLIR for p
 
 A defensible future claim, contingent on implementation and evaluation, is: **MDIR preserves staged particle dependencies through energy differentiation and uses them to construct and optimize both communication and physical traversal for classical and learned potentials.** The current repository supports the foundation of that claim; it does not yet demonstrate the complete result.
 
-The first-milestone white paper is written. Its validation and preparation for publication remain separate from this extension; they do not wait for MLIP or distributed execution. The paper about the implemented compiler should report the staged/distributed design as future work. A paper centered on classical/MLIP unification needs the additional implementation and experiments listed above. [Current roadmap](roadmap.md#7-distributed-execution-and-learned-potentials).
+The first-milestone white paper is written. Its validation and preparation for publication remain separate from this extension; they do not wait for MLIP or distributed execution. The paper about the implemented compiler should report the staged/distributed design as future work. A paper centered on classical/MLIP unification needs the additional implementation and experiments listed above. [Current roadmap](roadmap.md#7-learned-potentials-m3-and-distributed-execution-m4).
 
 ## Adopted scope and first deliverable
 
@@ -904,7 +904,7 @@ whole-step tradeoffs for the same model, not the count of supported models.
 ## Recommended implementation sequence
 
 This sequence implements D166 and D167 and the milestones in
-[roadmap Section 7](roadmap.md#7-distributed-execution-and-learned-potentials).
+[roadmap Section 7](roadmap.md#7-learned-potentials-m3-and-distributed-execution-m4).
 The first local MLIP on two GPUs completes ML1 through ML3; message-passing
 optimization follows as ML4 and ML5.
 

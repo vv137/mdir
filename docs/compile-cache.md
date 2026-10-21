@@ -17,7 +17,7 @@ owned engine (#99).
 D214 (#148) serializes the GPU modules in parallel, keeps
 the PTX and the cubin of each module in the same cache, and loads cubins
 compiled for the device instead of PTX; see
-[The GPU modules](#the-gpu-modules-dgpu-module-compile) below.
+[The GPU modules](#the-gpu-modules-d214) below.
 D217 (#163) clears the cache and bypasses it for one
 compile from Python; see [Controls from Python](#controls-from-python).
 D227 (#162) takes the values that depend on the
