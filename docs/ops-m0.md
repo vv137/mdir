@@ -1,9 +1,14 @@
 # MDIR Op Specification, Milestone M0
 
-Status: draft 18 (2026-09-29). Everything in this document is implemented,
-except where a section says otherwise. A Lennard-Jones system runs end to
-end in single, mixed, and double precision, on the CPU sequentially and
-with OpenMP, and on NVIDIA GPUs.
+Status: kept current (last checked against the ops of the dialects on
+2026-10-21). Everything in this document is implemented, except where a
+section says otherwise. It began as the specification of milestone M0, a
+Lennard-Jones system run end to end in single, mixed, and double precision,
+on the CPU sequentially and with OpenMP, and on NVIDIA GPUs; the summaries
+of Sections 4.1 and 8.1 list every op of `md` and `md_exec` today. The ops
+of `md_dist`, the distributed plan, are in
+[distributed-ml2.md](distributed-ml2.md), and those of `mdrt` in
+[mdrt-m0.md](mdrt-m0.md).
 
 This document specifies the types and ops needed for milestone M0: a
 Lennard-Jones [[Jones1924]](references.md#jones1924) fluid integrated with velocity Verlet
@@ -219,6 +224,11 @@ is needed when the kernels are compiled, not when LLVM is built.
 | `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; see [design-m1.md](design-m1.md), Sections 2 and 3. |
 | `md.chebyshev` | In a kernel, $\sum_k c_k T_k(y)$, a Chebyshev series with its coefficients as an attribute; its derivative is the series of the derivatives, and in a loop over pairs under `fast_math` a series of the distance becomes part of a table of $r^2$ (D94, D280). |
 | `md.stage`, `md.apply_stage` | A neural stage, a pure function of one element bound to its body and its vector-Jacobian product, and its application, or that of its product, in a kernel ([ml4-ir.md](ml4-ir.md), D288). |
+| `md.orthorhombic_cell`, `md.triclinic_cell` | A periodic cell from the lengths of its edges, or from the six numbers of a lower-triangular cell in reduced form ([triclinic-m2.md](triclinic-m2.md), D123). |
+| `md.lookup` | In a kernel, the value of a table for the types of its members, one index for each dimension of the table ([design-m1.md](design-m1.md), Section 7). |
+| `md.edges` | The pairs of images within a cutoff, every image of every particle and the particle's own, grouped by the first member: the list that a local learned potential takes ([metatomic-ml1.md](metatomic-ml1.md), D277). |
+| `md.reciprocal` | The reciprocal sum of smooth particle mesh Ewald: energy, virial, and forces, with the influence function's factors along each edge as an operand ([pme-m1.md](pme-m1.md)). |
+| `md.call` | Calls a function or a potential. |
 | `md.yield`, `md.return` | Terminators of kernels and functions. |
 
 All `md` ops are pure.
@@ -951,6 +961,18 @@ Inside a loop over pairs, the contributions of the neighbors of one particle
 are added up in the type of what they are added to: `force` for a field,
 `accumulator` for a global sum.
 
+The precision of a sum does not fix the order in which its terms are added.
+That is a separate fact of the IR: every sum of `md_exec` and `md_dist`
+states its algebra, `md_exec.algebra`, set by `md-exec-assign-algebra` from
+the mode after the precision is assigned (D301,
+[device-primitives.md](device-primitives.md), Section 5).
+`any_order_exact` licenses any order for a sum that is exact in any order
+(integers, `or`, fixed point); `any_order` licenses any order for a
+floating-point sum, and only the order: not its accumulator's precision or
+its error growth; `fixed_order` fixes the order, as the deterministic mode
+requires of every floating-point sum, where the verifier refuses
+`any_order`. The chooser and the lowerings read the algebra, not the mode.
+
 ### 7.6 Neighbor structures
 
 A neighbor structure is built and tested in the type of the positions. The
@@ -994,10 +1016,21 @@ double mode (Section 10.9).
 | `md_exec.spatial_order` | Computes the order of the particles by cell, and within a cell by their numbers. |
 | `md_exec.permute` | Returns a field in an order. |
 | `md_exec.build_neighbors` | Builds a physical neighbor structure. |
-| Memory of the device that a program frees | Kept by `mdrt` for a request of the same size: the work that a block is handed to runs after the work that used it, on the one stream, so neither the free nor the reuse waits for the device |
 | `md_exec.empty_neighbors` | A neighbor structure that is valid for no configuration. |
+| `md_exec.reset_neighbors` | Storage form only: makes a structure allocated outside a loop valid for no configuration, at the start of each iteration. |
 | `md_exec.refresh_neighbors` | Returns a neighbor structure that is valid for a configuration, building one only if the one given is not. |
 | `md_exec.reference_positions` | The configuration that a neighbor structure was built at. |
+| `md_exec.reference_cell` | The cell that a neighbor structure was built in, which the test of validity reads under a barostat (D80); with `pruned`, the cell of the last pruning of a dual list (D114). |
+| `md_exec.cell_edges`, `md_exec.cell_numbers` | The edge lengths of an orthorhombic cell; the diagonal and tilts of any cell, for functions of the host (D270). |
+| `md_exec.build_edges` | The pairs of `md.edges` from the rows of a neighbor matrix (D277). |
+| `md_exec.nonzero` | The places of the particles whose value is not zero, in ascending order, then the others: the charged particles that PME spreads and gathers (D262). |
+| `md_exec.renumber` | The members of tuples at the current places of the particles, from the members in the order of the files and the numbers of the particles in the current order ([device-tuples.md](device-tuples.md)). |
+| `md_exec.radial` | A function of the squared distance alone, which `md-exec-simplify-distance` separates under `fast_math` and `md-exec-expand-radial` makes a table of in f32 kernels (D94). |
+| `md_exec.tabulate` | A table computed entry by entry from other tables, so that a kernel's values that depend on the types only are computed once. |
+| `md_exec.scatter_add` | $a_i \mathrel{+}= \sum_{k : \mathrm{idx}_k = i} v_k$: values added into a field at the rows that indices name (D291, [device-primitives.md](device-primitives.md)). |
+| `md_exec.reciprocal` | What `md.reciprocal` computes, in the execution IR; Section 10.8 and [pme-m1.md](pme-m1.md) describe its lowerings. |
+| `md_exec.linear_transform` | The unnormalized real three-dimensional FFT, forward or backward, between a real grid and its packed half-spectrum, with its adjoint and the pairing under which it is one declared in the IR (D306, [primitives-map.md](primitives-map.md)). |
+| `md_exec.join` | Storage form only: the op marked `md_exec.side` before it runs on a second stream beside the ops between the two (D81, D87). |
 | `md_exec.rebuild_count` | The number of times a neighbor structure has been built. |
 | `md_exec.zeros`, `md_exec.empty` | Destinations of loops. |
 | `md_exec.pair_for` | Runs a kernel over the pairs of a neighbor structure. |
