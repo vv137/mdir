@@ -126,6 +126,11 @@ at a later call. To find the kernel that failed:
    `MDIR_PRINT_AFTER=gpu-kernel-outlining` prints the kernels themselves.
 4. `MDRT_PROFILE=1` (with `MDRT_WAIT=1`, the time of each kernel) reports
    where the time goes.
+5. `MDIR_DEVICE_MEMORY=2` reports where the device memory goes, for a run
+   that is out of memory on a smaller system or that holds more than
+   expected: what the context, the modules, cuFFT, and the structures of
+   the tuples took outside the runtime's pool, and the pool's blocks at its
+   peaks by size and use ([environment.md](environment.md)).
 
 ## Tiers of tests
 
