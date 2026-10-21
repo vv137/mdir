@@ -1780,7 +1780,7 @@ lowering does.
 
 | Limitation | Consequence |
 |---|---|
-| The build allocates its work buffers at every build and frees them. | The caching allocator of the runtime hands a freed block of the same size to the next allocation, so this costs a lookup. |
+| The build allocates its work buffers at every build and frees them. | The caching allocator of the runtime hands a freed block of the same size to the next allocation, so this costs a lookup. A buffer of the runtime's neighbor structures that a growth replaces goes back to the driver, after the wait that the growth makes anyway, and a buffer indexed by the places of the groups takes the room of the places, so that the sizes asked for do not change with the builds (D[pool-retention]). |
 | A split search takes one number for each of its threads. | The search is split only for small systems. |
 | One device | |
 | NVIDIA only | The storage form does not depend on the vendor; the lowering to `rocdl` is not written. |

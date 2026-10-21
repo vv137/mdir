@@ -3836,6 +3836,14 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
              : Value();
   SmallVector<Value> sources = {positions};
   llvm::append_range(sources, op.getIns());
+  // The buffers take the room of the structure's places, not the number
+  // of places that this build occupied (D[pool-retention]): that number
+  // changes at nearly every build, and the runtime's pool reuses a block
+  // only for a request of the same size, so a buffer sized by it left a
+  // block in the pool for each new number. The room changes only when the
+  // structure grows.
+  Value room = memref::DimOp::create(builder, loc, buffers.order,
+                                     createIndex(builder, loc, 0));
   SmallVector<Value> targets;
   for (auto [index, source] : llvm::enumerate(sources)) {
     auto type = cast<MemRefType>(source.getType());
@@ -3843,7 +3851,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
       type = MemRefType::get(type.getShape(), computed, type.getLayout(),
                              type.getMemorySpace());
     targets.push_back(
-        createDeviceBuffer(builder, loc, type, ValueRange{places}));
+        createDeviceBuffer(builder, loc, type, ValueRange{room}));
   }
   launchOver(builder, loc, places, [&](OpBuilder &body, Value place) {
     Value at = memref::LoadOp::create(body, loc, buffers.order,
@@ -7215,10 +7223,13 @@ void Lowering::emitPruneCheck(OpBuilder &builder, Location loc,
                                 ValueRange{createIndex(builder, loc, which)}));
   };
   Value places = size(0), blocks = size(2);
-  // The frames of this step's positions, apart from those of the pruning.
+  // The frames of this step's positions, apart from those of the pruning,
+  // in a buffer of the room of the places, as those of a loop over the
+  // groups (D[pool-retention]).
   Value placed = createDeviceBuffer(
       builder, loc, getDeviceType({ShapedType::kDynamic, 3}, f32),
-      ValueRange{places});
+      ValueRange{memref::DimOp::create(builder, loc, buffers.order,
+                                       createIndex(builder, loc, 0))});
   emitFramePositions(builder, loc, buffers, places, positions, box, placed,
                      Value(), Value(), {});
   // The two counts, from zero.

@@ -224,7 +224,18 @@ device computed. Three mechanisms keep the device busy.
 
 **A pool of device memory.** The runtime keeps freed blocks and hands one
 of the same size to the next allocation without a call to the driver;
-buffers that a step allocates and frees cost a lookup.
+buffers that a step allocates and frees cost a lookup. A block is reused
+only for a request of its own size, so the sizes that a step asks for must
+not follow the builds of the neighbor structure (D[pool-retention]): the
+buffers that a loop over the groups gathers its positions and fields into
+take the room of the structure's places, which changes only when it
+grows, and not the number of places that the last build occupied, which
+moves by 64 at nearly every build. Sized by that number, they left blocks
+in the pool for every new number, 783 MiB at STMV after 1,000 steps and
+more the longer the run; a buffer of the runtime that a growth replaces
+goes back to the driver, after the wait that the growth makes anyway. With
+both, STMV takes 5.6 GB of an RTX 4090 against 6.5 GB, and its fourfold
+replica (4.27 million atoms) runs in 20.8 GB, where it ran out of memory.
 
 **Flags read without waiting for the stream** (D113). The test of validity
 (Section 4.1) sets a flag on the device, and the host must read it to

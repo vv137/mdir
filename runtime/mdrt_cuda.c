@@ -703,7 +703,12 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    used the block. Freeing memory with the driver would wait for the device,
    and a build of a neighbor structure frees a dozen blocks. The live blocks
    are recorded with their sizes, and the free blocks are reused for
-   requests of the same size. */
+   requests of the same size. A block of a size that no later request asks
+   for would stay in the pool for the rest of the run, so the sizes that
+   compiled code asks for at every step do not follow the builds: a buffer
+   indexed by the places of the groups takes the room of the places, not
+   the number that a build occupied, and a buffer of the runtime that a
+   growth replaces goes back to the driver (D[pool-retention]). */
 #define MAX_BLOCKS 4096
 /* An activation of an entry that an embedding program keeps across its
    calls (a Python simulation, D215): what the activation
@@ -964,6 +969,26 @@ void mgpuMemFree(void *pointer, CUstream stream) {
   check(cuMemFree(address), "cuMemFree");
   ++numToDriver;
   end(ALLOCATE, start);
+}
+
+/* Returns a buffer of the runtime's structures that a growth replaces to
+   the driver, not to the pool (D[pool-retention]): the buffer that
+   replaces it is larger, and a later request of the old size is unlikely,
+   so in the pool it would stay for the rest of the run. The caller has
+   waited for the device, as a growth does, so the free does not wait. */
+static void releaseReplaced(void *pointer) {
+  if (!pointer)
+    return;
+  CUdeviceptr address = (CUdeviceptr)pointer;
+  for (int i = numLive; i-- != 0;) {
+    if (liveBlocks[i].pointer != address)
+      continue;
+    liveBytes -= liveBlocks[i].size;
+    liveBlocks[i] = liveBlocks[--numLive];
+    break;
+  }
+  check(cuMemFree(address), "cuMemFree");
+  ++numToDriver;
 }
 
 /* Records a structure of neighbors that the current activation made. */
@@ -1338,10 +1363,10 @@ static void allocateGroups(struct Groups *groups) {
     allocateGroup(groups, which);
 }
 
-static void freeGroups(struct Groups *groups) {
+/* After a wait for the device: the buffers go back to the driver. */
+static void releaseGroups(struct Groups *groups) {
   for (int which = 0; which != GROUPS_BUFFERS; ++which) {
-    if (groups->data[which])
-      mgpuMemFree(groups->data[which], NULL);
+    releaseReplaced(groups->data[which]);
     groups->data[which] = NULL;
   }
 }
@@ -1383,7 +1408,7 @@ void mdrtGroupsGrow(int64_t handle, int64_t places, int64_t blocks) {
   /* No kernel may still use the buffers that are freed. */
   enter();
   check(cuCtxSynchronize(), "cuCtxSynchronize");
-  freeGroups(groups);
+  releaseGroups(groups);
   if (places > groups->places)
     groups->places = (places + places / 4 + 15) / 16 * 16;
   if (blocks > groups->blocks)
@@ -1403,7 +1428,7 @@ void mdrtGroupsReserveBlockOf(int64_t handle, int64_t length) {
     /* No kernel may still use the buffer that is freed. */
     enter();
     check(cuCtxSynchronize(), "cuCtxSynchronize");
-    mgpuMemFree(groups->data[GROUPS_BLOCK_OF], NULL);
+    releaseReplaced(groups->data[GROUPS_BLOCK_OF]);
     groups->data[GROUPS_BLOCK_OF] = NULL;
   }
   allocateGroup(groups, GROUPS_BLOCK_OF);
@@ -1478,7 +1503,7 @@ void mdrtMatrixGrow(int64_t handle, int64_t width) {
     return;
   enter();
   check(cuCtxSynchronize(), "cuCtxSynchronize");
-  mgpuMemFree(matrix->data, NULL);
+  releaseReplaced(matrix->data);
   matrix->width = width + width / 4;
   allocateMatrix(matrix);
 }
@@ -1540,8 +1565,8 @@ int64_t mdrtEdgesReserve(int64_t handle, int64_t length) {
   if (length > edges->capacity) {
     enter();
     check(cuCtxSynchronize(), "cuCtxSynchronize");
-    mgpuMemFree(edges->candidates, NULL);
-    mgpuMemFree(edges->slots, NULL);
+    releaseReplaced(edges->candidates);
+    releaseReplaced(edges->slots);
     edges->capacity = length + length / 4;
     allocateEdges(edges);
   }
