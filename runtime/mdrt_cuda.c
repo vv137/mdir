@@ -76,6 +76,8 @@ struct Kernel {
   double seconds;
   /* The threads of its last launch, which tell what it runs over. */
   int64_t threads;
+  /* Whether it was launched (the accounts of MDIR_DEVICE_MEMORY=2). */
+  int launched;
 };
 static struct Kernel kernels[MAX_KERNELS];
 static int numKernels = 0;
@@ -169,6 +171,78 @@ static int joinPending = 0;
 /* Whether the device may still be running work that was issued. */
 static int isPending = 0;
 
+/* With MDIR_DEVICE_MEMORY=2 (D[device-memory-report]), the runtime also
+   keeps accounts of the device memory that its pool of blocks does not
+   hold: at each event that may take memory of the device outside the pool,
+   how much the driver's use of the device grew (cuMemGetInfo, the total
+   less the free, which counts every process on the device), and how many
+   bytes the runtime asked for there. The events are the making of the
+   context, the loads of modules, the first launch of each kernel (the
+   driver reserves the local memory of the threads there), the plans of
+   cuFFT and their workspaces, the handle of cuBLAS, and the allocations
+   outside the pool. The blocks of the pool are an account too: the growth
+   at the driver's allocations of blocks against their bytes. */
+enum {
+  ACCOUNT_CONTEXT,
+  ACCOUNT_MODULES,
+  ACCOUNT_LAUNCHES,
+  ACCOUNT_BLOCKS,
+  ACCOUNT_FFT,
+  ACCOUNT_BLAS,
+  ACCOUNT_TUPLES,
+  ACCOUNT_CONSTANTS,
+  ACCOUNT_MANAGED,
+  ACCOUNT_KEPT,
+  NUM_ACCOUNTS
+};
+static const char *const accountNames[NUM_ACCOUNTS] = {
+    "the context",
+    "the modules",
+    "the first launch of each kernel",
+    "the blocks of the pool",
+    "the plans of cuFFT",
+    "the handle of cuBLAS",
+    "the structures of the tuples",
+    "the constants of the bodies",
+    "the memory shared with the host",
+    "the memory of an embedding program"};
+static int64_t accountGrowth[NUM_ACCOUNTS], accountAsked[NUM_ACCOUNTS];
+static int64_t accountEvents[NUM_ACCOUNTS];
+static int memoryDetail = -1;
+static int isMemoryDetailed(void) {
+  if (memoryDetail < 0) {
+    const char *value = getenv("MDIR_DEVICE_MEMORY");
+    memoryDetail = value && strcmp(value, "2") == 0;
+  }
+  return memoryDetail;
+}
+/* The driver's use of the device, in bytes, and the most it was at an
+   event; -1 if it cannot be read. */
+static int64_t usedMost = 0;
+static int64_t getDeviceUsed(void) {
+  size_t free = 0, total = 0;
+  if (cuMemGetInfo(&free, &total) != CUDA_SUCCESS)
+    return -1;
+  int64_t used = (int64_t)(total - free);
+  if (used > usedMost)
+    usedMost = used;
+  return used;
+}
+/* The driver's use before an event of the accounts, or -1 if they are not
+   kept. */
+static int64_t beginAccount(void) {
+  return isMemoryDetailed() ? getDeviceUsed() : -1;
+}
+static void endAccount(int account, int64_t before, int64_t asked) {
+  if (before < 0)
+    return;
+  int64_t after = getDeviceUsed();
+  if (after >= 0)
+    accountGrowth[account] += after - before;
+  accountAsked[account] += asked;
+  accountEvents[account] += 1;
+}
+
 /* Makes the context of the device current for the calling thread. The
    device is the one that MDRT_DEVICE names, among those that
    CUDA_VISIBLE_DEVICES leaves visible, or the first. */
@@ -182,6 +256,13 @@ static void enter(void) {
     check(cuDeviceGet(&device, defaultDevice), "cuDeviceGet");
     check(cuDevicePrimaryCtxRetain(&context, device),
           "cuDevicePrimaryCtxRetain");
+    check(cuCtxSetCurrent(context), "cuCtxSetCurrent");
+    /* The driver's use once the context is made: what it was before is
+       the idle use of the device, which nvidia-smi reports. */
+    if (isMemoryDetailed()) {
+      accountGrowth[ACCOUNT_CONTEXT] = getDeviceUsed();
+      accountEvents[ACCOUNT_CONTEXT] = 1;
+    }
   }
   check(cuCtxSetCurrent(context), "cuCtxSetCurrent");
 }
@@ -252,7 +333,9 @@ static void reportUnsupportedPTX(CUresult result, const void *data,
 CUmodule mgpuModuleLoad(void *data, size_t size) {
   enter();
   CUmodule module = NULL;
+  int64_t before = beginAccount();
   CUresult result = cuModuleLoadData(&module, data);
+  endAccount(ACCOUNT_MODULES, before, 0);
   if (result != CUDA_SUCCESS)
     reportUnsupportedPTX(result, data, size, NULL);
   /* A cubin is compiled for the architecture of the device that the
@@ -282,7 +365,9 @@ CUmodule mgpuModuleLoadJIT(void *data, int optLevel, size_t size) {
   void *values[] = {(void *)log, (void *)(uintptr_t)sizeof(log),
                     (void *)(uintptr_t)optLevel};
   CUmodule module = NULL;
+  int64_t before = beginAccount();
   CUresult result = cuModuleLoadDataEx(&module, data, 3, options, values);
+  endAccount(ACCOUNT_MODULES, before, 0);
   if (result != CUDA_SUCCESS) {
     reportUnsupportedPTX(result, data, size, log);
     fprintf(stderr, "mdrt: the driver could not compile a kernel:\n%s\n",
@@ -346,11 +431,22 @@ void mgpuLaunchKernel(CUfunction function, intptr_t gridX, intptr_t gridY,
   if (getenv("MDRT_TRACE"))
     fprintf(stderr, "TRACE launch %ld fn %p grid %ld block %ld\n",
             traceCount++, (void *)function, (long)gridX, (long)blockX);
+  int64_t before = -1;
+  int launching = -1;
+  if (isMemoryDetailed()) {
+    launching = findKernel(function);
+    if (launching >= 0 && !kernels[launching].launched)
+      before = getDeviceUsed();
+  }
   check(cuLaunchKernel(function, (unsigned)gridX, (unsigned)gridY,
                        (unsigned)gridZ, (unsigned)blockX, (unsigned)blockY,
                        (unsigned)blockZ, (unsigned)sharedMemory, stream,
                        parameters, extra),
         "cuLaunchKernel");
+  if (before >= 0) {
+    kernels[launching].launched = 1;
+    endAccount(ACCOUNT_LAUNCHES, before, 0);
+  }
   lastFunction = function;
   isPending = 1;
   if (start >= 0.0) {
@@ -633,6 +729,9 @@ struct Block {
   uint64_t size;
   /* The activation that allocated the block, or null. */
   struct Activation *owner;
+  /* What the block was last allocated for: a buffer of the runtime's
+     structures, or null for compiled code (MDIR_DEVICE_MEMORY=2). */
+  const char *tag;
 };
 static struct Block liveBlocks[MAX_BLOCKS];
 static int numLive = 0;
@@ -641,22 +740,134 @@ static int numFree = 0;
 /* Whether memory of the device was allocated that `liveBlocks` does not
    record, for want of room. */
 static int untracked = 0;
+/* What the runtime allocates a block for, while it does (null for
+   compiled code). */
+static const char *allocationTag = NULL;
 
 /* The bytes of the blocks in use and of those in the pool, and their peaks
    since the program started (D294): with MDIR_DEVICE_MEMORY
    set, they are printed when the process ends. */
 static uint64_t liveBytes = 0, poolBytes = 0, peakLive = 0, peakReserved = 0;
+/* With MDIR_DEVICE_MEMORY=2: the blocks at the peak in use and at the peak
+   with the pool (those in the pool after those in use), the driver's use
+   at the latter, and the counts of the allocations. */
+static struct Block peakLiveBlocks[MAX_BLOCKS];
+static int numPeakLive = 0;
+static struct Block peakReservedBlocks[2 * MAX_BLOCKS];
+static int numPeakReservedLive = 0, numPeakReservedFree = 0;
+static int64_t usedAtPeakReserved = -1;
+static int64_t numAllocations = 0, numFromPool = 0, numToDriver = 0;
 static void noteBytes(void) {
-  if (liveBytes > peakLive)
+  int detailed = isMemoryDetailed();
+  if (liveBytes > peakLive) {
     peakLive = liveBytes;
-  if (liveBytes + poolBytes > peakReserved)
+    if (detailed) {
+      memcpy(peakLiveBlocks, liveBlocks, numLive * sizeof(struct Block));
+      numPeakLive = numLive;
+    }
+  }
+  if (liveBytes + poolBytes > peakReserved) {
     peakReserved = liveBytes + poolBytes;
+    if (detailed) {
+      memcpy(peakReservedBlocks, liveBlocks, numLive * sizeof(struct Block));
+      memcpy(peakReservedBlocks + numLive, freeBlocks,
+             numFree * sizeof(struct Block));
+      numPeakReservedLive = numLive;
+      numPeakReservedFree = numFree;
+      usedAtPeakReserved = getDeviceUsed();
+    }
+  }
 }
+
+/* The blocks of `blocks`, by what they were allocated for and their size,
+   the largest totals first: one line for each, and one for each tag for
+   the blocks smaller than a MiB. */
+struct BlockKind {
+  const char *tag;
+  uint64_t size;
+  int64_t count;
+};
+static int compareKinds(const void *a, const void *b) {
+  const struct BlockKind *x = a, *y = b;
+  /* A count of 0 is the blocks under a MiB, whose bytes are the size. */
+  uint64_t bx = x->size * (uint64_t)(x->count ? x->count : 1);
+  uint64_t by = y->size * (uint64_t)(y->count ? y->count : 1);
+  return bx < by ? 1 : bx > by ? -1 : 0;
+}
+static void printBlocks(const char *state, const struct Block *blocks,
+                        int count) {
+  static struct BlockKind kinds[2 * MAX_BLOCKS];
+  int numKinds = 0;
+  for (int i = 0; i != count; ++i) {
+    const char *tag = blocks[i].tag ? blocks[i].tag : "compiled code";
+    uint64_t size = blocks[i].size < 1048576 ? 0 : blocks[i].size;
+    int k = 0;
+    while (k != numKinds &&
+           !(kinds[k].size == size && strcmp(kinds[k].tag, tag) == 0))
+      ++k;
+    if (k == numKinds)
+      kinds[numKinds++] = (struct BlockKind){tag, size, 0};
+    /* The blocks under a MiB are counted together, by their bytes. */
+    kinds[k].count += size ? 1 : (int64_t)blocks[i].size;
+  }
+  for (int k = 0; k != numKinds; ++k)
+    if (!kinds[k].size) {
+      kinds[k].size = (uint64_t)kinds[k].count;
+      kinds[k].count = 0;
+    }
+  qsort(kinds, numKinds, sizeof(*kinds), compareKinds);
+  for (int k = 0; k != numKinds; ++k) {
+    int small = kinds[k].count == 0;
+    int64_t count = small ? 1 : kinds[k].count;
+    fprintf(stderr, "mdrt:   %-7s %10.1f MiB  %5lld x %12llu bytes  %s%s\n",
+            state, kinds[k].size * (double)count / 1048576.0,
+            (long long)count, (unsigned long long)kinds[k].size,
+            kinds[k].tag, small ? " (the blocks under 1 MiB)" : "");
+  }
+}
+
 static void printDeviceMemory(void) {
   fprintf(stderr,
           "mdrt: device memory (MDIR_DEVICE_MEMORY): peak %.1f MiB allocated, "
           "%.1f MiB with the pool\n",
           peakLive / 1048576.0, peakReserved / 1048576.0);
+  if (!isMemoryDetailed())
+    return;
+  const double mib = 1048576.0;
+  int64_t used = context && cuCtxSetCurrent(context) == CUDA_SUCCESS
+                     ? getDeviceUsed()
+                     : -1;
+  fprintf(stderr,
+          "mdrt: device memory: %lld allocations of blocks, %lld from the "
+          "pool, %lld returned to the driver%s\n",
+          (long long)numAllocations, (long long)numFromPool,
+          (long long)numToDriver,
+          untracked ? "; some blocks were not recorded" : "");
+  fprintf(stderr,
+          "mdrt: device memory: the driver's use of the device: %.1f MiB "
+          "once the context was made, %.1f MiB at the peak with the pool, "
+          "%.1f MiB at most at the events, %.1f MiB at the end\n",
+          accountGrowth[ACCOUNT_CONTEXT] / mib, usedAtPeakReserved / mib,
+          usedMost / mib, used / mib);
+  fprintf(stderr, "mdrt: device memory: by account, the growth of the "
+                  "driver's use, the bytes asked for, and the events:\n");
+  for (int i = 1; i != NUM_ACCOUNTS; ++i)
+    if (accountEvents[i])
+      fprintf(stderr, "mdrt:   %-36s %10.1f MiB %10.1f MiB %6lld\n",
+              accountNames[i], accountGrowth[i] / mib, accountAsked[i] / mib,
+              (long long)accountEvents[i]);
+  fprintf(stderr,
+          "mdrt: device memory at the peak in use (%.1f MiB), by tag and "
+          "size:\n",
+          peakLive / mib);
+  printBlocks("in use", peakLiveBlocks, numPeakLive);
+  fprintf(stderr,
+          "mdrt: device memory at the peak with the pool (%.1f MiB), by "
+          "tag and size:\n",
+          peakReserved / mib);
+  printBlocks("in use", peakReservedBlocks, numPeakReservedLive);
+  printBlocks("pool", peakReservedBlocks + numPeakReservedLive,
+              numPeakReservedFree);
 }
 static void watchDeviceMemory(void) {
   static int registered = 0;
@@ -687,8 +898,10 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
     return NULL;
   double start = begin();
   if (isHostShared) {
+    int64_t before = beginAccount();
     check(cuMemAllocManaged(&pointer, size, CU_MEM_ATTACH_GLOBAL),
           "cuMemAllocManaged");
+    endAccount(ACCOUNT_MANAGED, before, (int64_t)size);
     struct Activation *a = currentActivation;
     if (a) {
       if (a->numManaged == a->roomManaged)
@@ -705,16 +918,22 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
     pointer = freeBlocks[i].pointer;
     freeBlocks[i] = freeBlocks[--numFree];
     poolBytes -= size;
+    ++numFromPool;
     break;
   }
-  if (!pointer)
+  ++numAllocations;
+  if (!pointer) {
+    int64_t before = beginAccount();
     check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+    endAccount(ACCOUNT_BLOCKS, before, (int64_t)size);
+  }
   liveBytes += size;
-  noteBytes();
   if (numLive < MAX_BLOCKS)
-    liveBlocks[numLive++] = (struct Block){pointer, size, currentActivation};
+    liveBlocks[numLive++] =
+        (struct Block){pointer, size, currentActivation, allocationTag};
   else
     untracked = 1;
+  noteBytes();
   end(ALLOCATE, start);
   return (void *)pointer;
 }
@@ -743,6 +962,7 @@ void mgpuMemFree(void *pointer, CUstream stream) {
      back to the driver once the work that may use it is done. */
   finish();
   check(cuMemFree(address), "cuMemFree");
+  ++numToDriver;
   end(ALLOCATE, start);
 }
 
@@ -917,9 +1137,16 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
   cufftType type = single ? (forward ? CUFFT_R2C : CUFFT_C2R)
                           : (forward ? CUFFT_D2Z : CUFFT_Z2D);
   cufftHandle made;
+  int64_t before = beginAccount();
   if (!checkFFT(cufftPlan3d(&made, (int)k1, (int)k2, (int)k3, type),
                 "cufftPlan3d", k1, k2, k3))
     return 0;
+  if (before >= 0) {
+    /* The bytes asked for are the plan's workspace. */
+    size_t workspace = 0;
+    cufftGetSize(made, &workspace);
+    endAccount(ACCOUNT_FFT, before, (int64_t)workspace);
+  }
   if (!checkFFT(cufftSetStream(made, (cudaStream_t)mgpuStreamCreate()),
                 "cufftSetStream", k1, k2, k3)) {
     cufftDestroy(made);
@@ -1085,10 +1312,23 @@ static int64_t getGroupsLength(const struct Groups *groups, int which) {
   }
 }
 
+/* The tags of the buffers (MDIR_DEVICE_MEMORY=2). */
+static const char *const groupsTags[GROUPS_BUFFERS] = {
+    "groups: order",          "groups: counts",
+    "groups: entries",        "groups: masks",
+    "groups: unit groups",    "groups: unit ordinals",
+    "groups: shifts",         "groups: inner entries",
+    "groups: inner masks",    "groups: inner counts",
+    "groups: block of",       "groups: active units",
+    "groups: active count",   "groups: active runs",
+    "groups: active wide runs", "groups: placed"};
+
 static void allocateGroup(struct Groups *groups, int which) {
+  allocationTag = groupsTags[which];
   groups->data[which] = mgpuMemAlloc(
       (uint64_t)getGroupsLength(groups, which) * sizeof(int32_t), NULL,
       false);
+  allocationTag = NULL;
 }
 
 /* The buffers of the outer list; those of the inner one wait for their
@@ -1199,9 +1439,11 @@ struct Matrix {
 };
 
 static void allocateMatrix(struct Matrix *matrix) {
+  allocationTag = "matrix: rows";
   matrix->data = mgpuMemAlloc(
       (uint64_t)(matrix->rows * matrix->width) * sizeof(int32_t), NULL,
       false);
+  allocationTag = NULL;
 }
 
 int64_t mdrtMatrixCreate(int64_t rows, int64_t width) {
@@ -1261,10 +1503,13 @@ struct Edges {
 };
 
 static void allocateEdges(struct Edges *edges) {
+  allocationTag = "edges: candidates";
   edges->candidates = mgpuMemAlloc(
       (uint64_t)edges->capacity * 4 * sizeof(int32_t), NULL, false);
+  allocationTag = "edges: slots";
   edges->slots = mgpuMemAlloc(
       (uint64_t)edges->capacity * 5 * sizeof(int32_t), NULL, false);
+  allocationTag = NULL;
 }
 
 int64_t mdrtEdgesCreate(void) {
@@ -1398,8 +1643,11 @@ void mdrtDeviceActivationClose(void *activation) {
 void *mdrtDeviceAllocateKept(uint64_t size) {
   enter();
   CUdeviceptr pointer = 0;
-  if (size)
+  if (size) {
+    int64_t before = beginAccount();
     check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+    endAccount(ACCOUNT_KEPT, before, (int64_t)size);
+  }
   return (void *)pointer;
 }
 
@@ -1460,9 +1708,12 @@ void *mdrtDeviceAllocateRecorded(uint64_t size) {
   CUdeviceptr pointer = 0;
   if (!size)
     return NULL;
+  int64_t before = beginAccount();
   check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+  endAccount(ACCOUNT_KEPT, before, (int64_t)size);
   if (numLive < MAX_BLOCKS)
-    liveBlocks[numLive++] = (struct Block){pointer, size, NULL};
+    liveBlocks[numLive++] =
+        (struct Block){pointer, size, NULL, "a plugin's outputs"};
   else
     untracked = 1;
   return (void *)pointer;
@@ -1632,8 +1883,11 @@ static void tuplesToHost(void *host, const void *device, size_t bytes) {
 /* Memory of the device that the store keeps. */
 static void *tuplesDeviceKept(size_t bytes) {
   CUdeviceptr pointer = 0;
-  if (bytes)
+  if (bytes) {
+    int64_t before = beginAccount();
     check(cuMemAlloc(&pointer, bytes), "cuMemAlloc");
+    endAccount(ACCOUNT_TUPLES, before, (int64_t)bytes);
+  }
   return (void *)pointer;
 }
 
@@ -1753,7 +2007,9 @@ static void tuplesIncidence(struct MdrtMemref2 *result,
                       : mdrtTuplesWidth(given, tuples, arity, particles);
   size_t bytes = (size_t)(particles * width) * sizeof(int32_t);
   if (!e) {
+    allocationTag = "tuples: incidence";
     void *device = mgpuMemAlloc(bytes, NULL, false);
+    allocationTag = NULL;
     tuplesBuildOnDevice(device, given, tuples, arity, particles, width);
     mdrtTuplesSetMemref2(result, device, particles, width);
     return;
@@ -1805,7 +2061,9 @@ static void tuplesMembers(struct MdrtMemref2 *result,
   size_t bytes = (size_t)(tuples * arity) * sizeof(int32_t);
   struct MdrtTuples *e = mdrtTupleStoreFind(currentTuples, given);
   if (!e) {
+    allocationTag = "tuples: members";
     void *device = mgpuMemAlloc(bytes, NULL, false);
+    allocationTag = NULL;
     tuplesToDevice(device, given, bytes);
     mdrtTuplesSetMemref2(result, device, tuples, arity);
     return;
@@ -2074,6 +2332,14 @@ int64_t _mlir_ciface_mdrtDeviceTuplesTake(struct MdrtMemref2 *members,
     e->deviceIncidence =
         tuplesDeviceKept((size_t)(particles * e->width) * sizeof(int32_t));
     store->deviceBytes[0] += particles * e->width * (int64_t)sizeof(int32_t);
+    if (isMemoryDetailed())
+      fprintf(stderr,
+              "mdrt: device memory: the incidence structure of %lld tuples "
+              "of %lld: %lld particles, rows of %lld entries (at most %lld "
+              "tuples a particle), %lld bytes\n",
+              (long long)tuples, (long long)arity, (long long)particles,
+              (long long)e->width, (long long)e->widest,
+              (long long)(particles * e->width * (int64_t)sizeof(int32_t)));
     if (e->ordered) {
       e->deviceRenumbered = tuplesDeviceKept(bytes);
       store->deviceBytes[1] += (int64_t)bytes;
@@ -2205,8 +2471,10 @@ void mdrtGemmF32(int64_t m, int64_t n, int64_t k, int64_t a, int64_t lda,
   enter();
   double start = begin();
   if (!blasHandle) {
+    int64_t before = beginAccount();
     if (!checkBlas(cublasCreate(&blasHandle), "cublasCreate"))
       return;
+    endAccount(ACCOUNT_BLAS, before, 0);
     if (!checkBlas(cublasSetMathMode(blasHandle, CUBLAS_DEFAULT_MATH),
                    "cublasSetMathMode"))
       return;
@@ -2290,7 +2558,9 @@ int64_t mdrtDeviceConstant(int64_t host, int64_t bytes) {
     deviceConstantsCapacity = capacity;
   }
   CUdeviceptr device = 0;
+  int64_t before = beginAccount();
   check(cuMemAlloc(&device, (size_t)bytes), "cuMemAlloc");
+  endAccount(ACCOUNT_CONSTANTS, before, bytes);
   check(cuMemcpyHtoD(device, (const void *)(intptr_t)host, (size_t)bytes),
         "cuMemcpyHtoD");
   /* From pageable memory the copy may still be under way when it returns,
