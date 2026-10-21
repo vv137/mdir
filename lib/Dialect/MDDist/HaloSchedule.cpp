@@ -42,7 +42,8 @@ mdir::md_dist::proveCenterPartition(PartitionCentersOp op) {
       owned->getBlock() != op->getBlock() ||
       !copy->isBeforeInBlock(relation) ||
       !owned->isBeforeInBlock(relation)) {
-    op.emitOpError("cannot prove completed relation positions in the same block");
+    op.emitOpError(
+        "cannot prove completed relation positions in the same block");
     return failure();
   }
   auto validIndicator = [&](FieldType type) {
