@@ -12,6 +12,16 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **An opt-in single-pass device scan for group neighbor builds**
+  (D[device-single-pass-scan], #524, part of #420):
+  `convert-md-exec-to-gpu="single-pass-group-scan=true"` selects decoupled
+  look-back for the group's three integer counting-sort scans. Exact prefix
+  offsets and cursors match the CPU reference. On an RTX 4090 the scan
+  kernels of a JAC build fell from 52.65 to 38.41 µs, and a JAC run with
+  frequent builds improved by 1.02%; ordinary Amber JAC and Cellulose
+  changed within 0.23% and STMV slowed by 0.55%, so the existing
+  three-launch strategy remains the default. There is no control-file
+  key, file-format, or overwrite change.
 - **Distributed ownership-epoch migration primitives**
   (D313, #494): `md_dist.migrate` computes a new stable layout
   from current owned positions, and `md_dist.redistribute` moves a complete

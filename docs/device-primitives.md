@@ -21,7 +21,7 @@ describes how a device implements a primitive.
 | Sorted scatter: runs reduced without atomics | `BlockHistogram`, sort specialization; `BlockDiscontinuity` | #417 | Planned. `sorted` is reserved in the attribute and refused | — |
 | Warp-aggregated atomics | `WarpReduce`, matching by key | #418 | Planned | — |
 | Vectorized and transposed gathers | `BlockLoad`, `WarpLoad`, `BlockExchange` | #419 | Next, on the gathering of PME (tiled gathering at orders 6 and 8 is #411) | — |
-| Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420 | Planned | — |
+| Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420, #524 | In part: opt-in group scan | [Section 4.8](#48-single-pass-scan-strategy-ddevice-single-pass-scan) |
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
 | Reductions chosen by the algebra of the operator (Section 5) | `BlockReduce` (raking, commutative only) | #422 | Step 1 built, behavior-neutral: the algebra of every sum stated in the IR (`any_order_exact`, `any_order`, `fixed_order`), read by the chooser and the lowerings instead of the mode, with the same PTX; the warp and block reductions one emitter. The strategies it licenses follow only where measured | D301 |
 | Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D296 |
@@ -567,7 +567,8 @@ The emitters are in `include/mdir/Conversion/CompactionEmitter.h`
 | `emitLanesBelow`, `emitWarpBallot`, `emitWarpRank`, `emitWarpCount` | The warp compaction: the vote of the warp on a predicate, $b = \mathrm{ballot}(p)$; the rank of lane $\ell$ among the lanes that keep, $r_\ell = \mathrm{popc}(b \wedge (2^\ell - 1))$; the count, $\mathrm{popc}(b)$. A kept lane writes its item at the count of the round plus $r_\ell$, so the items keep the order of the lanes | Every lane of the warp reaches the ballot; warps of 32 | a `WarpScan` over flags, done in the bits of one vote [[CUB]](references.md#cub) |
 | `emitWarpScan` | The inclusive sum over segments of 2 to 32 lanes, in $\log_2$ rounds of `shuffle up` by $1, 2, 4, \ldots$ [[HillisSteele1986]](references.md#hillissteele1986) | Every lane reaches it. The lane is compared with the offset as a signed or an unsigned number, as the site has it | `WarpScanShfl` |
 | `emitBlockScan` | The exclusive sum over a block, and its total in every thread: a warp scan in each warp, the sums of the warps through block memory, a warp scan of those by the first warp | A buffer of one i32 a warp and one for the total in block memory (`memref<9xi32>` for 256 threads); every thread reaches its two barriers | `BlockScan`, `BLOCK_SCAN_WARP_SCANS` |
-| `emitDeviceScan` | The exclusive sums of $n$ counts into `start` ($n + 1$, the total last) and a cursor: blocks of 256 threads with 4 counts a thread sum their 1024 counts; one block scans the sums of the blocks; each block scans its counts from its offset. Three launches | The caller gives the buffer of the sums of the blocks, $\max(\lceil n/1024 \rceil, 1)$ of them | `DeviceScan` is one pass with decoupled look-back, #420; this is the reduce-then-scan form |
+| `emitDeviceScan` | The exclusive sums of $n$ counts into `start` ($n + 1$, the total last) and a cursor: blocks of 256 threads with 4 counts a thread sum their 1024 counts; one block scans the sums of the blocks; each block scans its counts from its offset. Three launches | The caller gives the buffer of the sums of the blocks, $\max(\lceil n/1024 \rceil, 1)$ of them | The reduce-then-scan form remains the default; `emitSinglePassScan` is the opt-in group strategy (#524) |
+| `emitSinglePassScan` | The same offsets and optional cursor: one initialization launch, then one launch whose blocks claim tiles and use decoupled look-back to find their prefix (Section 4.8) | The caller gives an i64 buffer of $\max(\lceil n/1024 \rceil, 1) + 1$ words; every count and total fits the existing i32 offset type | `DeviceScan` with decoupled look-back [[MerrillGarland2016]](references.md#merrillgarland2016) |
 | `emitChunkedScan`, `emitSerialScan` | The same sums for a few thousand counts: a thread sums each chunk of 256, one thread scans the sums of the chunks (`emitSerialScan`), a thread writes the offsets of each chunk | — | — |
 | `emitCursorScatter` | The scatter of a counting sort: each item takes the next slot of its key from the cursor with a device atomic and writes its number there; an item with a negative key has no bin, unless every key is one | The cursor holds the offsets of the keys (a scan above) | `BlockHistogram`'s atomic histogram, by key |
 | `emitSortBins` | The items of each bin sorted by insertion, by the item or by a value of the item; a thread a bin | Bins of a few items | — |
@@ -605,7 +606,8 @@ parameters that are not values are attributes of the call: `lanes` and
 `unsigned` of `warp_scan`, `every_key` of `cursor_scatter`. The names are
 those of the emitters: `warp_lanes_below`, `warp_ballot`, `warp_rank`,
 `warp_count`, `warp_scan`, `block_scan`, `device_scan`,
-`device_scan_cursor`, `chunked_scan`, `cursor_scatter`, `sort_bins`,
+`device_scan_cursor`, `single_pass_scan`, `single_pass_scan_cursor`,
+`chunked_scan`, `cursor_scatter`, `sort_bins`,
 `sort_bins_by`, `rank_in_bins`, and the accessor of ragged rows,
 `ragged_row` and `ragged_entry` (Section 4.7), whose results may be
 `index`.
@@ -620,7 +622,7 @@ The inventory of #432, by the primitive each site takes:
 | The active units (D268) | warp compaction | `emitActiveUnits` (lowering) |
 | The groups build: the queue of near candidates, the kept entries, and those of the build of all images | warp compaction | `lists_body`, `images_body` (the groups template) |
 | The groups build: the excluded partners of a group (D106) | warp scan, 16 lanes, unsigned | `lists_body` |
-| The groups build: particles by column and z-bin key; places by cell of the search grid; the chunks of the columns | device scan (three kernels, block scan within), scatter, insertion sort; the third a scan alone | `build` (the groups template) |
+| The groups build: particles by column and z-bin key; places by cell of the search grid; the chunks of the columns | device scan (three kernels by default, two with `single-pass-group-scan=true`), scatter, insertion sort; the third a scan alone | `build` (the groups template) |
 | The matrix build: the rows, orthorhombic, triclinic of one pass, and of all images (D241) | warp compaction | `mdrt_gpu_build_neighbors_matrix*` (the matrix template; the images part generated by `scripts/generate-matrix-images-template.py`) |
 | The matrix build: particles by cell | chunked scan, scatter, stable rank | `mdrt_gpu_matrix_sort` |
 | The spatial order (D44, D86) | chunked scan, scatter (every key), insertion sort by the numbers of the input | `mdrt_gpu_spatial_order` |
@@ -639,7 +641,8 @@ emitters of Section 5 (D301).
   `CompactionEmitter.h` from kernels written for the test; `device-primitives-gpu.test` runs it on a device
   and compares exactly: the compaction of 2 warps and the warp scans with
   results written out, and the block scan of 256 threads, the device scan
-  of 5000 counts with and without the cursor, the chunked scan of 1000, and
+  of 5000 counts with and without the cursor, the single-pass scan of 5000
+  and 131083 counts and the empty input, the chunked scan of 1000, and
   the counting sort of 3000 items by 50 keys (with the insertion sort, the
   stable rank, and the order by another buffer) with results computed on
   the host by the definition. With `-Dsanitize=1` it runs under memcheck
@@ -752,7 +755,7 @@ until a measurement shows a gain (#471).
 ### 4.8 Single-pass scan strategy (D[device-single-pass-scan])
 
 The three-launch `emitDeviceScan` reads the counts in both its reduction
-and output passes. The proposed single-pass strategy reads each count once
+and output passes. The single-pass strategy reads each count once
 and writes its exclusive offset once. Each running block first claims a
 tile number from a device counter, scans its 1024 counts locally, and
 publishes its aggregate. Its leader looks back over earlier tiles' published
@@ -766,11 +769,42 @@ their grid indices: otherwise active blocks could wait for unscheduled
 predecessors and deadlock. Each descriptor packs its status and i32 sum in
 one atomic i64 word, so that a reader never sees a status paired with an
 older sum. A short initialization launch clears the descriptors and the
-counter before the scan launch. The existing three-launch strategy remains
-available through an internal primitive attribute for direct comparison.
-The choice at each real site follows measurements of its scan time and of
-the whole step; the exact integer offsets and deterministic mode must agree.
-No control-file key or output format changes.
+counter before the scan launch. The three-launch primitive remains the
+default. The compiler pass `convert-md-exec-to-gpu` selects the alternate
+group template with `single-pass-group-scan=true`; both templates come from
+one generator. This is an internal compiler strategy, with no control-file
+key or output format change.
+
+The inventory for #420 separates scans with different shapes:
+
+| Site | Current scan | Decision |
+|---|---|---|
+| Group build: column/bin and cell offsets, three scans per build | Up to one count per column/bin or cell; three-launch device scan by default | Offer the shared single-pass strategy through a compiler pass option; its scan kernels and whole-step effect are measured below |
+| Matrix build and spatial order | Chunks of 256 cell counts, with one thread scanning the chunk totals | Retain their chunked scan pending a measurement of matrix runs |
+| Model pair-list slots (D277) | A partition within each particle's candidate slots, rather than one global prefix | No global scan to replace; measure a changed partition strategy separately |
+| Tuple incidence rows (D314) | The shared three-launch device scan over one count per particle, once per tuple set at startup | Retain until its startup time is material; its storage reduction comes from ragged rows, not the scan strategy |
+| Listed particles of PME (`md_exec.nonzero`) | One thread scans $\lceil N/256 \rceil$ chunk counts, when the list is built | Retain until a measured system makes this serial portion material |
+| PME tile bins (#410) | Fixed-capacity runs with an overflow list; no exact prefix scan | Compare an exact-scan design with the existing bins as separate work in #420 |
+
+On the RTX 4090, `MDRT_PROFILE=1` with `MDRT_WAIT=1` on JAC NVE
+(100 mixed-precision steps, seven group builds) measured the three scan
+kernel groups at 17.70, 17.19, and 17.76 µs per build with the old
+strategy, and 14.12, 11.27, and 13.02 µs with the new one. Their sum is
+52.65 → 38.41 µs per build, or 3.69 → 2.69 µs per step at that build
+frequency. On STMV NPT (100 mixed-precision steps), the scan kernels are
+95.12 → 80.83 µs per build, a 15.0% reduction.
+
+The whole-step Amber comparisons used the same RTX 4090, alternated main
+and the single-pass variant, and took the median of two warmed rounds.
+Times in ms/step were JAC NVE 0.135785 → 0.136091 (+0.23%), Cellulose
+NVE 1.136844 → 1.135727 (−0.10%), and STMV NPT 4 fs 3.797802 →
+3.818826 (+0.55%). With a valid but short outer and inner skin (0.5 and
+0.2 Å beyond JAC's 8 Å cutoff, 4,594 group builds in 10,000 steps), JAC
+NVE was 0.188103 → 0.186177 ms/step (−1.02%). The ordinary Amber skins
+do not establish a whole-step gain, and STMV slowed in both measured
+rounds. The default therefore stays the three-launch strategy; the
+single-pass pass option permits further measurements in rebuild-heavy
+programs.
 
 ## 5. Reductions by their algebra
 
