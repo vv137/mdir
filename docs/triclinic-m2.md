@@ -1,6 +1,11 @@
 # Triclinic cells (M2)
 
-Status: 2026-10-02. P0 and P1 done (D123): the readers take triclinic
+Status: kept current (last checked 2026-10-21). P0 to P4 are done (D123,
+D125 to D127), with the exactness of the lists in narrow cells (D241,
+D242); P5, the rates against other programs, is not (Section 5). Triclinic
+cells run on the CPU and on a device, with the neighbor matrix and with
+the groups, at constant volume and at constant pressure, from the control
+file and from Python (D238, D244). P0 and P1 (D123): the readers take triclinic
 cells (Amber's angles and `IFBOX` 2 and 3, the nine numbers of `.gro`, six
 numbers of `[boundary] box` for CHARMM with the rotation of its frame) and
 reduce them; on the CPU, the minimum image in one pass, the neighbor matrix
@@ -11,9 +16,8 @@ constants; a rhombic dodecahedron of GROMACS (631 TIP3P) agrees with a rerun
 of GROMACS to $4\times10^{-7}$ in the bonded terms and the Lennard-Jones and
 $4.5\times10^{-6}$ in Coulomb, its single precision; 10 ps at constant
 energy in the octahedron conserve it (`triclinic.test`,
-`triclinic-cell.test`). The device (P2, P3) and the barostat (P4) refuse
-them. Cells are orthorhombic in M1. This document
-plans general triclinic cells: the truncated octahedra and rhombic
+`triclinic-cell.test`). This document began as the plan of general
+triclinic cells, when cells were orthorhombic in M1: the truncated octahedra and rhombic
 dodecahedra of solutes (Amber's `solvateOct`, GROMACS's `editconf -bt`),
 and the hexagonal cells of CHARMM-GUI's membranes. It rests on a survey of
 where MDIR assumes the orthorhombic cell, a reading of OpenMM's
@@ -113,7 +117,7 @@ with `ucell`, as above.
 |---|---|---|
 | I1 | $H$ is lower triangular and reduced | Reduced on input; the barostat keeps it (I3) |
 | I2 | $r_c \le \tfrac12 \min(a_x, b_y, c_z)$ | Checked at the start, at a commit of a writable borrow (D238), and at every change of the cell (`mdrtSetBox`), in place of the edge of twice the cutoff. With the neighbor matrix it is all that is asked of the cell (D241) |
-| I3 | The barostat scales $H' = H\,\mathrm{diag}(\boldsymbol\mu)$ and $\mathbf x' = \mathbf x\,\mathrm{diag}(\boldsymbol\mu)$ only: isotropic and semi-isotropic coupling | The barostat refuses any other coupling |
+| I3 | The barostat scales $H' = H\,\mathrm{diag}(\boldsymbol\mu)$ and $\mathbf x' = \mathbf x\,\mathrm{diag}(\boldsymbol\mu)$ only: isotropic, semi-isotropic, and anisotropic coupling (D127, D163c) | The barostat has no coupling of shear: a flexible cell is left to another decision (D163c) |
 | I4 | A neighbor structure that stores the image of an entry stores it as lattice indices $\mathbf n = (n_a, n_b, n_c)$, applied as $\mathbf n H$ | The builds of the groups and of the dual list (D115). The matrix stores no image: an entry is a particle, and its loops take the image of the pass below |
 
 **I2 and the minimum image.** Every nonzero vector of a reduced lattice is
@@ -236,13 +240,15 @@ D80 holds unchanged, with $\mu_a$ the ratio of the diagonals of $H$ to those
 of the reference cell. The pressure of each axis is the diagonal of the
 virial over $a_x b_y c_z$, as now, and the center of the reference positions
 of restraints scales by $\mathrm{diag}(H)/\mathrm{diag}(H_\text{file})$, as
-D124 has it. A
-coupling of the shape of the cell (anisotropic, or OpenMM's flexible
-barostat) breaks I3 and is not in this work.
+D124 has it. Anisotropic coupling (D163c) scales each edge by a $\mu_a$ of
+its own, a diagonal $\mathrm{diag}(\boldsymbol\mu)$ still, and keeps I3. A
+coupling of the shape of the cell (shear, OpenMM's flexible barostat)
+breaks I3 and is not built.
 
 ## 3. What changes
 
-From the survey of M1 (line counts are of today's tree):
+From the survey of M1; the column "Today" is the code before this work
+(2026-10-02), and the column "Triclinic" is what P0 to P4 built:
 
 | Area | Today | Triclinic |
 |---|---|---|
@@ -277,7 +283,16 @@ equivalent; the measurement is part of the validation.
 | P2 | Done (D125): the device with the neighbor matrix: the cell as on the CPU, the tuples and pairs with the shared minimum image, a triclinic build of the matrix in fractional coordinates, and the kernels of PME of `PMEGPUTriclinic.mlir` | P1 on the CPU: the terms and 200 steps to the printed digits in double precision |
 | P3 | Done (D126). The device: groups, the dual list, D115's images. The search of candidates wraps the indices of cells per axis, which is wrong across the face of z (or y) of a tilted cell, where a neighbor is displaced by $\mathbf c$ (or $\mathbf b$), $x$ and $y$ with it. As GROMACS does, each group searches with shifts $t_z, t_y \in \{-1, 0, 1\}$ and recomputes its window of columns for each; the image of an entry is the lattice shift $\mathbf n$ that the search found (I4), not one chosen per axis; the kernel of D115 and the gather take $\mathbf n H$ | The matrix of the device (P2), in the same precision |
 | P4 | Done (D127): the barostat (I3); CHARMM's hexagonal cells | Conservation at constant energy; the density of water against a rectangular cell; CHARMM 51b1 on a hexagonal cell in its frame |
-| P5 | The rates of a protein in an octahedron against its cube; docs and the white paper | pmemd.cuda and GROMACS on the same systems |
+| P5 | Not done. The rates of a protein in an octahedron against its cube; docs and the white paper. First rates of MDIR alone are in the [roadmap](roadmap.md), F2 | pmemd.cuda and GROMACS on the same systems |
+
+Since the phases, the parts of MDIR that grew take triclinic cells as
+follows: Ewald summation with prolates runs in them (D266,
+[pme-m1.md](pme-m1.md)); the influence function of P3M,
+`influence = "P3M"`, takes a rectangular cell only and refuses a triclinic
+one (D304, #475); the tilts are arguments of a program's entry, not
+constants of its text (D227), and a Python simulation lends them through a
+borrow (`Borrow.tilt`, D238) and runs at constant pressure in a triclinic
+cell (D244).
 
 The defect of the barostat with restraints (roadmap, Section 1), which
 touches the same code as P4, was fixed before it (D124).

@@ -1,8 +1,13 @@
 # Design for Milestone M1
 
 Status: decided (2026-09-29), revised for an all-atom target
-(2026-09-29), in implementation. Section 16 has the decisions; Section 18
-has the order of work and its state.
+(2026-09-29), and built: every stage of Section 18 is done. Kept current
+(last checked 2026-10-21) where a section describes what runs; the tables
+headed "Proposal" record the choice made, and a section says where the
+code went another way. Sections 16 to 18 are history. The detail of later
+work is in its own documents: [pme-m1.md](pme-m1.md),
+[charmm-m1.md](charmm-m1.md), [triclinic-m2.md](triclinic-m2.md),
+[groups-m1.md](groups-m1.md), and the decisions they cite.
 
 M1 is all-atom molecular dynamics with an Amber force field: a protein in
 water, with particle mesh Ewald [[Darden1993]](references.md#darden1993), [[Essmann1995]](references.md#essmann1995) and
@@ -58,11 +63,11 @@ energy, temperature, and pressure.
 | Item | Milestone | Consequence for M1 |
 |---|---|---|
 | Martini and other coarse-grained force fields | Later (D53) | |
-| Particle mesh Ewald on more than one device or process | M2c and later | |
-| The repartitioning of the mass of hydrogen | Later | The time step stays at 2 fs |
+| Particle mesh Ewald on more than one device or process | M4 ([roadmap](roadmap.md), Section 7) | |
+| The repartitioning of the mass of hydrogen | Later | MDIR does not repartition; it runs the masses that a topology gives, repartitioned ones included, as the Amber suite's systems at 4 fs |
 | Polarizable force fields, 12-6-4 terms [[Li2014]](references.md#li2014) | Later | The readers reject topologies that have them |
 | Cells that are not orthorhombic | Done (D123, D125, D126, D127) | Triclinic cells run on the CPU and on the device, with the matrix and the groups, at constant volume and pressure (docs/triclinic-m2.md) |
-| Random numbers for each particle, as Langevin dynamics needs them | Open | The thermostat of M1 takes a few random numbers for each step |
+| Random numbers for each particle, as Langevin dynamics needs them | Done (D135, Section 11.6) | The thermostat of M1 takes a few random numbers for each step; Langevin dynamics a number for each particle and component |
 | Groups with a thermostat each | Later | One group |
 
 ### 1.4 An intermediate stage
@@ -145,7 +150,7 @@ the same tuple (Section 2.2 of ops-m0.md).
 | Orientation | Arity | The same tuple | Example |
 |---|---|---|---|
 | `unordered` | 2 | `{i, j}` and `{j, i}` | Bonds, exclusions |
-| `ordered` | Any | No other | Position restraints, with arity 1 |
+| `ordered` | Any | No other | Virtual sites (the site, then its atoms), the waters of SETTLE, the groups of SHAKE with two or three hydrogens, CMAP; the IR allows arity 1 as well, which the driver does not use: position restraints are fields of the particles (Section 22) |
 | `reversal` | 2 or more | `(i, j, k)` and `(k, j, i)` | Angles, dihedrals |
 
 ### 2.3 Parameters for each tuple, not for each kind
@@ -170,7 +175,9 @@ the pair (B7). A kernel over a relation of a topology takes the internal
 coordinates that the op names. The ops are `md.sum_tuples` and
 `md.gather_tuples`; they are apart from `md.sum_relation` and
 `md.gather_relation` because exchange and truncation, which those two
-carry, have no meaning for a tuple of a topology.
+carry, have no meaning for a tuple of a topology. The same ops also sum
+the triplets that `md.triplets` derives from a neighborhood, a relation of
+arity 3 of the positions rather than of the topology (D160).
 
 ```mlir
 %u = md.sum_tuples %angles, %x, %cell
@@ -287,15 +294,21 @@ common. Both are emitted by the same code, op for op, so that the
 elimination of common subexpressions leaves one of each after the
 coordinates have been computed in the kernel.
 
-A kernel that uses a `displacement` cannot be differentiated with respect
-to the positions yet, as in M0.
+A kernel over tuples that uses a `displacement` $\mathbf d = \mathbf x_a -
+\mathbf x_b$ is differentiated as well: the gradient a component at a time,
+$\mathbf F_a = -\partial u/\partial\mathbf d$ and $\mathbf F_b = -\mathbf
+F_a$, with its share of the virial. A kernel over a neighborhood
+(`md.sum_relation`, `md.gather_relation`) that uses the displacement still
+cannot be differentiated with respect to the positions, as in M0, except
+the kernel of a neural stage, whose product gives the cotangents (D288).
 
 ### 4.2 With respect to a parameter
 
 | With respect to | In M1 | How |
 |---|---|---|
 | An argument of the potential that is a number, such as a scale of the energy or a coupling parameter | Yes | `request [derivative(n)]`, as in M0. The derivative of a sum over tuples is the sum of the derivative of its kernel |
-| A field of the tuples or of the particles, such as the force constant of every bond | No | The result is a field, not a number. It is a gather of the derivative of the kernel, and the machinery of 4.1 can produce it when an application needs it, such as the fitting of a force field |
+| A field of the particles with one component of `f64`, such as the charges | Yes, since D230 | `request [derivative(n)]` of `md.evaluate` gives a field of its type, $g_i = \partial U/\partial a_i$: a gather of the derivative of each kernel that takes the field, over the relation, the tuples, or the particles; any other use of the field is an error that names the op ([python-gradient.md](python-gradient.md)) |
+| A field of the tuples, such as the force constant of every bond | No | The result would be a field of the tuples. `md-differentiate` refuses a field that a kernel takes other than by gathering it from the particles |
 | An entry of a table (Section 7) | No | The result is a table. It needs a sum for each entry |
 
 ## 5. Execution of terms over tuples
@@ -315,11 +328,21 @@ Decision: A, as for pairs (P13, D49).
 
 | Reason | |
 |---|---|
-| It is the strategy of the pairs. | A thread writes to its own particle. No atomic addition, and the deterministic level holds. |
+| It is the strategy of the pairs. | A thread writes to its own particle. Under A, no atomic addition, and the deterministic level holds. |
 | Bonded terms are a small part of the work. | An atom of a protein is a member of some 20 bonded tuples and has some 300 neighbors. |
 | A loop over tuples of this kind is a loop over particles. | It can be fused with the loop over pairs and with the kick that follows. |
 
-B and C are choices for the planner later.
+The decision holds on the CPU and in the deterministic mode. On a device
+B became the default: a loop over tuples that are not disjoint and that
+adds to its destinations evaluates each tuple once and adds to its members
+with atomics, where the stated algebra of every value it reduces allows
+another order (`evaluatesOnce` of `convert-md-exec-to-gpu`, option
+`tuples-once`; D103, D301). A `fixed_order` sum, as the deterministic mode
+states, keeps A, and so do the disjoint tuples of the constraints. A run of
+at least 100,000 tuples adds what the tuples of a block give each particle
+in a table in block memory first, the strategy `hash` of the privatized
+scatter-accumulate (D283, D285, [device-tuples.md](device-tuples.md),
+Section 11). C is not built.
 
 ### 5.2 The structure
 
@@ -343,9 +366,9 @@ B and C are choices for the planner later.
 |---|---|
 | What the structure holds | For each particle a row: the number of its tuples, then for each tuple its number, the place of the particle in it, and its members |
 | The width of a row | The largest number of tuples of a particle, found when the structure is built. No parameter, and no row that overflows. |
-| When it is built | Where the members change: where the run begins and where the particles are put in a new order (D44), which renumbers the members. It does not depend on the positions or on the cell. |
+| When it is built | Where the members change: where the run begins and where the particles are put in a new order (D44), which renumbers the members. It does not depend on the positions or on the cell. The members and the structure are kept by a store of the runtime and taken again where the identities of the particles are those they were built from (D253, D255); on a GPU, kernels of the program build them on the device, as a gather of the structure in the order of the files (D257, [device-tuples.md](device-tuples.md)). |
 | The coordinates | `md_exec.tuple_for` takes displacements only, in the minimum image. The kernel computes the other coordinates from them, with the code that differentiation uses (Section 4.1). |
-| The kernel | Yields the forces on all members. The loop takes the one of the particle. A kernel for each place, which computes that force only, is a later optimization. |
+| The kernel | Yields the forces on all members. A loop by the particles (strategy A) takes the one of the particle; a loop that evaluates each tuple once (B, Section 5.1) adds all of them. A kernel for each place, which computes that force only, is a later optimization. |
 | A sum | A tuple contributes once, from its member at place 0. No weight, and no rounding from adding a third three times. |
 
 ## 6. Exclusions and scaled pairs
@@ -361,9 +384,9 @@ $$N(\mathbf x, h) = \{ \{i, j\} : i \ne j,\ r_{ij} < r_c \} \setminus E.$$
 
 | Item | Proposal |
 |---|---|
-| The relation | `E` is a relation of arity 2 of a tuple set, as the bonds are. The reader derives it: pairs one, two, and three bonds apart (`nrexcl = 3`), and those that the topology lists. |
-| Where a pair is excluded | In the build of the neighbor structure. After the search, every particle removes from its row the particles in its row of exclusions and keeps the others in their order. A loop over pairs tests nothing. The neighbor structure carries the exclusions (`exclude` of `md_exec.build_neighbors` and `md_exec.empty_neighbors`), so every build applies them. |
-| The width of a row | A row holds the neighbors before the excluded ones are removed. The search itself is not changed, and a filter after it serves all three searches of a device. |
+| The relation | `E` is a relation of arity 2 of a tuple set, as the bonds are. The readers give it: from Amber, `EXCLUDED_ATOMS_LIST` as the file has it, built again from the bonds, angles, and dihedrals only where the topology has extra points (Section 19); from GROMACS, the pairs within `nrexcl` bonds of each `[ moleculetype ]` and those of its `[ exclusions ]`; from CHARMM, the pairs one to three bonds apart and those of `!NNB` ([charmm-m1.md](charmm-m1.md)). |
+| Where a pair is excluded | In the build of the neighbor structure, which carries the exclusions (`exclude` of `md_exec.build_neighbors` and `md_exec.empty_neighbors`), so every build applies them. On the CPU a filter after the search removes from each row the particles in its row of exclusions and keeps the others in their order. On a device the search of the matrix enters an excluded neighbor as the particle itself, which a loop over pairs skips ([neighbors-m0.md](neighbors-m0.md), Section 2.5); the groups clear the bit of an excluded pair in the mask of its entry (D89, D106, [groups-m1.md](groups-m1.md), Section 2). |
+| The width of a row | On the CPU a row holds the neighbors before the excluded ones are removed; on a device an excluded neighbor keeps its slot as the particle itself. |
 | The row of exclusions | An incidence structure of `E` (Section 5.2). It is built with the others. |
 | A term over the excluded pairs | `md.sum_tuples` over `E`, with `coordinates(distance(0, 1))`. Particle mesh Ewald has one: the reciprocal sum includes every pair, and the excluded pairs are taken out again (Section 8). |
 
@@ -382,7 +405,7 @@ md.tuple_set @pairs14 on(@atoms) arity(2) orientation(unordered)
 
 | Item | Proposal |
 |---|---|
-| Parameters | For each pair: the coefficients of Lennard-Jones and the product of the charges, each with its factor of scale applied by the reader |
+| Parameters | For each pair, fields of `pairs14`: `sigma`, `epsilon` times $s_\text{LJ}$, and `qq` $= f q_i q_j s_\text{C}$. The reader keeps the two factors for each pair, and the builder applies them |
 | The factors of scale | Amber stores them for each dihedral (`SCEE`, `SCNB`); GROMACS for the system (`fudgeLJ`, `fudgeQQ`) or for each pair. Parameters for each tuple take either (D47). |
 | A pair that two dihedrals share | Counted once. The reader keeps one tuple for each pair, as the engines do. |
 | Cutoff | None. A pair three bonds apart is always near. |
@@ -441,8 +464,11 @@ the repulsion out. As GROMACS does, it takes $N^2 \langle C_6\rangle$, with $\la
 mean of $C_6$ over the pairs of distinct particles that are not excluded;
 it agrees with GROMACS to 10⁻⁷. Its virial is six times its energy, so the pressure
 changes by $2 E_\text{disp} / V$. A switch or a shift of the potential inside the
-cutoff needs the integral of the change as well; M1 takes a plain cutoff
-only.
+cutoff needs the integral of the change as well; M1 took a plain cutoff
+only. Since then the correction also takes `POTENTIAL_SHIFT`, adding the
+estimate of what the shift takes within the cutoff (D210), and covers the
+tails of the `[[energy.pair]]` terms of a topology (D209); a switch still
+refuses it.
 
 sander leaves the repulsion out as well, but sums $N_a N_b C_{6,ab}$ over
 all pairs of types, with no mean over the pairs that are not excluded
@@ -465,7 +491,8 @@ that decays faster than $r^{-3}$. It differs from the correction above by
 $(\sigma / r_c)^6 / 3$ of it for Lennard-Jones, $10^{-3}$ at the cutoffs of M1, less
 than the error of the uniform density that both assume, and it would not
 agree with either engine. Lennard-Jones by particle mesh Ewald, for systems whose density
-beyond the cutoff is not uniform, such as membranes, is for later.
+beyond the cutoff is not uniform, such as membranes, is built since:
+`lennard_jones = "PME"` (D162).
 
 ## 8. Electrostatics
 
@@ -483,7 +510,8 @@ but the Coulomb one.
 ### 8.2 Particle mesh Ewald
 
 Decided: particle mesh Ewald on one device or one process, in M1 (D55).
-Designed in its own document when its stage begins. The parts:
+Designed and built in its own document, [pme-m1.md](pme-m1.md) (D69 to
+D71), which is the current description. The parts, as planned:
 
 | Part | Where |
 |---|---|
@@ -501,7 +529,7 @@ FFT, and differ in the influence function
 |---|---|---|
 | Ewald summation [[Ewald1921]](references.md#ewald1921), a sum over wave vectors | Of order $N^{3/2}$ at best | The reference of the tests: a script with many wave vectors |
 | Smooth particle mesh Ewald [[Essmann1995]](references.md#essmann1995): B-splines, an FFT, and the forces from the gradient of the B-splines | $N \log N$ | The method of M1, as both engines use it |
-| P3M with forces from the potential (P3M-AD): the influence function that minimizes the error for the grid | $N \log N$ | A variant: another influence function in the same pipeline, when it is measured to help |
+| P3M with forces from the potential (P3M-AD): the influence function that minimizes the error for the grid | $N \log N$ | A variant: another influence function in the same pipeline; built as `influence = "P3M"` (D304), beside `"OPTIMAL"` ([pme-m1.md](pme-m1.md), Section 1.1) |
 
 What the engines do differently, which MDIR must be able to do both ways
 to compare with them:
@@ -520,13 +548,18 @@ Beside those:
   Which one each applies by default is checked from their documentation
   before the stage begins.
 - The balance of the direct and the reciprocal sum (the cutoff, $\beta$, and
-  the grid) is tuned at run time by the engines. In MDIR it is a numeric
-  parameter of the plan (A4), which a run can tune without compiling
-  again, since $\beta$ and the grid enter the program as values.
+  the grid) is tuned at run time by the engines. In MDIR it was to be a
+  numeric parameter of the plan (A4), tuned without compiling again. Not
+  built: the grid, the order, and $\beta$ are attributes of
+  `md.reciprocal`, constants of the program ([pme-m1.md](pme-m1.md),
+  Section 2), set from the control file (Section 4 there).
 - Methods of other kinds, such as fast multipole or multilevel summation,
-  are not planned for M1; distributed particle mesh Ewald is M2c.
+  are not planned for M1; distributed particle mesh Ewald is M4
+  ([roadmap](roadmap.md)).
 
-Two questions shape the design (Section 17):
+Two questions shaped the design (Section 17), answered by D70 (fixed
+point in the deterministic mode, atomics of floating-point numbers by
+default, D84) and D64 (pocketfft on the host, cuFFT on a device):
 
 | Question | Candidates |
 |---|---|
@@ -535,8 +568,8 @@ Two questions shape the design (Section 17):
 
 ## 9. Constraints
 
-Decided: constraints in M1 (D56). Designed in its own document when its
-stage begins.
+Decided: constraints in M1 (D56). Designed and described in this section;
+no document of its own was written.
 
 | Item | Decision |
 |---|---|
@@ -608,7 +641,10 @@ every `center_of_mass_interval` steps.
 | Barostat | Stochastic cell rescaling (Bernetti and Bussi 2020 [[Bernetti2020]](references.md#bernetti2020)), isotropic; semi-isotropic, with the pressure in a plane apart from that along its normal, as an option | It samples the distribution at constant pressure and is of first order: it has no momentum of the cell to store. |
 
 Both carry the statement that they preserve the target distribution
-(P10).
+(P10). Since M1: a Nosé–Hoover chain, `method = "NOSE-HOOVER"` (D163a);
+Brownian dynamics as an integrator (D163b); and anisotropic coupling of the
+barostat, each axis on its own (D163c). The keys are in
+[the control file](paper/A-control-file.md).
 
 Two barostats go by the name of Bussi:
 
@@ -660,6 +696,12 @@ dyn.program @step(...) attributes {
 | How often | Every `n` steps, with `n` times the time step. A step between computes no global sum. On a device a step with global sums takes up to twice the time of one without (Section 10.8 of ops-m0.md). |
 | Groups with a thermostat each | One group in M1 |
 
+Two rows of this table no longer hold: the thermostats control the optimal
+temperature, measured from the kinetic energies of the half steps at the
+steps that close a period of coupling (D263); and the log and the barostat
+take the pressure of the groups that the barostat scales, with the kinetic
+energy of their centers at the half steps (D264).
+
 ### 11.3 Random numbers
 
 | Item | Proposal |
@@ -688,7 +730,7 @@ Verlet and leapfrog (D72, D76, D77, D119):
 | Semi-isotropic coupling | x and y scale together by the strain of $\ln A$ from $(P_{xx} + P_{yy})/2$ less $\gamma/L_z$, z by that of $\ln L_z$ from $P_{zz}$, each with its own normal number (the first two of stream 1 of the step), one step of Euler and Maruyama of eqs. (9a) and (9b) of [[Bernetti2020]](references.md#bernetti2020) (`mdrtBarostatStrainArea`, `mdrtBarostatStrainHeight`). The pressure of each axis takes its kinetic energy without the center of mass and the diagonal of the virial; the scale, the kinetic energy, and the virials are vectors of three, and the work sums over the axes. `work = "FIRST_ORDER"` is for isotropic coupling only (D119) |
 | The period of coupling | The paper finds the fluctuations of the volume too large when $N_P \Delta t$ is not small against $\tau_p$ (a TIP3P box at $\tau_p = 0.5$ ps: $\sigma^2_V$ from 0.23 at $N_P \le 10$ to 0.45 nm⁶ at 100, Fig. 3b), with $N_P = 10$ as a compromise and little gain in rate beyond 20 to 40 in GROMACS (Fig. 4). A longer period that lowers the cost of the evaluation must keep $N_P \Delta t / \tau_p$ small |
 | The conserved energy, first order | Takes away $-(\mu - 1) \mathrm{tr}\,\mathsf W_g$, the change of the potential energy to first order, as GROMACS does, and $(1/\mu^2 - 1) K$, that of the kinetic energy, exactly. $\mathsf W_g$, the virial of the rigid groups that move as wholes, is the $\mathsf W$ of the pressure above, which has the virial of the constraints, with twice the kinetic energy of the motion within the groups, $\sum \tfrac12 m \lVert\mathbf v - \mathbf V\rVert^2$ over each (the virial of the forces within a rigid group is minus that). What is left is the second order, $\tfrac12 (\mu - 1)^2\, d^2U/d\mu^2$, whose mean over the noise of $\Delta\varepsilon$ is proportional to its variance, and so to $f$: a drift that neither the time step nor the period of coupling reduces, only `time_constant`. On the mixture of `barostat.test` at 2 fs, 1.8 × 10⁻³ of the energy over 8 ps with `time_constant = 2`, 4.4 times less with `time_constant = 8`; on 1394 OPC waters with PME at 300 K and 1 bar, 2.1 kcal/mol per ps with `time_constant = 2` and 0.52 with `time_constant = 8`. The same runs at constant volume keep the conserved energy to 10⁻⁶ and 10⁻⁵ |
-| Parameters | In `[ensemble]`: `ensemble = "NPT"`, `temperature`, and `pressure` in atm. In `[barostat]`: `method = "C-RESCALE"`, `time_constant` in ps (5 by default), `compressibility` in 1/atm (4.5 × 10⁻⁵ /bar by default), `coupling` (`"ISOTROPIC"` or `"SEMI_ISOTROPIC"`; with the second, `compressibility_z` in 1/atm, that of x and y by default, 0 to keep the height, `surface_tension` in dyn/cm of each surface normal to z, and `surfaces`, 2 by default), `work` (`"TROTTER"` by default, `"TROTTER_FIRST_ORDER"`, `"EXACT"`, `"FIRST_ORDER"`), and `interval`, which must be that of the thermostat. NPT needs a `[thermostat]` |
+| Parameters | In `[ensemble]`: `ensemble = "NPT"`, `temperature`, and `pressure` in atm. In `[barostat]`: `method = "C-RESCALE"`, `time_constant` in ps (5 by default), `compressibility` in 1/atm (4.5 × 10⁻⁵ /bar by default), `coupling` (`"ISOTROPIC"`, `"SEMI_ISOTROPIC"`, or `"ANISOTROPIC"`, each axis on its own, D163c, with `compressibility` one number or three; with the second, `compressibility_z` in 1/atm, that of x and y by default, 0 to keep the height, `surface_tension` in dyn/cm of each surface normal to z, and `surfaces`, 2 by default), `work` (`"TROTTER"` by default, `"TROTTER_FIRST_ORDER"`, `"EXACT"`, `"FIRST_ORDER"`), and `interval`, which must be that of the thermostat. NPT needs a `[thermostat]` |
 
 The drift of the conserved energy on tri-alanine in 1218 OPC waters
 (`examples/ala3`, 4,905 particles, from its checkpoint after 100 ps at
@@ -760,7 +802,11 @@ before and after a scaling. With rigid groups scaled about their centers
 of mass it is the molecular pressure; at the scaled positions MDIR has the
 atomic virial without the constraints, so the molecular one needs
 $\sum_\text{groups}\sum_i (\mathbf r_i - \mathbf R)\cdot\mathbf F_i$
-as well. Without constraints the atomic pressure serves.
+as well. Without constraints the atomic pressure serves. Since D116 and
+D264 the counting of the work and the pressure take the virial of the
+groups from the forces of the evaluations, which defines $P_\text{int}$
+the same before and after a scaling; the effective energy itself is not
+computed yet ([roadmap](roadmap.md), barostat integrators).
 
 ### 11.6 Langevin dynamics
 
@@ -859,6 +905,7 @@ for the dispersion follows the volume.
 |---|---|---|
 | Amber | `prmtop` (topology), `inpcrd` or `rst7` (positions, velocities, and the cell) | `topology`, `coordinates` |
 | GROMACS | `.top` with `.itp` (topology), `.gro` (positions, velocities, and the cell) | `topology`, `coordinates` |
+| CHARMM (since M1, D122) | `.psf` (topology), `.crd` (positions; the cell from `[boundary]`), files of topology, parameters, and streams ([charmm-m1.md](charmm-m1.md)) | `topology`, `coordinates`, `parameters` |
 
 | Item | Proposal |
 |---|---|
@@ -866,7 +913,7 @@ for the dispersion follows the volume.
 | What a reader hands on | A description of the system that does not depend on the format: particles, types, tuple sets with their parameters, the table of pairs of types, exclusions, pairs three bonds apart, constraints, the cell. A format is a reader more. |
 | Units and forms | A reader converts to the units and the forms of [conventions.md](conventions.md) (D62): for Amber, twice the force constants of bonds and angles, the charges divided by 18.2223, and $\sigma$ and $\varepsilon$ of Lennard-Jones from `ACOEF` and `BCOEF`. The control file stays in Å and kcal/mol (D36). |
 | What is an error | What M1 cannot run: 10-12 terms, 12-6-4 terms, polarizability, virtual sites other than those of water of four sites. Each with the milestone that brings it. |
-| Formats of other engines | Planned |
+| Formats of other engines | CHARMM's files (D122); no other format yet |
 
 The GROMACS preprocessor and sections are as in the specification of the
 format; M1 reads the sections that an Amber force field in the format of
@@ -970,15 +1017,17 @@ output of `mdir template amber` (`scripts/paper/check-appendix.sh`).
 
 | Table | Keywords |
 |---|---|
-| `[input]` | `topology`, `coordinates`, `format`, `checkpoint`, `include_paths` (directories of includes of GROMACS), `defines` (macros, as `-D` of grompp) |
-| `[output]` | `trajectory`, `checkpoint`, `energy_interval`, `trajectory_interval`, `checkpoint_interval` |
-| `[energy]` | `cutoff`, `switch_distance`, `pairlist_distance`, `pruned_distance`, `rebuild_interval`, `lennard_jones_modifier`, `coulomb_modifier` (`"NONE"`, `"POTENTIAL_SHIFT"`), `dispersion_correction`, `electrostatics` (`"CUTOFF"`, `"PME"`, `"REACTION_FIELD"` with `reaction_field_dielectric`, D140), `[[energy.pair]]` (with a topology over its pairs, with `groups`, D137), `[[energy.function]]` (D138), `implicit_solvent`, `solvent_dielectric`, `solute_dielectric`, `surface_area_energy` (D144), `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` over particles or the centers of groups (D136, D139), and for a system without a topology `[[energy.type]]`, `[[energy.pair_override]]` |
-| `[pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order` (4, 6, 8), `influence` (`"SPME"`, `"OPTIMAL"`; `"P3M"` since D304) |
-| `[dynamics]` | `integrator`, `time_step`, `steps`, `seed`, `center_of_mass_interval` |
+| `[input]` | `topology`, `coordinates`, `format` (`AMBER`, `GROMACS`, `CHARMM`, `PDB`), `parameters` (of CHARMM, D122), `checkpoint`, `include_paths` (directories of includes of GROMACS), `defines` (macros, as `-D` of grompp) |
+| `[output]` | `log`, `manifest` (D168), `energy`, `trajectory`, `trajectory_format`, `trajectory_precision`, `trajectory_strings` (D141, D239), `pull` (D145), `free_energy` (D161), `observables` (D189), `checkpoint`, `energy_interval`, `trajectory_interval`, `checkpoint_interval` |
+| `[energy]` | `cutoff`, `switch_distance`, `pairlist_distance`, `pruned_distance`, `rebuild_interval`, `lennard_jones_modifier`, `lennard_jones` (`"CUTOFF"`, `"PME"`, D162), `coulomb_modifier` (`"NONE"`, `"POTENTIAL_SHIFT"`), `dispersion_correction`, `electrostatics` (`"CUTOFF"`, `"PME"`, `"REACTION_FIELD"` with `reaction_field_dielectric`, D140), `implicit_solvent` with `born_radii`, `solvent_dielectric`, `solute_dielectric`, `surface_area_energy`, `salt_concentration`, `born_radius_cutoff` (D144, D152), `[[energy.pair]]` (with a topology over its pairs, with `groups`, D137), `[[energy.triplet]]` (D160), `[[energy.bond]]`, `[[energy.angle]]`, `[[energy.dihedral]]` over particles or the centers of groups (D136, D139), `[[energy.compound]]`, `[[energy.parameter]]` (D165), `[[energy.external]]` (D148), `[[energy.model]]` (D270), `[[energy.function]]` (D138), and for a system without a topology `[[energy.type]]`, `[[energy.pair_override]]` |
+| `[free_energy]` | `couple`, `state`, `soft_core_alpha`, `soft_core_power`, `[free_energy.lambdas]` (D161) |
+| `[pme]` | `kernel` (`"GAUSSIAN"`, `"PROLATE"`, D266), `tolerance`, `beta`, `max_spacing`, `grid`, `order`, `influence` (`"SPME"`, `"OPTIMAL"`, `"P3M"`, D304), `bandwidth`, `window_bandwidth` |
+| `[lj_pme]` | `tolerance`, `beta`, `max_spacing`, `grid`, `order` (D162) |
+| `[dynamics]` | `integrator` (`"VELOCITY_VERLET"`, `"LEAPFROG"`, `"BROWNIAN"`), `friction`, `time_step`, `steps`, `seed`, `center_of_mass_interval` |
 | `[minimize]` | `method`, `steps`, `initial_step`, `force_tolerance` |
 | `[ensemble]` | `ensemble` (`"NVE"`, `"NVT"`, `"NPT"`), `temperature`, `pressure` |
-| `[thermostat]` | `method = "V-RESCALE"`, `time_constant`, `interval` |
-| `[barostat]` | `method = "C-RESCALE"`, `time_constant`, `compressibility`, `coupling = "ISOTROPIC"`, `work`, `interval` |
+| `[thermostat]` | `method` (`"V-RESCALE"`, `"NOSE-HOOVER"`, `"LANGEVIN"`), `time_constant`, `friction`, `chain_length`, `interval` |
+| `[barostat]` | `method = "C-RESCALE"`, `time_constant`, `compressibility`, `coupling` (`"ISOTROPIC"`, `"SEMI_ISOTROPIC"`, `"ANISOTROPIC"`), `compressibility_z`, `surface_tension`, `surfaces`, `work`, `interval` |
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`, `analytic_bonds`. A topology with SETTLE needs `rigid_water = false` to run its waters flexible, with their bonds |
 | `[[restraints]]` | `selection` (a mask of Amber), `force_constant`, `reference_scaling` (`"CENTER"` or `"ALL"`, D124) |
 | `[boundary]` | `type` (`"PERIODIC"`, `"NONE"`, D142), `box` |
@@ -1000,6 +1049,13 @@ subcommands; `mdir-opt` stays a program for developers.
 | `mdir emit control.toml --stage=<module\|lowered>` | Prints the program of the run, as `--emit` does in M0 |
 | `mdir checkpoint <file>` | Prints what a checkpoint holds (`mdir-checkpoint` of M0) |
 | `mdir version` | The version, the LLVM it was built with, the targets it has |
+
+Since M1 (described in [driver-m0.md](driver-m0.md), Sections 1.3 to 1.5,
+and [debugging.md](debugging.md)): `mdir template` also prints the four
+stages of a pipeline, `minimize`, `nvt`, `npt`, `production` (D147);
+`mdir check` reports the planned run and its outputs, with `--json`
+(D151); `mdir doctor` checks the installation (D155); and
+`mdir bug-report` gathers what a report of a defect needs.
 
 The command line is independent of the physics, so it is a stage of its
 own right after the execution of terms over tuples (Section 18).
@@ -1251,6 +1307,9 @@ found D117, a crash at the end of 250,000 steps.
 
 ## 16. Decisions
 
+History: the decisions of the M1 proposal; [decisions.md](decisions.md)
+holds them and those that amended them.
+
 | # | Question | Decision | Recorded as |
 |---|---|---|---|
 | 1 | The target | All-atom: a protein in water with ff14SB and TIP3P; Martini deferred | D53 |
@@ -1273,12 +1332,18 @@ found D117, a crash at the end of 250,000 steps.
 
 ## 17. Open questions
 
+History: both were answered, by D70 and D64 ([pme-m1.md](pme-m1.md)).
+
 | Question | Recommendation | Needed by |
 |---|---|---|
 | Spreading of charges on a device without breaking the deterministic level | Atomic additions of integers in fixed point: one pass, and the order of the threads does not matter | The stage of particle mesh Ewald |
 | The FFT on the host | A library under a permissive license, such as pocketfft; cuFFT on a device | The same |
 
 ## 18. Order of work
+
+History: the stages of M1 and their state when M1 was done (2026-10-03).
+What a row calls still to come has since been built where a decision says
+so: anisotropic cells (D163c), triclinic cells (D123 to D127).
 
 | Stage | Work | Runs | State |
 |---|---|---|---|
@@ -1348,7 +1413,7 @@ weights sum to 1, and is added for the extra point of Amber.
 | Placement | After every drift, and once where the run begins, whatever the file of coordinates says. The positions that a step returns have their sites placed, so frames and checkpoints need nothing more. |
 | Forces | Moved after every evaluation of the forces, before the kick |
 | Mass and velocity | A site has mass 0. A kick leaves a particle of mass 0 alone, and the velocities drawn at the start give it none. |
-| Degrees of freedom | Three for each particle with a mass, less three |
+| Degrees of freedom | $3N_m - N_c - 3$: three for each particle with a mass ($N_m$; a site counts none), less one for each constraint, less three for the center of mass where its momentum is kept, which Langevin and Brownian dynamics do not keep unless `center_of_mass_interval` removes its motion |
 | Exclusions | Amber: a site is excluded from its oxygen and from what its oxygen is excluded from, as sander rebuilds them; the list of the file must not exclude more. GROMACS: those of `[ exclusions ]`; no bond reaches a site. |
 | Bonded terms | Amber: the bond from the oxygen to the extra point gives its length and is dropped, with every term that has an extra point. |
 | In the IR | The placement and the move of the forces are `md.gather_tuples` over a tuple set `sites_amber` or `sites_linear` of arity 4, the site first, in the programs of the step; the change of the virial is an `md.sum_tuples` |
@@ -1438,8 +1503,8 @@ steepest descent (D73):
 | Acceptance | The step is taken if the energy at $\mathbf x'$ is lower: $h$ grows by 1.2, to at most 0.1 Å (D260; 1 Å before); otherwise $\mathbf x$ stays and $h$ shrinks by 0.2. The choice is made particle by particle (a map that selects), so that the fields keep storage of their own. A trial whose constrained lengths are not at their targets, $\lvert r^2/d^2 - 1\rvert > 10^{-4}$ below double precision and $10^{-8}$ in double, or not numbers, does not lower the energy: SETTLE or M-SHAKE did not take a group back from a step that turned it too far. Its energy is evaluated at $\mathbf x$, so that no position that is not a number reaches the neighbor structure, and is taken as $+\infty$ (D259) |
 | Loops | Over the intervals between frames (one if there are none), over the intervals between energies in each, and over the steps; one `dyn.step @descend` per step, which evaluates the energy and the forces once |
 | Log | The potential energy with the constant terms, the root mean square and the largest of the forces $m\mathbf g$ without their parts along the constraints, in kcal/mol/Å, over the particles with mass, the particle of the largest, and $h$ in Å |
-| Checkpoint | At the end, with `checkpoint` of `[output]`: the positions, velocities of 0, and the integrator `MIN`. A run that reads it, a minimization or a run of dynamics, takes the positions and the cell and begins anew at step 0 with drawn velocities; a minimization takes the positions and the cell of any checkpoint |
-| Keywords | `method = "STEEPEST_DESCENT"`, `steps` (positive, 100 by default; 0 is refused, #180), `energy_interval` (a divisor of `steps`), `trajectory_interval` (a multiple of it), `initial_step` in Å (0.1), `force_tolerance` in kcal/mol/Å (none). No thermostat or barostat. In mixed precision the forces are rounded to about 10⁻⁵ of their size, which bounds how far a minimization can go |
+| Checkpoint | At the end, with `checkpoint` of `[output]`: the positions, velocities of 0, and the integrator `MINIMIZATION`. A run that reads it, a minimization or a run of dynamics, takes the positions and the cell and begins anew at step 0 with drawn velocities; a minimization takes the positions and the cell of any checkpoint |
+| Keywords | `[minimize]` takes `method = "STEEPEST_DESCENT"`, `steps` (positive, 100 by default; 0 is refused, #180), `initial_step` in Å (0.1), and `force_tolerance` in kcal/mol/Å (none). Of `[output]`, `energy_interval` must not be 0 and must divide `steps`, and `trajectory_interval`, where given, must be a multiple of `energy_interval` and divide `steps`. No thermostat or barostat. In mixed precision the forces are rounded to about 10⁻⁵ of their size, which bounds how far a minimization can go |
 | Convergence | With `force_tolerance` (D219), the host compares the largest force of each row of the log, step 0 included, with it, where it reads the forces for the row anyway; at the first row below it the steps, rows, and frames after it are loops of no iteration, and the checkpoint is written at that step. The log says at the end whether it converged |
 | Floor | At the same rows the host compares the length of the next step with a floor, $10^{-7}$ Å below double precision and $10^{-11}$ Å in double ($10^{-6}$ and $10^{-10}$ of the cap; D274): at the first row whose step has shrunk below it, and below the first step, the run ends as at convergence, and the log says at the end at which step, the step, the floor, and the largest force. Where trials no longer lower the energy by more than its rounding or noise, they are taken at random and the step falls to 0 (#369) |
 

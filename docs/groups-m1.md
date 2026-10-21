@@ -1,10 +1,16 @@
 # Groups of Neighbors for M1: Design
 
-Status: accepted (2026-10-01), D89; G1 done, G2 under way (the loop in
-the default mode is in MDIR, behind `neighbor_structure = "GROUPS"`); G3
-done (D261): `neighbor_structure = "AUTO"`, the default,
-takes the groups with a dual list on a GPU from 23,000 particles (Section
-6.3). It
+Status: accepted (2026-10-01), D89; kept current (last checked
+2026-10-21). G1 done; G2 done in the default mode (`neighbor_structure =
+"GROUPS"`), while the deterministic mode does not take the groups yet: the
+control file refuses `GROUPS` with `deterministic`, and `AUTO` keeps the
+matrix there; G3 done (D261): `neighbor_structure = "AUTO"`, the default,
+takes the groups with a dual list (D114) on a GPU from 23,000 particles
+(Section 6.3), and a run chooses the skins of both lists where they are
+`"AUTO"` (D281, [neighbors-m0.md](neighbors-m0.md), Section 6). The
+groups run in triclinic cells (D126), hold every image within a reach
+below the least edge (D242), and prune the inner list in the loop over
+pairs on large systems (D284). It
 replaces the
 tile structure of D82 ([tiles-m1.md](tiles-m1.md)), whose prototype did not
 beat the neighbor matrix. The keys in brackets are those of
@@ -346,8 +352,9 @@ with a reach of 0.77 to 0.89 of the edge against the sum over all images.
   attribute `weights` of the op stays that of the sum over both orders of
   each pair (½ for a sum of pairs); the lowering doubles it, so that each
   pair counts with the weight 1 (Section 3).
-- A pass chooses the kind of each structure and the policy of its loops on
-  a device (the kind stays `matrix` on the CPU).
+- A pass, `md-exec-choose-neighbors` (option `kind=groups`), chooses the
+  kind of each structure and the policy of its loops on a device (the kind
+  stays `matrix` on the CPU).
 
 ## 6.1 Measured in MDIR
 
@@ -496,6 +503,8 @@ every one of the following holds, and the matrix otherwise:
 - the target is a GPU, outside the deterministic mode;
 - no loop lacks an exchange contract: no implicit solvent, no derivative
   in the tunables;
+- no model in stages, which runs over the slots of the pairs of images
+  that a matrix keeps (D294);
 - no `rebuild_interval`;
 - at least 23,000 particles, virtual sites counted;
 - the reach of the groups at most 0.999 of the least edge of the cell.
@@ -597,7 +606,7 @@ drift of 1.9 kcal/mol/ns, against fluctuations of 1.9 kcal/mol.
 | G1, done but the matrix in the compact order | The compact order of the places (for the matrix as well); the structure and its build on a device; the exchange contracts on `md_exec.pair_for` | The pairs of the list within the cutoff are those of the matrix, on JAC and Cellulose; the matrix in the compact order against the order of cells |
 | G2, under way: the default mode and the erfc of D90 done; the deterministic mode to come | The loop over groups, each pair once, both modes; the cheaper erfc of the direct sum under `fast_math`, with the accuracy of the force near the cutoff checked (it is what lets the loop over groups gain, Section 1) | Forces, energies, and virials against the matrix (to the rounding; to the bit in the deterministic mode, where the matrix sums in fixed point too); conservation over runs |
 | G3, done (D261) | Groups by default on a device for the loops that allow them: `neighbor_structure = "AUTO"`, the groups with a dual list from 23,000 particles, measured against the matrix on two kinds of device (Section 6.3) | The rates of the matrix and the groups across sizes; a run without the keys at the rate of `GROUPS` given |
-| G4 | The reach of the list: a skin of 1 Å, once builds are cheap | Rates and intervals between builds |
+| G4 | The reach of the list: a skin of 1 Å, once builds are cheap. Since then the dual list (D114) and the choice of the skins by the run (D281) set the reaches | Rates and intervals between builds |
 | G5, under way: the table of D94 and the frames of D95 done | The arithmetic of the kernel (a table for the erfc, no minimum image, the order of the entries) | The prototype first |
 
 ## 8. Open questions

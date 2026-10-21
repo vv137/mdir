@@ -1,6 +1,7 @@
 # Neighbor Structures for Milestone M0: Method
 
-Status: implemented (2026-09-29).
+Status: implemented (2026-09-29) and kept current (last checked
+2026-10-21). Section 6, the choice of the skins (D281), is of 2026-10.
 
 This document describes how MDIR builds a neighbor structure, keeps it
 valid, and keeps the particles in an order in which a loop over pairs
@@ -10,7 +11,16 @@ The ops are specified in [ops-m0.md](ops-m0.md), Section 8.2.
 
 ## 1. The structure
 
-A neighbor structure is a neighbor matrix: for each particle a row of the
+There are two kinds of neighbor structure (`kind` of
+`md_exec.empty_neighbors`): the neighbor matrix of this document, on the
+CPU and on a device, and on a device only the groups of 16 particles that
+share a list, each pair once (D89, [groups-m1.md](groups-m1.md)), with an
+optional dual list (D114). `neighbor_structure = "AUTO"`, the default,
+takes the groups on a GPU for large systems and the matrix elsewhere
+(D261). The test of validity (Section 3), the order of the particles
+(Section 5), and the choice of the skins (Section 6) serve both.
+
+The neighbor matrix holds for each particle a row of the
 particles within the reach, which is the cutoff plus the skin, as in the
 neighbor list of Verlet [[Verlet1967]](references.md#verlet1967).
 
@@ -243,7 +253,7 @@ memory.
 
 | Parameter | Option | Default |
 |---|---|---|
-| The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlist_distance − cutoff` | 0 for the pass; in a control file `pairlist_distance` is the cutoff plus 1.5 Å |
+| The skin | `skin` of `convert-md-to-md-exec`; in a control file `pairlist_distance − cutoff` | 0 for the pass; in a control file `pairlist_distance = "AUTO"`: for the matrix the cutoff plus 1.5 Å, which is not searched; for the groups the cutoff plus 3 Å, or the choice of a search (Section 6, D261, D281) |
 | The width of a row of the matrix | `width` of `convert-md-to-md-exec`; in a control file `neighbor_capacity`, in Python `Execution.neighbor_capacity` | 64 for the pass; the driver always gives one, from `neighbor_capacity` or estimated from the start: half as many again as the most neighbors of a particle, plus 16, rounded up to four significant bits (D227) |
 | The least width of the cells | `cells` of `convert-md-to-md-exec` | A third of the reach |
 

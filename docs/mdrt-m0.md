@@ -1,7 +1,16 @@
 # Runtime and Execution for Milestone M0: Proposal
 
-Status: proposal (2026-09-29). Nothing here is decided except where a
-decision is cited.
+Status: written as the proposal for M0 (2026-09-29); Section 7 and the
+table of ops below are kept current (last checked 2026-10-21). Elsewhere,
+nothing is decided except where a decision is cited.
+
+The ops of the `mdrt` dialect:
+
+| Op | Purpose |
+|---|---|
+| `mdrt.from_buffer`, `mdrt.to_buffer` | Connect code that works on buffers with code that works on fields; on a device, the copy to and from the host. |
+| `mdrt.host_call` | Calls a function of the host that reads fields while it runs and keeps nothing of them: the writing of a frame, for example. On a device, the field is copied to a buffer of the host for the call. |
+| `mdrt.halo_copy_start`, `mdrt.halo_sum_start`, `mdrt.halo_wait` | The start of a halo copy $G$ or a halo sum $G^\mathsf T$ of `md_dist` as an event, and its completion, which yields the destination; the verifier proves the buffers' lifetimes, and `--lower-mdrt-halo-events` lowers them to the synchronous in-process transport (D310, [distributed-ml2.md](distributed-ml2.md)). |
 
 This document proposes how the M0 program is executed: what the compiler
 generates, what the runtime provides, and how the two meet. It is the basis
@@ -232,6 +241,11 @@ Proposal: the C++ tool.
 | Spatial reordering (step 5) | Implemented, where a run and where a segment begins (D44); see [neighbors-m0.md](neighbors-m0.md), Section 5 |
 | GPU | Implemented for NVIDIA. See [ops-m0.md](ops-m0.md), Section 10.8. |
 | Runtime library `libmdrt_cuda` | The functions that the lowering of the `gpu` dialect calls (`mgpu*`), on the CUDA driver API: modules of PTX compiled by the driver at load, launches that skip empty grids, and a caching allocator whose frees do not wait. One stream serves all launches, and an optional second one the reciprocal sum (`mdrtSideBegin`, `mdrtSideEnd`, `mdrtSideJoin`, D81, D87). The host waits only where it reads what the device has computed; a flag of a test is read through pinned memory and an event (`mdrtFlagStart`, `mdrtFlagFinish`, D113), and the other flags that the kernel of the event set as they are (`mdrtFlagTake`, D278). The buffers of the neighbor matrix and of the lists of groups, grown when a build overflows (`mdrtMatrixCreate`, `mdrtMatrixGrow`, `mdrtGroupsCreate`, `mdrtGroupsGrow`, `mdrtGroupsBuffer`); the transforms of cuFFT in f32 and f64 with cached plans, one for each grid, direction, and precision of the process, in a table that grows (`mdrtCudaFFTForward3D`, `mdrtCudaFFTBackward3D` and their `F32` forms); a failure of cuFFT goes to the handler of the embedding program (`mdrtCudaSetStopHandler`, as `mdrtSetStopHandler` of `libmdrt`), or ends the process with status 1 (#323). |
+| Memory of the device | A caching allocator: a block that a program frees is kept for a later request of the same size, without waiting, since the work it is handed to runs after the work that used it on the one stream. The driver's own use outside it (the context, modules, cuFFT's plans, cuBLAS, the store of the tuples) is reported with the pool's blocks by `MDIR_DEVICE_MEMORY=2` (D311, [debugging.md](debugging.md)); #471 measures where it goes on large systems. |
+| Products of learned stages | `mdrtGemmF32`, cuBLAS's f32 GEMM and strided-batched GEMM on the stream of the kernels, without TF32; the weights that the products read are copied to the device when first read and freed with the activation or the program that made them (`mdrtDeviceConstant`, D302). |
+| Tuples on a device | The renumbered tuples and their incidence structures are a store of the program that runs the code, built on the device (D253, D257, [device-tuples.md](device-tuples.md)). |
+| Transport of domains | `runtime/mdrt_dist.c`: the halo copy and the halo sum of the in-process executor (`mdrtDistHaloCopy`, `mdrtDistHaloSum`), synchronous ([distributed-ml2.md](distributed-ml2.md)). |
+| Kernels | Cubins for the device's architecture, which the driver loads without compiling them; PTX where the device cannot be asked (D214). |
 
 The runtime library for devices reads these variables of the environment:
 
