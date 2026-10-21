@@ -829,6 +829,127 @@ outputs:
 mdir: note: trajectory output 'md.xtc' exists; mdir run keeps it as '#md.xtc.1#' before it writes its own, and mdir run --continue continues the run of its checkpoint instead
 ```
 
+### 2.9 The command line
+
+One program with subcommands (D59). The programs of M0 become
+subcommands; `mdir-opt` stays a program for developers.
+
+| Command | Does |
+|---|---|
+| `mdir run control.toml` | Reads the input, compiles the run, and runs it (`mdir-run` of M0). `--continue`, `--no-append`, and `--max-walltime` carry a run over more than one job (D129 to D132, Section 2.7) |
+| `mdir template md` | Prints a control file with every keyword |
+| `mdir check control.toml` | Reads the input and prints what it found: particles, types, the mass and the density, the cell, the degrees of freedom, the integrator and the target; with a topology also the tuples of each kind, the charges and their sum. Compiles nothing, so it gives no energies: a run of zero steps does. |
+| `mdir emit control.toml --stage=<module\|lowered>` | Prints the program of the run, as `--emit` does in M0 |
+| `mdir checkpoint <file>` | Prints what a checkpoint holds (`mdir-checkpoint` of M0) |
+| `mdir version` | The version, the LLVM it was built with, the targets it has |
+
+Since M1 (described in Sections 1.3 to 1.5 and in
+[debugging.md](debugging.md)): `mdir template` also prints the four
+stages of a pipeline, `minimize`, `nvt`, `npt`, `production` (D147);
+`mdir check` reports the planned run and its outputs, with `--json`
+(D151); `mdir doctor` checks the installation (D155); and
+`mdir bug-report` gathers what a report of a defect needs.
+
+### 2.10 The readers of topologies
+
+| Format | Files | Keywords of `[input]` |
+|---|---|---|
+| Amber | `prmtop` (topology), `inpcrd` or `rst7` (positions, velocities, and the cell) | `topology`, `coordinates` |
+| GROMACS | `.top` with `.itp` (topology), `.gro` (positions, velocities, and the cell) | `topology`, `coordinates` |
+| CHARMM (since M1, D122) | `.psf` (topology), `.crd` (positions; the cell from `[boundary]`), files of topology, parameters, and streams ([charmm.md](charmm.md)) | `topology`, `coordinates`, `parameters` |
+
+| Item | Proposal |
+|---|---|
+| The readers | MDIR has readers of its own. They accept what the engines accept and share no code with them. The engines and their tools are under the GPL and the LGPL; their behavior is learned from their documentation and their code, and written down as a specification, from which the readers are written. |
+| What a reader hands on | A description of the system that does not depend on the format: particles, types, tuple sets with their parameters, the table of pairs of types, exclusions, pairs three bonds apart, constraints, the cell. A format is a reader more. |
+| Units and forms | A reader converts to the units and the forms of [conventions.md](conventions.md) (D62): for Amber, twice the force constants of bonds and angles, the charges divided by 18.2223, and $\sigma$ and $\varepsilon$ of Lennard-Jones from `ACOEF` and `BCOEF`. The control file stays in Å and kcal/mol (D36). |
+| What is an error | What M1 cannot run: 10-12 terms, 12-6-4 terms, polarizability, virtual sites other than those of water of four sites. Each with the milestone that brings it. |
+| Formats of other engines | CHARMM's files (D122); no other format yet |
+
+The GROMACS preprocessor and sections are as in the specification of the
+format; M1 reads the sections that an Amber force field in the format of
+GROMACS needs: `defaults`, `atomtypes`, `nonbond_params`, `pairtypes`,
+`bondtypes`, `angletypes`, `dihedraltypes`, `moleculetype`, `atoms`,
+`bonds`, `pairs`, `angles`, `dihedrals`, `exclusions`, `settles`,
+`system`, `molecules`.
+
+A `.gro` file is read in fixed columns, as GROMACS reads it: the name
+fields take 20 columns, and the distance between the decimal points of
+the first atom's x and y sets the width of every field after them, of
+the three coordinates and of the three velocities, which GROMACS writes
+in fields as wide as the coordinates with one more decimal (`%8.3f` and
+`%8.4f` by default). A line has either three velocities that read in such
+fields or none, and every line alike; anything else, such as velocities
+wider than the coordinates, is an error that names the line, where
+GROMACS takes a field that does not read as 0 (#365).
+
+A dihedral without parameters takes those of the first entry of
+`[ dihedraltypes ]` of its function with the most types that are not
+wildcards, matched to its atoms in the order of the file or the reverse;
+functions 1 and 9 share a table, and an entry of function 9 brings the
+entries of the same types on the lines that follow it. When the force
+field defines `_FF_AMBER_LEAP_ATOM_REORDERING`, as amber14sb.ff and
+amber19sb.ff of GROMACS do, the atoms of each dihedral are then put in the
+order that LEaP gives them, as grompp of GROMACS 2026.3 does, while the
+parameters stay those of the order of the file. With the types of the
+matching entry, a blank for a wildcard: a dihedral whose entry has a force
+constant is reversed when its first type sorts after its last, or the two
+are equal and its second sorts after its third; an improper whose types,
+or whose atoms, an earlier improper of the same function had, over all
+molecule types in the order of the file, has the three atoms around the
+third, the central one, sorted by type and then by index. The first
+improper of its types keeps its order. Reversing a dihedral leaves its
+angle alone, but which atoms are the outer ones of an improper changes its
+angle: in ubiquitin with amber19sb.ff, the order of the file gives
+impropers 0.896 kcal/mol above those of grompp, and the order of LEaP
+agrees with them to 5 × 10⁻⁵ kcal/mol (`gromacs-leap-order.test`).
+
+The functions read are those of the Amber, CHARMM, OPLS-AA, and GROMOS
+force fields: bonds of function 1, and of function 2, the quartic bond of
+GROMOS, a term given by an expression (D136); angles of function 1, of
+function 2, the angle of GROMOS in its cosine, a term given by an
+expression as well, and of function 5, whose Urey–Bradley
+term ½ k_UB (r₁₃ − r13)² between the outer atoms becomes a set of pairs of
+its own; dihedrals of functions 1, 4, and 9, and of function 2, the
+harmonic improper ½ k (ξ − ξ0)² with ξ − ξ0 taken in [−π, π), and of
+functions 3 (Ryckaert and Bellemans, $\sum_n C_n \cos^n(\varphi - \pi)$)
+and 5 (Fourier), as terms given by expressions (D136); pairs of
+function 1; CMAP of function 1 (D121, [charmm.md](charmm.md)). The
+Lennard-Jones of a topology takes `lennard_jones_modifier` in its kernel:
+`POTENTIAL_SHIFT`, `FORCE_SWITCH` (the polynomial of GROMACS), or
+`POWER_FORCE_SWITCH` (VFSWITCH of CHARMM, which also switches the pairs
+three bonds apart).
+
+A topology of Amber is read in either format (D133): with `%FLAG` lines,
+or in the format before Amber 7, a title, 30 pointers in lines of 12, and
+the sections in a fixed order whose lengths the pointers give (a section
+of no items is a blank line), then the solvent pointers, the molecules,
+and the box when IFBOX is set; that format has no NUMEXTRA, no SCEE and
+SCNB (1.2 and 2.0), and no atomic numbers (from the masses). The reader
+takes the conventions that pmemd 26 follows, read from its source for
+compatibility:
+
+| Item | Rule |
+|---|---|
+| Negative periodicity | A dihedral whose type has a negative periodicity also has the term of the next type, and so on up to the first type of positive periodicity |
+| Phase | A phase within $10^{-3}$ of $\pm\pi$ is $\pm\pi$; a cosine or sine of the phase below $10^{-6}$ in magnitude is 0. Topologies write $\pi$ as 3.141594 or 3.1415927; JAC's dihedrals are 965.2152 kcal/mol so and 965.2154 without |
+| 1-4 pairs | From the entries with positive third and fourth indices, with SCEE and SCNB of the last type of the entry's chain; a type of periodicity 0 carries none. Two entries of the same pair, or a factor of 0, are errors, where Amber counts the pair twice or drops its Coulomb term |
+| Exclusions | Without extra points those of the file; with them built again from the bonds, the ends of the angles and of every dihedral, an extra point taking those of its owner ([constraints.md](constraints.md), Section 2) |
+
+What still differs from pmemd, by design: the cosine of an angle is not
+clamped to $\pm0.999$ (pmemd evaluates an angle within 2.56° of linear at
+that bound); a dihedral whose cross products are below $10^{-3}$ Å² is not
+dropped; a net charge below 0.01 e is not spread over the atoms to make
+the system neutral (Factor IX: $3.1\times10^{-4}$ e, below the printed
+digits); water is found by its residue and atomic numbers (O, H, H), not
+by the names O, H1, H2 in any order; and on an odd grid the aliasing
+factor of `influence = "OPTIMAL"` takes the principal frequency at the
+index $(N-1)/2$, where pmemd takes $-(N+1)/2$ ([pme.md](pme.md),
+Section 1.1). The Coulomb
+constant, $\beta$ from $\mathrm{erfc}(\beta r_c)$ rather than
+$\mathrm{erfc}(\beta r_c)/r_c$, and the average of the correction
+for the dispersion are conventions of MDIR ([nonbonded.md](nonbonded.md), Sections 1.2 and 2).
+
 ## 3. Decided
 
 | # | Question | Decision |

@@ -54,6 +54,8 @@ C(\mathbf m) &= \frac{f}{\pi V}\, \frac{\exp(-\pi^2 m^2/\beta^2)}{m^2}, \qquad C
 $$
 
 with $u_{ai}$ the fractional coordinates of particle $i$ along edge $a$.
+Methods of other kinds, such as fast multipole or multilevel summation,
+are not planned.
 
 ### 1.1 The influence function
 
