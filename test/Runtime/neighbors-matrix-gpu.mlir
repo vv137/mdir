@@ -80,11 +80,12 @@ func.func @run(%length: f64, %reach: f64, %width: f64, %row: index) {
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
   gpu.wait [%t1]
-  // No excluded pairs: a buffer with no rows.
-  %none = gpu.alloc (%c0, %c1) : memref<?x?xi32, 1>
+  // No excluded pairs: a buffer of no elements, which has no rows
+  // (ragged rows, include/mdir/Conversion/RaggedRows.h).
+  %none = gpu.alloc (%c0) : memref<?xi32, 1>
   %largest, %not_numbers = call @mdrt_gpu_build_neighbors_matrix(
       %xd, %box, %reach, %width, %none, %countsd, %indexd, %orderd)
-      : (memref<?x3xf64, 1>, vector<3xf64>, f64, f64, memref<?x?xi32, 1>,
+      : (memref<?x3xf64, 1>, vector<3xf64>, f64, f64, memref<?xi32, 1>,
          memref<?xi32, 1>, memref<?x?xi32, 1>, memref<?xi32, 1>) -> (index, index)
   %counts2 = memref.alloc(%count) : memref<?xi32>
   %index2 = memref.alloc(%count, %row) : memref<?x?xi32>

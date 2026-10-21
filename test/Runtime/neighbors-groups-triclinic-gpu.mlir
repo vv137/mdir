@@ -322,23 +322,40 @@ func.func @images(%x: memref<?x3xf64>, %i: index, %j: index, %h: vector<6xf64>, 
 }
 
 // Excluded pairs (i, i + d), d = 1 .. k, around the ring of the particles,
-// as an incidence structure: a row for each particle with its number of
-// pairs, 2k, then for each the number of the pair, the place of the
-// particle in it, and its two members.
-func.func @exclusions(%n: index, %k: index) -> memref<?x?xi32> {
+// as an incidence structure in ragged rows
+// (include/mdir/Conversion/RaggedRows.h): the number of rows, the offsets
+// (2k entries a particle), then for each particle, for each of its pairs,
+// the number of the pair, the place of the particle in it, and its two
+// members, and an entry of zeros at the end.
+func.func @exclusions(%n: index, %k: index) -> memref<?xi32> {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
   %c3 = arith.constant 3 : index
   %c4 = arith.constant 4 : index
-  %c8 = arith.constant 8 : index
-  %k8 = arith.muli %k, %c8 : index
-  %width = arith.addi %k8, %c1 : index
-  %e = memref.alloc(%n, %width) : memref<?x?xi32>
   %k2 = arith.muli %k, %c2 : index
-  %k2_32 = arith.index_cast %k2 : index to i32
+  %entries = arith.muli %k2, %n : index
+  %entries1 = arith.addi %entries, %c1 : index
+  %values = arith.muli %entries1, %c4 : index
+  %header = arith.addi %n, %c2 : index
+  %size = arith.addi %header, %values : index
+  %e = memref.alloc(%size) : memref<?xi32>
+  %zero32 = arith.constant 0 : i32
+  %n32 = arith.index_cast %n : index to i32
+  memref.store %n32, %e[%c0] : memref<?xi32>
+  %n1 = arith.addi %n, %c1 : index
+  scf.for %i = %c0 to %n1 step %c1 {
+    %o = arith.muli %i, %k2 : index
+    %o32 = arith.index_cast %o : index to i32
+    %at = arith.addi %i, %c1 : index
+    memref.store %o32, %e[%at] : memref<?xi32>
+  }
+  %last = arith.subi %size, %c4 : index
+  scf.for %z = %last to %size step %c1 {
+    memref.store %zero32, %e[%z] : memref<?xi32>
+  }
   scf.for %i = %c0 to %n step %c1 {
-    memref.store %k2_32, %e[%i, %c0] : memref<?x?xi32>
+    %first0 = arith.muli %i, %k2 : index
     scf.for %d1 = %c0 to %k step %c1 {
       %d = arith.addi %d1, %c1 : index
       // The pair (i, i + d), the particle first.
@@ -346,19 +363,19 @@ func.func @exclusions(%n: index, %k: index) -> memref<?x?xi32> {
       %j = arith.remui %id, %n : index
       %num0 = arith.muli %i, %k : index
       %num = arith.addi %num0, %d1 : index
-      %col0 = arith.muli %d1, %c4 : index
-      %col = arith.addi %col0, %c1 : index
+      %slot = arith.addi %first0, %d1 : index
+      %slot4 = arith.muli %slot, %c4 : index
+      %col = arith.addi %header, %slot4 : index
       %col1 = arith.addi %col, %c1 : index
       %col2 = arith.addi %col, %c2 : index
       %col3 = arith.addi %col, %c3 : index
       %num32 = arith.index_cast %num : index to i32
-      %zero32 = arith.constant 0 : i32
       %i32 = arith.index_cast %i : index to i32
       %j32 = arith.index_cast %j : index to i32
-      memref.store %num32, %e[%i, %col] : memref<?x?xi32>
-      memref.store %zero32, %e[%i, %col1] : memref<?x?xi32>
-      memref.store %i32, %e[%i, %col2] : memref<?x?xi32>
-      memref.store %j32, %e[%i, %col3] : memref<?x?xi32>
+      memref.store %num32, %e[%col] : memref<?xi32>
+      memref.store %zero32, %e[%col1] : memref<?xi32>
+      memref.store %i32, %e[%col2] : memref<?xi32>
+      memref.store %j32, %e[%col3] : memref<?xi32>
       // The pair (i - d, i), the particle second.
       %in = arith.addi %i, %n : index
       %ind = arith.subi %in, %d : index
@@ -366,21 +383,22 @@ func.func @exclusions(%n: index, %k: index) -> memref<?x?xi32> {
       %hnum0 = arith.muli %h, %k : index
       %hnum = arith.addi %hnum0, %d1 : index
       %hd = arith.addi %d1, %k : index
-      %hcol0 = arith.muli %hd, %c4 : index
-      %hcol = arith.addi %hcol0, %c1 : index
+      %hslot = arith.addi %first0, %hd : index
+      %hslot4 = arith.muli %hslot, %c4 : index
+      %hcol = arith.addi %header, %hslot4 : index
       %hcol1 = arith.addi %hcol, %c1 : index
       %hcol2 = arith.addi %hcol, %c2 : index
       %hcol3 = arith.addi %hcol, %c3 : index
       %hnum32 = arith.index_cast %hnum : index to i32
       %one32 = arith.constant 1 : i32
       %h32 = arith.index_cast %h : index to i32
-      memref.store %hnum32, %e[%i, %hcol] : memref<?x?xi32>
-      memref.store %one32, %e[%i, %hcol1] : memref<?x?xi32>
-      memref.store %h32, %e[%i, %hcol2] : memref<?x?xi32>
-      memref.store %i32, %e[%i, %hcol3] : memref<?x?xi32>
+      memref.store %hnum32, %e[%hcol] : memref<?xi32>
+      memref.store %one32, %e[%hcol1] : memref<?xi32>
+      memref.store %h32, %e[%hcol2] : memref<?xi32>
+      memref.store %i32, %e[%hcol3] : memref<?xi32>
     }
   }
-  return %e : memref<?x?xi32>
+  return %e : memref<?xi32>
 }
 
 func.func @run(%h: vector<6xf64>, %reach: f64, %degree: index, %poison: i1,
@@ -419,21 +437,20 @@ func.func @run(%h: vector<6xf64>, %reach: f64, %degree: index, %poison: i1,
   %t0 = gpu.wait async
   %t1 = gpu.memcpy async [%t0] %xd, %x : memref<?x3xf64, 1>, memref<?x3xf64>
   gpu.wait [%t1]
-  %excluded_host = call @exclusions(%count, %degree) : (index, index) -> memref<?x?xi32>
-  %rows = arith.select %exclude, %count, %c0 : index
-  %c8 = arith.constant 8 : index
-  %width0 = arith.muli %degree, %c8 : index
-  %width = arith.addi %width0, %c1 : index
-  %excludedd = gpu.alloc (%rows, %width) : memref<?x?xi32, 1>
+  %excluded_host = call @exclusions(%count, %degree) : (index, index) -> memref<?xi32>
+  // Without excluded pairs, a buffer of no elements, which has no rows.
+  %excluded_size = memref.dim %excluded_host, %c0 : memref<?xi32>
+  %elements = arith.select %exclude, %excluded_size, %c0 : index
+  %excludedd = gpu.alloc (%elements) : memref<?xi32, 1>
   scf.if %exclude {
     %t2 = gpu.wait async
-    %t3 = gpu.memcpy async [%t2] %excludedd, %excluded_host : memref<?x?xi32, 1>, memref<?x?xi32>
+    %t3 = gpu.memcpy async [%t2] %excludedd, %excluded_host : memref<?xi32, 1>, memref<?xi32>
     gpu.wait [%t3]
   }
   func.call @mdrt_gpu_build_neighbors_groups_triclinic(%xd, %h, %reach, %excludedd,
       %orderd, %placed, %entriesd, %masksd, %countsd, %unitsd, %ordinalsd,
       %shiftd, %sizes)
-      : (memref<?x3xf64, 1>, vector<6xf64>, f64, memref<?x?xi32, 1>,
+      : (memref<?x3xf64, 1>, vector<6xf64>, f64, memref<?xi32, 1>,
          memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
          memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>,
          memref<?xi32, 1>, memref<?xi32, 1>, memref<5xi32>) -> ()
