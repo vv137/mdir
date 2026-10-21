@@ -150,7 +150,7 @@ the same tuple (Section 2.2 of ops-m0.md).
 | Orientation | Arity | The same tuple | Example |
 |---|---|---|---|
 | `unordered` | 2 | `{i, j}` and `{j, i}` | Bonds, exclusions |
-| `ordered` | Any | No other | Position restraints, with arity 1 |
+| `ordered` | Any | No other | Virtual sites (the site, then its atoms), the waters of SETTLE, the groups of SHAKE with two or three hydrogens, CMAP; the IR allows arity 1 as well, which the driver does not use: position restraints are fields of the particles (Section 22) |
 | `reversal` | 2 or more | `(i, j, k)` and `(k, j, i)` | Angles, dihedrals |
 
 ### 2.3 Parameters for each tuple, not for each kind
@@ -175,7 +175,9 @@ the pair (B7). A kernel over a relation of a topology takes the internal
 coordinates that the op names. The ops are `md.sum_tuples` and
 `md.gather_tuples`; they are apart from `md.sum_relation` and
 `md.gather_relation` because exchange and truncation, which those two
-carry, have no meaning for a tuple of a topology.
+carry, have no meaning for a tuple of a topology. The same ops also sum
+the triplets that `md.triplets` derives from a neighborhood, a relation of
+arity 3 of the positions rather than of the topology (D160).
 
 ```mlir
 %u = md.sum_tuples %angles, %x, %cell
@@ -292,15 +294,21 @@ common. Both are emitted by the same code, op for op, so that the
 elimination of common subexpressions leaves one of each after the
 coordinates have been computed in the kernel.
 
-A kernel that uses a `displacement` cannot be differentiated with respect
-to the positions yet, as in M0.
+A kernel over tuples that uses a `displacement` $\mathbf d = \mathbf x_a -
+\mathbf x_b$ is differentiated as well: the gradient a component at a time,
+$\mathbf F_a = -\partial u/\partial\mathbf d$ and $\mathbf F_b = -\mathbf
+F_a$, with its share of the virial. A kernel over a neighborhood
+(`md.sum_relation`, `md.gather_relation`) that uses the displacement still
+cannot be differentiated with respect to the positions, as in M0, except
+the kernel of a neural stage, whose product gives the cotangents (D288).
 
 ### 4.2 With respect to a parameter
 
 | With respect to | In M1 | How |
 |---|---|---|
 | An argument of the potential that is a number, such as a scale of the energy or a coupling parameter | Yes | `request [derivative(n)]`, as in M0. The derivative of a sum over tuples is the sum of the derivative of its kernel |
-| A field of the tuples or of the particles, such as the force constant of every bond | No | The result is a field, not a number. It is a gather of the derivative of the kernel, and the machinery of 4.1 can produce it when an application needs it, such as the fitting of a force field |
+| A field of the particles with one component of `f64`, such as the charges | Yes, since D230 | `request [derivative(n)]` of `md.evaluate` gives a field of its type, $g_i = \partial U/\partial a_i$: a gather of the derivative of each kernel that takes the field, over the relation, the tuples, or the particles; any other use of the field is an error that names the op ([python-gradient.md](python-gradient.md)) |
+| A field of the tuples, such as the force constant of every bond | No | The result would be a field of the tuples. `md-differentiate` refuses a field that a kernel takes other than by gathering it from the particles |
 | An entry of a table (Section 7) | No | The result is a table. It needs a sum for each entry |
 
 ## 5. Execution of terms over tuples
@@ -320,11 +328,21 @@ Decision: A, as for pairs (P13, D49).
 
 | Reason | |
 |---|---|
-| It is the strategy of the pairs. | A thread writes to its own particle. No atomic addition, and the deterministic level holds. |
+| It is the strategy of the pairs. | A thread writes to its own particle. Under A, no atomic addition, and the deterministic level holds. |
 | Bonded terms are a small part of the work. | An atom of a protein is a member of some 20 bonded tuples and has some 300 neighbors. |
 | A loop over tuples of this kind is a loop over particles. | It can be fused with the loop over pairs and with the kick that follows. |
 
-B and C are choices for the planner later.
+The decision holds on the CPU and in the deterministic mode. On a device
+B became the default: a loop over tuples that are not disjoint and that
+adds to its destinations evaluates each tuple once and adds to its members
+with atomics, where the stated algebra of every value it reduces allows
+another order (`evaluatesOnce` of `convert-md-exec-to-gpu`, option
+`tuples-once`; D103, D301). A `fixed_order` sum, as the deterministic mode
+states, keeps A, and so do the disjoint tuples of the constraints. A run of
+at least 100,000 tuples adds what the tuples of a block give each particle
+in a table in block memory first, the strategy `hash` of the privatized
+scatter-accumulate (D283, D285, [device-tuples.md](device-tuples.md),
+Section 11). C is not built.
 
 ### 5.2 The structure
 
@@ -348,9 +366,9 @@ B and C are choices for the planner later.
 |---|---|
 | What the structure holds | For each particle a row: the number of its tuples, then for each tuple its number, the place of the particle in it, and its members |
 | The width of a row | The largest number of tuples of a particle, found when the structure is built. No parameter, and no row that overflows. |
-| When it is built | Where the members change: where the run begins and where the particles are put in a new order (D44), which renumbers the members. It does not depend on the positions or on the cell. |
+| When it is built | Where the members change: where the run begins and where the particles are put in a new order (D44), which renumbers the members. It does not depend on the positions or on the cell. The members and the structure are kept by a store of the runtime and taken again where the identities of the particles are those they were built from (D253, D255); on a GPU, kernels of the program build them on the device, as a gather of the structure in the order of the files (D257, [device-tuples.md](device-tuples.md)). |
 | The coordinates | `md_exec.tuple_for` takes displacements only, in the minimum image. The kernel computes the other coordinates from them, with the code that differentiation uses (Section 4.1). |
-| The kernel | Yields the forces on all members. The loop takes the one of the particle. A kernel for each place, which computes that force only, is a later optimization. |
+| The kernel | Yields the forces on all members. A loop by the particles (strategy A) takes the one of the particle; a loop that evaluates each tuple once (B, Section 5.1) adds all of them. A kernel for each place, which computes that force only, is a later optimization. |
 | A sum | A tuple contributes once, from its member at place 0. No weight, and no rounding from adding a third three times. |
 
 ## 6. Exclusions and scaled pairs
@@ -366,9 +384,9 @@ $$N(\mathbf x, h) = \{ \{i, j\} : i \ne j,\ r_{ij} < r_c \} \setminus E.$$
 
 | Item | Proposal |
 |---|---|
-| The relation | `E` is a relation of arity 2 of a tuple set, as the bonds are. The reader derives it: pairs one, two, and three bonds apart (`nrexcl = 3`), and those that the topology lists. |
-| Where a pair is excluded | In the build of the neighbor structure. After the search, every particle removes from its row the particles in its row of exclusions and keeps the others in their order. A loop over pairs tests nothing. The neighbor structure carries the exclusions (`exclude` of `md_exec.build_neighbors` and `md_exec.empty_neighbors`), so every build applies them. |
-| The width of a row | A row holds the neighbors before the excluded ones are removed. The search itself is not changed, and a filter after it serves all three searches of a device. |
+| The relation | `E` is a relation of arity 2 of a tuple set, as the bonds are. The readers give it: from Amber, `EXCLUDED_ATOMS_LIST` as the file has it, built again from the bonds, angles, and dihedrals only where the topology has extra points (Section 19); from GROMACS, the pairs within `nrexcl` bonds of each `[ moleculetype ]` and those of its `[ exclusions ]`; from CHARMM, the pairs one to three bonds apart and those of `!NNB` ([charmm-m1.md](charmm-m1.md)). |
+| Where a pair is excluded | In the build of the neighbor structure, which carries the exclusions (`exclude` of `md_exec.build_neighbors` and `md_exec.empty_neighbors`), so every build applies them. On the CPU a filter after the search removes from each row the particles in its row of exclusions and keeps the others in their order. On a device the search of the matrix enters an excluded neighbor as the particle itself, which a loop over pairs skips ([neighbors-m0.md](neighbors-m0.md), Section 2.5); the groups clear the bit of an excluded pair in the mask of its entry (D89, D106, [groups-m1.md](groups-m1.md), Section 2). |
+| The width of a row | On the CPU a row holds the neighbors before the excluded ones are removed; on a device an excluded neighbor keeps its slot as the particle itself. |
 | The row of exclusions | An incidence structure of `E` (Section 5.2). It is built with the others. |
 | A term over the excluded pairs | `md.sum_tuples` over `E`, with `coordinates(distance(0, 1))`. Particle mesh Ewald has one: the reciprocal sum includes every pair, and the excluded pairs are taken out again (Section 8). |
 
@@ -387,7 +405,7 @@ md.tuple_set @pairs14 on(@atoms) arity(2) orientation(unordered)
 
 | Item | Proposal |
 |---|---|
-| Parameters | For each pair: the coefficients of Lennard-Jones and the product of the charges, each with its factor of scale applied by the reader |
+| Parameters | For each pair, fields of `pairs14`: `sigma`, `epsilon` times $s_\text{LJ}$, and `qq` $= f q_i q_j s_\text{C}$. The reader keeps the two factors for each pair, and the builder applies them |
 | The factors of scale | Amber stores them for each dihedral (`SCEE`, `SCNB`); GROMACS for the system (`fudgeLJ`, `fudgeQQ`) or for each pair. Parameters for each tuple take either (D47). |
 | A pair that two dihedrals share | Counted once. The reader keeps one tuple for each pair, as the engines do. |
 | Cutoff | None. A pair three bonds apart is always near. |
@@ -1395,7 +1413,7 @@ weights sum to 1, and is added for the extra point of Amber.
 | Placement | After every drift, and once where the run begins, whatever the file of coordinates says. The positions that a step returns have their sites placed, so frames and checkpoints need nothing more. |
 | Forces | Moved after every evaluation of the forces, before the kick |
 | Mass and velocity | A site has mass 0. A kick leaves a particle of mass 0 alone, and the velocities drawn at the start give it none. |
-| Degrees of freedom | Three for each particle with a mass, less three |
+| Degrees of freedom | $3N_m - N_c - 3$: three for each particle with a mass ($N_m$; a site counts none), less one for each constraint, less three for the center of mass where its momentum is kept, which Langevin and Brownian dynamics do not keep unless `center_of_mass_interval` removes its motion |
 | Exclusions | Amber: a site is excluded from its oxygen and from what its oxygen is excluded from, as sander rebuilds them; the list of the file must not exclude more. GROMACS: those of `[ exclusions ]`; no bond reaches a site. |
 | Bonded terms | Amber: the bond from the oxygen to the extra point gives its length and is dropped, with every term that has an extra point. |
 | In the IR | The placement and the move of the forces are `md.gather_tuples` over a tuple set `sites_amber` or `sites_linear` of arity 4, the site first, in the programs of the step; the change of the virial is an `md.sum_tuples` |
@@ -1485,8 +1503,8 @@ steepest descent (D73):
 | Acceptance | The step is taken if the energy at $\mathbf x'$ is lower: $h$ grows by 1.2, to at most 0.1 Å (D260; 1 Å before); otherwise $\mathbf x$ stays and $h$ shrinks by 0.2. The choice is made particle by particle (a map that selects), so that the fields keep storage of their own. A trial whose constrained lengths are not at their targets, $\lvert r^2/d^2 - 1\rvert > 10^{-4}$ below double precision and $10^{-8}$ in double, or not numbers, does not lower the energy: SETTLE or M-SHAKE did not take a group back from a step that turned it too far. Its energy is evaluated at $\mathbf x$, so that no position that is not a number reaches the neighbor structure, and is taken as $+\infty$ (D259) |
 | Loops | Over the intervals between frames (one if there are none), over the intervals between energies in each, and over the steps; one `dyn.step @descend` per step, which evaluates the energy and the forces once |
 | Log | The potential energy with the constant terms, the root mean square and the largest of the forces $m\mathbf g$ without their parts along the constraints, in kcal/mol/Å, over the particles with mass, the particle of the largest, and $h$ in Å |
-| Checkpoint | At the end, with `checkpoint` of `[output]`: the positions, velocities of 0, and the integrator `MIN`. A run that reads it, a minimization or a run of dynamics, takes the positions and the cell and begins anew at step 0 with drawn velocities; a minimization takes the positions and the cell of any checkpoint |
-| Keywords | `method = "STEEPEST_DESCENT"`, `steps` (positive, 100 by default; 0 is refused, #180), `energy_interval` (a divisor of `steps`), `trajectory_interval` (a multiple of it), `initial_step` in Å (0.1), `force_tolerance` in kcal/mol/Å (none). No thermostat or barostat. In mixed precision the forces are rounded to about 10⁻⁵ of their size, which bounds how far a minimization can go |
+| Checkpoint | At the end, with `checkpoint` of `[output]`: the positions, velocities of 0, and the integrator `MINIMIZATION`. A run that reads it, a minimization or a run of dynamics, takes the positions and the cell and begins anew at step 0 with drawn velocities; a minimization takes the positions and the cell of any checkpoint |
+| Keywords | `[minimize]` takes `method = "STEEPEST_DESCENT"`, `steps` (positive, 100 by default; 0 is refused, #180), `initial_step` in Å (0.1), and `force_tolerance` in kcal/mol/Å (none). Of `[output]`, `energy_interval` must not be 0 and must divide `steps`, and `trajectory_interval`, where given, must be a multiple of `energy_interval` and divide `steps`. No thermostat or barostat. In mixed precision the forces are rounded to about 10⁻⁵ of their size, which bounds how far a minimization can go |
 | Convergence | With `force_tolerance` (D219), the host compares the largest force of each row of the log, step 0 included, with it, where it reads the forces for the row anyway; at the first row below it the steps, rows, and frames after it are loops of no iteration, and the checkpoint is written at that step. The log says at the end whether it converged |
 | Floor | At the same rows the host compares the length of the next step with a floor, $10^{-7}$ Å below double precision and $10^{-11}$ Å in double ($10^{-6}$ and $10^{-10}$ of the cap; D274): at the first row whose step has shrunk below it, and below the first step, the run ends as at convergence, and the log says at the end at which step, the step, the floor, and the largest force. Where trials no longer lower the energy by more than its rounding or noise, they are taken at random and the step falls to 0 (#369) |
 
