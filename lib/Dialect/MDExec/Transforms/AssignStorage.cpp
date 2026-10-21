@@ -201,6 +201,14 @@ private:
   LogicalResult getNeighbors(Operation *op, Value structure, Type positions,
                              Scope &scope, Value &storage);
 
+  /// The storage of the neighbor structure `origin` of the value form, which
+  /// begins at `op`: that of an earlier structure of the same shape that
+  /// nothing uses from `op` on, with `shared` set, or else storage of its
+  /// own in the body of the function.
+  Value takeNeighborStorage(Operation *op, Value origin, Value size,
+                            TypeAttr positions, NeighborKindAttr kind,
+                            IntegerAttr width, Location loc, bool &shared);
+
   ModuleOp module;
   MLIRContext *context;
   bool onDevice;
@@ -229,6 +237,21 @@ private:
   llvm::DenseMap<Value, Value> hostTables;
   /// Neighbor structures: their storage.
   llvm::DenseMap<Value, Value> neighbors;
+  /// The storages of the neighbor structures of the function, with their
+  /// shape and the structures of the value form that each holds, one after
+  /// another (D[start-structures]).
+  struct NeighborStorage {
+    Value storage;
+    SmallVector<Value, 2> origins;
+    Type type;
+    Value size;
+    TypeAttr positions;
+    NeighborKindAttr kind;
+    IntegerAttr width;
+  };
+  SmallVector<NeighborStorage, 2> neighborStorages;
+  /// The body of the function that is being converted, in the value form.
+  Block *oldEntry = nullptr;
   /// The pairs of images of `md_exec.build_edges`: the results of its
   /// storage form, which a host call takes in their place
   /// (D277).
@@ -479,15 +502,116 @@ LogicalResult Assignment::getNeighbors(Operation *op, Value structure,
       return op->emitOpError()
              << "the excluded pairs of the neighbor structure have no storage";
   }
-  storage = EmptyNeighborsOp::create(
-      root->builder, empty.getLoc(), structure.getType(), size,
-      /*excluded=*/Value(), TypeAttr::get(getStorageType(positions)),
-      empty.getKindAttr(), empty.getWidthAttr());
-  // Inside a loop, every iteration begins with an empty structure.
-  if (&scope != root || excluded)
+  bool shared = false;
+  storage = takeNeighborStorage(op, structure, size,
+                                TypeAttr::get(getStorageType(positions)),
+                                empty.getKindAttr(), empty.getWidthAttr(),
+                                empty.getLoc(), shared);
+  // Inside a loop, every iteration begins with an empty structure; so does
+  // a structure that takes the storage of one before it.
+  if (shared || &scope != root || excluded)
     ResetNeighborsOp::create(scope.builder, empty.getLoc(), storage,
                              excluded);
   return success();
+}
+
+/// Returns true if nothing uses the neighbor structures `origins`, in the
+/// value form, from `point` on, an op of `block`: no op at or after `point`
+/// uses them, the forms that their refreshes and the loops that carry them
+/// give, or the configurations that they were built at
+/// (`md_exec.reference_positions`, which is the storage's own buffer). Sets
+/// `plain` to false if an op uses them that may give the storage more than
+/// a structure of the steps has (the pairs of images of D277, a stage of
+/// D293), or builds them for centers or images of their own (D290).
+static bool isUnusedFrom(ArrayRef<Value> origins, Operation *point,
+                         Block &block, bool &plain) {
+  SmallVector<Value> pending(origins.begin(), origins.end());
+  llvm::DenseSet<Value> seen;
+  plain = true;
+  bool unused = true;
+  while (!pending.empty()) {
+    Value value = pending.pop_back_val();
+    if (!seen.insert(value).second)
+      continue;
+    if (auto build = value.getDefiningOp<BuildNeighborsOp>())
+      if (build.getCenters() || build.getImages() == Images::Explicit)
+        plain = false;
+    for (OpOperand &use : value.getUses()) {
+      Operation *user = use.getOwner();
+      Operation *top = block.findAncestorOpInBlock(*user);
+      if (!top || top == point || !top->isBeforeInBlock(point))
+        unused = false;
+      if (auto refresh = dyn_cast<RefreshNeighborsOp>(user)) {
+        if (refresh.getCenters())
+          plain = false;
+        pending.push_back(refresh.getResult());
+      } else if (auto reference = dyn_cast<ReferencePositionsOp>(user)) {
+        pending.push_back(reference.getResult());
+      } else if (auto loop = dyn_cast<scf::ForOp>(user)) {
+        unsigned index = use.getOperandNumber();
+        if (index >= loop.getNumControlOperands()) {
+          index -= loop.getNumControlOperands();
+          pending.push_back(loop.getRegionIterArgs()[index]);
+          pending.push_back(loop.getResult(index));
+        }
+      } else if (auto yield = dyn_cast<scf::YieldOp>(user)) {
+        if (auto loop = dyn_cast<scf::ForOp>(yield->getParentOp())) {
+          pending.push_back(loop.getResult(use.getOperandNumber()));
+          pending.push_back(loop.getRegionIterArgs()[use.getOperandNumber()]);
+        } else {
+          plain = false;
+        }
+      } else if (auto pairs = dyn_cast<PairForOp>(user)) {
+        if (pairs.getCenters() || pairs.getImages() != Images::Minimum)
+          plain = false;
+        pairs->walk([&](md::ApplyStageOp) { plain = false; });
+      } else if (!isa<ReferenceCellOp, RebuildCountOp, ParticleForOp,
+                      TupleForOp>(user)) {
+        plain = false;
+      }
+    }
+  }
+  return unused;
+}
+
+Value Assignment::takeNeighborStorage(Operation *op, Value origin, Value size,
+                                      TypeAttr positions,
+                                      NeighborKindAttr kind,
+                                      IntegerAttr width, Location loc,
+                                      bool &shared) {
+  // The storage of a structure that nothing uses from here on, with the
+  // same shape (D[start-structures]): the structure of the start,
+  // which the evaluation at the start builds and the steps do not continue
+  // (D218), and that of the steps.
+  shared = false;
+  Operation *point = oldEntry ? oldEntry->findAncestorOpInBlock(*op) : nullptr;
+  // Only the shape of the storage is compared: the cutoff, the skin, and
+  // the width of the cells are those of the refreshes, which build anew
+  // after the reset whatever the storage held. On a host nothing is shared.
+  bool plain = false;
+  if (onDevice && point)
+    (void)isUnusedFrom({origin}, point, *oldEntry, plain);
+  if (plain) {
+    for (NeighborStorage &candidate : neighborStorages) {
+      if (candidate.type != origin.getType() || candidate.size != size ||
+          candidate.positions != positions || candidate.kind != kind ||
+          candidate.width != width)
+        continue;
+      bool earlierPlain = false;
+      if (!isUnusedFrom(candidate.origins, point, *oldEntry, earlierPlain) ||
+          !earlierPlain)
+        continue;
+      candidate.origins.push_back(origin);
+      shared = true;
+      return candidate.storage;
+    }
+  }
+  Value storage = EmptyNeighborsOp::create(
+      root->builder, loc, origin.getType(), size, /*excluded=*/Value(),
+      positions, kind, width);
+  neighborStorages.push_back(
+      {storage, {origin}, origin.getType(), size, positions, kind, width});
+  return storage;
 }
 
 //===----------------------------------------------------------------------===//
@@ -1152,12 +1276,12 @@ LogicalResult Assignment::convertBuildNeighbors(BuildNeighborsOp op,
     if (!excluded)
       return op.emitOpError() << "the excluded pairs have no storage";
   }
-  Value storage = EmptyNeighborsOp::create(
-      root->builder, loc, op.getResult().getType(), size,
-      /*excluded=*/Value(),
+  bool shared = false;
+  Value storage = takeNeighborStorage(
+      op, op.getResult(), size,
       TypeAttr::get(getStorageType(op.getPositions().getType())),
-      op.getKindAttr(), op.getWidthAttr());
-  if (&scope != root || excluded)
+      op.getKindAttr(), op.getWidthAttr(), loc, shared);
+  if (shared || &scope != root || excluded)
     ResetNeighborsOp::create(scope.builder, loc, storage, excluded);
   auto refresh = RefreshNeighborsOp::create(
       scope.builder, loc, storage.getType(), storage, positions,
@@ -2090,9 +2214,11 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
 
     sizes.clear();
     sharedScratch.clear();
+    neighborStorages.clear();
     hostBuffers.clear();
     readOnly.clear();
     Block &oldEntry = function.getBody().front();
+    this->oldEntry = &oldEntry;
     for (unsigned i = 0, e = oldEntry.getNumArguments(); i != e; ++i) {
       Value oldArgument = oldEntry.getArgument(i);
       Value newArgument = entry->getArgument(i);
