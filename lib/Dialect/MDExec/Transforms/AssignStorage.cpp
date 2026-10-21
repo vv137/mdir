@@ -26,6 +26,7 @@
 #include "llvm/ADT/MapVector.h"
 #include <cassert>
 #include <functional>
+#include <tuple>
 
 using namespace mlir;
 using namespace mdir;
@@ -236,6 +237,18 @@ private:
   llvm::DenseMap<Value, Value> orders;
   /// Particle sets: the number of particles.
   llvm::DenseMap<Attribute, Value> sizes;
+
+  /// The scratch of the reciprocal sums of the function, allocated once
+  /// in its body and shared by every sum that takes a buffer of the same
+  /// shape (D[pme-shared-buffers]): the type, the number of particles that
+  /// the length is computed from (null for a fixed length), the count of
+  /// the formula, the formula, and whether the buffer must hold zeros
+  /// between evaluations (the bricks of D108). A sum reads nothing of its
+  /// scratch that it has not written in the same evaluation, other than
+  /// those zeros, which each evaluation leaves as it found them, so the
+  /// sums that run one after another can take one buffer.
+  using ScratchKey = std::tuple<Type, Value, int64_t, unsigned, unsigned>;
+  llvm::DenseMap<ScratchKey, SmallVector<Value, 1>> sharedScratch;
 
   /// The scope of the body of the function that is being converted.
   Scope *root = nullptr;
@@ -937,17 +950,51 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
   // The grid, which the op needs for itself, once for the whole function:
   // the charges in fixed point, the grid, and its half-complex
   // transform; on a device also the sums of its rows.
+  //
+  // Every buffer of the scratch is shared with the other sums of the
+  // function that take one of the same shape (D[pme-shared-buffers]): a
+  // program evaluates the sum at several sites (the start, and each
+  // specialization of the step), and each site held a grid of its own
+  // for the whole run. A sum writes each buffer of its scratch before it
+  // reads it, within one evaluation, except the bricks, which it finds
+  // zero and leaves zero (D108); so two sums that do not run at once can
+  // take one buffer. They do not run at once on one stream, which runs
+  // its work in the order in which it was issued. The op declares that it
+  // reads and writes its scratch, so two sums that share a buffer are not
+  // independent (Independence.h): md-exec-assign-streams closes the window
+  // of a sum on the second stream before the next sum that shares its
+  // scratch (D87), and the lowering does not move one past the other
+  // (D113).
   ArrayRef<int64_t> grid = op.getGrid();
   int64_t points = grid[0] * grid[1] * grid[2];
   int64_t half = grid[0] * grid[1] * (grid[2] / 2 + 1);
   Attribute space;
   if (onDevice)
     space = IntegerAttr::get(IntegerType::get(context, 64), deviceSpace);
-  auto allocate = [&](Type element, int64_t count) -> Value {
+  // The buffers that this sum has taken, so that no two of its own are one.
+  llvm::SmallPtrSet<void *, 8> taken;
+  enum Formula : unsigned { Fixed, PerParticle, Bins };
+  // A buffer of `element` whose length is given by `formula` from `count`
+  // (and the number of particles, `size`, for all but `Fixed`): one that
+  // an earlier sum of the function took if there is one of that shape,
+  // else one allocated in the body of the function by `create`.
+  auto share = [&](Type element, Formula formula, int64_t count, bool zeroed,
+                   llvm::function_ref<Value(MemRefType)> create) -> Value {
     auto type = MemRefType::get({ShapedType::kDynamic}, element,
                                 MemRefLayoutAttrInterface(), space);
-    Value length =
-        arith::ConstantIndexOp::create(root->builder, loc, count);
+    ScratchKey key{type, formula == Fixed ? Value() : size, count,
+                   static_cast<unsigned>(formula),
+                   static_cast<unsigned>(zeroed)};
+    SmallVector<Value, 1> &shared = sharedScratch[key];
+    for (Value buffer : shared)
+      if (taken.insert(buffer.getAsOpaquePointer()).second)
+        return buffer;
+    Value buffer = create(type);
+    shared.push_back(buffer);
+    taken.insert(buffer.getAsOpaquePointer());
+    return buffer;
+  };
+  auto allocateLength = [&](MemRefType type, Value length) -> Value {
     if (onDevice)
       return gpu::AllocOp::create(root->builder, loc, type,
                                   /*asyncToken=*/Type(),
@@ -957,6 +1004,12 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
           .getMemref();
     return memref::AllocOp::create(root->builder, loc, type,
                                    ValueRange{length});
+  };
+  auto allocate = [&](Type element, int64_t count) -> Value {
+    return share(element, Fixed, count, /*zeroed=*/false, [&](MemRefType type) {
+      return allocateLength(
+          type, arith::ConstantIndexOp::create(root->builder, loc, count));
+    });
   };
   // The grid and its transform are in the type of the forces, which the
   // kernels of a device and the templates of the host compute in: f32 in
@@ -978,55 +1031,48 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
     // the fractions along the edges), from which the spreading of order 4
     // adds the charges and the gathering takes them (lowerReciprocal,
     // D109).
-    auto type = MemRefType::get({ShapedType::kDynamic}, gridType,
-                                MemRefLayoutAttrInterface(), space);
-    Value length = arith::MulIOp::create(
-        root->builder, loc, size,
-        arith::ConstantIndexOp::create(root->builder, loc, 6));
-    scratch.push_back(gpu::AllocOp::create(root->builder, loc, type,
-                                           /*asyncToken=*/Type(),
-                                           /*asyncDependencies=*/ValueRange(),
-                                           ValueRange{length},
-                                           /*symbolOperands=*/ValueRange())
-                          .getMemref());
+    scratch.push_back(share(
+        gridType, PerParticle, 6, /*zeroed=*/false, [&](MemRefType type) {
+          return allocateLength(
+              type,
+              arith::MulIOp::create(
+                  root->builder, loc, size,
+                  arith::ConstantIndexOp::create(root->builder, loc, 6)));
+        }));
     // The factors of the influence function along the edges, three for
     // each point of each edge (D104), five with `p3m` (D304).
     // The prolate kernel keeps its coefficients after them: at most
     // 3 + 2 * 64 + 2 * 8 * 64 (D266).
-    Value entries = arith::ConstantIndexOp::create(
-        root->builder, loc,
-        (op.getP3m() ? 5 : 3) * (grid[0] + grid[1] + grid[2]) +
-            (op.getProlate() ? 1280 : 0));
-    scratch.push_back(gpu::AllocOp::create(root->builder, loc, type,
-                                           /*asyncToken=*/Type(),
-                                           /*asyncDependencies=*/ValueRange(),
-                                           ValueRange{entries},
-                                           /*symbolOperands=*/ValueRange())
-                          .getMemref());
+    scratch.push_back(
+        allocate(gridType, (op.getP3m() ? 5 : 3) *
+                                   (grid[0] + grid[1] + grid[2]) +
+                               (op.getProlate() ? 1280 : 0)));
     // The bricks of the spreading of order 4 in f32 (D85): 16 values for
     // each z of each brick of 4 x 4 points in x-y, zero at the start and
     // left zero by each spreading (D108).
     if (gridType.isF32()) {
       int64_t bricks =
           (grid[0] + 3) / 4 * ((grid[1] + 3) / 4) * 16 * grid[2];
-      Value points = arith::ConstantIndexOp::create(root->builder, loc, bricks);
-      Value buffer = gpu::AllocOp::create(root->builder, loc, type,
-                                          /*asyncToken=*/Type(),
-                                          /*asyncDependencies=*/ValueRange(),
-                                          ValueRange{points},
-                                          /*symbolOperands=*/ValueRange())
-                         .getMemref();
-      Type token = gpu::AsyncTokenType::get(context);
-      Value begin = gpu::WaitOp::create(root->builder, loc, token, ValueRange())
-                        .getAsyncToken();
-      Value cleared =
-          gpu::MemsetOp::create(
-              root->builder, loc, token, ValueRange{begin}, buffer,
-              arith::ConstantOp::create(root->builder, loc,
-                                        root->builder.getF32FloatAttr(0.0f)))
-              .getAsyncToken();
-      gpu::WaitOp::create(root->builder, loc, Type(), ValueRange{cleared});
-      scratch.push_back(buffer);
+      scratch.push_back(share(
+          gridType, Fixed, bricks, /*zeroed=*/true, [&](MemRefType type) {
+            Value buffer = allocateLength(
+                type,
+                arith::ConstantIndexOp::create(root->builder, loc, bricks));
+            Type token = gpu::AsyncTokenType::get(context);
+            Value begin =
+                gpu::WaitOp::create(root->builder, loc, token, ValueRange())
+                    .getAsyncToken();
+            Value cleared =
+                gpu::MemsetOp::create(
+                    root->builder, loc, token, ValueRange{begin}, buffer,
+                    arith::ConstantOp::create(
+                        root->builder, loc,
+                        root->builder.getF32FloatAttr(0.0f)))
+                    .getAsyncToken();
+            gpu::WaitOp::create(root->builder, loc, Type(),
+                                ValueRange{cleared});
+            return buffer;
+          }));
     }
     // The bins of the spreading into tiles (D282, `scatter(tile(E))`,
     // D285), last: in i32,
@@ -1041,29 +1087,24 @@ LogicalResult Assignment::convertReciprocal(ReciprocalOp op, Scope &scope) {
       int64_t bins = 1;
       for (int64_t points : grid)
         bins *= (points + edge - 1) / edge;
-      auto type = MemRefType::get({ShapedType::kDynamic},
-                                  IntegerType::get(context, 32),
-                                  MemRefLayoutAttrInterface(), space);
-      OpBuilder &b = root->builder;
-      auto constant = [&](int64_t value) {
-        return arith::ConstantIndexOp::create(b, loc, value).getResult();
-      };
-      Value mean = arith::DivUIOp::create(
-          b, loc, arith::AddIOp::create(b, loc, size, constant(bins - 1)),
-          constant(bins));
-      Value capacity = arith::AddIOp::create(
-          b, loc, arith::AddIOp::create(b, loc, mean, mean), constant(8));
-      Value runs = arith::MulIOp::create(b, loc, capacity, constant(bins));
-      Value length = arith::AddIOp::create(
-          b, loc, arith::AddIOp::create(b, loc, runs, size),
-          constant(bins + 1));
-      Value buffer = gpu::AllocOp::create(b, loc, type,
-                                          /*asyncToken=*/Type(),
-                                          /*asyncDependencies=*/ValueRange(),
-                                          ValueRange{length},
-                                          /*symbolOperands=*/ValueRange())
-                         .getMemref();
-      scratch.push_back(buffer);
+      scratch.push_back(share(
+          IntegerType::get(context, 32), Bins, bins, /*zeroed=*/false,
+          [&](MemRefType type) {
+            OpBuilder &b = root->builder;
+            auto constant = [&](int64_t value) {
+              return arith::ConstantIndexOp::create(b, loc, value).getResult();
+            };
+            Value mean = arith::DivUIOp::create(
+                b, loc, arith::AddIOp::create(b, loc, size, constant(bins - 1)),
+                constant(bins));
+            Value capacity = arith::AddIOp::create(
+                b, loc, arith::AddIOp::create(b, loc, mean, mean), constant(8));
+            Value runs = arith::MulIOp::create(b, loc, capacity, constant(bins));
+            Value length = arith::AddIOp::create(
+                b, loc, arith::AddIOp::create(b, loc, runs, size),
+                constant(bins + 1));
+            return allocateLength(type, length);
+          }));
     }
   }
 
@@ -2043,6 +2084,7 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
     scope.builder.setInsertionPointToEnd(entry);
 
     sizes.clear();
+    sharedScratch.clear();
     hostBuffers.clear();
     readOnly.clear();
     Block &oldEntry = function.getBody().front();
