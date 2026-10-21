@@ -703,7 +703,12 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    used the block. Freeing memory with the driver would wait for the device,
    and a build of a neighbor structure frees a dozen blocks. The live blocks
    are recorded with their sizes, and the free blocks are reused for
-   requests of the same size. */
+   requests of the same size. A block of a size that no later request asks
+   for would stay in the pool for the rest of the run, so the sizes that
+   compiled code asks for at every step do not follow the builds: a buffer
+   indexed by the places of the groups takes the room of the places, not
+   the number that a build occupied, and a buffer of the runtime that a
+   growth replaces goes back to the driver (D[pool-retention]). */
 #define MAX_BLOCKS 4096
 /* An activation of an entry that an embedding program keeps across its
    calls (a Python simulation, D215): what the activation
