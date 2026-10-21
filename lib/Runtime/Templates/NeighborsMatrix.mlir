@@ -738,7 +738,7 @@ func.func private @mdrt.build_neighbors_matrix_centers(
 }
 
 // The minimum-image displacement in a triclinic cell, in one pass along c,
-// b, and a (docs/triclinic-m2.md, Section 2): exact for a displacement
+// b, and a (docs/triclinic.md, Section 2): exact for a displacement
 // whose nearest image is within half of the least of a_x, b_y, c_z.
 func.func private @mdrt.minimum_image_triclinic(
     %dx: f32, %dy: f32, %dz: f32, %ax: f32, %by: f32, %cz: f32, %bx: f32,
@@ -1083,7 +1083,7 @@ func.func private @mdrt.build_neighbors_matrix_triclinic_pass(
 
 // Whether an image of the displacement d of a pair is within the reach,
 // `far`, whose square is `limit2`, in a triclinic cell of the diagonal a_x,
-// b_y, c_z and the tilts b_x, c_x, c_y (docs/triclinic-m2.md, Section 2).
+// b_y, c_z and the tilts b_x, c_x, c_y (docs/triclinic.md, Section 2).
 // H is lower triangular, so z' = d_z - n_c c_z depends on n_c alone, y' on
 // n_c and n_b, and x' on all three: the images with |z'|, |y'|, |x'| within
 // the reach, which hold every image within it, are the n_c of
@@ -1501,7 +1501,7 @@ func.func private @mdrt.build_neighbors_matrix_triclinic_images(
 
 // The neighbor matrix of a triclinic cell, `box` = (a_x, b_y, c_z, b_x,
 // c_x, c_y), with the widths of the cell between its faces, `widths`
-// (docs/triclinic-m2.md, Section 2). A row holds a particle once if any of
+// (docs/triclinic.md, Section 2). A row holds a particle once if any of
 // its images is within `reach`. Where the reach is at most half of the
 // least of a_x, b_y, c_z that is the image of the one pass along c, b, and
 // a, and the build tests it alone; in a narrower cell it tests the others

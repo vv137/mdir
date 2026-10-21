@@ -1,4 +1,4 @@
-// The periodic cell of a run (docs/triclinic-m2.md, Section 1).
+// The periodic cell of a run (docs/triclinic.md, Section 1).
 
 #include "mdir/Driver/Cell.h"
 

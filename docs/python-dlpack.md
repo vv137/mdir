@@ -1,7 +1,7 @@
 # DLPack views and writable borrows of a simulation (D220, D229, D238)
 
 Issue #131, the first part of item 6 of the M2 sequence
-([python-m2.md](python-m2.md), Sections 3 to 5): read-only views. Writable
+([python.md](python.md), Sections 3 to 5): read-only views. Writable
 borrows with a commit, which advance the versions of the fields they
 change, are the second part (#136, D229,
 [below](#writable-borrows-d229)). Status of the views:
@@ -335,7 +335,7 @@ simulation at the commit.
 `Borrow.tilt` its tilts, the two arrays of `mdir.Cell` that `State.cell`
 and `InitialState.cell` hold: the cell is the lower-triangular matrix of
 rows $\mathbf a = (a_x, 0, 0)$, $\mathbf b = (b_x, b_y, 0)$,
-$\mathbf c = (c_x, c_y, c_z)$ ([triclinic-m2.md](triclinic-m2.md),
+$\mathbf c = (c_x, c_y, c_z)$ ([triclinic.md](triclinic.md),
 Section 1). A program is compiled for an orthorhombic or for a triclinic
 cell (D123), so the tilts are written through `Borrow.tilt` of a
 simulation whose program was compiled from a triclinic cell; for an
@@ -464,7 +464,7 @@ changes (`InputError`; nothing is committed and the borrow stays live):
 | Check | Why |
 |---|---|
 | the six numbers are finite | |
-| $a_x, b_y, c_z \ge 2 r_c$ | I2 of [triclinic-m2.md](triclinic-m2.md): the minimum image holds every image within the cutoff; what the builder asks of every cell, and the runtime at every change of the cell by a barostat |
+| $a_x, b_y, c_z \ge 2 r_c$ | I2 of [triclinic.md](triclinic.md): the minimum image holds every image within the cutoff; what the builder asks of every cell, and the runtime at every change of the cell by a barostat |
 | the tilts are not all zero; for a program compiled for an orthorhombic cell, the tilts are all zero | a cell without tilts is orthorhombic, for which the program has other arguments and other kernels (`isTriclinic` of the builder, D123): the change is structural either way, and the message says to compile from a state with that cell. `Borrow.tilt` of an orthorhombic program is read-only, so only a consumer that ignores the flag meets the second refusal |
 | $\lvert b_x\rvert \le a_x/2$, $\lvert c_x\rvert \le a_x/2$, $\lvert c_y\rvert \le b_y/2$, to the relative $10^{-6}$ of `reduceCell` | I1: the reduced form, which the minimum image in one pass and the search of the neighbor structures assume. A cell that is not reduced is refused and not reduced by the commit, as that of an `InitialState` is, and as nothing else that was written is adjusted; the message names the tilt and its bound |
 | `pairlist_distance` $\le 0.999 \min(a_x, b_y, c_z)$, for a program with the groups | what the builder asks of a cell with the groups at a compile (D242), repeated for the committed diagonal, so that a commit takes the cells that a compile takes. The matrix holds every pair with an image within its reach in any cell (D241), and a commit asks it for I2 alone |
@@ -482,7 +482,7 @@ form (I1), which is why a commit checks it. The widths between the faces
 $a_x$ for the others) are what a search by cells of the lattice would have
 to respect; the neighbor structures of MDIR bin the Cartesian brick
 $[0, a_x) \times [0, b_y) \times [0, c_z)$, whose widths are the diagonal
-([triclinic-m2.md](triclinic-m2.md), Section 3).
+([triclinic.md](triclinic.md), Section 3).
 
 **What the program had from the tilts, and what a commit does with it.**
 The audit of the builder (`lib/Driver/Builder.cpp`) for every read of the

@@ -1,6 +1,6 @@
 # Persistent simulations for M2 (D196)
 
-Issue #85 is item 3 of the M2 sequence ([python-m2.md](python-m2.md)): a
+Issue #85 is item 3 of the M2 sequence ([python.md](python.md)): a
 simulation that persists across calls, `run(n)` for any number of steps,
 status and errors that return to Python, and the ownership of the runtime
 and the device. Reporters, checkpoints, DLPack, and packaging follow as

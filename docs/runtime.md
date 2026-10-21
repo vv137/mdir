@@ -44,7 +44,7 @@ The runtime provides only the generic primitives they need (P9).
 ### 2.1 Algorithm
 
 M0 uses one algorithm on both targets: binning into cells
-[[Quentrec1973]](references.md#quentrec1973), then a neighbor matrix. [neighbors-m0.md](neighbors-m0.md) describes the method as it is
+[[Quentrec1973]](references.md#quentrec1973), then a neighbor matrix. [neighbors.md](neighbors.md) describes the method as it is
 implemented; the table is the proposal.
 
 | Step | Work | Provided by |
@@ -183,13 +183,13 @@ implemented.
 ### 5.2 Plan
 
 *The plan of M0, kept as it was.* The lowering as it is now is described
-in [ops-m0.md](ops-m0.md), Section 10.8, and in the description of
+in [ops.md](ops.md), Section 10.8, and in the description of
 `convert-md-exec-to-gpu` (`include/mdir/Conversion/Passes.td`): loops over
 pairs take 16 lanes a particle or groups of 16, global sums are added by
 blocks, and the test of validity is a flag rather than a global maximum.
 
 The GPU back end is a second lowering of the storage form
-(ops-m0.md, Section 10.7), next to `convert-md-exec-to-loops`.
+(ops.md, Section 10.7), next to `convert-md-exec-to-loops`.
 
 | Part | Plan |
 |---|---|
@@ -228,7 +228,7 @@ Proposal: the C++ tool.
 
 | Item | State |
 |---|---|
-| Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. See [neighbors-m0.md](neighbors-m0.md). On a device the templates are `NeighborsMatrixGPU.mlir` and, for groups of 16 with each pair once, `NeighborsGroupsGPU.mlir` ([groups-m1.md](groups-m1.md)); particle mesh Ewald has `PME.mlir` and `PMEGPU.mlir` ([pme-m1.md](pme-m1.md)). |
+| Neighbor build as a template in IR, `lib/Runtime/Templates/NeighborsMatrix.mlir` | Implemented. The compiler adds it to the module, where it is lowered with the rest of the code. See [neighbors.md](neighbors.md). On a device the templates are `NeighborsMatrixGPU.mlir` and, for groups of 16 with each pair once, `NeighborsGroupsGPU.mlir` ([neighbor-groups.md](neighbor-groups.md)); particle mesh Ewald has `PME.mlir` and `PMEGPU.mlir` ([pme.md](pme.md)). |
 | Neighbor matrix | Implemented |
 | Overflow of a row | The runtime holds the rows (`mdrtMatrixCreate`, `mdrtHostMatrixCreate`) and makes them a quarter wider than needed (`mdrtMatrixGrow`); the build is made again. Compiled code takes the rows where it uses them (`mdrtMatrixEntries`). |
 | Storage in `memref<?x3xT>` | Implemented, for `f32` and `f64` |
@@ -238,8 +238,8 @@ Proposal: the C++ tool.
 | Storage form of the loops | Implemented |
 | Threading as a plan parameter | Not implemented. The choice is made by the passes that are run after lowering. |
 | Runtime library `libmdrt` | The host side of a run (`runtime/mdrt.c`): the counts of builds, of prunings of inner lists, of those done by the loop over pairs (D284), and of late builds (`mdrtCountBuild`, `mdrtCountPrune`, `mdrtCountFusedPrune`, `mdrtCountLateBuild`) and the statistics of the lists of groups (`mdrtNoteGroups`) that the log reports; the stop of a run whose positions are not numbers or are far outside the cell (`mdrtStopNotNumbers`, D107, D225) and of one whose constraints failed in a step, with the step and the set (`mdrtStopConstraintFailure`, D278), before which, in a step with constraints, the first stops are recorded (`mdrtDeferStops`, `mdrtStopPending`); the generator Philox 4×32-10 and the factors of the thermostat and the barostat drawn from it (`mdrtPhilox4x32`, `mdrtBussiFactor`, `mdrtBarostatStrain`); the FFT of the host, from pocketfft, for blocks of the lines of a grid in f64 or f32 (`mdrtFFTPrepare`, `mdrtFFTColumnBlocks`, `mdrtFFT64RowsForward`, `mdrtFFT64RowsBackward`, `mdrtFFT64Columns` and their `32` forms, `runtime/mdrt_fft.c`, D271); and the neighbor matrix of the host (`mdrtHostMatrixCreate`, `mdrtHostMatrixGrow`, `mdrtHostMatrixEntries`) |
-| Spatial reordering (step 5) | Implemented, where a run and where a segment begins (D44); see [neighbors-m0.md](neighbors-m0.md), Section 5 |
-| GPU | Implemented for NVIDIA. See [ops-m0.md](ops-m0.md), Section 10.8. |
+| Spatial reordering (step 5) | Implemented, where a run and where a segment begins (D44); see [neighbors.md](neighbors.md), Section 5 |
+| GPU | Implemented for NVIDIA. See [ops.md](ops.md), Section 10.8. |
 | Runtime library `libmdrt_cuda` | The functions that the lowering of the `gpu` dialect calls (`mgpu*`), on the CUDA driver API: modules of PTX compiled by the driver at load, launches that skip empty grids, and a caching allocator whose frees do not wait. One stream serves all launches, and an optional second one the reciprocal sum (`mdrtSideBegin`, `mdrtSideEnd`, `mdrtSideJoin`, D81, D87). The host waits only where it reads what the device has computed; a flag of a test is read through pinned memory and an event (`mdrtFlagStart`, `mdrtFlagFinish`, D113), and the other flags that the kernel of the event set as they are (`mdrtFlagTake`, D278). The buffers of the neighbor matrix and of the lists of groups, grown when a build overflows (`mdrtMatrixCreate`, `mdrtMatrixGrow`, `mdrtGroupsCreate`, `mdrtGroupsGrow`, `mdrtGroupsBuffer`); the transforms of cuFFT in f32 and f64 with cached plans, one for each grid, direction, and precision of the process, in a table that grows (`mdrtCudaFFTForward3D`, `mdrtCudaFFTBackward3D` and their `F32` forms); a failure of cuFFT goes to the handler of the embedding program (`mdrtCudaSetStopHandler`, as `mdrtSetStopHandler` of `libmdrt`), or ends the process with status 1 (#323). |
 | Memory of the device | A caching allocator: a block that a program frees is kept for a later request of the same size, without waiting, since the work it is handed to runs after the work that used it on the one stream. The driver's own use outside it (the context, modules, cuFFT's plans, cuBLAS, the store of the tuples) is reported with the pool's blocks by `MDIR_DEVICE_MEMORY=2` (D311, [debugging.md](debugging.md)); #471 measures where it goes on large systems. |
 | Products of learned stages | `mdrtGemmF32`, cuBLAS's f32 GEMM and strided-batched GEMM on the stream of the kernels, without TF32; the weights that the products read are copied to the device when first read and freed with the activation or the program that made them (`mdrtDeviceConstant`, D302). |
@@ -264,7 +264,7 @@ for neighbors.
 D17 decided that `md_exec` ops have a value form and a storage form. Both
 exist. The pass `md-exec-assign-storage` converts the value form to the
 storage form, and `convert-md-exec-to-loops` turns the storage form into
-loops on the CPU. See [ops-m0.md](ops-m0.md), Sections 8.5 and 10.
+loops on the CPU. See [ops.md](ops.md), Sections 8.5 and 10.
 
 The first implementation lowered the value form directly to loops. The two
 steps were separated before the GPU back end, so that the back ends share

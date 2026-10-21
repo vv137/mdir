@@ -2,7 +2,7 @@
 """The relative force error Delta of the three influence functions of PME,
 "SPME", "OPTIMAL", and "P3M", at fixed (K, P, beta), against the reference
 of scripts/benchmarks/prolate-ewald/grid_sweep.py (D304, #468;
-docs/pme-m1.md, Section 1.1).
+docs/pme.md, Section 1.1).
 
     sweep.py make DIR SYSTEM TARGET SUITE REFERENCES
         SYSTEM      jac or cel

@@ -55,7 +55,7 @@ public:
 
   /// The edges of the cell of the frames that follow, in Å: of an
   /// orthorhombic cell, or the diagonal of a triclinic one, whose tilts
-  /// scale with the columns of the cell (docs/triclinic-m2.md, I3).
+  /// scale with the columns of the cell (docs/triclinic.md, I3).
   void setBox(const double edges[3]) {
     if (box[0] > 0.0) {
       tilt[0] *= edges[0] / box[0];

@@ -1,6 +1,6 @@
 # Shared model for M2 (D191)
 
-Native implementation of the first item of `python-m2.md` (#74, PR #75).
+Native implementation of the first item of `python.md` (#74, PR #75).
 This PR provides the native C++ model layer for subsequent Python bindings.
 It does not provide an importable Python package. The optional bindings and
 lowering contribution is [python-compile.md](python-compile.md)
@@ -190,7 +190,7 @@ evaluate the same pairs within the cutoff.
 D245 (#270) gives the Python model the two keys of the control
 file that select the neighbor structure of the loops over pairs: the
 groups of 16 particles that share a list (D89,
-[groups-m1.md](groups-m1.md)) and the dual list (D114). Until then a
+[neighbor-groups.md](neighbor-groups.md)) and the dual list (D114). Until then a
 Python simulation had the neighbor matrix alone, and the rates of
 `mdir run` with the groups could not be had from Python.
 
@@ -508,7 +508,7 @@ the names, the values, and the refusals of the control file:
   no momentum whose removal `com_period` could ask for. Its velocities are
   the displacements of a step over the time step, and its energies have no
   kinetic energy, temperature, total, or conserved energy
-  ([driver-m0.md](driver-m0.md)).
+  ([driver.md](driver.md)).
 - *The two frictions* are two keys in the control file, of `[dynamics]`
   and of `[thermostat]`, and two fields here, so that one given for the
   other is refused as the file refuses it.

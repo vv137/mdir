@@ -179,7 +179,7 @@ llvm::Expected<int64_t> DCDWriter::append(const std::string &path,
 
 void DCDWriter::writeFrame(const float *positions, int64_t, double) {
   // The cell: a, cos γ, b, cos β, cos α, c, as NAMD and OpenMM write it
-  // (docs/triclinic-m2.md, Section 1); right angles for an orthorhombic
+  // (docs/triclinic.md, Section 1); right angles for an orthorhombic
   // cell.
   double b = std::sqrt(tilt[0] * tilt[0] + box[1] * box[1]);
   double c = std::sqrt(tilt[1] * tilt[1] + tilt[2] * tilt[2] + box[2] * box[2]);

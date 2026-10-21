@@ -1,6 +1,6 @@
 # The Python package (D228)
 
-The last item of M2a ([python-m2.md](python-m2.md), Sections 1, 4 and 6;
+The last item of M2a ([python.md](python.md), Sections 1, 4 and 6;
 [#133](https://github.com/vv137/mdir/issues/133)). The Python interface of
 D192 is the package `mdir`, built as a pip wheel for CPython 3.10–3.13 on
 manylinux_2_28 (x86-64) on the packaging baseline of the release tarball

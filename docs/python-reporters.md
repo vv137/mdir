@@ -1,6 +1,6 @@
 # Reporters of a Python simulation (D207)
 
-Issue #109, M2a item 4 of [python-m2.md](python-m2.md). A persistent
+Issue #109, M2a item 4 of [python.md](python.md). A persistent
 simulation (D196) writes the outputs of `mdir run` (the energy file and the
 trajectory) and calls Python functions at chosen periods, at the cost of
 `mdir run`'s own outputs. This document is the design of the draft; the

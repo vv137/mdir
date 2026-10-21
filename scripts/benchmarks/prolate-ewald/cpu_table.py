@@ -22,7 +22,7 @@ B-splines, the gathering, and the rest do not change. That estimate is the
 paper's Coulomb-only setting; with the Lennard-Jones at 9 Å the loop over
 pairs would not shrink, and only the grid would grow.
 
---doc prints instead the compact tables of docs/pme-m1.md §7: for each
+--doc prints instead the compact tables of docs/pme.md §7: for each
 system and tier the prolate default, the fastest prolate case where it is
 another, the Gaussian of order 4 (the paper's kind of baseline), and the
 fastest Gaussian at 16 threads (the fair one); their parts at 16 threads;

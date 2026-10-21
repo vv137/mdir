@@ -273,7 +273,7 @@ def ChooseNeighbors
   let description = [{
     With `kind=groups`, a neighbor structure becomes a structure of groups
     of 16 particles that share a list of neighbors (D89,
-    docs/groups-m1.md), and every loop over it takes the policy
+    docs/neighbor-groups.md), and every loop over it takes the policy
     `(unique, atomic)`: each pair once, the value of the kernel added to
     both particles. It does so only when every loop over pairs over the
     structure has an exchange contract for each destination, symmetric or

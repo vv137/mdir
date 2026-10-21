@@ -1,6 +1,6 @@
 // Forward-mode differentiation of scalar computations.
 //
-// The derivative rules are those of docs/ops-m0.md, Section 5.4.
+// The derivative rules are those of docs/ops.md, Section 5.4.
 
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"
 #include "mdir/Dialect/MD/Transforms/AdjointInterface.h"

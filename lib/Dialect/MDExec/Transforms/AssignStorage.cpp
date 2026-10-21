@@ -2,7 +2,7 @@
 //
 // The pass converts the ops of md_exec from the value form to the storage
 // form: it gives every field a buffer and makes the loops update the buffers
-// where they are. See docs/ops-m0.md, Section 10.
+// where they are. See docs/ops.md, Section 10.
 
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 

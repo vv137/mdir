@@ -2,7 +2,7 @@
 //
 // The ops that touch fields have two forms. In the value form they take
 // fields and return fields. In the storage form they take the buffers that
-// hold the fields and update them where they are. See docs/ops-m0.md,
+// hold the fields and update them where they are. See docs/ops.md,
 // Section 8, for the specification.
 
 #ifndef MDIR_DIALECT_MDEXEC_MDEXECOPS_TD
@@ -227,7 +227,7 @@ def MDExec_ReciprocalOp : MDExec_Op<"reciprocal", [
   let summary = "The reciprocal sum of particle mesh Ewald";
   let description = [{
     What `md.reciprocal` computes: the energy, the virial, and the forces
-    of the reciprocal sum of smooth particle mesh Ewald (docs/pme-m1.md).
+    of the reciprocal sum of smooth particle mesh Ewald (docs/pme.md).
 
     ```mlir
     %u, %w, %f = md_exec.reciprocal %x, %q, %cell, %moduli
@@ -616,7 +616,7 @@ def MDExec_RefreshNeighborsOp : MDExec_Op<"refresh_neighbors", [
     ```
 
     With `prune_skin` the structure is a dual list (D114,
-    docs/tiles-m1.md, Section 6): the outer list, built with the reach
+    docs/neighbor-tiles.md, Section 6): the outer list, built with the reach
     `R = cutoff + skin` as above, and an inner one pruned from it, which
     keeps the pairs of the outer list within `R_in = cutoff + prune_skin`
     at the configuration `x_p` and the cell `L_p` of the pruning; the
@@ -776,7 +776,7 @@ def MDExec_CellNumbersOp : MDExec_Op<"cell_numbers", [Pure]> {
   let summary = "The diagonal and the tilts of a cell";
   let description = [{
     The six numbers of a cell: the diagonal l_x, l_y, l_z and the tilts
-    b_x, c_x, c_y of a triclinic cell (docs/triclinic-m2.md), with tilts of
+    b_x, c_x, c_y of a triclinic cell (docs/triclinic.md), with tilts of
     zero for an orthorhombic one. A function of the host that reads the
     cell takes these (D270).
 
@@ -996,7 +996,7 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
     value behaves when the two particles are swapped, from the
     `md.gather_relation` or `md.sum_relation` it came from. A loop may
     compute a pair once for its two particles only if every value is
-    `symmetric` or `antisymmetric` (docs/groups-m1.md, D89). Without it,
+    `symmetric` or `antisymmetric` (docs/neighbor-groups.md, D89). Without it,
     every value is `none`.
 
     ```mlir

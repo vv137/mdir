@@ -1,6 +1,6 @@
 // Assignment of floating-point types to fields and kernels.
 //
-// See docs/ops-m0.md, Section 7.
+// See docs/ops.md, Section 7.
 
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 

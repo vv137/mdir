@@ -83,7 +83,7 @@ phase `pair`) settle what the documentation of CHARMM does not write out:
 - **VSWITCH is the potential switch**
   S = (r_c² − r²)² (r_c² + 2r² − 3r_s²) / (r_c² − r_s²)³, a polynomial in
   r², within 2.8 × 10⁻⁹. It is not the potential switch of GROMACS, a
-  polynomial in r (`truncation(switch)` of ops-m0.md, Section 4.8).
+  polynomial in r (`truncation(switch)` of ops.md, Section 4.8).
 - **The Coulomb constant is 332.0716 kcal/mol Å/e²**: unit charges 10 Å
   apart give −33.20716 kcal/mol. MDIR keeps the constant of CODATA 2018,
   138.935457644 kJ/mol nm/e² or 332.0637 kcal/mol Å/e² (GROMACS rounds the
@@ -97,7 +97,7 @@ phase `pair`) settle what the documentation of CHARMM does not write out:
 `lennard_jones_modifier = "POWER_FORCE_SWITCH"` gives the Lennard-Jones of a
 topology the switch of Section 2, in the kernel of the pairs, and switches
 the pairs three bonds apart as well (D121). It is not a kind of the
-`truncation` attribute of the IR (ops-m0.md, Section 4.8): the attribute
+`truncation` attribute of the IR (ops.md, Section 4.8): the attribute
 applies to any kernel u(r), and this switch is defined only for a sum of
 inverse powers, each switched on its own. The driver writes the kernel as
 4ε (σ¹² Φ₁₂ − σ⁶ Φ₆) with s = σ/r and the powers of σ, so that no power of
@@ -129,7 +129,7 @@ A cell that is not orthorhombic is given by its lengths and angles, as
 `crystal define` takes them, `box = [a, b, c, α, β, γ]`; CHARMM keeps it
 in a symmetric frame, the rows of $G^{1/2}$ for the metric $G$, and MDIR
 rotates the coordinates of the CRD into the lower-triangular frame of
-docs/triclinic-m2.md (D123, D127).
+docs/triclinic.md (D123, D127).
 
 `lib/Driver/Charmm.cpp` reads them as the documentation of CHARMM 51b1
 describes them (`doc/io.info`, `doc/parmfile.info`, `doc/rtop.info`),

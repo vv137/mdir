@@ -12,7 +12,7 @@
 // The buffers are on the device. The simulation cell is periodic: for
 // @mdrt_gpu_build_neighbors_matrix orthorhombic, with edge lengths `box`,
 // and for @mdrt_gpu_build_neighbors_matrix_triclinic the lower-triangular
-// cell of docs/triclinic-m2.md. On return, `order[p]` is the particle
+// cell of docs/triclinic.md. On return, `order[p]` is the particle
 // at the place `p` of the order of the cells, row `p` of `index` holds the
 // places of the particles within `reach` of that particle, and `counts[p]`
 // holds their number, limited to the width of a row. The loops over pairs
@@ -819,7 +819,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix(
 // c_x, c_y), with the widths of the cell between its faces, `widths`, where
 // the reach is at most half of the least of a_x, b_y, c_z: the build of
 // the orthorhombic cell in the fractional coordinates, which the positions
-// are wrapped in, with the image of the one pass (docs/triclinic-m2.md),
+// are wrapped in, with the image of the one pass (docs/triclinic.md),
 // which is then the nearest image of every pair within the reach.
 // @mdrt_gpu_build_neighbors_matrix_triclinic, below, calls it for such a
 // cell, and for a narrower one the build that tests every image within the
@@ -1392,7 +1392,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_pass(
 
 // Whether an image of the displacement d of a pair is within the reach,
 // `far`, whose square is `limit2`, in a triclinic cell of the diagonal a_x,
-// b_y, c_z and the tilts b_x, c_x, c_y (docs/triclinic-m2.md, Section 2).
+// b_y, c_z and the tilts b_x, c_x, c_y (docs/triclinic.md, Section 2).
 // H is lower triangular, so z' = d_z - n_c c_z depends on n_c alone, y' on
 // n_c and n_b, and x' on all three: the images with |z'|, |y'|, |x'| within
 // the reach, which hold every image within it, are the n_c of
@@ -2068,7 +2068,7 @@ func.func private @mdrt_gpu_build_neighbors_matrix_triclinic_images(
   return %largest, %not_numbers : index, index
 }
 
-// The neighbor matrix of a triclinic cell on a device (docs/triclinic-m2.md,
+// The neighbor matrix of a triclinic cell on a device (docs/triclinic.md,
 // Section 2): a row holds a particle once if any of its images is within
 // `reach`, as @mdrt.build_neighbors_matrix_triclinic of the host has it.
 // Where the reach is at most 0.49 of the least of a_x, b_y, c_z the build

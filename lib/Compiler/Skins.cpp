@@ -6,7 +6,7 @@
 // skin, D80, D114), so every candidate takes the same pairs within the
 // cutoff: the choice changes the speed, not the forces.
 //
-// See docs/neighbors-m0.md, "The choice of the skins".
+// See docs/neighbors.md, "The choice of the skins".
 
 #include "mdir/Compiler/Skins.h"
 #include "mdir/Compiler/Compile.h"

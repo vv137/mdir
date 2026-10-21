@@ -1,6 +1,6 @@
 # `observe` in the Python model (D232, D233)
 
-Issue #188, M2a item 8 of [python-m2.md](python-m2.md), the last. A term of
+Issue #188, M2a item 8 of [python.md](python.md), the last. A term of
 the Python model given by an expression selects constants to observe, as
 `observe = [constants]` does in the control file (D189): a Python simulation
 writes the columns of `[output] observables` through a reporter and gives the

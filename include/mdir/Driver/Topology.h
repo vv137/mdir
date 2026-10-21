@@ -244,7 +244,7 @@ struct Topology {
   // Configuration
   //===--------------------------------------------------------------------===//
 
-  /// The cell (docs/triclinic-m2.md): its diagonal a_x, b_y, c_z, which are
+  /// The cell (docs/triclinic.md): its diagonal a_x, b_y, c_z, which are
   /// the edges of an orthorhombic cell, and its tilts b_x, c_x, c_y, which
   /// are 0 for one.
   double box[3] = {0.0, 0.0, 0.0};
@@ -292,7 +292,7 @@ llvm::Error readGromacsCoordinates(llvm::StringRef path, Topology &topology);
 /// Reads a protein structure file of CHARMM (PSF, with the types named, as
 /// `write psf card xplor` and CHARMM-GUI write it) and assigns it the
 /// parameters of `parameterFiles`: files of topology (RTF), of parameters
-/// (PRM), and stream files, read in order (docs/charmm-m1.md).
+/// (PRM), and stream files, read in order (docs/charmm.md).
 llvm::Expected<Topology>
 readCharmmTopology(llvm::StringRef path,
                    llvm::ArrayRef<std::string> parameterFiles);

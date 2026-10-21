@@ -38,7 +38,7 @@ mlir::Value createInverse(mlir::OpBuilder &builder, mlir::Location loc,
                           mlir::Value box);
 
 /// Whether `box`, a cell lowered to a vector, is triclinic: the vector of six,
-/// a_x, b_y, c_z, b_x, c_x, c_y (docs/triclinic-m2.md), rather than the three
+/// a_x, b_y, c_z, b_x, c_x, c_y (docs/triclinic.md), rather than the three
 /// edges of an orthorhombic cell.
 bool isTriclinic(mlir::Value box);
 
@@ -50,7 +50,7 @@ mlir::Value getEdges(mlir::OpBuilder &builder, mlir::Location loc,
 /// `createInverse`: per edge for an orthorhombic cell, and for a triclinic
 /// one in one pass along c, b, and a, which is exact for displacements
 /// whose nearest image is within half of the least of a_x, b_y, c_z
-/// (docs/triclinic-m2.md, Section 2).
+/// (docs/triclinic.md, Section 2).
 mlir::Value emitMinimumImage(mlir::OpBuilder &builder, mlir::Location loc,
                              mlir::Value raw, mlir::Value box,
                              mlir::Value inverse);
@@ -64,7 +64,7 @@ mlir::Value emitLatticeShift(mlir::OpBuilder &builder, mlir::Location loc,
 /// The bits a lattice vector of the shift of an entry of a list of groups,
 /// from bit 16 of its mask, and the offset that makes it whole (D95, D115):
 /// four bits and 4 for an orthorhombic cell, five and 16 for a triclinic
-/// one (docs/triclinic-m2.md).
+/// one (docs/triclinic.md).
 inline int64_t getEntryShiftBits(bool triclinic) { return triclinic ? 5 : 4; }
 inline int64_t getEntryShiftOffset(bool triclinic) {
   return triclinic ? 16 : 4;
@@ -147,8 +147,8 @@ emitPairKernel(mlir::OpBuilder &builder, md_exec::PairForOp op,
                llvm::SmallVectorImpl<mlir::Value> *outTotals = nullptr,
                const PairLayout *layout = nullptr, AddToMember add = nullptr);
 
-/// Where a loop over pairs over groups of 16 (D89, docs/groups-m1.md) finds
-/// its work: the lists of the groups in blocks of 64 entries (`entries` and
+/// Where a loop over pairs over groups of 16 (D89,
+/// docs/neighbor-groups.md) finds its work: the lists of the groups in blocks of 64 entries (`entries` and
 /// `masks`; block b is entries 64 b to 64 b + 63), the number of entries
 /// of each group (`counts`), what each block is (block `ordinals[b]` of the
 /// list of group `units[b]`: a block is a unit of work), and the particle

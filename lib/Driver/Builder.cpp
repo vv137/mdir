@@ -264,7 +264,7 @@ private:
   /// κ of the salt of generalized Born in nm⁻¹, scaled by 0.73, or 0.
   double getDebyeKappa() const;
   /// β, the grid, the influence function, and the constant terms of
-  /// particle mesh Ewald (docs/pme-m1.md).
+  /// particle mesh Ewald (docs/pme.md).
   llvm::Error collectPME();
   /// The parameters and tables of the prolate kernel (D266).
   llvm::Error collectProlate();
@@ -386,7 +386,7 @@ private:
   /// Whether the cell changes in the run, which a barostat does.
   bool changesCell() const { return control.barostat; }
   /// Whether particles are restrained to reference positions.
-  /// Whether the cell is triclinic (docs/triclinic-m2.md).
+  /// Whether the cell is triclinic (docs/triclinic.md).
   bool isTriclinic() const {
     return system.tilt[0] != 0.0 || system.tilt[1] != 0.0 ||
            system.tilt[2] != 0.0;
@@ -2838,14 +2838,14 @@ void Builder::collectFreeEnergyConstants() {
 }
 
 /// The aliases |j| ≤ P3MAliases of each index of an edge in the sums of
-/// influence "P3M" (D304; docs/pme-m1.md, Section 1.1). The
+/// influence "P3M" (D304; docs/pme.md, Section 1.1). The
 /// kernels of a device take it as a constant (tables_p3m of
 /// scripts/generate-pme-gpu-template.py): change both together.
 static constexpr int64_t P3MAliases = 2;
 
 /// The smallest even number of points, at least `least`, whose prime
 /// factors are 2, 3, 5, and 7, which the FFT handles fast. On an even grid
-/// the influence function of sander agrees with MDIR's (docs/pme-m1.md,
+/// the influence function of sander agrees with MDIR's (docs/pme.md,
 /// Section 1.1).
 static int64_t getSmoothSize(int64_t least) {
   for (int64_t size = least;; ++size) {
@@ -3162,7 +3162,7 @@ llvm::Error Builder::collectMesh(StringRef name, const int64_t (&given)[3],
     // differentiation, with the Gaussian in a rectangular cell: a product
     // of factors of the edges over a sum of their mean squares, whose
     // weights over the aliases |j| ≤ P3MAliases of each index do not
-    // depend on the cell (docs/pme-m1.md, Section 1.1; D304).
+    // depend on the cell (docs/pme.md, Section 1.1; D304).
     // Row a holds 1 / Σ_j Û², row 3 + a (2J + 1) + j + J the weight
     // Û²(n + jK) / Σ_j Û² of alias j of edge a.
     if (isTriclinic())
@@ -9159,7 +9159,7 @@ void Builder::emitStrain(StringRef indent, StringRef kinetic,
      << " : vector<3xf64>\n";
   // The new cell, which the next iteration takes from memory: H diag(μ),
   // the tilts b_x and c_x of the column of x scaled by μ_x and c_y by μ_y
-  // (I3 of docs/triclinic-m2.md).
+  // (I3 of docs/triclinic.md).
   static const int column[] = {0, 1, 2, 0, 0, 1};
   for (int k = 0; k != getCellSize(); ++k) {
     if (k < 3)
@@ -10993,7 +10993,7 @@ void Builder::emitEntry() {
     if (scalesEveryStep())
       os << "  %trotter_memory = memref.alloca() : memref<9xf64>\n";
     // A triclinic cell keeps its tilts after its diagonal (I3 of
-    // docs/triclinic-m2.md: the barostat scales them with their columns).
+    // docs/triclinic.md: the barostat scales them with their columns).
     // The tilts at the start are arguments of the entry
     // (collectStartValues).
     static const char *const initial[] = {"%lx", "%ly", "%lz",
@@ -11883,7 +11883,7 @@ llvm::Error Builder::build() {
   // The neighbor matrix of a triclinic cell holds every pair that has an
   // image within its reach, whatever the reach: its build tests the images
   // beyond that of the one pass where the reach is more than half of the
-  // least of a_x, b_y, c_z (docs/triclinic-m2.md, Section 2). It counts at
+  // least of a_x, b_y, c_z (docs/triclinic.md, Section 2). It counts at
   // most 64 images a side along a lattice vector, which holds every image
   // within the reach while the reach is at most 63.5 times the least of
   // a_x, b_y, c_z, and so, the diagonal being at least twice the cutoff
@@ -11904,8 +11904,8 @@ llvm::Error Builder::build() {
   // candidate nearest to the center of the box of a group and those a
   // lattice vector away along each axis, which are the images within three
   // halves of the cell of that center, and a box and the reach span at
-  // most half the cell and the reach (docs/groups-m1.md, Section 5.2). The
-  // runtime asks the same of a cell that a barostat scales
+  // most half the cell and the reach (docs/neighbor-groups.md, Section
+  // 5.2). The runtime asks the same of a cell that a barostat scales
   // (`leastReachEdge`). The 0.999 is for the margin by which the builds
   // widen the reach, 3e-6 of the sum of the edges.
   if (control.periodic &&
@@ -11923,7 +11923,7 @@ llvm::Error Builder::build() {
   }
   // A pair is taken once, in the minimum image, which holds every image
   // within the cutoff only while the cell is wider than twice the cutoff:
-  // for a triclinic cell, its diagonal (I2 of docs/triclinic-m2.md).
+  // for a triclinic cell, its diagonal (I2 of docs/triclinic.md).
   static const char axes[] = "xyz";
   for (int k = 0; k != 3; ++k)
     if (system.box[k] < 2.0 * control.cutoffDistance * units::length)

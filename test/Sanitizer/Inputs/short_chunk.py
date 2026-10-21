@@ -6,7 +6,7 @@ in x and y and 4.2 Å in z, and one atom more at the center of the first
 cell. Particles take a column of about 64 particles' width: here the
 cell is narrower than one (4 x 3.8 Å against (64 a^2 c)^(1/3) = 15.7 Å), so
 the build has one column of 129 particles, cut into chunks of 64, 64, and
-1. The chunk of one particle makes four groups (docs/groups-m1.md), the
+1. The chunk of one particle makes four groups (docs/neighbor-groups.md), the
 last three of them empty: their first places hold no particle.
 
     short_chunk.py DIRECTORY

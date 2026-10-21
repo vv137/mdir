@@ -510,7 +510,7 @@ the change gains less there.
   0.3% of a step, for a change of the arguments of every entry; not taken.
 - *The excluded pairs in the loop over pairs.* Their cost was their
   atomics, which the block sums now share with the other sets; the masks of
-  the groups clear an excluded pair and an empty place alike (groups-m1.md,
+  the groups clear an excluded pair and an empty place alike (neighbor-groups.md,
   Section 2), so the loop over pairs would need a second mask.
 - *The tuples in the order of their first member.* A unit of up to 128
   particles would then leave 0.10 particles a member on Cellulose instead

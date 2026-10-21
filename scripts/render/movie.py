@@ -3,7 +3,7 @@
 a lipid bilayer seen from the side, or a protein in water, with a camera
 that turns slowly about the normal of the bilayer (z) or the vertical. The
 cell may be triclinic: a truncated octahedron, a rhombic dodecahedron, or
-the hexagonal prism of a membrane (docs/triclinic-m2.md).
+the hexagonal prism of a membrane (docs/triclinic.md).
 
     scripts/render/movie.py STRUCTURE TRAJECTORY.dcd... MOVIE.mp4
         [--mode membrane|protein] [--ps 10...] [--fps 25] [--stride 1]

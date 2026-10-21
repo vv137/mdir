@@ -1,7 +1,7 @@
 // Conversion of md_exec loops in the storage form to loops over buffers.
 //
 // Every op of md_exec becomes `scf` loops that load from and store to
-// `memref`s, where the op is. See docs/ops-m0.md, Section 10.
+// `memref`s, where the op is. See docs/ops.md, Section 10.
 
 #include "mdir/Conversion/Passes.h"
 
@@ -674,7 +674,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   if (failed(addPMETemplates(position, charge, force, op.getOrder(),
                              op.getPotential(), static_cast<bool>(listed))))
     return failure();
-  // A triclinic cell takes the functions of its own (docs/triclinic-m2.md).
+  // A triclinic cell takes the functions of its own (docs/triclinic.md).
   bool tilted = isTriclinic(op.getCellMutable().get());
   auto instance = [&](StringRef name) {
     bool shared = name == "mdrt.pme_real" || name == "mdrt.pme_fft_forward" ||

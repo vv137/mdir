@@ -1,6 +1,6 @@
 // Proof of exchange contracts.
 //
-// See docs/ops-m0.md, Section 4.7. The proof is in lib/Dialect/MD/MDExchange.cpp.
+// See docs/ops.md, Section 4.7. The proof is in lib/Dialect/MD/MDExchange.cpp.
 
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 #include "mdir/Dialect/MD/MDExchange.h"

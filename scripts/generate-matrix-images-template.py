@@ -2,7 +2,7 @@
 """Writes the generated part of lib/Runtime/Templates/NeighborsMatrix.mlir and
 NeighborsMatrixGPU.mlir: the build of the neighbor matrix of a triclinic cell
 that takes a pair if any of its images is within the reach
-(docs/triclinic-m2.md, Section 2, D241), and the function that
+(docs/triclinic.md, Section 2, D241), and the function that
 chooses between it and the build that tests the image of the one pass alone.
 
 The build of the one pass, `..._triclinic_pass`, is written by hand in each
@@ -29,7 +29,7 @@ END = "// END GENERATED\n"
 WITHIN = """\
 // Whether an image of the displacement d of a pair is within the reach,
 // `far`, whose square is `limit2`, in a triclinic cell of the diagonal a_x,
-// b_y, c_z and the tilts b_x, c_x, c_y (docs/triclinic-m2.md, Section 2).
+// b_y, c_z and the tilts b_x, c_x, c_y (docs/triclinic.md, Section 2).
 // H is lower triangular, so z' = d_z - n_c c_z depends on n_c alone, y' on
 // n_c and n_b, and x' on all three: the images with |z'|, |y'|, |x'| within
 // the reach, which hold every image within it, are the n_c of
@@ -170,7 +170,7 @@ HOST = {
     "dispatch": """\
 // The neighbor matrix of a triclinic cell, `box` = (a_x, b_y, c_z, b_x,
 // c_x, c_y), with the widths of the cell between its faces, `widths`
-// (docs/triclinic-m2.md, Section 2). A row holds a particle once if any of
+// (docs/triclinic.md, Section 2). A row holds a particle once if any of
 // its images is within `reach`. Where the reach is at most half of the
 // least of a_x, b_y, c_z that is the image of the one pass along c, b, and
 // a, and the build tests it alone; in a narrower cell it tests the others
@@ -242,7 +242,7 @@ DEVICE = {
 // candidate at every image within the reach, as on the host.
 """,
     "dispatch": """\
-// The neighbor matrix of a triclinic cell on a device (docs/triclinic-m2.md,
+// The neighbor matrix of a triclinic cell on a device (docs/triclinic.md,
 // Section 2): a row holds a particle once if any of its images is within
 // `reach`, as @mdrt.build_neighbors_matrix_triclinic of the host has it.
 // Where the reach is at most 0.49 of the least of a_x, b_y, c_z the build

@@ -1,5 +1,5 @@
 // What a run writes: the log, files of columns, the trajectory, and
-// checkpoints (D149, docs/driver-m0.md, Section 2.8).
+// checkpoints (D149, docs/driver.md, Section 2.8).
 
 #include "mdir/Driver/Output.h"
 

@@ -1,4 +1,4 @@
-# Runs in a triclinic cell on the CPU (docs/triclinic-m2.md, P1): 403 TIP3P
+# Runs in a triclinic cell on the CPU (docs/triclinic.md, P1): 403 TIP3P
 # waters in a rhombic dodecahedron of 2.6 nm from `gmx editconf -bt
 # dodecahedron` and `gmx solvate`, whose tilts c_x = c_y = 1.3 nm lie on
 # the bounds of the reduced form. The terms in double precision, against a
@@ -14,7 +14,7 @@
 #
 # A truncated octahedron of Amber agrees with sander to the ratio of the
 # Coulomb constants (1.0000346) in its electrostatics, and in the rest to the
-# printed digits (docs/triclinic-m2.md).
+# printed digits (docs/triclinic.md).
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/triclinic/water.top %S/Inputs/triclinic/dodecahedron.gro %t/

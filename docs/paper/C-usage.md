@@ -366,11 +366,11 @@ output as well.
 | Output | Where | Reference |
 |---|---|---|
 | The log | The standard output, and the file `log` if given: the terms at the start, a row every `energy_interval` steps, and a summary | Section 6.5, D149 |
-| The manifest | Optional `manifest`, JSON Lines with execution provenance and start/end events | D168, docs/driver-m0.md Section 2.8 |
+| The manifest | Optional `manifest`, JSON Lines with execution provenance and start/end events | D168, docs/driver.md Section 2.8 |
 | The energies | `energy`, a file of columns at the rows of the log | D149 |
 | The coordinates of pulling | `pull`, a file of columns at the rows of the log (C.7) | D145, D149 |
 | The trajectory | `trajectory`, DCD (Å), XTC (nm, to a thousandth), or H5MD (`.h5md`: the positions of the state in nm without loss, with the cell of every frame) by its extension, every `trajectory_interval` steps | D141, D239 |
-| The checkpoint | `checkpoint`, H5MD with all numbers in 64 bits, every `checkpoint_interval` steps, the one before kept as `<checkpoint>.prev`; `mdir checkpoint --print=positions FILE` (or `velocities`, `forces`) prints a field in the order of the input, in nm, nm/ps, or kJ/mol/nm | D26, D132, docs/driver-m0.md Section 2.6 |
+| The checkpoint | `checkpoint`, H5MD with all numbers in 64 bits, every `checkpoint_interval` steps, the one before kept as `<checkpoint>.prev`; `mdir checkpoint --print=positions FILE` (or `velocities`, `forces`) prints a field in the order of the input, in nm, nm/ps, or kJ/mol/nm | D26, D132, docs/driver.md Section 2.6 |
 
 For execution provenance, add `manifest = "run.jsonl"` to `[output]`
 (D168). It is off by default. The start event records the build, input

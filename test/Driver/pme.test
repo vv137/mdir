@@ -1,5 +1,5 @@
 # Particle mesh Ewald on the three OPC waters of virtual-sites.test, whose
-# extra points carry the negative charge (docs/pme-m1.md).
+# extra points carry the negative charge (docs/pme.md).
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: cp %S/Inputs/opc/three.prmtop %S/Inputs/opc/three.inpcrd %t

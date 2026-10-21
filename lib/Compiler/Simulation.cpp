@@ -2297,7 +2297,7 @@ Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
                       "nothing is committed");
   // A pair is taken once, in the minimum image, which holds every image
   // within the cutoff only while the diagonal is at least twice the
-  // cutoff (I2 of docs/triclinic-m2.md), as the builder asks.
+  // cutoff (I2 of docs/triclinic.md), as the builder asks.
   double least = 2.0 * control.cutoffDistance * units::length;
   for (int k = 0; k != 3; ++k)
     if (!std::isfinite(cell[k]) || cell[k] < least)
@@ -2325,7 +2325,7 @@ Simulation::checkCommittedCell(const std::array<double, 6> &cell) const {
           " nm; write the reduced cell of the lattice (|b_x| <= a_x/2, "
           "|c_x| <= a_x/2, |c_y| <= b_y/2); nothing is committed");
   // The neighbor matrix holds every pair with an image within its reach,
-  // whatever the cell (docs/triclinic-m2.md, Section 2), so I2 is all that
+  // whatever the cell (docs/triclinic.md, Section 2), so I2 is all that
   // a commit asks of it; the groups hold every image within their reach
   // while it is less than the least edge of the cell, the least of a_x,
   // b_y, c_z of a triclinic one, as the builder asks (D242). The check

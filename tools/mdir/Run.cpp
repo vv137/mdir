@@ -1,7 +1,7 @@
 // `mdir run` and `mdir emit`: read a control file, compile the run, and
 // execute it or print it.
 //
-// See docs/driver-m0.md.
+// See docs/driver.md.
 
 #include "BuildInfo.h"
 #include "Commands.h"

@@ -34,7 +34,7 @@ On a cluster, where a job ends before a long stage does, run a stage as
 `mdir run --continue --max-walltime <time> 4-md.toml` in each job: it
 continues the stage from its checkpoint, appends to its trajectory, stops
 at a checkpoint before the wall time with the exit status 75, and exits
-with 0 once the stage is complete (docs/driver-m0.md, Section 2.7).
+with 0 once the stage is complete (docs/driver.md, Section 2.7).
 
 On an RTX 3090, stage 2 runs at about 570 ns/day and stages 3 and 4,
 with the barostat, at about 520: 28 minutes for the 10 ns of stage 4. The

@@ -7,19 +7,19 @@ control file refuses `GROUPS` with `deterministic`, and `AUTO` keeps the
 matrix there; G3 done (D261): `neighbor_structure = "AUTO"`, the default,
 takes the groups with a dual list (D114) on a GPU from 23,000 particles
 (Section 6.3), and a run chooses the skins of both lists where they are
-`"AUTO"` (D281, [neighbors-m0.md](neighbors-m0.md), Section 6). The
+`"AUTO"` (D281, [neighbors.md](neighbors.md), Section 6). The
 groups run in triclinic cells (D126), hold every image within a reach
 below the least edge (D242), and prune the inner list in the loop over
 pairs on large systems (D284). It
 replaces the
-tile structure of D82 ([tiles-m1.md](tiles-m1.md)), whose prototype did not
+tile structure of D82 ([neighbor-tiles.md](neighbor-tiles.md)), whose prototype did not
 beat the neighbor matrix. The keys in brackets are those of
 [references.md](references.md).
 
 This document describes a second kind of neighbor structure on a device,
 `groups`: sixteen particles that share one list of neighbors, over which a
 loop computes each pair once. The neighbor matrix
-([neighbors-m0.md](neighbors-m0.md)) stays: on the CPU, for kernels that
+([neighbors.md](neighbors.md)) stays: on the CPU, for kernels that
 cannot be computed once a pair, in the deterministic comparison of the
 two, and on a device where it is faster.
 
@@ -121,11 +121,11 @@ $2 \max_i \lVert \mathbf x_i - \mathbf m \odot \mathbf x^\text{ref}_i \rVert \le
 out was farther than $R$ apart at the build, and so is farther than $r_c$ now
 (D80). Every pair within the cutoff is in the list: the list is a superset
 of the pairs within the cutoff, and the cutoff test of the loop removes the
-others, as for the matrix ([ops-m0.md](ops-m0.md), Section 9.2).
+others, as for the matrix ([ops.md](ops.md), Section 9.2).
 
 ## 3. The loop: each pair once
 
-The loop implements Section 9.3 of [ops-m0.md](ops-m0.md): for each
+The loop implements Section 9.3 of [ops.md](ops.md): for each
 unordered pair $\{i, j\}$ in the list and within the cutoff,
 
 ```text
@@ -135,7 +135,7 @@ S   += k_S(i, j)          weight 1 (the matrix counts each pair twice, weight ½
 ```
 
 This is legal only for kernels with an exchange contract
-([ops-m0.md](ops-m0.md), Section 4.7): the forces of a potential are
+([ops.md](ops.md), Section 4.7): the forces of a potential are
 antisymmetric (derived by differentiation), its energy and virial
 symmetric. `md_exec.pair_for` carries the contract of each of its
 destinations and sums (Section 6); a loop with a destination whose kernel
@@ -277,7 +277,7 @@ the same code took 128 registers instead of 64 and the build of Cellulose
 
 ## 5.1 Triclinic cells (D126)
 
-A triclinic cell (docs/triclinic-m2.md) takes the build of
+A triclinic cell (docs/triclinic.md) takes the build of
 `NeighborsGroupsGPUTriclinic.mlir`, written by the same script with
 `TILTED`; only a module with a triclinic cell parses it.
 
@@ -390,7 +390,7 @@ often, and its conserved energy drifts as much (−7.5 and −7.7 kcal/mol).
 `pruned_distance` in `[energy]` keeps a dual list: the structure of groups
 built with the reach R = `pairlist_distance` (the outer list) and an inner
 list pruned from it with the reach $R_\text{in}$ = `pruned_distance`, which the
-loops over pairs take. [tiles-m1.md](tiles-m1.md), Section 6, gives the
+loops over pairs take. [neighbor-tiles.md](neighbor-tiles.md), Section 6, gives the
 validity and its proof; they do not depend on the layout of the list.
 A structure that `md-exec-choose-neighbors` leaves as a matrix, beside the
 groups of other loops, keeps one list: the pass takes the reach and the
@@ -399,7 +399,7 @@ the derivative in the tunables of a Python model are such loops).
 
 | Item | Rule |
 |---|---|
-| The tests | Two loops over particles, fused with the loop that moves them (`md-exec-expose-validity`): that of D80 against the configuration and the cell of the build, and the same against those of the last pruning with $R_\text{in}$ (`md_exec.reference_positions pruned`, `md_exec.reference_cell pruned`). Each scales by its own cell, $\mathbf m = \mathbf L \oslash \mathbf L^\text{ref}$ and $\mathbf m^p = \mathbf L \oslash \mathbf L^p$, per axis; a scaling has no shear, since the cell is orthorhombic or, triclinic, scaled as $H\,\mathrm{diag}(\boldsymbol\mu)$ (I3 of [triclinic-m2.md](triclinic-m2.md)), where $\mathbf m$ is the ratio of the diagonals |
+| The tests | Two loops over particles, fused with the loop that moves them (`md-exec-expose-validity`): that of D80 against the configuration and the cell of the build, and the same against those of the last pruning with $R_\text{in}$ (`md_exec.reference_positions pruned`, `md_exec.reference_cell pruned`). Each scales by its own cell, $\mathbf m = \mathbf L \oslash \mathbf L^\text{ref}$ and $\mathbf m^p = \mathbf L \oslash \mathbf L^p$, per axis; a scaling has no shear, since the cell is orthorhombic or, triclinic, scaled as $H\,\mathrm{diag}(\boldsymbol\mu)$ (I3 of [triclinic.md](triclinic.md)), where $\mathbf m$ is the ratio of the diagonals |
 | The refresh | Where the outer list is not valid, it is built and the inner list pruned from it; where only the inner one is not, the inner one is pruned again. A pruning sets the configuration and the cell of the inner list only; those of the outer list change at a build only. Before the first pruning the cell of the inner list is not a number, so its test fails |
 | The pruning | Always from the outer list: the bits of an entry are those of the outer mask whose pairs are within $R_\text{in}$ now, `inner = outer & (r^2 <= R_in^2)`, so that a pair dropped once comes back when it is near again. The outer entries and masks are kept as the build left them |
 | The distances | In f32, from positions moved into the frames of their groups as the loop takes them (D95), against $R_\text{in}$ widened by $3 \times 10^{-6}$ of the sum of the edges of the cell, as the build widens $R$: the rounding can keep a pair beyond $R_\text{in}$, never drop one within it |
@@ -522,7 +522,7 @@ The groups take `pairlist_distance` = cutoff + 3 Å and
 `pruned_distance` = cutoff + 0.6 Å × max(1, Δt / 2 fs) where those keys
 are not given. The matrix keeps cutoff + 1.5 Å. These are the defaults
 that `"AUTO"` begins at; a long run measures candidates around them
-([neighbors-m0.md](neighbors-m0.md#6-the-choice-of-the-skins),
+([neighbors.md](neighbors.md#6-the-choice-of-the-skins),
 D281).
 
 **The size.** The matrix at its default reach is set against the groups

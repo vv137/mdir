@@ -140,7 +140,7 @@ on the reach $R$ of a neighbor structure, but then the *build* of a
 structure must not take the image of the pass for the nearest one beyond
 $\tfrac12 \min(a_x, b_y, c_z)$: the groups keep an entry for each image
 within their reach (D115, I4), which they hold completely for a reach
-below $\min(a_x, b_y, c_z)$ ([groups-m1.md](groups-m1.md), Section 5.2,
+below $\min(a_x, b_y, c_z)$ ([neighbor-groups.md](neighbor-groups.md), Section 5.2,
 D242), and the matrix tests every image within its reach, as
 follows. GROMACS's further bound $r_c \le b_y - |c_y|$ comes
 from its search, which tries one lattice vector at a time; MDIR's does not.
@@ -287,7 +287,7 @@ equivalent; the measurement is part of the validation.
 
 Since the phases, the parts of MDIR that grew take triclinic cells as
 follows: Ewald summation with prolates runs in them (D266,
-[pme-m1.md](pme-m1.md)); the influence function of P3M,
+[pme.md](pme.md)); the influence function of P3M,
 `influence = "P3M"`, takes a rectangular cell only and refuses a triclinic
 one (D304, #475); the tilts are arguments of a program's entry, not
 constants of its text (D227), and a Python simulation lends them through a

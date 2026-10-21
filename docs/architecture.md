@@ -4,17 +4,17 @@ Status: draft, revision 5 (2026-09-29).
 
 | Part | State |
 |---|---|
-| `md`, `dyn`, `md_exec`, the lowerings to the CPU and to NVIDIA GPUs, the driver | Implemented for milestone M0. [ops-m0.md](ops-m0.md), [neighbors-m0.md](neighbors-m0.md), and [driver-m0.md](driver-m0.md) describe what is implemented and have the actual syntax. |
+| `md`, `dyn`, `md_exec`, the lowerings to the CPU and to NVIDIA GPUs, the driver | Implemented for milestone M0. [ops.md](ops.md), [neighbors.md](neighbors.md), and [driver.md](driver.md) describe what is implemented and have the actual syntax. |
 | The planner, `md_dist`, `ensemble`, `mlff`, the events of `mdrt`, `ParticleDependencyInterface` | Not implemented. In M0 the options of the passes and the driver stand for the plan, and the ops of a block run in the order of the block (A12). |
 
 The IR snippets of this document are illustrative; where they differ from
-ops-m0.md, that document holds.
+ops.md, that document holds.
 
 Related documents:
 
 - [decisions.md](decisions.md): the decisions this document follows.
   References such as D3 or P4 point there.
-- [ops-m0.md](ops-m0.md): types and ops for milestone M0.
+- [ops.md](ops.md): types and ops for milestone M0.
 - [prior-art.md](prior-art.md): earlier work and what is taken from it.
 - [design-review.md](design-review.md): review of revision 1.
 - [references.md](references.md): the literature that the documents cite.

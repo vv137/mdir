@@ -22,7 +22,7 @@ same synchronous halo transport as the default. There is no control-file
 key, Python option, output format, checkpoint change, or overwrite change.
 
 M2 Python API preparation (D187) is described in
-[python-m2.md](../python-m2.md). It introduces no control-file keys or
+[python.md](../python.md). It introduces no control-file keys or
 changes to the checkpoint and output contracts listed here.
 
 The optional Python lowering interface (D192,
@@ -122,7 +122,7 @@ uses in the expression. This check does not change keys or file formats.
 | | `checkpoint` | The checkpoint (D26), written every `checkpoint_interval` steps in place of the one before, which stays as `<checkpoint>.prev` (D132), and at the end of a minimization. `mdir run --continue` continues the run from it (A.3). |
 | | `energy_interval`, `trajectory_interval`, `checkpoint_interval` | Steps between the rows of the log, the frames, and the checkpoints. The intervals nest, either way for energies and frames. |
 | `[energy]` | `cutoff` | The cutoff of `md.neighborhood` (Å). |
-| | `pairlist_distance` | The reach of the neighbor structures; the skin is `pairlist_distance − cutoff`. A number fixes it. `"AUTO"`, and a key not given, let the run choose it (D281): it begins at the default, `cutoff` + 1.5 Å, and `cutoff` + 3 Å where `neighbor_structure = "AUTO"` takes the groups (D261); a run of `mdir run` with the groups on a GPU, outside the deterministic mode, of at least $5 \times 10^{12}$ particles times steps (`MDIR_SKIN_SEARCH`), takes the reaches that an earlier run of the same key cached, or measures candidates and keeps the fastest. The structures are rebuilt exactly whatever the skin, so the choice changes the speed, not the pairs within the cutoff. The log, the manifest (`pairlist_distance_source`), and `mdir check` say where the reach came from: `given`, `default`, `cached`, or `measured` ([neighbors-m0.md](../neighbors-m0.md#6-the-choice-of-the-skins)). In Python, `System.pairlist_distance` in nm, or `mdir.Auto`, which takes the cache or the default and measures nothing. |
+| | `pairlist_distance` | The reach of the neighbor structures; the skin is `pairlist_distance − cutoff`. A number fixes it. `"AUTO"`, and a key not given, let the run choose it (D281): it begins at the default, `cutoff` + 1.5 Å, and `cutoff` + 3 Å where `neighbor_structure = "AUTO"` takes the groups (D261); a run of `mdir run` with the groups on a GPU, outside the deterministic mode, of at least $5 \times 10^{12}$ particles times steps (`MDIR_SKIN_SEARCH`), takes the reaches that an earlier run of the same key cached, or measures candidates and keeps the fastest. The structures are rebuilt exactly whatever the skin, so the choice changes the speed, not the pairs within the cutoff. The log, the manifest (`pairlist_distance_source`), and `mdir check` say where the reach came from: `given`, `default`, `cached`, or `measured` ([neighbors.md](../neighbors.md#6-the-choice-of-the-skins)). In Python, `System.pairlist_distance` in nm, or `mdir.Auto`, which takes the cache or the default and measures nothing. |
 | | `pruned_distance` | A dual list (D114): the loops over pairs take an inner list, pruned from the structure of `pairlist_distance` with this reach, between `cutoff` and `pairlist_distance`, whenever a particle has moved too far for it. Needs `neighbor_structure = "GROUPS"`, or `"AUTO"` on a GPU and not `deterministic`; not with `rebuild_interval`. The default, none, keeps one list, except where `AUTO` takes the groups: there `cutoff` + 0.6 Å × max(1, Δt / 2 fs), one list if that is not below `pairlist_distance`. Given under `AUTO` where the size takes the matrix, it is not used, and `mdir check` and the log say so. `"AUTO"`, and a key not given, let the run choose it with `pairlist_distance` (D281); a measured choice is always a dual list. In Python, `System.pruned_distance` in nm (D245), or `mdir.Auto`. |
 | | `rebuild_interval` | **Opt-in, not a default.** 0 (the default): a structure is rebuilt when a particle has moved half the skin, tested at every step. `n`: rebuilt every `n` steps and not tested in between, so it may miss pairs within the cutoff (D88). The run warns at the start, on the standard error and in the log, and reports at the end how many rebuilds found a structure no longer valid, with a warning if any did. |
 | | `switch_distance` | For terms in the control file, `truncation(switch, from = ...)`; equal to `cutoff`: no switching. With a topology, where the selected force or potential switch begins. |
@@ -160,7 +160,7 @@ uses in the expression. This check does not change keys or file formats.
 | `[barostat]` | `method`, `time_constant`, `compressibility`, `coupling`, `work`, `interval`, `compressibility_z`, `surface_tension`, `surfaces` | `C-RESCALE`, stochastic cell rescaling (D72, D77); ps; 1/atm; `ISOTROPIC`, `SEMI_ISOTROPIC` (x and y scale together from the mean of their pressures, z on its own, D119), or `ANISOTROPIC` (each axis from its own pressure and noise, with `compressibility` one number or three, those of x, y, and z, 0 keeping an edge; the pressures of the axes at the end of the log; a liquid has no stiffness of shape and its edges wander, so this is for solids and cells under unequal stresses, D163c); `TROTTER` (the default; D92), `TROTTER_FIRST_ORDER` (its energy from the virial before the scaling only, a virial less a period), `EXACT`, or `FIRST_ORDER` (not with `SEMI_ISOTROPIC` or `ANISOTROPIC`), which count the work of the barostat in the conserved energy and leave the trajectory alone (a run that changes its volume fast is checked with `EXACT`: the Trotter count then drifts by a term of first order in the time step); the steps of the thermostat; with `SEMI_ISOTROPIC`, the compressibility of z in 1/atm (0 keeps the height; that of x and y by default), the tension of each surface normal to z in dyn/cm (0 by default), and their number (2). In Python, `Ensemble.barostat_coupling` (`BarostatCoupling.Isotropic`, `SemiIsotropic`, `Anisotropic`) and `Ensemble.barostat_work` (`BarostatWork.Trotter`, `TrotterFirstOrder`, `Exact`, `FirstOrder`), `Ensemble.compressibility` (one number or three, 1/bar), `compressibility_z`, `surface_tension` (bar nm), and `surfaces` (D247). |
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`, `analytic_bonds` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water (by default WAT for Amber, TIP3 for CHARMM); without `rigid_water` the waters of an Amber or CHARMM topology run flexible, with a warning (D153). `analytic_bonds = true` enables the checked quadratic one-bond projection (D128); the default is `false`. In Python, `System.analytic_bonds` for the last (D246). |
 | `[[restraints]]` | `selection`, `force_constant`, `reference_scaling` | A mask of Amber, and kcal/mol/Å² (D74); under a barostat, `"CENTER"` (the default) scales the center of the references with the cell and keeps their shape, `"ALL"` scales each reference with the cell (D124). |
-| `[boundary]` | `type`, `box` | `PERIODIC`, or `NONE`, a run without a periodic cell, which places a cell around the particles that keeps every image beyond the reach of the neighbor structures and stops if they spread too far, and refuses PME, a barostat, the correction for the dispersion, and `box` (D142); the edges of the cell (Å), without a topology or with one of CHARMM, whose coordinates have no cell; for CHARMM also its angles α, β, γ (degrees), the cell taken from CHARMM's symmetric frame into MDIR's lower-triangular one (docs/triclinic-m2.md). |
+| `[boundary]` | `type`, `box` | `PERIODIC`, or `NONE`, a run without a periodic cell, which places a cell around the particles that keeps every image beyond the reach of the neighbor structures and stops if they spread too far, and refuses PME, a barostat, the correction for the dispersion, and `box` (D142); the edges of the cell (Å), without a topology or with one of CHARMM, whose coordinates have no cell; for CHARMM also its angles α, β, γ (degrees), the cell taken from CHARMM's symmetric frame into MDIR's lower-triangular one (docs/triclinic.md). |
 | `[execution]` | `target`, `threads`, `precision` | `CPU` or `GPU`; the threads of the CPU; `SINGLE`, `MIXED`, or `DOUBLE`. |
 | | `neighbor_capacity` | Neighbors that a neighbor structure holds per particle at first; a build that finds more makes room, so the value does not change the results. Absent: estimated from the configuration, half as many again as the most neighbors of a particle at the start plus 16, rounded up to four significant bits (D227). In Python, `Execution.neighbor_capacity`. |
 | | `fast_math` | Whether kernels are rewritten in ways that change rounding: the distance in powers of its square, fused multiply-adds, and in f32 approximate divisions and an approximation of erfc within 3.3e-7 (D90). The default is `true`. |
@@ -356,7 +356,7 @@ precision = "MIXED"             # SINGLE, MIXED, DOUBLE
 ## A.3 Runs over more than one job
 
 `mdir run` takes three options for a run that outlasts a job on a
-cluster (docs/driver-m0.md, Section 2.7). Without `--continue`, a run
+cluster (docs/driver.md, Section 2.7). Without `--continue`, a run
 keeps each output of an earlier run that has its name as `#<name>.<n>#`
 before it writes, at most 99 of each (D149):
 
@@ -417,7 +417,7 @@ the first three are absent on failure. Warning entries have `code` and
 `message`, while errors are strings. Numeric fields name their units,
 such as `duration_ns` and `pressure_atm`; unavailable values are null.
 Warnings in this mode are in the report, not on standard error. The full
-schema is in [driver-m0.md](../driver-m0.md), Section 1.4.
+schema is in [driver.md](../driver.md), Section 1.4.
 
 ## A.6 The checkpoint file
 
@@ -443,7 +443,7 @@ before it.
 every read; a file changed after it was written is refused, with a pointer
 to `<checkpoint>.prev`. The file is flushed to stable storage before it
 takes its name, and its directory after. `mdir checkpoint
---print=fingerprint` lists the fingerprint, and docs/driver-m0.md, Section
+--print=fingerprint` lists the fingerprint, and docs/driver.md, Section
 2.6, says what a run that takes a checkpoint compares.
 
 A trajectory in H5MD (`trajectory = "run.h5md"`, D239) is a

@@ -160,7 +160,7 @@ trajectory_interval  = 1000
   frame, so that a reader need not know the ensemble: `[K][3]` for an
   orthorhombic cell, `[K][3][3]` for a triclinic one with the cell vectors
   in rows, $(L_x,0,0)$, $(b_x,L_y,0)$, $(c_x,c_y,L_z)$
-  ([triclinic-m2.md](triclinic-m2.md)). The shape is that of the cell at
+  ([triclinic.md](triclinic.md)). The shape is that of the cell at
   the start; a barostat scales tilts and does not create them. Its `step`
   and `time` are hard links to those of `position`, as the specification
   requires. Without a periodic cell (D142), `boundary` is `none` and there

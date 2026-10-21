@@ -10,7 +10,7 @@
 #     difference wraps to 22.1928°, k = 500             8.964545
 #
 # The Lennard-Jones of σ = 3.76 / 2^(1/6) Å and ε = 238 kcal/mol (1000 times
-# the two particles of docs/charmm-m1.md), pairs at 6 and 11 Å, cutoff 12,
+# the two particles of docs/charmm.md), pairs at 6 and 11 Å, cutoff 12,
 # switch from 10:
 #
 #   none                     −27.955793 − 0.758632 = −28.714426

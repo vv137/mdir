@@ -2,7 +2,7 @@
 
 These are the experiments behind D82 (tile structure, on hold), D84
 (determinism as a mode), and the warp search of the neighbor matrix
-(docs/neighbors-m0.md, Section 2.5); docs/tiles-m1.md, Section 11, reads
+(docs/neighbors.md, Section 2.5); docs/neighbor-tiles.md, Section 11, reads
 them. They are standalone CUDA programs, not part of MDIR, so that a
 layout can be measured in an afternoon before it is built into the
 compiler.
@@ -114,7 +114,7 @@ copying included: 4 threads a particle 434 µs (`f32`) and 479 (`i32`); a
 warp a particle 351 and 393; a warp a particle into bricks 257 and 278. The
 weights of the particles take 142 µs written as a structure a particle and
 52 by component; the whole, from the positions, 329 µs. In MDIR the three
-kernels take 367 µs a step (docs/pme-m1.md).
+kernels take 367 µs a step (docs/pme.md).
 
 ### Groups of 16 (2026-10-01)
 

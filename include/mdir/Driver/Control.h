@@ -1,6 +1,6 @@
 // The control file of a run.
 //
-// See docs/driver-m0.md, Section 1.
+// See docs/driver.md, Section 1.
 
 #ifndef MDIR_DRIVER_CONTROL_H
 #define MDIR_DRIVER_CONTROL_H
@@ -41,7 +41,7 @@ enum class DispersionCorrection { None, EnergyPressure };
 /// (D266).
 enum class PMEKernel { Gaussian, Prolate };
 /// The influence function of particle mesh Ewald with the Gaussian
-/// (docs/pme-m1.md, Section 1.1): that of Essmann et al., the separable
+/// (docs/pme.md, Section 1.1): that of Essmann et al., the separable
 /// one that the aliasing of the B-splines sets (as sander), or the one
 /// optimal for the forces of analytic differentiation, eq. 2.28 of
 /// Ballenegger et al. (2012) (D304).
@@ -482,7 +482,7 @@ struct Control {
   std::vector<PairOverride> overrides;
   /// The correction for the dispersion of a run from a topology.
   /// Particle mesh Ewald for the Coulomb terms of a topology
-  /// (docs/pme-m1.md): β in Å⁻¹, or 0 to take it from the tolerance; the
+  /// (docs/pme.md): β in Å⁻¹, or 0 to take it from the tolerance; the
   /// numbers of points of the grid, or 0 to take them from the largest
   /// spacing, in Å; the order of the B-splines; and whether the direct sum
   /// is shifted to 0 at the cutoff.
@@ -496,7 +496,7 @@ struct Control {
   /// The influence function: that of Essmann et al. times a factor for
   /// each edge that the aliasing of the B-splines sets, as sander has it,
   /// or that of Essmann et al. alone, as GROMACS has it
-  /// (docs/pme-m1.md, Section 1.1); or the one optimal for the forces
+  /// (docs/pme.md, Section 1.1); or the one optimal for the forces
   /// (D304).
   PMEInfluence pmeInfluence = PMEInfluence::SPME;
   /// The kernel of the splitting and the spreading (D266): the

@@ -1,7 +1,7 @@
 // The proof of exchange contracts of pair kernels, shared by
 // md-check-exchange and the verifiers of md_dist (D275).
 //
-// See docs/ops-m0.md, Section 4.7. It is in the library of the dialect so
+// See docs/ops.md, Section 4.7. It is in the library of the dialect so
 // that md_dist, which the passes of md use, does not depend on them
 // (D276).
 
