@@ -1,4 +1,4 @@
-# D[gro-startup]: compare the binary64 bits read from fixed-width GRO fields
+# D323: compare the binary64 bits read from fixed-width GRO fields
 # with Python's independent decimal conversion. The existing velocity test
 # checks rejected fields and their line-level diagnostics.
 # REQUIRES: python-api

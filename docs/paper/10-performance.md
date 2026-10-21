@@ -276,7 +276,7 @@ the index is gone and the structures are 9 times smaller on STMV; a
 start in a new order takes 0.1 ms more on JAC, for the launches of the
 build, and the same on Factor IX and Cellulose.
 
-**Reading a large GROMACS coordinate file (D[gro-startup]).** After the
+**Reading a large GROMACS coordinate file (D323).** After the
 neighbor count at the start became exact and bounded by cells (D316),
 reading the numeric fields of a `.gro` file was the largest measured part
 of preparation. The reader now converts a complete finite decimal field
