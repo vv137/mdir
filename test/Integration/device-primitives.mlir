@@ -32,6 +32,9 @@
 // CHECK-NEXT: 1
 // CHECK-NEXT: 1
 // CHECK-NEXT: 1
+// CHECK-NEXT: 1
+// CHECK-NEXT: 1
+// CHECK-NEXT: 1
 // The counting sort of 3000 items by 50 keys, a tenth of them with none:
 // the scatter and the insertion sort; the scatter and the stable rank;
 // every item a key, sorted by the reverse of the item.
@@ -42,6 +45,7 @@
 
 !h = memref<?xi32>
 !d = memref<?xi32, 1>
+!wide = memref<?xi64, 1>
 !wg = memref<9xi32, #gpu.address_space<workgroup>>
 
 func.func private @mdir.primitive.warp_lanes_below(i32) -> i32
@@ -52,6 +56,8 @@ func.func private @mdir.primitive.warp_scan(i32, i32, i32, i32) -> i32
 func.func private @mdir.primitive.block_scan(i32, !wg, index) -> (i32, i32)
 func.func private @mdir.primitive.device_scan(!d, !d, index, !d, index, index, index)
 func.func private @mdir.primitive.device_scan_cursor(!d, !d, index, !d, index, index, index, !d)
+func.func private @mdir.primitive.single_pass_scan(!d, !d, index, !wide, index, index, index)
+func.func private @mdir.primitive.single_pass_scan_cursor(!d, !d, index, !wide, index, index, index, !d)
 func.func private @mdir.primitive.chunked_scan(!d, !d, !d, !d, index, index, index, index, index, index)
 func.func private @mdir.primitive.cursor_scatter(!d, !d, !d, index, index, index, index)
 func.func private @mdir.primitive.sort_bins(!d, !d, index, index, index, index)
@@ -300,6 +306,16 @@ func.func @scans() {
   %start2 = func.call @filled(%n1, %none) : (index, i32) -> !d
   func.call @mdir.primitive.device_scan(%dc, %start2, %n, %sums, %blocks, %threads, %c1) : (!d, !d, index, !d, index, index, index) -> ()
   call @same(%start2, %expect, %n1) : (!d, !h, index) -> ()
+  %state_size = arith.addi %blocks, %c1 : index
+  %state = gpu.alloc (%state_size) : !wide
+  %start4 = func.call @filled(%n1, %none) : (index, i32) -> !d
+  %cursor4 = func.call @filled(%n, %none) : (index, i32) -> !d
+  func.call @mdir.primitive.single_pass_scan_cursor(%dc, %start4, %n, %state, %blocks, %threads, %c1, %cursor4) : (!d, !d, index, !wide, index, index, index, !d) -> ()
+  call @same(%start4, %expect, %n1) : (!d, !h, index) -> ()
+  call @same(%cursor4, %expect, %n) : (!d, !h, index) -> ()
+  %start5 = func.call @filled(%n1, %none) : (index, i32) -> !d
+  func.call @mdir.primitive.single_pass_scan(%dc, %start5, %n, %state, %blocks, %threads, %c1) : (!d, !d, index, !wide, index, index, index) -> ()
+  call @same(%start5, %expect, %n1) : (!d, !h, index) -> ()
   // 4 chunks of 256 counts, a thread a chunk in one block of 128.
   %chunks = arith.constant 4 : index
   %chunk = arith.constant 256 : index

@@ -27,7 +27,7 @@ namespace mdir {
 namespace {
 
 /// What an operand of a primitive must be.
-enum class Kind { I1, I32, Index, Buffer, DynamicBuffer, SharedBuffer };
+enum class Kind { I1, I32, Index, Buffer, WideBuffer, DynamicBuffer, SharedBuffer };
 
 bool hasKind(Type type, Kind kind) {
   switch (kind) {
@@ -41,6 +41,11 @@ bool hasKind(Type type, Kind kind) {
     auto memref = dyn_cast<MemRefType>(type);
     return memref && memref.getRank() == 1 &&
            memref.getElementType().isInteger(32);
+  }
+  case Kind::WideBuffer: {
+    auto memref = dyn_cast<MemRefType>(type);
+    return memref && memref.getRank() == 1 &&
+           memref.getElementType().isInteger(64);
   }
   case Kind::DynamicBuffer: {
     auto memref = dyn_cast<MemRefType>(type);
@@ -138,6 +143,25 @@ std::optional<Primitive> getPrimitive(StringRef name) {
                                       args.size() > 7 ? args[7] : Value(),
                                       args[2], args[3], args[4], args[5],
                                       args[6]);
+                       return SmallVector<Value>{};
+                     }};
+  }
+  // The alternative single-pass strategy keeps one i64 descriptor per tile
+  // and a ticket counter in the caller-owned state buffer.
+  if (name == "single_pass_scan" || name == "single_pass_scan_cursor") {
+    bool withCursor = name == "single_pass_scan_cursor";
+    SmallVector<Kind> operands = {Kind::Buffer, Kind::Buffer, Kind::Index,
+                                  Kind::WideBuffer, Kind::Index, Kind::Index,
+                                  Kind::Index};
+    if (withCursor)
+      operands.push_back(Kind::Buffer);
+    unsigned count = operands.size();
+    return Primitive{std::move(operands), count, 0,
+                     [](OpBuilder &b, func::CallOp call, ValueRange args) {
+                       emitSinglePassScan(
+                           b, call.getLoc(), args[0], args[1],
+                           args.size() > 7 ? args[7] : Value(), args[2],
+                           args[3], args[4], args[5], args[6]);
                        return SmallVector<Value>{};
                      }};
   }

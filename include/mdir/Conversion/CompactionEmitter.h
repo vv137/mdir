@@ -114,6 +114,20 @@ void emitDeviceScan(mlir::OpBuilder &builder, mlir::Location loc,
                     mlir::Value n, mlir::Value sums, mlir::Value blocks,
                     mlir::Value threads, mlir::Value one);
 
+/// An alternative device scan of the same i32 counts, with one read of each
+/// count and one output launch after a launch that clears `state`. Blocks
+/// claim tiles dynamically and obtain their offsets by decoupled look-back
+/// (Merrill and Garland, NVR-2016-002). `state` is a device buffer of
+/// `blocks + 1` i64 words: the first is the tile counter, the rest pack a
+/// status and a sum. It must not be shared by concurrent scans. The caller
+/// owns the buffer. `blocks`, `threads`, and `one` have the same meaning as
+/// in emitDeviceScan.
+void emitSinglePassScan(mlir::OpBuilder &builder, mlir::Location loc,
+                        mlir::Value counts, mlir::Value start,
+                        mlir::Value cursor, mlir::Value n, mlir::Value state,
+                        mlir::Value blocks, mlir::Value threads,
+                        mlir::Value one);
+
 /// The loop of one thread that turns the `count` i32 of `sums` into their
 /// exclusive sums where they are, and stores the sum of all in `out` at
 /// `at`: the scan of the sums of chunks in the chunked scan, and of
