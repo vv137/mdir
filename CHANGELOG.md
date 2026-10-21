@@ -741,6 +741,17 @@ format, or the outputs; every such change is listed under **Changed** or
   16 cores: STMV from 61 to 18 s, STMV ×4 from 216 to 41 s, ×8 from 446
   to 73 s, and ×11 (11.74 million atoms) from 569 to 97 s. No
   control-file key or output change.
+- **Opt-in register and pointwise-fusion strategy for short reductions in neural stage bodies**
+  (`D[ml4-short-reductions]`, #477, part of #462): sums of 2 to 31 terms
+  can use one thread per output, write the accumulator once, and fuse an
+  adjacent pure pointwise map with `MDIR_STAGE_SHORT_REDUCTIONS=registers`.
+  A final duplicated result can write directly to both disjoint caller
+  outputs. The loop and separate pointwise launches remain the default.
+  On a 4,096-row PaiNN `node.b`, the opt-in form has 17 launches against
+  21 and takes 0.288 against 0.314 ms; two paired 20-step runs measured
+  about 1.5% less time per step on one RTX 4090. The reduction semantics,
+  control file, model artifact, and CPU lowering are unchanged; long sums
+  still use D303's warp strategy.
 
 - **The design documents are named by topic** (#390): `docs/ops.md`,
   `runtime.md`, `driver.md`, `neighbors.md`, `neighbor-groups.md`,

@@ -280,6 +280,10 @@ def LowerStageBodies : Pass<"md-exec-lower-stage-bodies", "::mlir::ModuleOp"> {
            "The products of the shape of a GEMM in f32, batched or not: "
            "'gemm', calls of cuBLAS on a device, or 'loops', MDIR's loops "
            "(D302)">,
+    Option<"shortReductions", "short-reductions", "bool",
+           /*default=*/"false",
+           "Keep short row sums (2 to 31 terms) in one thread's register "
+           "instead of loading and storing the accumulator at each term">,
   ];
   let dependentDialects = [
     "::mlir::arith::ArithDialect", "::mlir::bufferization::BufferizationDialect",

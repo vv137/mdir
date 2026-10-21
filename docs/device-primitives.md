@@ -906,6 +906,7 @@ The reductions of a device are one emitter each,
 |---|---|---|
 | `emitShuffleXor` | a value from the lane whose number differs in the bits of `offset`: one `gpu.shuffle xor` for 32 bits, two halves for 64, element by element for a vector | — |
 | `emitCombine` | a sum (`addf`, or `addi` for integers) or a maximum (`cmpf ogt` and a select) | the reduction operator |
+| `emitOrderedRegisterSum` | an ordered chain of terms in one thread, held in a register; the caller supplies each term at a constant index | a serial reduction |
 | `emitWarpReduce` | the butterfly over groups of 2 to 32 lanes: offsets `lanes/2`, ..., 1, every lane with the result | `WarpReduceShfl` [[CUB]](references.md#cub) |
 | `emitBlockReduce` | the warps' butterflies, the first lane of each writing to block memory, one barrier, every thread combining the warps in their order (D150) | `BlockReduce` with `BLOCK_REDUCE_WARP_REDUCTIONS` |
 
@@ -915,11 +916,23 @@ timing of the threads), and so meets each of the three algebras. Sites:
 `emitReductions`), `RowLanes::combine` (the lanes of a row of a matrix),
 the warp totals of the global sums of a loop over groups, the counts
 of the active units (D268, integers), and the sums of rows of the batched
-bodies of neural stages, a warp a row (D303,
-`warpRowSums` in `StageBodies.cpp`). Left as it is: the half-warp sum of
+bodies of neural stages: a warp a row for 32 or more contiguous terms
+(D303, `warpRowSums`), or one register-held accumulator per result for
+2 to 31 terms (D[ml4-short-reductions], `shortRowSums`). Both use the
+same semantic matcher and term emitter in `StageBodies.cpp`, and the
+same `emitCombine` in this reduction emitter. Left as it is: the half-warp sum of
 `emitGroupPairKernel` (`MDExecKernels.cpp`), which shuffles a 64-bit value
 with `gpu.shuffle` itself rather than as two halves, so that moving it would
 change the code of double precision.
+
+The short-row strategy can carry a pure, adjacent pointwise consumer of
+the sum in the same launch; it still stores the sum, preserving the
+reduction primitive's result and order. A final pointwise map with two
+identical results writes directly to both disjoint stage-caller outputs
+when their allocation contract is proved. These are fusion choices around
+the existing reduction and map primitives, not new semantic operations;
+unproved aliases keep the separate copies. The device GEMM calls and their
+completion dependencies remain separate.
 
 ### 5.5 Tests
 

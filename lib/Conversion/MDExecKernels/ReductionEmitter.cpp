@@ -66,6 +66,16 @@ Value kernels::emitCombine(OpBuilder &builder, Location loc,
   return arith::SelectOp::create(builder, loc, larger, lhs, rhs);
 }
 
+Value kernels::emitOrderedRegisterSum(
+    OpBuilder &builder, Location loc, Value initial, int64_t count,
+    llvm::function_ref<Value(OpBuilder &, int64_t)> emitTerm) {
+  Value value = initial;
+  for (int64_t k = 0; k != count; ++k)
+    value = emitCombine(builder, loc, Combiner::Add, value,
+                        emitTerm(builder, k));
+  return value;
+}
+
 Value kernels::emitWarpReduce(OpBuilder &builder, Location loc, Value value,
                               Combiner combiner, int64_t lanes) {
   for (int64_t offset = lanes / 2; offset >= 1; offset /= 2)

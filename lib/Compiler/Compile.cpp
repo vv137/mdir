@@ -88,8 +88,19 @@ static std::string getStageBodiesPass() {
   StringRef chosen = std::getenv("MDIR_STAGE_CONTRACTIONS")
                          ? std::getenv("MDIR_STAGE_CONTRACTIONS")
                          : "";
+  StringRef shortSums = std::getenv("MDIR_STAGE_SHORT_REDUCTIONS")
+                            ? std::getenv("MDIR_STAGE_SHORT_REDUCTIONS")
+                            : "";
+  std::string options;
   if (chosen == "gemm" || chosen == "loops")
-    return ("md-exec-lower-stage-bodies{contractions=" + chosen + "},").str();
+    options = ("contractions=" + chosen).str();
+  if (shortSums == "registers") {
+    if (!options.empty())
+      options += " ";
+    options += "short-reductions=true";
+  }
+  if (!options.empty())
+    return "md-exec-lower-stage-bodies{" + options + "},";
   return "md-exec-lower-stage-bodies,";
 }
 
