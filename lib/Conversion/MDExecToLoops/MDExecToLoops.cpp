@@ -45,6 +45,8 @@ static const char *const matrixEntriesName = "mdrtHostMatrixEntries";
 static const char *const tuplesRenumberName = "mdrtTuplesRenumber";
 static const char *const tuplesIncidenceName = "mdrtTuplesIncidence";
 static const char *const tuplesReleaseName = "mdrtTuplesRelease";
+/// The release of an incidence structure, a buffer of ragged rows.
+static const char *const tuplesReleaseRowsName = "mdrtTuplesReleaseRows";
 static const char *const growMatrixName = "mdrtHostMatrixGrow";
 static const char *const countBuildName = "mdrtCountBuild";
 /// Counts a build at an interval that found the structure no longer valid
@@ -507,10 +509,16 @@ Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
   OpBuilder builder(op);
   MemRefType wide = MemRefType::get(
       {ShapedType::kDynamic, ShapedType::kDynamic}, builder.getI32Type());
+  // An incidence structure is a buffer of ragged rows (RaggedRows.h), of
+  // rank 1; the members are of rank 2.
+  bool rows = type.getRank() == 1;
+  MemRefType givenType =
+      rows ? MemRefType::get({ShapedType::kDynamic}, builder.getI32Type())
+           : wide;
   if (members.getType() != wide)
     members = memref::CastOp::create(builder, loc, wide, members);
   func::FuncOp callee = getOrDeclare(
-      name, builder.getFunctionType({wide, other.getType()}, {wide}));
+      name, builder.getFunctionType({wide, other.getType()}, {givenType}));
   callee->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
   // The runtime copies the members it is given and compares them, and
   // never writes them (runtime/mdrt_tuples.h, D258).
@@ -520,11 +528,12 @@ Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
           .getResult(0);
   // The runtime frees it, or keeps it for the next activation.
   OpBuilder atEnd(op->getBlock()->getTerminator());
-  func::FuncOp release = getOrDeclare(
-      tuplesReleaseName, atEnd.getFunctionType({wide}, {}));
+  func::FuncOp release =
+      getOrDeclare(rows ? tuplesReleaseRowsName : tuplesReleaseName,
+                   atEnd.getFunctionType({givenType}, {}));
   release->setAttr("llvm.emit_c_interface", atEnd.getUnitAttr());
   func::CallOp::create(atEnd, loc, release, ValueRange{given});
-  if (type == wide)
+  if (type == givenType)
     return given;
   return memref::CastOp::create(builder, loc, type, given);
 }

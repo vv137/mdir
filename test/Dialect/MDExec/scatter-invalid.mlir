@@ -3,14 +3,14 @@
 // The strategy of a scatter-accumulate (D285): each op takes
 // the strategies that its lowering has, and the parameters are checked.
 
-func.func @f(%inc: memref<?x?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
+func.func @f(%inc: memref<?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
              %f: memref<?x3xf32>) {
   // expected-error@+1 {{cannot take the strategy 'tile': a tuple may have members anywhere, so the footprint of a block is not bounded}}
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32>) arity(2) scatter(tile(8)) {
   ^bb0(%d: vector<3xf32>):
     md_exec.yield %d, %d : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32>, memref<?x3xf32>
+  } : memref<?xi32>, memref<?x3xf32>
   return
 }
 
@@ -30,53 +30,53 @@ func.func @f(%x: !vec, %cell: !md.cell, %q: !real, %moduli: !md.table<2, f32>) {
 
 // -----
 
-func.func @f(%inc: memref<?x?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
+func.func @f(%inc: memref<?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
              %f: memref<?x3xf32>) {
   // expected-error@+2 {{the strategy 'sorted' is reserved for #417 and not implemented}}
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32>) arity(2) scatter(sorted) {
   ^bb0(%d: vector<3xf32>):
     md_exec.yield %d, %d : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32>, memref<?x3xf32>
+  } : memref<?xi32>, memref<?x3xf32>
   return
 }
 
 // -----
 
-func.func @f(%inc: memref<?x?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
+func.func @f(%inc: memref<?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
              %f: memref<?x3xf32>) {
   // expected-error@+2 {{expected a table of a power of two slots, got 384}}
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32>) arity(2) scatter(hash(384, 8, 0)) {
   ^bb0(%d: vector<3xf32>):
     md_exec.yield %d, %d : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32>, memref<?x3xf32>
+  } : memref<?xi32>, memref<?x3xf32>
   return
 }
 
 // -----
 
-func.func @f(%inc: memref<?x?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
+func.func @f(%inc: memref<?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
              %f: memref<?x3xf32>) {
   // expected-error@+2 {{expected at least 1 slot tried, got 0}}
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32>) arity(2) scatter(hash(256, 0, 0)) {
   ^bb0(%d: vector<3xf32>):
     md_exec.yield %d, %d : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32>, memref<?x3xf32>
+  } : memref<?xi32>, memref<?x3xf32>
   return
 }
 
 // -----
 
-func.func @f(%inc: memref<?x?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
+func.func @f(%inc: memref<?xi32>, %x: memref<?x3xf32>, %cell: !md.cell,
              %f: memref<?x3xf32>) {
   // expected-error@+2 {{expected 'atomic', 'tile', 'hash', or 'sorted', got 'bricks'}}
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32>) arity(2) scatter(bricks) {
   ^bb0(%d: vector<3xf32>):
     md_exec.yield %d, %d : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32>, memref<?x3xf32>
+  } : memref<?xi32>, memref<?x3xf32>
   return
 }
 

@@ -11,7 +11,7 @@ md.particle_set @atoms
 // the tuples to be evaluated once; here it is stated `fixed_order`, a stronger
 // requirement that the verifier accepts on an integer.
 //
-func.func @shared(%pairs: memref<?x?xi32, 1>, %x: memref<?x3xf64, 1>,
+func.func @shared(%pairs: memref<?xi32, 1>, %x: memref<?x3xf64, 1>,
                   %cell: !md.cell) -> i1 {
   %no = arith.constant false
   // expected-error@+1 {{takes a flag in 'reduce' over tuples that may share particles}}
@@ -24,6 +24,6 @@ func.func @shared(%pairs: memref<?x?xi32, 1>, %x: memref<?x3xf64, 1>,
     %far = arith.cmpf ugt, %r2, %limit : f64
     md_exec.yield %far : i1
   } {md_exec.algebra = #md_exec.algebra<fixed_order>}
-    : memref<?x?xi32, 1>, memref<?x3xf64, 1> -> i1
+    : memref<?xi32, 1>, memref<?x3xf64, 1> -> i1
   return %any : i1
 }

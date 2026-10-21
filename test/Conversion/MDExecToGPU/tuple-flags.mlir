@@ -36,7 +36,7 @@ md.particle_set @atoms
 // CHECK:           call @stop(
 // CHECK-NOT:     md_exec
 func.func private @stop(i64)
-func.func @two_sets(%waters: memref<?x?xi32, 1>, %groups: memref<?x?xi32, 1>,
+func.func @two_sets(%waters: memref<?xi32, 1>, %groups: memref<?xi32, 1>,
                     %x: memref<?x3xf64, 1>, %cell: !md.cell,
                     %v: memref<?x3xf64, 1>) {
   %no = arith.constant false
@@ -53,7 +53,7 @@ func.func @two_sets(%waters: memref<?x?xi32, 1>, %groups: memref<?x?xi32, 1>,
     %fb = arith.cmpf ugt, %rb, %limit : f64
     %f = arith.ori %fa, %fb : i1
     md_exec.yield %f : i1
-  } : memref<?x?xi32, 1>, memref<?x3xf64, 1> -> i1
+  } : memref<?xi32, 1>, memref<?x3xf64, 1> -> i1
   %shake = md_exec.tuple_for %groups, %x, %cell
       coordinates(displacement(1, 0)) reduce(%no : i1) arity(2) disjoint {
   ^bb0(%d: vector<3xf64>):
@@ -61,7 +61,7 @@ func.func @two_sets(%waters: memref<?x?xi32, 1>, %groups: memref<?x?xi32, 1>,
     %r2 = vector.reduction <add>, %sq : vector<3xf64> into f64
     %far = arith.cmpf ugt, %r2, %limit : f64
     md_exec.yield %far : i1
-  } : memref<?x?xi32, 1>, memref<?x3xf64, 1> -> i1
+  } : memref<?xi32, 1>, memref<?x3xf64, 1> -> i1
   md_exec.particle_for ins(%v : memref<?x3xf64, 1>)
       outs(%v : memref<?x3xf64, 1>) {
   ^bb0(%v_i: vector<3xf64>):
@@ -90,7 +90,7 @@ func.func @two_sets(%waters: memref<?x?xi32, 1>, %groups: memref<?x?xi32, 1>,
 // CHECK:         call @mdrtFlagFinish(%[[SLOT]])
 // CHECK-NOT:     call @mdrtFlagTake(
 // CHECK:         return
-func.func @one_set(%groups: memref<?x?xi32, 1>, %x: memref<?x3xf64, 1>,
+func.func @one_set(%groups: memref<?xi32, 1>, %x: memref<?x3xf64, 1>,
                    %cell: !md.cell) -> i1 {
   %no = arith.constant false
   %limit = arith.constant 1.0 : f64
@@ -101,6 +101,6 @@ func.func @one_set(%groups: memref<?x?xi32, 1>, %x: memref<?x3xf64, 1>,
     %r2 = vector.reduction <add>, %sq : vector<3xf64> into f64
     %far = arith.cmpf ugt, %r2, %limit : f64
     md_exec.yield %far : i1
-  } : memref<?x?xi32, 1>, memref<?x3xf64, 1> -> i1
+  } : memref<?xi32, 1>, memref<?x3xf64, 1> -> i1
   return %shake : i1
 }

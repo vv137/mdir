@@ -2,7 +2,7 @@
 
 func.func @f(%m: memref<?x3xi32>) {
   // expected-error@+1 {{expected the number of particles in 'size'}}
-  %inc = md_exec.build_incidence %m : memref<?x3xi32> -> memref<?x?xi32>
+  %inc = md_exec.build_incidence %m : memref<?x3xi32> -> memref<?xi32>
   return
 }
 

@@ -57,7 +57,7 @@ md.function @stretched(%x: !vec, %cell: !md.cell, %links: !rel,
 //
 // DEVICE-LABEL: func.func @stored(
 // DEVICE:         md_exec.tuple_for {{.*}} reduce(%{{[a-z0-9_]+}} : i1) arity(2) disjoint {
-// DEVICE:         } : memref<?x?xi32, 1>, memref<?x3xf64, 1> -> i1
+// DEVICE:         } : memref<?xi32, 1>, memref<?x3xf64, 1> -> i1
 // DEVICE:         md_exec.tuple_for {{.*}} reduce(%{{[a-z0-9_]+}} : f64) scratch(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?xf64, 1>, memref<?xf64, 1>) arity(2) disjoint {
 func.func @stored(%x: !vec, %cell: !md.cell, %links: !rel) -> (i1, f64) {
   %any = md.sum_tuples %links, %x, %cell coordinates(displacement(1, 0)) {

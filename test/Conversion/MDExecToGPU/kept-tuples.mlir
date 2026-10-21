@@ -33,8 +33,15 @@
 // DEVICE:         gpu.launch
 // DEVICE:         gpu.launch
 // DEVICE:         call @mdrtDeviceTuplesStructure(%[[H]])
+// The rows from the renumbered members (D[ragged-incidence]): the counts
+// cleared and taken, the three passes of the scan, the scatter, the sort
+// of each row, the offsets, and the entries.
+// DEVICE:         scf.if
+// DEVICE:         call @mdrtDeviceTuplesMemberships(%[[H]])
+// DEVICE-COUNT-8: gpu.launch
 // DEVICE:         scf.if
 // DEVICE:         gpu.launch
+// DEVICE-COUNT-5: gpu.dealloc
 // DEVICE:         call @mdrtDeviceTuplesBuilt(%[[H]])
 // DEVICE-NOT:     gpu.memcpy
 // DEVICE-NOT:     mdrtDeviceTuplesMembers
@@ -61,15 +68,15 @@ md.particle_set @atoms
 // CHECK:         %[[TAKEN:[a-z0-9_]+]] = call @mdrtDeviceTuplesRenumber(%[[WIDE]], %[[IDS]]) : (memref<?x?xi32>, memref<?xi32, 1>) -> memref<?x?xi32>
 // CHECK:         %[[MEMBERS:[a-z0-9_]+]] = memref.cast %[[TAKEN]] : memref<?x?xi32> to memref<?x2xi32>
 // CHECK:         %[[AGAIN:[a-z0-9_]+]] = memref.cast %[[MEMBERS]] : memref<?x2xi32> to memref<?x?xi32>
-// CHECK:         %[[INC:[a-z0-9_]+]] = call @mdrtDeviceTuplesIncidence(%[[AGAIN]], %[[N]]) : (memref<?x?xi32>, index) -> memref<?x?xi32, 1>
+// CHECK:         %[[INC:[a-z0-9_]+]] = call @mdrtDeviceTuplesIncidence(%[[AGAIN]], %[[N]]) : (memref<?x?xi32>, index) -> memref<?xi32, 1>
 // CHECK:         %[[COPY:[a-z0-9_]+]] = call @mdrtDeviceTuplesMembers(%{{[a-z0-9_]+}}) : (memref<?x?xi32>) -> memref<?x?xi32, 1>
 // CHECK-NOT:     gpu.memcpy
 // CHECK-NOT:     gpu.alloc
 // CHECK:         gpu.launch
 // CHECK-NOT:     dealloc
 // CHECK:         call @mdrtDeviceTuplesRelease(%[[TAKEN]]) : (memref<?x?xi32>) -> ()
-// CHECK:         %[[PLAIN:[a-z0-9_]+]] = memref.memory_space_cast %[[INC]] : memref<?x?xi32, 1> to memref<?x?xi32>
-// CHECK:         call @mdrtDeviceTuplesRelease(%[[PLAIN]]) : (memref<?x?xi32>) -> ()
+// CHECK:         %[[PLAIN:[a-z0-9_]+]] = memref.memory_space_cast %[[INC]] : memref<?xi32, 1> to memref<?xi32>
+// CHECK:         call @mdrtDeviceTuplesReleaseRows(%[[PLAIN]]) : (memref<?xi32>) -> ()
 // CHECK:         %[[PLAIN2:[a-z0-9_]+]] = memref.memory_space_cast %[[COPY]] : memref<?x?xi32, 1> to memref<?x?xi32>
 // CHECK:         call @mdrtDeviceTuplesRelease(%[[PLAIN2]]) : (memref<?x?xi32>) -> ()
 // CHECK:         return
@@ -91,13 +98,13 @@ func.func @renumbered(%file: memref<?x2xi32>, %ids: memref<?xi32, 1>,
                       %f: memref<?x3xf32, 1>) {
   %members = md_exec.renumber %file, %ids : memref<?x2xi32>, memref<?xi32, 1>
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32, 1>
+      : memref<?x2xi32> -> memref<?xi32, 1>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32, 1>) arity(2) {
   ^bb0(%d: vector<3xf32>):
     %n0 = arith.negf %d : vector<3xf32>
     md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  } : memref<?xi32, 1>, memref<?x3xf32, 1>
   return
 }
 
@@ -112,13 +119,13 @@ func.func @given(%members: memref<?x2xi32>, %n: index,
                  %x: memref<?x3xf32, 1>, %cell: !md.cell,
                  %f: memref<?x3xf32, 1>) {
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32, 1>
+      : memref<?x2xi32> -> memref<?xi32, 1>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32, 1>) arity(2) {
   ^bb0(%d: vector<3xf32>):
     %n0 = arith.negf %d : vector<3xf32>
     md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  } : memref<?xi32, 1>, memref<?x3xf32, 1>
   return
 }
 
@@ -134,13 +141,13 @@ func.func @found(%count: index, %n: index, %x: memref<?x3xf32, 1>,
                  %cell: !md.cell, %f: memref<?x3xf32, 1>) {
   %members = memref.alloc(%count) : memref<?x2xi32>
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x2xi32> -> memref<?x?xi32, 1>
+      : memref<?x2xi32> -> memref<?xi32, 1>
   md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
       outs(%f : memref<?x3xf32, 1>) arity(2) {
   ^bb0(%d: vector<3xf32>):
     %n0 = arith.negf %d : vector<3xf32>
     md_exec.yield %d, %n0 : vector<3xf32>, vector<3xf32>
-  } : memref<?x?xi32, 1>, memref<?x3xf32, 1>
+  } : memref<?xi32, 1>, memref<?x3xf32, 1>
   memref.dealloc %members : memref<?x2xi32>
   return
 }

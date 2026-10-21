@@ -7,6 +7,7 @@
 
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
+#include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/ReductionEmitter.h"
 #include "mdir/Conversion/ScatterEmitter.h"
 #include "mdir/Dialect/MD/MDDialect.h"
@@ -78,6 +79,9 @@ static const char *const tuplesRenumberName = "mdrtDeviceTuplesRenumber";
 static const char *const tuplesIncidenceName = "mdrtDeviceTuplesIncidence";
 static const char *const tuplesMembersName = "mdrtDeviceTuplesMembers";
 static const char *const tuplesReleaseName = "mdrtDeviceTuplesRelease";
+/// The release of an incidence structure, a buffer of ragged rows.
+static const char *const tuplesReleaseRowsName =
+    "mdrtDeviceTuplesReleaseRows";
 /// Counts a build at an interval that found the structure no longer valid
 /// (D88).
 static const char *const countLateBuildName = "mdrtCountLateBuild";
@@ -271,7 +275,7 @@ private:
   /// An entry of the runtime's store for a tuple set built on the device:
   /// its handle, whether the code builds it, and its buffers on the device.
   struct DeviceTuples {
-    Value handle, build, file, first, entries, renumbered, ids;
+    Value handle, build, file, renumbered, ids, particles;
     int64_t arity = 0;
   };
   /// The entries taken where the members are renumbered, by the result of
@@ -4519,8 +4523,7 @@ void Lowering::lowerBuildIncidence(md_exec::BuildIncidenceOp op) {
   Value one = createIndex(builder, loc, 1);
   Value device = createDeviceBuffer(
       builder, loc, type,
-      ValueRange{memref::DimOp::create(builder, loc, host, zero),
-                 memref::DimOp::create(builder, loc, host, one)});
+      ValueRange{memref::DimOp::create(builder, loc, host, zero)});
   createTransfer(builder, loc, device, host);
   memref::DeallocOp::create(builder, loc, host);
   op.getResult().replaceAllUsesWith(device);
@@ -4552,10 +4555,13 @@ Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
   Type narrow = builder.getI32Type();
   MemRefType wide = MemRefType::get(
       {ShapedType::kDynamic, ShapedType::kDynamic}, narrow);
+  // An incidence structure is a buffer of ragged rows (RaggedRows.h), of
+  // rank 1; the members are of rank 2.
+  bool rows = type.getRank() == 1;
+  SmallVector<int64_t, 2> shape(type.getRank(), ShapedType::kDynamic);
+  MemRefType plainType = MemRefType::get(shape, narrow);
   MemRefType given =
-      type.getMemorySpace()
-          ? getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, narrow)
-          : wide;
+      type.getMemorySpace() ? getDeviceType(shape, narrow) : plainType;
   if (members.getType() != wide)
     members = memref::CastOp::create(builder, loc, wide, members);
   SmallVector<Value, 2> arguments = {members};
@@ -4575,10 +4581,11 @@ Value Lowering::takeFromRuntime(Operation *op, StringRef name, Value members,
   // The runtime frees it, or keeps it for the next activation.
   OpBuilder atEnd(op->getBlock()->getTerminator());
   Value plain = taken;
-  if (given != wide)
-    plain = memref::MemorySpaceCastOp::create(atEnd, loc, wide, taken);
-  func::FuncOp release = getOrDeclare(
-      tuplesReleaseName, atEnd.getFunctionType({wide}, {}));
+  if (given != plainType)
+    plain = memref::MemorySpaceCastOp::create(atEnd, loc, plainType, taken);
+  func::FuncOp release =
+      getOrDeclare(rows ? tuplesReleaseRowsName : tuplesReleaseName,
+                   atEnd.getFunctionType({plainType}, {}));
   release->setAttr("llvm.emit_c_interface", atEnd.getUnitAttr());
   func::CallOp::create(atEnd, loc, release, ValueRange{plain});
   if (type == given)
@@ -4656,6 +4663,7 @@ Lowering::DeviceTuples Lowering::takeOnDevice(Operation *op, Value members,
   DeviceTuples tuples;
   tuples.arity = cast<MemRefType>(members.getType()).getDimSize(1);
   tuples.ids = ids;
+  tuples.particles = particles;
   Value given = members;
   if (given.getType() != wide)
     given = memref::CastOp::create(builder, loc, wide, given);
@@ -4676,10 +4684,6 @@ Lowering::DeviceTuples Lowering::takeOnDevice(Operation *op, Value members,
                                 builder.getI32IntegerAttr(0)));
   tuples.file = callRuntime(builder, loc, "mdrtDeviceTuplesFile",
                             {tuples.handle}, device2, true);
-  tuples.first = callRuntime(builder, loc, "mdrtDeviceTuplesFirst",
-                             {tuples.handle}, device1, true);
-  tuples.entries = callRuntime(builder, loc, "mdrtDeviceTuplesEntries",
-                               {tuples.handle}, device1, true);
   tuples.renumbered = callRuntime(builder, loc, "mdrtDeviceTuplesRenumbered",
                                   {tuples.handle}, device2, true);
   if (ids) {
@@ -4730,132 +4734,156 @@ Lowering::DeviceTuples Lowering::takeOnDevice(Operation *op, Value members,
   return tuples;
 }
 
-/// The rows of the incidence structure of an entry taken by
-/// `takeOnDevice`, where it is to be built: one thread for each slot k of
-/// each place p, which copies the k-th tuple of the particle at p in the
-/// order of the files, its members relabeled.
+/// The incidence structure of an entry taken by `takeOnDevice`, where it
+/// is to be built: ragged rows (RaggedRows.h) from the members on the
+/// device, renumbered or in the order of the files, by the primitives of
+/// D296 (emitDeviceRaggedRows): the memberships m = a t + s counted by
+/// particle, the offsets of the rows scanned, each membership scattered to
+/// a slot of its particle's row, and each row sorted by m, which puts its
+/// tuples in ascending order of their numbers, the order of the host's
+/// build, whatever order the atomics took. A thread for each slot then
+/// writes its entry, and a thread for each row its offset.
 void Lowering::buildOnDevice(md_exec::BuildIncidenceOp op,
                              const DeviceTuples &tuples) {
   Location loc = op.getLoc();
   OpBuilder builder(op);
   Type narrow = builder.getI32Type();
-  MemRefType device2 =
-      getDeviceType({ShapedType::kDynamic, ShapedType::kDynamic}, narrow);
+  MemRefType device1 = getDeviceType({ShapedType::kDynamic}, narrow);
   Value structure = callRuntime(builder, loc, "mdrtDeviceTuplesStructure",
-                                {tuples.handle}, device2, true);
+                                {tuples.handle}, device1, true);
   int64_t arity = tuples.arity, entry = arity + 2;
-  Value particles = memref::DimOp::create(builder, loc, structure,
-                                          createIndex(builder, loc, 0));
-  Value width = memref::DimOp::create(builder, loc, structure,
-                                      createIndex(builder, loc, 1));
-  Value slots = arith::DivUIOp::create(
-      builder, loc,
-      arith::SubIOp::create(builder, loc, width, createIndex(builder, loc, 1)),
-      createIndex(builder, loc, entry));
-  // A row has at least its count.
-  Value lanes = arith::MaxUIOp::create(builder, loc, slots,
-                                       createIndex(builder, loc, 1));
-  Value items = arith::MulIOp::create(builder, loc, particles, lanes);
-  Value some = arith::CmpIOp::create(builder, loc, arith::CmpIPredicate::ugt,
-                                     items, createIndex(builder, loc, 0));
-  Value build = arith::AndIOp::create(builder, loc, tuples.build, some);
-  Value ids = tuples.ids, first = tuples.first, entries = tuples.entries,
-        renumbered = tuples.renumbered;
-  scf::IfOp::create(builder, loc, build, [&](OpBuilder &then, Location) {
-    launchOver(then, loc, items, [&](OpBuilder &body, Value i) {
-      Type index = body.getIndexType();
-      auto toIndex = [&](Value value) -> Value {
-        return arith::IndexCastOp::create(body, loc, index, value);
-      };
-      Value p = arith::DivUIOp::create(body, loc, i, lanes);
-      Value k = arith::RemUIOp::create(body, loc, i, lanes);
-      // The particle at p in the order of the files.
-      Value q = ids ? toIndex(memref::LoadOp::create(body, loc, ids,
-                                                     ValueRange{p}))
-                    : p;
-      Value from = toIndex(memref::LoadOp::create(body, loc, first,
-                                                  ValueRange{q}));
-      Value next = arith::AddIOp::create(body, loc, q,
-                                         createIndex(body, loc, 1));
-      Value to = toIndex(memref::LoadOp::create(body, loc, first,
-                                                ValueRange{next}));
-      Value count = arith::SubIOp::create(body, loc, to, from);
-      Value zero = createIndex(body, loc, 0);
-      Value head = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::eq,
-                                         k, zero);
-      scf::IfOp::create(body, loc, head, [&](OpBuilder &b, Location) {
+  Value particles = tuples.particles, renumbered = tuples.renumbered;
+  Value tupleCount = memref::DimOp::create(builder, loc, renumbered,
+                                           createIndex(builder, loc, 0));
+  Value memberships = arith::MulIOp::create(
+      builder, loc, tupleCount, createIndex(builder, loc, arity));
+  // Built in place, so that the kernels' bodies take the values of the
+  // branch as values of a region that is in the function.
+  auto building =
+      scf::IfOp::create(builder, loc, tuples.build, /*withElseRegion=*/false);
+  {
+    OpBuilder then = building.getThenBodyBuilder();
+    Value one = createIndex(then, loc, 1);
+    // The scan's blocks of 1024 counts (emitDeviceScan).
+    Value threads = createIndex(then, loc, 256);
+    Value blocks = arith::MaxUIOp::create(
+        then, loc,
+        arith::DivUIOp::create(
+            then, loc,
+            arith::AddIOp::create(then, loc, particles,
+                                  createIndex(then, loc, 1023)),
+            createIndex(then, loc, 1024)),
+        one);
+    auto scratch = [&](Value size) {
+      return createDeviceBuffer(then, loc, device1, ValueRange{size});
+    };
+    Value counts = scratch(arith::MaxUIOp::create(then, loc, particles, one));
+    Value cursor = scratch(arith::MaxUIOp::create(then, loc, particles, one));
+    Value start =
+        scratch(arith::AddIOp::create(then, loc, particles, one));
+    Value items =
+        scratch(arith::MaxUIOp::create(then, loc, memberships, one));
+    Value sums = scratch(blocks);
+    // The particle of each membership: the members that `renumbered`
+    // holds, as one row.
+    Value keys = callRuntime(then, loc, "mdrtDeviceTuplesMemberships",
+                             {tuples.handle}, device1, true);
+    Block *body = then.getInsertionBlock();
+    llvm::SmallPtrSet<Operation *, 8> before;
+    for (Operation &existing : *body)
+      before.insert(&existing);
+    emitDeviceRaggedRows(then, loc, keys, memberships, particles, counts,
+                         start, cursor, items, sums, blocks, threads, one);
+    SmallVector<gpu::LaunchOp> launches;
+    for (Operation &emitted : *body)
+      if (auto launch = dyn_cast<gpu::LaunchOp>(&emitted);
+          launch && !before.count(launch))
+        launches.push_back(launch);
+    for (gpu::LaunchOp launch : launches)
+      bringIn(launch);
+
+    // The number of rows, the offsets, and the entry of zeros at the end.
+    Value header = arith::AddIOp::create(then, loc, particles,
+                                         createIndex(then, loc, 2));
+    Value last = arith::AddIOp::create(
+        then, loc, header,
+        arith::MulIOp::create(then, loc, memberships,
+                              createIndex(then, loc, entry)));
+    Value heads = arith::MaxUIOp::create(
+        then, loc, arith::AddIOp::create(then, loc, particles, one),
+        createIndex(then, loc, entry));
+    launchOver(then, loc, heads, [&](OpBuilder &b, Value i) {
+      Value i0 = createIndex(b, loc, 0);
+      Value rows = arith::CmpIOp::create(
+          b, loc, arith::CmpIPredicate::ule, i, particles);
+      scf::IfOp::create(b, loc, rows, [&](OpBuilder &c, Location) {
+        Value offset = memref::LoadOp::create(c, loc, start, ValueRange{i});
         memref::StoreOp::create(
-            b, loc, arith::IndexCastOp::create(b, loc, narrow, count),
-            structure, ValueRange{p, zero});
-        scf::YieldOp::create(b, loc);
+            c, loc, offset, structure,
+            ValueRange{arith::AddIOp::create(c, loc, i,
+                                             createIndex(c, loc, 1))});
+        scf::YieldOp::create(c, loc);
       });
-      Value inside = arith::CmpIOp::create(body, loc,
-                                           arith::CmpIPredicate::ult, k, count);
-      // A slot past the count of the particle holds zeros: the kernels
-      // of an integration run read the first tuple of every particle and
-      // keep it only where the count is not zero, and the memory of the
-      // structure is not cleared when it is allocated (#347).
-      auto empty = [&](OpBuilder &b, Location) {
-        Value zero32 = arith::ConstantOp::create(b, loc, narrow,
-                                                 b.getI32IntegerAttr(0));
-        Value base = arith::AddIOp::create(
-            b, loc,
-            arith::MulIOp::create(b, loc, k, createIndex(b, loc, entry)),
-            createIndex(b, loc, 1));
-        for (int64_t c = 0; c != entry; ++c)
-          memref::StoreOp::create(
-              b, loc, zero32, structure,
-              ValueRange{p, arith::AddIOp::create(b, loc, base,
-                                                  createIndex(b, loc, c))});
-        scf::YieldOp::create(b, loc);
-      };
-      Value fits = arith::CmpIOp::create(body, loc, arith::CmpIPredicate::ult,
-                                         k, slots);
-      scf::IfOp::create(
-          body, loc,
-          arith::AndIOp::create(
-              body, loc, fits,
-              arith::XOrIOp::create(
-                  body, loc, inside,
-                  arith::ConstantOp::create(body, loc, body.getI1Type(),
-                                            body.getBoolAttr(true)))),
-          empty);
-      scf::IfOp::create(body, loc, inside, [&](OpBuilder &b, Location) {
-        Value at = arith::MulIOp::create(
-            b, loc, arith::AddIOp::create(b, loc, from, k),
-            createIndex(b, loc, 2));
-        Value t = memref::LoadOp::create(b, loc, entries, ValueRange{at});
-        Value s = memref::LoadOp::create(
-            b, loc, entries,
-            ValueRange{arith::AddIOp::create(b, loc, at,
-                                             createIndex(b, loc, 1))});
-        Value base = arith::AddIOp::create(
-            b, loc,
-            arith::MulIOp::create(b, loc, k, createIndex(b, loc, entry)),
-            createIndex(b, loc, 1));
-        auto column = [&](int64_t c) -> Value {
-          return arith::AddIOp::create(b, loc, base, createIndex(b, loc, c));
-        };
-        memref::StoreOp::create(b, loc, t, structure, ValueRange{p, column(0)});
-        memref::StoreOp::create(b, loc, s, structure, ValueRange{p, column(1)});
-        Value tuple = arith::IndexCastOp::create(b, loc, index, t);
-        for (int64_t j = 0; j != arity; ++j) {
-          Value member = memref::LoadOp::create(
-              b, loc, renumbered,
-              ValueRange{tuple, createIndex(b, loc, j)});
-          memref::StoreOp::create(b, loc, member, structure,
-                                  ValueRange{p, column(2 + j)});
-        }
-        scf::YieldOp::create(b, loc);
+      Value first =
+          arith::CmpIOp::create(b, loc, arith::CmpIPredicate::eq, i, i0);
+      scf::IfOp::create(b, loc, first, [&](OpBuilder &c, Location) {
+        memref::StoreOp::create(
+            c, loc, arith::IndexCastOp::create(c, loc, narrow, particles),
+            structure, ValueRange{i0});
+        scf::YieldOp::create(c, loc);
+      });
+      Value zeros = arith::CmpIOp::create(
+          b, loc, arith::CmpIPredicate::ult, i, createIndex(b, loc, entry));
+      scf::IfOp::create(b, loc, zeros, [&](OpBuilder &c, Location) {
+        memref::StoreOp::create(
+            c, loc,
+            arith::ConstantOp::create(c, loc, narrow, c.getI32IntegerAttr(0)),
+            structure, ValueRange{arith::AddIOp::create(c, loc, last, i)});
+        scf::YieldOp::create(c, loc);
       });
     });
-    scf::YieldOp::create(then, loc);
-  });
+    // The entry of each slot: the tuple, the place, and the members.
+    Value some = arith::CmpIOp::create(then, loc, arith::CmpIPredicate::ugt,
+                                       memberships,
+                                       createIndex(then, loc, 0));
+    scf::IfOp::create(then, loc, some, [&](OpBuilder &any, Location) {
+      launchOver(any, loc, memberships, [&](OpBuilder &b, Value j) {
+        Type index = b.getIndexType();
+        Value item = arith::IndexCastOp::create(
+            b, loc, index, memref::LoadOp::create(b, loc, items, ValueRange{j}));
+        Value a = createIndex(b, loc, arity);
+        Value t = arith::DivUIOp::create(b, loc, item, a);
+        Value place = arith::RemUIOp::create(b, loc, item, a);
+        Value base = arith::AddIOp::create(
+            b, loc, header,
+            arith::MulIOp::create(b, loc, j, createIndex(b, loc, entry)));
+        auto store = [&](Value value, int64_t c) {
+          memref::StoreOp::create(
+              b, loc, value, structure,
+              ValueRange{arith::AddIOp::create(b, loc, base,
+                                               createIndex(b, loc, c))});
+        };
+        store(arith::IndexCastOp::create(b, loc, narrow, t), 0);
+        store(arith::IndexCastOp::create(b, loc, narrow, place), 1);
+        for (int64_t q = 0; q != arity; ++q)
+          store(memref::LoadOp::create(b, loc, renumbered,
+                                       ValueRange{t, createIndex(b, loc, q)}),
+                2 + q);
+      });
+      scf::YieldOp::create(any, loc);
+    });
+    for (Value buffer : {counts, cursor, start, items, sums}) {
+      Value plain = memref::MemorySpaceCastOp::create(
+          then, loc, MemRefType::get({ShapedType::kDynamic}, narrow), buffer);
+      gpu::DeallocOp::create(then, loc, /*asyncToken=*/Type(),
+                             /*asyncDependencies=*/ValueRange(), plain);
+    }
+  }
   callRuntime(builder, loc, "mdrtDeviceTuplesBuilt", {tuples.handle}, Type(),
               false);
   auto type = cast<MemRefType>(op.getResult().getType());
   Value result = structure;
-  if (type != device2)
+  if (type != device1)
     result = memref::CastOp::create(builder, loc, type, structure);
   op.getResult().replaceAllUsesWith(result);
 
@@ -5983,15 +6011,14 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
           .getResult(0);
 
   // The search enters the excluded pairs as the particle itself; without
-  // them it takes a buffer with no rows.
+  // them it takes a buffer of no elements, which has no rows (RaggedRows.h).
   Value excluded = structure.excluded;
   Value noExcluded;
   if (!excluded) {
-    MemRefType type = getDeviceType(
-        {ShapedType::kDynamic, ShapedType::kDynamic}, builder.getI32Type());
-    noExcluded = createDeviceBuffer(
-        builder, loc, type,
-        ValueRange{createIndex(builder, loc, 0), createIndex(builder, loc, 1)});
+    MemRefType type =
+        getDeviceType({ShapedType::kDynamic}, builder.getI32Type());
+    noExcluded = createDeviceBuffer(builder, loc, type,
+                                    ValueRange{createIndex(builder, loc, 0)});
     excluded = noExcluded;
   }
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
@@ -6045,8 +6072,7 @@ LogicalResult Lowering::emitBuild(OpBuilder &builder, Location loc,
   if (noExcluded) {
     Value plain = memref::MemorySpaceCastOp::create(
         builder, loc,
-        MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
-                        builder.getI32Type()),
+        MemRefType::get({ShapedType::kDynamic}, builder.getI32Type()),
         noExcluded);
     gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
                            /*asyncDependencies=*/ValueRange(), plain);
@@ -7389,15 +7415,15 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
   if (failed(addGroupsTemplates(tilted)))
     return failure();
 
-  // Without excluded pairs the build takes a buffer with no rows.
+  // Without excluded pairs the build takes a buffer of no elements, which
+  // has no rows (RaggedRows.h).
   Value excluded = structure.excluded;
   Value noExcluded;
   if (!excluded) {
-    MemRefType type = getDeviceType(
-        {ShapedType::kDynamic, ShapedType::kDynamic}, builder.getI32Type());
-    noExcluded = createDeviceBuffer(
-        builder, loc, type,
-        ValueRange{createIndex(builder, loc, 0), createIndex(builder, loc, 1)});
+    MemRefType type =
+        getDeviceType({ShapedType::kDynamic}, builder.getI32Type());
+    noExcluded = createDeviceBuffer(builder, loc, type,
+                                    ValueRange{createIndex(builder, loc, 0)});
     excluded = noExcluded;
   }
   auto build = cast<func::FuncOp>(SymbolTable::lookupSymbolIn(
@@ -7472,8 +7498,7 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
   if (noExcluded) {
     Value plain = memref::MemorySpaceCastOp::create(
         builder, loc,
-        MemRefType::get({ShapedType::kDynamic, ShapedType::kDynamic},
-                        builder.getI32Type()),
+        MemRefType::get({ShapedType::kDynamic}, builder.getI32Type()),
         noExcluded);
     gpu::DeallocOp::create(builder, loc, /*asyncToken=*/Type(),
                            /*asyncDependencies=*/ValueRange(), plain);

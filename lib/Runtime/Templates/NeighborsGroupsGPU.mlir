@@ -69,6 +69,8 @@ func.func private @mdir.primitive.device_scan(memref<?xi32, 1>, memref<?xi32, 1>
 func.func private @mdir.primitive.device_scan_cursor(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index, memref<?xi32, 1>)
 func.func private @mdir.primitive.cursor_scatter(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
 func.func private @mdir.primitive.sort_bins(memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
+func.func private @mdir.primitive.ragged_row(memref<?xi32, 1>, index, index) -> (index, index)
+func.func private @mdir.primitive.ragged_entry(memref<?xi32, 1>, index, index, index, index) -> i32
 
 // The number of blocks of `block` threads that hold `count` threads.
 func.func private @mdrt_gpu_groups_grid(%count: index, %block: index) -> index {
@@ -79,24 +81,20 @@ func.func private @mdrt_gpu_groups_grid(%count: index, %block: index) -> index {
   return %result : index
 }
 
-// The other member of the excluded pair `k` of the particle `i` in the
-// incidence structure `excluded` (see NeighborsMatrixGPU.mlir).
-func.func private @mdrt_gpu_groups_partner(%excluded: memref<?x?xi32, 1>,
-    %i: index, %k: index) -> i32 {
+// The other member of the excluded pair `k` of the row that begins at
+// `first` in the incidence structure `excluded`, ragged rows (see
+// NeighborsMatrixGPU.mlir).
+func.func private @mdrt_gpu_groups_partner(%excluded: memref<?xi32, 1>,
+    %first: index, %k: index) -> i32 {
   %c1 = arith.constant 1 : index
   %c2 = arith.constant 2 : index
   %c3 = arith.constant 3 : index
   %c4 = arith.constant 4 : index
   %zero = arith.constant 0 : i32
-  %entry0 = arith.muli %k, %c4 : index
-  %entry = arith.addi %entry0, %c1 : index
-  %place_column = arith.addi %entry, %c1 : index
-  %place = memref.load %excluded[%i, %place_column] : memref<?x?xi32, 1>
+  %place = func.call @mdir.primitive.ragged_entry(%excluded, %first, %k, %c1, %c4) : (memref<?xi32, 1>, index, index, index, index) -> i32
   %at_first = arith.cmpi eq, %place, %zero : i32
-  %first = arith.addi %entry, %c2 : index
-  %second = arith.addi %entry, %c3 : index
-  %column = arith.select %at_first, %second, %first : index
-  %partner = memref.load %excluded[%i, %column] : memref<?x?xi32, 1>
+  %column = arith.select %at_first, %c3, %c2 : index
+  %partner = func.call @mdir.primitive.ragged_entry(%excluded, %first, %k, %column, %c4) : (memref<?xi32, 1>, index, index, index, index) -> i32
   return %partner : i32
 }
 
@@ -111,7 +109,7 @@ func.func private @mdrt_gpu_groups_image(%d: f32, %l: f32, %il: f32) -> f32 {
 
 func.func private @mdrt_gpu_build_neighbors_groups(
     %x: memref<?x3xf64, 1>, %box: vector<3xf64>, %reach: f64,
-    %excluded: memref<?x?xi32, 1>, %order: memref<?xi32, 1>,
+    %excluded: memref<?xi32, 1>, %order: memref<?xi32, 1>,
     %place_of: memref<?xi32, 1>, %entries: memref<?xi32, 1>,
     %masks: memref<?xi32, 1>, %counts: memref<?xi32, 1>,
     %units: memref<?xi32, 1>, %ordinals: memref<?xi32, 1>,
@@ -2925,7 +2923,6 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       // Each particle of the group in a lane of each half-warp: its partners
       // at even k from the first half, at odd k from the second, from where
       // the counts of the particles before it end (D105).
-      %rows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
       %u16 = arith.remui %lane, %c16w : index
       %hk = arith.divui %lane, %c16w : index
       %u16_32 = arith.index_cast %u16 : index to i32
@@ -2933,15 +2930,9 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %pie = memref.load %order[%pe] : memref<?xi32, 1>
       %piie = arith.index_cast %pie : i32 to index
       %reale = arith.cmpi sge, %pie, %zero_i : i32
-      %in_rowse = arith.cmpi ult, %piie, %rows : index
-      %hase = arith.andi %reale, %in_rowse : i1
-      %counte = scf.if %hase -> (index) {
-        %c32v = memref.load %excluded[%piie, %c0w] : memref<?x?xi32, 1>
-        %cv = arith.index_cast %c32v : i32 to index
-        scf.yield %cv : index
-      } else {
-        scf.yield %c0w : index
-      }
+      %entry_e = arith.constant 4 : index
+      %firste, %rowe = func.call @mdir.primitive.ragged_row(%excluded, %piie, %entry_e) : (memref<?xi32, 1>, index, index) -> (index, index)
+      %counte = arith.select %reale, %rowe, %c0w : index
       %count32e = arith.index_cast %counte : index to i32
       // Shuffles over the whole warp: the halves hold the same counts, so a
       // lane reads one of its own half (shuffles up by segments of 16 lost
@@ -2954,7 +2945,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %c15i = arith.constant 15 : i32
       %total32, %totalv = gpu.shuffle idx %pre4, %c15i, %wexcl : i32
       scf.for %k = %hk to %counte step %c2w {
-        %partner = func.call @mdrt_gpu_groups_partner(%excluded, %piie, %k) : (memref<?x?xi32, 1>, index, index) -> i32
+        %partner = func.call @mdrt_gpu_groups_partner(%excluded, %firste, %k) : (memref<?xi32, 1>, index, index) -> i32
         %pj = arith.index_cast %partner : i32 to index
         %q = memref.load %place_of[%pj] : memref<?xi32, 1>
         %four = arith.constant 4 : i32
@@ -8184,7 +8175,6 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                     // first at the place q.
                     %mex = scf.if %overflow -> (i32) {
                       %sj = memref.load %order[%qi] : memref<?xi32, 1>
-                      %srows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
                       %sm = scf.for %su = %c0w to %c16w step %c1w iter_args(%smm = %m) -> (i32) {
                         %su32 = arith.index_cast %su : index to i32
                         %sbit = arith.shli %one_i, %su32 : i32
@@ -8194,13 +8184,13 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                           %sp = arith.addi %first, %su : index
                           %si = memref.load %order[%sp] : memref<?xi32, 1>
                           %sii = arith.index_cast %si : i32 to index
-                          %sin = arith.cmpi ult, %sii, %srows : index
+                          %sentry = arith.constant 4 : index
+                          %sfirst, %sc = func.call @mdir.primitive.ragged_row(%excluded, %sii, %sentry) : (memref<?xi32, 1>, index, index) -> (index, index)
+                          %sin = arith.cmpi ne, %sc, %c0w : index
                           %sfound = scf.if %sin -> (i1) {
-                            %sc32 = memref.load %excluded[%sii, %c0w] : memref<?x?xi32, 1>
-                            %sc = arith.index_cast %sc32 : i32 to index
                             %sno = arith.constant false
                             %sf = scf.for %sk = %c0w to %sc step %c1w iter_args(%sacc = %sno) -> (i1) {
-                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sii, %sk) : (memref<?x?xi32, 1>, index, index) -> i32
+                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sfirst, %sk) : (memref<?xi32, 1>, index, index) -> i32
                               %seq = arith.cmpi eq, %spt, %sj : i32
                               %sor = arith.ori %sacc, %seq : i1
                               scf.yield %sor : i1
@@ -8507,7 +8497,6 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                     // first at the place q.
                     %mex = scf.if %overflow -> (i32) {
                       %sj = memref.load %order[%qi] : memref<?xi32, 1>
-                      %srows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
                       %sm = scf.for %su = %c0w to %c16w step %c1w iter_args(%smm = %m) -> (i32) {
                         %su32 = arith.index_cast %su : index to i32
                         %sbit = arith.shli %one_i, %su32 : i32
@@ -8517,13 +8506,13 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                           %sp = arith.addi %first, %su : index
                           %si = memref.load %order[%sp] : memref<?xi32, 1>
                           %sii = arith.index_cast %si : i32 to index
-                          %sin = arith.cmpi ult, %sii, %srows : index
+                          %sentry = arith.constant 4 : index
+                          %sfirst, %sc = func.call @mdir.primitive.ragged_row(%excluded, %sii, %sentry) : (memref<?xi32, 1>, index, index) -> (index, index)
+                          %sin = arith.cmpi ne, %sc, %c0w : index
                           %sfound = scf.if %sin -> (i1) {
-                            %sc32 = memref.load %excluded[%sii, %c0w] : memref<?x?xi32, 1>
-                            %sc = arith.index_cast %sc32 : i32 to index
                             %sno = arith.constant false
                             %sf = scf.for %sk = %c0w to %sc step %c1w iter_args(%sacc = %sno) -> (i1) {
-                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sii, %sk) : (memref<?x?xi32, 1>, index, index) -> i32
+                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sfirst, %sk) : (memref<?xi32, 1>, index, index) -> i32
                               %seq = arith.cmpi eq, %spt, %sj : i32
                               %sor = arith.ori %sacc, %seq : i1
                               scf.yield %sor : i1
@@ -8874,7 +8863,6 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       // Each particle of the group in a lane of each half-warp: its partners
       // at even k from the first half, at odd k from the second, from where
       // the counts of the particles before it end (D105).
-      %rows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
       %u16 = arith.remui %lane, %c16w : index
       %hk = arith.divui %lane, %c16w : index
       %u16_32 = arith.index_cast %u16 : index to i32
@@ -8882,15 +8870,9 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %pie = memref.load %order[%pe] : memref<?xi32, 1>
       %piie = arith.index_cast %pie : i32 to index
       %reale = arith.cmpi sge, %pie, %zero_i : i32
-      %in_rowse = arith.cmpi ult, %piie, %rows : index
-      %hase = arith.andi %reale, %in_rowse : i1
-      %counte = scf.if %hase -> (index) {
-        %c32v = memref.load %excluded[%piie, %c0w] : memref<?x?xi32, 1>
-        %cv = arith.index_cast %c32v : i32 to index
-        scf.yield %cv : index
-      } else {
-        scf.yield %c0w : index
-      }
+      %entry_e = arith.constant 4 : index
+      %firste, %rowe = func.call @mdir.primitive.ragged_row(%excluded, %piie, %entry_e) : (memref<?xi32, 1>, index, index) -> (index, index)
+      %counte = arith.select %reale, %rowe, %c0w : index
       %count32e = arith.index_cast %counte : index to i32
       // Shuffles over the whole warp: the halves hold the same counts, so a
       // lane reads one of its own half (shuffles up by segments of 16 lost
@@ -8903,7 +8885,7 @@ func.func private @mdrt_gpu_build_neighbors_groups(
       %c15i = arith.constant 15 : i32
       %total32, %totalv = gpu.shuffle idx %pre4, %c15i, %wexcl : i32
       scf.for %k = %hk to %counte step %c2w {
-        %partner = func.call @mdrt_gpu_groups_partner(%excluded, %piie, %k) : (memref<?x?xi32, 1>, index, index) -> i32
+        %partner = func.call @mdrt_gpu_groups_partner(%excluded, %firste, %k) : (memref<?xi32, 1>, index, index) -> i32
         %pj = arith.index_cast %partner : i32 to index
         %q = memref.load %place_of[%pj] : memref<?xi32, 1>
         %four = arith.constant 4 : i32
@@ -14197,7 +14179,6 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                     // first at the place q.
                     %mex = scf.if %overflow -> (i32) {
                       %sj = memref.load %order[%qi] : memref<?xi32, 1>
-                      %srows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
                       %sm = scf.for %su = %c0w to %c16w step %c1w iter_args(%smm = %m) -> (i32) {
                         %su32 = arith.index_cast %su : index to i32
                         %sbit = arith.shli %one_i, %su32 : i32
@@ -14207,13 +14188,13 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                           %sp = arith.addi %first, %su : index
                           %si = memref.load %order[%sp] : memref<?xi32, 1>
                           %sii = arith.index_cast %si : i32 to index
-                          %sin = arith.cmpi ult, %sii, %srows : index
+                          %sentry = arith.constant 4 : index
+                          %sfirst, %sc = func.call @mdir.primitive.ragged_row(%excluded, %sii, %sentry) : (memref<?xi32, 1>, index, index) -> (index, index)
+                          %sin = arith.cmpi ne, %sc, %c0w : index
                           %sfound = scf.if %sin -> (i1) {
-                            %sc32 = memref.load %excluded[%sii, %c0w] : memref<?x?xi32, 1>
-                            %sc = arith.index_cast %sc32 : i32 to index
                             %sno = arith.constant false
                             %sf = scf.for %sk = %c0w to %sc step %c1w iter_args(%sacc = %sno) -> (i1) {
-                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sii, %sk) : (memref<?x?xi32, 1>, index, index) -> i32
+                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sfirst, %sk) : (memref<?xi32, 1>, index, index) -> i32
                               %seq = arith.cmpi eq, %spt, %sj : i32
                               %sor = arith.ori %sacc, %seq : i1
                               scf.yield %sor : i1
@@ -14554,7 +14535,6 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                     // first at the place q.
                     %mex = scf.if %overflow -> (i32) {
                       %sj = memref.load %order[%qi] : memref<?xi32, 1>
-                      %srows = memref.dim %excluded, %c0w : memref<?x?xi32, 1>
                       %sm = scf.for %su = %c0w to %c16w step %c1w iter_args(%smm = %m) -> (i32) {
                         %su32 = arith.index_cast %su : index to i32
                         %sbit = arith.shli %one_i, %su32 : i32
@@ -14564,13 +14544,13 @@ func.func private @mdrt_gpu_build_neighbors_groups(
                           %sp = arith.addi %first, %su : index
                           %si = memref.load %order[%sp] : memref<?xi32, 1>
                           %sii = arith.index_cast %si : i32 to index
-                          %sin = arith.cmpi ult, %sii, %srows : index
+                          %sentry = arith.constant 4 : index
+                          %sfirst, %sc = func.call @mdir.primitive.ragged_row(%excluded, %sii, %sentry) : (memref<?xi32, 1>, index, index) -> (index, index)
+                          %sin = arith.cmpi ne, %sc, %c0w : index
                           %sfound = scf.if %sin -> (i1) {
-                            %sc32 = memref.load %excluded[%sii, %c0w] : memref<?x?xi32, 1>
-                            %sc = arith.index_cast %sc32 : i32 to index
                             %sno = arith.constant false
                             %sf = scf.for %sk = %c0w to %sc step %c1w iter_args(%sacc = %sno) -> (i1) {
-                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sii, %sk) : (memref<?x?xi32, 1>, index, index) -> i32
+                              %spt = func.call @mdrt_gpu_groups_partner(%excluded, %sfirst, %sk) : (memref<?xi32, 1>, index, index) -> i32
                               %seq = arith.cmpi eq, %spt, %sj : i32
                               %sor = arith.ori %sacc, %seq : i1
                               scf.yield %sor : i1

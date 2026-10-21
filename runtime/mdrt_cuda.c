@@ -1855,12 +1855,8 @@ void mdrtDeviceTuplesClose(void *opaque) {
       check(cuMemFree((CUdeviceptr)e->deviceMembers), "cuMemFree");
     if (!gone && e->deviceRenumbered)
       check(cuMemFree((CUdeviceptr)e->deviceRenumbered), "cuMemFree");
-    if (!gone && e->ownsSet) {
-      void *shared[3] = {e->deviceFile, e->deviceFirst, e->deviceEntries};
-      for (int k = 0; k != 3; ++k)
-        if (shared[k])
-          check(cuMemFree((CUdeviceptr)shared[k]), "cuMemFree");
-    }
+    if (!gone && e->ownsSet && e->deviceFile)
+      check(cuMemFree((CUdeviceptr)e->deviceFile), "cuMemFree");
     free(e);
   }
   if (!gone) {
@@ -1916,15 +1912,15 @@ static void *tuplesDeviceKept(size_t bytes) {
   return (void *)pointer;
 }
 
-/* Builds the incidence structure of `members` at `device`: the rows are
-   written on the host a range of particles at a time, in memory of a few
-   megabytes (16 MiB at most), and each range is
-   uploaded before the next is written. The host never holds the whole
-   structure (355 MB for the dihedrals of Cellulose), whose memory would be
-   mapped and faulted in at every build (#294). */
+/* Builds the incidence structure of `members` at `device`, in ragged rows
+   (mdrtTuplesRange): the structure is written on the host a range of
+   elements at a time, in memory of a few megabytes (16 MiB at most), and
+   each range is uploaded before the next is written. The host never holds
+   the whole structure, whose memory would be mapped and faulted in at
+   every build (#294). */
 static void tuplesBuildOnDevice(void *device, const int32_t *members,
                                 int64_t tuples, int64_t arity,
-                                int64_t particles, int64_t width) {
+                                int64_t particles) {
   /* The memory of the ranges is the store's, taken once and cleared once:
      taking and clearing it for every structure cost more than the build of
      the structures of JAC (0.5 ms with 4 MiB, 1.2 ms with 16). */
@@ -1932,11 +1928,9 @@ static void tuplesBuildOnDevice(void *device, const int32_t *members,
   struct MdrtTupleStore *store = currentTuples;
   struct MdrtTupleIndex index;
   mdrtTupleIndexBuild(&index, members, tuples, arity, particles);
-  size_t rowBytes = (size_t)width * sizeof(int32_t);
-  int64_t rows = (int64_t)(STAGING_BYTES / rowBytes);
-  if (rows < 1)
-    rows = 1;
-  size_t needed = (size_t)rows * rowBytes;
+  int64_t elements = mdrtTuplesSize(tuples, arity, particles);
+  int64_t range = (int64_t)(STAGING_BYTES / sizeof(int32_t));
+  size_t needed = (size_t)range * sizeof(int32_t);
   int32_t *staging = store ? store->staging : NULL;
   if (!staging || (store && store->stagingBytes < needed)) {
     if (store)
@@ -1951,11 +1945,12 @@ static void tuplesBuildOnDevice(void *device, const int32_t *members,
       store->stagingBytes = needed;
     }
   }
-  for (int64_t begin = 0; begin < particles; begin += rows) {
-    int64_t end = begin + rows < particles ? begin + rows : particles;
-    mdrtTuplesRows(&index, members, arity, width, begin, end, staging);
-    tuplesToDevice((char *)device + (size_t)begin * rowBytes, staging,
-                   (size_t)(end - begin) * rowBytes);
+  for (int64_t begin = 0; begin < elements; begin += range) {
+    int64_t end = begin + range < elements ? begin + range : elements;
+    mdrtTuplesRange(&index, members, tuples, arity, particles, begin, end,
+                    staging);
+    tuplesToDevice((int32_t *)device + begin, staging,
+                   (size_t)(end - begin) * sizeof(int32_t));
   }
   if (!store)
     free(staging);
@@ -2010,7 +2005,7 @@ void _mlir_ciface_mdrtDeviceTuplesRenumber(struct MdrtMemref2 *result,
   mdrtTuplesSpent(currentTuples, start);
 }
 
-static void tuplesIncidence(struct MdrtMemref2 *result,
+static void tuplesIncidence(struct MdrtMemref1 *result,
                             struct MdrtMemref2 *members, int64_t particles) {
   enter();
   const int32_t *given = mdrtTuplesMembersOf(members);
@@ -2025,50 +2020,43 @@ static void tuplesIncidence(struct MdrtMemref2 *result,
   }
   if (e && e->particles != particles)
     e = NULL;
-  /* The width does not depend on the order: an entry that has had a
-     structure has the width of the next. */
-  int64_t width = e && e->width
-                      ? e->width
-                      : mdrtTuplesWidth(given, tuples, arity, particles);
-  size_t bytes = (size_t)(particles * width) * sizeof(int32_t);
+  /* The size does not depend on the order. */
+  int64_t elements = mdrtTuplesSize(tuples, arity, particles);
+  size_t bytes = (size_t)elements * sizeof(int32_t);
   if (!e) {
     allocationTag = "tuples: incidence";
     void *device = mgpuMemAlloc(bytes, NULL, false);
     allocationTag = NULL;
-    tuplesBuildOnDevice(device, given, tuples, arity, particles, width);
-    mdrtTuplesSetMemref2(result, device, particles, width);
+    tuplesBuildOnDevice(device, given, tuples, arity, particles);
+    mdrtTuplesSetMemref1(result, device, elements);
     return;
   }
   if (!e->hasIncidence) {
-    if (!e->deviceIncidence || e->width != width) {
+    if (!e->deviceIncidence || e->elements != elements) {
       if (e->deviceIncidence) {
         finish();
         check(cuMemFree((CUdeviceptr)e->deviceIncidence), "cuMemFree");
       }
       e->deviceIncidence = tuplesDeviceKept(bytes);
     }
-    e->width = width;
-    tuplesBuildOnDevice(e->deviceIncidence, given, tuples, arity, particles,
-                        width);
+    e->elements = elements;
+    tuplesBuildOnDevice(e->deviceIncidence, given, tuples, arity, particles);
     e->hasIncidence = 1;
   } else if (mdrtTuplesChecks()) {
-    int64_t anewWidth = mdrtTuplesWidth(given, tuples, arity, particles);
-    int32_t *anew =
-        mdrtTuplesAllocate((size_t)(particles * anewWidth) * sizeof(int32_t));
-    mdrtTuplesFill(given, tuples, arity, particles, anewWidth, anew);
+    int32_t *anew = mdrtTuplesAllocate(bytes);
+    mdrtTuplesFill(given, tuples, arity, particles, anew);
     int32_t *kept = mdrtTuplesAllocate(bytes);
     tuplesToHost(kept, e->deviceIncidence, bytes);
-    if (anewWidth != width ||
-        !mdrtTuplesSameRows(anew, kept, arity, particles, width))
+    if (memcmp(anew, kept, bytes) != 0)
       mdrtTuplesDiffer("the incidence structure of a tuple set");
     free(kept);
     free(anew);
   }
   ++e->held;
-  mdrtTuplesSetMemref2(result, e->deviceIncidence, particles, width);
+  mdrtTuplesSetMemref1(result, e->deviceIncidence, elements);
 }
 
-void _mlir_ciface_mdrtDeviceTuplesIncidence(struct MdrtMemref2 *result,
+void _mlir_ciface_mdrtDeviceTuplesIncidence(struct MdrtMemref1 *result,
                                             struct MdrtMemref2 *members,
                                             int64_t particles) {
   double start = mdrtTuplesNow();
@@ -2119,14 +2107,22 @@ void _mlir_ciface_mdrtDeviceTuplesMembers(struct MdrtMemref2 *result,
 
 /* Where the code would free what it took: the renumbered members, on the
    host, or a structure on the device. */
-void _mlir_ciface_mdrtDeviceTuplesRelease(struct MdrtMemref2 *buffer) {
-  void *pointer = buffer->allocated;
+static void tuplesRelease(void *pointer) {
   if (!pointer || mdrtTupleStoreGiveBack(currentTuples, pointer))
     return;
   if (isOnDevice(pointer))
     mgpuMemFree(pointer, NULL);
   else
     free(pointer);
+}
+
+void _mlir_ciface_mdrtDeviceTuplesRelease(struct MdrtMemref2 *buffer) {
+  tuplesRelease(buffer->allocated);
+}
+
+/* The same for an incidence structure, a buffer of ragged rows. */
+void _mlir_ciface_mdrtDeviceTuplesReleaseRows(struct MdrtMemref1 *buffer) {
+  tuplesRelease(buffer->allocated);
 }
 
 /*===----------------------------------------------------------------------===
@@ -2136,12 +2132,12 @@ void _mlir_ciface_mdrtDeviceTuplesRelease(struct MdrtMemref2 *buffer) {
   The code compares the identities that it holds with the store's copy of
   the last order (a kernel that writes a flag, which mdrtDeviceTuplesOrderEnd
   reads), takes an entry for each tuple set (mdrtDeviceTuplesTake), and,
-  where the entry is to be built, launches three kernels: the inverse of
-  the order, the renumbered members, and the rows of the incidence
-  structure, each element written by one thread. The rows of place p are
-  those of the particle at p in the order of the files, from the index of
-  the tuples of each particle in that order, which the host builds once and
-  uploads once for each tuple set; their members are relabeled. The entry
+  where the entry is to be built, launches the kernels of the inverse of
+  the order, the renumbered members, and the incidence structure in ragged
+  rows from them (D[ragged-incidence]: a count of the memberships of each
+  place, a scan, a scatter, a sort of each row, and a thread for each
+  entry; MDExecToGPU.cpp, buildOnDevice). The host uploads the members in
+  the order of the files once for each tuple set. The entry
   becomes valid when the code says that it is built
   (mdrtDeviceTuplesBuilt), never before: an activation that ends before
   leaves it to be built again. A failed launch ends the process (check). */
@@ -2242,15 +2238,16 @@ static void tuplesCheckOnDevice(struct MdrtTupleStore *store,
   } else {
     memcpy(renumbered, e->file, bytes);
   }
-  int64_t width = mdrtTuplesWidth(renumbered, tuples, arity, particles);
-  size_t structure = (size_t)(particles * width) * sizeof(int32_t);
+  /* The build on the device sorts each row (emitDeviceRaggedRows), so its
+     structure is the host's element for element. */
+  int64_t elements = mdrtTuplesSize(tuples, arity, particles);
+  size_t structure = (size_t)elements * sizeof(int32_t);
   int32_t *anew = mdrtTuplesAllocate(structure);
-  mdrtTuplesFill(renumbered, tuples, arity, particles, width, anew);
+  mdrtTuplesFill(renumbered, tuples, arity, particles, anew);
   int32_t *kept = mdrtTuplesAllocate(structure);
-  if (width == e->width)
+  if (elements == e->elements)
     tuplesToHost(kept, e->deviceIncidence, structure);
-  if (width != e->width ||
-      !mdrtTuplesSameRows(anew, kept, arity, particles, width))
+  if (elements != e->elements || memcmp(anew, kept, structure) != 0)
     mdrtTuplesDiffer("the incidence structure of a tuple set on the device");
   free(kept);
   free(anew);
@@ -2265,30 +2262,13 @@ static int sameSet(const struct MdrtTuples *e, const int32_t *file,
              0;
 }
 
-/* The members in the order of the files and the index of the tuples of
-   each particle, on the device, for a tuple set that has none yet. */
+/* The members in the order of the files, on the device, for a tuple set
+   that has none yet. */
 static void uploadSet(struct MdrtTuples *e) {
-  int64_t tuples = e->tuples, arity = e->arity, particles = e->particles;
-  size_t bytes = (size_t)(tuples * arity) * sizeof(int32_t);
-  struct MdrtTupleIndex index;
-  mdrtTupleIndexBuild(&index, e->file, tuples, arity, particles);
-  int32_t *first = mdrtTuplesAllocate((size_t)(particles + 1) * sizeof(int32_t));
-  int64_t widest = 0;
-  for (int64_t p = 0; p <= particles; ++p) {
-    first[p] = (int32_t)index.first[p];
-    if (p < particles && index.first[p + 1] - index.first[p] > widest)
-      widest = index.first[p + 1] - index.first[p];
-  }
-  e->widest = widest;
+  size_t bytes = (size_t)(e->tuples * e->arity) * sizeof(int32_t);
   e->deviceFile = tuplesDeviceKept(bytes);
   tuplesToDevice(e->deviceFile, e->file, bytes);
-  e->deviceFirst = tuplesDeviceKept((size_t)(particles + 1) * sizeof(int32_t));
-  tuplesToDevice(e->deviceFirst, first, (size_t)(particles + 1) * sizeof(int32_t));
-  e->deviceEntries = tuplesDeviceKept(2 * bytes);
-  tuplesToDevice(e->deviceEntries, index.entries, 2 * bytes);
   e->ownsSet = 1;
-  free(first);
-  mdrtTupleIndexFree(&index);
 }
 
 /* An entry for the members `members` of `particles` particles, in the
@@ -2345,26 +2325,22 @@ int64_t _mlir_ciface_mdrtDeviceTuplesTake(struct MdrtMemref2 *members,
         owner = store->entries[i];
     if (owner) {
       e->deviceFile = owner->deviceFile;
-      e->deviceFirst = owner->deviceFirst;
-      e->deviceEntries = owner->deviceEntries;
-      e->widest = owner->widest;
     } else {
       uploadSet(e);
-      store->deviceBytes[2] +=
-          (int64_t)(3 * bytes + (size_t)(particles + 1) * sizeof(int32_t));
+      store->deviceBytes[2] += (int64_t)bytes;
     }
-    e->width = e->widest * (arity + 2) + 1;
-    e->deviceIncidence =
-        tuplesDeviceKept((size_t)(particles * e->width) * sizeof(int32_t));
-    store->deviceBytes[0] += particles * e->width * (int64_t)sizeof(int32_t);
+    e->elements = mdrtTuplesSize(tuples, arity, particles);
+    int64_t structure = e->elements * (int64_t)sizeof(int32_t);
+    e->deviceIncidence = tuplesDeviceKept((size_t)structure);
+    store->deviceBytes[0] += structure;
     if (isMemoryDetailed())
       fprintf(stderr,
               "mdrt: device memory: the incidence structure of %lld tuples "
-              "of %lld: %lld particles, rows of %lld entries (at most %lld "
-              "tuples a particle), %lld bytes\n",
+              "of %lld: %lld particles, ragged rows of %lld entries of %lld "
+              "values, %lld bytes\n",
               (long long)tuples, (long long)arity, (long long)particles,
-              (long long)e->width, (long long)e->widest,
-              (long long)(particles * e->width * (int64_t)sizeof(int32_t)));
+              (long long)(tuples * arity), (long long)(arity + 2),
+              (long long)structure);
     if (e->ordered) {
       e->deviceRenumbered = tuplesDeviceKept(bytes);
       store->deviceBytes[1] += (int64_t)bytes;
@@ -2415,30 +2391,28 @@ void _mlir_ciface_mdrtDeviceTuplesRenumbered(struct MdrtMemref2 *result,
                        e->tuples, e->arity);
 }
 
-void _mlir_ciface_mdrtDeviceTuplesFirst(struct MdrtMemref1 *result,
-                                        int64_t handle) {
+/* The members that the structure is built from (those of
+   mdrtDeviceTuplesRenumbered), as one row: the particle of each
+   membership. */
+void _mlir_ciface_mdrtDeviceTuplesMemberships(struct MdrtMemref1 *result,
+                                              int64_t handle) {
   struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
-  setMemref1(result, e->deviceFirst, e->particles + 1);
-}
-
-void _mlir_ciface_mdrtDeviceTuplesEntries(struct MdrtMemref1 *result,
-                                          int64_t handle) {
-  struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
-  setMemref1(result, e->deviceEntries, 2 * e->tuples * e->arity);
+  setMemref1(result, e->ordered ? e->deviceRenumbered : e->deviceFile,
+             e->tuples * e->arity);
 }
 
 void _mlir_ciface_mdrtDeviceTuplesPlace(struct MdrtMemref1 *result,
                                         int64_t handle) {
   struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
   struct MdrtTupleStore *store = deviceTupleStore();
-  setMemref1(result, e->ordered ? store->devicePlace : e->deviceFirst,
+  setMemref1(result, e->ordered ? store->devicePlace : NULL,
              e->ordered ? e->particles : 0);
 }
 
-void _mlir_ciface_mdrtDeviceTuplesStructure(struct MdrtMemref2 *result,
+void _mlir_ciface_mdrtDeviceTuplesStructure(struct MdrtMemref1 *result,
                                             int64_t handle) {
   struct MdrtTuples *e = (struct MdrtTuples *)(intptr_t)handle;
-  mdrtTuplesSetMemref2(result, e->deviceIncidence, e->particles, e->width);
+  setMemref1(result, e->deviceIncidence, e->elements);
 }
 
 /* The code has launched the kernels of the build, or taken the entry: it

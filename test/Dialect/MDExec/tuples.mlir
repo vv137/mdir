@@ -46,21 +46,21 @@ func.func @value_form(%members: memref<?x3xi32>, %x: !vec, %cell: !md.cell,
 func.func @storage_form(%members: memref<?x3xi32>, %n: index,
                         %x: memref<?x3xf64>, %cell: !md.cell,
                         %k: memref<?xf64>, %f: memref<?x3xf64>) -> f64 {
-  // CHECK: md_exec.build_incidence %{{[a-z0-9]+}} size(%{{[a-z0-9]+}}) : memref<?x3xi32> -> memref<?x?xi32>
+  // CHECK: md_exec.build_incidence %{{[a-z0-9]+}} size(%{{[a-z0-9]+}}) : memref<?x3xi32> -> memref<?xi32>
   %inc = md_exec.build_incidence %members size(%n)
-      : memref<?x3xi32> -> memref<?x?xi32>
+      : memref<?x3xi32> -> memref<?xi32>
   %u0 = arith.constant 0.0 : f64
   // CHECK: md_exec.tuple_for %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} coordinates(displacement(0, 1))
   // CHECK-SAME: tuple(%{{[a-z0-9]+}} : memref<?xf64>) outs(%{{[a-z0-9]+}} : memref<?x3xf64>)
   // CHECK-SAME: arity(3) overwrite [true]
-  // CHECK: } : memref<?x?xi32>, memref<?x3xf64> -> f64
+  // CHECK: } : memref<?xi32>, memref<?x3xf64> -> f64
   %u = md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
          tuple(%k : memref<?xf64>) outs(%f : memref<?x3xf64>)
          reduce(%u0 : f64) arity(3) overwrite [true] {
   ^bb0(%d: vector<3xf64>, %k_t: f64):
     md_exec.yield %d, %d, %d, %k_t
         : vector<3xf64>, vector<3xf64>, vector<3xf64>, f64
-  } : memref<?x?xi32>, memref<?x3xf64> -> f64
+  } : memref<?xi32>, memref<?x3xf64> -> f64
   return %u : f64
 }
 
@@ -69,7 +69,7 @@ func.func @storage_form(%members: memref<?x3xi32>, %n: index,
 // CHECK-LABEL: func.func @excluding(
 func.func @excluding(%x: !vec, %cell: !md.cell,
                      %e: !mdrt.incidence<@atoms, 2, @bonds>,
-                     %m: memref<?x?xi32>, %n: index) {
+                     %m: memref<?xi32>, %n: index) {
   %cells = md_exec.build_cells %x, %cell width(1.0) : !vec -> !mdrt.cells<@atoms>
   // CHECK: md_exec.build_neighbors
   // CHECK-SAME: kind(matrix) width(32) exclude(%{{[a-z0-9]+}} : !mdrt.incidence<@atoms, 2, @bonds>)
@@ -77,9 +77,9 @@ func.func @excluding(%x: !vec, %cell: !md.cell,
       cutoff(1.0) skin(0.2) kind(matrix) width(32)
       exclude(%e : !mdrt.incidence<@atoms, 2, @bonds>)
       : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
-  // CHECK: md_exec.empty_neighbors size(%{{[a-z0-9]+}}) positions(memref<?x3xf64>) kind(matrix) width(32) exclude(%{{[a-z0-9]+}} : memref<?x?xi32>)
+  // CHECK: md_exec.empty_neighbors size(%{{[a-z0-9]+}}) positions(memref<?x3xf64>) kind(matrix) width(32) exclude(%{{[a-z0-9]+}} : memref<?xi32>)
   %nl0 = md_exec.empty_neighbors size(%n) positions(memref<?x3xf64>)
-      kind(matrix) width(32) exclude(%m : memref<?x?xi32>)
+      kind(matrix) width(32) exclude(%m : memref<?xi32>)
       : !mdrt.neighbors<@atoms>
   return
 }

@@ -15,7 +15,7 @@ md.particle_set @atoms
 // CHECK:             arith.ori %{{[a-z0-9]+}}, %{{[a-z0-9]+}} : i32
 // CHECK:         %[[SET:[0-9]+]] = arith.cmpi ne, %[[ANY]], %{{[a-z0-9_]+}} : i32
 // CHECK:         return %[[SET]] : i1
-func.func @stretched(%pairs: memref<?x?xi32>, %x: memref<?x3xf64>,
+func.func @stretched(%pairs: memref<?xi32>, %x: memref<?x3xf64>,
                      %cell: !md.cell) -> i1 {
   %no = arith.constant false
   %any = md_exec.tuple_for %pairs, %x, %cell coordinates(displacement(0, 1))
@@ -26,7 +26,7 @@ func.func @stretched(%pairs: memref<?x?xi32>, %x: memref<?x3xf64>,
     %limit = arith.constant 1.0 : f64
     %far = arith.cmpf ugt, %r2, %limit : f64
     md_exec.yield %far : i1
-  } : memref<?x?xi32>, memref<?x3xf64> -> i1
+  } : memref<?xi32>, memref<?x3xf64> -> i1
   return %any : i1
 }
 
@@ -40,7 +40,7 @@ func.func @stretched(%pairs: memref<?x?xi32>, %x: memref<?x3xf64>,
 // CHECK:             arith.ori
 // CHECK:           arith.extui %{{[0-9]+}} : i1 to i32
 // CHECK:         arith.cmpi ne
-func.func @shared(%pairs: memref<?x?xi32>, %x: memref<?x3xf64>,
+func.func @shared(%pairs: memref<?xi32>, %x: memref<?x3xf64>,
                   %cell: !md.cell) -> i1 {
   %no = arith.constant false
   %any = md_exec.tuple_for %pairs, %x, %cell coordinates(displacement(0, 1))
@@ -51,6 +51,6 @@ func.func @shared(%pairs: memref<?x?xi32>, %x: memref<?x3xf64>,
     %limit = arith.constant 1.0 : f64
     %far = arith.cmpf ugt, %r2, %limit : f64
     md_exec.yield %far : i1
-  } : memref<?x?xi32>, memref<?x3xf64> -> i1
+  } : memref<?xi32>, memref<?x3xf64> -> i1
   return %any : i1
 }
