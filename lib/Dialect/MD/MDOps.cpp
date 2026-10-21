@@ -10,6 +10,7 @@
 #include "mlir/Interfaces/FunctionImplementation.h"
 
 #include <cmath>
+#include <limits>
 
 using namespace mlir;
 using namespace mdir::md;
@@ -563,6 +564,58 @@ LogicalResult GatherRelationOp::verifyRegions() {
 //===----------------------------------------------------------------------===//
 // ReciprocalOp
 //===----------------------------------------------------------------------===//
+
+LogicalResult LinearTransformOp::verify() {
+  if (getKind() != "fft3d")
+    return emitOpError() << "expected a supported transform kind, got '"
+                         << getKind() << "'";
+  if (getDirection() != "forward" && getDirection() != "backward")
+    return emitOpError() << "expected direction 'forward' or 'backward', got '"
+                         << getDirection() << "'";
+  StringRef expected = getDirection() == "forward" ? "backward" : "forward";
+  if (getAdjoint() != expected)
+    return emitOpError() << "expected declared adjoint '" << expected
+                         << "', got '" << getAdjoint() << "'";
+  if (getPairing() != "real_hermitian_half")
+    return emitOpError() << "expected pairing 'real_hermitian_half', got '"
+                         << getPairing() << "'";
+
+  auto source = getInput().getType();
+  auto target = getResult().getType();
+  if (source.getRank() != 3 || target.getRank() != 3 ||
+      !source.hasStaticShape() || !target.hasStaticShape())
+    return emitOpError() << "expected statically shaped rank-three grids";
+  auto real = getDirection() == "forward" ? source : target;
+  auto half = getDirection() == "forward" ? target : source;
+  if (!real.getElementType().isF64() ||
+      half.getElementType() != ComplexType::get(Float64Type::get(getContext())))
+    return emitOpError()
+           << "expected a real f64 grid and a complex<f64> half-spectrum";
+  ArrayRef<int64_t> shape = real.getShape();
+  if (llvm::any_of(shape, [](int64_t n) {
+        return n < 2 || n > std::numeric_limits<int32_t>::max();
+      }))
+    return emitOpError() << "expected three grid dimensions from 2 through "
+                            "the 32-bit limit";
+  int64_t count = 1;
+  for (int64_t n : shape) {
+    if (count > std::numeric_limits<int64_t>::max() / n)
+      return emitOpError() << "the real grid size overflows";
+    count *= n;
+  }
+  int64_t halfCount = 2;
+  for (int64_t n : {shape[0], shape[1], shape[2] / 2 + 1}) {
+    if (halfCount > std::numeric_limits<int64_t>::max() / n)
+      return emitOpError() << "the packed half-spectrum size overflows";
+    halfCount *= n;
+  }
+  if (half.getDimSize(0) != shape[0] ||
+      half.getDimSize(1) != shape[1] ||
+      half.getDimSize(2) != shape[2] / 2 + 1)
+    return emitOpError() << "expected the last dimension of the packed "
+                            "half-spectrum to be K2/2+1";
+  return success();
+}
 
 LogicalResult ReciprocalOp::verify() {
   auto positions = cast<FieldType>(getPositions().getType());

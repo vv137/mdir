@@ -449,9 +449,12 @@ the influence map, the inverse FFT, and gathering from the primitive set.
 D306 (#480) introduces the execution-level transform first:
 the forward and backward unnormalized transforms declare each other as
 adjoints under the weighted Hermitian pairing, with explicit buffer
-dependencies. The semantic `md` transform, its use by `md-differentiate`,
-the reciprocal decomposition, and distributed grid transfer remain in
-#452. The transfer and local work may overlap where their data dependencies
+dependencies. D[pme-semantic-transform] (#502) adds a pure value-level
+`md.linear_transform` with static grid and half-spectrum shapes and a
+declared transpose. The value-to-buffer bridge, its use by
+`md-differentiate` in a composed reciprocal chain, the spread/influence/
+gather decomposition, and distributed grid transfer remain in #452.
+The transfer and local work may overlap where their data dependencies
 permit it; no whole-step wait is part of the transform.
 
 Direction adopted in D166 and refined in D167 (2026-10-03); all milestones
