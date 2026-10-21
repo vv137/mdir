@@ -1,6 +1,12 @@
 # Python API preparation (M2)
 
-Status: implementation plan with maintainer rulings, not implemented functionality.
+Status: the plan of M2a with the maintainer's rulings (D187), now built:
+items 1 to 8 of Section 4 are done, and the contracts of Sections 1 to 3
+and 6 hold in the code as the documents below describe it. Kept as the
+record of the plan and an index of those documents (last checked
+2026-10-21); the current interface is described by them, starting from
+[python-package.md](python-package.md) and
+[python-model.md](python-model.md), not by this one.
 "M2" in this document is M2a: D195 split the milestone,
 and differentiable simulation is M2b ([roadmap](roadmap.md), Section 6.1).
 D169 fixes the milestone's scope; D187 records this preparation.
@@ -75,7 +81,8 @@ close M2 or any implementation item.
 
 ## 2. Existing code and prerequisites
 
-Initial inventory: main at `5dc0c94`, read on 2026-10-04. The preparation
+History: the inventory of the code before M2a, read at `5dc0c94` on
+2026-10-04. The preparation
 was rebased on release 0.1.0 (`78acb94`); implementation must account for
 the merged free-energy work (D176) and portable binary packaging (D177).
 
@@ -108,7 +115,7 @@ embedded error handling are prerequisites, not just binding details.
 
 ## 3. Public contract and implementation requirements
 
-`load_amber` and `load_gromacs` return an owned loaded-data object containing
+`load_amber`, `load_gromacs`, and `load_charmm` (D191) return an owned loaded-data object containing
 topology, parameters, positions, optional velocities and cell in MD units,
 with no CUDA initialization or invented run. System and initial state are
 built separately from that object. Loaded data outlive the files; record
@@ -203,6 +210,9 @@ Changed changelog entry; checkpoint format changes also require migration.
 
 ## 4. Proposed implementation sequence
 
+History: the sequence as proposed; every row is done, with the decision
+that each became.
+
 Each row is a prospective issue/PR with its own decision label and design
 draft. Changes to Builder, Control and runtime should proceed sequentially.
 
@@ -213,8 +223,8 @@ draft. Changes to Builder, Control and runtime should proceed sequentially.
 | 2a | `D193` (#78): strict buffer/CPU DLPack host inputs, read-only NumPy copies and required NumPy >=1.23 | Bitwise native array round trips, shapes/dtypes/strides, ownership, atomic stale tracking, dependency failures and CPU/GPU IR parity |
 | 3 | `D196` (#85): persistent simulation and arbitrary counts, embedded status/errors, runtime ownership | Segmented/uninterrupted agreement, retained coupling phase, stop/error survival, independent simulation state |
 | 3a | `D198` (#92): `InitialState.draw_velocities`, typed `System.restraints` | Velocities of `mdir run` bit for bit; restrained runs against `mdir run` on CPU/GPU, mixed/double; refusals |
-| 4 | `python-reporters` (future label): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |
-| 5 | `python-checkpoints` (future label): shared in-memory provenance and cross-front-end continuation | Both checkpoint directions, stage changes, corruption rejection, tunable restoration and output continuation |
+| 4 | `D207` (#109, [python-reporters.md](python-reporters.md)): scheduling, C++ writers, Python callbacks, host snapshots | Nondividing/coincident periods, final remainder, callback errors, GIL behavior, file lifecycle, input order |
+| 5 | `D223` (#132, [python-checkpoints.md](python-checkpoints.md)): shared in-memory provenance and cross-front-end continuation | Both checkpoint directions, stage changes, corruption rejection, tunable restoration and output continuation |
 | 6 | `D220` (#131, [python-dlpack.md](python-dlpack.md)): read-only leases, IDs and stream handoff; `D229` (#136): tracked writable borrows with a commit | Alias lifetime/completion, allocator reuse, dtype/order and version invalidation; read-only support alone does not close M2 |
 | 7 | `D228` (#133): Python 3.10–3.13 manylinux_2_28 pip wheel, reference and four-stage tutorial | Import/run outside the source/build tree, runtime discovery, CPU-only operation, suite and performance report; conda is deferred |
 | 8 | `D232` (#188, [python-observe.md](python-observe.md)): `observe` on the terms of the Python model and the observables of D189 in a Python simulation, as `ObservablesReporter`, which writes the file of `[output] observables`, and as `State.observables`; an observed constant may be a tunable of one entry; `D233`: terms of the positions, which the walls of D189 are | The columns of `mdir run` for the same model, to the bit in the deterministic mode, on the CPU and a GPU, mixed and double; the refusals |
@@ -264,6 +274,9 @@ tests use the GPU 1 lock. This design-only PR has no numerical CPU/GPU
 results or timing measurements.
 
 ## 6. Adopted maintainer rulings and remaining details
+
+History: the rulings of 2026-10-04; the details they left to the
+implementation PRs are settled in the decisions of Section 4.
 
 The maintainer approved these answers on 2026-10-04 in the linked PR comment:
 
