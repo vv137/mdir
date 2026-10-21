@@ -139,7 +139,10 @@ number would go: in the row it adds at the end of the table in
 [decisions.md](decisions.md), in comments, in the documents, and in the
 paper. Several decisions of one branch take several labels. At merge time
 the coordinator runs `scripts/decision-number.sh assign <label>`, which
-gives the next free number. `scripts/decision-number.sh check --pending`
+gives the next free number and rewrites Markdown links to headings whose
+anchors change with the number, including duplicate-heading suffixes.
+`scripts/decision-number.sh check` also reports stale decision-label anchors
+that no heading defines. `scripts/decision-number.sh check --pending`
 runs on every push to `main`: it refuses a number given twice and a label
 without its row in decisions.md, and lists the labels still waiting for
 their numbers, since a merge reaches `main` before the commit that numbers

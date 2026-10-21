@@ -61,6 +61,9 @@ check() {
     echo "$duplicates" >&2
     status=1
   fi
+  if ! python3 scripts/decision-number-anchors.py check; then
+    status=1
+  fi
   return $status
 }
 
@@ -71,6 +74,8 @@ case "${1:-}" in
     files=$(git grep -lE "(^|[^A-Za-z0-9_])D\\[$label\\]" -- . ':!scripts/decision-number.sh' || true)
     [[ -n "$files" ]] || { echo "no D[$label] in the tree" >&2; exit 1; }
     number=$(next_number)
+    # Rewrite links using the headings' GitHub anchors before changing their text.
+    python3 scripts/decision-number-anchors.py assign "$label" "$number"
     # shellcheck disable=SC2086
     sed -i -E "s/(^|[^A-Za-z0-9_])D\\[$label\\]/\\1D$number/g" $files
     echo "D[$label] -> D$number in:"
