@@ -953,7 +953,7 @@ there is a question of fusion, not of products.
   maintainer's ruling on #472, Section 8.3). AOTInductor's bodies stay a
   baseline: its package does not export the VJP. The sums over the three
   components can opt into D[ml4-short-reductions] (Section 8.9); the
-  elementwise kernels of `node.b` remain open (Section 8.6).
+  remaining elementwise kernels of `node.b` remain open (Section 8.6).
 - Store against recompute; the two-ended scatter (one product per pair).
 - Rows compacted to the pairs within the cutoff; the fields in f64 in
   `mixed`.
@@ -966,8 +966,9 @@ there is a question of fusion, not of products.
 The sums over the three vector components in PaiNN's `node.b` are the
 same reduction primitive as D303's sums over 32 or more components. One
 `RowSum` matcher accepts a bufferized `linalg.generic` with one reduced
-loop and a term independent of the accumulator. It rejects a payload with
-side effects or nested regions. A sum of 2 to 31 terms uses one thread per
+loop and a term independent of the accumulator. It accepts read-only
+`memref.load` operations in the term, and rejects writes, unknown effects,
+and nested regions. A sum of 2 to 31 terms uses one thread per
 output, combining the terms in their source order through
 `emitOrderedRegisterSum`; the accumulator stays in a register until the
 single store. A longer sum whose inputs are contiguous along the reduced
@@ -975,16 +976,35 @@ dimension uses D303's warp strategy. Other reductions retain the loop
 lowering. The two strategies share the term emitter and the reduction
 operator of `ReductionEmitter.h`; the body pass chooses the strategy.
 
-The loop strategy remains the default. The opt-in pass option
+With the short strategy and body fusion enabled, a pure one-input pointwise
+operation immediately after that sum is computed in the same kernel. The
+kernel still writes the sum to its original buffer, so other users see the
+same value. The pointwise output must be a fresh allocation with matching
+identity maps and shape; an intervening operation other than allocation,
+an effect, another input, or a read of the old output keeps the separate
+kernel. A final pure pointwise producer of two identical results can write
+both result buffers in one launch. This requires local allocated inputs,
+single-use result buffers, and a stage body whose only symbol users are
+`md.stage`: the tiled stage caller allocates a distinct device buffer for
+each result. A body with any other symbol user, a captured external input,
+or an unproved view keeps the copies. These choices do not combine or hide
+the six cuBLAS calls, their buffer lifetimes, or their completion edges.
+
+The loop strategy and separate pointwise launches remain the default. The opt-in pass option
 `md-exec-lower-stage-bodies{short-reductions=true}` or environment value
-`MDIR_STAGE_SHORT_REDUCTIONS=registers` selects the register strategy.
+`MDIR_STAGE_SHORT_REDUCTIONS=registers` selects the combined strategy when
+the pass's `fuse` option is also true (its default); `fuse=false` leaves the
+pointwise operations separate.
 No control-file key, Python API, or exported body changes.
 
-On one RTX 4090 at 4,096 rows, `node.b` took 0.308144 ms with registers
-and 0.313950 ms with loops. Each body had 21 GPU launches and six GEMM
-calls. At 6,144 atoms, one paired 20-step mixed-precision run took
-649.936 ms/step with registers and 653.337 ms/step with loops, both with
-621.5 MiB peak device allocation. An earlier four-step pair reversed
-the order (676.040 versus 652.077 ms/step), which shows that the
-whole-step difference is small relative to short-run variation. One
-longer pair does not establish a robust default gain; hence the opt-in.
+On one RTX 4090 at 4,096 rows, `node.b` took 0.313950 ms with loops,
+0.308144 ms with register sums alone, and 0.287998 ms with the combined
+fusion. Its GPU launches fell from 21 to 17; all forms retain six GEMM
+calls. For 6,144 atoms and 328,944 pairs in mixed precision, two alternated
+20-step pairs on one idle RTX 4090 measured 482.504 and 482.345 ms/step
+with the default, then 475.182 and 475.279 ms/step with the combined
+strategy. Peak device allocation fell from 621.5 to 613.5 MiB. The
+default stage IR is byte-identical to current main for this exported
+model. These paired measurements support a roughly 1.5% whole-step gain
+on this device and model, with no wider default claim; the strategy stays
+opt-in.

@@ -479,8 +479,9 @@ preparation and semantic IR construction. CHARMM loading retains its explicit
 cell and symmetric-frame rotation. No Python bindings are provided yet.
 
 For `[[energy.model]]` with `backend = "STAGES"`, short sums inside
-the model's exported bodies can use a register-held accumulator on a GPU
-(D[ml4-short-reductions]); the body remains the same MLIR artifact named
+the model's exported bodies can use a register-held accumulator and fuse
+eligible pointwise work on a GPU (D[ml4-short-reductions]); the body remains
+the same MLIR artifact named
 by `path`. No key of this control file selects that opt-in lowering. The
 strategy switch is `MDIR_STAGE_SHORT_REDUCTIONS`, documented in
 [environment.md](../environment.md).

@@ -925,6 +925,15 @@ same `emitCombine` in this reduction emitter. Left as it is: the half-warp sum o
 with `gpu.shuffle` itself rather than as two halves, so that moving it would
 change the code of double precision.
 
+The short-row strategy can carry a pure, adjacent pointwise consumer of
+the sum in the same launch; it still stores the sum, preserving the
+reduction primitive's result and order. A final pointwise map with two
+identical results writes directly to both disjoint stage-caller outputs
+when their allocation contract is proved. These are fusion choices around
+the existing reduction and map primitives, not new semantic operations;
+unproved aliases keep the separate copies. The device GEMM calls and their
+completion dependencies remain separate.
+
 ### 5.5 Tests
 
 - `Dialect/MDExec/Transforms/assign-algebra.mlir`,
