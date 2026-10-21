@@ -34,7 +34,7 @@ and for tests.
 
 | Variable | Read by | Effect |
 |---|---|---|
-| `MDIR_COMPILE_THREADS=<n>` | every lowering (`mdir run`, `mdir.compile`, a Python simulation) | Bounds the threads of the process-wide pool that lowers programs; as many as the host has cores by default (D211). The test suite sets it to the cores over `gpu_workers` ([python-segments.md](python-segments.md)). |
+| `MDIR_COMPILE_THREADS=<n>` | every lowering (`mdir run`, `mdir.compile`, a Python simulation), and the count of the most neighbors at the start of a build without `neighbor_capacity` | Bounds the threads of the process-wide pool that lowers programs, and those of the count of neighbors (D[neighbor-count]), which does not change its result; as many as the process may run on by default (D211). The test suite sets it to the cores over `gpu_workers` ([python-segments.md](python-segments.md)). |
 | `MDIR_COMPILE_CACHE_DIR=<dir>` | the JIT of a Python simulation (host objects); every lowering of a GPU program (`mdir run`, `mdir.compile`, a Python simulation) for the PTX and cubins of its GPU modules | Enables the compile cache and puts its entries in `<dir>/host/` and `<dir>/gpu/` (D212, D214, [compile-cache.md](compile-cache.md)). `mdir.clear_compile_cache()` clears this directory when it is given none, even under `MDIR_COMPILE_CACHE=off`; `cache=False` on `mdir.compile` or `Simulation` bypasses it for one compile (D217). |
 | `MDIR_COMPILE_CACHE=off` | the same | Disables the cache even when a directory is set. |
 | `MDIR_COMPILE_CACHE_MAX_MB=<n>` | the same | Bounds the cache directory, host and GPU entries together, to $n$ MiB, 2048 by default, removing the entries used least recently when a store takes the total, kept in `<dir>/size`, over the bound (D234). |
