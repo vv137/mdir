@@ -1,0 +1,24 @@
+# D[distributed-pair-center-filter]: exercise filtered density gathering and
+# pair energy on a device, including empty domains and the ghost-free path.
+# REQUIRES: cuda, compute-sanitizer
+
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed 's/GRID/8, 1, 1/; s/TOLERANCE/1.0e-5/' %S/../Integration/dist-eam-center-filter.mlir \
+# RUN: | mdir-opt %md_passes --md-exec-assign-algebra \
+# RUN:     --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm > %t/eam.mlir
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 \
+# RUN:     mlir-runner %t/eam.mlir -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=MEM
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 \
+# RUN:     mlir-runner %t/eam.mlir -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+
+# MEM: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)

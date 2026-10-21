@@ -15,6 +15,18 @@
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
 // RUN: | FileCheck %s
+
+// RUN: sed 's/GRID/8, 1, 1/; s/TOLERANCE/1.0e-5/' %s \
+// RUN: | mdir-opt %md_passes --md-exec-assign-algebra \
+// RUN:     --convert-md-dist-to-md-exec="functions=main" \
+// RUN:     --convert-md-dist-to-loops \
+// RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
+// RUN:     --md-exec-assign-precision="mode=mixed" \
+// RUN:     --md-exec-assign-algebra --md-exec-assign-storage --convert-md-exec-to-loops \
+// RUN: | mlir-opt %lower_loops_to_llvm \
+// RUN: | mlir-runner -e main --entry-point-result=void \
+// RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt \
+// RUN: | FileCheck %s
 //
 // RUN: sed 's/GRID/2, 1, 1/; s/TOLERANCE/1.0e-10/' %s \
 // RUN: | mdir-opt %md_passes --md-exec-assign-algebra \
