@@ -276,6 +276,22 @@ the index is gone and the structures are 9 times smaller on STMV; a
 start in a new order takes 0.1 ms more on JAC, for the launches of the
 build, and the same on Factor IX and Cellulose.
 
+**Reading a large GROMACS coordinate file (D[gro-startup]).** After the
+neighbor count at the start became exact and bounded by cells (D316),
+reading the numeric fields of a `.gro` file was the largest measured part
+of preparation. The reader now converts a complete finite decimal field
+directly to binary64 and retains its general conversion for other forms.
+The file's width and the values of the positions and velocities do not
+change; the compiled program and the integration loop do not read text.
+In one sequential main-versus-change run on an otherwise idle RTX 4090,
+STMV from the GROMACS topology took 19.375 to 14.223 s from `mdir run`
+to its first energy row at 1,067,095 particles (73,629,636 input bytes),
+and its ×11 replica took 103.277 to 45.680 s at 11,738,045 particles
+(809,925,187 bytes). The compiler's own time was 10.62 to 10.41 s and
+10.32 to 10.60 s respectively. The main baseline was 1817dc5d. Each is one run, with the driver's kernel
+cache initially cold and then shared by the sequential runs; the figures
+describe startup on that node. In a separate single-process CPU read of the same inputs, the complete positions and velocities of each size have SHA-256 hashes equal to the old reader, and topology plus coordinate reading took 8.64 to 3.34 s and 86.39 to 30.17 s. The rates of the 1,000 integration steps of the GPU timing job were 4.23 to 4.15 ms/step at ×1 and 57.49 to 57.62 ms/step at ×11; the change does not alter a step kernel.
+
 ## 10.5 Over long runs
 
 Over 2 ns of JAC at constant energy before the dual list (D112), the rate

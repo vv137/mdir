@@ -1,0 +1,8 @@
+# D[gro-startup]: compare the binary64 bits read from fixed-width GRO fields
+# with Python's independent decimal conversion. The existing velocity test
+# checks rejected fields and their line-level diagnostics.
+# REQUIRES: python-api
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_gro_decimals.py %t | FileCheck %s
+# CHECK: 1536 coordinate and velocity fields equal the decimal oracle bitwise
+# CHECK: malformed coordinate retains its line-level diagnostic

@@ -10,6 +10,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Changed
+
+- **Faster GROMACS coordinate input** (D[gro-startup], #525): finite
+  decimal fields in `.gro` coordinates and velocities use a direct binary64
+  conversion. Accepted input, control keys, output, and overwrite behavior
+  are unchanged.
+
 ### Added
 
 - **An opt-in single-pass device scan for group neighbor builds**
