@@ -3759,9 +3759,8 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
         }
         {
           OpBuilder otherwise = OpBuilder::atBlockEnd(member.elseBlock());
-          scf::YieldOp::create(
-              otherwise, loc,
-              arith::ConstantIntOp::create(otherwise, loc, 0, 1));
+          Value no = arith::ConstantIntOp::create(otherwise, loc, 0, 1);
+          scf::YieldOp::create(otherwise, loc, ValueRange{no});
         }
         lanes.valid = member.getResult(0);
       }
