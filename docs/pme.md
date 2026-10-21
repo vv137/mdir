@@ -584,11 +584,13 @@ f64 or fixed-order sum takes no bricks. The bins may occupy the scratch
 position at which a non-tiled f32 sum has its bricks, so the lowering
 checks the element type when it finds either buffer.
 
-The order-4 f32 gathering still reads the places and fractions written
-by the weights kernel (D102, D109). Its choice follows the sum's order,
-grid type, algebra, and result, independent of whether spreading took
-tiles or bricks. Thus omitting the bricks changes the allocation and its
-one-time zeroing, not the arithmetic of the tiled sum.
+For tiled order-4 f32 spreading, gathering still reads the places and
+fractions written by the weights kernel (D102, D109), even though no
+bricks exist. A non-tiled sum with bricks uses that gathering too; a
+manually formed non-tiled B-spline sum without bricks retains its
+floating-point atomic spreading and ordinary gathering. Thus omitting the
+bricks from a tiled sum changes the allocation and its one-time zeroing,
+not its arithmetic.
 
 ## 4. Parameters (D71)
 

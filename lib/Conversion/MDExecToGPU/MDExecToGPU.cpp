@@ -5281,10 +5281,6 @@ static LogicalResult lowerProlate(
            << "expected buffers for the places and the tables";
   Value places = op.getScratch()[4], tables = op.getScratch()[5];
   Value bricks = getBricks(op);
-  if (!getTileEdge(op) && !fixedPoint &&
-      cast<MemRefType>(real.getType()).getElementType().isF32() && !bricks)
-    return op->emitOpError()
-           << "needs bricks for non-tiled f32 prolate spreading";
   func::CallOp::create(builder, loc,
                        instance("mdrt_gpu_pme_prolate_coefficients"),
                        ValueRange{op.getModuli(), tables, k1, k2, k3});
@@ -5479,13 +5475,10 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   // has the kernel of its own, which takes no weights.
   bool narrowGrid = cast<MemRefType>(real.getType()).getElementType().isF32();
   bool usesWeights = !fixedPoint && op.getOrder() == 4 && narrowGrid &&
-                     !op.getPotential();
+                     !op.getPotential() && (tiles || bricks);
   if (usesWeights && !weights)
     return op->emitOpError()
            << "needs particle weights for f32 order-4 gathering";
-  if (!tiles && usesWeights && !bricks)
-    return op->emitOpError()
-           << "needs bricks for non-tiled f32 order-4 spreading";
 
   // Marked, the sum runs on a second stream, beside the ops up to its join
   // (md_exec.join, D87). All the work that it issues goes there, and none
