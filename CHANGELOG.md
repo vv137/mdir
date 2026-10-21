@@ -30,7 +30,7 @@ format, or the outputs; every such change is listed under **Changed** or
   consumers, and independent owned particle work for each $G$ or
   $G^\mathsf T$ transfer. Execution remains synchronous. No control-file
   key, output-file format, or overwrite behavior changes.
-- **Storage-level halo completion events** (D[ml2-halo-events], #490):
+- **Storage-level halo completion events** (D310, #490):
   opt-in `halo-events=true` on the two `md_dist` conversion passes emits
   a start and matching wait for each copy or sum. The verifier checks
   source, destination, and handle lifetime, and

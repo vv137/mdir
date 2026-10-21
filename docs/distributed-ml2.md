@@ -403,7 +403,7 @@ schedule the storage-level event below so its wait precedes boundary
 work or a returned owner value. The in-process executor remains the
 synchronous baseline; this schedule proof does not claim runtime overlap.
 
-### Storage-level completion events (D[ml2-halo-events])
+### Storage-level completion events (D310)
 
 An opt-in lowering of the existing $G$ and $G^\mathsf T$ operations emits
 `mdrt.halo_copy_start` or `mdrt.halo_sum_start`, followed by

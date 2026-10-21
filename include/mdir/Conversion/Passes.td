@@ -588,7 +588,7 @@ def LowerMDRTHaloEvents
     : Pass<"lower-mdrt-halo-events", "::mlir::ModuleOp"> {
   let summary = "Lowers halo start/wait events to synchronous transport calls";
   let description = [{
-    The reference strategy of D[ml2-halo-events]. The start calls the
+    The reference strategy of D310. The start calls the
     existing in-process transport and the wait yields its completed
     destination buffer. The verifier of the event ops proves the buffer
     lifetime and completion dependencies before this pass runs.

@@ -10,7 +10,7 @@ inspection pass over distributed halo dependencies. It adds no control-file
 key and changes no output file or overwrite behavior. Distributed execution
 continues to use the synchronous in-process transport.
 
-D[ml2-halo-events] adds the opt-in compiler pass option
+D310 adds the opt-in compiler pass option
 `halo-events=true` to `--convert-md-dist-to-loops` and
 `--convert-md-dist-to-md-exec`; `--lower-mdrt-halo-events` then uses the
 same synchronous halo transport as the default. There is no control-file
