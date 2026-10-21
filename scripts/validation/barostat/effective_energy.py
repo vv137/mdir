@@ -1,5 +1,5 @@
 """Checks the increment of the effective energy of a step of the barostat
-(Bernetti and Bussi 2020, eq. S10; design-m1.md, Section 11.5) on a model
+(Bernetti and Bussi 2020, eq. S10; dynamics.md, Section 2.5) on a model
 in one variable. From lambda drawn from P(lambda) ~ exp(-E/kT), one step
 
     lambda' = lambda + (D/kT) f dt + sqrt(2 D dt) R,   f = -E'(lambda),

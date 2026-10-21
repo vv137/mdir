@@ -1,5 +1,5 @@
 // Internal coordinates of tuples: what a kernel over the tuples of a
-// topology takes. See docs/design-m1.md, Section 3.
+// topology takes. See docs/tuples.md, Section 2.
 
 #ifndef MDIR_DIALECT_MD_MDCOORDINATES_H
 #define MDIR_DIALECT_MD_MDCOORDINATES_H

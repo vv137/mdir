@@ -2379,7 +2379,7 @@ llvm::Error Builder::collectTopologyConstants() {
     program.coulombSelfEnergy = self;
   }
 
-  // The correction for the dispersion (Section 7.2 of design-m1.md): N²
+  // The correction for the dispersion (Section 1.2 of nonbonded.md): N²
   // times the mean of C6 over the pairs of distinct particles that are not
   // excluded, as GROMACS takes it.
   if (control.topologyDispersion != DispersionCorrection::None) {
@@ -5843,7 +5843,7 @@ std::string Builder::emitTripletTerm(size_t index, const TripletTerm &term) {
       llvm::cantFail(Expression::parse(term.expression, control.functions));
   // cos(theta) is the coordinate cosine(0, 1, 2), whose derivative has no
   // 1/sin(theta), which a collinear triplet makes infinite
-  // (design-m1.md, Section 4.1); theta alone is the angle.
+  // (tuples.md, Section 3.1); theta alone is the angle.
   expression.replaceCall("cos", "theta", "cos(theta)");
   const std::vector<std::string> &names = expression.getNames();
   struct Variable {
@@ -6062,7 +6062,7 @@ void Builder::emitPrograms() {
 
   // Velocity Verlet (Swope et al., J. Chem. Phys. 76, 637 (1982)) stores
   // the velocities of the time of the positions; leapfrog, those half a
-  // step behind (design-m1.md, Section 23). Both carry the forces of the
+  // step behind (dynamics.md, Section 6). Both carry the forces of the
   // positions, so that a step evaluates once, at its end. The step of
   // energy returns the energy and the virial of the new positions, and
   // with leapfrog also the velocities of their time, which the energies
@@ -9411,7 +9411,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
   // the step, with the virials of the correction for the dispersion and of
   // the background of a net charge at this volume, gives the change ε of
   // the logarithm of the volume. The positions and the cell scale by
-  // μ = exp(ε/3), the velocities by 1/μ (design-m1.md, Section 11.4).
+  // μ = exp(ε/3), the velocities by 1/μ (dynamics.md, Section 2.4).
   std::string newPositions = positions.str();
   if (control.barostat) {
     // The kinetic energy of the velocities of the step, without the center

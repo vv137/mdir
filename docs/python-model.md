@@ -616,7 +616,7 @@ bit: difference 0, tolerance 0.
 
 Under leapfrog too the parts need not follow the rows of `mdir run`:
 every program of a leapfrog step leaves the same state to the bit (#285;
-design-m1.md, Section 23).
+dynamics.md, Section 6).
 `python-thermostats.test` checks the fields, their defaults and types, the
 refusals above with their messages, and the plan, and needs no device.
 

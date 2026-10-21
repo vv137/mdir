@@ -500,7 +500,7 @@ loops that compute the energy and the forces.
 | Part of the module | From |
 |---|---|
 | `md.potential @energy` | `[energy]`: one `md.sum_relation` for each pair term, with the truncation and the cutoff |
-| `dyn.program @step` | `integrator`, with the constraints, the virtual sites, and the restraints. A second program, `@step_energy`, returns the energy and the virial as well, for the last step before an output. With the barostat of Trotter type, `@step_virial`, `@step_trotter`, and `@step_trotter_energy` take the last two steps of a period (design-m1.md, Section 11.4). |
+| `dyn.program @step` | `integrator`, with the constraints, the virtual sites, and the restraints. A second program, `@step_energy`, returns the energy and the virial as well, for the last step before an output. With the barostat of Trotter type, `@step_virial`, `@step_trotter`, and `@step_trotter_energy` take the last two steps of a period (dynamics.md, Section 2.4). |
 | `func.func @mdir_run` | The schedule: the loops, the calls that write, and the buffers of the state |
 
 The entry function takes the buffers of the positions, the velocities, the

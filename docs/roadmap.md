@@ -1,9 +1,10 @@
 # Roadmap
 
 Status: each row carries the date or the decisions of its own state (the
-row of M4 was brought current on 2026-10-21). The stages of the
-first milestone are recorded in [design-m1.md](design-m1.md), Section 18,
-as history; the principles that the work follows are in
+row of M4 was brought current on 2026-10-21). The decisions of the
+first milestone are in [decisions.md](decisions.md), and the results
+measured as its parts were built in [validation.md](validation.md),
+Section 1; the principles that the work follows are in
 [principles.md](principles.md).
 
 **Milestones** (D169; M2 split into M2a and M2b by D195):
@@ -40,7 +41,7 @@ Features of classical MD (Section 5) continue between milestones.
 
 | Stage | Work |
 |---|---|
-| M1e | Done (2026-10-02): the readers and renumbering; the format before Amber 7 and Amber's conventions (D133); flexible water at constant energy against sander, second order down to 0.0625 fs with the terms shifted at the cutoff (design-m1.md, Section 18) |
+| M1e | Done (2026-10-02): the readers and renumbering; the format before Amber 7 and Amber's conventions (D133); flexible water at constant energy against sander, second order down to 0.0625 fs with the terms shifted at the cutoff (validation.md, Section 1) |
 | M1f | Done: the terms and dynamics of the intermediate stage against AmberTools, GROMACS, and CHARMM (white paper, Section 9) |
 | M1k | Done (2026-10-03): the Amber suite term by term at the start against pmemd 26 and sander (D133), conservation over runs, the volumes at constant pressure of JAC and Factor IX against OpenMM, pmemd.cuda, and GROMACS (within 0.05% of OpenMM's Monte Carlo barostat), and rates as one model with pmemd.cuda, 104% to 132% (D134; white paper, Sections 9 and 10) |
 | Integrators | Done: leapfrog does what velocity Verlet does: constraints (SHAKE, SETTLE), virtual sites, the thermostats, the barostat, restraints (D76) |

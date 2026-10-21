@@ -4,7 +4,7 @@ Python simulation (#285, D265).
 
     leapfrog_langevin_reference.py INPUTS LIBMDRT TARGET PRECISION
 
-The documented step (design-m1.md, Sections 11.6 and 23) is g-BAOAB of
+The documented step (dynamics.md, Sections 2.6 and 6) is g-BAOAB of
 [Leimkuhler2016] (its Appendix, one drift in each A) in the form of
 velocity Verlet, of which leapfrog stores the velocities of the drift of
 the second A. From the positions x, the stored velocities v, and the

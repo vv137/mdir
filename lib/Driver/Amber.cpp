@@ -778,7 +778,7 @@ llvm::Error Reader::readTerms(Topology &topology,
   // takes them. With extra points Amber builds them again: the members of
   // the bonds, the ends of the angles, and the ends of every dihedral, and
   // an extra point is excluded from its owner and from what its owner is
-  // excluded from (design-m1.md, Section 19).
+  // excluded from (constraints.md, Section 2).
   if (topology.virtualSites.empty()) {
     std::set<std::pair<unsigned, unsigned>> listed;
     size_t next = 0;

@@ -221,11 +221,11 @@ is needed when the kernels are compiled, not when LLVM is built.
 | `md.sum_particles` | Sums a kernel over particles. |
 | `md.map_particles` | Applies a kernel to each particle. |
 | `md.evaluate` | Requests energy and derivatives of a potential. |
-| `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; see [design-m1.md](design-m1.md), Sections 2 and 3. |
+| `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; see [tuples.md](tuples.md), Sections 1 and 2. |
 | `md.chebyshev` | In a kernel, $\sum_k c_k T_k(y)$, a Chebyshev series with its coefficients as an attribute; its derivative is the series of the derivatives, and in a loop over pairs under `fast_math` a series of the distance becomes part of a table of $r^2$ (D94, D280). |
 | `md.stage`, `md.apply_stage` | A neural stage, a pure function of one element bound to its body and its vector-Jacobian product, and its application, or that of its product, in a kernel ([ml4-ir.md](ml4-ir.md), D288). |
 | `md.orthorhombic_cell`, `md.triclinic_cell` | A periodic cell from the lengths of its edges, or from the six numbers of a lower-triangular cell in reduced form ([triclinic.md](triclinic.md), D123). |
-| `md.lookup` | In a kernel, the value of a table for the types of its members, one index for each dimension of the table ([design-m1.md](design-m1.md), Section 7). |
+| `md.lookup` | In a kernel, the value of a table for the types of its members, one index for each dimension of the table ([nonbonded.md](nonbonded.md), Section 1). |
 | `md.edges` | The pairs of images within a cutoff, every image of every particle and the particle's own, grouped by the first member: the list that a local learned potential takes ([metatomic-ml1.md](metatomic-ml1.md), D277). |
 | `md.reciprocal` | The reciprocal sum of smooth particle mesh Ewald: energy, virial, and forces, with the influence function's factors along each edge as an operand ([pme.md](pme.md)). |
 | `md.call` | Calls a function or a potential. |
@@ -647,7 +647,7 @@ The two ops are separate at this level. Fusing them into one loop is an
 | `md-check-exchange` | Proves the exchange contracts whose basis is `proof`. Fails if a proof fails. |
 | `md-expand-truncation` | Expands truncation into the kernels. |
 | `md-differentiate` | Generates derivative functions and replaces `md.evaluate` with `md.call`. Expands truncation in the generated functions. |
-| `md-bypass-updates` | Lets a loop over the tuples of a set of an `md.disjoint_union` read a field before an update by an other set of the union: where a field is $\mathbf y = \mathbf x + \mathbf c$, with $\mathbf c$ gathered over an other set, the loop reads $\mathbf x$, which agrees with $\mathbf y$ at its members up to the sign of a zero (D83; the union is in [design-m1.md](design-m1.md), Section 2). |
+| `md-bypass-updates` | Lets a loop over the tuples of a set of an `md.disjoint_union` read a field before an update by an other set of the union: where a field is $\mathbf y = \mathbf x + \mathbf c$, with $\mathbf c$ gathered over an other set, the loop reads $\mathbf x$, which agrees with $\mathbf y$ at its members up to the sign of a zero (D83; the union is in [tuples.md](tuples.md), Section 1). |
 
 A generated function is named after the potential and the requests:
 `@lj.energy_forces`, `@lj.derivative3`. Equal requests share one function.
@@ -1035,7 +1035,7 @@ double mode (Section 10.9).
 | `md_exec.zeros`, `md_exec.empty` | Destinations of loops. |
 | `md_exec.pair_for` | Runs a kernel over the pairs of a neighbor structure. |
 | `md_exec.build_triplets` | Writes the triplets of a neighbor matrix within a cutoff: a relation without a tuple set, or in the storage form the members on the host, one row a triplet (D160). |
-| `md_exec.build_incidence`, `md_exec.tuple_for` | The tuples of each particle, and a kernel over them; see [design-m1.md](design-m1.md), Section 5. |
+| `md_exec.build_incidence`, `md_exec.tuple_for` | The tuples of each particle, and a kernel over them; see [tuples.md](tuples.md), Section 4. |
 | `md_exec.particle_for` | Runs a kernel over particles. |
 | `md_exec.yield` | Terminator of kernels. |
 

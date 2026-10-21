@@ -1,6 +1,6 @@
 // Semantic differentiation of potentials.
 //
-// See docs/ops.md, Section 5, and docs/design-m1.md, Section 4.
+// See docs/ops.md, Section 5, and docs/tuples.md, Section 3.
 
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 #include "mdir/Dialect/MD/Transforms/ScalarDerivative.h"

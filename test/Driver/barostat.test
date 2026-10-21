@@ -59,7 +59,7 @@
 # its value here, growing with the period of coupling. Counted exactly,
 # from the energy of the scaled positions, it changes as at constant energy
 # (D77); counted to first order in μ − 1, as GROMACS does, it drifts as the
-# square of the strain, by about 2e-3 (design-m1.md, Section 11.4).
+# square of the strain, by about 2e-3 (dynamics.md, Section 2.4).
 #
 # CHECK:      INFO:      STEP {{.*}}PRESSURE      CONSERVED         VOLUME
 # CHECK-NEXT: INFO:         0         0.0000 {{ *}}[[TOTAL:-[0-9.]+]] {{.*}} [[TOTAL]]     12487.1680
