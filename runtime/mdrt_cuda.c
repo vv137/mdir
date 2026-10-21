@@ -2134,7 +2134,7 @@ void _mlir_ciface_mdrtDeviceTuplesReleaseRows(struct MdrtMemref1 *buffer) {
   reads), takes an entry for each tuple set (mdrtDeviceTuplesTake), and,
   where the entry is to be built, launches the kernels of the inverse of
   the order, the renumbered members, and the incidence structure in ragged
-  rows from them (D[ragged-incidence]: a count of the memberships of each
+  rows from them (D314: a count of the memberships of each
   place, a scan, a scatter, a sort of each row, and a thread for each
   entry; MDExecToGPU.cpp, buildOnDevice). The host uploads the members in
   the order of the files once for each tuple set. The entry

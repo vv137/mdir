@@ -95,7 +95,7 @@ def release(lib, buffer):
 
 def ragged_rows(structure, arity):
     """The rows of an incidence structure in ragged rows (RaggedRows.h,
-    D[ragged-incidence]): the number of rows, the offsets in entries, the
+    D314): the number of rows, the offsets in entries, the
     entries of arity + 2 values, and an entry of zeros."""
     entry = arity + 2
     rows = int(structure[0])

@@ -25,7 +25,7 @@ describes how a device implements a primitive.
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
 | Reductions chosen by the algebra of the operator (Section 5) | `BlockReduce` (raking, commutative only) | #422 | Step 1 built, behavior-neutral: the algebra of every sum stated in the IR (`any_order_exact`, `any_order`, `fixed_order`), read by the chooser and the lowerings instead of the mode, with the same PTX; the warp and block reductions one emitter. The strategies it licenses follow only where measured | D301 |
 | Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D296 |
-| Ragged rows: a relation in compressed rows, its accessor, and its build from the row of each item (Section 4.7) | none (a CSR matrix [[Saad2003]](references.md#saad2003), built with the counting sort above) | #471 | Built; its first user is the incidence structure of the tuples | D[ragged-incidence] |
+| Ragged rows: a relation in compressed rows, its accessor, and its build from the row of each item (Section 4.7) | none (a CSR matrix [[Saad2003]](references.md#saad2003), built with the counting sort above) | #471 | Built; its first user is the incidence structure of the tuples | D314 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
 
 The order follows #415: #421 first, then #419 on the gathering of PME,
@@ -618,7 +618,7 @@ The inventory of #432, by the primitive each site takes:
 | The matrix build: particles by cell | chunked scan, scatter, stable rank | `mdrt_gpu_matrix_sort` |
 | The spatial order (D44, D86) | chunked scan, scatter (every key), insertion sort by the numbers of the input | `mdrt_gpu_spatial_order` |
 | The listed particles of PME (D262, `md_exec.nonzero`) | the serial scan of the counts of the chunks | `lowerNonzero` (lowering) |
-| The incidence structure of the tuples, built on a device (D257, D[ragged-incidence]) | the ragged rows of Section 4.7: a count with a device atomic, the device scan, the scatter (every key), the insertion sort | `buildOnDevice` (lowering) |
+| The incidence structure of the tuples, built on a device (D257, D314) | the ragged rows of Section 4.7: a count with a device atomic, the device scan, the scatter (every key), the insertion sort | `buildOnDevice` (lowering) |
 
 Left as they are: PME's binning for tiles (`match.any.sync` and a rank by
 key, one atomic for a key: a warp-aggregated atomic, #418), the serial
@@ -699,7 +699,7 @@ No system is slower beyond the spread of the runs: the rounds of JAC NVE
 took 1259.7 to 1272.4 ns/day with `main` and 1253.6 to 1260.3 with the
 branch, whose program is byte for byte that of `main`.
 
-### 4.7 Ragged rows (D[ragged-incidence])
+### 4.7 Ragged rows (D314)
 
 A relation from each of $N$ rows to a varying number of entries of $E$
 values is one buffer of i32 in compressed rows (CSR, the compressed sparse
@@ -738,7 +738,7 @@ The first user is the incidence structure of the tuples ($E = a + 2$: the
 tuple, the place of the particle, the members). On STMV it took 2,096 MiB
 in its dense form, the dihedrals' rows padded to 247 values; see
 [device-tuples.md](device-tuples.md), Section 3, for its build, and
-D[ragged-incidence] for the memory and the rates measured. The neighbor
+D314 for the memory and the rates measured. The neighbor
 matrix, the scatter table of D291, and ML2's lists keep their layouts
 until a measurement shows a gain (#471).
 

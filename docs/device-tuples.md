@@ -2,7 +2,7 @@
 
 Issue #295; the design as ruled by the maintainer on PR #329 (all three questions as proposed). The
 structure is stored in ragged rows and built on the device from the
-members since D[ragged-incidence] (#471, Sections 2 and 3). It builds on
+members since D314 (#471, Sections 2 and 3). It builds on
 the store of D253 (`runtime/mdrt_tuples.h`), which a Python simulation and
 a frame evaluator keep across their activations and, with #316
 (D255, #316), `mdir run` across its segments. Section
@@ -62,7 +62,7 @@ exactly one thread.
 **What is borrowed.** The structure is the compressed rows of a sparse
 matrix (CSR, [[Saad2003]](references.md#saad2003), Chapter 3), the
 incidence matrix of particles by tuples, built by distribution counting.
-Until D[ragged-incidence] the index above was built on the host
+Until D314 the index above was built on the host
 (`mdrtTupleIndexBuild`, D253), uploaded once for each tuple set, and the
 rows of the dense structure gathered from it on the device. Since then the
 device builds the ragged rows from the members directly (Section 3), with
@@ -79,7 +79,7 @@ For each tuple set whose structures are to be built, the lowering
 2. **renumber**, one thread an element of the members:
    $m'_i = \mathrm{place}[m_i]$, into the renumbered members on the
    device;
-3. **rows** (D[ragged-incidence], `buildOnDevice`), the structure in ragged
+3. **rows** (D314, `buildOnDevice`), the structure in ragged
    rows ([ops-m0.md](ops-m0.md), `md_exec.build_incidence`;
    `include/mdir/Conversion/RaggedRows.h`) from the members $m'$ (or $m$
    in the order of the files), by `emitDeviceRaggedRows` and two kernels
@@ -189,7 +189,7 @@ are compared and where the structure is built:
 
 - The members in the order of the files: they are the program's input,
   and the comparison with the kept copy reads them there.
-- Until D[ragged-incidence], the index of the tuples of each particle in
+- Until D314, the index of the tuples of each particle in
   the order of the files, built on the host and uploaded once for each
   tuple set. The device now builds the rows from the members (Section 3),
   so the index and its $N + 1 + 2M$ i32 on the device are gone.
@@ -204,7 +204,7 @@ are compared and where the structure is built:
 
 For each tuple set, new on the device and shared by its entries: the
 members in the order of the files (4 bytes an element) and, until
-D[ragged-incidence], the index (8 bytes an element, and 4 bytes a particle
+D314, the index (8 bytes an element, and 4 bytes a particle
 and one). For each entry, in
 the deterministic mode, the renumbered members (outside it they are the
 copy that exists now). For the store, one copy of the identities and one
@@ -291,7 +291,7 @@ evaluation, the arguments of the entry, and the rest of D253's list.
   structure that a start takes is also built on the host and compared with
   the one read back from the device, as now, and every structure that the
   kernels build is compared in the same way when the code says it is
-  built. Since D[ragged-incidence] the whole buffer is compared, the
+  built. Since D314 the whole buffer is compared, the
   offsets and the entry of zeros included. A difference ends the program
   and names the structure. No new
   variable. Under the check the identities are read back from the device,
@@ -346,7 +346,7 @@ of its own, and frees them.
   atomics puts the tuples of a row in the order in
   which threads run, and the rows would have to be sorted afterwards to
   equal the host's; with the index of Section 2 nothing is counted.
-  *Taken by D[ragged-incidence]* (#471), with the sort of each row, when
+  *Taken by D314* (#471), with the sort of each row, when
   the rows became ragged: it builds from the primitives of D296 and needs
   no index on the device.
 - **Sorting the pairs (particle, tuple, slot) by key on the device** at

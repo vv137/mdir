@@ -701,7 +701,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Changed
 
 - **The incidence structures of the tuples are stored in ragged rows**
-  (D[ragged-incidence], #471,
+  (D314, #471,
   [docs/device-primitives.md](docs/device-primitives.md), Section 4.7):
   one buffer of the offsets of the rows and their entries (CSR), in
   place of a table whose rows were padded to the longest one, on the CPU

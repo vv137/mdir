@@ -271,7 +271,7 @@ the comparison and the launches included, 0.07, 0.17, and 1.8 ms of it;
 the four systems, and a run of the suite as it is, one segment, keeps its
 rate. The device held the members and an index of each tuple set
 besides, 6% to 10% of the incidence structures. Since the structures are
-ragged rows built from the members on the device (D[ragged-incidence]),
+ragged rows built from the members on the device (D314),
 the index is gone and the structures are 9 times smaller on STMV; a
 start in a new order takes 0.1 ms more on JAC, for the launches of the
 build, and the same on Factor IX and Cellulose.

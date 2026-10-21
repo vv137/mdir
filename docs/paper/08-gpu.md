@@ -237,7 +237,7 @@ goes back to the driver, after the wait that the growth makes anyway. With
 both, STMV takes 5.6 GB of an RTX 4090 against 6.5 GB, and its fourfold
 replica (4.27 million atoms) runs in 20.8 GB, where it ran out of memory.
 
-**Ragged rows** (D[ragged-incidence]). The incidence structure of a tuple
+**Ragged rows** (D314). The incidence structure of a tuple
 set (Section 3.6) was a table of $N$ rows, each as long as the row of the
 particle with the most tuples: 247 values for the dihedrals of STMV,
 where most particles have a few. It is now one buffer of the offsets of

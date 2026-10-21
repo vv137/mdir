@@ -693,7 +693,7 @@ place $p$ of the incidence structure holds every pair $(t, k)$ of a tuple
 and a slot with $j'_{t,k} = p$, in the order of $t$, and of $k$ within a
 tuple; since $j'_{t,k} = \pi^{-1}(j_{t,k})$, these are the pairs with
 $j_{t,k} = \pi(p)$, the row of particle $\pi(p)$ in the order of the
-files, in the same order. The rows are ragged (D[ragged-incidence]): one
+files, in the same order. The rows are ragged (D314): one
 buffer holds the offsets $o_0 = 0 \le o_1 \le \dots \le o_N$ and the
 entries, row $p$ being the entries $o_p$ to $o_{p+1}$, so the structure
 takes the entries it has rather than $N$ rows as long as the longest. A

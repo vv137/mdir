@@ -33,7 +33,7 @@
 // DEVICE:         gpu.launch
 // DEVICE:         gpu.launch
 // DEVICE:         call @mdrtDeviceTuplesStructure(%[[H]])
-// The rows from the renumbered members (D[ragged-incidence]): the counts
+// The rows from the renumbered members (D314): the counts
 // cleared and taken, the three passes of the scan, the scatter, the sort
 // of each row, the offsets, and the entries.
 // DEVICE:         scf.if

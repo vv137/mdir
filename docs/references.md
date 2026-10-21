@@ -1251,7 +1251,7 @@ Philadelphia, 2003).
 
 Used for: the compressed sparse row form (CSR) of a sparse matrix, among
 the storage schemes of Chapter 3: the ragged rows of a relation, the incidence structure of the tuples
-in them (D[ragged-incidence], `include/mdir/Conversion/RaggedRows.h`).
+in them (D314, `include/mdir/Conversion/RaggedRows.h`).
 
 ### Salmon2011
 

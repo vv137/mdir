@@ -6,7 +6,7 @@
    built from them: for every particle a row with, for each of its tuples,
    the number of the tuple, the place of the particle in it, and its
    members, in ragged rows (md_exec.build_incidence,
-   include/mdir/Conversion/RaggedRows.h, D[ragged-incidence]). Both are functions of two
+   include/mdir/Conversion/RaggedRows.h, D314). Both are functions of two
    inputs alone: the members in the order of the files, and the particle at
    each place (the identities). A start of an activation that orders the
    particles as the last one did (an update of the tunables, a commit of a

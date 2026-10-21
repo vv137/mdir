@@ -1,5 +1,5 @@
 // The calls of the templates to the emitters of CompactionEmitter.h
-// (D296) and RaggedRows.h (D[ragged-incidence]):
+// (D296) and RaggedRows.h (D314):
 // `func.call @mdir.primitive.<name>(...)`, each replaced by the code of its
 // emitter where it stands.
 

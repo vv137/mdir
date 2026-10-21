@@ -1,4 +1,4 @@
-// Ragged rows (D[ragged-incidence]); see include/mdir/Conversion/RaggedRows.h.
+// Ragged rows (D314); see include/mdir/Conversion/RaggedRows.h.
 
 #include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/CompactionEmitter.h"

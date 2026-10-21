@@ -54,7 +54,7 @@ func.func @scan32(%v: i32, %lane: i32, %zero: i32, %width: i32) -> i32 {
   return %s : i32
 }
 
-// The accessor of ragged rows (D[ragged-incidence], RaggedRows.h): the row,
+// The accessor of ragged rows (D314, RaggedRows.h): the row,
 // checked against a buffer of no elements and against the number of rows
 // at element 0, from the offsets at elements i + 1 and i + 2 past the
 // header of N + 2 elements; then a value of an entry of the row.
