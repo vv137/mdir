@@ -1,6 +1,7 @@
 # CHARMM force fields in M1
 
-Status: 2026-10-02. What a run of a CHARMM force field needs, what CHARMM
+Status: kept current (last checked 2026-10-21); written 2026-10-02 with
+D121 and D122, and Section 8 with D175. What a run of a CHARMM force field needs, what CHARMM
 computes where its documentation leaves a choice open, what MDIR does, and
 how the two were compared. CHARMM 51b1 served as a reference program only:
 its energies were measured, as those of sander and GROMACS are (D58), and
@@ -13,7 +14,8 @@ A CHARMM system runs from its own files, a PSF with the files of its
 parameters and a CRD (Section 4), or from a topology of GROMACS: the one
 that CHARMM-GUI writes, a port of a force field such as `charmm27.ff` of
 GROMACS, or a conversion of a PSF by ParmEd with the correction of
-Section 4.
+Section 4. The Python interface loads the same files by the same readers
+(D191, [python-topology.md](python-topology.md)).
 
 | Term | In the topology of GROMACS | In MDIR |
 |---|---|---|
@@ -102,8 +104,11 @@ inverse powers, each switched on its own. The driver writes the kernel as
 r alone leaves the range of `f32`, and differentiation gives the forces.
 `FORCE_SWITCH` stays the polynomial of GROMACS, and `POTENTIAL_SHIFT`
 subtracts the value at the cutoff of each power; with a topology, each
-modifies the Lennard-Jones only, not the direct sum of PME, and takes
-`dispersion_correction = "NONE"`.
+modifies the Lennard-Jones only, not the direct sum of PME. A switch
+(`FORCE_SWITCH`, `POWER_FORCE_SWITCH`, `SQUARED_DISTANCE_SWITCH`) takes
+`dispersion_correction = "NONE"`; `POTENTIAL_SHIFT` may take the
+correction, which then adds the estimate of what the shift takes within
+the cutoff (D210; [the control file](paper/A-control-file.md)).
 
 ## 4. Reading the files of CHARMM, and converting them
 
@@ -289,7 +294,7 @@ Across its energy columns the largest difference is $4.13\times10^{-7}$
 kcal/mol; forces differ by at most $1.14\times10^{-8}$ kcal/(mol Å), and
 the diagonal virial by $3.39\times10^{-7}$ kcal/mol.
 
-The full local GPU suite passes (235 tests, 4 unsupported, including all nine Amber systems with both
+History, the record of the pull request of D175: the full local GPU suite passed (235 tests, 4 unsupported, including all nine Amber systems with both
 constraint solvers, no failures).
 The new sanitizer test passes memcheck, initcheck, and racecheck. On GPU 0
 alone under its lock, JAC NPT with groups and a dual list, mixed precision,
