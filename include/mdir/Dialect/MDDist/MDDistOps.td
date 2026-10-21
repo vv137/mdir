@@ -338,6 +338,28 @@ def MDDist_NeighborhoodOp : MDDist_Op<"neighborhood", [Pure]> {
   let hasVerifier = 1;
 }
 
+def MDDist_PartitionCentersOp : MDDist_Op<"partition_centers", [Pure]> {
+  let summary = "Partition owned centers by ghost membership in one relation";
+  let description = [{
+    The interior indicator is one exactly where no pair of this relation
+    centered on the owned row reads a ghost neighbor. The boundary indicator
+    is its complement. Both indicators have one i32 component over the owned
+    rows of the relation's layout, with values exactly zero or one. The
+    relation must have been built after its position halo completed; the
+    operation cannot justify overlapping that same position transfer.
+  }];
+  let arguments = (ins MDDist_RelationType:$relation,
+                       MDDist_LayoutType:$layout, MDDist_HaloType:$halo);
+  let results = (outs MDDist_FieldType:$interior,
+                      MDDist_FieldType:$boundary);
+  let assemblyFormat = [{
+    $relation `,` $layout `,` $halo attr-dict `:` qualified(type($relation))
+    `,` qualified(type($layout)) `,` qualified(type($halo)) `->`
+    qualified(type($interior)) `,` qualified(type($boundary))
+  }];
+  let hasVerifier = 1;
+}
+
 def MDDist_YieldOp : MDDist_Op<"yield", [
     Pure, Terminator, ReturnLike,
     ParentOneOf<["SumPairsOp", "GatherPairsOp", "SumParticlesOp",

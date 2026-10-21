@@ -522,12 +522,18 @@ and a completed destination SSA value at a matching wait
 immediately through the existing synchronous call; scheduling interior
 work and an asynchronous transport are further parts of #481.
 
+The center partition (D[ml2-center-partition], #496) classifies owned
+centers from actual relation membership for one layout/halo epoch. It
+provides the proof needed before a later center-filtered pair lowering (#499) can
+place ghost-independent work between transfer start and wait. There is no
+runtime overlap in this step.
+
 The schedule proof (D308, #483) records source versions,
 start prerequisites, completion-before-use edges, and owned-only work
 for each $G$ or $G^\mathsf T$ transfer, and prints them with
 `--md-dist-print-schedule`. It does not yet overlap communication with
-computation. The interior/boundary relation split, start/wait events,
-and buffer lifetime are the next part of #481.
+computation. Center-filtered MDExec work and asynchronous transport are
+further parts of #481.
 
 A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
 not required to complete that first deliverable, nor is support for all

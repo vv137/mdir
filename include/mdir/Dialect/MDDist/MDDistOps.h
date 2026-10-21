@@ -35,6 +35,18 @@ struct HaloScheduleRecord {
   llvm::SmallVector<mlir::Operation *> independentOwnedWork;
 };
 
+/// A relation-level proof for the exact owned-center partition. Each
+/// indicator has one entry per owned row and the two are complements by the
+/// operation's semantics; a lowering must materialize that definition from
+/// the given relation, not infer it from field ownership alone.
+struct CenterPartitionRecord {
+  NeighborhoodOp relation;
+  mlir::Value layout, halo, interior, boundary;
+};
+
+mlir::FailureOr<CenterPartitionRecord>
+proveCenterPartition(PartitionCentersOp op);
+
 /// Proves a straight-line block's halo copy/sum dependencies, using the
 /// dialect verifiers and SSA provenance. Rejects transfers crossing a block
 /// boundary; later async lowering must not silently schedule such a case.

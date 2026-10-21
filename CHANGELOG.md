@@ -49,6 +49,12 @@ format, or the outputs; every such change is listed under **Changed** or
   of the tuples took outside the runtime's pool, and the pool's blocks at
   its peaks by size and use. `MDIR_DEVICE_MEMORY=1` prints what it did.
   No control-file or output change.
+- **Semantic owned-center partition** (D[ml2-center-partition], #496):
+  `md_dist.partition_centers` classifies every owned center from actual
+  relation membership for one layout/halo epoch. The in-process CPU
+  reference materializes the classification; the verifier rejects stale
+  provenance. This adds no control-file key or output change and does not
+  change transfer scheduling.
 
 - **`[pme] influence = "P3M"`, the influence function optimal for the
   forces** (`D304`, #468 step 1,

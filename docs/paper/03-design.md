@@ -21,6 +21,18 @@ The four dialects have 50 operations; the passes over them number 22
 distributed runs (`md_dist`), learned potentials (`mlff`), and ensembles
 of runs (`ensemble`) are designs, not code (Section 13).
 
+The distributed level now includes `md_dist.partition_centers`
+(D[ml2-center-partition]). For each owned center $i$ of a neighborhood
+relation, $R_i^\mathrm{ghost}$ contains its pairs whose neighbor is a
+ghost row. The operation's two `i32` indicators identify $I_d$ and $B_d$,
+with $I_d\cap B_d=\varnothing$ and $I_d\cup B_d=O_d$ for the relation's
+layout epoch, whether it comes from initial partitioning or a completed
+migration. This
+classification follows completion of the position halo used to construct
+$R$; it does not move a transfer wait. The sets allow a later lowering to
+put pair work that reads only owned fields between a later transfer's
+start and completion.
+
 ## 3.1 What is computed, and how the state advances
 
 A term of the potential is written once, as an expression of its

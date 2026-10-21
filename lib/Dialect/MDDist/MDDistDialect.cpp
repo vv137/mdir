@@ -222,6 +222,8 @@ Value mdir::md_dist::layoutOf(Value value) {
     return op.getNewLayout();
   if (auto op = dyn_cast<HaloSumOp>(def))
     return layoutOf(op.getHalo());
+  if (auto op = dyn_cast<PartitionCentersOp>(def))
+    return op.getLayout();
   if (auto op = dyn_cast<ZerosOp>(def))
     return layoutOf(op.getRows());
   if (auto op = dyn_cast<GatherPairsOp>(def))
@@ -584,6 +586,10 @@ LogicalResult NeighborhoodOp::verify() {
   if (getPositions().getType().getNumComponents() != 3)
     return emitOpError() << "expected positions with 3 components";
   return verifyCoverage(*this, *this);
+}
+
+LogicalResult PartitionCentersOp::verify() {
+  return succeeded(proveCenterPartition(*this)) ? success() : failure();
 }
 
 LogicalResult mdir::md_dist::verifyCoverage(Operation *op,
