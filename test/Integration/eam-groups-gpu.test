@@ -4,7 +4,9 @@
 // the loops over groups (D291): an atomic of the device for each
 // value (`pair-hash=off`), and the table of a block (`pair-hash=on`), in
 // double precision to 1e-10 of the reference and in mixed precision to
-// 1e-5. All 8 checks must print 1.
+// 1e-5. The first double and mixed runs select the single-pass group scan
+// (D[device-single-pass-scan]); the other runs keep the default scan.
+// All 8 checks must print 1.
 //
 // REQUIRES: cuda
 //
@@ -12,7 +14,8 @@
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=off" \
-// RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-storage="memory=device" \
+// RUN:     --convert-md-exec-to-gpu="single-pass-group-scan=true" \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
@@ -35,7 +38,8 @@
 // RUN:     --md-exec-choose-neighbors="kind=groups" \
 // RUN:     --md-exec-assign-precision="mode=mixed" \
 // RUN:     --md-exec-assign-algebra --md-exec-choose-scatter="pair-hash=off" \
-// RUN:     --md-exec-assign-storage="memory=device" --convert-md-exec-to-gpu \
+// RUN:     --md-exec-assign-storage="memory=device" \
+// RUN:     --convert-md-exec-to-gpu="single-pass-group-scan=true" \
 // RUN: | mlir-opt %lower_gpu_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \

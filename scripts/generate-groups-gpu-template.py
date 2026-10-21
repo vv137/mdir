@@ -3,7 +3,7 @@
 builds groups of 16 particles sharing a list of neighbors on a device
 (docs/neighbor-groups.md, D89).
 
-    python3 scripts/generate-groups-gpu-template.py
+    python3 scripts/generate-groups-gpu-template.py [OUT_DIR [single_pass]]
 
 The networks that sort the particles of a chunk and the partners of the
 excluded pairs of a group are written out, stage by stage; this script
@@ -18,7 +18,7 @@ import sys
 TILTED = False
 # Internal lowering choice for the three counting-sort scans. Keep the
 # reduce-then-scan template path available for same-build comparisons.
-SCAN_STRATEGY = "single_pass"
+SCAN_STRATEGY = "device"
 
 HEADER = """\
 // Builds groups of 16 particles that share a list of neighbors on a device
@@ -93,8 +93,6 @@ func.func private @mdir.primitive.warp_count(i32) -> i32
 func.func private @mdir.primitive.warp_scan(i32, i32, i32, i32) -> i32
 func.func private @mdir.primitive.device_scan(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index)
 func.func private @mdir.primitive.device_scan_cursor(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi32, 1>, index, index, index, memref<?xi32, 1>)
-func.func private @mdir.primitive.single_pass_scan(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index)
-func.func private @mdir.primitive.single_pass_scan_cursor(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index, memref<?xi32, 1>)
 func.func private @mdir.primitive.cursor_scatter(memref<?xi32, 1>, memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
 func.func private @mdir.primitive.sort_bins(memref<?xi32, 1>, memref<?xi32, 1>, index, index, index, index)
 func.func private @mdir.primitive.ragged_row(memref<?xi32, 1>, index, index) -> (index, index)
@@ -2708,11 +2706,25 @@ def main():
     # The templates of the repository, or with a directory as the argument
     # the same files there, which generated-templates.test compares with
     # them.
+    global SCAN_STRATEGY
+    if len(sys.argv) > 2:
+        SCAN_STRATEGY = sys.argv[2]
+    if SCAN_STRATEGY not in ("device", "single_pass"):
+        raise SystemExit("scan strategy must be 'device' or 'single_pass'")
     here = os.path.dirname(os.path.abspath(__file__))
     templates = (sys.argv[1] if len(sys.argv) > 1 else
                  os.path.join(here, "..", "lib", "Runtime", "Templates"))
     path = os.path.join(templates, "NeighborsGroupsGPU.mlir")
-    text = HEADER + HELPERS + build()
+    helpers = HELPERS
+    if SCAN_STRATEGY == "single_pass":
+        declarations = (
+            "func.func private @mdir.primitive.single_pass_scan(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index)\n"
+            "func.func private @mdir.primitive.single_pass_scan_cursor(memref<?xi32, 1>, memref<?xi32, 1>, index, memref<?xi64, 1>, index, index, index, memref<?xi32, 1>)\n"
+        )
+        helpers = helpers.replace(
+            "func.func private @mdir.primitive.cursor_scatter",
+            declarations + "func.func private @mdir.primitive.cursor_scatter", 1)
+    text = HEADER + helpers + build()
     # Launch sizes that the body names.
     launches = [
         ("  gpu.launch blocks(%bx, %by, %bz) in (%gx = %grid_of_boxes,",
@@ -2734,7 +2746,7 @@ def main():
     # The build of a triclinic cell, in a template of its own.
     global TILTED
     TILTED = True
-    tilted = HEADER_TRICLINIC + HELPERS + IMAGE_TRICLINIC + build()
+    tilted = HEADER_TRICLINIC + helpers + IMAGE_TRICLINIC + build()
     TILTED = False
     for old, new in launches:
         tilted = tilted.replace(old, new, 1)

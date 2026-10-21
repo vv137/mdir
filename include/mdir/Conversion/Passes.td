@@ -410,7 +410,12 @@ def ConvertMDExecToGPU
            /*default=*/"0",
            "With fuse-pruning: the least number of groups of the last build "
            "for which the loop prunes; below it the refresh prunes "
-           "(D284)">
+           "(D284)">,
+    Option<"singlePassGroupScan", "single-pass-group-scan", "bool",
+           /*default=*/"false",
+           "Use the decoupled look-back scan for the three counting sorts "
+           "of the group neighbor build (D[device-single-pass-scan]); "
+           "the default retains the three-launch scan">
   ];
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",

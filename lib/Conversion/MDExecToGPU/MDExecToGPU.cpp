@@ -61,6 +61,8 @@ extern const char *const pmeGPUTriclinicTemplate;
 extern const char *const pmeGPUProlateTemplate;
 extern const char *const neighborsGroupsGPUTemplate;
 extern const char *const neighborsGroupsGPUTriclinicTemplate;
+extern const char *const neighborsGroupsSinglePassGPUTemplate;
+extern const char *const neighborsGroupsSinglePassGPUTriclinicTemplate;
 } // namespace mdir
 
 static const char *const spatialOrderName = "mdrt_gpu_spatial_order";
@@ -264,6 +266,8 @@ public:
   /// `fusePruningGroups` groups (`fuse-pruning`, D284).
   bool fusePruning = false;
   int64_t fusePruningGroups = 0;
+  /// An opt-in compiler strategy for the integer scans of the groups build.
+  bool singlePassGroupScan = false;
   /// Whether the loops over tuples of the module may add to their members
   /// in the order of the threads: no loop over tuples states `fixed_order` for
   /// a value it reduces. The members of the tuples go to the device for such
@@ -4997,9 +5001,13 @@ LogicalResult Lowering::addGroupsTemplates(bool tilted) {
                          : std::string(buildGroupsName)))
     return success();
   ParserConfig config(context);
-  OwningOpRef<ModuleOp> templates = parseSourceString<ModuleOp>(
-      tilted ? neighborsGroupsGPUTriclinicTemplate : neighborsGroupsGPUTemplate,
-      config);
+  const char *source = singlePassGroupScan
+                           ? (tilted ? neighborsGroupsSinglePassGPUTriclinicTemplate
+                                     : neighborsGroupsSinglePassGPUTemplate)
+                           : (tilted ? neighborsGroupsGPUTriclinicTemplate
+                                     : neighborsGroupsGPUTemplate);
+  OwningOpRef<ModuleOp> templates =
+      parseSourceString<ModuleOp>(source, config);
   if (!templates)
     return module.emitError()
            << "cannot parse the template that builds groups of neighbors";
@@ -8703,6 +8711,7 @@ public:
     lowering.checkPruning = checkPruning;
     lowering.fusePruning = fusePruning;
     lowering.fusePruningGroups = fusePruningGroups;
+    lowering.singlePassGroupScan = singlePassGroupScan;
     if (failed(lowering.run()))
       return signalPassFailure();
     // The ops whose algebras the mark of the deterministic mode verifies
