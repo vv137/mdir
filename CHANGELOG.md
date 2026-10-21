@@ -19,6 +19,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **Proved center filters for distributed pair work**
+  (D[distributed-pair-center-filter], #535): a pair traversal can select
+  the direct interior or boundary result of its own center partition.
+  The compiler carries the selection through the CPU reference and
+  execution-level CPU/GPU paths. There is no control-file key, file-format,
+  or overwrite change; delayed halo waits remain #536.
 - **An opt-in single-pass device scan for group neighbor builds**
   (D321, #524, part of #420):
   `convert-md-exec-to-gpu="single-pass-group-scan=true"` selects decoupled

@@ -417,6 +417,25 @@ center-filtered pair work between a later transfer's start and wait, and
 the MDExec/GPU row-set lowering, remain in #499 under #481; this partition alone
 does not overlap communication with computation.
 
+### Proved pair center filters (D[distributed-pair-center-filter])
+
+An optional `center_set` operand of `md_dist.sum_pairs` and
+`md_dist.gather_pairs` selects owned rows for one traversal. The verifier
+accepts only a direct interior or boundary result of
+`md_dist.partition_centers` for the pair operation's exact relation. This
+ties the selection to the same layout, halo, and ownership epoch; another
+`i32` field, even one with matching shape, cannot supply this proof.
+The two filtered traversals are disjoint and their sum is the unfiltered
+traversal, with the directed or unique pair weights unchanged.
+
+The lowering carries the selection into `md_exec.pair_for` and checks
+membership before reading the selected center's pair data. For an interior
+center the physical loop does not inspect ghost candidates, including
+their positions, fields, or IDs; its relation has already proved none of
+them can contribute. A boundary center uses the full relation. The CPU
+reference and device path implement the same selection. The compiler does
+not move a halo wait in this decision; #536 handles that schedule.
+
 ### Storage-level completion events (D310)
 
 An opt-in lowering of the existing $G$ and $G^\mathsf T$ operations emits

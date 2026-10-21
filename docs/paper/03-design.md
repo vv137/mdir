@@ -33,6 +33,14 @@ $R$; it does not move a transfer wait. The sets allow a later lowering to
 put pair work that reads only owned fields between a later transfer's
 start and completion.
 
+The proved filter (D[distributed-pair-center-filter]) selects either $I_d$
+or $B_d$ on a pair traversal only when the indicator is a direct result of
+that relation's partition. Thus the two partial traversals form a disjoint
+partition of the original sum. The interior traversal may inspect owned
+neighbors only: by the definition of $I_d$, its omitted ghost terms form
+the empty set. This filter alone preserves the immediate-wait schedule;
+placing it between a later start and wait is a separate step.
+
 ## 3.1 What is computed, and how the state advances
 
 A term of the potential is written once, as an expression of its
