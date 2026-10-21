@@ -1,5 +1,5 @@
 # The pool of device blocks does not grow with the length of a run
-# (D[pool-retention], #471): the dipeptide in water with groups, 100 and
+# (D312, #471): the dipeptide in water with groups, 100 and
 # 3,000 steps. A loop over the groups takes its positions and fields in the
 # order of the places, in buffers sized by the room of the structure's
 # places. Sized by the number of places that a build occupied, which

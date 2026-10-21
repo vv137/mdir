@@ -3837,7 +3837,7 @@ LogicalResult Lowering::lowerGroupPairFor(md_exec::PairForOp op,
   SmallVector<Value> sources = {positions};
   llvm::append_range(sources, op.getIns());
   // The buffers take the room of the structure's places, not the number
-  // of places that this build occupied (D[pool-retention]): that number
+  // of places that this build occupied (D312): that number
   // changes at nearly every build, and the runtime's pool reuses a block
   // only for a request of the same size, so a buffer sized by it left a
   // block in the pool for each new number. The room changes only when the
@@ -7225,7 +7225,7 @@ void Lowering::emitPruneCheck(OpBuilder &builder, Location loc,
   Value places = size(0), blocks = size(2);
   // The frames of this step's positions, apart from those of the pruning,
   // in a buffer of the room of the places, as those of a loop over the
-  // groups (D[pool-retention]).
+  // groups (D312).
   Value placed = createDeviceBuffer(
       builder, loc, getDeviceType({ShapedType::kDynamic, 3}, f32),
       ValueRange{memref::DimOp::create(builder, loc, buffers.order,

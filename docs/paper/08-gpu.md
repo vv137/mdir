@@ -226,7 +226,7 @@ device computed. Three mechanisms keep the device busy.
 of the same size to the next allocation without a call to the driver;
 buffers that a step allocates and frees cost a lookup. A block is reused
 only for a request of its own size, so the sizes that a step asks for must
-not follow the builds of the neighbor structure (D[pool-retention]): the
+not follow the builds of the neighbor structure (D312): the
 buffers that a loop over the groups gathers its positions and fields into
 take the room of the structure's places, which changes only when it
 grows, and not the number of places that the last build occupied, which

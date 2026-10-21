@@ -1565,7 +1565,7 @@ format, or the outputs; every such change is listed under **Changed** or
 ### Fixed
 
 - **The device pool no longer grows with the number of builds**
-  (D[pool-retention], #471). A loop over the groups gathered its
+  (D312, #471). A loop over the groups gathered its
   positions and fields into buffers sized by the number of places that
   the last build occupied, which changes at nearly every build, and the
   pool reuses a block only for the same size: each new number left its

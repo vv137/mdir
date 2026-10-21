@@ -99,7 +99,7 @@ build that finds a buffer too small makes it a quarter larger than it
 needs (`mdrtGroupsGrow`) and is made again; the run stops only if the
 device has no memory left. The buffers that a growth replaces go back to
 the driver, not to the runtime's pool of device memory, since no later
-request takes their size (D[pool-retention]). Measured: a fixed list of twice the width of
+request takes their size (D312). Measured: a fixed list of twice the width of
 a row stopped a run of Cellulose under NPT when one group needed 2521
 entries of 1248, where the longest list is usually 740 to 900; with the
 pool, Cellulose takes at most 153,517 of 280,929 blocks (144 MB for the
@@ -185,7 +185,7 @@ kernel reads are gathered in the order of the places first; an empty place
 takes those of particle 0, which no bit reads. The buffers of the gather
 (and the frames of a pruning check) take the room of the structure's
 places, not the number of places that the last build occupied
-(D[pool-retention], #471): that number moves by 64 from one build to the
+(D312, #471): that number moves by 64 from one build to the
 next, and the runtime's pool of device memory (not the pool of blocks of
 the lists above) reuses a block only for a request of the same size, so buffers sized by it left a block in the pool for each new
 number, 783 MiB at STMV after 1,000 steps. The room changes only when the

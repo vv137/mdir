@@ -708,7 +708,7 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    compiled code asks for at every step do not follow the builds: a buffer
    indexed by the places of the groups takes the room of the places, not
    the number that a build occupied, and a buffer of the runtime that a
-   growth replaces goes back to the driver (D[pool-retention]). */
+   growth replaces goes back to the driver (D312). */
 #define MAX_BLOCKS 4096
 /* An activation of an entry that an embedding program keeps across its
    calls (a Python simulation, D215): what the activation
@@ -972,7 +972,7 @@ void mgpuMemFree(void *pointer, CUstream stream) {
 }
 
 /* Returns a buffer of the runtime's structures that a growth replaces to
-   the driver, not to the pool (D[pool-retention]): the buffer that
+   the driver, not to the pool (D312): the buffer that
    replaces it is larger, and a later request of the old size is unlikely,
    so in the pool it would stay for the rest of the run. The caller has
    waited for the device, as a growth does, so the free does not wait. */

@@ -2,7 +2,7 @@
 that differ only in their number of steps (MDIR_DEVICE_MEMORY=2, D311),
 and checks that the longer run holds at most SLACK blocks of the driver
 more than the shorter one: the blocks taken from the driver less those
-returned to it (D[pool-retention], #471). Once the first steps have run,
+returned to it (D312, #471). Once the first steps have run,
 a step or a build of the neighbor structure takes its blocks from the
 pool, and a buffer of the runtime that a growth replaces goes back to the
 driver. The slack allows for a step that has more blocks in use at once
