@@ -54,12 +54,20 @@ thermostat are not.
 4. **Ready.** When the implementation, its documents, and its validation
    are complete, rebase on the current `main` immediately before marking
    the PR ready (`gh pr ready`), resolve every conflict there, and run the
-   full suite at that head. The comment that marks it ready names the head
-   commit, the commit of `main` it is based on, and the suite's counts. A
+   full suite at that head if source, runtime, tests, or build configuration
+   changed since the last passing suite. Changes confined to documentation
+   files do not require another full suite; test inputs and build files do.
+   The comment that marks it ready names the head commit and the commit of
+   `main` it is based on. When a suite is required, it also names the suite's
+   counts. When reusing a suite result, it names the tested commit and
+   confirms that the intervening diff changes documentation only. A
    PR whose head does not contain the current `main` is not ready (see
    [Staying current](#staying-current)).
 5. **Review.** The coordinator builds the PR's head commit and runs the
-   full suite on a GPU. There is no GPU continuous integration, so this run
+   full suite on a GPU when required by the rule above. A passing suite at an
+   earlier commit can be reused after the coordinator checks that the diff
+   to the reviewed head changes documentation files only. There is no GPU
+   continuous integration, so this run
    is part of the review. The coordinator checks the rules below, posts the
    result as a PR comment naming the commit tested, and labels the PR
    `merge-recommended` or `changes-requested`. Before labeling, the
@@ -205,9 +213,12 @@ The author, not the coordinator, brings a PR up to date with `main`:
   `main` has moved, the coordinator does not resolve the conflicts itself;
   it asks the author to rebase, with the label `changes-requested`.
 - After every push to `main`, the author of each open ready PR rebases on
-  the new `main`, resolves the conflicts, runs the full suite at the new
-  head, and says so in a comment naming the head and its base. The new head
-  is then reviewed again, as any head that moves after `merge-recommended`.
+  the new `main` and resolves the conflicts. Run the full suite at the new
+  head when source, runtime, tests, or build configuration changed since the
+  last passing suite. For a documentation-only diff, retain the passing
+  suite, check the diff, and name both the tested commit and the new head in
+  a comment. The new head is then reviewed again, as any head that moves
+  after `merge-recommended`.
 - Conflicts in prose and code are always resolved by the author, who knows
   what both sides mean. Rows of tables are no exception: the author keeps
   the rows of `main` and adds its own at the end.
