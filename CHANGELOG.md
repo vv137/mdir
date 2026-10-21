@@ -713,6 +713,18 @@ format, or the outputs; every such change is listed under **Changed** or
   12,939 MiB, and ×7 (7.47 million atoms) now runs in 22,883 MiB. The
   Amber suite's rates: JAC NVE 0.7% slower, the larger systems 1% to 4%
   faster. No control-file key or output change.
+- **The reciprocal sums of a program share one set of PME buffers**
+  (D[pme-shared-buffers], #471): the grids, the transform, the places,
+  the bricks, and the bins of particle mesh Ewald are allocated once for
+  every sum of the same shape, where each of the 7 places in the program
+  that evaluates the sum (the start and the specializations of the step)
+  held its own for the whole run. The sums never run at once on one
+  stream, and on the second stream (D87) the next sum waits for the one
+  before. STMV on an RTX 4090 (1,000 steps): the device peak from 3,665
+  to 2,567 MiB; STMV ×7 from 22,883 to 15,367 MiB, and ×11 (11.74 million
+  atoms) now runs in 22,789 MiB. The deterministic mode gives the same
+  bits as before, and the Amber suite's rates are unchanged. No
+  control-file key or output change.
 
 - **The design documents are named by topic** (#390): `docs/ops.md`,
   `runtime.md`, `driver.md`, `neighbors.md`, `neighbor-groups.md`,

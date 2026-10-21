@@ -249,6 +249,25 @@ kernels of the integration runs, which read the first entry of every
 particle's row, now read adjacent entries: Cellulose and STMV step 2% and
 4% faster.
 
+**One set of buffers for the reciprocal sum** (D[pme-shared-buffers]). A
+program evaluates the reciprocal sum in several places: before the first
+step, and in each copy of the step that the loop nest specializes by what
+the step must produce (the energy for the log, the virial for the
+barostat, or neither), seven in a run at constant pressure. Each held its
+grid, its transform, the bricks of the spreading, the places of the
+particles, and the bins of the tiles for the whole run, about 179 MiB at
+STMV. A sum writes each of these buffers before it reads it within one
+evaluation, except the bricks, which it finds zero and leaves zero, so
+sums that never run at once can take one buffer. On one stream they never
+do: its work runs in the order in which it was issued. A sum on the second
+stream (D87) declares that it reads and writes these buffers, so the
+analysis of independence that places its join puts the join before the
+next sum that shares them. The buffers are now allocated once for each
+shape and taken by every sum of the program: the device peak of STMV
+falls from 3.7 to 2.6 GB, the sevenfold replica takes 15.4 GB, and the
+elevenfold (11.7 million atoms) runs in 22.8 GB, with the deterministic
+mode unchanged to the bit and the rates of the suite unchanged.
+
 **Flags read without waiting for the stream** (D113). The test of validity
 (Section 4.1) sets a flag on the device, and the host must read it to
 decide whether to build. A copy to pageable memory waits for everything
