@@ -1,6 +1,6 @@
 # Checkpoints of a Python simulation (D223)
 
-Issue #132, M2a item 5 ([python-m2.md](python-m2.md), Sections 3–5).
+Issue #132, M2a item 5 ([python.md](python.md), Sections 3–5).
 Status: implemented (PR #186). The maintainer chose option 1 of the
 question below on PR #186.
 
@@ -175,7 +175,7 @@ control file of the same model writes: the same names (`[energy] cutoff`,
 control file (Å, kcal/mol/Å², atm), and the same canonical text. A setting
 is recorded when it was given explicitly (assigned on the Python object),
 as D172 records written keys (maintainer ruling 6 of
-[python-m2.md](python-m2.md)). The topology files are hashed by their
+[python.md](python.md)). The topology files are hashed by their
 contents as `mdir run` hashes them (the coordinates file is not one of
 them), and so are the masses and the reference of the restraints. A Python
 script and a control file that set the same options of the same files have

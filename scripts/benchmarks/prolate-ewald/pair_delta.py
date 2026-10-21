@@ -1,7 +1,7 @@
 """The force error of the prolate kernel with its direct sum as a table of
 r² against the cells of D266 (D280, issue #380).
 
-Delta is that of grid_sweep.py and docs/pme-m1.md Section 7: the RMS of the
+Delta is that of grid_sweep.py and docs/pme.md Section 7: the RMS of the
 difference of the forces from those of the Gaussian at erfc 1e-13, 0.33 A,
 order 8 (CPU, double), over the RMS of the Coulomb forces of that reference
 (the reference less the same system with every charge zero), one step of a

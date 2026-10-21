@@ -52,7 +52,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 - **`[pme] influence = "P3M"`, the influence function optimal for the
   forces** (`D304`, #468 step 1,
-  [docs/pme-m1.md](docs/pme-m1.md#11-the-influence-function)): eq. 2.28 of
+  [docs/pme.md](docs/pme.md#11-the-influence-function)): eq. 2.28 of
   Ballenegger, Cerdà, and Holm (2012) for analytic differentiation, with
   the sums over the aliases at $\lvert J_a\rvert \le 2$, from tables of the
   edges computed at every evaluation (no table of the grid; a barostat
@@ -170,7 +170,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 - **An exact automatic choice of the skins of the neighbor lists**
   (D281, #406,
-  [docs/neighbors-m0.md](docs/neighbors-m0.md#6-the-choice-of-the-skins)):
+  [docs/neighbors.md](docs/neighbors.md#6-the-choice-of-the-skins)):
   `pairlist_distance = "AUTO"` and `pruned_distance = "AUTO"` of
   `[energy]`, and the keys not given, let the run choose the skins. The
   lists stay exact, so the choice changes the speed, not the pairs within
@@ -192,7 +192,7 @@ format, or the outputs; every such change is listed under **Changed** or
   nothing.
 
 - The pruning of the inner list of a dual list in the loop over pairs
-  (D284, #362, [docs/groups-m1.md](docs/groups-m1.md), Section
+  (D284, #362, [docs/neighbor-groups.md](docs/neighbor-groups.md), Section
   6.2): where a refresh prunes, the loop over pairs that follows it prunes
   and computes in one kernel, a warp for each group, from 4096 groups
   (20,480 on `sm_12x`).
@@ -237,7 +237,7 @@ format, or the outputs; every such change is listed under **Changed** or
   `vector.shuffle`), so more kernels pass it. No control-file key or
   output changes.
 - The prolate kernel (D266) measured against the Gaussian on the CPU
-  target after D271 (#371, [docs/pme-m1.md §7](docs/pme-m1.md#7-the-prolate-kernel-d266)):
+  target after D271 (#371, [docs/pme.md §7](docs/pme.md#7-the-prolate-kernel-d266)):
   `scripts/benchmarks/prolate-ewald/cpu_cases.py`, `cpu_job.py`, and
   `cpu_table.py` match the kernels by the measured force error at a
   cutoff of 9 Å and time them at 16, 4, and 1 threads with the parts of
@@ -714,8 +714,20 @@ format, or the outputs; every such change is listed under **Changed** or
   Amber suite's rates: JAC NVE 0.7% slower, the larger systems 1% to 4%
   faster. No control-file key or output change.
 
+- **The design documents are named by topic** (#390): `docs/ops.md`,
+  `runtime.md`, `driver.md`, `neighbors.md`, `neighbor-groups.md`,
+  `neighbor-tiles.md`, `pme.md`, `charmm.md`, `triclinic.md`, and
+  `python.md`, which were named by their milestone (the runtime's as
+  `mdrt`, the groups and the tiles without `neighbor-`). Section 1.1 of
+  `docs/driver.md` points to Appendix A of the white paper instead of
+  copying its table of keywords. A CPU test
+  (`test/Docs/markdown-links.test`) checks that every relative link of
+  `README.md`, `CHANGELOG.md`, and `docs/` names a file and a heading that
+  exist; the links it found broken are fixed, and the four references of
+  the prolate kernel are added to the white paper's list. Documentation
+  only.
 - **The prolate kernel against the Gaussian, measured again with tiled
-  spreading** (D266, D282; `docs/pme-m1.md`, Section 7; documentation
+  spreading** (D266, D282; `docs/pme.md`, Section 7; documentation
   only). MDIR's whole step on JAC, Cellulose, and STMV, on an RTX 4090 and
   an RTX PRO 6000, each comparison within one job. The prolate kernel takes:
   - 1.17 to 1.44 times the Gaussian default's time at the standard
@@ -771,7 +783,7 @@ format, or the outputs; every such change is listed under **Changed** or
   Nothing user-visible changes.
 - **The transposes of the `md` ops are declared through
   `AdjointOpInterface`** (D295, #451, PR #459,
-  [docs/ad-robust.md](docs/ad-robust.md#declared-transposes-dmd-transposes)):
+  [docs/ad-robust.md](docs/ad-robust.md#declared-transposes-d295)):
   the sums and gathers over relations and tuples and the sums and maps
   over particles declare the transpose of their structure, and
   `md-differentiate` takes it from them instead of building the op itself;
@@ -836,7 +848,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 - **PME on a device spreads through tiles of the memory of a block**
   (D282, #336,
-  [docs/pme-m1.md §3.3](docs/pme-m1.md#33-spreading-through-tiles)): the
+  [docs/pme.md §3.3](docs/pme.md#33-spreading-through-tiles)): the
   particles are binned by their first grid point at each evaluation, a
   block adds the charges of a bin into a tile and the tile into the grid,
   as cuFINUFFT spreads. A new pass, `md-exec-choose-spreading`, sets
@@ -940,7 +952,7 @@ format, or the outputs; every such change is listed under **Changed** or
   `minimize-tolerance.test` stops at step 90 rather than 100.
 
 - **The default neighbor structure is `neighbor_structure = "AUTO"`**
-  (D261, #350, stage G3 of `docs/groups-m1.md`). On a GPU,
+  (D261, #350, stage G3 of `docs/neighbor-groups.md`). On a GPU,
   outside the deterministic mode, a system of at least 23,000 particles
   whose loops over pairs all take each pair once runs on the groups of 16
   with a dual list, `pairlist_distance` 3 Å and `pruned_distance` 0.6 Å
@@ -1551,7 +1563,7 @@ format, or the outputs; every such change is listed under **Changed** or
   pressure (D189, part of #16).
 - M2 Python API preparation: driver prerequisites, proposed implementation
   sequence, adopted maintainer contracts, and validation gates in
-  `docs/python-m2.md`
+  `docs/python.md`
   (D187); this preparation adds no executable Python API.
 - Tabulated functions can read whitespace-separated numeric grids from
   `values_file` with an explicit `shape`, with the existing interpolation
@@ -1816,7 +1828,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - With the groups (`neighbor_structure = "GROUPS"`, with or without a dual
   list) in an orthorhombic cell, a pairlist distance of more than about
   the edge of the cell less the half-width of a group lost pairs (#263,
-  D242, `docs/groups-m1.md`, Section 5.2): the lists took the
+  D242, `docs/neighbor-groups.md`, Section 5.2): the lists took the
   image of a candidate nearest to the center of a group and the one on the
   other side of the boundary along each axis, which are not every image
   within such a reach, and nothing refused the input. Measured on 216 argon
@@ -1847,7 +1859,7 @@ format, or the outputs; every such change is listed under **Changed** or
 - In a triclinic cell the neighbor matrix (the default structure, on the
   CPU and on a device) lost pairs once its reach, `pairlist_distance`, was
   more than half of the least of $a_x, b_y, c_z$ (#258, D241,
-  `docs/triclinic-m2.md`, Section 2). The builder refused such an input,
+  `docs/triclinic.md`, Section 2). The builder refused such an input,
   but a barostat could shrink an accepted cell past the bound, and the run
   went on: its build tested a candidate at the image of the one pass along
   $\mathbf c$, $\mathbf b$, $\mathbf a$, which is not the nearest image

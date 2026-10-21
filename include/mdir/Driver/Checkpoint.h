@@ -1,7 +1,7 @@
 // Checkpoints in the H5MD format: de Buyl et al., Comput. Phys. Commun. 185,
 // 1546 (2014).
 //
-// See docs/driver-m0.md, Section 2.6.
+// See docs/driver.md, Section 2.6.
 
 #ifndef MDIR_DRIVER_CHECKPOINT_H
 #define MDIR_DRIVER_CHECKPOINT_H
@@ -51,7 +51,7 @@ struct Checkpoint {
   /// For every particle, the position of its type in the control file.
   std::vector<int32_t> species;
   double box[3] = {0.0, 0.0, 0.0};
-  /// The tilts b_x, c_x, c_y of a triclinic cell (docs/triclinic-m2.md).
+  /// The tilts b_x, c_x, c_y of a triclinic cell (docs/triclinic.md).
   double tilt[3] = {0.0, 0.0, 0.0};
   /// Whether the cell is periodic; without one, `box` is the cell that the
   /// run placed around the particles (D142), which a continued run keeps.

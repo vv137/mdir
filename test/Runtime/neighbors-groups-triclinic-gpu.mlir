@@ -1,8 +1,8 @@
 // The template that builds groups of 16 particles sharing a list of
-// neighbors on a device in a triclinic cell (docs/triclinic-m2.md, D89),
+// neighbors on a device in a triclinic cell (docs/triclinic.md, D89),
 // against every image of every pair: each image within the reach has a
 // bit in the lists once, of its particle in the group, and an excluded
-// pair has none (docs/groups-m1.md, Section 5.2).
+// pair has none (docs/neighbor-groups.md, Section 5.2).
 //
 // REQUIRES: cuda
 //

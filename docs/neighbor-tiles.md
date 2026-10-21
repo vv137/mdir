@@ -2,7 +2,7 @@
 
 Status: superseded (2026-10-01) by D89; kept as the record of D82 and of
 its prototype (last checked 2026-10-21). The current design is the
-structure of groups of 16, [groups-m1.md](groups-m1.md): it computes each
+structure of groups of 16, [neighbor-groups.md](neighbor-groups.md): it computes each
 pair once (traversal `unique` of `md_exec.pair_for`), keeps the dual list
 of Section 6 (D114, `prune_skin` of `md_exec.refresh_neighbors`), and is
 the default on a GPU for large systems (D261). The tiles of this document
@@ -15,7 +15,7 @@ proposal, not of the code. The keys in brackets are those of
 
 This document describes a second kind of neighbor structure, `tiles`, for
 the loops over pairs on a device. The structure of M0, the neighbor matrix
-([neighbors-m0.md](neighbors-m0.md)), stays; the CPU keeps it, and a device
+([neighbors.md](neighbors.md)), stays; the CPU keeps it, and a device
 may keep it for small systems.
 
 ## 1. Why
@@ -40,7 +40,7 @@ expensive:
 1. **Every pair is computed twice.** The matrix is directed (a row for each
    particle holds all its neighbors), and the loop computes the kernel for
    `(i, j)` and for `(j, i)`, each writing to its own particle (the
-   owner-computes policy of [ops-m0.md](ops-m0.md), Section 9.2).
+   owner-computes policy of [ops.md](ops.md), Section 9.2).
 2. **Every neighbor is an index and a random load.** A row of JAC holds up
    to 736 indices; for each, the loop loads the index (4 bytes) and the
    position of the neighbor (12 bytes in `f32`) from wherever it is.
@@ -88,12 +88,12 @@ an option only and never the default), not a change to this structure.
 
 **The kernel of a pair is the semantic kernel.** A loop over pairs runs the
 body that the `md` dialect wrote, with the distance, the displacement,
-and two values of each gathered field (ops-m0.md, Section 8.2). The tile
+and two values of each gathered field (ops.md, Section 8.2). The tile
 structure changes the traversal, not the body: the same kernel runs for
 the pairs of a tile pair that its mask selects and that are within the
 cutoff. Whether a pair may be computed once (Section 5.2) is decided by
 the exchange contract of the kernel, which the IR already carries
-(`exchange(symmetric)`, `exchange(antisymmetric, derived)`; ops-m0.md,
+(`exchange(symmetric)`, `exchange(antisymmetric, derived)`; ops.md,
 Sections 4.7 and 9.3).
 
 **The deterministic level is a mode (P6, D84).** A sum whose order the
@@ -171,7 +171,7 @@ end of the row the four lanes of a target add their sums with shuffles,
 and one writes the force. No write conflicts, and the order of the sum of
 a particle is fixed: the deterministic level holds.
 
-The global sums take the weight ½, as for the directed matrix (ops-m0.md,
+The global sums take the weight ½, as for the directed matrix (ops.md,
 Section 9.2). Rows much longer than the mean are split across warps, with
 a second, fixed-order sum over the parts.
 
@@ -181,7 +181,7 @@ A tile pair is stored once, in the row of the lower of the two tiles, and
 the pair $(u, v)$ of a tile with itself once, for $u < v$. The kernel of
 the pair gives the contribution to $u$; the exchange contract gives that to
 $v$, $s\,k(u, v)$ with $s = +1$ for a symmetric and $s = -1$ for an
-antisymmetric kernel (ops-m0.md, Section 9.3). The contributions to the
+antisymmetric kernel (ops.md, Section 9.3). The contributions to the
 eight sources of a record are added across the lanes and written to the
 forces of $B$ from the thread of $A$: a conflict, with two strategies.
 
@@ -200,7 +200,7 @@ Section 9 measures them.
 
 ## 6. Validity, with a dual list
 
-Implemented for the groups of 16 (D114, [groups-m1.md](groups-m1.md),
+Implemented for the groups of 16 (D114, [neighbor-groups.md](neighbor-groups.md),
 Section 6.2); the tiles remain on hold.
 
 A structure is valid for the positions $\mathbf x$ in the cell of edges
@@ -264,7 +264,7 @@ tiles" was never built. The structure of groups that replaced it is
 `md_exec.pair_for`, not `policy(once, ...)`; and the inner list is the
 attribute `prune_skin` of `md_exec.refresh_neighbors`, with
 `md_exec.reference_positions pruned`, not an op `md_exec.prune_neighbors`
-([groups-m1.md](groups-m1.md), [ops-m0.md](ops-m0.md), Section 8.1).
+([neighbor-groups.md](neighbor-groups.md), [ops.md](ops.md), Section 8.1).
 
 | Part | Now | With tiles |
 |---|---|---|
@@ -273,7 +273,7 @@ attribute `prune_skin` of `md_exec.refresh_neighbors`, with
 | The excluded pairs | `md_exec.reset_neighbors ... exclude(...)` marks entries | The build clears the bits of the masks |
 | The inner structure | — | `md_exec.prune_neighbors %outer, %x, %cell reach(R_in)`, a structure with a reference of its own; `md-exec-expose-validity` writes both tests, `md-exec-reuse-neighbors` refreshes the outer one or prunes the inner one as Section 6 says |
 | The loop over pairs | `md_exec.pair_for %n ... policy(directed, owner_only)` | Unchanged in the IR; the lowering chooses the layout of Section 5 from the kind of the structure, as it chooses the lanes of a row now (`row-lanes`) |
-| Each pair once | ops-m0.md, Section 9.3, not implemented | `policy(once, fixed_point)` or `policy(once, atomic)`, legal only with an exchange contract |
+| Each pair once | ops.md, Section 9.3, not implemented | `policy(once, fixed_point)` or `policy(once, atomic)`, legal only with an exchange contract |
 | The positions of the kernels | The conversion loop of D79 | The same loop, writing in the order of the tiles, with the indices of the tiles as a field it gathers by |
 
 The tile structure is a device structure: the CPU lowering keeps the
@@ -284,7 +284,7 @@ message, until a CPU layout exists.
 
 | Step | Work |
 |---|---|
-| 1 | The columns: a counting sort of the particles by column, as the cells of the matrix are sorted now (neighbors-m0.md, Section 2.1) |
+| 1 | The columns: a counting sort of the particles by column, as the cells of the matrix are sorted now (neighbors.md, Section 2.1) |
 | 2 | Each column sorted by z: one thread per column, a sort by insertion (the columns hold tens of particles) |
 | 3 | The tiles: indices and bounding boxes, one thread per tile |
 | 4 | Count: for each target tile, the tiles of the columns within reach whose boxes are within $R$ and whose mask is not zero; a warp per target tile evaluates the 64 distances of a candidate at once |
@@ -322,7 +322,7 @@ against displacement tests (Section 3).
 
 History: the questions of the proposal, left with the tiles. Cells that are
 not orthorhombic have since been built for the matrix (D123 on the CPU,
-D125 on a device) and the groups (D126, [triclinic-m2.md](triclinic-m2.md)), and the decomposition into
+D125 on a device) and the groups (D126, [triclinic.md](triclinic.md)), and the decomposition into
 domains is the plan of [distributed-ml2.md](distributed-ml2.md).
 
 - The size of a tile on other devices (AMD wavefronts of 64) and whether

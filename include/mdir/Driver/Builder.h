@@ -1,6 +1,6 @@
 // Builds the program of a run: a module of md and dyn ops.
 //
-// See docs/driver-m0.md, Section 2.
+// See docs/driver.md, Section 2.
 
 #ifndef MDIR_DRIVER_BUILDER_H
 #define MDIR_DRIVER_BUILDER_H

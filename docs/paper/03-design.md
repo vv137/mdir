@@ -227,7 +227,7 @@ between $r_s$ and $r_c$, so this option requires no dispersion correction.
 LJPME and custom pair additions are refused. The analytic energy, force,
 and virial tests cover both boundaries, CPU and GPU, mixed and double;
 the independent two-POPC CHARMM comparison is documented in
-`docs/charmm-m1.md`, Section 8.
+`docs/charmm.md`, Section 8.
 
 **Particles.** A sum over the particles that reads the positions
 themselves, $U = \sum_i k(\mathbf x_i, \dots)$, a term of the absolute

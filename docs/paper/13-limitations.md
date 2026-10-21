@@ -116,7 +116,7 @@ periodic cell (D142), generalized Born (D143, D144, D152), and particle mesh
 Ewald for the dispersion (D162). Alchemical free energy, whose
 $dH/d\lambda$ the differentiation of the IR gives (D2, D161).
 
-*M2a, the Python API* ([plan](../python-m2.md)). In place: owned loaded
+*M2a, the Python API* ([plan](../python.md)). In place: owned loaded
 data, a typed model, and the preparation that the control file shares
 (D191); lowering to immutable IR (D192); read-only NumPy arrays at the
 boundary (D193); persistent simulations that run any number of steps and

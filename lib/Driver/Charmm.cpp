@@ -3,7 +3,7 @@
 // coordinates (CRD).
 //
 // The readers are written from the documentation of the formats, with no
-// code of CHARMM or of its tools (docs/charmm-m1.md). The terms are
+// code of CHARMM or of its tools (docs/charmm.md). The terms are
 // converted to the forms of docs/conventions.md.
 
 #include "mdir/Driver/Topology.h"

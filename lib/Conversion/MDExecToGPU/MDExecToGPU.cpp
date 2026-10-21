@@ -1,7 +1,7 @@
 // Conversion of md_exec loops in the storage form to GPU kernels.
 //
 // Every op of md_exec becomes ops of the upstream gpu dialect, where the op
-// is. See docs/ops-m0.md, Section 10.8.
+// is. See docs/ops.md, Section 10.8.
 
 #include "mdir/Conversion/Passes.h"
 
@@ -5057,7 +5057,7 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
                                         bool tilted, bool potential,
                                         bool listed, int64_t tiles) {
   // A triclinic cell takes the kernels of its own as well, which only it
-  // parses and specializes (docs/triclinic-m2.md); the spreading into
+  // parses and specializes (docs/triclinic.md); the spreading into
   // bricks, of its list too.
   if (tilted && failed(addPMETemplates(position, charge, force, order,
                                        /*tilted=*/false, /*potential=*/false,
@@ -5407,7 +5407,7 @@ LogicalResult Lowering::lowerReciprocal(md_exec::ReciprocalOp op) {
   Type position = elementOf(positions), charge = elementOf(charges),
        force = elementOf(forces);
   // A triclinic cell takes the kernels of its own where they depend on the
-  // cell (docs/triclinic-m2.md).
+  // cell (docs/triclinic.md).
   bool tilted = isTriclinic(op.getCellMutable().get());
   // The listed particles alone (D262); the
   // potential at the particles takes every particle.
@@ -6129,7 +6129,7 @@ Value Lowering::getEdgesBuffer(OpBuilder &builder, Location loc, Value handle,
 /// [(-d_z - reach) / c_z, (-d_z + reach) / c_z], for each the s_b of the
 /// same range of the y component over b_y, and for each the s_a of that of
 /// the x component over a_x, as the lower-triangular cell orders them
-/// (docs/triclinic-m2.md, Section 2). `visit` takes the image (three i32),
+/// (docs/triclinic.md, Section 2). `visit` takes the image (three i32),
 /// the squared length of d + s H, and the count carried, and returns the
 /// count carried on. A range is at most 1024 a side, so that a cell or a
 /// displacement that is not a number gives loops that end (#168).
@@ -7410,7 +7410,7 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
            << "structures of groups of neighbors are built from positions "
               "in f64, not "
            << real;
-  // A triclinic cell takes the build of its own (docs/triclinic-m2.md).
+  // A triclinic cell takes the build of its own (docs/triclinic.md).
   bool tilted = isTriclinic(box);
   if (failed(addGroupsTemplates(tilted)))
     return failure();

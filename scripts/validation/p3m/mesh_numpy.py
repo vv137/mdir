@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """An oracle of the three influence functions of PME in NumPy
-(D304; docs/pme-m1.md, Section 1.1), written from Section 1 of
-docs/pme-m1.md and not from MDIR's code: spreading with B-splines, the FFT,
+(D304; docs/pme.md, Section 1.1), written from Section 1 of
+docs/pme.md and not from MDIR's code: spreading with B-splines, the FFT,
 the product with G, and the gathering of analytic differentiation, with G
 of "SPME", "OPTIMAL", and "P3M" (eq. 2.28 of Ballenegger et al. 2012 by
 the direct sum over the aliases J in Z^3, |J_a| <= 2, not the form of the

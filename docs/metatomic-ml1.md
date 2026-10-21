@@ -1229,7 +1229,7 @@ orthorhombic cell, whatever its edges (the search spans
 $\min(n, 2 \cdot \text{range} + 1)$ cells of each axis, so no cell is
 visited twice), and in a triclinic one the build that tests every image
 where the reach exceeds half the least of $a_x$, $b_y$, $c_z$
-([triclinic-m2.md](triclinic-m2.md), Section 2). A pair with any image
+([triclinic.md](triclinic.md), Section 2). A pair with any image
 within $R$ is therefore in the row, and `build_edges` enumerates, for each
 entry, every image $\mathbf s$ within $R$ (the ranges of $s_c$, then $s_b$,
 then $s_a$, of the lower-triangular cell); the images of a particle itself,

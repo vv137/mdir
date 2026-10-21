@@ -176,7 +176,7 @@ Cellulose at $\beta$ = 0.39467 Å⁻¹ it lowers the relative force error
 $\Delta$ (Section 5.6) of `"OPTIMAL"` by 0.05% at about 1 Å and by up to 2%
 on grids of 2 Å, and that of `"SPME"` by 2 to 3% at about 1 Å and by 2 to
 6% at order 6, but raises it by 3 to 4% on grids of order 4 of 1.5 to 2 Å
-(`docs/pme-m1.md`, Section 1.1). A triclinic cell is refused (#475). Both
+(`docs/pme.md`, Section 1.1). A triclinic cell is refused (#475). Both
 front ends select the influence function,
 and the order of the splines: the control file with `influence` and
 `order` of `[pme]`, the Python model with `System.pme_influence` and
@@ -303,7 +303,7 @@ times as long on Factor IX, Cellulose, and STMV. Below 500,000 points the
 bins are too few to occupy a device (JAC, 512 bins: 1.00 to 1.01 times the
 step at order 4 on an RTX 4090, 1.05 on an RTX PRO 6000), and in f64 the
 tiles are slower (1.01 to 1.02); neither is tiled by default (the tables
-are in `docs/pme-m1.md`, Section 3.3; the conditions of the tiles are
+are in `docs/pme.md`, Section 3.3; the conditions of the tiles are
 derived in Section 8.5). The gathering is not tiled: in the
 prototype of #334 tiles did not pay there at order 4 (#411).
 
@@ -952,7 +952,7 @@ at $\Delta \approx 10^{-3}$, the tier of the standard settings of pmemd,
 GROMACS, and MDIR, as with the Gaussian default (order 4); 0.94 to 1.15
 times as long at $\Delta \approx 10^{-4}$ as order 6; and 0.84 to 1.02
 times at $10^{-5}$ as the faster of orders 6 and 8, faster on Cellulose and
-STMV (the table, with the grids, is in `docs/pme-m1.md`, Section 7). The
+STMV (the table, with the grids, is in `docs/pme.md`, Section 7). The
 Gaussian kernel stays the default. The tiles serve both kernels: with them
 the prolate default took 0.83 to 0.87 times the step without tiles on
 Factor IX, Cellulose, and STMV (RTX 4090), its spreading 72, 209, and

@@ -1,6 +1,6 @@
 // Conversion of md and dyn ops to md_exec loops.
 //
-// See docs/ops-m0.md, Section 9.
+// See docs/ops.md, Section 9.
 
 #include "mdir/Conversion/Passes.h"
 

@@ -1,5 +1,5 @@
 // The kernels of the reciprocal sum of smooth particle mesh Ewald on a
-// device [Essmann1995] for a triclinic cell (docs/triclinic-m2.md): those
+// device [Essmann1995] for a triclinic cell (docs/triclinic.md): those
 // of PMEGPU.mlir that depend on the cell, with `box` the vector of six,
 // a_x, b_y, c_z, b_x, c_x, c_y, of the lower-triangular cell H. The
 // particles are placed by their fractional coordinates s = x H⁻¹; the

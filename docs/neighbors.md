@@ -7,14 +7,14 @@ This document describes how MDIR builds a neighbor structure, keeps it
 valid, and keeps the particles in an order in which a loop over pairs
 reads little memory; why it does so in this way; and how the times in it
 were measured.
-The ops are specified in [ops-m0.md](ops-m0.md), Section 8.2.
+The ops are specified in [ops.md](ops.md), Section 8.2.
 
 ## 1. The structure
 
 There are two kinds of neighbor structure (`kind` of
 `md_exec.empty_neighbors`): the neighbor matrix of this document, on the
 CPU and on a device, and on a device only the groups of 16 particles that
-share a list, each pair once (D89, [groups-m1.md](groups-m1.md)), with an
+share a list, each pair once (D89, [neighbor-groups.md](neighbor-groups.md)), with an
 optional dual list (D114). `neighbor_structure = "AUTO"`, the default,
 takes the groups on a GPU for large systems and the matrix elsewhere
 (D261). The test of validity (Section 3), the order of the particles
@@ -302,7 +302,7 @@ output against the run without it, bit for bit in the deterministic mode.
 
 | Method | State |
 |---|---|
-| The thread that moves a particle in the drift tests it, and sets a flag if it is beyond the limit (D41). | Implemented; see [ops-m0.md](ops-m0.md), Section 9.6 |
+| The thread that moves a particle in the drift tests it, and sets a flag if it is beyond the limit (D41). | Implemented; see [ops.md](ops.md), Section 9.6 |
 | The largest displacement as a global maximum | Replaced. It is what a refresh does that is given no result of a test. |
 
 Other schemes that were considered are in
@@ -532,7 +532,7 @@ device the constants are used as they are: the model only narrows the
 candidates, and the measurement decides.
 
 The grid was measured before the loop over pairs pruned (D284,
-[groups-m1.md](groups-m1.md), Section 6.2). Where it does, from 4096
+[neighbor-groups.md](neighbor-groups.md), Section 6.2). Where it does, from 4096
 groups on an RTX 4090, a pruning costs only a few percent of the loop
 rather than $c_2\rho' R^3$, so the model overstates the cost of a short
 inner skin, and the fastest $s_\text{in}$ may be shorter than it

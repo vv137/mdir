@@ -1,6 +1,6 @@
 // The md_exec dialect: how the MD computation is organized.
 //
-// See docs/ops-m0.md, Section 8, for the specification.
+// See docs/ops.md, Section 8, for the specification.
 
 #ifndef MDIR_DIALECT_MDEXEC_MDEXECDIALECT_TD
 #define MDIR_DIALECT_MDEXEC_MDEXECDIALECT_TD

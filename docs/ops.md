@@ -8,7 +8,7 @@ on the CPU sequentially and with OpenMP, and on NVIDIA GPUs; the summaries
 of Sections 4.1 and 8.1 list every op of `md` and `md_exec` today. The ops
 of `md_dist`, the distributed plan, are in
 [distributed-ml2.md](distributed-ml2.md), and those of `mdrt` in
-[mdrt-m0.md](mdrt-m0.md).
+[runtime.md](runtime.md).
 
 This document specifies the types and ops needed for milestone M0: a
 Lennard-Jones [[Jones1924]](references.md#jones1924) fluid integrated with velocity Verlet
@@ -224,10 +224,10 @@ is needed when the kernels are compiled, not when LLVM is built.
 | `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; see [design-m1.md](design-m1.md), Sections 2 and 3. |
 | `md.chebyshev` | In a kernel, $\sum_k c_k T_k(y)$, a Chebyshev series with its coefficients as an attribute; its derivative is the series of the derivatives, and in a loop over pairs under `fast_math` a series of the distance becomes part of a table of $r^2$ (D94, D280). |
 | `md.stage`, `md.apply_stage` | A neural stage, a pure function of one element bound to its body and its vector-Jacobian product, and its application, or that of its product, in a kernel ([ml4-ir.md](ml4-ir.md), D288). |
-| `md.orthorhombic_cell`, `md.triclinic_cell` | A periodic cell from the lengths of its edges, or from the six numbers of a lower-triangular cell in reduced form ([triclinic-m2.md](triclinic-m2.md), D123). |
+| `md.orthorhombic_cell`, `md.triclinic_cell` | A periodic cell from the lengths of its edges, or from the six numbers of a lower-triangular cell in reduced form ([triclinic.md](triclinic.md), D123). |
 | `md.lookup` | In a kernel, the value of a table for the types of its members, one index for each dimension of the table ([design-m1.md](design-m1.md), Section 7). |
 | `md.edges` | The pairs of images within a cutoff, every image of every particle and the particle's own, grouped by the first member: the list that a local learned potential takes ([metatomic-ml1.md](metatomic-ml1.md), D277). |
-| `md.reciprocal` | The reciprocal sum of smooth particle mesh Ewald: energy, virial, and forces, with the influence function's factors along each edge as an operand ([pme-m1.md](pme-m1.md)). |
+| `md.reciprocal` | The reciprocal sum of smooth particle mesh Ewald: energy, virial, and forces, with the influence function's factors along each edge as an operand ([pme.md](pme.md)). |
 | `md.call` | Calls a function or a potential. |
 | `md.yield`, `md.return` | Terminators of kernels and functions. |
 
@@ -426,7 +426,7 @@ force switch of Steinbach and Brooks [[Steinbach1994]](references.md#steinbach19
 which switches the force of each inverse power by a function linear in
 $r^{n/2}$; that one is defined only for a sum of inverse powers, so it is
 not a `truncation` kind: the driver writes it into the Lennard-Jones of a
-topology (`POWER_FORCE_SWITCH`, D121, [charmm-m1.md](charmm-m1.md)).
+topology (`POWER_FORCE_SWITCH`, D121, [charmm.md](charmm.md)).
 
 A pass expands the attribute into the kernel before differentiation. After
 the pass every relation sum has `truncation(none)` and an explicit kernel.
@@ -1028,7 +1028,7 @@ double mode (Section 10.9).
 | `md_exec.radial` | A function of the squared distance alone, which `md-exec-simplify-distance` separates under `fast_math` and `md-exec-expand-radial` makes a table of in f32 kernels (D94). |
 | `md_exec.tabulate` | A table computed entry by entry from other tables, so that a kernel's values that depend on the types only are computed once. |
 | `md_exec.scatter_add` | $a_i \mathrel{+}= \sum_{k : \mathrm{idx}_k = i} v_k$: values added into a field at the rows that indices name (D291, [device-primitives.md](device-primitives.md)). |
-| `md_exec.reciprocal` | What `md.reciprocal` computes, in the execution IR; Section 10.8 and [pme-m1.md](pme-m1.md) describe its lowerings. |
+| `md_exec.reciprocal` | What `md.reciprocal` computes, in the execution IR; Section 10.8 and [pme.md](pme.md) describe its lowerings. |
 | `md_exec.linear_transform` | The unnormalized real three-dimensional FFT, forward or backward, between a real grid and its packed half-spectrum, with its adjoint and the pairing under which it is one declared in the IR (D306, [primitives-map.md](primitives-map.md)). |
 | `md_exec.join` | Storage form only: the op marked `md_exec.side` before it runs on a second stream beside the ops between the two (D81, D87). |
 | `md_exec.rebuild_count` | The number of times a neighbor structure has been built. |
@@ -1332,7 +1332,7 @@ loop, the buffer that held the field before is handed back with the
 buffers that the loop borrowed (Section 10.4), so the two change places
 from one iteration to the next.
 
-[neighbors-m0.md](neighbors-m0.md), Section 5, has the method and the
+[neighbors.md](neighbors.md), Section 5, has the method and the
 measurements.
 
 ## 9. Lowering `md` and `dyn` to `md_exec`
@@ -1689,7 +1689,7 @@ decides nothing about buffers.
 | `md_exec.refresh_neighbors` | The test of validity and, where it fails, a call to the neighbor build template |
 | `md_exec.reset_neighbors` | Two stores |
 | `md_exec.rebuild_count` | A load |
-| A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell; in a module with an `md.triclinic_cell`, `vector<6xf64>`, its diagonal $a_x, b_y, c_z$ and tilts $b_x, c_x, c_y$, which the kernels of the CPU and of a device take with the minimum image in one pass and the triclinic functions of the templates, `PMEGPUTriclinic.mlir` for PME and `NeighborsGroupsGPUTriclinic.mlir` for the groups on a device (docs/triclinic-m2.md, D123, D125, D126); `md_exec.cell_edges` gives its diagonal |
+| A cell | `vector<3xf64>`, the edge lengths of an orthorhombic cell; in a module with an `md.triclinic_cell`, `vector<6xf64>`, its diagonal $a_x, b_y, c_z$ and tilts $b_x, c_x, c_y$, which the kernels of the CPU and of a device take with the minimum image in one pass and the triclinic functions of the templates, `PMEGPUTriclinic.mlir` for PME and `NeighborsGroupsGPUTriclinic.mlir` for the groups on a device (docs/triclinic.md, D123, D125, D126); `md_exec.cell_edges` gives its diagonal |
 
 ### 10.8 From the storage form to GPU kernels
 
@@ -1722,7 +1722,7 @@ the move.
 | Storage form | Kernels |
 |---|---|
 | `md_exec.particle_for`, `md_exec.pair_for` | One kernel with one thread per particle, in blocks of 128 threads. With the policy `owner_only` a thread writes only to its own particle, so the kernel needs no atomic operation. A loop over pairs or tuples has 16 threads per particle, adjacent in a warp: each takes every 16th entry of the row of neighbors or of tuples, the group sums its values by shuffles (`gpu.shuffle xor`, 64-bit numbers as two words), and its first thread writes. Every thread of a launched block runs the loop, those beyond the last particle with no entry, so that the warps stay whole for the shuffles. |
-| `md_exec.pair_for` over groups | A warp for each block of 64 entries of the lists of groups of 16, each pair once: the value of the other particle is added with an atomic addition, and the group's once for the block (D89, [groups-m1.md](groups-m1.md)). `md-exec-choose-neighbors` takes groups only where every destination has an exchange contract. |
+| `md_exec.pair_for` over groups | A warp for each block of 64 entries of the lists of groups of 16, each pair once: the value of the other particle is added with an atomic addition, and the group's once for the block (D89, [neighbor-groups.md](neighbor-groups.md)). `md-exec-choose-neighbors` takes groups only where every destination has an exchange contract. |
 | `md_exec.tuple_for` | Over tuples that may share particles, a thread evaluates each tuple once and adds to its members with atomics (D103; in the deterministic mode, the rows of the particles take their tuples), or, with `scatter(hash(S, P, L))`, which `md-exec-choose-scatter` sets, through a table of the particles of its block in block memory (D283, [device-primitives.md](device-primitives.md)). Over disjoint tuples, the member at place 0 evaluates the tuple and writes every member, which no other thread writes (D83). A loop with a flag in `reduce` takes a flag of its own (D118): over disjoint tuples with destinations, as the constraints of a step, it stays in its integration run, whose member at place 0 of a failing tuple sets it; loops with flags alone, the separate test, are one kernel with one event; over tuples that may share particles it takes a flag outside the deterministic mode only (D278). |
 | A loop over particles, the loops over the tuples of a disjoint union that read it, and the loop over particles that reads them | One integration kernel (`fuse-integration`, D110): a warp takes whole groups of constraints, which the order of the state keeps contiguous, and the members exchange their values by shuffles; the groups that a warp cannot take whole go to a second kernel of one block (D111). |
 | The global sums of a loop | The kernel stores the contributions of each particle. A second kernel has a block of 128 threads for each part of the particles, at least 512 particles and at most 128 parts: a thread adds up every so manyth particle, and the block adds up its threads for all the sums at once (D150): each warp by a butterfly of shuffles, its first lane writes the warp's numbers to shared memory, and after one barrier every thread adds the warps in their order. A third kernel, one block, adds up the parts the same way, launched only for more than one part; with one, the second kernel writes the results. The host reads the results with one copy. The order of a sum depends only on the number of particles. All sums of the loop share the two kernels and the copy. Each sum has slots of its own in one buffer of results for each type, and the copy and the reads move down to where the host first needs a result; a copy that then follows another with nothing between that runs on the device is left out, since the first brought the whole buffer. The sums of a step of coupling, read one after another, then reach the host in one or two copies. A contribution is a number or a vector: the virial is a vector of nine numbers, and its buffers in `scratch` hold nine numbers per particle. |
@@ -1731,7 +1731,7 @@ the move.
 | `md_exec.reference_positions` | The buffer of the structure that holds the positions |
 | `md_exec.empty_neighbors` | The buffers of a neighbor matrix, or of the lists of groups, on the device; the runtime grows them when a build needs more. The flag and the count of builds are on the host. |
 | `md_exec.refresh_neighbors` | Where the structure is not valid, a call to the neighbor build template for devices. Without `moved`, the test of validity before it, with the largest displacement as a global maximum. The excluded pairs are marked, not taken out: a thread for each entry of the matrix replaces an excluded neighbor by the particle itself, which the loops over pairs skip. Taking them out moved the rest of a row, one thread per particle, and took as long as the forces. Groups clear the bit of an excluded pair in the mask at the build. With `prune_skin`, a dual list: where the outer list is valid but the inner one is not, the inner list is pruned from the outer one, a warp for each group, in the order of the outer list (D114). |
-| `md_exec.reciprocal` | The kernels of the template `PMEGPU.mlir` and the transforms of cuFFT ([pme-m1.md](pme-m1.md), Section 3); with `scatter(tile(E))`, which `md-exec-choose-scatter` sets, the spreading through tiles of bins of $E^3$ points (Section 3.3, D282, [device-primitives.md](device-primitives.md)); with `md_exec.side`, on a second stream that the first joins where it reads the forces (D81, D87) |
+| `md_exec.reciprocal` | The kernels of the template `PMEGPU.mlir` and the transforms of cuFFT ([pme.md](pme.md), Section 3); with `scatter(tile(E))`, which `md-exec-choose-scatter` sets, the spreading through tiles of bins of $E^3$ points (Section 3.3, D282, [device-primitives.md](device-primitives.md)); with `md_exec.side`, on a second stream that the first joins where it reads the forces (D81, D87) |
 | A cell | `vector<3xf64>`. A kernel takes numbers and buffers as arguments, so a vector from outside enters a kernel as its elements. |
 | A constant | A constant of the kernel, not an argument. A power whose exponent is an argument would be a loop. |
 | A loop of the host | The loop releases, at the end of every iteration, the stack that the iteration has taken. The lowering of a launch puts the arguments on the stack where the launch is; in a loop over steps the stack would grow until it overflows. |
@@ -1760,7 +1760,7 @@ step of a run at constant temperature costs on a device.
 The neighbor build template for devices,
 `lib/Runtime/Templates/NeighborsMatrixGPU.mlir`, builds the matrix in 10
 kernels, or in 12 where the search is split.
-[neighbors-m0.md](neighbors-m0.md) describes the method. The matrix is the
+[neighbors.md](neighbors.md) describes the method. The matrix is the
 one that the template for the host builds, entry by entry.
 
 The result is lowered by `mdir-gpu-lower-to-nvvm`, the upstream pipeline
@@ -1842,13 +1842,13 @@ loops over particles were fused already.
 | The host does not wait for every kernel, and a constant is a constant of the kernel (Section 10.8). | 280 |
 | The minimum image is found with a multiplication (D42). | 170 |
 | The test of validity is made in the drift (Section 9.6). | 150 |
-| The neighbor build searches a copy of the positions, with narrower cells and more threads ([neighbors-m0.md](neighbors-m0.md)). | 110 |
+| The neighbor build searches a copy of the positions, with narrower cells and more threads ([neighbors.md](neighbors.md)). | 110 |
 
 | Observation | Consequence |
 |---|---|
 | A kernel that does next to nothing takes 6 to 7 microseconds. | Every kernel that is saved saves that much. |
 | The time of a small system is the time of one thread, not of all. The kernel of the forces runs 864 threads at once; each visits its neighbors one after another, at 0.9 microseconds for a neighbor. | The time per step hardly depends on the number of particles until the device is full. A small system would need more than one thread per particle. |
-| The search of a build tested every particle of 27 cells. With 27 cells in all, that was every particle. | The width of the cells is chosen from the density, and the search of a small system has a thread for each row of cells ([neighbors-m0.md](neighbors-m0.md)). |
+| The search of a build tested every particle of 27 cells. With 27 cells in all, that was every particle. | The width of the cells is chosen from the density, and the search of a small system has a thread for each row of cells ([neighbors.md](neighbors.md)). |
 | A division in double precision costs a thread of a device much more than a multiplication. | The minimum image took three divisions for each neighbor, and nearly half the time of the forces. |
 | The kick after the forces writes to the particle that the thread of the forces has. | The two can be one kernel. A step then has two. |
 

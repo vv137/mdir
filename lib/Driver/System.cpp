@@ -165,7 +165,7 @@ static llvm::Expected<System> readTopologySystem(const Control &control) {
   // A coordinate file of CHARMM has no cell; the control file gives it.
   // CHARMM keeps a cell as the symmetric root of its metric, whose frame
   // is turned from the one of MDIR; its positions are turned with it
-  // (docs/triclinic-m2.md, Section 1).
+  // (docs/triclinic.md, Section 1).
   if (charmm && control.periodic) {
     llvm::Expected<Cell> cell =
         makeCell(control.box[0] * 0.1, control.box[1] * 0.1,

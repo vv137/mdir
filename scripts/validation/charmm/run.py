@@ -33,7 +33,7 @@ $CHARMM_TOPPAR); nothing of CHARMM is copied into the repository. The phases:
            G^(1/2) for the metric G; minimized in CHARMM with PME (300
            steps); the energy of the coordinates as written, term by term,
            in CHARMM and in MDIR from the PSF and the CRD with the cell
-           given by its lengths and angles (docs/triclinic-m2.md).
+           given by its lengths and angles (docs/triclinic.md).
 """
 import argparse
 import math

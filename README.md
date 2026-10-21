@@ -189,12 +189,12 @@ apptainer run --nv mdir-0.1.0.sif doctor
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | The design |
 | [docs/future-architecture-plan.md](docs/future-architecture-plan.md) | Future plan: architecture review against Saunders, Cornel, and P4IRS, with staged dependencies, MLIP semantics, and model interoperability |
-| [docs/ops-m0.md](docs/ops-m0.md) | Types and ops for the first milestone |
-| [docs/mdrt-m0.md](docs/mdrt-m0.md) | Proposal for the runtime and execution of the first milestone |
-| [docs/driver-m0.md](docs/driver-m0.md) | The driver and its control file |
-| [docs/neighbors-m0.md](docs/neighbors-m0.md) | How neighbor structures are built and kept valid, with measurements |
+| [docs/ops.md](docs/ops.md) | Types and ops for the first milestone |
+| [docs/runtime.md](docs/runtime.md) | Proposal for the runtime and execution of the first milestone |
+| [docs/driver.md](docs/driver.md) | The driver and its control file |
+| [docs/neighbors.md](docs/neighbors.md) | How neighbor structures are built and kept valid, with measurements |
 | [docs/design-m1.md](docs/design-m1.md) | The design of the first milestone: bonded terms, exclusions, PME, constraints, virtual sites, thermostat, barostat, and their validation |
-| [docs/charmm-m1.md](docs/charmm-m1.md) | CHARMM force fields: what CHARMM computes (measured with CHARMM 51b1), the force switch of Steinbach and Brooks, converting CHARMM files, and the validation against CHARMM |
+| [docs/charmm.md](docs/charmm.md) | CHARMM force fields: what CHARMM computes (measured with CHARMM 51b1), the force switch of Steinbach and Brooks, converting CHARMM files, and the validation against CHARMM |
 | [docs/paper/](docs/paper/README.md) | The white paper of the first milestone, with derivations and measurements (`scripts/paper/build-pdf.sh` builds the PDF) |
 | [CHANGELOG.md](CHANGELOG.md) | What changed in each release |
 | [docs/release-notes/](docs/release-notes/v0.1.0.md) | Notes of each release |
@@ -432,11 +432,11 @@ MDIR: the total energy changed by 1.813e-05 of its value
 The control file is a TOML file, in Å, kcal/mol, and ps. `[execution]`
 selects the target, `cpu` or `gpu`, the number of threads, and the
 precision. `mdir template md` prints a control file with every keyword.
-See [docs/driver-m0.md](docs/driver-m0.md).
+See [docs/driver.md](docs/driver.md).
 
 | Command | Does |
 |---|---|
-| `mdir run <control file> [--continue [--no-append]] [--max-walltime=<time>]` | Compiles the run and executes it; `--continue` goes on from its checkpoint until it is complete, and a run stops at a checkpoint on SIGTERM or at the wall time; a run that is not continued keeps the outputs of an earlier one as `#<name>.<n>#` with the exit status 75 ([docs/driver-m0.md](docs/driver-m0.md), Section 2.7) |
+| `mdir run <control file> [--continue [--no-append]] [--max-walltime=<time>]` | Compiles the run and executes it; `--continue` goes on from its checkpoint until it is complete, and a run stops at a checkpoint on SIGTERM or at the wall time; a run that is not continued keeps the outputs of an earlier one as `#<name>.<n>#` with the exit status 75 ([docs/driver.md](docs/driver.md), Section 2.7) |
 | `mdir emit <control file> [--stage=module\|lowered\|pipeline]` | Prints the program of the run, as it is built or as it is executed, or the passes between |
 | `mdir check <control file> [--json]` | Reads the input and reports the system, planned run, output paths and intervals, and preflight warnings; `--json` gives a structured report |
 | `mdir template md\|amber` | Prints a control file with every keyword, for terms in the control file or for an Amber topology |
@@ -458,7 +458,7 @@ interval, and missing energy reports or checkpoints. It leaves files
 untouched. Warnings keep exit status 0; invalid input returns 1, including
 in JSON mode. It checks the control file and coordinates without compiling
 or loading an input checkpoint; it does not test the device or guarantee
-that a run will compile. See [the preflight reference](docs/driver-m0.md#14-preflight).
+that a run will compile. See [the preflight reference](docs/driver.md#14-preflight).
 
 `mdir-opt` runs the passes of MDIR on IR, as `mlir-opt` does, for
 development.
@@ -497,7 +497,7 @@ without restraints. They require HDF5 checkpoints and select a GPU in
 mixed precision; set `target = "CPU"` to use the host. Then run the files
 in order with `mdir run --continue FILE`. Each stage takes the previous
 stage's checkpoint; the same commands continue interrupted stages and
-skip completed ones. [The driver guide](docs/driver-m0.md#13-standard-pipeline-templates)
+skip completed ones. [The driver guide](docs/driver.md#13-standard-pipeline-templates)
 lists the stage settings and outputs.
 
 `examples/argon/argon.toml` is liquid argon at constant energy: 864 atoms,

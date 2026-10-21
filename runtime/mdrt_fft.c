@@ -1,5 +1,5 @@
 /* The FFT of particle mesh Ewald on the host, from pocketfft
-   [Reinecke2019] (docs/pme-m1.md).
+   [Reinecke2019] (docs/pme.md).
 
    Compiled code calls these functions for blocks of the lines of a grid,
    from a parallel loop over the blocks of each of the three passes of a

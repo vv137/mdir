@@ -22,7 +22,7 @@ if [ ! -f ubq.prmtop ]; then
 fi
 for name in 1-min 2-nvt 3-npt 4-md; do
   # A stage that stopped goes on from its checkpoint, and one that is
-  # complete says so (docs/driver-m0.md, Section 2.7).
+  # complete says so (docs/driver.md, Section 2.7).
   echo "== $name"
   "$mdir" run --continue "$name.toml" | tee -a "$name.log"
 done

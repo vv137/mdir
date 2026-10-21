@@ -77,7 +77,7 @@ the rates.
 `--skin AUTO` writes `pairlist_distance = "AUTO"` and, unless
 `--prune-skin` gives the inner skin, `pruned_distance = "AUTO"`: what a
 control file without the two keys means (D281,
-[neighbors-m0.md](../../../docs/neighbors-m0.md#6-the-choice-of-the-skins)),
+[neighbors.md](../../../docs/neighbors.md#6-the-choice-of-the-skins)),
 except that the log then states the reaches and their source. A run
 searches for its skins only when it is long (at least $5 \times 10^{12}$
 particles times steps), far beyond the suite's runs, and otherwise takes

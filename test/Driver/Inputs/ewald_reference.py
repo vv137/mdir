@@ -2,7 +2,7 @@
 Python: the direct sum with erfc(β r) / r over the pairs within the cutoff
 that are not excluded, the excluded pairs with −erf(β r) / r, the self term,
 the background of a net charge, and the reciprocal sum over many wave
-vectors (docs/pme-m1.md, Section 1).
+vectors (docs/pme.md, Section 1).
 
     ewald_reference.py topology.prmtop coordinates.inpcrd cutoff-Å beta-per-nm
 

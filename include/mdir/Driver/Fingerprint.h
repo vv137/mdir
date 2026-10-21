@@ -1,7 +1,7 @@
 // What defined a run, which its checkpoint records and a run that takes the
 // checkpoint compares (D172).
 //
-// See docs/driver-m0.md, Section 2.6.
+// See docs/driver.md, Section 2.6.
 
 #ifndef MDIR_DRIVER_FINGERPRINT_H
 #define MDIR_DRIVER_FINGERPRINT_H

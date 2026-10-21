@@ -1,4 +1,4 @@
-# Runs in a triclinic cell on a device (docs/triclinic-m2.md, P2 to P4):
+# Runs in a triclinic cell on a device (docs/triclinic.md, P2 to P4):
 # the rhombic dodecahedron of triclinic.test. The neighbor matrix bins the
 # fractional coordinates and tests with the minimum image of the cell, and
 # PME places the particles by s = x H⁻¹, takes their forces through H⁻¹,

@@ -1,6 +1,6 @@
 // Ops of the dyn dialect.
 //
-// See docs/ops-m0.md, Section 6, for the specification.
+// See docs/ops.md, Section 6, for the specification.
 
 #ifndef MDIR_DIALECT_DYN_DYNOPS_TD
 #define MDIR_DIALECT_DYN_DYNOPS_TD

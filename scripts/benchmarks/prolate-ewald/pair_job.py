@@ -7,7 +7,7 @@ D280).
 
 SYSTEM: a directory under $PAIR_DIR/sys (sys.prmtop, sys.inpcrd, npt.h5 if
 NPT); the cases of each tier are the prolate default and the fastest
-Gaussian of docs/pme-m1.md, Section 7 (#371). TIERS: 1e-3,1e-4,1e-5. THREADS: 16,4,1 (CPU; the first for every
+Gaussian of docs/pme.md, Section 7 (#371). TIERS: 1e-3,1e-4,1e-5. THREADS: 16,4,1 (CPU; the first for every
 case, the others for --subset). BUILDS: name=PATH[:VAR=VAL;VAR=VAL],...
 Everything but [pme] is the control of cpu_job.py of #371 (9 A cutoff).
 Round 0 sets the steps (about 20 s; --steps fixes them) and is dropped by
@@ -27,7 +27,7 @@ SAMPLER = os.environ.get('SAMPLER', '')
 CUTOFF = 9.0
 TARGET_S = 20.0
 
-GRIDS = {  # the fastest Gaussian of docs/pme-m1.md section 7 (#371)
+GRIDS = {  # the fastest Gaussian of docs/pme.md section 7 (#371)
     'jac': {'1e-03': (4, 1e-4, (50, 50, 50)), '1e-04': (4, 1e-5, (96, 96, 96)),
             '1e-05': (6, 1e-6, (90, 90, 90))},
     'tip3p-34k': {'1e-03': (4, 1e-4, (84, 84, 84)), '1e-04': (6, 1e-5, (90, 90, 90)),

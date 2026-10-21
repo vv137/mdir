@@ -54,9 +54,9 @@ This is already a useful compiler architecture. A physical neighbor representati
 | MLIP integration | `mlff` and `md.external_potential` appear in the architecture proposal, but not in implemented operation definitions | Proposed, including the opaque escape hatch. |
 | Ensemble dialect | Architecture proposal | Proposed. Existing thermostat/barostat functionality does not imply that an `ensemble` dialect exists. |
 
-Evidence: [architecture status and proposals](architecture.md), [neighbor selection](../lib/Dialect/MDExec/Transforms/ChooseNeighbors.cpp), [groups status](groups-m1.md), [validity analysis](../lib/Dialect/MDExec/Transforms/ExposeValidity.cpp), [PME design](pme-m1.md), [stream assignment](../lib/Dialect/MDExec/Transforms/AssignStreams.cpp), [independence analysis](../lib/Dialect/MDExec/Independence.cpp), [runtime types](../include/mdir/Dialect/MDRT/MDRTTypes.td).
+Evidence: [architecture status and proposals](architecture.md), [neighbor selection](../lib/Dialect/MDExec/Transforms/ChooseNeighbors.cpp), [groups status](neighbor-groups.md), [validity analysis](../lib/Dialect/MDExec/Transforms/ExposeValidity.cpp), [PME design](pme.md), [stream assignment](../lib/Dialect/MDExec/Transforms/AssignStreams.cpp), [independence analysis](../lib/Dialect/MDExec/Independence.cpp), [runtime types](../include/mdir/Dialect/MDRT/MDRTTypes.td).
 
-The proposed tile representation should not be presented as the current implementation: its design document marks it superseded by the groups design. Likewise, the current groups path should not be described as a completed general cluster-list optimizer. [Tile status](tiles-m1.md), [groups design](groups-m1.md).
+The proposed tile representation should not be presented as the current implementation: its design document marks it superseded by the groups design. Likewise, the current groups path should not be described as a completed general cluster-list optimizer. [Tile status](neighbor-tiles.md), [groups design](neighbor-groups.md).
 
 ### Current and proposed compilation paths
 
@@ -311,7 +311,7 @@ The interface should derive summaries from generated regions where possible, usi
 
 This distinction directly answers the first Cornel comparison question. MDIR can generalize staleness analysis into semantic support and version requirements, but it should retain Cornel's separate ownership/ghost/list states as realization concerns. A new position version should invalidate a cached position field immediately; it should trigger a list rebuild only when the validity predicate fails.
 
-For fixed cells, the familiar sufficient list condition is $2 \times \text{maximum displacement} \le \text{skin}$. The implemented MDIR condition also accounts for cell scaling: with $\mathbf m = \text{current cell edges} \oslash \text{reference cell edges}$ and build reach $R$, it checks displacement relative to scaled reference positions against half of $\min(\mathbf m) R - \text{cutoff}$. This is an existing correctness mechanism that distributed planning should preserve, with an appropriate cross-domain reduction. [Validity implementation](../lib/Dialect/MDExec/Transforms/ExposeValidity.cpp), [neighbor method](neighbors-m0.md).
+For fixed cells, the familiar sufficient list condition is $2 \times \text{maximum displacement} \le \text{skin}$. The implemented MDIR condition also accounts for cell scaling: with $\mathbf m = \text{current cell edges} \oslash \text{reference cell edges}$ and build reach $R$, it checks displacement relative to scaled reference positions against half of $\min(\mathbf m) R - \text{cutoff}$. This is an existing correctness mechanism that distributed planning should preserve, with an appropriate cross-domain reduction. [Validity implementation](../lib/Dialect/MDExec/Transforms/ExposeValidity.cpp), [neighbor method](neighbors.md).
 
 List validity alone does not establish distributed coverage. A distributed plan must also guarantee that halo membership and field refreshes provide every needed remote particle. Migration, a skin-reserved halo, or another explicit coverage mechanism can supply that guarantee. The optimal mechanism is a planning choice.
 
@@ -558,7 +558,7 @@ The intended progression is an opaque call with minimum capabilities, richer dec
 
 ## Scientific API above the compiler
 
-Retain the OpenMM-like Python library already specified by repository constraint C5, alongside declarative input, with both producing the same semantic IR. The checkout provides the TOML driver, not the proposed public Python object API. Its existing energy-expression syntax and units already follow OpenMM conventions. [Front-end constraint](decisions.md#1-project-constraints), [architecture goal](architecture.md#1-goal), [expression and unit conventions](ops-m0.md).
+Retain the OpenMM-like Python library already specified by repository constraint C5, alongside declarative input, with both producing the same semantic IR. The checkout provides the TOML driver, not the proposed public Python object API. Its existing energy-expression syntax and units already follow OpenMM conventions. [Front-end constraint](decisions.md#1-project-constraints), [architecture goal](architecture.md#1-goal), [expression and unit conventions](ops.md).
 
 OpenMM separates a public scientific API from its implementation and platform interfaces. Its core model includes `System`, interactions represented by `Force` objects, `Integrator`, `Context`, and `State`. That is a useful user model to adopt without copying its class hierarchy or promising OpenMM API compatibility. [OpenMM architecture and public API](https://docs.openmm.org/latest/userguide/library/01_introduction.html).
 
@@ -599,7 +599,7 @@ The CLI and object API should consume the same scientific model and validation r
 
 ### Existing support and the proposed command boundary
 
-Today `mdir run` reads a control file, compiles, and executes in one process. The CLI also provides `emit`, `check`, `template`, `checkpoint`, `bug-report`, and `version`. HDF5-enabled builds support checkpoint continuation through the control file and checkpoint inspection/comparison. Separate `prepare`, `compile`, `resume`, and `inspect` commands and a compiled run-artifact format are proposals. [CLI definitions](../tools/mdir/mdir.cpp), [run implementation](../tools/mdir/Run.cpp), [driver documentation](driver-m0.md).
+Today `mdir run` reads a control file, compiles, and executes in one process. The CLI also provides `emit`, `check`, `template`, `checkpoint`, `bug-report`, and `version`. HDF5-enabled builds support checkpoint continuation through the control file and checkpoint inspection/comparison. Separate `prepare`, `compile`, `resume`, and `inspect` commands and a compiled run-artifact format are proposals. [CLI definitions](../tools/mdir/mdir.cpp), [run implementation](../tools/mdir/Run.cpp), [driver documentation](driver.md).
 
 GROMACS provides the useful precedent: `grompp` combines scientific inputs into a run-input file consumed by `mdrun`. Its checkpoints retain full-precision state and coupling-algorithm state, and continuation verifies output checksums before appending. The `-maxh` option requests termination and checkpointing at a neighbor-search step near the specified time limit. These mechanisms motivate the workflow; they do not constitute new compiler contributions. [GROMACS preparation](https://manual.gromacs.org/current/onlinehelp/gmx-grompp.html), [continuation](https://manual.gromacs.org/current/user-guide/managing-simulations.html), [wall-time handling](https://manual.gromacs.org/current/onlinehelp/gmx-mdrun.html).
 
@@ -641,7 +641,7 @@ For the strict HPC path, preparation, model conversion, LLVM compilation, depend
 
 ### Portable scientific state and optional execution caches
 
-The existing checkpoint is already richer than positions and velocities. It stores step/time, masses/species, cell, integrator and velocity timing, precision, time step, seed, forces when needed, and relevant barostat state. Output restores input particle order, and neighbor structures start empty at checkpoint boundaries so uninterrupted and continued runs follow the documented rebuild convention. The documented bitwise-continuation scope requires matching checkpoint intervals; it does not establish restart across distributed decompositions. [Checkpoint schema](../include/mdir/Driver/Checkpoint.h), [checkpoint semantics](driver-m0.md#26-checkpoints), [writer](../lib/Driver/Checkpoint.cpp).
+The existing checkpoint is already richer than positions and velocities. It stores step/time, masses/species, cell, integrator and velocity timing, precision, time step, seed, forces when needed, and relevant barostat state. Output restores input particle order, and neighbor structures start empty at checkpoint boundaries so uninterrupted and continued runs follow the documented rebuild convention. The documented bitwise-continuation scope requires matching checkpoint intervals; it does not establish restart across distributed decompositions. [Checkpoint schema](../include/mdir/Driver/Checkpoint.h), [checkpoint semantics](driver.md#26-checkpoints), [writer](../lib/Driver/Checkpoint.cpp).
 
 Extend this into two records:
 
@@ -738,7 +738,7 @@ These are contribution candidates, not established novelty claims. “MLIR for p
 
 A defensible future claim, contingent on implementation and evaluation, is: **MDIR preserves staged particle dependencies through energy differentiation and uses them to construct and optimize both communication and physical traversal for classical and learned potentials.** The current repository supports the foundation of that claim; it does not yet demonstrate the complete result.
 
-The first-milestone white paper is written. Its validation and preparation for publication remain separate from this extension; they do not wait for MLIP or distributed execution. The paper about the implemented compiler should report the staged/distributed design as future work. A paper centered on classical/MLIP unification needs the additional implementation and experiments listed above. [Current roadmap](roadmap.md#7-distributed-execution-and-learned-potentials).
+The first-milestone white paper is written. Its validation and preparation for publication remain separate from this extension; they do not wait for MLIP or distributed execution. The paper about the implemented compiler should report the staged/distributed design as future work. A paper centered on classical/MLIP unification needs the additional implementation and experiments listed above. [Current roadmap](roadmap.md#7-learned-potentials-m3-and-distributed-execution-m4).
 
 ## Adopted scope and first deliverable
 
@@ -904,7 +904,7 @@ whole-step tradeoffs for the same model, not the count of supported models.
 ## Recommended implementation sequence
 
 This sequence implements D166 and D167 and the milestones in
-[roadmap Section 7](roadmap.md#7-distributed-execution-and-learned-potentials).
+[roadmap Section 7](roadmap.md#7-learned-potentials-m3-and-distributed-execution-m4).
 The first local MLIP on two GPUs completes ML1 through ML3; message-passing
 optimization follows as ML4 and ML5.
 
@@ -1060,10 +1060,10 @@ No measurements in this report were newly reproduced. Existing tests provide imp
 | [Matthias Cornel, Development of a Custom Compilation Workflow With MLIR Leveraging OpenFPM to Accelerate Particle Simulations](https://cfaed.tu-dresden.de/publications?pubId=3851), master's thesis submitted August 18, 2025 | Sections 3.2–3.4; 4.1–4.5; 5.1–5.2; 6.3; 7.3; 8; 9; 10 | Dialect structure, state semantics, communication placement, runtime integration, and evaluation limits. Page numbers above refer to printed thesis pages, not PDF viewer indices. |
 | [Ravedutti Lucio Machado, Eitzinger, and Köstler, P4IRS](https://journals.sagepub.com/doi/10.1177/10943420251405928), IJHPCA 40(5), 621–642 | Pages 626–632, Figures 2–4; pages 633–640, evaluation; pages 640–641, outlook and notes | AST/code generation, physical variants, communication selection, and benchmark scope. |
 | [P4IRS publisher record](https://journals.sagepub.com/doi/10.1177/10943420251405928) | Publication metadata | Online-first date and issue identification. |
-| [MDIR architecture](architecture.md), [roadmap](roadmap.md), [prior art](prior-art.md), [operation reference](ops-m0.md) | Current documents | Intent and status, interpreted alongside code rather than as proof of implementation. |
+| [MDIR architecture](architecture.md), [roadmap](roadmap.md), [prior art](prior-art.md), [operation reference](ops.md) | Current documents | Intent and status, interpreted alongside code rather than as proof of implementation. |
 | [MD operations](../include/mdir/Dialect/MD/MDOps.td), [MDExec operations](../include/mdir/Dialect/MDExec/MDExecOps.td), [MDRT types](../include/mdir/Dialect/MDRT/MDRTTypes.td), [MDRT operations](../include/mdir/Dialect/MDRT/MDRTOps.td) | Operation/type declarations | Actual available IR constructs and the declared event type. |
 | [Differentiation](../lib/Dialect/MD/Transforms/Differentiate.cpp), [validity](../lib/Dialect/MDExec/Transforms/ExposeValidity.cpp), [neighbor selection](../lib/Dialect/MDExec/Transforms/ChooseNeighbors.cpp), [storage assignment](../lib/Dialect/MDExec/Transforms/AssignStorage.cpp), [independence](../lib/Dialect/MDExec/Independence.cpp), [pipeline](../tools/mdir/Run.cpp) | Implementations | Existing semantic-to-execution decisions and their limitations. |
-| [Neighbor method](neighbors-m0.md), [groups design](groups-m1.md), [superseded tiles design](tiles-m1.md), [PME design](pme-m1.md) | Methods and status | Current physical representations and single-node mesh computation. |
+| [Neighbor method](neighbors.md), [groups design](neighbor-groups.md), [superseded tiles design](neighbor-tiles.md), [PME design](pme.md) | Methods and status | Current physical representations and single-node mesh computation. |
 | [Allegro](https://www.nature.com/articles/s41467-023-36329-y), [NequIP](https://www.nature.com/articles/s41467-022-29939-5), [MACE](https://arxiv.org/abs/2206.07697) | Original model papers | Only the locality/message-passing classifications used in the proposed dependency table. |
 | [e3nn convolution](https://docs.e3nn.org/en/stable/guide/convolution.html), [irreps](https://docs.e3nn.org/en/stable/api/o3/o3_irreps.html), [gates](https://docs.e3nn.org/en/stable/api/nn/nn_gate.html), [NequIP source](https://nequip.readthedocs.io/en/latest/_modules/nequip/model/nequip_models.html), [CACE](https://www.nature.com/articles/s41524-024-01332-4) | Semantic examples and model construction | Geometry, representation metadata, nonlinearities, and alternative bases. |
 | [Metatomic capabilities](https://docs.metatensor.org/metatomic/latest/torch/reference/models/metadata.html), [model interface](https://docs.metatensor.org/metatomic/latest/torch/reference/models/export.html), [neighbor-list example](https://docs.metatensor.org/metatomic/latest/examples/3-atomistic-model-with-nl.html), [KIM API](https://kim-api.readthedocs.io/en/latest/) | Community model interfaces | Model consumption and the distinction between capabilities and executable stages. |

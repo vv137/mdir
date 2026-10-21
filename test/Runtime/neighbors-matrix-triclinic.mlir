@@ -1,5 +1,5 @@
 // The template that builds a neighbor matrix in a triclinic cell
-// (docs/triclinic-m2.md), against every pair and every image: each pair
+// (docs/triclinic.md), against every pair and every image: each pair
 // whose nearest image is within the reach is in the row of each of its
 // particles once, and no pair beyond the reach is.
 //
@@ -27,7 +27,7 @@
 // least of a_x, b_y, c_z or a little under it, where the image of the one
 // pass along c, b, and a is the nearest one; in the others it is beyond,
 // up to more than the least of the diagonal, where the build tests the
-// other images within the reach (#258, docs/triclinic-m2.md, Section 2).
+// other images within the reach (#258, docs/triclinic.md, Section 2).
 
 func.func private @printI64(i64)
 func.func private @printNewline()

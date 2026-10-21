@@ -11,7 +11,7 @@ def MDExec_NeighborKind : I32EnumAttr<"NeighborKind",
     // A row of fixed width per particle.
     I32EnumAttrCase<"Matrix", 0, "matrix">,
     // Groups of 16 particles that share a list of neighbors, each pair once
-    // (D89, docs/groups-m1.md). On a device only.
+    // (D89, docs/neighbor-groups.md). On a device only.
     I32EnumAttrCase<"Groups", 1, "groups">
   ]> {
   let cppNamespace = "::mdir::md_exec";

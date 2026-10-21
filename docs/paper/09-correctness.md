@@ -40,7 +40,7 @@ periodicities: its dihedrals were 1338.6 kcal/mol where pmemd takes 2259.2
 from the file of the suite, so the rates of Factor IX before D133 were of
 another model. And on a grid of an odd number of points the aliasing
 factor of Amber's influence function takes another frequency at one
-index (`docs/pme-m1.md`, Section 1.1): on Cellulose with 270 × 125 × 125
+index (`docs/pme.md`, Section 1.1): on Cellulose with 270 × 125 × 125
 points the electrostatic energies differ by $1.6\times10^{-6}$, with
 270 × 128 × 128 by $2\times10^{-9}$. MDIR chooses even grids.
 
@@ -105,7 +105,7 @@ the positions: $\mathrm{tr}\,\mathsf W$ against $-dU/d\lambda$ by
 Richardson's central difference, to $3\times10^{-5}$ relative
 (`check_virial.py`). On the ff19SB system the influence function of
 Essmann et al. is $-1.8\times10^{-3}$ from the Ewald sum and the optimal
-one $-2\times10^{-4}$ (recorded in `docs/pme-m1.md`).
+one $-2\times10^{-4}$ (recorded in `docs/pme.md`).
 
 ## 9.3 Derivatives
 
@@ -611,7 +611,7 @@ simulation give the energies and forces of a simulation compiled from each
   on the argon–krypton mixture in its cell of 23.2 Å (`groups-gpu.test`). Under the barostat,
   the dual list matches one list over 1000 steps (Section 4.5).
 - **The tests of validity.** Section 4.1 proves the test under scaling;
-  `tiles-m1.md` proves the dual list's.
+  `neighbor-tiles.md` proves the dual list's.
 
 ## 9.8 Robustness
 

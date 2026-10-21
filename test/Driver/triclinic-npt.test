@@ -1,4 +1,4 @@
-# A triclinic cell at constant pressure (docs/triclinic-m2.md, P4): the
+# A triclinic cell at constant pressure (docs/triclinic.md, P4): the
 # barostat scales the cell as H diag(μ), the tilts b_x and c_x with a_x
 # and c_y with b_y, so that the shape of the rhombic dodecahedron of
 # triclinic.test, c_x = a_x/2 and c_y = b_y/2, stays, with isotropic and

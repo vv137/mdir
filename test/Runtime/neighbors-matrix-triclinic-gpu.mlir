@@ -1,5 +1,5 @@
 // The template that builds a neighbor matrix on a device in a triclinic
-// cell (docs/triclinic-m2.md), against the matrix of the host, which
+// cell (docs/triclinic.md), against the matrix of the host, which
 // neighbors-matrix-triclinic.mlir compares with every pair and every image.
 //
 // REQUIRES: cuda

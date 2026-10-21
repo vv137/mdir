@@ -1,5 +1,5 @@
 // The periodic cell of a run: the reduced lower-triangular matrix of the
-// GROMACS manual (docs/triclinic-m2.md, Section 1).
+// GROMACS manual (docs/triclinic.md, Section 1).
 
 #ifndef MDIR_DRIVER_CELL_H
 #define MDIR_DRIVER_CELL_H

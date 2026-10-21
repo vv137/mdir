@@ -242,7 +242,7 @@ took 60.6 µs, tiles of 8 × 8 with a full list 142.1, and tiles of 8 × 4
 the slots of the 8 × 4 tiles held a pair of the list, against 98% of the
 entries of the matrix at that reach, and the kernel was bound by the
 arithmetic of the pairs, so contiguous loads did not pay for the empty
-slots (`docs/tiles-m1.md`, Section 11). Groups of 16 that share a list of
+slots (`docs/neighbor-tiles.md`, Section 11). Groups of 16 that share a list of
 *particles* waste no slot on the side of the list, need a sixteenth of
 the entries of the matrix, and keep the bounding box of a group for the
 build: on Cellulose at a reach of 9 Å the loop took 1013 to 1034 µs
@@ -523,7 +523,7 @@ beyond the cutoff lose on the dipeptide (1,168 atoms) by 17% on an RTX
 `neighbor_structure = "AUTO"`, takes the groups with these reaches on a
 GPU outside the deterministic mode from 23,000 particles, the crossover
 of the device where it comes later. Below that, and wherever a loop
-cannot take each pair once, it takes the matrix (`docs/groups-m1.md`,
+cannot take each pair once, it takes the matrix (`docs/neighbor-groups.md`,
 Section 6.3). The inner skin grows in proportion to the time step: the
 displacement over a fixed number of steps roughly does, so the interval between
 prunings stays the same. On STMV at 4 fs an inner reach of 9.2 Å is
@@ -611,7 +611,7 @@ that follows the refresh at the same positions, in f32, takes the frames
 of step 1 as they are when the refresh pruned: they are its own, to the
 bit. With the active units and the shared frames a step of 103,292 TIP3P
 waters takes 1118 µs against 1130 on an RTX 4090, and one of STMV 4737
-against 4784 (`docs/groups-m1.md`, Section 6.2). Positions in f32 can
+against 4784 (`docs/neighbor-groups.md`, Section 6.2). Positions in f32 can
 only keep a pair beyond $R_\text{in}$, never drop one within it, for the
 reason given for the build: the reach is widened by the same $\varepsilon$.
 
@@ -673,7 +673,7 @@ The deterministic mode does not search: the order of a row of the matrix
 follows its cells, so its sums, which agree across skins to the rounding
 ($1.8 \times 10^{-9}$ nm in the positions of a water box after 500 steps),
 repeat to the bit only with the same skins. Table 4.3 compares the choice
-with the best point of a grid; [neighbors-m0.md](../neighbors-m0.md),
+with the best point of a grid; [neighbors.md](../neighbors.md),
 Section 6, has the details.
 
 *Table 4.3. The skins of `"AUTO"` against the default of D261 and the
@@ -727,7 +727,7 @@ bound by memory and its computation by the shuffles and the arithmetic of
 the loop, and warps of the two parts share a multiprocessor, so the
 pruning hides under the loop. A step takes 4 to 6%
 less from about 6,400 groups (Cellulose 1465 → 1376 µs, STMV at 4 fs
-4710 → 4458; `docs/groups-m1.md`, Section 6.2). Two costs bound the gain.
+4710 → 4458; `docs/neighbor-groups.md`, Section 6.2). Two costs bound the gain.
 The warps are as many as the groups, where the loop has one for each
 active unit, several a group: with 1,472 groups on JAC they leave the
 device partly idle and a step takes 1.2% more. And the kernel holds 94 to

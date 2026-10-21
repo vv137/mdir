@@ -6,7 +6,7 @@
 # The directory is ala3-run by default, and mdir is found on PATH or given.
 # Each stage begins from the checkpoint of the one before; run again, the
 # script continues a stage that stopped and skips one that is complete
-# (docs/driver-m0.md, Section 2.7).
+# (docs/driver.md, Section 2.7).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 work=${1:-ala3-run}

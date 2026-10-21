@@ -1,6 +1,6 @@
 // Ops of the md dialect.
 //
-// See docs/ops-m0.md, Section 4, for the specification.
+// See docs/ops.md, Section 4, for the specification.
 
 #ifndef MDIR_DIALECT_MD_MDOPS_TD
 #define MDIR_DIALECT_MD_MDOPS_TD
@@ -199,7 +199,7 @@ def MD_TriclinicCellOp : MD_Op<"triclinic_cell", [Pure]> {
     The cell is periodic in all three directions, with the lattice vectors
     a = (lx, 0, 0), b = (bx, ly, 0), and c = (cx, cy, lz), the rows of a
     lower-triangular matrix in the reduced form |bx| <= lx/2, |cx| <= lx/2,
-    |cy| <= ly/2 (docs/triclinic-m2.md). The operands are its diagonal and
+    |cy| <= ly/2 (docs/triclinic.md). The operands are its diagonal and
     then its tilts.
 
     ```mlir
@@ -420,7 +420,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
     ```
 
     The sum of smooth particle mesh Ewald over a grid of `grid` points with
-    B-splines of the order `order` (docs/pme-m1.md), with `coulomb` the
+    B-splines of the order `order` (docs/pme.md), with `coulomb` the
     Coulomb constant f. `moduli` holds the factors of the influence function
     along each edge, which do not depend on the cell: row `a` holds
     `|b_a(k)|²` for each index `k` of edge `a`, times the factor of the
@@ -453,7 +453,7 @@ def MD_ReciprocalOp : MD_Op<"reciprocal", [Pure]> {
 
     With `p3m`, the influence function is the one optimal for the forces
     of analytic differentiation, eq. 2.28 of [Ballenegger2012], with the
-    Gaussian in a rectangular cell (D304, docs/pme-m1.md,
+    Gaussian in a rectangular cell (D304, docs/pme.md,
     Section 1.1): `moduli` has 3 + 3 (2J + 1) rows, row `a` holds
     `1 / S_a(k)` with `S_a(k) = Σ_j Û²(ν_j)`, and row `3 + a (2J + 1) + j
     + J` the weight `u_j = Û²(ν_j) / S_a(k)` of the alias `ν_j = n + j

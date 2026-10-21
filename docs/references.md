@@ -75,7 +75,7 @@ influence functions and error estimates," *J. Chem. Theory Comput.* **8**,
 Used for: influence functions of mesh Ewald other than that of smooth
 particle mesh Ewald: `influence = "OPTIMAL"` is its eq. 4.2, a factor for
 each edge, and `influence = "P3M"` its eq. 2.28, optimal for the forces of
-analytic differentiation (pme-m1.md, Section 1.1; D304).
+analytic differentiation (pme.md, Section 1.1; D304).
 
 ### Barker1973
 
@@ -615,7 +615,7 @@ charge," *J. Chem. Theory Comput.* **10**, 381–390 (2014).
 
 Used for: the energy of the uniform background that neutralizes a system
 with a net charge under Ewald summation, $-\pi Q^2 / (2V\beta^2)$ in units of
-$f$ (pme-m1.md).
+$f$ (pme.md).
 
 ### Izadi2014
 
@@ -1113,7 +1113,7 @@ Used for: cluster pair lists (clusters of a fixed number of particles,
 lists of cluster pairs searched by bounding boxes, masks of interactions
 and exclusions, the 8 × 4 layout of the CUDA kernels), discussed in
 [prior-art.md](prior-art.md); the tile structure of MDIR (D82) follows
-them, see [tiles-m1.md](tiles-m1.md).
+them, see [neighbor-tiles.md](neighbor-tiles.md).
 
 ### Pall2020
 
@@ -1126,7 +1126,7 @@ Used for: the dual pair list with dynamic (rolling) pruning, the pruning
 of cluster pairs on the GPU, and the fixed lifetime of the pair list with
 a buffer estimated from a tolerance of the energy drift, which the tile
 structure of MDIR (D82) follows or departs from; see
-[tiles-m1.md](tiles-m1.md). Also for the first pruning of a list in a special version
+[neighbor-tiles.md](neighbor-tiles.md). Also for the first pruning of a list in a special version
 of the kernel of forces, beside which the pruning of the inner list in the
 loop over pairs of MDIR (D284) is set in the white paper,
 Section 4.5.
@@ -1220,7 +1220,7 @@ M. Reinecke, "pocketfft," a library of fast Fourier transforms in C,
 Max-Planck-Society (2010–2019), under the 3-clause BSD license.
 [gitlab.mpcdf.mpg.de/mtr/pocketfft](https://gitlab.mpcdf.mpg.de/mtr/pocketfft)
 
-Used for: the FFT of particle mesh Ewald on the host (D64, pme-m1.md).
+Used for: the FFT of particle mesh Ewald on the host (D64, pme.md).
 
 ### Roe2013
 
@@ -1334,7 +1334,7 @@ Used for: the binning of the particles by the points they spread to and
 the spreading into blocks of the grid in shared memory: the prototype of
 issue #334 (D266), and the spreading into tiles of PME on a device, of
 the B-splines and of the prolate kernel (D282, issue #336,
-[pme-m1.md](pme-m1.md#33-spreading-through-tiles)).
+[pme.md](pme.md#33-spreading-through-tiles)).
 
 ### Shirts2007
 

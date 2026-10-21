@@ -13,7 +13,7 @@
 #
 # MDIR's Lennard-Jones and its 1-4 part add to VDW; its Coulomb terms add to
 # -42.379423, CHARMM's times 332.0637 / 332.0716, the ratio of the Coulomb
-# constants of CODATA and of CHARMM (docs/charmm-m1.md, Section 2).
+# constants of CODATA and of CHARMM (docs/charmm.md, Section 2).
 #
 # RUN: rm -rf %t && split-file %s %t
 # RUN: mdir run %t/run.toml | FileCheck %s

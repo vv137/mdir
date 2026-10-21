@@ -1,7 +1,7 @@
 // The reciprocal sum of smooth particle mesh Ewald on the host
 // [Essmann1995]: spreading the charges to a grid with B-splines, the product
 // of the transform of the grid with the influence function, and the forces
-// from the potential on the grid (docs/pme-m1.md). The keys are those of
+// from the potential on the grid (docs/pme.md). The keys are those of
 // docs/references.md. The FFT between the steps is pocketfft's, in the
 // runtime [Reinecke2019].
 //
@@ -608,7 +608,7 @@ func.func private @mdrt.pme_wave(%k: index, %count: index, %length: f64) -> f64 
 //
 // With the rows of influence "P3M" in `moduli` (more than five,
 // D304), eq. 2.28 of [Ballenegger2012] in its form for the
-// edges (docs/pme-m1.md, Section 1.1): with the weights u_j of the aliases
+// edges (docs/pme.md, Section 1.1): with the weights u_j of the aliases
 // ν_j = n + j K of the point, μ_j = ν_j / L, g_j = exp(−π² μ_j² / β²),
 // the three values are Σ u μ, Σ u μ², and Σ u g / S times the prefactor
 // along x, so that the influence is again the product of the third over
@@ -911,7 +911,7 @@ func.func private @mdrt.pme_point_sums(%re: !pme_real, %im: !pme_real, %m1: !pme
 
 // As pme_point_sums, for influence "P3M" (D304): the virial of
 // the point is the derivative of its energy under a strain of the cell,
-// through every alias in the sums of eq. 2.28 (docs/pme-m1.md, Section 1.1),
+// through every alias in the sums of eq. 2.28 (docs/pme.md, Section 1.1),
 //
 //   W_ab = E_m (δ_ab − 2 (π²/β²) A_ab − 2 B_ab / D),
 //

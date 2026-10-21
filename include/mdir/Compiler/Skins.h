@@ -1,6 +1,6 @@
 // The automatic choice of the skins of the neighbor lists (D281).
 //
-// See docs/neighbors-m0.md, "The choice of the skins".
+// See docs/neighbors.md, "The choice of the skins".
 #ifndef MDIR_COMPILER_SKINS_H
 #define MDIR_COMPILER_SKINS_H
 

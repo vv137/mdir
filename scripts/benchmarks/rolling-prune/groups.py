@@ -1,5 +1,5 @@
 """Groups of 16 places as the build of the lists of groups makes them
-(docs/groups-m1.md), for the offline studies of #357."""
+(docs/neighbor-groups.md), for the offline studies of #357."""
 import numpy as np
 
 

@@ -1,6 +1,6 @@
 // Expansion of truncation attributes into kernels.
 //
-// See docs/ops-m0.md, Section 4.8. Keys in brackets are those of
+// See docs/ops.md, Section 4.8. Keys in brackets are those of
 // docs/references.md.
 
 #include "mdir/Dialect/MD/Transforms/Passes.h"

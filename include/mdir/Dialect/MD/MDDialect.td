@@ -1,6 +1,6 @@
 // The md dialect: particles, fields, relations, and potentials.
 //
-// See docs/ops-m0.md for the specification.
+// See docs/ops.md for the specification.
 
 #ifndef MDIR_DIALECT_MD_MDDIALECT_TD
 #define MDIR_DIALECT_MD_MDDIALECT_TD

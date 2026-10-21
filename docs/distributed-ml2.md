@@ -692,7 +692,7 @@ own op and its own test, as the plan separates them:
 - `covered` is the skin test of neighbor validity, extended to the halo:
   the halo built at $\mathbf x^\text{ref}$ with reach $R$ covers a cutoff
   $r_c$ at $\mathbf x$ if no particle has moved more than $(R - r_c)/2$
-  (the existing condition with the scale of the cell, [neighbors-m0.md](neighbors-m0.md)).
+  (the existing condition with the scale of the cell, [neighbors.md](neighbors.md)).
   Its result is reduced over all domains before it is a value, so every
   domain takes the same branch: a predicate that guards a collective is
   agreed by construction (#38). A relation or halo used at other positions

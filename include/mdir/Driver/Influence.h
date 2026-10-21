@@ -3,9 +3,9 @@
 // The influence functions (lattice Green functions) of particle mesh Ewald
 // with analytic differentiation (AD), built from a splitting and a window
 // by sums over the aliases of each point of the grid [Ballenegger2012]
-// (docs/pme-m1.md, Section 1.1; D304).
+// (docs/pme.md, Section 1.1; D304).
 //
-// The notation is that of docs/pme-m1.md: a wave vector is m = H⁻ᵀ ν, with
+// The notation is that of docs/pme.md: a wave vector is m = H⁻ᵀ ν, with
 // ν = n + J K the signed index n of a point of the grid shifted by J ∈ ℤ³
 // times the numbers of points K, so that m is in reciprocal length (no
 // factor 2π). The window enters through Û(ν_a / K_a) along each edge, the
@@ -103,7 +103,7 @@ EdgeWeights getEdgeWeights(const Window &window, int64_t count,
                            int64_t aliases);
 
 /// What a kernel computes for point k of an edge of length `length` from
-/// those rows (docs/pme-m1.md, Section 1.1): with μ_j = ν_j / L, g_j =
+/// those rows (docs/pme.md, Section 1.1): with μ_j = ν_j / L, g_j =
 /// exp(−gauss μ_j²), u_j the weights,
 ///   factor = Σ u g / S, mean = Σ u μ, square = Σ u μ²,
 ///   gaussMean = Σ u g μ / Σ u g, gaussSquare = Σ u g μ² / Σ u g
@@ -120,7 +120,7 @@ EdgeSums getEdgeSums(const EdgeWeights &rows, int64_t count, int64_t aliases,
 std::vector<double> getSplineModuli(int64_t count, int64_t order);
 
 /// The square of the factor λ of influence "OPTIMAL" for each index
-/// (docs/pme-m1.md, Section 1.1), with the sums over |j| ≤ 50.
+/// (docs/pme.md, Section 1.1), with the sums over |j| ≤ 50.
 std::vector<double> getAliasFactors(int64_t count, int64_t order);
 
 } // namespace influence

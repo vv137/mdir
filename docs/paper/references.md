@@ -110,7 +110,12 @@ NVIDIA, "CUB," the block, warp, and device primitives of the CUDA C++ Core
 Libraries (CCCL), version 3.2.0 as shipped with CUDA 13.2 (`CUB_VERSION`
 300200), under the 3-clause BSD license: `cub::BlockHistogram` with the
 algorithm `BLOCK_HISTO_ATOMIC`, `cub/block/block_histogram.cuh` and
-`cub/block/specializations/block_histogram_atomic.cuh`. No paper;
+`cub/block/specializations/block_histogram_atomic.cuh`; `cub::WarpScan`
+(`cub/warp/specializations/warp_scan_shfl.cuh`), `cub::BlockScan` with
+the algorithm `BLOCK_SCAN_WARP_SCANS`
+(`cub/block/specializations/block_scan_warp_scans.cuh`), and the single
+pass of `cub::DeviceScan` with decoupled look-back
+(`cub/agent/single_pass_scan_operators.cuh`). No paper;
 [github.com/NVIDIA/cccl](https://github.com/NVIDIA/cccl) (read 2026-10-18,
 against the headers of CUDA 13.2).
 
@@ -299,8 +304,9 @@ Phys.* **3**(5), 300–313 (1935).
 ### Knuth1998
 
 D. E. Knuth, *The Art of Computer Programming*, Vol. 3, *Sorting and
-Searching*, 2nd ed. (Addison-Wesley, Reading, Massachusetts, 1998).
-ISBN 0-201-89685-0.
+Searching*, 2nd ed. (Addison-Wesley, Reading, Massachusetts, 1998),
+ISBN 0-201-89685-0. No DOI; checked on 2026-10-18 against the author's
+page of the volume (www-cs-faculty.stanford.edu/~knuth/taocp.html).
 
 ### Krautler2001
 
@@ -344,6 +350,13 @@ integration and solvent–solute splitting," *Proc. R. Soc. A* **472**,
 F. Lekien, J. Marsden, "Tricubic interpolation in three dimensions,"
 *Int. J. Numer. Methods Eng.* **63**, 455–471 (2005).
 [doi:10.1002/nme.1296](https://doi.org/10.1002/nme.1296)
+
+### Liang2026
+
+J. Liang, L. Lu, A. Barnett, L. Greengard, S. Jiang, "Accelerating
+molecular dynamics simulations using fast Ewald summation with prolates,"
+*Nat. Commun.* **17**, 6681 (2026).
+[doi:10.1038/s41467-026-73232-8](https://doi.org/10.1038/s41467-026-73232-8)
 
 ### Lingenheil2008
 
@@ -461,6 +474,13 @@ York, 2006).
 S. Nosé, "A molecular dynamics method for simulations in the canonical
 ensemble," *Mol. Phys.* **52**, 255–268 (1984).
 [doi:10.1080/00268978400101201](https://doi.org/10.1080/00268978400101201)
+
+### Osipov2013
+
+A. Osipov, V. Rokhlin, H. Xiao, *Prolate Spheroidal Wave Functions of
+Order Zero*, Applied Mathematical Sciences **187** (Springer, New York,
+2013).
+[doi:10.1007/978-1-4614-8259-8](https://doi.org/10.1007/978-1-4614-8259-8)
 
 ### Pall2013
 
@@ -606,6 +626,13 @@ portable library for particle-based simulations," *J. Open Source Softw.*
 **7**(72), 4115 (2022).
 [doi:10.21105/joss.04115](https://doi.org/10.21105/joss.04115)
 
+### Slepian1961
+
+D. Slepian, H. O. Pollak, "Prolate spheroidal wave functions, Fourier
+analysis and uncertainty — I," *Bell Syst. Tech. J.* **40**, 43–63
+(1961).
+[doi:10.1002/j.1538-7305.1961.tb03976.x](https://doi.org/10.1002/j.1538-7305.1961.tb03976.x)
+
 ### Steinbach1994
 
 P. J. Steinbach, B. R. Brooks, "New spherical-cutoff methods for
@@ -686,6 +713,12 @@ C. L. Wennberg, T. Murtola, B. Hess, E. Lindahl, "Lennard-Jones lattice
 summation in bilayer simulations has critical effects on surface tension
 and lipid properties," *J. Chem. Theory Comput.* **9**, 3527–3537 (2013).
 [doi:10.1021/ct400140n](https://doi.org/10.1021/ct400140n)
+
+### Xiao2001
+
+H. Xiao, V. Rokhlin, N. Yarvin, "Prolate spheroidal wavefunctions,
+quadrature and interpolation," *Inverse Problems* **17**, 805–838 (2001).
+[doi:10.1088/0266-5611/17/4/315](https://doi.org/10.1088/0266-5611/17/4/315)
 
 ### Zhang2019
 
