@@ -52,14 +52,13 @@ thermostat are not.
    `changes-requested`, remove that label and say so in a comment; the
    coordinator then reviews the new head.
 4. **Ready.** When the implementation, its documents, and its validation
-   are complete, rebase on the current `main` immediately before marking
-   the PR ready (`gh pr ready`), resolve every conflict there, and run the
-   full suite at that head, unless an earlier passing suite carries over
-   (see [Reusing a suite](#reusing-a-suite)). The comment that marks it
-   ready names the head commit, the commit of `main` it is based on, and
-   either the suite's counts or what the reuse requires. A PR whose head
-   does not contain the current `main` is not ready (see
-   [Staying current](#staying-current)).
+   are complete, rebase on the current `main`, resolve every conflict
+   there, and run the full suite at that head, unless an earlier passing
+   suite carries over (see [Reusing a suite](#reusing-a-suite)); then mark
+   the PR ready (`gh pr ready`). The comment that marks it ready names the
+   head commit, the commit of `main` it is based on, and either the suite's
+   counts or what the reuse requires. `main` may move after that without
+   the PR being rebased again (see [Staying current](#staying-current)).
 5. **Review.** The coordinator builds the PR's head commit and runs the
    full suite on a GPU, or verifies the author's suite at that same head
    (the build recorded that commit with no uncommitted changes and was not
@@ -206,24 +205,24 @@ maintainer decides whether to allow it.
 
 ## Staying current
 
-The author, not the coordinator, brings a PR up to date with `main`:
+A PR is reviewed and merged at the head that its suite tested, on the
+`main` it was based on when it was marked ready. The merge train (see
+[Merging](#merging)) tests the combination with the `main` of its time, so
+an author does not rebase each time `main` moves:
 
-- A PR is reviewed only when its head contains the current `main`. If
-  `main` has moved, the coordinator does not resolve the conflicts itself;
-  it asks the author to rebase, with the label `changes-requested`.
-- After every push to `main`, the author of each open ready PR rebases on
-  the new `main` and resolves the conflicts. It runs the full suite at the
-  new head unless the earlier suite carries over (see
-  [Reusing a suite](#reusing-a-suite)), and says so in a comment naming the
-  head and its base. The new head is then reviewed again, as any head that
-  moves after `merge-recommended`.
-- Conflicts in prose and code are always resolved by the author, who knows
-  what both sides mean. Rows of tables are no exception: the author keeps
-  the rows of `main` and adds its own at the end.
-
-A PR merged this way adds nothing to the tree its review suite tested: the
-merge commit has the tree of the reviewed head, so the review suite is also
-the suite of the merge.
+- The author rebases only when the train cannot merge the PR without
+  resolving a conflict in prose or code. Those conflicts are always
+  resolved by the author, who knows what both sides mean; the coordinator
+  asks with the label `changes-requested`. A conflict limited to the rows
+  that every PR adds at the end of `docs/decisions.md` and `CHANGELOG.md`
+  is not a reason to rebase: the train keeps both rows, in the order of the
+  merges.
+- The author also rebases when the train removes the PR because the
+  combination failed (see [Merging](#merging)), and when the PR depends on
+  something that `main` gained.
+- A rebased head is reviewed again, as any head that moves after
+  `merge-recommended`, and runs its suite unless the earlier one carries
+  over (see [Reusing a suite](#reusing-a-suite)).
 
 ## Reusing a suite
 
@@ -253,30 +252,37 @@ the two trees differ only in documentation:
 
 ## Merging
 
-The coordinator merges only PRs labeled `approved` by the maintainer, at
-the commit named in the review:
+The coordinator merges the PRs labeled `approved` by the maintainer, at the
+commit named in each review, in a **merge train**: once an hour, when at
+least one approved PR waits. A train that is still running when the next
+hour comes is not joined by a second one; the PRs approved meanwhile wait
+for the next.
 
-1. Branch `review-<name>` from `origin/main`.
-2. Merge the approved PR with `--no-ff`. Its head contains `main`, so the
-   merge has no conflicts and its tree is the tree of the reviewed head;
-   the coordinator checks that with `git diff` against the head before
-   going on. A merge with a conflict, or with a tree that differs, stops:
-   the author rebases and the PR is reviewed again.
+1. Branch `train-<date>-<hour>` from `origin/main`.
+2. Merge the approved PRs one after another with `--no-ff`, in the order of
+   their approval. A conflict limited to the rows at the end of
+   `docs/decisions.md` and `CHANGELOG.md` is resolved by keeping both rows,
+   in the order of the merges. Any other conflict leaves that PR out of the
+   train: the coordinator labels it `changes-requested` and asks its author
+   to rebase.
 3. Assign the decision numbers and run `scripts/decision-number.sh check`.
-   The numbering commit changes labels into numbers and nothing else; the
+   The numbering commit changes labels into numbers, in the text and in the
+   anchors of links to headings that held them, and nothing else; the
    coordinator checks that its diff is limited to that.
-4. The review suite at the merged head is the suite of the merge. A merge
-   never proceeds on a failing suite. Several approved PRs that are merged
-   in one sequence form the one exception: only the first matches its
-   reviewed tree, so the coordinator merges the others only when their
-   conflicts are limited to rows of `decisions.md` and `CHANGELOG.md`
-   (resolved by keeping both rows, in the order of the merges), and builds
-   and runs the full suite on a GPU at the combined head before pushing.
-5. Fast-forward `main` and push it. The PRs then show as merged; the
-   label `approved` is the maintainer's approval of this push.
+4. Build the combined head and run the full suite on a GPU (two D309 shards
+   where the scheduler allows), and the compute-sanitizer tier when a PR of
+   the train changes device code, after the suite has rebuilt the tree. A
+   train never pushes on a failing run. When a run fails, the coordinator
+   finds the PR that causes it (from the failing tests, or by running again
+   without the suspect), removes it from the train with `changes-requested`
+   and the failure, and runs the remaining train again. A train of one PR
+   whose head contains `main` needs no run of its own: its merge has the tree
+   of the reviewed head, whose suite is the suite of the merge.
+5. Fast-forward `main` and push it. The PRs then show as merged; the label
+   `approved` is the maintainer's approval of this push. The comment on
+   each PR names the train, its head, and the runs that gated it.
 6. Rebuild the white paper (`scripts/paper/build-pdf.sh`).
-7. Remove the merged worktrees, branches, and build trees, and ask the
-   authors of the open PRs to rebase on the new `main`.
+7. Remove the merged worktrees, branches, and build trees.
 
 ## Releases
 
