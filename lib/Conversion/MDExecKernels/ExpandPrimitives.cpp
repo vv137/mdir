@@ -1,9 +1,10 @@
 // The calls of the templates to the emitters of CompactionEmitter.h
-// (D296) and RaggedRows.h (D314):
+// (D296), RaggedRows.h (D314), and GatherEmitter.h (D[gather-grid-z]):
 // `func.call @mdir.primitive.<name>(...)`, each replaced by the code of its
 // emitter where it stands.
 
 #include "mdir/Conversion/CompactionEmitter.h"
+#include "mdir/Conversion/GatherEmitter.h"
 #include "mdir/Conversion/RaggedRows.h"
 #include "mdir/Conversion/Passes.h"
 
@@ -28,7 +29,8 @@ namespace {
 
 /// What an operand of a primitive must be.
 enum class Kind {
-  I1, I32, Index, Buffer, WideBuffer, DynamicBuffer, SharedBuffer
+  I1, I32, Index, Buffer, WideBuffer, DynamicBuffer, SharedBuffer,
+  RealBuffer, Real
 };
 
 bool hasKind(Type type, Kind kind) {
@@ -62,6 +64,14 @@ bool hasKind(Type type, Kind kind) {
            llvm::isPowerOf2_64(memref.getDimSize(0) - 1) &&
            memref.getDimSize(0) - 1 <= 32;
   }
+  case Kind::RealBuffer: {
+    auto memref = dyn_cast<MemRefType>(type);
+    return memref && memref.getRank() == 1 && memref.isDynamicDim(0) &&
+           (memref.getElementType().isF32() ||
+            memref.getElementType().isF64());
+  }
+  case Kind::Real:
+    return type.isF32() || type.isF64();
   }
   return false;
 }
@@ -239,6 +249,34 @@ std::optional<Primitive> getPrimitive(StringRef name) {
                        return SmallVector<Value>{emitRaggedEntry(
                            b, call.getLoc(), a[0], a[1], a[2], a[3], a[4])};
                      }};
+  // The wrapped z axis is calculated outside the row loops. The grid read
+  // stays inside them, so extraction does not add any repeated arithmetic.
+  if (name == "wrapped_grid_axis_index" ||
+      name == "wrapped_grid_axis_i32") {
+    Kind coord = name.ends_with("_i32") ? Kind::I32 : Kind::Index;
+    return Primitive{{coord, coord, coord}, 3, 1,
+                     [](OpBuilder &b, func::CallOp call, ValueRange a) {
+                       return SmallVector<Value>{emitWrappedGridAxis(
+                           b, call.getLoc(), a[0], a[1], a[2],
+                           call->hasAttr("signed"))};
+                     },
+                     {coord}};
+  }
+  if (name == "grid_gather_index" || name == "grid_gather_i32" ||
+      name == "grid_gather_masked_i32") {
+    Kind coord = name.ends_with("_i32") ? Kind::I32 : Kind::Index;
+    bool masked = name == "grid_gather_masked_i32";
+    SmallVector<Kind> operands = {Kind::RealBuffer, coord, coord};
+    if (masked)
+      operands.push_back(Kind::I1);
+    return Primitive{std::move(operands), masked ? 4u : 3u, 1,
+                     [](OpBuilder &b, func::CallOp call, ValueRange a) {
+                       return SmallVector<Value>{emitGridGather(
+                           b, call.getLoc(), a[0], a[1], a[2],
+                           a.size() > 3 ? a[3] : Value())};
+                     },
+                     {Kind::Real}};
+  }
   return std::nullopt;
 }
 
@@ -268,6 +306,12 @@ LogicalResult check(func::CallOp call, StringRef name,
   if (!resultsMatch)
     return call.emitOpError() << "declares results of the device primitive '"
                               << name << "' that it does not have";
+  if (name.starts_with("grid_gather_")) {
+    Type real = cast<MemRefType>(call.getOperand(0).getType()).getElementType();
+    if (call.getResult(0).getType() != real)
+      return call.emitOpError()
+             << "declares a grid gather result unlike the grid element type";
+  }
   return success();
 }
 

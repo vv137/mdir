@@ -5106,6 +5106,8 @@ LogicalResult Lowering::addPMETemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of particle mesh Ewald for devices";
+  if (failed(kernels::expandPrimitiveCalls(*templates)))
+    return failure();
   unrollSmallLoops(templates->getOperation(), /*limit=*/8);
   // The arrays of the splines, indexed by constants now, become values.
   PassManager promote(context);
@@ -5185,6 +5187,8 @@ LogicalResult Lowering::addProlateTemplates(Type position, Type charge,
   if (!templates)
     return module.emitError()
            << "cannot parse the template of the prolate kernel for devices";
+  if (failed(kernels::expandPrimitiveCalls(*templates)))
+    return failure();
   // As addPMETemplates: the loops over the points unroll, and the
   // constants go back into the kernels.
   unrollSmallLoops(templates->getOperation(), /*limit=*/8);

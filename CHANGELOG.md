@@ -24,6 +24,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **Shared scalar grid gather emitters** (D[gather-grid-z], #539): the
+  Gaussian and prolate PME gathers use the same wrapped z coordinate and
+  grid-read primitives, with their existing lane layout and arithmetic.
+  This changes no control key, file format, or overwrite behavior.
 - **An opt-in single-pass device scan for group neighbor builds**
   (D321, #524, part of #420):
   `convert-md-exec-to-gpu="single-pass-group-scan=true"` selects decoupled

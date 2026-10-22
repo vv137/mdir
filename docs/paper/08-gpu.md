@@ -295,6 +295,18 @@ grid type, and algebra rather than from the presence of bricks. A
 non-tiled f32 sum retains bricks where its spreading consumes them, and
 the fixed-order path retains its fixed-point grid and its addition order.
 
+**A shared grid gather** (D[gather-grid-z]). The Gaussian and prolate PME
+gathers read $\phi_{(aK_2+b)K_3+c}$ with
+$c=(c_0+\ell)\bmod K_3$. One device emitter computes the wrapped z
+coordinate and another reads the grid at the row base plus that
+coordinate. The order-4 stored-weight gather keeps i32 address
+arithmetic; the general Gaussian gather keeps index arithmetic; the
+prolate gather retains its signed wrap test and safe read for inactive
+points. The same emitters serve potential, listed-particle, and
+triclinic instances. The thread layout and summation order stay as
+before; the remaining spline or prolate window work belongs to each
+instance. The scalar gather has no extra storage or control key.
+
 **Flags read without waiting for the stream** (D113). The test of validity
 (Section 4.1) sets a flag on the device, and the host must read it to
 decide whether to build. A copy to pageable memory waits for everything

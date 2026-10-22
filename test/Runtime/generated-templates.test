@@ -8,6 +8,8 @@
 # RUN: %python %S/../../scripts/generate-pme-gpu-template.py %t/pme
 # RUN: cmp %t/pme/PMEGPU.mlir %S/../../lib/Runtime/Templates/PMEGPU.mlir
 # RUN: cmp %t/pme/PMEGPUTriclinic.mlir %S/../../lib/Runtime/Templates/PMEGPUTriclinic.mlir
+# RUN: %python %S/../../scripts/generate-pme-prolate-gpu-template.py > %t/pme/PMEGPUProlate.mlir
+# RUN: cmp %t/pme/PMEGPUProlate.mlir %S/../../lib/Runtime/Templates/PMEGPUProlate.mlir
 # RUN: %python %S/../../scripts/generate-groups-gpu-template.py %t/groups
 # RUN: cmp %t/groups/NeighborsGroupsGPU.mlir %S/../../lib/Runtime/Templates/NeighborsGroupsGPU.mlir
 # RUN: cmp %t/groups/NeighborsGroupsGPUTriclinic.mlir %S/../../lib/Runtime/Templates/NeighborsGroupsGPUTriclinic.mlir

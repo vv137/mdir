@@ -11,7 +11,8 @@ the job); OUT a directory for the control files, logs, and results.json;
 SYSTEMS the names of the suite (`jac_nve`, `cellulose_nve`, ...), which
 `MDIR_BENCH_DIR` holds as `scripts/benchmarks/amber/bench.py prepare`
 made it; VARIANTS a comma-separated list of `main` (MAIN as it is) or a
-value of MDIR_PME_SPREAD for BRANCH (`global`, `tiles8`, ...), each
+value of MDIR_PME_SPREAD for BRANCH (`global`, `tiles8`, ...), or `branch`
+for BRANCH with its default spreading, each
 optionally with `@ORDER` (the order of the B-splines, the grid of the
 suite kept) or `@prolate` (the prolate kernel at its default, D266, with
 its own grid); SCALE multiplies the steps of the suite; PRECISION is
@@ -66,7 +67,7 @@ def run(system, variant, prefix=()):
     directory, steps, step = control(system, variant)
     layout = variant.partition("@")[0]
     env = dict(os.environ)
-    if layout != "main":
+    if layout not in ("main", "branch"):
         env["MDIR_PME_SPREAD"] = layout
     program = main_mdir if layout == "main" else branch_mdir
     p = subprocess.run(list(prefix) + [program, "run", "mdir.toml"], cwd=directory, env=env,
