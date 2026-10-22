@@ -551,3 +551,61 @@ rate in that earlier configuration. This is a bound for choosing the next
 strategy, not a measured speedup of the NVE runs below; the next pair-loop
 slice (#554) will measure its share and the full step together.
 
+*Table 10.8. CPU time in ms/step, mean $\pm$ sample standard deviation of
+three kept rounds. `m` and `d` are MDIR mixed and double, `g` is GROMACS
+with its default list, `x` is GROMACS with the exact 3 Å buffer and a
+10-step search, and `p` is serial pmemd double. The suffix is the thread
+count. The first of four alternating rounds is warm-up.*
+
+| System | Variant | ms/step |
+|---|---|---:|
+| JAC | m1 | 123.227 $\pm$ 0.079 |
+| JAC | m16 | 9.335 $\pm$ 0.036 |
+| JAC | d1 | 355.478 $\pm$ 15.193 |
+| JAC | d16 | 23.885 $\pm$ 0.036 |
+| JAC | g1 | 9.990 $\pm$ 0.012 |
+| JAC | g16 | 1.271 $\pm$ 0.034 |
+| JAC | x1 | 16.568 $\pm$ 0.181 |
+| JAC | x16 | 1.697 $\pm$ 0.002 |
+| JAC | p1 | 51.340 $\pm$ 0.044 |
+| TIP3P 103k | m1 | 1896.445 $\pm$ 1.681 |
+| TIP3P 103k | m16 | 129.451 $\pm$ 0.084 |
+| TIP3P 103k | d1 | 5705.728 $\pm$ 0.561 |
+| TIP3P 103k | d16 | 387.577 $\pm$ 0.411 |
+| TIP3P 103k | g1 | 172.567 $\pm$ 5.571 |
+| TIP3P 103k | g16 | 16.619 $\pm$ 0.105 |
+| TIP3P 103k | x1 | 267.567 $\pm$ 0.792 |
+| TIP3P 103k | x16 | 23.187 $\pm$ 0.009 |
+| TIP3P 103k | p1 | 802.297 $\pm$ 0.352 |
+| Cellulose | m1 | 2381.427 $\pm$ 1.055 |
+| Cellulose | m16 | 180.337 $\pm$ 0.222 |
+| Cellulose | d1 | 6479.728 $\pm$ 2.263 |
+| Cellulose | d16 | 462.115 $\pm$ 0.876 |
+| Cellulose | g1 | 209.763 $\pm$ 0.643 |
+| Cellulose | g16 | 22.628 $\pm$ 0.093 |
+| Cellulose | x1 | 327.500 $\pm$ 1.499 |
+| Cellulose | x16 | 30.656 $\pm$ 0.029 |
+| Cellulose | p1 | 970.193 $\pm$ 0.544 |
+
+*Table 10.9. Paired MDIR/reference CPU time ratios, mean $\pm$ sample
+standard deviation over the three kept rounds. Above one, MDIR takes
+longer. JAC and Cellulose have matched starting coordinates to `.gro`
+rounding; TIP3P has a different starting state across the engines.*
+
+| System | m1/g1 | m1/x1 | m16/g16 | m16/x16 | d1/p1 |
+|---|---:|---:|---:|---:|---:|
+| JAC | 12.335 $\pm$ 0.007 | 7.438 $\pm$ 0.077 | 7.346 $\pm$ 0.211 | 5.502 $\pm$ 0.014 | 6.924 $\pm$ 0.300 |
+| TIP3P 103k | 10.997 $\pm$ 0.340 | 7.088 $\pm$ 0.027 | 7.790 $\pm$ 0.054 | 5.583 $\pm$ 0.002 | 7.112 $\pm$ 0.004 |
+| Cellulose | 11.353 $\pm$ 0.031 | 7.272 $\pm$ 0.036 | 7.970 $\pm$ 0.041 | 5.883 $\pm$ 0.006 | 6.679 $\pm$ 0.004 |
+
+For the two coordinate-matched systems, the mixed CPU step takes 11.35 to
+12.34 times GROMACS's default-list time on one thread and 7.35 to 7.97
+times on 16 threads. With the exact GROMACS list, the 16-thread gap is
+5.50 to 5.88. MDIR double takes 6.68 to 6.92 times serial pmemd. These
+ratios are end-to-end baselines for selecting a host strategy, not the
+isolated cost of the pair primitive. The complete per-run records and
+commands to regenerate both tables accompany the runner. During the last
+Cellulose round, two unrelated allocations began on its node; the
+per-variant range across all three kept rounds remained below 0.8%, and
+the whole alternating set is retained.
+
