@@ -8,6 +8,13 @@ $N_T$ steps. A minimization replaces the step by one of steepest descent
 (Section 6.7). Every derivation below is of what the generated code
 computes; $h = \Delta t/2$.
 
+Planned, not implemented: the couplings, which the driver now writes
+into the schedule of the run as sums, calls of the host, and loops over
+the particles, are to become ops of `dyn` that lower to the same
+operations, so that the step program states which global sums a coupling
+takes and what state of the host it changes, with no change of the
+numbers below (D[dyn-coupling-ops], [dynamics.md](../dynamics.md), Section 2.2).
+
 ## 6.1 Integrators
 
 **Velocity Verlet** [[Swope1982]](references.md#swope1982) with constraints, as written by
