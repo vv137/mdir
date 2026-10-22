@@ -21,8 +21,13 @@
 # RUN: sed 's/precision = "double"/precision = "mixed"/' %t/run.toml > %t/mixed.toml
 # RUN: cd %t && mdir run mixed.toml > %t/mixed.log
 # RUN: %jax_python %S/Inputs/model-term/compare.py log %t/reference.npz < %t/mixed.log | FileCheck %s --check-prefix=START
+# RUN: sed '/^path = /a stage_field_precision = "DOUBLE"' %t/mixed.toml > %t/mixed-fields.toml
+# RUN: mdir emit %t/mixed-fields.toml --stage=pipeline | FileCheck %s --check-prefix=FIELDS-PIPELINE
+# RUN: cd %t && mdir run mixed-fields.toml > %t/mixed-fields.log
+# RUN: %jax_python %S/Inputs/model-term/compare.py log %t/reference.npz < %t/mixed-fields.log | FileCheck %s --check-prefix=START
 # CHECK: MDIR: neighbor structure: the matrix {{.*}}(AUTO: a model in stages runs over the slots of a matrix)
 # START: mdir run energy ok
+# FIELDS-PIPELINE: md-exec-assign-precision{mode=mixed stage-fields-f64=true}
 
 #--- run.toml
 [input]

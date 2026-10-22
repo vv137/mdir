@@ -210,6 +210,10 @@ std::string mdir::compiler::getPipeline(const Control &control,
   // In the deterministic mode the fields of the steps are stored as their
   // roles say, whatever buffers of host calls the loops reach (#102).
   os << "md-exec-assign-precision{mode=" << mode
+     << (!control.stagedModels.empty() &&
+                 control.stagedModels.front().stageFieldPrecision == "DOUBLE"
+             ? " stage-fields-f64=true"
+             : "")
      << (control.deterministic ? " deterministic=true" : "") << "},";
   if (control.fastMath)
     os << "md-exec-approximate,md-exec-expand-radial,canonicalize,cse,";

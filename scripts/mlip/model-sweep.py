@@ -35,6 +35,7 @@ printed, and the table at the end.
 usage: model-sweep.py OUT --waters 8 16 32 ...
            (--artifact A.pt | --stages MODEL.mlir | --package KIND:PATH)
            [--precision mixed|double] [--steps 60] [--mdir mdir]
+           [--stage-field-precision DOUBLE]
            [--seed 1]
 """
 import argparse
@@ -74,6 +75,7 @@ electrostatics = "CUTOFF"
 name = "model"
 backend = "{backend}"
 path = "{artifact}"
+{stage_field_precision}
 
 [dynamics]
 integrator = "VELOCITY_VERLET"
@@ -98,6 +100,9 @@ def run_mdir(directory, args):
         f.write(RUN.format(steps=args.steps, interval=max(1, args.steps // 10),
                            artifact=os.path.abspath(args.artifact or args.stages),
                            backend="STAGES" if args.stages else "METATOMIC",
+                           stage_field_precision=(
+                               'stage_field_precision = "DOUBLE"'
+                               if args.stage_field_precision else ''),
                            precision=args.precision))
     env = dict(os.environ, MDIR_MLIP_TIMING="1", MDIR_DEVICE_MEMORY="1")
     begin = time.perf_counter()
@@ -187,12 +192,15 @@ def main():
     p.add_argument("--stages")
     p.add_argument("--package")
     p.add_argument("--precision", default="mixed")
+    p.add_argument("--stage-field-precision", choices=["DOUBLE"])
     p.add_argument("--steps", type=int, default=60)
     p.add_argument("--mdir", default="mdir")
     p.add_argument("--seed", type=int, default=1)
     args = p.parse_args()
     if (bool(args.artifact) + bool(args.package) + bool(args.stages)) != 1:
         sys.exit("give one of --artifact, --stages, and --package")
+    if args.stage_field_precision and not args.stages:
+        sys.exit("--stage-field-precision is for --stages only")
     wb = water_box()
     rows = []
     for count in args.waters:

@@ -267,7 +267,10 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     std::string text;
     for (const driver::Control::ModelTerm &term : s.models)
       text += term.name + " " + term.backend + " " + term.path + " " +
-              std::to_string(term.centersPerCall) + "\n";
+              std::to_string(term.centersPerCall) +
+              (term.stageFieldPrecision.empty()
+                   ? ""
+                   : " " + term.stageFieldPrecision) + "\n";
     add("physics", "[python] models", driver::getFingerprintHash(text));
   }
   if (!prepared.tunables.empty()) {

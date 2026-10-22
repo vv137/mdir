@@ -404,23 +404,27 @@ PYBIND11_MODULE(_core, m) {
   // through the optional plugin, on a GPU.
   py::class_<driver::Control::ModelTerm>(m, "ModelTerm")
     .def(py::init([](std::string name, std::string path, std::string backend,
-                     int64_t centersPerCall) {
+                     int64_t centersPerCall, std::string stageFieldPrecision) {
            driver::Control::ModelTerm term;
            term.name = std::move(name);
            term.path = std::move(path);
            term.backend = std::move(backend);
            term.centersPerCall = centersPerCall;
+           term.stageFieldPrecision = std::move(stageFieldPrecision);
            return term;
          }),
          py::arg("name"), py::arg("path"), py::arg("backend") = "METATOMIC",
-         py::arg("centers_per_call") = 0)
+         py::arg("centers_per_call") = 0,
+         py::arg("stage_field_precision") = "")
     .def_readwrite("name", &driver::Control::ModelTerm::name)
     .def_readwrite("path", &driver::Control::ModelTerm::path)
     .def_readwrite("backend", &driver::Control::ModelTerm::backend)
     .def_readwrite("centers_per_call", &driver::Control::ModelTerm::centersPerCall)
+    .def_readwrite("stage_field_precision", &driver::Control::ModelTerm::stageFieldPrecision)
     .def("__repr__", [](const driver::Control::ModelTerm &t) {
       return "ModelTerm(name='" + t.name + "', path='" + t.path + "', backend='" +
-             t.backend + "', centers_per_call=" + std::to_string(t.centersPerCall) + ")";
+             t.backend + "', centers_per_call=" + std::to_string(t.centersPerCall) +
+             ", stage_field_precision='" + t.stageFieldPrecision + "')";
     });
   // Tunable parameters (D213).
   tunables::bindTunable(m);
