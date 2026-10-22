@@ -3765,41 +3765,13 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
         lanes.valid = member.getResult(0);
       }
     }
-    SmallVector<Value> contributions;
-    if (op.getCenterSet()) {
-      auto filtered = scf::IfOp::create(
-          body, loc, TypeRange(op.getReduce()), lanes.valid,
-          /*withElseRegion=*/true);
-      if (!filtered.thenBlock()->empty() &&
-          isa<scf::YieldOp>(filtered.thenBlock()->back()))
-        filtered.thenBlock()->back().erase();
-      if (!filtered.elseBlock()->empty() &&
-          isa<scf::YieldOp>(filtered.elseBlock()->back()))
-        filtered.elseBlock()->back().erase();
-      {
-        OpBuilder then = OpBuilder::atBlockEnd(filtered.thenBlock());
-        scf::YieldOp::create(
-            then, loc,
-            emitPairKernel(then, op, structure.counts, entries, box,
-                           inverse, central, local, &lanes,
-                           /*outTotals=*/nullptr, &layout,
-                           tabled ? AddToMember(addToTable) : AddToMember()));
-      }
-      {
-        OpBuilder otherwise = OpBuilder::atBlockEnd(filtered.elseBlock());
-        SmallVector<Value> zeros;
-        for (Value init : op.getReduce())
-          zeros.push_back(createZero(otherwise, loc, init.getType()));
-        scf::YieldOp::create(otherwise, loc, zeros);
-      }
-      contributions.assign(filtered.getResults().begin(),
-                           filtered.getResults().end());
-    } else {
-      contributions = emitPairKernel(
-          body, op, structure.counts, entries, box, inverse, central,
-          local, &lanes, /*outTotals=*/nullptr, &layout,
-          tabled ? AddToMember(addToTable) : AddToMember());
-    }
+    // Every lane must reach the row reduction: its shuffle names the full
+    // warp even when one of the warp's two rows is outside the center set.
+    // An invalid row has an empty pair loop and contributes zero.
+    SmallVector<Value> contributions = emitPairKernel(
+        body, op, structure.counts, entries, box, inverse, central,
+        local, &lanes, /*outTotals=*/nullptr, &layout,
+        tabled ? AddToMember(addToTable) : AddToMember());
     // A place that is not a center contributes zeros to the sums, which
     // its slot of the scratch must hold.
     storeContributions(body, loc, contributions, op.getScratch(), central,

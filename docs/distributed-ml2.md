@@ -428,13 +428,15 @@ ties the selection to the same layout, halo, and ownership epoch; another
 The two filtered traversals are disjoint and their sum is the unfiltered
 traversal, with the directed or unique pair weights unchanged.
 
-The lowering carries the selection into `md_exec.pair_for` and checks
-membership before reading the selected center's pair data. For an interior
-center the physical loop checks neighbor indices but does not read ghost
-positions, fields, or IDs; its relation has already proved none of those
-pairs can contribute. A boundary center uses the full relation. The CPU
-reference and device path implement the same selection. The compiler does
-not move a halo wait in this decision; #536 handles that schedule.
+The lowering carries the selection into `md_exec.pair_for`. On a device,
+only the membership bit load is conditional on a valid owned center; a row
+outside the set gets an empty pair loop. Every lane still reaches the
+full-warp shuffle for its row reduction. For an interior center the
+physical loop checks neighbor indices but does not read ghost positions,
+fields, or IDs; its relation has already proved none of those pairs can
+contribute. A boundary center uses the full relation. The CPU reference
+and device path implement the same selection. The compiler does not move
+a halo wait in this decision; #536 handles that schedule.
 
 ### Storage-level completion events (D310)
 
