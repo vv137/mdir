@@ -1,7 +1,7 @@
 """CPU timings of MDIR, GROMACS, and pmemd, alternated in one job (#359, #552).
 
     bench.py SYSTEM ROUNDS VARIANT[,VARIANT...] [--tag T] [--steps-scale X]
-        [--ensemble nve|coupled] [--cutoff ANGSTROM]
+        [--ensemble nve|coupled] [--cutoff ANGSTROM] [--min-steps N]
 
 SYSTEM is a directory under $CPU_BENCH_DIR with the files of the size sweep
 of #345 (scripts/benchmarks/pair-loop/sweep.py of PR #353 prepares them):
@@ -54,6 +54,7 @@ variants = sys.argv[3].split(",")
 scale = 1.0
 ensemble = "coupled"
 cutoff = None
+min_steps = 100
 BUILDS = {}
 tag = "t" + time.strftime("%m%d-%H%M%S")
 args = sys.argv[4:]
@@ -68,12 +69,16 @@ while args:
         ensemble = args[1]; args = args[2:]
     elif args[0] == "--cutoff":
         cutoff = float(args[1]); args = args[2:]
+    elif args[0] == "--min-steps":
+        min_steps = int(args[1]); args = args[2:]
     else:
         sys.exit("unknown " + args[0])
 D = f"{S}/{system}"
 JAC = system == "jac"
 if ensemble not in ("nve", "coupled"):
     sys.exit("--ensemble must be nve or coupled")
+if min_steps < 2 or min_steps % 2:
+    sys.exit("--min-steps must be a positive even number")
 if "p1" in variants and ensemble != "nve":
     sys.exit("p1 requires --ensemble nve")
 cut = cutoff if cutoff is not None else (8.0 if JAC or system.startswith("cellulose") else 9.0)
@@ -146,8 +151,9 @@ def steps_for(threads, kind):
     rate = 0.95e-6 * natoms * (16.0 / threads) ** 0.5
     if kind == "g":
         rate = rate / 18 * (16.0 / threads) ** 0.5
-        return max(1000, min(40000, int(15.0 / rate * scale / 100) * 100))
-    return max(100, min(20000, int(20.0 / rate * scale / 100) * 100))
+        minimum = 1000 if ensemble == "coupled" else max(200, min_steps)
+        return max(minimum, min(40000, int(15.0 / rate * scale / 100) * 100))
+    return max(min_steps, min(20000, int(20.0 / rate * scale / 100) * 100))
 
 
 def mdir_control(threads, steps, reach=None, precision="MIXED"):
@@ -218,7 +224,7 @@ def run_gmx(variant, d):
     out = subprocess.run([GMX, "mdrun", "-s", "run.tpr", "-nb", "cpu", "-pme", "cpu", "-bonded", "cpu",
                           "-update", "cpu", "-ntmpi", "1", "-ntomp", str(threads), "-pin", "on",
                           "-resethway", "-noconfout", "-g", "md.log"],
-                         cwd=d, capture_output=True, text=True, env=dict(os.environ, CUDA_VISIBLE_DEVICES=""))
+                         cwd=d, capture_output=True, text=True)
     open(d + "/mdrun.out", "w").write(out.stdout + out.stderr)
     log = open(d + "/md.log").read() if os.path.exists(d + "/md.log") else ""
     m = re.search(r"Performance:\s+([0-9.]+)\s+([0-9.]+)", log)
