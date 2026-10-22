@@ -141,8 +141,10 @@ into distinct flat real buffers, storing each complex number as adjacent
 real and imaginary components. The backward execution transform may
 overwrite its packed input, so the bridge uses a private copy of the
 immutable semantic value. The composition with spreading, influence
-mapping, and gathering remains #452; the
-current potential is still `md.reciprocal`.
+mapping, and gathering remains #452. Bufferization and ownership-based
+deallocation establish the lifetimes of the packed host buffers before
+optional device placement adds its own allocation, data-dependent copies,
+and release. The current potential is still `md.reciprocal`.
 
 The driver computes the moduli $\lvert b_a\rvert^2$ in f64 from the
 recursion of $M_n$ and passes them as a table. Under `influence =

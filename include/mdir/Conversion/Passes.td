@@ -14,21 +14,34 @@ def ConvertLinearTransformValues
     result tensor. A complex number uses adjacent real and imaginary
     components in row-major order. The private input is required for the
     backward transform, whose execution implementation may overwrite it.
-    `memory=device` allocates the execution buffers on a GPU and transfers
-    only this transform's data. The semantic input remains immutable.
+    The semantic input remains immutable. Run one-shot bufferization and
+    ownership-based deallocation after this pass; optionally place the
+    marked execution transform on a device after those two passes.
     No control-file behavior changes. D[fft-value-buffer].
   }];
-  let options = [
-    Option<"memory", "memory", "std::string", /*default=*/"\"host\"",
-           "Execution storage: host or device">
-  ];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect",
                            "::mlir::complex::ComplexDialect",
-                           "::mlir::gpu::GPUDialect",
                            "::mlir::memref::MemRefDialect",
                            "::mlir::scf::SCFDialect",
                            "::mlir::tensor::TensorDialect"];
+}
+
+def PlaceLinearTransformDevice
+    : Pass<"md-exec-place-linear-transform-device", "::mlir::ModuleOp"> {
+  let summary = "Place the buffered semantic FFT on a device";
+  let description = [{
+    After value bridging, tensor bufferization, and ownership-based
+    deallocation, move only the marked `md_exec.linear_transform` to
+    device buffers. Allocate two distinct device buffers, copy the private
+    input, execute the FFT, copy the result back, and free both buffers.
+    Each transfer waits on its own dependency; there is no whole-step wait.
+    The pack/unpack path remains independent of the target. D[fft-value-buffer].
+  }];
+  let dependentDialects = ["::mdir::md_exec::MDExecDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::gpu::GPUDialect",
+                           "::mlir::memref::MemRefDialect"];
 }
 
 def ConvertMDToMDExec : Pass<"convert-md-to-md-exec", "::mlir::ModuleOp"> {
