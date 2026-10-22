@@ -1,7 +1,8 @@
 // D[dist-covered]: single-mover x/y/z and strict binary-exact half-skin oracle.
 // Reach 2.25 minus cutoff 2.0 gives half-skin 0.125 exactly.
 // The 0.0625 move is covered; 0.25 in each axis and exactly 0.125 are not.
-// RUN: mdir-opt --convert-md-dist-to-loops %md_passes %s \
+// RUN: mdir-opt --convert-md-dist-to-loops %md_passes \
+// RUN:     --convert-md-to-md-exec="skin=0.25 width=64" %md_exec_passes %s \
 // RUN: | mlir-opt %lower_loops_to_llvm \
 // RUN: | mlir-runner -e main --entry-point-result=void \
 // RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt | FileCheck %s

@@ -385,7 +385,7 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
            minimum-image displacement would incorrectly preserve coverage. */
         double delta = b - a;
         if (!isfinite(delta))
-          fail("coverage displacement exceeds cell range");
+          fail("coverage requires finite displacement");
         displacement2 += delta * delta;
       }
       if (!(displacement2 < limit2))
