@@ -424,7 +424,10 @@ PYBIND11_MODULE(_core, m) {
     .def("__repr__", [](const driver::Control::ModelTerm &t) {
       return "ModelTerm(name='" + t.name + "', path='" + t.path + "', backend='" +
              t.backend + "', centers_per_call=" + std::to_string(t.centersPerCall) +
-             ", stage_field_precision='" + t.stageFieldPrecision + "')";
+             (t.stageFieldPrecision.empty()
+                  ? ""
+                  : ", stage_field_precision='" + t.stageFieldPrecision + "'") +
+             ")";
     });
   // Tunable parameters (D213).
   tunables::bindTunable(m);

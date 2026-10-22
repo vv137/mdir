@@ -116,8 +116,11 @@ def run_mdir(directory, args):
     out = {"wall_s": wall}
     text = p.stdout + p.stderr
     if p.returncode != 0:
-        tail = [l for l in text.splitlines() if l.strip()][-3:]
-        out["failed"] = " | ".join(tail)[:400]
+        if "CUDA_ERROR_OUT_OF_MEMORY" in text:
+            out["failed"] = "CUDA_ERROR_OUT_OF_MEMORY"
+        else:
+            tail = [l for l in text.splitlines() if l.strip()][-3:]
+            out["failed"] = " | ".join(tail)[:400]
         return out
     m = re.search(r"(\d+) pairs and (\d+) calls in the last; the plugin's allocator held at "
                   r"most ([\d.]+) MiB allocated, ([\d.]+) MiB reserved", text)
