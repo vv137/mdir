@@ -2,7 +2,11 @@
 
 The `cpu-baseline-2026-10-22/` JSONL files retain the per-run rate and
 conditions from `bench.py`. Round 0 is the warm-up; rounds 1–3 are reported.
-The MDIR executable was built from `a8a5f7fffd7d4db40b3bfe04138b0c07b5c89849`.
+The MDIR run logs identify the measured executable as commit
+`89535e1f130b`. They have no `with uncommitted changes` suffix, which is
+the build's cleanliness report. Relative to main `a8a5f7ff`, that commit
+changes only this benchmark's `README.md` and `bench.py`; compiled MDIR
+source is unchanged.
 GROMACS 2026.3 was built in mixed precision, and pmemd 26 was the serial
 double-precision program. The three systems were run sequentially on one
 CPU node in separate 16-core Slurm allocations. Exact allocation details
@@ -24,7 +28,7 @@ $64^3$. TIP3P used `--min-steps 100 --steps-scale 0.2`, the default cutoff
 of 9 Å, and grid $160^3$. Cellulose used the same two step-count flags,
 `--grid 288,128,128`, and the default cutoff of 8 Å. The JSONL rows state
 the actual step count of each variant. See the parent README for the
-engine-specific controls, PME tolerance conversion, list policies, and
+engine-specific controls, PME tolerance conversion, actual NVE list policies, and
 different timing windows.
 
 The SHA-256 hashes below identify the prepared inputs. The JAC and

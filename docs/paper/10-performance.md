@@ -527,6 +527,13 @@ buffer or an exact 3 Å buffer searched every 10 steps, and pmemd uses
 its default skin. Thus the table compares end-to-end CPU costs, with the
 specified GROMACS list variants, not one identical list algorithm.
 
+For the `g` variants in this NVE protocol, GROMACS reports that it cannot
+increase `nstlist`, so its actual search interval is 10 steps. The logged
+`rlist` is 0.805 nm on JAC, 0.901 nm on TIP3P, and 0.807 nm on
+Cellulose: buffers of 0.005, 0.001, and 0.007 nm beyond the respective
+cutoffs. This nearly bufferless NVE list is not the thermostat-enabled
+default measured in D267. The `x` variants use the stated exact 3 Å buffer.
+
 Every system's variants run in alternating order over four rounds in one
 16-core Slurm allocation on one CPU node; the first round is discarded
 and the remaining rates are summarized as the mean and sample standard
@@ -536,13 +543,24 @@ a run from the final rates. MDIR times the second half of its steps.
 GROMACS resets its timing halfway and reports the `Performance` `ms/step`
 column. pmemd reports the whole run through its all-steps `Per Step(ms)` field.
 The `ns/day` fields are rounded and are not used. The source
-of MDIR is commit `a8a5f7ff` on
-`main`; the measurement branch changes only scripts and documentation.
+of the measured MDIR executable is commit `89535e1f`, as reported by
+every run log, without the `with uncommitted changes` suffix of a dirty
+build. Relative to main `a8a5f7ff`, that source commit changes only
+`scripts/benchmarks/cpu-breakdown/README.md` and `bench.py`; the compiled
+MDIR source is unchanged.
 GROMACS 2026.3 is mixed precision; pmemd 26 is serial and double
 precision. MDIR's `double` at one thread is compared to pmemd; its
 `mixed` at one and 16 threads is compared to GROMACS at those thread
 counts. The 16-thread MDIR `double` rate shows scaling and has no
 16-thread pmemd reference.
+
+The actual step counts differ by variant. On JAC, MDIR `m1` and `d1`
+take 200 steps and `m16` and `d16` take 800; GROMACS `g1` and `x1`
+take 700 and `g16` and `x16` take 12,000; pmemd takes 200. On TIP3P
+and Cellulose, MDIR takes 100, GROMACS 200, and pmemd 100 steps. MDIR
+reports its latter half, GROMACS resets timing halfway, and pmemd reports
+its whole run. TIP3P MDIR starts at 298.15 K from generated velocities,
+while pmemd generates its velocities from 300 K.
 
 The pair-loop sampler of D267 measured a 64% share of a mixed-precision,
 16-thread TIP3P NPT step before this NVE baseline. Eliminating that loop's
@@ -605,7 +623,12 @@ times on 16 threads. With the exact GROMACS list, the 16-thread gap is
 ratios are end-to-end baselines for selecting a host strategy, not the
 isolated cost of the pair primitive. The complete per-run records and
 commands to regenerate both tables accompany the runner. During the last
-Cellulose round, two unrelated allocations began on its node; the
-largest per-variant range across all three kept rounds was 0.87%, and
-the whole alternating set is retained.
+Cellulose round, two unrelated allocations began on its node; its largest
+per-variant range across the three kept rounds was 0.87%, and its whole
+alternating set is retained. Other systems have wider kept-round spreads:
+JAC `d1` spans 7.62% (373.021 ms in round 3 against 346.625–346.787 ms),
+JAC `g16` spans 4.80%, and TIP3P `g1` spans 5.77%. JAC's paired `d1/p1`
+ratios are 6.757, 6.745, and 7.270; the reported 6.924 $\pm$ 0.300
+includes that third-round outlier, while the first two ratios are about
+6.75. No round was removed from Tables 10.8 and 10.9.
 

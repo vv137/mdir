@@ -55,7 +55,12 @@ MDIR's `tolerance` and GROMACS's `ewald-rtol` take $10^{-5}$, while
 pmemd's `dsum_tol` takes $10^{-5}/r_c$ with $r_c$ in Å. GROMACS chooses
 the PME grid at a 1 Å
 spacing and the script gives that grid to MDIR and pmemd. GROMACS's default
-Verlet policy is `gT`; `xT` uses an exact buffer of 3 Å and a rebuild every
+Verlet input policy is `gT`. In these NVE runs GROMACS reports that it
+cannot increase `nstlist`; the actual `gT` search interval is 10 steps.
+Its `rlist` is 0.805 nm on JAC, 0.901 nm on TIP3P, and 0.807 nm on
+Cellulose, leaving respective buffers of 0.005, 0.001, and 0.007 nm.
+This nearly bufferless NVE list is not the thermostat-enabled default
+measured in D267. `xT` uses an exact buffer of 3 Å and a rebuild every
 10 steps. MDIR's default neighbor matrix uses a 1.5 Å reach; `mTrD` or
 `dTrD` requests another reach. pmemd's neighbor policy is its own.
 These are separate policy comparisons, not identical list algorithms.
@@ -64,6 +69,8 @@ The `p1` run uses the same Amber topology and coordinate file as MDIR.
 Where the file includes velocities it restarts from those velocities; if
 not, pmemd generates velocities from 300 K with a fixed seed. In the latter
 case, label its rate contextual because the starting states differ.
+For this TIP3P input, the MDIR log reports 298.15 K at step 0 from
+generated velocities, while pmemd generates its velocities from 300 K.
 GROMACS reads `eq.gro`; compare its coordinates and velocities with the
 Amber input before calling a pair of rates fully matched. These checks
 and the programs' versions belong in the report beside the rates.
@@ -73,9 +80,16 @@ scaling but has no 16-thread pmemd counterpart. The script accepts
 `--steps-scale X` for a short pilot. Final rates need enough steps for a
 stable rate after initialization and pair-list builds.
 
+For the final records, JAC's MDIR `m1` and `d1` take 200 steps and
+`m16` and `d16` take 800; GROMACS `g1` and `x1` take 700 and `g16`
+and `x16` take 12,000; pmemd takes 200. On TIP3P and Cellulose, MDIR
+takes 100, GROMACS 200, and pmemd 100 steps. The three programs keep
+the timing windows stated above.
+
 `baseline_summary.py TAG SYSTEM...` prints the rates and neutral ratios;
-`SYSTEM@OTHER_TAG` selects a different tag for one system. The JSON lines
-include the node, CPU model, and allocated affinity. Check the Slurm log
+`SYSTEM@OTHER_TAG` selects a different tag for one system. The original JSON
+lines include the node, CPU model, and allocated affinity; the committed
+portable records omit those host details. Check the Slurm log
 for other jobs on that node during kept rounds; a run concurrent with
 another CPU benchmark or MDIR suite is a pilot and should be measured
 again without that competing work.
