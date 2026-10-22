@@ -135,20 +135,28 @@ at a later call. To find the kernel that failed:
 ## The time of the outputs
 
 `MDIR_CHECKPOINT_TIMES=1` makes `mdir run` print, on the standard error,
-where the time of its outputs goes (#548):
+where the time of its outputs goes (#548). The lines below are from STMV
+on one RTX 4090, with a row of the log every 100 steps:
 
 ```
-MDIR: times of the checkpoint at step 1000: copy 7.1 ms, order 30.2 ms, hash 98.0 ms, file 120.4 ms, file sync 60.3 ms, names 2.1 ms, directory sync 1.0 ms; 319.1 ms in the call
-MDIR: times of the frame at step 1000: copy 2.3 ms, write 9.8 ms
-MDIR: times of the row at step 2000: 4630.2 ms since the row at step 1000, 331.2 ms of it in frames and checkpoints
+MDIR: times of the frame at step 1000: copy 5.6 ms, write 22.6 ms
+MDIR: times of the checkpoint at step 1000: copy 5.9 ms, wait 0.0 ms, state 10.9 ms, snapshot 2.7 ms; 14.1 ms in the call
+MDIR: times of the row at step 1100: 447.1 ms since the row at step 1000, 36.7 ms of it in frames and checkpoints
+...
+MDIR: times of the write of the checkpoint at step 1000: order 21.7 ms, hash 237.1 ms, file 92.9 ms, file sync 0.1 ms, names 0.1 ms, directory sync 0.1 ms; 352.1 ms on its thread, of which the steps waited 0.0 ms
 ```
 
 The copy is the time from the return of the call of the host before
 (the row of the log, or the frame) to the start of this one: on a device,
-the copy of the buffers to the host, and any wait for the device. The
-order is the reordering of the state into the order of the input; the
-file is the H5MD file up to its close, and the syncs and the names the
-steps that put it on stable storage under its name (D132, D173). The
+the copy of the buffers to the host, and any wait for the device. In the
+call of a checkpoint, the wait is for the write of the checkpoint before,
+the state the copy of the buffers as the program holds them (in a cell
+that is not periodic, their order into that of the input), and the
+snapshot the copy of the rest of what the file holds. The thread that
+writes the checkpoint (D[checkpoint-async]) reports when it is waited for,
+at the next checkpoint or at the end of the run: the order of the input,
+the hash of the state, the H5MD file up to its close, and the syncs and the
+names that put it on stable storage under its name (D132, D173). The
 interval between two rows holds, besides the steps, the frames and the
 checkpoints between them and the start of a segment after a checkpoint.
 

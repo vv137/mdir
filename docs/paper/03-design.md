@@ -835,7 +835,9 @@ rather than take the forces of the physics before
 (D172). Format 1 of the file is the contract of
 release 0.1.0: the reader checks the format and the SHA-256 of the state,
 and the file is on stable storage before it takes its name
-(D173).
+(D173). `mdir run` writes it on a thread of its own while the steps go
+on, from a copy of the state, and the next checkpoint, a stop, and the end
+of the run wait for it (D[checkpoint-async]).
 
 A run is a realization of a Markov chain on the state $\mathbf z_n$, each
 step drawn from the kernel $\mathcal K_{U,\mathcal C}$: the integrator and
