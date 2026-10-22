@@ -41,6 +41,8 @@ import subprocess
 import sys
 import time
 
+from timing import pmemd_all_step_ms
+
 if not os.environ.get("CPU_BENCH_DIR"):
     sys.exit("bench.py: CPU_BENCH_DIR, the directory of the systems, is not set")
 S = os.environ["CPU_BENCH_DIR"]
@@ -274,8 +276,7 @@ def run_pmemd(d):
     with open(d + "/run.log", "w") as file:
         file.write(out.stdout + out.stderr)
     output = open(d + "/mdout").read() if os.path.exists(d + "/mdout") else ""
-    rates = re.findall(r"ns/day\s*=\s+([0-9.]+)", output)
-    rate = 0.002 * 86400.0 / float(rates[-1]) if rates else None
+    rate = pmemd_all_step_ms(output) if out.returncode == 0 else None
     return dict(rate_ms=rate, steps=steps, threads=1, precision="DOUBLE",
                 ensemble=ensemble, has_velocities=has_velocities,
                 wall_s=time.time() - t0, ok=out.returncode == 0)

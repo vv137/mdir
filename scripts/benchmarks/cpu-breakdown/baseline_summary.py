@@ -16,6 +16,8 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+from timing import pmemd_all_step_ms
+
 
 def read(system, tag):
     if os.environ.get("CPU_BENCH_DIR"):
@@ -25,6 +27,11 @@ def read(system, tag):
                 f"{system}-{tag}.jsonl")
     with open(path) as file:
         rows = [json.loads(line) for line in file]
+    if os.environ.get("CPU_BENCH_DIR"):
+        for row in rows:
+            if row["variant"] == "p1" and row["ok"]:
+                row["rate_ms"] = pmemd_all_step_ms(
+                    (Path(row["dir"]) / "mdout").read_text())
     hosts = {row["host"] for row in rows if "host" in row}
     cpus = {row["cpu"] for row in rows if "cpu" in row}
     affinities = {tuple(row["affinity"]) for row in rows if "affinity" in row}

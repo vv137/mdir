@@ -9,7 +9,11 @@ CPU node in separate 16-core Slurm allocations. Exact allocation details
 remain in the original job records and are omitted here along with local
 executable and scratch paths. `export_results.py` removes these fields;
 `baseline_summary.py baseline-final jac tip3p-103k cellulose` regenerates
-the paper's rate and ratio tables from the checked-in files.
+the paper's rate and ratio tables from the checked-in files. The pmemd
+records use the all-steps `Per Step(ms)` value from `mdout`; the older
+benchmark runner converted a two-decimal `ns/day` field, which was too
+coarse for these systems. The precise timing is retained in the raw
+`mdout` files, so no run needed to be repeated for the correction.
 
 All commands used the variants
 `m1,m16,d1,d16,g1,g16,x1,x16,p1`, `--ensemble nve`, four rounds, and

@@ -30,6 +30,11 @@ per run and the exact input files under `runs/TAG/`. Do not mix executable
 revisions in one tag. The MDIR rate is the second half of its steps;
 GROMACS uses `-resethway`; pmemd reports all integration steps. Report this
 timing-window difference with the comparison.
+For pmemd, read `Per Step(ms)` in its all-steps timing block: `ns/day` is
+printed to only two decimal places and would distort the large-system
+rates. `export_results.py` and the raw-output mode of
+`baseline_summary.py` derive that precise value from each `mdout`, including
+for runs made before the benchmark runner's parser was corrected.
 
 Use `--grid NX,NY,NZ` when a grid chosen from GROMACS's 1 Å spacing has
 a prime factor other than 2, 3, or 5, which pmemd refuses. Specify one

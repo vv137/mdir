@@ -10,11 +10,14 @@ import json
 import sys
 from pathlib import Path
 
+from timing import pmemd_all_step_ms
+
 
 FIELDS = (
     "system", "sites", "variant", "round", "tag", "rate_ms", "steps",
     "threads", "precision", "exact", "reach", "ensemble", "has_velocities",
     "builds", "build_interval", "wall_s", "ok", "grid", "cutoff",
+    "rate_source",
 )
 REQUIRED = {"system", "variant", "round", "tag", "rate_ms", "steps", "ok",
             "grid", "cutoff"}
@@ -31,6 +34,10 @@ def main():
             if REQUIRED - raw.keys():
                 raise ValueError(f"record missing fields: {sorted(REQUIRED - raw.keys())}")
             record = {key: raw[key] for key in FIELDS if key in raw}
+            if record["variant"] == "p1" and record["ok"]:
+                record["rate_ms"] = pmemd_all_step_ms(
+                    (Path(raw["dir"]) / "mdout").read_text())
+                record["rate_source"] = "pmemd all-steps Per Step(ms)"
             dst.write(json.dumps(record, sort_keys=True) + "\n")
 
 

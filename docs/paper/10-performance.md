@@ -531,7 +531,9 @@ deviation. The node and allocated CPU affinity are recorded with the raw
 results. A concurrent CPU benchmark or MDIR suite on the node disqualifies
 a run from the final rates. MDIR times
 the second half of its steps, GROMACS resets its timing halfway, and
-pmemd reports the whole run. The source of MDIR is commit `a8a5f7ff` on
+pmemd reports the whole run through its all-steps `Per Step(ms)` field.
+Its `ns/day` field has only two decimal places and is not used. The source
+of MDIR is commit `a8a5f7ff` on
 `main`; the measurement branch changes only scripts and documentation.
 GROMACS 2026.3 is mixed precision; pmemd 26 is serial and double
 precision. MDIR's `double` at one thread is compared to pmemd; its
