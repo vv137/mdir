@@ -92,7 +92,7 @@ benchmark script checks), but the node's power and host were. The same
 program's rate differs between nodes by a few percent (pmemd.cuda on
 Cellulose by 6%, #405), so a ratio is taken within one job on one node.
 The two programs run the same steps with the same output and are timed
-over the same window (D[suite-symmetric]), but their couplings differ
+over the same window (D327), but their couplings differ
 (Table 10.1), and in the short window of STMV a checkpoint of MDIR weighs
 10% (#548).
 The earlier rates, from one RTX 3090 capped at 300 W, show that a cap

@@ -1,4 +1,4 @@
-// D[distributed-pair-center-filter]: a shaped i32 field is not proof.
+// D328: a shaped i32 field is not proof.
 // RUN: mdir-opt %s -verify-diagnostics
 
 !vec = !md.field<@atoms, 3 x f64>

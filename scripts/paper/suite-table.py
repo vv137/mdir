@@ -8,13 +8,13 @@ LOGS holds runs.jsonl, the numbers that bench.py recorded for every run
 system of repeat N, from which the change of the energy and the counts of
 builds and prunings are taken. Every rate is over the same steps for both
 programs, from the first report of mdin.GPU to its last step
-(D[suite-symmetric]). Rates and times are the mean and the sample standard
+(D327). Rates and times are the mean and the sample standard
 deviation over the repeats; a ratio is taken within each repeat, between
 runs that ran one after the other on the same device, and then averaged.
 Prints three tables in Markdown: the rates (Table 10.2), the share of the
 output (Table 10.3), and the time to solution (Table 10.4).
 
-Without runs.jsonl, LOGS is that of the protocol before D[suite-symmetric]
+Without runs.jsonl, LOGS is that of the protocol before D327
 (mdir-N.log and pmemd-N.log, the summaries of bench.py, and
 out-mdir-N/SYSTEM.out), and the table of that protocol is printed.
 """

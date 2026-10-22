@@ -374,7 +374,7 @@ LogicalResult Assigner::collect(Operation *op) {
     positions.push_back(loop.getPositions());
     collectLoop(loop, forces);
     // Follow the SSA operands of the stage, not its vector width or name
-    // (D[ml4-stage-fields]). Both the forward and VJP have this contract.
+    // (D329). Both the forward and VJP have this contract.
     collectStageInputs(loop.getKernel(), loop.getIns(), /*firstArgument=*/2,
                        /*perField=*/2, stageFields);
     pairLoops.push_back(loop);

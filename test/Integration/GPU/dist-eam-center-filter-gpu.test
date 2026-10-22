@@ -1,4 +1,4 @@
-# D[distributed-pair-center-filter]: EAM energy, forces, and virial on a
+# D328: EAM energy, forces, and virial on a
 # device against the analytic energy and the one-domain potential.
 # REQUIRES: cuda
 

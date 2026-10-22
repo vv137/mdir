@@ -100,7 +100,7 @@ Without `--suite-protocol`, MDIR runs `steps` of `SYSTEMS` (JAC 10,000,
 Factor IX 4000, Cellulose 1000, STMV 500), writes the energies twice and
 nothing else, and its rate is over the second half of the run, while
 pmemd runs `mdin.GPU` and its rate is over all steps.
-`--suite-protocol` (D[suite-symmetric]) runs both programs under the
+`--suite-protocol` (D327) runs both programs under the
 protocol of each system's `mdin.GPU`:
 
 | | `mdin.GPU` | MDIR |

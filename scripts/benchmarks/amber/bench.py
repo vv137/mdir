@@ -17,7 +17,7 @@ with ParmEd. MDIR and pmemd read the files of the suite as they are. See
 README.md.
 
 `--suite-protocol` runs MDIR and pmemd under one protocol, that of each
-system's mdin.GPU (D[suite-symmetric]): `nstlim` steps; the energies every
+system's mdin.GPU (D327): `nstlim` steps; the energies every
 `ntpr` steps, a trajectory every `ntwx` steps, and a restart every `ntwr`
 steps; and the rate over one window, from the first report (step `ntpr`)
 to the last (step `nstlim`). For pmemd that is its "Average timings for
@@ -765,7 +765,7 @@ def main():
     p.add_argument("--suite-protocol", action="store_true",
                    help="MDIR and pmemd: the steps and the output of each "
                         "system's mdin.GPU, and the rate from its first "
-                        "report to its last step (D[suite-symmetric])")
+                        "report to its last step (D327)")
     p.add_argument("--energies-only", action="store_true",
                    help="with --suite-protocol: no trajectory and no "
                         "restarts (pmemd: ntwx=0, ntwr=nstlim)")

@@ -6,7 +6,7 @@ ratios of the repeats above each group.
 
     plot-suite.py LOGS OUTPUT.png [DEVICE]
 
-With LOGS/runs.jsonl (the protocol of mdin.GPU, D[suite-symmetric]) the
+With LOGS/runs.jsonl (the protocol of mdin.GPU, D327) the
 bars are pmemd.cuda, MDIR with the searched reaches, and MDIR with the
 default reaches, all with the output of mdin.GPU, and the ratio is that of
 the searched reaches. Without it LOGS is that of the protocol before
@@ -41,7 +41,7 @@ def rates(path):
 
 
 def short_series(logs):
-    """The rates of the protocol before D[suite-symmetric], by repeat."""
+    """The rates of the protocol before D327, by repeat."""
     series = {"mdir": [], "pmemd": []}
     for engine in series:
         for path in sorted(glob.glob(os.path.join(logs, f"{engine}-*.log"))):

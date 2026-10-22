@@ -1,4 +1,4 @@
-// D[distributed-pair-center-filter]: both EAM pair terms use a proved
+// D328: both EAM pair terms use a proved
 // interior/boundary partition. Four particles form a periodic one-dimensional
 // chain at spacings 0.8 and 1.6 in a 4.8 box. The grid has interior and
 // boundary centers; the second run leaves empty domains.

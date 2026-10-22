@@ -713,7 +713,7 @@ and the loops of `md_exec` carry them to the lowering for a device:
   reverse-sweep adjoints, while the body's arithmetic remains f32.
   `md-exec-assign-precision` identifies those fields from the
   operands of `md.apply_stage`, tracing through the casts and additions
-  left by differentiation and loop fusion (D[ml4-stage-fields]). The
+  left by differentiation and loop fusion (D329). The
   final coordinate force follows the existing mixed policy. `single`
   keeps f32 fields, and `double` keeps f64 fields.
 
@@ -747,7 +747,7 @@ filters ($6 \times 384$ values a pair).
 | NVE, 1,000 steps of 0.1 fs from 300 K, 27 waters 5 Å apart, double | the opaque call's run from the same state | total energy within 1.53 kJ/mol of 24,085 (the opaque call 1.54), a drift of $-2.4$ kJ/mol/ps ($-2.7$); the two runs' totals within 0.099 kJ/mol of each other | |
 | The same at 0.5 fs, double and mixed | the same | both runs leave conservation together (28 kJ/mol within 50 steps, then they blow up); their totals agree to 0.006 kJ/mol over 50 steps, 0.015 over 100 | |
 
-For D[ml4-stage-fields], the same 24-atom, multiple-image water box
+For D329, the same 24-atom, multiple-image water box
 (`Driver/model-stages-ml4-gpu.test`) was evaluated against SchNetPack's
 float64 calculator on one RTX 4090, using the same exported PaiNN model
 and inputs for the f32-field baseline at `24cb1e98` and the f64-field
@@ -767,7 +767,7 @@ $1.44\times10^{-5}$ kJ/mol in energy, 0.004786 kJ/mol/nm in maximum
 force, and 0.001842 kJ/mol in virial trace, under the same tolerances.
 
 The initial `mixed` result above used f32 inter-stage fields and adjoints;
-D[ml4-stage-fields] makes their f64 storage an opt-in strategy while the
+D329 makes their f64 storage an opt-in strategy while the
 exported bodies stay f32. On liquid water at 300 K
 (64 waters, unrelaxed), the staged model and the opaque call follow the
 same trajectory to the third decimal of kJ/mol for 30 steps and leave it
@@ -947,7 +947,7 @@ elementwise kernels over $4096\times3\times128$ values. These kernels
 write intermediates that XLA's fusions do not write, so what is left
 there is a question of fusion, not of products.
 
-**Mixed stage-field storage (D[ml4-stage-fields]).** On the same RTX
+**Mixed stage-field storage (D329).** On the same RTX
 4090 kind, with the same exported PaiNN, four NVE steps, and the base
 commit `24cb1e98`, the opt-in f64 stage fields increased both peak
 device memory and step time:

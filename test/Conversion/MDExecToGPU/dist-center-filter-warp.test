@@ -1,4 +1,4 @@
-# D[distributed-pair-center-filter]: every row lane must reach the full-warp
+# D328: every row lane must reach the full-warp
 # shuffle, including rows outside the selected center set. Only the mask bit
 # load is conditional; the selected bit controls an empty pair-loop bound.
 

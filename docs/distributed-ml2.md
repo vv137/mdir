@@ -417,7 +417,7 @@ center-filtered pair work between a later transfer's start and wait, and
 the MDExec/GPU row-set lowering, remain in #499 under #481; this partition alone
 does not overlap communication with computation.
 
-### Proved pair center filters (D[distributed-pair-center-filter])
+### Proved pair center filters (D328)
 
 An optional `center_set` operand of `md_dist.sum_pairs` and
 `md_dist.gather_pairs` selects owned rows for one traversal. The verifier

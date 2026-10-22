@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
-- **Optional f64 stage fields in mixed precision** (D[ml4-stage-fields],
+- **Optional f64 stage fields in mixed precision** (D329,
   #543): `[[energy.model]] stage_field_precision = "DOUBLE"` selects
   `md-exec-assign-precision{mode=mixed stage-fields-f64=true}` and stores
   feature fields and their reverse-sweep adjoints in f64 between stage
@@ -37,7 +37,7 @@ format, or the outputs; every such change is listed under **Changed** or
   grid-read primitives, with their existing lane layout and arithmetic.
   This changes no control key, file format, or overwrite behavior.
 - **Proved center filters for distributed pair work**
-  (D[distributed-pair-center-filter], #535): a pair traversal can select
+  (D328, #535): a pair traversal can select
   the direct interior or boundary result of its own center partition.
   The compiler carries the selection through the CPU reference and
   execution-level CPU/GPU paths. There is no control-file key, file-format,
@@ -1609,7 +1609,7 @@ format, or the outputs; every such change is listed under **Changed** or
   the bit (#236).
 
 - **The comparison with pmemd.cuda on the Amber suite runs both programs
-  under one protocol** (D[suite-symmetric], #534): the steps and the
+  under one protocol** (D327, #534): the steps and the
   output of each system's `mdin.GPU`, the rate over the same window, MDIR
   with the searched and the default reaches, and the whole wall time of
   each run (`scripts/benchmarks/amber/bench.py run --suite-protocol

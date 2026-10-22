@@ -1,7 +1,7 @@
 #!/bin/bash
 # Runs the Amber suite with MDIR and with pmemd.cuda, alternately, N times
 # (3 by default) on one device, under the protocol of each system's
-# mdin.GPU for both (bench.py --suite-protocol, D[suite-symmetric]): its
+# mdin.GPU for both (bench.py --suite-protocol, D327): its
 # steps (nstlim), its energies (ntpr), its trajectory (ntwx), and its
 # restarts (ntwr), and a rate over the same steps, from the first report to
 # the last step. Each repeat runs, one after the other:

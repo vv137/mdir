@@ -407,7 +407,7 @@ struct Control {
     /// call; honored only for a model that declares that it is local.
     int64_t centersPerCall = 0;
     /// "DOUBLE" opts staged models into f64 feature and adjoint field
-    /// storage in mixed precision (D[ml4-stage-fields]); empty is default.
+    /// storage in mixed precision (D329); empty is default.
     std::string stageFieldPrecision;
   };
   std::vector<ModelTerm> models;

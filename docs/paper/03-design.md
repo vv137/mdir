@@ -33,7 +33,7 @@ $R$; it does not move a transfer wait. The sets allow a later lowering to
 put pair work that reads only owned fields between a later transfer's
 start and completion.
 
-The proved filter (D[distributed-pair-center-filter]) selects either $I_d$
+The proved filter (D328) selects either $I_d$
 or $B_d$ on a pair traversal only when the indicator is a direct result of
 that relation's partition. Thus the two partial traversals form a disjoint
 partition of the original sum. The interior traversal may inspect owned
@@ -432,7 +432,7 @@ stage's function or its adjoint, and the cuBLAS calls remain explicit.
 
 In mixed precision, an opt-in strategy gives the values passed between
 stage bodies and the adjoints carried by the reverse sweep f64 field
-storage (D[ml4-stage-fields]). A body exported with f32 arithmetic still
+storage (D329). A body exported with f32 arithmetic still
 computes in f32; packing and unpacking convert at the body boundary. The
 final coordinate force follows the ordinary mixed policy. This gives the
 reverse sweep a stable inter-stage representation without retaining the

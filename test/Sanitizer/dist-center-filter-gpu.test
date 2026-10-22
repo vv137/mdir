@@ -1,4 +1,4 @@
-# D[distributed-pair-center-filter]: exercise filtered density gathering and
+# D328: exercise filtered density gathering and
 # pair energy on a device, including empty domains and the ghost-free path.
 # In domain 2, centers at 2.05 and 2.95 share one warp: the former has only
 # an owned neighbor, while the latter also has a ghost neighbor at 4.7.

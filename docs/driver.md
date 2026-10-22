@@ -84,7 +84,7 @@ For `backend = "STAGES"`, `precision = "MIXED"` keeps neural stage features
 and their reverse-sweep adjoints in f32 by default. The model key
 `stage_field_precision = "DOUBLE"` opts them into f64 storage; each
 exported stage body still computes in its declared type
-(D[ml4-stage-fields]). The key is available only with `backend = "STAGES"`
+(D329). The key is available only with `backend = "STAGES"`
 and mixed or double execution precision. All staged models in one run
 must use the same choice. It is included in the checkpoint fingerprint.
 

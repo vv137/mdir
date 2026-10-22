@@ -2,20 +2,20 @@
 
 ## 10.1 Conditions
 
-The two programs are measured under one protocol (D[suite-symmetric]):
+The two programs are measured under one protocol (D327):
 each runs the steps of the suite's own input, writes the output that
 input asks for, and is timed over the same steps. Earlier versions of
 this section gave MDIR shorter runs, timed over their second half, with
 the energies written twice and no trajectory, while pmemd.cuda ran the
 inputs as they are; that protocol favored MDIR, and its ratios are kept
-only as history, in the row of D[suite-symmetric] in
+only as history, in the row of D327 in
 [decisions.md](../decisions.md).
 
 *Table 10.1. What was measured, and how.*
 
 | Item | MDIR | pmemd.cuda |
 |---|---|---|
-| Program | `mdir` of `main` at afc96bf5 (after D320), built with LLVM and MLIR 23.1.2, kernels loaded as cubins (D214); the build is of the branch of D[suite-symmetric], whose commit changes only scripts | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 for the RTX 4090 |
+| Program | `mdir` of `main` at afc96bf5 (after D320), built with LLVM and MLIR 23.1.2, kernels loaded as cubins (D214); the build is of the branch of D327, whose commit changes only scripts | pmemd.cuda of Amber 26, SPFP [[LeGrand2013]](references.md#legrand2013), built with CUDA 13 for the RTX 4090 |
 | Device | One NVIDIA RTX 4090 (450 W) of one compute node (ada-003), on 2026-10-22, in one job of the cluster's scheduler that held the device alone (`gpu-run --idle`); other jobs ran on the node's other GPUs | The same |
 | Inputs | The systems of the Amber 24 GPU benchmark suite (PME), the topologies and restart files of the suite as they are (`prmtop`, `inpcrd`; two topologies are in the format before Amber 7, D133), with the settings of `scripts/benchmarks/amber/bench.py --suite-protocol` | The inputs of the suite as they are (`mdin.GPU`, `prmtop`, `inpcrd`) |
 | Model | Cutoff 8 Å; PME with the $\beta$ of pmemd, $\mathrm{erfc}(\beta r_c)/r_c = 10^{-6}$ at constant energy and $10^{-5}$ at constant pressure (0.39467 and 0.34864 Å⁻¹), the grids of pmemd.cuda (64³; 144 × 84 × 80; 256 × 128 × 128; 224 × 224 × 240), order 4, and Amber's influence function (D134); SHAKE on the bonds of hydrogen and rigid water; the correction for the dispersion | The same, by the inputs |
@@ -222,7 +222,7 @@ weighs less: the derived wall time of MDIR is 75% to 96% of pmemd.cuda's
 
 **Earlier measurements.** The ratios of the protocol before, at D134 on
 an RTX 3090 and at D280 and D285 on an RTX 4090, are kept as history in
-the row of D[suite-symmetric] in [decisions.md](../decisions.md).
+the row of D327 in [decisions.md](../decisions.md).
 Under this protocol MDIR's rate is at least pmemd.cuda's on every system
 of the suite with either choice of the reaches, the first milestone's
 target (D114); the closest is STMV with the default reaches, 105.8 ±
