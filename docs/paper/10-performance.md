@@ -486,3 +486,56 @@ need a list that lives longer, through a buffer set from a tolerance as
 GROMACS's is. That is not the default, since a missed pair is not allowed
 by default, and it would be an option.
 
+## 10.7 CPU target against CPU engines
+
+The CPU target is measured before selecting host strategies for the
+primitives of Section 8 (D[cpu-host-baseline], #552, under #549). The
+runner and its summary are in `scripts/benchmarks/cpu-breakdown/`.
+JAC and Cellulose use the Amber benchmark suite's topology and restart;
+their GROMACS input has the same particle order, with coordinates rounded
+to its `.gro` fields (RMS difference 0.00289 Å and maximum 0.005 Å from
+the Amber restart). Their velocities also match after the Amber-to-GROMACS
+unit conversion: a least-squares factor of 20.4550 and an RMS residual
+of $3.0\times10^{-5}$ relative to the GROMACS velocity RMS on each system.
+The TIP3P box uses a generated Amber input and a
+separately equilibrated GROMACS state; its coordinates differ by 22.8 Å
+RMS, so its cross-engine rates show the cost on one molecular system but
+are contextual, not a matched starting-state comparison. Its Amber
+restart has no velocities, and pmemd starts with velocities generated at
+300 K; the two other Amber restarts carry velocities.
+
+All runs use one CPU target, one process, a step of 2 fs, NVE, PME of order
+4 with $\mathrm{erfc}(\beta r_c)=10^{-5}$, and bonds to hydrogen
+constrained. MDIR's `tolerance` and GROMACS's `ewald-rtol` are both set to
+$10^{-5}$; pmemd's `dsum_tol` is
+$\mathrm{erfc}(\beta r_c)/r_c=10^{-5}/r_c$, with $r_c$ in Å, hence
+$1.25\times10^{-6}\,\mathrm{Å}^{-1}$ at 8 Å and
+$1.11111111111\times10^{-6}\,\mathrm{Å}^{-1}$
+at 9 Å. This gives the same $\beta$ rather than the same literal key
+value. The
+cutoff is 8 Å for JAC and Cellulose and 9 Å for TIP3P. JAC's grid is
+$64^3$, TIP3P's $160^3$; Cellulose uses $288\times128\times128$ in all
+three programs. GROMACS chose $280\times128\times128$ from its 1 Å mesh
+spacing, but serial pmemd does not accept its factor of seven, so the
+nearby common grid is given explicitly. The engines keep their own
+nonbonded arithmetic and neighbor policies: MDIR's default matrix has a
+1.5 Å reach beyond the cutoff, GROMACS uses either its default Verlet
+buffer or an exact 3 Å buffer searched every 10 steps, and pmemd uses
+its default skin. Thus the table compares end-to-end CPU costs, with the
+specified GROMACS list variants, not one identical list algorithm.
+
+Every system's variants run in alternating order over four rounds in one
+16-core Slurm allocation on an AMD EPYC node; the first round is discarded
+and the remaining rates are summarized as the mean and sample standard
+deviation. The node and allocated CPU affinity are recorded with the raw
+results. A concurrent CPU benchmark or MDIR suite on the node disqualifies
+a run from the final rates. MDIR times
+the second half of its steps, GROMACS resets its timing halfway, and
+pmemd reports the whole run. The source of MDIR is commit `a8a5f7ff` on
+`main`; the measurement branch changes only scripts and documentation.
+GROMACS 2026.3 is mixed precision; pmemd 26 is serial and double
+precision. MDIR's `double` at one thread is compared to pmemd; its
+`mixed` at one and 16 threads is compared to GROMACS at those thread
+counts. The 16-thread MDIR `double` rate shows scaling and has no
+16-thread pmemd reference.
+

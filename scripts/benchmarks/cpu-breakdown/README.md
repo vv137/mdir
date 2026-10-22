@@ -35,8 +35,10 @@ Use `--grid NX,NY,NZ` when a grid chosen from GROMACS's 1 Å spacing has
 a prime factor other than 2, 3, or 5, which pmemd refuses. Specify one
 nearby FFT-friendly grid for all three engines. Cellulose's automatic
 grid is `280,128,128`; use `288,128,128` for the three-engine comparison.
-Use `--min-steps` only for a pilot on a large system, and state the final
-number of steps for every variant.
+Use `--min-steps` and `--steps-scale` to bound a large system's run time;
+state the final number of steps for every variant and report the spread
+over kept rounds. A 40-step pilot is too short for the final MDIR rate,
+which times only its latter half.
 
 The NVE mode disables thermostats and barostats. All programs use a 2 fs
 step, a common cutoff, PME with order 4 and
@@ -66,5 +68,6 @@ stable rate after initialization and pair-list builds.
 `baseline_summary.py TAG SYSTEM...` prints the rates and neutral ratios;
 `SYSTEM@OTHER_TAG` selects a different tag for one system. The JSON lines
 include the node, CPU model, and allocated affinity. Check the Slurm log
-for other jobs on that node during kept rounds; a shared-node run is a
-pilot and should be measured again without competing work.
+for other jobs on that node during kept rounds; a run concurrent with
+another CPU benchmark or MDIR suite is a pilot and should be measured
+again without that competing work.

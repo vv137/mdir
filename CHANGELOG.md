@@ -32,6 +32,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **A reproducible CPU performance baseline** (D[cpu-host-baseline],
+  #552): the benchmark runner compares the CPU target in mixed and double
+  precision with GROMACS and serial pmemd on JAC, Cellulose, and TIP3P,
+  with a common PME splitting parameter and grid and recorded node and
+  thread conditions. It changes no control-file key, simulation result,
+  output format, or overwrite behavior.
 - **Shared scalar grid gather emitters** (D325, #539): the
   Gaussian and prolate PME gathers use the same wrapped z coordinate and
   grid-read primitives, with their existing lane layout and arithmetic.
