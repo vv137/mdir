@@ -92,7 +92,7 @@ does not turn such inputs into newly refused runs.
 | Ordered reduction (D171, D301) | The algebra says `fixed_order`, `any_order`, or exact reorderability | Only legal accumulation strategies enter the chooser; the fixed-order path is the conservative choice when a reordering is not allowed |
 | Owner-computes (D290, `md-dist-owner-computes`) | The relation and transfer form establish its ownership conditions | The pass uses the fast form only after those conditions are checked; otherwise it retains the original distributed form |
 | Partitioned centers (D317, D328) | Direct results of `partition_centers` carry relation and layout provenance | The matching relation can use the disjoint interior and boundary filters; a stale or unrelated filter is not proof |
-| Halo coverage (#546) | `md_dist.covered` tests a halo against current positions and cell | A collective runtime guard selects reuse or migration and rebuild; the current verifier refuses a halo whose source it cannot establish |
+| Halo coverage (#546) | `md_dist.covered` tests a halo against current positions and cell | The predicate supplies the collective guard; #38 will consume it in a reuse-or-migrate branch. The current verifier refuses a halo whose source it cannot establish |
 | Device strategy (#444, #433, #558) | Algebra, target capabilities, and strategy preconditions determine legality | Measurement selects among legal strategies; an unavailable optimization gets a reason and legal fallback |
 
 These examples do not all have a first-class witness today. Their present
