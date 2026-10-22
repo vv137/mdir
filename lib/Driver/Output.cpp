@@ -201,6 +201,52 @@ llvm::Expected<std::string> mdir::driver::backUpOutput(const std::string &path) 
 
 static Output *current = nullptr;
 
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+/// The times of the outputs that `MDIR_CHECKPOINT_TIMES=1` prints to the
+/// standard error (#548, docs/environment.md): of each checkpoint and frame
+/// of `mdir run`, in parts, and of each interval between two rows of the
+/// log. A part that the program does before a call of the host, the copy
+/// of the buffers of a device, is the time since the last call returned.
+struct OutputTimes {
+  bool enabled = false;
+  /// When the last call of the host for an output returned.
+  Clock::time_point lastReturn;
+  /// When the last row of the log was taken, and at which step.
+  Clock::time_point lastRow;
+  int64_t lastRowStep = -1;
+  /// The time in s spent in frames and checkpoints since that row.
+  double written = 0.0;
+};
+
+OutputTimes &getTimes() {
+  static OutputTimes times = [] {
+    OutputTimes times;
+    const char *value = std::getenv("MDIR_CHECKPOINT_TIMES");
+    times.enabled = value && std::strcmp(value, "1") == 0;
+    times.lastReturn = Clock::now();
+    return times;
+  }();
+  return times;
+}
+
+double getMilliseconds(Clock::time_point from, Clock::time_point to) {
+  return 1.0e3 * std::chrono::duration<double>(to - from).count();
+}
+
+/// Marks the return of a call of the host for an output.
+struct ReturnMark {
+  ~ReturnMark() {
+    OutputTimes &times = getTimes();
+    if (times.enabled)
+      times.lastReturn = Clock::now();
+  }
+};
+
+} // namespace
+
 volatile std::sig_atomic_t mdir::driver::stopSignal = 0;
 
 void mdir::driver::setOutput(Output *output) { current = output; }
@@ -809,6 +855,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double excess,
                                     double virial, double pressureKinetic) {
   Output &output = *current;
+  ReturnMark returns;
   // A step of energy that is not a row of the log keeps no temperatures of
   // the solvent and the solute, as for `mdir run`; an embedded program
   // (D196) still takes its energies, without a row.
@@ -821,6 +868,21 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     output.hasSolvent = false;
     if (!output.embedded)
       return;
+  }
+  if (OutputTimes &times = getTimes(); times.enabled && isRow) {
+    Clock::time_point now = Clock::now();
+    if (times.lastRowStep >= 0 && step > times.lastRowStep)
+      std::fprintf(stderr,
+                   "MDIR: times of the row at step %lld: %.1f ms since the "
+                   "row at step %lld, %.1f ms of it in frames and "
+                   "checkpoints\n",
+                   static_cast<long long>(step),
+                   getMilliseconds(times.lastRow, now),
+                   static_cast<long long>(times.lastRowStep),
+                   1.0e3 * times.written);
+    times.lastRow = now;
+    times.lastRowStep = step;
+    times.written = 0.0;
   }
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
@@ -1107,6 +1169,25 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   Output &output = *current;
   if (!output.hasTrajectory)
     return;
+  ReturnMark returns;
+  // With MDIR_CHECKPOINT_TIMES, the time of the frame when it returns.
+  struct FrameTimes {
+    int64_t step;
+    Clock::time_point entered = Clock::now();
+    ~FrameTimes() {
+      OutputTimes &times = getTimes();
+      if (!times.enabled)
+        return;
+      Clock::time_point now = Clock::now();
+      times.written += 1.0e-3 * getMilliseconds(entered, now);
+      std::fprintf(stderr,
+                   "MDIR: times of the frame at step %lld: copy %.1f ms, "
+                   "write %.1f ms\n",
+                   static_cast<long long>(step),
+                   getMilliseconds(times.lastReturn, entered),
+                   getMilliseconds(entered, now));
+    }
+  } frameTimes{step};
   if (output.trajectory->isExact()) {
     // The state as the run has it, in nm (D239): a buffer of
     // f32 (the single mode) widens to f64 without loss.
@@ -1140,6 +1221,9 @@ static void writeState(int64_t step, void *positions, void *velocities,
   Output &output = *current;
   if (output.checkpointPath.empty())
     return;
+  ReturnMark returns;
+  OutputTimes &times = getTimes();
+  Clock::time_point entered = Clock::now();
   Checkpoint &checkpoint = output.checkpoint;
   checkpoint.step = step;
   checkpoint.time = output.getTime(step);
@@ -1149,18 +1233,35 @@ static void writeState(int64_t step, void *positions, void *velocities,
   checkpoint.forces.clear();
   if (forces)
     checkpoint.forces = readVectors(forces, ids, output.force);
+  Clock::time_point ordered = Clock::now();
 
   checkpoint.frames = output.hasTrajectory ? output.trajectory->getNumFrames()
                                            : 0;
   checkpoint.bath = output.bath;
 
-  if (llvm::Error error =
-          writeCheckpoint(output.checkpointPath, checkpoint)) {
+  CheckpointWriteTimes parts;
+  if (llvm::Error error = writeCheckpoint(output.checkpointPath, checkpoint,
+                                          times.enabled ? &parts : nullptr)) {
     std::fprintf(stderr, "mdir: %s\n",
                  llvm::toString(std::move(error)).c_str());
     std::exit(1);
   }
   ++output.numCheckpoints;
+  if (times.enabled) {
+    Clock::time_point now = Clock::now();
+    times.written += 1.0e-3 * getMilliseconds(entered, now);
+    std::fprintf(stderr,
+                 "MDIR: times of the checkpoint at step %lld: copy %.1f ms, "
+                 "order %.1f ms, hash %.1f ms, file %.1f ms, file sync "
+                 "%.1f ms, names %.1f ms, directory sync %.1f ms; %.1f ms in "
+                 "the call\n",
+                 static_cast<long long>(step),
+                 getMilliseconds(times.lastReturn, entered),
+                 getMilliseconds(entered, ordered), 1.0e3 * parts.hash,
+                 1.0e3 * parts.file, 1.0e3 * parts.fileSync,
+                 1.0e3 * parts.names, 1.0e3 * parts.directorySync,
+                 getMilliseconds(entered, now));
+  }
 
   // A stop that a signal or the wall time asks for is taken here, where
   // the run continues exactly from what it has just written (D131), and

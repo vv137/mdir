@@ -132,6 +132,26 @@ at a later call. To find the kernel that failed:
    the tuples took outside the runtime's pool, and the pool's blocks at its
    peaks by size and use ([environment.md](environment.md)).
 
+## The time of the outputs
+
+`MDIR_CHECKPOINT_TIMES=1` makes `mdir run` print, on the standard error,
+where the time of its outputs goes (#548):
+
+```
+MDIR: times of the checkpoint at step 1000: copy 7.1 ms, order 30.2 ms, hash 98.0 ms, file 120.4 ms, file sync 60.3 ms, names 2.1 ms, directory sync 1.0 ms; 319.1 ms in the call
+MDIR: times of the frame at step 1000: copy 2.3 ms, write 9.8 ms
+MDIR: times of the row at step 2000: 4630.2 ms since the row at step 1000, 331.2 ms of it in frames and checkpoints
+```
+
+The copy is the time from the return of the call of the host before
+(the row of the log, or the frame) to the start of this one: on a device,
+the copy of the buffers to the host, and any wait for the device. The
+order is the reordering of the state into the order of the input; the
+file is the H5MD file up to its close, and the syncs and the names the
+steps that put it on stable storage under its name (D132, D173). The
+interval between two rows holds, besides the steps, the frames and the
+checkpoints between them and the start of a segment after a checkpoint.
+
 ## Tiers of tests
 
 | Tier | How | What |
