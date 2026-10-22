@@ -17,9 +17,13 @@ The shared [execution contract](execution-contracts.md) (#574) establishes
 legality before a device strategy is chosen by cost. Its provenance, effect,
 validity, and witness rules apply to the chooser and the lowering alike;
 this document gives the preconditions of individual device strategies.
+
 The storage-form operands of these primitives carry their row set in
 `#md_exec.set_layout<@set, rank>` (D[typed-storage-set], #565). The
 identity layout leaves the numeric GPU memory space and addressing alone.
+This invariant set is the buffer-provenance case of the
+[execution contract](execution-contracts.md) (D334); changing validity
+state remains in SSA values.
 The loop verifier checks each operand against the primitive's particle or
 tuple domain before a strategy is chosen. The common CPU/GPU conversion
 boundary rejects a cast from one set to another, then removes the layout;
