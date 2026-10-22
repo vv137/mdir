@@ -1,0 +1,104 @@
+# CPU step baseline
+
+`bench.py` times the CPU target and CPU reference engines on the same
+molecular systems. Issue #552 uses its NVE variant before selecting host
+primitive strategies under #549. The existing `coupled` mode retains D267's
+NVT and NPT size sweep.
+
+Prepare each directory under `CPU_BENCH_DIR` with `sys.prmtop` and
+`sys.inpcrd` in Amber format, and `gmx.top` and `eq.gro` for the same atoms
+in the same order. `eq.cpt` and `npt.h5` are needed only for the coupled NPT
+mode. JAC and the TIP3P boxes prepared for D267 have this layout. An Amber
+suite system may use links to its prepared `system.parm7`, `system.rst7`,
+`system.top`, and `system.gro`, respectively. Keep benchmark outputs in the
+system directory; they are not repository inputs.
+
+For each system, run one Slurm allocation with 16 cores and no other CPU
+benchmark in that allocation. Give the engine binaries through `MDIR`,
+`GMX`, and `PMEMD`. For example, the body of a submitted command for JAC is:
+
+```sh
+CPU_BENCH_DIR=... MDIR=... GMX=... PMEMD=... \
+  python scripts/benchmarks/cpu-breakdown/bench.py jac 4 \
+  m1,m16,d1,d16,g1,g16,x1,x16,p1 --ensemble nve --tag baseline-jac
+```
+
+Use `--cutoff 8` for JAC and Cellulose, `--cutoff 9` for TIP3P. The script
+alternates the variant order by round. Discard round 0; report the mean and
+sample standard deviation of the remaining rates. It writes one JSON line
+per run and the exact input files under `runs/TAG/`. Do not mix executable
+revisions in one tag. The MDIR rate is the second half of its steps;
+GROMACS uses `-resethway`; pmemd reports all integration steps. Report this
+timing-window difference with the comparison.
+For pmemd, read `Per Step(ms)` in its all-steps timing block: `ns/day` is
+printed to only two decimal places and would distort the large-system
+rates. `export_results.py` and the raw-output mode of
+`baseline_summary.py` derive that precise value from each `mdout`, including
+for runs made before the benchmark runner's parser was corrected.
+For GROMACS, read the `Performance` line's `ms/step` column rather than
+convert its rounded `ns/day` column. The exporter and raw-output summary
+make the same correction for earlier runs from each `md.log`.
+
+Use `--grid NX,NY,NZ` when a grid chosen from GROMACS's 1 Å spacing has
+a prime factor other than 2, 3, or 5, which pmemd refuses. Specify one
+nearby FFT-friendly grid for all three engines. Cellulose's automatic
+grid is `280,128,128`; use `288,128,128` for the three-engine comparison.
+Use `--min-steps` and `--steps-scale` to bound a large system's run time;
+state the final number of steps for every variant and report the spread
+over kept rounds. A 40-step pilot is too short for the final MDIR rate,
+which times only its latter half.
+
+The NVE mode disables thermostats and barostats. All programs use a 2 fs
+step, a common cutoff, PME with order 4 and
+$\mathrm{erfc}(\beta r_c)=10^{-5}$, and constraints on bonds to hydrogen.
+MDIR's `tolerance` and GROMACS's `ewald-rtol` take $10^{-5}$, while
+pmemd's `dsum_tol` takes $10^{-5}/r_c$ with $r_c$ in Å. GROMACS chooses
+the PME grid at a 1 Å
+spacing and the script gives that grid to MDIR and pmemd. GROMACS's default
+Verlet input policy is `gT`. In these NVE runs GROMACS reports that it
+cannot increase `nstlist`; the actual `gT` search interval is 10 steps.
+Its `rlist` is 0.805 nm on JAC, 0.901 nm on TIP3P, and 0.807 nm on
+Cellulose, leaving respective buffers of 0.005, 0.001, and 0.007 nm.
+This nearly bufferless NVE list is not the thermostat-enabled default
+measured in D267. `xT` uses an exact buffer of 3 Å and a rebuild every
+10 steps. MDIR's default neighbor matrix uses a 1.5 Å reach; `mTrD` or
+`dTrD` requests another reach. pmemd's neighbor policy is its own.
+These are separate policy comparisons, not identical list algorithms.
+
+The `p1` run uses the same Amber topology and coordinate file as MDIR.
+Where the file includes velocities it restarts from those velocities; if
+not, pmemd generates velocities from 300 K with a fixed seed. In the latter
+case, label its rate contextual because the starting states differ.
+For this TIP3P input, the MDIR log reports 298.15 K at step 0 from
+generated velocities, while pmemd generates its velocities from 300 K.
+GROMACS reads `eq.gro`; compare its coordinates and velocities with the
+Amber input before calling a pair of rates fully matched. These checks
+and the programs' versions belong in the report beside the rates.
+
+Serial pmemd is available; `d16` is shown for the CPU target's thread
+scaling but has no 16-thread pmemd counterpart. The script accepts
+`--steps-scale X` for a short pilot. Final rates need enough steps for a
+stable rate after initialization and pair-list builds.
+
+For the final records, JAC's MDIR `m1` and `d1` take 200 steps and
+`m16` and `d16` take 800; GROMACS `g1` and `x1` take 700 and `g16`
+and `x16` take 12,000; pmemd takes 200. On TIP3P and Cellulose, MDIR
+takes 100, GROMACS 200, and pmemd 100 steps. The three programs keep
+the timing windows stated above.
+
+`baseline_summary.py TAG SYSTEM...` prints the rates and neutral ratios;
+`SYSTEM@OTHER_TAG` selects a different tag for one system. The original JSON
+lines include the node, CPU model, and allocated affinity; the committed
+portable records omit those host details. Check the Slurm log
+for other jobs on that node during kept rounds; a run concurrent with
+another CPU benchmark or MDIR suite is a pilot and should be measured
+again without that competing work.
+
+The final records for #552 are committed as portable JSONL under
+`data/cpu-baseline-2026-10-22/`, one file per system. With `CPU_BENCH_DIR`
+unset, `baseline_summary.py baseline-final jac tip3p-103k cellulose`
+reads those records. With `CPU_BENCH_DIR` set, it reads the original
+`results.jsonl` files instead. The committed records retain the per-run
+rates, step counts, simulation conditions, and round number, but omit local
+paths and host allocation details. The original benchmark JSONL and Slurm
+logs retain the exact node, CPU model, and affinity for local audit.

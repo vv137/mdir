@@ -486,3 +486,149 @@ need a list that lives longer, through a buffer set from a tolerance as
 GROMACS's is. That is not the default, since a missed pair is not allowed
 by default, and it would be an option.
 
+## 10.7 CPU target against CPU engines
+
+The CPU target is measured before selecting host strategies for the
+primitives of Section 8 (D[cpu-host-baseline], #552, under #549). The
+runner and its summary are in `scripts/benchmarks/cpu-breakdown/`.
+JAC and Cellulose use the Amber benchmark suite's topology and restart;
+their GROMACS input has the same particle order, with coordinates rounded
+to its `.gro` fields (RMS difference 0.00289 Å and maximum 0.005 Å from
+the Amber restart). Their velocities also match after the Amber-to-GROMACS
+unit conversion: a least-squares factor of 20.4550 and an RMS residual
+of $3.0\times10^{-5}$ relative to the GROMACS velocity RMS on each system.
+The TIP3P box uses a generated Amber input and a
+separately equilibrated GROMACS state; its coordinates differ by 22.8 Å
+RMS, so its cross-engine rates show the cost on one molecular system but
+are contextual, not a matched starting-state comparison. Its Amber
+restart has no velocities, and pmemd starts with velocities generated at
+300 K; the two other Amber restarts carry velocities.
+
+All runs use one CPU target, one process, a step of 2 fs, NVE, PME of order
+4 with $\mathrm{erfc}(\beta r_c)=10^{-5}$, and bonds to hydrogen
+constrained. MDIR's `tolerance` and GROMACS's `ewald-rtol` are both set to
+$10^{-5}$; pmemd's `dsum_tol` is
+$\mathrm{erfc}(\beta r_c)/r_c=10^{-5}/r_c$, with $r_c$ in Å, hence
+$1.25\times10^{-6}\,\mathrm{Å}^{-1}$ at 8 Å and
+$1.11111111111\times10^{-6}\,\mathrm{Å}^{-1}$
+at 9 Å. This gives the same $\beta$ rather than the same literal key
+value. The independent values $\mathrm{erfc}^{-1}(10^{-5})/r_c$ are
+$0.3904266593\,\mathrm{Å}^{-1}$ and
+$0.3470459194\,\mathrm{Å}^{-1}$, respectively; pmemd reports 0.39043
+and 0.34705. The
+cutoff is 8 Å for JAC and Cellulose and 9 Å for TIP3P. JAC's grid is
+$64^3$, TIP3P's $160^3$; Cellulose uses $288\times128\times128$ in all
+three programs. GROMACS chose $280\times128\times128$ from its 1 Å mesh
+spacing, but serial pmemd does not accept its factor of seven, so the
+nearby common grid is given explicitly. The engines keep their own
+nonbonded arithmetic and neighbor policies: MDIR's default matrix has a
+1.5 Å reach beyond the cutoff, GROMACS uses either its default Verlet
+buffer or an exact 3 Å buffer searched every 10 steps, and pmemd uses
+its default skin. Thus the table compares end-to-end CPU costs, with the
+specified GROMACS list variants, not one identical list algorithm.
+
+For the `g` variants in this NVE protocol, GROMACS reports that it cannot
+increase `nstlist`, so its actual search interval is 10 steps. The logged
+`rlist` is 0.805 nm on JAC, 0.901 nm on TIP3P, and 0.807 nm on
+Cellulose: buffers of 0.005, 0.001, and 0.007 nm beyond the respective
+cutoffs. This nearly bufferless NVE list is not the thermostat-enabled
+default measured in D267. The `x` variants use the stated exact 3 Å buffer.
+
+Every system's variants run in alternating order over four rounds in one
+16-core Slurm allocation on one CPU node; the first round is discarded
+and the remaining rates are summarized as the mean and sample standard
+deviation. The node and allocated CPU affinity are recorded with the raw
+results. A concurrent CPU benchmark or MDIR suite on the node disqualifies
+a run from the final rates. MDIR times the second half of its steps.
+GROMACS resets its timing halfway and reports the `Performance` `ms/step`
+column. pmemd reports the whole run through its all-steps `Per Step(ms)` field.
+The `ns/day` fields are rounded and are not used. The source
+of the measured MDIR executable is commit `89535e1f`, as reported by
+every run log, without the `with uncommitted changes` suffix of a dirty
+build. Relative to main `a8a5f7ff`, that source commit changes only
+`scripts/benchmarks/cpu-breakdown/README.md` and `bench.py`; the compiled
+MDIR source is unchanged.
+GROMACS 2026.3 is mixed precision; pmemd 26 is serial and double
+precision. MDIR's `double` at one thread is compared to pmemd; its
+`mixed` at one and 16 threads is compared to GROMACS at those thread
+counts. The 16-thread MDIR `double` rate shows scaling and has no
+16-thread pmemd reference.
+
+The actual step counts differ by variant. On JAC, MDIR `m1` and `d1`
+take 200 steps and `m16` and `d16` take 800; GROMACS `g1` and `x1`
+take 700 and `g16` and `x16` take 12,000; pmemd takes 200. On TIP3P
+and Cellulose, MDIR takes 100, GROMACS 200, and pmemd 100 steps. MDIR
+reports its latter half, GROMACS resets timing halfway, and pmemd reports
+its whole run. TIP3P MDIR starts at 298.15 K from generated velocities,
+while pmemd generates its velocities from 300 K.
+
+The pair-loop sampler of D267 measured a 64% share of a mixed-precision,
+16-thread TIP3P NPT step before this NVE baseline. Eliminating that loop's
+cost completely would therefore give at most $1/(1-0.64)=2.78$ times the
+rate in that earlier configuration. This is a bound for choosing the next
+strategy, not a measured speedup of the NVE runs below; the next pair-loop
+slice (#554) will measure its share and the full step together.
+
+*Table 10.8. CPU time in ms/step, mean $\pm$ sample standard deviation of
+three kept rounds. `m` and `d` are MDIR mixed and double, `g` is GROMACS
+with its default list, `x` is GROMACS with the exact 3 Å buffer and a
+10-step search, and `p` is serial pmemd double. The suffix is the thread
+count. The first of four alternating rounds is warm-up.*
+
+| System | Variant | ms/step |
+|---|---|---:|
+| JAC | m1 | 123.227 $\pm$ 0.079 |
+| JAC | m16 | 9.335 $\pm$ 0.036 |
+| JAC | d1 | 355.478 $\pm$ 15.193 |
+| JAC | d16 | 23.885 $\pm$ 0.036 |
+| JAC | g1 | 9.990 $\pm$ 0.012 |
+| JAC | g16 | 1.271 $\pm$ 0.034 |
+| JAC | x1 | 16.568 $\pm$ 0.181 |
+| JAC | x16 | 1.697 $\pm$ 0.002 |
+| JAC | p1 | 51.340 $\pm$ 0.044 |
+| TIP3P 103k | m1 | 1896.445 $\pm$ 1.681 |
+| TIP3P 103k | m16 | 129.451 $\pm$ 0.084 |
+| TIP3P 103k | d1 | 5705.728 $\pm$ 0.561 |
+| TIP3P 103k | d16 | 387.577 $\pm$ 0.411 |
+| TIP3P 103k | g1 | 172.567 $\pm$ 5.571 |
+| TIP3P 103k | g16 | 16.619 $\pm$ 0.105 |
+| TIP3P 103k | x1 | 267.567 $\pm$ 0.792 |
+| TIP3P 103k | x16 | 23.187 $\pm$ 0.009 |
+| TIP3P 103k | p1 | 802.297 $\pm$ 0.352 |
+| Cellulose | m1 | 2381.427 $\pm$ 1.055 |
+| Cellulose | m16 | 180.337 $\pm$ 0.222 |
+| Cellulose | d1 | 6479.728 $\pm$ 2.263 |
+| Cellulose | d16 | 462.115 $\pm$ 0.876 |
+| Cellulose | g1 | 209.763 $\pm$ 0.643 |
+| Cellulose | g16 | 22.628 $\pm$ 0.093 |
+| Cellulose | x1 | 327.500 $\pm$ 1.499 |
+| Cellulose | x16 | 30.656 $\pm$ 0.029 |
+| Cellulose | p1 | 970.193 $\pm$ 0.544 |
+
+*Table 10.9. Paired MDIR/reference CPU time ratios, mean $\pm$ sample
+standard deviation over the three kept rounds. Above one, MDIR takes
+longer. JAC and Cellulose have matched starting coordinates to `.gro`
+rounding; TIP3P has a different starting state across the engines.*
+
+| System | m1/g1 | m1/x1 | m16/g16 | m16/x16 | d1/p1 |
+|---|---:|---:|---:|---:|---:|
+| JAC | 12.335 $\pm$ 0.007 | 7.438 $\pm$ 0.077 | 7.346 $\pm$ 0.211 | 5.502 $\pm$ 0.014 | 6.924 $\pm$ 0.300 |
+| TIP3P 103k | 10.997 $\pm$ 0.340 | 7.088 $\pm$ 0.027 | 7.790 $\pm$ 0.054 | 5.583 $\pm$ 0.002 | 7.112 $\pm$ 0.004 |
+| Cellulose | 11.353 $\pm$ 0.031 | 7.272 $\pm$ 0.036 | 7.970 $\pm$ 0.041 | 5.883 $\pm$ 0.006 | 6.679 $\pm$ 0.004 |
+
+For the two coordinate-matched systems, the mixed CPU step takes 11.35 to
+12.34 times GROMACS's default-list time on one thread and 7.35 to 7.97
+times on 16 threads. With the exact GROMACS list, the 16-thread gap is
+5.50 to 5.88. MDIR double takes 6.68 to 6.92 times serial pmemd. These
+ratios are end-to-end baselines for selecting a host strategy, not the
+isolated cost of the pair primitive. The complete per-run records and
+commands to regenerate both tables accompany the runner. During the last
+Cellulose round, two unrelated allocations began on its node; its largest
+per-variant range across the three kept rounds was 0.87%, and its whole
+alternating set is retained. Other systems have wider kept-round spreads:
+JAC `d1` spans 7.62% (373.021 ms in round 3 against 346.625–346.787 ms),
+JAC `g16` spans 4.80%, and TIP3P `g1` spans 5.77%. JAC's paired `d1/p1`
+ratios are 6.757, 6.745, and 7.270; the reported 6.924 $\pm$ 0.300
+includes that third-round outlier, while the first two ratios are about
+6.75. No round was removed from Tables 10.8 and 10.9.
+
