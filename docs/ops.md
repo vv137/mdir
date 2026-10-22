@@ -1110,6 +1110,11 @@ Two structures share storage only if the first is no longer used where the
 second begins. The parameters are the cell, the cutoff, the skin, the width
 of the cells, and the kind and width of the structure.
 
+A structure that the pass leaves apart, such as the one of a loop marked
+`mdrt.fresh`, may still take the storage of an earlier structure on a
+device, with a reset, without continuing it. `md-exec-assign-storage`
+decides this (Section 10.5, D[start-structures]).
+
 **Rebuild policy (B1).**
 
 | Policy | Behavior | Exact | State |
@@ -1277,7 +1282,7 @@ buffers. An op takes fields only or buffers only.
 | `md_exec.empty_neighbors` | Takes `size` and `positions` and allocates the storage of a structure for that many particles. `positions` is the type of the buffers that hold the positions; the storage is where they are. |
 | Every op | `scratch` holds buffers that the op may use as it likes. A lowering to a device needs them for global sums and maxima. |
 | `md_exec.refresh_neighbors` | Rebuilds the structure where it is. The result is the structure that was given. |
-| `md_exec.reset_neighbors` | Storage form only. Makes the structure valid for no configuration. It stands where the value form has an empty structure inside a loop. |
+| `md_exec.reset_neighbors` | Storage form only. Makes the structure valid for no configuration. It stands where the value form has an empty structure inside a loop, and where a structure takes the storage of an earlier one (Section 10.5). |
 | `md_exec.join` | Storage form only. The op before it that is marked `md_exec.side` runs on a second stream beside the ops between the two, which must be independent of it; the ops after the join run after it (`md-exec-assign-streams`, D87). |
 | `md_exec.zeros`, `md_exec.empty`, `md_exec.build_cells`, `md_exec.build_neighbors`, `md_exec.tabulate` | Do not occur. A table that `md_exec.tabulate` makes (`md-exec-fold-tables`, D91) is computed on the host, entry by entry, where its tables are, and is placed as they are. A build is storage and a refresh with the policy `always`. |
 
@@ -1666,6 +1671,31 @@ it is needed.
 A neighbor structure is refreshed where it is. If the structure that a
 refresh takes is used after the refresh, the pass fails: the structure would
 need storage of its own.
+
+On a device, a structure takes the storage of an earlier one when nothing
+uses the earlier one any more (D[start-structures], #471). This is how the
+structure of the evaluation at the start and the structure of the steps,
+which D218 keeps apart (Section 8.2), come to share one storage. The rule
+has four conditions:
+
+- The two have the same shape: the type of the structure, its kind and
+  width, the number of particles, and the type of the positions.
+- No op of the body of the function at or after the op where the later
+  structure begins uses the earlier one. That includes its refreshes, the
+  loops that carry it, and the configuration it was built at
+  (`md_exec.reference_positions`, which is the storage's own buffer).
+- Neither structure feeds `md_exec.build_edges` or a stage. Neither is
+  built for centers or images of its own.
+- The storage is on a device. On the host each structure keeps its own,
+  and the CPU target compiles the same program as before.
+
+The later structure begins with a `md_exec.reset_neighbors`, so its first
+refresh builds whatever the storage held: the test of displacement then
+compares with the earlier structure's last configuration instead of
+zeros, and a structure that is valid for no configuration ignores the
+test. The capacity carries over: a structure that grew leaves its room to
+the next. The cutoff, the skin, and the width of the cells are not part of
+the shape: they belong to the refreshes.
 
 ### 10.6 Limitations
 

@@ -107,6 +107,18 @@ entries and the masks, against 510 MB for the fixed lists), and a run of
 `test/Driver/groups-gpu.test` that starts with almost no room grows its
 buffers and gives the energies of the matrix to every digit.
 
+**Lifetime.** A structure's buffers live until the program ends: the end
+of `mdir run`, or the close of a Python simulation's activation (D215).
+The evaluation at the start builds a structure that the steps do not
+continue (D218). Since D[start-structures] (#471) the steps' structure
+takes the start's storage on a device, with a reset, rather than storage
+of its own: the start's structure is no longer used when the steps begin,
+and both have the same shape. Each of the two held about 466 MiB at STMV
+(1.07 million atoms): 413 MiB of lists and buffers of the runtime, and
+53 MiB of `placeOf` and the two reference configurations. The steps still
+build at step 1. Their first build finds the lists with the room the
+start left, so they grow only if they need more.
+
 **Validity.** The build tests distances in f32 against the reach widened
 by 3e-6 of the sum of the edges of the cell (in a triclinic cell, of the
 diagonal and the magnitudes of the three tilts), as the build of the matrix
