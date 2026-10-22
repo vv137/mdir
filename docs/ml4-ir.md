@@ -762,6 +762,9 @@ force magnitude is $2013.298414$ kJ/mol/nm. The differences are absolute:
 Both are within the existing tolerances of 0.048, 0.193, and 0.048,
 respectively. The f64-field strategy reduces these differences by 24%,
 8%, and 40%, respectively; the exported bodies still compute in f32.
+In `double`, the same model and input give differences of
+$1.44\times10^{-5}$ kJ/mol in energy, 0.004786 kJ/mol/nm in maximum
+force, and 0.001842 kJ/mol in virial trace, under the same tolerances.
 
 The initial `mixed` result above used f32 inter-stage fields and adjoints;
 D[ml4-stage-fields] makes their f64 storage an opt-in strategy while the
