@@ -130,11 +130,30 @@ struct Checkpoint {
 /// need.
 bool hasCheckpointSupport();
 
+/// The time in seconds of each part of a write of a checkpoint (#548,
+/// `MDIR_CHECKPOINT_TIMES`): the hash of the state, the file in H5MD up to
+/// its close, its synchronization, the names (the `.prev` and the rename),
+/// and the synchronization of the directory.
+struct CheckpointWriteTimes {
+  double hash = 0.0;
+  double file = 0.0;
+  double fileSync = 0.0;
+  double names = 0.0;
+  double directorySync = 0.0;
+};
+
 /// Writes `checkpoint` to `path`. The file appears under its name only
 /// when it is complete and on stable storage, and the one it replaces stays
-/// as `path` with `.prev` appended (D132, D173).
+/// as `path` with `.prev` appended (D132, D173). With `times`, the
+/// duration of each part goes there.
 llvm::Error writeCheckpoint(const std::string &path,
-                            const Checkpoint &checkpoint);
+                            const Checkpoint &checkpoint,
+                            CheckpointWriteTimes *times = nullptr);
+
+/// Initializes the library of the files before a thread of its own writes
+/// a checkpoint, so that the library's handler of the exit of the process
+/// is registered before one that waits for that thread.
+void openCheckpointLibrary();
 
 /// The name under which `writeCheckpoint` keeps the checkpoint before the
 /// last.

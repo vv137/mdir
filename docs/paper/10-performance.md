@@ -133,7 +133,10 @@ pressure, −4.1 and −1.7 on Factor IX, −7.3 and −5.4 on Cellulose, and
   MDIR about 0.43 s, 10.4% of the window. pmemd.cuda also writes a
   restart at step 1000; whether its "last 1000 steps" include it, its
   output does not say. The cost of a checkpoint of MDIR on a large system
-  is issue #548.
+  was issue #548: since D[checkpoint-async] a thread writes the checkpoint
+  while the steps go on, and the output's share on STMV fell from 8.8% to
+  1.0% in a measurement of its own (Section 10.4). The table is of the
+  program before that change.
 - **The run is longer and both programs' rates moved between jobs.** The
   previous table timed MDIR over steps 500 to 1000 of Cellulose, just
   after the sort of the state where a run begins (Section 4.2), and 2000
@@ -187,6 +190,8 @@ cell of MDIR on `jac_nve_4fs` is from two repeats (above).*
 The output costs MDIR 1.0% on Cellulose and at most 0.5% on JAC and
 Factor IX, whose windows hold a checkpoint at most once in 10,000 steps;
 on STMV it costs 10.4%, the checkpoint inside its short window (above).
+These are the shares before D[checkpoint-async], which writes the
+checkpoints beside the steps (Section 10.4).
 
 **Time to solution.** Table 10.4 gives the whole wall time of each run.
 
@@ -350,6 +355,48 @@ ragged rows built from the members on the device (D314),
 the index is gone and the structures are 9 times smaller on STMV; a
 start in a new order takes 0.1 ms more on JAC, for the launches of the
 build, and the same on Factor IX and Cellulose.
+
+**The cost of a checkpoint (D[checkpoint-cost], D[checkpoint-async]).**
+A checkpoint of `mdir run` copied the state from the device, put it into
+the order of the input, hashed it with SHA-256, and wrote, synchronized,
+and renamed its H5MD file between two steps (Section 3.6), and the next
+segment began in a new order. Timed in parts (`MDIR_CHECKPOINT_TIMES`) on
+one RTX 4090 with the output of the suite's `mdin.GPU` and the default
+reaches, the files on the shared file system, a checkpoint of STMV took
+8.6 ms of copy, 48.7 ms of order, 311.3 ms of hash, 114.6 ms of file, and
+under 1 ms of syncs and names, and the frame of the same step 52 ms; the
+start of the next segment, derived from rows every 100 steps, about 35 ms.
+On Cellulose the same parts took 4.0, 6.4 to 6.9, 119.6, 43 to 46, and 3
+ms. The hash and the file were 85% of a checkpoint of STMV.
+
+Keeping the order and the structures across a checkpoint, where the sums
+are in an order of the threads anyway (the groups of 16), made the runs
+slower: 77.1 against 78.3 ns/day on STMV and 141.5 against 143.5 and 134.6
+against 136.5 on Cellulose. A segment's new order restores the locality
+that the order of a long run loses (Section 10.5), which is worth more
+than the start of the segment; and where a run is the same to the bit
+from run to run, the run continued from the checkpoint begins in the
+order of the positions it reads, so the run that goes on must too. A
+checkpoint therefore still ends its segment.
+
+Since D[checkpoint-async] the call of the host copies the state as the
+program holds it and the rest of the file, 20 ms on STMV, and a thread
+orders, hashes, and writes it while the steps go on: 352 ms on its thread
+on STMV and 137 ms on Cellulose, and the steps waited for none of the
+writes. The next checkpoint and the end of the run wait for the write
+before, and the file and its continuation are those of before; in the
+deterministic mode the run continued from a checkpoint is that of the run
+that went on, to the bit, also across main and the change. In one job,
+alternated with the program before (three repeats), STMV ran at 88.04 ±
+0.08 ns/day against 81.07 ± 0.09, the output's share 1.0 ± 0.3% against
+8.8 ± 0.2% of the rate with the energies alone (88.9); Cellulose at 146.8
+and 139.6 against 144.7 and 137.6 ns/day, shares of −0.3 ± 0.3% and −0.9
+± 0.2% against 1.1 ± 0.3% and 0.6 ± 0.2%. A share below zero is the new
+order of each segment, which the run with the energies alone, one
+segment, does not have. The peak resident memory rose by 63 MB on STMV
+(1552 to 1615 MB) and by 28 to 31 MB on Cellulose, one checkpoint's
+staging buffers and ordered state. The frame of DCD, 23 to 48 ms on STMV
+on the two nodes measured, is still written between the steps.
 
 **Reading a large GROMACS coordinate file (D323).** After the
 neighbor count at the start became exact and bounded by cells (D316),

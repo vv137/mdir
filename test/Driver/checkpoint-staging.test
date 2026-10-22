@@ -1,0 +1,34 @@
+# The staging buffers of a checkpoint that a thread of its own writes
+# (D[checkpoint-async], #548) belong to that write until the thread has
+# ordered them, whatever the steps do meanwhile; the next checkpoint waits
+# for that and for the commit of the one before. Here the thread holds
+# each write back by 300 ms (MDIR_CHECKPOINT_WRITE_DELAY), longer than the
+# 100 steps to the next checkpoint: the checkpoint of step 200 is requested
+# while the write of step 100 has not yet read its staging buffers, and
+# waits for it. The checkpoint of step 100 (now `.prev`) and that of step
+# 200 are those of a run whose writes are not held back, bit for bit, as
+# are the rows of the log.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t/held %t/plain
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' %S/mixture.toml > %t/run.toml
+# RUN: printf 'checkpoint = "run.h5"\ncheckpoint_interval = 100\n' >> %t/run.toml
+# RUN: cp %t/run.toml %t/held/run.toml && cp %t/run.toml %t/plain/run.toml
+# RUN: cd %t/plain && mdir run run.toml > out
+# RUN: cd %t/held && env MDIR_CHECKPOINT_WRITE_DELAY=300 MDIR_CHECKPOINT_TIMES=1 \
+# RUN:     mdir run run.toml > out 2> err
+# RUN: FileCheck %s < %t/held/err
+# RUN: mdir checkpoint %t/plain/run.h5.prev %t/held/run.h5.prev | FileCheck %s --check-prefix=SAME
+# RUN: mdir checkpoint %t/plain/run.h5 %t/held/run.h5 | FileCheck %s --check-prefix=SAME
+# RUN: grep 'INFO: ' %t/plain/out > %t/plain/rows
+# RUN: grep 'INFO: ' %t/held/out > %t/held/rows
+# RUN: diff %t/plain/rows %t/held/rows
+
+# The checkpoint of step 200 waited for the write of step 100.
+# CHECK: MDIR: times of the checkpoint at step 100: copy {{.*}}, wait 0.{{[0-9]}} ms
+# CHECK: MDIR: times of the write of the checkpoint at step 100: order
+# CHECK: MDIR: times of the checkpoint at step 200: copy {{[0-9.]+}} ms, wait {{[1-9][0-9][0-9]+}}.{{[0-9]}} ms
+# CHECK: MDIR: times of the write of the checkpoint at step 200: order
+
+# SAME: the states are identical

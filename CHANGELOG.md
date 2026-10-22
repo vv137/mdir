@@ -12,6 +12,19 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **Checkpoints written beside the steps** (D[checkpoint-async],
+  D[checkpoint-cost], #548): `mdir run` copies the state at a checkpoint
+  and writes the H5MD file, its hash, `fsync`, and rename on a thread of
+  its own while the steps go on; the next checkpoint, a stop, and the end
+  of the run wait for it, and a failed write stops the run at the next of
+  them with its error and the status 1 (it stopped at the failed one). On
+  STMV with the suite's output the output's share of the rate fell from
+  8.8% to 1.0%. `MDIR_CHECKPOINT_TIMES=1` prints where the time of the
+  checkpoints and frames goes. A checkpoint still ends its segment: keeping
+  the order across it was measured slower. Control keys, the checkpoint
+  file, its continuation, and overwrite behavior are unchanged; the stop
+  on `--max-walltime` waits for its write, under a second on STMV.
+
 - **Optional f64 stage fields in mixed precision** (D329,
   #543): `[[energy.model]] stage_field_precision = "DOUBLE"` selects
   `md-exec-assign-precision{mode=mixed stage-fields-f64=true}` and stores

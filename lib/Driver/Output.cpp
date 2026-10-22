@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -200,6 +201,249 @@ llvm::Expected<std::string> mdir::driver::backUpOutput(const std::string &path) 
 //===----------------------------------------------------------------------===//
 
 static Output *current = nullptr;
+
+namespace {
+
+using Clock = std::chrono::steady_clock;
+
+/// The times of the outputs that `MDIR_CHECKPOINT_TIMES=1` prints to the
+/// standard error (#548, docs/environment.md): of each checkpoint and frame
+/// of `mdir run`, in parts, and of each interval between two rows of the
+/// log. A part that the program does before a call of the host, the copy
+/// of the buffers of a device, is the time since the last call returned.
+struct OutputTimes {
+  bool enabled = false;
+  /// When the last call of the host for an output returned.
+  Clock::time_point lastReturn;
+  /// When the last row of the log was taken, and at which step.
+  Clock::time_point lastRow;
+  int64_t lastRowStep = -1;
+  /// The time in s spent in frames and checkpoints since that row.
+  double written = 0.0;
+};
+
+OutputTimes &getTimes() {
+  static OutputTimes times = [] {
+    OutputTimes times;
+    const char *value = std::getenv("MDIR_CHECKPOINT_TIMES");
+    times.enabled = value && std::strcmp(value, "1") == 0;
+    times.lastReturn = Clock::now();
+    return times;
+  }();
+  return times;
+}
+
+double getMilliseconds(Clock::time_point from, Clock::time_point to) {
+  return 1.0e3 * std::chrono::duration<double>(to - from).count();
+}
+
+/// Marks the return of a call of the host for an output.
+struct ReturnMark {
+  ~ReturnMark() {
+    OutputTimes &times = getTimes();
+    if (times.enabled)
+      times.lastReturn = Clock::now();
+  }
+};
+
+/// A copy of a buffer of three numbers per particle as the program holds
+/// it, in its order, rows of three contiguous numbers of `element`, which
+/// the thread of checkpoints puts into the order of the input
+/// (D[checkpoint-async]): the call of the host then copies memory and
+/// leaves the scattered writes of the order to the thread.
+struct RawVectors {
+  Element element = Element::F64;
+  int64_t count = 0;
+  std::vector<char> bytes;
+
+  /// Copies the buffer of `descriptor`.
+  RawVectors(void *descriptor, Element element) : element(element) {
+    auto *buffer = static_cast<StridedMemRefType<char, 2> *>(descriptor);
+    count = buffer->sizes[0];
+    size_t size = element == Element::F32 ? sizeof(float) : sizeof(double);
+    bytes.resize(3 * count * size);
+    const char *data = buffer->data + buffer->offset * size;
+    if (buffer->strides[0] == 3 && buffer->strides[1] == 1) {
+      std::memcpy(bytes.data(), data, bytes.size());
+      return;
+    }
+    for (int64_t i = 0; i != count; ++i)
+      for (int64_t c = 0; c != 3; ++c)
+        std::memcpy(bytes.data() + (3 * i + c) * size,
+                    data + (i * buffer->strides[0] + c * buffer->strides[1]) *
+                               size,
+                    size);
+  }
+
+  /// The values in the order of the numbers of the particles, `ids`, as
+  /// readVectors gives them.
+  std::vector<double> order(const std::vector<int32_t> &ids) const {
+    std::vector<double> values(3 * count);
+    for (int64_t i = 0; i != count; ++i) {
+      int64_t place = ids[i];
+      for (int64_t c = 0; c != 3; ++c)
+        values[3 * place + c] =
+            element == Element::F32
+                ? reinterpret_cast<const float *>(bytes.data())[3 * i + c]
+                : reinterpret_cast<const double *>(bytes.data())[3 * i + c];
+    }
+    return values;
+  }
+};
+
+/// The numbers of the particles at each place of the program.
+std::vector<int32_t> copyIds(void *ids) {
+  auto *numbers = static_cast<StridedMemRefType<int32_t, 1> *>(ids);
+  std::vector<int32_t> copy(numbers->sizes[0]);
+  for (int64_t i = 0; i != numbers->sizes[0]; ++i)
+    copy[i] = numbers->data[numbers->offset + i * numbers->strides[0]];
+  return copy;
+}
+
+/// The checkpoint that a thread of its own writes while the steps go on
+/// (D[checkpoint-async], #548). There is one writer, `writeState`, and at
+/// most one write at a time. A checkpoint passes three events, kept apart:
+///
+///   1. The copy from the device ends. The program copies its buffers to
+///      buffers of the host before it calls `writeState`; that copy has
+///      ended when the call begins. The call copies those buffers into the
+///      staging buffers of the write (RawState, or the snapshot), which the
+///      write owns: the program may overwrite its own buffers once the call
+///      returns.
+///   2. The write no longer borrows its staging buffers: the thread has put
+///      the state into the order of the input and released them
+///      (`released`). Only the thread releases them; no later checkpoint
+///      takes them, since each has staging buffers of its own.
+///   3. The commit: the file is complete, on stable storage, and under its
+///      name (`.partial`, `fsync`, `.prev`, rename, `fsync` of the
+///      directory), with the mutex of the library (#262) around its part
+///      in the library alone (`ended`).
+///
+/// The waits (waitForCheckpoint, which joins the thread): the next
+/// checkpoint waits for 2 and 3 of the one before, before it stages its
+/// own state; a stop on a signal or the wall time, the end of the run, and
+/// the exit of the process wait for all three. A write that failed stops
+/// the run at the next of them, with its error.
+struct CheckpointThread {
+  std::thread thread;
+  /// Written by the thread, read after it is joined.
+  std::string path;
+  std::string failure;
+  CheckpointWriteTimes parts;
+  /// The time in s that the thread took to order the state, if it did,
+  /// and when it released its staging buffers (event 2).
+  double order = 0.0;
+  Clock::time_point released;
+  int64_t step = 0;
+  Clock::time_point started, ended;
+};
+
+/// Never destroyed: a thread that is still joinable when the process ends
+/// is joined by the handler of the exit, not by a destructor.
+CheckpointThread &getCheckpointThread() {
+  static CheckpointThread *writer = new CheckpointThread;
+  return *writer;
+}
+
+/// Joins the thread that writes a checkpoint, if one runs, and returns its
+/// failure, or an empty string.
+std::string joinCheckpointThread() {
+  CheckpointThread &writer = getCheckpointThread();
+  if (!writer.thread.joinable())
+    return "";
+  Clock::time_point waited = Clock::now();
+  writer.thread.join();
+  OutputTimes &times = getTimes();
+  if (times.enabled) {
+    Clock::time_point now = Clock::now();
+    const CheckpointWriteTimes &parts = writer.parts;
+    std::fprintf(stderr,
+                 "MDIR: times of the write of the checkpoint at step %lld: "
+                 "order %.1f ms, hash %.1f ms, file %.1f ms, file sync %.1f "
+                 "ms, names %.1f ms, directory sync %.1f ms; %.1f ms on its "
+                 "thread, of which the steps waited %.1f ms\n",
+                 static_cast<long long>(writer.step), 1.0e3 * writer.order,
+                 1.0e3 * parts.hash,
+                 1.0e3 * parts.file, 1.0e3 * parts.fileSync,
+                 1.0e3 * parts.names, 1.0e3 * parts.directorySync,
+                 getMilliseconds(writer.started, writer.ended),
+                 getMilliseconds(waited, now));
+    times.written += 1.0e-3 * getMilliseconds(waited, now);
+  }
+  return std::move(writer.failure);
+}
+
+/// The state of a checkpoint as the program holds it, which the thread
+/// puts into the order of the input before it writes; empty where the call
+/// has ordered it.
+struct RawState {
+  std::vector<int32_t> ids;
+  std::vector<RawVectors> fields;
+};
+
+/// Starts the write of `snapshot` to `path` on the thread of checkpoints,
+/// with its positions, velocities, and forces from `raw` if it holds them.
+void startCheckpointThread(const std::string &path, int64_t step,
+                           Checkpoint snapshot, RawState raw) {
+  static bool registered = [] {
+    // The library's handler of the exit runs after this one, which waits
+    // for a write under way: the handlers run in the reverse order of
+    // their registration.
+    openCheckpointLibrary();
+    std::atexit([] {
+      std::string failure = joinCheckpointThread();
+      if (!failure.empty())
+        std::fprintf(stderr, "mdir: %s\n", failure.c_str());
+    });
+    return true;
+  }();
+  (void)registered;
+  CheckpointThread &writer = getCheckpointThread();
+  writer.path = path;
+  writer.step = step;
+  writer.failure.clear();
+  writer.parts = CheckpointWriteTimes();
+  writer.order = 0.0;
+  writer.started = Clock::now();
+  static const long delay = [] {
+    const char *value = std::getenv("MDIR_CHECKPOINT_WRITE_DELAY");
+    return value ? std::strtol(value, nullptr, 10) : 0L;
+  }();
+  writer.thread = std::thread([&writer, snapshot = std::move(snapshot),
+                               raw = std::move(raw)]() mutable {
+    // A write held back on purpose, for a test of the staging buffers
+    // (MDIR_CHECKPOINT_WRITE_DELAY, test/Driver/checkpoint-staging.test).
+    if (delay > 0)
+      std::this_thread::sleep_for(std::chrono::milliseconds(delay));
+    if (!raw.fields.empty()) {
+      Clock::time_point from = Clock::now();
+      snapshot.positions = raw.fields[0].order(raw.ids);
+      snapshot.velocities = raw.fields[1].order(raw.ids);
+      if (raw.fields.size() > 2)
+        snapshot.forces = raw.fields[2].order(raw.ids);
+      writer.order =
+          std::chrono::duration<double>(Clock::now() - from).count();
+    }
+    // Event 2: the staging buffers are released.
+    raw = RawState();
+    writer.released = Clock::now();
+    // Event 3: the commit.
+    if (llvm::Error error =
+            writeCheckpoint(writer.path, snapshot, &writer.parts))
+      writer.failure = llvm::toString(std::move(error));
+    writer.ended = Clock::now();
+  });
+}
+
+} // namespace
+
+void mdir::driver::waitForCheckpoint() {
+  std::string failure = joinCheckpointThread();
+  if (failure.empty())
+    return;
+  std::fprintf(stderr, "mdir: %s\n", failure.c_str());
+  std::exit(1);
+}
 
 volatile std::sig_atomic_t mdir::driver::stopSignal = 0;
 
@@ -809,6 +1053,7 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
                                     double kinetic, double excess,
                                     double virial, double pressureKinetic) {
   Output &output = *current;
+  ReturnMark returns;
   // A step of energy that is not a row of the log keeps no temperatures of
   // the solvent and the solute, as for `mdir run`; an embedded program
   // (D196) still takes its energies, without a row.
@@ -821,6 +1066,21 @@ void _mlir_ciface_mdrtWriteEnergies(int64_t step, double potential,
     output.hasSolvent = false;
     if (!output.embedded)
       return;
+  }
+  if (OutputTimes &times = getTimes(); times.enabled && isRow) {
+    Clock::time_point now = Clock::now();
+    if (times.lastRowStep >= 0 && step > times.lastRowStep)
+      std::fprintf(stderr,
+                   "MDIR: times of the row at step %lld: %.1f ms since the "
+                   "row at step %lld, %.1f ms of it in frames and "
+                   "checkpoints\n",
+                   static_cast<long long>(step),
+                   getMilliseconds(times.lastRow, now),
+                   static_cast<long long>(times.lastRowStep),
+                   1.0e3 * times.written);
+    times.lastRow = now;
+    times.lastRowStep = step;
+    times.written = 0.0;
   }
   // `kinetic` is that of the velocities at the step. The total energy has
   // it, because that sum varies least.
@@ -1107,6 +1367,25 @@ void _mlir_ciface_mdrtWriteFrame(int64_t step, void *positions, void *ids) {
   Output &output = *current;
   if (!output.hasTrajectory)
     return;
+  ReturnMark returns;
+  // With MDIR_CHECKPOINT_TIMES, the time of the frame when it returns.
+  struct FrameTimes {
+    int64_t step;
+    Clock::time_point entered = Clock::now();
+    ~FrameTimes() {
+      OutputTimes &times = getTimes();
+      if (!times.enabled)
+        return;
+      Clock::time_point now = Clock::now();
+      times.written += 1.0e-3 * getMilliseconds(entered, now);
+      std::fprintf(stderr,
+                   "MDIR: times of the frame at step %lld: copy %.1f ms, "
+                   "write %.1f ms\n",
+                   static_cast<long long>(step),
+                   getMilliseconds(times.lastReturn, entered),
+                   getMilliseconds(entered, now));
+    }
+  } frameTimes{step};
   if (output.trajectory->isExact()) {
     // The state as the run has it, in nm (D239): a buffer of
     // f32 (the single mode) widens to f64 without loss.
@@ -1134,36 +1413,81 @@ void _mlir_ciface_mdrtFinish(void *positions, void *velocities,
 }
 
 /// Writes the state as a checkpoint. `forces` is null if the state has
-/// none.
+/// none. The state in the order of the input is copied, and a thread of its
+/// own writes the file while the steps go on (D[checkpoint-async]); this
+/// call first waits for the write of the checkpoint before.
 static void writeState(int64_t step, void *positions, void *velocities,
                        void *forces, void *ids) {
   Output &output = *current;
   if (output.checkpointPath.empty())
     return;
+  ReturnMark returns;
+  OutputTimes &times = getTimes();
+  Clock::time_point entered = Clock::now();
+  // The wait of a checkpoint: for events 2 and 3 of the one before (the
+  // release of its staging buffers and its commit), before this one stages
+  // its state (CheckpointThread). A failed write stops the run here, with
+  // its error.
+  waitForCheckpoint();
+  Clock::time_point waited = Clock::now();
   Checkpoint &checkpoint = output.checkpoint;
   checkpoint.step = step;
   checkpoint.time = output.getTime(step);
-  checkpoint.positions = readVectors(positions, ids, output.state);
-  checkSpread(output, checkpoint.positions, step);
-  checkpoint.velocities = readVectors(velocities, ids, output.state);
-  checkpoint.forces.clear();
-  if (forces)
-    checkpoint.forces = readVectors(forces, ids, output.force);
+  // In a periodic cell the call copies the buffers as they are and the
+  // thread orders them. Without one the positions in the order of the
+  // input are checked here, where a spread that is too wide stops the run
+  // (D142), and the call orders the state.
+  std::vector<double> x, v, f;
+  RawState raw;
+  if (output.periodic) {
+    raw.ids = copyIds(ids);
+    raw.fields.emplace_back(positions, output.state);
+    raw.fields.emplace_back(velocities, output.state);
+    if (forces)
+      raw.fields.emplace_back(forces, output.force);
+  } else {
+    x = readVectors(positions, ids, output.state);
+    checkSpread(output, x, step);
+    v = readVectors(velocities, ids, output.state);
+    if (forces)
+      f = readVectors(forces, ids, output.force);
+  }
+  Clock::time_point ordered = Clock::now();
 
   checkpoint.frames = output.hasTrajectory ? output.trajectory->getNumFrames()
                                            : 0;
   checkpoint.bath = output.bath;
-
-  if (llvm::Error error =
-          writeCheckpoint(output.checkpointPath, checkpoint)) {
-    std::fprintf(stderr, "mdir: %s\n",
-                 llvm::toString(std::move(error)).c_str());
-    std::exit(1);
-  }
+  // The snapshot that the thread writes: the state, which the program
+  // overwrites after this call, moved; the rest, which later calls of the
+  // host change (the cell, the bath, the states of the coupling), copied.
+  checkpoint.positions.clear();
+  checkpoint.velocities.clear();
+  checkpoint.forces.clear();
+  Checkpoint snapshot = checkpoint;
+  snapshot.positions = std::move(x);
+  snapshot.velocities = std::move(v);
+  snapshot.forces = std::move(f);
+  Clock::time_point copied = Clock::now();
+  startCheckpointThread(output.checkpointPath, step, std::move(snapshot),
+                        std::move(raw));
   ++output.numCheckpoints;
+  if (times.enabled) {
+    Clock::time_point now = Clock::now();
+    times.written += 1.0e-3 * getMilliseconds(entered, now);
+    std::fprintf(stderr,
+                 "MDIR: times of the checkpoint at step %lld: copy %.1f ms, "
+                 "wait %.1f ms, state %.1f ms, snapshot %.1f ms; %.1f ms in "
+                 "the call\n",
+                 static_cast<long long>(step),
+                 getMilliseconds(times.lastReturn, entered),
+                 getMilliseconds(entered, waited),
+                 getMilliseconds(waited, ordered),
+                 getMilliseconds(ordered, copied),
+                 getMilliseconds(entered, now));
+  }
 
-  // A stop that a signal or the wall time asks for is taken here, where
-  // the run continues exactly from what it has just written (D131), and
+  // A stop that a signal or the wall time asks for is taken here, once the
+  // file is written, where the run continues exactly from it (D131), and
   // not at the last step, where the run ends anyway. The wall time must
   // leave room for one more interval between checkpoints, as long as the
   // longest so far.
@@ -1185,6 +1509,8 @@ static void writeState(int64_t step, void *positions, void *velocities,
     reason = "the wall time";
   if (!reason)
     return;
+  // The wait of a stop: for all three events of this checkpoint.
+  waitForCheckpoint();
   if (output.trajectory)
     output.trajectory->close();
   output.log.print(

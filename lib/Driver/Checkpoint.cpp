@@ -37,6 +37,7 @@
 #include "llvm/Support/SHA256.h"
 
 #include <array>
+#include <chrono>
 #include <cstdio>
 #include <cstring>
 
@@ -205,8 +206,11 @@ std::string hashExtras(const Checkpoint &state) {
 
 bool mdir::driver::hasCheckpointSupport() { return false; }
 
+void mdir::driver::openCheckpointLibrary() {}
+
 llvm::Error mdir::driver::writeCheckpoint(const std::string &,
-                                          const Checkpoint &) {
+                                          const Checkpoint &,
+                                          CheckpointWriteTimes *) {
   return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                  "MDIR was built without HDF5, which "
                                  "checkpoints need");
@@ -221,6 +225,11 @@ llvm::Expected<Checkpoint> mdir::driver::readCheckpoint(const std::string &) {
 #else
 
 bool mdir::driver::hasCheckpointSupport() { return true; }
+
+void mdir::driver::openCheckpointLibrary() {
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
+  H5open();
+}
 
 namespace {
 
@@ -457,8 +466,23 @@ bool synchronize(const std::string &path, bool directory) {
 } // namespace
 
 llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
-                                          const Checkpoint &checkpoint) {
+                                          const Checkpoint &checkpoint,
+                                          CheckpointWriteTimes *times) {
   std::string partial = path + ".partial";
+  using Clock = std::chrono::steady_clock;
+  Clock::time_point mark = Clock::now();
+  // The time since the last mark, in s, added to `part` of `times`.
+  auto lap = [&](double CheckpointWriteTimes::*part) {
+    Clock::time_point now = Clock::now();
+    if (times)
+      times->*part += std::chrono::duration<double>(now - mark).count();
+    mark = now;
+  };
+  // The hashes, before the library is entered: they read the state alone.
+  std::string stateHash = hashState(checkpoint);
+  std::string extrasHash =
+      checkpoint.hasExtras() ? hashExtras(checkpoint) : std::string();
+  lap(&CheckpointWriteTimes::hash);
   bool failed;
   {
     // One thread at a time is inside the library (#262): a simulation
@@ -552,7 +576,7 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
       Handle mdir = writer.createGroup(parameters, "mdir");
       int format = checkpointFormat;
       writer.writeAttribute(mdir, "format", H5T_NATIVE_INT, &format);
-      writer.writeText(mdir, "state_sha256", hashState(checkpoint));
+      writer.writeText(mdir, "state_sha256", stateHash);
       writer.writeText(mdir, "integrator", checkpoint.integrator);
       writer.writeReal(mdir, "velocity_offset", checkpoint.velocityOffset);
       writer.writeText(mdir, "precision", checkpoint.precision);
@@ -594,7 +618,7 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
             getFingerprintText(checkpoint.fingerprint, group));
       // The additional entries (D223).
       if (checkpoint.hasExtras()) {
-        writer.writeText(mdir, "extras_sha256", hashExtras(checkpoint));
+        writer.writeText(mdir, "extras_sha256", extrasHash);
         writer.writeText(mdir, "front_end", checkpoint.frontEnd);
         writer.writeText(mdir, "model_sha256", checkpoint.modelHash);
         writer.writeText(mdir, "plan_sha256", checkpoint.planHash);
@@ -629,12 +653,14 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
     }
     failed = writer.hasFailed() || H5Fflush(file, H5F_SCOPE_GLOBAL) < 0;
   }
+  lap(&CheckpointWriteTimes::file);
 
   // On stable storage before it takes its name: a file system that delays
   // its writes (ext4 without auto_da_alloc, Lustre, NFS) may otherwise
   // leave an empty file under the name after a crash (D173).
   if (!failed)
     failed = !synchronize(partial, /*directory=*/false);
+  lap(&CheckpointWriteTimes::fileSync);
   if (failed) {
     std::remove(partial.c_str());
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
@@ -662,12 +688,15 @@ llvm::Error mdir::driver::writeCheckpoint(const std::string &path,
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "cannot write '%s'", path.c_str());
   }
+  lap(&CheckpointWriteTimes::names);
   // The new names, too.
   llvm::SmallString<256> directory(path);
   llvm::sys::path::remove_filename(directory);
   if (directory.empty())
     directory = ".";
-  if (!synchronize(directory.str().str(), /*directory=*/true))
+  bool synchronized = synchronize(directory.str().str(), /*directory=*/true);
+  lap(&CheckpointWriteTimes::directorySync);
+  if (!synchronized)
     return llvm::createStringError(llvm::inconvertibleErrorCode(),
                                    "cannot synchronize the directory of '%s'",
                                    path.c_str());

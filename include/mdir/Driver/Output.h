@@ -475,6 +475,13 @@ constexpr int StoppedStatus = 75;
 
 void writeLogHeader(Output &output);
 
+/// Waits for the checkpoint that a thread of its own is writing, if there
+/// is one (D[checkpoint-async]): the next checkpoint, a stop at a
+/// checkpoint, the end of the run, and the exit of the process wait for
+/// it. A write that failed ends the process with its error and the status
+/// 1.
+void waitForCheckpoint();
+
 /// Writes a frame of the state to the trajectory of `output`, whose writer
 /// is exact (H5MDWriter): three numbers per particle in the order of the
 /// input, in nm, nm/ps, and kJ/mol/nm, with the potential energy of the

@@ -1,0 +1,43 @@
+# A checkpoint is written by a thread of its own while the steps go on
+# (D[checkpoint-async], #548). A write that fails stops the run at the
+# next point that waits for it, with its error and the status 1: the next
+# checkpoint, or the end of the run. Here the directory of the checkpoints
+# cannot be written. The write of step 100 fails while the steps go on to
+# step 200, whose checkpoint waits for it and stops the run there.
+#
+# REQUIRES: hdf5
+#
+# RUN: rm -rf %t && mkdir -p %t/ro
+# RUN: sed -e 's|Inputs/|%S/Inputs/|' -e 's|^steps *= 200|steps = 400|' \
+# RUN:     %S/mixture.toml > %t/run.toml
+# RUN: printf 'checkpoint = "ro/run.h5"\ncheckpoint_interval = 100\n' >> %t/run.toml
+# RUN: chmod 555 %t/ro
+# RUN: cd %t && %python %S/Inputs/exit_status.py mdir run run.toml \
+# RUN:     > %t/out 2> %t/err
+# RUN: chmod 755 %t/ro
+# RUN: FileCheck %s --check-prefix=ROWS < %t/out
+# RUN: FileCheck %s --check-prefix=ERROR < %t/err
+# RUN: not ls %t/ro/run.h5 %t/ro/run.h5.partial
+
+# ROWS:     INFO:       100
+# ROWS:     INFO:       150
+# ROWS:     INFO:       200
+# ROWS-NOT: INFO:       250
+# ROWS-NOT: MDIR: wrote
+# ROWS:     exit status 1
+
+# ERROR: mdir: cannot write 'ro/run.h5.partial'
+
+# The checkpoint at the last step is waited for when the steps end.
+#
+# RUN: sed -e 's|^steps *= 400|steps = 100|' %t/run.toml > %t/end.toml
+# RUN: chmod 555 %t/ro
+# RUN: cd %t && %python %S/Inputs/exit_status.py mdir run end.toml \
+# RUN:     > %t/end.out 2> %t/end.err
+# RUN: chmod 755 %t/ro
+# RUN: FileCheck %s --check-prefix=END < %t/end.out
+# RUN: FileCheck %s --check-prefix=ERROR < %t/end.err
+
+# END:     INFO:       100
+# END-NOT: MDIR: wrote
+# END:     exit status 1
