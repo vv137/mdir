@@ -10,7 +10,7 @@ import json
 import sys
 from pathlib import Path
 
-from timing import pmemd_all_step_ms
+from timing import gromacs_step_ms, pmemd_all_step_ms
 
 
 FIELDS = (
@@ -38,6 +38,10 @@ def main():
                 record["rate_ms"] = pmemd_all_step_ms(
                     (Path(raw["dir"]) / "mdout").read_text())
                 record["rate_source"] = "pmemd all-steps Per Step(ms)"
+            elif record["variant"][0] in "gx" and record["ok"]:
+                record["rate_ms"] = gromacs_step_ms(
+                    (Path(raw["dir"]) / "md.log").read_text())
+                record["rate_source"] = "GROMACS Performance ms/step"
             dst.write(json.dumps(record, sort_keys=True) + "\n")
 
 

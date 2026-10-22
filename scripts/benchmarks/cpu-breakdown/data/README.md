@@ -14,6 +14,8 @@ records use the all-steps `Per Step(ms)` value from `mdout`; the older
 benchmark runner converted a two-decimal `ns/day` field, which was too
 coarse for these systems. The precise timing is retained in the raw
 `mdout` files, so no run needed to be repeated for the correction.
+GROMACS records likewise use the `ms/step` column of each `md.log`
+`Performance` line rather than a conversion from rounded `ns/day`.
 
 All commands used the variants
 `m1,m16,d1,d16,g1,g16,x1,x16,p1`, `--ensemble nve`, four rounds, and

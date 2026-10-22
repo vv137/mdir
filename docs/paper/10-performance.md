@@ -512,7 +512,10 @@ $\mathrm{erfc}(\beta r_c)/r_c=10^{-5}/r_c$, with $r_c$ in Å, hence
 $1.25\times10^{-6}\,\mathrm{Å}^{-1}$ at 8 Å and
 $1.11111111111\times10^{-6}\,\mathrm{Å}^{-1}$
 at 9 Å. This gives the same $\beta$ rather than the same literal key
-value. The
+value. The independent values $\mathrm{erfc}^{-1}(10^{-5})/r_c$ are
+$0.3904266593\,\mathrm{Å}^{-1}$ and
+$0.3470459194\,\mathrm{Å}^{-1}$, respectively; pmemd reports 0.39043
+and 0.34705. The
 cutoff is 8 Å for JAC and Cellulose and 9 Å for TIP3P. JAC's grid is
 $64^3$, TIP3P's $160^3$; Cellulose uses $288\times128\times128$ in all
 three programs. GROMACS chose $280\times128\times128$ from its 1 Å mesh
@@ -529,10 +532,10 @@ Every system's variants run in alternating order over four rounds in one
 and the remaining rates are summarized as the mean and sample standard
 deviation. The node and allocated CPU affinity are recorded with the raw
 results. A concurrent CPU benchmark or MDIR suite on the node disqualifies
-a run from the final rates. MDIR times
-the second half of its steps, GROMACS resets its timing halfway, and
-pmemd reports the whole run through its all-steps `Per Step(ms)` field.
-Its `ns/day` field has only two decimal places and is not used. The source
+a run from the final rates. MDIR times the second half of its steps.
+GROMACS resets its timing halfway and reports the `Performance` `ms/step`
+column. pmemd reports the whole run through its all-steps `Per Step(ms)` field.
+The `ns/day` fields are rounded and are not used. The source
 of MDIR is commit `a8a5f7ff` on
 `main`; the measurement branch changes only scripts and documentation.
 GROMACS 2026.3 is mixed precision; pmemd 26 is serial and double

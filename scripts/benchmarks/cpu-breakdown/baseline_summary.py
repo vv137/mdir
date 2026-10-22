@@ -16,7 +16,7 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
-from timing import pmemd_all_step_ms
+from timing import gromacs_step_ms, pmemd_all_step_ms
 
 
 def read(system, tag):
@@ -32,6 +32,9 @@ def read(system, tag):
             if row["variant"] == "p1" and row["ok"]:
                 row["rate_ms"] = pmemd_all_step_ms(
                     (Path(row["dir"]) / "mdout").read_text())
+            elif row["variant"][0] in "gx" and row["ok"]:
+                row["rate_ms"] = gromacs_step_ms(
+                    (Path(row["dir"]) / "md.log").read_text())
     hosts = {row["host"] for row in rows if "host" in row}
     cpus = {row["cpu"] for row in rows if "cpu" in row}
     affinities = {tuple(row["affinity"]) for row in rows if "affinity" in row}

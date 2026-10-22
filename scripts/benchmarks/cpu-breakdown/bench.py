@@ -41,7 +41,7 @@ import subprocess
 import sys
 import time
 
-from timing import pmemd_all_step_ms
+from timing import gromacs_step_ms, pmemd_all_step_ms
 
 if not os.environ.get("CPU_BENCH_DIR"):
     sys.exit("bench.py: CPU_BENCH_DIR, the directory of the systems, is not set")
@@ -239,8 +239,7 @@ def run_gmx(variant, d):
                          cwd=d, capture_output=True, text=True)
     open(d + "/mdrun.out", "w").write(out.stdout + out.stderr)
     log = open(d + "/md.log").read() if os.path.exists(d + "/md.log") else ""
-    m = re.search(r"Performance:\s+([0-9.]+)\s+([0-9.]+)", log)
-    rate = 0.002 * 86400.0 / float(m.group(1)) if m else None  # ms a step of 2 fs, from ns/day
+    rate = gromacs_step_ms(log) if out.returncode == 0 else None
     return dict(rate_ms=rate, steps=steps, threads=threads, exact=exact, ensemble=ensemble,
                 wall_s=time.time() - t0, ok=out.returncode == 0)
 

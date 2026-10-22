@@ -35,6 +35,9 @@ printed to only two decimal places and would distort the large-system
 rates. `export_results.py` and the raw-output mode of
 `baseline_summary.py` derive that precise value from each `mdout`, including
 for runs made before the benchmark runner's parser was corrected.
+For GROMACS, read the `Performance` line's `ms/step` column rather than
+convert its rounded `ns/day` column. The exporter and raw-output summary
+make the same correction for earlier runs from each `md.log`.
 
 Use `--grid NX,NY,NZ` when a grid chosen from GROMACS's 1 Å spacing has
 a prime factor other than 2, 3, or 5, which pmemd refuses. Specify one
