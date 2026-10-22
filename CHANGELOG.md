@@ -12,8 +12,8 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
-- **Checkpoints written beside the steps** (D[checkpoint-async],
-  D[checkpoint-cost], #548): `mdir run` copies the state at a checkpoint
+- **Checkpoints written beside the steps** (D336,
+  D335, #548): `mdir run` copies the state at a checkpoint
   and writes the H5MD file, its hash, `fsync`, and rename on a thread of
   its own while the steps go on; the next checkpoint, a stop, and the end
   of the run wait for it, and a failed write stops the run at the next of

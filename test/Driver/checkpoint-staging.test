@@ -1,5 +1,5 @@
 # The staging buffers of a checkpoint that a thread of its own writes
-# (D[checkpoint-async], #548) belong to that write until the thread has
+# (D336, #548) belong to that write until the thread has
 # ordered them, whatever the steps do meanwhile; the next checkpoint waits
 # for that and for the commit of the one before. Here the thread holds
 # each write back by 300 ms (MDIR_CHECKPOINT_WRITE_DELAY), longer than the

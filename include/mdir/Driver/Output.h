@@ -476,7 +476,7 @@ constexpr int StoppedStatus = 75;
 void writeLogHeader(Output &output);
 
 /// Waits for the checkpoint that a thread of its own is writing, if there
-/// is one (D[checkpoint-async]): the next checkpoint, a stop at a
+/// is one (D336): the next checkpoint, a stop at a
 /// checkpoint, the end of the run, and the exit of the process wait for
 /// it. A write that failed ends the process with its error and the status
 /// 1.

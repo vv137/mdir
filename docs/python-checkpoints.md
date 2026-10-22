@@ -40,7 +40,7 @@ mdir.read_checkpoint("prod.h5")           # a read-only view of a checkpoint
   `path + ".prev"` (D132, D173). It is the writer of `mdir run`, called on
   the host, not through the compiled code, and it writes in the call:
   the thread that writes the checkpoints of `mdir run` beside its steps
-  (D[checkpoint-async]) is not used here. A step begins with forces, so a
+  (D336) is not used here. A step begins with forces, so a
   simulation that has not run evaluates its start first (`run(0,
   energy=True)`'s evaluation, D213). The next part begins from the state
   written, with new neighbor structures, as `mdir run` builds them anew at

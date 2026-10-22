@@ -1,5 +1,5 @@
 # A checkpoint is written by a thread of its own while the steps go on
-# (D[checkpoint-async], #548). A write that fails stops the run at the
+# (D336, #548). A write that fails stops the run at the
 # next point that waits for it, with its error and the status 1: the next
 # checkpoint, or the end of the run. Here the directory of the checkpoints
 # cannot be written. The write of step 100 fails while the steps go on to

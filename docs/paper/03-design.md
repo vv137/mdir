@@ -87,7 +87,7 @@ contract instances under named rules and recorded assumptions, not every
 program. Its trusted base includes predicate rules and their numerics,
 effect and derivative models, preservation arguments, accepted external
 contracts, the runtime and backends, and the toolchain. This is the design
-of D[execution-contracts] (#574); individual checks and witnesses belong
+of D334 (#574); individual checks and witnesses belong
 to later decisions. Existing inputs and emitted programs do not change.
 
 ## 3.1 What is computed, and how the state advances
@@ -870,7 +870,7 @@ release 0.1.0: the reader checks the format and the SHA-256 of the state,
 and the file is on stable storage before it takes its name
 (D173). `mdir run` writes it on a thread of its own while the steps go
 on, from a copy of the state, and the next checkpoint, a stop, and the end
-of the run wait for it (D[checkpoint-async]).
+of the run wait for it (D336).
 
 A run is a realization of a Markov chain on the state $\mathbf z_n$, each
 step drawn from the kernel $\mathcal K_{U,\mathcal C}$: the integrator and

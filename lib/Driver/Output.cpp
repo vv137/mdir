@@ -249,7 +249,7 @@ struct ReturnMark {
 /// A copy of a buffer of three numbers per particle as the program holds
 /// it, in its order, rows of three contiguous numbers of `element`, which
 /// the thread of checkpoints puts into the order of the input
-/// (D[checkpoint-async]): the call of the host then copies memory and
+/// (D336): the call of the host then copies memory and
 /// leaves the scattered writes of the order to the thread.
 struct RawVectors {
   Element element = Element::F64;
@@ -301,7 +301,7 @@ std::vector<int32_t> copyIds(void *ids) {
 }
 
 /// The checkpoint that a thread of its own writes while the steps go on
-/// (D[checkpoint-async], #548). There is one writer, `writeState`, and at
+/// (D336, #548). There is one writer, `writeState`, and at
 /// most one write at a time. A checkpoint passes three events, kept apart:
 ///
 ///   1. The copy from the device ends. The program copies its buffers to
@@ -1414,7 +1414,7 @@ void _mlir_ciface_mdrtFinish(void *positions, void *velocities,
 
 /// Writes the state as a checkpoint. `forces` is null if the state has
 /// none. The state in the order of the input is copied, and a thread of its
-/// own writes the file while the steps go on (D[checkpoint-async]); this
+/// own writes the file while the steps go on (D336); this
 /// call first waits for the write of the checkpoint before.
 static void writeState(int64_t step, void *positions, void *velocities,
                        void *forces, void *ids) {

@@ -153,7 +153,7 @@ call of a checkpoint, the wait is for the write of the checkpoint before,
 the state the copy of the buffers as the program holds them (in a cell
 that is not periodic, their order into that of the input), and the
 snapshot the copy of the rest of what the file holds. The thread that
-writes the checkpoint (D[checkpoint-async]) reports when it is waited for,
+writes the checkpoint (D336) reports when it is waited for,
 at the next checkpoint or at the end of the run: the order of the input,
 the hash of the state, the H5MD file up to its close, and the syncs and the
 names that put it on stable storage under its name (D132, D173). The

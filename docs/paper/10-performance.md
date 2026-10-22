@@ -133,7 +133,7 @@ pressure, −4.1 and −1.7 on Factor IX, −7.3 and −5.4 on Cellulose, and
   MDIR about 0.43 s, 10.4% of the window. pmemd.cuda also writes a
   restart at step 1000; whether its "last 1000 steps" include it, its
   output does not say. The cost of a checkpoint of MDIR on a large system
-  was issue #548: since D[checkpoint-async] a thread writes the checkpoint
+  was issue #548: since D336 a thread writes the checkpoint
   while the steps go on, and the output's share on STMV fell from 8.8% to
   1.0% in a measurement of its own (Section 10.4). The table is of the
   program before that change.
@@ -190,7 +190,7 @@ cell of MDIR on `jac_nve_4fs` is from two repeats (above).*
 The output costs MDIR 1.0% on Cellulose and at most 0.5% on JAC and
 Factor IX, whose windows hold a checkpoint at most once in 10,000 steps;
 on STMV it costs 10.4%, the checkpoint inside its short window (above).
-These are the shares before D[checkpoint-async], which writes the
+These are the shares before D336, which writes the
 checkpoints beside the steps (Section 10.4).
 
 **Time to solution.** Table 10.4 gives the whole wall time of each run.
@@ -356,7 +356,7 @@ the index is gone and the structures are 9 times smaller on STMV; a
 start in a new order takes 0.1 ms more on JAC, for the launches of the
 build, and the same on Factor IX and Cellulose.
 
-**The cost of a checkpoint (D[checkpoint-cost], D[checkpoint-async]).**
+**The cost of a checkpoint (D335, D336).**
 A checkpoint of `mdir run` copied the state from the device, put it into
 the order of the input, hashed it with SHA-256, and wrote, synchronized,
 and renamed its H5MD file between two steps (Section 3.6), and the next
@@ -379,7 +379,7 @@ from run to run, the run continued from the checkpoint begins in the
 order of the positions it reads, so the run that goes on must too. A
 checkpoint therefore still ends its segment.
 
-Since D[checkpoint-async] the call of the host copies the state as the
+Since D336 the call of the host copies the state as the
 program holds it and the rest of the file, 20 ms on STMV, and a thread
 orders, hashes, and writes it while the steps go on: 352 ms on its thread
 on STMV and 137 ms on Cellulose, and the steps waited for none of the

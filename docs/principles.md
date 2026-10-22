@@ -151,7 +151,7 @@ code and the gaps, each an issue.
 
 ## 10. Execution contracts
 
-Status: design, D[execution-contracts] (#574). The detailed contract is in
+Status: design, D334 (#574). The detailed contract is in
 [execution-contracts.md](execution-contracts.md). It connects provenance,
 effects, validity, and witnesses across `md`, `dyn`, `md_exec`, and
 `md_dist`. Semantic IR says what is computed, verified execution IR says
