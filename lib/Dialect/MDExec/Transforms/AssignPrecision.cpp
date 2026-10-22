@@ -5,6 +5,7 @@
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 
 #include "mdir/Dialect/MD/MDTypes.h"
+#include "mdir/Dialect/MD/MDOps.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
@@ -13,6 +14,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/SymbolTable.h"
 #include "llvm/ADT/DenseMap.h"
+#include "llvm/ADT/DenseSet.h"
 #include <cassert>
 
 using namespace mlir;
@@ -41,6 +43,7 @@ struct Storage {
   bool isPosition = false;
   bool isForce = false;
   bool isIntegrated = false;
+  bool isStage = false;
 
   /// The element type that the fields are stored in.
   Type assigned;
@@ -60,6 +63,39 @@ static bool isRealLike(Type type) {
 static bool isRealField(Type type) {
   auto field = dyn_cast<FieldType>(type);
   return field && isReal(field.getElementType());
+}
+
+/// Fields whose values enter a neural stage, including through the casts and
+/// sums left by differentiation and loop fusion. Position geometry is not in
+/// `inputs`, and the final coordinate-force field is not fed to a stage.
+static void collectStageInputs(Region &region, ValueRange inputs,
+                               unsigned firstArgument, unsigned perField,
+                               SmallVectorImpl<Value> &stageFields) {
+  Block &kernel = region.front();
+  region.walk([&](md::ApplyStageOp apply) {
+    SmallVector<Value> pending(apply.getOperands());
+    llvm::DenseSet<Value> seen;
+    while (!pending.empty()) {
+      Value value = pending.pop_back_val();
+      if (!seen.insert(value).second)
+        continue;
+      if (auto argument = dyn_cast<BlockArgument>(value)) {
+        if (argument.getOwner() != &kernel)
+          continue;
+        unsigned index = argument.getArgNumber();
+        if (index >= firstArgument &&
+            index < firstArgument + perField * inputs.size()) {
+          Value field = inputs[(index - firstArgument) / perField];
+          if (isRealField(field.getType()))
+            stageFields.push_back(field);
+        }
+      } else if (Operation *definition = value.getDefiningOp()) {
+        if (definition->getBlock() == &kernel)
+          for (Value operand : definition->getOperands())
+            pending.push_back(operand);
+      }
+    }
+  });
 }
 
 /// `type` with its floating-point type replaced by `real`.
@@ -175,6 +211,7 @@ private:
   };
   SmallVector<Boundary> boundaries;
   SmallVector<Value> positions, forces, integrated;
+  SmallVector<Value> stageFields;
 
   SmallVector<PairForOp> pairLoops;
   SmallVector<TupleForOp> tupleLoops;
@@ -334,6 +371,10 @@ LogicalResult Assigner::collect(Operation *op) {
       return failure();
     positions.push_back(loop.getPositions());
     collectLoop(loop, forces);
+    // Follow the SSA operands of the stage, not its vector width or name
+    // (D[ml4-stage-fields]). Both the forward and VJP have this contract.
+    collectStageInputs(loop.getKernel(), loop.getIns(), /*firstArgument=*/2,
+                       /*perField=*/2, stageFields);
     pairLoops.push_back(loop);
     return success();
   }
@@ -352,6 +393,8 @@ LogicalResult Assigner::collect(Operation *op) {
     if (failed(checkForm(loop)))
       return failure();
     collectLoop(loop, integrated);
+    collectStageInputs(loop.getKernel(), loop.getIns(), /*firstArgument=*/0,
+                       /*perField=*/1, stageFields);
     particleLoops.push_back(loop);
     return success();
   }
@@ -462,6 +505,8 @@ LogicalResult Assigner::resolve() {
     storages[find(field)].isForce = true;
   for (Value field : integrated)
     storages[find(field)].isIntegrated = true;
+  for (Value field : stageFields)
+    storages[find(field)].isStage = true;
 
   bool oneType =
       policy.position == policy.force && policy.force == policy.integrator;
@@ -472,6 +517,8 @@ LogicalResult Assigner::resolve() {
     if (storage.boundary)
       storage.assigned = storage.boundary;
     else if (storage.isPosition)
+      storage.assigned = policy.position;
+    else if (storage.isStage && policy.position.isF64())
       storage.assigned = policy.position;
     else if (storage.isForce)
       storage.assigned = policy.force;

@@ -21,6 +21,10 @@
 # RUN: cat %t/head.mlir %t/model.mlir %t/harness.mlir > %t/m.mlir
 # RUN: mdir-opt %t/m.mlir %md_passes \
 # RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN: | FileCheck %s --check-prefix=STORAGE
+# RUN: mdir-opt %t/m.mlir %md_passes \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
 # RUN:     --md-exec-assign-algebra --md-exec-assign-storage="memory=device" --md-exec-lower-stage-bodies='short-reductions=true' \
 # RUN:     --convert-md-exec-to-gpu \
 # RUN: | mlir-opt %lower_gpu_to_llvm \
@@ -41,6 +45,10 @@
 # largest difference of each is printed after it.
 # CHECK:      {{^}}1{{$}}
 # CHECK-NEXT: {{^[0-9.e+-]+$}}
+# The stage adjoint and feature fields use f64 storage, including the
+# adjoint traced through the fused particle VJP. The coordinate force remains
+# f32 until the driver accumulates it.
+# STORAGE: md_exec.pair_for{{.*}}outs({{.*}}!md.field<@atoms, 12 x f64>, !md.field<@atoms, irreps<4x0e + 4x1o, ir_mul>, f64>, !md.field<@atoms, 3 x f32>
 # CHECK-NEXT: {{^}}1{{$}}
 # CHECK-NEXT: {{^[0-9.e+-]+$}}
 # CHECK-NEXT: {{^}}1{{$}}
