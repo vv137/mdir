@@ -187,6 +187,10 @@ script now rounds the cell too; the numbers above are with it.
 
 ### 2.2 Peak device memory against pairs
 
+`water-box.py` writes the five-column residue and atom indices of its `.gro`
+files modulo 100,000. This preserves the fixed-width coordinate fields when
+the sweep exceeds 99,999 waters; the topology still records every water.
+
 Liquid water (29.9 Å³ per molecule, `model-sweep.py`), from 64 waters
 doubling until a size fails. MDIR: `mdir run`, `mixed`, 40 steps of NVE at
 0.5 fs, the peak of the plugin's allocator over the run (torch's count),
