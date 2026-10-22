@@ -50,12 +50,45 @@ With the cell unchanged, a candidate image retains its build-time shift.
 The old candidate membership is sufficient for a cutoff $r_c$ when
 $2\Delta_h < R_h-r_c$: by the triangle inequality, a pair at the current
 cutoff was at most $r_c+2\Delta_h < R_h$ apart in that same image at build
-time. A periodic wrap invalidates the witness even when the minimum-image
+time. A periodic wrap invalidates coverage even when the minimum-image
 displacement is small. The predicate is one value for all domains, including empty ones.
 The current coordinate values remain a separate version and require their
 own halo copy before use. This predicate currently runs in the in-process
 reference executor; loop-carried distributed state and the production
 driver remain to be connected.
+
+### Execution contracts (design)
+
+The semantic levels may state any computation. Before the execution levels
+schedule it, they must establish the provenance of values, the effects of
+operations, and the validity of the state on which an access depends.
+Invariant meaning, such as the set of a buffer or the representation of a
+feature, belongs to a type or static attribute. Positions, cell, ownership
+epoch, and copy completion change during a run and therefore remain SSA
+values and explicit operands. A witness produced by a check is valid only
+for those state values. The consumer checks that provenance rather than
+assuming that a prior check still applies.
+
+A required execution condition is proved or established by a sound runtime
+guard with legal recovery. An unknown required condition without such a
+guard is diagnosed as an unsupported contract; its path is never executed.
+Contradictory types, mismatched entities, invalid evidence, and demonstrated
+uninitialized reads are invalid IR and are refused. A false or unknown
+requirement of an optional strategy selects an independently legal baseline
+with an `explain` reason. `Unknown` establishes no positive fact. Neither
+the availability of a runtime predicate nor that of an asynchronous event
+establishes its truth or completion. Existing input defects are diagnosed
+by `mdir check`, not classified as unsupported compiler contracts.
+Numerical requirements are represented separately from structural and
+memory requirements, but all are prerequisites of a legal plan; the cost
+model never weakens them. Thus a race-free atomic sum is illegal when a
+fixed order is required. This design conditionally verifies supported
+contract instances under named rules and recorded assumptions, not every
+program. Its trusted base includes predicate rules and their numerics,
+effect and derivative models, preservation arguments, accepted external
+contracts, the runtime and backends, and the toolchain. This is the design
+of D[execution-contracts] (#574); individual checks and witnesses belong
+to later decisions. Existing inputs and emitted programs do not change.
 
 ## 3.1 What is computed, and how the state advances
 

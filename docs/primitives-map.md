@@ -15,6 +15,11 @@ device implements a primitive (privatization, tiles, tables, warp forms)
 are in [device-primitives.md](device-primitives.md); this document says
 where each primitive occurs.
 
+The [execution contract](execution-contracts.md) (#574) checks whether a
+composition may run or be transformed for its stated sets, effects, state,
+and numerical order. It is shared by the primitive sites in this map and
+does not add a mathematical primitive.
+
 ## 1. The primitive set
 
 ![The primitives and their transposes](figures/primitives/transpose-pairs.svg)

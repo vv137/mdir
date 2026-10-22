@@ -149,6 +149,44 @@ is a finding, not a failure.
 the map of every part of MDIR to its primitives, with the state of the
 code and the gaps, each an issue.
 
+## 10. Execution contracts
+
+Status: design, D[execution-contracts] (#574). The detailed contract is in
+[execution-contracts.md](execution-contracts.md). It connects provenance,
+effects, validity, and witnesses across `md`, `dyn`, `md_exec`, and
+`md_dist`. Semantic IR says what is computed, verified execution IR says
+which access and schedule is legal, and a physical plan selects a legal
+implementation for the target.
+
+Invariant meaning belongs in types or static attributes: a buffer's set
+(#565) and a distributed feature's representation (#571). State that can
+change during a run belongs in SSA values and explicit operands: positions,
+cell, ownership epoch, and transfer completion. A witness is an SSA result
+of a check and is valid only for the state from which that check made it.
+The consumer and its lowering check that the witness names their state.
+
+A required condition is either proved or established by a sound runtime
+guard with a legal recovery. If it remains unknown, the path is not executed
+and an unsupported-contract diagnostic is issued. A refuted required
+condition, contradictory type, mismatched entity, invalid evidence, or
+demonstrated uninitialized read is invalid IR and is refused. An optional
+strategy whose requirements are false or unknown uses an independently legal
+baseline with an `explain` reason. `Unknown` never means true, zero,
+initialized, fresh, or independent. A runtime predicate's availability does
+not establish its truth, and an event's availability does not establish
+completion. Existing user inputs keep their behavior; `mdir check`
+diagnoses input defects. Legality is established before measured cost
+chooses a strategy.
+
+Numerical requirements are represented separately from memory and
+structural requirements, but are prerequisites of a legal plan. The cost
+model cannot weaken them: a race-free atomic sum is illegal when a fixed
+order is required. `fixed_order`, `any_order`, exact integer
+accumulation, precision mode, `fast_math`, and approximation accuracy are
+different guarantees. A behavior-preserving refactor keeps lowered IR and
+PTX byte-identical and deterministic results bitwise identical. This design
+adds no operation, plan choice, control key, or runtime behavior.
+
 ## Planned work
 
 1. The storage form carries the set of each buffer in its type, so that
