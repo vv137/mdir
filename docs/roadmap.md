@@ -24,6 +24,11 @@ exported f32 bodies retain their arithmetic type. The model key
 measurements are in
 [ml4-ir.md](ml4-ir.md#85-validation).
 
+For the M3 size sweeps, `water-box.py` keeps both `.gro` identifier fields
+within five columns when a box exceeds 99,999 waters (D[water-box-gro-residue],
+#550). This removes an input-format limit from the sweep without changing the
+model or the simulation.
+
 Features of classical MD (Section 5) continue between milestones.
 
 ## 1. Robustness (under way)

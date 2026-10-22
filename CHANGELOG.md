@@ -20,6 +20,10 @@ format, or the outputs; every such change is listed under **Changed** or
   coordinate force keeps the existing mixed policy. The f32-field default
   preserves memory capacity. The model key is included in checkpoint
   fingerprints; file formats and overwrite behavior are unchanged.
+- **Large water-box GRO files keep fixed-width residue fields**
+  (D[water-box-gro-residue], #550): `scripts/mlip/water-box.py` wraps the
+  five-column residue number after 99,999, as it already does the atom
+  number. No control key or overwrite behavior changes.
 - **Faster GROMACS coordinate input** (D323, #525): finite
   decimal fields in `.gro` coordinates and velocities use a direct binary64
   conversion. Accepted input, control keys, output, and overwrite behavior
