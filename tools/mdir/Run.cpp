@@ -1518,6 +1518,13 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  static_cast<long long>(used),
                  static_cast<long long>(readCount("mdrtGetGroupsCapacity")),
                  static_cast<long long>(readCount("mdrtGetGroupsLongest")));
+  // The first build of a structure sizes its lists (D[density-lists]); a
+  // build that needed more room later made it and was made again.
+  if (int64_t grew = readCount("mdrtGetGroupsGrowths"))
+    output.log.print(
+                 "MDIR: the lists of groups grew %lld times after the first "
+                 "build of their structure, which sizes them\n",
+                 static_cast<long long>(grew));
   if (int64_t over = readCount("mdrtGetGroupsOverflow"))
     output.log.print(
                  "MDIR: %lld groups had more partners of excluded pairs than "
