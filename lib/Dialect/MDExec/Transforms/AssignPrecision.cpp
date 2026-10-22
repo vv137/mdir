@@ -155,9 +155,10 @@ namespace {
 class Assigner {
 public:
   Assigner(func::FuncOp function, const Policy &policy,
-           bool kernelPositions, bool deterministic)
+           bool kernelPositions, bool deterministic, bool stageFieldF64)
       : function(function), policy(policy),
-        kernelPositions(kernelPositions), deterministic(deterministic) {}
+        kernelPositions(kernelPositions), deterministic(deterministic),
+        stageFieldF64(stageFieldF64) {}
 
   LogicalResult run();
 
@@ -198,6 +199,7 @@ private:
   const Policy &policy;
   bool kernelPositions;
   bool deterministic;
+  bool stageFieldF64;
 
   llvm::DenseMap<Value, unsigned> ids;
   SmallVector<Value> fields;
@@ -518,7 +520,7 @@ LogicalResult Assigner::resolve() {
       storage.assigned = storage.boundary;
     else if (storage.isPosition)
       storage.assigned = policy.position;
-    else if (storage.isStage && policy.position.isF64())
+    else if (storage.isStage && stageFieldF64 && policy.position.isF64())
       storage.assigned = policy.position;
     else if (storage.isForce)
       storage.assigned = policy.force;
@@ -845,7 +847,8 @@ public:
         if (!function.isExternal())
           functions.push_back(function);
     for (func::FuncOp function : functions)
-      if (failed(Assigner(function, policy, kernelPositions, deterministic)
+      if (failed(Assigner(function, policy, kernelPositions, deterministic,
+                          stageFieldsF64)
                      .run()))
         return signalPassFailure();
   }
