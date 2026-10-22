@@ -587,10 +587,11 @@ LogicalResult LinearTransformOp::verify() {
     return emitOpError() << "expected statically shaped rank-three grids";
   auto real = getDirection() == "forward" ? source : target;
   auto half = getDirection() == "forward" ? target : source;
-  if (!real.getElementType().isF64() ||
-      half.getElementType() != ComplexType::get(Float64Type::get(getContext())))
+  Type scalar = real.getElementType();
+  if ((!scalar.isF32() && !scalar.isF64()) ||
+      half.getElementType() != ComplexType::get(scalar))
     return emitOpError()
-           << "expected a real f64 grid and a complex<f64> half-spectrum";
+           << "expected a real f32 or f64 grid and a matching complex half-spectrum";
   ArrayRef<int64_t> shape = real.getShape();
   if (llvm::any_of(shape, [](int64_t n) {
         return n < 2 || n > std::numeric_limits<int32_t>::max();

@@ -75,6 +75,13 @@ format, or the outputs; every such change is listed under **Changed** or
   emitter ownership, and the target capability and measured-policy contract.
   No control-file key, file format, overwrite behavior, generated code, or
   simulation result changes.
+- **A storage bridge for semantic FFT values** (D[fft-value-buffer],
+  #526): the real grid and Hermitian half-spectrum value forms may use
+  matching f32 or f64 elements and lower to explicit row-major buffers
+  with interleaved complex components. A backward transform owns a copy of
+  its input so an execution implementation may overwrite that copy without
+  changing the semantic value. No control-file key, checkpoint, output
+  format, or overwrite behavior changes.
 - **Shared scalar grid gather emitters** (D325, #539): the
   Gaussian and prolate PME gathers use the same wrapped z coordinate and
   grid-read primitives, with their existing lane layout and arithmetic.
