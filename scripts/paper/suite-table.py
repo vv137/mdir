@@ -11,8 +11,8 @@ programs, from the first report of mdin.GPU to its last step
 (D[suite-symmetric]). Rates and times are the mean and the sample standard
 deviation over the repeats; a ratio is taken within each repeat, between
 runs that ran one after the other on the same device, and then averaged.
-Prints two tables in Markdown: the rates (Table 10.2) and the share of the
-output and the time to solution (Table 10.3).
+Prints three tables in Markdown: the rates (Table 10.2), the share of the
+output (Table 10.3), and the time to solution (Table 10.4).
 
 Without runs.jsonl, LOGS is that of the protocol before D[suite-symmetric]
 (mdir-N.log and pmemd-N.log, the summaries of bench.py, and
@@ -161,37 +161,34 @@ def symmetric(logs):
               f"| {reaches} | {change} | {every} |")
     print()
     print("| System | pmemd.cuda, energies only | MDIR, energies only "
-          "| MDIR / pmemd.cuda | Output's share: pmemd.cuda | MDIR "
-          "| Wall time of the run, s: pmemd.cuda | MDIR | Of it outside the "
-          "steps (derived), s: pmemd.cuda | MDIR | Wall time of 1 ns "
-          "(derived), min: pmemd.cuda | MDIR |")
-    print("|---|---|---|---|---|---|---|---|---|---|---|---|")
+          "| MDIR / pmemd.cuda | Output's share: pmemd.cuda | MDIR |")
+    print("|---|---|---|---|---|---|")
     for name in SYSTEMS:
         print(f"| `{name}` "
               f"| {spread(values('energies', name), 1)} "
               f"| {spread(values('searched-energies', name), 1)} "
               f"| {spread(ratios('searched-energies', 'energies', name), 1, '%')} "
               f"| {spread(shares('output', 'energies', name), 1, '%')} "
-              f"| {spread(shares('searched', 'searched-energies', name), 1, '%')} "
+              f"| {spread(shares('searched', 'searched-energies', name), 1, '%')} |")
+    print()
+    print("| System | Wall time of the run, s: pmemd.cuda | MDIR | Of it "
+          "outside the steps (derived), s: pmemd.cuda | MDIR | pmemd.cuda's "
+          "setup, s | MDIR compiled in, s | Wall time of 1 ns (derived), "
+          "min: pmemd.cuda | MDIR |")
+    print("|---|---|---|---|---|---|---|---|---|")
+    for name in SYSTEMS:
+        print(f"| `{name}` "
               f"| {spread(values('output', name, 'wall'), 1)} "
               f"| {spread(values('searched', name, 'wall'), 1)} "
               f"| {spread(fixed('output', name), 1)} "
               f"| {spread(fixed('searched', name), 1)} "
+              f"| {spread(values('output', name, 'setup_wall'), 0)} "
+              f"| {spread(values('searched', name, 'compiled'), 1)} "
               f"| {spread(one_ns('output', name), 2)} "
               f"| {spread(one_ns('searched', name), 2)} |")
-    # The checks: pmemd's setup and MDIR's compilation, the window of
-    # pmemd, and the clock of the rows against MDIR's own over the second
-    # half.
+    # The check of the clock of the rows against MDIR's own over the
+    # second half of its run.
     print()
-    for name in SYSTEMS:
-        setup = values("output", name, "setup_wall")
-        nonsetup = values("output", name, "nonsetup_wall")
-        compiled = values("searched", name, "compiled")
-        default_wall = values("default", name, "wall")
-        print(f"{name}: pmemd setup wall {spread(setup, 0)} s, nonsetup "
-              f"{spread(nonsetup, 0)} s; MDIR compiled in "
-              f"{spread(compiled, 1)} s; MDIR default wall "
-              f"{spread(default_wall, 1)} s")
     worst = []
     for key, run in by.items():
         if run.get("half_ns_per_day") and run.get("half_ns_per_day_by_rows"):

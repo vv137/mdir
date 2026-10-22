@@ -48,7 +48,8 @@ SUITE_URL = "https://ambermd.org/Amber24_Benchmark_Suite.tar.gz"
 SUITE_SHA256 = "0c23da4d8b72ca76e764a82c4bfadd983feeeaa5a3931b0d4f7f93bac273a148"
 
 # The systems, from the directories of the suite. `steps` is how many a
-# timing takes; `pmemd` is the rate of pmemd.cuda on an RTX 3090 that
+# timing of MDIR takes without --suite-protocol, which takes `nstlim` of
+# mdin.GPU instead; `pmemd` is the rate of pmemd.cuda on an RTX 3090 that
 # ambermd.org/GPUPerformance.php reports, in ns/day, where it reports one.
 SYSTEMS = {
     "jac_nve": dict(directory="JAC_production_NVE", ensemble="NVE",
