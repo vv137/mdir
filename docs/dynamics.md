@@ -403,8 +403,9 @@ differ only in `coupling` of `dyn.cell_rescaling`: every other op is axis
 by axis already, with $\mu_a$ equal on the three axes, on x and y, or on
 none, and a semi-isotropic `tension` enters the strain of the area. The
 barostat takes the pressure of the groups that it scales, from the
-kinetic energy of their centers at the half steps without the motion of
-the center of mass, $K_{\text{half},g}$ of `dyn.group_kinetic`, and the
+kinetic energy of their centers at the half steps, without the motion of
+the center of mass where the run removes it, $K_{\text{half},g}$ of
+`dyn.group_kinetic`, and the
 virial of the groups that the closing step returns (D264). The thermostats
 take $K_T$ at the step that closes the period: from the forces without
 constraints, and with constraints from the $K_\text{half}$ that the closing
@@ -418,7 +419,7 @@ code:
 | Item | Rule |
 |---|---|
 | The kinetic energy of the thermostat | $K_T - K_\text{cm}$, of the optimal temperature (D263), measured from the half steps around the step that closes the period: from the forces without constraints ($K + \tfrac23E$), measured with them. The factor scales $K_t$, and the bath counts the change of $K_t$ exactly. `K_T` of D45 is this estimate |
-| The pressure of the barostat | That of the groups that it scales, $P_{aa}$ of `dyn.pressure`, with $K_{\text{half},g}$ of their centers at the half steps without the motion of the center of mass, and $\mathsf W_g$ (D264); the log takes the same pressure |
+| The pressure of the barostat | That of the groups that it scales, $P_{aa}$ of `dyn.pressure`, with $K_{\text{half},g}$ of their centers at the half steps, without the motion of the center of mass where the run removes it, and $\mathsf W_g$ (D264); the log takes the same pressure |
 | The pressure, its corrections | The virials of the correction for the dispersion and of the background of a net charge, $C/(3V)$ on each axis ([nonbonded.md](nonbonded.md), Section 1.2); the forces of the constraints sum to zero within a group and do not enter |
 | How often | Every $N_T$ steps, with the period $N_T\Delta t$; a step between computes no global sum (`no_global_sums`). On a device a step with global sums takes up to twice the time of one without (ops.md, Section 10.8) |
 | Groups with a thermostat each | One group in M1 |
@@ -436,8 +437,9 @@ before `md-bypass-updates`, so that every later pass sees what it sees
 today; the code of the expansion is moved from `Builder.cpp`, not
 rewritten. Data movement may differ (a `vector.extract` where the driver
 had a scalar), never an arithmetic operation. `mdir emit
---stage=pipeline` prints the module at each stage, so the module after
-the expansion can be compared with that of `main`. The risks are the
+--stage=pipeline` and `--stage=lowered` print the module at a named
+stage, so the module after the expansion can be compared with that of
+`main`. The risks are the
 chain of the velocities, which must stay one loop in today's order, and a
 fusion of loops that sees other neighbors (#356); both are checked by the
 bitwise runs of step 3, not argued.
