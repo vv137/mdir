@@ -9,6 +9,9 @@ of Sections 4.1 and 8.1 list every op of `md` and `md_exec` today. The ops
 of `md_dist`, the distributed plan, are in
 [distributed-ml2.md](distributed-ml2.md), and those of `mdrt` in
 [runtime.md](runtime.md).
+The proposed shared verification rules for these dialects are in
+[execution-contracts.md](execution-contracts.md) (#574); that document is a
+design and does not change the implemented op syntax here.
 
 This document specifies the types and ops needed for milestone M0: a
 Lennard-Jones [[Jones1924]](references.md#jones1924) fluid integrated with velocity Verlet

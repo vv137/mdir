@@ -149,6 +149,36 @@ is a finding, not a failure.
 the map of every part of MDIR to its primitives, with the state of the
 code and the gaps, each an issue.
 
+## 10. Execution contracts
+
+Status: design, D[execution-contracts] (#574). The detailed contract is in
+[execution-contracts.md](execution-contracts.md). It connects provenance,
+effects, validity, and witnesses across `md`, `dyn`, `md_exec`, and
+`md_dist`. Semantic IR says what is computed, verified execution IR says
+which access and schedule is legal, and a physical plan selects a legal
+implementation for the target.
+
+Invariant meaning belongs in types or static attributes: a buffer's set
+(#565) and a distributed feature's representation (#571). State that can
+change during a run belongs in SSA values and explicit operands: positions,
+cell, ownership epoch, and transfer completion. A witness is an SSA result
+of a check and is valid only for the state from which that check made it.
+The consumer and its lowering check that the witness names their state.
+
+A precondition check has three outcomes for valid IR: it is proved, it is
+guarded at run time with a legal fallback, or it selects a conservative
+legal path and emits an `explain` remark. If no legal path exists, or a
+known invariant is contradicted, the IR is invalid and receives a
+diagnostic. Existing user inputs keep their behavior; `mdir check`
+diagnoses input defects instead of making the compiler refuse those inputs.
+Legality is established before measured cost chooses a strategy.
+
+Numerical permission is separate: `fixed_order`, `any_order`, exact integer
+accumulation, precision mode, `fast_math`, and approximation accuracy are
+different guarantees. A behavior-preserving refactor keeps lowered IR and
+PTX byte-identical and deterministic results bitwise identical. This design
+adds no operation, plan choice, control key, or runtime behavior.
+
 ## Planned work
 
 1. The storage form carries the set of each buffer in its type, so that

@@ -13,6 +13,11 @@ and the properties the part relies on, is in
 [primitives-map.md](primitives-map.md) (D292); this document
 describes how a device implements a primitive.
 
+The shared [execution contract](execution-contracts.md) (#574) establishes
+legality before a device strategy is chosen by cost. Its provenance, effect,
+validity, and witness rules apply to the chooser and the lowering alike;
+this document gives the preconditions of individual device strategies.
+
 ## 1. Status
 
 | Primitive | CUB's counterpart | Issue | Status | Decision |

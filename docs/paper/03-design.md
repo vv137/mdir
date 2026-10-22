@@ -57,6 +57,27 @@ own halo copy before use. This predicate currently runs in the in-process
 reference executor; loop-carried distributed state and the production
 driver remain to be connected.
 
+### Execution contracts (design)
+
+The semantic levels may state any computation. Before the execution levels
+schedule it, they must establish the provenance of values, the effects of
+operations, and the validity of the state on which an access depends.
+Invariant meaning, such as the set of a buffer or the representation of a
+feature, belongs to a type or static attribute. Positions, cell, ownership
+epoch, and copy completion change during a run and therefore remain SSA
+values and explicit operands. A witness produced by a check is valid only
+for those state values. The consumer checks that provenance rather than
+assuming that a prior check still applies.
+
+A requested execution path is either statically proved, protected by a
+runtime guard with a legal fallback, or replaced by a conservative legal
+path with an `explain` reason. A contradiction or the absence of any legal
+path is an IR diagnostic. Numerical legality is separate from the cost of a
+strategy: a fixed-order sum cannot be made reorderable by a favorable
+timing. This is the design of D[execution-contracts] (#574); the individual
+checks and witnesses are implemented in later decisions. Existing inputs
+and emitted programs do not change with this design.
+
 ## 3.1 What is computed, and how the state advances
 
 A term of the potential is written once, as an expression of its
