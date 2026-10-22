@@ -1722,6 +1722,10 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Fixed
 
+- **Device memory report test accepts a signed driver-memory change**
+  (D311, #559). The sampled device-wide change can be negative even when
+  the pool's own size grows. No control-file, output, or runtime change.
+
 - **The device pool no longer grows with the number of builds**
   (D312, #471). A loop over the groups gathered its
   positions and fields into buffers sized by the number of places that
