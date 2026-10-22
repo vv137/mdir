@@ -606,6 +606,6 @@ ratios are end-to-end baselines for selecting a host strategy, not the
 isolated cost of the pair primitive. The complete per-run records and
 commands to regenerate both tables accompany the runner. During the last
 Cellulose round, two unrelated allocations began on its node; the
-per-variant range across all three kept rounds remained below 0.8%, and
+largest per-variant range across all three kept rounds was 0.87%, and
 the whole alternating set is retained.
 
