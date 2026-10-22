@@ -1,10 +1,12 @@
 """Summarize the NVE CPU baseline of issue #552.
 
-    CPU_BENCH_DIR=... python baseline_summary.py TAG SYSTEM[@TAG]...
+    python baseline_summary.py TAG SYSTEM[@TAG]...
 
 Round zero is warm-up. A missing or failed variant is shown, never silently
 replaced by another round or system. Ratios divide MDIR ms/step by the
 reference ms/step; a ratio above one means MDIR took longer.
+With CPU_BENCH_DIR, read the original benchmark outputs and check node and
+affinity consistency. Otherwise read the portable JSONL records under data/.
 """
 
 import json
@@ -12,21 +14,29 @@ import os
 import statistics
 import sys
 from collections import defaultdict
+from pathlib import Path
 
 
 def read(system, tag):
-    path = os.path.join(os.environ["CPU_BENCH_DIR"], system, "runs", tag,
-                        "results.jsonl")
+    if os.environ.get("CPU_BENCH_DIR"):
+        path = Path(os.environ["CPU_BENCH_DIR"]) / system / "runs" / tag / "results.jsonl"
+    else:
+        path = (Path(__file__).resolve().parent / "data" / "cpu-baseline-2026-10-22" /
+                f"{system}-{tag}.jsonl")
     with open(path) as file:
         rows = [json.loads(line) for line in file]
-    hosts = {row["host"] for row in rows}
-    cpus = {row["cpu"] for row in rows}
-    affinities = {tuple(row["affinity"]) for row in rows}
+    hosts = {row["host"] for row in rows if "host" in row}
+    cpus = {row["cpu"] for row in rows if "cpu" in row}
+    affinities = {tuple(row["affinity"]) for row in rows if "affinity" in row}
     grids = {tuple(row["grid"]) for row in rows}
     cutoffs = {row["cutoff"] for row in rows}
-    if any(len(group) != 1 for group in
-           (hosts, cpus, affinities, grids, cutoffs)):
+    if any(len(group) > 1 for group in (hosts, cpus, affinities)) or \
+            any(len(group) != 1 for group in (grids, cutoffs)):
         raise ValueError(f"{system}: node, affinity, grid, or cutoff changed")
+    if any(any(key in row for row in rows) and
+           any(key not in row for row in rows) for key in
+           ("host", "cpu", "affinity")):
+        raise ValueError(f"{system}: partial host metadata")
     by_variant = defaultdict(list)
     expected = {"m1", "m16", "d1", "d16", "g1", "g16", "x1", "x16", "p1"}
     for row in rows:
@@ -54,7 +64,7 @@ def read(system, tag):
                            statistics.stdev(rates) if len(rates) > 1 else 0,
                            len(rates),
                            {row["round"]: row["rate_ms"] for row in repeats})
-    return next(iter(hosts)), next(iter(cpus)), result
+    return result
 
 
 def rate(stats, variant):
@@ -80,16 +90,16 @@ def main():
     tag, *systems = sys.argv[1:]
     if not systems:
         raise SystemExit("usage: baseline_summary.py TAG SYSTEM[@TAG]...")
-    print("| System | Host | Variant | ms/step, mean ± sample SD (kept rounds) |")
-    print("|---|---|---|---:|")
+    print("| System | Variant | ms/step, mean ± sample SD (kept rounds) |")
+    print("|---|---|---:|")
     data = {}
     for named in systems:
         system, run_tag = (named.split("@", 1) if "@" in named else
                            (named, tag))
-        host, cpu, stats = read(system, run_tag)
+        stats = read(system, run_tag)
         data[system] = stats
         for variant in sorted(stats):
-            print(f"| {system} | {host} ({cpu}) | {variant} | {rate(stats, variant)} |")
+            print(f"| {system} | {variant} | {rate(stats, variant)} |")
     print("\n| System | MDIR mixed / GROMACS default, 1t | "
           "MDIR mixed / GROMACS exact, 1t | "
           "MDIR mixed / GROMACS default, 16t | "

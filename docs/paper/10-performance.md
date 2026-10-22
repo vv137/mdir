@@ -525,7 +525,7 @@ its default skin. Thus the table compares end-to-end CPU costs, with the
 specified GROMACS list variants, not one identical list algorithm.
 
 Every system's variants run in alternating order over four rounds in one
-16-core Slurm allocation on an AMD EPYC node; the first round is discarded
+16-core Slurm allocation on one CPU node; the first round is discarded
 and the remaining rates are summarized as the mean and sample standard
 deviation. The node and allocated CPU affinity are recorded with the raw
 results. A concurrent CPU benchmark or MDIR suite on the node disqualifies
@@ -538,4 +538,11 @@ precision. MDIR's `double` at one thread is compared to pmemd; its
 `mixed` at one and 16 threads is compared to GROMACS at those thread
 counts. The 16-thread MDIR `double` rate shows scaling and has no
 16-thread pmemd reference.
+
+The pair-loop sampler of D267 measured a 64% share of a mixed-precision,
+16-thread TIP3P NPT step before this NVE baseline. Eliminating that loop's
+cost completely would therefore give at most $1/(1-0.64)=2.78$ times the
+rate in that earlier configuration. This is a bound for choosing the next
+strategy, not a measured speedup of the NVE runs below; the next pair-loop
+slice (#554) will measure its share and the full step together.
 

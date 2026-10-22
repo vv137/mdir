@@ -71,3 +71,12 @@ include the node, CPU model, and allocated affinity. Check the Slurm log
 for other jobs on that node during kept rounds; a run concurrent with
 another CPU benchmark or MDIR suite is a pilot and should be measured
 again without that competing work.
+
+The final records for #552 are committed as portable JSONL under
+`data/cpu-baseline-2026-10-22/`, one file per system. With `CPU_BENCH_DIR`
+unset, `baseline_summary.py baseline-final jac tip3p-103k cellulose`
+reads those records. With `CPU_BENCH_DIR` set, it reads the original
+`results.jsonl` files instead. The committed records retain the per-run
+rates, step counts, simulation conditions, and round number, but omit local
+paths and host allocation details. The original benchmark JSONL and Slurm
+logs retain the exact node, CPU model, and affinity for local audit.
