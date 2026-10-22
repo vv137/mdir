@@ -1,6 +1,6 @@
 """Summarize the NVE CPU baseline of issue #552.
 
-    CPU_BENCH_DIR=... python baseline_summary.py TAG SYSTEM...
+    CPU_BENCH_DIR=... python baseline_summary.py TAG SYSTEM[@TAG]...
 
 Round zero is warm-up. A missing or failed variant is shown, never silently
 replaced by another round or system. Ratios divide MDIR ms/step by the
@@ -54,12 +54,14 @@ def ratio(stats, variant, reference):
 def main():
     tag, *systems = sys.argv[1:]
     if not systems:
-        raise SystemExit("usage: baseline_summary.py TAG SYSTEM...")
+        raise SystemExit("usage: baseline_summary.py TAG SYSTEM[@TAG]...")
     print("| System | Host | Variant | ms/step, mean ± sample SD (kept rounds) |")
     print("|---|---|---|---:|")
     data = {}
-    for system in systems:
-        host, cpu, stats = read(system, tag)
+    for named in systems:
+        system, run_tag = (named.split("@", 1) if "@" in named else
+                           (named, tag))
+        host, cpu, stats = read(system, run_tag)
         data[system] = stats
         for variant in sorted(stats):
             print(f"| {system} | {host} ({cpu}) | {variant} | {rate(stats, variant)} |")

@@ -262,7 +262,7 @@ def run_pmemd(d):
   ntt=0, ntb=1, ntp=0, tempi=300, ig=12345, ioutfm=1,
  /
  &ewald
-  dsum_tol=0.00001, nfft1={GRID[0]}, nfft2={GRID[1]}, nfft3={GRID[2]}, order=4,
+  dsum_tol={1e-5 / cut:.12g}, nfft1={GRID[0]}, nfft2={GRID[1]}, nfft3={GRID[2]}, order=4,
  /
 """
     with open(d + "/mdin", "w") as file:
@@ -288,10 +288,13 @@ def run(variant, r):
     res = (run_mdir(variant, d) if variant[0] in "md" else
            run_pmemd(d) if variant == "p1" else run_gmx(variant, d))
     res.update(system=system, sites=natoms, variant=variant, round=r, dir=d, tag=tag,
-               host=os.uname().nodename, cpu=MODEL, grid=GRID, cutoff=cut)
+               host=os.uname().nodename, cpu=MODEL, grid=GRID, cutoff=cut,
+               affinity=sorted(os.sched_getaffinity(0)))
     with open(f"{OUT}/results.jsonl", "a") as f:
         f.write(json.dumps(res) + "\n")
     print(json.dumps(res), flush=True)
+    if not res.get("ok") or res.get("rate_ms") is None:
+        raise RuntimeError(f"{variant} failed or produced no rate; see its run files")
 
 
 print(f"{system}: {natoms} sites; grid {GRID}; host {os.uname().nodename}; cpu {MODEL}; "

@@ -39,8 +39,11 @@ Use `--min-steps` only for a pilot on a large system, and state the final
 number of steps for every variant.
 
 The NVE mode disables thermostats and barostats. All programs use a 2 fs
-step, a common cutoff, PME with order 4 and tolerance $10^{-5}$, and
-constraints on bonds to hydrogen. GROMACS chooses the PME grid at a 1 Å
+step, a common cutoff, PME with order 4 and
+$\mathrm{erfc}(\beta r_c)=10^{-5}$, and constraints on bonds to hydrogen.
+MDIR's `tolerance` and GROMACS's `ewald-rtol` take $10^{-5}$, while
+pmemd's `dsum_tol` takes $10^{-5}/r_c$ with $r_c$ in Å. GROMACS chooses
+the PME grid at a 1 Å
 spacing and the script gives that grid to MDIR and pmemd. GROMACS's default
 Verlet policy is `gT`; `xT` uses an exact buffer of 3 Å and a rebuild every
 10 steps. MDIR's default neighbor matrix uses a 1.5 Å reach; `mTrD` or
@@ -59,3 +62,9 @@ Serial pmemd is available; `d16` is shown for the CPU target's thread
 scaling but has no 16-thread pmemd counterpart. The script accepts
 `--steps-scale X` for a short pilot. Final rates need enough steps for a
 stable rate after initialization and pair-list builds.
+
+`baseline_summary.py TAG SYSTEM...` prints the rates and neutral ratios;
+`SYSTEM@OTHER_TAG` selects a different tag for one system. The JSON lines
+include the node, CPU model, and allocated affinity. Check the Slurm log
+for other jobs on that node during kept rounds; a shared-node run is a
+pilot and should be measured again without competing work.
