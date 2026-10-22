@@ -5,6 +5,7 @@
 #include "mdir/Dialect/MDExec/Algebra.h"
 
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/MathExtras.h"
@@ -30,6 +31,20 @@ void MDExecDialect::registerAttributes() {
 #define GET_ATTRDEF_LIST
 #include "mdir/Dialect/MDExec/MDExecAttrs.cpp.inc"
       >();
+}
+
+AffineMap SetLayoutAttr::getAffineMap() const {
+  return AffineMap::getMultiDimIdentityMap(getRank(), getContext());
+}
+
+LogicalResult SetLayoutAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, FlatSymbolRefAttr set,
+    int64_t rank) {
+  if (!set)
+    return emitError() << "expected a particle or tuple set";
+  if (rank < 1)
+    return emitError() << "expected a rank of at least one, got " << rank;
+  return success();
 }
 
 //===----------------------------------------------------------------------===//
