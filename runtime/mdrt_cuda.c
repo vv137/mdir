@@ -1419,10 +1419,12 @@ void mdrtGroupsGrow(int64_t handle, int64_t places, int64_t blocks) {
   releaseGroups(groups);
   if (places > groups->places)
     groups->places = (places + places / 4 + 15) / 16 * 16;
-  if (blocks > groups->blocks)
+  bool lists = blocks > groups->blocks;
+  if (lists)
     groups->blocks = blocks + blocks / 4;
   allocateGroups(groups);
-  if (groups->built)
+  /* The log counts the growths of the lists, not those of the places. */
+  if (groups->built && lists)
     ++groups->lateGrowths;
 }
 
