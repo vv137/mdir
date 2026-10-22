@@ -169,7 +169,10 @@ MemRefType mdir::md_exec::getScratchType(Type value, MemRefType like) {
     shape.push_back(vector.getNumElements());
     element = vector.getElementType();
   }
-  return MemRefType::get(shape, element, MemRefLayoutAttrInterface(),
+  MemRefLayoutAttrInterface layout;
+  if (auto tagged = dyn_cast_if_present<SetLayoutAttr>(like.getLayout()))
+    layout = SetLayoutAttr::get(like.getContext(), tagged.getSet(), shape.size());
+  return MemRefType::get(shape, element, layout,
                          like.getMemorySpace());
 }
 
@@ -214,6 +217,24 @@ static bool isRealOrRealVector(Type type) {
          isReal(vector.getElementType());
 }
 
+static FlatSymbolRefAttr getBufferSet(Type type) {
+  auto buffer = dyn_cast<MemRefType>(type);
+  if (!buffer)
+    return {};
+  if (auto layout = dyn_cast_if_present<SetLayoutAttr>(buffer.getLayout()))
+    return layout.getSet();
+  return {};
+}
+
+static LogicalResult verifyBufferSet(Operation *op, Value value,
+                                     FlatSymbolRefAttr expected) {
+  FlatSymbolRefAttr actual = getBufferSet(value.getType());
+  if (actual && expected && actual != expected)
+    return op->emitOpError() << "expected a buffer of set " << expected
+                             << ", got a buffer of set " << actual;
+  return success();
+}
+
 /// Verifies that `positions` is a position field on `particleSet`, or a
 /// buffer that holds a position field.
 static LogicalResult verifyPositions(Operation *op, Value positions,
@@ -227,6 +248,8 @@ static LogicalResult verifyPositions(Operation *op, Value positions,
     return op->emitOpError()
            << "the structure is on " << particleSet
            << ", but the positions belong to " << field.getParticleSet();
+  if (failed(verifyBufferSet(op, positions, particleSet)))
+    return failure();
   return success();
 }
 
@@ -820,6 +843,10 @@ template <typename OpTy>
 static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet,
                                 bool allowsFlags) {
   bool isStorage = op.isStorageForm();
+  if (isStorage && !particleSet && !op.getIns().empty())
+    particleSet = getBufferSet(op.getIns().front().getType());
+  if (isStorage && !particleSet && !op.getOuts().empty())
+    particleSet = getBufferSet(op.getOuts().front().getType());
   for (Value field : llvm::concat<Value>(op.getIns(), op.getOuts())) {
     if (isa<MemRefType>(field.getType()) != isStorage)
       return op.emitOpError()
@@ -830,7 +857,14 @@ static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet,
       return op.emitOpError() << "expected all fields to belong to "
                               << particleSet << ", but one belongs to "
                               << type.getParticleSet();
+    if (isStorage && failed(verifyBufferSet(op.getOperation(), field,
+                                            particleSet)))
+      return failure();
   }
+  if (isStorage)
+    for (Value scratch : op.getScratch())
+      if (failed(verifyBufferSet(op.getOperation(), scratch, particleSet)))
+        return failure();
   for (Value value : op.getReduce()) {
     Type type = value.getType();
     if (isRealOrRealVector(type) || (allowsFlags && type.isInteger(1)))
@@ -1369,6 +1403,9 @@ LogicalResult TupleForOp::verify() {
       return emitOpError() << "the tuples are those of " << tupleSet
                            << ", but a field in 'tuple' belongs to "
                            << field.getParticleSet();
+    if (isStorageForm() &&
+        failed(verifyBufferSet(getOperation(), parameter, tupleSet)))
+      return failure();
   }
 
   if (failed(mdir::md::verifyCoordinates(getOperation(),

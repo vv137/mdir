@@ -16,6 +16,7 @@
 #include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mdir/Dialect/MDExec/Scatter.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
@@ -8728,6 +8729,8 @@ public:
       ConvertMDExecToGPU>::ConvertMDExecToGPUBase;
 
   void runOnOperation() final {
+    if (failed(md_exec::eraseStorageSets(getOperation())))
+      return signalPassFailure();
     if (getOperation()->hasAttr("md.derivative_check")) {
       getOperation().emitError("derivative checking requires the CPU lowering");
       return signalPassFailure();

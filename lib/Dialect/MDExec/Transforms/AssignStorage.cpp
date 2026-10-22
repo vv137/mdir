@@ -365,10 +365,11 @@ static const int64_t deviceSpace = 1;
 
 MemRefType Assignment::getStorageType(Type field) {
   MemRefType host = mdrt::getBufferType(cast<md::FieldType>(field));
+  auto layout = SetLayoutAttr::get(context, getStorageSet(field), host.getRank());
   if (!onDevice)
-    return host;
+    return MemRefType::get(host.getShape(), host.getElementType(), layout);
   return MemRefType::get(
-      host.getShape(), host.getElementType(), MemRefLayoutAttrInterface(),
+      host.getShape(), host.getElementType(), layout,
       IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
 }
 
@@ -393,7 +394,7 @@ LogicalResult Assignment::getScratch(Operation *op, ArrayRef<Type> sums,
     return failure();
   MemRefType device = MemRefType::get(
       {ShapedType::kDynamic}, Float64Type::get(context),
-      MemRefLayoutAttrInterface(),
+      SetLayoutAttr::get(context, getStorageSet(field), 1),
       IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
   for (Type sum : sums) {
     // A number, or a vector of numbers: the virial has nine.
@@ -1696,6 +1697,9 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                      from.getBuffer().getParentBlock() == op->getBlock();
     bool isReadOnly = readOnly.contains(buffer);
     if (!onDevice && !givenAnew) {
+      buffer = memref::CastOp::create(builder, op->getLoc(),
+                                       getStorageType(from.getResult().getType()),
+                                       buffer);
       bind(from.getResult(), buffer, scope);
       // A buffer that the function may not write is read where it is, and
       // no loop takes it for what it writes.
@@ -1742,7 +1746,9 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     if (!onDevice) {
       // The buffer is visible outside from here on. Leave it alone.
       scope.owned.erase(buffer);
-      mapping.map(to.getResult(), buffer);
+      mapping.map(to.getResult(), memref::CastOp::create(
+                                     builder, op->getLoc(),
+                                     to.getResult().getType(), buffer));
       return success();
     }
 
@@ -1788,6 +1794,13 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
         // The buffers of the device as the host takes them (D215).
         for (Value value : found->second) {
           auto device = dyn_cast<MemRefType>(value.getType());
+          if (device && isa<SetLayoutAttr>(device.getLayout()))
+            value = memref::CastOp::create(
+                builder, op->getLoc(),
+                MemRefType::get(device.getShape(), device.getElementType(),
+                                MemRefLayoutAttrInterface(),
+                                device.getMemorySpace()),
+                value);
           arguments.push_back(
               device ? memref::MemorySpaceCastOp::create(
                            builder, op->getLoc(),
@@ -1812,13 +1825,21 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
         return failure();
       if (!onDevice) {
         // The host reads the buffer where it is.
-        arguments.push_back(buffer);
+        arguments.push_back(memref::CastOp::create(builder, op->getLoc(),
+                                                   type, buffer));
         continue;
       }
       if (call.getInPlace()) {
         // The host takes the buffer of the device where it is
         // (D215).
         auto device = cast<MemRefType>(buffer.getType());
+        if (isa<SetLayoutAttr>(device.getLayout()))
+          buffer = memref::CastOp::create(
+              builder, op->getLoc(),
+              MemRefType::get(device.getShape(), device.getElementType(),
+                              MemRefLayoutAttrInterface(),
+                              device.getMemorySpace()),
+              buffer);
         arguments.push_back(memref::MemorySpaceCastOp::create(
             builder, op->getLoc(),
             MemRefType::get(device.getShape(), device.getElementType()),
@@ -1859,13 +1880,21 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                << "expected a field in 'outs' that holds a value";
       outs.push_back(buffer);
       if (!onDevice) {
-        arguments.push_back(buffer);
+        arguments.push_back(memref::CastOp::create(
+            builder, op->getLoc(), calleeTypes[next++], buffer));
         continue;
       }
       if (!call.getInPlace())
         return op->emitOpError()
                << "writes fields on a device, which it takes only in place";
       auto device = cast<MemRefType>(buffer.getType());
+      if (isa<SetLayoutAttr>(device.getLayout()))
+        buffer = memref::CastOp::create(
+            builder, op->getLoc(),
+            MemRefType::get(device.getShape(), device.getElementType(),
+                            MemRefLayoutAttrInterface(),
+                            device.getMemorySpace()),
+            buffer);
       arguments.push_back(memref::MemorySpaceCastOp::create(
           builder, op->getLoc(),
           MemRefType::get(device.getShape(), device.getElementType()),
