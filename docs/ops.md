@@ -1288,7 +1288,7 @@ tuple set as `md_exec.tuple_set`. The module attribute
 `md_exec.typed_storage` marks storage assigned by the pass, for which loop
 operands must be tagged. Loop verification rejects a different set, and
 the CPU and GPU conversion passes reject casts that reinterpret a tagged
-buffer as another set, including through a plain cast. An external host
+buffer as another set, including through a plain cast or aliasing view. An external host
 buffer crosses the boundary through `memref.cast`. The conversion passes
 erase the identity layout and those boundary casts before lowering, so
 the generated address calculations stay the same. Dynamic first dimensions

@@ -31,6 +31,12 @@ static FlatSymbolRefAttr getProvenance(Value value) {
     return getProvenance(cast.getSource());
   if (auto cast = value.getDefiningOp<memref::MemorySpaceCastOp>())
     return getProvenance(cast.getSource());
+  if (auto view = value.getDefiningOp<memref::SubViewOp>())
+    return getProvenance(view.getSource());
+  if (auto view = value.getDefiningOp<memref::ReinterpretCastOp>())
+    return getProvenance(view.getSource());
+  if (auto view = value.getDefiningOp<memref::ViewOp>())
+    return getProvenance(view.getSource());
   return getSet(value.getType());
 }
 

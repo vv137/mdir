@@ -41,6 +41,20 @@ func.func @cross_set_reuse_through_plain(
 
 // -----
 
+md.particle_set @atoms
+md.particle_set @other
+
+func.func @cross_set_reuse_through_view(
+    %a: memref<?xf64, #md_exec.set_layout<@atoms, 1>>) {
+  %plain = memref.cast %a : memref<?xf64, #md_exec.set_layout<@atoms, 1>> to memref<?xf64>
+  %view = memref.subview %plain[0] [10] [1] : memref<?xf64> to memref<10xf64, strided<[1]>>
+  // expected-error@+1 {{cannot reinterpret storage of set @atoms as set @other}}
+  %b = memref.cast %view : memref<10xf64, strided<[1]>> to memref<10xf64, #md_exec.set_layout<@other, 1>>
+  return
+}
+
+// -----
+
 module attributes {md_exec.typed_storage} {
   md.particle_set @atoms
 

@@ -633,7 +633,7 @@ The verifier compares a loop's buffers with its particle or tuple domain,
 and rejects a buffer from another set. The current pool can reuse a buffer
 only for the same set and full type. Before either CPU or GPU lowering a
 shared boundary rejects a cast across sets, including one hidden by a
-plain cast, and erases the identity layout and boundary casts. Therefore
+plain cast or aliasing view, and erases the identity layout and boundary casts. Therefore
 the address calculations, allocation sizes, and kernels are those of the
 plain-memref program. Dynamic row counts come from validated input and
 the assignment pass's size map; lifetime planning is a later pass.
