@@ -2,6 +2,7 @@
 
     bench.py SYSTEM ROUNDS VARIANT[,VARIANT...] [--tag T] [--steps-scale X]
         [--ensemble nve|coupled] [--cutoff ANGSTROM] [--min-steps N]
+        [--grid NX,NY,NZ]
 
 SYSTEM is a directory under $CPU_BENCH_DIR with the files of the size sweep
 of #345 (scripts/benchmarks/pair-loop/sweep.py of PR #353 prepares them):
@@ -55,6 +56,7 @@ scale = 1.0
 ensemble = "coupled"
 cutoff = None
 min_steps = 100
+forced_grid = None
 BUILDS = {}
 tag = "t" + time.strftime("%m%d-%H%M%S")
 args = sys.argv[4:]
@@ -71,6 +73,9 @@ while args:
         cutoff = float(args[1]); args = args[2:]
     elif args[0] == "--min-steps":
         min_steps = int(args[1]); args = args[2:]
+    elif args[0] == "--grid":
+        forced_grid = [int(value) for value in args[1].split(",")]
+        args = args[2:]
     else:
         sys.exit("unknown " + args[0])
 D = f"{S}/{system}"
@@ -79,6 +84,8 @@ if ensemble not in ("nve", "coupled"):
     sys.exit("--ensemble must be nve or coupled")
 if min_steps < 2 or min_steps % 2:
     sys.exit("--min-steps must be a positive even number")
+if forced_grid is not None and (len(forced_grid) != 3 or min(forced_grid) < 1):
+    sys.exit("--grid must have three positive dimensions")
 if "p1" in variants and ensemble != "nve":
     sys.exit("p1 requires --ensemble nve")
 cut = cutoff if cutoff is not None else (8.0 if JAC or system.startswith("cellulose") else 9.0)
@@ -119,6 +126,9 @@ nstpcouple      = 25
 if ensemble == "nve":
     GMX_MDP = re.sub(r"tcoupl\s*=\s*v-rescale", "tcoupl = no", GMX_MDP)
     GMX_MDP = re.sub(r"pcoupl\s*=\s*c-rescale", "pcoupl = no", GMX_MDP)
+if forced_grid is not None:
+    GMX_MDP = GMX_MDP.replace("fourierspacing  = 0.1", "\n".join(
+        f"fourier-n{axis} = {length}" for axis, length in zip("xyz", forced_grid)))
 
 
 def gmx_start():
@@ -139,7 +149,7 @@ def grid():
     return [int(re.search(rf"fourier-n{a}\s*=\s*(\d+)", dump).group(1)) for a in "xyz"]
 
 
-GRID = grid()
+GRID = forced_grid if forced_grid is not None else grid()
 
 
 def steps_for(threads, kind):

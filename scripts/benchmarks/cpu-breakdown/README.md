@@ -31,6 +31,13 @@ revisions in one tag. The MDIR rate is the second half of its steps;
 GROMACS uses `-resethway`; pmemd reports all integration steps. Report this
 timing-window difference with the comparison.
 
+Use `--grid NX,NY,NZ` when a grid chosen from GROMACS's 1 Å spacing has
+a prime factor other than 2, 3, or 5, which pmemd refuses. Specify one
+nearby FFT-friendly grid for all three engines. Cellulose's automatic
+grid is `280,128,128`; use `288,128,128` for the three-engine comparison.
+Use `--min-steps` only for a pilot on a large system, and state the final
+number of steps for every variant.
+
 The NVE mode disables thermostats and barostats. All programs use a 2 fs
 step, a common cutoff, PME with order 4 and tolerance $10^{-5}$, and
 constraints on bonds to hydrogen. GROMACS chooses the PME grid at a 1 Å
