@@ -119,7 +119,8 @@ format, or the outputs; every such change is listed under **Changed** or
   real grid or Hermitian half-spectrum value with statically checked shapes,
   direction, opposite adjoint, and weighted pairing. This IR-only slice
   adds no control-file key, Python API, checkpoint or output change; the
-  value-to-buffer bridge and reciprocal composition remain #452.
+  value-to-buffer bridge follows in D[fft-value-buffer] (#526); reciprocal
+  composition remains #452.
 - **A linear FFT transform primitive with an inspectable adjoint**
   (D306, #480): `md_exec.linear_transform` exposes the grid
   buffers, direction, opposite adjoint, and Hermitian half-spectrum pairing.

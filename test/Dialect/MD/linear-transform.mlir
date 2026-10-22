@@ -23,3 +23,17 @@ func.func @even(%real: tensor<3x2x6xf64>) -> tensor<3x2x4xcomplex<f64>> {
     tensor<3x2x6xf64> -> tensor<3x2x4xcomplex<f64>>
   return %forward : tensor<3x2x4xcomplex<f64>>
 }
+
+// F32 values retain the same Hermitian adjoint declaration as f64.
+func.func @mixed(%real: tensor<3x2x6xf32>,
+                 %half: tensor<3x2x4xcomplex<f32>>) {
+  // CHECK: md.linear_transform %{{.*}} kind("fft3d") direction("forward") adjoint("backward") pairing("real_hermitian_half") : tensor<3x2x6xf32> -> tensor<3x2x4xcomplex<f32>>
+  %forward = md.linear_transform %real kind("fft3d") direction("forward")
+    adjoint("backward") pairing("real_hermitian_half") :
+    tensor<3x2x6xf32> -> tensor<3x2x4xcomplex<f32>>
+  // CHECK: md.linear_transform %{{.*}} kind("fft3d") direction("backward") adjoint("forward") pairing("real_hermitian_half") : tensor<3x2x4xcomplex<f32>> -> tensor<3x2x6xf32>
+  %backward = md.linear_transform %half kind("fft3d") direction("backward")
+    adjoint("forward") pairing("real_hermitian_half") :
+    tensor<3x2x4xcomplex<f32>> -> tensor<3x2x6xf32>
+  return
+}

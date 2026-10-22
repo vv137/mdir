@@ -43,7 +43,7 @@ of the fields (of the owned rows, for the transfers of domains).
 | **scan** | $y_i = \sum_{k < i} x_k$ (exclusive) | reverse scan: $\bar x_k = \sum_{i > k} \bar y_i$ | no op; the shared emitters of warp, block, and device scans (`CompactionEmitter.h`, D296), including the single-pass device strategy (D321) available for the groups' counting sorts through an opt-in compiler pass option; the matrix and `lowerNonzero` retain their specialized scans |
 | **permutation** | $y_k = x_{\pi(k)}$ | inverse permutation | `md_exec.permute`; the members relabeled by `md_exec.renumber`; the host writing a frame by the numbers of the particles; `md_dist.distribute` and `md_dist.collect`, declared transposes of each other |
 | **compaction** | the elements with $p(i)$, packed: $y_{r(i)} = x_i$ | expansion: $\bar x_i = \bar y_{r(i)}$ where $p(i)$, else 0 | `md_exec.nonzero` (D262); the pruning, the active units, and the builds, through the shared warp compaction (`CompactionEmitter.h`, D296) |
-| **linear transform** (the FFT first) | $\hat x = F x$, the unnormalized discrete Fourier transform | the unnormalized inverse transform under the Hermitian-weighted real inner product of the half-complex values | `md.linear_transform` carries pure grid and half-spectrum values with a declared transpose (D319); `md_exec.linear_transform` has explicit buffers and the same adjoint and pairing declarations (D306). cuFFT (`mdrtCudaFFTForward3D`, `runtime/mdrt_cuda.c`) and pocketfft (`runtime/mdrt_fft.c`) remain the execution strategies; the value-to-buffer bridge is #452 |
+| **linear transform** (the FFT first) | $\hat x = F x$, the unnormalized discrete Fourier transform | the unnormalized inverse transform under the Hermitian-weighted real inner product of the half-complex values | `md.linear_transform` carries pure grid and half-spectrum values with a declared transpose (D319); `md_exec.linear_transform` has explicit buffers and the same adjoint and pairing declarations (D306). D[fft-value-buffer] (#526) bridges the two forms. cuFFT (`mdrtCudaFFTForward3D`, `runtime/mdrt_cuda.c`) and pocketfft (`runtime/mdrt_fft.c`) remain the execution strategies; the reciprocal composition is #452 |
 | **sort, neighbor build** | a permutation, or a relation, from the positions | none: structural, piecewise constant, not differentiated | `md_exec.spatial_order`, `md_exec.build_neighbors`, `refresh_neighbors`, `build_incidence`, `build_edges`, `build_triplets`; `md_dist.partition`, `md_dist.halo` |
 
 Two members are special cases kept apart. A halo copy is a gather whose
@@ -195,7 +195,7 @@ The set had no linear transform until the maintainer's ruling on #452
 transform first: the adjoint of the unnormalized forward transform is the
 unnormalized backward transform (for the real form, with the weights of
 the Hermitian symmetry). Both transform forms are now in the IR, while the
-value-to-buffer bridge and differentiation through the reciprocal chain are missing:
+composition and differentiation through the reciprocal chain are missing:
 `md.reciprocal` is one op whose forces are a result (Section 3.3), so the
 derivative uses the closed form, spreading and gathering with the slopes
 of the splines. D306 gives `md_exec.linear_transform` an
