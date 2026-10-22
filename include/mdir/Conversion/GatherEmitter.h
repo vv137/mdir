@@ -1,6 +1,7 @@
 // A wrapped, contiguous-axis grid read shared by the PME gathers
 // (D325, docs/device-primitives.md). Each lane reads one grid
 // point; the caller keeps its particle and lane mapping and its arithmetic.
+// Portability: docs/device-primitives.md, Section 6 (D[device-portability-inventory]).
 
 #ifndef MDIR_CONVERSION_GATHEREMITTER_H
 #define MDIR_CONVERSION_GATHEREMITTER_H

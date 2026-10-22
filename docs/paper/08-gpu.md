@@ -536,3 +536,37 @@ v_k$ with the strategies and the conditions above. A loop that computes
 its values in registers keeps them there and states the strategy of its
 own destinations, since a separate op would store every value and read it
 again.
+
+## 8.6 Target capabilities and primitive implementations
+
+A data-parallel primitive has the same mathematical meaning on every
+target, but its implementation may need a subgroup of a particular width,
+an atomic operation of a particular type and scope, enough workgroup
+memory, or a specified approximation error. The first portability
+inventory (D[device-portability-inventory], #558) separates these
+correctness requirements from the measured thresholds that choose among
+legal strategies (#433). One target description supplies both: a
+capability record for preconditions and a policy record for thresholds.
+The chooser and the lowering use the same precondition. A target that
+cannot meet it refuses the strategy with a reason and takes a legal
+fallback. A target without measurements takes a conservative stated
+policy, not a threshold inferred from another architecture.
+
+The proposed compilation plan records the selected target, precision,
+neighbor and scatter strategies, and determinism with a reason and
+preconditions for each choice. A pass-manager builder consumes it, and an
+`explain-plan` command would expose the reasons without changing the emitted
+program. Dividing device lowering into neighbor, interaction, collective,
+launch, and runtime responsibilities lets each implementation read that same
+plan instead of repeating target decisions.
+
+This separation matters even where MLIR already uses a generic `gpu`
+shuffle or ballot: a surrounding 32-lane algorithm can still be wrong
+on a wider subgroup. NVIDIA-specific warp barriers and approximate
+reciprocals still appear directly in the lowering, and several atomics
+use PTX assembly within LLVM operations. They will move behind shared
+emitter interfaces, with NVIDIA's existing instructions preserved. The
+generated group kernels come from one generator, so the generator, not
+each generated occurrence, is the migration point. Runtime allocation,
+transfer, launch, and FFT plans form a separate device interface; the
+FFT itself remains the same linear-transform primitive (Section 2).

@@ -32,6 +32,11 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
+- **Device portability inventory** (D[device-portability-inventory], #558):
+  documented explicit NVVM operations, PTX assembly, generic GPU operations,
+  emitter ownership, and the target capability and measured-policy contract.
+  No control-file key, file format, overwrite behavior, generated code, or
+  simulation result changes.
 - **Shared scalar grid gather emitters** (D325, #539): the
   Gaussian and prolate PME gathers use the same wrapped z coordinate and
   grid-read primitives, with their existing lane layout and arithmetic.
