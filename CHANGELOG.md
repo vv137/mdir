@@ -726,6 +726,13 @@ format, or the outputs; every such change is listed under **Changed** or
   a pair term whose tail diverges is then an `InputError`, and is left out
   with the `UserWarning` `pair_tail_left_out` otherwise.
   `Program.plan["dispersion"]` reports which tails are in the correction.
+- **The design of the couplings as ops of `dyn`** (D[dyn-coupling-ops],
+  part of #541): `docs/dynamics.md`, Section 2.2, is the design of record
+  for the thermostats, the barostat with every `work` mode, and the
+  removal of the motion of the center of mass as ops of the step program,
+  with their verifiers, effects, lowering, random streams, and the plan of
+  the PRs that build them. Documentation only; nothing is built, and no
+  run changes.
 
 ### Changed
 
