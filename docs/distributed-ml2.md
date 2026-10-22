@@ -762,6 +762,20 @@ before buffer retirement, and the production driver's `[distribute]`
 boundary. Repeated independent snapshots in tests are not an integrated
 trajectory.
 
+The first temporal-validity slice, D[dist-covered] (#542), adds
+`md_dist.covered` as a collective predicate over all owned rows of a halo's
+layout. Its reference field and cell must be the exact SSA operands of the
+halo build; its current positions are a distinct field version in the same
+ownership epoch. For each global identity the in-process executor takes the
+minimum-image displacement between the two positions. The predicate is true
+only when twice the maximum displacement is strictly less than the halo
+reach minus the requested cutoff. Empty domains contribute no displacement
+but participate in the one result. This predicate describes validity of the
+candidate halo membership; a current coordinate payload must still receive
+its own `halo_copy` before a pair kernel reads it. The existing one-block
+executor can evaluate the predicate, but does not yet carry a halo through a
+step loop or branch collectively on the result. Those uses remain in #38.
+
 ## 9. Transports
 
 The ABI below `md_dist` is a small set of collective calls: partition,

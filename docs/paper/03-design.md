@@ -41,6 +41,18 @@ neighbors only: by the definition of $I_d$, its omitted ghost terms form
 the empty set. This filter alone preserves the immediate-wait schedule;
 placing it between a later start and wait is a separate step.
 
+`md_dist.covered` (D[dist-covered]) expresses the collective skin test for a
+halo built at positions $\mathbf x^0$ with reach $R$. For current positions
+$\mathbf x$, let $\delta$ be the largest minimum-image displacement of an
+owned particle over all domains. The old candidate membership is sufficient
+for a cutoff $r_c$ when $2\delta < R-r_c$: by the triangle inequality, a
+pair at the current cutoff was at most $r_c+2\delta < R$ apart at build
+time. The predicate is one value for all domains, including empty ones.
+The current coordinate values remain a separate version and require their
+own halo copy before use. This predicate currently runs in the in-process
+reference executor; loop-carried distributed state and the production
+driver remain to be connected.
+
 ## 3.1 What is computed, and how the state advances
 
 A term of the potential is written once, as an expression of its

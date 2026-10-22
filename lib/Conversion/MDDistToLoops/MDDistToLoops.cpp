@@ -133,6 +133,7 @@ private:
   LogicalResult lowerCollect(CollectOp op);
   LogicalResult lowerRedistribute(RedistributeOp op);
   LogicalResult lowerHalo(HaloOp op);
+  LogicalResult lowerCovered(CoveredOp op);
   LogicalResult lowerHaloCopy(HaloCopyOp op);
   LogicalResult lowerHaloSum(HaloSumOp op);
   LogicalResult lowerZeros(ZerosOp op);
@@ -566,6 +567,29 @@ LogicalResult Lowering::lowerHalo(HaloOp op) {
       declare("mdrtDistReleaseHalo", b.getFunctionType({i64}, {}), false),
       ValueRange{handle});
   storage[op.getResult()] = {handle, rows, ids, capacity, Value(), Value()};
+  return success();
+}
+
+LogicalResult Lowering::lowerCovered(CoveredOp op) {
+  OpBuilder b(op);
+  Value reference = storage[op.getReference()].buffer;
+  Value current = storage[op.getCurrent()].buffer;
+  Type i64 = b.getI64Type();
+  Value answer = func::CallOp::create(
+                     b, loc,
+                     declare("mdrtDistCovered",
+                             b.getFunctionType({i64, reference.getType(),
+                                                current.getType(), b.getF64Type()},
+                                               {i64}),
+                             true),
+                     ValueRange{storage[op.getHalo()].handle, reference,
+                                current,
+                                real(b, op.getCutoff().convertToDouble())})
+                     .getResult(0);
+  Value zero = arith::ConstantOp::create(b, loc, b.getI64IntegerAttr(0));
+  Value covered = arith::CmpIOp::create(b, loc, arith::CmpIPredicate::ne,
+                                       answer, zero);
+  op.getResult().replaceAllUsesWith(covered);
   return success();
 }
 
@@ -1591,6 +1615,7 @@ LogicalResult Lowering::lower(Operation *op) {
       .Case([&](CollectOp o) { return lowerCollect(o); })
       .Case([&](RedistributeOp o) { return lowerRedistribute(o); })
       .Case([&](HaloOp o) { return lowerHalo(o); })
+      .Case([&](CoveredOp o) { return lowerCovered(o); })
       .Case([&](HaloCopyOp o) { return lowerHaloCopy(o); })
       .Case([&](HaloSumOp o) { return lowerHaloSum(o); })
       .Case([&](ZerosOp o) { return lowerZeros(o); })
