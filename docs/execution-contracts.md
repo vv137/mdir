@@ -23,6 +23,19 @@ Failure to prove that fact does not make an otherwise valid program invalid.
 The distinction between a valid program with an unavailable optimization and
 an invalid execution is part of every check's contract.
 
+```mermaid
+flowchart LR
+    A[md and dyn: meaning] --> B[md_exec and md_dist: access and state]
+    B --> C{Legal execution?}
+    C -->|Invalid IR| D[Diagnostic]
+    C -->|Proved| E[Allowed plans]
+    C -->|Runtime check| F[Guard and legal fallback]
+    C -->|Unproved optional choice| G[Conservative plan and explain remark]
+    E --> H[Measured cost selects a physical plan]
+    F --> H
+    G --> H
+```
+
 ## 2. Four facts, one place each
 
 | Fact | Representation | Consumers and planned implementation |
