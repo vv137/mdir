@@ -302,19 +302,38 @@ std::vector<int32_t> copyIds(void *ids) {
 
 /// The checkpoint that a thread of its own writes while the steps go on
 /// (D[checkpoint-async], #548). There is one writer, `writeState`, and at
-/// most one write at a time: the next checkpoint, a stop, the end of the
-/// run, and the exit of the process wait for it (waitForCheckpoint). The
-/// thread runs `writeCheckpoint` as a write between the steps did, with its
-/// `.partial`, `fsync`s, `.prev`, and rename, and the mutex of the library
-/// (#262) around the part in the library alone.
+/// most one write at a time. A checkpoint passes three events, kept apart:
+///
+///   1. The copy from the device ends. The program copies its buffers to
+///      buffers of the host before it calls `writeState`; that copy has
+///      ended when the call begins. The call copies those buffers into the
+///      staging buffers of the write (RawState, or the snapshot), which the
+///      write owns: the program may overwrite its own buffers once the call
+///      returns.
+///   2. The write no longer borrows its staging buffers: the thread has put
+///      the state into the order of the input and released them
+///      (`released`). Only the thread releases them; no later checkpoint
+///      takes them, since each has staging buffers of its own.
+///   3. The commit: the file is complete, on stable storage, and under its
+///      name (`.partial`, `fsync`, `.prev`, rename, `fsync` of the
+///      directory), with the mutex of the library (#262) around its part
+///      in the library alone (`ended`).
+///
+/// The waits (waitForCheckpoint, which joins the thread): the next
+/// checkpoint waits for 2 and 3 of the one before, before it stages its
+/// own state; a stop on a signal or the wall time, the end of the run, and
+/// the exit of the process wait for all three. A write that failed stops
+/// the run at the next of them, with its error.
 struct CheckpointThread {
   std::thread thread;
   /// Written by the thread, read after it is joined.
   std::string path;
   std::string failure;
   CheckpointWriteTimes parts;
-  /// The time in s that the thread took to order the state, if it did.
+  /// The time in s that the thread took to order the state, if it did,
+  /// and when it released its staging buffers (event 2).
   double order = 0.0;
+  Clock::time_point released;
   int64_t step = 0;
   Clock::time_point started, ended;
 };
@@ -386,18 +405,29 @@ void startCheckpointThread(const std::string &path, int64_t step,
   writer.parts = CheckpointWriteTimes();
   writer.order = 0.0;
   writer.started = Clock::now();
+  static const long delay = [] {
+    const char *value = std::getenv("MDIR_CHECKPOINT_WRITE_DELAY");
+    return value ? std::strtol(value, nullptr, 10) : 0L;
+  }();
   writer.thread = std::thread([&writer, snapshot = std::move(snapshot),
                                raw = std::move(raw)]() mutable {
+    // A write held back on purpose, for a test of the staging buffers
+    // (MDIR_CHECKPOINT_WRITE_DELAY, test/Driver/checkpoint-staging.test).
+    if (delay > 0)
+      std::this_thread::sleep_for(std::chrono::milliseconds(delay));
     if (!raw.fields.empty()) {
       Clock::time_point from = Clock::now();
       snapshot.positions = raw.fields[0].order(raw.ids);
       snapshot.velocities = raw.fields[1].order(raw.ids);
       if (raw.fields.size() > 2)
         snapshot.forces = raw.fields[2].order(raw.ids);
-      raw = RawState();
       writer.order =
           std::chrono::duration<double>(Clock::now() - from).count();
     }
+    // Event 2: the staging buffers are released.
+    raw = RawState();
+    writer.released = Clock::now();
+    // Event 3: the commit.
     if (llvm::Error error =
             writeCheckpoint(writer.path, snapshot, &writer.parts))
       writer.failure = llvm::toString(std::move(error));
@@ -1394,7 +1424,10 @@ static void writeState(int64_t step, void *positions, void *velocities,
   ReturnMark returns;
   OutputTimes &times = getTimes();
   Clock::time_point entered = Clock::now();
-  // A failed write stops the run here, with its error.
+  // The wait of a checkpoint: for events 2 and 3 of the one before (the
+  // release of its staging buffers and its commit), before this one stages
+  // its state (CheckpointThread). A failed write stops the run here, with
+  // its error.
   waitForCheckpoint();
   Clock::time_point waited = Clock::now();
   Checkpoint &checkpoint = output.checkpoint;
@@ -1476,6 +1509,7 @@ static void writeState(int64_t step, void *positions, void *velocities,
     reason = "the wall time";
   if (!reason)
     return;
+  // The wait of a stop: for all three events of this checkpoint.
   waitForCheckpoint();
   if (output.trajectory)
     output.trajectory->close();
