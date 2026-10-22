@@ -21,11 +21,11 @@
 # CHECK-NEXT: mdrt: device memory: {{[0-9]+}} allocations of blocks, {{[0-9]+}} from the pool, {{[0-9]+}} returned to the driver
 # CHECK-NEXT: mdrt: device memory: the driver's use of the device: {{[0-9.]+}} MiB once the context was made, {{[0-9.]+}} MiB at the peak with the pool
 # CHECK-NEXT: mdrt: device memory: by account, the growth of the driver's use, the bytes asked for, and the events:
+# Every account row's driver-wide growth may be negative; bytes asked for stay nonnegative.
 # CHECK-NEXT: mdrt: the modules {{-?[0-9.]+}} MiB 0.0 MiB {{[0-9]+}}
-# The driver-wide memory sample can fall while the pool's own size grows.
 # CHECK: mdrt: the blocks of the pool {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB {{[0-9]+}}
 # CHECK-NEXT: mdrt: the plans of cuFFT {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB 2
-# CHECK-NEXT: mdrt: the structures of the tuples {{[0-9.]+}} MiB {{[0-9.]+}} MiB {{[0-9]+}}
+# CHECK-NEXT: mdrt: the structures of the tuples {{-?[0-9.]+}} MiB {{[0-9.]+}} MiB {{[0-9]+}}
 # CHECK-NEXT: mdrt: device memory at the peak in use ({{[0-9.]+}} MiB), by tag and size:
 # CHECK-DAG: mdrt: in use {{[0-9.]+}} MiB {{[0-9]+}} x {{[0-9]+}} bytes groups: entries
 # CHECK-DAG: mdrt: in use {{[0-9.]+}} MiB {{[0-9]+}} x {{[0-9]+}} bytes compiled code
