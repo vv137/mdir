@@ -66,6 +66,11 @@ bench.py --work DIR run mdir --mdir PATH_TO_MDIR --neighbor-structure GROUPS \
 bench.py --work DIR run mdir --mdir PATH_TO_MDIR --skin AUTO
                                      # the reaches chosen by the run (D281)
 bench.py --work DIR run gromacs [SYSTEM ...] --gmx PATH_TO_GMX
+bench.py --work DIR run mdir --mdir PATH_TO_MDIR --skin AUTO --suite-protocol \
+    [--energies-only] [--record FILE --variant NAME --repeat N]
+bench.py --work DIR run pmemd --pmemd PATH_TO_PMEMD_CUDA --suite-protocol \
+    [--energies-only] [--record FILE --variant NAME --repeat N]
+                                     # the protocol of mdin.GPU for both
 bench.py --work DIR report
 ```
 
@@ -88,6 +93,34 @@ which measures the candidates and caches its choice, and time the runs
 after it, which take the cache; `scripts/paper/run-suite-repeats.sh` does
 this for the white paper (Section 10). `--prune-skin AUTO` with a number
 for `--skin` leaves the inner list alone to the run.
+
+## The protocol of the suite's inputs
+
+Without `--suite-protocol`, MDIR runs `steps` of `SYSTEMS` (JAC 10,000,
+Factor IX 4000, Cellulose 1000, STMV 500), writes the energies twice and
+nothing else, and its rate is over the second half of the run, while
+pmemd runs `mdin.GPU` and its rate is over all steps.
+`--suite-protocol` (D[suite-symmetric]) runs both programs under the
+protocol of each system's `mdin.GPU`:
+
+| | `mdin.GPU` | MDIR |
+|---|---|---|
+| Steps | `nstlim`: JAC 100,000, Factor IX 20,000, Cellulose 30,000, STMV 2000 | `steps` = `nstlim` |
+| Energies | every `ntpr` steps (2500, 1000, 1000, 1000) in `mdout` and `mdinfo` | `energy_interval` = `ntpr`, the log |
+| Trajectory | every `ntwx` steps, NetCDF (`ioutfm=1`), f32 positions | `trajectory_interval` = `ntwx`, DCD: f32 positions and the cell, uncompressed, the format of MDIR closest in cost |
+| Restarts | every `ntwr` steps (50,000, 10,000, 8000, 1000) and at the end | `checkpoint_interval`: `ntwr`, or for Cellulose 6000, the largest multiple of `ntwx` below `ntwr` that divides `nstlim` |
+| Rate | "Average timings for last N steps", N = `nstlim` − `ntpr`, from pmemd's output | the same steps, from the row of step `ntpr` to that of step `nstlim` in MDIR's log, by the clock of bench.py as each row arrives; MDIR prints a row once the device has finished its step and flushes the log |
+
+`--energies-only` keeps the energies and drops the trajectory and the
+restarts: MDIR without `trajectory` and `checkpoint`, pmemd with a copy of
+`mdin.GPU` with `ntwx=0` and `ntwr=nstlim`, in `SYSTEM/pmemd-energies`
+(pmemd still writes its restart at the end). Every run records the wall
+time of its process, from its start to its exit; pmemd's own wall times
+of setup and of the rest (whole seconds) and MDIR's time of compilation
+are recorded as well. `--record FILE` appends all the numbers of a run as
+one line of JSON, with `--variant` and `--repeat`, which
+`scripts/paper/run-suite-repeats.sh` and `suite-table.py` use for the
+white paper (Section 10).
 
 `bench.py --work DIR smoke --mdir PATH_TO_MDIR` runs 50 steps (two
 coupling periods), with energy output only at the start and end. Add

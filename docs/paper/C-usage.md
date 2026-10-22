@@ -314,9 +314,10 @@ neighbor_structure = "GROUPS"
 ```
 
 Section 10 measured the suite with a cutoff of 8 Å and neither the
-structure nor the reaches given: the groups with a dual list, and the
-reaches that the search of a long run chose and cached for each system
-(`"AUTO"`, D281, Section 4.5).
+structure nor the reaches given: the groups with a dual list, and either
+the reaches that the search of a long run chose and cached for each
+system (`"AUTO"`, D281, Section 4.5) or the defaults, with no search and
+no cache.
 
 ## C.5 Runs on a cluster
 

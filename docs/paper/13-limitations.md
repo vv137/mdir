@@ -68,10 +68,11 @@ the spreading of PME has (D70), would close the gap.
   the water box and $+11.4 \pm 33$ on ubiquitin in OPC, from $-228$. The
   sampling was never in question (Section 9.5): the count changes nothing
   in the trajectory.
-- *Slower than GROMACS on a protein in OPC.* On ubiquitin in OPC with a
+- *72% and 66% of GROMACS's rate on a protein in OPC.* On ubiquitin in OPC with a
   cutoff of 9 Å (Section 10.6) MDIR's rate is 72% of GROMACS's at constant
   energy and 66% at constant pressure, though its loop over pairs costs
-  the same as GROMACS's nonbonded kernel and its PME less. GROMACS runs
+  the same as GROMACS's nonbonded kernel and its PME takes 47 µs of the
+  device against 77 (Table 10.6). GROMACS runs
   PME beside its nonbonded kernel and the bonded terms, the update, and
   the constraints on the host; MDIR runs them in series on the device
   (123 µs of the device in a step of 310), and the host's time between its launches is
@@ -90,6 +91,10 @@ measurements was not shared (the scheduler gives it to one job, and the
 benchmark script checks), but the node's power and host were. The same
 program's rate differs between nodes by a few percent (pmemd.cuda on
 Cellulose by 6%, #405), so a ratio is taken within one job on one node.
+The two programs run the same steps with the same output and are timed
+over the same window (D[suite-symmetric]), but their couplings differ
+(Table 10.1), and in the short window of STMV a checkpoint of MDIR weighs
+10% (#548).
 The earlier rates, from one RTX 3090 capped at 300 W, show that a cap
 matters: under it, MDIR's kernels ran at a lower clock than pmemd.cuda's
 (about 1590 against 1695 MHz on Cellulose), so a kernel that does the

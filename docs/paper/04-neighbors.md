@@ -633,8 +633,8 @@ within 2% of a list built with 9 Å.
 
 The default of D261, which a run takes where it does not choose (below),
 is an outer skin of 3 Å and an inner skin of 0.6 Å at 2 fs, in proportion
-to the step; the measurements of Section 10 take the skins that the
-choice below made for each system.
+to the step; the measurements of Section 10 take both the skins that the
+choice below made for each system and these defaults.
 
 **The choice of the skins** (D281). Because the test of validity
 is exact, every pair of skins $(s, s_\text{in})$ gives the same pairs

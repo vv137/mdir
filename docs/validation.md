@@ -181,7 +181,8 @@ stream, and the bonded terms, the update, and the constraints on the 64
 threads of the host; the host's time between MDIR's launches is 48 µs of
 a step of 310. MDIR's second stream for the reciprocal sum (D81, D87)
 gives 580.8 ns/day here against 584.0 without. On JAC (TIP3P, 8 Å)
-MDIR's rate is 125% of pmemd.cuda's (Section 10 of the white paper); on
+MDIR's rate is 147% of pmemd.cuda's at constant energy, with the steps and
+output of the suite's input (Section 10 of the white paper); on
 this system, with four sites per water and a cutoff of 9 Å, its pair loop
 and its list are as fast as GROMACS's, and the rest of the step is not.
 

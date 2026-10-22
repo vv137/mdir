@@ -181,7 +181,15 @@ precision of the suite, ran 2 ns at 722 ns/day. Its total energy fell by
 as finer logs show for both programs (Section 13), and then rose by 1.5 kcal/mol/ns, a
 slope fitted to the rows after 40 ps, $2.6\times10^{-4}$ kJ/mol/ns per
 atom; pmemd.cuda 26 (SPFP) on the same input rose by 5.9 kcal/mol/ns,
-$1.0\times10^{-3}$ kJ/mol/ns per atom (Figure 7.1, D112). MDIR in double precision did not drift
+$1.0\times10^{-3}$ kJ/mol/ns per atom (Figure 7.1, D112). Over the 2 ns
+that is about 3 and 12 kcal/mol, against a total energy of about
+$-58{,}170$ kcal/mol: both drifts are small. The two numbers are from one
+run of 2 ns of each program, with the slope fitted to the rows after
+40 ps and no uncertainty estimated, and the programs differ in their
+precision and in their constraints on water: pmemd.cuda in SPFP, single
+precision with forces accumulated in fixed point, and SETTLE; MDIR in its
+mixed mode with the waters constrained by M-SHAKE (D112, Section 7.3).
+They are not a ranking of the two integrators. MDIR in double precision did not drift
 over 0.4 ns. Section 7.3 tells how the first version of the mixed mode
 drifted by 830 kcal/mol over the same run and how the cause was found.
 Section 10 reports the change of the energy for every run of the suite
