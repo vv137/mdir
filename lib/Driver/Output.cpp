@@ -246,6 +246,60 @@ struct ReturnMark {
   }
 };
 
+/// A copy of a buffer of three numbers per particle as the program holds
+/// it, in its order, rows of three contiguous numbers of `element`, which
+/// the thread of checkpoints puts into the order of the input
+/// (D[checkpoint-async]): the call of the host then copies memory and
+/// leaves the scattered writes of the order to the thread.
+struct RawVectors {
+  Element element = Element::F64;
+  int64_t count = 0;
+  std::vector<char> bytes;
+
+  /// Copies the buffer of `descriptor`.
+  RawVectors(void *descriptor, Element element) : element(element) {
+    auto *buffer = static_cast<StridedMemRefType<char, 2> *>(descriptor);
+    count = buffer->sizes[0];
+    size_t size = element == Element::F32 ? sizeof(float) : sizeof(double);
+    bytes.resize(3 * count * size);
+    const char *data = buffer->data + buffer->offset * size;
+    if (buffer->strides[0] == 3 && buffer->strides[1] == 1) {
+      std::memcpy(bytes.data(), data, bytes.size());
+      return;
+    }
+    for (int64_t i = 0; i != count; ++i)
+      for (int64_t c = 0; c != 3; ++c)
+        std::memcpy(bytes.data() + (3 * i + c) * size,
+                    data + (i * buffer->strides[0] + c * buffer->strides[1]) *
+                               size,
+                    size);
+  }
+
+  /// The values in the order of the numbers of the particles, `ids`, as
+  /// readVectors gives them.
+  std::vector<double> order(const std::vector<int32_t> &ids) const {
+    std::vector<double> values(3 * count);
+    for (int64_t i = 0; i != count; ++i) {
+      int64_t place = ids[i];
+      for (int64_t c = 0; c != 3; ++c)
+        values[3 * place + c] =
+            element == Element::F32
+                ? reinterpret_cast<const float *>(bytes.data())[3 * i + c]
+                : reinterpret_cast<const double *>(bytes.data())[3 * i + c];
+    }
+    return values;
+  }
+};
+
+/// The numbers of the particles at each place of the program.
+std::vector<int32_t> copyIds(void *ids) {
+  auto *numbers = static_cast<StridedMemRefType<int32_t, 1> *>(ids);
+  std::vector<int32_t> copy(numbers->sizes[0]);
+  for (int64_t i = 0; i != numbers->sizes[0]; ++i)
+    copy[i] = numbers->data[numbers->offset + i * numbers->strides[0]];
+  return copy;
+}
+
 /// The checkpoint that a thread of its own writes while the steps go on
 /// (D[checkpoint-async], #548). There is one writer, `writeState`, and at
 /// most one write at a time: the next checkpoint, a stop, the end of the
@@ -259,6 +313,8 @@ struct CheckpointThread {
   std::string path;
   std::string failure;
   CheckpointWriteTimes parts;
+  /// The time in s that the thread took to order the state, if it did.
+  double order = 0.0;
   int64_t step = 0;
   Clock::time_point started, ended;
 };
@@ -284,10 +340,11 @@ std::string joinCheckpointThread() {
     const CheckpointWriteTimes &parts = writer.parts;
     std::fprintf(stderr,
                  "MDIR: times of the write of the checkpoint at step %lld: "
-                 "hash %.1f ms, file %.1f ms, file sync %.1f ms, names %.1f "
-                 "ms, directory sync %.1f ms; %.1f ms on its thread, of "
-                 "which the steps waited %.1f ms\n",
-                 static_cast<long long>(writer.step), 1.0e3 * parts.hash,
+                 "order %.1f ms, hash %.1f ms, file %.1f ms, file sync %.1f "
+                 "ms, names %.1f ms, directory sync %.1f ms; %.1f ms on its "
+                 "thread, of which the steps waited %.1f ms\n",
+                 static_cast<long long>(writer.step), 1.0e3 * writer.order,
+                 1.0e3 * parts.hash,
                  1.0e3 * parts.file, 1.0e3 * parts.fileSync,
                  1.0e3 * parts.names, 1.0e3 * parts.directorySync,
                  getMilliseconds(writer.started, writer.ended),
@@ -297,9 +354,18 @@ std::string joinCheckpointThread() {
   return std::move(writer.failure);
 }
 
-/// Starts the write of `snapshot` to `path` on the thread of checkpoints.
+/// The state of a checkpoint as the program holds it, which the thread
+/// puts into the order of the input before it writes; empty where the call
+/// has ordered it.
+struct RawState {
+  std::vector<int32_t> ids;
+  std::vector<RawVectors> fields;
+};
+
+/// Starts the write of `snapshot` to `path` on the thread of checkpoints,
+/// with its positions, velocities, and forces from `raw` if it holds them.
 void startCheckpointThread(const std::string &path, int64_t step,
-                           Checkpoint snapshot) {
+                           Checkpoint snapshot, RawState raw) {
   static bool registered = [] {
     // The library's handler of the exit runs after this one, which waits
     // for a write under way: the handlers run in the reverse order of
@@ -318,14 +384,25 @@ void startCheckpointThread(const std::string &path, int64_t step,
   writer.step = step;
   writer.failure.clear();
   writer.parts = CheckpointWriteTimes();
+  writer.order = 0.0;
   writer.started = Clock::now();
-  writer.thread = std::thread(
-      [&writer, snapshot = std::move(snapshot)]() {
-        if (llvm::Error error =
-                writeCheckpoint(writer.path, snapshot, &writer.parts))
-          writer.failure = llvm::toString(std::move(error));
-        writer.ended = Clock::now();
-      });
+  writer.thread = std::thread([&writer, snapshot = std::move(snapshot),
+                               raw = std::move(raw)]() mutable {
+    if (!raw.fields.empty()) {
+      Clock::time_point from = Clock::now();
+      snapshot.positions = raw.fields[0].order(raw.ids);
+      snapshot.velocities = raw.fields[1].order(raw.ids);
+      if (raw.fields.size() > 2)
+        snapshot.forces = raw.fields[2].order(raw.ids);
+      raw = RawState();
+      writer.order =
+          std::chrono::duration<double>(Clock::now() - from).count();
+    }
+    if (llvm::Error error =
+            writeCheckpoint(writer.path, snapshot, &writer.parts))
+      writer.failure = llvm::toString(std::move(error));
+    writer.ended = Clock::now();
+  });
 }
 
 } // namespace
@@ -1323,12 +1400,25 @@ static void writeState(int64_t step, void *positions, void *velocities,
   Checkpoint &checkpoint = output.checkpoint;
   checkpoint.step = step;
   checkpoint.time = output.getTime(step);
-  std::vector<double> x = readVectors(positions, ids, output.state);
-  checkSpread(output, x, step);
-  std::vector<double> v = readVectors(velocities, ids, output.state);
-  std::vector<double> f;
-  if (forces)
-    f = readVectors(forces, ids, output.force);
+  // In a periodic cell the call copies the buffers as they are and the
+  // thread orders them. Without one the positions in the order of the
+  // input are checked here, where a spread that is too wide stops the run
+  // (D142), and the call orders the state.
+  std::vector<double> x, v, f;
+  RawState raw;
+  if (output.periodic) {
+    raw.ids = copyIds(ids);
+    raw.fields.emplace_back(positions, output.state);
+    raw.fields.emplace_back(velocities, output.state);
+    if (forces)
+      raw.fields.emplace_back(forces, output.force);
+  } else {
+    x = readVectors(positions, ids, output.state);
+    checkSpread(output, x, step);
+    v = readVectors(velocities, ids, output.state);
+    if (forces)
+      f = readVectors(forces, ids, output.force);
+  }
   Clock::time_point ordered = Clock::now();
 
   checkpoint.frames = output.hasTrajectory ? output.trajectory->getNumFrames()
@@ -1345,14 +1435,15 @@ static void writeState(int64_t step, void *positions, void *velocities,
   snapshot.velocities = std::move(v);
   snapshot.forces = std::move(f);
   Clock::time_point copied = Clock::now();
-  startCheckpointThread(output.checkpointPath, step, std::move(snapshot));
+  startCheckpointThread(output.checkpointPath, step, std::move(snapshot),
+                        std::move(raw));
   ++output.numCheckpoints;
   if (times.enabled) {
     Clock::time_point now = Clock::now();
     times.written += 1.0e-3 * getMilliseconds(entered, now);
     std::fprintf(stderr,
                  "MDIR: times of the checkpoint at step %lld: copy %.1f ms, "
-                 "wait %.1f ms, order %.1f ms, snapshot %.1f ms; %.1f ms in "
+                 "wait %.1f ms, state %.1f ms, snapshot %.1f ms; %.1f ms in "
                  "the call\n",
                  static_cast<long long>(step),
                  getMilliseconds(times.lastReturn, entered),
