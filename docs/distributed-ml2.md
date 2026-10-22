@@ -766,7 +766,7 @@ before buffer retirement, and the production driver's `[distribute]`
 boundary. Repeated independent snapshots in tests are not an integrated
 trajectory.
 
-The first temporal-validity slice, D[dist-covered] (#542), adds
+The first temporal-validity slice, D332 (#542), adds
 `md_dist.covered` as a collective Verlet skin predicate
 [[Verlet1967]](references.md#verlet1967) over all owned rows of a halo's
 layout. Its reference field and cell must be the exact SSA operands of the

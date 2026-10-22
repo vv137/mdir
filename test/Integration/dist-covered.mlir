@@ -1,4 +1,4 @@
-// D[dist-covered]: independent analytic skin oracle. For reach 2.2 and
+// D332: independent analytic skin oracle. For reach 2.2 and
 // cutoff 2.0, the half skin is 0.1. Two particles start at x=0.01 and
 // x=6.50 in an 8-cube, both with y=z=4. A nonwrapping move of 0.03 and
 // 0.04 is covered. A wrap of 0.01 -> 7.98 invalidates the explicit-image

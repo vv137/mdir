@@ -42,7 +42,7 @@ format, or the outputs; every such change is listed under **Changed** or
   The compiler carries the selection through the CPU reference and
   execution-level CPU/GPU paths. There is no control-file key, file-format,
   or overwrite change; delayed halo waits remain #536.
-- **A collective distributed halo skin predicate** (D[dist-covered], #542):
+- **A collective distributed halo skin predicate** (D332, #542):
   `md_dist.covered` checks owned-particle displacement in the wrapped
   coordinate frame of a fixed-cell explicit-image halo. A wrap or a move
   to the half-skin boundary requires rebuilding candidate membership.

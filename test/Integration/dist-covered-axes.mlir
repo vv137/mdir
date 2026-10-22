@@ -1,4 +1,4 @@
-// D[dist-covered]: single-mover x/y/z and strict binary-exact half-skin oracle.
+// D332: single-mover x/y/z and strict binary-exact half-skin oracle.
 // Reach 2.25 minus cutoff 2.0 gives half-skin 0.125 exactly.
 // The 0.0625 move is covered; 0.25 in each axis and exactly 0.125 are not.
 // RUN: mdir-opt --convert-md-dist-to-loops %md_passes \

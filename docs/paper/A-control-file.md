@@ -1,7 +1,7 @@
 # Appendix A. The control file
 
 D313 adds execution-level ownership-epoch migration and field
-redistribution to `md_dist`. D[dist-covered] adds an execution-level
+redistribution to `md_dist`. D332 adds an execution-level
 collective halo skin predicate. Neither adds a `[distribute]` table, Python
 option, checkpoint or output format, or overwrite behavior. The production
 driver's distributed step state and the approved `[distribute]` keys remain

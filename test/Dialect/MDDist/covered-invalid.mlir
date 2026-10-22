@@ -1,4 +1,4 @@
-// D[dist-covered]: the collective predicate belongs to exactly the halo's
+// D332: the collective predicate belongs to exactly the halo's
 // reference version, cell, and ownership epoch.
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
 

@@ -41,7 +41,7 @@ neighbors only: by the definition of $I_d$, its omitted ghost terms form
 the empty set. This filter alone preserves the immediate-wait schedule;
 placing it between a later start and wait is a separate step.
 
-`md_dist.covered` (D[dist-covered]) expresses the collective Verlet skin test
+`md_dist.covered` (D332) expresses the collective Verlet skin test
 [[Verlet1967]](references.md#verlet1967) for a
 halo built at positions $\mathbf x^\text{ref}$ with reach $R_h$. For current
 positions $\mathbf x$, $\Delta_h$ is the largest displacement of an owned
