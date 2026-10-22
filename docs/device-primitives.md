@@ -20,7 +20,7 @@ describes how a device implements a primitive.
 | Privatized scatter-accumulate: `tile`, `hash` (Section 2) | `BlockHistogram`, atomic specialization | #416 | Built. One attribute, one pass, and one set of preconditions (step 1). The table `hash` is one emitter that every site calls (`ScatterEmitter.h`, step 3). Its sites are the tuples, the op `md_exec.scatter_add`, and the loops over pairs that add at both ends (over groups, and `(directed, atomic)` over a matrix), where it was measured slower and is off by default (Section 2.7). The tile of PME keeps its template. Fixed point in the deterministic mode (step 2) is planned | D282 (`tile`), D283 (`hash`), D285 (the attribute and the pass), D291 (the op, the emitter, the groups) |
 | Sorted scatter: runs reduced without atomics | `BlockHistogram`, sort specialization; `BlockDiscontinuity` | #417 | Planned. `sorted` is reserved in the attribute and refused | — |
 | Warp-aggregated atomics | `WarpReduce`, matching by key | #418 | Planned | — |
-| Grid gathers; vectorized and transposed strategies to measure | `BlockLoad`, `WarpLoad`, `BlockExchange` for future strategies | #539, #419 | The wrapped z coordinate and scalar grid read are shared by the Gaussian and prolate PME gathers. The existing scalar strategy and lane mapping remain; vectorized and transposed strategies are #419, tiled gathering at orders 6 and 8 is #411 | D[gather-grid-z] |
+| Grid gathers; vectorized and transposed strategies to measure | `BlockLoad`, `WarpLoad`, `BlockExchange` for future strategies | #539, #419 | The wrapped z coordinate and scalar grid read are shared by the Gaussian and prolate PME gathers. The existing scalar strategy and lane mapping remain; vectorized and transposed strategies are #419, tiled gathering at orders 6 and 8 is #411 | D325 |
 | Single-pass prefix sums | `BlockScan`; device scan with decoupled look-back | #420, #524 | In part: opt-in group scan | [Section 4.8](#48-single-pass-scan-strategy-d321) |
 | Radix sorts: tuples by first member, binning by key | `BlockRadixSort`; device radix sort (onesweep) | #421 | Next | — |
 | Reductions chosen by the algebra of the operator (Section 5) | `BlockReduce` (raking, commutative only) | #422 | Step 1 built, behavior-neutral: the algebra of every sum stated in the IR (`any_order_exact`, `any_order`, `fixed_order`), read by the chooser and the lowerings instead of the mode, with the same PTX; the warp and block reductions one emitter. The strategies it licenses follow only where measured | D301 |
@@ -810,7 +810,7 @@ rounds. The default therefore stays the three-launch strategy; the
 single-pass pass option permits further measurements in rebuild-heavy
 programs.
 
-### 4.9 Grid gathers (D[gather-grid-z])
+### 4.9 Grid gathers (D325)
 
 The gather of a grid value is $\phi_{(aK_2+b)K_3+c}$, with
 $c=(c_0+\ell)\bmod K_3$. `emitWrappedGridAxis` computes $c$ once for

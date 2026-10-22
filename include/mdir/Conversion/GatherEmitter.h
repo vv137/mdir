@@ -1,5 +1,5 @@
 // A wrapped, contiguous-axis grid read shared by the PME gathers
-// (D[gather-grid-z], docs/device-primitives.md). Each lane reads one grid
+// (D325, docs/device-primitives.md). Each lane reads one grid
 // point; the caller keeps its particle and lane mapping and its arithmetic.
 
 #ifndef MDIR_CONVERSION_GATHEREMITTER_H

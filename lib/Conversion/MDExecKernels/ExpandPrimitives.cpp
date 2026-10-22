@@ -1,5 +1,5 @@
 // The calls of the templates to the emitters of CompactionEmitter.h
-// (D296), RaggedRows.h (D314), and GatherEmitter.h (D[gather-grid-z]):
+// (D296), RaggedRows.h (D314), and GatherEmitter.h (D325):
 // `func.call @mdir.primitive.<name>(...)`, each replaced by the code of its
 // emitter where it stands.
 

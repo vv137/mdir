@@ -24,7 +24,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- **Shared scalar grid gather emitters** (D[gather-grid-z], #539): the
+- **Shared scalar grid gather emitters** (D325, #539): the
   Gaussian and prolate PME gathers use the same wrapped z coordinate and
   grid-read primitives, with their existing lane layout and arithmetic.
   This changes no control key, file format, or overwrite behavior.
@@ -735,7 +735,7 @@ format, or the outputs; every such change is listed under **Changed** or
   a pair term whose tail diverges is then an `InputError`, and is left out
   with the `UserWarning` `pair_tail_left_out` otherwise.
   `Program.plan["dispersion"]` reports which tails are in the correction.
-- **The design of the couplings as ops of `dyn`** (D[dyn-coupling-ops],
+- **The design of the couplings as ops of `dyn`** (D326,
   part of #541): `docs/dynamics.md`, Section 2.2, is the design of record
   for the thermostats, the barostat with every `work` mode, and the
   removal of the motion of the center of mass as ops of the step program,

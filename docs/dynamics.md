@@ -57,7 +57,7 @@ MDIR takes the one of 2020 (D50). A checkpoint needs nothing for it.
 
 ### 2.2 In `dyn`
 
-*A design, not implemented (D[dyn-coupling-ops], #541).* Nothing in this
+*A design, not implemented (D326, #541).* Nothing in this
 section is built yet. `include/mdir/Dialect/Dyn/DynOps.td` has
 `dyn.kick`, `dyn.drift`, `dyn.program`, `dyn.return`, and `dyn.step`, and
 no op of a coupling. The ops below formalize what the driver writes

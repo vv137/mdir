@@ -13,7 +13,7 @@ into the schedule of the run as sums, calls of the host, and loops over
 the particles, are to become ops of `dyn` that lower to the same
 operations, so that the step program states which global sums a coupling
 takes and what state of the host it changes, with no change of the
-numbers below (D[dyn-coupling-ops], [dynamics.md](../dynamics.md), Section 2.2).
+numbers below (D326, [dynamics.md](../dynamics.md), Section 2.2).
 
 ## 6.1 Integrators
 

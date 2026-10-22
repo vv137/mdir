@@ -180,7 +180,7 @@ uses in the expression. This check does not change keys or file formats.
 The PME spreading strategy does not add a control-file key: tiled
 spreading omits unused bricks while keeping the order-4 f32 gathering
 unchanged (D320, Section 8).
-The shared scalar grid gather of D[gather-grid-z] changes no key, file
+The shared scalar grid gather of D325 changes no key, file
 format, or overwrite behavior.
 The group build's integer bin offsets can use the single-pass device scan
 of D321 through an internal compiler pass option.
