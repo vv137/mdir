@@ -46,7 +46,7 @@ flowchart TD
 |---|---|---|
 | Provenance | Invariant meaning in a type or static attribute; changing state in an SSA value and explicit operand | The set of a storage buffer (#565), irreps and component layout of a distributed field (#571), and the layout epoch of a domain |
 | Effects | One summary per execution op, checked against its body | Reads, writes, affected rows, accumulation algebra, and order for fusion, D87 streams, and distributed scheduling (#566) |
-| Validity | A check of the state on which a proposed execution relies | Neighbor reach and images (#572), the D80 skin test, `md_dist.covered` (#546), copy readiness and buffer lifetime (#567), and definite initialization (#573) |
+| Validity | A check of the state on which a proposed execution relies | Neighbor reach and images (#572), the D80 skin test, `md_dist.covered` (D332, #546), copy readiness and buffer lifetime (#567), and definite initialization (#573) |
 | Witness | An SSA result of a check, consumed by an op or branch that requires the fact | A proof of coverage or partition that is valid only for the positions, cell, ownership epoch, and relation from which it was made |
 
 The witness convention is a design rule, not a new operation in this PR. A
@@ -115,7 +115,7 @@ does not turn such inputs into newly refused runs.
 | Ordered reduction (D171, D301) | The algebra says `fixed_order`, `any_order`, or exact reorderability | Only legal accumulation strategies enter the chooser; the fixed-order path is the conservative choice when a reordering is not allowed |
 | Owner-computes (D290, `md-dist-owner-computes`) | The relation and transfer form establish its ownership conditions | The pass uses the fast form only after those conditions are checked; otherwise it retains the original distributed form |
 | Partitioned centers (D317, D328) | Direct results of `partition_centers` carry relation and layout provenance | The matching relation can use the disjoint interior and boundary filters; a stale or unrelated filter is not proof |
-| Halo coverage (#546) | `md_dist.covered` is a collective runtime predicate for fixed cells in the in-process executor, with separate fresh coordinate payloads | #38 will consume the predicate in a reuse-or-migrate branch; the predicate is not a scoped witness. The current verifier refuses a halo whose source it cannot establish |
+| Halo coverage (D332, #546) | `md_dist.covered` is a collective runtime predicate for fixed cells in the in-process executor, with separate fresh coordinate payloads | #38 will consume the predicate in a reuse-or-migrate branch; the predicate is not a scoped witness. The current verifier refuses a halo whose source it cannot establish |
 | Device strategy (#444, #433, #558) | Algebra, target capabilities, and strategy preconditions determine legality | Measurement selects among legal strategies; an unavailable optimization gets a reason and legal fallback |
 
 These examples do not all have a first-class witness today. Their present

@@ -50,7 +50,7 @@ With the cell unchanged, a candidate image retains its build-time shift.
 The old candidate membership is sufficient for a cutoff $r_c$ when
 $2\Delta_h < R_h-r_c$: by the triangle inequality, a pair at the current
 cutoff was at most $r_c+2\Delta_h < R_h$ apart in that same image at build
-time. A periodic wrap invalidates the witness even when the minimum-image
+time. A periodic wrap invalidates coverage even when the minimum-image
 displacement is small. The predicate is one value for all domains, including empty ones.
 The current coordinate values remain a separate version and require their
 own halo copy before use. This predicate currently runs in the in-process
