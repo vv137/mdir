@@ -323,6 +323,19 @@ from 2.5 to 2.0 GB and that of the elevenfold replica from 22.3 to 17.2
 GB. The fourteenfold replica (14.9 million atoms) runs in 23.0 GB on the
 24 GB device. The deterministic mode is unchanged to the bit.
 
+**Lists of groups sized by their first build** (D[density-lists]). The
+pool of blocks of the lists of groups (Section 4.4) started with as many
+entries a group as a row of the matrix, from the particle with the most
+neighbors and half as many again: 1.84 times what STMV's lists took. A
+structure now starts with one block a group, and its first build, which
+counts the blocks it takes even where they do not fit, grows the pool to
+a quarter more than that count and is made again. Section 4.4 derives why
+the count of one build gives the need of every build of an equilibrated
+state; a later build that needs more grows the pool the same way. The
+device peak of STMV falls from 2.05 to 1.92 GB and that of the
+fourteenfold replica from 23.0 to 21.1 GB, and the fifteenfold (16.0
+million atoms) runs in 22.6 GB.
+
 **Flags read without waiting for the stream** (D113). The test of validity
 (Section 4.1) sets a flag on the device, and the host must read it to
 decide whether to build. A copy to pageable memory waits for everything

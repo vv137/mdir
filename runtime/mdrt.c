@@ -94,9 +94,13 @@ static int64_t groupsBlocks = 0, groupsCapacity = 0, groupsLongest = 0;
    fit the memory of a warp and took their excluded pairs from the rows
    (D106), for the log of the run. */
 static int64_t groupsOverflow = 0;
+/* The growths of the lists of groups after the first build of their
+   structure, which sizes them (D[density-lists]), for the log of the run. */
+static int64_t groupsGrowths = 0;
 
+/* Of a complete build of a structure of groups. */
 void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest,
-                    int64_t overflow) {
+                    int64_t overflow, int64_t growths) {
   if (blocks > groupsBlocks) {
     groupsBlocks = blocks;
     groupsCapacity = capacity;
@@ -104,6 +108,7 @@ void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest,
   if (longest > groupsLongest)
     groupsLongest = longest;
   groupsOverflow += overflow;
+  groupsGrowths += growths;
 }
 
 /* Sets the counts of the builds and prunings and the notes of the groups
@@ -112,6 +117,7 @@ void mdrtNoteGroups(int64_t blocks, int64_t capacity, int64_t longest,
 void mdrtResetCounts(void) {
   numBuilds = numPrunes = numLateBuilds = 0;
   groupsBlocks = groupsCapacity = groupsLongest = groupsOverflow = 0;
+  groupsGrowths = 0;
 }
 
 /* A program that embeds a run may take its failures instead of the process
@@ -203,6 +209,7 @@ int64_t mdrtGetGroupsBlocks(void) { return groupsBlocks; }
 int64_t mdrtGetGroupsCapacity(void) { return groupsCapacity; }
 int64_t mdrtGetGroupsLongest(void) { return groupsLongest; }
 int64_t mdrtGetGroupsOverflow(void) { return groupsOverflow; }
+int64_t mdrtGetGroupsGrowths(void) { return groupsGrowths; }
 
 /*===----------------------------------------------------------------------===
  * Random numbers

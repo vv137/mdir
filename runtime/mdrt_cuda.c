@@ -1307,6 +1307,12 @@ struct Groups {
   int64_t blocks;
   /* The length of `blockOf`. */
   int64_t blockOf;
+  /* Whether a build of the structure has completed, and the growths since
+     that build that `mdrtGroupsBuilt` has not yet handed over. The first
+     build of a structure sizes its blocks (D[density-lists]); a growth after
+     it is noted in the log. */
+  bool built;
+  int64_t lateGrowths;
 };
 
 /* A memref of rank 1 as the C interface of MLIR passes it. */
@@ -1372,7 +1378,9 @@ static void releaseGroups(struct Groups *groups) {
 }
 
 /* A structure with room for `places` places (a multiple of 16) and
-   `blocks` blocks. */
+   `blocks` blocks. The lowering asks for one block a group: the first build
+   counts the blocks it needs, and its growth sizes the pool
+   (D[density-lists]). */
 int64_t mdrtGroupsCreate(int64_t places, int64_t blocks) {
   struct Groups *groups = calloc(1, sizeof(struct Groups));
   if (!groups) {
@@ -1411,9 +1419,24 @@ void mdrtGroupsGrow(int64_t handle, int64_t places, int64_t blocks) {
   releaseGroups(groups);
   if (places > groups->places)
     groups->places = (places + places / 4 + 15) / 16 * 16;
-  if (blocks > groups->blocks)
+  bool lists = blocks > groups->blocks;
+  if (lists)
     groups->blocks = blocks + blocks / 4;
   allocateGroups(groups);
+  /* The log counts the growths of the lists, not those of the places. */
+  if (groups->built && lists)
+    ++groups->lateGrowths;
+}
+
+/* After a complete build: the structure has been built, and the growths
+   since its first build that this build made (0 or 1, in general) go to the
+   log through `mdrtNoteGroups`. */
+int64_t mdrtGroupsBuilt(int64_t handle) {
+  struct Groups *groups = (struct Groups *)(intptr_t)handle;
+  int64_t late = groups->lateGrowths;
+  groups->built = true;
+  groups->lateGrowths = 0;
+  return late;
 }
 
 /* Makes room for `length` entries of `blockOf`, a quarter more than asked,

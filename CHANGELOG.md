@@ -822,6 +822,20 @@ format, or the outputs; every such change is listed under **Changed** or
   CPU program is unchanged. The Amber suite's rates are unchanged within
   0.3%, except Factor IX NPT and Cellulose NPT, which are 0.35% and 0.5%
   slower. No control-file key or output change.
+- **The lists of groups are sized by their first build** (D[density-lists],
+  #471): a structure of groups starts with one block a group, and its
+  first build gives the pool a quarter more than the blocks it took, in
+  place of as many blocks a group as a row of the matrix holds (1.84 times
+  what STMV took). A later build that needs more grows the lists and is
+  made again, as before, and the log says how many times
+  (`MDIR: the lists of groups grew N times after the first build of their
+  structure`), only when it happened. `neighbor_capacity` no longer sets
+  the groups' room. STMV on an RTX 4090 (1,000 steps): the device peak
+  from 2,045 to 1,921 MiB, ×11 from 17,151 to 15,723 MiB, ×14 from 22,985
+  to 21,117 MiB, and ×15 (16.01 million atoms) now runs in 22,625 MiB. The
+  deterministic mode and the CPU program are unchanged to the bit. The Amber suite's rates
+  are within 0.2% of before.
+  No control-file key or output format change.
 
 - **The design documents are named by topic** (#390): `docs/ops.md`,
   `runtime.md`, `driver.md`, `neighbors.md`, `neighbor-groups.md`,

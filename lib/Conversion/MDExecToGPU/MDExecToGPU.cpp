@@ -95,6 +95,7 @@ static const char *const matrixEntriesName = "mdrtMatrixEntries";
 static const char *const growMatrixName = "mdrtMatrixGrow";
 static const char *const groupsBufferName = "mdrtGroupsBuffer";
 static const char *const growGroupsName = "mdrtGroupsGrow";
+static const char *const builtGroupsName = "mdrtGroupsBuilt";
 static const char *const reserveBlockOfName = "mdrtGroupsReserveBlockOf";
 static const char *const placedGroupsName = "mdrtGroupsPlaced";
 static const char *const checkPrunedName = "mdrtCheckPruned";
@@ -5834,8 +5835,14 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     // union, about as many as a row of the matrix.
     structure.groups = true;
     Type wide = builder.getI64Type();
-    // Places for a quarter more than the particles and a chunk; blocks for
-    // as many entries as a row for each group and one block more.
+    // Places for a quarter more than the particles and a chunk. Blocks: one
+    // for each group, so that the first build, which counts the blocks it
+    // takes even where they do not fit, sizes the pool at a quarter more
+    // than it took (emitGroupsBuild, `mdrtGroupsGrow`; D[density-lists]).
+    // The lists hold about as many entries a group as a particle has
+    // neighbors within the reach, a few blocks, and a sum over all the
+    // groups, which the density fixes, is what the pool needs. The width,
+    // from the particle with the most neighbors, gave nearly twice that.
     Value places = arith::AddIOp::create(
         builder, loc,
         arith::AddIOp::create(
@@ -5848,9 +5855,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
         arith::DivUIOp::create(builder, loc, structure.size,
                                createIndex(builder, loc, 16)),
         createIndex(builder, loc, 1));
-    Value blocks = arith::MulIOp::create(
-        builder, loc, filled,
-        createIndex(builder, loc, (op.getWidth() + 63) / 64 + 1));
+    Value blocks = filled;
     structure.handle =
         func::CallOp::create(
             builder, loc,
@@ -7510,13 +7515,30 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
           ValueRange{structure.handle, places, blocks});
       scf::YieldOp::create(then, loc);
     });
-    // The runtime keeps the largest use of the blocks and counts the
-    // groups with too many excluded partners, for the log.
-    func::CallOp::create(
-        at, loc,
-        getOrDeclare(noteGroupsName,
-                     at.getFunctionType({wide, wide, wide, wide}, {})),
-        ValueRange{blocks, capacity(buffers.units), load(1), load(3)});
+    // Of a complete build, the runtime keeps the largest use of the blocks,
+    // counts the groups with too many excluded partners, and counts the
+    // growths of the structure after its first build (D[density-lists]),
+    // for the log.
+    Value complete = arith::XOrIOp::create(
+        at, loc, more,
+        arith::ConstantOp::create(at, loc, at.getBoolAttr(true)));
+    scf::IfOp::create(at, loc, complete, [&](OpBuilder &then, Location) {
+      Value late =
+          func::CallOp::create(
+              then, loc,
+              getOrDeclare(builtGroupsName,
+                           then.getFunctionType({wide}, {wide})),
+              ValueRange{structure.handle})
+              .getResult(0);
+      func::CallOp::create(
+          then, loc,
+          getOrDeclare(noteGroupsName,
+                       then.getFunctionType({wide, wide, wide, wide, wide},
+                                            {})),
+          ValueRange{blocks, capacity(buffers.units), load(1), load(3),
+                     late});
+      scf::YieldOp::create(then, loc);
+    });
     scf::ConditionOp::create(at, loc, more, ValueRange());
     Block *after = builder.createBlock(&again.getAfter());
     OpBuilder close = OpBuilder::atBlockEnd(after);

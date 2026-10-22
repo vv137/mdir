@@ -29,6 +29,7 @@ element.
 | $r_s$, $S_2(r)$ | Onset and squared-distance potential switch of a topology Lennard-Jones term (Section 3.3) |
 | $s,\ R = r_c + s$ | Skin and reach of a neighbor structure |
 | $s_\text{in},\ R_\text{in} = r_c + s_\text{in}$ | Skin and reach of the inner list of a dual list |
+| $\bar n;\ E_g;\ B,\ B_0;\ \kappa_T$ | In Section 4.4, the mean number of neighbors of a particle within the reach, at the number density $\rho$ of Section 4.5; the length of the list of group $g$; the blocks of 64 entries that the lists take, and those that the first build of a structure takes; the isothermal compressibility (D[density-lists]) |
 | $n_\text{build},\ n_\text{prune};\ t_\text{step};\ \rho;\ v_\text{max}$ | In Section 4.5, the mean number of steps between builds of a structure and between prunings of its inner list; the time of a step; the number density of the particles; the largest speed among the particles |
 | $t_\text{loop},\ t_\text{prune},\ t_\text{fused}$ | In Section 4.5, the time of a call of the loop over pairs over the inner list, of a pruning, and of the loop that prunes |
 | $\mathbf x^\text{ref},\ \mathbf L^\text{ref}$ | Configuration and cell of the last build of a structure |
