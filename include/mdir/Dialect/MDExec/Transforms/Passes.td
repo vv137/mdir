@@ -683,8 +683,10 @@ def AssignPrecision
     1. the element type of a buffer that holds one of them, as
        `mdrt.from_buffer` and `mdrt.to_buffer` state it;
     2. the type of `position`, if one of them is used as positions;
-    3. the type of `force`, if a loop over pairs writes one of them;
-    4. the type of `integrator`, if a loop over particles writes one of
+    3. the type of `position` for a field read by a neural stage, if
+       `stage-fields-f64` is selected and positions are f64;
+    4. the type of `force`, if a loop over pairs writes one of them;
+    5. the type of `integrator`, if a loop over particles writes one of
        them.
 
     A loop over pairs computes in the type of `kernel` and a loop over
@@ -728,6 +730,9 @@ def AssignPrecision
     Option<"accumulator", "accumulator", "std::string",
            /*default=*/"\"\"",
            "The type that global sums are accumulated in: f32 or f64">,
+    Option<"stageFieldsF64", "stage-fields-f64", "bool", /*default=*/"false",
+           "Store fields read by neural stages, including adjoints, in f64 "
+           "when positions are f64 (opt-in in mixed mode)">,
     Option<"kernelPositions", "kernel-positions", "bool",
            /*default=*/"true",
            "Whether loops over pairs, and over tuples that are not "

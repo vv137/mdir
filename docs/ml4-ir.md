@@ -705,8 +705,17 @@ and the loops of `md_exec` carry them to the lowering for a device:
   takes 11 seconds this way.
 - **Precision**: a body may compute in a narrower type than the
   declaration (PaiNN's float32); the pack converts, as the opaque call
-  converts at the model's boundary, and the fields and sums keep the
-  precision of the mode. In `mixed`, the kernel's values are f32.
+  converts at the model's boundary. In `mixed`, the default stage fields
+  and ordinary pair kernels use f32. The model key
+  `[[energy.model]] stage_field_precision = "DOUBLE"` selects
+  `md-exec-assign-precision{mode=mixed stage-fields-f64=true}` and
+  gives f64 storage to fields read by a neural stage, including their
+  reverse-sweep adjoints, while the body's arithmetic remains f32.
+  `md-exec-assign-precision` identifies those fields from the
+  operands of `md.apply_stage`, tracing through the casts and additions
+  left by differentiation and loop fusion (D[ml4-stage-fields]). The
+  final coordinate force follows the existing mixed policy. `single`
+  keeps f32 fields, and `double` keeps f64 fields.
 
 The two products of each directed pair of the gather of Section 4.3 are
 two calls on the same rows. On the CPU the loops of batched stages are
@@ -738,11 +747,28 @@ filters ($6 \times 384$ values a pair).
 | NVE, 1,000 steps of 0.1 fs from 300 K, 27 waters 5 Å apart, double | the opaque call's run from the same state | total energy within 1.53 kJ/mol of 24,085 (the opaque call 1.54), a drift of $-2.4$ kJ/mol/ps ($-2.7$); the two runs' totals within 0.099 kJ/mol of each other | |
 | The same at 0.5 fs, double and mixed | the same | both runs leave conservation together (28 kJ/mol within 50 steps, then they blow up); their totals agree to 0.006 kJ/mol over 50 steps, 0.015 over 100 | |
 
-In `mixed` the staged forces are $6.4\times10^{-5}$ of the largest from
-the float64 reference, the opaque call's $5.8\times10^{-6}$: the staged
-model's fields and their adjoints are f32 in that mode, and the opaque
-call's float32 network keeps its own sums. Both are within the tolerance;
-the fields in f64 in `mixed` are a choice for 4b. On liquid water at 300 K
+For D[ml4-stage-fields], the same 24-atom, multiple-image water box
+(`Driver/model-stages-ml4-gpu.test`) was evaluated against SchNetPack's
+float64 calculator on one RTX 4090, using the same exported PaiNN model
+and inputs for the f32-field baseline at `24cb1e98` and the f64-field
+strategy. The reference energy is $-7544.467103$ kJ/mol and its largest
+force magnitude is $2013.298414$ kJ/mol/nm. The differences are absolute:
+
+| Mixed stage fields | Energy difference (kJ/mol) | Maximum force difference (kJ/mol/nm) | Virial trace difference (kJ/mol) |
+|---|---:|---:|---:|
+| f32 (default) | 0.000823 | 0.013110 | 0.002051 |
+| f64 (opt-in) | 0.000625 | 0.012011 | 0.001224 |
+
+Both are within the existing tolerances of 0.048, 0.193, and 0.048,
+respectively. The f64-field strategy reduces these differences by 24%,
+8%, and 40%, respectively; the exported bodies still compute in f32.
+In `double`, the same model and input give differences of
+$1.44\times10^{-5}$ kJ/mol in energy, 0.004786 kJ/mol/nm in maximum
+force, and 0.001842 kJ/mol in virial trace, under the same tolerances.
+
+The initial `mixed` result above used f32 inter-stage fields and adjoints;
+D[ml4-stage-fields] makes their f64 storage an opt-in strategy while the
+exported bodies stay f32. On liquid water at 300 K
 (64 waters, unrelaxed), the staged model and the opaque call follow the
 same trajectory to the third decimal of kJ/mol for 30 steps and leave it
 together at step 38, where both runs blow up: the checkpoint was trained
@@ -920,6 +946,30 @@ cuBLAS calls, about 31 the sums over the components, and the rest
 elementwise kernels over $4096\times3\times128$ values. These kernels
 write intermediates that XLA's fusions do not write, so what is left
 there is a question of fusion, not of products.
+
+**Mixed stage-field storage (D[ml4-stage-fields]).** On the same RTX
+4090 kind, with the same exported PaiNN, four NVE steps, and the base
+commit `24cb1e98`, the opt-in f64 stage fields increased both peak
+device memory and step time:
+
+| Atoms | f32 fields: peak (MiB), ms/step | f64 fields: peak (MiB), ms/step |
+|---|---:|---:|
+| 6,144 | 621.5, 480.812 | 714.5, 504.124 |
+| 196,608 | 13,951.3, 15,389.638 | 16,927.3, 16,206.971 |
+| 262,143 | 18,536.8, 20,591.040 | 22,504.8, 21,636.554 |
+
+The 196,608-atom cost is 2,976 MiB (21.3%) of peak allocation and
+5.3% of step time. The f32-field mixed default is retained to protect
+the largest system that fits. The opt-in model key is
+`stage_field_precision = "DOUBLE"` (the maintainer's ruling on #544).
+In a one-step fit probe of 99,999 waters (299,997 atoms, 16,147,120
+pairs), f32 stage fields completed with a peak of 21,232.4 MiB on a 24
+GiB RTX 4090; f64 stage fields reached `CUDA_ERROR_OUT_OF_MEMORY`
+before a step. The f64 strategy completed 262,143 atoms with 22,504.8
+MiB peak, so the tested capacity interval differs: f32 fits at least
+299,997 atoms, while f64 fits 262,143 but not 299,997. The `.gro`
+generator's residue field overflows above 99,999 waters (#550), which
+limits this probe; it does not establish the exact maximum for f32.
 
 ### 8.7 What was ruled (the maintainer, 2026-10-19, on #447)
 

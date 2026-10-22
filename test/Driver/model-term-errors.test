@@ -30,6 +30,14 @@
 # RUN: not mdir check %t/stages-cpu.toml 2>&1 | FileCheck %s --check-prefix=STAGES-CPU
 # STAGES-CPU: the model 'allegro' of {{.*}} in stages runs on a GPU only yet
 
+# The storage choice belongs to a staged model and accepts only DOUBLE.
+# RUN: sed '/^path = /a stage_field_precision = "DOUBLE"' %t/run.toml > %t/field-plugin.toml
+# RUN: not mdir check %t/field-plugin.toml 2>&1 | FileCheck %s --check-prefix=FIELD-PLUGIN
+# FIELD-PLUGIN: 'stage_field_precision' is for backend = "STAGES" only
+# RUN: sed -e 's/"METATOMIC"/"STAGES"/' -e '/^centers_per_call/d' -e '/^path = /a stage_field_precision = "SINGLE"' %t/run.toml > %t/field-value.toml
+# RUN: not mdir check %t/field-value.toml 2>&1 | FileCheck %s --check-prefix=FIELD-VALUE
+# FIELD-VALUE: 'stage_field_precision' takes "DOUBLE"
+
 # RUN: sed '/^path/d' %t/run.toml > %t/nopath.toml
 # RUN: not mdir check %t/nopath.toml 2>&1 | FileCheck %s --check-prefix=NOPATH
 # NOPATH: expected a 'path' in {{\[\[}}energy.model{{\]\]}}

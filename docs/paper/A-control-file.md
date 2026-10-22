@@ -175,7 +175,7 @@ uses in the expression. This check does not change keys or file formats.
 | `[constraints]` | `hydrogen_bonds`, `rigid_water`, `water_residues`, `analytic_bonds` | SHAKE and RATTLE on the bonds of hydrogen; SETTLE on the waters in double precision, M-SHAKE on their three bonds below it (D112); the names of the residues of water (by default WAT for Amber, TIP3 for CHARMM); without `rigid_water` the waters of an Amber or CHARMM topology run flexible, with a warning (D153). `analytic_bonds = true` enables the checked quadratic one-bond projection (D128); the default is `false`. In Python, `System.analytic_bonds` for the last (D246). |
 | `[[restraints]]` | `selection`, `force_constant`, `reference_scaling` | A mask of Amber, and kcal/mol/Å² (D74); under a barostat, `"CENTER"` (the default) scales the center of the references with the cell and keeps their shape, `"ALL"` scales each reference with the cell (D124). |
 | `[boundary]` | `type`, `box` | `PERIODIC`, or `NONE`, a run without a periodic cell, which places a cell around the particles that keeps every image beyond the reach of the neighbor structures and stops if they spread too far, and refuses PME, a barostat, the correction for the dispersion, and `box` (D142); the edges of the cell (Å), without a topology or with one of CHARMM, whose coordinates have no cell; for CHARMM also its angles α, β, γ (degrees), the cell taken from CHARMM's symmetric frame into MDIR's lower-triangular one (docs/triclinic.md). |
-| `[execution]` | `target`, `threads`, `precision` | `CPU` or `GPU`; the threads of the CPU; `SINGLE`, `MIXED`, or `DOUBLE`. |
+| `[execution]` | `target`, `threads`, `precision` | `CPU` or `GPU`; the threads of the CPU; `SINGLE`, `MIXED`, or `DOUBLE`. In `MIXED`, fields read by a staged neural model and their adjoints use f32 storage by default; `[[energy.model]] stage_field_precision = "DOUBLE"` selects f64 storage (D[ml4-stage-fields]). Exported stage bodies keep their declared arithmetic type. |
 | | `neighbor_capacity` | Neighbors that a neighbor structure holds per particle at first; a build that finds more makes room, so the value does not change the results. Absent: estimated from the configuration, half as many again as the most neighbors of a particle at the start plus 16, rounded up to four significant bits (D227). In Python, `Execution.neighbor_capacity`. |
 | | `fast_math` | Whether kernels are rewritten in ways that change rounding: the distance in powers of its square, fused multiply-adds, and in f32 approximate divisions and an approximation of erfc within 3.3e-7 (D90). The default is `true`. |
 | | `spatial_order` | Whether the run keeps the particles in the order of their positions (D44). The default is `true`. The files of the run are in the order of the input either way. A particle takes the place of its anchor, the oxygen of its water or the center of its group of SHAKE, so that the members of a group of the constraints stay next to each other (D110). |
@@ -501,6 +501,13 @@ object lengths and energies use nm and kJ/mol, whereas this reference keeps
 Å and kcal/mol. Both input paths share topology validation, constraint
 preparation and semantic IR construction. CHARMM loading retains its explicit
 cell and symmetric-frame rotation. No Python bindings are provided yet.
+
+For `[[energy.model]]` with `backend = "STAGES"`, the staged feature and
+adjoint fields use f32 storage in mixed precision
+by default. `stage_field_precision = "DOUBLE"` selects f64 storage for
+them (D[ml4-stage-fields]); no other value is accepted. It is refused
+for other backends and with single precision. All staged models of a run
+must use the same choice, which is recorded in the checkpoint fingerprint.
 
 For `[[energy.model]]` with `backend = "STAGES"`, short sums inside
 the model's exported bodies can use a register-held accumulator and fuse

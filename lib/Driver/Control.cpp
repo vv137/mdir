@@ -486,7 +486,7 @@ Error Reader::readObserve(const toml::table &table, StringRef term) {
 Error Reader::readModel(const toml::table &table) {
   if (Error error = checkKeywords(table, "[energy.model]",
                                   {"name", "backend", "path",
-                                   "centers_per_call"}))
+                                   "centers_per_call", "stage_field_precision"}))
     return error;
   Control::ModelTerm term;
   if (Error error = readString(table, "name", term.name))
@@ -526,6 +526,14 @@ Error Reader::readModel(const toml::table &table) {
   if (Error error = readCount(table, "centers_per_call", term.centersPerCall,
                               0))
     return error;
+  if (Error error = readString(table, "stage_field_precision",
+                               term.stageFieldPrecision))
+    return error;
+  if (table.get("stage_field_precision") &&
+      term.stageFieldPrecision != "DOUBLE")
+    return fail(*table.get("stage_field_precision"),
+                "'stage_field_precision' takes \"DOUBLE\" for f64 staged "
+                "feature and adjoint storage");
   // A model in stages (D294, docs/ml4-ir.md, Section 8) is
   // a potential of the program, which MDIR differentiates; the plugin does
   // not take it.
@@ -534,9 +542,17 @@ Error Reader::readModel(const toml::table &table) {
       return fail(*table.get("centers_per_call"),
                   "a model in stages takes no 'centers_per_call': its tiles "
                   "are rows of pairs");
+    if (!control.stagedModels.empty() &&
+        term.stageFieldPrecision !=
+            control.stagedModels.front().stageFieldPrecision)
+      return fail(table, "models in stages must agree on "
+                         "'stage_field_precision'");
     control.stagedModels.push_back(std::move(term));
     return Error::success();
   }
+  if (!term.stageFieldPrecision.empty())
+    return fail(*table.get("stage_field_precision"),
+                "'stage_field_precision' is for backend = \"STAGES\" only");
   control.models.push_back(std::move(term));
   return Error::success();
 }
@@ -3273,6 +3289,9 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
       return refuse("is not evaluated by the frame evaluator yet");
     if (control.models.size() > 1)
       return refuse("is one of several models; ML1 takes one");
+    if (!control.models.front().stageFieldPrecision.empty())
+      return refuse("takes no 'stage_field_precision': it is for "
+                    "backend = \"STAGES\" only");
     if (!control.periodic)
       return refuse("takes a periodic cell");
   }
@@ -3287,6 +3306,18 @@ llvm::Error mdir::driver::validateControl(Control &control, StringRef path) {
     };
     if (control.target != Target::GPU)
       return refuse("runs on a GPU only yet; give 'target = \"GPU\"'");
+    if (!term.stageFieldPrecision.empty() &&
+        term.stageFieldPrecision != "DOUBLE")
+      return refuse("takes 'stage_field_precision = \"DOUBLE\"' or no "
+                    "'stage_field_precision'");
+    if (term.stageFieldPrecision == "DOUBLE" &&
+        control.precision == Precision::Single)
+      return refuse("takes 'stage_field_precision = \"DOUBLE\"' only in "
+                    "mixed or double precision");
+    if (term.stageFieldPrecision !=
+        control.stagedModels.front().stageFieldPrecision)
+      return refuse("must agree with the other staged models on "
+                    "'stage_field_precision'");
     if (!control.periodic)
       return refuse("takes a periodic cell");
     if (control.neighborStructure == NeighborStructure::Groups)

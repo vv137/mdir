@@ -17,6 +17,13 @@ Section 1; the principles that the work follows are in
 | M3 | Learned potentials on one GPU: ML1 steps 1 to 3, the IR of ML4, PaiNN in stages, and MACE in stages (Section 7, D287) | In progress: ML1's TorchScript backend through the metatomic plugin with chunks, from the control file and Python (D270), its AOTInductor backend (D273), the pair list from MDIR's neighbor structures (D277), ML4's opaque baselines of a pretrained PaiNN and MACE (D286), the IR of ML4: neural stages, fields of features, and their derivative (D288, D289), and PaiNN in stages on one GPU, step 4a (D294, D293), and the fusion of its bodies, the first part of step 4b (D299), and their products as calls of cuBLAS (D302), batched ones included, with their sums of rows as a warp a row (D303) |
 | M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | ML2 under way in parallel with M3 (Section 7): the dialect `md_dist` and its verifier (D275), the program derived from the global potential (D276), EAM on domains (D279), each domain's loops through `md_exec` (D290), the factor grid of the domains (D307), the record of the dependencies of the halos (D308), and their start and wait events (D310); ML3, ML5, and distributed particle mesh Ewald planned |
 
+Within ML4 step 4b, D[ml4-stage-fields] provides an opt-in f64 storage
+strategy for stage feature and adjoint fields in mixed precision, while
+exported f32 bodies retain their arithmetic type. The model key
+`stage_field_precision = "DOUBLE"` selects it. Its memory and accuracy
+measurements are in
+[ml4-ir.md](ml4-ir.md#85-validation).
+
 Features of classical MD (Section 5) continue between milestones.
 
 ## 1. Robustness (under way)

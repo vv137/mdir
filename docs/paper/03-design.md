@@ -430,6 +430,16 @@ The loop and separate map launches remain the default. These lowerings
 implement the same reduction and pointwise maps; neither changes the
 stage's function or its adjoint, and the cuBLAS calls remain explicit.
 
+In mixed precision, an opt-in strategy gives the values passed between
+stage bodies and the adjoints carried by the reverse sweep f64 field
+storage (D[ml4-stage-fields]). A body exported with f32 arithmetic still
+computes in f32; packing and unpacking convert at the body boundary. The
+final coordinate force follows the ordinary mixed policy. This gives the
+reverse sweep a stable inter-stage representation without retaining the
+body's per-row intermediates for the whole system; the f32-field default
+uses less device memory. The staged model's
+`stage_field_precision = "DOUBLE"` key selects the f64 storage strategy.
+
 **Parameters.** `derivative(n)` asks $\partial U/\partial\theta_n$ of a
 scalar argument $\theta_n$ of the potential (D2), such as a component of
 $\boldsymbol\lambda$ of `[free_energy]` (Section 6.8, D161). The

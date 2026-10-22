@@ -12,7 +12,8 @@ for `--steps`, the total energy of every step.
 
 usage: check-model-term.py DIR ARTIFACT [--precision Double|Mixed]
            [--backend METATOMIC|AOTI|STAGES (by default AOTI for a .pt2)]
-           [--centers-per-call N] [--steps N] [--timestep 0.0005]
+           [--centers-per-call N] [--stage-field-precision DOUBLE]
+           [--steps N] [--timestep 0.0005]
            [--temperature 300] [--forces OUT.npy]
 """
 import argparse
@@ -26,7 +27,8 @@ import numpy as np
 import mdir
 
 
-def build(directory, artifact, backend, precision, centers, timestep, temperature):
+def build(directory, artifact, backend, precision, centers, stage_field_precision,
+          timestep, temperature):
     loaded = mdir.load_gromacs(os.path.join(directory, "system.top"),
                                os.path.join(directory, "system.gro"))
     system, state = loaded.make_system(), loaded.make_state()
@@ -35,7 +37,8 @@ def build(directory, artifact, backend, precision, centers, timestep, temperatur
     system.cutoff = 0.2
     system.pairlist_distance = 0.25
     system.models = [mdir.ModelTerm("allegro", artifact, backend=backend,
-                                     centers_per_call=centers)]
+                                     centers_per_call=centers,
+                                     stage_field_precision=stage_field_precision)]
     # The velocities of the .gro, if it has them, else drawn.
     if temperature > 0:
         state = state.draw_velocities(system, temperature, 7)
@@ -56,6 +59,7 @@ def main():
     p.add_argument("--backend")
     p.add_argument("--precision", default="Double")
     p.add_argument("--centers-per-call", type=int, default=0)
+    p.add_argument("--stage-field-precision", default="")
     p.add_argument("--steps", type=int, default=0)
     p.add_argument("--timestep", type=float, default=0.0005)
     p.add_argument("--temperature", type=float, default=0.0)
@@ -63,8 +67,8 @@ def main():
     a = p.parse_args()
 
     backend = a.backend or ("AOTI" if a.artifact.endswith(".pt2") else "METATOMIC")
-    sim = build(a.directory, a.artifact, backend, a.precision, a.centers_per_call, a.timestep,
-                a.temperature)
+    sim = build(a.directory, a.artifact, backend, a.precision, a.centers_per_call,
+                a.stage_field_precision, a.timestep, a.temperature)
     sim.run(0, energy=True)
     state = sim.state()
     # A model in stages is a potential of the program: the run gives the
