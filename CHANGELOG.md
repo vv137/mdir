@@ -52,6 +52,12 @@ format, or the outputs; every such change is listed under **Changed** or
   affinity, and thread conditions in the original job records. It changes
   no control-file key, simulation result,
   output format, or overwrite behavior.
+- **Set-bearing storage-form buffers** (D[typed-storage-set], #565):
+  field, scratch, tuple-member, and incidence buffers carry their row set in an
+  identity memref layout. Loop verification rejects cross-set use, and
+  CPU/GPU conversion rejects cross-set casts before removing the layout.
+  No control key, output format, overwrite rule, or generated address
+  calculation changes.
 - **Shared scalar grid gather emitters** (D325, #539): the
   Gaussian and prolate PME gathers use the same wrapped z coordinate and
   grid-read primitives, with their existing lane layout and arithmetic.

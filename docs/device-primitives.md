@@ -17,6 +17,15 @@ The shared [execution contract](execution-contracts.md) (#574) establishes
 legality before a device strategy is chosen by cost. Its provenance, effect,
 validity, and witness rules apply to the chooser and the lowering alike;
 this document gives the preconditions of individual device strategies.
+The storage-form operands of these primitives carry their row set in
+`#md_exec.set_layout<@set, rank>` (D[typed-storage-set], #565). The
+identity layout leaves the numeric GPU memory space and addressing alone.
+The loop verifier checks each operand against the primitive's particle or
+tuple domain before a strategy is chosen. The common CPU/GPU conversion
+boundary rejects a cast from one set to another, then removes the layout;
+the existing emitters receive the same plain memrefs and produce the same
+device code. Dynamic row counts remain checked by the input and set size
+map. The lifetime-based planner is a separate follow-up.
 
 ## 1. Status
 

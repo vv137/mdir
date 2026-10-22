@@ -26,11 +26,19 @@ static Type eraseSet(Type type) {
                          MemRefLayoutAttrInterface(), buffer.getMemorySpace());
 }
 
+static FlatSymbolRefAttr getProvenance(Value value) {
+  if (auto cast = value.getDefiningOp<memref::CastOp>())
+    return getProvenance(cast.getSource());
+  if (auto cast = value.getDefiningOp<memref::MemorySpaceCastOp>())
+    return getProvenance(cast.getSource());
+  return getSet(value.getType());
+}
+
 LogicalResult mdir::md_exec::eraseStorageSets(ModuleOp module) {
   SmallVector<memref::CastOp> casts;
   bool valid = true;
   module.walk([&](memref::CastOp cast) {
-    FlatSymbolRefAttr source = getSet(cast.getSource().getType());
+    FlatSymbolRefAttr source = getProvenance(cast.getSource());
     FlatSymbolRefAttr target = getSet(cast.getType());
     if (source && target && source != target) {
       cast.emitOpError() << "cannot reinterpret storage of set " << source
@@ -52,6 +60,11 @@ LogicalResult mdir::md_exec::eraseStorageSets(ModuleOp module) {
   module.walk([&](Operation *op) {
     for (Value result : op->getResults())
       result.setType(eraseSet(result.getType()));
+    SmallVector<NamedAttribute> attributes(op->getAttrs());
+    for (NamedAttribute named : attributes)
+      if (auto type = dyn_cast<TypeAttr>(named.getValue()))
+        if (Type erased = eraseSet(type.getValue()); erased != type.getValue())
+          op->setAttr(named.getName(), TypeAttr::get(erased));
     for (Region &region : op->getRegions())
       for (Block &block : region)
         for (BlockArgument argument : block.getArguments())
@@ -66,5 +79,7 @@ LogicalResult mdir::md_exec::eraseStorageSets(ModuleOp module) {
       results.push_back(eraseSet(type));
     function.setType(FunctionType::get(module.getContext(), inputs, results));
   });
+  module.walk([](Operation *op) { op->removeAttr("md_exec.tuple_set"); });
+  module->removeAttr("md_exec.typed_storage");
   return success();
 }

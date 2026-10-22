@@ -229,6 +229,11 @@ static FlatSymbolRefAttr getBufferSet(Type type) {
 static LogicalResult verifyBufferSet(Operation *op, Value value,
                                      FlatSymbolRefAttr expected) {
   FlatSymbolRefAttr actual = getBufferSet(value.getType());
+  auto module = op->getParentOfType<ModuleOp>();
+  if (module && module->hasAttr("md_exec.typed_storage") && expected &&
+      isa<MemRefType>(value.getType()) && !actual)
+    return op->emitOpError() << "expected a buffer tagged with set "
+                             << expected;
   if (actual && expected && actual != expected)
     return op->emitOpError() << "expected a buffer of set " << expected
                              << ", got a buffer of set " << actual;
@@ -847,6 +852,10 @@ static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet,
     particleSet = getBufferSet(op.getIns().front().getType());
   if (isStorage && !particleSet && !op.getOuts().empty())
     particleSet = getBufferSet(op.getOuts().front().getType());
+  auto module = op.getOperation()->template getParentOfType<ModuleOp>();
+  if (isStorage && module && module->hasAttr("md_exec.typed_storage") &&
+      !particleSet)
+    return op.emitOpError() << "expected tagged buffers in the storage form";
   for (Value field : llvm::concat<Value>(op.getIns(), op.getOuts())) {
     if (isa<MemRefType>(field.getType()) != isStorage)
       return op.emitOpError()
@@ -1228,6 +1237,10 @@ LogicalResult BuildIncidenceOp::verify() {
     if (cast<MemRefType>(getRelation().getType()).getMemorySpace())
       return emitOpError()
              << "expected the buffer of the members on the host";
+    if (auto tupleSet =
+            (*this)->getAttrOfType<FlatSymbolRefAttr>("md_exec.tuple_set"))
+      if (failed(verifyBufferSet(getOperation(), getRelation(), tupleSet)))
+        return failure();
     return success();
   }
 
@@ -1385,6 +1398,10 @@ LogicalResult TupleForOp::verify() {
     if (incidence.getArity() != arity)
       return emitOpError() << "the tuples have " << incidence.getArity()
                            << " members, but the arity is " << arity;
+  }
+  if (isStorageForm()) {
+    particleSet = getBufferSet(getIncidence().getType());
+    tupleSet = (*this)->getAttrOfType<FlatSymbolRefAttr>("md_exec.tuple_set");
   }
   if (isStorageForm() != isa<MemRefType>(getIncidence().getType()))
     return emitOpError()

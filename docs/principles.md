@@ -14,7 +14,7 @@ map of a pass or in a comment, is a defect waiting for a new input.
 
 | Case | What was implicit | What the IR states now, or should |
 |---|---|---|
-| A buffer of the members of the tuples of a SHAKE set served as scratch for the particles of Cellulose; kernels wrote beyond it (eaca883) | The storage form `memref<?xf64>` does not say which set a buffer holds; the pool reused buffers by type | The pools key buffers by set; the storage form should carry the set in its type ([Planned work](#planned-work)) |
+| A buffer of the members of the tuples of a SHAKE set served as scratch for the particles of Cellulose; kernels wrote beyond it (eaca883) | The storage form `memref<?xf64>` did not say which set a buffer held; the pool reused buffers by type | The storage form now carries `#md_exec.set_layout<@set, rank>` on fields, scratch, tuple members, and incidence. Loop verification rejects a different set, and the pool still keys reuse by set and complete type (D[typed-storage-set]). A general memory planner remains [planned](#planned-work). |
 | The loops of a fused kernel wrote at once to scratch that storage gave to several of them (19fa9ef) | Storage assumed that loops run one after the other | Fusion checks that the loops' buffers are distinct; an effects summary of each loop should state it |
 | A tuple set whose tuples share no particle is evaluated once per tuple (eaca883) | — | `disjoint` on `md.tuple_set` and `md_exec.tuple_for`, which the driver proves from the members |
 | The groups of the constraints update in a chain, one after another, though they share no atom (D83) | That SETTLE and the sets of SHAKE share no atom was known to the driver only | `md.disjoint_union`, which the driver checks from the members; `md-bypass-updates` relies on it |
@@ -189,10 +189,13 @@ adds no operation, plan choice, control key, or runtime behavior.
 
 ## Planned work
 
-1. The storage form carries the set of each buffer in its type, so that
-   reuse and aliasing across sets cannot be written, and the verifier checks
-   the index domains of kernels. Memory planning then becomes a pass of its
-   own over lifetimes and sets.
+1. The storage form carries the set of field, scratch, tuple-member, and
+   incidence buffers in an identity layout (D[typed-storage-set]). Loop verification checks their
+   symbolic index domain, and the lowering boundary rejects casts that
+   reinterpret one set as another. Next, carry the set of other structural
+   buffers, and make memory planning a pass of its own over
+   lifetimes and sets. Dynamic row counts still come from the validated
+   input and the pass's size map.
 2. Copies between host and device are ordered by async tokens in the IR;
    deferral and merging of readbacks become a general scheduling pass, and
    the path to CUDA graphs is open.

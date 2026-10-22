@@ -15,7 +15,7 @@
 md.particle_set @atoms
 
 // STORAGE-LABEL: func.func @kick(
-// STORAGE-SAME:    memref<?x3xf64>
+// STORAGE-SAME:    memref<?x3xf64{{.*}}>
 // STORAGE:         "test.unknown"() : () -> ()
 // STORAGE:         md_exec.particle_for
 // STORAGE:           "test.scale"(%{{[0-9]+}}) : (f64) -> f64
