@@ -206,6 +206,8 @@ std::string hashExtras(const Checkpoint &state) {
 
 bool mdir::driver::hasCheckpointSupport() { return false; }
 
+void mdir::driver::openCheckpointLibrary() {}
+
 llvm::Error mdir::driver::writeCheckpoint(const std::string &,
                                           const Checkpoint &,
                                           CheckpointWriteTimes *) {
@@ -223,6 +225,11 @@ llvm::Expected<Checkpoint> mdir::driver::readCheckpoint(const std::string &) {
 #else
 
 bool mdir::driver::hasCheckpointSupport() { return true; }
+
+void mdir::driver::openCheckpointLibrary() {
+  std::lock_guard<std::mutex> lock(getHDF5Mutex());
+  H5open();
+}
 
 namespace {
 

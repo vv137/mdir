@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <thread>
 #include <unistd.h>
 #include <vector>
 
@@ -245,7 +246,97 @@ struct ReturnMark {
   }
 };
 
+/// The checkpoint that a thread of its own writes while the steps go on
+/// (D[checkpoint-async], #548). There is one writer, `writeState`, and at
+/// most one write at a time: the next checkpoint, a stop, the end of the
+/// run, and the exit of the process wait for it (waitForCheckpoint). The
+/// thread runs `writeCheckpoint` as a write between the steps did, with its
+/// `.partial`, `fsync`s, `.prev`, and rename, and the mutex of the library
+/// (#262) around the part in the library alone.
+struct CheckpointThread {
+  std::thread thread;
+  /// Written by the thread, read after it is joined.
+  std::string path;
+  std::string failure;
+  CheckpointWriteTimes parts;
+  int64_t step = 0;
+  Clock::time_point started, ended;
+};
+
+/// Never destroyed: a thread that is still joinable when the process ends
+/// is joined by the handler of the exit, not by a destructor.
+CheckpointThread &getCheckpointThread() {
+  static CheckpointThread *writer = new CheckpointThread;
+  return *writer;
+}
+
+/// Joins the thread that writes a checkpoint, if one runs, and returns its
+/// failure, or an empty string.
+std::string joinCheckpointThread() {
+  CheckpointThread &writer = getCheckpointThread();
+  if (!writer.thread.joinable())
+    return "";
+  Clock::time_point waited = Clock::now();
+  writer.thread.join();
+  OutputTimes &times = getTimes();
+  if (times.enabled) {
+    Clock::time_point now = Clock::now();
+    const CheckpointWriteTimes &parts = writer.parts;
+    std::fprintf(stderr,
+                 "MDIR: times of the write of the checkpoint at step %lld: "
+                 "hash %.1f ms, file %.1f ms, file sync %.1f ms, names %.1f "
+                 "ms, directory sync %.1f ms; %.1f ms on its thread, of "
+                 "which the steps waited %.1f ms\n",
+                 static_cast<long long>(writer.step), 1.0e3 * parts.hash,
+                 1.0e3 * parts.file, 1.0e3 * parts.fileSync,
+                 1.0e3 * parts.names, 1.0e3 * parts.directorySync,
+                 getMilliseconds(writer.started, writer.ended),
+                 getMilliseconds(waited, now));
+    times.written += 1.0e-3 * getMilliseconds(waited, now);
+  }
+  return std::move(writer.failure);
+}
+
+/// Starts the write of `snapshot` to `path` on the thread of checkpoints.
+void startCheckpointThread(const std::string &path, int64_t step,
+                           Checkpoint snapshot) {
+  static bool registered = [] {
+    // The library's handler of the exit runs after this one, which waits
+    // for a write under way: the handlers run in the reverse order of
+    // their registration.
+    openCheckpointLibrary();
+    std::atexit([] {
+      std::string failure = joinCheckpointThread();
+      if (!failure.empty())
+        std::fprintf(stderr, "mdir: %s\n", failure.c_str());
+    });
+    return true;
+  }();
+  (void)registered;
+  CheckpointThread &writer = getCheckpointThread();
+  writer.path = path;
+  writer.step = step;
+  writer.failure.clear();
+  writer.parts = CheckpointWriteTimes();
+  writer.started = Clock::now();
+  writer.thread = std::thread(
+      [&writer, snapshot = std::move(snapshot)]() {
+        if (llvm::Error error =
+                writeCheckpoint(writer.path, snapshot, &writer.parts))
+          writer.failure = llvm::toString(std::move(error));
+        writer.ended = Clock::now();
+      });
+}
+
 } // namespace
+
+void mdir::driver::waitForCheckpoint() {
+  std::string failure = joinCheckpointThread();
+  if (failure.empty())
+    return;
+  std::fprintf(stderr, "mdir: %s\n", failure.c_str());
+  std::exit(1);
+}
 
 volatile std::sig_atomic_t mdir::driver::stopSignal = 0;
 
@@ -1215,7 +1306,9 @@ void _mlir_ciface_mdrtFinish(void *positions, void *velocities,
 }
 
 /// Writes the state as a checkpoint. `forces` is null if the state has
-/// none.
+/// none. The state in the order of the input is copied, and a thread of its
+/// own writes the file while the steps go on (D[checkpoint-async]); this
+/// call first waits for the write of the checkpoint before.
 static void writeState(int64_t step, void *positions, void *velocities,
                        void *forces, void *ids) {
   Output &output = *current;
@@ -1224,47 +1317,53 @@ static void writeState(int64_t step, void *positions, void *velocities,
   ReturnMark returns;
   OutputTimes &times = getTimes();
   Clock::time_point entered = Clock::now();
+  // A failed write stops the run here, with its error.
+  waitForCheckpoint();
+  Clock::time_point waited = Clock::now();
   Checkpoint &checkpoint = output.checkpoint;
   checkpoint.step = step;
   checkpoint.time = output.getTime(step);
-  checkpoint.positions = readVectors(positions, ids, output.state);
-  checkSpread(output, checkpoint.positions, step);
-  checkpoint.velocities = readVectors(velocities, ids, output.state);
-  checkpoint.forces.clear();
+  std::vector<double> x = readVectors(positions, ids, output.state);
+  checkSpread(output, x, step);
+  std::vector<double> v = readVectors(velocities, ids, output.state);
+  std::vector<double> f;
   if (forces)
-    checkpoint.forces = readVectors(forces, ids, output.force);
+    f = readVectors(forces, ids, output.force);
   Clock::time_point ordered = Clock::now();
 
   checkpoint.frames = output.hasTrajectory ? output.trajectory->getNumFrames()
                                            : 0;
   checkpoint.bath = output.bath;
-
-  CheckpointWriteTimes parts;
-  if (llvm::Error error = writeCheckpoint(output.checkpointPath, checkpoint,
-                                          times.enabled ? &parts : nullptr)) {
-    std::fprintf(stderr, "mdir: %s\n",
-                 llvm::toString(std::move(error)).c_str());
-    std::exit(1);
-  }
+  // The snapshot that the thread writes: the state, which the program
+  // overwrites after this call, moved; the rest, which later calls of the
+  // host change (the cell, the bath, the states of the coupling), copied.
+  checkpoint.positions.clear();
+  checkpoint.velocities.clear();
+  checkpoint.forces.clear();
+  Checkpoint snapshot = checkpoint;
+  snapshot.positions = std::move(x);
+  snapshot.velocities = std::move(v);
+  snapshot.forces = std::move(f);
+  Clock::time_point copied = Clock::now();
+  startCheckpointThread(output.checkpointPath, step, std::move(snapshot));
   ++output.numCheckpoints;
   if (times.enabled) {
     Clock::time_point now = Clock::now();
     times.written += 1.0e-3 * getMilliseconds(entered, now);
     std::fprintf(stderr,
                  "MDIR: times of the checkpoint at step %lld: copy %.1f ms, "
-                 "order %.1f ms, hash %.1f ms, file %.1f ms, file sync "
-                 "%.1f ms, names %.1f ms, directory sync %.1f ms; %.1f ms in "
+                 "wait %.1f ms, order %.1f ms, snapshot %.1f ms; %.1f ms in "
                  "the call\n",
                  static_cast<long long>(step),
                  getMilliseconds(times.lastReturn, entered),
-                 getMilliseconds(entered, ordered), 1.0e3 * parts.hash,
-                 1.0e3 * parts.file, 1.0e3 * parts.fileSync,
-                 1.0e3 * parts.names, 1.0e3 * parts.directorySync,
+                 getMilliseconds(entered, waited),
+                 getMilliseconds(waited, ordered),
+                 getMilliseconds(ordered, copied),
                  getMilliseconds(entered, now));
   }
 
-  // A stop that a signal or the wall time asks for is taken here, where
-  // the run continues exactly from what it has just written (D131), and
+  // A stop that a signal or the wall time asks for is taken here, once the
+  // file is written, where the run continues exactly from it (D131), and
   // not at the last step, where the run ends anyway. The wall time must
   // leave room for one more interval between checkpoints, as long as the
   // longest so far.
@@ -1286,6 +1385,7 @@ static void writeState(int64_t step, void *positions, void *velocities,
     reason = "the wall time";
   if (!reason)
     return;
+  waitForCheckpoint();
   if (output.trajectory)
     output.trajectory->close();
   output.log.print(

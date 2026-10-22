@@ -150,6 +150,11 @@ llvm::Error writeCheckpoint(const std::string &path,
                             const Checkpoint &checkpoint,
                             CheckpointWriteTimes *times = nullptr);
 
+/// Initializes the library of the files before a thread of its own writes
+/// a checkpoint, so that the library's handler of the exit of the process
+/// is registered before one that waits for that thread.
+void openCheckpointLibrary();
+
 /// The name under which `writeCheckpoint` keeps the checkpoint before the
 /// last.
 std::string getPreviousCheckpointPath(const std::string &path);

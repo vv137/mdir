@@ -1447,6 +1447,9 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   begin = std::chrono::steady_clock::now();
   output.lastCheckpoint = begin;
   (*function)(arguments.data());
+  // The checkpoint at the last step is written by a thread of its own
+  // (D[checkpoint-async]); the run ends when it is on stable storage.
+  waitForCheckpoint();
   double runTime = std::chrono::duration<double>(
                        std::chrono::steady_clock::now() - begin)
                        .count();
