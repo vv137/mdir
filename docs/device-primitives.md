@@ -1178,6 +1178,15 @@ stated fallback; an unmeasured target takes a documented conservative
 policy, never a guessed architecture threshold. Measurement overrides
 change the policy, not the target's capabilities.
 
+The proposed `CompilationPlan` of #433 records the chosen target, precision
+policy, neighbor strategy, scatter strategy, and determinism before the pass
+manager is built. Each choice carries its preconditions and the reason it was
+selected. A separate builder consumes that record, while `mdir explain-plan`
+reports those reasons. The first implementation preserves the existing pass
+pipeline string and `mdir emit` output byte for byte; neither the inventory
+nor this proposal changes a strategy default. This plan is the input to
+lowering, so target selection is not repeated in individual kernels.
+
 Subgroup size is a value of that record, not an implicit 32. The following
 existing layouts require audit before a wider subgroup can use them:
 `emitShuffleXor` and its full-lane masks, matrix `row-lanes`, group and
@@ -1197,3 +1206,10 @@ a separate boundary: it does not make an FFT a different semantic
 primitive (#452). Subsequent PRs move one operation group at a time and
 keep NVIDIA's generated lowered program and PTX byte-identical; any
 exception requires an explicit correctness and performance comparison.
+
+The same migration will divide the current `MDExecToGPU.cpp` lowering by
+responsibility: neighbor build, refresh, and pruning; pair and tuple
+interactions; PME, reductions, and FFT collectives; launch construction; and
+the runtime ABI. These parts share the plan and only the state needed for
+their operations. This is a future behavior-preserving refactor, with
+byte-identical PTX as its gate, rather than five new semantic primitives.

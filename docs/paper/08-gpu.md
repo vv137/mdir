@@ -565,6 +565,14 @@ cannot meet it refuses the strategy with a reason and takes a legal
 fallback. A target without measurements takes a conservative stated
 policy, not a threshold inferred from another architecture.
 
+The proposed compilation plan records the selected target, precision,
+neighbor and scatter strategies, and determinism with a reason and
+preconditions for each choice. A pass-manager builder consumes it, and an
+`explain-plan` command would expose the reasons without changing the emitted
+program. Dividing device lowering into neighbor, interaction, collective,
+launch, and runtime responsibilities lets each implementation read that same
+plan instead of repeating target decisions.
+
 This separation matters even where MLIR already uses a generic `gpu`
 shuffle or ballot: a surrounding 32-lane algorithm can still be wrong
 on a wider subgroup. NVIDIA-specific warp barriers and approximate
