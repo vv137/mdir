@@ -201,6 +201,15 @@ Two things that MDIR computes are not primitives of the set:
 
 ## 2. Reading the map
 
+The target-independent operations in this map have target-dependent
+implementations. [Device primitives, Section 6](device-primitives.md#6-portability-one-target-contract-several-implementations)
+is the source inventory for #558: it distinguishes explicit `nvvm.*` and
+PTX assembly from generic `gpu` operations, names the existing shared
+emitters, and states how one target capability record and the measured
+strategy policy of #433 will be read by the chooser and the lowering.
+The map's semantic primitives and their transposes do not change with the
+backend (D[device-portability-inventory]).
+
 Each row is one part of MDIR, with five columns:
 
 - **Primitives** used, and, where the part is differentiated, the

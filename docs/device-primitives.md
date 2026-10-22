@@ -27,6 +27,7 @@ describes how a device implements a primitive.
 | Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D296 |
 | Ragged rows: a relation in compressed rows, its accessor, and its build from the row of each item (Section 4.7) | none (a CSR matrix [[Saad2003]](references.md#saad2003), built with the counting sort above) | #471 | Built; its first user is the incidence structure of the tuples | D314 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
+| Target boundary and portability inventory (Section 6) | target dispatch policies and backend-specific implementations | #558, #433, #444 | Inventory and contract recorded; emitter migration and target record are pending | D[device-portability-inventory] |
 
 The order follows #415: #421 first, then #419 on the gathering of PME,
 then #417 and #422 for the deterministic mode, and #418 and #420 where
@@ -1107,3 +1108,68 @@ each only on a measured gain, `main` and the branch in one job:
   groups in fixed point;
 - raking (`BlockReduce`'s commutative-only form) for the global sums
   where they are `any_order`.
+
+## 6. Portability: one target contract, several implementations
+
+D[device-portability-inventory] records the first stage of #558. This is an
+inventory and an interface rule, not a new backend or a changed lowering.
+It covers explicit NVVM operations and attributes in `lib/` at the current
+head. It also records other NVIDIA-specific instructions that an inventory
+of the spelling `nvvm.*` alone would miss. The companion map in
+[primitives-map.md](primitives-map.md#2-reading-the-map) names the affected
+primitives and sites; this section is the canonical source inventory.
+
+### 6.1 Source inventory
+
+| Function | Current source and representation | Boundary today | Migration under #558 |
+|---|---|---|---|
+| Warp synchronization | `nvvm.bar.warp.sync` occurs 181 times in each of the four generated `NeighborsGroups*GPU*.mlir` variants (724 textual instances). All are emitted from seven sites in `scripts/generate-groups-gpu-template.py`. `NVVM::SyncWarpOp` occurs once in `MDExecToGPU.cpp`, in fused pruning before the group pair kernel reads another lane's entry | Direct NVVM, outside a primitive emitter | A subgroup barrier emitter with an explicit participating-lane mask and convergence contract; change the generator and regenerate all four templates together |
+| Approximate reciprocal | `NVVM::RcpApproxFtzF32Op` occurs once in `MDExecToGPU.cpp`, for an f32 division marked `afn`; the quotient is rounded before later arithmetic (D98) | Direct NVVM, outside an emitter | An approximation emitter whose precondition states precision, subnormal handling, and contraction behavior; retain the NVIDIA instruction and results |
+| Target and binary attributes | `NVVM::NVVMTargetAttr` is read in `GPUToBinary.cpp`; `buildGpuLowerToNVVM` attaches the NVVM target with chip, triple, features, and optimization level, then lowers the GPU module and invokes NVIDIA binary tools | Backend compilation boundary, rather than a data-parallel primitive | Keep target attachment and binary production inside the NVIDIA backend; another backend supplies its own compiler and target attribute |
+| Shared-memory and global atomics | `ScatterEmitter.cpp` emits `red.shared.add.f32/f64` and `atom.shared.cas.b32` through LLVM inline assembly. `MDExecKernels.cpp` emits `red.relaxed.gpu.global.add.f32` through LLVM inline assembly; its other path uses `LLVM::AtomicRMWOp` | The shared-memory operations already have one scatter emitter; the global relaxed add is still in a kernel helper | Put target-specific assembly in the NVIDIA implementation of atomic emitters; express scope, address space, data type, ordering, and required atomic capability in the call contract |
+| Shuffles and votes | `gpu.shuffle` and `gpu.ballot` in templates, `MDExecKernels.cpp`, and the reduction/compaction emitters | Generic GPU ops, partly shared by `ReductionEmitter` and `CompactionEmitter` | Keep the generic operation where its semantics suffice; route repeated algorithms through the existing emitters, with subgroup width as a precondition or parameter |
+| Workgroup memory and barriers | `#gpu.address_space<workgroup>`, `gpu.barrier`, and launch workgroup attributions in templates and kernels | Generic GPU ops; scatter and scan allocation partly shared | State capacity and synchronization requirements in the primitive; use a backend-specific emitter only for a capability the generic operation cannot express |
+| Thread/block indices and launches | `gpu.thread_id`, `gpu.block_id`, `gpu.launch`, and `gpu.launch_func` | Generic GPU ops | Preserve generic forms; the runtime device interface of #558 owns allocation, copies, launches, queues, events, and FFT plans |
+| Launch tuning and cache policy | Workgroup sizes and strategy thresholds are selected in lowerings and templates; `Compile.cpp` tests `cubin-chip=sm_12` for the fused-pruning threshold. The L2 access-policy experiment is documented in Section 3 and remains off | Target-specific policy is scattered, even where no NVVM op appears | Read measured thresholds from the target's policy entry (#433); cache hints require an explicit capability and measured benefit |
+| Fences and other cache hints | No explicit `nvvm.*` fence or cache-hint op appears in `lib/` in this inventory | Generic synchronization or backend lowering | Keep absent until a site states its memory-order requirement and shows a measured gain |
+
+The four group templates account for the apparent hundreds of NVVM sites;
+changing 724 generated lines separately would duplicate the same decision.
+Their generator is the source of truth. The `gpu` operations in this table
+are *already target-neutral at the IR level*, although an algorithm around
+them can still assume NVIDIA's 32-lane subgroup. The PTX inline assembly is
+NVIDIA-specific even though it is represented by an LLVM op.
+
+### 6.2 Contract and choice
+
+The eventual target record is a single description of both capabilities
+(subgroup width, workgroup memory and maximum block size, f64 arithmetic,
+atomics by type and address space, approximation accuracy, load alignment
+and vector width) and the measured policy for each strategy (#433). The
+capability part answers whether a strategy is legal; the policy part
+answers whether a legal strategy should be chosen by default. A strategy
+has one precondition read by the chooser and checked again by the
+lowering. A failed precondition gives an `explain` reason and selects the
+stated fallback; an unmeasured target takes a documented conservative
+policy, never a guessed architecture threshold. Measurement overrides
+change the policy, not the target's capabilities.
+
+Subgroup size is a value of that record, not an implicit 32. The following
+existing layouts require audit before a wider subgroup can use them:
+`emitShuffleXor` and its full-lane masks, matrix `row-lanes`, group and
+tuple-table warp layouts, the 4-by-32 PME gathering layout, and the
+half-warp group sums. A layout that truly needs 32 lanes declares that
+precondition and is refused elsewhere. This is distinct from changing
+the mathematics of the map, gather, scatter, or reduction it implements.
+
+An emitter interface names the operation and its correctness conditions;
+only its NVIDIA implementation may contain `nvvm.*` or PTX assembly.
+Existing `ReductionEmitter`, `ScatterEmitter`, `CompactionEmitter`, and
+`GatherEmitter` remain the shared algorithm boundaries. Their sites should
+call those boundaries instead of duplicating a second CPU/GPU algorithm
+or wrapping each generated instruction independently. The runtime's
+allocation, transfer, launch, synchronization, and FFT-plan interface is
+a separate boundary: it does not make an FFT a different semantic
+primitive (#452). Subsequent PRs move one operation group at a time and
+keep NVIDIA's generated lowered program and PTX byte-identical; any
+exception requires an explicit correctness and performance comparison.
