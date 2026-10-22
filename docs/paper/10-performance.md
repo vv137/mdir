@@ -489,7 +489,7 @@ by default, and it would be an option.
 ## 10.7 CPU target against CPU engines
 
 The CPU target is measured before selecting host strategies for the
-primitives of Section 8 (D[cpu-host-baseline], #552, under #549). The
+primitives of Section 8 (D333, #552, under #549). The
 runner and its summary are in `scripts/benchmarks/cpu-breakdown/`.
 JAC and Cellulose use the Amber benchmark suite's topology and restart;
 their GROMACS input has the same particle order, with coordinates rounded

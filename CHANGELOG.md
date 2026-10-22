@@ -32,7 +32,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- **A reproducible CPU performance baseline** (D[cpu-host-baseline],
+- **A reproducible CPU performance baseline** (D333,
   #552): the benchmark runner compares the CPU target in mixed and double
   precision with GROMACS and serial pmemd on JAC, Cellulose, and TIP3P,
   with a common PME splitting parameter and grid and recorded CPU model,
