@@ -38,7 +38,7 @@ The Python `observe` tests use Double with cutoff and Mixed with shift
 for the dipeptide and Double with shift and Mixed with cutoff for the
 mixture in the default CPU and GPU tier. Their release twins test the
 full precision and modifier matrix with the same independent CLI file
-oracles and closed-form dispersion checks (D[suite-runtime], #530). Both
+oracles and closed-form dispersion checks (D324, #530). Both
 tiers keep the NPT checks in Double and Mixed precision.
 
 Where two GPU allocations are available, the default tier can run as two

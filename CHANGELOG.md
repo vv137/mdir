@@ -16,7 +16,7 @@ format, or the outputs; every such change is listed under **Changed** or
   decimal fields in `.gro` coordinates and velocities use a direct binary64
   conversion. Accepted input, control keys, output, and overwrite behavior
   are unchanged.
-- **A shorter default Python `observe` test matrix** (D[suite-runtime],
+- **A shorter default Python `observe` test matrix** (D324,
   #530): the CPU and GPU default tests keep Double/cutoff and Mixed/shift
   for the dipeptide, and Double/shift and Mixed/cutoff for the mixture; release tests run the full precision/modifier
   matrix. This changes no control key, API, file format, or simulation

@@ -4,7 +4,7 @@ The CPU and GPU tests compare observed files with independent `mdir run`
 files byte for byte. The default tests cover Double with cutoff and Mixed with shift for
 the dipeptide, and Double with shift and Mixed with cutoff for the mixture; release tests (`-Drelease=1`) cover all four combinations of
 precision and modifier for both dipeptide and mixture models
-(D[suite-runtime], #530). Both default tests keep Double and Mixed checks
+(D324, #530). Both default tests keep Double and Mixed checks
 of NPT, external terms, and tunables. This is a test-tier choice; the
 Python API and its numerical behavior are unchanged.
 
