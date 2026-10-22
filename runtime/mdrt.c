@@ -95,7 +95,7 @@ static int64_t groupsBlocks = 0, groupsCapacity = 0, groupsLongest = 0;
    (D106), for the log of the run. */
 static int64_t groupsOverflow = 0;
 /* The growths of the lists of groups after the first build of their
-   structure, which sizes them (D[density-lists]), for the log of the run. */
+   structure, which sizes them (D331), for the log of the run. */
 static int64_t groupsGrowths = 0;
 
 /* Of a complete build of a structure of groups. */

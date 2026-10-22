@@ -277,7 +277,7 @@ again, so no pair is left out. On Cellulose the lists take at most 152,619
 of 280,929 blocks (144 MB for entries and masks, against 510 MB that fixed
 lists of twice the width of a row would need).
 
-**The size of the pool** (D[density-lists]). The list of a group holds
+**The size of the pool** (D331). The list of a group holds
 the particles at later places within $R$ of any of its 16 members, so its
 length follows the mean number of neighbors of a particle within the
 reach. In a fluid of number density $\rho$ and pair distribution $g(r)$

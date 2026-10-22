@@ -1695,7 +1695,7 @@ compares with the earlier structure's last configuration instead of
 zeros, and a structure that is valid for no configuration ignores the
 test. The capacity carries over: a structure that grew leaves its room to
 the next. On a device the lists of groups are sized by the first build of
-their storage (D[density-lists]), so the steps begin with the room that
+their storage (D331), so the steps begin with the room that
 the start's first build gave. The cutoff, the skin, and the width of the cells are not part of
 the shape: they belong to the refreshes.
 
@@ -1761,7 +1761,7 @@ the move.
 | Loops over pairs and tuples one after another | One kernel, where the group of threads of a particle does each loop in turn, when the loops take the same positions, none reads what an earlier one writes, and their buffers for global sums are their own; their sums share the kernels of the sums. The forces of a step, the loop over pairs and those over bonds, angles, dihedrals, and the like, are one kernel. |
 | A value that tells whether the kernel yields true for any particle, or for any tuple (D278) | A flag on the device. A thread that yields true sets it. Every thread that writes it writes the same value, so the threads need not take turns. The flag is copied into pinned memory of the host with an event after the copy, and the host waits for that event alone, just before the first op that uses the flag, so the device goes on with what was issued meanwhile (`mdrtFlagStart`, `mdrtFlagFinish`, D113). |
 | `md_exec.reference_positions` | The buffer of the structure that holds the positions |
-| `md_exec.empty_neighbors` | The buffers of a neighbor matrix, or of the lists of groups, on the device; the runtime grows them when a build needs more. The lists of groups start with one block a group, and their first build sizes them (D[density-lists]). The flag and the count of builds are on the host. |
+| `md_exec.empty_neighbors` | The buffers of a neighbor matrix, or of the lists of groups, on the device; the runtime grows them when a build needs more. The lists of groups start with one block a group, and their first build sizes them (D331). The flag and the count of builds are on the host. |
 | `md_exec.refresh_neighbors` | Where the structure is not valid, a call to the neighbor build template for devices. Without `moved`, the test of validity before it, with the largest displacement as a global maximum. The excluded pairs are marked, not taken out: a thread for each entry of the matrix replaces an excluded neighbor by the particle itself, which the loops over pairs skip. Taking them out moved the rest of a row, one thread per particle, and took as long as the forces. Groups clear the bit of an excluded pair in the mask at the build. With `prune_skin`, a dual list: where the outer list is valid but the inner one is not, the inner list is pruned from the outer one, a warp for each group, in the order of the outer list (D114). |
 | `md_exec.reciprocal` | The kernels of the template `PMEGPU.mlir` and the transforms of cuFFT ([pme.md](pme.md), Section 3); with `scatter(tile(E))`, which `md-exec-choose-scatter` sets, the spreading through tiles of bins of $E^3$ points (Section 3.3, D282, [device-primitives.md](device-primitives.md)); with `md_exec.side`, on a second stream that the first joins where it reads the forces (D81, D87) |
 | A cell | `vector<3xf64>`. A kernel takes numbers and buffers as arguments, so a vector from outside enters a kernel as its elements. |

@@ -93,7 +93,7 @@ snake case; defaults and the supported physics subset are those of
 `Execution.neighbor_capacity` is `[execution] neighbor_capacity` of the
 control file: the neighbors that a neighbor matrix holds per particle
 at first; the lists of groups are sized by their first build instead
-(D[density-lists]). 0, the default, estimates it from the start, and
+(D331). 0, the default, estimates it from the start, and
 `Program.plan["neighbor_capacity"]` is the capacity taken. A build that
 finds more neighbors makes room, so the capacity does not change the
 results; it is part of the compiled program, though, so stages that

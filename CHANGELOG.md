@@ -822,7 +822,7 @@ format, or the outputs; every such change is listed under **Changed** or
   CPU program is unchanged. The Amber suite's rates are unchanged within
   0.3%, except Factor IX NPT and Cellulose NPT, which are 0.35% and 0.5%
   slower. No control-file key or output change.
-- **The lists of groups are sized by their first build** (D[density-lists],
+- **The lists of groups are sized by their first build** (D331,
   #471): a structure of groups starts with one block a group, and its
   first build gives the pool a quarter more than the blocks it took, in
   place of as many blocks a group as a row of the matrix holds (1.84 times

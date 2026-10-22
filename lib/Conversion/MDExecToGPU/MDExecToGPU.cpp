@@ -5838,7 +5838,7 @@ void Lowering::lowerEmptyNeighbors(md_exec::EmptyNeighborsOp op) {
     // Places for a quarter more than the particles and a chunk. Blocks: one
     // for each group, so that the first build, which counts the blocks it
     // takes even where they do not fit, sizes the pool at a quarter more
-    // than it took (emitGroupsBuild, `mdrtGroupsGrow`; D[density-lists]).
+    // than it took (emitGroupsBuild, `mdrtGroupsGrow`; D331).
     // The lists hold about as many entries a group as a particle has
     // neighbors within the reach, a few blocks, and a sum over all the
     // groups, which the density fixes, is what the pool needs. The width,
@@ -7517,7 +7517,7 @@ LogicalResult Lowering::emitGroupsBuild(OpBuilder &builder, Location loc,
     });
     // Of a complete build, the runtime keeps the largest use of the blocks,
     // counts the groups with too many excluded partners, and counts the
-    // growths of the structure after its first build (D[density-lists]),
+    // growths of the structure after its first build (D331),
     // for the log.
     Value complete = arith::XOrIOp::create(
         at, loc, more,

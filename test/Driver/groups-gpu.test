@@ -52,7 +52,7 @@
 # RUN: cd %t && env MDIR_FUSED_PRUNE=always mdir run npt-dual.toml | grep 'INFO: ' > npt-fused.log
 # RUN: diff %t/npt.log %t/npt-fused.log
 # The lists are sized at their first build, a quarter more than it took
-# (D[density-lists]). The mixture with its cell and positions 1.15 times as
+# (D331). The mixture with its cell and positions 1.15 times as
 # wide (18,991 Å^3), under 5000 atm, compresses to about 10,260 Å^3 in 400
 # steps: the lists need more than the first build left them, grow, and the
 # energies of the log are still those of the matrix to their digits.

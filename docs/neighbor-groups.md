@@ -100,7 +100,7 @@ quarter larger than it needs (`mdrtGroupsGrow`) and is made again, so no
 pair is ever left out; the run stops only if the device has no memory
 left. The first build of a structure therefore sizes its pool: a quarter
 more than the blocks that the configuration at the start takes
-(D[density-lists], #471). The list of a group holds of the order of as
+(D331, #471). The list of a group holds of the order of as
 many entries as a particle has neighbors within the reach,
 $\bar n = \tfrac43\pi\rho R^3$ at a number density $\rho$: at most 416
 entries a group (6.5 blocks) against $\bar n \approx 346$ at STMV
@@ -109,7 +109,7 @@ holds the sum over all the groups, which follows the density and varies
 little from one build to the next; the first build counts it exactly,
 where an estimate from $\bar n$ would need a factor that depends on the
 shape of the groups. Until
-D[density-lists] the pool started with as many entries a group as a row of
+D331 the pool started with as many entries a group as a row of
 the matrix and one block more, from the particle with the most neighbors
 with half as many again: 12 blocks a group at STMV, 1.84 times what the
 lists took. A build that needs more than the first build left, after a
@@ -141,7 +141,7 @@ and both have the same shape. Each of the two held about 466 MiB at STMV
 53 MiB of `placeOf` and the two reference configurations. The steps still
 build at step 1. Their first build finds the lists with the room the
 start left, the room that the start's first build sized
-(D[density-lists]), so they grow only if they need more.
+(D331), so they grow only if they need more.
 
 **Validity.** The build tests distances in f32 against the reach widened
 by 3e-6 of the sum of the edges of the cell (in a triclinic cell, of the

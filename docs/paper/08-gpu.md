@@ -323,7 +323,7 @@ from 2.5 to 2.0 GB and that of the elevenfold replica from 22.3 to 17.2
 GB. The fourteenfold replica (14.9 million atoms) runs in 23.0 GB on the
 24 GB device. The deterministic mode is unchanged to the bit.
 
-**Lists of groups sized by their first build** (D[density-lists]). The
+**Lists of groups sized by their first build** (D331). The
 pool of blocks of the lists of groups (Section 4.4) started with as many
 entries a group as a row of the matrix, from the particle with the most
 neighbors and half as many again: 1.84 times what STMV's lists took. A

@@ -1518,7 +1518,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
                  static_cast<long long>(used),
                  static_cast<long long>(readCount("mdrtGetGroupsCapacity")),
                  static_cast<long long>(readCount("mdrtGetGroupsLongest")));
-  // The first build of a structure sizes its lists (D[density-lists]); a
+  // The first build of a structure sizes its lists (D331); a
   // build that needed more room later made it and was made again.
   if (int64_t grew = readCount("mdrtGetGroupsGrowths"))
     output.log.print(
