@@ -371,12 +371,13 @@ def MDDist_YieldOp : MDDist_Op<"yield", [
 }
 
 class MDDist_PairOp<string mnemonic> : MDDist_Op<mnemonic, [
-    RecursiveMemoryEffects, SingleBlock
+    AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock
   ]> {
   let arguments = (ins
     MDDist_RelationType:$relation,
     MDDist_FieldType:$positions,
     MDDist_FieldType:$ghosts,
+    Optional<MDDist_FieldType>:$centerSet,
     Variadic<MDDist_FieldType>:$gathered,
     MD_Exchange:$exchange
   );
@@ -414,6 +415,7 @@ def MDDist_SumPairsOp : MDDist_PairOp<"sum_pairs"> {
   let results = (outs MDDist_PartialType:$result);
   let assemblyFormat = [{
     $relation `,` $positions `,` $ghosts
+    (`center_set` `(` $centerSet^ `:` qualified(type($centerSet)) `)`)?
     (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
     `exchange` `(` $exchange `)` $kernel attr-dict
     `:` qualified(type($relation)) `,` qualified(type($positions)) `,`
@@ -455,6 +457,7 @@ def MDDist_GatherPairsOp : MDDist_PairOp<"gather_pairs"> {
   let results = (outs Variadic<MDDist_FieldType>:$results);
   let assemblyFormat = [{
     $relation `,` $positions `,` $ghosts
+    (`center_set` `(` $centerSet^ `:` qualified(type($centerSet)) `)`)?
     (`gather` `(` $gathered^ `:` qualified(type($gathered)) `)`)?
     `exchange` `(` $exchange `)` $kernel attr-dict
     `:` qualified(type($relation)) `,` qualified(type($positions)) `,`

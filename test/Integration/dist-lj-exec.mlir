@@ -524,7 +524,8 @@ func.func @check_stretch(%xb: !buf, %edge: f64, %sp: vector<3xf64>,
 // The program of dist-lj.mlir, written by hand in md_dist: energy, forces,
 // and virial on the directed traversal, energy and forces on the unique.
 func.func @handwritten(%buffer: !buf, %edge: f64)
-    -> (f64, !buf, vector<9xf64>, f64, !buf) {
+    -> (f64, !buf, vector<9xf64>, f64, !buf, f64, !buf,
+        vector<9xf64>) {
   %one = arith.constant 1.0 : f64
   %eps = arith.constant 1.0 : f64
   %sigma = arith.constant 1.0 : f64
@@ -553,6 +554,33 @@ func.func @handwritten(%buffer: !buf, %edge: f64)
     %k   = arith.mulf %e4, %t : f64
     md_dist.yield %k : f64
   } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<f64>
+  %uip = md_dist.sum_pairs %nd, %xo, %xg center_set(%id : !md_dist.field<@dd, owned, i32>) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %t   = arith.subf %s12, %s6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %k   = arith.mulf %e4, %t : f64
+    md_dist.yield %k : f64
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<f64>
+  %ui = md_dist.all_reduce %uip : !md_dist.partial<f64> -> f64
+  %ubp = md_dist.sum_pairs %nd, %xo, %xg center_set(%bd : !md_dist.field<@dd, owned, i32>) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %t   = arith.subf %s12, %s6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %k   = arith.mulf %e4, %t : f64
+    md_dist.yield %k : f64
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<f64>
+  %ub = md_dist.all_reduce %ubp : !md_dist.partial<f64> -> f64
+  %uf = arith.addf %ui, %ub : f64
   %ud = md_dist.all_reduce %udp : !md_dist.partial<f64> -> f64
   %fdo = md_dist.gather_pairs %nd, %xo, %xg exchange(antisymmetric) {
   ^bb0(%r: f64, %d: vector<3xf64>):
@@ -574,6 +602,52 @@ func.func @handwritten(%buffer: !buf, %edge: f64)
     %f   = arith.mulf %sv, %d : vector<3xf64>
     md_dist.yield %f : vector<3xf64>
   } : !md_dist.relation<@dd, directed>, !own, !gho -> !own
+  %fio = md_dist.gather_pairs %nd, %xo, %xg center_set(%id : !md_dist.field<@dd, owned, i32>) exchange(antisymmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %c6  = arith.constant 6.0 : f64
+    %c12 = arith.constant 12.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %a12 = arith.mulf %c12, %s12 : f64
+    %a6  = arith.mulf %c6, %s6 : f64
+    %a   = arith.subf %a12, %a6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %num = arith.mulf %e4, %a : f64
+    %r2  = arith.mulf %r, %r : f64
+    %s   = arith.divf %num, %r2 : f64
+    %sv  = vector.broadcast %s : f64 to vector<3xf64>
+    %f   = arith.mulf %sv, %d : vector<3xf64>
+    md_dist.yield %f : vector<3xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !own
+  %fbo = md_dist.gather_pairs %nd, %xo, %xg center_set(%bd : !md_dist.field<@dd, owned, i32>) exchange(antisymmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %c6  = arith.constant 6.0 : f64
+    %c12 = arith.constant 12.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %a12 = arith.mulf %c12, %s12 : f64
+    %a6  = arith.mulf %c6, %s6 : f64
+    %a   = arith.subf %a12, %a6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %num = arith.mulf %e4, %a : f64
+    %r2  = arith.mulf %r, %r : f64
+    %s   = arith.divf %num, %r2 : f64
+    %sv  = vector.broadcast %s : f64 to vector<3xf64>
+    %f   = arith.mulf %sv, %d : vector<3xf64>
+    md_dist.yield %f : vector<3xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !own
+  %ffo = md_dist.map_particles gather(%fio, %fbo : !own, !own) {
+  ^bb0(%a: vector<3xf64>, %b: vector<3xf64>):
+    %sum = arith.addf %a, %b : vector<3xf64>
+    md_dist.yield %sum : vector<3xf64>
+  } : !own
+  %ffd = md_dist.collect %ffo, %lay : !own -> !vec
   %fd = md_dist.collect %fdo, %lay : !own -> !vec
   %wdp = md_dist.sum_pairs %nd, %xo, %xg exchange(symmetric) {
   ^bb0(%r: f64, %d: vector<3xf64>):
@@ -598,6 +672,55 @@ func.func @handwritten(%buffer: !buf, %edge: f64)
     %w   = arith.mulf %sv, %dd : vector<9xf64>
     md_dist.yield %w : vector<9xf64>
   } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<vector<9xf64>>
+  %wip = md_dist.sum_pairs %nd, %xo, %xg center_set(%id : !md_dist.field<@dd, owned, i32>) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %c6  = arith.constant 6.0 : f64
+    %c12 = arith.constant 12.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %a12 = arith.mulf %c12, %s12 : f64
+    %a6  = arith.mulf %c6, %s6 : f64
+    %a   = arith.subf %a12, %a6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %num = arith.mulf %e4, %a : f64
+    %r2  = arith.mulf %r, %r : f64
+    %s   = arith.divf %num, %r2 : f64
+    %left = vector.shuffle %d, %d [0, 0, 0, 1, 1, 1, 2, 2, 2] : vector<3xf64>, vector<3xf64>
+    %right = vector.shuffle %d, %d [0, 1, 2, 0, 1, 2, 0, 1, 2] : vector<3xf64>, vector<3xf64>
+    %dd  = arith.mulf %left, %right : vector<9xf64>
+    %sv  = vector.broadcast %s : f64 to vector<9xf64>
+    %w   = arith.mulf %sv, %dd : vector<9xf64>
+    md_dist.yield %w : vector<9xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<vector<9xf64>>
+  %wi = md_dist.all_reduce %wip : !md_dist.partial<vector<9xf64>> -> vector<9xf64>
+  %wbp = md_dist.sum_pairs %nd, %xo, %xg center_set(%bd : !md_dist.field<@dd, owned, i32>) exchange(symmetric) {
+  ^bb0(%r: f64, %d: vector<3xf64>):
+    %c4  = arith.constant 4.0 : f64
+    %c6  = arith.constant 6.0 : f64
+    %c12 = arith.constant 12.0 : f64
+    %i6  = arith.constant 6 : i32
+    %sr  = arith.divf %sigma, %r : f64
+    %s6  = math.fpowi %sr, %i6 : f64, i32
+    %s12 = arith.mulf %s6, %s6 : f64
+    %a12 = arith.mulf %c12, %s12 : f64
+    %a6  = arith.mulf %c6, %s6 : f64
+    %a   = arith.subf %a12, %a6 : f64
+    %e4  = arith.mulf %c4, %eps : f64
+    %num = arith.mulf %e4, %a : f64
+    %r2  = arith.mulf %r, %r : f64
+    %s   = arith.divf %num, %r2 : f64
+    %left = vector.shuffle %d, %d [0, 0, 0, 1, 1, 1, 2, 2, 2] : vector<3xf64>, vector<3xf64>
+    %right = vector.shuffle %d, %d [0, 1, 2, 0, 1, 2, 0, 1, 2] : vector<3xf64>, vector<3xf64>
+    %dd  = arith.mulf %left, %right : vector<9xf64>
+    %sv  = vector.broadcast %s : f64 to vector<9xf64>
+    %w   = arith.mulf %sv, %dd : vector<9xf64>
+    md_dist.yield %w : vector<9xf64>
+  } : !md_dist.relation<@dd, directed>, !own, !gho -> !md_dist.partial<vector<9xf64>>
+  %wb = md_dist.all_reduce %wbp : !md_dist.partial<vector<9xf64>> -> vector<9xf64>
+  %wf = arith.addf %wi, %wb : vector<9xf64>
   %wd = md_dist.all_reduce %wdp : !md_dist.partial<vector<9xf64>> -> vector<9xf64>
 
   %nu = md_dist.neighborhood %xo, %xg, %h cutoff(2.0)
@@ -645,8 +768,11 @@ func.func @handwritten(%buffer: !buf, %edge: f64)
              !md_dist.field<@dd, ghost, partial, 3 x f64>, !halo -> !own
   %fu = md_dist.collect %fuc, %lay : !own -> !vec
   %fdb = mdrt.to_buffer %fd : !vec to !buf
+  %ffdb = mdrt.to_buffer %ffd : !vec to !buf
   %fub = mdrt.to_buffer %fu : !vec to !buf
-  return %ud, %fdb, %wd, %uu, %fub : f64, !buf, vector<9xf64>, f64, !buf
+  return %ud, %fdb, %wd, %uu, %fub, %uf, %ffdb, %wf
+      : f64, !buf, vector<9xf64>, f64, !buf, f64, !buf,
+        vector<9xf64>
 }
 
 func.func @main() {
@@ -667,8 +793,9 @@ func.func @main() {
       : (!buf, f64) -> (f64, !buf, vector<9xf64>)
   %ud, %fd, %wd = call @derived(%x, %edge)
       : (!buf, f64) -> (f64, !buf, vector<9xf64>)
-  %uh, %fh, %wh, %uhu, %fhu = call @handwritten(%x, %edge)
-      : (!buf, f64) -> (f64, !buf, vector<9xf64>, f64, !buf)
+  %uh, %fh, %wh, %uhu, %fhu, %uf, %ff, %wf = call @handwritten(%x, %edge)
+      : (!buf, f64) -> (f64, !buf, vector<9xf64>, f64, !buf, f64,
+                        !buf, vector<9xf64>)
   %ur, %fr, %wr = call @derived_ref(%x, %edge)
       : (!buf, f64) -> (f64, !buf, vector<9xf64>)
 
@@ -685,6 +812,12 @@ func.func @main() {
   // CHECK-NEXT: 1
   // CHECK-NEXT: 1
   // CHECK-NEXT: 1
+  // CHECK-NEXT: 1
+  // CHECK-NEXT: 1
+  // CHECK-NEXT: 1
+  call @check(%uf, %ud, %ud, %tol) : (f64, f64, f64, f64) -> ()
+  call @check_forces(%ff, %fh) : (!buf, !buf) -> ()
+  call @check_virial(%wf, %wh) : (vector<9xf64>, vector<9xf64>) -> ()
   call @check(%ud, %u, %u, %tol) : (f64, f64, f64, f64) -> ()
   call @check_forces(%fd, %f) : (!buf, !buf) -> ()
   call @check_virial(%wd, %w) : (vector<9xf64>, vector<9xf64>) -> ()

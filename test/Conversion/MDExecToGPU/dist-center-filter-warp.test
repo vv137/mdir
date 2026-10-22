@@ -1,0 +1,24 @@
+# D[distributed-pair-center-filter]: every row lane must reach the full-warp
+# shuffle, including rows outside the selected center set. Only the mask bit
+# load is conditional; the selected bit controls an empty pair-loop bound.
+
+# RUN: sed 's/GRID/8, 1, 1/; s/TOLERANCE/1.0e-5/' %S/../../Integration/dist-eam-center-filter.mlir \
+# RUN: | mdir-opt %md_passes --md-exec-assign-algebra \
+# RUN:     --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | FileCheck %s
+
+# CHECK: gpu.launch{{.*}}module(@main_pair_for
+# CHECK: %[[MEMBER:[0-9]+]] = scf.if %{{[0-9]+}} -> (i1) {
+# CHECK: memref.load {{.*}} : memref<?xi32, 1>
+# CHECK: scf.yield {{.*}} : i1
+# CHECK: } else {
+# CHECK: scf.yield {{.*}} : i1
+# CHECK: }
+# CHECK-NEXT: %{{[A-Za-z0-9_]+}} = arith.constant
+# CHECK: arith.select %[[MEMBER]],
+# CHECK-NOT: scf.if %[[MEMBER]]
+# CHECK: gpu.shuffle xor

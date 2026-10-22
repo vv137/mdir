@@ -365,9 +365,42 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
       builder, loc, ValueRange{zero}, ValueRange{size}, ValueRange{one},
       inits, [&](OpBuilder &body, Location, ValueRange ivs, ValueRange) {
         IRMapping local;
-        SmallVector<Value> contributions =
-            emitPairKernel(body, op, structure.counts, entries, box,
-                           inverse, ivs[0], local);
+        SmallVector<Value> contributions;
+        if (Value selected = op.getCenterSet()) {
+          Value bit = memref::LoadOp::create(body, loc, selected,
+                                            ValueRange{ivs[0]});
+          Value active = arith::CmpIOp::create(
+              body, loc, arith::CmpIPredicate::ne, bit,
+              arith::ConstantIntOp::create(body, loc, 0, 32));
+          auto filtered = scf::IfOp::create(
+              body, loc, TypeRange(op.getReduce()), active,
+              /*withElseRegion=*/true);
+          if (!filtered.thenBlock()->empty() &&
+              isa<scf::YieldOp>(filtered.thenBlock()->back()))
+            filtered.thenBlock()->back().erase();
+          if (!filtered.elseBlock()->empty() &&
+              isa<scf::YieldOp>(filtered.elseBlock()->back()))
+            filtered.elseBlock()->back().erase();
+          {
+            OpBuilder then = OpBuilder::atBlockEnd(filtered.thenBlock());
+            scf::YieldOp::create(
+                then, loc,
+                emitPairKernel(then, op, structure.counts, entries, box,
+                               inverse, ivs[0], local));
+          }
+          {
+            OpBuilder otherwise = OpBuilder::atBlockEnd(filtered.elseBlock());
+            SmallVector<Value> zeros;
+            for (Value init : op.getReduce())
+              zeros.push_back(createZero(otherwise, loc, init.getType()));
+            scf::YieldOp::create(otherwise, loc, zeros);
+          }
+          contributions.assign(filtered.getResults().begin(),
+                               filtered.getResults().end());
+        } else {
+          contributions = emitPairKernel(body, op, structure.counts, entries,
+                                         box, inverse, ivs[0], local);
+        }
         if (!contributions.empty())
           createReduction(body, loc, contributions, /*isSum=*/true);
       });

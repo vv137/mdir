@@ -539,9 +539,10 @@ work and an asynchronous transport are further parts of #481.
 
 The center partition (D317, #496) classifies owned
 centers from actual relation membership for one layout/halo epoch. It
-provides the proof needed before a later center-filtered pair lowering (#499) can
-place ghost-independent work between transfer start and wait. There is no
-runtime overlap in this step.
+provides the proof for center-filtered pair lowering (#535 under #499).
+That lowering carries proved interior and boundary selection through the
+CPU reference and MDExec CPU/GPU loops. The optional interior-before-wait
+schedule follows in #536; there is no runtime overlap in the filter step.
 
 The schedule proof (D308, #483) records source versions,
 start prerequisites, completion-before-use edges, and owned-only work

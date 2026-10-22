@@ -3744,7 +3744,30 @@ LogicalResult Lowering::lowerPairFor(md_exec::PairForOp op) {
       Value isCenter = arith::CmpIOp::create(
           body, loc, arith::CmpIPredicate::ult, particle, centers);
       lanes.valid = arith::AndIOp::create(body, loc, sharing.valid, isCenter);
+      if (Value selected = op.getCenterSet()) {
+        auto member = scf::IfOp::create(
+            body, loc, TypeRange{body.getI1Type()}, lanes.valid,
+            /*withElseRegion=*/true);
+        {
+          OpBuilder then = OpBuilder::atBlockEnd(member.thenBlock());
+          Value bit = memref::LoadOp::create(then, loc, selected,
+                                            ValueRange{particle});
+          Value active = arith::CmpIOp::create(
+              then, loc, arith::CmpIPredicate::ne, bit,
+              arith::ConstantIntOp::create(then, loc, 0, 32));
+          scf::YieldOp::create(then, loc, active);
+        }
+        {
+          OpBuilder otherwise = OpBuilder::atBlockEnd(member.elseBlock());
+          Value no = arith::ConstantIntOp::create(otherwise, loc, 0, 1);
+          scf::YieldOp::create(otherwise, loc, ValueRange{no});
+        }
+        lanes.valid = member.getResult(0);
+      }
     }
+    // Every lane must reach the row reduction: its shuffle names the full
+    // warp even when one of the warp's two rows is outside the center set.
+    // An invalid row has an empty pair loop and contributes zero.
     SmallVector<Value> contributions = emitPairKernel(
         body, op, structure.counts, entries, box, inverse, central,
         local, &lanes, /*outTotals=*/nullptr, &layout,

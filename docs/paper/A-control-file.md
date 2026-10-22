@@ -30,6 +30,11 @@ for a distributed neighborhood relation. It introduces no control-file or
 Python key, and changes no output format or overwrite behavior. The
 synchronous transfer schedule remains the default.
 
+D[distributed-pair-center-filter] adds an IR-level selection of a proved
+interior or boundary center set for distributed pair work. It introduces
+no control-file or Python key, output format, or overwrite change. The
+immediate-wait transfer schedule remains the default.
+
 M2 Python API preparation (D187) is described in
 [python.md](../python.md). It introduces no control-file keys or
 changes to the checkpoint and output contracts listed here.

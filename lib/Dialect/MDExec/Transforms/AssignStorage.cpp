@@ -602,7 +602,6 @@ LogicalResult Assignment::convertParticleFor(ParticleForOp op, Scope &scope,
       return failure();
     ins.push_back(buffer);
   }
-
   SmallVector<Value> outs;
   for (Value destination : op.getOuts()) {
     Value buffer;
@@ -666,11 +665,17 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
       return failure();
     ins.push_back(buffer);
   }
+  Value centerSet;
+  if (op.getCenterSet() &&
+      failed(getBuffer(op.getCenterSet(), scope, centerSet)))
+    return failure();
 
   // The loop reads the positions and the fields in `ins` of other
   // particles, so it cannot write to any of their buffers.
   SmallVector<Value> readFields(op.getIns().begin(), op.getIns().end());
   readFields.push_back(op.getPositions());
+  if (op.getCenterSet())
+    readFields.push_back(op.getCenterSet());
 
   // A loop that writes at its centers only, or at the neighbors as well,
   // does not write every value of a destination once: it adds to a buffer
@@ -728,7 +733,8 @@ LogicalResult Assignment::convertPairFor(PairForOp op, Scope &scope,
       mapping.lookup(op.getCell()), ins, outs, reduce, scratch,
       op.getCutoffAttr(), op.getWeightsAttr(), overwriteAttr,
       op.getTraversalAttr(), op.getConflictAttr(), op.getExchangeAttr(),
-      mapCenters(op.getCenters()), op.getImagesAttr(),
+      mapCenters(op.getCenters()), centerSet,
+      op.getGhostFreeAttr(), op.getImagesAttr(),
       // The strategy of the scatter (D291): a loop that overwrites
       // a destination clears it first and then adds to it as well.
       op.getScatterAttr());

@@ -1661,6 +1661,8 @@ Operation *DerivativeBuilder::createDistributedPairOp(
   MLIRContext *context = builder.getContext();
   OperationState state(loc, md_dist::SumPairsOp::getOperationName());
   state.addOperands(source->getOperands());
+  state.getOrAddProperties<md_dist::SumPairsOp::Properties>()
+      .setOperandSegmentSizes(source.getProperties().operandSegmentSizes);
   state.addAttribute("exchange", ExchangeAttr::get(context, exchange));
   state.addTypes(md_dist::PartialType::get(context, valueType));
   state.addRegion();

@@ -1,0 +1,40 @@
+# D[distributed-pair-center-filter]: exercise filtered density gathering and
+# pair energy on a device, including empty domains and the ghost-free path.
+# In domain 2, centers at 2.05 and 2.95 share one warp: the former has only
+# an owned neighbor, while the latter also has a ghost neighbor at 4.7.
+# Their selected rows therefore diverge if a collective is guarded by the
+# center-set bit. The independent analytic energy is -0.3798239844809741.
+# REQUIRES: cuda, compute-sanitizer
+
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: sed -e 's/GRID/8, 1, 1/; s/TOLERANCE/1.0e-5/' \
+# RUN:     -e 's/%a = arith.constant 0.2 : f64/%a = arith.constant 2.05 : f64/' \
+# RUN:     -e 's/%b = arith.constant 1.0 : f64/%b = arith.constant 2.95 : f64/' \
+# RUN:     -e 's/%c = arith.constant 2.6 : f64/%c = arith.constant 4.7 : f64/' \
+# RUN:     -e 's/%d = arith.constant 3.4 : f64/%d = arith.constant 5.5 : f64/' \
+# RUN:     -e 's/%edge = arith.constant 4.8 : f64/%edge = arith.constant 8.0 : f64/' \
+# RUN:     -e 's/%analytic = arith.constant -0.026684256269407847 : f64/%analytic = arith.constant -0.3798239844809741 : f64/' \
+# RUN:     %S/../Integration/dist-eam-center-filter.mlir \
+# RUN: | mdir-opt %md_passes --md-exec-assign-algebra \
+# RUN:     --convert-md-dist-to-md-exec="functions=main" \
+# RUN:     --convert-md-dist-to-loops \
+# RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_transforms \
+# RUN:     --md-exec-assign-precision="mode=mixed" \
+# RUN:     --md-exec-assign-algebra --md-exec-assign-storage=memory=device --convert-md-exec-to-gpu \
+# RUN: | mlir-opt %lower_gpu_to_llvm > %t/eam.mlir
+# RUN: %compute_sanitizer --tool memcheck --error-exitcode 1 \
+# RUN:     mlir-runner %t/eam.mlir -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=MEM
+# RUN: %compute_sanitizer --tool racecheck --error-exitcode 1 \
+# RUN:     mlir-runner %t/eam.mlir -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=RACE
+# RUN: %compute_sanitizer --tool synccheck --error-exitcode 1 \
+# RUN:     mlir-runner %t/eam.mlir -e main --entry-point-result=void \
+# RUN:     --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda 2>&1 \
+# RUN:   | FileCheck %s --check-prefix=SYNC
+
+# MEM: ERROR SUMMARY: 0 errors
+# RACE: RACECHECK SUMMARY: 0 hazards displayed (0 errors, 0 warnings)
+# SYNC: ERROR SUMMARY: 0 errors
