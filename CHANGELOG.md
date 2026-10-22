@@ -12,6 +12,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **Optional f64 stage fields in mixed precision** (D[ml4-stage-fields],
+  #543): `[[energy.model]] stage_field_precision = "DOUBLE"` selects
+  `md-exec-assign-precision{mode=mixed stage-fields-f64=true}` and stores
+  feature fields and their reverse-sweep adjoints in f64 between stage
+  bodies. Exported f32 bodies keep their arithmetic type and the final
+  coordinate force keeps the existing mixed policy. The f32-field default
+  preserves memory capacity. The model key is included in checkpoint
+  fingerprints; file formats and overwrite behavior are unchanged.
 - **Faster GROMACS coordinate input** (D323, #525): finite
   decimal fields in `.gro` coordinates and velocities use a direct binary64
   conversion. Accepted input, control keys, output, and overwrite behavior

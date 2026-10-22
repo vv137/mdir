@@ -388,10 +388,11 @@ file, through the same plugin and its C boundary:
 
 | Python | Control file | Values |
 |---|---|---|
-| `System.models` | `[[energy.model]]` | a list of `mdir.ModelTerm(name, path, backend="METATOMIC", centers_per_call=0)` |
+| `System.models` | `[[energy.model]]` | a list of `mdir.ModelTerm(name, path, backend="METATOMIC", centers_per_call=0, stage_field_precision="")` |
 | `ModelTerm.path` | `path` | the artifact; a relative path is taken relative to the working directory when the program is compiled |
-| `ModelTerm.backend` | `backend` | `"METATOMIC"`, a TorchScript artifact of metatomic; `"AOTI"`, an AOTInductor package of the `nequip` package (D273, [metatomic-ml1.md](metatomic-ml1.md#11-the-aotinductor-backend-d273)) |
+| `ModelTerm.backend` | `backend` | `"METATOMIC"`, a TorchScript artifact of metatomic; `"AOTI"`, an AOTInductor package of the `nequip` package (D273, [metatomic-ml1.md](metatomic-ml1.md#11-the-aotinductor-backend-d273)); `"STAGES"`, an MLIR staged model (D294) |
 | `ModelTerm.centers_per_call` | `centers_per_call` | 0 (the whole system in one call), or the centers of one call, for a model that declares that it is local |
+| `ModelTerm.stage_field_precision` | `stage_field_precision` | Empty (default f32 storage for staged features in mixed mode) or `"DOUBLE"` (f64 feature and adjoint field storage, D[ml4-stage-fields]); only for `backend="STAGES"` |
 
 A `Simulation` of a program with a model term imports `torch` before the
 plugin is loaded, so that the plugin takes the libtorch of the imported
