@@ -270,11 +270,38 @@ bond, an angle, a 1–4 pair taken elsewhere) has its bit cleared at the
 build, so the loop needs no test of exclusion. The lists are held in
 *blocks* of 64 entries, which a group takes from one pool as it fills them
 with an atomic addition; block $b$ is block `ordinals[b]` of the list of
-group `units[b]`. A block is the unit of work of the loop. The runtime
-sizes the pool from an estimate and grows it by a quarter more than
-needed when a build overflows, then builds again; on Cellulose the lists
-take at most 152,619 of 280,929 blocks (144 MB for entries and masks,
-against 510 MB that fixed lists of twice the width of a row would need).
+group `units[b]`. A block is the unit of work of the loop. A build counts
+the blocks it takes even where they do not fit; when they do not, the
+runtime grows the pool to a quarter more than needed and the build is made
+again, so no pair is left out. On Cellulose the lists take at most 152,619
+of 280,929 blocks (144 MB for entries and masks, against 510 MB that fixed
+lists of twice the width of a row would need).
+
+**The size of the pool** (D[density-lists]). The list of a group holds
+the particles at later places within $R$ of any of its 16 members, so its
+length follows the mean number of neighbors of a particle within the
+reach. In a fluid of number density $\rho$ and pair distribution $g(r)$
+that number is $\bar n = 4\pi\rho\int_0^R g(r)\,r^2\,dr$, which is
+$\tfrac43\pi\rho R^3$ once $R$ is beyond the range of the correlations.
+The pool holds $B = \sum_g \lceil E_g/64\rceil$ blocks for the lengths
+$E_g$ of the lists. A sum over many groups follows the density of the
+whole cell. At constant $N$ and pressure the volume fluctuates by
+$\delta V/V = \sqrt{k_BT\kappa_T/V}$, with $\kappa_T$ the isothermal
+compressibility; for water at 300 K ($\kappa_T = 4.5\times
+10^{-10}$ Pa$^{-1}$) that is $4\times10^{-4}$ at STMV and $3\times10^{-3}$
+at JAC. $B$ scales with the density, as $V^{-1}$, so the blocks that one
+build takes fix the pool's need for every build of an equilibrated state,
+and a margin of a quarter covers these fluctuations many times over, and a
+compression to 0.8 of the volume. The structure therefore starts with one
+block a group, and its first build sizes the pool: $B_0 + \lfloor
+B_0/4\rfloor$ for the $B_0$ blocks that the configuration at the start
+takes. Counting $B_0$ is exact, where an estimate from $\bar n$ would need
+the ratio of $E_g$ to $\bar n$, which depends on the shape of the groups:
+about 1.2 at STMV ($R$ = 9.5 Å) and 0.77 at JAC ($R$ = 11 Å). STMV takes
+at most 433,376 of 541,603 blocks, where the pool sized from the particle
+with the most neighbors held 800,328. An argon and krypton mixture
+compressed from 18,991 to 10,260 Å$^3$ grows its lists once after the
+first build, and gives the matrix's energies to every printed digit.
 
 **Frames without a minimum image** (D95). The loop takes no minimum
 image. The build moves every place, and every entry, by whole cells into

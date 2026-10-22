@@ -92,12 +92,30 @@ cutoff of each pair.
 which its group takes from one pool as it fills them (with an atomic
 addition); block b is block `ordinals[b]` of the list of group `units[b]`,
 and a block is the unit of work of the loop. The runtime holds the buffers
-(`mdrtGroupsCreate`, `mdrtGroupsBuffer`) and sizes them from an estimate:
-places for a quarter more than the particles and a chunk, blocks for as
-many entries as a row of the matrix for each group and one block more. A
-build that finds a buffer too small makes it a quarter larger than it
-needs (`mdrtGroupsGrow`) and is made again; the run stops only if the
-device has no memory left. The buffers that a growth replaces go back to
+(`mdrtGroupsCreate`, `mdrtGroupsBuffer`): places for a quarter more than
+the particles and a chunk, and one block for each group. A build counts
+the places and the blocks it takes even where they do not fit, and writes
+only those that fit. A build that finds a buffer too small makes it a
+quarter larger than it needs (`mdrtGroupsGrow`) and is made again, so no
+pair is ever left out; the run stops only if the device has no memory
+left. The first build of a structure therefore sizes its pool: a quarter
+more than the blocks that the configuration at the start takes
+(D[density-lists], #471). The list of a group holds of the order of as
+many entries as a particle has neighbors within the reach,
+$\bar n = \tfrac43\pi\rho R^3$ at a number density $\rho$: at most 416
+entries a group (6.5 blocks) against $\bar n \approx 346$ at STMV
+($R$ = 9.5 Å), and at most 419 against 545 at JAC ($R$ = 11 Å). The pool
+holds the sum over all the groups, which follows the density and varies
+little from one build to the next; the first build counts it exactly,
+where an estimate from $\bar n$ would need a factor that depends on the
+shape of the groups. Until
+D[density-lists] the pool started with as many entries a group as a row of
+the matrix and one block more, from the particle with the most neighbors
+with half as many again: 12 blocks a group at STMV, 1.84 times what the
+lists took. A build that needs more than the first build left, after a
+compression by the barostat for example, grows the pool the same way;
+`mdir run` then logs how many times the lists grew after the first build
+of their structure. The buffers that a growth replaces go back to
 the driver, not to the runtime's pool of device memory, since no later
 request takes their size (D312). Measured: a fixed list of twice the width of
 a row stopped a run of Cellulose under NPT when one group needed 2521
@@ -105,7 +123,12 @@ entries of 1248, where the longest list is usually 740 to 900; with the
 pool, Cellulose takes at most 153,517 of 280,929 blocks (144 MB for the
 entries and the masks, against 510 MB for the fixed lists), and a run of
 `test/Driver/groups-gpu.test` that starts with almost no room grows its
-buffers and gives the energies of the matrix to every digit.
+buffers and gives the energies of the matrix to every digit. Sized at the
+first build, STMV takes at most 433,376 of 541,603 blocks (800,328 before)
+and JAC 9,664 of 12,046 (17,676 before), with no growth after the first
+build. The same test compresses an argon and krypton mixture from 18,991
+to about 10,260 Å$^3$ under 5000 atm: its lists grow once after the first
+build, and the energies are again those of the matrix to every digit.
 
 **Lifetime.** A structure's buffers live until the program ends: the end
 of `mdir run`, or the close of a Python simulation's activation (D215).
@@ -117,7 +140,8 @@ and both have the same shape. Each of the two held about 466 MiB at STMV
 (1.07 million atoms): 413 MiB of lists and buffers of the runtime, and
 53 MiB of `placeOf` and the two reference configurations. The steps still
 build at step 1. Their first build finds the lists with the room the
-start left, so they grow only if they need more.
+start left, the room that the start's first build sized
+(D[density-lists]), so they grow only if they need more.
 
 **Validity.** The build tests distances in f32 against the reach widened
 by 3e-6 of the sum of the edges of the cell (in a triclinic cell, of the
