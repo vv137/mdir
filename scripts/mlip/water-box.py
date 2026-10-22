@@ -108,7 +108,8 @@ def write(outdir, positions, cell, velocities=None):
         names = ["O", "H1", "H2"]
         for i, x in enumerate(nm):
             f.write("%5d%-5s%5s%5d%12.7f%12.7f%12.7f" % (
-                i // 3 + 1, "MOL", names[i % 3], (i + 1) % 100000, x[0], x[1], x[2]))
+                (i // 3 + 1) % 100000, "MOL", names[i % 3],
+                (i + 1) % 100000, x[0], x[1], x[2]))
             if velocities is not None:
                 f.write("%12.7f%12.7f%12.7f" % tuple(velocities[i]))
             f.write("\n")

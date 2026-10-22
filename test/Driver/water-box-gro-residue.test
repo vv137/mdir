@@ -1,0 +1,7 @@
+# A generated water box above the five-column residue limit must remain a
+# valid fixed-width GRO file that the reader can load (#550).
+# REQUIRES: python-api
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %mdir_python %S/Inputs/python_water_box_gro_residue.py %t %S/../../scripts/mlip/water-box.py | FileCheck %s
+# CHECK: GRO identifiers wrap from residue 99999 to 0 to 1 in fixed-width fields
+# CHECK: MDIR reads all 300003 generated coordinates
