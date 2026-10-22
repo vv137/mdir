@@ -25,8 +25,8 @@
 // The storage form: the first continues in the buffer of the field it adds
 // to, the second starts from zeros in a buffer of its own.
 // RUN: mdir-opt %s --md-exec-assign-storage | FileCheck %s --check-prefix=STORE
-// STORE: md_exec.scatter_add %{{.*}} at %{{.*}} into %[[A:[a-z0-9_]+]] overwrite(false) : memref<?x3xf64>, memref<?xi32>, memref<?x3xf64>
-// STORE: md_exec.scatter_add %{{.*}} at %{{.*}} into %{{.*}} overwrite(true) : memref<?x3xf64>, memref<?xi32>, memref<?x3xf64>
+// STORE: md_exec.scatter_add %{{.*}} at %{{.*}} into %[[A:[a-z0-9_]+]] overwrite(false) : memref<?x3xf64, #md_exec.set_layout<@items, 2>>, memref<?xi32, #md_exec.set_layout<@items, 1>>, memref<?x3xf64, #md_exec.set_layout<@atoms, 2>>
+// STORE: md_exec.scatter_add %{{.*}} at %{{.*}} into %{{.*}} overwrite(true) : memref<?x3xf64, #md_exec.set_layout<@items, 2>>, memref<?xi32, #md_exec.set_layout<@items, 1>>, memref<?x3xf64, #md_exec.set_layout<@atoms, 2>>
 //
 // CHECK: 1
 // CHECK-NEXT: 1
