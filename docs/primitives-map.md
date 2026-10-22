@@ -207,6 +207,9 @@ is the source inventory for #558: it distinguishes explicit `nvvm.*` and
 PTX assembly from generic `gpu` operations, names the existing shared
 emitters, and states how one target capability record and the measured
 strategy policy of #433 will be read by the chooser and the lowering.
+It also records the proposed `CompilationPlan` and the responsibility split
+of `MDExecToGPU.cpp`; those are implementation boundaries, not additions to
+the semantic primitive map.
 The map's semantic primitives and their transposes do not change with the
 backend (D[device-portability-inventory]).
 
