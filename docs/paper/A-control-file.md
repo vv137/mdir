@@ -118,7 +118,7 @@ uses in the expression. This check does not change keys or file formats.
 | Table | Keyword | Meaning |
 |---|---|---|
 | `[input]` | `topology` | The topology: of Amber (`.prmtop`, `.parm7`), GROMACS (`.top`), or CHARMM (`.psf`, of the XPLOR kind, with the names of the types). Absent for a run from a PDB file, whose terms are in `[energy]`. |
-| | `coordinates` | The positions and the cell: of Amber (`.inpcrd`, `.rst7`), GROMACS (`.gro`), CHARMM (`.crd`, standard or extended; it has no cell), or a PDB file, in which the name of an atom selects its type. The reference of restraints. |
+| | `coordinates` | The positions and the cell: of Amber (`.inpcrd`, `.rst7`), GROMACS (`.gro`), CHARMM (`.crd`, standard or extended; it has no cell), or a PDB file, in which the name of an atom selects its type. The reference of restraints. The five-column residue and atom identifiers of `.gro` wrap modulo 100,000; `scripts/mlip/water-box.py` writes both that way (D[water-box-gro-residue]). |
 | | `format` | `AUTO` (the default: from the names of the files), `AMBER`, `GROMACS`, `CHARMM`, or `PDB`. A CHARMM force field runs from its own files (D122) or from a topology of GROMACS (D121). |
 | | `parameters` | With a PSF: the files of topology (`.rtf`), parameters (`.prm`), and streams (`.str`), in the order that CHARMM reads them; a later file replaces what an earlier one defines. |
 | | `include_paths`, `defines` | With a GROMACS topology: the directories of `#include` and the names that `#define` gives. |
