@@ -68,3 +68,35 @@ func.func @invalid_cutoff(%x: !vec, %cell: !md.cell) {
   %ok = md_dist.covered %h, %o, %o, %cell cutoff(2.2) : !halo, !own -> i1
   return
 }
+
+// -----
+
+!vec = !md.field<@atoms, 3 x f64>
+!own = !md_dist.field<@dd, owned, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.2>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+func.func @zero_cutoff(%x: !vec, %cell: !md.cell) {
+  %l = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>
+  %o = md_dist.distribute %x, %l image(%cell) : !vec -> !own
+  %h = md_dist.halo %l, %o, %cell : !own -> !halo
+  // expected-error @+1 {{cutoff must be positive and smaller than the halo reach}}
+  %ok = md_dist.covered %h, %o, %o, %cell cutoff(0.0) : !halo, !own -> i1
+  return
+}
+
+// -----
+
+!vec = !md.field<@atoms, 3 x f64>
+!own = !md_dist.field<@dd, owned, 3 x f64>
+!halo = !md_dist.halo<@dd, 2.2>
+md.particle_set @atoms
+md_dist.decomposition @dd on(@atoms) grid([2, 1, 1])
+func.func @negative_cutoff(%x: !vec, %cell: !md.cell) {
+  %l = md_dist.partition %x, %cell : !vec -> !md_dist.layout<@dd>
+  %o = md_dist.distribute %x, %l image(%cell) : !vec -> !own
+  %h = md_dist.halo %l, %o, %cell : !own -> !halo
+  // expected-error @+1 {{cutoff must be positive and smaller than the halo reach}}
+  %ok = md_dist.covered %h, %o, %o, %cell cutoff(-0.1) : !halo, !own -> i1
+  return
+}

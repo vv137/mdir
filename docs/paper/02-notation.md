@@ -28,6 +28,7 @@ element.
 | $r_c$ | Cutoff of the pair terms and of the direct sum of Ewald |
 | $r_s$, $S_2(r)$ | Onset and squared-distance potential switch of a topology Lennard-Jones term (Section 3.3) |
 | $s,\ R = r_c + s$ | Skin and reach of a neighbor structure |
+| $R_h,\ \Delta_h$ | Reach of a distributed halo, and the largest Euclidean displacement of an owned particle since its halo build, measured in the same wrapped coordinate frame as its explicit halo image |
 | $s_\text{in},\ R_\text{in} = r_c + s_\text{in}$ | Skin and reach of the inner list of a dual list |
 | $n_\text{build},\ n_\text{prune};\ t_\text{step};\ \rho;\ v_\text{max}$ | In Section 4.5, the mean number of steps between builds of a structure and between prunings of its inner list; the time of a step; the number density of the particles; the largest speed among the particles |
 | $t_\text{loop},\ t_\text{prune},\ t_\text{fused}$ | In Section 4.5, the time of a call of the loop over pairs over the inner list, of a pruning, and of the loop that prunes |

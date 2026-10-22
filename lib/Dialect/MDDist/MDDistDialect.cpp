@@ -514,10 +514,6 @@ LogicalResult CoveredOp::verify() {
       failed(verifySameLayout(*this, "current positions", getCurrent(),
                               build.getLayout())))
     return failure();
-  if (getCurrent().getType() != getReference().getType() ||
-      getCurrent().getType().getNumComponents() != 3)
-    return emitOpError()
-           << "current positions must have the reference position type";
   double cutoff = getCutoff().convertToDouble();
   if (!(cutoff > 0.0 && cutoff < getHalo().getType().getReach().convertToDouble()))
     return emitOpError() << "cutoff must be positive and smaller than the halo reach";

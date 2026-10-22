@@ -220,9 +220,11 @@ def MDDist_CoveredOp : MDDist_Op<"covered", [
     Return one predicate agreed by all domains. The reference positions and
     cell must be exactly those of `halo`; the current positions belong to
     the same ownership epoch but are a separate SSA value. Coverage holds
-    when twice the largest minimum-image displacement of an owned particle
-    is strictly smaller than the halo reach minus `cutoff`. Empty domains
-    participate and contribute zero displacement.
+    when twice the largest displacement of an owned particle in the wrapped
+    coordinate frame is strictly smaller than the halo reach minus `cutoff`.
+    A periodic wrap therefore invalidates coverage: the halo stores explicit
+    images. The cell must remain unchanged. Empty domains participate and
+    contribute zero displacement.
 
     ```mlir
     %ok = md_dist.covered %halo, %reference, %current, %cell cutoff(2.0)

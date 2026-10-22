@@ -450,7 +450,8 @@ D313 (#494, a first slice of #38) gives `md_dist` an
 ownership-epoch transition and a generic complete-field redistribution by
 stable particle identity. Moving-snapshot LJ and EAM checks exercise the
 in-process CPU path, including empty domains. D[dist-covered] (#542) adds the
-in-process collective skin predicate over the old halo's ownership epoch;
+in-process collective skin predicate over the old halo's ownership epoch and
+the wrapped coordinate frame of its explicit images, with a fixed cell;
 current coordinate halo copies remain separate. #38 still owns applying
 the witness to candidate-map reuse, loop-carried live state and completed transfers at
 retirement, and the first production-driver `[distribute]` path. These

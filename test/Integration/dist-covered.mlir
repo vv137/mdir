@@ -1,9 +1,12 @@
 // D[dist-covered]: independent analytic skin oracle. For reach 2.2 and
 // cutoff 2.0, the half skin is 0.1. Two particles start at x=0.01 and
-// x=3.00 in an 8-cube. A periodic move 0.01 -> 7.98 has displacement
-// 0.03, and 3.00 -> 3.04 has displacement 0.04: covered = 1. Moves to
-// 7.89 and 3.11 have displacements 0.12 and 0.11: covered = 0.
+// x=6.50 in an 8-cube, both with y=z=4. A nonwrapping move of 0.03 and
+// 0.04 is covered. A wrap of 0.01 -> 7.98 invalidates the explicit-image
+// halo even though minimum-image displacement is 0.03. The true pair
+// separation after that wrap is 1.48, within cutoff 2.0.
 // A 16-domain grid leaves most domains empty but gives the same answer.
+// Both routes call the same f64 reference predicate; mixed precision
+// assignment of md_exec does not change this runtime computation.
 // RUN: sed 's/GRID/2, 1, 1/' %s \
 // RUN: | mdir-opt --convert-md-dist-to-loops %md_passes \
 // RUN:     --convert-md-to-md-exec="skin=0.2 width=64" %md_exec_passes \
@@ -34,13 +37,13 @@ func.func @main() {
   %n = arith.constant 2 : index
   %i0 = arith.constant 0 : index
   %i1 = arith.constant 1 : index
-  %z = arith.constant 0.0 : f64
+  %z = arith.constant 4.0 : f64
   %a = arith.constant 0.01 : f64
-  %b = arith.constant 3.0 : f64
-  %a1 = arith.constant 7.98 : f64
-  %b1 = arith.constant 3.04 : f64
-  %a2 = arith.constant 7.89 : f64
-  %b2 = arith.constant 3.11 : f64
+  %b = arith.constant 6.5 : f64
+  %a1 = arith.constant 0.04 : f64
+  %b1 = arith.constant 6.54 : f64
+  %a2 = arith.constant 7.98 : f64
+  %b2 = arith.constant 6.5 : f64
   %edge = arith.constant 8.0 : f64
   %base = memref.alloc(%n) : memref<?x3xf64>
   %near = memref.alloc(%n) : memref<?x3xf64>

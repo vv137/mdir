@@ -381,7 +381,9 @@ int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
         double b = *at3(current, d, r, k);
         if (!isfinite(a) || !isfinite(b))
           fail("coverage requires finite positions");
-        double delta = remainder(b - a, l->edges[k]);
+        /* Halo rows retain explicit images. A wrap changes that image, so
+           minimum-image displacement would incorrectly preserve coverage. */
+        double delta = b - a;
         if (!isfinite(delta))
           fail("coverage displacement exceeds cell range");
         displacement2 += delta * delta;
