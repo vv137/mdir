@@ -69,14 +69,26 @@ values and explicit operands. A witness produced by a check is valid only
 for those state values. The consumer checks that provenance rather than
 assuming that a prior check still applies.
 
-A requested execution path is either statically proved, protected by a
-runtime guard with a legal fallback, or replaced by a conservative legal
-path with an `explain` reason. A contradiction or the absence of any legal
-path is an IR diagnostic. Numerical legality is separate from the cost of a
-strategy: a fixed-order sum cannot be made reorderable by a favorable
-timing. This is the design of D[execution-contracts] (#574); the individual
-checks and witnesses are implemented in later decisions. Existing inputs
-and emitted programs do not change with this design.
+A required execution condition is proved or established by a sound runtime
+guard with legal recovery. An unknown required condition without such a
+guard is diagnosed as an unsupported contract; its path is never executed.
+Contradictory types, mismatched entities, invalid evidence, and demonstrated
+uninitialized reads are invalid IR and are refused. A false or unknown
+requirement of an optional strategy selects an independently legal baseline
+with an `explain` reason. `Unknown` establishes no positive fact. Neither
+the availability of a runtime predicate nor that of an asynchronous event
+establishes its truth or completion. Existing input defects are diagnosed
+by `mdir check`, not classified as unsupported compiler contracts.
+Numerical requirements are represented separately from structural and
+memory requirements, but all are prerequisites of a legal plan; the cost
+model never weakens them. Thus a race-free atomic sum is illegal when a
+fixed order is required. This design conditionally verifies supported
+contract instances under named rules and recorded assumptions, not every
+program. Its trusted base includes predicate rules and their numerics,
+effect and derivative models, preservation arguments, accepted external
+contracts, the runtime and backends, and the toolchain. This is the design
+of D[execution-contracts] (#574); individual checks and witnesses belong
+to later decisions. Existing inputs and emitted programs do not change.
 
 ## 3.1 What is computed, and how the state advances
 

@@ -24,16 +24,20 @@ The distinction between a valid program with an unavailable optimization and
 an invalid execution is part of every check's contract.
 
 ```mermaid
-flowchart LR
-    A[md and dyn: meaning] --> B[md_exec and md_dist: access and state]
-    B --> C{Legal execution?}
-    C -->|Invalid IR| D[Diagnostic]
-    C -->|Proved| E[Allowed plans]
-    C -->|Runtime check| F[Guard and legal fallback]
-    C -->|Unproved optional choice| G[Conservative plan and explain remark]
-    E --> H[Measured cost selects a physical plan]
-    F --> H
-    G --> H
+flowchart TD
+    Q[Precondition query: Proven, Refuted, or Unknown] --> K{Kind of requirement}
+    K -->|Optional strategy| O{Truth}
+    O -->|Proven| P[Use the strategy]
+    O -->|Refuted or Unknown| B[Independently legal baseline, with an explain reason]
+    K -->|Required for execution| R{Truth}
+    R -->|Proven| E[Execute]
+    R -->|Unknown, with a sound guard| G[Guard: success runs the path, failure runs a legal recovery such as a rebuild]
+    R -->|Unknown, without a guard| U[Diagnostic: unsupported contract]
+    R -->|Refuted| I[Diagnostic: invalid IR]
+    P --> C[Measured cost chooses among legal plans; numerics are never weakened]
+    B --> C
+    E --> C
+    G --> C
 ```
 
 ## 2. Four facts, one place each
@@ -62,23 +66,42 @@ expire during execution.
 
 ## 3. Outcomes of a precondition check
 
-The checker returns one of the following outcomes for a *valid* program.
-The choice is made before any effect that depends on the condition.
+A query distinguishes `Proven`, `Refuted`, and `Unknown`. Its use depends on
+whether the requirement is optional or required for execution. A runtime
+guard is a separate action, available only when it soundly establishes the
+required fact and its failing branch has a legal recovery. Every choice is
+made before an effect that depends on it.
 
-| Outcome | Execution | Required evidence |
-|---|---|---|
-| Proved statically | Use the requested transformation or strategy | A fact in verified IR, including a matching witness or a checked invariant |
-| Decidable at run time | Emit a guard; use the requested path only when it holds, otherwise run a legal fallback | The guard reads the same state as the guarded path, and both branches preserve the stated effects and result |
-| Not proved, or no suitable guard | Take a conservative legal path and emit an `explain` remark naming the missing fact | The fallback needs no unproved premise and retains the program's semantics |
+| Requirement and result | Action |
+|---|---|
+| Optional strategy, proved | Use the strategy. |
+| Optional strategy, refuted or unknown | Use an independently legal baseline and emit an `explain` reason. |
+| Required execution condition, proved | Execute the path. |
+| Required execution condition, unknown with a sound guard and legal recovery | Execute the path only when the guard succeeds; use the recovery otherwise. |
+| Required execution condition, unknown without such a guard | Diagnose an unsupported contract; do not execute the path. |
+| Required execution condition, refuted | Diagnose invalid IR; do not execute the path. |
 
-If no legal path can execute the operation, the IR is invalid: report the
-operation, the unmet obligation, and the relevant values. In particular, a
-`pair_for` whose neighbor coverage cannot be established must not traverse
-an unproved list. #572 may prove coverage across the boundary, guard and
-rebuild before traversal, or diagnose the IR if neither is possible. The
-absence of proof alone is not a reason to reject an independent optimization
-when its conservative path exists. A known contradiction, such as reading a
-buffer of another set, is an IR error, not a conservative choice.
+Three failure categories must remain distinct. **Invalid IR** includes
+contradictory types, mismatched entities, invalid evidence, and a
+demonstrated read of an uninitialized value; the verifier refuses it with a
+diagnostic. **Unavailable strategy** means an optional strategy's
+requirements are false or unknown; an independently legal baseline may
+still run. **Unresolved required contract** means no implementation, guard,
+or accepted external contract establishes safe execution; report that
+limitation as an unsupported contract, not as a user-input error. A path
+with unresolved required conditions is never executed. `Unknown` never
+means true, zero, initialized, fresh, or independent.
+
+For example, `pair_for` must not traverse a neighbor list whose coverage
+is unresolved. #572 may prove coverage across a boundary or guard and
+rebuild before traversal; otherwise the contract is unsupported. Serial
+traversal of the same unproved list is not a legal fallback. A known
+mismatch between a buffer's particle set and its consumer is invalid IR.
+
+A runtime predicate returns a Boolean; its definition dominating an access
+does not establish that it is true. Likewise, an available asynchronous
+event does not establish that its operation completed. A scoped fact must
+come from the successful guard path or another checked producer.
 
 This classification concerns compiler IR. Existing user inputs retain their
 behavior. `mdir check` diagnoses input defects; a new execution contract
@@ -92,7 +115,7 @@ does not turn such inputs into newly refused runs.
 | Ordered reduction (D171, D301) | The algebra says `fixed_order`, `any_order`, or exact reorderability | Only legal accumulation strategies enter the chooser; the fixed-order path is the conservative choice when a reordering is not allowed |
 | Owner-computes (D290, `md-dist-owner-computes`) | The relation and transfer form establish its ownership conditions | The pass uses the fast form only after those conditions are checked; otherwise it retains the original distributed form |
 | Partitioned centers (D317, D328) | Direct results of `partition_centers` carry relation and layout provenance | The matching relation can use the disjoint interior and boundary filters; a stale or unrelated filter is not proof |
-| Halo coverage (#546) | `md_dist.covered` tests a halo against current positions and cell | The predicate supplies the collective guard; #38 will consume it in a reuse-or-migrate branch. The current verifier refuses a halo whose source it cannot establish |
+| Halo coverage (#546) | `md_dist.covered` is a collective runtime predicate for fixed cells in the in-process executor, with separate fresh coordinate payloads | #38 will consume the predicate in a reuse-or-migrate branch; the predicate is not a scoped witness. The current verifier refuses a halo whose source it cannot establish |
 | Device strategy (#444, #433, #558) | Algebra, target capabilities, and strategy preconditions determine legality | Measurement selects among legal strategies; an unavailable optimization gets a reason and legal fallback |
 
 These examples do not all have a first-class witness today. Their present
@@ -112,9 +135,10 @@ from their summaries, aliases, and state dependencies.
 
 The proposed async contract (#567) gives a copy a token. A read of its
 destination, a write of its source or destination, and a free or reuse of
-either buffer require the corresponding completion dependency. A token is a
-witness of completion for that copy and its buffers, not a general witness
-that the data remains ready after another write. The same rule applies to
+either buffer require the corresponding completion dependency. Merely
+holding the token does not establish completion; the required wait or
+dependency does. Completion does not establish that the data remains ready
+after another write. The same rule applies to
 halo transfers of #481. The first implementation retains today's waits;
 moving waits is a separate, measured change.
 
@@ -125,7 +149,10 @@ or write on only one branch does not prove initialization of the whole set.
 
 ## 6. Numerical and external contracts
 
-Legality of access and scheduling is separate from numerical equivalence.
+Numerical requirements are represented separately from memory and
+structural requirements, but all are prerequisites of a legal execution
+plan. A cost model never weakens them. For example, a race-free atomic
+sum is not legal where a fixed reduction order is required.
 `fixed_order` and `any_order` (D171, D301), exact integer accumulation
 (D70), precision modes, `fast_math` (D90), and approximation accuracy state
 distinct guarantees. A mathematical transpose or equal real-valued formula
@@ -137,6 +164,14 @@ external model from its type. #569 records these as declarations with
 independent property tests. A declaration does not replace the execution
 checks on buffers, state, and transfers that carry its values.
 
+This design claims conditional verification of supported contract instances
+under named rules and recorded assumptions, not a universal proof. Its
+trusted base includes the predicate rules and their numerical
+implementations, registered effect and derivative models, transformation
+preservation arguments, accepted external contracts, runtime and backend
+implementations, and the upstream toolchain. Property tests check evidence
+but do not turn an external mathematical assertion into a static theorem.
+
 ## 7. Implementation sequence and acceptance
 
 This PR specifies the contract and changes no compiler or runtime behavior.
@@ -146,9 +181,10 @@ distributed fields before ML3's design. Each implementation PR records its
 own decision and updates this document and its topic documentation.
 
 A shared checker must be used by both the chooser and the lowering instead
-of copying the same precondition into two passes. It produces a diagnostic
-for invalid IR, a guard only when the guard and fallback are legal, or an
-`explain` reason for a conservative choice. Legality precedes measured cost.
+of copying the same precondition into two passes. It diagnoses invalid IR
+and unsupported required contracts, guards only when the guard and recovery
+are legal, and emits an `explain` reason for an unavailable optional
+strategy. Legality precedes measured cost.
 For a behavior-preserving migration, `mdir emit --stage=lowered` and the
 PTX are byte-identical against the same base, and deterministic outputs are
 bitwise identical. A new strategy or delayed wait requires its own measured

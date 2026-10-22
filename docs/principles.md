@@ -165,15 +165,23 @@ cell, ownership epoch, and transfer completion. A witness is an SSA result
 of a check and is valid only for the state from which that check made it.
 The consumer and its lowering check that the witness names their state.
 
-A precondition check has three outcomes for valid IR: it is proved, it is
-guarded at run time with a legal fallback, or it selects a conservative
-legal path and emits an `explain` remark. If no legal path exists, or a
-known invariant is contradicted, the IR is invalid and receives a
-diagnostic. Existing user inputs keep their behavior; `mdir check`
-diagnoses input defects instead of making the compiler refuse those inputs.
-Legality is established before measured cost chooses a strategy.
+A required condition is either proved or established by a sound runtime
+guard with a legal recovery. If it remains unknown, the path is not executed
+and an unsupported-contract diagnostic is issued. A refuted required
+condition, contradictory type, mismatched entity, invalid evidence, or
+demonstrated uninitialized read is invalid IR and is refused. An optional
+strategy whose requirements are false or unknown uses an independently legal
+baseline with an `explain` reason. `Unknown` never means true, zero,
+initialized, fresh, or independent. A runtime predicate's availability does
+not establish its truth, and an event's availability does not establish
+completion. Existing user inputs keep their behavior; `mdir check`
+diagnoses input defects. Legality is established before measured cost
+chooses a strategy.
 
-Numerical permission is separate: `fixed_order`, `any_order`, exact integer
+Numerical requirements are represented separately from memory and
+structural requirements, but are prerequisites of a legal plan. The cost
+model cannot weaken them: a race-free atomic sum is illegal when a fixed
+order is required. `fixed_order`, `any_order`, exact integer
 accumulation, precision mode, `fast_math`, and approximation accuracy are
 different guarantees. A behavior-preserving refactor keeps lowered IR and
 PTX byte-identical and deterministic results bitwise identical. This design
