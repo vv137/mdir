@@ -308,7 +308,7 @@ before; the remaining spline or prolate window work belongs to each
 instance. The scalar gather has no extra storage or control key.
 
 **One storage for the neighbors of the start and of the steps**
-(D[start-structures]). The evaluation before the first step builds a
+(D330). The evaluation before the first step builds a
 neighbor structure that the steps do not continue: they begin with a
 structure of their own, built at step 1, so that a run builds at the same
 steps whether or not it is cut into segments (D218). The two structures

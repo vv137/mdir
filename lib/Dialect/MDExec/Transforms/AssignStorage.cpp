@@ -239,7 +239,7 @@ private:
   llvm::DenseMap<Value, Value> neighbors;
   /// The storages of the neighbor structures of the function, with their
   /// shape and the structures of the value form that each holds, one after
-  /// another (D[start-structures]).
+  /// another (D330).
   struct NeighborStorage {
     Value storage;
     SmallVector<Value, 2> origins;
@@ -580,7 +580,7 @@ Value Assignment::takeNeighborStorage(Operation *op, Value origin, Value size,
                                       IntegerAttr width, Location loc,
                                       bool &shared) {
   // The storage of a structure that nothing uses from here on, with the
-  // same shape (D[start-structures]): the structure of the start,
+  // same shape (D330): the structure of the start,
   // which the evaluation at the start builds and the steps do not continue
   // (D218), and that of the steps.
   shared = false;

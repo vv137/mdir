@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --split-input-file --md-exec-assign-storage="memory=device" | FileCheck %s
 // RUN: mdir-opt %s --split-input-file --md-exec-assign-storage | FileCheck %s --check-prefix=HOST
 
-// The storage of neighbor structures on a device (D[start-structures]): a
+// The storage of neighbor structures on a device (D330): a
 // structure that begins where nothing uses an earlier one of the same
 // shape any more takes its storage, and begins with a reset. Here the
 // structure of the start, which a build makes, and that of the steps,

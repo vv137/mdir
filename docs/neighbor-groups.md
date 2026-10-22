@@ -110,7 +110,7 @@ buffers and gives the energies of the matrix to every digit.
 **Lifetime.** A structure's buffers live until the program ends: the end
 of `mdir run`, or the close of a Python simulation's activation (D215).
 The evaluation at the start builds a structure that the steps do not
-continue (D218). Since D[start-structures] (#471) the steps' structure
+continue (D218). Since D330 (#471) the steps' structure
 takes the start's storage on a device, with a reset, rather than storage
 of its own: the start's structure is no longer used when the steps begin,
 and both have the same shape. Each of the two held about 466 MiB at STMV

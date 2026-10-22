@@ -805,7 +805,7 @@ def MDExec_ResetNeighborsOp : MDExec_Op<"reset_neighbors"> {
     device a structure may take the storage of an earlier one of the same
     shape that nothing uses any more, such as the structure of the
     evaluation at the start for that of the steps; it is reset where it
-    begins (D[start-structures]).
+    begins (D330).
 
     The count of builds starts again from zero.
 

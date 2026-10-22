@@ -1113,7 +1113,7 @@ of the cells, and the kind and width of the structure.
 A structure that the pass leaves apart, such as the one of a loop marked
 `mdrt.fresh`, may still take the storage of an earlier structure on a
 device, with a reset, without continuing it. `md-exec-assign-storage`
-decides this (Section 10.5, D[start-structures]).
+decides this (Section 10.5, D330).
 
 **Rebuild policy (B1).**
 
@@ -1673,7 +1673,7 @@ refresh takes is used after the refresh, the pass fails: the structure would
 need storage of its own.
 
 On a device, a structure takes the storage of an earlier one when nothing
-uses the earlier one any more (D[start-structures], #471). This is how the
+uses the earlier one any more (D330, #471). This is how the
 structure of the evaluation at the start and the structure of the steps,
 which D218 keeps apart (Section 8.2), come to share one storage. The rule
 has four conditions:

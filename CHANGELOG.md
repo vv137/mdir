@@ -812,7 +812,7 @@ format, or the outputs; every such change is listed under **Changed** or
   spreading retains its fixed-point path. No control-file or output
   format change.
 - **The neighbor structures of the start and of the steps share one
-  storage on a device** (D[start-structures], #471): the evaluation at the
+  storage on a device** (D330, #471): the evaluation at the
   start builds a structure that the steps do not continue (D218), and
   each held its own lists and buffers for the whole run. The steps now
   take the start's storage, reset, and still build at step 1. STMV on an
