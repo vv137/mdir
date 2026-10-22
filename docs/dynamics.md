@@ -286,7 +286,8 @@ a restart (D67).
 The period maps onto the ops as follows (velocity Verlet; with leapfrog
 the coupling takes the velocities of the time of the positions where the
 barostat acts, and stores them half a kick behind by a `dyn.kick` of
-$-\Delta t/2$, Section 6):
+$-\Delta t/2$; the thermostat alone scales the stored velocities, with
+$K_T$ from those of the time of the positions, Section 6):
 
 1. **Without a barostat.** The closing step is `@step`, or with
    constraints and a thermostat that rescales `@step_thermostat`, which
