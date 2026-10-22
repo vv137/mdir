@@ -17,6 +17,8 @@ using namespace mdir;
 namespace mdir {
 #define GEN_PASS_DEF_CONVERTLINEARTRANSFORMVALUES
 #include "mdir/Conversion/Passes.h.inc"
+#define GEN_PASS_DEF_PLACELINEARTRANSFORMDEVICE
+#include "mdir/Conversion/Passes.h.inc"
 } // namespace mdir
 
 namespace {
@@ -55,12 +57,6 @@ public:
       ConvertLinearTransformValues>::ConvertLinearTransformValuesBase;
 
   void runOnOperation() final {
-    if (memory != "host" && memory != "device") {
-      getOperation()->emitError()
-          << "expected memory 'host' or 'device', got '" << memory << "'";
-      signalPassFailure();
-      return;
-    }
     SmallVector<md::LinearTransformOp> operations;
     getOperation()->walk([&](md::LinearTransformOp op) { operations.push_back(op); });
     for (auto op : operations)
@@ -121,27 +117,10 @@ private:
     }
     builder.setInsertionPointAfter(loop);
 
-    Value executeIn = hostIn;
-    Value executeOut = hostOut;
-    if (memory == "device") {
-      auto space = builder.getI64IntegerAttr(1);
-      auto deviceType = MemRefType::get(
-          {ShapedType::kDynamic}, scalar, MemRefLayoutAttrInterface(), space);
-      executeIn = gpu::AllocOp::create(builder, loc, deviceType,
-                                       Type(), ValueRange(),
-                                       ValueRange{index(builder, loc, inputCount)},
-                                       ValueRange()).getMemref();
-      executeOut = gpu::AllocOp::create(builder, loc, deviceType,
-                                        Type(), ValueRange(),
-                                        ValueRange{index(builder, loc, outputCount)},
-                                        ValueRange()).getMemref();
-      transfer(builder, loc, executeIn, hostIn);
-    }
-    md_exec::LinearTransformOp::create(builder, loc, executeIn, executeOut,
-                                        grid, op.getKind(), op.getDirection(),
-                                        op.getAdjoint(), op.getPairing());
-    if (memory == "device")
-      transfer(builder, loc, hostOut, executeOut);
+    auto execute = md_exec::LinearTransformOp::create(
+        builder, loc, hostIn, hostOut, grid, op.getKind(),
+        op.getDirection(), op.getAdjoint(), op.getPairing());
+    execute->setAttr("fft.value_bridge", builder.getUnitAttr());
 
     // Reassemble a fresh tensor in row-major order. The generated value
     // depends on this transform alone; no unrelated stream is waited on.
@@ -166,18 +145,79 @@ private:
           tensor::YieldOp::create(at, where, element);
         });
     op.getResult().replaceAllUsesWith(value);
-    builder.setInsertionPointAfter(value.getDefiningOp());
-    if (memory == "device") {
-      Value plainIn = memref::MemorySpaceCastOp::create(
-          builder, loc, hostType, executeIn);
-      Value plainOut = memref::MemorySpaceCastOp::create(
-          builder, loc, hostType, executeOut);
-      gpu::DeallocOp::create(builder, loc, Type(), ValueRange(), plainIn);
-      gpu::DeallocOp::create(builder, loc, Type(), ValueRange(), plainOut);
-    }
-    memref::DeallocOp::create(builder, loc, hostIn);
-    memref::DeallocOp::create(builder, loc, hostOut);
+    // Leave host-buffer lifetimes to the ownership-based deallocation pass
+    // after tensor bufferization. An explicit memref.dealloc here prevents
+    // that pass from seeing the complete tensor-to-buffer ownership graph.
     op.erase();
+  }
+};
+
+class PlaceLinearTransformDevice
+    : public mdir::impl::PlaceLinearTransformDeviceBase<PlaceLinearTransformDevice> {
+public:
+  using mdir::impl::PlaceLinearTransformDeviceBase<
+      PlaceLinearTransformDevice>::PlaceLinearTransformDeviceBase;
+
+  void runOnOperation() final {
+    SmallVector<md_exec::LinearTransformOp> operations;
+    getOperation()->walk([&](md_exec::LinearTransformOp op) {
+      if (op->hasAttr("fft.value_bridge"))
+        operations.push_back(op);
+    });
+    for (auto op : operations)
+      if (failed(place(op))) {
+        signalPassFailure();
+        return;
+      }
+  }
+
+private:
+  LogicalResult place(md_exec::LinearTransformOp op) {
+    Value input = op.getInput();
+    Value output = op.getOut();
+    auto allocation = [](Value value) -> Operation * {
+      while (auto cast = value.getDefiningOp<memref::CastOp>())
+        value = cast.getSource();
+      return value.getDefiningOp<memref::AllocOp>();
+    };
+    Operation *inputAllocation = allocation(input);
+    Operation *outputAllocation = allocation(output);
+    auto inType = dyn_cast<MemRefType>(input.getType());
+    auto outType = dyn_cast<MemRefType>(output.getType());
+    if (!inType || !outType || inType.getMemorySpace() ||
+        outType.getMemorySpace() || !inputAllocation || !outputAllocation ||
+        inputAllocation == outputAllocation)
+      return op.emitOpError()
+             << "expected distinct owned host allocations from the value bridge";
+    OpBuilder builder(op);
+    Location loc = op.getLoc();
+    auto space = builder.getI64IntegerAttr(1);
+    auto deviceType = MemRefType::get(
+        {ShapedType::kDynamic}, inType.getElementType(),
+        MemRefLayoutAttrInterface(), space);
+    Value deviceIn = gpu::AllocOp::create(
+        builder, loc, deviceType, Type(), ValueRange(),
+        ValueRange{memref::DimOp::create(builder, loc, input, 0)},
+        ValueRange()).getMemref();
+    Value deviceOut = gpu::AllocOp::create(
+        builder, loc, deviceType, Type(), ValueRange(),
+        ValueRange{memref::DimOp::create(builder, loc, output, 0)},
+        ValueRange()).getMemref();
+    transfer(builder, loc, deviceIn, input);
+    md_exec::LinearTransformOp::create(
+        builder, loc, deviceIn, deviceOut, op.getGrid(), op.getKind(),
+        op.getDirection(), op.getAdjoint(), op.getPairing());
+    transfer(builder, loc, output, deviceOut);
+    auto plainType = MemRefType::get({ShapedType::kDynamic},
+                                      inType.getElementType());
+    Value plainIn = memref::MemorySpaceCastOp::create(
+        builder, loc, plainType, deviceIn);
+    Value plainOut = memref::MemorySpaceCastOp::create(
+        builder, loc, plainType, deviceOut);
+    gpu::DeallocOp::create(builder, loc, Type(), ValueRange(), plainIn);
+    gpu::DeallocOp::create(builder, loc, Type(), ValueRange(), plainOut);
+    op.erase();
+    return success();
   }
 };
 

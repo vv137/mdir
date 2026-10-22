@@ -204,7 +204,10 @@ D319 gives `md.linear_transform` a pure value form
 and declared transpose. D[fft-value-buffer] (#526) connects a value to a
 distinct packed execution buffer: the half-spectrum is row-major with
 interleaved real and imaginary components, and backward input is copied
-before an execution transform that may overwrite it. `md-differentiate` still treats `md.reciprocal`
+before an execution transform that may overwrite it. Tensor bufferization
+and ownership-based deallocation run before optional device placement, so
+the target boundary adds only local allocation, copies, and dependent waits.
+`md-differentiate` still treats `md.reciprocal`
 as one op. #452 writes the reciprocal sum as spread, FFT,
 the influence map, inverse FFT, and gather. The adjoint identity holds on
 the valid Hermitian half-spectrum of a real grid: its last-axis zero and,
