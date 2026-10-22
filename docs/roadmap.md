@@ -15,7 +15,7 @@ Section 1; the principles that the work follows are in
 | M2a | The Python API (Section 6) | Items 1 to 8 of [python.md](python.md), Section 4, are done: item 8, `observe` in the Python model (#188, D232), was the last |
 | M2b | Differentiable simulation: parameters as tunable buffers, a frame evaluator with derivative rules, PyTorch then JAX adapters, and trajectory reweighting [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) (Section 6.1) | Under way beside the last item of M2a (maintainer, 2026-10-08): the derivative of the energy in the tunables is the first step (#203) |
 | M3 | Learned potentials on one GPU: ML1 steps 1 to 3, the IR of ML4, PaiNN in stages, and MACE in stages (Section 7, D287) | In progress: ML1's TorchScript backend through the metatomic plugin with chunks, from the control file and Python (D270), its AOTInductor backend (D273), the pair list from MDIR's neighbor structures (D277), ML4's opaque baselines of a pretrained PaiNN and MACE (D286), the IR of ML4: neural stages, fields of features, and their derivative (D288, D289), and PaiNN in stages on one GPU, step 4a (D294, D293), and the fusion of its bodies, the first part of step 4b (D299), and their products as calls of cuBLAS (D302), batched ones included, with their sums of rows as a warp a row (D303) |
-| M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | ML2 under way in parallel with M3 (Section 7): the dialect `md_dist` and its verifier (D275), the program derived from the global potential (D276), EAM on domains (D279), each domain's loops through `md_exec` (D290), the factor grid of the domains (D307), the record of the dependencies of the halos (D308), and their start and wait events (D310); ML3, ML5, and distributed particle mesh Ewald planned |
+| M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | ML2 under way in parallel with M3 (Section 7): the dialect `md_dist` and its verifier (D275), the program derived from the global potential (D276), EAM on domains (D279), each domain's loops through `md_exec` (D290), the factor grid of the domains (D307), the record of the dependencies of the halos (D308), their start and wait events (D310), ownership-epoch migration (D313), and the collective halo skin predicate (D[dist-covered]); ML3, ML5, and distributed particle mesh Ewald planned |
 
 Within ML4 step 4b, D329 provides an opt-in f64 storage
 strategy for stage feature and adjoint fields in mixed precision, while
@@ -449,8 +449,11 @@ long-term distributed scope.
 D313 (#494, a first slice of #38) gives `md_dist` an
 ownership-epoch transition and a generic complete-field redistribution by
 stable particle identity. Moving-snapshot LJ and EAM checks exercise the
-in-process CPU path, including empty domains. #38 still owns the collective
-skin/coverage witness, loop-carried live state and completed transfers at
+in-process CPU path, including empty domains. D[dist-covered] (#542) adds the
+in-process collective skin predicate over the old halo's ownership epoch and
+the wrapped coordinate frame of its explicit images, with a fixed cell;
+current coordinate halo copies remain separate. #38 still owns applying
+the witness to candidate-map reuse, loop-carried live state and completed transfers at
 retirement, and the first production-driver `[distribute]` path. These
 snapshot checks are not a distributed trajectory.
 

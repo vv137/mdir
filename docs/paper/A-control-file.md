@@ -1,9 +1,11 @@
 # Appendix A. The control file
 
 D313 adds execution-level ownership-epoch migration and field
-redistribution to `md_dist`. It adds no `[distribute]` table, Python option,
-checkpoint or output format, or overwrite behavior. The production driver's
-distributed step state and the approved `[distribute]` keys remain #38.
+redistribution to `md_dist`. D[dist-covered] adds an execution-level
+collective halo skin predicate. Neither adds a `[distribute]` table, Python
+option, checkpoint or output format, or overwrite behavior. The production
+driver's distributed step state and the approved `[distribute]` keys remain
+#38.
 
 D306 adds the execution-level linear FFT transform used for
 future reciprocal-sum composition. It introduces no control-file key,

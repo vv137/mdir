@@ -726,8 +726,12 @@ own op and its own test, as the plan separates them:
 
 - `covered` is the skin test of neighbor validity, extended to the halo:
   the halo built at $\mathbf x^\text{ref}$ with reach $R$ covers a cutoff
-  $r_c$ at $\mathbf x$ if no particle has moved more than $(R - r_c)/2$
-  (the existing condition with the scale of the cell, [neighbors.md](neighbors.md)).
+  $r_c$ at $\mathbf x$ if every particle has moved strictly less than
+  $(R - r_c)/2$
+  in the wrapped coordinate frame of the halo's explicit images. A periodic
+  wrap therefore invalidates coverage even if minimum-image displacement is
+  small. The cell must be unchanged: this slice does not apply the cell
+  scaling condition of [neighbors.md](neighbors.md).
   Its result is reduced over all domains before it is a value, so every
   domain takes the same branch: a predicate that guards a collective is
   agreed by construction (#38). A relation or halo used at other positions
@@ -761,6 +765,25 @@ empty ones), loop-carried layout and field state, completion of halo events
 before buffer retirement, and the production driver's `[distribute]`
 boundary. Repeated independent snapshots in tests are not an integrated
 trajectory.
+
+The first temporal-validity slice, D[dist-covered] (#542), adds
+`md_dist.covered` as a collective Verlet skin predicate
+[[Verlet1967]](references.md#verlet1967) over all owned rows of a halo's
+layout. Its reference field and cell must be the exact SSA operands of the
+halo build; its current positions are a distinct field version in the same
+ownership epoch. For each global identity the in-process executor takes the
+plain displacement between the two positions in the wrapped coordinate
+frame. A wrap changes an explicit halo image and makes the predicate false.
+The verifier requires the exact halo-build cell SSA value, and the runtime
+assumes its edges are unchanged; NPT cell scaling is outside this slice.
+The predicate is true
+only when twice the maximum displacement is strictly less than the halo
+reach minus the requested cutoff. Empty domains contribute no displacement
+but participate in the one result. This predicate describes validity of the
+candidate halo membership; a current coordinate payload must still receive
+its own `halo_copy` before a pair kernel reads it. The existing one-block
+executor can evaluate the predicate, but does not yet carry a halo through a
+step loop or branch collectively on the result. Those uses remain in #38.
 
 ## 9. Transports
 

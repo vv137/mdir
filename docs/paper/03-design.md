@@ -41,6 +41,22 @@ neighbors only: by the definition of $I_d$, its omitted ghost terms form
 the empty set. This filter alone preserves the immediate-wait schedule;
 placing it between a later start and wait is a separate step.
 
+`md_dist.covered` (D[dist-covered]) expresses the collective Verlet skin test
+[[Verlet1967]](references.md#verlet1967) for a
+halo built at positions $\mathbf x^\text{ref}$ with reach $R_h$. For current
+positions $\mathbf x$, $\Delta_h$ is the largest displacement of an owned
+particle in the wrapped coordinate frame of the halo's explicit images.
+With the cell unchanged, a candidate image retains its build-time shift.
+The old candidate membership is sufficient for a cutoff $r_c$ when
+$2\Delta_h < R_h-r_c$: by the triangle inequality, a pair at the current
+cutoff was at most $r_c+2\Delta_h < R_h$ apart in that same image at build
+time. A periodic wrap invalidates the witness even when the minimum-image
+displacement is small. The predicate is one value for all domains, including empty ones.
+The current coordinate values remain a separate version and require their
+own halo copy before use. This predicate currently runs in the in-process
+reference executor; loop-carried distributed state and the production
+driver remain to be connected.
+
 ## 3.1 What is computed, and how the state advances
 
 A term of the potential is written once, as an expression of its

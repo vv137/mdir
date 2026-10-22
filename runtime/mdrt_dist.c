@@ -352,6 +352,48 @@ int64_t mdrtDistHaloCapacity(int64_t handle) {
   return ((struct Halo *)(intptr_t)handle)->capacity;
 }
 
+/* A team-wide Verlet skin predicate (Verlet, Phys. Rev. 159, 98, 1967).
+   Each global identity is visited once
+   through the halo's ownership layout; even domains with no rows take part
+   in the decision. The current coordinate payload is independent of the
+   halo's stored membership and must be refreshed separately. */
+int64_t _mlir_ciface_mdrtDistCovered(int64_t handle,
+                                     struct Memref3D *reference,
+                                     struct Memref3D *current,
+                                     double cutoff) {
+  struct Halo *h = (struct Halo *)(intptr_t)handle;
+  if (!h || !reference || !current ||
+      !(isfinite(cutoff) && cutoff > 0.0 && cutoff < h->reach))
+    fail("coverage requires a halo and a cutoff below its reach");
+  struct Layout *l = h->layout;
+  if (reference->sizes[0] != l->domains ||
+      current->sizes[0] != l->domains ||
+      reference->sizes[1] < l->count || current->sizes[1] < l->count ||
+      reference->sizes[2] != 3 || current->sizes[2] != 3)
+    fail("coverage positions do not span the halo layout");
+  double halfSkin = (h->reach - cutoff) * 0.5;
+  double limit2 = halfSkin * halfSkin;
+  for (int64_t d = 0; d < l->domains; ++d)
+    for (int64_t r = 0; r < l->rows[d]; ++r) {
+      double displacement2 = 0.0;
+      for (int k = 0; k < 3; ++k) {
+        double a = *at3(reference, d, r, k);
+        double b = *at3(current, d, r, k);
+        if (!isfinite(a) || !isfinite(b))
+          fail("coverage requires finite positions");
+        /* Halo rows retain explicit images. A wrap changes that image, so
+           minimum-image displacement would incorrectly preserve coverage. */
+        double delta = b - a;
+        if (!isfinite(delta))
+          fail("coverage requires finite displacement");
+        displacement2 += delta * delta;
+      }
+      if (!(displacement2 < limit2))
+        return 0;
+    }
+  return 1;
+}
+
 /* The ghost rows of each domain, and the particle each is an image of. */
 void _mlir_ciface_mdrtDistHaloRows(int64_t handle, struct Memref1I *rows,
                                    struct Memref2I *ids) {

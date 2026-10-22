@@ -501,6 +501,25 @@ LogicalResult HaloOp::verify() {
   return success();
 }
 
+LogicalResult CoveredOp::verify() {
+  auto build = getHalo().getDefiningOp<HaloOp>();
+  if (!build)
+    return emitOpError() << "cannot prove the halo build source";
+  if (getReference() != build.getPositions())
+    return emitOpError()
+           << "reference positions must be the halo build version";
+  if (getCell() != build.getCell())
+    return emitOpError() << "cell must be the halo build cell";
+  if (failed(verifyOwnedComplete(*this, "current positions", getCurrent())) ||
+      failed(verifySameLayout(*this, "current positions", getCurrent(),
+                              build.getLayout())))
+    return failure();
+  double cutoff = getCutoff().convertToDouble();
+  if (!(cutoff > 0.0 && cutoff < getHalo().getType().getReach().convertToDouble()))
+    return emitOpError() << "cutoff must be positive and smaller than the halo reach";
+  return success();
+}
+
 LogicalResult HaloCopyOp::verify() {
   if (failed(verifyOwnedComplete(*this, "the field", getField())) ||
       failed(verifySameLayout(*this, "the field", getField(),

@@ -212,6 +212,41 @@ def MDDist_HaloOp : MDDist_Op<"halo", [
   let hasVerifier = 1;
 }
 
+def MDDist_CoveredOp : MDDist_Op<"covered", [
+    Pure, AllTypesMatch<["reference", "current"]>
+  ]> {
+  let summary = "Collectively test whether a halo still covers a cutoff";
+  let description = [{
+    Return one predicate agreed by all domains. The reference positions and
+    cell must be exactly those of `halo`; the current positions belong to
+    the same ownership epoch but are a separate SSA value. Coverage holds
+    when twice the largest displacement of an owned particle in the wrapped
+    coordinate frame is strictly smaller than the halo reach minus `cutoff`.
+    A periodic wrap therefore invalidates coverage: the halo stores explicit
+    images. The cell must remain unchanged. Empty domains participate and
+    contribute zero displacement.
+
+    ```mlir
+    %ok = md_dist.covered %halo, %reference, %current, %cell cutoff(2.0)
+            : !md_dist.halo<@dd, 2.2>,
+              !md_dist.field<@dd, owned, 3 x f64> -> i1
+    ```
+  }];
+  let arguments = (ins MDDist_HaloType:$halo,
+                       MDDist_FieldType:$reference,
+                       MDDist_FieldType:$current,
+                       MD_CellType:$cell,
+                       F64Attr:$cutoff);
+  let results = (outs I1:$result);
+  let assemblyFormat = [{
+    $halo `,` $reference `,` $current `,` $cell
+    `cutoff` `(` $cutoff `)` attr-dict `:`
+    qualified(type($halo)) `,` qualified(type($reference)) `->`
+    type($result)
+  }];
+  let hasVerifier = 1;
+}
+
 def MDDist_HaloCopyOp : MDDist_Op<"halo_copy", [Pure]> {
   let summary = "The owner-to-ghost copy G";
   let description = [{
