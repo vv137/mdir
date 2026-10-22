@@ -1583,6 +1583,20 @@ format, or the outputs; every such change is listed under **Changed** or
   instead of 10.9. The tables and the compiled programs are the same to
   the bit (#236).
 
+- **The comparison with pmemd.cuda on the Amber suite runs both programs
+  under one protocol** (D[suite-symmetric], #534): the steps and the
+  output of each system's `mdin.GPU`, the rate over the same window, MDIR
+  with the searched and the default reaches, and the whole wall time of
+  each run (`scripts/benchmarks/amber/bench.py run --suite-protocol
+  [--energies-only] [--record FILE]`; `scripts/paper/run-suite-repeats.sh`,
+  `suite-table.py`, `plot-suite.py`). White paper Section 10, Tables 10.1
+  to 10.4 and Figure 10.1, measured again: MDIR with the searched reaches
+  at 112% (STMV) to 150% (JAC at 4 fs) of pmemd.cuda's rate, with the
+  default reaches at 106% to 144%. The previous protocol, which favored
+  MDIR, gave 124% to 151%. The headlines of the README and the paper give
+  MDIR's own rates and refer to Section 10 for the ratios. Without
+  `--suite-protocol`, `bench.py` runs as before.
+
 ### Added
 
 - `examples/ala3/run.py`: the four stages of the ala3 example (minimization,

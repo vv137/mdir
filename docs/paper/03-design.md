@@ -612,9 +612,9 @@ PTX, which the driver compiles when the module is loaded
 (`cuModuleLoadDataEx`). The log reports the time from the
 parsed module to a callable entry point, which includes the passes, the
 code generation of LLVM, the creation of the CUDA context, and the
-compilation of the PTX: about 10 s at constant energy and 20 s at
+compilation of the PTX: about 7 s at constant energy and 13 s at
 constant pressure for the systems of the Amber suite, whatever their size
-(Table 10.2). The module of JAC at constant pressure has 9,236 lines as
+(Table 10.4). The module of JAC at constant pressure has 9,236 lines as
 the driver writes it, and the lowering outlines 545 GPU modules from it.
 
 A Python simulation compiles on an engine of its own (D199), whose host

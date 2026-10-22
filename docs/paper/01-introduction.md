@@ -60,14 +60,13 @@ paper describes the system that reaches it.
    decides.
 5. **Results** (Sections 9 and 10): agreement of the energy terms and of
    the force on every particle with sander and GROMACS, and of the terms
-   with CHARMM and, in triclinic cells, with all three; conservation of energy over 2 ns of JAC better than
-   that of pmemd.cuda on the same input; on an RTX 4090, a rate between 124%
-   and 151% of pmemd.cuda's over the Amber suite, with the skins that
-   MDIR chooses, and between 104% and
-   132% on every system on an RTX 3090 when the first milestone was
-   completed; and on
-   ubiquitin in OPC, 66% to 72% of the rate of GROMACS, with the loop over
-   pairs as fast as GROMACS's and the difference in the rest of the step.
+   with CHARMM and, in triclinic cells, with all three; conservation of
+   energy over 2 ns of JAC (Section 9.4); and on one RTX 4090, rates over
+   the Amber suite from 1277 ns/day on JAC (2406 at 4 fs) to 83 ns/day on
+   STMV with the steps and output of the suite's inputs. Section 10
+   measures them against the target of the first milestone (D114), the
+   rate of pmemd.cuda, with both programs under one protocol, and against
+   GROMACS on ubiquitin in OPC.
 
 ## How the paper is organized
 
