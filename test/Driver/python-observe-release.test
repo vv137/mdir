@@ -1,0 +1,18 @@
+# The full CPU precision/modifier matrix of the Python observe oracles.
+# The default test keeps Double/cutoff and Mixed/shift; the release tier
+# also checks Double/shift and Mixed/cutoff for both model families.
+# REQUIRES: python-api, hdf5, release-tests
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5
+# RUN: %mdir_python %S/Inputs/python_observe.py %S/Inputs/dipeptide %t CPU mdir %t matrix 2>&1 | FileCheck %s
+# CHECK: CPU Double cutoff: 5 rows of 10 columns (pair, bonds, walls) equal to mdir run's file byte for byte, and the state's values to its rows
+# CHECK: CPU Double shift: 5 rows of 10 columns
+# CHECK: CPU Mixed cutoff: 5 rows of 10 columns
+# CHECK: CPU Mixed shift: 5 rows of 10 columns
+# CHECK: CPU Double cutoff: the mixture's rows equal to mdir run's file byte for byte; the correction adds, as its closed forms, nbfix.energy -1.921376, nbfix.d_sig -43.801428, nbfix.d_eps -1.291884
+# CHECK: CPU Double shift: the mixture's rows equal to mdir run's file byte for byte
+# CHECK: CPU Mixed cutoff: the mixture's rows equal to mdir run's file byte for byte
+# CHECK: CPU Mixed shift: the mixture's rows equal to mdir run's file byte for byte
+# CHECK: CPU Double NPT: 5 rows equal to mdir run's file byte for byte
+# CHECK: CPU Mixed NPT: 5 rows
+# CHECK: observe matrix passed

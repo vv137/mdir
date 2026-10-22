@@ -1,0 +1,18 @@
+# The full GPU precision/modifier matrix of the Python observe oracles.
+# The default test keeps Double/cutoff and Mixed/shift; the release tier
+# also checks Double/shift and Mixed/cutoff for both model families.
+# REQUIRES: python-api, hdf5, cuda, release-tests
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/pair_tail_system.py %t 60 60 32 3.7 0.5
+# RUN: %mdir_python %S/Inputs/python_observe.py %S/Inputs/dipeptide %t GPU mdir %t matrix 2>&1 | FileCheck %s
+# CHECK: GPU Double cutoff: 5 rows of 10 columns (pair, bonds, walls) equal to mdir run's file byte for byte, and the state's values to its rows
+# CHECK: GPU Double shift: 5 rows of 10 columns
+# CHECK: GPU Mixed cutoff: 5 rows of 10 columns
+# CHECK: GPU Mixed shift: 5 rows of 10 columns
+# CHECK: GPU Double cutoff: the mixture's rows equal to mdir run's file byte for byte; the correction adds, as its closed forms, nbfix.energy -1.921376, nbfix.d_sig -43.801428, nbfix.d_eps -1.291884
+# CHECK: GPU Double shift: the mixture's rows equal to mdir run's file byte for byte
+# CHECK: GPU Mixed cutoff: the mixture's rows equal to mdir run's file byte for byte
+# CHECK: GPU Mixed shift: the mixture's rows equal to mdir run's file byte for byte
+# CHECK: GPU Double NPT: 5 rows equal to mdir run's file byte for byte
+# CHECK: GPU Mixed NPT: 5 rows
+# CHECK: observe matrix passed

@@ -185,6 +185,10 @@ def run_files():
     # values that a callback reads at each row.
     for precision in ("Double", "Mixed"):
         for shift in (False, True):
+            # The release tier runs the full precision/modifier matrix.
+            # Each default run still covers both precisions and modifiers.
+            if scenario != "matrix" and shift != (precision == "Mixed"):
+                continue
             name = f"dip-{precision}-{'shift' if shift else 'cutoff'}".lower()
             run_cli(dipeptide_control(name, precision, shift, 20, 5))
             program = dipeptide(precision, shift)
@@ -649,6 +653,10 @@ def run_mixture():
     # shift (D209, D210), in the energy and in both derivatives.
     for precision in ("Double", "Mixed"):
         for shift in (False, True):
+            # Use the other diagonal so all four combinations occur in the
+            # default suite across the two independent models.
+            if scenario != "matrix" and shift != (precision == "Double"):
+                continue
             name = f"mix-{precision}-{'shift' if shift else 'cutoff'}".lower()
             run_cli(mixture_control(name, precision, shift, "NVE", 20, 5))
             sim = mdir.Simulation(mixture_program(precision, shift))
@@ -797,6 +805,7 @@ def run_tunables(precision):
 
 
 scenario = sys.argv[6] if len(sys.argv) > 6 else "all"
+assert scenario in ("all", "matrix"), scenario
 try:
     mdir.read_checkpoint(str(work / "missing.h5"))
 except mdir.UnsupportedError:
@@ -804,6 +813,10 @@ except mdir.UnsupportedError:
 except Exception:
     pass
 run_files()
+if scenario == "matrix":
+    run_mixture()
+    print("observe matrix passed")
+    sys.exit(0)
 probe = mdir.Simulation(dipeptide("Double", False))
 probe.run(20, energy=True)
 seen_at_20 = probe.state().observables
