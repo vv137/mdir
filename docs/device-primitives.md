@@ -171,9 +171,11 @@ At the semantic level, `md.linear_transform` (D319,
 #502) has the same direction, adjoint, and pairing contract over pure
 static three-dimensional tensor values. It requires a real `f64` grid and
 a `complex<f64>` half-spectrum whose last extent is $K_3/2+1$.
-Its declared transpose creates the opposite transform. The semantic
-value-to-buffer bridge is a separate part of #452; the pure operation
-does not yet call these host or device strategies.
+Its declared transpose creates the opposite transform. The
+semantic-to-execution FFT bridge is #526 (PR #563, in progress); the
+composition of the reciprocal sum from primitives remains #452. Until
+that bridge is merged, the pure operation does not call the host or
+device FFT strategies.
 The current `md_exec.reciprocal` template remains in use until #452
 decomposes its semantic `md` counterpart.
 
