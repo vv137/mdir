@@ -1,6 +1,6 @@
 # Dynamics, Minimization, and Restraints
 
-Status: kept current; last checked against the code on 2026-10-21. The
+Status: kept current; last checked against the code on 2026-10-22. The
 decisions are D50, D60, D67, D72 to D74, D76, D77, and those that amended them
 ([decisions.md](decisions.md)); the keys are in
 [the control file](paper/A-control-file.md).
@@ -57,48 +57,420 @@ MDIR takes the one of 2020 (D50). A checkpoint needs nothing for it.
 
 ### 2.2 In `dyn`
 
-*Proposed, not implemented as written.* The couplings are not ops of
-`dyn`: the driver writes them into the schedule of `@mdir_run` at the end
-of each period of coupling (Section 2.4). The factor of the thermostat
-and the strain of the barostat are calls to the host (`mdrtBussiFactor`,
-`mdrtBarostatStrain` of `libmdrt`, which draw from Philox 4×32-10 by the
-key of A13), and loops over particles (`md.map_particles`) remove the
-motion of the center of mass and scale the velocities and the positions.
-The proposal was:
+*A design, not implemented (D[dyn-coupling-ops], #541).* Nothing in this
+section is built yet. `include/mdir/Dialect/Dyn/DynOps.td` has
+`dyn.kick`, `dyn.drift`, `dyn.program`, `dyn.return`, and `dyn.step`, and
+no op of a coupling. The ops below formalize what the driver writes
+today. They add no thermostat or barostat, change no key of the control
+file and no default, and change no number. Steps 2 to 4 of #541 build
+them (Section 2.2.9). Until then Sections 1, 2.3, 2.4, 2.6, and 6
+describe what runs.
+
+#### 2.2.1 What runs today
+
+`lib/Driver/Builder.cpp` writes the couplings as text into the schedule of
+`@mdir_run`, at the end of each period of coupling (`emitCoupling`,
+`emitStrain`, and the closing steps in `emitLevel`):
+
+| What | How it is written |
+|---|---|
+| Sums over the particles | `md.sum_particles`: the momentum $\sum_i m_i\mathbf v_i$, the kinetic energy of each axis, and $\tfrac{\Delta t^2}{8}\sum_i F_{i,a}^2/m_i$; with `md.sum_tuples` over the rigid groups, the kinetic energy of the centers of the groups (`emitGroupKinetic`) |
+| The factor of the thermostat | `func.call @mdrtBussiFactor` (`runtime/mdrt.c`, `libmdrt`) or `@mdrtNoseHooverFactor` (`lib/Driver/Output.cpp`), on the host |
+| The strain of the barostat | Arithmetic on the host for the pressure, then `func.call @mdrtBarostatStrain`, `@mdrtBarostatStrainArea` and `@mdrtBarostatStrainHeight`, or `@mdrtBarostatStrainAxis` once for each axis (`libmdrt`) |
+| The cell | `memref.store` into `%box_memory`, a buffer of the host that each iteration of a loop loads (D72), and `func.call @mdrtSetBox` and `@mdrtSetTilt` for the log, the trajectory, and the checkpoint |
+| The scaling | One `md.map_particles` that subtracts the velocity of the center of mass, multiplies by $\alpha$, and multiplies by $1/\mu_a$, in that order; the positions by `emitGroupScaling`, rigid groups by their centers through `md.gather_tuples` |
+| The energy of the bath | Arithmetic on the host, then `func.call @mdrtAddBath` |
+| Langevin and Brownian dynamics | Inside every program of a step: Philox as `arith` ops in an `md.map_particles` (`emitNoise`) |
+| The barostat of Trotter type | Two closing steps, `dyn.step @step_virial` and `dyn.step @step_trotter(…, %mu)`, the second of which scales in the middle of its drift; with a period of one step, the state of the pressure in `%trotter_memory` and `func.call @mdrtSetBarostatState` |
+
+A pass therefore sees sums and calls, and not what they are for: which
+sums a coupling needs, which state of the host it reads and writes, and
+whether the steps of a period compute a sum. `dyn.step` is `Pure`, though
+the programs it applies hold host calls (`mdrtDeferStops`,
+`mdrtStopConstraintFailure`). `requires` and `provides` of `dyn.program`
+are checked against a list of names and read by no pass, and every
+program of a step but those of Brownian dynamics claims `symplectic` and `time_reversible`,
+those with the friction and the noise of Langevin dynamics and
+`step_trotter` included.
+
+#### 2.2.2 Principles
+
+1. **Each op lowers to the operations that the driver writes today, on the
+   same operands, in the same order of dependence.** An op returns the
+   intermediate values that today's arithmetic takes, not a recombination
+   of them: $E = \tfrac{\Delta t^2}{8}\sum F^2/m$ rather than
+   $K_\text{half} = K + E$, since $K + \tfrac23\big((K + E) - K\big)$ need
+   not round as $K + \tfrac23E$ does. The chain of the velocities (the
+   center of mass subtracted, then $\alpha$, then $1/\mu_a$) stays one loop
+   with the same order of products, since $(\mathbf v\alpha)\mu^{-1}$ and
+   $\mathbf v(\alpha\mu^{-1})$ need not round alike. This keeps a run in
+   the deterministic mode bitwise identical (Section 2.2.8).
+2. **The random numbers are drawn inside the op that takes them.** The old
+   proposal's `dyn.random` is dropped: the factor of stochastic velocity
+   rescaling draws a gamma number by rejection
+   [[Bussi2007]](references.md#bussi2007), so the count of its draws is
+   not known before, and the key of A13 is fixed by the op, its step, and
+   the stream of its kind (Section 2.2.6).
+3. **The state of the host stays on the host**: the cell (D72), the
+   Nosé–Hoover chain (D163a), the energy of the bath (D129), and the state
+   of the pressure of a barostat of Trotter type that scales every step
+   (D92). An op that reads or writes one declares it as an effect on a
+   resource of the dialect, so that passes keep the order of those ops and
+   do not remove them.
+4. **The schedule does not change.** The loops of `setSchedule` stay as
+   they are (Section 2.2.5); the ops take the places of the text that
+   `emitCoupling` and the closing steps write.
+
+#### 2.2.3 The ops
+
+`!vec` is a field of 3 × f64 on a particle set, `!real` a scalar field on
+it, `!ids` the numbers of the particles in the input, and `!md.relation`
+the tuples of a set of rigid groups (a water of SETTLE, a cluster of
+SHAKE). Every field operand of an op is on one particle set, as the
+verifiers of `dyn.kick` and `dyn.drift` require. A *global sum* is a sum
+over the particles, tuples, or pairs whose result the host reads; on a
+device it is a reduction and a wait for its result (ops.md, Section 10.8).
+
+**Measurements.** Pure; each needs global sums and lowers to
+`md.sum_particles`, with `md.sum_tuples` over the groups, which run as
+loops on the device and reductions.
+
+| Op | Operands → results | Value |
+|---|---|---|
+| `dyn.kinetic` | `%v: !vec, %m: !real` → `vector<3xf64>` | $K_a = \tfrac12\sum_i m_iv_{i,a}^2$; one sum |
+| `dyn.momentum` | `%v, %m` → `vector<3xf64>` | $\mathbf P = \sum_i m_i\mathbf v_i$; one sum |
+| `dyn.half_step_excess` | `%f: !vec, %m, %dt: f64` → `vector<3xf64>` | $E_a = \tfrac{\Delta t^2}{8}\sum_i F_{i,a}^2/m_i$, a particle of mass 0 left out: $K_{\text{half},a} - K_a$, exact without constraints [[Jung2018]](references.md#jung2018); one sum |
+| `dyn.group_kinetic` | `%x, %v, %f, %m, %cell: !md.cell, %dt`, `groups(%r: !md.relation, …)`, optional `center(%M: vector<3xf64>)` → three `vector<3xf64>` | $K_{g,a}$, $E_{g,a} = \tfrac{\Delta t^2}{8}\sum_g F_{g,a}^2/M_g$, and $K_{\text{half},g,a} = K_{g,a} + E_{g,a}$ of the centers of the groups (D264, [[Jung2020]](references.md#jung2020)). With `center`, the total mass, $K_g$ is without the motion of the center of mass, as when the run removes it. Two sums over the particles, two over the tuples of each set of groups, and one more with `center` |
+
+The verifier of `dyn.group_kinetic` requires each relation to be a set of
+groups of the particle set of the fields; a particle in no relation is a
+group of one.
+
+**Arithmetic of a coupling.** Pure, on scalars and `vector<3xf64>` of the
+host; no sum. They lower to `arith` and `math` ops on the host.
+
+| Op | Operands → results | Value |
+|---|---|---|
+| `dyn.pressure` | `%k: vector<3xf64>, %w: vector<3xf64>`, the edges `%L0, %L1, %L2: f64`, `%c: f64` → `vector<3xf64>` | $P_{aa} = c_\text{bar}\,(2K_{\text{half},g,a} + W_{g,aa} + C/(3V))/V$ in bar, with $V = (L_0L_1)L_2$, $C$ the virials of the constant terms times the volume, and $c_\text{bar} = 16.6053906717$ bar nm³ mol/kJ (D264) |
+| `dyn.scale_cell` | the edges, and with a triclinic cell the tilts $b_x, c_x, c_y$ (3 or 6 × f64), `%mu: vector<3xf64>` → as many f64 | $H\,\mathrm{diag}(\boldsymbol\mu)$: each edge by its $\mu_a$, $b_x$ and $c_x$ by $\mu_x$, $c_y$ by $\mu_y$ (D127) |
+| `dyn.scaling_work` | `kinetic(%k)`, `strain(%mu)` or `log_strain(%e)`, `virial_before(%wb)`, optional `virial_after(%wa)`, optional `energies(%u, %u1: f64)`, `constant(%c)`, `volumes(%V, %V1: f64)`; attribute `count` → f64 | $\Delta E_\text{sys}$, the energy that a scaling gives the system (Section 2.2.7) |
+
+The verifier of `dyn.scaling_work` requires, for each `count`, exactly the
+operands that its formula takes: `trotter` the log strain and both
+virials; `trotter_before` the log strain and the virial before; `exact`
+the strain and the energies; `first_order` the strain and the virial
+before. `count` is how the work is counted, not the key `work`:
+`TROTTER_FIRST_ORDER` with a period of one step counts as `trotter`, since
+the next scaling takes the virial after the scaling anyway
+(`countsAfterScaling`, D92).
+
+**Draws.** Each takes the seed as an `i64` attribute and the number of the
+step as an `i64` operand, and draws from its own stream (Section 2.2.6).
+They lower to calls into `libmdrt` on the host.
+
+| Op | Operands → results | Value | Effects |
+|---|---|---|---|
+| `dyn.velocity_rescaling` | `%k: f64, %step: i64`; attributes `seed`, `target_kinetic` $\bar K = \tfrac12N_fk_BT_0$, `freedom` $N_f$, `decay` $e^{-N_T\Delta t/\tau_T}$ → f64 | The factor $\alpha$ of [[Bussi2007]](references.md#bussi2007) (its appendix) for the kinetic energy $K$; 1 if $K \le 0$; `mdrtBussiFactor`, stream 0 | Pure: a function of its operands and attributes, since Philox is counter-based. The verifier requires $N_f > 0$, $\bar K > 0$, and $0 < $ `decay` $< 1$ |
+| `dyn.cell_rescaling` | `%p: vector<3xf64>` (bar), the edges `%L0, %L1, %L2`, `%step: i64`; attributes `coupling` (`isotropic`, `semi_isotropic`, `anisotropic`), `seed`, `target` $P_0$ (bar), `compressibility` (one number, two for x and y and for z, or three; 1/bar), `rate` $N_P\Delta t/\tau_P$, `kT` (kJ/mol), `tension` $\gamma$ (bar nm, semi-isotropic only) → `vector<3xf64>` | The change $\Delta\varepsilon_a$ of the strain of each axis over the period [[Bernetti2020]](references.md#bernetti2020): isotropic, a third of $\Delta\varepsilon$ of the step of $\lambda = \sqrt V$, eq. (S7), from the mean of the three pressures (`mdrtBarostatStrain`); semi-isotropic, half of $\Delta\varepsilon_{xy}$ to x and y and $\Delta\varepsilon_z$ to z, eqs. (9a, 9b) (`mdrtBarostatStrainArea`, `mdrtBarostatStrainHeight`, D119); anisotropic, $\Delta\varepsilon_a$ of each axis (`mdrtBarostatStrainAxis`, D163c); stream 1 | Isotropic: pure. Semi-isotropic and anisotropic: writes the statistics of the pressures of the axes that the log reports at the end (`semiPressures`, `axisPressures` of `runtime/mdrt.c`). The verifier requires the count of `compressibility` of the coupling, not every compressibility 0 when anisotropic, `tension` only when semi-isotropic, `rate > 0`, and `kT > 0` |
+
+**Thermostat with state.**
+
+| Op | Operands → results | Value | Effects |
+|---|---|---|---|
+| `dyn.nose_hoover` | `%k: f64, %step: i64`; attributes `temperature` $T_0$, `time_constant` $\tau_T$, `chain_length` $M$, `period` $N_T\Delta t$ (ps), `freedom` $N_f$ → f64 | The factor of the velocities from one action of the chain over the period [[Martyna1992]](references.md#martyna1992), [[Martyna1996]](references.md#martyna1996) (D163a); `mdrtNoseHooverFactor` of `lib/Driver/Output.cpp`, on the host | Reads and writes the chain, $2M$ numbers of the host that the checkpoint keeps (`/parameters/mdir/thermostat_state`); stops the run when the factorization no longer follows the chain (D206). The verifier requires $M \ge 1$, $\tau_T > 0$, $T_0 > 0$, $N_f > 0$ |
+
+The step operand of `dyn.nose_hoover` only names the step in the message
+of a stop. Its attributes are those that `Output::setChain` takes from the
+control file today; step 3 checks that the two agree.
+
+**Updates of the particles.** Pure; each lowers to an `md.map_particles`
+(and `md.gather_tuples` for groups), a loop on the device with no sum.
+
+| Op | Operands → results | Value |
+|---|---|---|
+| `dyn.shift` | `%v: !vec, %u: vector<3xf64>` → `!vec` | $\mathbf v_i - \mathbf u$; with $\mathbf u = \mathbf P/M$ the removal of the motion of the center of mass |
+| `dyn.scale` | `%v: !vec, %s: f64` or `vector<3xf64>` → `!vec` | $s\,\mathbf v_i$, or $\mathbf s\odot\mathbf v_i$ |
+| `dyn.scale_positions` | `%x: !vec, %mu: vector<3xf64>, %m: !real, %cell`, `groups(%r: !md.relation, …)` → `!vec` | $\boldsymbol\mu\odot\mathbf x_i$ for a particle alone; each rigid group moves with its center of mass $\mathbf X_g$ to $\boldsymbol\mu\odot\mathbf X_g$ and keeps its shape (D72) |
+| `dyn.noise` | `%v: !vec, %m: !real, %step: i64, %ids: !ids`; attributes `seed`, `decay` $c$, `spread` $\sigma$ → `!vec` | $c\,\mathbf v_i + (\sigma/\sqrt{m_i})\,\mathbf R_i$, with $\mathbf R_i$ three normal numbers of stream 2 of particle $i$ and the step; a particle of mass 0 keeps $\mathbf v_i$. Philox as `arith` ops in the loop, as `emitNoise` writes it |
+
+A chain of `dyn.shift` and `dyn.scale` on one field whose intermediate
+values have no other use lowers to one `md.map_particles` that applies
+them in order, as the driver writes it today; no canonicalization folds two
+scales into one. `dyn.noise` is the O step of Langevin dynamics with
+$c = e^{-\gamma\Delta t}$ and $\sigma = \sqrt{(1 - c^2)k_BT_0}$
+[[Leimkuhler2013]](references.md#leimkuhler2013), and the noise of
+Brownian dynamics with $c = 1$ and $\sigma = \sqrt{2k_BT_0/(\gamma\Delta t)}$
+on the velocity of the drift $\mathbf F_i/(m_i\gamma)$
+[[Ermak1978]](references.md#ermak1978) (D163b). The attributes hold the
+numbers that the driver computes for `emitNoise` today, so that the
+constants of the kernel keep their bits.
+
+**State of the host.** Each lowers to `memref` ops on a buffer of the host
+and, where the log or the checkpoint keeps the value, a call into the
+driver's runtime (`lib/Driver/Output.cpp`).
+
+| Op | Operands → results | Effects |
+|---|---|---|
+| `dyn.load_cell` | → 3 or 6 × f64, the edges and the tilts | Reads the cell (`%box_memory`) |
+| `dyn.store_cell` | 3 or 6 × f64 | Writes the cell, and the box of the log, the trajectory, and the checkpoint (`mdrtSetBox`, `mdrtSetTilt`); stops a run whose cell is not finite or changed by more than a factor of 2 along an axis at one coupling (#168, D225) |
+| `dyn.load_pressure_state` | → three `vector<3xf64>`: the diagonals of $\mathsf W$ and of $\mathsf W_g$, and $K_{\text{half},g}$ after the thermostat | Reads `%trotter_memory` |
+| `dyn.store_pressure_state` | the same three | Writes `%trotter_memory` and the checkpoint's `/parameters/mdir/barostat_state` (`mdrtSetBarostatState`) |
+| `dyn.to_bath` | `%e: f64` | Adds $-\Delta E_\text{sys}$ to $E_\text{bath}$ (`mdrtAddBath`), which the conserved energy of the log and the checkpoint's `bath` take (D129) |
+
+The pair `dyn.load_pressure_state` and `dyn.store_pressure_state` appears
+only under the barostat of Trotter type with a period of one step (D92).
+The verifier of `dyn.load_cell` and `dyn.store_cell` requires 3 or 6
+values; every op of a module takes the same count, that of the cell of the
+run.
+
+`dyn.step` loses `Pure`: it takes the effects of the ops of the program it
+applies, through an interface that `dyn.program` implements over its body,
+so that a step whose program holds `dyn.store_pressure_state` or a stop is
+not moved across another.
+
+#### 2.2.4 The contract of `dyn.program`
+
+`requires` names what the bath gives the ops of a program, and `provides`
+what the program claims. Once the ops exist, the verifier checks the
+claims against the body, in both directions where a name says what the
+body holds:
+
+| Name | Rule |
+|---|---|
+| `requires = ["temperature"]` | If and only if the body has a `dyn.noise` |
+| `requires = ["pressure"]` | If and only if the body has a `dyn.scale_positions`, whose strain the barostat computes from the pressure (`step_trotter`) |
+| `provides = ["thermostatting"]` | If and only if the body has a `dyn.noise` |
+| `provides = ["barostatting"]` | If and only if the body has a `dyn.scale_positions` |
+| `provides = ["symplectic", "time_reversible"]` | Only if the body has neither: friction, noise, and a scaling within the drift are neither. Neither integrator conserves energy exactly [[Hairer2003]](references.md#hairer2003), and neither claims to (ops.md, Section 6.3) |
+| `provides = ["no_global_sums"]` (new) | Only if the body computes no global sum: no op of the measurements above, no `md.sum_particles`, `md.sum_tuples`, or `md.sum_relation` with a floating-point result, and no `md.evaluate` that requests the energy or the virial |
+
+`no_global_sums` allows what a plain step reduces today and does not wait
+for: the flags of the constraints, an `i1` that `md.gather_tuples` yields
+and that is exact in any order (D278), and the test of validity of the
+neighbor structures within `md.evaluate`. The driver gives it to `@step`,
+the program of the steps between couplings, so that D67's rule (a step
+between couplings computes no global sum) is checked rather than kept by
+the schedule alone.
+
+Today's programs would change their claims: those of Langevin dynamics
+take `thermostatting` instead of `symplectic` and `time_reversible`, and
+`step_trotter` takes `barostatting` and `pressure`. Nothing reads these
+attributes, so the change alters the text of the IR and no number.
+
+#### 2.2.5 The schedule
+
+The loops stay those of `setSchedule`. A period of coupling of $N_T$
+steps, `interval` of `[thermostat]` (`getCouplingPeriod`, the interval of
+`center_of_mass_interval` without a thermostat), is a loop of
+$N_T - k$ plain steps, `dyn.step @step`, then $k$ closing steps and the
+coupling, with $k = 2$ under the barostat of Trotter type unless the
+period is one step, and $k = 1$ otherwise (`getClosingSteps`). The loop
+over the periods of an interval between energies leaves the last period
+to the interval, whose step of energy closes it. `interval` is resolved as
+`resolveControlCoupling` does it today: 10 by default with a thermostat
+that rescales, `center_of_mass_interval` equal to it or 0; under Langevin
+dynamics it paces the removal of the motion of the center of mass and the
+barostat, 10 by default with a barostat and none otherwise; the barostat's
+`interval` equals the thermostat's; `steps` and every interval of output
+are multiples of it.
+
+The step operand of the draws is the step that ends the period,
+`nestStart` plus the steps the loops have done (`emitStep`), counted from
+the first step of the run (D129), in a Python simulation as well, whose
+periods are counted from its first step (D196). The kernels of Langevin and
+Brownian dynamics take the number of the step from the counter on the host
+that every step advances (`%noise_memory`). Both are absolute, so a
+trajectory depends neither on how the steps are grouped into loops nor on
+a restart (D67).
+
+The period maps onto the ops as follows (velocity Verlet; with leapfrog
+the coupling takes the velocities of the time of the positions where the
+barostat acts, and stores them half a kick behind by a `dyn.kick` of
+$-\Delta t/2$; the thermostat alone scales the stored velocities, with
+$K_T$ from those of the time of the positions, Section 6):
+
+1. **Without a barostat.** The closing step is `@step`, or with
+   constraints and a thermostat that rescales `@step_thermostat`, which
+   also returns the measured $K_\text{half}$ (D263). Then
+   `dyn.momentum` (with a removal), `dyn.kinetic`, $K_T$ from
+   `dyn.half_step_excess` or the measured $K_\text{half}$,
+   `dyn.velocity_rescaling` or `dyn.nose_hoover`, `dyn.shift` and
+   `dyn.scale`, and `dyn.to_bath`.
+2. **The barostat with `work = "EXACT"` or `"FIRST_ORDER"`.** The closing
+   step is `@step_energy`, or `@step_coupling` with constraints, which
+   returns the energy, the virial, and the diagonal of $\mathsf W_g$. Then
+   the measurements, the factor of the thermostat, `dyn.group_kinetic`,
+   `dyn.load_cell`, `dyn.pressure`, `dyn.cell_rescaling`, $\mu_a =
+   e^{\Delta\varepsilon_a}$, `dyn.scale_cell`, `dyn.store_cell`,
+   `dyn.scale_positions`; with `"EXACT"` the sites placed on the scaled
+   positions and `md.evaluate` in the new cell, with the restraints and
+   the learned potentials, as today (D77); `dyn.scaling_work`,
+   `dyn.to_bath`, and the velocities by `dyn.shift`, `dyn.scale` by
+   $\alpha$, and `dyn.scale` by $1/\mu_a$.
+3. **The barostat of Trotter type.** The first closing step is
+   `@step_virial`. Then `dyn.group_kinetic`, `dyn.load_cell`,
+   `dyn.pressure`, `dyn.cell_rescaling`, `dyn.scale_cell`, and
+   `dyn.store_cell`; the second closing step `dyn.step @step_trotter(…,
+   %cell1, %dt, %mu)` in the new cell, whose program holds
+   `dyn.drift` of $\Delta t/2$, `dyn.noise` under Langevin dynamics,
+   `dyn.scale_positions`, `dyn.kinetic` of the velocities it scales
+   ($K_{1/2,a}$), `dyn.scale` by $1/\mu_a$, and the second `dyn.drift`;
+   then `dyn.scaling_work` with `count = "trotter"` or `"trotter_before"`,
+   the thermostat as in item 1, and `dyn.to_bath`. With a period of one
+   step `@step_virial` is not taken: `dyn.load_pressure_state` gives the
+   pressure of the state that the step before left, and
+   `dyn.store_pressure_state` keeps that of this one. At the end of an
+   interval between energies `@step_trotter_energy` takes the place of
+   `@step_trotter`.
+
+The closing steps stay two `dyn.step`, with the ops of the strain between
+them in `@mdir_run`: the strain is already an operand of `step_trotter`,
+so a pass sees what depends on it (open question 1 of the PR asks whether
+a region should hold them).
+
+The cell stays a buffer of the host: every loop loads it at the start of
+each iteration and after a loop of periods (`dyn.load_cell`), the neighbor
+structures test their validity against it (D80), and restraints take their
+references from it (D124). A sketch of a period of velocity Verlet with
+stochastic velocity rescaling and the removal of the motion of the center
+of mass, without constraints:
 
 ```mlir
-dyn.program @step(...) attributes {
-    requires = ["temperature", "pressure"],
-    provides = ["thermostatting", "barostatting"]} {
-  ...
-  %alpha = dyn.velocity_rescaling %kinetic, %freedom, %step
-             temperature(300.0) tau(1.0) dt(%span) stream(0)
-  %v2    = dyn.scale %v1, %alpha : !vec
-  ...
-}
+%xk, %vk, %fk = dyn.step @step(%x, %v, %f, %m, %cell, %dt)
+    : (!vec, !vec, !vec, !real, !md.cell, f64) -> (!vec, !vec, !vec)
+%p    = dyn.momentum %vk, %m : !vec -> vector<3xf64>
+%vcm  = arith.divf %p, %total_mass : vector<3xf64>
+%k    = dyn.kinetic %vk, %m : !vec -> vector<3xf64>
+%e    = dyn.half_step_excess %fk, %m, %dt : !vec -> vector<3xf64>
+// K_T = K + (2/3) E without the kinetic energy of the center of mass, as
+// emitOptimal writes it; K_t, the kinetic energy without it.
+%alpha = dyn.velocity_rescaling %kopt, %step
+    {seed = 314159 : i64, target_kinetic = 1.1e+04, freedom = 8.9e+03,
+     decay = 0.99} : f64
+%v1 = dyn.shift %vk, %vcm : !vec
+%v2 = dyn.scale %v1, %alpha : !vec, f64
+// The bath takes K_cm + (1 - alpha^2) K_t, which the arithmetic of
+// emitCoupling gives as %heat.
+dyn.to_bath %heat : f64
 ```
 
-| Op | Definition |
-|---|---|
-| `dyn.velocity_rescaling` | The factor of the thermostat, from the kinetic energy, the degrees of freedom, and random numbers |
-| `dyn.cell_rescaling` | The factors of the barostat along the three edges, from the pressure along each |
-| `dyn.scale` | A field times a number, or times a number for each direction |
-| `dyn.scale_cell` | A cell with edges times a number for each direction |
-| `dyn.random` | A random number (P5, A5, A13) |
+#### 2.2.6 Random numbers
 
-| Item | Proposal |
+The key is that of A13 and Section 2.3, unchanged: Philox 4×32-10
+[[Salmon2011]](references.md#salmon2011) under the seed, with the counter
+$(\text{step}, \text{entity}, 2^{24}\,\text{stream} + \text{block})$, the
+block counting the calls of Philox of one entity in one stream and step
+(the draw index of A13). The op names the stream by its kind:
+
+| Op | Stream | Entity | Draws, in order of the blocks | Where |
+|---|---|---|---|---|
+| `dyn.velocity_rescaling` | 0 | 0 | A normal number, then the gamma number of $\chi^2_{N_f-1}$ by rejection [[Marsaglia2000]](references.md#marsaglia2000) | Host (`libmdrt`) |
+| `dyn.cell_rescaling`, isotropic | 1 | 0 | Normal number 0 | Host |
+| `dyn.cell_rescaling`, semi-isotropic | 1 | 0 | Normal numbers 0 (the area) and 1 (the height); each of the two calls draws both | Host |
+| `dyn.cell_rescaling`, anisotropic | 1 | 0 | Normal number $a$ for axis $a$ | Host |
+| `dyn.noise` | 2 | The number of the particle in the input | One block: four words, two pairs of Box–Muller, three numbers taken | Device or CPU loop, in the kernel |
+
+`dyn.nose_hoover` draws nothing. A normal number on the host takes two
+uniform numbers of 53 bits, a block of four words, so that the normal
+number $n$ is that of block $n$; the cosine branch of Box–Muller is taken.
+Since the ops lower to the same calls with the same arguments, they draw
+what the driver draws today.
+
+#### 2.2.7 What each coupling covers, and its conserved energy
+
+The conserved energy of the log is $\tilde H = U + K + E_\text{bath}$
+(D129; white paper, Section 6.5); each coupling gives the system
+$\Delta E_\text{sys}$, and `dyn.to_bath` adds $-\Delta E_\text{sys}$ to
+$E_\text{bath}$. $K_\text{cm} = \tfrac12\mathbf P\cdot\mathbf V_\text{cm}$
+is the kinetic energy of the center of mass, $K_t = K - K_\text{cm}$, and
+$K_T = K + \tfrac23(K_\text{half} - K)$ the kinetic energy of the optimal
+temperature [[Jung2019]](references.md#jung2019).
+
+| Coupling | The ops | $-\Delta E_\text{sys}$ to the bath |
+|---|---|---|
+| Removal of the motion of the center of mass (D60, D67) | `dyn.momentum`, `dyn.shift` | $K_\text{cm}$ |
+| `V-RESCALE` (D50, D67, D263) | `dyn.kinetic`, `dyn.half_step_excess` or the measured $K_\text{half}$, `dyn.velocity_rescaling` of $K_T - K_\text{cm}$, `dyn.scale` by $\alpha$ | $K_\text{cm} + (1 - \alpha^2)K_t$, exactly, what the scaling takes |
+| `NOSE-HOOVER` (D163a, D206, D263) | As `V-RESCALE`, with `dyn.nose_hoover` | The same: since D263 the bath counts the change of $K$ that the scaling makes, not the energy of the chain |
+| `LANGEVIN` (D135, D265) | `dyn.noise` in every program of a step, by g-BAOAB with constraints; `interval` paces the removal and the barostat | $K_\text{cm}$ and the work of the barostat; the log shows no conserved energy, since the friction and the noise are not counted |
+| `BROWNIAN` (D163b) | `dyn.noise` with $c = 1$ on the velocity of the drift, in every step; no coupling at the end of a period, no `[thermostat]`, `[barostat]`, or `center_of_mass_interval` | None; no conserved energy |
+| `C-RESCALE`, `work = "TROTTER"` (D92, D116) | `@step_virial`, `dyn.cell_rescaling`, `@step_trotter`, `dyn.scaling_work` with `count = "trotter"` | $-\big[\sum_a(\mu_a^{-2} - 1)K_{1/2,a} - \sum_a\ln\mu_a\,\tfrac12\big(W_{b,aa} + \tfrac{C}{3V} + W_{a,aa} + \tfrac{C}{3V'}\big)\big]$, with $K_{1/2}$ that of the velocities scaled in the middle of the step and $\mathsf W_b$, $\mathsf W_a$ the virials of the groups from the evaluations before and after the scaling; then the thermostat's |
+| `C-RESCALE`, `"TROTTER_FIRST_ORDER"` (D92) | The same, `count = "trotter_before"`; `@step_trotter` computes no virial | $-\big[\sum_a(\mu_a^{-2} - 1)K_{1/2,a} - \sum_a\ln\mu_a\,\big(W_{b,aa} + \tfrac{C}{3V}\big)\big]$; with a period of one step, as `"TROTTER"` |
+| `C-RESCALE`, `"EXACT"` (D77) | `dyn.scale_positions`, the evaluation in the new cell, `dyn.scaling_work` with `count = "exact"` | $-\big[U(\mathbf x') - U(\mathbf x) + C(1/V' - 1/V) + \sum_a(\mu_a^{-2} - 1)\,\alpha^2K_{t,a}\big]$, added to the thermostat's |
+| `C-RESCALE`, `"FIRST_ORDER"` (D72), isotropic only | `dyn.scale_positions`, `dyn.scaling_work` with `count = "first_order"` | $-\big[-\sum_a(\mu_a - 1)\tfrac13(\mathrm{tr}\,\mathsf W_g + C/V) + \sum_a(\mu_a^{-2} - 1)\,\alpha^2K_{t,a}\big]$, added to the thermostat's |
+
+Isotropic, semi-isotropic, and anisotropic coupling (D72, D119, D163c)
+differ only in `coupling` of `dyn.cell_rescaling`: every other op is axis
+by axis already, with $\mu_a$ equal on the three axes, on x and y, or on
+none, and a semi-isotropic `tension` enters the strain of the area. The
+barostat takes the pressure of the groups that it scales, from the
+kinetic energy of their centers at the half steps, without the motion of
+the center of mass where the run removes it, $K_{\text{half},g}$ of
+`dyn.group_kinetic`, and the
+virial of the groups that the closing step returns (D264). The thermostats
+take $K_T$ at the step that closes the period: from the forces without
+constraints, and with constraints from the $K_\text{half}$ that the closing
+step measures (`@step_thermostat`, `@step_coupling`, `@step_trotter`;
+D203, D263). They scale every velocity, so the constraints of the
+velocities hold.
+
+The two rows of the old proposal that no longer held are now, by the
+code:
+
+| Item | Rule |
 |---|---|
-| The kinetic energy of the thermostat | That of the velocities it scales (D67): with velocity Verlet, those at the end of a step, which are of one time. `K_T` of D45 estimates the temperature of the log. |
-| The kinetic energy of the barostat | That of the velocities of the step without that of the center of mass, before the thermostat (Section 2.4), not `K_P` of D45 |
-| The pressure of the barostat | With the correction for the dispersion ([nonbonded.md](nonbonded.md), Section 1.2) and the virial of the constraints ([constraints.md](constraints.md), Section 1) |
-| How often | Every `n` steps, with `n` times the time step. A step between computes no global sum. On a device a step with global sums takes up to twice the time of one without (Section 10.8 of ops.md). |
+| The kinetic energy of the thermostat | $K_T - K_\text{cm}$, of the optimal temperature (D263), measured from the half steps around the step that closes the period: from the forces without constraints ($K + \tfrac23E$), measured with them. The factor scales $K_t$, and the bath counts the change of $K_t$ exactly. `K_T` of D45 is this estimate |
+| The pressure of the barostat | That of the groups that it scales, $P_{aa}$ of `dyn.pressure`, with $K_{\text{half},g}$ of their centers at the half steps, without the motion of the center of mass where the run removes it, and $\mathsf W_g$ (D264); the log takes the same pressure |
+| The pressure, its corrections | The virials of the correction for the dispersion and of the background of a net charge, $C/(3V)$ on each axis ([nonbonded.md](nonbonded.md), Section 1.2); the forces of the constraints sum to zero within a group and do not enter |
+| How often | Every $N_T$ steps, with the period $N_T\Delta t$; a step between computes no global sum (`no_global_sums`). On a device a step with global sums takes up to twice the time of one without (ops.md, Section 10.8) |
 | Groups with a thermostat each | One group in M1 |
 
-Two rows of this table no longer hold: the thermostats control the optimal
-temperature, measured from the kinetic energies of the half steps at the
-steps that close a period of coupling (D263); and the log and the barostat
-take the pressure of the groups that the barostat scales, with the kinetic
-energy of their centers at the half steps (D264).
+#### 2.2.8 Existing inputs and checkpoints
+
+**Bitwise in the deterministic mode.** Every op lowers to the operations
+that the driver writes today, on the same operands and in the same order
+of dependence (Section 2.2.2); the host calls keep their order among
+themselves, which the effects of Section 2.2.3 enforce. Every value is
+then computed by the same floating-point operations on the same inputs,
+and the trajectories, logs, and checkpoints are those of `main`. The
+lowering is a pass, `dyn-expand-couplings`, placed after `md-inline` and
+before `md-bypass-updates`, so that every later pass sees what it sees
+today; the code of the expansion is moved from `Builder.cpp`, not
+rewritten. Data movement may differ (a `vector.extract` where the driver
+had a scalar), never an arithmetic operation. `mdir emit
+--stage=pipeline` and `--stage=lowered` print the module at a named
+stage, so the module after the expansion can be compared with that of
+`main`. The risks are the
+chain of the velocities, which must stay one loop in today's order, and a
+fusion of loops that sees other neighbors (#356); both are checked by the
+bitwise runs of step 3, not argued.
+
+**Checkpoints of `main`.** Nothing that a checkpoint holds changes: the
+positions, velocities, and forces, the cell, `bath`, the chain
+(`thermostat_state`), the state of the pressure (`barostat_state`), and the
+step, from which the counter of the noise continues. A continuation
+decides by the fingerprint, whose groups `physics`, `coupling`, and
+`execution` hold the keys of the control file and do not change, so
+`mdir run --continue` and `mdir.Simulation(checkpoint=…)` continue a
+checkpoint of `main` as one of their own. `plan_sha256` of a checkpoint of
+a Python simulation hashes the text of the module and will change; it is
+provenance, which no continuation compares
+([python-checkpoints.md](python-checkpoints.md)).
+
+#### 2.2.9 The plan (#541)
+
+| Step | What | Done when |
+|---|---|---|
+| 1 | This design | Reviewed |
+| 2 | The ops in `DynOps.td`, with their verifiers and effects, `no_global_sums` in the verifier of `dyn.program`, round-trip and invalid tests in `test/Dialect/Dyn`, and `dyn-expand-couplings`, with a test for each op that its expansion is the text the driver writes today; ops.md, Sections 6 and 9.1 | The driver unchanged; the suite passes |
+| 3a | The driver writes the thermostats: the removal of the motion of the center of mass, `V-RESCALE`, `NOSE-HOOVER`, `dyn.to_bath`, and `dyn.noise` for `LANGEVIN` and `BROWNIAN` | In the deterministic mode the NVT and Langevin runs of `examples/ala3`, `thermostat.test`, `nose-hoover.test`, `langevin.test`, and `brownian.test` are bitwise those of `main`, on the CPU and a GPU, in `mixed` and `double`; otherwise within the tolerances of the tests; a checkpoint of `main` continues bitwise |
+| 3b | The barostat with `"EXACT"` and `"FIRST_ORDER"`, isotropic, semi-isotropic, and anisotropic: `dyn.group_kinetic`, `dyn.pressure`, `dyn.cell_rescaling`, the cell, `dyn.scale_positions`, `dyn.scaling_work` | The same for `barostat.test` and NPT of `examples/ala3` with these counts |
+| 3c | The Trotter steps: `@step_trotter` with `dyn.scale_positions` in its body, `"TROTTER"` and `"TROTTER_FIRST_ORDER"`, the period of one step with `dyn.load_pressure_state` and `dyn.store_pressure_state`; the claims of Section 2.2.4 | The same with the default `work`, `barostat-pme-restart.test` bitwise; the Amber suite and NPT of `examples/ala3` at the rate of `main` on one device |
+| 4 | In the PRs of step 3: this section describes the ops as built, the white paper's Section 6 and decisions.md say so | Each PR of step 3 updates them for what it moves |
+
+Each part of step 3 checks the drift and distribution tests of Section 2.4
+as they stand. Derivatives through the couplings (M2b), groups with a
+thermostat each, and the fusion of the steps around a coupling (#356)
+build on the ops and are not part of #541.
 
 ### 2.3 Random numbers
 
