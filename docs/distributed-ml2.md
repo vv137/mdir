@@ -763,7 +763,8 @@ boundary. Repeated independent snapshots in tests are not an integrated
 trajectory.
 
 The first temporal-validity slice, D[dist-covered] (#542), adds
-`md_dist.covered` as a collective predicate over all owned rows of a halo's
+`md_dist.covered` as a collective Verlet skin predicate
+[[Verlet1967]](references.md#verlet1967) over all owned rows of a halo's
 layout. Its reference field and cell must be the exact SSA operands of the
 halo build; its current positions are a distinct field version in the same
 ownership epoch. For each global identity the in-process executor takes the

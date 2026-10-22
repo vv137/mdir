@@ -352,7 +352,8 @@ int64_t mdrtDistHaloCapacity(int64_t handle) {
   return ((struct Halo *)(intptr_t)handle)->capacity;
 }
 
-/* A team-wide Verlet skin predicate. Each global identity is visited once
+/* A team-wide Verlet skin predicate (Verlet, Phys. Rev. 159, 98, 1967).
+   Each global identity is visited once
    through the halo's ownership layout; even domains with no rows take part
    in the decision. The current coordinate payload is independent of the
    halo's stored membership and must be refreshed separately. */
