@@ -35,7 +35,7 @@ func.func @half_shape(%x: tensor<3x2x5xf64>) {
 // -----
 
 func.func @wrong_type(%x: tensor<3x2x5xf64>) {
-  // expected-error@+1 {{expected a real f64 grid and a complex<f64> half-spectrum}}
+  // expected-error@+1 {{expected a real f32 or f64 grid and a matching complex half-spectrum}}
   %s = md.linear_transform %x kind("fft3d") direction("forward") adjoint("backward") pairing("real_hermitian_half") : tensor<3x2x5xf64> -> tensor<3x2x3xf64>
   return
 }

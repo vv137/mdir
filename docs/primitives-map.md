@@ -189,7 +189,10 @@ derivative uses the closed form, spreading and gathering with the slopes
 of the splines. D306 gives `md_exec.linear_transform` an
 inspectable FFT adjoint declaration and independent lowerings;
 D319 gives `md.linear_transform` a pure value form
-and declared transpose. `md-differentiate` still treats `md.reciprocal`
+and declared transpose. D[fft-value-buffer] (#526) connects a value to a
+distinct packed execution buffer: the half-spectrum is row-major with
+interleaved real and imaginary components, and backward input is copied
+before an execution transform that may overwrite it. `md-differentiate` still treats `md.reciprocal`
 as one op. #452 writes the reciprocal sum as spread, FFT,
 the influence map, inverse FFT, and gather. The adjoint identity holds on
 the valid Hermitian half-spectrum of a real grid: its last-axis zero and,

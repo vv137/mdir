@@ -465,7 +465,9 @@ the forward and backward unnormalized transforms declare each other as
 adjoints under the weighted Hermitian pairing, with explicit buffer
 dependencies. D319 (#502) adds a pure value-level
 `md.linear_transform` with static grid and half-spectrum shapes and a
-declared transpose. The value-to-buffer bridge, its use by
+declared transpose. D[fft-value-buffer] (#526) connects these semantic
+values to explicit interleaved execution buffers in f32 and f64, with a
+private backward-input copy. Its use by
 `md-differentiate` in a composed reciprocal chain, the spread/influence/
 gather decomposition, and distributed grid transfer remain in #452.
 The transfer and local work may overlap where their data dependencies
