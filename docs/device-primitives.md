@@ -17,6 +17,10 @@ The shared [execution contract](execution-contracts.md) (#574) establishes
 legality before a device strategy is chosen by cost. Its provenance, effect,
 validity, and witness rules apply to the chooser and the lowering alike;
 this document gives the preconditions of individual device strategies.
+The [boundary and acceptance rules](execution-contracts.md#14-acceptance-and-closure-of-the-design)
+also require an explicit completion dependency before a device consumer
+reads a copied buffer; an available token is insufficient. Physical plans
+retain their numerical order and target preconditions before measurement.
 
 ## 1. Status
 
