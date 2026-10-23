@@ -17,6 +17,10 @@ The shared [execution contract](execution-contracts.md) (#574) establishes
 legality before a device strategy is chosen by cost. Its provenance, effect,
 validity, and witness rules apply to the chooser and the lowering alike;
 this document gives the preconditions of individual device strategies.
+The planned host-device [transfer contract](runtime.md#53-transfer-readiness-and-lifetime-design-for-567)
+(#567) verifies completion and source/destination borrows before a copy
+consumer runs or a buffer is reused. Merely exposing the existing async
+token does not authorize overlap or alter the immediate-wait baseline.
 
 ## 1. Status
 

@@ -10,6 +10,13 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Added
+
+- **Host-device copy contract design** (D[async-copy-contract], #567):
+  documents the planned token readiness, visibility, and buffer-lifetime
+  checks shared with distributed halos. This draft has no runtime or
+  control-file behavior change; implementation and validation remain open.
+
 ### Changed
 
 - **Checkpoints written beside the steps** (D336,

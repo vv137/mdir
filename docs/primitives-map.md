@@ -19,6 +19,9 @@ The [execution contract](execution-contracts.md) (#574) checks whether a
 composition may run or be transformed for its stated sets, effects, state,
 and numerical order. It is shared by the primitive sites in this map and
 does not add a mathematical primitive.
+The planned [transfer-readiness rule](runtime.md#53-transfer-readiness-and-lifetime-design-for-567)
+applies to host-device copies and to `md_dist` halo copy and sum (#481):
+completion, payload freshness, and candidate coverage remain separate.
 
 ## 1. The primitive set
 

@@ -195,7 +195,10 @@ adds no operation, plan choice, control key, or runtime behavior.
    own over lifetimes and sets.
 2. Copies between host and device are ordered by async tokens in the IR;
    deferral and merging of readbacks become a general scheduling pass, and
-   the path to CUDA graphs is open.
+   the path to CUDA graphs is open. Storage assignment already emits
+   token-bearing copies with immediate waits. #567 first checks their
+   readiness and buffer lifetimes without moving those waits; delayed
+   readbacks are a separate measured step.
 3. Each loop op carries a summary of its effects: what it reads and writes,
    and where (its own element, all members of a tuple, a global sum). Fusion
    decides from it in one place. Begun: the independence of whole ops, from
