@@ -219,12 +219,14 @@ plus the run of the velocities, RTX 3090).*
 
 ## 8.3 The host and the device
 
-The host issues work on one stream and waits only where it reads what the
-device computed. Three mechanisms keep the device busy.
+The host issues most work on the main stream; D87 permits independent work
+on a side stream. It waits at readbacks and other required boundaries.
+Three mechanisms keep the device busy.
 
 Host-device copies currently have token-bearing `gpu.memcpy` operations
 followed by immediate waits, and their runtime path synchronizes both
-runtime streams when a host buffer participates. D[async-copy-contract]
+runtime streams when work is pending and a host buffer participates.
+D[async-copy-contract]
 (#567) proposes a verifier for copy readiness and source/destination
 lifetimes using the same completion contract as distributed halo transfers.
 Its first slice preserves every existing wait and numerical result. An

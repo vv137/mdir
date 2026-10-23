@@ -217,7 +217,8 @@ between `gpu.wait async` and an immediate `gpu.wait`. Thus each copy is
 complete before the next host access, while the blocking wait is a
 synchronization point. In `runtime/mdrt_cuda.c`, `mgpuMemcpy` also calls
 `finish()` for a host-device copy; `finish()` synchronizes both runtime
-streams. An IR token alone does not remove that runtime-wide wait.
+streams when work is pending. An IR token alone does not remove that
+runtime-wide wait.
 
 The proposed first #567 slice describes the existing behavior with a
 checked transfer record. The record associates the completion token with
