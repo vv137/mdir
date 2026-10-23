@@ -11,6 +11,7 @@
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -1568,6 +1569,8 @@ public:
       ConvertMDExecToLoops>::ConvertMDExecToLoopsBase;
 
   void runOnOperation() final {
+    if (failed(md_exec::eraseStorageSets(getOperation())))
+      return signalPassFailure();
     // The algebra of every sum is stated (D301): the
     // lowering reads it, and refuses an op that reduces without one.
     bool stated = true;

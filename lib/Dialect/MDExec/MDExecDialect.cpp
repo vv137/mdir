@@ -3,8 +3,10 @@
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
+#include "mdir/Dialect/MDExec/StorageSet.h"
 
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinAttributeInterfaces.h"
 #include "mlir/IR/DialectImplementation.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/Support/MathExtras.h"
@@ -30,6 +32,20 @@ void MDExecDialect::registerAttributes() {
 #define GET_ATTRDEF_LIST
 #include "mdir/Dialect/MDExec/MDExecAttrs.cpp.inc"
       >();
+}
+
+AffineMap SetLayoutAttr::getAffineMap() const {
+  return AffineMap::getMultiDimIdentityMap(getRank(), getContext());
+}
+
+LogicalResult SetLayoutAttr::verify(
+    function_ref<InFlightDiagnostic()> emitError, FlatSymbolRefAttr set,
+    int64_t rank) {
+  if (!set)
+    return emitError() << "expected a particle or tuple set";
+  if (rank < 1)
+    return emitError() << "expected a rank of at least one, got " << rank;
+  return success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -165,6 +181,12 @@ void AlgebraListAttr::print(AsmPrinter &printer) const {
 
 LogicalResult MDExecDialect::verifyOperationAttribute(Operation *op,
                                                       NamedAttribute attr) {
+  if (attr.getName() == "md_exec.typed_storage") {
+    if (!isa<UnitAttr>(attr.getValue()) || !isa<ModuleOp>(op))
+      return op->emitError()
+             << "expects 'md_exec.typed_storage' on a module";
+    return verifyStorageSetCasts(cast<ModuleOp>(op));
+  }
   if (attr.getName() == algebra::kAlgebraAttrName)
     return algebra::verify(op, attr.getValue());
   if (attr.getName() == algebra::kDeterministicAttrName) {

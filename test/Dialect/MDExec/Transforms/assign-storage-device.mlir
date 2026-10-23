@@ -11,18 +11,18 @@ md.particle_set @atoms
 // space.
 //
 // CHECK-LABEL: func.func @kick(
-// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64>, %[[F:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[DT:[a-z0-9]+]]: f64)
-// CHECK-SAME:    -> memref<?x3xf64>
+// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[F:[a-z0-9]+]]: memref<?x3xf64{{.*}}, 1>, %[[DT:[a-z0-9]+]]: f64)
+// CHECK-SAME:    -> memref<?x3xf64{{.*}}>
 func.func @kick(%velocities: memref<?x3xf64>, %f: !vec, %dt: f64)
     -> memref<?x3xf64> {
   // CHECK:      %[[N:[a-z0-9_]+]] = memref.dim %[[F]],
-  // CHECK:      %[[DEVICE:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
+  // CHECK:      %[[DEVICE:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}, 1>
   // CHECK:      %[[T0:[0-9]+]] = gpu.wait async
-  // CHECK:      %[[T1:[0-9]+]] = gpu.memcpy async [%[[T0]]] %[[DEVICE]], %[[V]] : memref<?x3xf64, 1>, memref<?x3xf64>
+  // CHECK:      %[[T1:[0-9]+]] = gpu.memcpy async [%[[T0]]] %[[DEVICE]], %[[V]] : memref<?x3xf64{{.*}}, 1>, memref<?x3xf64{{.*}}>
   // CHECK:      gpu.wait [%[[T1]]]
   %v = mdrt.from_buffer %velocities : memref<?x3xf64> to !vec
 
-  // CHECK:      md_exec.particle_for ins(%[[DEVICE]], %[[F]] : memref<?x3xf64, 1>, memref<?x3xf64, 1>) outs(%[[DEVICE]] : memref<?x3xf64, 1>) {
+  // CHECK:      md_exec.particle_for ins(%[[DEVICE]], %[[F]] : memref<?x3xf64{{.*}}, 1>, memref<?x3xf64{{.*}}, 1>) outs(%[[DEVICE]] : memref<?x3xf64{{.*}}, 1>) {
   %v0 = md_exec.empty : !vec
   %v1 = md_exec.particle_for ins(%v, %f : !vec, !vec) outs(%v0 : !vec) {
   ^bb0(%v_i: vector<3xf64>, %f_i: vector<3xf64>):
@@ -33,7 +33,7 @@ func.func @kick(%velocities: memref<?x3xf64>, %f: !vec, %dt: f64)
   } -> !vec
 
   // CHECK:      %[[T2:[0-9]+]] = gpu.wait async
-  // CHECK:      %[[T3:[0-9]+]] = gpu.memcpy async [%[[T2]]] %[[V]], %[[DEVICE]] : memref<?x3xf64>, memref<?x3xf64, 1>
+  // CHECK:      %[[T3:[0-9]+]] = gpu.memcpy async [%[[T2]]] %[[V]], %[[DEVICE]] : memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}, 1>
   // CHECK:      gpu.wait [%[[T3]]]
   // CHECK:      return %[[V]]
   %result = mdrt.to_buffer %v1 : !vec to memref<?x3xf64>
@@ -45,16 +45,16 @@ func.func @kick(%velocities: memref<?x3xf64>, %f: !vec, %dt: f64)
 // around them carries them, and nothing is allocated inside it.
 //
 // CHECK-LABEL: func.func @energy(
-// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf32, 1>, %{{[a-z0-9]+}}: index)
+// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf32{{.*}}, 1>, %{{[a-z0-9]+}}: index)
 func.func @energy(%v: !md.field<@atoms, 3 x f32>, %steps: index) -> f64 {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %zero = arith.constant 0.0 : f64
-  // CHECK-DAG:  %[[A:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xf64, 1>
-  // CHECK-DAG:  %[[B:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xf64, 1>
-  // CHECK:      scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[a-z0-9_]+}}, %[[AA:[a-z0-9]+]] = %{{[a-z0-9_]+}}, %[[BA:[a-z0-9]+]] = %{{[a-z0-9_]+}}) -> (f64, memref<?xf64, 1>, memref<?xf64, 1>) {
+  // CHECK-DAG:  %[[A:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xf64{{.*}}, 1>
+  // CHECK-DAG:  %[[B:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?xf64{{.*}}, 1>
+  // CHECK:      scf.for {{.*}} iter_args(%{{[a-z0-9]+}} = %{{[a-z0-9_]+}}, %[[AA:[a-z0-9]+]] = %{{[a-z0-9_]+}}, %[[BA:[a-z0-9]+]] = %{{[a-z0-9_]+}}) -> (f64, memref<?xf64{{.*}}, 1>, memref<?xf64{{.*}}, 1>) {
   // CHECK-NOT:    gpu.alloc
-  // CHECK:        md_exec.particle_for ins(%[[V]] : memref<?x3xf32, 1>) reduce(%{{[a-z0-9_]+}} : f64) scratch(%{{[a-z0-9]+}}, %{{[a-z0-9]+}} : memref<?xf64, 1>, memref<?xf64, 1>) {
+  // CHECK:        md_exec.particle_for ins(%[[V]] : memref<?x3xf32{{.*}}, 1>) reduce(%{{[a-z0-9_]+}} : f64) scratch(%{{[a-z0-9]+}}, %{{[a-z0-9]+}} : memref<?xf64{{.*}}, 1>, memref<?xf64{{.*}}, 1>) {
   %total = scf.for %step = %c0 to %steps step %c1
       iter_args(%sum = %zero) -> (f64) {
     %k = md_exec.particle_for ins(%v : !md.field<@atoms, 3 x f32>)
@@ -75,10 +75,10 @@ func.func @energy(%v: !md.field<@atoms, 3 x f32>, %steps: index) -> f64 {
 // validity gets two buffers of the type of the positions.
 //
 // CHECK-LABEL: func.func @refresh(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf32, 1>, %[[CELL:[a-z0-9]+]]: !md.cell)
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf32{{.*}}, 1>, %[[CELL:[a-z0-9]+]]: !md.cell)
 func.func @refresh(%x: !md.field<@atoms, 3 x f32>, %cell: !md.cell) -> i64 {
-  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf32, 1>) kind(matrix) width(48)
-  // CHECK:      md_exec.refresh_neighbors %[[STORAGE]], %[[X]], %[[CELL]] scratch(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?xf32, 1>, memref<?xf32, 1>)
+  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf32{{.*}}, 1>) kind(matrix) width(48)
+  // CHECK:      md_exec.refresh_neighbors %[[STORAGE]], %[[X]], %[[CELL]] scratch(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?xf32{{.*}}, 1>, memref<?xf32{{.*}}, 1>)
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
       : !mdrt.neighbors<@atoms>
   %nl = md_exec.refresh_neighbors %nl0, %x, %cell
@@ -92,16 +92,16 @@ func.func @refresh(%x: !md.field<@atoms, 3 x f32>, %cell: !md.cell) -> i64 {
 // host takes the copies.
 //
 // CHECK-LABEL: func.func @frames(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[STEP:[a-z0-9]+]]: i64, %{{[a-z0-9]+}}: index)
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}, 1>, %[[STEP:[a-z0-9]+]]: i64, %{{[a-z0-9]+}}: index)
 func.func private @write_frame(i64, memref<?x3xf64>)
 
 func.func @frames(%x: !vec, %step: i64, %frames: index) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  // CHECK:      %[[HOST:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
+  // CHECK:      %[[HOST:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}>
   // CHECK:      scf.for
   // CHECK-NOT:    memref.alloc
-  // CHECK:        gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[X]] : memref<?x3xf64>, memref<?x3xf64, 1>
+  // CHECK:        gpu.memcpy async [%{{[0-9]+}}] %[[HOST]], %[[X]] : memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}, 1>
   // CHECK:        call @write_frame(%[[STEP]], %[[HOST]])
   scf.for %frame = %c0 to %frames step %c1 {
     mdrt.host_call @write_frame(%step, %x) : (i64, !vec)
@@ -114,11 +114,11 @@ func.func @frames(%x: !vec, %step: i64, %frames: index) {
 // result.
 //
 // CHECK-LABEL: func.func @validity(
-// CHECK:         %[[NL:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64, 1>)
+// CHECK:         %[[NL:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64{{.*}}, 1>)
 // CHECK:         scf.for
-// CHECK:           %[[REF:[0-9]+]] = md_exec.reference_positions %[[NL]] : !mdrt.neighbors<@atoms> -> memref<?x3xf64, 1>
+// CHECK:           %[[REF:[0-9]+]] = md_exec.reference_positions %[[NL]] : !mdrt.neighbors<@atoms> -> memref<?x3xf64{{.*}}, 1>
 // CHECK:           %[[MOVED:[0-9]+]] = md_exec.particle_for ins(%[[XA:[a-z0-9]+]], %{{[a-z0-9_]+}}, %[[REF]] :
-// CHECK-SAME:        outs(%[[XA]] : memref<?x3xf64, 1>) reduce(%{{[a-z0-9_]+}} : i1) {
+// CHECK-SAME:        outs(%[[XA]] : memref<?x3xf64{{.*}}, 1>) reduce(%{{[a-z0-9_]+}} : i1) {
 // CHECK:           md_exec.refresh_neighbors %[[NL]], %[[XA]], %{{[a-z0-9]+}} moved(%[[MOVED]]) cutoff
 
 func.func @validity(%xb: memref<?x3xf64>, %vb: memref<?x3xf64>,
@@ -160,12 +160,12 @@ func.func @validity(%xb: memref<?x3xf64>, %vb: memref<?x3xf64>,
 //
 // CHECK-LABEL: func.func @ordered(
 // CHECK:         scf.for
-// CHECK:           md_exec.spatial_order %[[XA:[a-z0-9]+]], %{{[a-z0-9]+}}, %[[IDA:[a-z0-9]+]] outs(%[[ORDER:[a-z0-9]+]] : memref<?xi32, 1>) width(1.100000e+00)
-// CHECK-SAME:        : memref<?x3xf64, 1>, memref<?xi32, 1>
-// CHECK:           md_exec.permute %[[XA]], %[[ORDER]] outs(%[[XS:[a-z0-9]+]] : memref<?x3xf64, 1>)
-// CHECK:           md_exec.permute %[[IDA]], %[[ORDER]] outs(%[[IDS:[a-z0-9]+]] : memref<?xi32, 1>)
-// CHECK:           gpu.memcpy async [%{{[0-9]+}}] %[[HOST:[a-z0-9_]+]], %[[XS]] : memref<?x3xf64>, memref<?x3xf64, 1>
-// CHECK:           gpu.memcpy async [%{{[0-9]+}}] %[[NUMBERS:[a-z0-9_]+]], %[[IDS]] : memref<?xi32>, memref<?xi32, 1>
+// CHECK:           md_exec.spatial_order %[[XA:[a-z0-9]+]], %{{[a-z0-9]+}}, %[[IDA:[a-z0-9]+]] outs(%[[ORDER:[a-z0-9]+]] : memref<?xi32{{.*}}, 1>) width(1.100000e+00)
+// CHECK-SAME:        : memref<?x3xf64{{.*}}, 1>, memref<?xi32{{.*}}, 1>
+// CHECK:           md_exec.permute %[[XA]], %[[ORDER]] outs(%[[XS:[a-z0-9]+]] : memref<?x3xf64{{.*}}, 1>)
+// CHECK:           md_exec.permute %[[IDA]], %[[ORDER]] outs(%[[IDS:[a-z0-9]+]] : memref<?xi32{{.*}}, 1>)
+// CHECK:           gpu.memcpy async [%{{[0-9]+}}] %[[HOST:[a-z0-9_]+]], %[[XS]] : memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}, 1>
+// CHECK:           gpu.memcpy async [%{{[0-9]+}}] %[[NUMBERS:[a-z0-9_]+]], %[[IDS]] : memref<?xi32{{.*}}>, memref<?xi32{{.*}}, 1>
 // CHECK:           call @write_ordered(%{{[a-z0-9_]+}}, %[[HOST]], %[[NUMBERS]])
 
 func.func private @write_ordered(i64, memref<?x3xf64>, memref<?xi32>)
@@ -209,12 +209,12 @@ func.func @ordered(%xb: memref<?x3xf64>, %mb: memref<?xf64>,
 // hold one vector per particle.
 //
 // CHECK-LABEL: func.func @momentum(
-// CHECK-DAG:     %[[A:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
-// CHECK-DAG:     %[[B:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
-// CHECK-DAG:     %[[C:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64, 1>
-// CHECK:         md_exec.particle_for ins(%{{[a-z0-9_]+}} : memref<?x3xf64, 1>)
+// CHECK-DAG:     %[[A:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}, 1>
+// CHECK-DAG:     %[[B:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}, 1>
+// CHECK-DAG:     %[[C:[a-z0-9_]+]] = gpu.alloc (%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}, 1>
+// CHECK:         md_exec.particle_for ins(%{{[a-z0-9_]+}} : memref<?x3xf64, #md_exec.set_layout<@atoms, 2>, 1>)
 // CHECK-SAME:      reduce(%{{[a-z0-9_]+}} : vector<3xf64>)
-// CHECK-SAME:      scratch(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?x3xf64, 1>, memref<?x3xf64, 1>)
+// CHECK-SAME:      scratch(%{{[a-z0-9_]+}}, %{{[a-z0-9_]+}} : memref<?x3xf64{{.*}}, 1>, memref<?x3xf64{{.*}}, 1>)
 func.func @momentum(%vb: memref<?x3xf64>) -> vector<3xf64> {
   %v = mdrt.from_buffer %vb : memref<?x3xf64> to !vec
   %zero = arith.constant dense<0.0> : vector<3xf64>

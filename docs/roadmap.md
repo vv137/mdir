@@ -36,7 +36,7 @@ Features of classical MD (Section 5) continue between milestones.
 | Full-suite wall time (#485) | Optional two-shard Slurm run from independent build trees (D309); the test set and oracle are unchanged. The Python `observe` precision/modifier matrix keeps representative CPU/GPU cases by default and the full matrix in release tests (D324, #530). Continue profiling other long Python driver tests. |
 | Kernels named after their op and line | Done |
 | Reports of defects that can be reproduced: `mdir bug-report`, crash reproducers of the passes, versions, a template for issues | Done ([debugging.md](debugging.md)) |
-| The set of each buffer in the type of the storage form; memory planning as a pass of its own | Design first, then implementation |
+| The set of each buffer in the type of the storage form; memory planning as a pass of its own | Field, scratch, tuple-member, and incidence buffers carry the set through storage form (D[typed-storage-set], #565). The common CPU/GPU conversion boundary removes the identity layout; a lifetime-based memory planner and set types for remaining structural buffers follow. |
 | A summary of the effects of each loop op, from which fusion decides | After the storage types |
 | Copies between host and device ordered by async tokens in the IR | After the effects |
 | A debug lowering that checks bounds and the residuals of iterative solvers | With the storage types |

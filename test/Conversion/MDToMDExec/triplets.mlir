@@ -62,8 +62,8 @@ md.potential @three_body(%x: !vec, %cell: !md.cell) -> f64 {
 // STORAGE-LABEL: func.func @forces(
 // STORAGE:       %[[NL:[0-9]+]] = md_exec.refresh_neighbors
 // STORAGE:       %[[M:[0-9]+]] = md_exec.build_triplets %[[NL]], %{{[a-z0-9]+}}, %{{[a-z0-9]+}} cutoff(1.200000e+00)
-// STORAGE-SAME:    : !mdrt.neighbors<@atoms>, memref<?x3xf64> -> memref<?x3xi32>
-// STORAGE-NEXT:  md_exec.build_incidence %[[M]] size(%{{[a-z0-9]+}}) : memref<?x3xi32> -> memref<?xi32>
+// STORAGE-SAME:    : !mdrt.neighbors<@atoms>, memref<?x3xf64, #md_exec.set_layout<@atoms, 2>> -> memref<?x3xi32>
+// STORAGE-NEXT:  md_exec.build_incidence %[[M]] size(%{{[a-z0-9]+}}) : memref<?x3xi32> -> memref<?xi32, #md_exec.set_layout<@atoms, 1>>
 //
 // DEVICE: error: 'md_exec.build_triplets' op finds triplets on the host only: terms over triplets do not run on a device yet (D160)
 func.func @forces(%x: !vec, %cell: !md.cell) -> (f64, !vec) {

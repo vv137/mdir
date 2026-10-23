@@ -61,6 +61,14 @@ decide whether an order may change (privatization, atomics, a tree), what
 the deterministic mode (D84) accepts, and whether a sum can be split over
 domains (#422, D285).
 
+Its storage-form field and loop-reduction scratch buffers also state the row set in the
+identity layout `#md_exec.set_layout<@set, rank>` (D[typed-storage-set],
+#565). Tuple-member buffers carry the tuple set. This gives map, gather,
+scatter-accumulate, and reduction a shared index-domain check in the loop
+verifier; it is erased at the CPU/GPU conversion boundary without changing
+the selected strategy. The existing set-keyed pool still handles lifetime
+reuse; a separate memory-planning pass remains planned.
+
 | Property | Meaning here |
 |---|---|
 | Associative, commutative | Of the combiner $\oplus$: the terms may be grouped and ordered otherwise. Real addition is; floating-point addition is not associative, so reordering changes the rounding |

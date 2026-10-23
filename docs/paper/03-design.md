@@ -587,7 +587,7 @@ follow, in the order of the pipeline that `tools/mdir/Run.cpp` builds:
 | `md-exec-assign-precision` | Assigns a type to every field and kernel by its role (below) |
 | `md-exec-approximate`, `md-exec-expand-radial` | Approximations of f32 kernels of terms, with stated bounds (Section 7.2) |
 | `md-exec-choose-scatter` | On a device, chooses the strategy of each scatter-accumulate, `#md_exec.scatter`: tiles of block memory for the spreading of PME in f32 on a grid of at least 500,000 points, `scatter(tile(8))` on `md_exec.reciprocal` (D282), and a table of the particles of a block for the loops over tuples evaluated once, `scatter(hash(S, P, L))` on `md_exec.tuple_for` (D283); outside the deterministic mode, each where its preconditions hold (Section 8.5, D285) |
-| `md-exec-assign-storage` | Turns the value form into the storage form: every field gets a buffer, loops update buffers in place, scratch comes from a pool; never copies a field, and fails with the reason where it would have to; never takes a buffer that the entry declares read-only |
+| `md-exec-assign-storage` | Turns the value form into the storage form: every field gets a buffer with its row set in an identity layout (D[typed-storage-set]), loops update buffers in place, scratch comes from a pool keyed by set and type; never copies a field, and fails with the reason where it would have to; never takes a buffer that the entry declares read-only |
 | `check-read-only-arguments` | Where the lowering to loops or to a device ends, proves that the code writes no buffer that the entry declares read-only, the model, or fails the compile naming the use (D258) |
 | `md-exec-assign-streams` | Optionally moves an op to a second stream where an independence proof holds (D87; off by default) |
 
@@ -622,6 +622,22 @@ particles converts the positions to f32 once per evaluation for the loops
 over tuples (D79), and a loop over groups converts each position after it
 has added the shift of its frame in f64 (D101). Scalars outside loops stay
 f64, and tables go to the device in f32 when their kernels are f32.
+
+**Set identity in storage** (D[typed-storage-set]). Storage assignment
+types a field with the set of its rows, for example
+`memref<?x3xf32, #md_exec.set_layout<@atoms, 2>>`; loop-reduction scratch and the members
+of tuples carry their corresponding particle and tuple sets; incidence
+buffers carry the particle set of their rows; their tuple set remains an
+explicit `md_exec.tuple_set` attribute on the builder and tuple loop. The layout
+maps each index to itself and the numeric memory space remains separate.
+The verifier compares a loop's buffers with its particle or tuple domain,
+and rejects a buffer from another set. The current pool can reuse a buffer
+only for the same set and full type. Before either CPU or GPU lowering a
+shared boundary rejects a cast across sets, including one hidden by a
+plain cast or aliasing view, and rejects unknown source provenance unless the cast marks a declared input boundary. It erases the identity layout and boundary casts. Therefore
+the address calculations, allocation sizes, and kernels are those of the
+plain-memref program. Dynamic row counts come from validated input and
+the assignment pass's size map; PME scratch remains untagged structural storage, and lifetime planning is a later pass.
 
 ## 3.5 Lowerings and templates
 
@@ -1455,7 +1471,7 @@ repository.*
 | Entry | The schedule of a run: loops over segments, frames, energies, periods, and steps, with the calls to the host for the outputs | `func.func @mdir_run`, `mdrt.host_call @mdrtWriteEnergies(...)` | `Builder::emitEntry`; the callbacks in `lib/Driver/Output.cpp` |
 | Loop | A sum or a map lowered to an iteration over a set with a pattern of access | `md_exec.particle_for`, `md_exec.pair_for`, `md_exec.tuple_for`, `md_exec.reciprocal` | `lib/Conversion/MDToMDExec`; passes in `lib/Dialect/MDExec/Transforms` (Section 3.4) |
 | Neighbor structure | The pairs within the reach, the matrix or the groups of 16, with its test of validity | `md_exec.build_neighbors`, `md_exec.refresh_neighbors`, `!mdrt.neighbors<@atoms>` | Section 4; `runtime/mdrt_cuda.c` |
-| Storage | The buffers of fields, the scratch of reductions, the cells of results read by the host | `memref`s after `md-exec-assign-storage` | `lib/Dialect/MDExec/Transforms/AssignStorage.cpp` |
+| Storage | The buffers of fields, the scratch of reductions, the cells of results read by the host | `memref`s with set-bearing identity layouts after `md-exec-assign-storage`, plain `memref`s after CPU/GPU conversion | `lib/Dialect/MDExec/Transforms/AssignStorage.cpp`, `lib/Dialect/MDExec/StorageSet.cpp` |
 | Kernel of a device | A loop lowered to a launch, its sums reduced in blocks | `gpu.launch` | `lib/Conversion/MDExecToGPU` (Section 8) |
 
 **From the control file to a kernel.** The driver reads the control file

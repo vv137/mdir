@@ -4,7 +4,20 @@
 #define MDIR_DIALECT_MDEXEC_MDEXECATTRS_TD
 
 include "mlir/IR/AttrTypeBase.td"
+include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mdir/Dialect/MDExec/MDExecDialect.td"
+
+// A physical identity layout that also names the particle or tuple set
+// whose elements the rows of a storage-form buffer hold (D[typed-storage-set]).
+def MDExec_SetLayoutAttr : AttrDef<MDExec_Dialect, "SetLayout",
+    [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface, ["getAffineMap"]>]> {
+  let mnemonic = "set_layout";
+  let summary = "Identity memref layout carrying the set of its rows";
+  let parameters = (ins "::mlir::FlatSymbolRefAttr":$set,
+                        "int64_t":$rank);
+  let assemblyFormat = "`<` $set `,` $rank `>`";
+  let genVerifyDecl = 1;
+}
 
 def MDExec_ScatterAttr : AttrDef<MDExec_Dialect, "Scatter"> {
   let mnemonic = "scatter";

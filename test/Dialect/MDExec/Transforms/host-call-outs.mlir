@@ -24,22 +24,26 @@ func.func private @model(memref<?x3xf64>, memref<?x3xf64>, memref<1xf64>,
 // FUSE:         return %[[V]], %[[F]]#0, %[[F]]#1
 //
 // DEVICE-LABEL: func.func @kick_after_model(
-// DEVICE-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[V:[a-z0-9]+]]: memref<?x3xf64, 1>, %[[M:[a-z0-9]+]]: memref<?xf64, 1>
-// DEVICE:         md_exec.particle_for ins(%[[X]] : memref<?x3xf64, 1>) outs(%[[FB:[a-z0-9_]+]] : memref<?x3xf64, 1>)
-// DEVICE-DAG:     %[[XH:[a-z0-9_]+]] = memref.memory_space_cast %[[X]] : memref<?x3xf64, 1> to memref<?x3xf64>
-// DEVICE-DAG:     %[[FH:[a-z0-9_]+]] = memref.memory_space_cast %[[FB]] : memref<?x3xf64, 1> to memref<?x3xf64>
-// DEVICE-DAG:     %[[U:[a-z0-9_]+]] = memref.alloca() : memref<1xf64>
-// DEVICE-DAG:     %[[W:[a-z0-9_]+]] = memref.alloca() : memref<9xf64>
+// DEVICE-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}, 1>, %[[V:[a-z0-9]+]]: memref<?x3xf64{{.*}}, 1>, %[[M:[a-z0-9]+]]: memref<?xf64{{.*}}, 1>
+// DEVICE:         md_exec.particle_for ins(%[[X]] : memref<?x3xf64{{.*}}, 1>) outs(%[[FB:[a-z0-9_]+]] : memref<?x3xf64{{.*}}, 1>)
+// DEVICE-DAG:     %[[XP:[a-z0-9_]+]] = memref.cast %[[X]] : memref<?x3xf64{{.*}}, 1> to memref<?x3xf64, 1>
+// DEVICE-DAG:     %[[FP:[a-z0-9_]+]] = memref.cast %[[FB]] : memref<?x3xf64{{.*}}, 1> to memref<?x3xf64, 1>
+// DEVICE-DAG:     %[[XH:[a-z0-9_]+]] = memref.memory_space_cast %[[XP]] : memref<?x3xf64, 1> to memref<?x3xf64>
+// DEVICE-DAG:     %[[FH:[a-z0-9_]+]] = memref.memory_space_cast %[[FP]] : memref<?x3xf64, 1> to memref<?x3xf64>
+// DEVICE-DAG:     %[[U:[a-z0-9_]+]] = memref.alloca() : memref<1xf64{{.*}}>
+// DEVICE-DAG:     %[[W:[a-z0-9_]+]] = memref.alloca() : memref<9xf64{{.*}}>
 // DEVICE:         call @model(%[[XH]], %[[FH]], %[[U]], %[[W]])
 // DEVICE-NOT:     gpu.memcpy
 // DEVICE:         %[[E:[0-9]+]] = memref.load %[[U]]
-// DEVICE:         md_exec.particle_for ins(%[[V]], %[[FB]], %[[M]] : memref<?x3xf64, 1>, memref<?x3xf64, 1>, memref<?xf64, 1>)
+// DEVICE:         md_exec.particle_for ins(%[[V]], %[[FB]], %[[M]] : memref<?x3xf64{{.*}}, 1>, memref<?x3xf64{{.*}}, 1>, memref<?xf64{{.*}}, 1>)
 // DEVICE:         return %{{.*}}, %[[E]]
 //
 // HOST-LABEL: func.func @kick_after_model(
-// HOST-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>
-// HOST:         md_exec.particle_for ins(%[[X]] : memref<?x3xf64>) outs(%[[FB:[a-z0-9_]+]] : memref<?x3xf64>)
-// HOST:         call @model(%[[X]], %[[FB]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}})
+// HOST-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}>
+// HOST:         md_exec.particle_for ins(%[[X]] : memref<?x3xf64{{.*}}>) outs(%[[FB:[a-z0-9_]+]] : memref<?x3xf64{{.*}}>)
+// HOST:         %[[XP:[a-z0-9_]+]] = memref.cast %[[X]] : memref<?x3xf64{{.*}}> to memref<?x3xf64>
+// HOST:         %[[FP:[a-z0-9_]+]] = memref.cast %[[FB]] : memref<?x3xf64{{.*}}> to memref<?x3xf64>
+// HOST:         call @model(%[[XP]], %[[FP]], %{{[a-z0-9_]+}}, %{{[a-z0-9_]+}})
 // HOST:         md_exec.particle_for ins(%{{[a-z0-9]+}}, %[[FB]], %{{[a-z0-9]+}} :
 func.func @kick_after_model(%x: !vec, %v: !vec, %m: !real, %dt: f64)
     -> (!vec, !vec, f64) {
