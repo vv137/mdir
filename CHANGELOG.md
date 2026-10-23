@@ -52,6 +52,13 @@ format, or the outputs; every such change is listed under **Changed** or
   affinity, and thread conditions in the original job records. It changes
   no control-file key, simulation result,
   output format, or overwrite behavior.
+- **A storage bridge for semantic FFT values** (D[fft-value-buffer],
+  #526): the real grid and Hermitian half-spectrum value forms may use
+  matching f32 or f64 elements and lower to explicit row-major buffers
+  with interleaved complex components. A backward transform owns a copy of
+  its input so an execution implementation may overwrite that copy without
+  changing the semantic value. No control-file key, checkpoint, output
+  format, or overwrite behavior changes.
 - **Shared scalar grid gather emitters** (D325, #539): the
   Gaussian and prolate PME gathers use the same wrapped z coordinate and
   grid-read primitives, with their existing lane layout and arithmetic.
@@ -89,7 +96,8 @@ format, or the outputs; every such change is listed under **Changed** or
   real grid or Hermitian half-spectrum value with statically checked shapes,
   direction, opposite adjoint, and weighted pairing. This IR-only slice
   adds no control-file key, Python API, checkpoint or output change; the
-  value-to-buffer bridge and reciprocal composition remain #452.
+  value-to-buffer bridge follows in D[fft-value-buffer] (#526); reciprocal
+  composition remains #452.
 - **A linear FFT transform primitive with an inspectable adjoint**
   (D306, #480): `md_exec.linear_transform` exposes the grid
   buffers, direction, opposite adjoint, and Hermitian half-spectrum pairing.

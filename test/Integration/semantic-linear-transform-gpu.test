@@ -1,0 +1,33 @@
+# The semantic FFT bridge executes through a private buffer on a GPU.
+# Each transfer waits only on its own dependency, and the independent direct
+# DFT verifies forward, backward, transpose, and immutable source. D[fft-value-buffer].
+# REQUIRES: cuda
+#
+# RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 5 --precision double \
+# RUN: | mdir-opt --convert-linear-transform-values --one-shot-bufferize \
+# RUN:     --buffer-deallocation-pipeline --convert-linalg-to-loops \
+# RUN:     --md-exec-place-linear-transform-device --convert-md-exec-to-gpu --convert-complex-to-llvm \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | %mdir_python %S/Inputs/semantic_linear_transform_oracle.py check --length 5 --precision double
+# RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 6 --precision double \
+# RUN: | mdir-opt --convert-linear-transform-values --one-shot-bufferize \
+# RUN:     --buffer-deallocation-pipeline --convert-linalg-to-loops \
+# RUN:     --md-exec-place-linear-transform-device --convert-md-exec-to-gpu --convert-complex-to-llvm \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | %mdir_python %S/Inputs/semantic_linear_transform_oracle.py check --length 6 --precision double
+# RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 5 --precision mixed \
+# RUN: | mdir-opt --convert-linear-transform-values --one-shot-bufferize \
+# RUN:     --buffer-deallocation-pipeline --convert-linalg-to-loops \
+# RUN:     --md-exec-place-linear-transform-device --convert-md-exec-to-gpu --convert-complex-to-llvm \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | %mdir_python %S/Inputs/semantic_linear_transform_oracle.py check --length 5 --precision mixed
+# RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 6 --precision mixed \
+# RUN: | mdir-opt --convert-linear-transform-values --one-shot-bufferize \
+# RUN:     --buffer-deallocation-pipeline --convert-linalg-to-loops \
+# RUN:     --md-exec-place-linear-transform-device --convert-md-exec-to-gpu --convert-complex-to-llvm \
+# RUN: | mlir-opt %lower_gpu_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt,%mdrt_cuda \
+# RUN: | %mdir_python %S/Inputs/semantic_linear_transform_oracle.py check --length 6 --precision mixed

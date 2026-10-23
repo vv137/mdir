@@ -415,9 +415,9 @@ def MD_LinearTransformOp : MD_Op<"linear_transform", [Pure]> {
   let summary = "A value-level linear transform with a declared adjoint";
   let description = [{
     The first kind is the unnormalized three-dimensional real FFT. Forward
-    maps `tensor<K0 x K1 x K2 x f64>` to
-    `tensor<K0 x K1 x (K2/2+1) x complex<f64>>`; backward maps the latter
-    to the former. The half-spectrum represents a real grid and obeys
+    maps `tensor<K0 x K1 x K2 x T>` to
+    `tensor<K0 x K1 x (K2/2+1) x complex<T>>`, where `T` is f32 or f64;
+    backward maps the latter to the former. The half-spectrum represents a real grid and obeys
     Hermitian symmetry on its zero and, for even K2, Nyquist planes.
     Forward and backward are adjoints under the Euclidean pairing on the
     real grid and the Hermitian-weighted real pairing on the half-spectrum.

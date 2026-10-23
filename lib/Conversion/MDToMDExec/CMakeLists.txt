@@ -1,5 +1,6 @@
 add_mlir_conversion_library(MDIRMDToMDExec
   MDToMDExec.cpp
+  LinearTransformValues.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Conversion
@@ -13,8 +14,13 @@ add_mlir_conversion_library(MDIRMDToMDExec
   MDIRMDExec
   MDIRMDRT
   MLIRArithDialect
+  MLIRComplexDialect
+  MLIRGPUDialect
   MLIRIR
   MLIRMathDialect
+  MLIRMemRefDialect
   MLIRPass
+  MLIRSCFDialect
+  MLIRTensorDialect
   MLIRVectorDialect
   )

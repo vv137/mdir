@@ -15,6 +15,11 @@ D319 adds its pure `md` value-level form and declared
 transpose. It also adds no control-file key, checkpoint or output format,
 or overwrite behavior change. The composed reciprocal potential remains
 future work.
+D[fft-value-buffer] bridges that value form to explicit execution buffers
+in matching f32 or f64 precision. The backward transform may overwrite its
+private packed input copy; the semantic tensor operand remains unchanged.
+It adds no control-file key, checkpoint or output format, or overwrite
+behavior change.
 
 D308 adds `mdir-opt --md-dist-print-schedule`, a compiler
 inspection pass over distributed halo dependencies. It adds no control-file
