@@ -137,3 +137,19 @@ module attributes {md_exec.typed_storage} {
     return
   }
 }
+
+// -----
+
+module attributes {md_exec.typed_storage} {
+  md.particle_set @atoms
+  md.tuple_set @angles on(@atoms) arity(3) orientation(reversal)
+
+  func.func @missing_builder_tuple_set(
+      %members: memref<?x3xi32, #md_exec.set_layout<@angles, 2>>,
+      %n: index) {
+    // expected-error@+1 {{expected 'md_exec.tuple_set' for tagged members}}
+    %inc = md_exec.build_incidence %members size(%n)
+        : memref<?x3xi32, #md_exec.set_layout<@angles, 2>> -> memref<?xi32, #md_exec.set_layout<@atoms, 1>>
+    return
+  }
+}
