@@ -19,6 +19,10 @@ The [execution contract](execution-contracts.md) (#574) checks whether a
 composition may run or be transformed for its stated sets, effects, state,
 and numerical order. It is shared by the primitive sites in this map and
 does not add a mathematical primitive.
+Its [async contract](execution-contracts.md#11-async-readiness-borrows-and-ordered-resources)
+applies to the halo copy and sum as well as host-device transfer: completed
+payload, candidate coverage, and reverse contribution completeness remain
+different facts. The first transfer migration keeps current waits.
 
 ## 1. The primitive set
 

@@ -90,6 +90,20 @@ contracts, the runtime and backends, and the toolchain. This is the design
 of D334 (#574); individual checks and witnesses belong
 to later decisions. Existing inputs and emitted programs do not change.
 
+The extended D[execution-contract-boundaries] design refines a contract into
+requirements, established facts, effects, numerical policy, and named
+external assumptions. A fact is tied to the versions of the positions,
+cell, ordering, ownership, and allocation that establish it; a function or
+loop carries it only with checked preconditions and preservation on every
+path. For an asynchronous transfer, token definition alone does not make
+data ready: completion must precede a consumer and make its memory domain
+visible. Source and destination storage remain borrowed until completion.
+For a checkpoint, the copy's completion, the writer's release of staging
+storage, and the file's commit are three distinct events (D336). A plan
+preserves the required numerical order and derivative pairing before cost
+can select among legal schedules. These are design obligations, not new
+runtime checks in this document.
+
 ## 3.1 What is computed, and how the state advances
 
 A term of the potential is written once, as an expression of its
