@@ -53,7 +53,7 @@ format, or the outputs; every such change is listed under **Changed** or
   no control-file key, simulation result,
   output format, or overwrite behavior.
 - **Set-bearing storage-form buffers** (D[typed-storage-set], #565):
-  field, scratch, tuple-member, and incidence buffers carry their row set in an
+  field, loop-reduction scratch, tuple-member, and incidence buffers carry their row set in an
   identity memref layout. Loop verification rejects cross-set use, and
   CPU/GPU conversion rejects cross-set casts before removing the layout.
   No control key, output format, overwrite rule, or generated address

@@ -27,8 +27,11 @@ static Type eraseSet(Type type) {
 }
 
 static FlatSymbolRefAttr getProvenance(Value value) {
-  if (auto cast = value.getDefiningOp<memref::CastOp>())
+  if (auto cast = value.getDefiningOp<memref::CastOp>()) {
+    if (cast->hasAttr("md_exec.input_set_boundary"))
+      return getSet(cast.getType());
     return getProvenance(cast.getSource());
+  }
   if (auto cast = value.getDefiningOp<memref::MemorySpaceCastOp>())
     return getProvenance(cast.getSource());
   if (auto view = value.getDefiningOp<memref::SubViewOp>())
@@ -40,24 +43,44 @@ static FlatSymbolRefAttr getProvenance(Value value) {
   return getSet(value.getType());
 }
 
+static LogicalResult verifySetCast(memref::CastOp cast) {
+  FlatSymbolRefAttr source = getProvenance(cast.getSource());
+  FlatSymbolRefAttr target = getSet(cast.getType());
+  Attribute boundary = cast->getAttr("md_exec.input_set_boundary");
+  bool inputBoundary = static_cast<bool>(boundary);
+  if (inputBoundary && !isa<UnitAttr>(boundary))
+    return cast.emitOpError()
+           << "input set boundary must be a unit attribute";
+  if (inputBoundary && (source || !target))
+    return cast.emitOpError() << "input set boundary must tag a plain buffer";
+  if (target && !source && !inputBoundary)
+    return cast.emitOpError()
+           << "cannot infer the source set of a cast to set " << target;
+  if (source && target && source != target)
+    return cast.emitOpError() << "cannot reinterpret storage of set " << source
+                              << " as set " << target;
+  return success();
+}
+
+LogicalResult mdir::md_exec::verifyStorageSetCasts(ModuleOp module) {
+  WalkResult result = module.walk([&](memref::CastOp cast) {
+    return failed(verifySetCast(cast)) ? WalkResult::interrupt()
+                                       : WalkResult::advance();
+  });
+  return result.wasInterrupted() ? failure() : success();
+}
+
 LogicalResult mdir::md_exec::eraseStorageSets(ModuleOp module) {
+  if (failed(verifyStorageSetCasts(module)))
+    return failure();
   SmallVector<memref::CastOp> casts;
-  bool valid = true;
   module.walk([&](memref::CastOp cast) {
     FlatSymbolRefAttr source = getProvenance(cast.getSource());
     FlatSymbolRefAttr target = getSet(cast.getType());
-    if (source && target && source != target) {
-      cast.emitOpError() << "cannot reinterpret storage of set " << source
-                         << " as set " << target;
-      valid = false;
-      return;
-    }
     if ((source || target) &&
         eraseSet(cast.getSource().getType()) == eraseSet(cast.getType()))
       casts.push_back(cast);
   });
-  if (!valid)
-    return failure();
   for (memref::CastOp cast : casts) {
     cast.getResult().replaceAllUsesWith(cast.getSource());
     cast.erase();

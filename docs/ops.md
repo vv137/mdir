@@ -1281,15 +1281,15 @@ buffers. An op takes fields only or buffers only.
 
 The layout's affine map is the identity: it changes neither an address nor
 the number of bytes. Its second argument is the memref rank, and its set is
-the row domain. A field or scratch buffer over `@atoms` has that set;
+the row domain. A field or loop-reduction scratch buffer over `@atoms` has that set;
 the members of tuples carry their tuple set; an incidence buffer carries
 the particle set of its rows, and its builder and tuple loops declare the
-tuple set as `md_exec.tuple_set`. The module attribute
+tuple set as `md_exec.tuple_set`. The incidence type does not yet carry that
+second set in the storage form; typed tuple parameters require the declaration. The module attribute
 `md_exec.typed_storage` marks storage assigned by the pass, for which loop
 operands must be tagged. Loop verification rejects a different set, and
 the CPU and GPU conversion passes reject casts that reinterpret a tagged
-buffer as another set, including through a plain cast or aliasing view. An external host
-buffer crosses the boundary through `memref.cast`. The conversion passes
+buffer as another set, including through a plain cast or aliasing view. A cast into tagged storage with unknown source provenance is refused unless storage assignment marks it as a declared input boundary. An external host buffer crosses this boundary through that marked `memref.cast`. PME scratch remains untagged structural storage. The conversion passes
 erase the identity layout and those boundary casts before lowering, so
 the generated address calculations stay the same. Dynamic first dimensions
 continue to use the validated input size and the pass's set size map.

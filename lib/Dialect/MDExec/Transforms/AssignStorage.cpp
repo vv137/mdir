@@ -338,6 +338,15 @@ static Value eraseSetForHostCall(OpBuilder &builder, Location loc,
       buffer);
 }
 
+/// A plain input buffer gains its declared field or relation set here. This
+/// cast is the only assertion of set identity allowed at a storage boundary.
+static Value tagInputBuffer(OpBuilder &builder, Location loc, Type type,
+                            Value buffer) {
+  auto cast = memref::CastOp::create(builder, loc, type, buffer);
+  cast->setAttr("md_exec.input_set_boundary", builder.getUnitAttr());
+  return cast;
+}
+
 /// The type of the positions that the neighbor structure `structure` is
 /// refreshed or traversed with, from the ops that use it.
 static Type findPositionsType(Value structure) {
@@ -1721,8 +1730,8 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     if (auto relation = dyn_cast<md::RelationType>(from.getResult().getType())) {
       Value buffer = mapping.lookup(from.getBuffer());
       if (relation.getTupleSet())
-        buffer = memref::CastOp::create(builder, op->getLoc(),
-                                       getMembersStorageType(relation), buffer);
+        buffer = tagInputBuffer(builder, op->getLoc(),
+                                getMembersStorageType(relation), buffer);
       mapping.map(from.getResult(), buffer);
       Attribute set = relation.getTupleSet();
       if (!sizes.count(set))
@@ -1744,9 +1753,9 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                      from.getBuffer().getParentBlock() == op->getBlock();
     bool isReadOnly = readOnly.contains(buffer);
     if (!onDevice && !givenAnew) {
-      buffer = memref::CastOp::create(builder, op->getLoc(),
-                                       getStorageType(from.getResult().getType()),
-                                       buffer);
+      buffer = tagInputBuffer(builder, op->getLoc(),
+                              getStorageType(from.getResult().getType()),
+                              buffer);
       bind(from.getResult(), buffer, scope);
       // A buffer that the function may not write is read where it is, and
       // no loop takes it for what it writes.

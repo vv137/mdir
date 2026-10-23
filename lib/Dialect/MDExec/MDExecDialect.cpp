@@ -3,6 +3,7 @@
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
+#include "mdir/Dialect/MDExec/StorageSet.h"
 
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinAttributeInterfaces.h"
@@ -180,6 +181,12 @@ void AlgebraListAttr::print(AsmPrinter &printer) const {
 
 LogicalResult MDExecDialect::verifyOperationAttribute(Operation *op,
                                                       NamedAttribute attr) {
+  if (attr.getName() == "md_exec.typed_storage") {
+    if (!isa<UnitAttr>(attr.getValue()) || !isa<ModuleOp>(op))
+      return op->emitError()
+             << "expects 'md_exec.typed_storage' on a module";
+    return verifyStorageSetCasts(cast<ModuleOp>(op));
+  }
   if (attr.getName() == algebra::kAlgebraAttrName)
     return algebra::verify(op, attr.getValue());
   if (attr.getName() == algebra::kDeterministicAttrName) {

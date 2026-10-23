@@ -624,6 +624,17 @@ LogicalResult ScatterAddOp::verify() {
         return emitOpError() << "expected buffers of rank 1 or 2, got "
                              << type;
     }
+    auto module = (*this)->getParentOfType<ModuleOp>();
+    if (module && module->hasAttr("md_exec.typed_storage")) {
+      FlatSymbolRefAttr rowSet = getBufferSet(values);
+      if (!rowSet)
+        return emitOpError() << "expected tagged values in the storage form";
+      if (failed(verifyBufferSet(getOperation(), getIndices(), rowSet)))
+        return failure();
+      if (!getBufferSet(dest))
+        return emitOpError()
+               << "expected a tagged destination in the storage form";
+    }
   } else {
     if (!getResult() || getResult().getType() != dest)
       return emitOpError() << "expected a result of the type of the "
@@ -1237,8 +1248,13 @@ LogicalResult BuildIncidenceOp::verify() {
     if (cast<MemRefType>(getRelation().getType()).getMemorySpace())
       return emitOpError()
              << "expected the buffer of the members on the host";
-    if (auto tupleSet =
-            (*this)->getAttrOfType<FlatSymbolRefAttr>("md_exec.tuple_set"))
+    auto tupleSet =
+        (*this)->getAttrOfType<FlatSymbolRefAttr>("md_exec.tuple_set");
+    auto module = (*this)->getParentOfType<ModuleOp>();
+    if (module && module->hasAttr("md_exec.typed_storage") &&
+        getBufferSet(getRelation().getType()) && !tupleSet)
+      return emitOpError() << "expected 'md_exec.tuple_set' for tagged members";
+    if (tupleSet)
       if (failed(verifyBufferSet(getOperation(), getRelation(), tupleSet)))
         return failure();
     return success();
@@ -1402,6 +1418,11 @@ LogicalResult TupleForOp::verify() {
   if (isStorageForm()) {
     particleSet = getBufferSet(getIncidence().getType());
     tupleSet = (*this)->getAttrOfType<FlatSymbolRefAttr>("md_exec.tuple_set");
+    auto module = (*this)->getParentOfType<ModuleOp>();
+    if (module && module->hasAttr("md_exec.typed_storage") &&
+        !getParameters().empty() && !tupleSet)
+      return emitOpError()
+             << "expected 'md_exec.tuple_set' for tuple parameters";
   }
   if (isStorageForm() != isa<MemRefType>(getIncidence().getType()))
     return emitOpError()

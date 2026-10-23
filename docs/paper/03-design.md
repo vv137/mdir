@@ -625,18 +625,19 @@ f64, and tables go to the device in f32 when their kernels are f32.
 
 **Set identity in storage** (D[typed-storage-set]). Storage assignment
 types a field with the set of its rows, for example
-`memref<?x3xf32, #md_exec.set_layout<@atoms, 2>>`; scratch and the members
+`memref<?x3xf32, #md_exec.set_layout<@atoms, 2>>`; loop-reduction scratch and the members
 of tuples carry their corresponding particle and tuple sets; incidence
-buffers carry the particle set of their rows. The layout
+buffers carry the particle set of their rows; their tuple set remains an
+explicit `md_exec.tuple_set` attribute on the builder and tuple loop. The layout
 maps each index to itself and the numeric memory space remains separate.
 The verifier compares a loop's buffers with its particle or tuple domain,
 and rejects a buffer from another set. The current pool can reuse a buffer
 only for the same set and full type. Before either CPU or GPU lowering a
 shared boundary rejects a cast across sets, including one hidden by a
-plain cast or aliasing view, and erases the identity layout and boundary casts. Therefore
+plain cast or aliasing view, and rejects unknown source provenance unless the cast marks a declared input boundary. It erases the identity layout and boundary casts. Therefore
 the address calculations, allocation sizes, and kernels are those of the
 plain-memref program. Dynamic row counts come from validated input and
-the assignment pass's size map; lifetime planning is a later pass.
+the assignment pass's size map; PME scratch remains untagged structural storage, and lifetime planning is a later pass.
 
 ## 3.5 Lowerings and templates
 

@@ -15,7 +15,7 @@ md.particle_set @atoms
 //
 // HOST-LABEL: func.func @scale(
 // HOST-SAME:    %[[M:[a-z0-9]+]]: memref<?xf64{{.*}}> {mdrt.read_only}
-// HOST:         %[[TAG:[a-z0-9_]+]] = memref.cast %[[M]] : memref<?xf64> to memref<?xf64, #md_exec.set_layout<@atoms, 1>>
+// HOST:         %[[TAG:[a-z0-9_]+]] = memref.cast %[[M]] {md_exec.input_set_boundary} : memref<?xf64> to memref<?xf64, #md_exec.set_layout<@atoms, 1>>
 // HOST:         %[[OWN:[a-z0-9_]+]] = memref.alloc
 // HOST:         md_exec.particle_for ins(%[[TAG]] : memref<?xf64{{.*}}>) outs(%[[OWN]] : memref<?xf64{{.*}}>)
 // HOST:         %[[PLAIN:[a-z0-9_]+]] = memref.cast %[[OWN]] : memref<?xf64{{.*}}> to memref<?xf64>
@@ -23,7 +23,7 @@ md.particle_set @atoms
 //
 // PLAIN-HOST-LABEL: func.func @scale(
 // PLAIN-HOST-SAME:    %[[M:[a-z0-9]+]]: memref<?xf64{{.*}}>
-// PLAIN-HOST:         %[[TAG:[a-z0-9_]+]] = memref.cast %[[M]] : memref<?xf64> to memref<?xf64, #md_exec.set_layout<@atoms, 1>>
+// PLAIN-HOST:         %[[TAG:[a-z0-9_]+]] = memref.cast %[[M]] {md_exec.input_set_boundary} : memref<?xf64> to memref<?xf64, #md_exec.set_layout<@atoms, 1>>
 // PLAIN-HOST-NOT:     memref.alloc
 // PLAIN-HOST:         md_exec.particle_for ins(%[[TAG]] : memref<?xf64{{.*}}>) outs(%[[TAG]] : memref<?xf64{{.*}}>)
 // PLAIN-HOST:         %[[PLAIN:[a-z0-9_]+]] = memref.cast %[[TAG]] : memref<?xf64{{.*}}> to memref<?xf64>

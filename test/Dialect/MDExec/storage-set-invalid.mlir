@@ -70,6 +70,61 @@ module attributes {md_exec.typed_storage} {
 
 // -----
 
+md.particle_set @atoms
+md.particle_set @other
+
+func.func @unknown_set_after_select(
+    %a: memref<?xf64, #md_exec.set_layout<@atoms, 1>>,
+    %choose: i1) {
+  %plain = memref.cast %a : memref<?xf64, #md_exec.set_layout<@atoms, 1>> to memref<?xf64>
+  %selected = arith.select %choose, %plain, %plain : memref<?xf64>
+  // expected-error@+1 {{cannot infer the source set of a cast to set @other}}
+  %b = memref.cast %selected : memref<?xf64> to memref<?xf64, #md_exec.set_layout<@other, 1>>
+  return
+}
+
+// -----
+
+module attributes {md_exec.typed_storage} {
+  md.particle_set @atoms
+  md.particle_set @items
+  md.particle_set @other
+
+  func.func @scatter_cross_set(
+      %values: memref<?xf64, #md_exec.set_layout<@items, 1>>,
+      %indices: memref<?xi32, #md_exec.set_layout<@other, 1>>,
+      %dest: memref<?xf64, #md_exec.set_layout<@atoms, 1>>) {
+    // expected-error@+1 {{expected a buffer of set @items, got a buffer of set @other}}
+    md_exec.scatter_add %values at %indices into %dest
+        : memref<?xf64, #md_exec.set_layout<@items, 1>>, memref<?xi32, #md_exec.set_layout<@other, 1>>, memref<?xf64, #md_exec.set_layout<@atoms, 1>>
+    return
+  }
+}
+
+// -----
+
+module attributes {md_exec.typed_storage} {
+  md.particle_set @atoms
+  md.tuple_set @angles on(@atoms) arity(2) orientation(ordered)
+
+  func.func @missing_tuple_set(
+      %inc: memref<?xi32, #md_exec.set_layout<@atoms, 1>>,
+      %x: memref<?x3xf64, #md_exec.set_layout<@atoms, 2>>,
+      %cell: !md.cell,
+      %param: memref<?xf64, #md_exec.set_layout<@angles, 1>>) {
+    // expected-error@+1 {{expected 'md_exec.tuple_set' for tuple parameters}}
+    md_exec.tuple_for %inc, %x, %cell coordinates(displacement(0, 1))
+        tuple(%param : memref<?xf64, #md_exec.set_layout<@angles, 1>>)
+        arity(2) {
+    ^bb0(%d: vector<3xf64>, %p: f64):
+      md_exec.yield
+    } : memref<?xi32, #md_exec.set_layout<@atoms, 1>>, memref<?x3xf64, #md_exec.set_layout<@atoms, 2>>
+    return
+  }
+}
+
+// -----
+
 module attributes {md_exec.typed_storage} {
   md.particle_set @atoms
 

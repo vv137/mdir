@@ -189,7 +189,7 @@ adds no operation, plan choice, control key, or runtime behavior.
 
 ## Planned work
 
-1. The storage form carries the set of field, scratch, tuple-member, and
+1. The storage form carries the set of field, loop-reduction scratch, tuple-member, and
    incidence buffers in an identity layout (D[typed-storage-set]). Loop verification checks their
    symbolic index domain, and the lowering boundary rejects casts that
    reinterpret one set as another. Next, carry the set of other structural
