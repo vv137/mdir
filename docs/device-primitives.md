@@ -54,6 +54,9 @@ This first interface slice does not change strategy selection, fusion,
 stream assignment, or device code; moving their checks to a shared rule is
 follow-up work.
 
+The planned [transfer-readiness implementation](runtime.md#53-transfer-readiness-and-lifetime-design-for-567)
+of #567 checks completion and buffer borrows while retaining current waits.
+
 ## 1. Status
 
 | Primitive | CUB's counterpart | Issue | Status | Decision |

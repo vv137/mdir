@@ -222,6 +222,16 @@ plus the run of the velocities, RTX 3090).*
 The host issues work on one stream and waits only where it reads what the
 device computed. Three mechanisms keep the device busy.
 
+Host-device copies currently have token-bearing `gpu.memcpy` operations
+followed by immediate waits, and their runtime path synchronizes both
+runtime streams when a host buffer participates. D[async-copy-contract]
+(#567) proposes a verifier for copy readiness and source/destination
+lifetimes using the same completion contract as distributed halo transfers.
+Its first slice preserves every existing wait and numerical result. An
+explicit token does not by itself make a copy asynchronous to the host or
+license a read of an unfinished destination; moving waits or removing the
+runtime-wide synchronization requires a separate proof and measurement.
+
 **A pool of device memory.** The runtime keeps freed blocks and hands one
 of the same size to the next allocation without a call to the driver;
 buffers that a step allocates and frees cost a lookup. A block is reused

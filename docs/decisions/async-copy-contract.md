@@ -1,0 +1,5 @@
+# D[async-copy-contract]
+
+Recorded at its merge.
+
+**Host-device copies carry an explicit completion dependency and source/destination borrows checked before a dependent read, conflicting write, free, or reuse.** #567, design for a first implementation slice. Storage assignment already emits `gpu.memcpy async` between a token-producing `gpu.wait async` and an immediate blocking `gpu.wait`; the first verifier preserves those wait points and emitted code. A token's SSA dominance is not readiness, completion needs visibility to the consumer's domain, and disjoint work may run independently. The contract is shared with the start/wait events of #481; D336's copy completion, writer release, and checkpoint commit remain distinct. `mgpuMemcpy` currently synchronizes both streams for host-device copies, so adding a token alone makes no overlap claim. #565 storage identity and #566 effect summaries supply the provenance and alias facts; a separate measured decision is required to move waits, merge readbacks, or remove the runtime-wide synchronization. This draft design changes no control key, file format, runtime check, strategy default, or generated program.

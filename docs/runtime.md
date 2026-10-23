@@ -210,6 +210,53 @@ Open questions:
 | 2 | Size of a block of threads | 128, a numeric plan parameter |
 | 3 | Which GPU | The first one that `CUDA_VISIBLE_DEVICES` leaves visible |
 
+### 5.3 Transfer readiness and lifetime (design for #567)
+
+Storage assignment currently emits an asynchronous `gpu.memcpy` token
+between `gpu.wait async` and an immediate `gpu.wait`. Thus each copy is
+complete before the next host access, while the blocking wait is a
+synchronization point. In `runtime/mdrt_cuda.c`, `mgpuMemcpy` also calls
+`finish()` for a host-device copy; `finish()` synchronizes both runtime
+streams. An IR token alone does not remove that runtime-wide wait.
+
+The proposed first #567 slice describes the existing behavior with a
+checked transfer record. The record associates the completion token with
+the exact source and destination storage roots and slices, their allocation
+generations, and the visibility domain. The source is read-borrowed and the
+destination write-borrowed from initiation until completion. A consumer
+may read the destination only after a completion dependency with the right
+visibility; a conflicting write, free, or reuse of either storage waits for
+the borrow to end. An SSA token definition dominating a use is not itself
+completion. Proved disjoint work may run between start and wait.
+
+| Event | What it establishes | What it does not establish |
+|---|---|---|
+| Transfer start | An in-flight copy and source/destination borrows | Ready destination data |
+| Transfer completion/dependency | Data visible to the stated consumer domain; transfer borrows end | Initialization of unwritten elements or release of a later host writer's borrow |
+| Host writer release (D336) | Staging storage may be reused | Checkpoint file committed |
+| File commit (D336) | Checkpoint visibility under its existing rename protocol | Permission to skip a required copy dependency |
+
+The verifier and lowering use the same provenance, alias, and effect
+queries from D334 and the #574 boundary design. #565 supplies storage-set
+identity, and #566 supplies loop effects; a buffer's set tag does not prove
+that aliases are disjoint. The initial verifier is bounded to recognized
+same-block transfer/wait pairs and checked loop/function effects. It refuses
+a known conflicting use without completion, and diagnoses an unsupported
+contract where required alias or completion facts remain unknown. It does
+not turn an unresolved dependency into a presumed safe serial path.
+
+The first implementation retains the existing waits, copy placement,
+checkpoint release/commit points, and failure propagation. It shares the
+readiness and borrow contract with `mdrt.halo_copy_start`,
+`mdrt.halo_sum_start`, and `mdrt.halo_wait` (#481), whose current in-process
+transport and same-block, one-wait restriction remain. Moving waits,
+merging readbacks, pinned-memory transport, CUDA graph capture, and actual
+MPI/GPU halo overlap are separate measured strategies with explicit
+preconditions. A change that removes `mgpuMemcpy`'s runtime-wide `finish()`
+must establish scoped stream dependencies and host visibility before it may
+claim overlap. No control key, output format, or result changes in this
+first slice.
+
 ## 6. Reference interpreter
 
 V1 decided against an interpreter. The options that were considered:
