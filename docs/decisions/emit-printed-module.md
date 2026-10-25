@@ -1,0 +1,35 @@
+# D[emit-printed-module]
+
+Recorded at its merge.
+
+**The module of a program is the builder's text parsed and printed again by MLIR's printer, with the locations of its ops, and `mdir emit --stage=module` and `Program.ir` print it without the positions in the builder's text** (#568, step 2; the ruling of the maintainer on #568, 2026-10-26).
+
+**Why.** Step 2 of #568 builds parts of the module with `OpBuilder` and `IRMapping` instead of text. A module made in part from IR objects can only be printed by MLIR's printer, which names SSA values by number (`%0`, `%arg3`), prints numbers in its own format, and keeps no comments and no type aliases of the text. The program's text therefore becomes the printed module first, in a commit of its own. That way every later step compares like with like, and the gate of each step is that printed form, byte for byte, and the lowered program (`docs/driver.md`, Section 2.11).
+
+**What the program's text holds.**
+- `driver::printParsedModule`, called by `buildProgram`, parses the builder's text and prints it with `enableDebugInfo` (location aliases at the end), so that it keeps the locations of the ops. They are of two kinds:
+  - The builder's own locations: the term of a custom expression, which diagnostics name.
+  - The positions in the builder's text: the lowering names the kernels that it outlines from loops by the line of the loop (`MDExecToGPU`, `setPurpose`). A text printed without the positions and parsed again would name every kernel differently.
+- A text that does not parse is left as it was, for the lowering to report, as before.
+- **Cost:** one more parse and print of the module per build. On STMV `mdir emit` took 12.3 s against 11.8 s before, most of it the reading of the topology.
+
+**What a reader sees.** `driver::printModuleForReading`, which `mdir emit --stage=module` and `Program.ir` print:
+- Removes the positions in the builder's text, which refer to a text that nobody reads.
+- Keeps the builder's own locations after their ops, as its text had them.
+
+**Changes for users.**
+- The text of `mdir emit --stage=module` and of `Program.ir` changes once: printer names, numbers, and layout.
+- The key of the compile cache hashes the module, so every entry misses once after this change.
+- No program changes. Over the full corpus of #606 (243 control files, 486 cases), the printed module and the lowered program are byte-identical to main, the Amber suite included.
+
+**Tests.** The FileCheck patterns that named the builder's values or aliases now capture the printer's names, and match full types and the printer's numbers. Three kinds of test change more than their patterns:
+- Python checks that used a name as a probe now use structure:
+  - an extra non-symmetric table among the arguments of the potential (`python_tunable.py`, `check_function_files.py`);
+  - equal texts for two programs that differ only in a value that must be an argument (`python_tunable.py`, `compile_cache_cell.py`);
+  - the arguments of the entry by position, with the names of the start values from the private `Simulation._start_values` (`python_frames.py`, D227's order).
+- The extraction of the projection of the bonds of hydrogen (`analytic_bonds.py`) is found by its tuple set and the `scf.if` of its analytic solution, not by names.
+- `Lit/builder-equivalence.test` perturbs the cutoff in the printer's spelling.
+
+**Corrected.** Step 1 (#606) said that locations were not part of the contract. Both kinds are, and `docs/driver.md`, Section 2.11, says so.
+
+**Not taken.** The builder's names could be kept: record each SSA name as a `NameLoc` from the parser's `AsmParserState`, and print with `OpPrintingFlags::printNameLocAsPrefix`. That changes the location of every op, and `setPurpose` would have to look through `NameLoc`, a change of the lowering. The printer would also still rename values that the builder names alike in sibling regions. This is offered to the maintainer in the PR, not done.

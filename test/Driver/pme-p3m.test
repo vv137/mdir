@@ -34,7 +34,7 @@
 # CHECK: MDIR: the total energy changed by {{[0-9.]+}}e-0{{[4-9]}} of its value
 
 # MODULE: md.reciprocal
-# MODULE-NEXT: grid([16, 20, 24]) order(4) {{.*}} p3m
+# MODULE-SAME: grid([16, 20, 24]) order(4) {{.*}} p3m
 
 # The virial of the influence function through every alias of eq. 2.28
 # (docs/pme.md, Section 1.1): its trace against -dU/dlambda under a

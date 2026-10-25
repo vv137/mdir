@@ -33,10 +33,12 @@
 # and does not read the velocities of the step before (#19).
 #
 # MODULE:     dyn.program @step(
-# MODULE:     provides = ["thermostatting"]
-# MODULE:     %v1_drift = md.map_particles gather(%f, %m :
+# MODULE-SAME: provides = ["thermostatting"]
+# MODULE:     [[DRIFT:%[0-9]+]] = md.map_particles gather(%arg2, %arg3 :
 # MODULE-NOT: dyn.kick
-# MODULE:     %x1 = dyn.drift %x, %v1, %dt
+# MODULE:     [[V1:%[0-9]+]] = md.map_particles gather([[DRIFT]], %arg3,
+# MODULE-NOT: dyn.kick
+# MODULE:     dyn.drift %arg0, [[V1]], %arg5
 
 # With constraints, a step that moves the lightest atom more than 0.005 nm
 # at random is warned of: hydrogens at 2 fs and 50/ps, not at 0.1 fs.

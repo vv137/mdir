@@ -75,9 +75,12 @@
 # barostat-ff19sb-gpu.test -1.47 kcal/mol after 2 ps (CPU, double), the
 # dispersion correction of -30.24 kcal/mol times V_0/V - 1 = 0.0487.
 #
-# EXACT-WORK: %baro_constant: f64, %baro_energy_constant: f64
-# EXACT-WORK: %bdc{{[a-z0-9_]*}} = arith.mulf %baro_energy_constant, %bdvi
-# EXACT-WORK: %bdu{{[a-z0-9_]*}} = arith.addf %bdue
+# The two constants are the last arguments of the entry, after the step
+# to start from (D227): the constant of the virial and that of the energy.
+# EXACT-WORK: func.func @mdir_run({{.*}}: i64, [[CONSTANT:%arg[0-9]+]]: f64, [[ENERGY:%arg[0-9]+]]: f64)
+# EXACT-WORK: arith.divf [[CONSTANT]], {{%[0-9]+}} : f64
+# EXACT-WORK: [[CHANGE:%[0-9]+]] = arith.mulf [[ENERGY]], {{%[0-9]+}} : f64
+# EXACT-WORK: arith.addf {{%[0-9]+}}, [[CHANGE]] : f64
 # FIRST:      MDIR: the conserved energy changed by {{[0-9.]+}}e-03 of its value
 
 # Leapfrog takes the pressure from the velocities of the time of the

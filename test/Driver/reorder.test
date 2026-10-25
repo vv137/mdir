@@ -36,21 +36,20 @@
 # The particles are ordered where the run begins and where a segment
 # begins. The segments carry the fields that do not change otherwise.
 #
-# ON:      %id_in = mdrt.from_buffer %identities : memref<?xi32> to !ids
-# ON-NEXT: %order0 = md_exec.spatial_order %x_in, %cell, %id_in width(5.0{{0*}}e-01)
-# ON:      %x0 = md_exec.permute %x_in, %order0
-# ON:      %p_sigma = md_exec.permute %p_in_sigma, %order0
-# ON:      %id = md_exec.permute %id_in, %order0
-# ON:      %xe0, %ve0, %fe0, %me0, %pe0_epsilon, %pe0_sigma, %ide0 = scf.for %i0
-# ON-NEXT:     iter_args(%xa0 = %x0, %va0 = %v0, %fa0 = %f0, %ma0 = %m, %pa0_epsilon = %p_epsilon, %pa0_sigma = %p_sigma, %ida0 = %id)
-# ON:        %orders = md_exec.spatial_order %xa0, %cell, %ida0
-# ON:        %ids = md_exec.permute %ida0, %orders
-# ON:            dyn.step @step(%xa2, %va2, %fa2, %ms, %cell, %dt, %ps_epsilon, %ps_sigma)
-# ON:        mdrt.host_call @mdrtWriteCheckpoint(%step0, %xe1, %ve1, %fe1, %ids)
-# ON:        scf.yield %xe1, %ve1, %fe1, %ms, %ps_epsilon, %ps_sigma, %ids
+# ON:      [[IDIN:%[0-9]+]] = mdrt.from_buffer %arg5 : memref<?xi32> to !md.field<@atoms, i32>
+# ON-NEXT: [[ORDER0:%[0-9]+]] = md_exec.spatial_order [[XIN:%[0-9]+]], [[CELL:%[0-9]+]], [[IDIN]] width(5.000000e-01)
+# ON:      [[X0:%[0-9]+]] = md_exec.permute [[XIN]], [[ORDER0]]
+# ON:      md_exec.permute {{%[0-9]+}}, [[ORDER0]] : !md.field<@atoms, f64>
+# ON:      [[ID:%[0-9]+]] = md_exec.permute [[IDIN]], [[ORDER0]]
+# ON:      [[E:%[0-9]+]]:7 = scf.for {{%arg[0-9]+}} = {{.*}} iter_args([[XA:%arg[0-9]+]] = [[X0]], {{.*}}, [[IDA:%arg[0-9]+]] = [[ID]])
+# ON:        [[ORDERS:%[0-9]+]] = md_exec.spatial_order [[XA]], [[CELL]], [[IDA]]
+# ON:        [[IDS:%[0-9]+]] = md_exec.permute [[IDA]], [[ORDERS]]
+# ON:            dyn.step @step(
+# ON:        mdrt.host_call @mdrtWriteCheckpoint({{%[0-9]+}}, {{%[0-9#]+}}, {{%[0-9#]+}}, {{%[0-9#]+}}, [[IDS]])
+# ON:        scf.yield {{.*}}, [[IDS]] :
 # ON:      } {mdrt.segment}
-# ON:      mdrt.host_call @mdrtFinish(%xe0, %ve0, %ide0)
+# ON:      mdrt.host_call @mdrtFinish([[E]]#0, [[E]]#1, [[E]]#6)
 
 # OFF-NOT: md_exec.spatial_order
-# OFF:     %id = mdrt.from_buffer %identities : memref<?xi32> to !ids
-# OFF:     mdrt.host_call @mdrtFinish(%xe0, %ve0, %id)
+# OFF:     [[OFFID:%[0-9]+]] = mdrt.from_buffer %arg5 : memref<?xi32> to !md.field<@atoms, i32>
+# OFF:     mdrt.host_call @mdrtFinish({{%[0-9#]+}}, {{%[0-9#]+}}, [[OFFID]])

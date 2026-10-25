@@ -79,6 +79,16 @@ def model(tunables=None, pme=True, terms=True):
     return system, state
 
 
+def constant_tables(ir):
+    """The tables of pairs of types that are not symmetric among the
+    arguments of the potential of a program: one of them holds the tunable
+    constants of the pair terms. The module that `Program.ir` prints names
+    its values as the printer numbers them (#568), so the table is told by
+    its type and count, not by its name."""
+    potential = ir[ir.index("md.potential @energy("):]
+    return potential.split("\n", 1)[0].count("!md.table<2, f64>")
+
+
 def declarations(system, values=None):
     """Tied charges (one entry per atom name of the waters, each atom of the
     peptide its own), σ and ε of every type, a constant of the pair term,
@@ -577,13 +587,13 @@ def run_declarations():
     assert [(d["name"], d["entries"], d["unit"]) for d in plan][:3] == [
         ("q", int(good[0].map.max()) + 1, "e"), ("sigma", nt, "nm"),
         ("epsilon", nt, "kJ/mol")], plan
-    assert "md.lookup %t_tunable_constants" in program.ir
+    tables = constant_tables(program.ir)
     system.tunables = good[:2]
     assert program.stale
     expect(mdir.StaleProgramError, program.check_current)
     # Without tunables the program reads no table of them.
     system.tunables = []
-    assert "tunable_constants" not in compile_(system, state).ir
+    assert constant_tables(compile_(system, state).ir) == tables - 1
     print("declaring is structural: the program goes stale; the plan lists the tunables")
 
 
@@ -752,7 +762,11 @@ def run_integrators(target, precision):
     a, b = sim.state(), fresh.state()
     d = difference(a, b)
     assert d == [0.0, 0.0, 0.0] and a.energies == b.energies, (d, a.energies, b.energies)
-    assert "%baro_constant: f64" in compile_(system, state, target, precision, npt=True).ir
+    # The constants of the exact work of the barostat, which the new values
+    # change, are arguments of the entry, not constants of its text (D227):
+    # the programs of the two sets of values are one text.
+    assert compile_(system, state, target, precision, npt=True).ir == \
+        compile_(other_system, state, target, precision, npt=True).ir
     print(f"{target} {precision}: NPT, an update before the first run equals a compile with the "
           f"new values to the bit after 30 steps (volume {a.energies['volume']:.6f} nm^3)")
 

@@ -32,18 +32,17 @@
 # A quarter of the particles have a coefficient of the dispersion, and a
 # device gathers them alone; three quarters have a charge, and a device
 # gathers every particle (gather_all).
-# MODULE: md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli listed(%p_ljpme_listed)
-# MODULE-NEXT: coulomb(1.0) dispersion{{$}}
-# MODULE: md.reciprocal %x, %p_q, %cell, %t_pme_moduli listed(%p_pme_listed)
-# MODULE-NEXT: coulomb({{[0-9.e+]+}}) gather_all{{$}}
+# The arguments of md.reciprocal are the positions (%arg0), the values,
+# the cell (%arg1), and the moduli, then the list of the particles.
+# MODULE: md.reciprocal %arg0, {{%arg[0-9]+}}, %arg1, {{%arg[0-9]+}} listed({{%arg[0-9]+}}) grid({{.*}}) coulomb(1.000000e+00) dispersion :
+# MODULE: md.reciprocal %arg0, {{%arg[0-9]+}}, %arg1, {{%arg[0-9]+}} listed({{%arg[0-9]+}}) grid({{.*}}) coulomb({{[0-9.e+]+}}) gather_all :
 
 # FIXED-NOT: md_exec.nonzero
-# FIXED: listed(%p_ljpme_listed)
-# FIXED: listed(%p_pme_listed)
+# FIXED: md.reciprocal %arg0, {{%arg[0-9]+}}, %arg1, {{%arg[0-9]+}} listed({{%arg[0-9]+}}) {{.*}} dispersion
+# FIXED: md.reciprocal %arg0, {{%arg[0-9]+}}, %arg1, {{%arg[0-9]+}} listed({{%arg[0-9]+}}) {{.*}} coulomb(138.
 
-# TIP3P: md.reciprocal %x, %p_ljpme_c, %cell, %t_ljpme_moduli listed(%p_ljpme_listed)
-# TIP3P-NOT: pme_listed
-# TIP3P: md.reciprocal %x, %p_q, %cell, %t_pme_moduli{{$}}
+# TIP3P: md.reciprocal %arg0, {{%arg[0-9]+}}, %arg1, {{%arg[0-9]+}} listed({{%arg[0-9]+}}) {{.*}} dispersion :
+# TIP3P: md.reciprocal %arg0, {{%arg[0-9]+}}, %arg1, {{%arg[0-9]+}} grid({{.*}}) coulomb(138.{{[0-9]+}}) :
 
 # CHECK: INFO: {{ *}}0 {{ *}}0.0000 {{ *}}-2815.0592 {{ *}}-3522.4045 {{ *}}707.3454 {{ *}}300.0000 {{ *}}-101.7588 {{ *}}685.7587 {{ *}}-2815.0592 {{ *}}19810.9175
 # CHECK: INFO: {{ *}}20 {{ *}}0.0400 {{ *}}-2824.3441 {{ *}}-3674.3254 {{ *}}849.9813 {{ *}}362.3977 {{ *}}-1189.8576 {{ *}}-488.2131 {{ *}}-2815.7859 {{ *}}19787.0778

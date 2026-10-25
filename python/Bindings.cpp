@@ -754,7 +754,9 @@ PYBIND11_MODULE(_core, m) {
     return unwrap(model::loadCharmm(structure, coordinates, parameters, cell));
   }, py::arg("structure"), py::arg("coordinates"), py::arg("parameters"), py::arg("cell") = driver::Cell{});
   py::class_<Program, std::shared_ptr<Program>>(m, "Program")
-    .def_property_readonly("ir", [](const Program &p) { return p.compiled.program.module; })
+    .def_property_readonly("ir", [](const Program &p) {
+      return driver::printModuleForReading(p.compiled.program);
+    })
     .def_property_readonly("lowered_ir", [](const Program &p) {
       // Lowered when first asked for, with the GIL released: a simulation
       // lowers programs of its own (D224).
@@ -1608,7 +1610,14 @@ PYBIND11_MODULE(_core, m) {
     // simulation, which for an evaluator is the loop over frames
     // (D251): private, for the tests of what the builder
     // emits (#302). Not part of the interface: it may change or go.
-    .def_property_readonly("_ir", [](const PySimulation &s) { return s.simulation->getProgramText(); })
+    .def_property_readonly("_ir", [](const PySimulation &s) {
+      driver::Program program;
+      program.module = s.simulation->getProgramText();
+      return driver::printModuleForReading(program);
+    })
+    .def_property_readonly("_start_values", [](const PySimulation &s) {
+      return s.simulation->getStartValueNames();
+    })
     // The bytes of its stack that the entry held at the last boundary,
     // 0 without an activation: private, for the tests of the memory per
     // frame (#302). Not part of the interface: it may change or go.

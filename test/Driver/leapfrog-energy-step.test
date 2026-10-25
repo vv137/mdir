@@ -70,8 +70,8 @@
 # MIXED: leapfrog CPU MIXED: 3 of 3 cases passed
 
 # LANGEVIN:      dyn.program @step(
-# LANGEVIN:      %v0u = dyn.kick %v, %f, %m, %half : !vec
-# LANGEVIN:      %v1 = dyn.kick %v0, %f, %m, %half : !vec
+# LANGEVIN:      dyn.kick %arg1, %arg2, %arg3, [[HALF:%[0-9]+]] : !md.field<@atoms, 3 x f64>
+# LANGEVIN:      dyn.kick {{%[0-9]+}}, %arg2, %arg3, [[HALF]] : !md.field<@atoms, 3 x f64>
 # LANGEVIN:      dyn.program @step_energy(
-# LANGEVIN:      %v0u = dyn.kick %v, %f, %m, %half : !vec
-# LANGEVIN:      %v1 = dyn.kick %v0, %f, %m, %half : !vec
+# LANGEVIN:      dyn.kick %arg1, %arg2, %arg3, [[EHALF:%[0-9]+]] : !md.field<@atoms, 3 x f64>
+# LANGEVIN:      dyn.kick {{%[0-9]+}}, %arg2, %arg3, [[EHALF]] : !md.field<@atoms, 3 x f64>

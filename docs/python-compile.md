@@ -15,6 +15,10 @@ The immutable returned `Program` exposes `ir`, `lowered_ir`, `pipeline`,
 and a copied `plan` dictionary. `ir`, `pipeline`, and `plan` are ready on
 return; `lowered_ir` is lowered on its first read, from the IR captured at
 compilation, and kept, so a later change of the inputs does not reach it.
+`ir` is the module as `mdir emit --stage=module` prints it: as MLIR's
+printer prints it once the builder's text is parsed, its values numbered
+by the printer (D[emit-printed-module], #568,
+[driver.md](driver.md#211-the-equivalence-check-of-the-builder)).
 A `Simulation` lowers programs of its own
 ([python-segments.md](python-segments.md#compiles)), so a program that is
 only simulated is not lowered twice. The `Program` keeps the code of

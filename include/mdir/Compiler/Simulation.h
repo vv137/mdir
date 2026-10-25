@@ -238,6 +238,10 @@ public:
   /// simulation, as `mdir emit` prints that of a run: for the tests of
   /// what the builder emits (#302).
   const std::string &getProgramText() const;
+  /// The names of the values of the start that close the arguments of the
+  /// entry, in their order (D227): for the tests of what the builder
+  /// emits, whose printed module names its values by number (#568).
+  std::vector<std::string> getStartValueNames() const;
   /// The bytes of its own stack that the entry held at the last boundary
   /// where it waits (the address of the frame of that call, from the top of
   /// the stack), or 0 without an activation. The entry never returns, so

@@ -564,7 +564,7 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
   if (!program)
     return fail(program.takeError());
   if (emit == Emit::Module) {
-    llvm::outs() << program->module;
+    llvm::outs() << printModuleForReading(*program);
     return 0;
   }
 

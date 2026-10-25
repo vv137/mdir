@@ -25,15 +25,17 @@
 # velocity along the bonds, and the first half kick and the drift of
 # velocity Verlet from there.
 #
+# The arguments of a step program are x, v, f, m, the cell, and dt, in
+# that order (%arg0 to %arg5).
 # MODULE:      dyn.program @step(
-# MODULE:      %v1 = dyn.kick %v, %f, %m, %dt : !vec
-# MODULE-NOT:  %v0u
+# MODULE:      dyn.kick %arg1, %arg2, %arg3, %arg5 : !md.field<@atoms, 3 x f64>
+# MODULE-NOT:  dyn.kick %arg1, %arg2, %arg3, %{{[0-9]+}}
 # MODULE:      dyn.program @step_energy(
-# MODULE:      %v1 = dyn.kick %v, %f, %m, %dt : !vec
-# MODULE:      %v0u = dyn.kick %v, %f, %m, %half : !vec
-# MODULE:      %v1p = dyn.kick %v0, %f, %m, %half : !vec
-# MODULE:      %x1d = dyn.drift %x, %v1, %dt : !vec
-# MODULE:      %x1dp = dyn.drift %x, %v1p, %dt : !vec
+# MODULE:      [[V1:%[0-9]+]] = dyn.kick %arg1, %arg2, %arg3, %arg5 : !md.field<@atoms, 3 x f64>
+# MODULE:      dyn.kick %arg1, %arg2, %arg3, [[HALF:%[0-9]+]] : !md.field<@atoms, 3 x f64>
+# MODULE:      [[V1P:%[0-9]+]] = dyn.kick {{%[0-9]+}}, %arg2, %arg3, [[HALF]] : !md.field<@atoms, 3 x f64>
+# MODULE:      dyn.drift %arg0, [[V1]], %arg5 : !md.field<@atoms, 3 x f64>
+# MODULE:      dyn.drift %arg0, [[V1P]], %arg5 : !md.field<@atoms, 3 x f64>
 
 #--- run.toml
 [input]

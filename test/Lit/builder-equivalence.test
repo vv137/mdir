@@ -114,5 +114,5 @@ sys.exit(done.returncode)
 import os, subprocess, sys
 done = subprocess.run([os.environ["MDIR_REAL"], *sys.argv[1:]], capture_output=True)
 sys.stderr.buffer.write(done.stderr)
-sys.stdout.buffer.write(done.stdout.replace(b"cutoff(8.50000000000000089e-01)", b"cutoff(9.0e-01)"))
+sys.stdout.buffer.write(done.stdout.replace(b"cutoff(0.85000000000000008)", b"cutoff(9.0e-01)"))
 sys.exit(done.returncode)

@@ -19,14 +19,15 @@
 # velocities of the time of the new positions, half a kick ahead of those
 # that it stores, and the kinetic energy takes them.
 #
-# MODULE:      dyn.program @step(%x: !vec, %v: !vec, %f: !vec, %m: !real,
-# MODULE:      attributes {velocity_offset = -0.5,
-# MODULE:      %v1 = dyn.kick %v, %f, %m, %dt : !vec
-# MODULE:      dyn.return %x1, %v1, %f1 : !vec, !vec, !vec
+# MODULE:      dyn.program @step([[X:%[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, [[V:%[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, [[F:%[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, [[M:%[a-z0-9]+]]: !md.field<@atoms, f64>, {{%[a-z0-9]+}}: !md.cell, [[DT:%[a-z0-9]+]]: f64,
+# MODULE-SAME: velocity_offset = -5.000000e-01 : f64
+# MODULE:      [[V1:%[0-9]+]] = dyn.kick [[V]], [[F]], [[M]], [[DT]] : !md.field<@atoms, 3 x f64>
+# MODULE:      dyn.return {{%[0-9]+}}, [[V1]], {{%[0-9]+}} : !md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>
 # MODULE:      dyn.program @step_energy(
-# MODULE:      %v2 = dyn.kick %v1, %f1, %m, %half : !vec
-# MODULE-NEXT: dyn.return %x1, %v1, %f1, %u1, %w1, %gd1, %v2
-# MODULE:      %xl, %vl, %fl, %u, %w, %gwl, %vn = dyn.step @step_energy(
-# MODULE:      %k = md.sum_particles gather(%vn, %m : !vec, !real)
-# MODULE:      %kexg{{.*}} = md.sum_particles gather(%fl, %m : !vec, !real)
-# MODULE:      %g = vector.reduction <add>, %kex
+# MODULE:      [[EV1:%[0-9]+]] = dyn.kick {{%arg[0-9]+}}, {{%arg[0-9]+}}, [[EM:%arg[0-9]+]], {{%arg[0-9]+}} : !md.field<@atoms, 3 x f64>
+# MODULE:      [[V2:%[0-9]+]] = dyn.kick [[EV1]], [[F1:%[0-9#]+]], [[EM]], {{%[0-9a-z_]+}} : !md.field<@atoms, 3 x f64>
+# MODULE-NEXT: dyn.return {{%[0-9]+}}, [[EV1]], [[F1]], {{%[0-9#]+}}, {{%[0-9#]+}}, {{%[0-9]+}}, [[V2]]
+# MODULE:      [[S:%[0-9]+]]:7 = dyn.step @step_energy(
+# MODULE:      md.sum_particles gather([[S]]#6, [[MASS:%[0-9]+]] : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>)
+# MODULE:      md.sum_particles gather([[S]]#2, [[MASS]] : !md.field<@atoms, 3 x f64>, !md.field<@atoms, f64>)
+# MODULE:      vector.reduction <add>, [[S]]#5

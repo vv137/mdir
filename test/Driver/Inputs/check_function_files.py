@@ -186,7 +186,10 @@ assert grids_example[0][1:] == ([2, 3], [11, 12, 13, 21, 22, 23])
 inline_ir = invoke(mdir, 'emit', 'order-inline.toml')
 file_ir = invoke(mdir, 'emit', 'order-file.toml')
 assert inline_ir == file_ir
-assert 'fn_order' in file_ir
+# The table of the function: a table of pairs that is not symmetric, among
+# the arguments of the potential (the module names its values by number,
+# #568).
+assert '!md.table<2, f64>,' in file_ir.split('md.potential @energy(', 1)[1].split('{', 1)[0]
 print('2-by-3 file order matches inline nested lists: passed')
 
 # Input errors are checked once on the CPU; they precede compilation.
