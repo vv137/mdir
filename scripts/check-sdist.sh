@@ -9,7 +9,9 @@
 # ala3 example on the CPU from there. CONFIG_SETTING are passed to pip as
 # `-C`, for example cmake.define.LLVM_DIR=<llvm>/lib/cmake/llvm. The tree is
 # not changed; WORK_DIR holds the environments, the sdist, and the wheel.
-# PYTHON names the interpreter (python3 by default).
+# PYTHON names the interpreter (python3 by default). A wheel that auditwheel
+# has not repaired links HDF5 from where it was built: HDF5_LIBRARY_DIR names
+# that directory for the run (#634).
 set -euo pipefail
 work=${1:?usage: $0 WORK_DIR [CONFIG_SETTING...]}
 shift
@@ -47,6 +49,7 @@ rm -rf "$work/env"
 "$python" -m venv "$work/env"
 "$work/env/bin/pip" install -q "$wheel"
 cd "$work"
+LD_LIBRARY_PATH="${HDF5_LIBRARY_DIR:+$HDF5_LIBRARY_DIR:}${LD_LIBRARY_PATH:-}" \
 "$work/env/bin/python" - "$source/examples/ala3" <<'EOF'
 import sys
 import mdir
