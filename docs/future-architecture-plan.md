@@ -1079,3 +1079,60 @@ William Robert Saunders, *Development of a Performance-Portable Framework for At
 The local reading copy is `references/saunders-2018-performance-portable-atomistic-thesis.pdf`, retained in the ignored reference collection. The copy has 197 PDF pages; architecture citations use printed page numbers. The legacy institutional publication URL embedded in this edition could not be resolved during review; the catalog link above provides an accessible bibliographic reference.
 
 Cornel and P4IRS citations retain their institutional publication and publisher links. The P4IRS paper's repository URL was attempted during the original review but could not be fetched, so no claim about its current code or maintenance is made.
+
+## The plan as the roadmap stated it
+
+From the roadmap (#603), whose rows now give the state and the next steps.
+
+Classical MD remains a core use case. This extension preserves its existing
+features, validation, and performance baselines, with no required MLIP
+backend for classical runs. LJ/EAM are initial distributed validation
+models; realistic molecular systems remain part of validation and the
+long-term distributed scope.
+
+Direction adopted in D166 and refined in D167 (2026-10-03); all milestones
+below are planned, not implemented. [The architecture plan](future-architecture-plan.md#adopted-scope-and-first-deliverable)
+holds the contracts and detailed sequence. The first deliverable is **one
+existing local MLIP, validated on one GPU and then on two GPUs sharing one
+physical system**. Independent trajectories on separate GPUs are useful
+but do not validate this decomposition.
+
+Start the optional metatomic adapter through the existing driver before
+the distributed compiler and full Python API are complete. The first
+scope is finite-range local interactions, a fixed cell, no constraints,
+and one node. Keep the first-milestone classical MD paper's validation and
+publication independent of this work. An adapter, distributed inference,
+and compiler optimization are separate outcomes; none alone establishes
+novelty or a speedup.
+
+Use **Allegro → PaiNN → MACE** as the sequential support target, pinning
+one existing artifact and its backend/adapter versions per architecture.
+Allegro is the first local model; PaiNN introduces staged scalar/vector
+message passing; MACE extends the validated stage contract. Compatibility
+is checked per artifact, not promised for every checkpoint in a family.
+Supporting these architectures does not by itself validate water-and-salt
+properties; scientific validation is a separate application gate.
+
+**PyTorch/JAX supplies neural-network AD and tensor execution.** MDIR
+verifies particle dependencies, derivative ownership, communication,
+lifetimes, and execution order. Begin with a whole-model energy/force/virial
+call; staged execution later registers or reuses differentiable halo and
+reverse-accumulation primitives while the external framework generates
+backward. No new general reverse-mode engine is required. torch-mlir is an
+optional later import route, not a dependency of ML1–ML3. Preserve semantic
+contracts through external AD rather than reconstructing them from generic
+tensor operations. See the [layer and model plan](future-architecture-plan.md#external-ad-and-execution-layers).
+
+A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
+not required to complete that first deliverable, nor is support for all
+three architectures. ML5 can begin with the first validated staged model.
+Distributed PME, global attention or charge solvers, constraints across
+domains, training, arbitrary PyTorch/JAX import, and full-trajectory
+differentiation remain outside it. The dependency vocabulary must leave
+room for these cases without claiming support.
+
+A persistent kernel cache and runnable compiled artifacts remain companion
+work. Cache keys include the model/backend and code-affecting plan choices;
+replanning that does not change generated code can reuse it. Preserve
+artifact identity and restart contracts from ML1, initially with same-plan
+continuation; changes of rank count require later validation.

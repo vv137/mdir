@@ -305,3 +305,31 @@ completion and write-commit mechanism, hash comparison details, and package
 layout. These details do not reopen the approved choices above. Released
 control-key or checkpoint-format changes carry a Changed changelog entry,
 and checkpoint changes include migration when the format changes.
+
+## A reading of OpenMM's Python layer
+
+From the roadmap (#603).
+
+The design follows a reading of OpenMM's Python layer (2026-10-02,
+`openmm/openmm` at 5ee2cba): its vocabulary and its reporters fit MDIR,
+its copies and its silent caching do not. Both front ends, the control file
+and Python, must produce the same IR and share one validation.
+
+DLPack views use execution order with input particle IDs alongside and
+the buffer's actual dtype (mixed-mode forces in `f32`, state in `f64`).
+Read-only leases block conflicting runs and mutations while views
+are alive; tracked writable borrows with an explicit commit complete the
+item (D229). The implementation specifies stream handoff, consumer
+completion, and allocation release. Reporters use typed MDIR requests,
+with final reports only when due; segments without reporters bound stop
+latency to about 1 s or less on the Amber suite. Python fingerprints record
+explicit options and add model/plan hashes to format 1, with continuation
+tests in both directions before claiming CLI/Python interoperability.
+
+Future MLIP work will integrate PyTorch/JAX automatic differentiation
+(maintainer, 2026-10-04). Keep energy/observable evaluation and
+parameters separate from simulation ownership. Tensor exchange alone does
+not propagate gradients: framework adapters need explicit derivative rules
+and independently validated force/virial and parameter derivatives. This
+future requirement does not claim training or trajectory differentiation in
+the initial M3 inference deliverable.

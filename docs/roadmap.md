@@ -1,412 +1,189 @@
 # Roadmap
 
-Status: each row carries the date or the decisions of its own state (the
-row of M4 was brought current on 2026-10-21). The decisions of the
-first milestone are in [decisions.md](decisions.md), and the results
-measured as its parts were built in [validation.md](validation.md),
-Section 1; the principles that the work follows are in
-[principles.md](principles.md).
+Status: each row says where its item stands and what comes next, with the
+issues that hold the work (#603); the history of an item is its decisions,
+in [decisions.md](decisions.md), whose rows hold the measurements. The
+results measured as the first milestone was built are in
+[validation.md](validation.md), Section 1, and the principles that the work
+follows are in [principles.md](principles.md).
 
 **Milestones** (D169; M2 split into M2a and M2b by D195):
 
 | Milestone | Scope | Status |
 |---|---|---|
-| M1 | An all-atom protein in water with an Amber force field, on one node, CPU and GPU; at least the rate of pmemd.cuda on every system of the Amber suite | Done (D114, 2026-10-02); release in preparation. Measured again with both programs under one protocol (D327, white paper Section 10): the target holds on every system, the closest STMV with the default reaches, 105.8 ± 1.6% |
-| M2a | The Python API (Section 6) | Items 1 to 8 of [python.md](python.md), Section 4, are done: item 8, `observe` in the Python model (#188, D232), was the last |
-| M2b | Differentiable simulation: parameters as tunable buffers, a frame evaluator with derivative rules, PyTorch then JAX adapters, and trajectory reweighting [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) (Section 6.1) | Under way beside the last item of M2a (maintainer, 2026-10-08): the derivative of the energy in the tunables is the first step (#203) |
-| M3 | Learned potentials on one GPU: ML1 steps 1 to 3, the IR of ML4, PaiNN in stages, and MACE in stages (Section 7, D287) | In progress: ML1's TorchScript backend through the metatomic plugin with chunks, from the control file and Python (D270), its AOTInductor backend (D273), the pair list from MDIR's neighbor structures (D277), ML4's opaque baselines of a pretrained PaiNN and MACE (D286), the IR of ML4: neural stages, fields of features, and their derivative (D288, D289), and PaiNN in stages on one GPU, step 4a (D294, D293), and the fusion of its bodies, the first part of step 4b (D299), and their products as calls of cuBLAS (D302), batched ones included, with their sums of rows as a warp a row (D303) |
-| M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | ML2 under way in parallel with M3 (Section 7): the dialect `md_dist` and its verifier (D275), the program derived from the global potential (D276), EAM on domains (D279), each domain's loops through `md_exec` (D290), the factor grid of the domains (D307), the record of the dependencies of the halos (D308), their start and wait events (D310), ownership-epoch migration (D313), and the collective halo skin predicate (D332); ML3, ML5, and distributed particle mesh Ewald planned |
+| M1 | An all-atom protein in water with an Amber force field, on one node, CPU and GPU; at least the rate of pmemd.cuda on every system of the Amber suite | Done (D114, 2026-10-02); released as 0.1.0. Under one protocol for both programs (D327) the target holds on every system ([white paper, Section 10](paper/10-performance.md)) |
+| M2a | The Python API (Section 6) | Done: items 1 to 8 of [python.md](python.md), Section 4; the last was `observe` in the Python model (D232, #188) |
+| M2b | Differentiable simulation: tunable parameters, a frame evaluator with derivative rules, PyTorch then JAX adapters, and trajectory reweighting [[ThalerZavadlav2021]](references.md#thalerzavadlav2021) (Section 6.1) | In progress: the derivative in the tunables (D230, #203), the frame evaluator and its PyTorch adapter. Next: JAX, force matching (#138) |
+| M3 | Learned potentials on one GPU: ML1 steps 1 to 3, the IR of ML4, PaiNN in stages, and MACE in stages (Section 7, D287) | In progress: ML1 (D270, D273, D277), ML4's baselines (D286), its IR (D288, D289), PaiNN in stages (D294, D293) and step 4b (D299, D302, D303, D318, D329). Next: the rest of step 4b (#462), MACE in stages (#377) |
+| M4 | Distributed execution: ML2, ML3, ML5, and distributed particle mesh Ewald (Section 7) | In progress, ML2 beside M3: `md_dist` in the compiler on an in-process executor (D275, D276, D279, D290, D307, D308, D310, D313, D332). Next: migration and the first `[distribute]` run (#38), MPI on CPU ranks; ML3, ML5, and distributed PME are planned |
 
-Within ML4 step 4b, D329 provides an opt-in f64 storage
-strategy for stage feature and adjoint fields in mixed precision, while
-exported f32 bodies retain their arithmetic type. The model key
-`stage_field_precision = "DOUBLE"` selects it. Its memory and accuracy
-measurements are in
-[ml4-ir.md](ml4-ir.md#85-validation).
-
-For the M3 size sweeps, `water-box.py` keeps both `.gro` identifier fields
-within five columns when a box exceeds 99,999 waters (D339,
-#550). This removes an input-format limit from the sweep without changing the
-model or the simulation.
-
+The size sweeps of M3 take boxes of more than 99,999 waters (D339, #550).
 Features of classical MD (Section 5) continue between milestones.
 
 ## 1. Robustness (under way)
 
-| Item | State |
+| Item | State and next |
 |---|---|
-| Robust differentiation (#15) | Activity analysis shared by positions, cell variables, and parameters (D182); scalar rule interfaces and coverage (D183); CPU f64 central-difference checker and expression fuzzer (D184); singular-point conventions and direct tests (D185); control-file term diagnostic locations (D186). All five parts are implemented for review in separate PRs. The transposes of the structure of the ops of `md` declared through `AdjointOpInterface`, with `--md-check-transposes` (D295, #451) |
+| Robust differentiation (#15) | Done: activity analysis (D182), rule coverage (D183), the f64 checker (D184), singular-point conventions (D185), term names in diagnostics (D186), and declared transposes of `md` with `--md-check-transposes` (D295, #451) |
 | Principles of development | Done ([principles.md](principles.md)) |
 | Tests under compute-sanitizer; short runs of the Amber suite | Done (`test/Sanitizer`, `test/Scale`) |
-| Full-suite wall time (#485) | Optional two-shard Slurm run from independent build trees (D309); the test set and oracle are unchanged. The Python `observe` precision/modifier matrix keeps representative CPU/GPU cases by default and the full matrix in release tests (D324, #530). Continue profiling other long Python driver tests. |
-| Portable device primitive boundary (#558, #433) | First stage: explicit NVVM, PTX assembly, and generic GPU operations inventoried with their emitter ownership and target preconditions (D340, [device-primitives.md](device-primitives.md#6-portability-one-target-contract-several-implementations)). Next: move one operation group per PR behind emitters, build one capability and measured-policy record, then put runtime device calls behind an interface. NVIDIA output stays identical unless a measured exception is justified. |
-| Declared semantic attributes (#607) | Tuple coordinate kinds and member places were already inherent and verified; differentiation now uses their typed accessors (D343). The stage, storage, transfer, and other attribute families and verifier-less ops remain separate slices. |
+| Full-suite wall time (#485) | Done in part: two Slurm shards (D309), the release tier for the long Python matrices (D324, #530). Next: profile the other long Python driver tests |
+| Portable device primitive boundary (#558, #433) | In progress: the inventory of NVVM, PTX, and GPU operations with their emitters (D340, [device-primitives.md](device-primitives.md#6-portability-one-target-contract-several-implementations)). Next: one operation group per PR behind emitters, one capability and measured-policy record, then the runtime's device calls behind an interface; NVIDIA output stays identical |
+| Declared semantic attributes (#607) | In progress: differentiation uses the typed accessors of tuple coordinate kinds and member places (D343). Next: the stage, storage, transfer, and other attribute families, and the ops without a verifier, each a slice of its own |
 | Kernels named after their op and line | Done |
-| Reports of defects that can be reproduced: `mdir bug-report`, crash reproducers of the passes, versions, a template for issues | Done ([debugging.md](debugging.md)) |
-| The set of each buffer in the type of the storage form; memory planning as a pass of its own | Field, scratch, tuple-member, and incidence buffers carry the set through storage form (D337, #565). The common CPU/GPU conversion boundary removes the identity layout; a lifetime-based memory planner and set types for remaining structural buffers follow. |
-| A summary of the effects of each loop op, from which fusion decides | After the storage types |
+| Reports of defects that can be reproduced | Done: `mdir bug-report`, crash reproducers of the passes, versions, an issue template ([debugging.md](debugging.md)) |
+| The set of each buffer in the type of the storage form; memory planning as a pass of its own | In progress: field, scratch, tuple-member, and incidence buffers carry their set (D337, #565). Next: a lifetime-based memory planner and set types for the other structural buffers |
+| A summary of the effects of each loop op, from which fusion decides | In progress: the loop effect interface (D342, #566). Next: checked summaries shared by fusion, streams, and distribution |
 | Copies between host and device ordered by async tokens in the IR | After the effects |
 | A debug lowering that checks bounds and the residuals of iterative solvers | With the storage types |
-| The barostat with positional restraints: a defect | Fixed 2026-10-02 (D124). Ubiquitin in OPC from the end of the tutorial's stage 3: with the restraints the cell stayed at 200,900 Å³, without them it went to 196,300. The references, scaled about the origin with the cell (D74), had shrunk with it (radius of gyration of the restrained atoms 11.33 Å against 11.73 for the file), and the restraints pushed outward. The center of the references now follows the cell and their offsets stay (`reference_scaling = "CENTER"`, the default): 196,262 ± 580 Å³ with the restraints, 196,293 ± 658 without; stage 3 of the tutorial ends at 195,700 Å³ instead of 201,000. The bilayer's stage 3, whose restraints are spread through the cell, takes `"ALL"` |
-| The conserved energy of the Trotter count under a fast compression | Closed 2026-10-02, not a defect: the offset of half a step between the virials of the count and the scaling (D92), which the trajectory does not depend on. The peptide of D65 on a GPU in double precision, $\tau_P$ = 0.5 ps, conserved energy over the run: from an equilibrated cell, 20 ps, every count within ±0.07 kcal/mol/ps of 0 for periods of 1, 5, and 10 steps (at constant volume −0.001), the Trotter count fluctuating more (0.6 to 0.9 kcal/mol against 0.24); compressed from the file by 12 to 15% in 2 ps, the Trotter count below the exact one by 4.2 kcal/mol at 1 fs whatever the period, 2.1 at 0.5 fs, 1.9 at 0.25 fs with a period of 10 fs and 1.1 with one of 1 fs, while the run at constant volume from the same file drifts by −2.1 kcal/mol/ps of its own. A run that changes its volume fast is checked with `work = "EXACT"` |
-| A build of the driver and runtime under AddressSanitizer and UndefinedBehaviorSanitizer | Done (`scripts/build-sanitized.sh`; the tests pass) |
+| The barostat with positional restraints: a defect | Fixed 2026-10-02 (D124; `reference_scaling`, [validation.md](validation.md#the-barostat-with-positional-restraints-d124)) |
+| The conserved energy of the Trotter count under a fast compression | Closed 2026-10-02, not a defect (D92); a run that changes its volume fast is checked with `work = "EXACT"` |
+| A build of the driver and runtime under AddressSanitizer and UndefinedBehaviorSanitizer | Done (`scripts/build-sanitized.sh`) |
 
 ## 2. The rest of the first milestone
 
-| Stage | Work |
+| Stage | State and next |
 |---|---|
-| M1e | Done (2026-10-02): the readers and renumbering; the format before Amber 7 and Amber's conventions (D133); flexible water at constant energy against sander, second order down to 0.0625 fs with the terms shifted at the cutoff (validation.md, Section 1) |
-| M1f | Done: the terms and dynamics of the intermediate stage against AmberTools, GROMACS, and CHARMM (white paper, Section 9) |
-| M1k | Done (2026-10-03): the Amber suite term by term at the start against pmemd 26 and sander (D133), conservation over runs, the volumes at constant pressure of JAC and Factor IX against OpenMM, pmemd.cuda, and GROMACS (within 0.05% of OpenMM's Monte Carlo barostat), and rates as one model with pmemd.cuda, 104% to 132% (D134; white paper, Sections 9 and 10) |
-| Integrators | Done: leapfrog does what velocity Verlet does: constraints (SHAKE, SETTLE), virtual sites, the thermostats, the barostat, restraints (D76) |
-| Comparison on a protein | Done (2026-10-02, `scripts/validation/protein`): ubiquitin in 5700 OPC waters with amber19sb.ff from `pdb2gmx` (ParmEd collapsed the 13 residue-specific maps of CMAP into one and was set aside). The terms agree with a rerun of GROMACS 2026.3 to 1.7e-6 each, Coulomb to 1.9e-6 against its tabulated kernels; the reader now puts the atoms of dihedrals in the order of LEaP, as grompp does. MDIR's rate is 70% of GROMACS's at constant energy and 64% at constant pressure: its loop over pairs takes the time of GROMACS's nonbonded kernel and its PME 47 µs of the device against 77, and the rest of the step runs in series on the device (white paper, Section 10.6) |
-| The rest of the step against GROMACS | In part (D118): the flags in mapped memory of the host took the idle time of the device from 49 to 29 µs a step on ubiquitin (585 to 609 ns/day) and raised JAC by 6 to 7%. Next: the fused integration kernel (14 µs, 130 registers) and the kernel of the tuples across warps (13 µs in one block; spread over 47 blocks it gained what the smaller list of another run lost), which need the counters of Nsight Compute; the 0.75 µs between each of 32 launches (CUDA graphs) |
-| The CPU target against GROMACS (D267, #359) | In part: step 1, the host code at O3 (D269); step 2, PME on the host in parallel, the same bits for any number of threads, f32 in the mixed mode (D271): TIP3P 103k at 16 threads 253.9 to 138.7 ms a step, its PME 131 to 14 ms against GROMACS's 7.2. D333 (#552, #549 step 0) records the CPU target against GROMACS and serial pmemd on one NVE protocol before a host primitive is selected. Next: the host `vector(W)` pair-loop strategy (#554, D267 step 4); step 3, builds of the list, follows the measured choice of matrix or clusters; then the rest of the step |
-| Performance | Done: PME in `f32` (D78), positions converted once (D79), valid structures across scalings (D80), PME on a second stream (D81, off by default; D87 checks what runs beside it), the groups of the constraints as a disjoint union run at once (D83), PME over the particles whose charge or coefficient of the dispersion is not zero (D262: on 103,292 OPC waters the sums take 241 µs a step where they took 274, and TIP3P's take 225), the values of the tuples of a block summed in block memory before the forces (D283: the kernel of the bonded terms and the excluded pairs takes 84 µs a step on Cellulose where it took 221 on an RTX 4090), the two as strategies of one privatized scatter-accumulate, chosen by one pass with stated preconditions (D285, #416 step 1, [device-primitives.md](device-primitives.md); the lowering strategies after CUB's primitives are #415), `md_exec.scatter_add` and one emitter of the table for every site (D291, #416 step 3; the table on the loops over groups measured slower and off), the compaction, scans, and counting sorts of the builds and the pruning as one emitter each, which the templates call by name (D296, #432; the same PTX), the algebra of every sum stated in the IR as a licence on its order of evaluation and read by the chooser and the lowerings instead of the mode, with the warp and block reductions one emitter (D301, #422 step 1; the same PTX). Next: one kernel for the kick, drift, and constraints of each group; the loop effect interface (D342, #566) is built; next, checked summaries shared by fusion, streams, and distribution; host synchronization moved to the device (the test of validity and the decision to rebuild, one copy to the host per step now); CUDA graphs; the tile structure (D82, [neighbor-tiles.md](neighbor-tiles.md)), stages T1 to T4 |
+| M1e | Done (2026-10-02): the readers and renumbering, Amber's formats and conventions (D133), flexible water against sander ([validation.md](validation.md), Section 1) |
+| M1f | Done: the terms and dynamics against AmberTools, GROMACS, and CHARMM (white paper, Section 9) |
+| M1k | Done (2026-10-03): the Amber suite term by term against pmemd 26 and sander (D133), conservation, volumes at constant pressure, and rates as one model (D134; white paper, Sections 9 and 10) |
+| Integrators | Done: leapfrog with everything velocity Verlet has (D76) |
+| Comparison on a protein | Done (2026-10-02, `scripts/validation/protein`): ubiquitin in OPC against GROMACS 2026.3 (white paper, Section 10.6) |
+| The rest of the step against GROMACS | In part (D118). Next: the fused integration kernel and the kernel of the tuples across warps (with Nsight Compute counters), and CUDA graphs for the launches (#60) |
+| The CPU target against GROMACS (D267, #359) | In part: the host code at O3 (D269), PME on the host in parallel (D271), and a recorded baseline (D333, #552, #549). Next: the host `vector(W)` pair-loop strategy (#554, D267 step 4), then the builds of the list and the rest of the step |
+| Performance | Done: D78, D79, D80, D81, D83, D87, D262, D283, D285 (#416, #415), D291, D296 (#432), D301 (#422) ([device-primitives.md](device-primitives.md)). Next: one kernel for the kick, drift, and constraints of each group; host synchronization on the device; CUDA graphs; the tile structure (D82, [neighbor-tiles.md](neighbor-tiles.md), stages T1 to T4) |
+| Device scan strategies (#420) | In part: the single-pass scan (D321) is opt-in; the three-launch scan stays the default. Next: further sites only with a measured critical path ([device-primitives.md](device-primitives.md)) |
+| Device gather strategies (#419) | In part: shared gather emitters (D325, #539). Next: vectorized or transposed loads where measured; tiled gathering at orders 6 and 8 (#411) |
+| Barostat integrators | Done: the exact work (D77), the Trotter integrator (D92), the virial of the groups (D116), the ensemble test of two pressures (white paper, Section 9.5). Next: the effective energy of [[Bernetti2020]](references.md#bernetti2020), eq. S11, as a diagnostic |
+| CHARMM force fields | Done (D121, D122, [charmm.md](charmm.md)). Next: CHARMM-GUI's triclinic cells and cell files, VSWITCH (done since as D175, F3), the lone pairs of CGenFF, and a bilayer at constant pressure against GROMACS and CHARMM |
+| PME grid axes | TODO: the longest edge as the contiguous axis of the grid, with the tables of D104 and the other stages on the permuted axes ([pme.md](pme.md#the-axes-of-the-grid)) |
+| Ewald summation with prolates | Done (D266, #334; measured again with tiles, D282, #336; the direct sum as a table, D280, #380; [pme.md](pme.md#7-the-prolate-kernel-d266), Section 7) |
+| Influence functions of P3M (#468) | In part: step 1, `[pme] influence = "P3M"` (D304; a triclinic cell is #475). Next: the self-force subtraction, the a priori error estimate and a choice of $(\beta, K, P)$, interlacing, and the prolate kernel with an optimal $G$ (#467) |
+| Dual pair lists | Done (D114; the default since D261; D268, #357; skins by measurement, D281, #406; fused pruning, D284, #362) |
+| Device memory on large systems (#471) | In part: D311, D312, D314, D315, D316, D320 (#517), D330, D331; STMV ×15 (16.01 M atoms) runs on one RTX 4090. Next: ×16, which runs out of memory after step 0 |
+| Large-system startup (#520) | In part: D316 and D323 (#525). Next: topology reading, validation, and the rest of the setup (#520) |
+| Physical validity ([[Merz2018]](references.md#merz2018)) | Done: the kinetic energy and the ensembles at two temperatures and two pressures, isotropic and semi-isotropic ([validation.md](validation.md#physical-validity), white paper, Section 9.5). Next, in order: two tensions on a bilayer; equipartition between solute and solvent and among motions; $\sigma_E \propto \Delta t^2$ at constant energy |
+| Periodic reordering of the state | TODO: the loops over pairs read the order of the last build (D86), the gathers and scatters that of the state; measure the loss over 10 ns of a large system first ([neighbors.md](neighbors.md#the-order-of-the-state)); reorder every N builds if it exceeds about 1% |
+| Pairs and lists, next | Measure first, then a box test of a group in the pruning and forces of the groups in fixed point, as the grid of PME (D70) ([neighbor-groups.md](neighbor-groups.md#next)) |
+| Other engines on MDBench | Preliminary (2026-10-02, [validation.md](validation.md#other-engines-on-mdbench)). Next: three repeats on GPU 0 alone, 9naw, runs with other seeds |
+| Semi-isotropic barostat | Done (D119). Next: the area per lipid, which needs runs of 100 ns or more |
 
-| Device scan strategies (#420) | In part: the single-pass device scan (D321) is a shared primitive offered to the three counting sorts of the group build through an opt-in compiler pass option; the three-launch scan stays the default because the ordinary Amber runs did not gain end to end. A high-rebuild JAC run gained 1.02%. The ragged incidence rows use a scan only when a tuple set is made; the matrix and PME sites have different scan forms. Further moves need a measured critical path ([device-primitives.md](device-primitives.md)). |
-| Device gather strategies (#419) | In part: the wrapped z coordinate and scalar grid read of the Gaussian and prolate PME gathers use one emitter each (D325, #539), with the existing lanes and arithmetic. Next: vectorized or transposed loads only where measured; tiled gathering at orders 6 and 8 is #411. |
-| Barostat integrators | Done: the strain stepped in $\lambda = \sqrt V$ (eq. S7 of [[Bernetti2020]](references.md#bernetti2020)), which makes the exact work of D77 the paper's reversible integrator. Done: its Trotter integrator (SI Sec. V.C), the default, which needs no evaluation after a scaling (D92). The count of its work takes the virial of the groups of the evaluations (D116), which removed a drift of −230 kcal/mol/ns with rigid groups. Done: the ensemble test of two pressures (white paper, Section 9.5). Next: its effective energy (eq. S11) as a diagnostic, which the virial of the groups of D116 now defines the same before and after a scaling |
-| CHARMM force fields | Done (2026-10-02, D121, [charmm.md](charmm.md)): from a topology of GROMACS, Urey–Bradley angles (function 5), harmonic impropers (function 2), and `lennard_jones_modifier = "POWER_FORCE_SWITCH"`, CHARMM's VFSWITCH [[Steinbach1994]](references.md#steinbach1994), which is not the force switch of GROMACS; NBFIX and the special 1-4 parameters were in place. Trp-cage in CHARMM36m agrees with CHARMM 51b1 to its printed digits in the bonded terms and to 2.2e-7 in the Lennard-Jones; charmm27.ff with GROMACS within 4.3e-6. Done (2026-10-02, D122): the files of CHARMM themselves, a PSF of the XPLOR kind, its CRD, and the files of topology, parameters, and streams; Lennard-Jones within 5e-10 of CHARMM on Trp-cage, two POPC of CHARMM36 to the printed digits (MDIR keeps the Coulomb constant of CODATA, 2.38e-5 below CHARMM's). Next: triclinic cells (F2; CHARMM-GUI's hexagonal membranes and octahedral solutes, in CHARMM's symmetric frame), the cell from CHARMM-GUI's files, VSWITCH, the lone pairs of CGenFF, and a bilayer of CHARMM-GUI at constant pressure against GROMACS and CHARMM |
-| PME grid axes | TODO: the longest edge as the contiguous axis of the grid, along which the real-to-complex transform runs: cuFFT on an RTX 3090 takes 277 µs for the pair of transforms of 126 × 126 × 270 against 292 for 270 × 126 × 126 (Cellulose; 255 against 275 for 128 × 128 × 256). The spreading, the weights, the tables of D104, the products, and the gathering then take the axes permuted; nothing for a cubic cell (STMV) |
-| Ewald summation with prolates | Done (D266, #334): `[pme] kernel = "PROLATE"`, the prolate spheroidal wave function as splitting and window, CPU and GPU, orthorhombic and triclinic, with its parameters from a tolerance and the aliasing estimate of its paper at half the tolerance, and its window continuous at its edge. Measured again with tiled spreading for both kernels (D282, #336; whole step, one GPU, `main` at 0a336ff9, `docs/pme.md` §7): 1.17 to 1.44 times the Gaussian default's time at the standard accuracy (relative force error about 10⁻³), 0.94 to 1.15 times order 6's at 10⁻⁴, and 0.84 to 1.02 times the faster of orders 6 and 8 at 10⁻⁵, with 6 to 7 times fewer grid points at 10⁻⁵, what a distributed transform moves. The direct sum as a table of $r^2$ (D280, #380): the loop over pairs takes the Gaussian's time on the CPU and a GPU, and on the CPU the step is 0.96 to 1.03 times the fastest Gaussian's at $10^{-5}$ and 1.05 to 1.24 times at $10^{-3}$ and $10^{-4}$, where the window remains |
-| Influence functions of P3M (#468) | In part: step 1, `[pme] influence = "P3M"`, eq. 2.28 of [[Ballenegger2012]](references.md#ballenegger2012) for analytic differentiation, from one builder of a splitting and a window (D304; a rectangular cell, #475 for a triclinic one); its $\Delta$ on JAC and Cellulose is within 2% of `"OPTIMAL"`'s, and against `"SPME"`'s lower at about 1 Å and higher by 3 to 4% on coarse grids of order 4 (`docs/pme.md`, Section 1.1). Next: step 2, the self-force subtraction; step 3, the a priori estimate of the error and a choice of $(\beta, K, P)$ from it; step 4, interlacing; the prolate kernel with an optimal $G$ (#467) |
-| Dual pair lists | Done (D114): an outer list of groups with a skin of 3 Å and an inner one pruned from it with 0.6 to 1 Å, whenever its test asks; 4 to 8 % on the Amber suite. Since D261 the default on a GPU from 23,000 particles (`neighbor_structure = "AUTO"`), with 3 Å and 0.6 Å at 2 fs. D268 (#357): the loop takes only the blocks a pruning left with entries, the index of the blocks is made at the build, the frames are shared with the loop; 12 µs a step less on 103k TIP3P waters, 47 on STMV. D281 (#406): `"AUTO"` skins, measured on the system by a long run on a device from candidates of a cost model, and cached. D284 (#362): where the refresh prunes, the loop over pairs that follows prunes in its own kernel, a warp a group, from 4096 groups (20,480 on `sm_12x`); 4 to 6% less a step on an RTX 4090 from about 6,400 groups (Cellulose 1465 → 1376 µs), at most 1% on an RTX PRO 6000 Max-Q |
-| Device memory on large systems (#471) | In part: the breakdown (D311, `MDIR_DEVICE_MEMORY=2`); the first fix, the pool's retention (D312): the buffers that a loop over the groups gathers take the room of the places, and the buffers that a growth replaces go back to the driver, so the pool no longer grows with the builds; STMV from 6,529 to 5,641 MiB on an RTX 4090, and STMV ×4 (4.27 M atoms) runs in 20,771 MiB; the second, the incidence structures of the tuples in ragged rows (D314), built on the device from the primitives of D296: STMV from 5,641 to 3,663 MiB, and STMV ×7 (7.47 M atoms) runs in 22,883 MiB; the third, one set of PME buffers for all the sites of the sum (D315): STMV from 3,665 to 2,567 MiB, ×7 in 15,367 MiB, and ×11 (11.74 M atoms) runs in 22,789 MiB; the setup, the count of the most neighbors at the start by cells and threads, exact (D316): `mdir run` to its first row at ×11 from 569 to 97 s on an RTX 4090 node. The unused bricks of tiled PME are removed by D320 (#517): ×1 uses 2,521 MiB and ×11 uses 22,283 MiB, saving 46 and 506 MiB on the same RTX 4090; ×12 still runs out of memory. The steps take the storage of the start's neighbor structure (D330): ×1 from 2,521 to 2,045 MiB and ×11 from 22,283 to 17,151 MiB, and ×14 (14.94 M atoms) runs in 22,985 MiB. The lists of groups are sized by their first build, a quarter more than it took (D331): ×1 from 2,045 to 1,921 MiB, ×14 from 22,985 to 21,117 MiB, and ×15 (16.01 M atoms) runs in 22,625 MiB; ×16 runs out of memory after the row of step 0 |
-| Large-system startup (#520) | In part: D316 removed the exhaustive neighbor count at the start, reducing STMV ×11 time to the first energy row from 569 to 97 s on one RTX 4090 node. D323 (#525) takes the next measured phase, `.gro` numeric parsing; topology reading, topology validation, and other setup remain in #520. |
-| Physical validity (Merz and Shirts 2018 [[Merz2018]](references.md#merz2018)) | Done: the mean and the variance of the kinetic energy and the ensemble tests at two temperatures and two pressures on OPC water (white paper, Section 9.5), isotropic. Done (2026-10-02): the Kolmogorov–Smirnov test of the whole distribution of the kinetic energy against the gamma distribution of the bath, $p = 0.26$ and 0.61 at 300 and 306 K (`scripts/validation/ensembles/analyze.py`). Done (2026-10-02): the test at two pressures with semi-isotropic coupling, within 0.08 standard errors, and with the height held, within 0.36, on water, whose volume (not shape) has a distribution (white paper, Section 9.5). Next, in order: a test at two tensions, which needs a bilayer and runs of 100 ns or more; (3) frames of the velocities and equipartition between solute and solvent and among translation, rotation, and internal motion, where the constraints of mixed precision would show; (4) the fluctuation of the total energy at constant energy against the step, $\sigma_E \propto \Delta t^2$, with the forces switched to zero at the cutoff, since a plain cutoff breaks it. The `physical_validation` package of that paper takes the series as they are, through an adapter for the log and the frames of MDIR |
-| Periodic reordering of the state | TODO: the state is sorted in space only where a run begins (white paper, Section 4.2); the loops over pairs read the order of the last build (D86), but the gathers of positions and the scatters of forces follow the order of the state, which diffusion scrambles (water moves about 37 Å in 1 ns). Measured so far: JAC fell from 726 to 722 ns/day over 2 ns, 0.5%, then stayed flat (Section 10.5). First measure the loss over 10 ns of a large system (STMV, or 6n4o of MDBench at 239,131 atoms); if it exceeds about 1%, permute the state and renumber the relations every N builds, as GROMACS sorts its local state at each search |
-| Pairs and lists, next | Measure first: the mean count of bits of the masks of the inner list, the share of the 16 pairs of an entry that are work (the cost of groups over single pairs), and whether a pruning is bound by its loads or its arithmetic. Then: in the pruning, a test of the box of the group that keeps or drops an entry whole when its candidate is within $R_\text{in} - a$ or beyond $R_\text{in} + a$ of the center, $a$ the half-diagonal of the box (about 4.7 Å for 16 atoms of water), before its 16 distances; by the volume of the shell, a third or more of the outer entries lie beyond, and a pruning is about 6% of a step of Cellulose. The forces of the loop over groups accumulated in 64-bit fixed point, as the grid of PME (D70), which makes groups deterministic (white paper, Section 13). Not now: lists of clusters along a Hilbert curve with indices stored as deltas in nibbles [[Thaler2026]](references.md#thaler2026), 3.6 bytes a particle against 12 for GROMACS, but on a GH200 no faster than GROMACS and slower than a full list; the loop over groups is bound by the pipe of loads and shuffles (92% of its peak on Cellulose, white paper, Section 10.2), not by the bytes of its list, and the lists fit (Cellulose: 153,517 blocks of 64 entries of 8 bytes, 190 bytes a particle). For many devices and systems of hundreds of millions |
-| Other engines on MDBench | Preliminary (2026-10-02, one run each on GPU 1 beside another job, 30 ps at 1 fs; `scripts/benchmarks/mdbench/run.py`): 6n4o (Argonaute2 with miR-122, ff14SB and OL3 in TIP3P, 239,131 atoms, a cutoff of 8 Å), each engine with the input of MDBench and MDIR with its own couplings: MDIR 55.1 ns/day, GROMACS 2026.3 53.0 (over all steps, with its tuning of PME), pmemd.cuda 26 43.3, OpenMM 8.6.1 32.5 (mixed). Next: three repeats on GPU 0 alone, and 9naw (3,023,780 atoms). Done (2026-10-02): 2 ns of each with a frame every 10 ps (`run.py --frames 10000 --steps 2000000`), compared by `structure.py` with cpptraj: the radius of gyration of the complex is 30.9 to 31.3 Å in all four, the RMSF of the CA 0.77 to 0.85 Å, and the profiles of the RMSF by residue correlate between MDIR and each other engine (0.86 to 0.92) as the others do among themselves (0.79 to 0.95). MDIR's backbone RMSD over the second ns is the largest, 2.00 Å against 1.34 to 1.56, but over the 711 residues whose RMSF is below 1.2 Å in every engine it is 1.25 against 0.92 to 1.11: the rest is in the flexible loops, and one run of each cannot tell it from the spread between runs. Next: three runs of each with other seeds, MDIR and GROMACS first (both stochastic velocity rescaling). The volumes differ: over the second ns MDIR 2399.7 nm³, OpenMM 2402 (a Monte Carlo barostat, which takes energies, not the virial), pmemd.cuda 2432.6, GROMACS 2453.6 (the input of MDBench corrects the energy for the dispersion, not the pressure, `DispCorr = Ener`). At the cell of the restart, held fixed for 20 ps, MDIR's pressure is −133.1 ± 6.5 bar, GROMACS's with `EnerPres` −135.0 ± 6.7 (its correction −409.168 bar, MDIR's −409.167), and pmemd.cuda's +101.2 ± 8.2: pmemd.cuda is 234 bar above the others here, 1.3% in volume. On TIP3P water at 8 and 10 Å the two agree within 8 bar, and on ubiquitin in OPC within 67 ± 36; the 13,707 particles of the protein of 6n4o span 110 Å of a cell of 134 Å, and pmemd.cuda takes the virial of molecules. Not examined further |
-| Semi-isotropic barostat | Done (D119): `coupling = "SEMI_ISOTROPIC"`, eqs. (9a, 9b) of [[Bernetti2020]](references.md#bernetti2020) with a surface tension and a held height, the kinetic energy, the virials, and the scaling by axis. Water samples the same volume as with isotropic coupling; on a POPC bilayer of Lipid21 the split of the pressure by axis agrees with GROMACS's in one cell. The pressure of that cell differs from GROMACS's by 43 bar (0.24% in density): on TIP3P water the pressures of MDIR, GROMACS, and pmemd.cuda at 2 fs are 52.7, 34.4, and 61.6 bar and agree near 45 bar at 0.25 fs, so it is the error of each integrator's estimator of the pressure at the step, not the coupling (D119). The area per lipid needs runs of 100 ns or more to compare to 1 Å²
-
-The order: leapfrog, then performance. The goal of performance for the
-first milestone is at least the rate of pmemd.cuda (Amber 26, SPFP), in
-mixed precision, on each system of the Amber suite (from 23,558 to
-1,067,095 atoms, NVE and NPT) on the same GPU; the white paper begins when
-it is reached. (Changed 2026-09-30 from 90% of GROMACS with CUDA:
-pmemd.cuda keeps a neighbor list as MDIR does, with a skin and a test of
-displacements, so the comparison measures the kernels; what GROMACS gains
-with a thermostat comes from a list every 50 steps and dynamic pruning,
-which is an item of its own.) On 2026-09-30, MDIR against pmemd.cuda:
-JAC 84–85% (NVE), 63–64% (NPT); FactorIX 60%, 47%; Cellulose 49%, 40%;
-STMV 38%.
-
-The goal was reached on 2026-10-02 (D114): MDIR runs every system of the
-suite at 102% to 127% of the rate of pmemd.cuda, at 103% to 132% after D118, and at 104% to 132% as one model with pmemd.cuda, with all the dihedral terms of Factor IX (D133, D134; white paper, Table 10.2).
-The rates of the first comparison, kept for the record (2026-09-30,
-ns/day, RTX 3090):
-
-| System | Atoms | MDIR | GROMACS (CUDA) | pmemd.cuda (published) |
-|---|---|---|---|---|
-| jac_nve | 23,558 | 212 | 747 | 632 |
-| jac_nve_4fs | 23,558 | 400 | 795 | 1197 |
-| factorix_nve | 90,906 | 51 | 248 | 265 |
-| cellulose_nve | 408,609 | 9 | 51 | 63 |
-| stmv_npt_4fs | 1,067,095 | 5 | 40 | 39 |
+The goal of the first milestone, its history, and the rates of the first
+comparison are in [validation.md](validation.md#the-goal-of-the-first-milestone)
+(D114, D118, D133, D134).
 
 ## Documentation
 
 | Item | State |
 |---|---|
-| Equations in the Markdown documents written in TeX (`$...$`, `$$...$$`, which GitHub renders) instead of Unicode text | Done (2026-10-02): the equations of every document of `docs/` are TeX; numbers, units, and the sizes of grids and tiles stay as text |
-| A guide for contributors: building, the layers of the IR and where a feature goes, adding a term, a pass, or a lowering, the tiers of tests and the tools of debugging, the principles, how a change is reviewed | Done: Appendix B of the white paper, and `CONTRIBUTING.md` at the root |
+| Equations in the Markdown documents written in TeX (`$...$`, `$$...$$`) instead of Unicode text | Done (2026-10-02) |
+| A guide for contributors | Done: Appendix B of the white paper, and `CONTRIBUTING.md` |
 
 ## 3. White paper, after the first milestone
 
-A paper that describes MDIR and what the first milestone shows, written
-when the milestone ends and the rates reach those of pmemd.cuda across the
-systems. *Written 2026-10-02:* [docs/paper/](paper/README.md), in
-Markdown with equations in TeX, built as a PDF with pandoc and tectonic
-(`scripts/paper/build-pdf.sh`); a change to a method, an algorithm, or an
-implementation updates it. The performance of the suite is measured
-against pmemd.cuda (the user, 2026-10-01); the comparison on a protein
-(Section 10.6) is against GROMACS. The outline:
+Written 2026-10-02 ([docs/paper/](paper/README.md)), built as a PDF with
+pandoc and tectonic (`scripts/paper/build-pdf.sh`); a change to a method,
+an algorithm, or an implementation updates it. The performance of the
+suite is measured against pmemd.cuda (the user, 2026-10-01), and the
+comparison on a protein (Section 10.6) against GROMACS. Every citation is
+checked against its source (docs/references.md), and the figures are
+generated from the logs by scripts in the repository.
 
-- A section of notation at the front (Done, Section 2): the symbols of positions,
-  cells, images and their shifts, forces, the virial and its sign, units,
-  and the types of the precision modes, fixed before the chapters and used
-  in all of them.
-- Every method that MDIR implements, with its equations as implemented
-  (TODO: keep the design documents complete in TeX as features land).
-- Usage (Done, 2026-10-03: Appendix C, [C-usage.md](paper/C-usage.md)):
-  how a researcher runs MDIR, beside the reference of the control file
-  (Appendix A): building and checking an installation, the stages of the
-  standard pipeline as control files, inputs from Amber, GROMACS, and
-  CHARMM, continuing a run on a cluster (U1 to U4), the choice of target
-  and precision, terms given by expressions, implicit solvent, and
-  failures, each command run at the commit of the paper. Its section on
-  the outputs follows U12 when that lands.
-- The design: the levels of the IR (`md`, `dyn`, `md_exec`), compilation of
-  each run before it runs, the lowerings to CPUs and GPUs, the runtime.
-- The neighbor algorithms in detail (Done, Section 4): the matrix (neighbors.md)
-  and the groups of 16 (neighbor-groups.md, D89 to D106): the compact order of
-  the places, the frames that take no minimum image (D95), the masks and
-  their ballots (D97), the queue of candidates and the ranges of partners
-  (D99, D100), the excluded pairs in the masks and their fallback (D105,
-  D106), the blocks of 64 entries and their pool, the exact test of
-  validity under scaling (D80) and of the dual list with its proof
-  (neighbor-tiles.md, Section 6), and why the tiles of D82 were set aside; with
-  the measurements behind each choice.
-- Correctness: agreement of the terms with sander and GROMACS, conservation
-  of energy, the ensembles (the density of OPC water, the distributions of
-  the thermostat and the barostat), the target of D65 (ff19SB in OPC).
-- Performance: the Amber suite against GROMACS and pmemd.cuda, with the
-  scripts that produce every number and figure.
-- The way from double to mixed precision (Done, Section 7): what stays in `f64` and
-  why (the differences of positions, D75; the sums), what moved to `f32`
-  (the kernels of pairs, PME), and what each step cost and gained.
-- Related work (Done, Section 11): every source of the list that the
-  outline began with was read at its source on 2026-10-02.
-  chemtrain-deploy, JAX MD, Reactant.jl, FFTc (also diva2:1757681),
-  LAPIS (arXiv 2509.25605), the activity analysis of automatic
-  differentiation on MLIR (doi:10.1145/3763125), mlip (arXiv 2505.22397),
-  and MDcraft (arXiv 2511.22951) are cited. MLIR-AIR (arXiv 2510.14871,
-  AI workloads on AMD NPUs) and SODA-OPT (high-level synthesis) target
-  spatial hardware and concern neither neighbor lists nor molecular
-  dynamics; they are not cited. The point the sources bear out: these
-  compile tensor programs, linear algebra, or potentials, or wrap learned
-  potentials in an engine, while MDIR has dialects of molecular dynamics
-  itself (particle sets, neighbor structures, tuples, integrators) and
-  lowers the whole step.
-- The principles of development and the defects that led to them.
-- A manual of the control file (Done, Appendix A, checked by
-  `scripts/paper/check-appendix.sh`): every table and keyword, its
-  units and default, and the combinations that are errors, checked
-  against `mdir template` so that it follows the code.
-- How to take part: how the code is laid out, how a new term, pass, or
-  target is added and tested, and how defects are reported, so that a
-  reader can begin to contribute.
-- Limitations and the next milestones.
-
-Every citation is checked against its source (docs/references.md), and the
-figures are generated from the logs by scripts in the repository.
+| Part | State |
+|---|---|
+| Notation (Section 2) | Done |
+| Every method as implemented | TODO: keep the design documents complete in TeX as features land |
+| Usage (Appendix C, [C-usage.md](paper/C-usage.md)) | Done (2026-10-03); its section on outputs follows U12 |
+| The design, the neighbor algorithms (Section 4: D80, D82, and D89 to D106, among them D95, D97, D99, D100, D105), correctness (the target of D65), performance, precision (Section 7, D75) | Done |
+| Related work (Section 11) | Done, every source read on 2026-10-02 ([paper/README.md](paper/README.md#related-work)) |
+| The principles of development; limitations and the next milestones | Done |
+| A manual of the control file (Appendix A) | Done, checked by `scripts/paper/check-appendix.sh` |
+| How to take part (Appendix B) | Done |
 
 ## 4. Usability (after the first milestone)
 
-From a review of how a researcher meets MDIR (2026-10-02), checked against
-the code. The order is that of the work; P0 is what a production run on a
-cluster needs.
+From a review of how a researcher meets MDIR (2026-10-02). The order is
+that of the work; P0 is what a production run on a cluster needs.
 
-| # | Item | Priority | State and scope |
+| # | Item | Priority | State |
 |---|---|---|---|
-| U1 | `steps` as the total of a run, and `mdir run --continue` | P0 | Done (2026-10-02, D129): the checkpoint records the step its run began at, and `--continue` takes the steps that remain to it from the checkpoint of `[output]`, begins the run without one, and exits with 0 when it is complete, so the same command line resubmits a job until it is done; the intervals are checked against what remains. A run that begins from the checkpoint of another begins at its step, which keeps the random numbers of stages apart, so `steps` of a run that begins means what it did. The conserved energy continues across parts ([driver.md](driver.md), Section 2.7); since D172 the checkpoint records what defined the run, `--continue` refuses other physics or coupling and names each change, and a run from another run's checkpoint evaluates its first forces where they differ |
-| U2 | Output that continues with the run | P0 | Done (D130, D149): the checkpoint records the trajectory and its frames, and the part whose files the outputs go to; a continued run cuts the trajectory to its frames and the files of columns to its step, and appends, and appends the log file whole; it refuses a trajectory with fewer frames, other particles, or another interval, and a file of columns with other columns. `--no-append` writes the log, the files of columns, and the frames of the continued part to `<name>.partNNNN<ext>` |
-| U3 | A stop on SIGTERM, SIGINT, or `--max-walltime` | P0 | Done (D131), without a change of the compiler: the function of the driver that writes a checkpoint ends the process after the write when a signal or the wall time asks for a stop, with the exit status 75 (`EX_TEMPFAIL`). The stop falls on a checkpoint, which keeps the continuation exact (R1); a second signal ends the run at once. The wall time leaves room for the longest interval between checkpoints so far |
-| U4 | Keep the previous checkpoint | P0 | Done (D132): `<checkpoint>.prev` is a hard link to the one before, made before the rename that replaces it, so the name of the checkpoint always holds a complete state; without hard links a rename, which `--continue` detects; since D173 the file is `fsync`ed before the rename and the directory after it, and the state carries its SHA-256, checked on every read |
-| U5 | A directory for a run: the log in a file as well, protection against overwriting, a manifest | P1 | Done (D149, D168): `[output]` names the log and optional `manifest`; outputs use numbered backups on a fresh run. The manifest records versioned JSON Lines with build identity, input SHA-256 hashes including topology includes, resolved execution settings, device identity, warnings, and start/end events. Continuations append history, and `--no-append` uses the part file ([driver.md](driver.md), Section 2.8) |
-| U6 | `mdir check` as a preflight | P1 | Done (2026-10-03, D151): the system and planned run (ensemble, step and length in ns, PME, constraints, target and precision), all outputs with their intervals and existing paths, warnings with recovery hints, and `--json` with structured errors and warnings. Reads without compiling, loading a checkpoint, or writing outputs |
-| U7 | Errors that say what to do | P1 | Done (2026-10-03, D146): errors name the line, and enums list their values. Unknown keywords and table names suggest a unique nearest valid key within two edits, list the supported keys of the table, and point to `mdir template md` and `mdir template amber`. A run whose constraints fail stops with the step and the set (D278, #349) |
-| U8 | A quickstart first in the README, and `mdir doctor` | P1 | Done (D155): the README starts with a runnable argon quickstart; `doctor` reports the build, probes the CUDA driver and devices, and compiles and runs a small system on each requested target |
-| U9 | Control files of the standard pipeline from `mdir template` | P2 | Done (2026-10-03, D147): `minimize`, `nvt`, `npt`, and `production` print the four stages of `examples/ala3` with placeholder input paths and their checkpoint chain. Embedded at build time; `md` and `amber` remain the reference templates, with no new command or aliases |
-| U10 | Distribution | P2 | After the release of M1: an Apptainer or OCI image. A container needs the cubin of its kernels, not PTX that a driver older than the toolkit cannot compile |
-| U11 | Many runs of one plan (as `-multidir`) | Later | With `ensemble` |
-| U12 | Outputs as one system | P1 | Done (2026-10-03, D149; the user asked for it the same day): [output] names every file and its interval (`log`, `energy`, `pull`, which was `pull_coordinates`, `trajectory`, `checkpoint`); the files of columns share one form, a line of names, a line of units, one for each column, and rows of the step and values with six decimals; every file continues with the run (U2), and a run that is not continued keeps the outputs of an earlier one as backups, `#<name>.<n>#` (U5); `mdir check` lists each with its count and notes the backups (U6, D151). Not taken: intervals of their own for the files of columns, which the compiled schedule would need loops for |
-| U13 | The cost of a checkpoint on a large system | P1 | Done (#548, D335, D336): measured, the hash and the H5MD file were 85% of a checkpoint of STMV; a thread writes them while the steps go on, and the output's share of STMV's rate with the suite's output fell from 8.8% to 1.0%. Keeping the order of the particles across a checkpoint was measured slower and not taken. Left: the DCD frame (48 ms on STMV) is still written between the steps, and the order on the device with a copy into pinned memory is left to #567 |
+| U1 | `steps` as the total of a run, and `mdir run --continue` | P0 | Done (D129, D172; [driver.md](driver.md), Section 2.7) |
+| U2 | Output that continues with the run | P0 | Done (D130, D149) |
+| U3 | A stop on SIGTERM, SIGINT, or `--max-walltime` | P0 | Done (D131; exit status 75) |
+| U4 | Keep the previous checkpoint | P0 | Done (D132, D173: `<checkpoint>.prev`, `fsync`, SHA-256) |
+| U5 | A directory for a run: the log in a file, protection against overwriting, a manifest | P1 | Done (D149, D168; [driver.md](driver.md), Section 2.8) |
+| U6 | `mdir check` as a preflight | P1 | Done (2026-10-03, D151) |
+| U7 | Errors that say what to do | P1 | Done (2026-10-03, D146; the constraints' step and set, D278, #349) |
+| U8 | A quickstart first in the README, and `mdir doctor` | P1 | Done (D155) |
+| U9 | Control files of the standard pipeline from `mdir template` | P2 | Done (2026-10-03, D147) |
+| U10 | Distribution | P2 | Done in part: the container recipes in `packaging/`, whose kernels are cubins (a driver older than the toolkit cannot compile PTX; D214). 0.2.0 is source only |
+| U11 | Many runs of one plan (as GROMACS's `-multidir`) | Later | With `ensemble` |
+| U12 | Outputs as one system | P1 | Done (2026-10-03, D149, D151). Not taken: intervals of their own for the files of columns |
+| U13 | The cost of a checkpoint on a large system | P1 | Done (#548, D335, D336). Next: the DCD frame between the steps, and the order on the device with a copy into pinned memory (#567) |
 
 Not taken: `target = "AUTO"` (a check would pass on one machine and fail
-on another, and a large run could fall back to the CPU without a word; a
-clear failure is better), runs without a number of steps (the counts of the
-schedule are constants of the program), and checkpoints by the clock (they
-would break the exact continuation).
+on another, and a large run could fall back to the CPU without a word),
+runs without a number of steps (the counts of the schedule are constants of
+the program), and checkpoints by the clock (they would break the exact
+continuation).
 
 ## 5. Features for the purpose of MDIR
 
 MDIR is for general MD, all-atom and coarse-grained, on workstations and
-clusters ([decisions.md](decisions.md), Section 1, C1 and C2). What runs of that kind still lack, in the order of how often
-they are needed:
+clusters ([decisions.md](decisions.md), Section 1, C1 and C2). What runs of
+that kind still lack, in the order of how often they are needed:
 
-| # | Feature | State |
+| # | Feature | State and next |
 |---|---|---|
-| F1 | Langevin dynamics (the middle scheme, BAOAB) | Done (D135): `method = "LANGEVIN"` with `friction`, in every program of a step, with Philox in the kernel keyed by the step and the number of the particle; on the CPU and on a GPU, continued runs bitwise. With constraints g-BAOAB (D265, #268), and the thermostats that rescale control the optimal temperature (D263); the pressure of the log and the barostat is that of the groups (D264). A thermostat consistent with the shadow Hamiltonian of the step remains #118. Next: the energy that the friction and the noise exchange with the bath, summed in a field of each particle, for a conserved energy |
-| F2 | Triclinic cells (the truncated octahedron and the rhombic dodecahedron of Amber and GROMACS, the hexagonal cells of CHARMM-GUI) | Done but the rates (D123, D125 to D127, D241, D242, [triclinic.md](triclinic.md)): read, reduced, and run on the CPU and on the device, with the matrix and the groups, at constant volume and pressure, the matrix with any pairlist distance in a cell of at least twice the cutoff (#258) and the groups with one below the least of $a_x, b_y, c_z$ (#263); validated against sander, GROMACS, and CHARMM 51b1 on a hexagonal cell. First rates (2026-10-02, RTX 3090, groups with a dual list, mixed precision): ubiquitin in OPC 12 Å beyond the protein, tleap's octahedron of 25,035 particles at 587 ns/day against its rectangular box of 26,031 at 581, 3% more time a particle for the minimum image and the lattice shifts, and only 4% fewer particles for this solute. Next: P5 (pmemd.cuda and GROMACS on the same systems, cells of the same least distance between images) |
-| F3 | CHARMM force fields | In part: from a topology of GROMACS (D121) and from the files of CHARMM (D122), with triclinic cells (D127), validated against CHARMM 51b1. Particle mesh Ewald for the dispersion, `lennard_jones = "PME"` (D162), validated against OpenMM and GROMACS. Squared-distance potential switching (CHARMM VSWITCH) is implemented as `SQUARED_DISTANCE_SWITCH` (D175), including 1-4 pairs, validated against an analytic oracle and CHARMM 51b1 on two POPC. Missing: lone pairs, the Drude model |
-| F4 | Outputs for analysis: frames of the velocities, XTC, the pressure tensor and the area in the log, observables in H5MD | In part: XTC (D141), with `trajectory_format` from the extension. Cell area in barostat logs and energy files (D170). Frames without loss in H5MD (D239, [python-h5md.md](python-h5md.md)): positions in f64 or f32 with the cell from `mdir run` and from a Python simulation, whose reporter also writes the velocities, the forces, the potential energy, and the version of the tunables. Missing: velocities in the frames of `mdir run`, which the test of equipartition needs, and the pressure tensor |
-| F5 | Restraints beyond positions: distance, angle, dihedral, flat-bottomed | Done (D136): terms over tuples given by expressions, [[energy.bond]], [[energy.angle]], and [[energy.dihedral]], as the custom forces of OpenMM; positional restraints keep their own table (D74). Over the centers of groups as well (D139), the restraints of pulling. A reference that moves with the time `t` and the coordinates, energies, and forces of the terms over centers written at every energy (D145). Terms of the absolute positions of single particles, with parameters of each, `[[energy.external]]` (D148) |
+| F1 | Langevin dynamics (BAOAB) | Done (D135; g-BAOAB with constraints, D265, #268; D263, D264). Next: a thermostat consistent with the shadow Hamiltonian (#118), and the energy exchanged with the bath for a conserved energy |
+| F2 | Triclinic cells | Done but the rates (D123, D125 to D127, D241, D242, #258, #263; [triclinic.md](triclinic.md)). Next: P5, pmemd.cuda and GROMACS on the same systems |
+| F3 | CHARMM force fields | In part (D121, D122, D127, LJ-PME D162, VSWITCH D175). Missing: lone pairs, the Drude model |
+| F4 | Outputs for analysis | In part: XTC (D141), the cell area (D170), H5MD frames (D239, [python-h5md.md](python-h5md.md)). Missing: velocities in the frames of `mdir run`, and the pressure tensor |
+| F5 | Restraints beyond positions | Done (D136, D74, D139, D145, D148) |
 | F6 | Coarse-grained models: tabulated potentials, Martini from GROMACS topologies, DPD | Missing; part of the purpose from the start |
-| F7 | Free energy and enhanced sampling: alchemical $\lambda$ with $dH/d\lambda$ (D2), collective variables, replica exchange | In part (2026-10-03, D161): `[free_energy]` decouples a selection of whole molecules with states of $\lambda$ of the Coulomb and the Lennard-Jones (soft-core of Beutler et al.), every component a parameter of the expressions, and writes $\partial U/\partial\lambda$ and the energies of every state at every energy, for thermodynamic integration and MBAR (`scripts/free-energy.py`); on the CPU and on a device, against OpenMM 8.6.1. Next: relative transformations between the A and B states of a topology, annihilation, soft-core of the Coulomb, $\lambda$ as a function of time, replica exchange over the states, and the energies of the states in one pass over the pairs of the selection. Collective variables and replica exchange are not part of D161; the architecture names `ensemble` and replica exchange as a driver event (P4); the energies of terms and their generalized forces along their constants at every energy, `observe` and `[output] observables` (D189, phase 1 of #16), with which the osmotic pressure of 5 M NaCl between walls on its ions agrees with Luo and Roux (2010); next for #16: profiles along an axis, RDF and coordination, RMSD and radius of gyration, adaptive biases, and an asynchronous bridge to PLUMED |
+| F7 | Free energy and enhanced sampling | In part: decoupling with $\partial U/\partial\lambda$ and MBAR (D161, D2), and `observe` (D189, #16). Next: relative transformations, annihilation, Coulomb soft-core, $\lambda(t)$, replica exchange (P4), one pass over the selection's pairs; for #16 profiles, RDF, RMSD, adaptive biases, and a bridge to PLUMED |
 | F8 | Learned potentials | Section 7 |
-| F9 | The custom forces of OpenMM beyond tuples: pairs with a topology, tabulated functions, centers of groups (pulling), generalized Born | In progress: pair terms over the pairs of a topology, in its charges and Lennard-Jones parameters, with interaction groups (D137); tabulated functions of one argument, natural or periodic splines, in every expression (D138); terms over the centers of groups (D139), 0.21 to 0.24 ms a step on JAC with a bond and 0.26 with a dihedral since the sums of a block are added in one pass, a set of few tuples is reduced by one block, and the forces of a term are one field evaluated once per tuple (D150). The reaction field as GROMACS has it (D140); runs without a periodic cell, in a cell that no image reaches (D142). Intermediate fields, the derivative of the energy carried back through fields computed from the positions (D143), and generalized Born, OBC I and II, from a topology of Amber (D144), and HCT, salt, a cutoff of the descreening, and the radii of mbondi2 for a topology of GROMACS or CHARMM (D152). Terms over the triplets centered on each particle, the three-body term of Stillinger-Weber and mW water, `[[energy.triplet]]` without a topology on the CPU, its members written at every step from the neighbor matrix (D160); their GPU kernel, the selections `center` and `ends`, a topology, the exclusion of a far leg, and bond order (Tersoff) follow. Parameters of each particle, by masks of Amber, for the pair terms, the terms over tuples, and those of the positions, tabulated functions of two and three arguments and discrete ones, and terms over tuples of any length in their distances, angles, and dihedrals, as OpenMM's (D165). Term parameter collisions are rejected and compound terms accept declared lambda components (D188, #67). Next: the first reduction inside the loop of the sums (D150) and an open cell if a system needs one; file-backed grids with explicit shape are implemented (D178); later a reader or converter for the seven-column tables of GROMACS for F6 |
-| F10 | Thermostats, integrators, and barostats beyond M1: a deterministic thermostat, Brownian dynamics, anisotropic and flexible cells, multiple time steps | In progress (D163): Nosé–Hoover chains (D163a; a run stops where the factorization no longer follows the chain, D206), Brownian dynamics (D163b), anisotropic cell rescaling (D163c). Next, as a design only: multiple time steps (r-RESPA, [[Tuckerman1992]](references.md#tuckerman1992)), the energy split into a fast part (bonded terms, the direct sum within a short cutoff) and a slow part (the rest, the reciprocal sum), the slow forces kicking half an outer step at its ends and the fast ones integrated by velocity Verlet within it; in MDIR two `md.evaluate` of two `@energy` functions that the terms are partitioned into, a program of an outer step that loops over inner ones, and a check of the resonance of the outer step with the fastest motions, which limits it to about 4 fs with constraints; a flexible cell, with shear, needs the off-diagonal virial and the pressure tensor (F4), a decision of its own. Planned, a design only: the couplings as ops of `dyn` that lower to what the driver writes today (#541, D326, [dynamics.md](dynamics.md), Section 2.2), on which derivatives through the couplings (M2b) and the fusion of the steps around a coupling (#356) build |
+| F9 | The custom forces of OpenMM beyond tuples | In progress (D137, D138, D139, D140, D142, D143, D144, D150, D152, D160, D165, D178, D188, #67). Next: the triplets' GPU kernel, selections, topology, and bond order (D160); the first reduction inside the loop of the sums (D150); GROMACS's seven-column tables for F6 |
+| F10 | Thermostats, integrators, and barostats beyond M1 | In progress (D163; D163a with D206, D163b, D163c). Next, as designs: multiple time steps ([[Tuckerman1992]](references.md#tuckerman1992), [dynamics.md](dynamics.md#multiple-time-steps)), a flexible cell with the pressure tensor (F4), and the couplings as ops of `dyn` (#541, D326, [dynamics.md](dynamics.md), Section 2.2) for M2b and the fusion of #356 |
 
 ## 6. Python API (M2a)
 
-D195 splits M2 in two: M2a is this section, the Python API
-as planned in [python.md](python.md), where "M2" means M2a; M2b is
-Section 6.1.
+D195 splits M2 in two: M2a is this section, the Python API as planned in
+[python.md](python.md) (D187, with the maintainer's rulings of 2026-10-04);
+M2b is Section 6.1. M2a is done; each part is a decision and a document:
 
-Preparation and proposed implementation gates are in
-[python.md](python.md) (D187), including the maintainer's
-2026-10-04 rulings. The first native model contribution
-(D191, [python-model.md](python-model.md)) adds shared preparation
-and owned Amber/GROMACS/CHARMM loading. D192
-([python-compile.md](python-compile.md)) adds optional Python bindings, explicit
-lowering, immutable IR/plan inspection and versioned stale detection.
-D193 (#78, [host arrays](python-arrays.md)) replaces numeric
-lists with shaped, read-only NumPy host copies and strict buffer/CPU DLPack
-inputs before segments; enabling Python requires NumPy >=1.23.
-D196 (#85, [persistent simulations](python-segments.md)) adds
-`mdir.Simulation` and `run(n)` for any number of steps, with the coupling
-phase, errors, stops, and runtime and device ownership. Host JIT unwind ranges
-remain disjoint across simulation lifetimes, and a failed part finishes runtime
-cleanup before its state is discarded. D199 (#89) enforces the
-final object memory and unwind boundary and serializes creation and teardown
-with execution; see [JIT ownership](jit-invariants.md).
-D198 (#92,
-[drawn velocities and restraints](python-velocities-restraints.md)) adds
-`InitialState.draw_velocities`, bit for bit the velocities of `mdir run`,
-and typed `System.restraints` mapped to `[[restraints]]`, which the
-four-stage example needs. D200 (#95,
-[unit quantities](python-units.md)) lets the setters take OpenMM unit
-quantities, converted at the boundary. D202 (#91,
-[minimization](python-minimize.md)) runs the minimizer of `mdir run` in a
-Python simulation, `Simulation.minimize(steps)`, and
-D219 (#106) stops it, and `mdir run`'s, at a tolerance on
-the largest force, and D274 (#369) once its step has
-shrunk below a floor. D207 (#109,
-[reporters](python-reporters.md)) writes `mdir run`'s energy file and
-trajectory inside the parts of a run and calls Python functions at their
-steps. `examples/ala3/run.py` (#82) runs the four stages of the
-example from Python, beside its control files. D211
-(#147, [compiles](python-segments.md#compiles)) compiles one program per
-simulation, whose entry branches the start on an argument, with MLIR's
-threads from one pool of the process. D212 (#142,
-[compile cache](compile-cache.md)) keeps the host objects of compiled
-programs on disk, keyed by their content; D217 (#163)
-clears it and bypasses it per compile from Python;
-D234 (#196) keeps its total in a file, so that a
-store does not list the directory;
-D236 (#236,
-[reuse within a process](compile-cache.md#reuse-within-a-process))
-keeps the code of a `Program`'s simulations in memory, so that only the
-first of them lowers and generates code;
-D227 (#162,
-[values of the start](compile-cache.md#values-of-the-start-d227))
-makes the values that depend on the starting cell arguments of the entry
-and rounds the estimate of the neighbor capacity more coarsely
-(`Execution.neighbor_capacity` gives it), so a stage from an equilibrated
-cell hits the cache. D213 (#130,
-[tunable parameters](python-tunable.md)) declares charges, per-type σ and
-ε, constants of pair terms, and parameters of tuple terms tunable, whose
-values a simulation takes without compiling; the quantities derived from
-them are rebuilt by the code that compiles them, so an update equals a
-compile with the new values to the bit; D226 (#160)
-adds the table of the Lennard-Jones by pairs of types. D222 (#161,
-[dispersion](python-model.md#the-correction-for-the-dispersion)) gives
-Python pair terms their own `dispersion`, so a term can leave the
-correction for the dispersion, and records whether the system's correction
-was set, so a divergent tail is refused or left out as in the control
-file. D232 (#188, [observe](python-observe.md)) gives pair, tuple,
-and external terms `observe`, writes the file of `[output] observables`
-through `ObservablesReporter`, and gives the values to a script in
-`State.observables`; D233 adds the terms of the positions
-(`mdir.ExternalTerm`). D214 (#148,
-[GPU modules](compile-cache.md#the-gpu-modules-d214))
-serializes the GPU modules in parallel, caches their PTX and cubins, and
-loads cubins compiled for the device instead of PTX.
-D215 (#135,
-[resident buffers](python-segments.md#resident-buffers)) runs every part of
-a simulation in one activation of its entry, whose buffers, order of the
-particles, and neighbor structures stay where the program keeps them, on
-the device, from part to part: a run in parts equals one run to the bit,
-and the host copies the state only where it is asked for.
-D220 (#131, [DLPack views](python-dlpack.md)) hands
-consumers such as PyTorch those buffers, the particle IDs, and the values
-of tunables as read-only DLPack views, without a copy: leases block runs
-and updates while a view or a tensor taken from it is alive, and the
-consumer's stream waits for the simulation's work.
-D229 (#136,
-[writable borrows](python-dlpack.md#writable-borrows-d229))
-completes the item: `Simulation.borrow()` hands a consumer the buffers of
-the positions and the velocities for writing, with the edges of the cell
-and the values of the tunables, and `Borrow.commit()` takes what was
-written, advances the versions of the changed fields, and begins an
-activation from the committed state, whose order, neighbor structures, and
-forces are built anew; a borrow excludes runs, views, and other borrows,
-and one that ends without a commit is undone. D238 (#206) adds
-`Borrow.tilt`, the tilts of a triclinic cell, which a commit checks and
-gives to the activation it begins. D244 (#254) lets a
-Python simulation run at constant pressure in a triclinic cell: the tilts
-that the barostat scales are those of its state, of its checkpoints and
-frames, and of a borrow, and the run is that of `mdir run` to the bit.
-D245 (#270) gives the Python model the groups of 16 and the
-dual list (`Execution.neighbor_structure`, `System.pruned_distance`), with
-the refusals of the control file: with one structure the two front ends
-run at one rate (JAC at constant energy, 0.206 ms a step from Python
-against 0.205 from `mdir run` with the dual list, and 0.259 against 0.258
-with the matrix). The matrix stayed the default; the choice by the size of
-the system, G3, is `neighbor_structure = "AUTO"`, the default since
-D261 (#350): the groups with a dual list on a GPU from 23,000
-particles, the matrix below and elsewhere.
-D246 (#279) gives the Python model `[pme] influence`,
-`[constraints] analytic_bonds`, and the PME orders 6 and 8, the settings of
-the Amber suite's script that it lacked.
-D247 (#275) gives `mdir.Ensemble` the `coupling` and the
-`work` of `[barostat]`: the semi-isotropic and the anisotropic coupling
-and the four works, each to the bit of `mdir run` in an orthorhombic and
-in a triclinic cell, and with the exact and the first-order work a
-coupling at every step.
-D248 (#281) makes the defaults of the Python model those of
-the control file (a plain cutoff with the correction for the dispersion,
-the switch and the pairlist distance from the cutoff, the center of mass
-with the thermostat, drawn velocities for a state without them): a system
-given to both front ends with nothing beyond its inputs runs to the same
-bits. A breaking change of the Python API, listed in the changelog.
-D249 (#278) gives the Python model the thermostats of
-the control file and Brownian dynamics (`Ensemble.thermostat`,
-`Ensemble.friction`, `Ensemble.chain_length`, `Integrator.friction`):
-Langevin dynamics (F1), a Nosé–Hoover chain, and Brownian dynamics (F10)
-run from Python to the bit of `mdir run`, and a checkpoint with the state
-of the chain continues in either front end.
-D221 (#120, [topology views](python-topology.md)) gives
-loaded data, systems, and programs a read-only view of their topology
-(atoms, residues, bonded tuples, and, after preparation, the constraints)
-and `Topology.select(mask)`, the particles of a mask of Amber by the parser
-of the control file, with `Topology.to_openmm()` for OpenMM's tools.
-D223 (#132, [checkpoints](python-checkpoints.md)) writes
-and continues the checkpoint of `mdir run` from Python: the fingerprint of
-a Python model has the entries of the control file of the same model, so
-either front end continues the other's run, tested in both directions.
-D228 (#133, [the package](python-package.md)) builds
-the interface as the package `mdir`, a manylinux_2_28 pip wheel for
-Python 3.10–3.13 that carries its runtime, libdevice, and HDF5 and takes
-cuFFT and ptxas from NVIDIA's wheels (`mdir[cuda]`), and runs the four-stage tutorial
-from it. M2 covers a documented classical subset; conda follows later.
+| Part | Decisions and documents |
+|---|---|
+| Preparation, loading, compiling, host arrays | D191 ([python-model.md](python-model.md)), D192 ([python-compile.md](python-compile.md)), D193 (#78, [python-arrays.md](python-arrays.md)) |
+| Persistent simulations and their ownership | D196 (#85, [python-segments.md](python-segments.md)), D199 (#89, [jit-invariants.md](jit-invariants.md)), D211 (#147), D215 (#135) |
+| Velocities, restraints, units, minimization | D198 (#92, [python-velocities-restraints.md](python-velocities-restraints.md)), D200 (#95, [python-units.md](python-units.md)), D202 (#91, [python-minimize.md](python-minimize.md)), D219 (#106), D274 (#369) |
+| Reporters and the example | D207 (#109, [python-reporters.md](python-reporters.md)); `examples/ala3/run.py` (#82) |
+| The compile cache | D212 (#142, [compile-cache.md](compile-cache.md)), D214 (#148), D217 (#163), D227 (#162), D234 (#196), D236 (#236) |
+| Tunable parameters | D213 (#130, [python-tunable.md](python-tunable.md)), D226 (#160) |
+| The model's terms and settings | D222 (#161), D232 and D233 (#188, [python-observe.md](python-observe.md)), D245 (#270; the default `AUTO` since D261, #350), D246 (#279), D247 (#275), D248 (#281), D249 (#278) |
+| Views, borrows, topology, checkpoints, the package | D220 (#131, [python-dlpack.md](python-dlpack.md)), D229 (#136), D238 (#206), D244 (#254), D221 (#120, [python-topology.md](python-topology.md)), D223 (#132, [python-checkpoints.md](python-checkpoints.md)), D228 (#133, [python-package.md](python-package.md)) |
 
-The design follows a reading of OpenMM's Python layer (2026-10-02,
-`openmm/openmm` at 5ee2cba): its vocabulary and its reporters fit MDIR,
-its copies and its silent caching do not. Both front ends, the control file
-and Python, must produce the same IR and share one validation.
+M2 covers a documented classical subset; conda follows later. The design
+follows a reading of OpenMM's Python layer
+([python.md](python.md#a-reading-of-openmms-python-layer)): both front ends,
+the control file and Python, produce the same IR and share one validation.
 
 | Item | Design |
 |---|---|
-| Loading | `mdir.load_amber`, `mdir.load_gromacs`: topology, parameters, positions, cell; nothing about the run. Later an import of an OpenMM `System` for the supported subset, which reuses its force fields and its builders |
-| Topology | `loaded.topology`, `system.topology`, `program.topology`: read-only copies of atoms, residues, bonded tuples, and the constraints of a compiled program; `select(mask)` by the control file's masks; `to_openmm()` (done, D221) |
-| Physics apart from execution | `System` (terms, cutoff, PME, constraints, custom potentials as expressions with per-particle and global parameters); the integrator and the ensemble; `Execution` (target, device, precision) as typed objects, not strings |
-| An explicit compile | `mdir.compile(...)` returns an immutable program and its plan; changing the system afterwards marks it stale rather than being ignored. Parameters declared tunable are read from a buffer, so setting them does not recompile |
-| Runs and reporters | `sim.run(n)` runs segments to the next report of any reporter (OpenMM's protocol), with the writers of the driver in C++ and the GIL released; a stop is polled between segments |
-| State | `state()`: host copies in the order of the input, in the units of MD (nm, ps, kJ/mol, bar) as plain arrays. `view()`: DLPack tensors of the device in the order of the run with the index of each row, with leases blocking conflicting runs and mutations, on a stated stream, whose type is that of the buffer (`f32` forces in the mixed mode). A write goes through `borrow()` and its `commit()`, which advances the versions of the changed fields (P16) and rebuilds what depends on them (D229) |
-| Errors | Typed: input (file, line, term), compile (the diagnostic with its location), unsupported (feature, target), simulation (step, particle, quantity) |
-| Checkpoints | The H5MD checkpoint of the driver, exact and portable, with the hashes of the model and the plan; one format, not two |
+| Loading | `mdir.load_amber`, `mdir.load_gromacs`: topology, parameters, positions, cell; nothing about the run. Later an import of an OpenMM `System` for the supported subset |
+| Topology | `loaded.topology`, `system.topology`, `program.topology`: read-only copies, `select(mask)`, `to_openmm()` (done, D221) |
+| Physics apart from execution | `System`, the integrator and the ensemble, and `Execution` as typed objects, not strings |
+| An explicit compile | `mdir.compile(...)` returns an immutable program and its plan; a change afterwards marks it stale. Tunable parameters do not recompile |
+| Runs and reporters | `sim.run(n)` runs segments to the next report of any reporter, with the writers of the driver in C++ and the GIL released |
+| State | `state()` (host copies in the order of the input), `view()` (DLPack, leases, P16), and `borrow()` with `commit()` (D229) |
+| Errors | Typed: input, compile, unsupported, simulation |
+| Checkpoints | The H5MD checkpoint of the driver, with the hashes of the model and the plan; one format |
 
-DLPack views use execution order with input particle IDs alongside and
-the buffer's actual dtype (mixed-mode forces in `f32`, state in `f64`).
-Read-only leases block conflicting runs and mutations while views
-are alive; tracked writable borrows with an explicit commit complete the
-item (D229). The implementation specifies stream handoff, consumer
-completion, and allocation release. Reporters use typed MDIR requests,
-with final reports only when due; segments without reporters bound stop
-latency to about 1 s or less on the Amber suite. Python fingerprints record
-explicit options and add model/plan hashes to format 1, with continuation
-tests in both directions before claiming CLI/Python interoperability.
-
-Future MLIP work will integrate PyTorch/JAX automatic differentiation
-(maintainer, 2026-10-04). Keep energy/observable evaluation and
-parameters separate from simulation ownership. Tensor exchange alone does
-not propagate gradients: framework adapters need explicit derivative rules
-and independently validated force/virial and parameter derivatives. This
-future requirement does not claim training or trajectory differentiation in
-the initial M3 inference deliverable.
+Future MLIP work integrates PyTorch/JAX automatic differentiation
+(maintainer, 2026-10-04): evaluation and parameters stay apart from the
+ownership of a simulation, and framework adapters need explicit derivative
+rules and validated derivatives. This does not claim training or
+trajectory differentiation in the initial M3 inference deliverable.
 
 ### 6.1 Differentiable simulation (M2b)
 
@@ -422,96 +199,34 @@ so MDIR need provide only two things: a sampler, which is not
 differentiated, and an evaluator of $U_\theta$, the virial, and observables
 at stored frames, with a derivative rule in $\theta$.
 
-| Item | Design |
+| Item | State and next |
 |---|---|
-| Tunable parameters | Done in M2a (D213, [python-tunable.md](python-tunable.md)): charges, per-type Lennard-Jones and its table by pairs of types (D226), constants of pair terms, and parameters of tuple terms are runtime values, a flat collection of named vectors with maps from their sites, so a new $\theta$ needs no compilation; the derived quantities are rebuilt on the host. M2b adds their derivatives (D230, [python-gradient.md](python-gradient.md), #203): the program gives the derivative of the potential that the forces sample in each of its buffers, as fields of the particles through seeds, and the host applies the chain rule beside `applyTunables` and adds the derivatives of the constants of the energy, closed forms and the Richardson derivatives of the quadratures of the tails (D209); it is not an IR that computes the derived quantities from $\theta$, as first written here (maintainer, PR #205). Done at the state of a simulation, `sim.tunables.gradient()`, for constants of pair terms, parameters of tuple terms, per-type and pair $\sigma$ and $\epsilon$, and the charges under a Coulomb cutoff, and with PME (D231) by a fourth result of `md.reciprocal`, the potential of the grid at the particles, checked against torch-pme |
-| Frame evaluator | $U_\theta$, virial, and observables at $K$ stored frames, on the device, with the vector-Jacobian product $g \mapsto \sum_i g_i\,\partial U/\partial\theta(S_i)$ from the differentiation of parameters (D161) and of fields (D230): the entry that `gradient()` calls, at given positions and cell, the fields accumulated over the frames and the chain rule applied once; evaluated as a multi-point evaluation of the potential (#87). First slice done ([python-frames.md](python-frames.md), D240, #249): `mdir.FrameEvaluator(program)` with a simulation of its own, frames in the order of the input, each with its cell, one start of an activation per frame (1.05 ms on the dipeptide and 6.85 ms on JAC, against 2.55 ms and 16.8 ms through a borrow, a commit, and `gradient()`), the Jacobian kept or a second pass. Each frame has its cell, triclinic included (D238), and the frames of `mdir.read_h5md` are an input (D239). With `terms="dependent"` the evaluator has only the terms that a tunable enters, at 1.5 to 2.5 times less a frame (D243, #264). The frames of a call are evaluated inside one activation of a program of frames, in the order of the input (D251, #291): on one RTX 4090 in mixed precision a frame of JAC takes 0.69 ms with the whole potential and 0.45 ms with the dependent terms, where it took 5.00 ms and 2.07 ms, which is what its kernels cost; the tuples of the bonded terms are built once for an activation; a relation over the particles of the types of a tunable Lennard-Jones pair was measured and not taken (at most 0.25 of 0.73 ms a frame). The gradients of the energy in the positions and the strain are outputs where they are asked (D252, #313): `gradients=("tunables", "positions", "strain")`, one argument in place of `gradient=`, gives $-\mathbf F$ in the order of the input and in the type of the forces, and $\partial U/\partial\boldsymbol\varepsilon$, the virial tensor with the opposite sign, nine components for every cell; a frame that asks for neither costs what it cost, and one that asks pays one more evaluation of its forces; `mdir.torch.evaluate` differentiates the energy in the positions and the cell, and refuses every second derivative; checked against differences of the energy, torch-pme (the Coulomb part, by autograd in the positions and a strain), and OpenMM (the whole potential). Next: the metatomic shape of #138 (a list of systems in, outputs out), and force matching (the derivative of the forces in $\boldsymbol\theta$, stage 4 of #138), which is refused until then. A start of an activation at which the particles have not moved (an update of the tunables in a fit, an evaluation, a commit of parameters, the start after a checkpoint) takes the renumbered tuples and their incidence structures that the simulation keeps, and one in a new order builds them in the kept memory (D253, #294); the segments of `mdir run` build them in the memory of the segment before, from the same store (D255, #316: 0.45% to 0.9% faster runs on a GPU with a checkpoint every 10,000 steps on the three larger systems of the suite, 3.5% to 5.5% every 1,000). An update of the tunables writes its values into a model that the simulation keeps and no longer sorts the tuples or repeats the quadratures of the tails (D254, #324): 5.4, 16, and 87 ms with its evaluation on JAC, Factor IX, and Cellulose. The arrays of the program that no value of a tunable enters are kept across updates (D256, #328): an update with its evaluation takes 4.6, 13, and 65 ms with a pair constant, and 9.3, 27, and 118 ms with four kinds of tunable, about its two starts. On a GPU a start in a new order builds the structures on the device, as a gather of those in the order of the files, and copies only a flag of 4 bytes (D257, #295): 1.98, 5.67, and 26.2 ms with its evaluation on JAC, Factor IX, and Cellulose, where it took 5.29, 18.1, and 96.9 ms. A start no longer copies the model for the arguments of the entry, which the compile proves never to write them, and keeps the buffers of the state (D258, #326): `gradient()` again takes 1.63, 4.25, and 20.8 ms where it took 2.02, 5.97, and 30.2 ms, and an update with its evaluation 3.62, 8.92, and 42.8 ms (one RTX 4090). |
-| Frames on disk | Done (D239, #251, [python-h5md.md](python-h5md.md)): a trajectory in H5MD that holds the positions of the state in f64 or f32 with the cell of every frame, the potential energy of the step, and the version of $\hat\theta$, from `mdir.H5MDReporter` and from `[output] trajectory`; `mdir.read_h5md` gives the frames one at a time as the pairs of positions and cell that the evaluator takes. XTC's rounding raises the energy of a frame by tens of kJ/mol, which cancels in the differences of a reweighting but for tunables of stiff terms and for recorded reference energies (#264) |
-| Adapters | PyTorch first, done: `mdir.torch.evaluate`, a `torch.library.custom_op` with `register_autograd` (maintainer, PR #250; first written here as `torch.autograd.Function`), then JAX (`jax.custom_vjp` over `jax.ffi`), one framework-neutral contract with DLPack buffers (maintainer, 2026-10-05) |
-| Reweighting | In the framework, with the effective sample size $\exp(-\sum_i w_i\ln w_i)$ deciding when to sample again; an example fits the radial distribution function and the density of water |
-| Further targets | Free energies through `[free_energy]` ($\partial\Delta G/\partial\theta$ from $\langle\partial U/\partial\theta\rangle$ at the end states or MBAR weights), the pressure through the derivative of the virial, the relative entropy of coarse-grained models |
+| Tunable parameters | Done in M2a (D213, D226); their derivatives in M2b (D230, #203, [python-gradient.md](python-gradient.md); the tails' derivatives D209; the charges under PME, D231): the host applies the chain rule, not an IR of the derived quantities (maintainer, PR #205) |
+| Frame evaluator | Done ([python-frames.md](python-frames.md)): D240 (#249, the multi-point evaluation of #87, with D161 and D230), D238, D239, D243 (#264), D251 (#291), D252 (#313); its starts made cheap by D253 (#294), D255 (#316), D254 (#324), D256 (#328), D257 (#295), D258 (#326) ([python-segments.md](python-segments.md), [device-tuples.md](device-tuples.md)). Next: the metatomic shape of #138, and force matching (stage 4 of #138), refused until then |
+| Frames on disk | Done (D239, #251, [python-h5md.md](python-h5md.md)); XTC frames for reweighting: #264 |
+| Adapters | PyTorch done: `mdir.torch.evaluate`, a `torch.library.custom_op` with `register_autograd` (maintainer, PR #250; first written here as `torch.autograd.Function`). Next: JAX (`jax.custom_vjp` over `jax.ffi`), one framework-neutral contract with DLPack buffers (maintainer, 2026-10-05) |
+| Reweighting | Next, in the framework, with the effective sample size $\exp(-\sum_i w_i\ln w_i)$ deciding when to sample again; an example fits the radial distribution function and the density of water |
+| Further targets | Free energies through `[free_energy]` ($\partial\Delta G/\partial\theta$ from $\langle\partial U/\partial\theta\rangle$ or MBAR weights), the pressure through the derivative of the virial, the relative entropy of coarse-grained models |
 
 Learned potentials (M3) keep their parameters in the framework: MDIR
 samples, and the framework model evaluates $U_\theta$ at the frames. M2b
-depends on M2a's segments, device views, and tunable parameters (done,
-D213), and on buffers that stay on the device across parts (done,
-D215).
+depends on M2a's segments, device views, and tunable parameters (D213),
+and on buffers that stay on the device (D215).
 
 ## 7. Learned potentials (M3) and distributed execution (M4)
 
-D169 splits this section between two milestones, as D287
-(the rulings on #377 of 2026-10-16 and 2026-10-17) sets them: ML1 steps 1
-to 3, the IR of ML4, PaiNN in stages, and MACE in stages close M3 (MACE is
-required, not an extension after PaiNN); ML2, ML3, PaiNN and MACE on two
-GPUs, ML5, and distributed particle mesh Ewald close M4. A milestone
-orders completion, not the start of work: ML2 runs in parallel with M3.
-The bodies of the stages come as AOTInductor packages or as StableHLO,
-which lowers through `linalg` and MDIR's own lowering.
-
-Classical MD remains a core use case. This extension preserves its existing
-features, validation, and performance baselines, with no required MLIP
-backend for classical runs. LJ/EAM are initial distributed validation
-models; realistic molecular systems remain part of validation and the
-long-term distributed scope.
-
-D313 (#494, a first slice of #38) gives `md_dist` an
-ownership-epoch transition and a generic complete-field redistribution by
-stable particle identity. Moving-snapshot LJ and EAM checks exercise the
-in-process CPU path, including empty domains. D332 (#542) adds the
-in-process collective skin predicate over the old halo's ownership epoch and
-the wrapped coordinate frame of its explicit images, with a fixed cell;
-current coordinate halo copies remain separate. #38 still owns applying
-the witness to candidate-map reuse, loop-carried live state and completed transfers at
-retirement, and the first production-driver `[distribute]` path. These
-snapshot checks are not a distributed trajectory.
-
-For distributed classical PME, #452 composes spreading, a linear FFT,
-the influence map, the inverse FFT, and gathering from the primitive set.
-D306 (#480) introduces the execution-level transform first:
-the forward and backward unnormalized transforms declare each other as
-adjoints under the weighted Hermitian pairing, with explicit buffer
-dependencies. D319 (#502) adds a pure value-level
-`md.linear_transform` with static grid and half-spectrum shapes and a
-declared transpose. D341 (#526) connects these semantic
-values to explicit interleaved execution buffers in f32 and f64, with a
-private backward-input copy. Its use by
-`md-differentiate` in a composed reciprocal chain, the spread/influence/
-gather decomposition, and distributed grid transfer remain in #452.
-The transfer and local work may overlap where their data dependencies
-permit it; no whole-step wait is part of the transform.
-
-Direction adopted in D166 and refined in D167 (2026-10-03); all milestones
-below are planned, not implemented. [The architecture plan](future-architecture-plan.md#adopted-scope-and-first-deliverable)
-holds the contracts and detailed sequence. The first deliverable is **one
-existing local MLIP, validated on one GPU and then on two GPUs sharing one
-physical system**. Independent trajectories on separate GPUs are useful
-but do not validate this decomposition.
-
-Start the optional metatomic adapter through the existing driver before
-the distributed compiler and full Python API are complete. The first
-scope is finite-range local interactions, a fixed cell, no constraints,
-and one node. Keep the first-milestone classical MD paper's validation and
-publication independent of this work. An adapter, distributed inference,
-and compiler optimization are separate outcomes; none alone establishes
-novelty or a speedup.
-
-Use **Allegro → PaiNN → MACE** as the sequential support target, pinning
-one existing artifact and its backend/adapter versions per architecture.
-Allegro is the first local model; PaiNN introduces staged scalar/vector
-message passing; MACE extends the validated stage contract. Compatibility
-is checked per artifact, not promised for every checkpoint in a family.
-Supporting these architectures does not by itself validate water-and-salt
-properties; scientific validation is a separate application gate.
-
-**PyTorch/JAX supplies neural-network AD and tensor execution.** MDIR
-verifies particle dependencies, derivative ownership, communication,
-lifetimes, and execution order. Begin with a whole-model energy/force/virial
-call; staged execution later registers or reuses differentiable halo and
-reverse-accumulation primitives while the external framework generates
-backward. No new general reverse-mode engine is required. torch-mlir is an
-optional later import route, not a dependency of ML1–ML3. Preserve semantic
-contracts through external AD rather than reconstructing them from generic
-tensor operations. See the [layer and model plan](future-architecture-plan.md#external-ad-and-execution-layers).
+D169 splits this section between two milestones, as D287 (the rulings on
+#377 of 2026-10-16 and 2026-10-17) sets them: ML1 steps 1 to 3, the IR of
+ML4, PaiNN in stages, and MACE in stages close M3 (MACE is required); ML2,
+ML3, PaiNN and MACE on two GPUs, ML5, and distributed particle mesh Ewald
+close M4. A milestone orders completion, not the start of work: ML2 runs
+in parallel with M3. The direction is D166 and D167 (2026-10-03);
+[the architecture plan](future-architecture-plan.md#adopted-scope-and-first-deliverable)
+holds the contracts, the sequence (Allegro, then PaiNN, then MACE), the
+scope of the first deliverable (one local MLIP on one GPU, then on two GPUs
+sharing one system), and the [layers and external AD](future-architecture-plan.md#external-ad-and-execution-layers).
+Classical MD keeps its features, validation, and baselines, with no MLIP
+backend required.
 
 | Milestone | Work | Completion evidence |
 |---|---|---|
@@ -521,69 +236,14 @@ tensor operations. See the [layer and model plan](future-architecture-plan.md#ex
 | ML4 | PaiNN with an opaque path and declared stages/differentiable communication, then MACE using the same contracts; external AD generates backward; semantic import is optional | Communication adjoint checks and same-model comparison of enlarged coordinate halos and per-layer feature exchange, including reverse derivatives and saved-value lifetimes; energy/force/virial agreement and measurements of bytes, messages, redundant work, memory, and full-step time |
 | ML5 | Bounded legal-plan selection and measured overlap | Fixed-plan baselines and tuning cost reported; one/two/four-GPU strong and weak scaling; multiple nodes before a cluster claim; checked preconditions and an off switch for each optimization |
 
-ML1's first step is built (D270, [metatomic-ml1.md](metatomic-ml1.md#9-what-the-first-pr-built-d270)): the TorchScript backend with chunks of centers, from `[[energy.model]]` and `mdir.System.models`, validated against the `nequip` package's calculator in `mixed` and `double`; a minimization and stochastic cell rescaling take the model (D272, [metatomic-ml1.md](metatomic-ml1.md#10-minimization-and-constant-pressure-d272)). The AOTInductor backend (D273, [metatomic-ml1.md](metatomic-ml1.md#11-the-aotinductor-backend-d273)) takes the `nequip` package's compiled packages: 132 kB per pair against 1.22 MB, and 6 times less time (85 kB and 9 times with its Triton kernel). The pair list is MDIR's (D277, [metatomic-ml1.md](metatomic-ml1.md#12-the-pair-list-from-mdirs-neighbor-structures-d277)): `md.edges` of a neighborhood at the model's cutoff, every image from the rows of the neighbor matrix, in slots fixed at each build; the staged models of #377 lower over it. The CPU target follows. ML4's baselines (D286, [ml4-baselines.md](ml4-baselines.md)) run nablaDFT's PaiNN and MACE-OFF23 medium as one whole-system call through the model term, validated against their packages' calculators: 164 kB per pair for MACE (float64) and 61 kB for PaiNN, the packages' own peaks, which bound the whole system on one GPU (1,536 and 6,144 atoms of water on 24 GB), since a message-passing model cannot be chunked by centers; the staged models of steps 4 and 5 are measured against them. The IR of ML4 is built (D288, D289, [ml4-ir.md](ml4-ir.md)): `md.stage` binds the forward body and the vector-Jacobian product of a stage of one element, `md.apply_stage` applies it in the kernels of `md.gather_relation`, `md.map_particles`, and `md.sum_particles`, fields carry any number of components and their `irreps<...>`, and `md-differentiate` takes the adjoints of the features, the forces, and the virial of each stage gather in one gather, two evaluations of the product per directed pair; a synthetic two-layer model agrees with an independent reverse sweep to $10^{-15}$ on the CPU and a GPU. PaiNN in stages runs on one GPU (step 4a: D294, D293, [ml4-ir.md](ml4-ir.md#8-painn-in-stages-step-4)): nablaDFT's PaiNN re-implemented in JAX from its weights and checked against SchNetPack, exported through StableHLO legalized to `linalg`, its bodies called in tiles of rows over the slots of the pairs, from the control file with `backend = "STAGES"`; it agrees with SchNetPack in float64 and with the opaque call, and takes 1.4 to 2.1 kB of device memory a pair of liquid water against the opaque call's 61 kB (196,608 atoms ran on 24 GB, against 6,144), at about 10 µs a pair, about 20 times the opaque call's time. Step 4b compares AOTInductor bodies, store against recompute, and the two-ended scatter.
-
-PaiNN step 4b now also offers an opt-in register and pointwise-fusion strategy for short stage-body reductions
-(D318, [ml4-ir.md](ml4-ir.md#89-short-reductions-of-a-stage-body-d318)):
-the node VJP's three-component sums share the semantic matcher of D303's
-warp reductions and retain their source order; eligible adjacent pointwise
-work and a duplicated result write join the same body kernels. The loop
-and separate pointwise launches remain the default after two paired 20-step
-runs measured about a 1.5% whole-step gain on one RTX 4090. Store against recompute,
-the two-ended scatter, and the other body strategies remain in #462.
-
-ML2 has begun (D275, [distributed-ml2.md](distributed-ml2.md)), in
-parallel with M3 (the ruling on #377): its stage 1 is the dialect
-`md_dist` (layouts, halos, $G$ and $G^\mathsf T$ as adjoint ops, and the
-verifier of missing transfers, stale halos, coverage, and exactly-once
-sums) with an in-process executor of several domains as the oracle, and
-Lennard-Jones on two domains against one. Its second part
-(D276) derives that program from the global potential:
-`md-distribute`, the transposes of $G$ and $G^\mathsf T$ declared to
-`md-differentiate`, and `md-dist-owner-computes` for the directed
-traversal. Its third part (D279) carries the derivative through the
-fields computed from the positions: EAM on domains, with the adjoint of the
-density copied to the ghosts between the two passes. Its fourth part
-(D290) runs each domain's loops through `md_exec`, with a center
-extent and explicit images, on the CPU and, one domain after another, on
-one GPU, in `double` and `mixed`. The static factor-grid selection of
-`md-distribute` takes an orthorhombic compile-time box or an explicit grid
-(D307, #476). Migration, MPI on CPU ranks, and
-several GPUs follow, then the classical track of #31 (topology, PME,
-ensembles, the Amber suite on several GPUs).
-The storage lowering can expose each $G$ or $G^\mathsf T$ as a start event
-and a completed destination SSA value at a matching wait
-(D310, #490). Its first transport strategy waits
-immediately through the existing synchronous call; scheduling interior
-work and an asynchronous transport are further parts of #481.
-
-The center partition (D317, #496) classifies owned
-centers from actual relation membership for one layout/halo epoch. It
-provides the proof for center-filtered pair lowering (#535 under #499).
-That lowering carries proved interior and boundary selection through the
-CPU reference and MDExec CPU/GPU loops. The optional interior-before-wait
-schedule follows in #536; there is no runtime overlap in the filter step.
-
-The schedule proof (D308, #483) records source versions,
-start prerequisites, completion-before-use edges, and owned-only work
-for each $G$ or $G^\mathsf T$ transfer, and prints them with
-`--md-dist-print-schedule`. It does not yet overlap communication with
-computation. Center-filtered MDExec work and asynchronous transport are
-further parts of #481.
-
-A four-GPU measurement follows ML3's one/two-GPU correctness gate; it is
-not required to complete that first deliverable, nor is support for all
-three architectures. ML5 can begin with the first validated staged model.
-Distributed PME, global attention or charge solvers, constraints across
-domains, training, arbitrary PyTorch/JAX import, and full-trajectory
-differentiation remain outside it. The dependency vocabulary must leave
-room for these cases without claiming support.
-
-A persistent kernel cache and runnable compiled artifacts remain companion
-work. Cache keys include the model/backend and code-affecting plan choices;
-replanning that does not change generated code can reuse it. Preserve
-artifact identity and restart contracts from ML1, initially with same-plan
-continuation; changes of rank count require later validation.
+| Track | State and next |
+|---|---|
+| ML1 | Done: the TorchScript backend with chunks (D270, [metatomic-ml1.md](metatomic-ml1.md#9-what-the-first-pr-built-d270)), minimization and constant pressure (D272), the AOTInductor backend (D273), the pair list from MDIR's structures (D277). Next: the CPU target |
+| ML4 | In progress: the baselines (D286, [ml4-baselines.md](ml4-baselines.md)), the IR (D288, D289, [ml4-ir.md](ml4-ir.md)), PaiNN in stages, step 4a (D294, D293), and step 4b's fusion, cuBLAS products, row sums, short reductions, and f64 fields (D299, D302, D303, D318, D329). Next: AOTInductor bodies, store against recompute, and the two-ended scatter (#462); MACE in stages (#377) |
+| ML2 | In progress ([distributed-ml2.md](distributed-ml2.md)): the dialect and the in-process oracle (D275), the program from the global potential (D276), EAM (D279), loops through `md_exec` (D290), the factor grid (D307, #476), the schedule proof (D308, #483), halo events (D310, #490), migration primitives (D313, #494), center partitions and filters (D317, #496, #535, #499), and the collective skin predicate (D332, #542). Next: the witness in candidate-map reuse, the live state at retirement, and the first `[distribute]` run (#38); interior work before the wait (#536); asynchronous transport (#481); MPI on CPU ranks, several GPUs, then the classical track of #31 |
+| Distributed PME (#452) | In progress: the execution-level transform (D306, #480), the semantic transform (D319, #502), and its storage (D341, #526). Next: its use by `md-differentiate` in the reciprocal chain, the spread/influence/gather decomposition, and the transfer of grids (#452) |
+| ML3, ML5 | Planned. A four-GPU measurement follows ML3's gate. Distributed PME, global attention or charge solvers, constraints across domains, training, arbitrary PyTorch/JAX import, and trajectory differentiation remain outside ML5 |
+| Companion work | A persistent kernel cache and runnable compiled artifacts, with keys of the model, the backend, and the plan choices that change code; same-plan continuation first |
 
 To bring into line with the detailed plan: [decisions.md](decisions.md),
 Section 7 still tags the dependency interface M2b, which A14 moved into M1.
@@ -593,32 +253,10 @@ and of `mlff`'s op families, was removed from
 
 ## 8. Analysis
 
-Measured on 2026-10-02 on the 2 ns of 6n4o of MDBench (239,131 particles,
-200 frames; `scripts/benchmarks/analysis/tools.py`): the same work, a fit
-of the backbone of the protein, its RMSD per frame, the RMSF of each CA,
-and the radius of gyration of its heavy atoms, read from the 574 MB DCD of
-MDIR in the page cache. cpptraj [[Roe2013]](references.md#roe2013) took 0.5 s,
-MDTraj [[McGibbon2015]](references.md#mcgibbon2015) 3.4 s, and MDAnalysis
-[[MichaudAgrawal2011]](references.md#michaudagrawal2011) 6.9 s; the three agree to
-5 × 10⁻⁵ Å, the rounding of frames in `f32`. GROMACS's `rms`, `rmsf`, and
-`gyrate` took 8.8 s on its own XTC of the same length, three passes that
-each decompress it. Simple observables run at the speed of reading the
-file (1.1 GB/s for cpptraj here).
-
-What went wrong in the comparisons of this work was never the arithmetic:
-
-- `unwrap` of cpptraj from a reference in another image gave the RNA of
-  6n4o an RMSD of 20 to 35 Å and the complex a radius of gyration of 64 Å,
-  against 1.3 to 1.9 and 31, without a warning. MDIR writes the image of
-  its sorted state, with the RNA 178 Å from the protein; the restart of
-  MDBench has it in another; GROMACS writes whole molecules. Imaging each
-  molecule next to the protein (`autoimage`) gave the right numbers.
-- GROMACS writes a frame of step 0 and the others do not, so frames of the
-  same index differ by one interval.
-- The columns of `gmx energy` and of ParmEd's reporter for OpenMM come in
-  their own order, not that of the request; they were misread three times.
-- Definitions differ between programs: the weights of the radius of
-  gyration, the reference of a fit, nm against Å.
+Simple observables run at the speed of reading a file; what went wrong in
+the comparisons of this work was never the arithmetic, but images,
+frame indices, column orders, and definitions
+([validation.md](validation.md#analysis-tools-on-mdbench)).
 
 | # | Item | State |
 |---|---|---|

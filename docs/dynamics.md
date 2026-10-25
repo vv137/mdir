@@ -825,3 +825,7 @@ where that of velocity Verlet is at the rounding.
 A checkpoint of leapfrog holds the forces, as one of velocity Verlet does,
 and a run continues it exactly. A checkpoint of leapfrog written before
 this holds none and is refused with a message.
+
+## Multiple time steps
+
+A design only, from the roadmap (#603). multiple time steps (r-RESPA, [[Tuckerman1992]](references.md#tuckerman1992)), the energy split into a fast part (bonded terms, the direct sum within a short cutoff) and a slow part (the rest, the reciprocal sum), the slow forces kicking half an outer step at its ends and the fast ones integrated by velocity Verlet within it; in MDIR two `md.evaluate` of two `@energy` functions that the terms are partitioned into, a program of an outer step that loops over inner ones, and a check of the resonance of the outer step with the fastest motions, which limits it to about 4 fs with constraints; a flexible cell, with shear, needs the off-diagonal virial and the pressure tensor (F4), a decision of its own.
