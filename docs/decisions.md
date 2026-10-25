@@ -4,7 +4,8 @@ Last updated: 2026-10-03.
 
 This log records what has been decided. Every entry is accepted unless it
 is marked otherwise.
-[architecture.md](architecture.md) describes the design that results.
+[overview.md](overview.md) describes the design that results, and
+[architecture.md](architecture.md) maps the first design to it.
 [design-review.md](design-review.md) and [prior-art.md](prior-art.md) hold
 the analysis that led to the decisions.
 

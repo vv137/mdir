@@ -17,6 +17,14 @@ format, or the outputs; every such change is listed under **Changed** or
   legality, and positive and negative acceptance cases across the dialects.
   This documentation change adds no operation, control key, or runtime
   behavior.
+- **An overview of MDIR** (#587): `docs/overview.md` states why MDIR
+  exists, its dialects, main passes, lowerings, runtime, and front ends,
+  one step of a run, and what it guarantees, with four diagrams, checked
+  against the code. `docs/architecture.md`, revision 5 of the first design,
+  becomes a map from each of its sections to where the content is now, with
+  the statements that no longer held. README's three diagrams moved into
+  the overview's, and README and Sections 1 and 3 of the white paper link
+  to it. Documentation only.
 
 ### Changed
 

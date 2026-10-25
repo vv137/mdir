@@ -76,7 +76,7 @@ flowchart TD
     K -. proposed .-> F
 ```
 
-Solid edges describe the implemented path at an architectural level. Dashed edges describe the planned extension; the diagram does not prescribe exact pass nesting. The important boundary is that distribution and traversal derive from a shared plan before storage assignment removes field-value semantics. [Current pipeline](../tools/mdir/Run.cpp), [proposed pipeline](architecture.md#2-two-structures-a-graph-and-a-pipeline).
+Solid edges describe the implemented path at an architectural level. Dashed edges describe the planned extension; the diagram does not prescribe exact pass nesting. The important boundary is that distribution and traversal derive from a shared plan before storage assignment removes field-value semantics. [Current pipeline](../tools/mdir/Run.cpp), [proposed pipeline](https://github.com/vv137/mdir/blob/5f421d1a4b0c1322a2c69de52b2c5504a700ab99/docs/architecture.md#2-two-structures-a-graph-and-a-pipeline).
 
 ## Cornel's architecture and its relevance
 
@@ -92,7 +92,7 @@ One difference is where execution choices enter. Cornel's specialization obtains
 
 Cornel explicitly describes particle-set SSA as “fake value semantics”: operations consume a set reference, modify underlying memory, and produce a new reference to that memory. Previous references cannot be reused. A restricted single-source, single-sink modification graph makes updates analyzable and aligns graph branches with control-flow branches. These restrictions are an essential part of the design, not incidental syntax. [Cornel, Sections 4.2.1–4.2.2, printed pages 28–32](https://cfaed.tu-dresden.de/publications?pubId=3851).
 
-MDIR instead specifies individual field values and a later storage-assignment boundary. Its architecture allows an old value to remain live, for example while a proposed configuration is evaluated. The implemented storage pass must decide whether in-place reuse preserves those uses. This gives MDIR a more explicit basis for expressing independent computations and preserved configurations, but merely using SSA does not prove that buffer reuse or overlap is safe. [MDIR state and storage semantics](architecture.md#41-state), [storage assignment](../lib/Dialect/MDExec/Transforms/AssignStorage.cpp).
+MDIR instead specifies individual field values and a later storage-assignment boundary. Its architecture allows an old value to remain live, for example while a proposed configuration is evaluated. The implemented storage pass must decide whether in-place reuse preserves those uses. This gives MDIR a more explicit basis for expressing independent computations and preserved configurations, but merely using SSA does not prove that buffer reuse or overlap is safe. [MDIR state and storage semantics](https://github.com/vv137/mdir/blob/5f421d1a4b0c1322a2c69de52b2c5504a700ab99/docs/architecture.md#41-state), [storage assignment](../lib/Dialect/MDExec/Transforms/AssignStorage.cpp).
 
 The existing storage-form independence analysis reinforces that distinction: it checks effects, possible aliases, and use dependencies conservatively before placing work on a second stream. Semantic independence must survive physical storage assignment. [Independence contract](../include/mdir/Dialect/MDExec/Independence.h), [implementation](../lib/Dialect/MDExec/Independence.cpp).
 
@@ -352,7 +352,7 @@ The key observation is that refreshing positions once does not satisfy the later
 
 ### Differentiation changes communication requirements
 
-For an owner-to-ghost copy in the forward graph, the corresponding adjoint operation sums ghost contributions back to their owners. A message-passing layer can therefore require a forward feature exchange and a reverse accumulation when forces are obtained by differentiating the energy. Reverse mode also needs forward activations or a legal recomputation policy. These requirements should be derived before communication is lowered into transport calls, as the MDIR architecture already proposes. [Semantic differentiation proposal](architecture.md#5-semantic-differentiation).
+For an owner-to-ghost copy in the forward graph, the corresponding adjoint operation sums ghost contributions back to their owners. A message-passing layer can therefore require a forward feature exchange and a reverse accumulation when forces are obtained by differentiating the energy. Reverse mode also needs forward activations or a legal recomputation policy. These requirements should be derived before communication is lowered into transport calls, as the MDIR architecture already proposes. [Semantic differentiation proposal](https://github.com/vv137/mdir/blob/5f421d1a4b0c1322a2c69de52b2c5504a700ab99/docs/architecture.md#5-semantic-differentiation).
 
 This answers the third Cornel comparison question: one representation can express both directions if it records the ownership map, field versions, contribution targets, and accumulation semantics. `reads` and `writes` alone are insufficient. The implementation must also avoid counting ghost-centered energies twice and must preserve the mapping through particle reordering.
 
@@ -415,7 +415,7 @@ Retain body/correlation order as model information where it is well defined, sep
 
 ## Opaque MLIP integration and StableHLO
 
-The proposed `md.external_potential` is a reasonable first integration boundary. It allows MDIR to own the time-step loop and particle organization while an external engine executes the model. It is not present in the current operation definitions, so introducing it requires an actual semantic and runtime contract. [MLFF proposal](architecture.md#43-mlff--machine-learned-force-fields), [current MD definitions](../include/mdir/Dialect/MD/MDOps.td).
+The proposed `md.external_potential` is a reasonable first integration boundary. It allows MDIR to own the time-step loop and particle organization while an external engine executes the model. It is not present in the current operation definitions, so introducing it requires an actual semantic and runtime contract. [MLFF proposal](https://github.com/vv137/mdir/blob/5f421d1a4b0c1322a2c69de52b2c5504a700ab99/docs/architecture.md#43-mlff--machine-learned-force-fields), [current MD definitions](../include/mdir/Dialect/MD/MDOps.td).
 
 The contract should specify requested outputs, support for each output, particle/global-ID mapping, species and parameter inputs, units, dtype/layout, periodic-image conventions, force contribution ownership, buffer lifetime, completion ordering, and derivative availability. An external model can satisfy such a contract without exposing its internal layers, but the compiler cannot infer undeclared internal support safely.
 
@@ -558,7 +558,7 @@ The intended progression is an opaque call with minimum capabilities, richer dec
 
 ## Scientific API above the compiler
 
-Retain the OpenMM-like Python library already specified by repository constraint C5, alongside declarative input, with both producing the same semantic IR. The checkout provides the TOML driver, not the proposed public Python object API. Its existing energy-expression syntax and units already follow OpenMM conventions. [Front-end constraint](decisions.md#1-project-constraints), [architecture goal](architecture.md#1-goal), [expression and unit conventions](ops.md).
+Retain the OpenMM-like Python library already specified by repository constraint C5, alongside declarative input, with both producing the same semantic IR. The checkout provides the TOML driver, not the proposed public Python object API. Its existing energy-expression syntax and units already follow OpenMM conventions. [Front-end constraint](decisions.md#1-project-constraints), [architecture goal](https://github.com/vv137/mdir/blob/5f421d1a4b0c1322a2c69de52b2c5504a700ab99/docs/architecture.md#1-goal), [expression and unit conventions](ops.md).
 
 OpenMM separates a public scientific API from its implementation and platform interfaces. Its core model includes `System`, interactions represented by `Force` objects, `Integrator`, `Context`, and `State`. That is a useful user model to adopt without copying its class hierarchy or promising OpenMM API compatibility. [OpenMM architecture and public API](https://docs.openmm.org/latest/userguide/library/01_introduction.html).
 
@@ -702,7 +702,7 @@ For the first research prototype, use a bounded procedure: enumerate a few legal
 | Approximation parameters | Couple real/reciprocal or direct/indirect work and must satisfy the requested error and boundary-condition contract; they are distinct from physical cutoff changes and floating-point precision. |
 | Entity distribution and memory budget | Particle, mesh, and hierarchy decompositions can differ; communication, coarse-level utilization, maximum occupancy, and feature width constrain feasible layouts. |
 
-The architecture already separates an immutable `ExecutionPlan` from mutable `ExecutionTuningState`. Keep that distinction, but specify a compiler-visible ABI for each tunable parameter. Updating skin without recompilation is possible only when the generated validity tests, builds, and halo coverage use the updated value consistently. A number described as tunable in a document can still be compiled as a constant today. [Plan proposal](architecture.md#71-plan-and-tuning-state), [current pipeline options](../tools/mdir/Run.cpp).
+The architecture already separates an immutable `ExecutionPlan` from mutable `ExecutionTuningState`. Keep that distinction, but specify a compiler-visible ABI for each tunable parameter. Updating skin without recompilation is possible only when the generated validity tests, builds, and halo coverage use the updated value consistently. A number described as tunable in a document can still be compiled as a constant today. [Plan proposal](https://github.com/vv137/mdir/blob/5f421d1a4b0c1322a2c69de52b2c5504a700ab99/docs/architecture.md#71-plan-and-tuning-state), [current pipeline options](../tools/mdir/Run.cpp).
 
 Give tuning an explicit startup/runtime budget and deterministic fixed-plan fallback. Cache measurements by relevant model, hardware, numerical, and workload characteristics. Trials must preserve the scientific trajectory or use a controlled replay/reference state; measuring multiple variants must not accidentally apply a time step multiple times. Saunders's proposed early-iteration trials support this bounded approach, while strict batch launches can choose precompiled variants using offline profiles without exploration.
 
@@ -714,7 +714,7 @@ An interior region is stage-specific. A particle can be interior for a short-ran
 
 ### What transport independence requires
 
-The fourth Cornel comparison question also has a positive architectural answer. MDIR can preserve transport-independent operations above its runtime ABI, then lower them to MPI, an in-process GPU transfer, or another transport. Cornel already preserves a target-agnostic root dialect; the proposed additional distinction is keeping the distributed realization itself independent of OpenFPM-specific procedures. [Cornel, Sections 3.4 and 7.3.2](https://cfaed.tu-dresden.de/publications?pubId=3851), [MDIR distribution proposal](architecture.md#81-md_dist--distributed-execution-plan).
+The fourth Cornel comparison question also has a positive architectural answer. MDIR can preserve transport-independent operations above its runtime ABI, then lower them to MPI, an in-process GPU transfer, or another transport. Cornel already preserves a target-agnostic root dialect; the proposed additional distinction is keeping the distributed realization itself independent of OpenFPM-specific procedures. [Cornel, Sections 3.4 and 7.3.2](https://cfaed.tu-dresden.de/publications?pubId=3851), [MDIR distribution proposal](https://github.com/vv137/mdir/blob/5f421d1a4b0c1322a2c69de52b2c5504a700ab99/docs/architecture.md#81-md_dist--distributed-execution-plan).
 
 That separation must define observable semantics. A forward halo needs an ownership/communication map, a field version, a supported region, and completion that guarantees the consumer can read the data. Reverse accumulation needs the inverse ownership mapping and a reduction rule. Migration must preserve global identity and topology while invalidating stale local-index maps. The runtime must preserve buffer lifetime and completion across asynchronous work.
 

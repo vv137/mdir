@@ -52,109 +52,16 @@ the white paper ([docs/paper/10-performance.md](docs/paper/10-performance.md))
 measures it against the first milestone's target (D114), the rate of
 pmemd.cuda, with both programs under one protocol. A driver reads a control file and writes a log, a
 trajectory, and checkpoints, from which a run continues exactly. The white
-paper of the first milestone is in [docs/paper/](docs/paper/README.md).
+paper of the first milestone is in [docs/paper/](docs/paper/README.md), and
+[docs/overview.md](docs/overview.md) gives the whole design in brief.
 
 ## MDIR at a glance
 
-### A step on a GPU
-
-The step that `mdir run` compiles for a typical all-atom system: velocity
-Verlet with constraints, Lennard-Jones and particle mesh Ewald, and the
-neighbor groups with a dual list. Each box is one or more fused kernels,
-annotated with the primitives they are made of.
-
-```mermaid
-flowchart LR
-    X["Positions"] --> V{"Neighbor structures<br/>still valid?"}
-    V -- no --> B["Rebuild<br/>sort, scan, compaction"]
-    V -- yes --> F
-    B --> F
-    subgraph F["Forces, energy, virial"]
-        direction TB
-        P["Pairs within the cutoff<br/>Lennard-Jones and Ewald direct sum<br/>gather, scatter-accumulate"]
-        T["Tuples<br/>bonds, angles, torsions, CMAP, 1-4 pairs,<br/>excluded pairs of PME<br/>gather, scatter-accumulate"]
-        subgraph K["PME reciprocal sum"]
-            direction LR
-            S["Spread<br/>scatter-accumulate"] --> FFT["FFT"] --> G["Influence<br/>map"] --> IFFT["Inverse FFT"] --> R["Gather"]
-        end
-    end
-    F --> E["Energies and virial<br/>reduction"]
-    F --> I["Kick, drift, constraints<br/>SHAKE, SETTLE"]
-    E --> C["Thermostat and barostat"]
-    C --> I
-    I --> X
-```
-
-The compiled segment runs this loop for many steps. Between segments the
-driver writes the log, the trajectory, and checkpoints.
-
-### From a control file to machine code
-
-The passes that `mdir run` applies, in order (`lib/Compiler/Compile.cpp`).
-Solid edges are the pipeline of a run today. The dashed path through
-`md_dist` (domains and halos) is built and tested with `mdir-opt`, but no
-run takes it yet.
-
-```mermaid
-flowchart TD
-    IN["Amber, GROMACS, or CHARMM topology<br/>control file, Python front end"] --> MD["md, dyn<br/>potential terms, relations, integrator"]
-    MD --> AD["md-differentiate<br/>forces and virial from the energy"]
-    AD --> EX["convert-md-to-md-exec<br/>loops over particles, pairs, tuples"]
-    EX --> NB["Neighbor reuse and validity<br/>loop fusion, accumulation"]
-    NB --> PR["Precision: single, mixed, double<br/>algebra of every sum"]
-    PR --> GPU["GPU: scatter strategy, device storage,<br/>streams, stage bodies"]
-    PR --> CPU["CPU: storage, fixed-order reductions"]
-    GPU --> K["convert-md-exec-to-gpu<br/>NVVM, cubins"]
-    CPU --> L["convert-md-exec-to-loops<br/>OpenMP, LLVM"]
-    K --> RT["mdrt runtime<br/>launches, memory pool, cuFFT, cuBLAS"]
-    L --> RT2["mdrt runtime<br/>pocketfft, OpenMP threads"]
-    MD -.-> DI["md-distribute<br/>md_dist: domains, halo copy and sum"]
-    DI -.-> EX
-```
-
-### The primitives and what is built on them
-
-Every loop of a step is made of a small set of primitives, each with a
-declared transpose, so that forces and their derivatives are compositions
-of the same pieces. The lowerings share one emitter for each primitive
-and choose among its strategies by measurement
-([docs/primitives-map.md](docs/primitives-map.md)).
-
-```mermaid
-flowchart BT
-    subgraph PRIM["Primitives and their transposes"]
-        direction LR
-        MAP["map"]
-        GA["gather"] <-.-> SC["scatter-accumulate"]
-        RE["reduction"] <-.-> BC["broadcast"]
-        FT["FFT"] <-.-> IFT["inverse FFT"]
-        HC["halo copy"] <-.-> HS["halo sum"]
-        SCAN["scan"] --> CMP["compaction"]
-        SCAN --> SORT["sort, neighbor build"]
-        CMP --> SORT
-    end
-    subgraph EMIT["Shared emitters and strategies"]
-        direction LR
-        RED["Reduction emitter<br/>warp butterfly, fixed order"]
-        SCE["Scatter emitter<br/>atomics, block tables, PME tiles"]
-        CE["Compaction emitter<br/>warp, block, device scan"]
-        LIB["cuFFT, pocketfft, cuBLAS"]
-    end
-    RE --> RED
-    SC --> SCE
-    CMP --> CE
-    FT --> LIB
-    PRIM --> USE
-    subgraph USE["What is built on them"]
-        direction LR
-        U1["Pair loops<br/>LJ, PME direct, EAM"]
-        U2["Bonded terms<br/>constraints"]
-        U3["PME reciprocal sum"]
-        U4["Neighbor structures"]
-        U5["Learned potentials<br/>in stages"]
-        U6["Domains<br/>in progress"]
-    end
-```
+The diagrams of MDIR are in [docs/overview.md](docs/overview.md): the passes
+from a control file or a Python model to machine code in Section 2.1, the
+front ends in Section 2.6, one step with the primitives each part is made
+of in Section 3, and the path from the facts of the IR through the shared
+emitters to code in Section 4.
 
 ## Installing
 
@@ -189,7 +96,8 @@ apptainer run --nv mdir-0.1.0.sif doctor
 
 | Document | Contents |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | The design |
+| [docs/overview.md](docs/overview.md) | An overview: why MDIR exists, its dialects, passes, lowerings, runtime, and front ends, one step, and what it guarantees, with diagrams |
+| [docs/architecture.md](docs/architecture.md) | The first design (M0), and where each of its parts went |
 | [docs/future-architecture-plan.md](docs/future-architecture-plan.md) | Future plan: architecture review against Saunders, Cornel, and P4IRS, with staged dependencies, MLIP semantics, and model interoperability |
 | [docs/ops.md](docs/ops.md) | Types and ops for the first milestone |
 | [docs/runtime.md](docs/runtime.md) | Proposal for the runtime and execution of the first milestone |
