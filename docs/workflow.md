@@ -237,8 +237,12 @@ the cluster.
   review and on `main`, not on a draft: MDIR built with Python in the image
   `ghcr.io/vv137/mdir-ci`, and its tests on the CPU (`lit`, no GPU: the
   tests that require `cuda` are unsupported there, and the check of the
-  expected unsupported tests is off). The compile cache (ccache) is kept
-  in the Actions cache between runs. It does not block a merge yet.
+  expected unsupported tests is off). The tests run in four parallel jobs,
+  shards of lit in the lexical order (`--num-shards=4 --run-shard=N
+  --order=lexical`, D344), each of which builds MDIR from the
+  shared compile cache (ccache, kept in the Actions cache; shard 1 saves
+  it, and also builds the Python package from its sdist). It does not
+  block a merge yet.
 - **The image** (`ci-image.yml`): HDF5, LLVM/MLIR 23.1.2, and the tools of
   the tests, from the stages `ci-hdf5` and `ci-prebuilt` of
   `packaging/Dockerfile`, tagged with a hash of the Dockerfile and of

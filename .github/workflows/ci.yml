@@ -44,8 +44,17 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.draft == false
     needs: checks
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 90
     continue-on-error: true
+    # The CPU tests in four shards (the maintainer, 2026-10-26), each a job of
+    # its own that builds MDIR from the shared compile cache and runs every
+    # fourth test in the lexical order of their names (D344), so
+    # that the four together hold every test once. Shard 1 also builds the
+    # Python package from its sdist, and alone saves the cache.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - name: Image
@@ -59,18 +68,20 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .ccache
-          key: ccache-${{ steps.image.outputs.name }}-${{ github.sha }}
-          restore-keys: ccache-${{ steps.image.outputs.name }}-
-      - name: Build and CPU tests
+          key: ccache-shards-${{ steps.image.outputs.name }}-${{ github.sha }}
+          restore-keys: ccache-shards-${{ steps.image.outputs.name }}-
+      - name: Build and CPU tests, shard ${{ matrix.shard }} of 4
+        env:
+          SHARD: ${{ matrix.shard }}
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker pull -q "${{ steps.image.outputs.name }}" || {
-            echo "::error::no image ${{ steps.image.outputs.name }}; run the workflow ci-image"; exit 1; }
+            echo "::error::no image ${{ steps.image.outputs.name }}; the maintainer builds it (docs/workflow.md)"; exit 1; }
           # As the runner's user, not root: root writes into a directory of
           # mode 555 (checkpoint-write-failure.test), and git refuses a
           # repository that another user owns (the commit of the manifest,
           # script-paths.test).
-          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp -e SHARD \
             -v "$PWD":/src -w /src -e CCACHE_DIR=/src/.ccache \
             -e CCACHE_MAXSIZE=2G "${{ steps.image.outputs.name }}" bash -euo pipefail -c '
             start=$(date +%s)
@@ -89,27 +100,35 @@ jobs:
               -DPython_EXECUTABLE=$(command -v python3)
             ninja -C /tmp/build
             built=$(date +%s)
-            ccache -s | tee /tmp/ccache.txt
+            hits=$(ccache -s | sed -n "s/^ *Hits: *\([0-9]*\) *\/ *\([0-9]*\).*/\1 of \2/p" | head -1)
+            echo "shard $SHARD: build $((built - start)) s (ccache hits: ${hits:-none})" > /src/.ci-times
             # The GPU, PyTorch, OpenMM, and h5py are not here: their tests
             # are unsupported, which the list of #608 does not describe.
-            lit -j 4 -sv -Dexpected_unsupported=off /tmp/build/test
+            status=0
+            lit -j 4 -sv -Dexpected_unsupported=off --order=lexical \
+              --num-shards=4 --run-shard="$SHARD" /tmp/build/test || status=$?
             end=$(date +%s)
-            echo "build $((built - start)) s, tests $((end - built)) s" | tee /tmp/times.txt
+            echo "shard $SHARD: tests $((end - built)) s, lit status $status" >> /src/.ci-times
             # The Python package from its sdist, built and installed as a
-            # user does (#624), where the script exists.
-            if [ -x scripts/check-sdist.sh ]; then
+            # user does (#624), in shard 1, where the script exists.
+            if [ "$SHARD" = 1 ] && [ -x scripts/check-sdist.sh ]; then
               HDF5_LIBRARY_DIR=/opt/hdf5/1.14.6/lib scripts/check-sdist.sh /tmp/sdist \
                 cmake.define.LLVM_DIR=/opt/llvm/23.1.2/lib/cmake/llvm \
                 cmake.define.MLIR_DIR=/opt/llvm/23.1.2/lib/cmake/mlir \
                 cmake.define.HDF5_ROOT=/opt/hdf5/1.14.6 \
                 cmake.define.MDIR_ENABLE_CUDA=OFF \
                 cmake.define.CMAKE_C_COMPILER_LAUNCHER=ccache \
-                cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=ccache
+                cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=ccache || status=1
+              echo "shard $SHARD: sdist $(($(date +%s) - end)) s" >> /src/.ci-times
             fi
+            exit $status
           '
-      - name: Save the compile cache
+      - name: Times
         if: always()
+        run: cat .ci-times 2>/dev/null | tee -a "$GITHUB_STEP_SUMMARY" || true
+      - name: Save the compile cache
+        if: always() && matrix.shard == 1
         uses: actions/cache/save@v4
         with:
           path: .ccache
-          key: ccache-${{ steps.image.outputs.name }}-${{ github.sha }}
+          key: ccache-shards-${{ steps.image.outputs.name }}-${{ github.sha }}
