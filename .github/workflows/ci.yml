@@ -88,4 +88,15 @@ jobs:
             lit -j 4 -sv -Dexpected_unsupported=off /tmp/build/test
             end=$(date +%s)
             echo "build $((built - start)) s, tests $((end - built)) s" | tee /tmp/times.txt
+            # The Python package from its sdist, built and installed as a
+            # user does (#624), where the script exists.
+            if [ -x scripts/check-sdist.sh ]; then
+              HDF5_LIBRARY_DIR=/opt/hdf5/1.14.6/lib scripts/check-sdist.sh /tmp/sdist \
+                cmake.define.LLVM_DIR=/opt/llvm/23.1.2/lib/cmake/llvm \
+                cmake.define.MLIR_DIR=/opt/llvm/23.1.2/lib/cmake/mlir \
+                cmake.define.HDF5_ROOT=/opt/hdf5/1.14.6 \
+                cmake.define.MDIR_ENABLE_CUDA=OFF \
+                cmake.define.CMAKE_C_COMPILER_LAUNCHER=ccache \
+                cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=ccache
+            fi
           '
