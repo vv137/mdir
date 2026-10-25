@@ -125,9 +125,10 @@ table. Measurements, alternatives, file names, and the reasoning stay in
 the decision's row of `docs/decisions.md` and in the topic document, which
 the entry may link. Purely internal changes (refactors, test
 infrastructure) are said in a few words, and a release may group them. Each
-subsection (Added, Changed, Fixed, Performance, Validated, Known
+subsection (Added, Changed, Removed, Fixed, Validated, Performance, Known
 limitations, in the order of `scripts/release/changelog.py`) appears once
-in a section; a new entry goes at the top of its subsection. The entry is part of what the review checks before it labels the PR
+in a section; a PR adds its entry to the existing subsection rather than
+opening a second one. The entry is part of what the review checks before it labels the PR
 `merge-recommended`. Whether a change counts as breaking, when that is in
 doubt, is a design question for the maintainer: ask it in a PR comment and
 label the PR `needs-decision`.
