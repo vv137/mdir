@@ -397,6 +397,26 @@ INFO:      2000        10.0000      -834.1467     -1083.2389       249.0922     
 
 The line shows the last row of `examples/argon/argon.toml`.
 
+The whole log of `mdir run examples/argon/argon.toml` on the CPU, as of
+2026-10-25 (the times and the rates depend on the machine):
+
+```text
+MDIR 0.1.0, commit <12 hexadecimal digits>
+MDIR: 864 particles, 2000 steps of 0.005 ps
+MDIR: neighbor structure: the matrix with the reach 9.5 Å (AUTO: the target is the CPU)
+MDIR: compiled in 0.70 s
+INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
+INFO:         0         0.0000      -834.1316     -1304.8874       470.7558       183.0000     -4920.3575     -2161.8410
+INFO:       100         0.5000      -834.1466     -1087.9806       253.8339        98.6980      -300.5656       112.6241
+...
+INFO:      2000        10.0000      -834.1467     -1083.2389       249.0922        96.8538       -70.6513       232.3875
+MDIR: ran in 0.24 s, 0.12 ms per step, 3582.5 ns per day
+MDIR: from step 1000 to step 2000, 0.119 ms per step, 3631.4 ns per day
+MDIR: neighbor structures were built 114 times, every 17.7 steps on average
+MDIR: the momentum at the end is 4.246e-12 amu nm/ps
+MDIR: the total energy changed by 1.813e-05 of its value
+```
+
 | Column | Unit | Meaning |
 |---|---|---|
 | `TIME` | ps | |

@@ -11,7 +11,7 @@ roles, branches and draft pull requests, review, and merging.
 
 Build LLVM and MLIR 23.1.2 with `scripts/build-llvm.sh` and, for
 checkpoints, HDF5 with `scripts/build-hdf5.sh`; then configure and build
-as in [README.md](README.md) and run
+as in [docs/building.md](docs/building.md) and run
 
 ```sh
 cmake --build build --target check-mdir
