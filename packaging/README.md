@@ -155,7 +155,16 @@ DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
   --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) \
   --target wheels --output type=local,dest=dist .
 scripts/release/check-wheel.sh dist/*.whl
+scripts/release/check-wheel-install.sh --gpu 0 dist/*.whl
 ```
+
+`check-wheel.sh` inspects the files; `check-wheel-install.sh` installs each
+wheel by pip into a fresh environment of its CPython (from `uv`), checks
+`import mdir` and its version, and runs 20 steps of the ala3 example on the
+CPU, and with `--gpu` the first wheel on that GPU. It needs the network
+for NVIDIA's wheels of the extra `cuda`. `scripts/release/publish.sh`
+builds the wheels with the tarball and runs both (docs/workflow.md,
+Releases).
 
 A wheel holds the extension, the runtime, libdevice with the CUDA EULA,
 and HDF5 (in `mdir.libs`); cuFFT and ptxas come from NVIDIA's wheels

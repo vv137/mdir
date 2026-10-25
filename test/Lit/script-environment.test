@@ -25,6 +25,7 @@
 # CHECK-NEXT: PANDOC is not set and pandoc is not on the path: pandoc 3, for the white paper
 # CHECK-NEXT: TECTONIC is not set and tectonic is not on the path: tectonic, for the white paper
 # CHECK-NEXT: DOCKER is not set and docker is not on the path: Docker with BuildKit, for the manylinux tree and the image
+# CHECK-NEXT: UV is not set and uv is not on the path: uv, which installs the CPythons that the wheels are tested with
 # CHECK-NEXT: a dry run without the binary, nothing set: exit 2
 # CHECK-NEXT: scripts/release/publish.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
 # CHECK-NEXT: MDIR_RELEASE_DIR is not set: the directory where a release writes its worktree, build tree, assets, and logs

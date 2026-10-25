@@ -61,7 +61,7 @@ with open(machine, "w") as file:
     file.write(f"MDIR_LLVM={work}/llvm\nHDF5_PREFIX={work}/hdf5\n")
     file.write(f"CUDA_ROOT={work}/cuda\nMDIR_RELEASE_GPU=0\n")
     file.write(f"PYBIND11_DIR={work}/pybind11\nMDIR_PYTHON={program('python')}\n")
-    for name in ("cmake", "ninja", "lit", "pandoc", "tectonic", "docker"):
+    for name in ("cmake", "ninja", "lit", "pandoc", "tectonic", "docker", "uv"):
         file.write(f"{name.upper()}={program(name)}\n")
 run("the release, the file of the machine and a device from the environment",
     publish, "0.1.0", MDIR_ENV_FILE=machine, MDIR_RELEASE_GPU="first")
