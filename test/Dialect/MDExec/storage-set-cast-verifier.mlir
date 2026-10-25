@@ -14,6 +14,38 @@ module attributes {md_exec.typed_storage} {
 
 // -----
 
+// The boundary marker is checked even without the typed-storage module flag.
+module {
+  md.particle_set @atoms
+
+  func.func @bad_boundary_value(%plain: memref<?xf64>) {
+    // expected-error@+1 {{expects 'md_exec.input_set_boundary' as a unit attribute on memref.cast}}
+    %a = memref.cast %plain {md_exec.input_set_boundary = true} : memref<?xf64> to memref<?xf64, #md_exec.set_layout<@atoms, 1>>
+    return
+  }
+}
+
+// -----
+
+module {
+  // expected-error@+1 {{expects 'md_exec.input_set_boundary' as a unit attribute on memref.cast}}
+  func.func @misplaced_marker() attributes {md_exec.input_set_boundary} {
+    return
+  }
+}
+
+// -----
+
+module {
+  func.func @plain_target(%plain: memref<?xf64>) {
+    // expected-error@+1 {{input set boundary must tag a plain buffer}}
+    %a = memref.cast %plain {md_exec.input_set_boundary} : memref<?xf64> to memref<?xf64>
+    return
+  }
+}
+
+// -----
+
 module attributes {md_exec.typed_storage} {
   md.particle_set @atoms
   md.particle_set @other

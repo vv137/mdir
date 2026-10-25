@@ -28,7 +28,7 @@ static Type eraseSet(Type type) {
 
 static FlatSymbolRefAttr getProvenance(Value value) {
   if (auto cast = value.getDefiningOp<memref::CastOp>()) {
-    if (cast->hasAttr("md_exec.input_set_boundary"))
+    if (hasInputSetBoundary(cast))
       return getSet(cast.getType());
     return getProvenance(cast.getSource());
   }
@@ -46,7 +46,7 @@ static FlatSymbolRefAttr getProvenance(Value value) {
 static LogicalResult verifySetCast(memref::CastOp cast) {
   FlatSymbolRefAttr source = getProvenance(cast.getSource());
   FlatSymbolRefAttr target = getSet(cast.getType());
-  Attribute boundary = cast->getAttr("md_exec.input_set_boundary");
+  Attribute boundary = cast->getAttr(kInputSetBoundaryAttrName);
   bool inputBoundary = static_cast<bool>(boundary);
   if (inputBoundary && !isa<UnitAttr>(boundary))
     return cast.emitOpError()
@@ -60,6 +60,24 @@ static LogicalResult verifySetCast(memref::CastOp cast) {
     return cast.emitOpError() << "cannot reinterpret storage of set " << source
                               << " as set " << target;
   return success();
+}
+
+bool mdir::md_exec::hasInputSetBoundary(memref::CastOp cast) {
+  return cast->hasAttr(kInputSetBoundaryAttrName);
+}
+
+void mdir::md_exec::markInputSetBoundary(memref::CastOp cast) {
+  cast->setAttr(kInputSetBoundaryAttrName, UnitAttr::get(cast.getContext()));
+}
+
+LogicalResult mdir::md_exec::verifyInputSetBoundaryAttribute(Operation *op,
+                                                              Attribute value) {
+  auto cast = dyn_cast<memref::CastOp>(op);
+  if (!cast || !isa<UnitAttr>(value))
+    return op->emitError()
+           << "expects '" << kInputSetBoundaryAttrName
+           << "' as a unit attribute on memref.cast";
+  return verifySetCast(cast);
 }
 
 LogicalResult mdir::md_exec::verifyStorageSetCasts(ModuleOp module) {

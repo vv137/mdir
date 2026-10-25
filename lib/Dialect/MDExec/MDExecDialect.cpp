@@ -181,6 +181,8 @@ void AlgebraListAttr::print(AsmPrinter &printer) const {
 
 LogicalResult MDExecDialect::verifyOperationAttribute(Operation *op,
                                                       NamedAttribute attr) {
+  if (attr.getName() == kInputSetBoundaryAttrName)
+    return verifyInputSetBoundaryAttribute(op, attr.getValue());
   if (attr.getName() == "md_exec.typed_storage") {
     if (!isa<UnitAttr>(attr.getValue()) || !isa<ModuleOp>(op))
       return op->emitError()

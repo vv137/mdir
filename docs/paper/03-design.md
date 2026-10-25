@@ -655,7 +655,7 @@ The verifier compares a loop's buffers with its particle or tuple domain,
 and rejects a buffer from another set. The current pool can reuse a buffer
 only for the same set and full type. Before either CPU or GPU lowering a
 shared boundary rejects a cast across sets, including one hidden by a
-plain cast or aliasing view, and rejects unknown source provenance unless the cast marks a declared input boundary. It erases the identity layout and boundary casts. Therefore
+plain cast or aliasing view, and rejects unknown source provenance unless the cast marks a declared input boundary. That boundary is a `memref.cast` with the unit marker `md_exec.input_set_boundary` (D[input-set-boundary-attr]); the dialect verifies placement, value, and provenance. It erases the identity layout and boundary casts. Therefore
 the address calculations, allocation sizes, and kernels are those of the
 plain-memref program. Dynamic row counts come from validated input and
 the assignment pass's size map; PME scratch remains untagged structural storage, and lifetime planning is a later pass.

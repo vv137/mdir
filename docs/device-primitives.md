@@ -32,6 +32,10 @@ identity layout leaves the numeric GPU memory space and addressing alone.
 This invariant set is the buffer-provenance case of the
 [execution contract](execution-contracts.md) (D334); changing validity
 state remains in SSA values.
+The external-input cast that first asserts a storage set carries the unit
+marker `md_exec.input_set_boundary` (D[input-set-boundary-attr], #625).
+Dialect verification restricts the marker to `memref.cast`, checks its value
+and set provenance, and rejects a cast that retags an already known set.
 The loop verifier checks each operand against the primitive's particle or
 tuple domain before a strategy is chosen. The common CPU/GPU conversion
 boundary rejects a cast from one set to another, then removes the layout;
