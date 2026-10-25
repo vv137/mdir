@@ -1,0 +1,76 @@
+# The tests expected to be unsupported, by the lit feature that decides it
+# (#608; docs/workflow.md, Validation). lit.cfg.py compares this list with
+# what the features of a configuration leave unsupported, before the tests
+# run (test/mdir_lit.py): on a run of the whole suite a difference is a
+# warning, and with -Dexpected_unsupported=strict an error.
+#
+#   without <feature>: <test>   the test needs the feature (REQUIRES)
+#   with <feature>: <test>      the feature makes it unsupported (UNSUPPORTED)
+#   without <feature>: *        every test whose REQUIRES names the feature
+#
+# A test is expected to be unsupported when an entry for it holds. A test
+# unsupported for a feature that has no entry here (torch, torchpme,
+# openmm, h5py) is not expected: a full suite gives lit the interpreters
+# that have those modules. test/Lit/expected-unsupported.test checks that
+# each test listed under a feature names it, and that every test naming a
+# feature with explicit entries is listed under it.
+
+# A build or a node without a device, without Python, or without HDF5.
+without cuda: *
+without python-api: *
+without hdf5: *
+
+# The tests of a build with HDF5 that check the messages of one without it.
+with hdf5: Driver/python-checkpoints-no-hdf5.test
+with hdf5: Driver/python-h5md-no-hdf5.test
+
+# compute-sanitizer: lit -Dsanitize=1 (docs/debugging.md).
+without compute-sanitizer: Sanitizer/analytic-bonds-gpu.test
+without compute-sanitizer: Sanitizer/centroid-gpu.test
+without compute-sanitizer: Sanitizer/dist-center-filter-gpu.test
+without compute-sanitizer: Sanitizer/dist-exec-gpu.test
+without compute-sanitizer: Sanitizer/free-energy-reorder-gpu.test
+without compute-sanitizer: Sanitizer/fused-prune-gpu.test
+without compute-sanitizer: Sanitizer/group-scatter-gpu.test
+without compute-sanitizer: Sanitizer/groups-empty-gpu.test
+without compute-sanitizer: Sanitizer/npt-velocity-verlet-gpu.test
+without compute-sanitizer: Sanitizer/pme-p3m-gpu.test
+without compute-sanitizer: Sanitizer/pme-side-gpu.test
+without compute-sanitizer: Sanitizer/pme-tiles-gpu.test
+without compute-sanitizer: Sanitizer/position-guard-gpu.test
+without compute-sanitizer: Sanitizer/python-dlpack-gpu.test
+without compute-sanitizer: Sanitizer/python-resident-gpu.test
+without compute-sanitizer: Sanitizer/squared-distance-switch-gpu.test
+without compute-sanitizer: Sanitizer/target-gpu.test
+without compute-sanitizer: Sanitizer/triclinic-gpu.test
+without compute-sanitizer: Sanitizer/tuple-block-sums-gpu.test
+
+# The plugin of learned potentials (-DMDIR_ENABLE_METATOMIC=ON) and what its
+# tests need besides (docs/metatomic-ml1.md, docs/ml4-baselines.md).
+without metatomic: Driver/model-term-aoti-gpu.test
+without metatomic: Driver/model-term-gpu.test
+without metatomic: Driver/model-term-ml4-gpu.test
+without mlip-python: Driver/model-term-aoti-gpu.test
+without mlip-python: Driver/model-term-gpu.test
+without allegro-package: Driver/model-term-aoti-gpu.test
+without allegro-package: Driver/model-term-gpu.test
+without ml4-python: Driver/model-stages-ml4-gpu.test
+without ml4-python: Driver/model-term-ml4-gpu.test
+without ml4-artifacts: Driver/model-stages-ml4-gpu.test
+without ml4-artifacts: Driver/model-term-ml4-gpu.test
+
+# The export of models in stages: a JAX interpreter and stablehlo-opt
+# (MDIR_JAX_PYTHON, docs/ml4-ir.md).
+without stages-export: Driver/model-stages-gpu.test
+without stages-export: Driver/model-stages-ml4-gpu.test
+without stages-export: Driver/model-stages-programs-gpu.test
+without stages-export: Integration/stages-batched-gpu.test
+
+# The tests of a release: lit -Drelease=1 (docs/workflow.md, Releases).
+without release-tests: Driver/leapfrog-energy-step-release-gpu.test
+without release-tests: Driver/leapfrog-energy-step-release.test
+without release-tests: Driver/python-observe-release-gpu.test
+without release-tests: Driver/python-observe-release.test
+
+# The Amber benchmark suite, prepared in MDIR_BENCH_DIR.
+without amber-suite: Scale/amber-suite.test

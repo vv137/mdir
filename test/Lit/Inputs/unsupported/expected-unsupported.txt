@@ -1,0 +1,3 @@
+without b: needs-b.test
+with a: not-with-a.test
+without d: runs.test

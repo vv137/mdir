@@ -178,6 +178,25 @@ conclude that a result is zero, empty, or unchanged has to prove it; a case
 it cannot decide is an error that names the reason, so that a proven zero
 and a failure are never confused.
 
+A test that is unsupported looks like a pass in the counts of a suite, so
+the suite says which tests it expects to be unsupported (#608).
+`test/expected-unsupported.txt` lists them by the lit feature that decides
+it, not by machine: `without <feature>: <test>` for a test that requires
+the feature, `with <feature>: <test>` for one that the feature makes
+unsupported, and `without <feature>: *` for every test that requires it.
+On a run of the whole suite, `lit.cfg.py` compares the list with what the
+features of the configuration leave unsupported, before any test runs. It
+notes how many tests it expects to be unsupported, and warns, at the start
+and at the end of the log, on a test that is unsupported but not expected
+(with the missing feature) and on an expected one that runs.
+`-Dexpected_unsupported=strict` makes a difference an error, and `=off`
+skips the check. A PR that adds a test requiring an optional feature, or
+changes a `REQUIRES` or `UNSUPPORTED` line, updates the list in the same
+PR; `test/Lit/expected-unsupported.test` fails until every test that names
+a listed feature is listed under it. The record of a suite (a ready
+comment, a merge comment) runs lit with `--show-unsupported` and gives the
+note and any warning of the check.
+
 ## Performance
 
 Timings are taken on a GPU that runs nothing else, after checking that no

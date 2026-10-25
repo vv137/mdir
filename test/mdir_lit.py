@@ -104,3 +104,201 @@ def enable_compile_cache(config, lit_config):
         return
     config.environment["MDIR_COMPILE_CACHE_DIR"] = os.path.join(
         config.mdir_obj_root, "test", "compile-cache")
+
+
+# The tests expected to be unsupported, by the feature that decides it
+# (test/expected-unsupported.txt, #608). A test that becomes unsupported by
+# accident, through a feature missing on a node, an interpreter that fails
+# to import, or a changed REQUIRES, would otherwise look like a pass in the
+# counts of a suite.
+_keyword = re.compile(r"(REQUIRES|UNSUPPORTED):(.*)")
+_entry = re.compile(r"^(without|with)\s+([\w.+-]+):\s*(\S+)$")
+
+
+def read_expected(path):
+    """The entries of the list, (kind, feature, test): kind "without" (the
+    test needs the feature) or "with" (the feature makes the test
+    unsupported); test a path under test/, or "*" for every test whose
+    REQUIRES names the feature."""
+    entries = []
+    with open(path, encoding="utf-8") as file:
+        for number, line in enumerate(file, 1):
+            line = line.split("#", 1)[0].strip()
+            if not line:
+                continue
+            match = _entry.match(line)
+            if not match:
+                raise ValueError(f"{path}:{number}: not 'without|with "
+                                 f"<feature>: <test>': {line}")
+            entries.append(match.groups())
+    return entries
+
+
+def read_conditions(path):
+    """The REQUIRES and UNSUPPORTED expressions of a test, as lit reads them:
+    on any line, comma-separated."""
+    requires, unsupported = [], []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as file:
+            for line in file:
+                match = _keyword.search(line)
+                if not match:
+                    continue
+                exprs = [e.strip() for e in match.group(2).split(",") if e.strip()]
+                if match.group(1) == "REQUIRES":
+                    requires.extend(exprs)
+                else:
+                    unsupported.extend(exprs)
+    except OSError:
+        pass
+    return requires, unsupported
+
+
+def _names(exprs):
+    names = set()
+    for expr in exprs:
+        names |= set(re.findall(r"[\w.+-]+", expr))
+    return names - {"true", "false"}
+
+
+def list_tests(root, suffixes, excludes):
+    """The test files under root, as lit discovers them: by suffix, outside
+    the excluded names."""
+    tests = []
+    for directory, subdirs, files in os.walk(root):
+        subdirs[:] = sorted(d for d in subdirs if d not in excludes)
+        for name in sorted(files):
+            if name in excludes or os.path.splitext(name)[1] not in suffixes:
+                continue
+            tests.append(os.path.relpath(os.path.join(directory, name), root))
+    return tests
+
+
+def compare(root, tests, features, entries, evaluate):
+    """For these features: the tests the list expects to be unsupported,
+    the unsupported tests it does not expect (with the reason), and the
+    tests it expects to be unsupported that run."""
+    features = set(features)
+    conditions = {t: read_conditions(os.path.join(root, t)) for t in tests}
+    expected = set()
+    for kind, feature, test in entries:
+        holds = (feature not in features) if kind == "without" else (feature in features)
+        if not holds:
+            continue
+        if test == "*":
+            expected |= {t for t, (req, _) in conditions.items() if feature in _names(req)}
+        else:
+            expected.add(test)
+    unexpected, running = [], []
+    for test in tests:
+        req, uns = conditions[test]
+        unsupported = (not all(evaluate(e, features) for e in req) or
+                       any(evaluate(e, features) for e in uns))
+        if unsupported and test not in expected:
+            reason = ([f"without {f}" for f in sorted(_names(req) - features)] +
+                      [f"with {f}" for f in sorted(_names(uns) & features)])
+            unexpected.append(f"{test} ({', '.join(reason)})")
+        elif not unsupported and test in expected:
+            running.append(test)
+    return sorted(expected), unexpected, running
+
+
+def check_list(root, tests, entries):
+    """The list against the tests: every test it names exists and names its
+    feature, and every test that names a feature with explicit entries is
+    listed under it."""
+    problems = []
+    conditions = {t: read_conditions(os.path.join(root, t)) for t in tests}
+    explicit = {}
+    for kind, feature, test in entries:
+        if test == "*":
+            continue
+        explicit.setdefault((kind, feature), set()).add(test)
+        if test not in conditions:
+            problems.append(f"{kind} {feature}: {test}: no such test")
+            continue
+        req, uns = conditions[test]
+        if feature not in _names(req if kind == "without" else uns):
+            word = "REQUIRES" if kind == "without" else "UNSUPPORTED"
+            problems.append(f"{kind} {feature}: {test}: its {word} does not name {feature}")
+    for (kind, feature), listed in sorted(explicit.items()):
+        for test, (req, uns) in sorted(conditions.items()):
+            if feature in _names(req if kind == "without" else uns) and test not in listed:
+                problems.append(f"{kind} {feature}: {test}: not listed")
+    return problems
+
+
+def _runs_whole_suite(config):
+    """Whether lit was given the root of the suite, in the source or the
+    build tree, as check-mdir gives it."""
+    import sys
+    roots = {os.path.realpath(config.test_source_root),
+             os.path.realpath(config.test_exec_root)}
+    return any(not arg.startswith("-") and os.path.realpath(arg) in roots
+               for arg in sys.argv[1:])
+
+
+def check_expected_unsupported(config, lit_config):
+    """Compare the tests that the features of this configuration leave
+    unsupported with test/expected-unsupported.txt, before any test runs.
+    On a run of the whole suite, or with -Dexpected_unsupported=check, a
+    difference is a warning; with -Dexpected_unsupported=strict it is an
+    error; -Dexpected_unsupported=off skips the check."""
+    from lit.BooleanExpression import BooleanExpression
+
+    mode = lit_config.params.get("expected_unsupported", "")
+    if mode not in ("", "check", "strict", "off"):
+        lit_config.fatal("expected_unsupported must be check, strict, or "
+                         f"off, not '{mode}'")
+    if mode == "off" or (not mode and not _runs_whole_suite(config)):
+        return
+    root = config.test_source_root
+    try:
+        entries = read_expected(os.path.join(root, "expected-unsupported.txt"))
+    except (OSError, ValueError) as error:
+        lit_config.fatal(str(error))
+    tests = list_tests(root, set(config.suffixes), set(config.excludes))
+    expected, unexpected, running = compare(
+        root, tests, config.available_features, entries,
+        BooleanExpression.evaluate)
+    lit_config.note(f"expected unsupported: {len(expected)} of {len(tests)} "
+                    "tests for the features of this configuration "
+                    "(test/expected-unsupported.txt)")
+    problems = ([f"unsupported but not expected: {t}" for t in unexpected] +
+                [f"expected unsupported but runs: {t}" for t in running])
+    if not problems:
+        return
+    message = ("the unsupported tests differ from "
+               "test/expected-unsupported.txt:\n  " + "\n  ".join(problems))
+    if mode == "strict":
+        lit_config.fatal(message)
+    lit_config.warning(message)
+    # Again after the results, where the log of a suite ends.
+    import atexit
+    import sys
+
+    def repeat():
+        sys.stdout.flush()
+        print("lit: warning: " + message, file=sys.stderr, flush=True)
+
+    atexit.register(repeat)
+
+
+if __name__ == "__main__":
+    # python3 test/mdir_lit.py [ROOT]: check the list against the REQUIRES
+    # and UNSUPPORTED lines of the tests (test/Lit/expected-unsupported.test).
+    import sys
+    root = sys.argv[1] if len(sys.argv) > 1 else os.path.dirname(os.path.abspath(__file__))
+    excludes = {"CMakeLists.txt", "lit.cfg.py", "lit.site.cfg.py.in",
+                "mdir_lit.py", "lib", "Inputs"}
+    tests = list_tests(root, {".mlir", ".toml", ".test"}, excludes)
+    try:
+        entries = read_expected(os.path.join(root, "expected-unsupported.txt"))
+    except (OSError, ValueError) as error:
+        print(error)
+        sys.exit(1)
+    problems = check_list(root, tests, entries)
+    for problem in problems:
+        print(problem)
+    print(f"{len(entries)} entries, {len(tests)} tests, {len(problems)} problems")
+    sys.exit(1 if problems else 0)
