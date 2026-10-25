@@ -22,8 +22,9 @@ format, or the outputs; every such change is listed under **Changed** or
   one step of a run, and what it guarantees, with four diagrams, checked
   against the code. `docs/architecture.md`, revision 5 of the first design,
   becomes a map from each of its sections to where the content is now, with
-  the statements that no longer held. README and Sections 1 and 3 of the
-  white paper link to it. Documentation only.
+  the statements that no longer held. README's three diagrams moved into
+  the overview's, and README and Sections 1 and 3 of the white paper link
+  to it. Documentation only.
 
 ### Changed
 

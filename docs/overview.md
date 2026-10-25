@@ -81,12 +81,12 @@ flowchart TD
     MODEL --> SEM["md and dyn<br/>potential, relations, tuple sets,<br/>step programs, the schedule of the run"]
     SEM --> MDP["Passes on md<br/>md-check-exchange, md-differentiate,<br/>md-expand-truncation, md-inline, md-bypass-updates"]
     MDP --> CONV["convert-md-to-md-exec"]
-    CONV --> EXV["md_exec, value form<br/>reuse-neighbors, expose-validity, fuse-loops,<br/>fold-tables, assign-precision, assign-algebra"]
+    CONV --> EXV["md_exec, value form<br/>reuse-neighbors, expose-validity, fuse-loops,<br/>accumulate-destinations, fold-tables,<br/>assign-precision, assign-algebra"]
     EXV --> CPU["CPU: assign-storage, convert-md-exec-to-loops,<br/>fixed-order-reductions, OpenMP, LLVM"]
-    EXV --> GPU["GPU: choose-scatter, assign-storage on the device,<br/>assign-streams, convert-md-exec-to-gpu, NVVM, cubins"]
+    EXV --> GPU["GPU: choose-scatter, assign-storage on the device,<br/>assign-streams, stage bodies,<br/>convert-md-exec-to-gpu, NVVM, cubins"]
     CPU --> JIT["MLIR ExecutionEngine<br/>host code at O3, linked with the runtime"]
     GPU --> JIT
-    JIT --> RT["mdrt runtime<br/>libmdrt, libmdrt_cuda, templates"]
+    JIT --> RT["mdrt runtime<br/>CPU: pocketfft, OpenMP threads<br/>GPU: launches, memory pool, cuFFT, cuBLAS"]
     RT --> OUT["Log, energies, trajectories,<br/>checkpoints, manifest, Python state"]
     SEM -.->|"mdir-opt only"| DIST["md-distribute<br/>md_dist: domains, halo copy and halo sum"]
     DIST -.-> DL["convert-md-dist-to-loops, or<br/>convert-md-dist-to-md-exec"]
@@ -233,8 +233,8 @@ flowchart TD
     REB --> FORCES
     subgraph FORCES["Forces, and the energy and virial where an output asks"]
         direction TB
-        PAIR["Pair loops, md_exec.pair_for<br/>Lennard-Jones, the Ewald direct sum, pair expressions"]
-        TUP["Tuple loops, md_exec.tuple_for<br/>bonds, angles, torsions, CMAP,<br/>1-4 pairs, excluded pairs"]
+        PAIR["Pair loops, md_exec.pair_for<br/>Lennard-Jones, the Ewald direct sum, pair expressions<br/>gather, scatter-accumulate"]
+        TUP["Tuple loops, md_exec.tuple_for<br/>bonds, angles, torsions, CMAP,<br/>1-4 pairs, excluded pairs of PME<br/>gather, scatter-accumulate"]
         MANY["Many-body and staged terms<br/>densities over pairs, as in EAM,<br/>neural stages, external models"]
         subgraph RECIP["Reciprocal sum, md_exec.reciprocal"]
             direction LR
@@ -244,6 +244,8 @@ flowchart TD
             IFFT --> GAT["Gather<br/>forces at the particles"]
         end
     end
+    FORCES --> RED["Energies and virial<br/>reduction, where an output asks"]
+    RED --> CPL
     FORCES --> INT["Integrator<br/>dyn.kick, dyn.drift,<br/>SHAKE, SETTLE, virtual sites"]
     INT --> CPL["Couplings<br/>thermostat, barostat,<br/>center-of-mass motion"]
     CPL --> DUE{"Output due?"}
@@ -255,6 +257,10 @@ flowchart TD
     SEG --> S1
     S1 --> S0
 ```
+
+Each box is one or more loops, fused where the passes allow it; on a GPU
+each is one or more kernels. The words under a box name the primitives it
+is made of.
 
 - **Neighbor structures** are values built from reference positions and
   a cell, with an exact test of validity that also holds while a
@@ -313,9 +319,15 @@ that taught them; this section names them and what each guarantees.
   part of MDIR is written as a composition of a small set of primitives,
   map, gather, scatter-accumulate, halo copy and halo sum, reduction,
   broadcast, scan, permutation, compaction, a linear transform (the FFT),
-  and the structural sorts and builds, each with a declared transpose
-  (principle 9, a design goal; D292,
-  [primitives-map.md](primitives-map.md)). A strategy of a primitive is a
+  and the structural sorts and builds, each with a declared transpose:
+  gather and scatter-accumulate, reduction and broadcast, halo copy and
+  halo sum, the FFT and the inverse FFT; scan underlies compaction, and
+  both the sorts and the neighbor builds, which are structural and have no
+  transpose (principle 9, a design goal; D292,
+  [primitives-map.md](primitives-map.md)). Built on them are the pair
+  loops (Lennard-Jones, the direct sum of PME, EAM), the bonded terms and
+  the constraints, the reciprocal sum, the neighbor structures, learned
+  potentials in stages, and, in progress, the domains of `md_dist`. A strategy of a primitive is a
   semantic op, a strategy attribute, a chooser with preconditions shared
   with the lowering, an emitter, and a switch. Once a shared emitter
   exists, every site moves onto it unless a measurement shows a loss in
@@ -375,7 +387,7 @@ flowchart LR
     LEGAL --> COST["Cost<br/>measured thresholds;<br/>numerics never weakened"]
     BASE --> COST
     GUARD --> COST
-    COST --> EMIT["Shared emitters<br/>reduction, scatter, compaction, gather"]
+    COST --> EMIT["Shared emitters<br/>reduction: warp butterfly, fixed order<br/>scatter: atomics, block tables, PME tiles<br/>compaction: warp, block, device scan<br/>gather; libraries: cuFFT, pocketfft, cuBLAS"]
     EMIT --> CODE["gpu and nvvm kernels,<br/>scf loops"]
     LEG1["Dashed border: design of D334 and D338,<br/>checked per site today"]
     classDef design stroke-dasharray: 5 5
