@@ -1325,6 +1325,13 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
 }
 
 static int isDriverGone(void);
+/* No plan is in use when a trim destroys the plans: each transform
+   (mdrtCudaFFT*3D*) looks its plan up in getFFTPlan and executes it at
+   once, with no allocation of the runtime between the two, and no handle
+   is kept across calls. The trims within getFFTPlan run before the plan it
+   returns is made (a failed cufftPlan3d) or entered in the cache (the
+   eviction of others). The work already issued with a plan is run first
+   (finish), so that destroying it cannot cut that work short. */
 static uint64_t trimIdle(void) {
   if (isDriverGone())
     return 0;
