@@ -15,6 +15,22 @@
 # RUN: %lit -Dout=%t -Dfeatures=a,c,d -Dexpected_unsupported=strict %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=AGREE %s
 # RUN: %lit -Dout=%t %S/Inputs/unsupported/runs.test 2>&1 | FileCheck --check-prefix=ONE %s
 # RUN: not %lit -Dout=%t -Dexpected_unsupported=maybe %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=BAD %s
+#
+# A shard compares its own tests, those that lit takes in the lexical order
+# of their names, which a shard must ask for (D309): lit's default order
+# follows the times recorded in each build tree, so the shards of two trees
+# overlap and leave tests out.
+# RUN: %lit -Dout=%t --num-shards=2 --run-shard=1 --order=lexical %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=SHARD1 %s
+# RUN: %lit -Dout=%t --num-shards=2 --run-shard=2 --order=lexical %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=SHARD2 %s
+# RUN: not %lit -Dout=%t --num-shards=2 --run-shard=1 %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=ORDER %s
+# RUN: env LIT_OPTS="--num-shards=2 --run-shard=2" not %lit -Dout=%t %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=ORDER %s
+# SHARD1: note: expected unsupported: 1 of 3 tests of shard 1/2
+# SHARD1: unsupported but not expected: needs-c.test (without c)
+# SHARD1-NEXT: expected unsupported but runs: runs.test
+# SHARD2: note: expected unsupported: 2 of 2 tests of shard 2/2
+# SHARD2-NOT: warning
+# SHARD2: Total Discovered Tests: 5
+# ORDER: fatal: a shard of the suite takes --order=lexical
 # WARN: note: expected unsupported: 3 of 5 tests
 # WARN: warning: the unsupported tests differ from test/expected-unsupported.txt:
 # WARN-NEXT: unsupported but not expected: needs-c.test (without c)

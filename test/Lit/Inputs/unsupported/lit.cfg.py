@@ -19,4 +19,5 @@ config.available_features.update(
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 import mdir_lit
 
+mdir_lit.check_shards(lit_config)
 mdir_lit.check_expected_unsupported(config, lit_config)

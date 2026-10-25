@@ -42,7 +42,8 @@ oracles and closed-form dispersion checks (D324, #530). Both
 tiers keep the NPT checks in Double and Mixed precision.
 
 Where two GPU allocations are available, the default tier can run as two
-lit shards on independent build trees of one commit (D309). Both
+lit shards on independent build trees of one commit (D309), in the
+lexical order of the tests (D[shard-order]). Both
 shards must pass; their disjoint selections together contain every default
 test. This changes elapsed validation time and uses two allocations, not the
 tests or the numerical oracle.

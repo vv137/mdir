@@ -639,6 +639,7 @@ specification follow those made with it.
 | [D341](decisions/D341.md) | Bridge semantic FFT values to execution buffers with private storage for each result and each backward input. | 2026-10-25 |
 | [D342](decisions/D342.md) | Execution loops expose a derived, conservative access interface. | 2026-10-25 |
 | [D343](decisions/D343.md) | Tuple coordinate kinds and member places are read and extended through their declared operation accessors. | 2026-10-26 |
+| [D[shard-order]](decisions/shard-order.md) | The shards of a suite are taken in the lexical order of the tests (`--order=lexical`), and `lit.cfg.py` refuses a shard without it; the check of the expected unsupported tests compares a shard's own tests. | pending |
 <!-- end decisions-table -->
 
 
