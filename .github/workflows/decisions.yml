@@ -1,13 +1,17 @@
 name: decisions
 
-# On main, no number is given twice, and a decision without its number yet
-# has its row in docs/decisions.md. Branches write labels, D[<label>], and
+# On main, the table of docs/decisions.md is that of docs/decisions/, a
+# decision without its number yet has its file there, and every changelog
+# fragment is well formed (#602). Branches write labels, D[<label>], and
 # the merger numbers them after the merge (docs/workflow.md), so a push of
 # a merge carries labels until the commit that numbers them; a tag runs the
 # strict check (release-check.yml).
 on:
   push:
     branches: [main]
+  # A change of this workflow runs it on its pull request.
+  pull_request:
+    paths: ['.github/workflows/decisions.yml']
 
 jobs:
   numbers:
@@ -15,3 +19,4 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: scripts/decision-number.sh check --pending
+      - run: python3 scripts/release/changelog.py fragments
