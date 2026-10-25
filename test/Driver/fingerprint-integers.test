@@ -1,0 +1,69 @@
+# The integers of a fingerprint are exact (#620). They were written through
+# a double, so from 2^53 on distinct values had one text: a seed of 2^53 + 1
+# continued the run of 2^53, and 2^63 - 2 that of 2^63 - 1. Below 2^53 the
+# text is the one of before, so that the checkpoints of such values
+# continue; from 2^53 on, every digit is written. The control file and the
+# model of Python write the seed with the same function and give one text.
+# RUN: rm -rf %t && split-file %s %t && cp -r %S/Inputs/dipeptide %t/
+# RUN: sed 's/^seed = .*/seed = 9007199254740991/' %t/run.toml > %t/below.toml
+# RUN: sed 's/^seed = .*/seed = 9007199254740992/' %t/run.toml > %t/at.toml
+# RUN: sed 's/^seed = .*/seed = 9007199254740993/' %t/run.toml > %t/above.toml
+# RUN: sed 's/^seed = .*/seed = 9223372036854775807/' %t/run.toml > %t/largest.toml
+# RUN: sed 's/^seed = .*/seed = 1000000000000000000/' %t/run.toml > %t/round.toml
+# RUN: sed 's/^seed = .*/seed = 2000000000000000/' %t/run.toml > %t/before.toml
+# RUN: cd %t && mdir-model-test below.toml --seed-fingerprint | FileCheck %s --check-prefix=BELOW
+# RUN: cd %t && mdir-model-test at.toml --seed-fingerprint | FileCheck %s --check-prefix=AT
+# RUN: cd %t && mdir-model-test above.toml --seed-fingerprint | FileCheck %s --check-prefix=ABOVE
+# RUN: cd %t && mdir-model-test largest.toml --seed-fingerprint | FileCheck %s --check-prefix=LARGEST
+# RUN: cd %t && mdir-model-test round.toml --seed-fingerprint | FileCheck %s --check-prefix=ROUND
+# RUN: cd %t && mdir-model-test before.toml --seed-fingerprint | FileCheck %s --check-prefix=BEFORE
+# BELOW: seed 9007199254740991: control file 9007199254740991, model 9007199254740991
+# AT: seed 9007199254740992: control file 9007199254740992, model 9007199254740992
+# ABOVE: seed 9007199254740993: control file 9007199254740993, model 9007199254740993
+# LARGEST: seed 9223372036854775807: control file 9223372036854775807, model 9223372036854775807
+# ROUND: seed 1000000000000000000: control file 1000000000000000000, model 1000000000000000000
+# Below 2^53 the text is that of the double, as before: 2e+15.
+# BEFORE: seed 2000000000000000: control file 2e+15, model 2e+15
+
+# A run of the seed 2^53 is not continued by one of 2^53 + 1.
+# RUN: cd %t && mdir run at.toml > at.log
+# RUN: cd %t && mdir checkpoint --print=fingerprint at.h5 | FileCheck %s --check-prefix=PRINT
+# PRINT: coupling [dynamics] seed = 9007199254740992
+# RUN: cd %t && sed -e 's/^seed = .*/seed = 9007199254740993/' -e 's/^steps .*/steps = 4/' at.toml > next.toml
+# RUN: cd %t && not mdir run --continue next.toml 2>&1 | FileCheck %s --check-prefix=CONTINUE
+# CONTINUE: was written by a run of other physics or coupling, which --continue does not change
+# CONTINUE: [dynamics] seed: 9007199254740992 -> 9007199254740993
+
+#--- run.toml
+[input]
+topology    = "dipeptide/dipeptide.prmtop"
+coordinates = "dipeptide/dipeptide.inpcrd"
+
+[output]
+energy_interval     = 2
+checkpoint          = "at.h5"
+checkpoint_interval = 2
+
+[energy]
+cutoff            = 8.0
+pairlist_distance = 9.0
+electrostatics    = "CUTOFF"
+
+[constraints]
+rigid_water = false
+
+[dynamics]
+time_step = 0.0005
+steps     = 2
+seed = 314159
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 300.0
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"

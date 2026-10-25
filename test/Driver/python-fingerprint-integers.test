@@ -1,0 +1,14 @@
+# REQUIRES: python-api
+# The seed in the fingerprint of a Python checkpoint is exact, and is the
+# text of the control file for the same seed (#620; fingerprint-integers.test
+# for the control file). The run of `mdir run` is that of
+# fingerprint-integers.test with the seed 2^53.
+# RUN: rm -rf %t && split-file %S/fingerprint-integers.test %t && cp -r %S/Inputs/dipeptide %t/
+# RUN: sed 's/^seed = .*/seed = 9007199254740992/' %t/run.toml > %t/at.toml
+# RUN: cd %t && mdir run at.toml > at.log
+# RUN: %mdir_python %S/Inputs/python_fingerprint_seed.py %t %t/at.h5 | FileCheck %s
+# CHECK: python seed 9007199254740991: 9007199254740991
+# CHECK-NEXT: python seed 9007199254740992: 9007199254740992
+# CHECK-NEXT: python seed 9007199254740993: 9007199254740993
+# CHECK-NEXT: python seed 9223372036854775807: 9223372036854775807
+# CHECK-NEXT: the seed of 2^53 is that of mdir run: 9007199254740992
