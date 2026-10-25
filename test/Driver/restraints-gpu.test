@@ -22,19 +22,26 @@
 # to the steps. They scale the centers of the references, and the fields
 # hold the offsets from them (D124); the virial adds the offsets to d.
 #
-# MODULE:     dyn.program @step(%x: !vec, %v: !vec, %f: !vec, %m: !real,
-# MODULE-NEXT:    %cell: !md.cell, %dt: f64, %rest_scale: vector<3xf64>,
-# MODULE:     %p_rest_cx: !real, %p_rest_cy: !real, %p_rest_cz: !real,
-# MODULE:     %rc_i = vector.from_elements %rcx_i, %rcy_i, %rcz_i : vector<3xf64>
-# MODULE-NEXT: %rcs_i = arith.mulf %rest_scale, %rc_i : vector<3xf64>
-# MODULE-NEXT: %refs_i = arith.addf %rcs_i, %ref_i : vector<3xf64>
-# MODULE-NEXT: %d_i = arith.subf %x_i, %refs_i : vector<3xf64>
-# MODULE:     _vparts = md.sum_particles gather(
-# MODULE:     %dpo_i = arith.addf %d_i, %ref_i : vector<3xf64>
-# MODULE-NEXT: %kdo_i = arith.mulf %kd_i, %dpo_i : vector<3xf64>
-# MODULE:     %rest_edges = vector.from_elements
-# MODULE:     %rest_scale{{[0-9]+}}_e = vector.from_elements %edge{{[0-9]+}}_0, %edge{{[0-9]+}}_1, %edge{{[0-9]+}}_2
-# MODULE-NEXT: %rest_scale{{[0-9]+}} = arith.divf %rest_scale{{[0-9]+}}_e, %rest_edges : vector<3xf64>
+# MODULE:     dyn.program @step(%arg0: !md.field<@atoms, 3 x f64>, %arg1: !md.field<@atoms, 3 x f64>, %arg2: !md.field<@atoms, 3 x f64>, %arg3: !md.field<@atoms, f64>, %arg4: !md.cell, %arg5: f64, [[SCALE:%arg[0-9]+]]: vector<3xf64>,
+# MODULE:     [[REF:%[0-9]+]] = vector.from_elements {{.*}} : vector<3xf64>
+# MODULE-NEXT: [[RC:%[0-9]+]] = vector.from_elements {{.*}} : vector<3xf64>
+# MODULE-NEXT: [[RCS:%[0-9]+]] = arith.mulf [[SCALE]], [[RC]] : vector<3xf64>
+# MODULE-NEXT: [[REFS:%[0-9]+]] = arith.addf [[RCS]], [[REF]] : vector<3xf64>
+# MODULE-NEXT: arith.subf {{%arg[0-9]+}}, [[REFS]] : vector<3xf64>
+# MODULE:     md.sum_particles gather(
+# MODULE:     [[VREF:%[0-9]+]] = vector.from_elements {{.*}} : vector<3xf64>
+# MODULE-NEXT: [[VRC:%[0-9]+]] = vector.from_elements {{.*}} : vector<3xf64>
+# MODULE-NEXT: [[VRCS:%[0-9]+]] = arith.mulf {{%arg[0-9]+}}, [[VRC]] : vector<3xf64>
+# MODULE-NEXT: [[VREFS:%[0-9]+]] = arith.addf [[VRCS]], [[VREF]] : vector<3xf64>
+# MODULE-NEXT: [[VD:%[0-9]+]] = arith.subf {{%arg[0-9]+}}, [[VREFS]] : vector<3xf64>
+# MODULE:     [[DPO:%[0-9]+]] = arith.addf [[VD]], [[VREF]] : vector<3xf64>
+# MODULE-NEXT: arith.mulf {{%[0-9]+}}, [[DPO]] : vector<3xf64>
+# The entry: the edges of the reference (values of the start), and in the
+# loops the factors, the edges of the cell over them.
+# MODULE:     func.func @mdir_run(
+# MODULE:     [[EDGES:%[0-9]+]] = vector.from_elements {{%arg[0-9]+}}, {{%arg[0-9]+}}, {{%arg[0-9]+}} : vector<3xf64>
+# MODULE-NEXT: [[CELL:%[0-9]+]] = vector.from_elements {{%[0-9a-z]+}}, {{%[0-9a-z]+}}, {{%[0-9a-z]+}} : vector<3xf64>
+# MODULE-NEXT: arith.divf [[CELL]], [[EDGES]] : vector<3xf64>
 
 # BONDS: bonds ok
 
