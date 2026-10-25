@@ -8,7 +8,11 @@
 `release` merges the entries of [Unreleased] into an existing
 "[VERSION] - unreleased" section subsection by subsection (Added, Changed,
 Fixed, ...), or makes a new section above the previous version, and leaves
-[Unreleased] empty. The compare links at the end are updated.
+[Unreleased] empty. A subsection that [Unreleased] repeats (two Added
+blocks, say) is merged in file order. The compare links at the end are
+updated. The move stops with an error, before it writes, unless the new
+section holds as many top-level entries as [Unreleased] and the old section
+together (#596).
 """
 import re
 import sys
@@ -34,12 +38,25 @@ def split_sections(text):
 
 
 def subsections(body):
-    """Intro text, then an ordered dict of '### ' subsection -> entries."""
+    """Intro text, then an ordered dict of '### ' subsection -> entries.
+
+    The entries of a subsection that appears more than once are joined in
+    file order: a later block extends the earlier one (#596; it replaced
+    it, and the entries of the earlier block were lost)."""
     parts = re.split(r"(?m)^### (.*)$", body)
     intro, subs = parts[0], {}
     for i in range(1, len(parts), 2):
-        subs[parts[i].strip()] = parts[i + 1].strip("\n")
+        name, entries = parts[i].strip(), parts[i + 1].strip("\n")
+        if name in subs and entries.strip():
+            subs[name] = (subs[name].strip("\n") + "\n" + entries).strip("\n")
+        elif name not in subs:
+            subs[name] = entries
     return intro, subs
+
+
+def count_entries(body):
+    """The top-level entries ('- ' at the start of a line) of a section."""
+    return len(re.findall(r"(?m)^- ", body))
 
 
 def join_subsections(intro, subs):
@@ -60,6 +77,7 @@ def release(version, date):
     if any(t.startswith(f"## [{version}] - ") and not t.endswith("unreleased")
            for t in titles):
         sys.exit(f"CHANGELOG.md: {version} is already released")
+    found = count_entries(sections[0][1])
     _, new = subsections(sections[0][1])
     if not any(v.strip() for v in new.values()):
         sys.exit("CHANGELOG.md: [Unreleased] is empty")
@@ -70,11 +88,17 @@ def release(version, date):
         target = 1
     else:
         sections[target][0] = f"## [{version}] - {date}"
+    found += count_entries(sections[target][1])
     intro, old = subsections(sections[target][1])
     for name, entries in new.items():
         if entries.strip():
             old[name] = (entries.strip() + "\n" + old.get(name, "")).strip()
     sections[target][1] = join_subsections(intro, old)
+    moved = count_entries(sections[target][1])
+    if moved != found:
+        sys.exit(f"CHANGELOG.md: [Unreleased] and the section of {version} hold "
+                 f"{found} entries, but the new section would hold {moved}: "
+                 "nothing is written")
     sections[0][1] = "\n\n"
     tail = re.sub(r"(?m)^\[Unreleased\]: .*$",
                   f"[Unreleased]: https://github.com/vv137/mdir/compare/"
