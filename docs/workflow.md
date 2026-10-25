@@ -389,8 +389,8 @@ A release is two steps, scripted so that nothing is done by hand
 2. After its merge, `scripts/release/publish.sh VERSION` builds the merged
    `main` in a fresh tree, runs the full suite on a GPU, builds the white
    paper, writes the assets (the source archive, the installed tree for
-   Linux x86-64 with CUDA unless `--no-binary`, the PDF, the notes, and
-   SHA256SUMS), and makes
+   Linux x86-64 with CUDA and the Python wheels unless `--no-binary`, the
+   PDF, the notes, and SHA256SUMS), and makes
    the annotated tag. Nothing is tagged unless the suite passes. With
    `--publish` it pushes the tag and creates the GitHub Release, whose
    notes are the changelog's section; the maintainer runs it, or approves
@@ -416,8 +416,22 @@ status. The suite then needs neither `MDIR_RELEASE_GPU` nor the locks; the
 run of the manylinux tree still uses them. The script
 stops at its start and names everything that is missing.
 
+The wheels come from the target `wheels` of `packaging/Dockerfile.manylinux`,
+on the same commit and version as the tarball. `scripts/release/check-wheel.sh`
+checks them as files, and `scripts/release/check-wheel-install.sh` then
+installs them as a user does: for each CPython of the wheels, an
+interpreter from `uv` (`UV`) and a fresh environment under
+`MDIR_RELEASE_DIR`, `pip install "<wheel>[cuda]"` from the file, `import
+mdir` with its version checked, from an empty directory and without
+`CUDA_ROOT`, and 20 steps of the ala3 example on the CPU, and for the first
+wheel on the GPU of the suite under its lock, as the tarball's runs. pip
+takes NVIDIA's wheels of the extra `cuda` from the network. The wheels are
+assets of the GitHub Release and are in SHA256SUMS. The install test runs
+by hand as well: `scripts/release/check-wheel-install.sh [--gpu INDEX]
+WHEEL...`, `--dry-run` to see what each wheel takes.
+
 `--no-binary`, for a machine without Docker, makes a release without the
-manylinux tree: it is neither built nor run, and the assets that the
+manylinux tree and the wheels: they are neither built nor run, and the assets that the
 GitHub Release attaches are the source archive, the PDF, the release notes
 (`vVERSION.md`), and SHA256SUMS, which lists the other three. The notes of the
 GitHub Release (the file `notes.md` of the assets) then start by saying

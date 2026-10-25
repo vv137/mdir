@@ -23,9 +23,13 @@
 #  4. writes the assets to MDIR_RELEASE_DIR/vVERSION: the source archive
 #     (git archive), the installed tree for manylinux_2_28 x86-64 with CUDA
 #     (packaging/Dockerfile.manylinux; checked by check-binary.sh and run
-#     on the CPU and on that GPU without CUDA_ROOT), the PDF, the release
-#     notes, and SHA256SUMS (--no-binary leaves out the installed tree and
-#     its two runs, and the notes say so); --container also builds the Docker
+#     on the CPU and on that GPU without CUDA_ROOT), the Python wheels for
+#     manylinux_2_28 (the same Dockerfile, target `wheels`; checked by
+#     check-wheel.sh, then installed by pip into a fresh environment of each
+#     of their CPythons and run on the CPU, and one of them on that GPU, by
+#     check-wheel-install.sh), the PDF, the release notes, and SHA256SUMS
+#     (--no-binary leaves out the installed tree, the wheels, and their
+#     runs, and the notes say so); --container also builds the Docker
 #     image mdir:VERSION (checked by check-image.sh; not uploaded);
 #  5. makes the annotated tag vVERSION on that commit.
 # Without --publish it stops there and prints the two publishing commands;
@@ -40,7 +44,7 @@
 # --publish is refused with it.
 #
 # --no-binary, for a machine without Docker, makes a release (or a dry run)
-# without the manylinux tree: it is neither built nor run, SHA256SUMS and
+# without the manylinux tree and the wheels: they are neither built nor run, SHA256SUMS and
 # the assets of the GitHub Release leave it out, and the notes of the
 # release (notes.md, the body of the GitHub Release) start by saying that
 # the release has no binary tarball and where the build from the source is
@@ -88,10 +92,13 @@
 #                      optional: lock files held, with flock, while the GPU
 #                      is used and around the suite (the suite's first);
 #                      without MDIR_RELEASE_SUITE
-#   CMAKE, NINJA, LIT, PANDOC, TECTONIC, DOCKER
+#   CMAKE, NINJA, LIT, PANDOC, TECTONIC, DOCKER, UV
 #                      optional: the programs, by name or path; cmake,
-#                      ninja, pandoc, tectonic, and docker on the path by
-#                      default, and the lit beside ninja, else on the path
+#                      ninja, pandoc, tectonic, docker, and uv on the path by
+#                      default, and the lit beside ninja, else on the path;
+#                      uv installs the CPythons of the wheels' test, under
+#                      MDIR_RELEASE_DIR, and pip takes NVIDIA's wheels of
+#                      the extra `cuda` from the network
 # CC, CXX, PATH, LD_LIBRARY_PATH, LIT_OPTS, CUDA_CACHE_PATH, and
 # MDIR_BENCH_DIR reach the build and the suite as the environment has them.
 set -euo pipefail
@@ -126,6 +133,7 @@ need_program LIT lit "LLVM's lit, which runs the suite"
 need_program PANDOC pandoc "pandoc 3, for the white paper"
 need_program TECTONIC tectonic "tectonic, for the white paper"
 if (( binary || container )); then need_program DOCKER docker "Docker with BuildKit, for the manylinux tree and the image"; fi
+if (( binary )); then need_program UV uv "uv, which installs the CPythons that the wheels are tested with"; fi
 if (( publish )); then need_program GH gh "the GitHub CLI, which creates the release"; fi
 if (( use_gpu )) && [[ -n ${MDIR_RELEASE_GPU_LOCK:-}${MDIR_RELEASE_SUITE_LOCK:-} ]]; then need_program FLOCK flock "flock, for the locks"; fi
 need_check
@@ -220,8 +228,24 @@ if (( binary )); then
   (cd "$tree/ala3" && "${gpu_locked[@]}" sh -c "nvidia-smi -i $gpu >/dev/null; export CUDA_VISIBLE_DEVICES=$gpu; env -u CUDA_ROOT -u CUDA_HOME -u CUDA_PATH '$mdir' doctor --target=gpu && env -u CUDA_ROOT -u CUDA_HOME -u CUDA_PATH '$mdir' run 1-min.toml") > "$log-tarball-gpu.log" 2>&1 \
     || { echo "the tarball failed on the GPU: $log-tarball-gpu.log" >&2; exit 1; }
   rm -rf "$tree"
+  # The wheels, from the same image and commit (D228): checked, then
+  # installed by pip as a user does, into a fresh environment of each of
+  # their CPythons, and run on the CPU, and the first on the GPU of the
+  # suite (check-wheel-install.sh).
+  wheels=$(mktemp -d)
+  DOCKER_BUILDKIT=1 "$DOCKER" build -f packaging/Dockerfile.manylinux \
+    --build-arg MDIR_GIT_COMMIT="$commit" --build-arg VERSION="$version" \
+    --target wheels --output "type=local,dest=$wheels" . > "$log-wheels.log" 2>&1
+  scripts/release/check-wheel.sh "$wheels"/mdir-"$version"-*.whl
+  cp "$wheels"/mdir-"$version"-*.whl "$out/"
+  rm -rf "$wheels"
+  "${gpu_locked[@]}" env UV="$UV" scripts/release/check-wheel-install.sh \
+    --work "$root/wheel-install-$name" --gpu "$gpu" --examples "$src/examples/ala3" \
+    "$out"/mdir-"$version"-*.whl > "$log-wheel-install.log" 2>&1 \
+    || { cat "$log-wheel-install.log" >&2; echo "a wheel failed when installed: $log-wheel-install.log" >&2; exit 1; }
+  cat "$log-wheel-install.log"
 else
-  echo "== --no-binary: no manylinux tree"
+  echo "== --no-binary: no manylinux tree and no wheels"
 fi
 scripts/paper/build-pdf.sh "$build/paper" > "$log-pdf.log" 2>&1
 cp "$build/paper/main.pdf" "$out/mdir-$version-white-paper.pdf"
