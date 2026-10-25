@@ -1,0 +1,95 @@
+name: ci-image
+
+# The image of the CPU tier of CI (#611): HDF5, LLVM/MLIR 23.1.2, and the
+# tools of the tests, pushed to ghcr.io/vv137/mdir-ci with the tag
+# `llvm-23.1.2-<hash>`, a hash of packaging/Dockerfile and of the two build
+# scripts, which ci.yml computes the same way. LLVM is built by
+# scripts/build-llvm.sh in up to three parts that share a compile cache
+# (ci-llvm-part.yml), since one hosted job cannot build it in six hours;
+# the image is then the stage `ci-prebuilt` of packaging/Dockerfile over
+# that install (the stage `ci` builds the same image in one go where a
+# machine can). Run by hand, and when one of those files changes on main;
+# never on a pull request.
+on:
+  workflow_dispatch:
+  push:
+    # TEMPORARY, ci/cpu-tier is removed before #611 is ready: the first
+    # build, from the branch, since workflow_dispatch needs the workflow on
+    # main.
+    branches: [main, ci/cpu-tier]
+    paths:
+      - 'packaging/Dockerfile'
+      - 'scripts/build-llvm.sh'
+      - 'scripts/build-hdf5.sh'
+      - '.github/workflows/ci-image.yml'
+      - '.github/workflows/ci-llvm-part.yml'
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+      present: ${{ steps.present.outputs.yes }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: tag
+        run: |
+          hash=$(cat packaging/Dockerfile scripts/build-llvm.sh scripts/build-hdf5.sh | sha256sum | cut -c1-16)
+          echo "image=ghcr.io/vv137/mdir-ci:llvm-23.1.2-$hash" >> "$GITHUB_OUTPUT"
+      - id: present
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          if docker manifest inspect "${{ steps.tag.outputs.image }}" > /dev/null 2>&1; then
+            echo "yes=true" >> "$GITHUB_OUTPUT"
+          fi
+
+  part1:
+    needs: tag
+    uses: ./.github/workflows/ci-llvm-part.yml
+    with:
+      part: 1
+      skip: ${{ needs.tag.outputs.present == 'true' }}
+  part2:
+    needs: [tag, part1]
+    uses: ./.github/workflows/ci-llvm-part.yml
+    with:
+      part: 2
+      skip: ${{ needs.tag.outputs.present == 'true' || needs.part1.outputs.done == 'true' }}
+  part3:
+    needs: [tag, part1, part2]
+    uses: ./.github/workflows/ci-llvm-part.yml
+    with:
+      part: 3
+      skip: ${{ needs.tag.outputs.present == 'true' || needs.part1.outputs.done == 'true' || needs.part2.outputs.done == 'true' }}
+
+  image:
+    needs: [tag, part1, part2, part3]
+    if: ${{ always() && needs.tag.outputs.present != 'true' && (needs.part1.outputs.done == 'true' || needs.part2.outputs.done == 'true' || needs.part3.outputs.done == 'true') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: llvm-install
+      - name: The install of LLVM in the context
+        run: mkdir ci-llvm && tar -C ci-llvm -xzf llvm-install.tar.gz && rm llvm-install.tar.gz && du -sh ci-llvm
+      - uses: docker/setup-buildx-action@v3
+      - name: Login
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: packaging/Dockerfile
+          target: ci-prebuilt
+          push: true
+          tags: ${{ needs.tag.outputs.image }}
+      - name: Size
+        run: |
+          docker pull -q "${{ needs.tag.outputs.image }}"
+          docker image inspect "${{ needs.tag.outputs.image }}" --format '{{.Size}}' |
+            awk '{printf "image size: %.2f GB\n", $1 / 1e9}' | tee -a "$GITHUB_STEP_SUMMARY"

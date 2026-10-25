@@ -14,6 +14,10 @@
 #   LLVM_TARGETS  Semicolon-separated list of LLVM targets.
 #   JOBS          Parallel compile jobs.
 #   LINK_JOBS     Parallel link jobs. Linking is memory-hungry; keep this low.
+#   LLVM_EXTRA_CMAKE_ARGS
+#                 Further arguments of LLVM's configuration, split at spaces,
+#                 for example a compiler launcher; the image of CI passes
+#                 ccache and lld (#611).
 
 set -euo pipefail
 
@@ -26,6 +30,7 @@ LLVM_PREFIX="${LLVM_PREFIX:-$LLVM_ROOT/$LLVM_VERSION}"
 LLVM_TARGETS="${LLVM_TARGETS:-X86;NVPTX;AMDGPU}"
 JOBS="${JOBS:-$(nproc)}"
 LINK_JOBS="${LINK_JOBS:-8}"
+read -r -a EXTRA_CMAKE_ARGS <<< "${LLVM_EXTRA_CMAKE_ARGS:-}"
 
 log() { printf '[build-llvm %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 
@@ -67,7 +72,8 @@ cmake -G "$GENERATOR" -S "$LLVM_SRC/llvm" -B "$LLVM_BUILD" \
     -DLLVM_INSTALL_UTILS=ON \
     -DLLVM_INCLUDE_BENCHMARKS=OFF \
     -DLLVM_INCLUDE_EXAMPLES=OFF \
-    -DLLVM_PARALLEL_LINK_JOBS="$LINK_JOBS"
+    -DLLVM_PARALLEL_LINK_JOBS="$LINK_JOBS" \
+    "${EXTRA_CMAKE_ARGS[@]}"
 
 log "building"
 cmake --build "$LLVM_BUILD" --parallel "$JOBS"

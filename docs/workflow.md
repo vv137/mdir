@@ -221,6 +221,37 @@ a listed feature is listed under it. The record of a suite (a ready
 comment, a merge comment) runs lit with `--show-unsupported` and gives the
 note and any warning of the check.
 
+## Continuous integration
+
+GitHub Actions runs the CPU tier of a change (#611; `.github/workflows/`).
+It filters pull requests before the train; it does not replace the GPU
+suite, the sanitizer tier, or the Amber suite, which the train still runs on
+the cluster.
+
+- **Checks** (`ci.yml`, job `checks`), on every push to a pull request and
+  to `main`, in seconds and without a build: the links, the decision numbers
+  and their table, the changelog fragments, the list of the expected
+  unsupported tests (`python3 test/mdir_lit.py`), and the release path
+  (`scripts/release/check-path.sh`).
+- **Build** (`ci.yml`, job `build`), on a pull request that is ready for
+  review and on `main`, not on a draft: MDIR built with Python in the image
+  `ghcr.io/vv137/mdir-ci`, and its tests on the CPU (`lit`, no GPU: the
+  tests that require `cuda` are unsupported there, and the check of the
+  expected unsupported tests is off). The compile cache (ccache) is kept
+  in the Actions cache between runs. It does not block a merge yet.
+- **The image** (`ci-image.yml`): HDF5, LLVM/MLIR 23.1.2, and the tools of
+  the tests, from the stages `ci-hdf5` and `ci-prebuilt` of
+  `packaging/Dockerfile`, tagged with a hash of the Dockerfile and of
+  `scripts/build-llvm.sh` and `scripts/build-hdf5.sh`, which `ci.yml`
+  computes the same way. It is built by hand (workflow_dispatch) and when
+  one of those files changes on `main`, never on a pull request. One hosted
+  job (4 cores, six hours) cannot build LLVM, so `ci-llvm-part.yml` builds it
+  with `scripts/build-llvm.sh` in up to three parts that share a compile
+  cache, and the image is made over the install tree; the stage `ci` builds
+  the same image in one go on a machine that can. A change of the LLVM
+  version or of the Dockerfile thus makes a new tag, which the next run of
+  `ci-image.yml` builds before `ci.yml` can take it.
+
 ## Performance
 
 Timings are taken on a GPU that runs nothing else, after checking that no

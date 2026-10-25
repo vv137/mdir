@@ -1,0 +1,91 @@
+name: ci
+
+# The CPU tier of CI (#611; docs/workflow.md, Continuous integration), in two
+# tiers:
+#
+# 1. checks, on every push to a pull request and to main: the links, the
+#    decision numbers and their table, the changelog fragments, the list of
+#    the expected unsupported tests, and the release path. No build;
+#    seconds.
+# 2. build, on a pull request that is ready for review (not on a draft) and
+#    on main: MDIR built in the image of ci-image.yml, with Python, and its
+#    CPU tests (lit, no GPU: the GPU tests are unsupported). The compile
+#    cache (ccache) is kept in the Actions cache between runs. It does not
+#    block a merge yet; the GPU suite, the sanitizer tier, and the Amber
+#    suite still run on the cluster at the train.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Links
+        run: python3 scripts/check-markdown-links.py
+      - name: Decision numbers and their table
+        run: scripts/decision-number.sh check --pending
+      - name: Changelog fragments
+        run: python3 scripts/release/changelog.py fragments
+      - name: The list of the expected unsupported tests
+        run: python3 test/mdir_lit.py
+      - name: The release path
+        run: scripts/release/check-path.sh
+
+  build:
+    if: github.event_name == 'push' || github.event.pull_request.draft == false
+    needs: checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Image
+        id: image
+        run: |
+          hash=$(cat packaging/Dockerfile scripts/build-llvm.sh scripts/build-hdf5.sh | sha256sum | cut -c1-16)
+          echo "name=ghcr.io/vv137/mdir-ci:llvm-23.1.2-$hash" >> "$GITHUB_OUTPUT"
+      - name: Compile cache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ steps.image.outputs.name }}-${{ github.sha }}
+          restore-keys: ccache-${{ steps.image.outputs.name }}-
+      - name: Build and CPU tests
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker pull -q "${{ steps.image.outputs.name }}" || {
+            echo "::error::no image ${{ steps.image.outputs.name }}; run the workflow ci-image"; exit 1; }
+          docker run --rm -v "$PWD":/src -w /src -e CCACHE_DIR=/src/.ccache \
+            -e CCACHE_MAXSIZE=2G "${{ steps.image.outputs.name }}" bash -euo pipefail -c '
+            start=$(date +%s)
+            ccache -z
+            cmake -G Ninja -S . -B /tmp/build -DCMAKE_BUILD_TYPE=Release \
+              -DLLVM_DIR=/opt/llvm/23.1.2/lib/cmake/llvm \
+              -DMLIR_DIR=/opt/llvm/23.1.2/lib/cmake/mlir \
+              -DLLVM_EXTERNAL_LIT=$(command -v lit) \
+              -DHDF5_ROOT=/opt/hdf5/1.14.6 -DMDIR_ENABLE_CUDA=OFF \
+              -DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+              "-DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld" \
+              "-DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld" \
+              "-DCMAKE_MODULE_LINKER_FLAGS=-fuse-ld=lld" \
+              -DMDIR_ENABLE_PYTHON=ON \
+              -Dpybind11_DIR=$(python3 -m pybind11 --cmakedir) \
+              -DPython_EXECUTABLE=$(command -v python3)
+            ninja -C /tmp/build
+            built=$(date +%s)
+            ccache -s | tee /tmp/ccache.txt
+            # The GPU, PyTorch, OpenMM, and h5py are not here: their tests
+            # are unsupported, which the list of #608 does not describe.
+            lit -j 4 -sv -Dexpected_unsupported=off /tmp/build/test
+            end=$(date +%s)
+            echo "build $((built - start)) s, tests $((end - built)) s" | tee /tmp/times.txt
+          '
