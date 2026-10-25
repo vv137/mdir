@@ -14,7 +14,7 @@ and the properties the part relies on, is in
 describes how a device implements a primitive.
 
 Tuple coordinates remain declared and verified on the tuple operations
-(D[tuple-coordinate-attrs]); this compiler attribute cleanup leaves every
+(D343); this compiler attribute cleanup leaves every
 device primitive and its generated code unchanged.
 
 The shared [execution contract](execution-contracts.md) (#574) establishes

@@ -144,7 +144,7 @@ The coordinate kinds and member places are inherent, typed attributes of
 `md.sum_tuples`, `md.gather_tuples`, and `md_exec.tuple_for`. Their verifiers
 check the member count, arity, and distinct places. Differentiation reads
 and extends them through the tuple ops' declared accessors
-(D[tuple-coordinate-attrs]); the generated tuple kernel and its signature
+(D343); the generated tuple kernel and its signature
 remain unchanged.
 
 The result of `md.sum_tuples` is a sum (`f64` or a vector of `f64`), or an

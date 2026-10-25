@@ -16,7 +16,7 @@ are in [device-primitives.md](device-primitives.md); this document says
 where each primitive occurs.
 
 The internal-coordinate kinds and member places of tuple maps and gathers
-are declared op attributes (D[tuple-coordinate-attrs]); differentiation
+are declared op attributes (D343); differentiation
 uses the typed tuple-op accessors when it composes their transposes. This
 changes no primitive or lowering strategy.
 

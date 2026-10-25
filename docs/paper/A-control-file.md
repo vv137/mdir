@@ -1,6 +1,6 @@
 # Appendix A. The control file
 
-D[tuple-coordinate-attrs] changes how differentiation accesses declared
+D343 changes how differentiation accesses declared
 tuple-coordinate attributes inside the compiler. It adds no key and changes
 no default, format, checkpoint, or overwrite behavior.
 

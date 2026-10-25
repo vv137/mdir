@@ -224,7 +224,7 @@ is needed when the kernels are compiled, not when LLVM is built.
 | `md.sum_particles` | Sums a kernel over particles. |
 | `md.map_particles` | Applies a kernel to each particle. |
 | `md.evaluate` | Requests energy and derivatives of a potential. |
-| `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; their coordinate kinds and members are inherent, verified attributes accessed through typed op methods (D[tuple-coordinate-attrs]); see [tuples.md](tuples.md), Sections 1 and 2. |
+| `md.tuple_set`, `md.disjoint_union`, `md.sum_tuples`, `md.gather_tuples` | The tuples of a topology, and the loops over them; their coordinate kinds and members are inherent, verified attributes accessed through typed op methods (D343); see [tuples.md](tuples.md), Sections 1 and 2. |
 | `md.chebyshev` | In a kernel, $\sum_k c_k T_k(y)$, a Chebyshev series with its coefficients as an attribute; its derivative is the series of the derivatives, and in a loop over pairs under `fast_math` a series of the distance becomes part of a table of $r^2$ (D94, D280). |
 | `md.stage`, `md.apply_stage` | A neural stage, a pure function of one element bound to its body and its vector-Jacobian product, and its application, or that of its product, in a kernel ([ml4-ir.md](ml4-ir.md), D288). |
 | `md.orthorhombic_cell`, `md.triclinic_cell` | A periodic cell from the lengths of its edges, or from the six numbers of a lower-triangular cell in reduced form ([triclinic.md](triclinic.md), D123). |

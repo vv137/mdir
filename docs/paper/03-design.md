@@ -257,7 +257,7 @@ subexpressions leaves one of each norm and product.
 The kinds and member places of these coordinates are inherent attributes
 of the tuple operations, checked against tuple arity and accessed through
 their typed operation interface in differentiation
-(D[tuple-coordinate-attrs]). Their numerical definition and kernel order
+(D343). Their numerical definition and kernel order
 do not change.
 
 **Parameters.** `derivative(n)` requests $\partial U/\partial p_n$ for a
