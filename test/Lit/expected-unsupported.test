@@ -1,0 +1,30 @@
+# The list of expected unsupported tests (test/expected-unsupported.txt,
+# #608) agrees with the REQUIRES and UNSUPPORTED lines of the tests: every
+# test listed under a feature names it, and every test that names a feature
+# with explicit entries is listed under it.
+# RUN: %python %S/../mdir_lit.py %S/.. | FileCheck --check-prefix=LIST %s
+# LIST: entries, {{[0-9]+}} tests, 0 problems
+#
+# The check of a configuration, on a suite of its own whose list differs
+# from what its features leave unsupported: a warning on a run of the whole
+# suite, also at the end of its log; an error with strict; nothing when the
+# list agrees, or on a run of one test.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %lit -Dout=%t %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=WARN %s
+# RUN: not %lit -Dout=%t -Dexpected_unsupported=strict %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=STRICT %s
+# RUN: %lit -Dout=%t -Dfeatures=a,c,d -Dexpected_unsupported=strict %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=AGREE %s
+# RUN: %lit -Dout=%t %S/Inputs/unsupported/runs.test 2>&1 | FileCheck --check-prefix=ONE %s
+# RUN: not %lit -Dout=%t -Dexpected_unsupported=maybe %S/Inputs/unsupported 2>&1 | FileCheck --check-prefix=BAD %s
+# WARN: note: expected unsupported: 3 of 5 tests
+# WARN: warning: the unsupported tests differ from test/expected-unsupported.txt:
+# WARN-NEXT: unsupported but not expected: needs-c.test (without c)
+# WARN-NEXT: expected unsupported but runs: runs.test
+# WARN: Total Discovered Tests: 5
+# WARN: lit: warning: the unsupported tests differ
+# STRICT: fatal: the unsupported tests differ from test/expected-unsupported.txt:
+# STRICT-NEXT: unsupported but not expected: needs-c.test (without c)
+# AGREE: note: expected unsupported: 2 of 5 tests
+# AGREE-NOT: warning
+# AGREE: Total Discovered Tests: 5
+# ONE-NOT: expected unsupported
+# BAD: expected_unsupported must be check, strict, or off, not 'maybe'

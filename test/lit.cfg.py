@@ -263,6 +263,10 @@ if bench and os.path.exists(os.path.join(bench, "jac_nve", "system.parm7")):
         )
     )
 
+# Every feature is known now: compare what they leave unsupported with
+# test/expected-unsupported.txt (#608, test/mdir_lit.py).
+mdir_lit.check_expected_unsupported(config, lit_config)
+
 # It goes before "%mdrt", which is the beginning of its name.
 config.substitutions.insert(
     0,
