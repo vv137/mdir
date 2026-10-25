@@ -53,7 +53,7 @@
 # RUN: mdir checkpoint --print=fingerprint %t/aniso.h5 \
 # RUN: | FileCheck %s --check-prefix=FINGERPRINT
 
-# DESCRIBE: format: 1, written by MDIR 0.1.0 ({{[0-9a-f]+|unknown}}
+# DESCRIBE: format: 1, written by MDIR {{[0-9]+\.[0-9]+\.[0-9]+}} ({{[0-9a-f]+|unknown}}
 # DESCRIBE: fingerprint: {{[0-9]+}} entries
 
 # FINGERPRINT:      physics {{\[\[}}energy.pair{{\]\]}} = [{expression="4*epsilon*((sigma/r)^12 - (sigma/r)^6)",mixing="lorentz-berthelot",name="lj"}]
