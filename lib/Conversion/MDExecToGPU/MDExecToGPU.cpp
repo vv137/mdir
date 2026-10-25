@@ -4,6 +4,7 @@
 // is. See docs/ops.md, Section 10.8.
 
 #include "mdir/Conversion/Passes.h"
+#include "mdir/Runtime/GroupsABI.h"
 
 #include "mdir/Conversion/MDExecKernels.h"
 #include "mdir/Conversion/CompactionEmitter.h"
@@ -326,10 +327,9 @@ private:
                                 Value handle);
   /// The inner list of the dual list of groups `handle` (D114).
   InnerLists getInnerLists(OpBuilder &builder, Location loc, Value handle);
-  /// The buffer `which` of the structure of groups `handle`, in the order
-  /// of the runtime (mdrt_cuda.c).
+  /// The buffer `which` of the shared group-buffer ABI.
   Value getGroupsBuffer(OpBuilder &builder, Location loc, Value handle,
-                        int64_t which);
+                        MdrtGroupsSlot which);
   /// The buffers of the pruning of the dual list `handle` besides the inner
   /// list (D268).
   PruneBuffers getPruneBuffers(OpBuilder &builder, Location loc,
@@ -403,7 +403,7 @@ private:
   /// The candidates (`which` 0) or the slots (1) of the pairs of images of
   /// `handle`, as the last build left them (D277).
   Value getEdgesBuffer(OpBuilder &builder, Location loc, Value handle,
-                       int64_t which);
+                       MdrtGroupsSlot which);
   /// After a build of the matrix `structure` at `positions` in the cell
   /// `box`: the candidates of the pairs of images of each particle within
   /// `reach`, their offsets, and the candidates in their slots.
@@ -6626,7 +6626,7 @@ GroupBuffers Lowering::getGroupsBuffers(OpBuilder &builder, Location loc,
   func::FuncOp getter = getOrDeclare(
       groupsBufferName, builder.getFunctionType({wide, wide}, {type}));
   getter->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
-  auto get = [&](int64_t which) -> Value {
+  auto get = [&](MdrtGroupsSlot which) -> Value {
     return func::CallOp::create(
                builder, loc, getter,
                ValueRange{handle, arith::ConstantOp::create(
@@ -6634,20 +6634,19 @@ GroupBuffers Lowering::getGroupsBuffers(OpBuilder &builder, Location loc,
                                       builder.getI64IntegerAttr(which))})
         .getResult(0);
   };
-  // In the order of the runtime (mdrt_cuda.c).
   GroupBuffers buffers;
-  buffers.order = get(0);
-  buffers.counts = get(1);
-  buffers.entries = get(2);
-  buffers.masks = get(3);
-  buffers.units = get(4);
-  buffers.ordinals = get(5);
-  buffers.shifts = get(6);
+  buffers.order = get(GROUPS_ORDER);
+  buffers.counts = get(GROUPS_COUNTS);
+  buffers.entries = get(GROUPS_ENTRIES);
+  buffers.masks = get(GROUPS_MASKS);
+  buffers.units = get(GROUPS_UNIT_GROUPS);
+  buffers.ordinals = get(GROUPS_UNIT_ORDINALS);
+  buffers.shifts = get(GROUPS_SHIFTS);
   return buffers;
 }
 
 Value Lowering::getGroupsBuffer(OpBuilder &builder, Location loc,
-                                Value handle, int64_t which) {
+                                Value handle, MdrtGroupsSlot which) {
   Type wide = builder.getI64Type();
   MemRefType type =
       getDeviceType({ShapedType::kDynamic}, builder.getI32Type());
@@ -6664,21 +6663,19 @@ Value Lowering::getGroupsBuffer(OpBuilder &builder, Location loc,
 
 InnerLists Lowering::getInnerLists(OpBuilder &builder, Location loc,
                                    Value handle) {
-  // In the order of the runtime (mdrt_cuda.c).
-  return {getGroupsBuffer(builder, loc, handle, 7),
-          getGroupsBuffer(builder, loc, handle, 8),
-          getGroupsBuffer(builder, loc, handle, 9)};
+  return {getGroupsBuffer(builder, loc, handle, GROUPS_INNER_ENTRIES),
+          getGroupsBuffer(builder, loc, handle, GROUPS_INNER_MASKS),
+          getGroupsBuffer(builder, loc, handle, GROUPS_INNER_COUNTS)};
 }
 
 PruneBuffers Lowering::getPruneBuffers(OpBuilder &builder, Location loc,
                                        Value handle) {
-  // In the order of the runtime (mdrt_cuda.c).
   PruneBuffers buffers;
-  buffers.blockOf = getGroupsBuffer(builder, loc, handle, 10);
-  buffers.activeUnits = getGroupsBuffer(builder, loc, handle, 11);
-  buffers.activeCount = getGroupsBuffer(builder, loc, handle, 12);
-  buffers.runSums = getGroupsBuffer(builder, loc, handle, 13);
-  buffers.wideSums = getGroupsBuffer(builder, loc, handle, 14);
+  buffers.blockOf = getGroupsBuffer(builder, loc, handle, GROUPS_BLOCK_OF);
+  buffers.activeUnits = getGroupsBuffer(builder, loc, handle, GROUPS_ACTIVE_UNITS);
+  buffers.activeCount = getGroupsBuffer(builder, loc, handle, GROUPS_ACTIVE_COUNT);
+  buffers.runSums = getGroupsBuffer(builder, loc, handle, GROUPS_ACTIVE_RUNS);
+  buffers.wideSums = getGroupsBuffer(builder, loc, handle, GROUPS_ACTIVE_WIDE_RUNS);
   return buffers;
 }
 
@@ -6741,7 +6738,7 @@ void Lowering::emitGroupsBlockIndex(OpBuilder &builder, Location loc,
                      builder, loc, wide,
                      arith::MulIOp::create(builder, loc, groups, stride))});
   GroupBuffers buffers = getGroupsBuffers(builder, loc, structure.handle);
-  Value blockOf = getGroupsBuffer(builder, loc, structure.handle, 10);
+  Value blockOf = getGroupsBuffer(builder, loc, structure.handle, GROUPS_BLOCK_OF);
   launchOver(builder, loc, blocks, [&](OpBuilder &b, Value block) {
     Value group = arith::IndexCastOp::create(
         b, loc, b.getIndexType(),

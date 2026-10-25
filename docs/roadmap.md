@@ -269,3 +269,5 @@ frame indices, column orders, and definitions
 Not taken: reimplementing the actions of cpptraj. A device pays where pairs
 are involved, where all pairs of frames are (clustering), or where the
 frames never reach a file.
+
+The first runtime-interface slice of #558 stage 2 is #623: a shared, versioned neighbor-group slot contract, with descriptor-driven extents and range checks (D[groups-buffer-abi]).

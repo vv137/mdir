@@ -531,3 +531,5 @@ the same MLIR artifact named
 by `path`. No key of this control file selects that opt-in lowering. The
 strategy switch is `MDIR_STAGE_SHORT_REDUCTIONS`, documented in
 [environment.md](../environment.md).
+
+D[groups-buffer-abi] formalizes the internal neighbor-group buffer ABI and adds no control-file key or input behavior.

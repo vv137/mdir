@@ -1236,3 +1236,5 @@ interactions; PME, reductions, and FFT collectives; launch construction; and
 the runtime ABI. These parts share the plan and only the state needed for
 their operations. This is a future behavior-preserving refactor, with
 byte-identical PTX as its gate, rather than five new semantic primitives.
+
+The neighbor-group runtime boundary declares stable buffer slots and their element/shape/role descriptors in a C-compatible shared header (D[groups-buffer-abi]). Slot range checking precedes indexing. This is an ABI formalization with unchanged kernels and storage sizes, not a new primitive strategy.

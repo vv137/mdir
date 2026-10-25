@@ -6,6 +6,7 @@
    the header of the toolkit, and nothing else of the toolkit. */
 
 #include <cuda.h>
+#include "mdir/Runtime/GroupsABI.h"
 
 #include <stdbool.h>
 #include <stddef.h>
@@ -1472,25 +1473,6 @@ void _mlir_ciface_mdrtCudaFFTBackward3DF32(DeviceBuffer1DF32 *complex,
    groups in f32 (`mdrtGroupsPlaced`, three numbers a place). Compiled code
    takes a buffer where it uses it (`mdrtGroupsBuffer`), so a buffer that
    grew is the one it takes. */
-enum {
-  GROUPS_ORDER,
-  GROUPS_COUNTS,
-  GROUPS_ENTRIES,
-  GROUPS_MASKS,
-  GROUPS_UNIT_GROUPS,
-  GROUPS_UNIT_ORDINALS,
-  GROUPS_SHIFTS,
-  GROUPS_INNER_ENTRIES,
-  GROUPS_INNER_MASKS,
-  GROUPS_INNER_COUNTS,
-  GROUPS_BLOCK_OF,
-  GROUPS_ACTIVE_UNITS,
-  GROUPS_ACTIVE_COUNT,
-  GROUPS_ACTIVE_RUNS,
-  GROUPS_ACTIVE_WIDE_RUNS,
-  GROUPS_PLACED,
-  GROUPS_BUFFERS
-};
 
 struct Groups {
   void *data[GROUPS_BUFFERS];
@@ -1508,45 +1490,22 @@ struct Groups {
 
 /* A memref of rank 1 as the C interface of MLIR passes it. */
 static int64_t getGroupsLength(const struct Groups *groups, int which) {
-  switch (which) {
-  case GROUPS_ORDER:
-  case GROUPS_SHIFTS:
-    return groups->places;
-  case GROUPS_COUNTS:
-    return groups->places / 16;
-  case GROUPS_ENTRIES:
-  case GROUPS_MASKS:
-  case GROUPS_INNER_ENTRIES:
-  case GROUPS_INNER_MASKS:
-    return groups->blocks * 64;
-  case GROUPS_BLOCK_OF:
-    return groups->blockOf > 0 ? groups->blockOf : 1;
-  case GROUPS_ACTIVE_COUNT:
-    return 1;
-  case GROUPS_ACTIVE_RUNS:
-    return groups->blocks / 32 + 1;
-  case GROUPS_ACTIVE_WIDE_RUNS:
-    return groups->blocks / 1024 + 1;
-  case GROUPS_PLACED:
-    return groups->places * 3;
-  default:
-    return groups->blocks;
+  switch (mdrtGroupsDescriptor(which)->shape) {
+  case MDRT_GROUPS_PLACES: return groups->places;
+  case MDRT_GROUPS_GROUPS: return groups->places / 16;
+  case MDRT_GROUPS_ENTRIES: return groups->blocks * 64;
+  case MDRT_GROUPS_BLOCK_OF: return groups->blockOf > 0 ? groups->blockOf : 1;
+  case MDRT_GROUPS_SCALAR: return 1;
+  case MDRT_GROUPS_RUNS: return groups->blocks / 32 + 1;
+  case MDRT_GROUPS_WIDE_RUNS: return groups->blocks / 1024 + 1;
+  case MDRT_GROUPS_PLACED: return groups->places * 3;
+  case MDRT_GROUPS_BLOCKS: return groups->blocks;
   }
+  abort();
 }
 
-/* The tags of the buffers (MDIR_DEVICE_MEMORY=2). */
-static const char *const groupsTags[GROUPS_BUFFERS] = {
-    "groups: order",          "groups: counts",
-    "groups: entries",        "groups: masks",
-    "groups: unit groups",    "groups: unit ordinals",
-    "groups: shifts",         "groups: inner entries",
-    "groups: inner masks",    "groups: inner counts",
-    "groups: block of",       "groups: active units",
-    "groups: active count",   "groups: active runs",
-    "groups: active wide runs", "groups: placed"};
-
 static void allocateGroup(struct Groups *groups, int which) {
-  allocationTag = groupsTags[which];
+  allocationTag = mdrtGroupsDescriptor(which)->role;
   groups->data[which] = mgpuMemAlloc(
       (uint64_t)getGroupsLength(groups, which) * sizeof(int32_t), NULL,
       false);
@@ -1587,6 +1546,11 @@ int64_t mdrtGroupsCreate(int64_t places, int64_t blocks) {
 
 void _mlir_ciface_mdrtGroupsBuffer(struct Buffer1 *result, int64_t handle,
                                    int64_t which) {
+  if (!mdrtGroupsDescriptor(which)) {
+    fprintf(stderr, "mdrt: invalid groups buffer slot %lld (expected 0..%d)\n",
+            (long long)which, GROUPS_BUFFERS - 1);
+    abort();
+  }
   struct Groups *groups = (struct Groups *)(intptr_t)handle;
   if (!groups->data[which])
     allocateGroup(groups, (int)which);
