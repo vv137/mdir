@@ -315,7 +315,7 @@ systems of other sizes, grids, or precisions, the idle blocks stay within
 `mdir.trim_device_memory()` gives them, and the cached plans of cuFFT,
 back to the driver; it returns the bytes given back. A request that the
 driver refuses for want of memory does the same once by itself
-(D[device-memory-reclaim], #622, [runtime.md](runtime.md)).
+(D348, #622, [runtime.md](runtime.md)).
 
 ### One activation runs the parts
 
