@@ -246,6 +246,17 @@ a known conflicting use without completion, and diagnoses an unsupported
 contract where required alias or completion facts remain unknown. It does
 not turn an unresolved dependency into a presumed safe serial path.
 
+The check must cover copies made by both storage assignment and GPU
+conversion, including reduction readbacks. GPU conversion may remove
+readbacks with `keepReadbacksOnDevice` or move and combine their copy/wait
+groups with `deferReadbacks`; the final groups must be checked after those
+rewrites, or each rewrite must establish that it preserves the same
+contract. A token operand or a marker on a copy is not a substitute for a
+checked completion path. Positive cases include the emitted immediate-wait
+sequence and the existing deferred readback sequence; negative cases put a
+read, conflicting write, or deallocation between a copy and its wait,
+including through a recognized alias.
+
 The first implementation retains the existing waits, copy placement,
 checkpoint release/commit points, and failure propagation. It shares the
 readiness and borrow contract with `mdrt.halo_copy_start`,
