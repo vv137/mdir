@@ -92,8 +92,9 @@ Cellulose (408,609 atoms; white paper, Table 10.8). Both are in
 
 ## Installing
 
-The current release is [v0.1.0](docs/release-notes/v0.1.0.md); its
-changes are in [CHANGELOG.md](CHANGELOG.md).
+The current release is [v0.2.0](docs/release-notes/v0.2.0.md), a source
+release: it has no binary tarball and no wheel. Its changes are in
+[CHANGELOG.md](CHANGELOG.md).
 
 - **From a release.** Download the source archive from
   [GitHub Releases](https://github.com/vv137/mdir/releases) and build it
@@ -104,21 +105,23 @@ changes are in [CHANGELOG.md](CHANGELOG.md).
   or an Apptainer image with LLVM, HDF5, CUDA, and MDIR:
 
   ```sh
-  docker build -f packaging/Dockerfile -t mdir:0.1.0 .
-  docker run --rm --gpus all -v "$PWD":/work mdir:0.1.0 doctor
-  apptainer build mdir-0.1.0.sif docker-daemon://mdir:0.1.0
-  apptainer run --nv mdir-0.1.0.sif doctor
+  docker build -f packaging/Dockerfile -t mdir:0.2.0 .
+  docker run --rm --gpus all -v "$PWD":/work mdir:0.2.0 doctor
+  apptainer build mdir-0.2.0.sif docker-daemon://mdir:0.2.0
+  apptainer run --nv mdir-0.2.0.sif doctor
   ```
 
-- **The Python wheel**, for CPython 3.10–3.13 on Linux x86-64
-  (manylinux_2_28); a GPU needs only the NVIDIA driver, and the extra
-  `cuda` brings cuFFT and ptxas. The `mdir` command is not in the wheel;
-  it comes with the release tarball
-  ([docs/python-package.md](docs/python-package.md)):
+- **The Python package.** No wheel is published with 0.2.0. A wheel for
+  CPython 3.10–3.13 on Linux x86-64 is built from the source tree, with
+  `pip wheel .` or the target `wheels` of `packaging/Dockerfile.manylinux`
+  for manylinux_2_28, as [docs/python-package.md](docs/python-package.md),
+  Section 6, describes; its extra `cuda` brings cuFFT and ptxas. The
+  `mdir` command is not in the wheel. A wheel built that way installs
+  with:
 
   ```sh
   python -m venv mdir-env
-  mdir-env/bin/pip install "mdir-0.1.0-cp312-cp312-manylinux_2_28_x86_64.whl[cuda]"
+  mdir-env/bin/pip install "dist/mdir-0.2.0-cp312-cp312-manylinux_2_28_x86_64.whl[cuda]"
   mdir-env/bin/python -c "import mdir; print(mdir.__version__)"
   ```
 
