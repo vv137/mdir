@@ -993,6 +993,107 @@ constant, $\beta$ from $\mathrm{erfc}(\beta r_c)$ rather than
 $\mathrm{erfc}(\beta r_c)/r_c$, and the average of the correction
 for the dispersion are conventions of MDIR ([nonbonded.md](nonbonded.md), Sections 1.2 and 2).
 
+### 2.11 The equivalence check of the builder
+
+The builder writes the module as MLIR text (`Builder.cpp`), and
+`mdir emit --stage=module` prints that text as it is built, before it is
+parsed (`tools/mdir/Run.cpp`). #568 moves the builder to IR built with
+`OpBuilder`, in stages, and no stage may change the generated program.
+`scripts/builder-equivalence/check.py` shows this for two builds of the
+driver, over a fixed corpus. It is the gate of every later stage of #568.
+
+```sh
+scripts/builder-equivalence/check.py compare OLD NEW   # two mdir programs or build trees
+scripts/builder-equivalence/check.py record MDIR --output hashes.tsv
+scripts/builder-equivalence/check.py verify MDIR --hashes hashes.tsv
+```
+
+The exit status is 0 when every case is identical, 1 when one differs
+(each one is named, with the first lines of its difference), and 2 for an
+error of the script. The report names a case by its place in the corpus,
+for example `test/Driver/x.test:run.toml [gpu] module printed`, never by a
+path of the machine.
+
+**The corpus.** By default it has all of these; `--only` takes some of
+them:
+
+- `examples`: the control files of `examples/`.
+- `tests`: the control files of the lit tests. These are the `*.toml`
+  files under `test/` and the `*.toml` parts of the tests that split-file
+  divides. The other parts of the test are written beside them, and the
+  files that its RUN lines copy into `%t` (`cp %S/PATH... %t[/NAME]`) are
+  linked there under the names they are copied to. Other RUN commands
+  (sed, scripts, environment variables such as `MDIR_PME_SPREAD`) are not
+  followed, so a control file that needs one of them stops with an error,
+  the same error in both builds.
+- `bench`: the control files of the systems of the prepared Amber suite,
+  one level under `MDIR_BENCH_DIR` (or `--bench`). Without either, this
+  kind is left out.
+- `--control FILE` adds a control file of one's own.
+
+**The cases.** Each control file is a case for each target of `--targets`
+(`cpu,gpu` by default), emitted from a copy of the file with `target` set
+in `[execution]`. A case runs in a scratch directory that mirrors the
+directories above the control file with links, so a relative input
+resolves as it would beside the file. No case writes into the corpus.
+`mdir emit` uses no device: the module is printed before anything is
+compiled, and the GPU target changes only the text. A target that the
+control file does not allow (a model or a neighbor structure that only
+runs on a GPU, with `target = "CPU"`) is a case that stops with an error.
+
+**What is compared.** The exit status, the standard output, and the
+standard error of each case count; the path of the scratch directory is
+replaced by `<corpus>`. A case that stops with an error is therefore
+identical only if both builds stop with the same message. `--forms`
+selects the forms of the module stage, both by default:
+
+- `raw`: the bytes that `mdir emit --stage=module` prints, which today is
+  the builder's own text: its SSA names, its type aliases, its comments,
+  and its formats of numbers.
+- `printed`: the module after a round trip through `mdir-opt` (by default
+  the one beside NEW; `--printer`) with MLIR's default printer. The
+  printer numbers the SSA values itself and prints no comments, no
+  aliases of the text, and no locations.
+
+Locations are not part of the contract. The builder's text has none, emit
+has no option that prints them, and the default printer leaves out the
+locations that parsing gives the ops. `mdir-opt --mlir-print-debuginfo`
+would print them, and the check does not use it.
+
+`--stages module,lowered` adds the program after the passes, as
+`mdir emit --stage=lowered` prints it, with the kernels of the GPU target.
+That needs the CUDA toolkit but no device.
+
+**What each stage keeps.** Step 1 of #568, which adds the check, keeps
+both forms, and the lowered program as well. A stage that builds ops with
+`OpBuilder` instead of text changes the raw text (names, aliases, numbers)
+but must keep the printed form and the lowered program identical. It runs
+`compare` (or `verify` against hashes recorded with main) with
+`--forms printed --stages module,lowered`, and its PR gives the counts. A
+file of hashes depends on the corpus: record it and verify against it on
+one machine, with one `MDIR_BENCH_DIR`.
+
+On main at 98e41261, a separate build of main's sources compared with a
+second build on the CPU of the login node, with the Amber suite prepared,
+gave these results:
+
+- The corpus had 234 control files: 13 of `examples`, 180 of `tests`, and
+  41 of `bench`. That is 468 cases.
+- All 468 cases were identical in the module stage (raw and printed) and
+  the lowered stage.
+- 252 cases emit a program. The other 216 stop with the same error in
+  both builds: test inputs made by other RUN commands, examples whose
+  inputs are prepared first or that continue a checkpoint, intentional
+  errors of the tests, and targets that the file does not allow.
+- With 8 cases at a time, the module and lowered stages took 3.7 minutes.
+
+`test/Lit/builder-equivalence.test` checks the checker on a small corpus.
+One build compared with itself is identical, including a control file
+that stops with an error. Then two wrappers of it perturb the module: a
+comment, which only the raw form sees, and a different cutoff, which both
+forms see. Recorded hashes are verified with the build and with the
+second wrapper.
+
 ## 3. Decided
 
 | # | Question | Decision |

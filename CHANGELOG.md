@@ -167,6 +167,12 @@ format, or the outputs; every such change is listed under **Changed** or
   adopted (#434); and the control-file reference's advice of
   `coulomb_modifier = "POTENTIAL_SHIFT"` at a loose PME tolerance at
   constant energy (#346).
+- **An equivalence check of the builder**:
+  `scripts/builder-equivalence/check.py` shows that two builds of `mdir`
+  emit the same program for the examples, the control files of the tests,
+  and the Amber suite
+  ([docs/driver.md](docs/driver.md#211-the-equivalence-check-of-the-builder);
+  #568).
 
 ### Changed
 
