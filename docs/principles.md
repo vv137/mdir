@@ -149,7 +149,7 @@ is a finding, not a failure.
 the map of every part of MDIR to its primitives, with the state of the
 code and the gaps, each an issue.
 
-The first executable semantic FFT bridge (D[fft-value-buffer], PR #563)
+The first executable semantic FFT bridge (D341, PR #563)
 preserves the declared adjoint while giving backward execution a private
 input buffer. Its staged host-device copies currently synchronize both
 runtime streams; eliminating that boundary belongs to #580 under #567.
@@ -215,7 +215,7 @@ before a physical plan is selected.
    deferral and merging of readbacks become a general scheduling pass, and
    the path to CUDA graphs is open.
 3. The `md_exec` loop interface now derives a summary of each operand's
-   read, write, or accumulation and its row scope (D[loop-effect-summary],
+   read, write, or accumulation and its row scope (D342,
    #566). Missing set or algebra declarations and opaque body effects make
    it incomplete, so it proves no optimization. Next, make one checked
    summary serve fusion, D87 stream assignment, and distributed scheduling;

@@ -1,4 +1,4 @@
-// Conservative access summaries for execution loops (D[loop-effect-summary]).
+// Conservative access summaries for execution loops (D342).
 
 #include "mdir/Dialect/MDExec/LoopEffects.h"
 

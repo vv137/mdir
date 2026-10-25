@@ -59,7 +59,7 @@ result.
 
 This operation does not add a control-file or Python key and does not
 change a trajectory. `md.reciprocal` still provides the potential,
-forces, and virial. D[fft-value-buffer] (#526) lowers a semantic value to
+forces, and virial. D341 (#526) lowers a semantic value to
 the explicit buffers of D306: real grids use row-major scalar storage and
 half-spectra use row-major interleaved real and imaginary scalars. Each
 backward input is copied into an owned execution buffer because execution

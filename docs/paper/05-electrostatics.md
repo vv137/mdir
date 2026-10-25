@@ -136,7 +136,7 @@ $\delta\langle\mathcal F Q,Y\rangle_\mathrm H
 =\langle\delta Q,\mathcal F^\dagger Y\rangle$; thus the cotangent of
 the forward transform is the backward transform without a factor of the
 grid size. Reversing the roles gives the forward transform as the
-backward one's transpose. D[fft-value-buffer] (#526) packs these values
+backward one's transpose. D341 (#526) packs these values
 into distinct flat real buffers, storing each complex number as adjacent
 real and imaginary components. The backward execution transform may
 overwrite its packed input, so the bridge uses a private copy of the

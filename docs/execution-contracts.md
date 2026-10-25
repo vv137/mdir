@@ -125,7 +125,7 @@ new strategy.
 
 ## 5. Effects, dependencies, and lifetimes
 
-The first loop effect interface (D[loop-effect-summary], #566) derives
+The first loop effect interface (D342, #566) derives
 operand, row-scope, set, and accumulation-algebra records. A missing
 declaration or opaque body effect makes that record incomplete; existing
 optimizations do not consume it yet. The later checked summary states the

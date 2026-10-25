@@ -35,7 +35,7 @@ the existing emitters receive the same plain memrefs and produce the same
 device code. Dynamic row counts remain checked by the input and set size
 map. The lifetime-based planner is a separate follow-up.
 
-The derived loop effect interface (D[loop-effect-summary], #566) names each
+The derived loop effect interface (D342, #566) names each
 access's SSA operand, row scope, and set, and records reduction algebra.
 Unknown declarations and opaque body effects make the summary incomplete.
 This first interface slice does not change strategy selection, fusion,
@@ -176,7 +176,7 @@ this subspace; the lowering does not project an arbitrary complex buffer
 onto it.
 At the semantic level, `md.linear_transform` (D319,
 #502) has the same direction, adjoint, and pairing contract over pure
-static three-dimensional tensor values. D[fft-value-buffer] supports matching
+static three-dimensional tensor values. D341 supports matching
 f32/complex<f32> and f64/complex<f64> values and bridges them to owned
 execution buffers. The half-spectrum's last extent is $K_3/2+1$.
 Its declared transpose creates the opposite transform.

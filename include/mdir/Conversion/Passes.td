@@ -17,7 +17,7 @@ def ConvertLinearTransformValues
     The semantic input remains immutable. Run one-shot bufferization and
     ownership-based deallocation after this pass; optionally place the
     marked execution transform on a device after those two passes.
-    No control-file behavior changes. D[fft-value-buffer].
+    No control-file behavior changes. D341.
   }];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect",
@@ -36,7 +36,7 @@ def PlaceLinearTransformDevice
     device buffers. Allocate two distinct device buffers, copy the private
     input, execute the FFT, copy the result back, and free both buffers.
     Each transfer waits on its own dependency; there is no whole-step wait.
-    The pack/unpack path remains independent of the target. D[fft-value-buffer].
+    The pack/unpack path remains independent of the target. D341.
   }];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect",

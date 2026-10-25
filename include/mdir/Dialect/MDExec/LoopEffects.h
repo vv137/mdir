@@ -1,4 +1,4 @@
-// One effect record for md_exec execution loops (D[loop-effect-summary]).
+// One effect record for md_exec execution loops (D342).
 
 #ifndef MDIR_DIALECT_MDEXEC_LOOPEFFECTS_H
 #define MDIR_DIALECT_MDEXEC_LOOPEFFECTS_H

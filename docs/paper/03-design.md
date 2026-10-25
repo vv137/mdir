@@ -655,7 +655,7 @@ the address calculations, allocation sizes, and kernels are those of the
 plain-memref program. Dynamic row counts come from validated input and
 the assignment pass's size map; PME scratch remains untagged structural storage, and lifetime planning is a later pass.
 
-The execution loop interface (D[loop-effect-summary]) derives a record
+The execution loop interface (D342) derives a record
 for each access: the exact SSA operand, its read/write or accumulation
 effect, its row scope, and its symbolic set. The scopes
 distinguish a particle's own row, a pair neighbor, tuple members, indexed

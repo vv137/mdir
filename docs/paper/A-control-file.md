@@ -1,6 +1,6 @@
 # Appendix A. The control file
 
-D[loop-effect-summary] adds a compiler inspection interface for loop
+D342 adds a compiler inspection interface for loop
 accesses. It adds no control-file or Python key and changes no default,
 input or output format, checkpoint, or overwrite behavior.
 
@@ -19,7 +19,7 @@ D319 adds its pure `md` value-level form and declared
 transpose. It also adds no control-file key, checkpoint or output format,
 or overwrite behavior change. The composed reciprocal potential remains
 future work.
-D[fft-value-buffer] bridges that value form to explicit execution buffers
+D341 bridges that value form to explicit execution buffers
 in matching f32 or f64 precision. The backward transform may overwrite its
 private packed input copy; the semantic tensor operand remains unchanged.
 It adds no control-file key, checkpoint or output format, or overwrite

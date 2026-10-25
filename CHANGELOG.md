@@ -28,7 +28,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
-- **A shared loop effect interface** (D[loop-effect-summary], #566):
+- **A shared loop effect interface** (D342, #566):
   particle, pair, tuple, and scatter operations now expose their operand,
   row scope, set, and accumulation algebra to compiler inspection. Missing
   declarations remain unknown. Fusion, scheduling, generated code, control
@@ -89,7 +89,7 @@ format, or the outputs; every such change is listed under **Changed** or
   emitter ownership, and the target capability and measured-policy contract.
   No control-file key, file format, overwrite behavior, generated code, or
   simulation result changes.
-- **A storage bridge for semantic FFT values** (D[fft-value-buffer],
+- **A storage bridge for semantic FFT values** (D341,
   #526): the real grid and Hermitian half-spectrum value forms may use
   matching f32 or f64 elements and lower to explicit row-major buffers
   with interleaved complex components. A backward transform owns a copy of
@@ -133,7 +133,7 @@ format, or the outputs; every such change is listed under **Changed** or
   real grid or Hermitian half-spectrum value with statically checked shapes,
   direction, opposite adjoint, and weighted pairing. This IR-only slice
   adds no control-file key, Python API, checkpoint or output change; the
-  value-to-buffer bridge follows in D[fft-value-buffer] (#526); reciprocal
+  value-to-buffer bridge follows in D341 (#526); reciprocal
   composition remains #452.
 - **A linear FFT transform primitive with an inspectable adjoint**
   (D306, #480): `md_exec.linear_transform` exposes the grid
