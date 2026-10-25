@@ -2447,6 +2447,15 @@ format, or the outputs; every such change is listed under **Changed** or
   write its shift; no entry of an empty group used the value, so no result
   changes. `test/Sanitizer/groups-empty-gpu.test` builds three empty
   groups.
+- `scripts/release/changelog.py release` (run by `prepare.sh`) kept only
+  the last block of a subsection that [Unreleased] repeats (#596): with
+  Added, Changed, Added, Changed, Added, and Fixed there, the move to
+  [0.2.0] lost 78 of the 271 entries of this file without an error. The
+  blocks of one name are now joined in file order, and the move stops
+  before it writes unless the new section holds as many top-level entries
+  as [Unreleased] and the section of the version together.
+  `test/Lit/changelog-release.test` moves a changelog with repeated
+  subsections and checks each entry and its order.
 
 ## [0.1.0] - 2026-10-04
 

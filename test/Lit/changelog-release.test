@@ -1,0 +1,122 @@
+# `changelog.py release` keeps every entry of [Unreleased] when a
+# subsection repeats (#596): [Unreleased] held Added, Changed, Added,
+# Changed, Added, Fixed, and the move kept only the last block of each
+# name, which lost 78 of the 271 entries of CHANGELOG.md without an error.
+# The blocks of one name are now joined in file order, ahead of the entries
+# that the section of the version already holds, and the move stops before
+# it writes unless the new section holds every entry.
+# RUN: rm -rf %t && split-file %s %t
+# RUN: cd %t/repeated && %python %S/../../scripts/release/changelog.py release 9.9.9 2026-10-26
+# RUN: FileCheck --check-prefix=MOVED --match-full-lines %s < %t/repeated/CHANGELOG.md
+# RUN: cd %t/lost && not %python %S/../../scripts/release/changelog.py release 9.9.9 2026-10-26 2>&1 \
+# RUN:   | FileCheck --check-prefix=LOST %s
+# RUN: cmp %t/lost/CHANGELOG.md %t/lost-original.md
+
+# MOVED: ## [Unreleased]
+# MOVED-EMPTY:
+# MOVED-NEXT: ## [9.9.9] - 2026-10-26
+# MOVED-NEXT: ### Added
+# MOVED-EMPTY:
+# MOVED-NEXT: - Added one.
+# MOVED-NEXT: - Added two,
+# MOVED-NEXT:   on two lines.
+# MOVED-NEXT: - Added three.
+# MOVED-NEXT: - Added four.
+# MOVED-NEXT: - Added before, in 9.9.9.
+# MOVED-EMPTY:
+# MOVED-NEXT: ### Changed
+# MOVED-EMPTY:
+# MOVED-NEXT: - Changed one.
+# MOVED-NEXT: - Changed two.
+# MOVED-EMPTY:
+# MOVED-NEXT: ### Fixed
+# MOVED-EMPTY:
+# MOVED-NEXT: - Fixed one.
+# MOVED-EMPTY:
+# MOVED-NEXT: ## [0.1.0] - 2026-10-04
+# MOVED-EMPTY:
+# MOVED-NEXT: ### Added
+# MOVED-EMPTY:
+# MOVED-NEXT: - The first.
+# MOVED-EMPTY:
+# MOVED-NEXT: [Unreleased]: https://github.com/vv137/mdir/compare/v9.9.9...HEAD
+# MOVED-NEXT: [0.1.0]: https://github.com/vv137/mdir/releases/tag/v0.1.0
+# MOVED-NEXT: [9.9.9]: https://github.com/vv137/mdir/releases/tag/v9.9.9
+
+# An entry outside a subsection is not moved: the count stops the move,
+# and the file is left as it was.
+# LOST: CHANGELOG.md: [Unreleased] and the section of 9.9.9 hold 2 entries, but the new section would hold 1: nothing is written
+
+#--- repeated/CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- Added one.
+- Added two,
+  on two lines.
+
+### Changed
+
+- Changed one.
+
+### Added
+
+- Added three.
+
+### Changed
+
+- Changed two.
+
+### Added
+
+- Added four.
+
+### Fixed
+
+- Fixed one.
+
+## [9.9.9] - unreleased
+
+### Added
+
+- Added before, in 9.9.9.
+
+## [0.1.0] - 2026-10-04
+
+### Added
+
+- The first.
+
+[Unreleased]: https://github.com/vv137/mdir/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/vv137/mdir/releases/tag/v0.1.0
+#--- lost/CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+- Outside a subsection.
+
+### Added
+
+- Added one.
+
+## [0.1.0] - 2026-10-04
+
+[Unreleased]: https://github.com/vv137/mdir/compare/v0.1.0...HEAD
+#--- lost-original.md
+# Changelog
+
+## [Unreleased]
+
+- Outside a subsection.
+
+### Added
+
+- Added one.
+
+## [0.1.0] - 2026-10-04
+
+[Unreleased]: https://github.com/vv137/mdir/compare/v0.1.0...HEAD
