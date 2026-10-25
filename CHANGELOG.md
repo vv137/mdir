@@ -423,12 +423,13 @@ format, or the outputs; every such change is listed under **Changed** or
   choice (D282, #336).
 - **The bonded kernel sums a block's values in block memory first** on
   large systems, 9 to 10% faster on Cellulose (D283, #408).
-- **Fused pruning and pair loop** for the dual list: 4 to 6% a step on an
+- **Fused pruning and pair loop** for the dual list: 4 to 6% less time a step on an
   RTX 4090 from about 6,400 groups; `MDIR_FUSED_PRUNE` overrides it (D284,
   D281, #362).
 - **The inner loop of a dual list takes only the blocks that hold
-  entries** (D268, #357, #360), and a device build of the neighbor matrix
-  sorts a cell by rank (D235, #231).
+  entries**, 12 to 47 µs less a step on an RTX 4090 (D268, #357, #360).
+- **A device build of the neighbor matrix sorts a cell by rank**, which
+  made a small system with crowded cells 2.5 times as fast (D235, #231).
 - **Neural stages on a GPU**: products through cuBLAS (D302), batched
   products and fixed-order row sums (D303, D301), more fusion (D299,
   D293), and per-row sums of a pair tile (D300) each shorten a PaiNN step,
@@ -449,8 +450,9 @@ format, or the outputs; every such change is listed under **Changed** or
   (D181, #20), and the terms over centers of groups run inside the bonded
   kernel (D194, #66).
 - **Leapfrog under Langevin dynamics with constraints** is 1.2 to 2.4%
-  faster on a GPU (D250, #287), and `.gro` coordinates are read with a
-  direct binary64 conversion (D323, #525).
+  faster on a GPU (D250, #287).
+- **`.gro` coordinates and velocities are read faster**, with a direct
+  binary64 conversion (D323, #525).
 - **An opt-in single-pass scan for group builds**,
   `single-pass-group-scan=true` of `convert-md-exec-to-gpu`; the
   three-launch scan stays the default (D321, #420, #524).

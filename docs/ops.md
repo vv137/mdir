@@ -658,9 +658,10 @@ A generated function is named after the potential and the requests:
 An op of no registered dialect, which `--allow-unregistered-dialect`
 admits, is taken as an op of another dialect and left where it is by
 `md-exec-assign-storage`, `md-exec-fold-tables`, `convert-md-exec-to-loops`,
-`convert-md-exec-to-gpu`, and `md-exec-simplify-distance`, which test its
-dialect with `isa_and_nonnull` (#395; `isa<...Dialect>` asserted on its
-null dialect). A program that `md-exec-assign-storage` refuses inside a
+and `convert-md-exec-to-gpu`, which test its dialect with
+`isa_and_nonnull` (#395; `isa<...Dialect>` asserted on its null dialect);
+`md-exec-simplify-distance` uses the same test, though only ops whose
+values it can evaluate reach it. A program that `md-exec-assign-storage` refuses inside a
 loop that carries fields fails with the pass's diagnostic, a
 `CompileError` in Python (#208; the process aborted with "operation
 destroyed but still has uses" before).
