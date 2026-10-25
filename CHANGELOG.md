@@ -172,6 +172,12 @@ format, or the outputs; every such change is listed under **Changed** or
   lists them by lit feature, and a run of the whole suite warns on a test
   that is unsupported but not listed, or listed but run
   (`-Dexpected_unsupported=strict` makes it an error) (#608).
+- **An equivalence check of the builder**:
+  `scripts/builder-equivalence/check.py` shows that two builds of `mdir`
+  emit the same program for the examples, the control files of the tests,
+  and the Amber suite
+  ([docs/driver.md](docs/driver.md#211-the-equivalence-check-of-the-builder);
+  #568).
 
 ### Changed
 
