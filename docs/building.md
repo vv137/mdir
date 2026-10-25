@@ -61,6 +61,13 @@ If the CUDA toolkit is found, the runtime for NVIDIA GPUs is built as
 that is not on the search path, and `-DMDIR_ENABLE_CUDA=OFF` leaves the
 runtime out.
 
+| Option | Default | What it builds |
+|---|---|---|
+| `MDIR_ENABLE_CUDA` | `AUTO`: on where the CUDA toolkit is found | The runtime for NVIDIA GPUs; `ON` fails without the toolkit |
+| `MDIR_ENABLE_PYTHON` | `OFF` | The Python interface (Section 4.1) |
+| `MDIR_ENABLE_METATOMIC` | `OFF` | The plugin of learned potentials (Section 4.2) |
+| `MDIR_BUILD_TESTS` | `ON` | The tests (`test/`), their tools, and `mdir-opt`, which links their test passes. The wheel builds with it `OFF`, since the Python sdist leaves `test/` out (#624); a build without it has no `check-mdir` |
+
 ### 4.1 The Python interface
 
 In a build of the tree the interface is optional and off by
