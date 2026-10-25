@@ -10,6 +10,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-26
 ### Added
 
 - **Learned potentials through metatomic (ML1).** An optional plugin,
@@ -687,5 +688,6 @@ mean ± standard deviation of three runs (white paper, Table 10.2):
   Rocky, and Alma 8+, Ubuntu 20.04+, Debian 11+) and x86-64 with an NVIDIA
   driver supporting CUDA 13.0 or newer for the GPU (D177).
 
-[Unreleased]: https://github.com/vv137/mdir/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/vv137/mdir/compare/v0.2.0...HEAD
 [0.1.0]: https://github.com/vv137/mdir/releases/tag/v0.1.0
+[0.2.0]: https://github.com/vv137/mdir/releases/tag/v0.2.0

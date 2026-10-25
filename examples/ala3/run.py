@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10,<3.14"
-# dependencies = ["mdir[cuda]==0.1.0", "numpy>=1.23"]
+# dependencies = ["mdir[cuda]==0.2.0", "numpy>=1.23"]
 # ///
 """The four stages of examples/ala3 from Python.
 
