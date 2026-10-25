@@ -1,0 +1,24 @@
+name: release-path
+
+# The release path on a copy of the tree, on every push to main (#609;
+# docs/workflow.md, Releases): the edits of prepare.sh with the next
+# version, the move of the changelog with its count, the notes of the
+# GitHub Release, their links, and the version pinned in tests or code.
+# No build and no GPU.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'scripts/release/**'
+      - 'CHANGELOG.md'
+      - 'changelog.d/**'
+      - 'CMakeLists.txt'
+      - '.github/workflows/release-path.yml'
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/release/check-path.sh
