@@ -251,8 +251,11 @@ conversion, including reduction readbacks. GPU conversion may remove
 readbacks with `keepReadbacksOnDevice` or move and combine their copy/wait
 groups with `deferReadbacks`; the final groups must be checked after those
 rewrites, or each rewrite must establish that it preserves the same
-contract. A token operand or a marker on a copy is not a substitute for a
-checked completion path. Positive cases include the emitted immediate-wait
+contract. While `md_exec` loops exist, the checker uses #566's exact operand
+and row summary; after conversion it uses the conservative projection to
+MLIR memory effects and generic alias tracking. A token operand or a marker
+on a copy is not a substitute for a checked completion path. Positive cases
+include the emitted immediate-wait
 sequence and the existing deferred readback sequence; negative cases put a
 read, conflicting write, or deallocation between a copy and its wait,
 including through a recognized alias.
