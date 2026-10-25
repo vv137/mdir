@@ -403,7 +403,7 @@ private:
   /// The candidates (`which` 0) or the slots (1) of the pairs of images of
   /// `handle`, as the last build left them (D277).
   Value getEdgesBuffer(OpBuilder &builder, Location loc, Value handle,
-                       MdrtGroupsSlot which);
+                       int64_t which);
   /// After a build of the matrix `structure` at `positions` in the cell
   /// `box`: the candidates of the pairs of images of each particle within
   /// `reach`, their offsets, and the candidates in their slots.
