@@ -200,7 +200,7 @@ def compare(root, tests, features, entries, evaluate):
             unexpected.append(f"{test} ({', '.join(reason)})")
         elif not unsupported and test in expected:
             running.append(test)
-    return sorted(expected), unexpected, running
+    return sorted(expected & set(tests)), unexpected, running
 
 
 def check_list(root, tests, entries):
@@ -238,6 +238,52 @@ def _runs_whole_suite(config):
                for arg in sys.argv[1:])
 
 
+def lit_options():
+    """The options that lit was given: LIT_OPTS, then the command line."""
+    import shlex
+    import sys
+    return shlex.split(os.environ.get("LIT_OPTS", "")) + sys.argv[1:]
+
+
+def _option(options, name):
+    value = None
+    for i, arg in enumerate(options):
+        if arg.startswith(name + "="):
+            value = arg.split("=", 1)[1]
+        elif arg == name and i + 1 < len(options):
+            value = options[i + 1]
+    return value
+
+
+def shard_of(options):
+    """(run, shards) when lit runs a shard of the suite, else None."""
+    shards = _option(options, "--num-shards") or os.environ.get("LIT_NUM_SHARDS")
+    run = _option(options, "--run-shard") or os.environ.get("LIT_RUN_SHARD")
+    if not shards and not run:
+        return None
+    return int(run or 1), int(shards or 1)
+
+
+def check_shards(lit_config):
+    """A shard of the suite needs --order=lexical (D309). lit sorts the
+    tests before it takes every n-th, and its default order follows the
+    times and failures recorded in each build tree (.lit_test_times.txt):
+    the shards of two trees then overlap, and some tests run in neither
+    (the train of 2026-10-26, 04:30)."""
+    options = lit_options()
+    if shard_of(options) is None:
+        return None
+    order = _option(options, "--order") or "smart"
+    if "--shuffle" in options:
+        order = "random"
+    if order != "lexical":
+        lit_config.fatal(
+            "a shard of the suite takes --order=lexical: lit's default order "
+            "follows the times recorded in each build tree, so the shards of "
+            "two trees overlap and leave tests out (D309)")
+    return shard_of(options)
+
+
 def check_expected_unsupported(config, lit_config):
     """Compare the tests that the features of this configuration leave
     unsupported with test/expected-unsupported.txt, before any test runs.
@@ -258,11 +304,18 @@ def check_expected_unsupported(config, lit_config):
     except (OSError, ValueError) as error:
         lit_config.fatal(str(error))
     tests = list_tests(root, set(config.suffixes), set(config.excludes))
+    # A shard compares its own tests, those that lit takes in the lexical
+    # order of their names (check_shards).
+    shard, of = shard_of(lit_options()) or (None, None), ""
+    if shard[0] is not None:
+        run, shards = shard
+        tests = sorted(tests, key=lambda t: t.replace(os.sep, "/"))[run - 1::shards]
+        of = f" of shard {run}/{shards}"
     expected, unexpected, running = compare(
         root, tests, config.available_features, entries,
         BooleanExpression.evaluate)
     lit_config.note(f"expected unsupported: {len(expected)} of {len(tests)} "
-                    "tests for the features of this configuration "
+                    f"tests{of} for the features of this configuration "
                     "(test/expected-unsupported.txt)")
     problems = ([f"unsupported but not expected: {t}" for t in unexpected] +
                 [f"expected unsupported but runs: {t}" for t in running])

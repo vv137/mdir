@@ -167,6 +167,8 @@ sys.path.insert(0, os.path.dirname(__file__))
 import mdir_lit
 
 mdir_lit.enable_compile_cache(config, lit_config)
+# A shard of the suite is taken in the lexical order of the tests (D309).
+mdir_lit.check_shards(lit_config)
 
 # One device serves every worker of a suite: at most four tests that need it
 # run at once, the others side by side (test/mdir_lit.py).
