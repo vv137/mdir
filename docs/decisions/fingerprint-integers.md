@@ -1,0 +1,59 @@
+# D[fingerprint-integers]
+
+Recorded at its merge.
+
+**An integer of a fingerprint is written exactly, and the text of an
+integer below $2^{53}$ in magnitude does not change** (#620).
+
+**The defect.** The fingerprint (D172, D223) wrote every integer through a
+`double`: `formatNumber` in `canonical()` for the control file, and
+`getFingerprintNumber(static_cast<double>(...))` for the Python model.
+From $2^{53}$ on the double rounds, so distinct integers had one text.
+$2^{53}$ and $2^{53}+1$ were both `9007199254740992`, and $2^{63}-2$ and
+$2^{63}-1$ were both `9.223372036854776e+18`. The seed is an entry of the
+coupling, so `mdir run --continue` and a Python continuation took a
+changed large seed for the same run.
+
+**The fix.**
+- Two functions write integers: `getFingerprintInteger` for signed
+  integers and `getFingerprintUnsigned` for the seed, a `uint64_t` of the
+  model. An integer of magnitude below $2^{53}$ is written as the text of
+  its double, which is exact there. A larger one is written as its exact
+  decimal.
+- Both front ends go through them. On the control-file side, that is the
+  canonical text of a TOML integer. On the model side, it is every integer
+  entry of the fingerprint: the seed, the periods, the length of the
+  chain, the surfaces, the threads, the neighbor capacity, and the PME
+  grid and order. So the two front ends write one text for one setting.
+
+**Compatibility.**
+- Every checkpoint whose integers are below $2^{53}$ continues as before.
+  That is every checkpoint except one with a seed of 16 or more digits.
+- Below $2^{53}$ the text of the double is exact but does not always show
+  every digit. From $10^{15}$ to $2^{53}$ it is the shortest text that
+  reads back, for example `2e+15` for 2,000,000,000,000,000. Earlier
+  checkpoints recorded that text, so it stays.
+- A checkpoint written before this change with an integer of $2^{53}$ or
+  more recorded the rounded text. A continuation refuses it, as a change
+  of the coupling.
+- **Alternatives not taken.**
+  - Writing every integer with all its digits would also have refused the
+    checkpoints of integers from $10^{15}$ to $2^{53}$, for no gain.
+  - Accepting the rounded text as a match would keep the defect.
+
+**What does not change.**
+- Floating-point numbers keep their shortest round-trip text.
+- A TOML integer given where a real is meant, such as a constant of a
+  custom term, keeps the integer path in the control file while the model
+  holds a double. The two agree below $2^{53}$, as before.
+
+**Tests.**
+- `test/Driver/fingerprint-integers.test` covers $2^{53}-1$, $2^{53}$,
+  $2^{53}+1$, $2^{63}-1$, $10^{18}$, and $2\times10^{15}$. For each it
+  checks that the control file and the model write the seed with one
+  text. It also checks the entry of the checkpoint, and that
+  `--continue` from the run of $2^{53}$ refuses $2^{53}+1$.
+- `test/Driver/python-fingerprint-integers.test` writes Python checkpoints
+  with the seeds $2^{53}-1$ to $2^{63}-1$, checks that their entries are
+  distinct, and compares the entry of $2^{53}$ with the checkpoint of
+  `mdir run`.

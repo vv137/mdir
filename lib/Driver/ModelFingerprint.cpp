@@ -16,7 +16,9 @@
 using namespace mdir;
 using namespace mdir::model;
 using driver::Fingerprint;
+using driver::getFingerprintInteger;
 using driver::getFingerprintNumber;
+using driver::getFingerprintUnsigned;
 using driver::getFingerprintString;
 
 namespace {
@@ -193,11 +195,11 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     add("physics", "[pme] max_spacing", number(s.pmeSpacing / length));
   if (has(given.system, "pme_grid"))
     add("physics", "[pme] grid",
-        "[" + getFingerprintNumber(s.pmeGrid[0]) + "," +
-            getFingerprintNumber(s.pmeGrid[1]) + "," +
-            getFingerprintNumber(s.pmeGrid[2]) + "]");
+        "[" + getFingerprintInteger(s.pmeGrid[0]) + "," +
+            getFingerprintInteger(s.pmeGrid[1]) + "," +
+            getFingerprintInteger(s.pmeGrid[2]) + "]");
   if (has(given.system, "pme_order"))
-    add("physics", "[pme] order", getFingerprintNumber(s.pmeOrder));
+    add("physics", "[pme] order", getFingerprintInteger(s.pmeOrder));
   if (has(given.system, "pme_influence"))
     add("physics", "[pme] influence",
         getFingerprintString(s.pmeInfluence == PMEInfluence::Optimal ? "OPTIMAL"
@@ -307,7 +309,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     add("coupling", "[dynamics] friction", number(*integrator.friction));
   if (has(given.ensemble, "seed"))
     add("coupling", "[dynamics] seed",
-        getFingerprintNumber(static_cast<double>(ensemble.seed)));
+        getFingerprintUnsigned(ensemble.seed));
   // Brownian dynamics has `ensemble = "NVT"` and no `[thermostat]`.
   bool bath = ensemble.kind != EnsembleKind::NVE;
   bool thermostat = bath && !brownian;
@@ -316,7 +318,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   // an absent key takes (D248).
   if (ensemble.comPeriod)
     add("coupling", "[dynamics] center_of_mass_interval",
-        getFingerprintNumber(static_cast<double>(*ensemble.comPeriod)));
+        getFingerprintInteger(*ensemble.comPeriod));
   if (has(given.ensemble, "kind") || bath)
     add("coupling", "[ensemble] ensemble",
         getFingerprintString(barostat ? "NPT"
@@ -343,12 +345,12 @@ Fingerprint mdir::model::getFingerprint(const System &s,
     if (chain &&
         (has(given.ensemble, "chain_length") || ensemble.chainLength != 3))
       add("coupling", "[thermostat] chain_length",
-          getFingerprintNumber(static_cast<double>(ensemble.chainLength)));
+          getFingerprintInteger(ensemble.chainLength));
     // Given, the key of the control file; not given, the model takes what
     // an absent key takes.
     if (ensemble.couplingPeriod)
       add("coupling", "[thermostat] interval",
-          getFingerprintNumber(static_cast<double>(*ensemble.couplingPeriod)));
+          getFingerprintInteger(*ensemble.couplingPeriod));
   }
   if (barostat) {
     add("coupling", "[barostat] method", getFingerprintString("C-RESCALE"));
@@ -374,7 +376,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
           number(ensemble.surfaceTension / driver::units::dynePerCmToBarNm));
     if (has(given.ensemble, "surfaces") || ensemble.surfaces != 2)
       add("coupling", "[barostat] surfaces",
-          getFingerprintNumber(static_cast<double>(ensemble.surfaces)));
+          getFingerprintInteger(ensemble.surfaces));
     // The coupling and the work, as the keys of the control file write
     // them: when given, or when not the default that an absent key takes
     // (D247).
@@ -438,7 +440,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
                                                                : "DOUBLE"));
   if (has(given.execution, "threads"))
     add("execution", "[execution] threads",
-        getFingerprintNumber(static_cast<double>(execution.threads)));
+        getFingerprintInteger(execution.threads));
   if (has(given.execution, "deterministic"))
     add("execution", "[execution] deterministic",
         flag(execution.deterministic));
@@ -451,7 +453,7 @@ Fingerprint mdir::model::getFingerprint(const System &s,
   if (has(given.execution, "neighbor_capacity") &&
       execution.neighborCapacity > 0)
     add("execution", "[execution] neighbor_capacity",
-        getFingerprintNumber(static_cast<double>(execution.neighborCapacity)));
+        getFingerprintInteger(execution.neighborCapacity));
 
   std::stable_sort(fingerprint.begin(), fingerprint.end(),
                    [](const driver::FingerprintEntry &a,

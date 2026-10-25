@@ -31,6 +31,12 @@ llvm::Expected<Fingerprint> getRunFingerprint(llvm::StringRef controlFile,
 /// it (the shortest text that reads back to the same double), a string
 /// quoted, and SHA-256 of bytes as "sha256:<hex>" (D172).
 std::string getFingerprintNumber(double value);
+/// An integer of a fingerprint, exact (#620): below 2^53 in magnitude the
+/// text of getFingerprintNumber, which is exact there; from 2^53 on, every
+/// digit. The control file and the Python model write their integers with
+/// these, so that the same setting gives the same text.
+std::string getFingerprintInteger(int64_t value);
+std::string getFingerprintUnsigned(uint64_t value);
 std::string getFingerprintString(llvm::StringRef text);
 std::string getFingerprintHash(llvm::StringRef data);
 /// The entry of the files of the topology: SHA-256 of the list of the

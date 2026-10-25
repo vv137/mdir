@@ -1,4 +1,5 @@
 // Native model parity, ownership, validation and MD-unit adaptation.
+#include "mdir/Driver/Fingerprint.h"
 #include "mdir/Driver/Model.h"
 #include "llvm/Support/raw_ostream.h"
 #include <cmath>
@@ -22,8 +23,10 @@ static void reject(llvm::Expected<model::PreparedModel> result,
 int main(int argc, char **argv) {
   require(argc == 2 || (argc == 3 && (llvm::StringRef(argv[2]) == "--arrays" ||
                                        llvm::StringRef(argv[2]) == "--drawn" ||
-                                       llvm::StringRef(argv[2]) == "--selections")),
-          "expected a control file and optional --arrays, --drawn, or --selections");
+                                       llvm::StringRef(argv[2]) == "--selections" ||
+                                       llvm::StringRef(argv[2]) == "--seed-fingerprint")),
+          "expected a control file and optional --arrays, --drawn, --selections, "
+          "or --seed-fingerprint");
   auto c = take(driver::readControl(argv[1]));
   auto fileSystem = take(driver::readSystem(c));
   // As `mdir run` does before it builds (D261).
@@ -73,7 +76,8 @@ int main(int argc, char **argv) {
           : take(model::loadAmber(c.prmtopFile,c.amberCoordinateFile));
   auto s = data.makeSystem();
   auto state = data.makeState();
-  if (argc == 3) {
+  bool seedFingerprint = argc == 3 && llvm::StringRef(argv[2]) == "--seed-fingerprint";
+  if (argc == 3 && !seedFingerprint) {
     // The D191 native values underlying D192's list interface, independent
     // of Python array shaping, dtype conversion and ownership.
     auto write = [](const std::vector<double> &values) {
@@ -106,8 +110,29 @@ int main(int argc, char **argv) {
   execution.target = c.target; execution.precision = c.precision;
   model::Schedule schedule;
   schedule.steps = 20; schedule.energyPeriod = 10;
+  if (seedFingerprint)
+    ensemble.seed = c.seed;
   auto prepare = [&]() { return model::prepare(s,state,integrator,ensemble,execution,schedule); };
   auto prepared = take(prepare());
+  if (seedFingerprint) {
+    // The entry of the seed in the fingerprint of the control file and in
+    // that of the same seed given to the model, as Python gives it (#620):
+    // the two are one text, the exact integer.
+    auto entry = [](const driver::Fingerprint &fingerprint) {
+      for (const auto &e : fingerprint)
+        if (e.group == "coupling" && e.name == "[dynamics] seed")
+          return e.value;
+      return std::string("<none>");
+    };
+    std::string file = entry(take(driver::getRunFingerprint(argv[1], c, fileSystem)));
+    std::string object = entry(model::getFingerprint(
+        s, integrator, ensemble, execution,
+        model::GivenSettings{{}, {}, {"seed"}, {}}, prepared));
+    llvm::outs() << "seed " << c.seed << ": control file " << file << ", model "
+                 << object << "\n";
+    require(file == object, "the control file and the model write the seed differently");
+    return 0;
+  }
   auto fileProgram = take(driver::buildProgram(c,fileSystem));
   auto objectProgram = take(prepared.build());
   require(fileProgram.module == objectProgram.module, "file/object semantic IR differs");

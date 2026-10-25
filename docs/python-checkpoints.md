@@ -183,6 +183,20 @@ them), and so are the masses and the reference of the restraints. A Python
 script and a control file that set the same options of the same files have
 the same fingerprint, and either continues the other's run.
 
+An integer of the fingerprint is written exactly, by one function that the
+control file and the model share (D[fingerprint-integers], #620): below
+$2^{53}$ in magnitude as the text of its double, as every integer was
+written before, and from $2^{53}$ on with all its digits. Before #620 an
+integer went through a double, so from $2^{53}$ on distinct values had one
+text, and a seed of $2^{53}+1$ continued the run of $2^{53}$. A checkpoint
+whose integers are all below $2^{53}$ (seeds, intervals, grids, counts)
+continues as before. One written before #620 with a larger integer, which
+in practice is a seed, records the rounded text (for example
+`9.223372036854776e+18`) and is refused by `--continue` and by a Python
+continuation as a change of the coupling: such a run begins anew from the
+checkpoint, as `checkpoint` of `[input]` in a control file or as the state
+of a new Python simulation.
+
 `Execution.neighbor_capacity`, when given and not 0, is the entry
 `[execution] neighbor_capacity` that the control file's key writes
 (D227). A run that gives the same capacity to both

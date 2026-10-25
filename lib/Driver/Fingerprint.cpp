@@ -50,6 +50,20 @@ std::string formatNumber(double value) {
   return buffer;
 }
 
+/// An integer as its exact decimal text (#620). Below 2^53 in magnitude
+/// an integer is a double exactly, and its text is that of the double, as
+/// fingerprints wrote every integer before: the checkpoints of such values
+/// continue. From 2^53 on, the double rounds and gave distinct integers one
+/// text (2^53 and 2^53 + 1, 2^63 - 2 and 2^63 - 1); those are now written
+/// with all their digits.
+std::string formatInteger(bool negative, uint64_t magnitude) {
+  if (magnitude < (uint64_t(1) << 53)) {
+    double value = static_cast<double>(magnitude);
+    return formatNumber(negative ? -value : value);
+  }
+  return (negative ? "-" : "") + std::to_string(magnitude);
+}
+
 std::string quote(StringRef text) {
   std::string result = "\"";
   for (char c : text) {
@@ -65,7 +79,9 @@ std::string quote(StringRef text) {
 }
 
 /// The canonical text of a value of a control file: the keys of a table in
-/// the order of their names, numbers as doubles, and no spaces.
+/// the order of their names, a floating-point number as the shortest text of
+/// its double, an integer as its exact decimal (formatInteger), and no
+/// spaces.
 std::string canonical(const toml::node &node) {
   if (const toml::table *table = node.as_table()) {
     std::map<std::string, const toml::node *> sorted;
@@ -93,7 +109,7 @@ std::string canonical(const toml::node &node) {
   if (const auto *text = node.as_string())
     return quote(text->get());
   if (const auto *integer = node.as_integer())
-    return formatNumber(static_cast<double>(integer->get()));
+    return getFingerprintInteger(integer->get());
   if (const auto *real = node.as_floating_point())
     return formatNumber(real->get());
   if (const auto *flag = node.as_boolean())
@@ -113,6 +129,16 @@ std::string shown(std::string text) {
 
 std::string mdir::driver::getFingerprintNumber(double value) {
   return formatNumber(value);
+}
+
+std::string mdir::driver::getFingerprintInteger(int64_t value) {
+  // The magnitude of INT64_MIN is not an int64_t.
+  uint64_t magnitude = value < 0 ? uint64_t(-(value + 1)) + 1 : uint64_t(value);
+  return formatInteger(value < 0, magnitude);
+}
+
+std::string mdir::driver::getFingerprintUnsigned(uint64_t value) {
+  return formatInteger(false, value);
 }
 
 std::string mdir::driver::getFingerprintString(StringRef text) {
