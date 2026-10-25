@@ -145,6 +145,14 @@ notes. Others cannot open them, and they leak the layout of a machine.
 Describe the measurement or the input instead, and put anything others need
 in the repository; paths in the repository are fine.
 
+The roadmap ([roadmap.md](roadmap.md)) says, for each item, where it stands
+and what comes next, in a sentence or two, with the issues that hold the
+next work and the decisions that brought it there (#603). A cell holds the
+state, not the history: the measurements, the alternatives, and the log of
+the work stay in the decision and in the topic document, which the cell
+links. A PR that changes the state of an item rewrites its cell rather than
+appending to it.
+
 ## Decision numbers
 
 A branch does not take a decision number. It writes its decision as a

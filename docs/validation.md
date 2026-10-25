@@ -264,3 +264,76 @@ the mean potential energy −4763.3 ± 4.1 against −4759.2 ± 2.6 kcal/mol
 (−0.88). The first run of this comparison, at the volume of tleap
 (about 0.6 g/cm³), relaxed over the whole 500 ps; its CPU run also
 found D117, a crash at the end of 250,000 steps.
+
+## 3. From the roadmap
+
+What the roadmap held of these results, moved here when its rows became
+state and next steps (#603).
+
+### The goal of the first milestone
+
+The order: leapfrog, then performance. The goal of performance for the
+first milestone is at least the rate of pmemd.cuda (Amber 26, SPFP), in
+mixed precision, on each system of the Amber suite (from 23,558 to
+1,067,095 atoms, NVE and NPT) on the same GPU; the white paper begins when
+it is reached. (Changed 2026-09-30 from 90% of GROMACS with CUDA:
+pmemd.cuda keeps a neighbor list as MDIR does, with a skin and a test of
+displacements, so the comparison measures the kernels; what GROMACS gains
+with a thermostat comes from a list every 50 steps and dynamic pruning,
+which is an item of its own.) On 2026-09-30, MDIR against pmemd.cuda:
+JAC 84–85% (NVE), 63–64% (NPT); FactorIX 60%, 47%; Cellulose 49%, 40%;
+STMV 38%.
+
+The goal was reached on 2026-10-02 (D114): MDIR runs every system of the
+suite at 102% to 127% of the rate of pmemd.cuda, at 103% to 132% after D118, and at 104% to 132% as one model with pmemd.cuda, with all the dihedral terms of Factor IX (D133, D134; white paper, Table 10.2).
+The rates of the first comparison, kept for the record (2026-09-30,
+ns/day, RTX 3090):
+
+| System | Atoms | MDIR | GROMACS (CUDA) | pmemd.cuda (published) |
+|---|---|---|---|---|
+| jac_nve | 23,558 | 212 | 747 | 632 |
+| jac_nve_4fs | 23,558 | 400 | 795 | 1197 |
+| factorix_nve | 90,906 | 51 | 248 | 265 |
+| cellulose_nve | 408,609 | 9 | 51 | 63 |
+| stmv_npt_4fs | 1,067,095 | 5 | 40 | 39 |
+
+### The barostat with positional restraints (D124)
+
+Fixed 2026-10-02 (D124). Ubiquitin in OPC from the end of the tutorial's stage 3: with the restraints the cell stayed at 200,900 Å³, without them it went to 196,300. The references, scaled about the origin with the cell (D74), had shrunk with it (radius of gyration of the restrained atoms 11.33 Å against 11.73 for the file), and the restraints pushed outward. The center of the references now follows the cell and their offsets stay (`reference_scaling = "CENTER"`, the default): 196,262 ± 580 Å³ with the restraints, 196,293 ± 658 without; stage 3 of the tutorial ends at 195,700 Å³ instead of 201,000. The bilayer's stage 3, whose restraints are spread through the cell, takes `"ALL"`
+
+### Physical validity
+
+Done: the mean and the variance of the kinetic energy and the ensemble tests at two temperatures and two pressures on OPC water (white paper, Section 9.5), isotropic. Done (2026-10-02): the Kolmogorov–Smirnov test of the whole distribution of the kinetic energy against the gamma distribution of the bath, $p = 0.26$ and 0.61 at 300 and 306 K (`scripts/validation/ensembles/analyze.py`). Done (2026-10-02): the test at two pressures with semi-isotropic coupling, within 0.08 standard errors, and with the height held, within 0.36, on water, whose volume (not shape) has a distribution (white paper, Section 9.5). Next, in order: a test at two tensions, which needs a bilayer and runs of 100 ns or more; (3) frames of the velocities and equipartition between solute and solvent and among translation, rotation, and internal motion, where the constraints of mixed precision would show; (4) the fluctuation of the total energy at constant energy against the step, $\sigma_E \propto \Delta t^2$, with the forces switched to zero at the cutoff, since a plain cutoff breaks it. The `physical_validation` package of that paper takes the series as they are, through an adapter for the log and the frames of MDIR
+
+### Other engines on MDBench
+
+Preliminary (2026-10-02, one run each on GPU 1 beside another job, 30 ps at 1 fs; `scripts/benchmarks/mdbench/run.py`): 6n4o (Argonaute2 with miR-122, ff14SB and OL3 in TIP3P, 239,131 atoms, a cutoff of 8 Å), each engine with the input of MDBench and MDIR with its own couplings: MDIR 55.1 ns/day, GROMACS 2026.3 53.0 (over all steps, with its tuning of PME), pmemd.cuda 26 43.3, OpenMM 8.6.1 32.5 (mixed). Next: three repeats on GPU 0 alone, and 9naw (3,023,780 atoms). Done (2026-10-02): 2 ns of each with a frame every 10 ps (`run.py --frames 10000 --steps 2000000`), compared by `structure.py` with cpptraj: the radius of gyration of the complex is 30.9 to 31.3 Å in all four, the RMSF of the CA 0.77 to 0.85 Å, and the profiles of the RMSF by residue correlate between MDIR and each other engine (0.86 to 0.92) as the others do among themselves (0.79 to 0.95). MDIR's backbone RMSD over the second ns is the largest, 2.00 Å against 1.34 to 1.56, but over the 711 residues whose RMSF is below 1.2 Å in every engine it is 1.25 against 0.92 to 1.11: the rest is in the flexible loops, and one run of each cannot tell it from the spread between runs. Next: three runs of each with other seeds, MDIR and GROMACS first (both stochastic velocity rescaling). The volumes differ: over the second ns MDIR 2399.7 nm³, OpenMM 2402 (a Monte Carlo barostat, which takes energies, not the virial), pmemd.cuda 2432.6, GROMACS 2453.6 (the input of MDBench corrects the energy for the dispersion, not the pressure, `DispCorr = Ener`). At the cell of the restart, held fixed for 20 ps, MDIR's pressure is −133.1 ± 6.5 bar, GROMACS's with `EnerPres` −135.0 ± 6.7 (its correction −409.168 bar, MDIR's −409.167), and pmemd.cuda's +101.2 ± 8.2: pmemd.cuda is 234 bar above the others here, 1.3% in volume. On TIP3P water at 8 and 10 Å the two agree within 8 bar, and on ubiquitin in OPC within 67 ± 36; the 13,707 particles of the protein of 6n4o span 110 Å of a cell of 134 Å, and pmemd.cuda takes the virial of molecules. Not examined further
+
+### Analysis tools on MDBench
+
+Measured on 2026-10-02 on the 2 ns of 6n4o of MDBench (239,131 particles,
+200 frames; `scripts/benchmarks/analysis/tools.py`): the same work, a fit
+of the backbone of the protein, its RMSD per frame, the RMSF of each CA,
+and the radius of gyration of its heavy atoms, read from the 574 MB DCD of
+MDIR in the page cache. cpptraj [[Roe2013]](references.md#roe2013) took 0.5 s,
+MDTraj [[McGibbon2015]](references.md#mcgibbon2015) 3.4 s, and MDAnalysis
+[[MichaudAgrawal2011]](references.md#michaudagrawal2011) 6.9 s; the three agree to
+5 × 10⁻⁵ Å, the rounding of frames in `f32`. GROMACS's `rms`, `rmsf`, and
+`gyrate` took 8.8 s on its own XTC of the same length, three passes that
+each decompress it. Simple observables run at the speed of reading the
+file (1.1 GB/s for cpptraj here).
+
+What went wrong in the comparisons of this work was never the arithmetic:
+
+- `unwrap` of cpptraj from a reference in another image gave the RNA of
+  6n4o an RMSD of 20 to 35 Å and the complex a radius of gyration of 64 Å,
+  against 1.3 to 1.9 and 31, without a warning. MDIR writes the image of
+  its sorted state, with the RNA 178 Å from the protein; the restart of
+  MDBench has it in another; GROMACS writes whole molecules. Imaging each
+  molecule next to the protein (`autoimage`) gave the right numbers.
+- GROMACS writes a frame of step 0 and the others do not, so frames of the
+  same index differ by one interval.
+- The columns of `gmx energy` and of ParmEd's reporter for OpenMM come in
+  their own order, not that of the request; they were misread three times.
+- Definitions differ between programs: the weights of the radius of
+  gyration, the reference of a fit, nm against Å.

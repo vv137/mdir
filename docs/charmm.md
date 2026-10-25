@@ -304,3 +304,7 @@ the second half gives 755.6 and 755.1 ns/day (0.229 ms/step each), a
 emitted IR for that unchanged Hamiltonian is byte-identical to main. This
 single timing pair does not resolve a performance cost; it does not measure the difference
 in cost between switched and unswitched Hamiltonians.
+
+## 9. The state of the work
+
+From the roadmap (#603). Done (2026-10-02, D121, [charmm.md](charmm.md)): from a topology of GROMACS, Urey–Bradley angles (function 5), harmonic impropers (function 2), and `lennard_jones_modifier = "POWER_FORCE_SWITCH"`, CHARMM's VFSWITCH [[Steinbach1994]](references.md#steinbach1994), which is not the force switch of GROMACS; NBFIX and the special 1-4 parameters were in place. Trp-cage in CHARMM36m agrees with CHARMM 51b1 to its printed digits in the bonded terms and to 2.2e-7 in the Lennard-Jones; charmm27.ff with GROMACS within 4.3e-6. Done (2026-10-02, D122): the files of CHARMM themselves, a PSF of the XPLOR kind, its CRD, and the files of topology, parameters, and streams; Lennard-Jones within 5e-10 of CHARMM on Trp-cage, two POPC of CHARMM36 to the printed digits (MDIR keeps the Coulomb constant of CODATA, 2.38e-5 below CHARMM's).

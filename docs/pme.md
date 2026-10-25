@@ -1264,3 +1264,7 @@ call), ms a step:
 - **The compile time** of the prolate kernel grows by 0.5 s on JAC
   (4.54 to 5.04 s) and on TIP3P 103k (2.45 to 2.91 s), the search for two
   tables, and by less than 0.1 s on the others.
+
+## The axes of the grid
+
+Planned, from the roadmap (#603). TODO: the longest edge as the contiguous axis of the grid, along which the real-to-complex transform runs: cuFFT on an RTX 3090 takes 277 µs for the pair of transforms of 126 × 126 × 270 against 292 for 270 × 126 × 126 (Cellulose; 255 against 275 for 128 × 128 × 256). The spreading, the weights, the tables of D104, the products, and the gathering then take the axes permuted; nothing for a cubic cell (STMV)

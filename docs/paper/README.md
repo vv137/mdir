@@ -72,3 +72,21 @@ by expressions, implicit solvent, and what to do when something fails.
 
 A change to a method, an algorithm, or an implementation of MDIR updates
 the sections of this paper that describe it.
+
+## Related work
+
+What the outline of the paper said of its sources, from the roadmap (#603):
+
+- Related work (Done, Section 11): every source of the list that the
+  outline began with was read at its source on 2026-10-02.
+  chemtrain-deploy, JAX MD, Reactant.jl, FFTc (also diva2:1757681),
+  LAPIS (arXiv 2509.25605), the activity analysis of automatic
+  differentiation on MLIR (doi:10.1145/3763125), mlip (arXiv 2505.22397),
+  and MDcraft (arXiv 2511.22951) are cited. MLIR-AIR (arXiv 2510.14871,
+  AI workloads on AMD NPUs) and SODA-OPT (high-level synthesis) target
+  spatial hardware and concern neither neighbor lists nor molecular
+  dynamics; they are not cited. The point the sources bear out: these
+  compile tensor programs, linear algebra, or potentials, or wrap learned
+  potentials in an engine, while MDIR has dialects of molecular dynamics
+  itself (particle sets, neighbor structures, tuples, integrators) and
+  lowers the whole step.

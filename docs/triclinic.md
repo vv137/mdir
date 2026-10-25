@@ -296,3 +296,7 @@ cell (D244).
 
 The defect of the barostat with restraints (roadmap, Section 1), which
 touches the same code as P4, was fixed before it (D124).
+
+## 6. First rates
+
+From the roadmap (#603). First rates (2026-10-02, RTX 3090, groups with a dual list, mixed precision): ubiquitin in OPC 12 Å beyond the protein, tleap's octahedron of 25,035 particles at 587 ns/day against its rectangular box of 26,031 at 581, 3% more time a particle for the minimum image and the lattice shifts, and only 4% fewer particles for this solute.
