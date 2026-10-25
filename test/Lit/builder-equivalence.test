@@ -1,0 +1,118 @@
+# The equivalence check of the builder (#568, scripts/builder-equivalence,
+# docs/driver.md): the script finds the control files of a corpus, emits
+# each with two builds for the CPU and the GPU target, and reports every
+# case that differs. Here a small corpus of the kind "tests" (a test that
+# split-file divides, with an input that its RUN line copies) is checked
+# with one build against itself, and against two wrappers of it that
+# perturb the module: one adds a comment, which only the raw form sees, and
+# one changes the cutoff, which both forms see. A file of hashes recorded
+# with the build is checked again with the build and with the second
+# wrapper. emit uses no device.
+# The test of the corpus is written from argon.test.in, whose markers and
+# RUN line are disguised, since split-file and lit would take them here.
+# RUN: rm -rf %t && split-file %s %t && mkdir -p %t/root/test/Driver
+# RUN: sed -e 's/^#=== /#--- /' -e 's/R-U-N/RUN/' %t/argon.test.in > %t/root/test/Driver/argon.test
+# RUN: cp %S/../../examples/argon/argon.pdb %t/root/test/Driver
+# RUN: chmod +x %t/comment %t/cutoff
+# RUN: %python %S/../../scripts/builder-equivalence/check.py compare mdir mdir \
+# RUN:   --root %t/root --only tests --printer mdir-opt | FileCheck %s --check-prefix=SAME
+# RUN: env MDIR_REAL=mdir not %python %S/../../scripts/builder-equivalence/check.py compare \
+# RUN:   mdir %t/comment --root %t/root --only tests --printer mdir-opt \
+# RUN:   | FileCheck %s --check-prefix=COMMENT
+# RUN: env MDIR_REAL=mdir %python %S/../../scripts/builder-equivalence/check.py compare \
+# RUN:   mdir %t/comment --root %t/root --only tests --printer mdir-opt --forms printed \
+# RUN:   | FileCheck %s --check-prefix=PRINTED
+# RUN: env MDIR_REAL=mdir not %python %S/../../scripts/builder-equivalence/check.py compare \
+# RUN:   mdir %t/cutoff --root %t/root --only tests --printer mdir-opt --forms printed \
+# RUN:   | FileCheck %s --check-prefix=CUTOFF
+# RUN: %python %S/../../scripts/builder-equivalence/check.py record mdir \
+# RUN:   --root %t/root --only tests --printer mdir-opt --output %t/hashes.tsv
+# RUN: %python %S/../../scripts/builder-equivalence/check.py verify mdir \
+# RUN:   --root %t/root --only tests --printer mdir-opt --hashes %t/hashes.tsv \
+# RUN:   | FileCheck %s --check-prefix=SAME
+# RUN: env MDIR_REAL=mdir not %python %S/../../scripts/builder-equivalence/check.py verify \
+# RUN:   %t/cutoff --root %t/root --only tests --printer mdir-opt --hashes %t/hashes.tsv \
+# RUN:   | FileCheck %s --check-prefix=VERIFY
+
+# Two control files: one that builds, and one that stops with an error (an
+# unknown key), whose message is compared as well.
+# SAME: control files: 2
+# SAME-NEXT: cases (control file and target): 4
+# SAME-NEXT: compared: module printed, module raw
+# SAME-NEXT: identical: 4 (of which stop with the same error in both: 2)
+# SAME-NEXT: different: 0
+
+# COMMENT: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module raw
+# COMMENT-NEXT: output: lines removed or added: 1
+# COMMENT: +// a comment
+# COMMENT: DIFFERENT: test/Driver/argon.test:argon.toml [gpu] module raw
+# COMMENT: identical: 2 (of which stop with the same error in both: 2)
+# COMMENT-NEXT: different: 2
+
+# PRINTED: compared: module printed
+# PRINTED-NEXT: identical: 4 (of which stop with the same error in both: 2)
+# PRINTED-NEXT: different: 0
+
+# CUTOFF: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module printed
+# CUTOFF: -{{.*}}cutoff(0.85000000000000008){{.*}}
+# CUTOFF-NEXT: +{{.*}}cutoff(9.000000e-01){{.*}}
+# CUTOFF: DIFFERENT: test/Driver/argon.test:argon.toml [gpu] module printed
+# CUTOFF: different: 2
+
+# VERIFY: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module printed: the output differs from the recorded hash
+# VERIFY-NEXT: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module raw: the output differs from the recorded hash
+# VERIFY: different: 2
+
+#--- argon.test.in
+# R-U-N: cp %S/argon.pdb %t
+#=== argon.toml
+[input]
+coordinates = "argon.pdb"
+
+[energy]
+cutoff            = 8.5
+pairlist_distance = 9.5
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.948
+sigma   = 3.4
+epsilon = 0.238
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.005
+steps      = 10
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 183.0
+
+[boundary]
+type = "PERIODIC"
+box  = [34.7786, 34.7786, 34.7786]
+
+[execution]
+precision = "DOUBLE"
+#=== broken.toml
+[input]
+coordinates = "argon.pdb"
+unknown = 1
+#--- comment
+#!/usr/bin/env python3
+import os, subprocess, sys
+done = subprocess.run([os.environ["MDIR_REAL"], *sys.argv[1:]], capture_output=True)
+sys.stderr.buffer.write(done.stderr)
+sys.stdout.buffer.write(done.stdout + (b"// a comment\n" if done.returncode == 0 else b""))
+sys.exit(done.returncode)
+#--- cutoff
+#!/usr/bin/env python3
+import os, subprocess, sys
+done = subprocess.run([os.environ["MDIR_REAL"], *sys.argv[1:]], capture_output=True)
+sys.stderr.buffer.write(done.stderr)
+sys.stdout.buffer.write(done.stdout.replace(b"cutoff(8.50000000000000089e-01)", b"cutoff(9.0e-01)"))
+sys.exit(done.returncode)
