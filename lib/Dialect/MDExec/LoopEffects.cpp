@@ -130,8 +130,14 @@ LoopEffectSummary mdir::md_exec::summarizeLoop(Operation *op) {
             summary.complete = false;
             continue;
           }
-          if (!isa<MemRefType>(value.getType()) || isLocalTo(op, value))
+          if (isLocalTo(op, value))
             continue;
+          // A non-buffer resource outside the loop has no row or set in this
+          // summary. It cannot establish independence for a later consumer.
+          if (!isa<MemRefType>(value.getType())) {
+            summary.complete = false;
+            continue;
+          }
           bool writes = isa<MemoryEffects::Write, MemoryEffects::Free>(
               effect.getEffect());
           bool declared = llvm::any_of(summary.accesses, [&](const Access &a) {
