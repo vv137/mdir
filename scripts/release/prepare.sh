@@ -19,14 +19,8 @@ git rev-parse -q --verify "refs/tags/v$version" >/dev/null && { echo "v$version 
 
 git fetch -q origin
 git checkout -q -b "release/v$version" origin/main
-sed -i -E "s/^project\(mdir VERSION [0-9]+\.[0-9]+\.[0-9]+/project(mdir VERSION $version/" CMakeLists.txt
-grep -q "project(mdir VERSION $version " CMakeLists.txt || { echo "CMakeLists.txt: version not set" >&2; exit 1; }
-# The package that the Python example declares is the release's (D228).
-sed -i -E "s/\"mdir\[cuda\]==[0-9]+\.[0-9]+\.[0-9]+\"/\"mdir[cuda]==$version\"/" examples/ala3/run.py
-grep -q "\"mdir\[cuda\]==$version\"" examples/ala3/run.py || { echo "examples/ala3/run.py: version not set" >&2; exit 1; }
-python3 scripts/release/changelog.py release "$version" "$date"
-python3 scripts/release/changelog.py check "$version"
-scripts/decision-number.sh check
+# The edits, which check-path.sh also runs on every push to main (#609).
+scripts/release/bump.sh "$version" "$date"
 # The fragments that the release took are removed (changelog.d/, #602).
 git add -A CMakeLists.txt CHANGELOG.md changelog.d examples/ala3/run.py
 git commit -q -m "Release $version: the version and the changelog"

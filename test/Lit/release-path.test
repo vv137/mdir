@@ -1,0 +1,20 @@
+# scripts/release/check-path.sh exercises the release path on a copy of
+# the tree (#609): the edits of prepare.sh with the next version, the move
+# of [Unreleased] and the fragments with its count (one entry, a fragment, and
+# the check's own dummy fragment), the notes of the GitHub
+# Release with absolute links, the links of the moved changelog, and the
+# version of the tree pinned outside comments, here in a FileCheck pattern
+# and in code, which it reports until they match any version.
+# RUN: %python %S/Inputs/release_path.py %S/../.. | FileCheck %s
+# CHECK: release path: 1.4.0 -> 1.5.0, 3 entries moved, 3 in [1.5.0]
+# CHECK-NEXT: release path: notes, {{[0-9]+}} lines, 0 bad link(s)
+# CHECK-NEXT: 0 broken link(s)
+# CHECK-NEXT: release path: 2 use(s) of 1.4.0 outside comments
+# CHECK-DAG: the previous version 1.4.0: lib/Version.cpp:2: const char *v = "1.4.0";
+# CHECK-DAG: the previous version 1.4.0: test/Driver/version.test:3: # CHECK: MDIR 1.4.0
+# CHECK: release path: FAILED
+# CHECK-NOT: test/Driver/version.test:2
+# CHECK: -- after the fix --
+# CHECK: release path: 0 use(s) of 1.4.0 outside comments
+# CHECK-NEXT: release path: ok
+# CHECK: status 1 then 0

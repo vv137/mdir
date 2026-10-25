@@ -2,7 +2,11 @@
 """Release edits of CHANGELOG.md (Keep a Changelog).
 
   changelog.py release VERSION DATE   move [Unreleased] under [VERSION] - DATE
-  changelog.py notes VERSION          print the section of VERSION
+  changelog.py notes VERSION [--absolute TAG]
+                                      print the section of VERSION; with
+                                      --absolute, its relative links point
+                                      into the repository at TAG, as the
+                                      body of a GitHub Release needs (#609)
   changelog.py check VERSION          exit 1 unless VERSION has a dated section
   changelog.py unreleased             print [Unreleased] with the fragments
   changelog.py fragments              exit 1 unless every fragment is well formed
@@ -159,6 +163,25 @@ def release(version, date):
         os.remove(path)
 
 
+REPOSITORY = "https://github.com/vv137/mdir"
+
+
+def absolute(body, tag):
+    """The links of a section of CHANGELOG.md, relative to the root of the
+    repository, made absolute at a tag: a relative link in the body of a
+    GitHub Release would resolve against the page of the release."""
+    def target(path):
+        if re.match(r"^[A-Za-z][A-Za-z0-9+.-]*:", path) or path.startswith("//"):
+            return path
+        if path.startswith("#"):
+            return f"{REPOSITORY}/blob/{tag}/CHANGELOG.md{path}"
+        kind = "tree" if path.rstrip("/").split("#")[0].endswith("/") else "blob"
+        return f"{REPOSITORY}/{kind}/{tag}/{path.lstrip('./')}"
+    body = re.sub(r"(\]\()([^)\s]+)", lambda m: m.group(1) + target(m.group(2)), body)
+    return re.sub(r"(?m)^(\[[^\]]+\]:\s*)(\S+)",
+                  lambda m: m.group(1) + target(m.group(2)), body)
+
+
 def section(version):
     _, sections, _ = split_sections(open(PATH).read())
     for title, body in sections:
@@ -181,10 +204,14 @@ def main():
     command, version = sys.argv[1], sys.argv[2]
     if command == "release" and len(sys.argv) == 4:
         release(version, sys.argv[3])
-    elif command == "notes":
+    elif command == "notes" and len(sys.argv) in (3, 5):
         title, body = section(version)
         if title is None:
             sys.exit(f"CHANGELOG.md: no section for {version}")
+        if len(sys.argv) == 5:
+            if sys.argv[3] != "--absolute":
+                sys.exit(__doc__)
+            body = absolute(body, sys.argv[4])
         print(body.strip())
     elif command == "check":
         title, _ = section(version)

@@ -227,7 +227,7 @@ scripts/paper/build-pdf.sh "$build/paper" > "$log-pdf.log" 2>&1
 cp "$build/paper/main.pdf" "$out/mdir-$version-white-paper.pdf"
 cp "docs/release-notes/$tag.md" "$out/"
 if (( binary )); then
-  python3 scripts/release/changelog.py notes "$version" > "$out/notes.md"
+  python3 scripts/release/changelog.py notes "$version" --absolute "$tag" > "$out/notes.md"
 else
   # The notes are the body of the GitHub Release: a link there is absolute,
   # at the tag.
@@ -238,7 +238,7 @@ else
     echo "[docs/building.md](https://github.com/vv137/mdir/blob/$tag/docs/building.md)"
     echo "describes."
     echo
-    python3 scripts/release/changelog.py notes "$version"
+    python3 scripts/release/changelog.py notes "$version" --absolute "$tag"
   } > "$out/notes.md"
 fi
 if (( container )); then
