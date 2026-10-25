@@ -19,7 +19,7 @@ diagrams, and the white paper of the first milestone is in
 
 | Milestone | Scope | State |
 |---|---|---|
-| M1 | An all-atom protein in water with an Amber force field, on one node, CPU and GPU; at least the rate of pmemd.cuda on every system of the Amber suite | Works today: bonded terms with CMAP and Urey–Bradley angles, Lennard-Jones with the dispersion correction or CHARMM's force switch, particle mesh Ewald, SHAKE and SETTLE, virtual sites, restraints, thermostats and barostats, minimization, in single, mixed, or double precision |
+| M1 | An all-atom protein in water with an Amber force field, on one node, CPU and GPU (the full definition, with its rate target, is in [docs/roadmap.md](docs/roadmap.md)) | Works today: bonded terms with CMAP and Urey–Bradley angles, Lennard-Jones with the dispersion correction or CHARMM's force switch, particle mesh Ewald, SHAKE and SETTLE, virtual sites, restraints, thermostats and barostats, minimization, in single, mixed, or double precision |
 | M2a | The Python API | Works today |
 | M2b | Differentiable simulation | In progress: tunable parameters, their gradient, and a frame evaluator with a PyTorch operation work today; a JAX adapter is planned |
 | M3 | Learned potentials on one GPU | In progress: metatomic (TorchScript) and AOTInductor models through an optional plugin, and PaiNN in neural stages of the IR |
@@ -83,11 +83,11 @@ one RTX 4090 in mixed precision, MDIR runs the nine runs of the suite at
 83.4 ns/day on STMV (1,067,095 atoms, 4 fs) to 2406.1 ns/day on JAC at
 4 fs (23,558 atoms; 1276.8 ns/day at 2 fs) with the searched reaches, and
 at 79.0 to 2311.5 ns/day with the default reaches (white paper,
-Table 10.2); outside its steps it spends 7.9 to 27.9 s of a run (D327). On the CPU, at constant energy on one 16-core node,
-MDIR takes 7.35 to 7.97 times the time per step of GROMACS 2026.3 with
-its NVE-default list at 16 threads, both in mixed precision, on JAC, a
-TIP3P box, and Cellulose; the TIP3P box starts from a different state in
-each engine (D333). Both are in
+Table 10.2); outside its steps it spends 7.9 to 27.9 s of a run (D327).
+On the CPU, at constant energy with a step of 2 fs on
+one 16-core node, MDIR in mixed precision at 16 threads takes 9.3 ms a
+step on JAC, 129.5 ms on a TIP3P water box of about 103k atoms, and 180.3 ms on
+Cellulose (408,609 atoms; white paper, Table 10.8). Both are in
 [Section 10 of the white paper](docs/paper/10-performance.md).
 
 ## Installing
