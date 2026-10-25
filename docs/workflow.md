@@ -332,8 +332,9 @@ manylinux tree: it is neither built nor run, and the assets that the
 GitHub Release attaches are the source archive, the PDF, the release notes
 (`vVERSION.md`), and SHA256SUMS, which lists the other three. The notes of the
 GitHub Release (the file `notes.md` of the assets) then start by saying
-that the release has no binary tarball and link the sections of the README
-that describe the build from the source (Requirements to Building MDIR).
+that the release has no binary tarball and link
+[building.md](building.md) at the tag, which describes the build from the
+source.
 The changelog's Known limitations of that release should say so too. With
 `MDIR_RELEASE_SUITE` and `--no-binary` no GPU is used outside the command.
 

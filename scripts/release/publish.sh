@@ -180,8 +180,8 @@ echo "== build $commit"
 
 if (( suite_command )); then
   # The machine's command runs the suite where its GPUs are (a job of its
-  # scheduler) and returns lit's status; LIT_OPTS reaches it in the
-  # environment.
+  # scheduler) and returns lit's status. The options of a release are its
+  # arguments, since the command may set LIT_OPTS itself.
   read -r -a lit_release_options <<< "$lit_release"
   echo "== suite through $MDIR_RELEASE_SUITE (log $log-check.log)"
   "$MDIR_RELEASE_SUITE" "$build" "${lit_release_options[@]}" > "$log-check.log" 2>&1 \
@@ -234,9 +234,9 @@ else
   {
     echo "**This release has no binary tarball.** Its assets are the source"
     echo "archive, the white paper, the release notes, and SHA256SUMS. Build MDIR"
-    echo "from the source archive as the README describes, from its section"
-    echo "[Requirements](https://github.com/vv137/mdir/blob/$tag/README.md#requirements)"
-    echo "to [Building MDIR](https://github.com/vv137/mdir/blob/$tag/README.md#building-mdir)."
+    echo "from the source archive as"
+    echo "[docs/building.md](https://github.com/vv137/mdir/blob/$tag/docs/building.md)"
+    echo "describes."
     echo
     python3 scripts/release/changelog.py notes "$version"
   } > "$out/notes.md"
