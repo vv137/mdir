@@ -1702,6 +1702,14 @@ format, or the outputs; every such change is listed under **Changed** or
   MDIR, gave 124% to 151%. The headlines of the README and the paper give
   MDIR's own rates and refer to Section 10 for the ratios. Without
   `--suite-protocol`, `bench.py` runs as before.
+- **README as a short entry point** (#589): `README.md` becomes a page of
+  status, quickstart (the `mdir` command and Python), performance,
+  installing, using MDIR, documents by reader, and how to cite. Building
+  from source, the CMake options, the tests, and `mdir-opt` move to the
+  new `docs/building.md` (the maintainer, 2026-10-25), which CONTRIBUTING
+  and the notes of v0.1.0 now link; the sample log of the argon example
+  moves to `docs/driver.md`, Section 2.3, brought up to date. Documentation
+  only.
 
 ### Added
 
