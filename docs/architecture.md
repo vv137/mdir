@@ -6,8 +6,11 @@ replaces revision 5 of the first design (2026-09-29), which described the
 plan of milestone M0. The design's choices are rows of
 [decisions.md](decisions.md) (the C, D, P, A, B, and S series), which keep
 their text; this page says, for each section of that revision, where its
-content is now, and what in it no longer holds. Revision 5 is in the
-history of this file.
+content is now, and what in it no longer holds.
+[Revision 5](https://github.com/vv137/mdir/blob/5f421d1a4b0c1322a2c69de52b2c5504a700ab99/docs/architecture.md)
+is in the history of this file;
+[future-architecture-plan.md](future-architecture-plan.md) cites its
+sections there.
 
 ## Where each section went
 

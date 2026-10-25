@@ -321,11 +321,17 @@ that taught them; this section names them and what each guarantees.
   exists, every site moves onto it unless a measurement shows a loss in
   results, time, or peak memory (#444;
   [device-primitives.md](device-primitives.md)).
-- **Portability.** The device code is generated through MLIR, not linked
-  from vendor libraries of primitives; target capabilities are to come
-  from one target record that both the chooser and the lowering read,
-  with an inventory of what is specific to NVIDIA today (#558; proposed in
-  PR #562, not yet on `main`). Only NVIDIA GPUs are a target today.
+- **Portability** (D340, design with an inventory). A device primitive
+  has one operation and one correctness contract, and only the emission of
+  instructions is specific to a backend. The capabilities of a target
+  (subgroup width, workgroup memory, arithmetic and atomics, accuracy of
+  approximations) are preconditions that the chooser and the lowering both
+  read from one target record, separate from the measured thresholds of
+  its strategies, which cannot change legality. The record and the
+  backend emitters are later work (#558, #433); the inventory of what is
+  specific to NVIDIA today is
+  [device-primitives.md](device-primitives.md#6-portability-one-target-contract-several-implementations),
+  Section 6. Only NVIDIA GPUs are a target today.
 - **Execution contracts** (D334, D338; design, with D337 its first
   implemented part). Provenance, effects, validity, and witnesses have one
   definition across `md`, `dyn`, `md_exec`, and `md_dist`. Invariant
