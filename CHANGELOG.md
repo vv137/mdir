@@ -10,6 +10,14 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Added
+
+- **Execution contract boundary design** (D[execution-contract-boundaries],
+  #574): documents scoped evidence, effect and lifetime queries, numerical
+  legality, and positive and negative acceptance cases across the dialects.
+  This documentation change adds no operation, control key, or runtime
+  behavior.
+
 ### Changed
 
 - **Checkpoints written beside the steps** (D336,

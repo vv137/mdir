@@ -187,6 +187,15 @@ different guarantees. A behavior-preserving refactor keeps lowered IR and
 PTX byte-identical and deterministic results bitwise identical. This design
 adds no operation, plan choice, control key, or runtime behavior.
 
+The [boundary rules](execution-contracts.md#8-contract-records-and-subjects)
+name the exact state a proof depends on and require a new proof after a
+relevant mutation. Initialization, readiness, and contribution completeness
+are separate facts. A token's availability is not copy completion; a copy's
+completion is not release of a host writer's staging buffer. The first
+#567 implementation preserves existing waits while making these
+dependencies verifiable. Collective order and numerical policy are checked
+before a physical plan is selected.
+
 ## Planned work
 
 1. The storage form carries the set of field, loop-reduction scratch, tuple-member, and
