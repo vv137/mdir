@@ -10,6 +10,25 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+### Added
+
+- **The suite checks which tests are unsupported**: `test/expected-unsupported.txt`
+  lists them by lit feature, and a run of the whole suite warns on a test
+  that is unsupported but not listed, or listed but run
+  (`-Dexpected_unsupported=strict` makes it an error) (#608).
+- **An equivalence check of the builder**:
+  `scripts/builder-equivalence/check.py` shows that two builds of `mdir`
+  emit the same program for the examples, the control files of the tests,
+  and the Amber suite
+  ([docs/driver.md](docs/driver.md#211-the-equivalence-check-of-the-builder);
+  #568).
+
+### Changed
+
+- **Tuple coordinate attributes** are accessed through their declared op
+  interface during differentiation; emitted programs and results are
+  unchanged (D343, #612).
+
 ## [0.2.0] - 2026-10-26
 ### Added
 
@@ -168,22 +187,9 @@ format, or the outputs; every such change is listed under **Changed** or
   adopted (#434); and the control-file reference's advice of
   `coulomb_modifier = "POTENTIAL_SHIFT"` at a loose PME tolerance at
   constant energy (#346).
-- **The suite checks which tests are unsupported**: `test/expected-unsupported.txt`
-  lists them by lit feature, and a run of the whole suite warns on a test
-  that is unsupported but not listed, or listed but run
-  (`-Dexpected_unsupported=strict` makes it an error) (#608).
-- **An equivalence check of the builder**:
-  `scripts/builder-equivalence/check.py` shows that two builds of `mdir`
-  emit the same program for the examples, the control files of the tests,
-  and the Amber suite
-  ([docs/driver.md](docs/driver.md#211-the-equivalence-check-of-the-builder);
-  #568).
 
 ### Changed
 
-- **Tuple coordinate attributes** are accessed through their declared op
-  interface during differentiation; emitted programs and results are
-  unchanged (D[tuple-coordinate-attrs], #612).
 - **The default neighbor structure is `neighbor_structure = "AUTO"`**: on
   a GPU outside the deterministic mode, a system of at least 23,000
   particles runs on the groups of 16 with a dual list, about 1.6 to 2
