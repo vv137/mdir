@@ -59,7 +59,7 @@ it (D240, [python-frames.md](python-frames.md)).
 | Milestone | Scope | State |
 |---|---|---|
 | M1 | All-atom systems with Amber, GROMACS, and CHARMM inputs on one node, CPU and GPU; at least the rate of pmemd.cuda on every system of the Amber suite | Done. Under one protocol, the suite's own inputs, steps, and output (D327), on one RTX 4090 in mixed precision, MDIR's rate is 111.7% to 149.5% of pmemd.cuda's with the searched reaches and 105.8% to 143.6% with the default reaches, over the nine runs of the suite; outside its steps MDIR spends 7.9 to 27.9 s of a run, pmemd.cuda 0.6 to 6.9 s ([white paper, Section 10](paper/10-performance.md)) |
-| CPU baseline | The CPU target measured before host strategies are chosen (D333) | Recorded. At constant energy on JAC, a 103k-atom TIP3P box, and Cellulose, on one 16-core node, the ratio of MDIR's time per step to that of GROMACS 2026.3 (both mixed precision, GROMACS's default list) is 12.34, 11.00, and 11.35 at one thread and 7.35, 7.79, and 7.97 at 16 threads; MDIR double against serial pmemd 26 is 6.92, 7.11, and 6.68 ([white paper, Section 10.7](paper/10-performance.md#107-cpu-target-against-cpu-engines)) |
+| CPU baseline | The CPU target measured before host strategies are chosen (D333) | Recorded. At constant energy on JAC, a 103k-atom TIP3P box, and Cellulose, on one 16-core node, the ratio of MDIR's time per step to that of GROMACS 2026.3 (both mixed precision, GROMACS with its NVE-default list) is 12.34, 11.00, and 11.35 at one thread and 7.35, 7.79, and 7.97 at 16 threads; MDIR double against serial pmemd 26 is 6.92, 7.11, and 6.68 ([white paper, Section 10.7](paper/10-performance.md#107-cpu-target-against-cpu-engines)) |
 | M2a | The Python API | Done ([python.md](python.md), Section 4) |
 | M2b | Differentiable simulation | Under way |
 | M3 | Learned potentials on one GPU | In progress |
@@ -74,7 +74,7 @@ flowchart TD
     subgraph FE["Front ends"]
         direction LR
         CF["Control file, TOML<br/>with Amber, GROMACS, CHARMM, or PDB inputs"]
-        PY["Python package mdir<br/>load_amber, System, State, mdir.compile"]
+        PY["Python package mdir<br/>load_amber, System, InitialState, mdir.compile"]
     end
     CF --> MODEL["One model and one IR builder<br/>lib/Driver: Model, Builder"]
     PY --> MODEL
@@ -182,7 +182,7 @@ flowchart LR
     end
     subgraph PYAPI["The Python package mdir"]
         direction TB
-        LOAD["load_amber, load_gromacs, load_charmm<br/>System, State, Integrator, Execution"]
+        LOAD["load_amber, load_gromacs, load_charmm<br/>System, InitialState, Integrator, Ensemble, Execution"]
         COMP["mdir.compile<br/>Program: IR and plan"]
         SIM["Simulation<br/>run, minimize, state"]
         FRM["FrameEvaluator<br/>mdir.torch.evaluate"]
