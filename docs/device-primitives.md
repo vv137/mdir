@@ -169,15 +169,19 @@ this subspace; the lowering does not project an arbitrary complex buffer
 onto it.
 At the semantic level, `md.linear_transform` (D319,
 #502) has the same direction, adjoint, and pairing contract over pure
-static three-dimensional tensor values. It requires a real `f64` grid and
-a `complex<f64>` half-spectrum whose last extent is $K_3/2+1$.
-Its declared transpose creates the opposite transform. The
-semantic-to-execution FFT bridge is #526 (PR #563, in progress); the
-composition of the reciprocal sum from primitives remains #452. Until
-that bridge is merged, the pure operation does not call the host or
-device FFT strategies.
+static three-dimensional tensor values. D[fft-value-buffer] supports matching
+f32/complex<f32> and f64/complex<f64> values and bridges them to owned
+execution buffers. The half-spectrum's last extent is $K_3/2+1$.
+Its declared transpose creates the opposite transform.
 The current `md_exec.reciprocal` template remains in use until #452
 decomposes its semantic `md` counterpart.
+
+The first semantic bridge (PR #563, part of #526) stages device transforms
+through host buffers. Although its IR copies carry dependencies, each staged
+host-device copy currently calls `finish()` and synchronizes both runtime
+streams. Device-resident composition and scoped transfer waits are #580
+under #567. This synchronization is distinct from the FFT call's stream
+ordering and is not reported as overlap.
 
 ### 2.3 Preconditions, and where they are checked
 

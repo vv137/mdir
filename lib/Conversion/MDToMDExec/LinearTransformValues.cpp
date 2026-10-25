@@ -122,8 +122,8 @@ private:
         op.getDirection(), op.getAdjoint(), op.getPairing());
     execute->setAttr("fft.value_bridge", builder.getUnitAttr());
 
-    // Reassemble a fresh tensor in row-major order. The generated value
-    // depends on this transform alone; no unrelated stream is waited on.
+    // Reassemble a fresh tensor in row-major order. Device placement stages
+    // through host memory; its runtime copies currently synchronize streams.
     Value value = tensor::GenerateOp::create(
         builder, loc, outputType, ValueRange(),
         [&](OpBuilder &at, Location where, ValueRange xyz) {

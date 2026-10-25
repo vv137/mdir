@@ -65,7 +65,11 @@ half-spectra use row-major interleaved real and imaginary scalars. Each
 backward input is copied into an owned execution buffer because execution
 may overwrite it; the semantic tensor remains immutable. Bufferization
 and ownership-based deallocation precede optional device placement, which
-copies only this transform's buffers and waits on those transfers. #452
+copies this transform's buffers and waits on those transfers. The GPU path
+stages each tensor through host buffers, and each staged host-device copy
+calls the runtime-wide `finish()`, which synchronizes both runtime streams.
+This is the host-boundary bridge, part of #526. Device-resident composition
+with dependency-scoped waits is #580 under #567; #526 remains open. #452
 still needs semantic spread and gather with their transposes, the
 influence map, and differentiation of their composition. Distributed grid
 transfer can then become a dependency between these primitive stages.

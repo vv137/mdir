@@ -144,7 +144,11 @@ immutable semantic value. The composition with spreading, influence
 mapping, and gathering remains #452. Bufferization and ownership-based
 deallocation establish the lifetimes of the packed host buffers before
 optional device placement adds its own allocation, data-dependent copies,
-and release. The current potential is still `md.reciprocal`.
+and release. The GPU bridge stages through host buffers; each host-device
+copy currently synchronizes both runtime streams through `finish()`.
+Device-resident composition with dependency-scoped waits remains #580
+under #567, so this host-boundary bridge is only part of #526. The current
+potential is still `md.reciprocal`.
 
 The driver computes the moduli $\lvert b_a\rvert^2$ in f64 from the
 recursion of $M_n$ and passes them as a table. Under `influence =
