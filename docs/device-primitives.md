@@ -1058,6 +1058,10 @@ same `emitCombine` in this reduction emitter. Left as it is: the half-warp sum o
 `emitGroupPairKernel` (`MDExecKernels.cpp`), which shuffles a 64-bit value
 with `gpu.shuffle` itself rather than as two halves, so that moving it would
 change the code of double precision.
+The batched body's static row count is retained as the verified
+`md.stage_rows` function attribute through bufferization
+(D[stage-rows-attr], #642). It does not select a different reduction
+strategy or change the tile's numerical order.
 
 The short-row strategy can carry a pure, adjacent pointwise consumer of
 the sum in the same launch; it still stores the sum, preserving the

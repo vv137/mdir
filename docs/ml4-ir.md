@@ -723,6 +723,13 @@ The two products of each directed pair of the gather of Section 4.3 are
 two calls on the same rows. On the CPU the loops of batched stages are
 not lowered: the slots of D277 are found on a device only.
 
+Before a batched body becomes a function of buffers, its first tensor input
+states the leading row count. The `md.stage_rows` i64 attribute retains
+that count on the function through bufferization (D[stage-rows-attr],
+#642). The MD dialect checks its placement and type and compares it with a
+known leading dimension. The stage verifier uses the same named accessor
+for forward/VJP row agreement; lowering keeps the existing tile plan.
+
 ### 8.4 Memory: what is stored
 
 Every product recomputes its forward (a VJP exported from `jax.vjp`
