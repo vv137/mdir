@@ -15,6 +15,9 @@ An attribute carrying semantic meaning is written through a named dialect
 helper or an inherent op accessor and is verified where it is read. A raw
 string attribute name in a pass is not a contract (D345,
 #625).
+The storage-form module declaration is read and changed through a named
+dialect contract, with its type, placement, and cast provenance checked
+(D[typed-storage-marker], #636).
 
 | Case | What was implicit | What the IR states now, or should |
 |---|---|---|

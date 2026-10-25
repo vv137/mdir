@@ -36,6 +36,10 @@ The external-input cast that first asserts a storage set carries the unit
 marker `md_exec.input_set_boundary` (D345, #625).
 Dialect verification restricts the marker to `memref.cast`, checks its value
 and set provenance, and rejects a cast that retags an already known set.
+The unit module marker `md_exec.typed_storage` declares this checked storage
+form (D[typed-storage-marker], #636). Storage assignment marks it through
+the shared helper; loop verifiers query the same helper, and the conversion
+boundary clears it after checking set casts.
 The loop verifier checks each operand against the primitive's particle or
 tuple domain before a strategy is chosen. The common CPU/GPU conversion
 boundary rejects a cast from one set to another, then removes the layout;
