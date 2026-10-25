@@ -115,7 +115,19 @@ Every PR adds its entry to the Unreleased section of
 [CHANGELOG.md](../CHANGELOG.md), under Added, Changed, Fixed, or Removed,
 with its decision label. A change that breaks a control file, a checkpoint,
 or an output of an earlier release says so there, with what a user has to
-do. The entry is part of what the review checks before it labels the PR
+do.
+
+An entry is one or two sentences in a user's terms: what a user can now do,
+or what now behaves differently. It ends with its decision label or number
+and its issue or PR, for example "Checkpoints are written on a thread beside
+the steps (D336, #564)." It is a single `- ` item, with no nested list or
+table. Measurements, alternatives, file names, and the reasoning stay in
+the decision's row of `docs/decisions.md` and in the topic document, which
+the entry may link. Purely internal changes (refactors, test
+infrastructure) are said in a few words, and a release may group them. Each
+subsection (Added, Changed, Fixed, Performance, Validated, Known
+limitations, in the order of `scripts/release/changelog.py`) appears once
+in a section; a new entry goes at the top of its subsection. The entry is part of what the review checks before it labels the PR
 `merge-recommended`. Whether a change counts as breaking, when that is in
 doubt, is a design question for the maintainer: ask it in a PR comment and
 label the PR `needs-decision`.
