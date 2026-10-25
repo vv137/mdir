@@ -1,0 +1,111 @@
+# A pull request adds its changelog entries as a fragment in changelog.d/
+# (#602), and `changelog.py release` takes them after those of
+# [Unreleased], in the order of the fragments' names, keeps the count of
+# #596, and removes the fragments it took; README.md there is not one.
+# A fragment that is not subsections of entries is refused before
+# anything is written.
+# RUN: rm -rf %t && split-file %s %t
+# RUN: cd %t/good && %python %S/../../scripts/release/changelog.py fragments | FileCheck --check-prefix=COUNT %s
+# RUN: cd %t/good && %python %S/../../scripts/release/changelog.py unreleased | FileCheck --check-prefix=PREVIEW --match-full-lines %s
+# RUN: cd %t/good && %python %S/../../scripts/release/changelog.py release 9.9.9 2026-10-27
+# RUN: FileCheck --check-prefix=MOVED --match-full-lines %s < %t/good/CHANGELOG.md
+# RUN: ls %t/good/changelog.d | FileCheck --check-prefix=LEFT --implicit-check-not=label %s
+# RUN: cd %t/bad && not %python %S/../../scripts/release/changelog.py fragments 2>&1 | FileCheck --check-prefix=BAD %s
+# RUN: cd %t/bad && not %python %S/../../scripts/release/changelog.py release 9.9.9 2026-10-27 2>&1 | FileCheck --check-prefix=BAD %s
+# RUN: cmp %t/bad/CHANGELOG.md %t/good-original.md
+# RUN: ls %t/bad/changelog.d | sort | FileCheck --check-prefix=KEPT %s
+
+# COUNT: 2 fragment(s): ok
+
+# PREVIEW: ### Added
+# PREVIEW-EMPTY:
+# PREVIEW-NEXT: - Added in the file.
+# PREVIEW-NEXT: - Added by a.
+# PREVIEW-NEXT: - Added by b,
+# PREVIEW-NEXT:   on two lines.
+# PREVIEW-EMPTY:
+# PREVIEW-NEXT: ### Fixed
+# PREVIEW-EMPTY:
+# PREVIEW-NEXT: - Fixed by a.
+
+# MOVED: ## [Unreleased]
+# MOVED-EMPTY:
+# MOVED-NEXT: ## [9.9.9] - 2026-10-27
+# MOVED-NEXT: ### Added
+# MOVED-EMPTY:
+# MOVED-NEXT: - Added in the file.
+# MOVED-NEXT: - Added by a.
+# MOVED-NEXT: - Added by b,
+# MOVED-NEXT:   on two lines.
+# MOVED-EMPTY:
+# MOVED-NEXT: ### Fixed
+# MOVED-EMPTY:
+# MOVED-NEXT: - Fixed by a.
+# MOVED-EMPTY:
+# MOVED-NEXT: ## [0.1.0] - 2026-10-04
+
+# LEFT: README.md
+
+# BAD: changelog.d/b-label.md: '### Bogus' is not one of Added,
+# KEPT: a-label.md
+# KEPT: b-label.md
+
+#--- good/CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- Added in the file.
+
+## [0.1.0] - 2026-10-04
+
+[Unreleased]: https://github.com/vv137/mdir/compare/v0.1.0...HEAD
+#--- good/changelog.d/README.md
+Not a fragment.
+#--- good/changelog.d/a-label.md
+### Fixed
+
+- Fixed by a.
+
+### Added
+
+- Added by a.
+#--- good/changelog.d/b-label.md
+### Added
+
+- Added by b,
+  on two lines.
+#--- good-original.md
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- Added in the file.
+
+## [0.1.0] - 2026-10-04
+
+[Unreleased]: https://github.com/vv137/mdir/compare/v0.1.0...HEAD
+#--- bad/CHANGELOG.md
+# Changelog
+
+## [Unreleased]
+
+### Added
+
+- Added in the file.
+
+## [0.1.0] - 2026-10-04
+
+[Unreleased]: https://github.com/vv137/mdir/compare/v0.1.0...HEAD
+#--- bad/changelog.d/a-label.md
+### Fixed
+
+- Fixed by a.
+#--- bad/changelog.d/b-label.md
+### Bogus
+
+- An entry.

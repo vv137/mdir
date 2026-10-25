@@ -4,6 +4,16 @@
   changelog.py release VERSION DATE   move [Unreleased] under [VERSION] - DATE
   changelog.py notes VERSION          print the section of VERSION
   changelog.py check VERSION          exit 1 unless VERSION has a dated section
+  changelog.py unreleased             print [Unreleased] with the fragments
+  changelog.py fragments              exit 1 unless every fragment is well formed
+
+A pull request adds its entries as a fragment, changelog.d/<name>.md, and
+does not edit CHANGELOG.md (#602): one or more subsections, `### Added` and
+the like, each with its entries, as they would stand in [Unreleased]. The
+name is the decision's label or the issue, so that two PRs never write the
+same file. `release` takes the entries of [Unreleased] and then those of
+the fragments, in the order of their names, and removes the fragments it
+took; changelog.d/README.md says this and is not a fragment.
 
 `release` merges the entries of [Unreleased] into an existing
 "[VERSION] - unreleased" section subsection by subsection (Added, Changed,
@@ -18,6 +28,7 @@ import re
 import sys
 
 PATH = "CHANGELOG.md"
+FRAGMENTS = "changelog.d"
 ORDER = ["Added", "Changed", "Deprecated", "Removed", "Fixed", "Security",
          "Validated", "Performance", "Known limitations"]
 
@@ -54,6 +65,38 @@ def subsections(body):
     return intro, subs
 
 
+def fragments():
+    """The fragments, in the order of their names: (path, text). A fragment
+    is subsections of entries, with nothing before its first subsection."""
+    import os
+    if not os.path.isdir(FRAGMENTS):
+        return []
+    found, errors = [], []
+    for name in sorted(os.listdir(FRAGMENTS)):
+        if not name.endswith(".md") or name == "README.md":
+            continue
+        path = os.path.join(FRAGMENTS, name)
+        text = open(path).read()
+        intro, subs = subsections(text)
+        if intro.strip() or not subs:
+            errors.append(f"{path}: not one or more '### <subsection>' with entries")
+        for sub, entries in subs.items():
+            if sub not in ORDER:
+                errors.append(f"{path}: '### {sub}' is not one of {', '.join(ORDER)}")
+            if not count_entries(entries):
+                errors.append(f"{path}: '### {sub}' has no entry ('- ')")
+        found.append((path, text))
+    if errors:
+        sys.exit("\n".join(errors))
+    return found
+
+
+def unreleased_body(body):
+    """[Unreleased] with the entries of the fragments after its own."""
+    return body.rstrip("\n") + "\n\n" + "".join(
+        text.strip("\n") + "\n\n" for _, text in fragments())
+
+
 def count_entries(body):
     """The top-level entries ('- ' at the start of a line) of a section."""
     return len(re.findall(r"(?m)^- ", body))
@@ -77,6 +120,8 @@ def release(version, date):
     if any(t.startswith(f"## [{version}] - ") and not t.endswith("unreleased")
            for t in titles):
         sys.exit(f"CHANGELOG.md: {version} is already released")
+    taken = fragments()
+    sections[0][1] = unreleased_body(sections[0][1])
     found = count_entries(sections[0][1])
     _, new = subsections(sections[0][1])
     if not any(v.strip() for v in new.values()):
@@ -109,6 +154,9 @@ def release(version, date):
     out = head + "".join(t + "\n" + b if not b.startswith("\n") else t + b
                          for t, b in sections) + tail
     open(PATH, "w").write(re.sub(r"\n{3,}", "\n\n", out))
+    import os
+    for path, _ in taken:
+        os.remove(path)
 
 
 def section(version):
@@ -120,6 +168,14 @@ def section(version):
 
 
 def main():
+    if len(sys.argv) == 2 and sys.argv[1] == "unreleased":
+        _, sections, _ = split_sections(open(PATH).read())
+        _, subs = subsections(unreleased_body(sections[0][1]))
+        print(join_subsections("", subs).strip())
+        return
+    if len(sys.argv) == 2 and sys.argv[1] == "fragments":
+        print(f"{len(fragments())} fragment(s): ok")
+        return
     if len(sys.argv) < 3:
         sys.exit(__doc__)
     command, version = sys.argv[1], sys.argv[2]

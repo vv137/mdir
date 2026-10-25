@@ -44,7 +44,7 @@ schedule also passes the short runs of the Amber suite
   the test fails now and then, whatever the code it tests (#427, #428).
 - **A switch and a comparison** for an optimization: it can be turned off,
   and a test compares both ways, bitwise where the sums have a fixed order.
-- **A decision** in [docs/decisions.md](docs/decisions.md) for a choice
+- **A decision**, a file `docs/decisions/<label>.md` that [docs/decisions.md](docs/decisions.md) lists (#602), for a choice
   that changes a method, a structure, or a default: what, why, and the
   measurements before and after. A branch names its decision by a label,
   `D[<label>]` (lowercase letters, digits, and dashes), wherever it would

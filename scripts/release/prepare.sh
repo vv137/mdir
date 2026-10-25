@@ -27,7 +27,8 @@ grep -q "\"mdir\[cuda\]==$version\"" examples/ala3/run.py || { echo "examples/al
 python3 scripts/release/changelog.py release "$version" "$date"
 python3 scripts/release/changelog.py check "$version"
 scripts/decision-number.sh check
-git add CMakeLists.txt CHANGELOG.md examples/ala3/run.py
+# The fragments that the release took are removed (changelog.d/, #602).
+git add -A CMakeLists.txt CHANGELOG.md changelog.d examples/ala3/run.py
 git commit -q -m "Release $version: the version and the changelog"
 git push -q -u origin "release/v$version"
 gh pr create --draft --base main --head "release/v$version" \

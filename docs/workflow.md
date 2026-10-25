@@ -111,24 +111,25 @@ The description states:
   affect it;
 - what is left open.
 
-Every PR adds its entry to the Unreleased section of
-[CHANGELOG.md](../CHANGELOG.md), under Added, Changed, Fixed, or Removed,
-with its decision label. A change that breaks a control file, a checkpoint,
-or an output of an earlier release says so there, with what a user has to
-do.
+Every PR adds its changelog entry as a fragment,
+`changelog.d/<label>.md` (or `changelog.d/<issue>-<word>.md` without a
+decision), under Added, Changed, Fixed, or Removed, with its decision label
+([changelog.d/README.md](../changelog.d/README.md), #602). It does not edit
+[CHANGELOG.md](../CHANGELOG.md): a release moves the fragments into its
+section. A change that breaks a control file, a checkpoint, or an output of
+an earlier release says so there, with what a user has to do.
 
 An entry is one or two sentences in a user's terms: what a user can now do,
 or what now behaves differently. It ends with its decision label or number
 and its issue or PR, for example "Checkpoints are written on a thread beside
 the steps (D336, #564)." It is a single `- ` item, with no nested list or
 table. Measurements, alternatives, file names, and the reasoning stay in
-the decision's row of `docs/decisions.md` and in the topic document, which
+the decision's file in `docs/decisions/` and in the topic document, which
 the entry may link. Purely internal changes (refactors, test
 infrastructure) are said in a few words, and a release may group them. Each
 subsection (Added, Changed, Removed, Fixed, Validated, Performance, Known
 limitations, in the order of `scripts/release/changelog.py`) appears once
-in a section; a PR adds its entry to the existing subsection rather than
-opening a second one. The entry is part of what the review checks before it labels the PR
+in a section; a release joins the fragments' subsections of one name. The entry is part of what the review checks before it labels the PR
 `merge-recommended`. Whether a change counts as breaking, when that is in
 doubt, is a design question for the maintainer: ask it in a PR comment and
 label the PR `needs-decision`.
@@ -148,16 +149,31 @@ in the repository; paths in the repository are fine.
 
 A branch does not take a decision number. It writes its decision as a
 label, `D[<label>]` (lowercase letters, digits, and dashes), wherever the
-number would go: in the row it adds at the end of the table in
-[decisions.md](decisions.md), in comments, in the documents, and in the
-paper. Several decisions of one branch take several labels. At merge time
-the coordinator runs `scripts/decision-number.sh assign <label>`, which
-gives the next free number and rewrites Markdown links to headings whose
+number would go: in comments, in the documents, in the paper, and in the
+file it adds for the decision, `docs/decisions/<label>.md` (#602):
+
+```md
+# D[<label>]
+
+Recorded at its merge.
+
+**The statement, in one sentence.** The full text: what, why, the
+alternatives, and the measurements before and after.
+```
+
+The branch does not edit the table of [decisions.md](decisions.md), which
+`scripts/decisions-table.py` writes from the files: the number, the
+statement (the bold sentence that begins the text), and the date. Several
+decisions of one branch take several labels and files. At merge time the
+coordinator runs `scripts/decision-number.sh assign <label>`, which gives
+the next free number, renames the file `docs/decisions/Dnnn.md` with the
+date, writes the table, and rewrites Markdown links to headings whose
 anchors change with the number, including duplicate-heading suffixes.
 `scripts/decision-number.sh check` also reports stale decision-label anchors
 that no heading defines. `scripts/decision-number.sh check --pending`
-runs on every push to `main`: it refuses a number given twice and a label
-without its row in decisions.md, and lists the labels still waiting for
+runs on every push to `main`: it refuses a table that is not that of the
+files, a decision written as a row of decisions.md, and a label without its
+file, and lists the labels still waiting for
 their numbers, since a merge reaches `main` before the commit that numbers
 it. A tag runs the strict `scripts/decision-number.sh check`, which also
 refuses any label left without a number. Numbers therefore follow the
@@ -229,10 +245,9 @@ an author does not rebase each time `main` moves:
 - The author rebases only when the train cannot merge the PR without
   resolving a conflict in prose or code. Those conflicts are always
   resolved by the author, who knows what both sides mean; the coordinator
-  asks with the label `changes-requested`. A conflict limited to the rows
-  that every PR adds at the end of `docs/decisions.md` and `CHANGELOG.md`
-  is not a reason to rebase: the train keeps both rows, in the order of the
-  merges.
+  asks with the label `changes-requested`. A PR adds its decision and its
+  changelog entry as files of its own (`docs/decisions/<label>.md`,
+  `changelog.d/<label>.md`, #602), so two PRs do not conflict over them.
 - The author also rebases when the train removes the PR because the
   combination failed (see [Merging](#merging)), and when the PR depends on
   something that `main` gained.
@@ -251,7 +266,7 @@ scripts that nothing else runs:
   `main` gained in between. A head whose own new commits change only
   documentation does not qualify when `main` gained anything else.
 - **Documentation.** Documentation means files under `docs/` (the white
-  paper included), `README.md`, and `CHANGELOG.md`. Code comments and
+  paper included), `README.md`, `CHANGELOG.md`, and `changelog.d/`. Code comments and
   TableGen descriptions do not count, because they are compiled; nor do
   tests and their inputs and comments, which FileCheck and the tests read;
   nor `examples/`, some of which tests run; nor generated templates and
@@ -296,14 +311,16 @@ for the next.
 
 1. Branch `train-<date>-<hour>` from `origin/main`.
 2. Merge the approved PRs one after another with `--no-ff`, in the order of
-   their approval. A conflict limited to the rows at the end of
-   `docs/decisions.md` and `CHANGELOG.md` is resolved by keeping both rows,
-   in the order of the merges. Any other conflict leaves that PR out of the
-   train: the coordinator labels it `changes-requested` and asks its author
-   to rebase.
+   their approval. Decisions and changelog entries are files of their own
+   (#602), so there are no rows to join: any conflict leaves that PR out of
+   the train, and the coordinator labels it `changes-requested` and asks
+   its author to rebase. (A PR made before #602 that still adds a row to
+   `docs/decisions.md` or an entry to `CHANGELOG.md` is asked to move them
+   into files.)
 3. Assign the decision numbers and run `scripts/decision-number.sh check`.
    The numbering commit changes labels into numbers, in the text and in the
-   anchors of links to headings that held them, and nothing else; the
+   anchors of links to headings that held them, renames the decisions'
+   files with their dates, and writes the table, and nothing else; the
    coordinator checks that its diff is limited to that.
 4. Build the combined head and run the full suite on a GPU (two D309 shards
    where the scheduler allows), and the compute-sanitizer tier when a PR of
@@ -327,8 +344,9 @@ A release is two steps, scripted so that nothing is done by hand
 
 1. `scripts/release/prepare.sh VERSION` opens the release PR: it sets
    `project(mdir VERSION ...)` in `CMakeLists.txt` and moves the
-   changelog's [Unreleased] under [VERSION] and the date with
-   `scripts/release/changelog.py release`, which joins the blocks of a
+   changelog's [Unreleased], with the fragments of `changelog.d/`, under
+   [VERSION] and the date with `scripts/release/changelog.py release`,
+   which removes the fragments it took, joins the blocks of a
    subsection that [Unreleased] repeats in file order and stops before it
    writes unless the new section holds every top-level entry
    (`test/Lit/changelog-release.test`; before #596 it kept only the last
