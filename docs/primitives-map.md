@@ -228,7 +228,7 @@ It also records the proposed `CompilationPlan` and the responsibility split
 of `MDExecToGPU.cpp`; those are implementation boundaries, not additions to
 the semantic primitive map.
 The map's semantic primitives and their transposes do not change with the
-backend (D[device-portability-inventory]).
+backend (D340).
 
 Each row is one part of MDIR, with five columns:
 

@@ -1,6 +1,6 @@
 // The emitters of the privatized scatter-accumulate on a device
 // (D291, docs/device-primitives.md, Section 2.6).
-// Portability: docs/device-primitives.md, Section 6 (D[device-portability-inventory]).
+// Portability: docs/device-primitives.md, Section 6 (D340).
 //
 // A site that adds values into destinations at indices that the threads of
 // a block share emits its kernel and calls these to give the block a copy of

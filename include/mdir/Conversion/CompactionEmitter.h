@@ -1,6 +1,6 @@
 // The emitters of compaction, scans, and counting sorts on a device
 // (D296, docs/device-primitives.md, Section 4).
-// Portability: docs/device-primitives.md, Section 6 (D[device-portability-inventory]).
+// Portability: docs/device-primitives.md, Section 6 (D340).
 //
 // A compaction keeps the items whose predicate holds and packs them in their
 // order: item i goes to place r(i), the number of kept items before it. At

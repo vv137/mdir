@@ -49,7 +49,7 @@ map. The lifetime-based planner is a separate follow-up.
 | Compaction, scans, and counting sorts as shared emitters (Section 4) | `WarpScan` over flags (a ballot), `WarpScanShfl`, `BlockScan` (`BLOCK_SCAN_WARP_SCANS`); the scans of counting sorts | #432 | Built, behavior-neutral: one emitter for each, which the lowering calls and the templates call by name; every site of #432's inventory moved, with the same PTX | D296 |
 | Ragged rows: a relation in compressed rows, its accessor, and its build from the row of each item (Section 4.7) | none (a CSR matrix [[Saad2003]](references.md#saad2003), built with the counting sort above) | #471 | Built; its first user is the incidence structure of the tuples | D314 |
 | L2 access policy window: persisting lines for the buffers a step reads again (Section 3) | none: the CUDA programming guide's L2 cache control [[CUDAGuideL2]](references.md#cudaguidel2) | #434 | Measured, not adopted: no gain on either device, up to 14% slower on the RTX 4090 | — |
-| Target boundary and portability inventory (Section 6) | target dispatch policies and backend-specific implementations | #558, #433, #444 | Inventory and contract recorded; emitter migration and target record are pending | D[device-portability-inventory] |
+| Target boundary and portability inventory (Section 6) | target dispatch policies and backend-specific implementations | #558, #433, #444 | Inventory and contract recorded; emitter migration and target record are pending | D340 |
 
 The order follows #415: #421 first, then #419 on the gathering of PME,
 then #417 and #422 for the deterministic mode, and #418 and #420 where
@@ -1135,7 +1135,7 @@ each only on a measured gain, `main` and the branch in one job:
 
 ## 6. Portability: one target contract, several implementations
 
-D[device-portability-inventory] records the first stage of #558. This is an
+D340 records the first stage of #558. This is an
 inventory and an interface rule, not a new backend or a changed lowering.
 It covers explicit NVVM operations and attributes in `lib/` at the current
 head. It also records other NVIDIA-specific instructions that an inventory

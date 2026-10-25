@@ -1,7 +1,7 @@
 // The emitters of reductions on a device: the butterfly of a warp and the
 // reduction of a block (D301, docs/device-primitives.md,
 // Section 5).
-// Portability: docs/device-primitives.md, Section 6 (D[device-portability-inventory]).
+// Portability: docs/device-primitives.md, Section 6 (D340).
 //
 // A warp combines a value of each lane by a butterfly of `shuffle xor`:
 // at offsets 16, 8, 4, 2, 1 each lane combines its value with that of the

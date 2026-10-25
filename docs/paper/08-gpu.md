@@ -556,7 +556,7 @@ A data-parallel primitive has the same mathematical meaning on every
 target, but its implementation may need a subgroup of a particular width,
 an atomic operation of a particular type and scope, enough workgroup
 memory, or a specified approximation error. The first portability
-inventory (D[device-portability-inventory], #558) separates these
+inventory (D340, #558) separates these
 correctness requirements from the measured thresholds that choose among
 legal strategies (#433). One target description supplies both: a
 capability record for preconditions and a policy record for thresholds.

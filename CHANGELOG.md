@@ -42,7 +42,7 @@ format, or the outputs; every such change is listed under **Changed** or
   preserves memory capacity. The model key is included in checkpoint
   fingerprints; file formats and overwrite behavior are unchanged.
 - **Large water-box GRO files keep fixed-width residue fields**
-  (D[water-box-gro-residue], #550): `scripts/mlip/water-box.py` wraps the
+  (D339, #550): `scripts/mlip/water-box.py` wraps the
   five-column residue number after 99,999, as it already does the atom
   number. No control key or overwrite behavior changes.
 - **Faster GROMACS coordinate input** (D323, #525): finite
@@ -70,7 +70,7 @@ format, or the outputs; every such change is listed under **Changed** or
   CPU/GPU conversion rejects cross-set casts before removing the layout.
   No control key, output format, overwrite rule, or generated address
   calculation changes.
-- **Device portability inventory** (D[device-portability-inventory], #558):
+- **Device portability inventory** (D340, #558):
   documented explicit NVVM operations, PTX assembly, generic GPU operations,
   emitter ownership, and the target capability and measured-policy contract.
   No control-file key, file format, overwrite behavior, generated code, or
