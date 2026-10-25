@@ -251,6 +251,19 @@ the cluster.
   the same image in one go on a machine that can. A change of the LLVM
   version or of the Dockerfile thus makes a new tag, which the next run of
   `ci-image.yml` builds before `ci.yml` can take it.
+- **The image by hand** (`scripts/ci/build-image.sh`): on a machine with
+  Docker, the stage `ci` builds LLVM in one go, in about an hour with 16 to
+  32 jobs, against several hours of the hosted parts. Use it after a change
+  of the LLVM version, the Dockerfile, or the two build scripts (a new
+  tag), or whenever the hosted build is too slow:
+  `scripts/ci/build-image.sh --push` clones `BRANCH` (default `main`), builds
+  the image with the tag that `ci-image.yml` and `ci.yml` compute, and
+  pushes it to GHCR with the token of `gh`, which needs the scope
+  `write:packages`; `--source DIR` builds a tree as it is, and
+  `--dry-run --source DIR` prints the tag and the command without Docker.
+  `WORK` (default `/var/tmp/$USER`), `JOBS`, `LINK_JOBS`, `COMMIT`, and
+  `MIN_FREE_GB` adapt it to the machine. `ci-image.yml` then finds the tag
+  present and builds nothing.
 
 ## Performance
 

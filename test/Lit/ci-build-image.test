@@ -1,0 +1,12 @@
+# scripts/ci/build-image.sh builds the image of CI on a machine with Docker
+# (#611). Its dry run, which needs no Docker, prints the tag that
+# ci-image.yml and ci.yml compute, and the command of the build; a wrong
+# option is refused.
+# RUN: %python %S/Inputs/ci_build_image.py %S/../.. | FileCheck %s
+# CHECK: image: ghcr.io/vv137/mdir-ci:llvm-23.1.2-{{[0-9a-f]{16}}}
+# CHECK-NEXT: build: docker build -f packaging/Dockerfile --target ci --build-arg JOBS=16 --build-arg LINK_JOBS=4 -t ghcr.io/vv137/mdir-ci:llvm-23.1.2-{{[0-9a-f]{16}}} .
+# CHECK-NEXT: push: docker push ghcr.io/vv137/mdir-ci:llvm-23.1.2-
+# CHECK-NEXT: the tag of ci-image.yml: yes
+# CHECK-NEXT: --bogus: status 2, usage:
+# CHECK-NEXT: --source: status 2, usage:
+# CHECK-NEXT: --dry-run: status 2, --dry-run takes --source DIR
