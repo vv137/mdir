@@ -263,7 +263,10 @@ the cluster.
   `--dry-run --source DIR` prints the tag and the command without Docker.
   `WORK` (default `/var/tmp/$USER`), `JOBS`, `LINK_JOBS`, `COMMIT`, and
   `MIN_FREE_GB` adapt it to the machine. `ci-image.yml` then finds the tag
-  present and builds nothing.
+  present and builds nothing. Pushing publishes, so only the maintainer
+  runs `--push`, and only the maintainer starts a run of `ci-image.yml`,
+  which pushes; a contributor builds without it, or stops before it, and
+  reports the command (the maintainer, 2026-10-26).
 
 ## Performance
 
