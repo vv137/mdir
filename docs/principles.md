@@ -170,6 +170,10 @@ change during a run belongs in SSA values and explicit operands: positions,
 cell, ownership epoch, and transfer completion. A witness is an SSA result
 of a check and is valid only for the state from which that check made it.
 The consumer and its lowering check that the witness names their state.
+An attribute that gives an operation semantic meaning is declared on that
+operation or accessed through a named, verified dialect helper. Passes do
+not read or write such an attribute by a string name outside its dialect;
+the op verifier checks that the value satisfies the declared contract.
 
 A required condition is either proved or established by a sound runtime
 guard with a legal recovery. If it remains unknown, the path is not executed

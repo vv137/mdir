@@ -140,6 +140,13 @@ arity 3 of the positions rather than of the topology (D160).
 coordinates, such as the angle of three particles and the distance of the
 two outer ones.
 
+The coordinate kinds and member places are inherent, typed attributes of
+`md.sum_tuples`, `md.gather_tuples`, and `md_exec.tuple_for`. Their verifiers
+check the member count, arity, and distinct places. Differentiation reads
+and extends them through the tuple ops' declared accessors
+(D[tuple-coordinate-attrs]); the generated tuple kernel and its signature
+remain unchanged.
+
 The result of `md.sum_tuples` is a sum (`f64` or a vector of `f64`), or an
 `i1` that tells whether the kernel yields true for some tuple.
 `md.gather_tuples` may have a second result, an `i1` of the same meaning,

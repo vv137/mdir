@@ -87,6 +87,20 @@ md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
 
 md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
                %b: !md.relation<@atoms, 2, unordered, @bonds>) -> f64 {
+  // expected-error@+1 {{expected at least 1 coordinate}}
+  %u = md.sum_tuples %b, %x, %cell coordinates() {
+  ^bb0:
+    %zero = arith.constant 0.0 : f64
+    md.yield %zero : f64
+  } : !md.relation<@atoms, 2, unordered, @bonds>, !md.field<@atoms, 3 x f64>
+      -> f64
+  md.return %u : f64
+}
+
+// -----
+
+md.function @f(%x: !md.field<@atoms, 3 x f64>, %cell: !md.cell,
+               %b: !md.relation<@atoms, 2, unordered, @bonds>) -> f64 {
   // expected-error@+1 {{'distance' names member 2, but a tuple has the members 0 to 1}}
   %u = md.sum_tuples %b, %x, %cell coordinates(distance(0, 2)) {
   ^bb0(%r: f64):

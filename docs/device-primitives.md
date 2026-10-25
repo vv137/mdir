@@ -13,6 +13,10 @@ and the properties the part relies on, is in
 [primitives-map.md](primitives-map.md) (D292); this document
 describes how a device implements a primitive.
 
+Tuple coordinates remain declared and verified on the tuple operations
+(D[tuple-coordinate-attrs]); this compiler attribute cleanup leaves every
+device primitive and its generated code unchanged.
+
 The shared [execution contract](execution-contracts.md) (#574) establishes
 legality before a device strategy is chosen by cost. Its provenance, effect,
 validity, and witness rules apply to the chooser and the lowering alike;

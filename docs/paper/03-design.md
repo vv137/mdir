@@ -254,6 +254,11 @@ takes the form of [[Blondel1996]](references.md#blondel1996), which has no singu
 of its particles are in line. A kernel computes a coordinate and its
 derivative with the same ops, so the elimination of common
 subexpressions leaves one of each norm and product.
+The kinds and member places of these coordinates are inherent attributes
+of the tuple operations, checked against tuple arity and accessed through
+their typed operation interface in differentiation
+(D[tuple-coordinate-attrs]). Their numerical definition and kernel order
+do not change.
 
 **Parameters.** `derivative(n)` requests $\partial U/\partial p_n$ for a
 scalar argument, by the same rules. The reciprocal sum of Ewald returns
