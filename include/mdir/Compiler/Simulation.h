@@ -12,6 +12,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <tuple>
@@ -210,14 +211,29 @@ public:
   llvm::Expected<SimulationState> getState() const;
 
   /// The tunable parameters of the program (D213,
-  /// docs/python-tunable.md), their values, the version of the values (0
-  /// at the creation, one more for each update), and for each version the
-  /// step after which it holds.
+  /// docs/python-tunable.md).
   const model::TunableSet &getTunables() const { return prepared.tunables; }
-  const std::vector<std::vector<double>> &getTunableValues() const {
-    return tunableValues;
-  }
-  int64_t getTunablesVersion() const { return tunablesVersion; }
+  /// Their values, the version of the values (0 at the creation, one more
+  /// for each update), and for each version the step after which it holds,
+  /// as one snapshot (#621). It is what the last update, commit, or
+  /// continuation that succeeded published, under a lock of its own: a
+  /// reader on another thread, while an operation without the GIL changes
+  /// the values, sees those of before or those of after with their version
+  /// and history, never a vector that is being replaced, nor the values of
+  /// an update with the version of before.
+  struct TunableSnapshot {
+    std::vector<std::vector<double>> values;
+    int64_t version = 0;
+    std::vector<std::pair<int64_t, int64_t>> history;
+  };
+  TunableSnapshot getTunableSnapshot() const;
+  /// For the tests of interleavings (#621): when set, called at the named
+  /// points of an operation, on its thread and without the GIL, so that a
+  /// test may run another thread's access there. "tunables": an update has
+  /// built and evaluated its new values and not yet published them;
+  /// "hand-off": a hand-off of the buffers to a stream of a consumer
+  /// begins. Empty, and not called, otherwise.
+  std::function<void(const char *)> pausePoint;
   /// The module that the builder emitted for the program of this
   /// simulation, as `mdir emit` prints that of a run: for the tests of
   /// what the builder emits (#302).
@@ -285,9 +301,6 @@ public:
   /// without a copy, as a write of the entry would: for the test of the
   /// check of MDRT_CHECK_KEPT_TUPLES. False without an activation.
   bool spoilStartArgument();
-  const std::vector<std::pair<int64_t, int64_t>> &getTunablesHistory() const {
-    return tunablesHistory;
-  }
   /// Gives the tunables named in `changes` the values given, at once: the
   /// values of the program are built anew from the model with them, which
   /// must give the program compiled (a structural change is refused), and
@@ -707,6 +720,12 @@ private:
   /// written or freed.
   void waitForConsumers();
   mutable std::atomic<bool> busy{false};
+  /// The tunables as the readers see them (getTunableSnapshot), and the
+  /// lock of the copy; publishTunables copies the values, version, and
+  /// history of the program there once an operation has succeeded.
+  mutable std::mutex tunablesMutex;
+  TunableSnapshot publishedTunables;
+  void publishTunables();
 };
 
 } }

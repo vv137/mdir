@@ -1,0 +1,9 @@
+# REQUIRES: python-api
+# An update of the tunables, stopped where it runs without the GIL after it
+# has replaced the values of the program and before it publishes them: the
+# readers of another thread see one snapshot of before (#621,
+# Inputs/python_races.py). The interleaving is forced once, not repeated.
+# RUN: %mdir_python %S/Inputs/python_races.py %S/Inputs/dipeptide CPU tunables | FileCheck %s
+# CHECK: during the update: the values, version 0, and history of before
+# CHECK-NEXT: after the update: its values, version 1, history [(0, 0), (2, 1)]
+# CHECK-NEXT: races tunables passed

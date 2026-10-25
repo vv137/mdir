@@ -48,9 +48,17 @@ namespace views {
 /// thread, with or without the GIL.
 struct Lease {
   std::shared_ptr<compiler::Simulation> simulation;
+  /// Adopts a lease that the simulation already took (takeView, takeBorrow).
   explicit Lease(std::shared_ptr<compiler::Simulation> s) : simulation(std::move(s)) {}
   Lease(const Lease &) = delete;
   ~Lease() { simulation->releaseLease(); }
+  /// Takes a lease of its own, while the caller holds the GIL and a lease
+  /// that is alive (#621): from then on the buffers are this one's to keep,
+  /// whatever another thread releases.
+  static std::unique_ptr<Lease> take(std::shared_ptr<compiler::Simulation> s) {
+    s->acquireLease();
+    return std::make_unique<Lease>(std::move(s));
+  }
 };
 
 /// What a View and its Buffers share: the view's own lease, until release().
@@ -148,6 +156,12 @@ static py::object exportBuffer(const Buffer &b, py::object stream, py::object ma
                              "); a view does not copy to another");
   }
   compiler::Simulation &sim = *b.state->simulation;
+  // The export's own lease, taken while the GIL is held and the lease of
+  // the view or borrow is alive, before the GIL is released for the
+  // hand-off (#621): another thread's View.release() in that window then
+  // leaves the buffers leased, and a mutation is refused. The lease moves
+  // into the capsule, and is released if the export fails.
+  std::unique_ptr<Lease> lease = Lease::take(b.state->simulation);
   if (b.device.type == dlpack::CUDA) {
     int64_t s = stream.is_none() ? 1 : py::cast<int64_t>(stream);
     if (s == 0)
@@ -169,8 +183,6 @@ static py::object exportBuffer(const Buffer &b, py::object stream, py::object ma
     auto v = py::cast<std::pair<int, int>>(maxVersion);
     versioned = v.first >= 1;
   }
-  sim.acquireLease();
-  auto lease = std::make_unique<Lease>(b.state->simulation);
   // A tensor handed out for writing cannot be told from one written.
   if (b.field) sim.markWritten(b.field);
   if (versioned) {
@@ -240,14 +252,20 @@ inline View take(std::shared_ptr<compiler::Simulation> simulation) {
   view.velocities = make(v.velocities, {n, 3}, stateType, device, "velocities");
   view.forces = make(v.forces, {n, 3}, forceType, device, "forces");
   view.ids = make(v.ids, {n}, {dlpack::Int, 32, 1}, device, "ids");
-  // The values of the tunables, which an update (refused while the lease
-  // is alive) replaces.
+  // The values of the tunables, from their snapshot (#621), in memory of
+  // the view that an exported tensor of them keeps; an update is refused
+  // while the lease is alive, so they are those of the program.
   const auto &set = simulation->getTunables();
-  const auto &values = simulation->getTunableValues();
-  for (size_t k = 0; k != set.tunables.size(); ++k)
-    view.tunables.emplace_back(set.tunables[k].name,
-        make(values[k].data(), {static_cast<int64_t>(values[k].size())},
-             {dlpack::Float, 64, 1}, {dlpack::CPU, 0}, "tunables['" + set.tunables[k].name + "']"));
+  state->staging = std::make_shared<Staging>();
+  state->staging->tunables = simulation->getTunableSnapshot().values;
+  const auto &values = state->staging->tunables;
+  for (size_t k = 0; k != set.tunables.size(); ++k) {
+    Buffer b = make(values[k].data(), {static_cast<int64_t>(values[k].size())},
+                    {dlpack::Float, 64, 1}, {dlpack::CPU, 0},
+                    "tunables['" + set.tunables[k].name + "']");
+    b.staging = state->staging;
+    view.tunables.emplace_back(set.tunables[k].name, std::move(b));
+  }
   return view;
 }
 
@@ -273,7 +291,7 @@ inline Borrow borrow(std::shared_ptr<compiler::Simulation> simulation) {
   state->lease = std::move(lease);
   state->staging = std::make_shared<Staging>();
   state->staging->cell = simulation->getCell();
-  state->staging->tunables = simulation->getTunableValues();
+  state->staging->tunables = simulation->getTunableSnapshot().values;
   Staging &staging = *state->staging;
   dlpack::Device device{v.onDevice ? dlpack::CUDA : dlpack::CPU, v.onDevice ? v.device : 0};
   auto make = [&](const void *data, std::vector<int64_t> shape, dlpack::DataType dtype,
@@ -329,7 +347,7 @@ inline std::optional<std::array<double, 6>> writtenCell(const Borrow &b) {
 }
 inline std::vector<std::pair<std::string, std::vector<double>>> writtenTunables(const Borrow &b) {
   std::vector<std::pair<std::string, std::vector<double>>> changes;
-  const auto &now = b.state->simulation->getTunableValues();
+  const auto now = b.state->simulation->getTunableSnapshot().values;
   for (size_t k = 0; k != b.tunables.size(); ++k) {
     const auto &mine = b.state->staging->tunables[k];
     if (std::memcmp(now[k].data(), mine.data(), mine.size() * sizeof(double)) != 0)
