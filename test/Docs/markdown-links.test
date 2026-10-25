@@ -10,7 +10,8 @@
 # The checker itself, on a small tree: a missing file, a missing heading,
 # a link that misses a directory, and a reference definition are reported;
 # links in fenced code and code spans, numbered duplicate headings, headings
-# with code, HTML anchors, and docs/diagrams/ are not.
+# with code, HTML anchors, docs/diagrams/, and the links of a changelog
+# fragment, read from the root as those of CHANGELOG.md (changelog.d/), are not.
 #
 # RUN: not %python %S/../../scripts/check-markdown-links.py %S/Inputs/links | FileCheck %s --check-prefix=TREE
 # TREE: README.md:5: docs/missing.md: no such file

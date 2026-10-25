@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
 """Check the relative links of the Markdown documents of the repository.
 
-Every relative link of README.md, CHANGELOG.md, and docs/**/*.md (except
-docs/diagrams/, which is not part of the repository) must name a file or a
+Every relative link of README.md, CHANGELOG.md, changelog.d/*.md, and
+docs/**/*.md (except docs/diagrams/, which is not part of the repository)
+must name a file or a
 directory that exists, and a `#anchor` of a link to a Markdown document must
 name a heading of that document, or an HTML anchor (`<a id="...">`) in it.
+A fragment of the changelog (changelog.d/, #602) becomes part of
+CHANGELOG.md at a release, so its links are read as those of CHANGELOG.md.
 
 Anchors follow GitHub's rule for headings: the text of the heading as it is
 rendered, in lower case, without the characters other than letters, digits,
@@ -41,6 +44,10 @@ def documents(root):
     """The Markdown documents to check, relative to `root`."""
     found = [name for name in ("README.md", "CHANGELOG.md")
              if os.path.isfile(os.path.join(root, name))]
+    fragments = os.path.join(root, "changelog.d")
+    if os.path.isdir(fragments):
+        found += [os.path.join("changelog.d", name)
+                  for name in sorted(os.listdir(fragments)) if name.endswith(".md")]
     docs = os.path.join(root, "docs")
     for directory, subdirectories, files in os.walk(docs):
         relative = os.path.relpath(directory, root)
@@ -156,6 +163,10 @@ def check(root):
         source = os.path.join(root, document)
         with open(source, encoding="utf-8") as stream:
             text = stream.read()
+        # A fragment's links are those of CHANGELOG.md, where it goes.
+        base = os.path.join(root, "CHANGELOG.md") \
+            if document.startswith("changelog.d" + os.sep) and \
+            not document.endswith("README.md") else source
         for number, target in links(text):
             if target.startswith("<") and target.endswith(">"):
                 target = target[1:-1]
@@ -166,9 +177,9 @@ def check(root):
             if path.startswith("/"):
                 resolved = os.path.join(root, path.lstrip("/"))
             elif path:
-                resolved = os.path.join(os.path.dirname(source), path)
+                resolved = os.path.join(os.path.dirname(base), path)
             else:
-                resolved = source
+                resolved = base
             resolved = os.path.normpath(resolved)
             where = "%s:%d: %s" % (document, number, target)
             if not os.path.exists(resolved):
