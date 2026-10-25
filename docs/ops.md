@@ -1317,7 +1317,7 @@ second set in the storage form; typed tuple parameters require the declaration. 
 `md_exec.typed_storage` marks storage assigned by the pass, for which loop
 operands must be tagged. Loop verification rejects a different set, and
 the CPU and GPU conversion passes reject casts that reinterpret a tagged
-buffer as another set, including through a plain cast or aliasing view. A cast into tagged storage with unknown source provenance is refused unless storage assignment marks it as a declared input boundary. An external host buffer crosses this boundary through a `memref.cast` carrying the unit marker `md_exec.input_set_boundary` (D[input-set-boundary-attr], #625). The dialect checks the marker's placement and value and the cast's set provenance. PME scratch remains untagged structural storage. The conversion passes
+buffer as another set, including through a plain cast or aliasing view. A cast into tagged storage with unknown source provenance is refused unless storage assignment marks it as a declared input boundary. An external host buffer crosses this boundary through a `memref.cast` carrying the unit marker `md_exec.input_set_boundary` (D345, #625). The dialect checks the marker's placement and value and the cast's set provenance. PME scratch remains untagged structural storage. The conversion passes
 erase the identity layout and those boundary casts before lowering, so
 the generated address calculations stay the same. Dynamic first dimensions
 continue to use the validated input size and the pass's set size map.

@@ -184,7 +184,7 @@ script and a control file that set the same options of the same files have
 the same fingerprint, and either continues the other's run.
 
 An integer of the fingerprint is written exactly, by one function that the
-control file and the model share (D[fingerprint-integers], #620): below
+control file and the model share (D347, #620): below
 $2^{53}$ in magnitude as the text of its double, as every integer was
 written before, and from $2^{53}$ on with all its digits. Before #620 an
 integer went through a double, so from $2^{53}$ on distinct values had one

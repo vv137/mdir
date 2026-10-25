@@ -251,7 +251,7 @@ the recorded times of only one shard would be incomplete for a later full
 suite. The lexical order makes the two selections disjoint whatever the
 times each tree recorded before; lit's default order follows those times,
 so two trees took overlapping shards and left tests out, and `lit.cfg.py`
-now refuses a shard without `--order=lexical` (D[shard-order]). Under a
+now refuses a shard without `--order=lexical` (D344). Under a
 shard the check of the expected unsupported tests compares that shard's
 tests alone. Keep both trees and their source untouched until both jobs end. Record
 both job exit statuses and add their passed, unsupported, and failed counts;

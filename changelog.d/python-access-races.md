@@ -4,4 +4,4 @@
   values, version, and history of before, whole, and
   `sim.tunables.snapshot()` returns all three at once. A buffer exported to
   a consumer stream keeps the simulation from running even if its view is
-  released during the hand-off (D[python-access-races], #621).
+  released during the hand-off (D346, #621).

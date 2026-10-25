@@ -281,7 +281,7 @@ program's text and values, about 10 ms on the host for JAC (23,558 atoms).
   creation), not the structure version of D192: the program stays current.
   `sim.tunables.history` lists `(step, version)`: version `v` is in effect for
   the steps after `step`.
-- **Readers and threads** (D[python-access-races], #621). An update runs
+- **Readers and threads** (D346, #621). An update runs
   without the GIL, so another Python thread may read the tunables while it
   runs. The readers (`sim.tunables[name]`, `values()`, `items()`,
   `version`, `history`, `sim.versions["tunables"]`, and the tunables of a

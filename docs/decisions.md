@@ -639,7 +639,10 @@ specification follow those made with it.
 | [D341](decisions/D341.md) | Bridge semantic FFT values to execution buffers with private storage for each result and each backward input. | 2026-10-25 |
 | [D342](decisions/D342.md) | Execution loops expose a derived, conservative access interface. | 2026-10-25 |
 | [D343](decisions/D343.md) | Tuple coordinate kinds and member places are read and extended through their declared operation accessors. | 2026-10-26 |
-| [D[shard-order]](decisions/shard-order.md) | The shards of a suite are taken in the lexical order of the tests (`--order=lexical`), and `lit.cfg.py` refuses a shard without it; the check of the expected unsupported tests compares a shard's own tests. | pending |
+| [D344](decisions/D344.md) | The shards of a suite are taken in the lexical order of the tests (`--order=lexical`), and `lit.cfg.py` refuses a shard without it; the check of the expected unsupported tests compares a shard's own tests. | 2026-10-25 |
+| [D345](decisions/D345.md) | An external buffer acquires a storage set only at a verified input cast. | 2026-10-25 |
+| [D346](decisions/D346.md) | The readers of the tunables read a snapshot that a successful operation publishes whole, and an export of a buffer takes its own lease before it releases the GIL | 2026-10-25 |
+| [D347](decisions/D347.md) | **An integer of a fingerprint is written exactly, and the text of an integer below $2^{53}$ in magnitude does not change** (#620). | 2026-10-25 |
 <!-- end decisions-table -->
 
 

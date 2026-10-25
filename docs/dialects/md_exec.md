@@ -27,7 +27,7 @@ Discardable attributes of the storage form (D337, `StorageSet.h`):
 - `md_exec.input_set_boundary` is a unit marker on `memref.cast` where
   an external plain input first acquires its declared storage set. The
   dialect verifies its placement, value, and set provenance
-  (D[input-set-boundary-attr]).
+  (D345).
 
 
 ## Operations

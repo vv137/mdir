@@ -39,7 +39,7 @@ Features of classical MD (Section 5) continue between milestones.
 | The barostat with positional restraints: a defect | Fixed 2026-10-02 (D124; `reference_scaling`, [validation.md](validation.md#the-barostat-with-positional-restraints-d124)) |
 | The conserved energy of the Trotter count under a fast compression | Closed 2026-10-02, not a defect (D92); a run that changes its volume fast is checked with `work = "EXACT"` |
 | A build of the driver and runtime under AddressSanitizer and UndefinedBehaviorSanitizer | Done (`scripts/build-sanitized.sh`) |
-| The declared external-input set boundary (#607, #625) | The unit marker on `memref.cast` has a named writer and reader; the dialect checks its placement, value, and set provenance (D[input-set-boundary-attr]). Other semantic attribute families remain in #607. |
+| The declared external-input set boundary (#607, #625) | The unit marker on `memref.cast` has a named writer and reader; the dialect checks its placement, value, and set provenance (D345). Other semantic attribute families remain in #607. |
 
 ## 2. The rest of the first milestone
 
