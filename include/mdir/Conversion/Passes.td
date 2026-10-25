@@ -5,6 +5,45 @@
 
 include "mlir/Pass/PassBase.td"
 
+def ConvertLinearTransformValues
+    : Pass<"convert-linear-transform-values", "::mlir::ModuleOp"> {
+  let summary = "Materialize semantic FFT tensors as explicit execution buffers";
+  let description = [{
+    Packs an `md.linear_transform` input tensor into a private flat real
+    buffer, runs `md_exec.linear_transform`, and reassembles an independent
+    result tensor. A complex number uses adjacent real and imaginary
+    components in row-major order. The private input is required for the
+    backward transform, whose execution implementation may overwrite it.
+    The semantic input remains immutable. Run one-shot bufferization and
+    ownership-based deallocation after this pass; optionally place the
+    marked execution transform on a device after those two passes.
+    No control-file behavior changes. D[fft-value-buffer].
+  }];
+  let dependentDialects = ["::mdir::md_exec::MDExecDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::complex::ComplexDialect",
+                           "::mlir::memref::MemRefDialect",
+                           "::mlir::scf::SCFDialect",
+                           "::mlir::tensor::TensorDialect"];
+}
+
+def PlaceLinearTransformDevice
+    : Pass<"md-exec-place-linear-transform-device", "::mlir::ModuleOp"> {
+  let summary = "Place the buffered semantic FFT on a device";
+  let description = [{
+    After value bridging, tensor bufferization, and ownership-based
+    deallocation, move only the marked `md_exec.linear_transform` to
+    device buffers. Allocate two distinct device buffers, copy the private
+    input, execute the FFT, copy the result back, and free both buffers.
+    Each transfer waits on its own dependency; there is no whole-step wait.
+    The pack/unpack path remains independent of the target. D[fft-value-buffer].
+  }];
+  let dependentDialects = ["::mdir::md_exec::MDExecDialect",
+                           "::mlir::arith::ArithDialect",
+                           "::mlir::gpu::GPUDialect",
+                           "::mlir::memref::MemRefDialect"];
+}
+
 def ConvertMDToMDExec : Pass<"convert-md-to-md-exec", "::mlir::ModuleOp"> {
   let summary = "Converts md and dyn ops to md_exec loops";
   let description = [{

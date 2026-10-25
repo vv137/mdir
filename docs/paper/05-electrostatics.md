@@ -127,17 +127,28 @@ This derivation underlies the declared `md_exec.linear_transform`
 adjoint (D306, #480) and the pure `md.linear_transform` with the
 opposite transform as its declared transpose (D319,
 #502). The semantic operand and result are respectively the real grid
-`tensor<K1xK2xK3xf64>` and the half-spectrum
-`tensor<K1xK2x(K3/2+1)xcomplex<f64>>`, reversed for the backward direction.
+`tensor<K1xK2xK3xT>` and the half-spectrum
+`tensor<K1xK2x(K3/2+1)xcomplex<T>>`, with matching $T$ of f32 or f64,
+reversed for the backward direction.
 The shapes, directions, and pairing are checked before lowering. For a
 variation $\delta Q$ and a valid half-spectrum $Y$, the chain rule gives
 $\delta\langle\mathcal F Q,Y\rangle_\mathrm H
 =\langle\delta Q,\mathcal F^\dagger Y\rangle$; thus the cotangent of
 the forward transform is the backward transform without a factor of the
 grid size. Reversing the roles gives the forward transform as the
-backward one's transpose. The value-to-buffer bridge and the composition
-with spreading, influence mapping, and gathering remain #452; the
-current potential is still `md.reciprocal`.
+backward one's transpose. D[fft-value-buffer] (#526) packs these values
+into distinct flat real buffers, storing each complex number as adjacent
+real and imaginary components. The backward execution transform may
+overwrite its packed input, so the bridge uses a private copy of the
+immutable semantic value. The composition with spreading, influence
+mapping, and gathering remains #452. Bufferization and ownership-based
+deallocation establish the lifetimes of the packed host buffers before
+optional device placement adds its own allocation, data-dependent copies,
+and release. The GPU bridge stages through host buffers; each host-device
+copy currently synchronizes both runtime streams through `finish()`.
+Device-resident composition with dependency-scoped waits remains #580
+under #567, so this host-boundary bridge is only part of #526. The current
+potential is still `md.reciprocal`.
 
 The driver computes the moduli $\lvert b_a\rvert^2$ in f64 from the
 recursion of $M_n$ and passes them as a table. Under `influence =

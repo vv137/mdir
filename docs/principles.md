@@ -149,6 +149,12 @@ is a finding, not a failure.
 the map of every part of MDIR to its primitives, with the state of the
 code and the gaps, each an issue.
 
+The first executable semantic FFT bridge (D[fft-value-buffer], PR #563)
+preserves the declared adjoint while giving backward execution a private
+input buffer. Its staged host-device copies currently synchronize both
+runtime streams; eliminating that boundary belongs to #580 under #567.
+An explicit dependency token alone does not establish transport overlap.
+
 ## 10. Execution contracts
 
 Status: design, D334 (#574). The detailed contract is in
