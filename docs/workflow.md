@@ -230,7 +230,8 @@ an author does not rebase each time `main` moves:
 ## Reusing a suite
 
 A passing full suite at an earlier commit carries over to a new head when
-the two trees differ only in documentation:
+the two trees differ only in documentation, or in documentation and
+scripts that nothing else runs:
 
 - **The diff.** The comparison is `git diff --name-only <tested commit>
   <new head>`, tree against tree. After a rebase it includes everything
@@ -241,7 +242,25 @@ the two trees differ only in documentation:
   TableGen descriptions do not count, because they are compiled; nor do
   tests and their inputs and comments, which FileCheck and the tests read;
   nor `examples/`, some of which tests run; nor generated templates and
-  their generator scripts. Any other path in the diff calls for a full suite.
+  their generator scripts. `CONTRIBUTING.md` counts, since nothing reads
+  it. Any other path in the diff calls for a full suite, except the scripts
+  of the next item.
+- **Scripts that nothing else runs.** A file under `scripts/` qualifies
+  when no build file, code, example, or other script reads or runs it, and
+  the only tests that run it are its own tests on the CPU (under
+  `test/Lit/` or `test/Docs/`). The release scripts are an example.
+  - **The check.** `git grep -l <file name> -- ':!docs' ':!*.md'` lists
+    the files that name it. Each match must be the script itself or one of
+    its own CPU tests. A match only in a comment does not count; the record
+    says so.
+  - **What runs again.** Its own tests may change in the same diff, with
+    their inputs under `Inputs/`. They, and all of `test/Lit` and
+    `test/Docs`, run again at the new head.
+  - **What does not qualify:**
+    - a script that writes files the repository checks in, such as the
+      generators of templates (`test/Runtime/generated-templates.test`
+      compares them);
+    - `scripts/environment.sh`, which the other scripts source.
 - **Documentation that tests read.** Some documents are inputs of tests on
   the CPU, among them `docs/environment.md` (the checks of the environment
   and script paths), `docs/decisions.md` (`scripts/decision-number.sh
@@ -250,7 +269,8 @@ the two trees differ only in documentation:
   `test/Docs`, `test/Lit`, and every test that names a changed file.
 - **The record.** The comment names the tested commit, its suite job and
   counts, the new head, the files of the diff, and the CPU tests run again
-  with their results. The reviewer checks them before relying on the
+  with their results; for a script, also the matches of the check above.
+  The reviewer checks them before relying on the
   earlier suite.
 
 ## Merging
