@@ -281,6 +281,17 @@ program's text and values, about 10 ms on the host for JAC (23,558 atoms).
   creation), not the structure version of D192: the program stays current.
   `sim.tunables.history` lists `(step, version)`: version `v` is in effect for
   the steps after `step`.
+- **Readers and threads** (D[python-access-races], #621). An update runs
+  without the GIL, so another Python thread may read the tunables while it
+  runs. The readers (`sim.tunables[name]`, `values()`, `items()`,
+  `version`, `history`, `sim.versions["tunables"]`, and the tunables of a
+  view or a borrow) read a snapshot of the values, the version, and the
+  history, which the simulation publishes whole, under a lock of its own,
+  once an update, a commit, or a continuation has succeeded. A reader during
+  an update sees the snapshot of before, never the new values with the old
+  version; after the update, that of after. Separate reads may straddle an
+  update. `sim.tunables.snapshot()` returns `(values, version, history)` of
+  one snapshot, the values as a dict of copies.
 - The forces that the next step begins with were those of the old values.
   After an update during a run the simulation evaluates them anew at its
   state: a call of the entry with no steps and `%first_call = 2`, which

@@ -129,7 +129,13 @@ copy=None)`:
   the legacy `DLManagedTensor`, which cannot say that it is read-only.
 - **Ownership.** The managed tensor's context holds the lease and the
   simulation, not a Python object: its deleter may be called on any
-  thread, with or without the GIL. A capsule that no consumer took
+  thread, with or without the GIL. The export takes its lease first, while
+  it holds the GIL and the lease of its view or borrow is alive, and only
+  then releases the GIL to hand the buffers off to the consumer's stream
+  (D[python-access-races], #621): a `View.release()` of another thread
+  during the hand-off leaves the buffers leased, and a run or an update is
+  refused until the capsule is gone. Before #621 the lease was taken after
+  the hand-off, and a mutation could pass in that window. A capsule that no consumer took
   releases its lease when it is destroyed; a consumer that took it
   (renamed it `used_dltensor...`) releases it through the deleter,
   exactly once.

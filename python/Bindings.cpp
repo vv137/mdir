@@ -1371,12 +1371,28 @@ PYBIND11_MODULE(_core, m) {
   static auto simulationOf = [](const TunableValues &t) -> compiler::Simulation & {
     return *t.owner.cast<PySimulation &>().simulation;
   };
+  // The readers take the snapshot of the values, the version, and the
+  // history (#621), which an update on another thread, without the GIL,
+  // publishes whole once it has succeeded.
   static auto valueOf = [](const TunableValues &t, const std::string &name) {
     auto &sim = simulationOf(t);
     int k = sim.getTunables().find(name);
     if (k < 0) throw py::key_error(name);
-    const auto &v = sim.getTunableValues()[k];
+    const auto v = std::move(sim.getTunableSnapshot().values[k]);
     return host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size())});
+  };
+  // One snapshot, and the arrays of its values by name.
+  static auto snapshotOf = [](const TunableValues &t) {
+    auto &sim = simulationOf(t);
+    auto snapshot = sim.getTunableSnapshot();
+    std::vector<std::pair<std::string, py::array>> values;
+    const auto &set = sim.getTunables();
+    for (size_t k = 0; k != set.tunables.size(); ++k) {
+      const auto &v = snapshot.values[k];
+      values.emplace_back(set.tunables[k].name,
+                          host::copy(v.data(), v.size(), {static_cast<py::ssize_t>(v.size())}));
+    }
+    return std::make_pair(std::move(snapshot), std::move(values));
   };
   static auto namesOf = [](const TunableValues &t) {
     std::vector<std::string> names;
@@ -1409,7 +1425,7 @@ PYBIND11_MODULE(_core, m) {
       error.emplace(sim.updateTunables(changes));
     }
     if (*error) raise(std::move(*error));
-    return sim.getTunablesVersion();
+    return sim.getTunableSnapshot().version;
   };
   // The derivative of the energy in the tunables at a state
   // (D230): a read-only mapping of the names to arrays of
@@ -1476,13 +1492,19 @@ PYBIND11_MODULE(_core, m) {
     .def("keys", [](const TunableValues &t) { return namesOf(t); })
     .def("values", [](const TunableValues &t) {
       py::list result;
-      for (const auto &name : namesOf(t)) result.append(valueOf(t, name));
+      for (const auto &[name, value] : snapshotOf(t).second) result.append(value);
       return result;
     })
     .def("items", [](const TunableValues &t) {
       py::list result;
-      for (const auto &name : namesOf(t)) result.append(py::make_tuple(name, valueOf(t, name)));
+      for (const auto &[name, value] : snapshotOf(t).second) result.append(py::make_tuple(name, value));
       return result;
+    })
+    .def("snapshot", [](const TunableValues &t) {
+      auto [snapshot, values] = snapshotOf(t);
+      py::dict d;
+      for (const auto &[name, value] : values) d[py::str(name)] = value;
+      return py::make_tuple(d, snapshot.version, py::cast(snapshot.history));
     })
     .def("update", [](TunableValues &t, py::object mapping, py::kwargs more) {
       py::dict all;
@@ -1490,15 +1512,15 @@ PYBIND11_MODULE(_core, m) {
       for (auto item : more) all[item.first] = item.second;
       return updateOf(t, all);
     }, py::arg("values") = py::none())
-    .def_property_readonly("version", [](const TunableValues &t) { return simulationOf(t).getTunablesVersion(); })
-    .def_property_readonly("history", [](const TunableValues &t) { return simulationOf(t).getTunablesHistory(); })
+    .def_property_readonly("version", [](const TunableValues &t) { return simulationOf(t).getTunableSnapshot().version; })
+    .def_property_readonly("history", [](const TunableValues &t) { return simulationOf(t).getTunableSnapshot().history; })
     .def_property_readonly("units", [](const TunableValues &t) {
       py::dict d;
       for (const auto &entry : simulationOf(t).getTunables().tunables) d[py::str(entry.name)] = entry.unit;
       return d;
     })
     .def("__repr__", [](const TunableValues &t) {
-      std::string text = "TunableValues(version=" + std::to_string(simulationOf(t).getTunablesVersion()) + ", [";
+      std::string text = "TunableValues(version=" + std::to_string(simulationOf(t).getTunableSnapshot().version) + ", [";
       bool first = true;
       for (const auto &name : namesOf(t)) { text += (first ? "'" : ", '") + name + "'"; first = false; }
       return text + "])";
@@ -1855,6 +1877,29 @@ PYBIND11_MODULE(_core, m) {
       });
     }, py::arg("steps") = py::none(), py::arg("tolerance") = py::none())
     .def("request_stop", [](PySimulation &s) { s.simulation->requestStop(); })
+    // For the tests of interleavings (#621; Simulation::pausePoint): a
+    // callable that an operation calls, with the name of the point, where
+    // it runs without the GIL; None removes it. The callable is held so that
+    // it is released with the GIL, wherever the simulation ends.
+    .def("_set_pause_point", [](PySimulation &s, py::object callable) {
+      if (callable.is_none()) {
+        s.simulation->pausePoint = nullptr;
+        return;
+      }
+      auto held = std::shared_ptr<py::object>(new py::object(std::move(callable)),
+                                              [](py::object *o) {
+                                                py::gil_scoped_acquire gil;
+                                                delete o;
+                                              });
+      s.simulation->pausePoint = [held](const char *point) {
+        py::gil_scoped_acquire gil;
+        try {
+          (*held)(point);
+        } catch (py::error_already_set &e) {
+          e.discard_as_unraisable("Simulation._set_pause_point");
+        }
+      };
+    })
     .def("state", [](PySimulation &s) { return unwrap(s.simulation->getState()); })
     // The learned potentials (D270) at their last evaluation,
     // that of the last step: their energy (kJ/mol) and their virial tensor
@@ -1878,7 +1923,7 @@ PYBIND11_MODULE(_core, m) {
       d["positions"] = v.positions;
       d["velocities"] = v.velocities;
       d["cell"] = v.cell;
-      d["tunables"] = s.simulation->getTunablesVersion();
+      d["tunables"] = s.simulation->getTunableSnapshot().version;
       return d;
     })
     .def_property_readonly("commits", [](const PySimulation &s) {

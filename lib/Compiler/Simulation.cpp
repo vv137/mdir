@@ -786,6 +786,7 @@ Simulation::create(const model::PreparedModel &prepared, bool cache,
   simulation->compiledSystem = system;
   simulation->tunableValues = prepared.tunables.values;
   simulation->tunablesHistory = {{0, 0}};
+  simulation->publishTunables();
   auto engine =
       compileEngine(control, system, prepared.execution, cache, store);
   if (!engine) {
@@ -2203,6 +2204,8 @@ compiler::SimulationView Simulation::describeView() const {
 }
 
 void Simulation::handOff(uint64_t consumer) {
+  if (pausePoint)
+    pausePoint("hand-off");
   if (!activation || !activation->onDevice)
     return;
   exported = true;
@@ -2494,6 +2497,7 @@ llvm::Expected<std::vector<std::string>> Simulation::commitBorrow(
     ++tunablesVersion;
     tunablesHistory.push_back({step, tunablesVersion});
     output->tunablesVersion = tunablesVersion;
+    publishTunables();
     fields.push_back("tunables");
   }
   commits.push_back({step, fields});
@@ -2622,10 +2626,24 @@ llvm::Error Simulation::updateTunables(
   } else {
     output->lastEnergies.step = -1;
   }
+  if (pausePoint)
+    pausePoint("tunables");
   ++tunablesVersion;
   tunablesHistory.push_back({step, tunablesVersion});
   output->tunablesVersion = tunablesVersion;
+  publishTunables();
   return llvm::Error::success();
+}
+
+Simulation::TunableSnapshot Simulation::getTunableSnapshot() const {
+  std::lock_guard<std::mutex> lock(tunablesMutex);
+  return publishedTunables;
+}
+
+void Simulation::publishTunables() {
+  TunableSnapshot snapshot{tunableValues, tunablesVersion, tunablesHistory};
+  std::lock_guard<std::mutex> lock(tunablesMutex);
+  publishedTunables = std::move(snapshot);
 }
 
 llvm::Expected<Program>
@@ -3437,6 +3455,7 @@ Simulation::continueFrom(const Checkpoint &checkpoint, bool stage,
       tunablesHistory = {{checkpoint.step, 0}};
     }
     output->tunablesVersion = tunablesVersion;
+    publishTunables();
   }
 
   system.positions = checkpoint.positions;

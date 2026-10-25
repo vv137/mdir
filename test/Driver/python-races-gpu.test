@@ -1,0 +1,10 @@
+# REQUIRES: cuda, python-api
+# The export of a buffer to a consumer stream, stopped at the hand-off,
+# where it runs without the GIL: another thread releases the view there,
+# and a run is refused, since the export took its lease before it released
+# the GIL (#621, Inputs/python_races.py). The interleaving is forced once,
+# not repeated.
+# RUN: %mdir_python %S/Inputs/python_races.py %S/Inputs/dipeptide GPU export | FileCheck %s
+# CHECK: during the hand-off, with the view released: run refused: run is refused while 1 lease of a view of this simulation is alive
+# CHECK-NEXT: after the capsule is deleted: the run goes on, step 3
+# CHECK-NEXT: races export passed
