@@ -47,3 +47,17 @@ func.func @local_allocation(%input: !real) -> !real {
 
 // Allocation and release are outside the interface's read/write vocabulary.
 // CHECK: md_exec.particle_for complete=0 accesses=2 reductions=0
+
+func.func @recursive_op_own_effect(%input: !real, %buffer: memref<1xf64>) -> !real {
+  %empty = md_exec.empty : !real
+  %out = md_exec.particle_for ins(%input : !real)
+      outs(%empty : !real) {
+  ^bb0(%x: f64):
+    linalg.fill ins(%x : f64) outs(%buffer : memref<1xf64>)
+    md_exec.yield %x : f64
+  } -> !real
+  return %out : !real
+}
+
+// Recursive effects include the enclosing op's own effects as well as its body.
+// CHECK: md_exec.particle_for complete=0 accesses=2 reductions=0

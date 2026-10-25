@@ -111,8 +111,6 @@ LoopEffectSummary mdir::md_exec::summarizeLoop(Operation *op) {
   loop.getLoopEffectSummary(summary);
   for (Region &region : op->getRegions())
     region.walk([&](Operation *nested) {
-      if (nested->hasTrait<OpTrait::HasRecursiveMemoryEffects>())
-        return;
       if (auto memory = dyn_cast<MemoryEffectOpInterface>(nested)) {
         SmallVector<MemoryEffects::EffectInstance> effects;
         memory.getEffects(effects);
@@ -145,7 +143,8 @@ LoopEffectSummary mdir::md_exec::summarizeLoop(Operation *op) {
           });
           summary.complete &= declared;
         }
-      } else if (!isPure(nested)) {
+      } else if (!nested->hasTrait<OpTrait::HasRecursiveMemoryEffects>() &&
+                 !isPure(nested)) {
         summary.complete = false;
       }
     });
