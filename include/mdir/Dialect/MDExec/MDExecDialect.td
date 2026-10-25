@@ -19,6 +19,15 @@ def MDExec_Dialect : Dialect {
 
     In the value form, which is the form defined here, the ops take and
     return field values.
+
+    Discardable attributes of the storage form (D337, `StorageSet.h`):
+
+    - `md_exec.tuple_set` on the builder of an incidence buffer and on its
+      tuple loops declares the tuple set of the buffer, which its type does
+      not carry yet.
+    - `md_exec.typed_storage` on a module marks storage that
+      `md-exec-assign-storage` assigned, whose loop operands must be tagged
+      with their set; the conversions to loops and to a device remove both.
   }];
   let cppNamespace = "::mdir::md_exec";
   let dependentDialects = ["::mdir::md::MDDialect",

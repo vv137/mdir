@@ -141,6 +141,10 @@ Some tests check the tree itself:
 - `test/Docs/markdown-links.test` checks that every relative link of
   `README.md`, `CHANGELOG.md`, and `docs/` names a file and a heading that
   exist (#390).
+- `test/Docs/dialect-docs.test` compares the reference of the dialects in
+  `docs/dialects/` with what `mlir-tblgen` generates from their TableGen
+  definitions; `ninja mdir-dialect-docs` writes it again after a change of
+  a `.td` file (#610).
 - `test/Runtime/generated-templates.test` compares what
   `scripts/generate-pme-gpu-template.py` and
   `scripts/generate-groups-gpu-template.py` generate with the checked-in

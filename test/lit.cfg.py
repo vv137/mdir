@@ -59,8 +59,12 @@ tools = [
     "FileCheck",
     "not",
     "split-file",
+    "mlir-tblgen",
 ]
 llvm_config.add_tool_substitutions(tools, tool_dirs)
+# The headers of MLIR, for mlir-tblgen (test/Docs/dialect-docs.test).
+config.substitutions.append(
+    ("%mlir_include_dir", os.path.join(os.path.dirname(config.llvm_lib_dir), "include")))
 
 # The library that provides printF64 and friends to code run by mlir-runner.
 config.substitutions.append(
