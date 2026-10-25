@@ -15,6 +15,11 @@ device implements a primitive (privatization, tiles, tables, warp forms)
 are in [device-primitives.md](device-primitives.md); this document says
 where each primitive occurs.
 
+The internal-coordinate kinds and member places of tuple maps and gathers
+are declared op attributes (D[tuple-coordinate-attrs]); differentiation
+uses the typed tuple-op accessors when it composes their transposes. This
+changes no primitive or lowering strategy.
+
 The [execution contract](execution-contracts.md) (#574) checks whether a
 composition may run or be transformed for its stated sets, effects, state,
 and numerical order. It is shared by the primitive sites in this map and

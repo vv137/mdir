@@ -170,6 +170,9 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **Tuple coordinate attributes** are accessed through their declared op
+  interface during differentiation; emitted programs and results are
+  unchanged (D[tuple-coordinate-attrs], #612).
 - **The default neighbor structure is `neighbor_structure = "AUTO"`**: on
   a GPU outside the deterministic mode, a system of at least 23,000
   particles runs on the groups of 16 with a dual list, about 1.6 to 2
