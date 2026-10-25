@@ -92,6 +92,36 @@ format, or the outputs; every such change is listed under **Changed** or
 - **Invalid batched stage row declarations are diagnosed** before lowering; valid staged models run as before (D351, #642).
 - **The checked storage form uses one declared module marker contract** across assignment, loop verification, and lowering, with unchanged simulation behavior (D349, #636).
 
+### Known limitations
+
+- **One device per run.** Distributed execution (`md_dist`) runs only in
+  one process, on the reference executor, and no run of `mdir run` or of
+  Python takes it yet (#31, #38).
+- **Learned potentials run on one GPU.** A model term of `backend =
+  "METATOMIC"` refuses the CPU target, the deterministic mode,
+  `[free_energy]`, `observe`, tunables, the frame evaluator, more than one
+  model, constraints, and virtual sites, among others
+  ([docs/metatomic-ml1.md](docs/metatomic-ml1.md), Section 9.1).
+- **No polarizable potentials.** There is no Drude or AMOEBA model, and
+  CHARMM's lone pairs are not supported.
+- **Triplet terms run on the CPU only.**
+- **The deterministic mode does not take neighbor groups.** It keeps the
+  neighbor matrix, and `AUTO` takes the matrix there.
+- **Free energy is limited to decoupling.** Relative (A to B)
+  transformations, annihilation, and replica exchange are not supported,
+  and a decoupled selection takes a plain Lennard-Jones cutoff or
+  `POTENTIAL_SHIFT`, not a switch.
+- **The cell does not shear at constant pressure.** The barostat scales
+  each axis (isotropic, semi-isotropic, or anisotropic), without coupling
+  the angles of the cell.
+- **`[pme] influence = "P3M"` takes a rectangular cell only** (#475).
+- **`mdir run` does not cache its host objects** in the compile cache yet;
+  its GPU modules are cached (#99).
+- **Binaries** are built for manylinux_2_28 (glibc 2.28 or newer: RHEL,
+  Rocky, and Alma 8+, Ubuntu 20.04+, Debian 11+) and x86-64, with an NVIDIA
+  driver supporting CUDA 13.0 or newer for the GPU (D177); the wheels are
+  for CPython 3.10 to 3.13 (D228).
+
 ## [0.2.0] - 2026-10-26
 ### Added
 
