@@ -9,7 +9,7 @@
 // steps. On the host each has its own.
 //
 // CHECK-LABEL: func.func @start_and_steps(
-// CHECK:         %[[NL:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64, 1>) kind(matrix) width(48)
+// CHECK:         %[[NL:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64{{.*}}, 1>) kind(matrix) width(48)
 // CHECK-NOT:     md_exec.empty_neighbors
 // CHECK:         md_exec.refresh_neighbors %[[NL]], {{.*}} policy(always)
 // CHECK:         md_exec.rebuild_count

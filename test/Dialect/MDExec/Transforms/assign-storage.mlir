@@ -9,11 +9,11 @@ md.particle_set @atoms
 // that is dead afterward.
 //
 // CHECK-LABEL: func.func @kick(
-// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64>, %[[F:[a-z0-9]+]]: memref<?x3xf64>, %[[M:[a-z0-9]+]]: memref<?xf64>, %[[DT:[a-z0-9]+]]: f64)
-// CHECK-SAME:    -> memref<?x3xf64>
+// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[F:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[M:[a-z0-9]+]]: memref<?xf64{{.*}}>, %[[DT:[a-z0-9]+]]: f64)
+// CHECK-SAME:    -> memref<?x3xf64{{.*}}>
 func.func @kick(%v: !vec, %f: !vec, %m: !real, %dt: f64) -> !vec {
   // CHECK-NOT:  memref.alloc
-  // CHECK:      md_exec.particle_for ins(%[[V]], %[[F]], %[[M]] : memref<?x3xf64>, memref<?x3xf64>, memref<?xf64>) outs(%[[V]] : memref<?x3xf64>) {
+  // CHECK:      md_exec.particle_for ins(%[[V]], %[[F]], %[[M]] : memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}>, memref<?xf64{{.*}}>) outs(%[[V]] : memref<?x3xf64{{.*}}>) {
   // CHECK-NEXT: ^bb0(%{{[a-z0-9]+}}: vector<3xf64>, %{{[a-z0-9]+}}: vector<3xf64>, %[[MI:[a-z0-9]+]]: f64):
   // CHECK-NEXT:   arith.divf %[[DT]], %[[MI]]
   // CHECK:        md_exec.yield %{{[0-9]+}} : vector<3xf64>
@@ -28,7 +28,7 @@ func.func @kick(%v: !vec, %f: !vec, %m: !real, %dt: f64) -> !vec {
     %vn = arith.addf %v_i, %dv : vector<3xf64>
     md_exec.yield %vn : vector<3xf64>
   } -> !vec
-  // CHECK:      return %[[V]] : memref<?x3xf64>
+  // CHECK:      return %[[V]] : memref<?x3xf64{{.*}}>
   return %v1 : !vec
 }
 
@@ -36,10 +36,10 @@ func.func @kick(%v: !vec, %f: !vec, %m: !real, %dt: f64) -> !vec {
 // buffer of its own.
 //
 // CHECK-LABEL: func.func @keep(
-// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64>)
+// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64{{.*}}>)
 func.func @keep(%v: !vec) -> (!vec, !vec) {
-  // CHECK:      %[[NEW:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
-  // CHECK:      md_exec.particle_for ins(%[[V]] : memref<?x3xf64>) outs(%[[NEW]] : memref<?x3xf64>)
+  // CHECK:      %[[NEW:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}>
+  // CHECK:      md_exec.particle_for ins(%[[V]] : memref<?x3xf64{{.*}}>) outs(%[[NEW]] : memref<?x3xf64{{.*}}>)
   %w0 = md_exec.empty : !vec
   %w = md_exec.particle_for ins(%v : !vec) outs(%w0 : !vec) {
   ^bb0(%v_i: vector<3xf64>):
@@ -53,9 +53,9 @@ func.func @keep(%v: !vec) -> (!vec, !vec) {
 // A global sum stays a result.
 //
 // CHECK-LABEL: func.func @sum(
-// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64>)
+// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64{{.*}}>)
 func.func @sum(%v: !vec) -> f64 {
-  // CHECK:      %[[S:[0-9]+]] = md_exec.particle_for ins(%[[V]] : memref<?x3xf64>) reduce(%{{[a-z0-9_]+}} : f64) {
+  // CHECK:      %[[S:[0-9]+]] = md_exec.particle_for ins(%[[V]] : memref<?x3xf64{{.*}}>) reduce(%{{[a-z0-9_]+}} : f64) {
   // CHECK:      } -> f64
   %s0 = arith.constant 0.0 : f64
   %s = md_exec.particle_for ins(%v : !vec) reduce(%s0 : f64) {
@@ -73,13 +73,13 @@ func.func @sum(%v: !vec) -> f64 {
 // destination. The cell stays a value.
 //
 // CHECK-LABEL: func.func @forces(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[CELL:[a-z0-9]+]]: !md.cell)
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[CELL:[a-z0-9]+]]: !md.cell)
 func.func @forces(%x: !vec, %cell: !md.cell) -> (!vec, f64) {
   // CHECK:      %[[N:[a-z0-9_]+]] = memref.dim %[[X]],
-  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%[[N]]) positions(memref<?x3xf64>) kind(matrix) width(48) : !mdrt.neighbors<@atoms>
+  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%[[N]]) positions(memref<?x3xf64{{.*}}>) kind(matrix) width(48) : !mdrt.neighbors<@atoms>
   // CHECK:      %[[NL:[0-9]+]] = md_exec.refresh_neighbors %[[STORAGE]], %[[X]], %[[CELL]]
   // CHECK-SAME:   cutoff(1.500000e+00) skin(2.500000e-01) cell_width(1.750000e+00) policy(always)
-  // CHECK-SAME:   : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+  // CHECK-SAME:   : !mdrt.neighbors<@atoms>, memref<?x3xf64{{.*}}>
   // CHECK-NOT:  md_exec.build_cells
   %cells = md_exec.build_cells %x, %cell width(1.75)
       : !vec -> !mdrt.cells<@atoms>
@@ -87,12 +87,12 @@ func.func @forces(%x: !vec, %cell: !md.cell) -> (!vec, f64) {
       cutoff(1.5) skin(0.25) kind(matrix) width(48)
       : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
 
-  // CHECK:      %[[OUT:[a-z0-9_]+]] = memref.alloc(%[[N]]) : memref<?x3xf64>
+  // CHECK:      %[[OUT:[a-z0-9_]+]] = memref.alloc(%[[N]]) : memref<?x3xf64{{.*}}>
   // CHECK:      %[[U:[0-9]+]] = md_exec.pair_for %[[NL]], %[[X]], %[[CELL]]
-  // CHECK-SAME:   outs(%[[OUT]] : memref<?x3xf64>) reduce(%{{[a-z0-9_]+}} : f64)
+  // CHECK-SAME:   outs(%[[OUT]] : memref<?x3xf64{{.*}}>) reduce(%{{[a-z0-9_]+}} : f64)
   // CHECK-SAME:   cutoff(1.500000e+00) weights [5.000000e-01] overwrite [true]
   // CHECK-SAME:   policy(directed, owner_only) {
-  // CHECK:      } : !mdrt.neighbors<@atoms>, memref<?x3xf64> -> f64
+  // CHECK:      } : !mdrt.neighbors<@atoms>, memref<?x3xf64{{.*}}> -> f64
   %f0 = md_exec.zeros : !vec
   %u0 = arith.constant 0.0 : f64
   %f, %u = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec)
@@ -106,7 +106,7 @@ func.func @forces(%x: !vec, %cell: !md.cell) -> (!vec, f64) {
   // the buffer holds.
   //
   // CHECK:      md_exec.pair_for %[[NL]], %[[X]], %[[CELL]]
-  // CHECK-SAME:   outs(%[[OUT]] : memref<?x3xf64>) cutoff(1.500000e+00)
+  // CHECK-SAME:   outs(%[[OUT]] : memref<?x3xf64{{.*}}>) cutoff(1.500000e+00)
   // CHECK-NOT:    overwrite
   // CHECK-SAME:   policy(directed, owner_only) {
   %g = md_exec.pair_for %nl, %x, %cell outs(%f : !vec) cutoff(1.5)
@@ -124,25 +124,25 @@ func.func @forces(%x: !vec, %cell: !md.cell) -> (!vec, f64) {
 // it; its storage is allocated before the loop.
 //
 // CHECK-LABEL: func.func @steps(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[V:[a-z0-9]+]]: memref<?x3xf64>, %[[CELL:[a-z0-9]+]]: !md.cell, %[[DT:[a-z0-9]+]]: f64, %[[N:[a-z0-9]+]]: index)
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[V:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[CELL:[a-z0-9]+]]: !md.cell, %[[DT:[a-z0-9]+]]: f64, %[[N:[a-z0-9]+]]: index)
 func.func @steps(%x: !vec, %v: !vec, %cell: !md.cell, %dt: f64, %n: index)
     -> (!vec, !vec, i64) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   %nl0 = md_exec.empty_neighbors kind(matrix) width(48)
       : !mdrt.neighbors<@atoms>
-  // CHECK-DAG:  %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64>) kind(matrix) width(48)
-  // CHECK-DAG:  %[[SPARE:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
+  // CHECK-DAG:  %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64{{.*}}>) kind(matrix) width(48)
+  // CHECK-DAG:  %[[SPARE:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}>
   // CHECK:      %[[LOOP:[0-9]+]]:3 = scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[N]] step %{{[a-z0-9_]+}}
   // CHECK-SAME:   iter_args(%[[XA:[a-z0-9]+]] = %[[X]], %[[VA:[a-z0-9]+]] = %[[V]], %[[SA:[a-z0-9]+]] = %[[SPARE]])
-  // CHECK-SAME:   -> (memref<?x3xf64>, memref<?x3xf64>, memref<?x3xf64>) {
+  // CHECK-SAME:   -> (memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}>) {
   // CHECK-NOT:    memref.alloc
   %xe, %ve, %nle = scf.for %step = %c0 to %n step %c1
       iter_args(%xa = %x, %va = %v, %nla = %nl0)
       -> (!vec, !vec, !mdrt.neighbors<@atoms>) {
     // The scaled velocities are needed only within the step.
     //
-    // CHECK:      md_exec.particle_for ins(%[[VA]] : memref<?x3xf64>) outs(%[[SA]] : memref<?x3xf64>)
+    // CHECK:      md_exec.particle_for ins(%[[VA]] : memref<?x3xf64{{.*}}>) outs(%[[SA]] : memref<?x3xf64{{.*}}>)
     %w0 = md_exec.empty : !vec
     %w = md_exec.particle_for ins(%va : !vec) outs(%w0 : !vec) {
     ^bb0(%v_i: vector<3xf64>):
@@ -151,7 +151,7 @@ func.func @steps(%x: !vec, %v: !vec, %cell: !md.cell, %dt: f64, %n: index)
       md_exec.yield %s : vector<3xf64>
     } -> !vec
 
-    // CHECK:      md_exec.particle_for ins(%[[XA]], %[[SA]] : memref<?x3xf64>, memref<?x3xf64>) outs(%[[XA]] : memref<?x3xf64>)
+    // CHECK:      md_exec.particle_for ins(%[[XA]], %[[SA]] : memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}>) outs(%[[XA]] : memref<?x3xf64{{.*}}>)
     %x0 = md_exec.empty : !vec
     %xb = md_exec.particle_for ins(%xa, %w : !vec, !vec) outs(%x0 : !vec) {
     ^bb0(%x_i: vector<3xf64>, %w_i: vector<3xf64>):
@@ -160,7 +160,7 @@ func.func @steps(%x: !vec, %v: !vec, %cell: !md.cell, %dt: f64, %n: index)
     } -> !vec
 
     // CHECK:      md_exec.refresh_neighbors %[[STORAGE]], %[[XA]], %[[CELL]]
-    // CHECK-SAME:   policy(check) : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+    // CHECK-SAME:   policy(check) : !mdrt.neighbors<@atoms>, memref<?x3xf64{{.*}}>
     %nlb = md_exec.refresh_neighbors %nla, %xb, %cell
         cutoff(1.5) skin(0.25) cell_width(1.75) policy(check)
         : !mdrt.neighbors<@atoms>, !vec
@@ -180,23 +180,23 @@ func.func @steps(%x: !vec, %v: !vec, %cell: !md.cell, %dt: f64, %n: index)
 // conserved).
 //
 // CHECK-LABEL: func.func @unread(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[V:[a-z0-9]+]]: memref<?x3xf64>, %[[N:[a-z0-9]+]]: index)
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[V:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[N:[a-z0-9]+]]: index)
 func.func @unread(%x: !vec, %v: !vec, %n: index) -> (!vec, !vec) {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
   // CHECK-NOT:  memref.alloc
   // CHECK:      scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[N]] step %{{[a-z0-9_]+}}
   // CHECK-SAME:   iter_args(%[[XA:[a-z0-9]+]] = %[[X]], %[[VA:[a-z0-9]+]] = %[[V]])
-  // CHECK-SAME:   -> (memref<?x3xf64>, memref<?x3xf64>) {
+  // CHECK-SAME:   -> (memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}>) {
   %xe, %ve = scf.for %step = %c0 to %n step %c1
       iter_args(%xa = %x, %va = %v) -> (!vec, !vec) {
-    // CHECK:      md_exec.particle_for ins(%[[XA]] : memref<?x3xf64>) outs(%[[VA]] : memref<?x3xf64>)
+    // CHECK:      md_exec.particle_for ins(%[[XA]] : memref<?x3xf64{{.*}}>) outs(%[[VA]] : memref<?x3xf64{{.*}}>)
     %w0 = md_exec.empty : !vec
     %vb = md_exec.particle_for ins(%xa : !vec) outs(%w0 : !vec) {
     ^bb0(%x_i: vector<3xf64>):
       md_exec.yield %x_i : vector<3xf64>
     } -> !vec
-    // CHECK:      md_exec.particle_for ins(%[[XA]], %[[VA]] : memref<?x3xf64>, memref<?x3xf64>) outs(%[[XA]] : memref<?x3xf64>)
+    // CHECK:      md_exec.particle_for ins(%[[XA]], %[[VA]] : memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}>) outs(%[[XA]] : memref<?x3xf64{{.*}}>)
     %x0 = md_exec.empty : !vec
     %xb = md_exec.particle_for ins(%xa, %vb : !vec, !vec) outs(%x0 : !vec) {
     ^bb0(%x_i: vector<3xf64>, %v_i: vector<3xf64>):
@@ -214,15 +214,15 @@ func.func @unread(%x: !vec, %v: !vec, %n: index) -> (!vec, !vec) {
 // buffer it took is free again at the yield (#19).
 //
 // CHECK-LABEL: func.func @unused_result(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[N:[a-z0-9]+]]: index)
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[N:[a-z0-9]+]]: index)
 func.func @unused_result(%x: !vec, %n: index) -> !vec {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  // CHECK:      %[[SPARE:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
+  // CHECK:      %[[SPARE:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}>
   // CHECK:      scf.for %{{[a-z0-9]+}} = %{{[a-z0-9_]+}} to %[[N]] step %{{[a-z0-9_]+}}
   // CHECK-SAME:   iter_args(%[[XA:[a-z0-9]+]] = %[[X]], %[[SA:[a-z0-9]+]] = %[[SPARE]])
   %xe = scf.for %step = %c0 to %n step %c1 iter_args(%xa = %x) -> (!vec) {
-    // CHECK:      md_exec.particle_for ins(%[[XA]] : memref<?x3xf64>) outs(%[[XA]], %[[SA]] : memref<?x3xf64>, memref<?x3xf64>)
+    // CHECK:      md_exec.particle_for ins(%[[XA]] : memref<?x3xf64{{.*}}>) outs(%[[XA]], %[[SA]] : memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}>)
     %w0 = md_exec.empty : !vec
     %x0 = md_exec.empty : !vec
     %w, %xb = md_exec.particle_for ins(%xa : !vec) outs(%w0, %x0 : !vec, !vec) {
@@ -239,13 +239,13 @@ func.func @unused_result(%x: !vec, %n: index) -> !vec {
 // A destination of zeros that is read like any other field is filled.
 //
 // CHECK-LABEL: func.func @zeros(
-// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64>)
+// CHECK-SAME:    %[[V:[a-z0-9]+]]: memref<?x3xf64{{.*}}>)
 func.func @zeros(%v: !vec) -> !vec {
-  // CHECK:      %[[Z:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
-  // CHECK:      md_exec.particle_for outs(%[[Z]] : memref<?x3xf64>) {
+  // CHECK:      %[[Z:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}>
+  // CHECK:      md_exec.particle_for outs(%[[Z]] : memref<?x3xf64{{.*}}>) {
   // CHECK-NEXT:   %[[ZERO:[a-z0-9_]+]] = arith.constant dense<0.000000e+00> : vector<3xf64>
   // CHECK-NEXT:   md_exec.yield %[[ZERO]] : vector<3xf64>
-  // CHECK:      md_exec.particle_for ins(%[[V]], %[[Z]] : memref<?x3xf64>, memref<?x3xf64>) outs(%[[V]] : memref<?x3xf64>)
+  // CHECK:      md_exec.particle_for ins(%[[V]], %[[Z]] : memref<?x3xf64{{.*}}>, memref<?x3xf64{{.*}}>) outs(%[[V]] : memref<?x3xf64{{.*}}>)
   %z = md_exec.zeros : !vec
   %e = md_exec.empty : !vec
   %w = md_exec.particle_for ins(%v, %z : !vec, !vec) outs(%e : !vec) {
@@ -271,12 +271,12 @@ func.func @plain(%a: f64) -> f64 {
 // iteration of the outer loop begins with a structure that is built.
 //
 // CHECK-LABEL: func.func @segments(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[CELL:[a-z0-9]+]]: !md.cell,
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[CELL:[a-z0-9]+]]: !md.cell,
 func.func @segments(%x: !vec, %cell: !md.cell, %segments: index,
                     %steps: index) -> !vec {
   %c0 = arith.constant 0 : index
   %c1 = arith.constant 1 : index
-  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64>)
+  // CHECK:      %[[STORAGE:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64{{.*}}>)
   // CHECK:      scf.for
   // CHECK-NEXT:   md_exec.reset_neighbors %[[STORAGE]] : !mdrt.neighbors<@atoms>
   // CHECK-NEXT:   scf.for
@@ -314,12 +314,13 @@ func.func @segments(%x: !vec, %cell: !md.cell, %segments: index,
 // buffer.
 //
 // CHECK-LABEL: func.func @frames(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[STEP:[a-z0-9]+]]: i64)
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[STEP:[a-z0-9]+]]: i64)
 func.func private @write_frame(i64, memref<?x3xf64>)
 
 func.func @frames(%x: !vec, %step: i64) -> !vec {
-  // CHECK:      call @write_frame(%[[STEP]], %[[X]])
-  // CHECK:      md_exec.particle_for ins(%[[X]] : memref<?x3xf64>) outs(%[[X]] : memref<?x3xf64>)
+  // CHECK:      %[[PLAIN:[a-z0-9_]+]] = memref.cast %[[X]]
+  // CHECK:      call @write_frame(%[[STEP]], %[[PLAIN]])
+  // CHECK:      md_exec.particle_for ins(%[[X]] : memref<?x3xf64{{.*}}>) outs(%[[X]] : memref<?x3xf64{{.*}}>)
   mdrt.host_call @write_frame(%step, %x) : (i64, !vec)
   %e = md_exec.empty : !vec
   %y = md_exec.particle_for ins(%x : !vec) outs(%e : !vec) {
@@ -335,12 +336,13 @@ func.func @frames(%x: !vec, %step: i64) -> !vec {
 // old ones were, not there.
 //
 // CHECK-LABEL: func.func @validity(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[V:[a-z0-9]+]]: memref<?x3xf64>,
-// CHECK:         %[[NL:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64>)
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[V:[a-z0-9]+]]: memref<?x3xf64{{.*}}>,
+// CHECK:         %[[VTAG:[a-z0-9_]+]] = memref.cast %[[V]]
+// CHECK:         %[[NL:[0-9]+]] = md_exec.empty_neighbors size(%{{[a-z0-9_]+}}) positions(memref<?x3xf64{{.*}}>)
 // CHECK:         scf.for
-// CHECK:           %[[REF:[0-9]+]] = md_exec.reference_positions %[[NL]] : !mdrt.neighbors<@atoms> -> memref<?x3xf64>
-// CHECK:           %[[MOVED:[0-9]+]] = md_exec.particle_for ins(%[[XA:[a-z0-9]+]], %[[V]], %[[REF]] :
-// CHECK-SAME:        outs(%[[XA]] : memref<?x3xf64>) reduce(%{{[a-z0-9_]+}} : i1) {
+// CHECK:           %[[REF:[0-9]+]] = md_exec.reference_positions %[[NL]] : !mdrt.neighbors<@atoms> -> memref<?x3xf64{{.*}}>
+// CHECK:           %[[MOVED:[0-9]+]] = md_exec.particle_for ins(%[[XA:[a-z0-9]+]], %[[VTAG]], %[[REF]] :
+// CHECK-SAME:        outs(%[[XA]] : memref<?x3xf64{{.*}}>) reduce(%{{[a-z0-9_]+}} : i1) {
 // CHECK:           } -> i1
 // CHECK:           md_exec.refresh_neighbors %[[NL]], %[[XA]], %{{[a-z0-9]+}} moved(%[[MOVED]])
 // CHECK-SAME:        policy(check)
@@ -384,20 +386,25 @@ func.func @validity(%xb: memref<?x3xf64>, %vb: memref<?x3xf64>,
 // fields as they were before.
 //
 // CHECK-LABEL: func.func @ordered(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64>, %[[M:[a-z0-9]+]]: memref<?xf64>, %[[ID:[a-z0-9]+]]: memref<?xi32>,
-// CHECK-DAG:     %[[B0:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xi32>
-// CHECK-DAG:     %[[B1:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64>
-// CHECK-DAG:     %[[B2:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xf64>
-// CHECK-DAG:     %[[B3:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xi32>
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: memref<?x3xf64{{.*}}>, %[[M:[a-z0-9]+]]: memref<?xf64{{.*}}>, %[[ID:[a-z0-9]+]]: memref<?xi32{{.*}}>,
+// CHECK-DAG:     %[[XTAG:[a-z0-9_]+]] = memref.cast %[[X]]
+// CHECK-DAG:     %[[MTAG:[a-z0-9_]+]] = memref.cast %[[M]]
+// CHECK-DAG:     %[[IDTAG:[a-z0-9_]+]] = memref.cast %[[ID]]
+// CHECK-DAG:     %[[B0:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xi32{{.*}}>
+// CHECK-DAG:     %[[B1:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?x3xf64{{.*}}>
+// CHECK-DAG:     %[[B2:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xf64{{.*}}>
+// CHECK-DAG:     %[[B3:[a-z0-9_]+]] = memref.alloc(%{{[a-z0-9_]+}}) : memref<?xi32{{.*}}>
 // CHECK:         scf.for
-// CHECK-SAME:      iter_args(%[[XA:[a-z0-9]+]] = %[[X]], %[[MA:[a-z0-9]+]] = %[[M]], %[[IDA:[a-z0-9]+]] = %[[ID]], %[[ORDER:[a-z0-9]+]] = %[[B0]], %[[XS:[a-z0-9]+]] = %[[B1]], %[[MS:[a-z0-9]+]] = %[[B2]], %[[IDS:[a-z0-9]+]] = %[[B3]])
-// CHECK:           md_exec.spatial_order %[[XA]], %{{[a-z0-9]+}}, %[[IDA]] outs(%[[ORDER]] : memref<?xi32>) width(1.100000e+00)
-// CHECK:           md_exec.permute %[[XA]], %[[ORDER]] outs(%[[XS]] : memref<?x3xf64>)
-// CHECK:           md_exec.permute %[[MA]], %[[ORDER]] outs(%[[MS]] : memref<?xf64>)
-// CHECK:           md_exec.permute %[[IDA]], %[[ORDER]] outs(%[[IDS]] : memref<?xi32>)
+// CHECK-SAME:      iter_args(%[[XA:[a-z0-9]+]] = %[[XTAG]], %[[MA:[a-z0-9]+]] = %[[MTAG]], %[[IDA:[a-z0-9]+]] = %[[IDTAG]], %[[ORDER:[a-z0-9]+]] = %[[B0]], %[[XS:[a-z0-9]+]] = %[[B1]], %[[MS:[a-z0-9]+]] = %[[B2]], %[[IDS:[a-z0-9]+]] = %[[B3]])
+// CHECK:           md_exec.spatial_order %[[XA]], %{{[a-z0-9]+}}, %[[IDA]] outs(%[[ORDER]] : memref<?xi32{{.*}}>) width(1.100000e+00)
+// CHECK:           md_exec.permute %[[XA]], %[[ORDER]] outs(%[[XS]] : memref<?x3xf64{{.*}}>)
+// CHECK:           md_exec.permute %[[MA]], %[[ORDER]] outs(%[[MS]] : memref<?xf64{{.*}}>)
+// CHECK:           md_exec.permute %[[IDA]], %[[ORDER]] outs(%[[IDS]] : memref<?xi32{{.*}}>)
 // CHECK:           md_exec.particle_for ins(%[[XS]], %[[MS]] :
-// CHECK-SAME:        outs(%[[XS]] : memref<?x3xf64>)
-// CHECK:           call @write_ordered(%{{[a-z0-9_]+}}, %[[XS]], %[[IDS]])
+// CHECK-SAME:        outs(%[[XS]] : memref<?x3xf64{{.*}}>)
+// CHECK:           %[[XPLAIN:[a-z0-9_]+]] = memref.cast %[[XS]]
+// CHECK:           %[[IDPLAIN:[a-z0-9_]+]] = memref.cast %[[IDS]]
+// CHECK:           call @write_ordered(%{{[a-z0-9_]+}}, %[[XPLAIN]], %[[IDPLAIN]])
 // CHECK:           scf.yield %[[XS]], %[[MS]], %[[IDS]], %[[ORDER]], %[[XA]], %[[MA]], %[[IDA]]
 
 func.func private @write_ordered(i64, memref<?x3xf64>, memref<?xi32>)

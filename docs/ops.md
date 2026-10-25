@@ -1258,7 +1258,7 @@ buffers. An op takes fields only or buffers only.
 
 | | Value form | Storage form |
 |---|---|---|
-| Operands | Fields | The buffers that hold the fields, of type `memref` (D33). A buffer on a device has a memory space in its type: `memref<?x3xf64, 1>`. |
+| Operands | Fields | The buffers that hold the fields, of type `memref` (D33). Storage assignment gives each row set an identity layout, for example `memref<?x3xf64, #md_exec.set_layout<@atoms, 2>>` (D[typed-storage-set]). A device buffer keeps its numeric memory space after the layout: `memref<?x3xf64, #md_exec.set_layout<@atoms, 2>, 1>`. |
 | Results | One per `outs` and `reduce` operand | One per `reduce` operand; a buffer in `outs` is updated where it is |
 | Effects | None. The op can be removed, moved, and merged like any pure op. | Reads and writes of the buffers, declared to the upstream analyses |
 | Ordering | By data dependency | By the order of the ops in their block (A12) |
@@ -1272,11 +1272,27 @@ buffers. An op takes fields only or buffers only.
 
 // Storage form
 %u = md_exec.pair_for %nl, %x, %cell
-       outs(%f : memref<?x3xf64>) reduce(%u0 : f64)
+       outs(%f : memref<?x3xf64, #md_exec.set_layout<@atoms, 2>>)
+       reduce(%u0 : f64)
        cutoff(2.5) weights [0.5] overwrite [true]
        policy(directed, owner_only) { ... }
-     : !mdrt.neighbors<@atoms>, memref<?x3xf64> -> f64
+     : !mdrt.neighbors<@atoms>, memref<?x3xf64, #md_exec.set_layout<@atoms, 2>> -> f64
 ```
+
+The layout's affine map is the identity: it changes neither an address nor
+the number of bytes. Its second argument is the memref rank, and its set is
+the row domain. A field or loop-reduction scratch buffer over `@atoms` has that set;
+the members of tuples carry their tuple set; an incidence buffer carries
+the particle set of its rows, and its builder and tuple loops declare the
+tuple set as `md_exec.tuple_set`. The incidence type does not yet carry that
+second set in the storage form; typed tuple parameters require the declaration. The module attribute
+`md_exec.typed_storage` marks storage assigned by the pass, for which loop
+operands must be tagged. Loop verification rejects a different set, and
+the CPU and GPU conversion passes reject casts that reinterpret a tagged
+buffer as another set, including through a plain cast or aliasing view. A cast into tagged storage with unknown source provenance is refused unless storage assignment marks it as a declared input boundary. An external host buffer crosses this boundary through that marked `memref.cast`. PME scratch remains untagged structural storage. The conversion passes
+erase the identity layout and those boundary casts before lowering, so
+the generated address calculations stay the same. Dynamic first dimensions
+continue to use the validated input size and the pass's set size map.
 
 | Op | In the storage form |
 |---|---|

@@ -90,8 +90,16 @@ struct Scope {
   /// by which it is reused: buffers of one type are of one size only within
   /// a set. The scope of the function keeps them for all scopes.
   llvm::DenseMap<Value, Attribute> setOf;
-  Attribute getSet(Value buffer) { return getRoot().setOf.lookup(buffer); }
+  Attribute getSet(Value buffer) {
+    if (auto type = dyn_cast<MemRefType>(buffer.getType()))
+      if (auto layout = dyn_cast_if_present<SetLayoutAttr>(type.getLayout()))
+        return layout.getSet();
+    return getRoot().setOf.lookup(buffer);
+  }
   void setSet(Value buffer, Attribute set) {
+    if (auto type = dyn_cast<MemRefType>(buffer.getType()))
+      if (auto layout = dyn_cast_if_present<SetLayoutAttr>(type.getLayout()))
+        assert(layout.getSet() == set && "storage type and set disagree");
     if (set)
       getRoot().setOf[buffer] = set;
   }
@@ -307,6 +315,38 @@ static FlatSymbolRefAttr getStorageSet(Type type) {
   return getParticleSet(type);
 }
 
+static MemRefType getMembersStorageType(md::RelationType relation) {
+  MemRefType plain = mdrt::getMembersType(relation);
+  if (!relation.getTupleSet())
+    return plain;
+  return MemRefType::get(
+      plain.getShape(), plain.getElementType(),
+      SetLayoutAttr::get(relation.getContext(), relation.getTupleSet(),
+                         plain.getRank()),
+      plain.getMemorySpace());
+}
+
+static Value eraseSetForHostCall(OpBuilder &builder, Location loc,
+                                 Value buffer) {
+  auto type = dyn_cast<MemRefType>(buffer.getType());
+  if (!type || !isa<SetLayoutAttr>(type.getLayout()))
+    return buffer;
+  return memref::CastOp::create(
+      builder, loc,
+      MemRefType::get(type.getShape(), type.getElementType(),
+                      MemRefLayoutAttrInterface(), type.getMemorySpace()),
+      buffer);
+}
+
+/// A plain input buffer gains its declared field or relation set here. This
+/// cast is the only assertion of set identity allowed at a storage boundary.
+static Value tagInputBuffer(OpBuilder &builder, Location loc, Type type,
+                            Value buffer) {
+  auto cast = memref::CastOp::create(builder, loc, type, buffer);
+  cast->setAttr("md_exec.input_set_boundary", builder.getUnitAttr());
+  return cast;
+}
+
 /// The type of the positions that the neighbor structure `structure` is
 /// refreshed or traversed with, from the ops that use it.
 static Type findPositionsType(Value structure) {
@@ -365,10 +405,11 @@ static const int64_t deviceSpace = 1;
 
 MemRefType Assignment::getStorageType(Type field) {
   MemRefType host = mdrt::getBufferType(cast<md::FieldType>(field));
+  auto layout = SetLayoutAttr::get(context, getStorageSet(field), host.getRank());
   if (!onDevice)
-    return host;
+    return MemRefType::get(host.getShape(), host.getElementType(), layout);
   return MemRefType::get(
-      host.getShape(), host.getElementType(), MemRefLayoutAttrInterface(),
+      host.getShape(), host.getElementType(), layout,
       IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
 }
 
@@ -393,7 +434,7 @@ LogicalResult Assignment::getScratch(Operation *op, ArrayRef<Type> sums,
     return failure();
   MemRefType device = MemRefType::get(
       {ShapedType::kDynamic}, Float64Type::get(context),
-      MemRefLayoutAttrInterface(),
+      SetLayoutAttr::get(context, getStorageSet(field), 1),
       IntegerAttr::get(IntegerType::get(context, 64), deviceSpace));
   for (Type sum : sums) {
     // A number, or a vector of numbers: the virial has nine.
@@ -949,6 +990,9 @@ LogicalResult Assignment::convertTupleFor(TupleForOp op, Scope &scope,
       // that adds to its destinations: one that overwrites a destination
       // writes the rows of its particles, and scatters nothing.
       overwriteAttr ? ScatterAttr() : op.getScatterAttr());
+  if (auto tupleSet =
+          cast<mdrt::IncidenceType>(op.getIncidence().getType()).getTupleSet())
+    loop->setAttr("md_exec.tuple_set", tupleSet);
   algebra::carry(op, loop);
   copyKernel(loop, op.getKernel().front());
   for (Value buffer : scratch)
@@ -985,9 +1029,19 @@ LogicalResult Assignment::convertBuildIncidence(BuildIncidenceOp op,
   Attribute space;
   if (onDevice)
     space = IntegerAttr::get(IntegerType::get(context, 64), deviceSpace);
+  auto incidenceType = cast<mdrt::IncidenceType>(op.getResult().getType());
+  MemRefType plain = getIncidenceBufferType(context, space);
+  MemRefType tagged = MemRefType::get(
+      plain.getShape(), plain.getElementType(),
+      SetLayoutAttr::get(context, incidenceType.getParticleSet(),
+                         plain.getRank()),
+      plain.getMemorySpace());
   Value incidence = BuildIncidenceOp::create(
-      scope.builder, op.getLoc(), getIncidenceBufferType(context, space),
+      scope.builder, op.getLoc(), tagged,
       members, size);
+  if (incidenceType.getTupleSet())
+    incidence.getDefiningOp()->setAttr("md_exec.tuple_set",
+                                       incidenceType.getTupleSet());
   mapping.map(op.getResult(), incidence);
   return success();
 }
@@ -1675,6 +1729,9 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     // structures are built from them.
     if (auto relation = dyn_cast<md::RelationType>(from.getResult().getType())) {
       Value buffer = mapping.lookup(from.getBuffer());
+      if (relation.getTupleSet())
+        buffer = tagInputBuffer(builder, op->getLoc(),
+                                getMembersStorageType(relation), buffer);
       mapping.map(from.getResult(), buffer);
       Attribute set = relation.getTupleSet();
       if (!sizes.count(set))
@@ -1696,6 +1753,9 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                      from.getBuffer().getParentBlock() == op->getBlock();
     bool isReadOnly = readOnly.contains(buffer);
     if (!onDevice && !givenAnew) {
+      buffer = tagInputBuffer(builder, op->getLoc(),
+                              getStorageType(from.getResult().getType()),
+                              buffer);
       bind(from.getResult(), buffer, scope);
       // A buffer that the function may not write is read where it is, and
       // no loop takes it for what it writes.
@@ -1742,7 +1802,9 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
     if (!onDevice) {
       // The buffer is visible outside from here on. Leave it alone.
       scope.owned.erase(buffer);
-      mapping.map(to.getResult(), buffer);
+      mapping.map(to.getResult(), memref::CastOp::create(
+                                     builder, op->getLoc(),
+                                     to.getResult().getType(), buffer));
       return success();
     }
 
@@ -1788,6 +1850,7 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
         // The buffers of the device as the host takes them (D215).
         for (Value value : found->second) {
           auto device = dyn_cast<MemRefType>(value.getType());
+          value = eraseSetForHostCall(builder, op->getLoc(), value);
           arguments.push_back(
               device ? memref::MemorySpaceCastOp::create(
                            builder, op->getLoc(),
@@ -1812,13 +1875,15 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
         return failure();
       if (!onDevice) {
         // The host reads the buffer where it is.
-        arguments.push_back(buffer);
+        arguments.push_back(memref::CastOp::create(builder, op->getLoc(),
+                                                   type, buffer));
         continue;
       }
       if (call.getInPlace()) {
         // The host takes the buffer of the device where it is
         // (D215).
         auto device = cast<MemRefType>(buffer.getType());
+        buffer = eraseSetForHostCall(builder, op->getLoc(), buffer);
         arguments.push_back(memref::MemorySpaceCastOp::create(
             builder, op->getLoc(),
             MemRefType::get(device.getShape(), device.getElementType()),
@@ -1859,13 +1924,15 @@ LogicalResult Assignment::convertOp(Operation *op, Scope &scope,
                << "expected a field in 'outs' that holds a value";
       outs.push_back(buffer);
       if (!onDevice) {
-        arguments.push_back(buffer);
+        arguments.push_back(memref::CastOp::create(
+            builder, op->getLoc(), calleeTypes[next++], buffer));
         continue;
       }
       if (!call.getInPlace())
         return op->emitOpError()
                << "writes fields on a device, which it takes only in place";
       auto device = cast<MemRefType>(buffer.getType());
+      buffer = eraseSetForHostCall(builder, op->getLoc(), buffer);
       arguments.push_back(memref::MemorySpaceCastOp::create(
           builder, op->getLoc(),
           MemRefType::get(device.getShape(), device.getElementType()),
@@ -2177,7 +2244,7 @@ LogicalResult Assignment::convertFunction(func::FuncOp function) {
     // The members of tuples are on the host.
     if (auto relation = dyn_cast<md::RelationType>(type))
       if (relation.getTupleSet())
-        return mdrt::getMembersType(relation);
+        return getMembersStorageType(relation);
     return type;
   };
   SmallVector<Type> inputs, results;
@@ -2288,6 +2355,9 @@ public:
     if (failed(Assignment(getOperation(), memory == "device", tables == "f32")
                    .run()))
       signalPassFailure();
+    else
+      getOperation()->setAttr("md_exec.typed_storage",
+                              UnitAttr::get(getOperation().getContext()));
   }
 };
 } // namespace
