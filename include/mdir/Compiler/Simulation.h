@@ -728,5 +728,12 @@ private:
   void publishTunables();
 };
 
+/// Gives the idle memory of the device back to the driver (#622): the
+/// blocks of the pool that no activation uses and the plans of cuFFT, once
+/// the device has run its work. Blocks in use and the state that live
+/// simulations keep stay. Returns the bytes given back; 0 without the
+/// runtime of a device, or before it made its context.
+uint64_t trimDeviceMemory();
+
 } }
 #endif

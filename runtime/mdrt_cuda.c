@@ -708,7 +708,22 @@ void mgpuEventRecord(CUevent event, CUstream stream) {
    compiled code asks for at every step do not follow the builds: a buffer
    indexed by the places of the groups takes the room of the places, not
    the number that a build occupied, and a buffer of the runtime that a
-   growth replaces goes back to the driver (D312). */
+   growth replaces goes back to the driver (D312).
+
+   The registry of the blocks, live and pooled, is what returns them: an
+   activation that closes takes back the blocks that it owns, and a block
+   that the registry does not record would stay allocated for the rest of
+   the process. So it grows with the blocks, however many there are; it
+   held 4096 before #622, and a block past that was handed out untracked
+   and never reclaimed. If it cannot grow, the block is given back to the
+   driver and the run stops. The idle blocks of the pool are bounded in
+   bytes (MDIR_DEVICE_POOL_BYTES, by default half of the device): a freed
+   block that would exceed the budget goes back to the driver. A request
+   that the driver refuses for want of memory releases the idle blocks of
+   the pool and the plans of cuFFT (trimIdle) and is made once more; and
+   an embedding program may release them itself (mdrtDeviceTrim). The
+   copies of the blocks at the peaks, for MDIR_DEVICE_MEMORY=2, keep at
+   most MAX_BLOCKS of them. */
 #define MAX_BLOCKS 4096
 /* An activation of an entry that an embedding program keeps across its
    calls (a Python simulation, D215): what the activation
@@ -738,13 +753,79 @@ struct Block {
      structures, or null for compiled code (MDIR_DEVICE_MEMORY=2). */
   const char *tag;
 };
-static struct Block liveBlocks[MAX_BLOCKS];
-static int numLive = 0;
-static struct Block freeBlocks[MAX_BLOCKS];
-static int numFree = 0;
-/* Whether memory of the device was allocated that `liveBlocks` does not
-   record, for want of room. */
-static int untracked = 0;
+static struct Block *liveBlocks = NULL;
+static int numLive = 0, roomLive = 0;
+static struct Block *freeBlocks = NULL;
+static int numFree = 0, roomFree = 0;
+/* The blocks of the pool's allocator that the driver holds, live or idle:
+   what a trim of everything gives back (mdrtDeviceMemoryCounts). */
+static int64_t numDriverBlocks = 0;
+/* Makes room for one more block in `list`, twice as much as it had; 0 if
+   the host has no memory for it. */
+static int reserveBlock(struct Block **list, int count, int *room) {
+  if (count < *room)
+    return 1;
+  int grown = *room ? 2 * *room : 1024;
+  struct Block *larger = realloc(*list, (size_t)grown * sizeof(struct Block));
+  if (!larger)
+    return 0;
+  *list = larger;
+  *room = grown;
+  return 1;
+}
+/* Records a block in use, or stops the run if the registry cannot grow:
+   the block is first given back, so that nothing stays untracked. */
+static void recordLiveBlock(struct Block block) {
+  if (!reserveBlock(&liveBlocks, numLive, &roomLive)) {
+    cuMemFree(block.pointer);
+    fprintf(stderr, "mdrt: out of memory of the host for the registry of "
+                    "the blocks of the device; the block is given back\n");
+    abort();
+  }
+  liveBlocks[numLive++] = block;
+}
+/* The budget of the idle blocks of the pool, in bytes: MDIR_DEVICE_POOL_BYTES,
+   or half of the memory of the device. */
+static uint64_t getPoolBudget(void) {
+  static int read = 0;
+  static uint64_t budget = 0;
+  if (!read) {
+    read = 1;
+    const char *value = getenv("MDIR_DEVICE_POOL_BYTES");
+    size_t free = 0, total = 0;
+    if (value && *value)
+      budget = strtoull(value, NULL, 10);
+    else if (context && cuCtxSetCurrent(context) == CUDA_SUCCESS &&
+             cuMemGetInfo(&free, &total) == CUDA_SUCCESS)
+      budget = total / 2;
+    else
+      budget = UINT64_MAX;
+  }
+  return budget;
+}
+/* Returns the idle blocks of the pool and the plans of cuFFT to the driver
+   once the device has run its work; the bytes returned. */
+static uint64_t trimIdle(void);
+/* cuMemAlloc, made once more after a trim if the driver has no memory.
+   MDRT_FAIL_ALLOCATION=N, for the tests of the retry, makes the N-th
+   request of this process report that the driver has no memory, without
+   asking it. */
+static CUresult allocateDevice(CUdeviceptr *pointer, size_t size) {
+  static int64_t requests = 0, failing = -1;
+  if (failing < 0) {
+    const char *value = getenv("MDRT_FAIL_ALLOCATION");
+    failing = value && *value ? strtoll(value, NULL, 10) : 0;
+  }
+  CUresult result = ++requests == failing ? CUDA_ERROR_OUT_OF_MEMORY
+                                          : cuMemAlloc(pointer, size);
+  if (result == CUDA_ERROR_OUT_OF_MEMORY && trimIdle())
+    result = cuMemAlloc(pointer, size);
+  return result;
+}
+/* Puts an idle block in the pool if the budget and the host have room for
+   it, otherwise gives it back to the driver; the caller has waited for the
+   work that may use it, or the work after it runs after that work. */
+static void poolBlock(struct Block block, int gone);
 /* What the runtime allocates a block for, while it does (null for
    compiled code). */
 static const char *allocationTag = NULL;
@@ -767,18 +848,21 @@ static void noteBytes(void) {
   if (liveBytes > peakLive) {
     peakLive = liveBytes;
     if (detailed) {
-      memcpy(peakLiveBlocks, liveBlocks, numLive * sizeof(struct Block));
-      numPeakLive = numLive;
+      int live = numLive < MAX_BLOCKS ? numLive : MAX_BLOCKS;
+      memcpy(peakLiveBlocks, liveBlocks, live * sizeof(struct Block));
+      numPeakLive = live;
     }
   }
   if (liveBytes + poolBytes > peakReserved) {
     peakReserved = liveBytes + poolBytes;
     if (detailed) {
-      memcpy(peakReservedBlocks, liveBlocks, numLive * sizeof(struct Block));
-      memcpy(peakReservedBlocks + numLive, freeBlocks,
-             numFree * sizeof(struct Block));
-      numPeakReservedLive = numLive;
-      numPeakReservedFree = numFree;
+      int live = numLive < MAX_BLOCKS ? numLive : MAX_BLOCKS;
+      int idle = numFree < MAX_BLOCKS ? numFree : MAX_BLOCKS;
+      memcpy(peakReservedBlocks, liveBlocks, live * sizeof(struct Block));
+      memcpy(peakReservedBlocks + live, freeBlocks,
+             idle * sizeof(struct Block));
+      numPeakReservedLive = live;
+      numPeakReservedFree = idle;
       usedAtPeakReserved = getDeviceUsed();
     }
   }
@@ -844,10 +928,9 @@ static void printDeviceMemory(void) {
                      : -1;
   fprintf(stderr,
           "mdrt: device memory: %lld allocations of blocks, %lld from the "
-          "pool, %lld returned to the driver%s\n",
+          "pool, %lld returned to the driver\n",
           (long long)numAllocations, (long long)numFromPool,
-          (long long)numToDriver,
-          untracked ? "; some blocks were not recorded" : "");
+          (long long)numToDriver);
   fprintf(stderr,
           "mdrt: device memory: the driver's use of the device: %.1f MiB "
           "once the context was made, %.1f MiB at the peak with the pool, "
@@ -929,15 +1012,13 @@ void *mgpuMemAlloc(uint64_t size, CUstream stream, bool isHostShared) {
   ++numAllocations;
   if (!pointer) {
     int64_t before = beginAccount();
-    check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+    check(allocateDevice(&pointer, size), "cuMemAlloc");
     endAccount(ACCOUNT_BLOCKS, before, (int64_t)size);
+    ++numDriverBlocks;
   }
   liveBytes += size;
-  if (numLive < MAX_BLOCKS)
-    liveBlocks[numLive++] =
-        (struct Block){pointer, size, currentActivation, allocationTag};
-  else
-    untracked = 1;
+  recordLiveBlock(
+      (struct Block){pointer, size, currentActivation, allocationTag});
   noteBytes();
   end(ALLOCATE, start);
   return (void *)pointer;
@@ -955,20 +1036,34 @@ void mgpuMemFree(void *pointer, CUstream stream) {
     struct Block block = liveBlocks[i];
     liveBlocks[i] = liveBlocks[--numLive];
     liveBytes -= block.size;
-    if (numFree < MAX_BLOCKS) {
-      freeBlocks[numFree++] = block;
-      poolBytes += block.size;
-      end(ALLOCATE, start);
-      return;
-    }
-    break;
+    poolBlock(block, 0);
+    end(ALLOCATE, start);
+    return;
   }
-  /* Memory that is not recorded, or that the pool has no room for, goes
-     back to the driver once the work that may use it is done. */
+  /* Memory that is not recorded goes back to the driver once the work that
+     may use it is done. */
   finish();
   check(cuMemFree(address), "cuMemFree");
   ++numToDriver;
   end(ALLOCATE, start);
+}
+
+static void poolBlock(struct Block block, int gone) {
+  block.owner = NULL;
+  if (poolBytes + block.size <= getPoolBudget() &&
+      reserveBlock(&freeBlocks, numFree, &roomFree)) {
+    freeBlocks[numFree++] = block;
+    poolBytes += block.size;
+    return;
+  }
+  /* Past the budget the block goes back to the driver, once the work that
+     may use it is done. */
+  --numDriverBlocks;
+  if (gone)
+    return;
+  finish();
+  check(cuMemFree(block.pointer), "cuMemFree");
+  ++numToDriver;
 }
 
 /* Returns a buffer of the runtime's structures that a growth replaces to
@@ -985,6 +1080,7 @@ static void releaseReplaced(void *pointer) {
       continue;
     liveBytes -= liveBlocks[i].size;
     liveBlocks[i] = liveBlocks[--numLive];
+    --numDriverBlocks;
     break;
   }
   check(cuMemFree(address), "cuMemFree");
@@ -1002,8 +1098,8 @@ static void recordCallHandle(void *handle) {
 }
 
 /* Returns true if `pointer` is memory of the device: in a block that the
-   library has allocated. Only where it has not recorded every block does it
-   ask the driver, which reports an error for memory of the host (and tools
+   library has allocated, all of which it records (#622). It does not ask
+   the driver, which reports an error for memory of the host (and tools
    such as compute-sanitizer count it). */
 static bool isOnDevice(void *pointer) {
   CUdeviceptr address = (CUdeviceptr)pointer;
@@ -1011,12 +1107,7 @@ static bool isOnDevice(void *pointer) {
     if (address >= liveBlocks[i].pointer &&
         address < liveBlocks[i].pointer + liveBlocks[i].size)
       return true;
-  if (!untracked)
-    return false;
-  unsigned type = 0;
-  CUresult result = cuPointerGetAttribute(
-      &type, CU_POINTER_ATTRIBUTE_MEMORY_TYPE, (CUdeviceptr)pointer);
-  return result == CUDA_SUCCESS && type == CU_MEMORYTYPE_DEVICE;
+  return false;
 }
 
 /* Copies between the host and the device, in either direction: the driver
@@ -1112,9 +1203,40 @@ struct FFTPlan {
   int64_t k1, k2, k3;
   int forward, single;
   cufftHandle plan;
+  /* The plan's workspace, and when it was last taken. */
+  uint64_t bytes, lastUse;
 };
 static struct FFTPlan *fftPlans = NULL;
 static int64_t numFFTPlans = 0, fftPlansCapacity = 0;
+/* The workspaces of the plans together, and the count of the takings
+   (#622): past the budget, MDIR_FFT_PLAN_BYTES or a quarter of the memory
+   of the device, the plans least recently taken are destroyed, and a trim
+   destroys them all; a plan is made anew when its grid comes back. */
+static uint64_t fftPlanBytes = 0, fftUses = 0;
+static uint64_t getFFTPlanBudget(void) {
+  static int read = 0;
+  static uint64_t budget = 0;
+  if (!read) {
+    read = 1;
+    const char *value = getenv("MDIR_FFT_PLAN_BYTES");
+    size_t free = 0, total = 0;
+    if (value && *value)
+      budget = strtoull(value, NULL, 10);
+    else if (context && cuCtxSetCurrent(context) == CUDA_SUCCESS &&
+             cuMemGetInfo(&free, &total) == CUDA_SUCCESS)
+      budget = total / 4;
+    else
+      budget = UINT64_MAX;
+  }
+  return budget;
+}
+/* Destroys plan `i` once the work that may use it is done. */
+static void destroyFFTPlan(int64_t i) {
+  finish();
+  cufftDestroy(fftPlans[i].plan);
+  fftPlanBytes -= fftPlans[i].bytes;
+  fftPlans[i] = fftPlans[--numFFTPlans];
+}
 
 /* Whether `result` is a success; otherwise the run stops, naming `what`. */
 static int checkFFT(cufftResult result, const char *what, int64_t k1,
@@ -1139,6 +1261,7 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
     if (fftPlans[i].k1 == k1 && fftPlans[i].k2 == k2 &&
         fftPlans[i].k3 == k3 && fftPlans[i].forward == forward &&
         fftPlans[i].single == single) {
+      fftPlans[i].lastUse = ++fftUses;
       *plan = fftPlans[i].plan;
       return checkFFT(cufftSetStream(*plan, (cudaStream_t)mgpuStreamCreate()),
                       "cufftSetStream", k1, k2, k3);
@@ -1163,19 +1286,29 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
                           : (forward ? CUFFT_D2Z : CUFFT_Z2D);
   cufftHandle made;
   int64_t before = beginAccount();
-  if (!checkFFT(cufftPlan3d(&made, (int)k1, (int)k2, (int)k3, type),
-                "cufftPlan3d", k1, k2, k3))
+  cufftResult result = cufftPlan3d(&made, (int)k1, (int)k2, (int)k3, type);
+  /* For want of memory, once more after the idle memory is given back. */
+  if (result == CUFFT_ALLOC_FAILED && trimIdle())
+    result = cufftPlan3d(&made, (int)k1, (int)k2, (int)k3, type);
+  if (!checkFFT(result, "cufftPlan3d", k1, k2, k3))
     return 0;
-  if (before >= 0) {
-    /* The bytes asked for are the plan's workspace. */
-    size_t workspace = 0;
-    cufftGetSize(made, &workspace);
+  /* The bytes asked for are the plan's workspace. */
+  size_t workspace = 0;
+  cufftGetSize(made, &workspace);
+  if (before >= 0)
     endAccount(ACCOUNT_FFT, before, (int64_t)workspace);
-  }
   if (!checkFFT(cufftSetStream(made, (cudaStream_t)mgpuStreamCreate()),
                 "cufftSetStream", k1, k2, k3)) {
     cufftDestroy(made);
     return 0;
+  }
+  /* The plans least recently taken make room for this one in the budget. */
+  while (numFFTPlans && fftPlanBytes + workspace > getFFTPlanBudget()) {
+    int64_t oldest = 0;
+    for (int64_t i = 1; i != numFFTPlans; ++i)
+      if (fftPlans[i].lastUse < fftPlans[oldest].lastUse)
+        oldest = i;
+    destroyFFTPlan(oldest);
   }
   struct FFTPlan *entry = &fftPlans[numFFTPlans++];
   entry->k1 = k1;
@@ -1184,8 +1317,66 @@ static int getFFTPlan(int64_t k1, int64_t k2, int64_t k3, int forward,
   entry->forward = forward;
   entry->single = single;
   entry->plan = made;
+  entry->bytes = workspace;
+  entry->lastUse = ++fftUses;
+  fftPlanBytes += workspace;
   *plan = made;
   return 1;
+}
+
+static int isDriverGone(void);
+/* No plan is in use when a trim destroys the plans: each transform
+   (mdrtCudaFFT*3D*) looks its plan up in getFFTPlan and executes it at
+   once, with no allocation of the runtime between the two, and no handle
+   is kept across calls. The trims within getFFTPlan run before the plan it
+   returns is made (a failed cufftPlan3d) or entered in the cache (the
+   eviction of others). The work already issued with a plan is run first
+   (finish), so that destroying it cannot cut that work short. */
+static uint64_t trimIdle(void) {
+  if (isDriverGone())
+    return 0;
+  finish();
+  uint64_t released = poolBytes + fftPlanBytes;
+  for (int i = 0; i != numFree; ++i) {
+    check(cuMemFree(freeBlocks[i].pointer), "cuMemFree");
+    --numDriverBlocks;
+    ++numToDriver;
+  }
+  numFree = 0;
+  poolBytes = 0;
+  while (numFFTPlans)
+    destroyFFTPlan(numFFTPlans - 1);
+  return released;
+}
+
+/* Gives the idle blocks of the pool and the plans of cuFFT back to the
+   driver (#622), for an embedding program between simulations; the bytes
+   given back. The blocks in use and those of open activations stay. */
+uint64_t mdrtDeviceTrim(void) {
+  if (!context)
+    return 0;
+  enter();
+  return trimIdle();
+}
+
+/* The accounts of the memory of the device (#622), for tests: the blocks
+   in use and their bytes, the idle blocks of the pool and their bytes, the
+   blocks of the pool's allocator that the driver holds, the plans of
+   cuFFT and their workspaces, and the memory of the device that the driver
+   reports free (-1 without a context). */
+void mdrtDeviceMemoryCounts(int64_t counts[8]) {
+  counts[0] = numLive;
+  counts[1] = (int64_t)liveBytes;
+  counts[2] = numFree;
+  counts[3] = (int64_t)poolBytes;
+  counts[4] = numDriverBlocks;
+  counts[5] = numFFTPlans;
+  counts[6] = (int64_t)fftPlanBytes;
+  size_t free = 0, total = 0;
+  counts[7] = context && cuCtxSetCurrent(context) == CUDA_SUCCESS &&
+                      cuMemGetInfo(&free, &total) == CUDA_SUCCESS
+                  ? (int64_t)free
+                  : -1;
 }
 
 /* The forward transform of the real grid of k1 x k2 x k3 points into the
@@ -1665,13 +1856,8 @@ void mdrtDeviceActivationClose(void *activation) {
       continue;
     struct Block block = liveBlocks[i];
     liveBlocks[i] = liveBlocks[--numLive];
-    block.owner = NULL;
     liveBytes -= block.size;
-    if (numFree < MAX_BLOCKS) {
-      freeBlocks[numFree++] = block;
-      poolBytes += block.size;
-    } else if (!gone)
-      check(cuMemFree(block.pointer), "cuMemFree");
+    poolBlock(block, gone);
   }
   for (size_t i = 0; i != a->numManaged && !gone; ++i)
     check(cuMemFree(a->managed[i]), "cuMemFree");
@@ -1693,7 +1879,7 @@ void *mdrtDeviceAllocateKept(uint64_t size) {
   CUdeviceptr pointer = 0;
   if (size) {
     int64_t before = beginAccount();
-    check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+    check(allocateDevice(&pointer, size), "cuMemAlloc");
     endAccount(ACCOUNT_KEPT, before, (int64_t)size);
   }
   return (void *)pointer;
@@ -1757,13 +1943,9 @@ void *mdrtDeviceAllocateRecorded(uint64_t size) {
   if (!size)
     return NULL;
   int64_t before = beginAccount();
-  check(cuMemAlloc(&pointer, size), "cuMemAlloc");
+  check(allocateDevice(&pointer, size), "cuMemAlloc");
   endAccount(ACCOUNT_KEPT, before, (int64_t)size);
-  if (numLive < MAX_BLOCKS)
-    liveBlocks[numLive++] =
-        (struct Block){pointer, size, NULL, "a plugin's outputs"};
-  else
-    untracked = 1;
+  recordLiveBlock((struct Block){pointer, size, NULL, "a plugin's outputs"});
   return (void *)pointer;
 }
 
@@ -1929,7 +2111,7 @@ static void *tuplesDeviceKept(size_t bytes) {
   CUdeviceptr pointer = 0;
   if (bytes) {
     int64_t before = beginAccount();
-    check(cuMemAlloc(&pointer, bytes), "cuMemAlloc");
+    check(allocateDevice(&pointer, bytes), "cuMemAlloc");
     endAccount(ACCOUNT_TUPLES, before, (int64_t)bytes);
   }
   return (void *)pointer;
@@ -2581,7 +2763,7 @@ int64_t mdrtDeviceConstant(int64_t host, int64_t bytes) {
   }
   CUdeviceptr device = 0;
   int64_t before = beginAccount();
-  check(cuMemAlloc(&device, (size_t)bytes), "cuMemAlloc");
+  check(allocateDevice(&device, (size_t)bytes), "cuMemAlloc");
   endAccount(ACCOUNT_CONSTANTS, before, bytes);
   check(cuMemcpyHtoD(device, (const void *)(intptr_t)host, (size_t)bytes),
         "cuMemcpyHtoD");

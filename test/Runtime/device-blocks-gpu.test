@@ -1,0 +1,32 @@
+# REQUIRES: cuda
+# The registry and the pool of the blocks of the device (#622,
+# Inputs/device_blocks.py), through the functions of the runtime.
+#
+# More blocks than the 4096 that the registry held before #622, in use in
+# one activation: all of them are taken back when it closes, and the next
+# activation takes them from the pool, without new allocations of the
+# driver. A trim gives them back.
+# RUN: %python %S/Inputs/device_blocks.py %mdrt_cuda registry | FileCheck %s --check-prefix=REGISTRY
+# REGISTRY: 5000 blocks in use: live 5000, live bytes 20480000, idle 0, idle bytes 0, driver blocks 5000
+# REGISTRY-NEXT: closed: live 0, live bytes 0, idle 5000, idle bytes 20480000, driver blocks 5000
+# REGISTRY-NEXT: again, from the pool: live 5000, live bytes 20480000, idle 0, idle bytes 0, driver blocks 5000
+# REGISTRY-NEXT: closed again: live 0, live bytes 0, idle 5000, idle bytes 20480000, driver blocks 5000
+# REGISTRY-NEXT: trimmed 20480000 bytes
+# REGISTRY-NEXT: after the trim: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
+#
+# The budget of the idle blocks in bytes: past 1 MiB, the blocks that an
+# activation leaves go back to the driver.
+# RUN: env MDIR_DEVICE_POOL_BYTES=1048576 %python %S/Inputs/device_blocks.py %mdrt_cuda budget | FileCheck %s --check-prefix=BUDGET
+# BUDGET: 1000 blocks closed under a budget of 1 MiB: live 0, live bytes 0, idle 256, idle bytes 1048576, driver blocks 256
+# BUDGET-NEXT: trimmed 1048576 bytes
+# BUDGET-NEXT: after the trim: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
+#
+# A request that the driver refuses for want of memory is made once more
+# after the idle blocks of the pool are given back. The refusal is made by
+# MDRT_FAIL_ALLOCATION, at the 101st request, so that the test needs no
+# memory of the device that the other tests of the suite use.
+# RUN: env MDRT_FAIL_ALLOCATION=101 %python %S/Inputs/device_blocks.py %mdrt_cuda retry | FileCheck %s --check-prefix=RETRY
+# RETRY: 100 idle blocks: live 0, live bytes 0, idle 100, idle bytes 409600, driver blocks 100
+# RETRY-NEXT: a request refused once, after the trim: live 1, live bytes 8192, idle 0, idle bytes 0, driver blocks 1
+# RETRY-NEXT: after the trim: live 0, live bytes 0, idle 0, idle bytes 0, driver blocks 0
+# RETRY-NEXT: device blocks retry passed

@@ -307,6 +307,16 @@ copies of the host are made where they are asked for. It is the base of
 views of device buffers through DLPack (#131) and of the frame evaluator of
 M2b (#138).
 
+The memory of the device that a simulation's activation took returns to
+the runtime's pool when the simulation ends, where a later simulation
+takes the blocks of the same sizes. In a long process that alternates
+systems of other sizes, grids, or precisions, the idle blocks stay within
+`MDIR_DEVICE_POOL_BYTES` (half of the device by default), and
+`mdir.trim_device_memory()` gives them, and the cached plans of cuFFT,
+back to the driver; it returns the bytes given back. A request that the
+driver refuses for want of memory does the same once by itself
+(D[device-memory-reclaim], #622, [runtime.md](runtime.md)).
+
 ### One activation runs the parts
 
 Before, every part was a call of the entry that built everything anew from

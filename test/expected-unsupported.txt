@@ -27,6 +27,7 @@ with hdf5: Driver/python-h5md-no-hdf5.test
 # compute-sanitizer: lit -Dsanitize=1 (docs/debugging.md).
 without compute-sanitizer: Sanitizer/analytic-bonds-gpu.test
 without compute-sanitizer: Sanitizer/centroid-gpu.test
+without compute-sanitizer: Sanitizer/device-blocks-gpu.test
 without compute-sanitizer: Sanitizer/dist-center-filter-gpu.test
 without compute-sanitizer: Sanitizer/dist-exec-gpu.test
 without compute-sanitizer: Sanitizer/free-energy-reorder-gpu.test
