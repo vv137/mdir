@@ -125,9 +125,12 @@ new strategy.
 
 ## 5. Effects, dependencies, and lifetimes
 
-The proposed loop effect summary (#566) states the buffers and row domains
-read and written, the accumulation operation and its algebra, and any
-ordering constraint. A verifier compares it with the body. Fusion, stream
+The first loop effect interface (D[loop-effect-summary], #566) derives
+operand, row-scope, set, and accumulation-algebra records. A missing
+declaration or opaque body effect makes that record incomplete; existing
+optimizations do not consume it yet. The later checked summary states the
+buffers and row domains read and written, the accumulation operation and its
+algebra, and any ordering constraint. A verifier compares it with the body. Fusion, stream
 assignment, and distributed scheduling consume the same summary; they may
 still impose different preconditions on a proposed schedule. A summary is
 not an assertion that two loops are independent: independence is derived

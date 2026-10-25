@@ -1294,6 +1294,15 @@ erase the identity layout and those boundary casts before lowering, so
 the generated address calculations stay the same. Dynamic first dimensions
 continue to use the validated input size and the pass's set size map.
 
+The `LoopEffectOpInterface` of `particle_for`, `pair_for`, `tuple_for`, and
+`scatter_add` derives an access record for each exact SSA operand
+(D[loop-effect-summary], #566). It distinguishes own, neighbor, tuple-member,
+indexed, and whole-row scopes, and records the algebra of each accumulation.
+An absent set or algebra declaration, or an opaque effect in a loop body,
+makes the record incomplete. The record is an inspection interface at this
+stage: it changes no verifier, fusion, stream, or distributed schedule, and
+does not establish initialization, readiness, or completion.
+
 | Op | In the storage form |
 |---|---|
 | `md_exec.pair_for` | `overwrite` has one flag per buffer in `outs`. With the flag, the loop ignores what the buffer holds, as if it held zeros. Without it, the loop adds to what the buffer holds. |

@@ -1,5 +1,9 @@
 # Appendix A. The control file
 
+D[loop-effect-summary] adds a compiler inspection interface for loop
+accesses. It adds no control-file or Python key and changes no default,
+input or output format, checkpoint, or overwrite behavior.
+
 D313 adds execution-level ownership-epoch migration and field
 redistribution to `md_dist`. D332 adds an execution-level
 collective halo skin predicate. Neither adds a `[distribute]` table, Python

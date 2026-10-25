@@ -208,11 +208,12 @@ before a physical plan is selected.
 2. Copies between host and device are ordered by async tokens in the IR;
    deferral and merging of readbacks become a general scheduling pass, and
    the path to CUDA graphs is open.
-3. Each loop op carries a summary of its effects: what it reads and writes,
-   and where (its own element, all members of a tuple, a global sum). Fusion
-   decides from it in one place. Begun: the independence of whole ops, from
-   their declared effects and traced aliases, decides what runs on a second
-   stream (D87); fusion still has checks of its own.
+3. The `md_exec` loop interface now derives a summary of each operand's
+   read, write, or accumulation and its row scope (D[loop-effect-summary],
+   #566). Missing set or algebra declarations and opaque body effects make
+   it incomplete, so it proves no optimization. Next, make one checked
+   summary serve fusion, D87 stream assignment, and distributed scheduling;
+   those consumers retain their existing checks and choices today.
 4. A debug lowering checks the bounds of every load and store, and the
    residual of iterative solvers.
 5. Done: the tests have a tier under compute-sanitizer (`lit -Dsanitize=1`,

@@ -20,6 +20,12 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Changed
 
+- **A shared loop effect interface** (D[loop-effect-summary], #566):
+  particle, pair, tuple, and scatter operations now expose their operand,
+  row scope, set, and accumulation algebra to compiler inspection. Missing
+  declarations remain unknown. Fusion, scheduling, generated code, control
+  keys, and output formats are unchanged.
+
 - **Checkpoints written beside the steps** (D336,
   D335, #548): `mdir run` copies the state at a checkpoint
   and writes the H5MD file, its hash, `fsync`, and rename on a thread of
