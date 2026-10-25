@@ -57,7 +57,8 @@ with tempfile.TemporaryDirectory(prefix="mdir-decision-links-") as temporary:
     assert table("write").returncode == 0, table("write").stderr
     log = (root / "docs" / "decisions.md").read_text(encoding="utf-8")
     assert "| [D315](decisions/D315.md) | Existing. | 2026-10-20 |" in log, log
-    assert f"| [{foo}](decisions/foo.md) | Pending. | pending |" in log, log
+    # A pending decision has no row yet: its row comes with its number.
+    assert "decisions/foo.md" not in log, log
     subprocess.run(["git", "add", "README.md", "docs", "scripts"],
                    cwd=root, check=True)
 

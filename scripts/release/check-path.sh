@@ -34,10 +34,23 @@ tag=v$version
 status=0
 
 copy=$(mktemp -d "${TMPDIR:-/tmp}/mdir-release-path.XXXXXX")
-trap 'rm -rf "$copy"' EXIT
+# The copy is removed however the check ends, and its removal never decides
+# the result: an error of rm under `set -e` in the trap turned a check that
+# had printed "release path: ok" into exit 1 (run 40238707543).
+cleanup() {
+  wait
+  rm -rf "$copy" 2>/dev/null || { sleep 1; rm -rf "$copy" 2>/dev/null; } || true
+}
+trap cleanup EXIT
 git archive HEAD | tar -x -C "$copy"
 cd "$copy"
 git init -q
+# No automatic gc or maintenance: `git commit` of a whole tree of loose
+# objects started a detached `gc --auto`, which was still writing into .git
+# when the trap removed it ("Directory not empty").
+git config gc.auto 0
+git config gc.autoDetach false
+git config maintenance.auto false
 git add -A
 git -c user.name=check -c user.email=check@invalid commit -q -m "HEAD"
 

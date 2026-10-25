@@ -14,10 +14,12 @@ numbered one, docs/decisions/<label>.md for one that waits for its number
 
     **The statement.** The full text of the decision ...
 
-The table has one row a decision, in the order of the numbers and then of
-the labels: the link to its file, its statement (the bold sentence that
-begins its text), and the date. A PR adds its file and never edits the
-table: `decision-number.sh assign` writes it, and `check` checks it.
+The table has one row a numbered decision, in the order of the numbers:
+the link to its file, its statement (the bold sentence that begins its
+text), and the date. A decision that waits for its number has no row yet
+(its file is read and checked all the same), so a PR that adds its file
+leaves the table as it is, and `check` passes on the PR and on main until
+`decision-number.sh assign` gives the number and writes the row.
 """
 import os
 import re
@@ -66,9 +68,10 @@ def table(root):
     entries.sort(key=lambda e: key(e[0]))
     rows = [BEGIN, "| # | Decision | Recorded |", "|---|---|---|"]
     for number, date, text in entries:
-        stem = number if not number.startswith("D[") else number[2:-1]
-        rows.append(f"| [{number}](decisions/{stem}.md) | {statement(text)} | "
-                    f"{date if date != 'at its merge' else 'pending'} |")
+        if number.startswith("D["):
+            continue  # pending: its row comes with its number
+        rows.append(f"| [{number}](decisions/{number}.md) | {statement(text)} | "
+                    f"{date} |")
     rows.append(END)
     return "\n".join(rows)
 
