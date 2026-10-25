@@ -402,6 +402,13 @@ in either order. It is off by default: once the kernels of PME became
 cheap, sharing the device with the loop over pairs, the longest part of a
 step, lengthened the step.
 
+The proposed resident FFT strategy (D[fft-device-resident], #580) retains
+intermediate values in owned device storage. Layout views require a proof
+or guard from the target representation; a backward input remains private.
+Boundary copies must establish completion and host visibility on the actual
+producer queue before storage is released. This plan does not infer overlap
+from tokens or change the existing reciprocal implementation.
+
 ## 8.4 Where the time of a step goes
 
 *Table 8.2. Cellulose NVE (408,609 atoms, 2 fs), mixed precision, dual

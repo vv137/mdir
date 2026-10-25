@@ -35,7 +35,8 @@ def PlaceLinearTransformDevice
     deallocation, move only the marked `md_exec.linear_transform` to
     device buffers. Allocate two distinct device buffers, copy the private
     input, execute the FFT, copy the result back, and free both buffers.
-    Each transfer waits on its own dependency; there is no whole-step wait.
+    Each transfer carries its own dependency token. The current host-copy
+    runtime also synchronizes both streams at that boundary.
     The pack/unpack path remains independent of the target. D341.
   }];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
