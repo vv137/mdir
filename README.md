@@ -78,14 +78,12 @@ files.
 
 ## Performance
 
-Under one protocol, the inputs, steps, and output of the Amber GPU
-benchmark suite, on one RTX 4090 in mixed precision, MDIR's rate over
-the nine runs of the suite is 111.7% to 149.5% of pmemd.cuda's with the
-searched reaches and 105.8% to 143.6% with the default reaches. With the
-searched reaches it runs from 83.4 ns/day on STMV (1,067,095 atoms, 4 fs)
-to 2406.1 ns/day on JAC at 4 fs (23,558 atoms; 1276.8 ns/day at 2 fs),
-white paper Table 10.2; outside its steps MDIR spends 7.9 to 27.9 s of a run, pmemd.cuda
-0.6 to 6.9 s (D327). On the CPU, at constant energy on one 16-core node,
+With the inputs, steps, and output of the Amber GPU benchmark suite, on
+one RTX 4090 in mixed precision, MDIR runs the nine runs of the suite at
+83.4 ns/day on STMV (1,067,095 atoms, 4 fs) to 2406.1 ns/day on JAC at
+4 fs (23,558 atoms; 1276.8 ns/day at 2 fs) with the searched reaches, and
+at 79.0 to 2311.5 ns/day with the default reaches (white paper,
+Table 10.2); outside its steps it spends 7.9 to 27.9 s of a run (D327). On the CPU, at constant energy on one 16-core node,
 MDIR takes 7.35 to 7.97 times the time per step of GROMACS 2026.3 with
 its NVE-default list at 16 threads, both in mixed precision, on JAC, a
 TIP3P box, and Cellulose; the TIP3P box starts from a different state in
