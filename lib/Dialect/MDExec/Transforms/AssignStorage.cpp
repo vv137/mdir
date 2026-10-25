@@ -11,6 +11,7 @@
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -343,7 +344,7 @@ static Value eraseSetForHostCall(OpBuilder &builder, Location loc,
 static Value tagInputBuffer(OpBuilder &builder, Location loc, Type type,
                             Value buffer) {
   auto cast = memref::CastOp::create(builder, loc, type, buffer);
-  cast->setAttr("md_exec.input_set_boundary", builder.getUnitAttr());
+  markInputSetBoundary(cast);
   return cast;
 }
 
