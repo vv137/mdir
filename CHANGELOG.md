@@ -167,6 +167,10 @@ format, or the outputs; every such change is listed under **Changed** or
   adopted (#434); and the control-file reference's advice of
   `coulomb_modifier = "POTENTIAL_SHIFT"` at a loose PME tolerance at
   constant energy (#346).
+- **The suite checks which tests are unsupported**: `test/expected-unsupported.txt`
+  lists them by lit feature, and a run of the whole suite warns on a test
+  that is unsupported but not listed, or listed but run
+  (`-Dexpected_unsupported=strict` makes it an error) (#608).
 
 ### Changed
 
