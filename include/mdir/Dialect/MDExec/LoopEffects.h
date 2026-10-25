@@ -22,7 +22,8 @@ struct LoopEffectSummary : analysis::EffectSummary {
   llvm::SmallVector<Reduction> reductions;
 };
 
-/// The summary returned by each loop interface, including an opaque-body bit.
+/// The summary returned by each loop interface. Body memory accesses lack a
+/// checked row footprint in this first slice and make the record incomplete.
 LoopEffectSummary summarizeLoop(mlir::Operation *op);
 
 } // namespace mdir::md_exec

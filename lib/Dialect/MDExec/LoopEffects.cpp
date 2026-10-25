@@ -114,35 +114,11 @@ LoopEffectSummary mdir::md_exec::summarizeLoop(Operation *op) {
       if (auto memory = dyn_cast<MemoryEffectOpInterface>(nested)) {
         SmallVector<MemoryEffects::EffectInstance> effects;
         memory.getEffects(effects);
-        for (const auto &effect : effects) {
-          Value value = effect.getValue();
-          if (!value) {
-            summary.complete = false;
-            continue;
-          }
-          // A non-buffer resource outside the loop has no row or set in this
-          // summary. It cannot establish independence for a later consumer.
-          if (!isa<MemRefType>(value.getType())) {
-            summary.complete = false;
-            continue;
-          }
-          // This interface describes reads and writes only. Allocation,
-          // release, other resources, and locally produced aliases need
-          // additional facts before a consumer may call the record complete.
-          bool reads = isa<MemoryEffects::Read>(effect.getEffect());
-          bool writes = isa<MemoryEffects::Write>(effect.getEffect());
-          if ((!reads && !writes) ||
-              effect.getResource() != SideEffects::DefaultResource::get()) {
-            summary.complete = false;
-            continue;
-          }
-          bool declared = llvm::any_of(summary.accesses, [&](const Access &a) {
-            return a.operand->get() == value &&
-                   (a.effect == Effect::Accumulate ||
-                    a.effect == (reads ? Effect::Read : Effect::Write));
-          });
-          summary.complete &= declared;
-        }
+        // The loop supplies scalar kernel arguments for its declared rows.
+        // A body memory access needs a separate footprint proof, even when
+        // its buffer is a declared operand: the index may reach other rows.
+        // This interface slice does not attempt that proof.
+        summary.complete &= effects.empty();
       } else if (!nested->hasTrait<OpTrait::HasRecursiveMemoryEffects>() &&
                  !isPure(nested)) {
         summary.complete = false;

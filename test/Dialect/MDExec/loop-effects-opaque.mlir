@@ -61,3 +61,19 @@ func.func @recursive_op_own_effect(%input: !real, %buffer: memref<1xf64>) -> !re
 
 // Recursive effects include the enclosing op's own effects as well as its body.
 // CHECK: md_exec.particle_for complete=0 accesses=2 reductions=0
+
+func.func @unproved_input_row(
+    %source: memref<?xf64, #md_exec.set_layout<@atoms, 1>>,
+    %dest: memref<?xf64, #md_exec.set_layout<@atoms, 1>>) {
+  md_exec.particle_for ins(%source : memref<?xf64, #md_exec.set_layout<@atoms, 1>>)
+      outs(%dest : memref<?xf64, #md_exec.set_layout<@atoms, 1>>) {
+  ^bb0(%x: f64):
+    %zero = arith.constant 0 : index
+    %value = memref.load %source[%zero] : memref<?xf64, #md_exec.set_layout<@atoms, 1>>
+    md_exec.yield %value : f64
+  }
+  return
+}
+
+// Naming a declared input does not prove that a captured load reads its own row.
+// CHECK: md_exec.particle_for complete=0 accesses=2 reductions=0

@@ -1303,6 +1303,11 @@ makes the record incomplete. The record is an inspection interface at this
 stage: it changes no verifier, fusion, stream, or distributed schedule, and
 does not establish initialization, readiness, or completion.
 
+The loop supplies scalar kernel arguments for the declared row accesses.
+Any additional memory effect in the body makes this first record incomplete,
+including a captured read of a declared input: operand identity alone does
+not prove that its index stays within the declared row footprint.
+
 | Op | In the storage form |
 |---|---|
 | `md_exec.pair_for` | `overwrite` has one flag per buffer in `outs`. With the flag, the loop ignores what the buffer holds, as if it held zeros. Without it, the loop adds to what the buffer holds. |
