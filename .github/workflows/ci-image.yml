@@ -13,10 +13,7 @@ name: ci-image
 on:
   workflow_dispatch:
   push:
-    # TEMPORARY, ci/cpu-tier is removed before #611 is ready: the first
-    # build, from the branch, since workflow_dispatch needs the workflow on
-    # main.
-    branches: [main, ci/cpu-tier]
+    branches: [main]
     paths:
       - 'packaging/Dockerfile'
       - 'scripts/build-llvm.sh'
