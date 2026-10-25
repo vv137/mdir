@@ -300,7 +300,8 @@ A release is two steps, scripted so that nothing is done by hand
 2. After its merge, `scripts/release/publish.sh VERSION` builds the merged
    `main` in a fresh tree, runs the full suite on a GPU, builds the white
    paper, writes the assets (the source archive, the installed tree for
-   Linux x86-64 with CUDA, the PDF, the notes, and SHA256SUMS), and makes
+   Linux x86-64 with CUDA unless `--no-binary`, the PDF, the notes, and
+   SHA256SUMS), and makes
    the annotated tag. Nothing is tagged unless the suite passes. With
    `--publish` it pushes the tag and creates the GitHub Release, whose
    notes are the changelog's section; the maintainer runs it, or approves
@@ -316,14 +317,32 @@ Python interface; and `MDIR_RELEASE_GPU`, the device of the suite. `cmake`, `nin
 `pandoc`, `tectonic`, and `docker` are found on the path or named by
 `CMAKE`, `NINJA`, `LIT`, `PANDOC`, `TECTONIC`, and `DOCKER`. On a shared
 machine, `MDIR_RELEASE_SUITE_LOCK` and `MDIR_RELEASE_GPU_LOCK` name its
-locks, which the script takes in that order around the suite. The script
+locks, which the script takes in that order around the suite. On a
+machine whose GPUs belong to a batch scheduler, `MDIR_RELEASE_SUITE` names
+instead the machine's command of the suite (#593): the script builds the
+tree and calls it as `<command> <build tree> <lit option>...` with the
+options of a release (below); the command runs `check-mdir` of the tree on
+a GPU of the scheduler, waits for it, prints the log, and returns lit's
+status. The suite then needs neither `MDIR_RELEASE_GPU` nor the locks; the
+run of the manylinux tree still uses them. The script
 stops at its start and names everything that is missing.
+
+`--no-binary`, for a machine without Docker, makes a release without the
+manylinux tree: it is neither built nor run, and the assets that the
+GitHub Release attaches are the source archive, the PDF, the release notes
+(`vVERSION.md`), and SHA256SUMS, which lists the other three. The notes of the
+GitHub Release (the file `notes.md` of the assets) then start by saying
+that the release has no binary tarball and link
+[building.md](building.md) at the tag, which describes the build from the
+source.
+The changelog's Known limitations of that release should say so too. With
+`MDIR_RELEASE_SUITE` and `--no-binary` no GPU is used outside the command.
 
 `publish.sh VERSION --dry-run` rehearses a release, also of a version that
 is tagged already: it does everything up to the tag in trees of its own
 (their names end in `-dry-run`) and tags, pushes, and publishes nothing;
-`--publish` is refused with it. With it, `--no-binary` leaves out the
-manylinux tree, for a machine without Docker. A run, dry or not, removes
+`--publish` is refused with it; `--no-binary` works with it as with a
+release. A run, dry or not, removes
 its worktree when it ends and leaves its build tree
 (`build-vVERSION[-dry-run]`), its assets (`vVERSION[-dry-run]`), and its
 logs under `MDIR_RELEASE_DIR`, to be removed by hand.

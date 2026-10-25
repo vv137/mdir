@@ -39,13 +39,25 @@
 # CHECK-NEXT: LIT is not set and lit is not on the path: LLVM's lit, which runs the suite
 # CHECK-NEXT: PANDOC is not set and pandoc is not on the path: pandoc 3, for the white paper
 # CHECK-NEXT: TECTONIC is not set and tectonic is not on the path: tectonic, for the white paper
-# CHECK-NEXT: the release without its binary: exit 2
-# CHECK-NEXT: --no-binary is for --dry-run: a release has its binary
+# CHECK-NEXT: a release without the binary, nothing set: exit 2
+# CHECK-NEXT: scripts/release/publish.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: MDIR_RELEASE_DIR is not set: the directory where a release writes its worktree, build tree, assets, and logs
+# CHECK-NEXT: MDIR_LLVM is not set: the install prefix of LLVM and MLIR
+# CHECK-NEXT: HDF5_PREFIX is not set: the install prefix of HDF5
+# CHECK-NEXT: CUDA_ROOT is not set: the CUDA toolkit of the build
+# CHECK-NEXT: MDIR_PYTHON is not set: the Python interpreter of the build, which runs the Python tests
+# CHECK-NEXT: PYBIND11_DIR is not set: the directory of pybind11's CMake package
+# CHECK-NEXT: MDIR_RELEASE_GPU is not set: the index of the GPU that runs the suite
+# CHECK-NEXT: CMAKE is not set and cmake is not on the path: CMake
+# CHECK-NEXT: NINJA is not set and ninja is not on the path: ninja
+# CHECK-NEXT: LIT is not set and lit is not on the path: LLVM's lit, which runs the suite
+# CHECK-NEXT: PANDOC is not set and pandoc is not on the path: pandoc 3, for the white paper
+# CHECK-NEXT: TECTONIC is not set and tectonic is not on the path: tectonic, for the white paper
 # CHECK-NEXT: a dry run that publishes: exit 2
 # CHECK-NEXT: --dry-run publishes nothing: not with --publish
 # CHECK-NEXT: the release, an unknown option: exit 2
 # CHECK-NEXT: unknown: --tag
-# CHECK-NEXT: usage: scripts/release/publish.sh VERSION [--publish] [--container] | VERSION --dry-run [--no-binary] [--container]
+# CHECK-NEXT: usage: scripts/release/publish.sh VERSION [--publish] [--no-binary] [--container] | VERSION --dry-run [--no-binary] [--container]
 # CHECK-NEXT: the release, the file of the machine and a device from the environment: exit 2
 # CHECK-NEXT: MDIR_RELEASE_GPU is not the index of a GPU: first
 # CHECK-NEXT: the release directory was made: False
@@ -54,6 +66,14 @@
 # CHECK-NEXT: HDF5_PREFIX names WORK/none, which is not a directory: the install prefix of HDF5
 # CHECK-NEXT: MDIR_TORCH_PYTHON names WORK/tools/no-torch, which is not a program: a Python interpreter with PyTorch, for the tests that need it
 # CHECK-NEXT: PANDOC names WORK/tools/no-pandoc, which is not a program: pandoc 3, for the white paper
+# CHECK-NEXT: a release without the binary through the machine's command, no device: exit 2
+# CHECK-NEXT: scripts/release/publish.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: HDF5_PREFIX names WORK/none, which is not a directory: the install prefix of HDF5
+# CHECK-NEXT: a release with the binary through the machine's command, no device: exit 2
+# CHECK-NEXT: scripts/release/publish.sh: the environment lacks what this script needs (docs/environment.md, Scripts):
+# CHECK-NEXT: MDIR_RELEASE_SUITE names WORK/tools/no-suite, which is not a program: the command of the machine that runs the full suite of a build tree
+# CHECK-NEXT: MDIR_RELEASE_GPU is not set: the index of the GPU that runs the suite
+# CHECK-NEXT: the release directory was made: False
 # CHECK-NEXT: a file of the machine that is missing: exit 2
 # CHECK-NEXT: scripts/release/publish.sh: MDIR_ENV_FILE names WORK/no.env, which cannot be read
 # CHECK-NEXT: a file of the machine with a line that is not NAME=value: exit 2

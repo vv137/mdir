@@ -2456,6 +2456,17 @@ format, or the outputs; every such change is listed under **Changed** or
   as [Unreleased] and the section of the version together.
   `test/Lit/changelog-release.test` moves a changelog with repeated
   subsections and checks each entry and its order.
+- `scripts/release/publish.sh` can make a release on a machine whose GPUs
+  belong to a batch scheduler and that has no Docker (#593). It refused
+  `--no-binary` outside `--dry-run`, and its suite used the device
+  directly. `MDIR_RELEASE_SUITE` names the machine's command of the suite,
+  which the script calls with the build tree and the options of lit of a
+  release, instead of `ninja check-mdir` on `MDIR_RELEASE_GPU` under the
+  locks. `--no-binary` now also makes a release: no manylinux tree is
+  built or run, the assets and SHA256SUMS leave it out, and the notes of
+  the GitHub Release say that it has no binary tarball and link the build
+  from the source. Without the variable and the option a release runs as
+  before.
 
 ## [0.1.0] - 2026-10-04
 
