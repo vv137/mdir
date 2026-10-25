@@ -256,6 +256,18 @@ preconditions, postconditions, and effects, with every supported caller
 checked. Unknown or recursive boundaries remain conservative. A rewrite
 preserves subjects, derives replacement evidence, or invalidates it.
 
+```mermaid
+flowchart TD
+    Q["Coverage predicate for list L, positions p, and cell c"] --> G{Guard result}
+    G -->|True| T["Witness W is valid in this branch for L, p, and c"]
+    G -->|False| B["Rebuild list L2 and establish witness W2"]
+    T --> U["Traverse L using W"]
+    B --> V["Traverse L2 using W2"]
+    U --> M["Merge results; branch witnesses do not escape"]
+    V --> M
+    M --> N["Positions change: establish coverage again"]
+```
+
 The initial implementation covers existing operations, recognized branches,
 structured loops, and functions with verified summaries. It need not prove
 arbitrary heap aliasing or recursive control flow. Unsupported required
@@ -282,6 +294,15 @@ ordered resources, not merely field buffers. Three facts remain separate:
 Initialized(region, content version)
 Ready(region, completion dependencies)
 Complete(contribution set, accumulation algebra)
+```
+
+```mermaid
+flowchart LR
+    E["md_exec.empty"] -->|"Full write on every path"| I["Initialized region and content version"]
+    I -->|"Producer completion before access"| R["Ready region and dependencies"]
+    R -->|"Every contribution once under its algebra"| C["Complete contribution set"]
+    W["Wait"] -.->|"Cannot initialize unwritten rows"| I
+    X["Finished transfer"] -.->|"Cannot supply missing contributions"| C
 ```
 
 An `md_exec.empty` result (#573) is readable only where every path has
