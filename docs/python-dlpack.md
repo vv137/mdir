@@ -37,7 +37,7 @@ part, `view.step`:
 |---|---|---|
 | `positions` | `(N, 3)`, the state's type: float64 in double and mixed precision | nm |
 | `velocities` | `(N, 3)`, the state's type | nm/ps, at `time + velocity_offset * timestep` |
-| `forces` | `(N, 3)`, the forces' type: float32 in mixed precision, float64 in double precision and in the deterministic mixed mode (#102) | kJ/mol/nm, those that the next step begins with |
+| `forces` | `(N, 3)`, the forces' type: float32 in mixed precision, float64 in double precision and in the deterministic mixed mode (#102), as `Program.plan["force_dtype"]` says | kJ/mol/nm, those that the next step begins with |
 | `ids` | `(N,)` int32 | the index in the input of the particle at each row |
 | `tunables` | a dict of names to `(M,)` float64, on the host | the values of the tunables (D213) |
 | `step`, `time`, `velocity_offset` | int, float, float | as in `State` |

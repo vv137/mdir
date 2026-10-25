@@ -586,7 +586,9 @@ and the loops of `md_exec` carry them to the lowering for a device:
   become 29.
 - **Products as calls of cuBLAS** (`D302`; option
   `contractions` of the pass, `gemm` by default, `loops` for D293's loops;
-  `MDIR_STAGE_CONTRACTIONS` overrides it for comparisons). On a device,
+  `MDIR_STAGE_CONTRACTIONS` overrides it for comparisons; the GPU runtime
+  links cuBLAS, `libcublas`, which the installed tree carries, and
+  `nvidia-cublas` is in the `cuda` extra of the wheel). On a device,
   every op of a body of the shape of a GEMM in f32 becomes a call of
   cuBLAS's `cublasSgemm` through the runtime (`mdrtGemmF32`), on the
   stream of the kernels and in their order:

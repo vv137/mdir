@@ -104,7 +104,7 @@ weights sum to 1, and is added for the extra point of Amber.
 |---|---|
 | Placement | After every drift, and once where the run begins, whatever the file of coordinates says. The positions that a step returns have their sites placed, so frames and checkpoints need nothing more. |
 | Forces | Moved after every evaluation of the forces, before the kick |
-| Mass and velocity | A site has mass 0. A kick leaves a particle of mass 0 alone, and the velocities drawn at the start give it none. |
+| Mass and velocity | A site has mass 0. A kick leaves a particle of mass 0 alone, and the velocities drawn at the start give it none; a Brownian step gives it velocity 0, and does not read the velocities (#19). |
 | Degrees of freedom | $3N_m - N_c - 3$: three for each particle with a mass ($N_m$; a site counts none), less one for each constraint, less three for the center of mass where its momentum is kept, which Langevin and Brownian dynamics do not keep unless `center_of_mass_interval` removes its motion |
 | Exclusions | Amber: a site is excluded from its oxygen and from what its oxygen is excluded from, as sander rebuilds them; the list of the file must not exclude more. GROMACS: those of `[ exclusions ]`; no bond reaches a site. |
 | Bonded terms | Amber: the bond from the oxygen to the extra point gives its length and is dropped, with every term that has an extra point. |

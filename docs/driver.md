@@ -276,7 +276,7 @@ Its schema begins at version 1:
 | `run.skins` | `pairlist_distance_source` and `pruned_distance_source` (`given`, `default`, or `cached`: the check measures nothing) and `reason`; the text output has the line `skins:` (D281, [neighbors.md](neighbors.md), Section 6.4) |
 | `run.pme` | `null` when disabled; otherwise `grid_points` (three nulls when automatic), `beta_inverse_angstrom` (`null` when automatic), `order`, `max_spacing_angstrom`, and `tolerance` |
 | `outputs` | Entries with `kind` (`log`, `energy`, `pull`, `free_energy`, `observables`, `trajectory`, `checkpoint`, `manifest`), `path`, `format`, `interval_steps`, `enabled`, `at_end`, `count` and `count_of` (`rows`, `frames`, `checkpoints`; `count` is null where the run decides, as in a minimization), `exists`, and `backup`, the name under which a run keeps the file that exists (D149), or null; `path` is null for an unconfigured file, and for the log when it goes to standard output only |
-| `warnings` | Objects with `code` and `message`: `backup_limit`, `constant_expression`, `empty_selection`, `flexible_water`, `long_time_step`, `short_thermostat_period` (D163a), `brownian_step` (D163b), `charged_soft_core` (D161), `pair_tail_left_out` (D209), `unused_parameter`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable` |
+| `warnings` | Objects with `code` and `message`: `backup_limit`, `constant_expression`, `empty_selection`, `flexible_water`, `long_time_step`, `short_thermostat_period` (D163a), `brownian_step` (D163b), `charged_soft_core` (D161), `pair_tail_left_out` (D209), `unused_parameter`, `fixed_rebuild_interval`, `no_checkpoint`, `no_energies`, `missing_input_checkpoint`, `hdf5_unavailable`, or `gpu_unavailable`. Each is reported once (`short_thermostat_period` was added twice for a run from a topology before #124), and a run whose particles come from a PDB file reports the warnings of its control file (`unused_parameter`, `constant_expression`, D158) as a run from a topology does (#129) |
 | `notes` | Objects with `code` and `message` for what a run will do that needs no change: `output_backup`, an output that exists and the name it will be kept under |
 | `errors` | Error messages; empty on success. On failure, `system`, `run`, and `outputs` are absent |
 
@@ -388,7 +388,10 @@ tree had them (D174). The file holds every line from the first: the run
 keeps what it prints before the file opens, at the end of its set-up, and
 writes it there. After that it keeps no text of its log, and a run without
 `log` keeps none from the same point (#304): its memory does not grow with
-the rows.
+the rows. Before, every line of a run without a log file stayed in memory
+until the run ended, +154 to +170 bytes a row of the energies between rows
+512 and 65536 (a row is about 121 bytes of text), about 60 GB of text for
+$5\times10^8$ steps with a row at every step.
 
 ```text
 INFO:      STEP           TIME      TOTAL_ENE  POTENTIAL_ENE    KINETIC_ENE    TEMPERATURE         VIRIAL       PRESSURE
@@ -473,7 +476,12 @@ and the solute, every other particle, ions included; the three degrees of
 freedom of the center of mass are shared in proportion
 (D203). The run keeps their sums and the sums of the ten blocks,
 whose length the number of rows of the run gives before it begins, and
-not the rows (#300).
+not the rows (#300), in the order of the pass over the rows that they
+replace, so the two lines are the same to the digit. Before, each row kept
+48 bytes in vectors that double, 24 GB for $5\times10^8$ steps with a row
+at every step, and a Python simulation 64 bytes a call of
+`run(1, energy=True)`, about 70 MB after 1.5 million calls
+(`output-rows.test`, `python-memory.test`).
 
 | Quantity | Kinetic energy | Reason |
 |---|---|---|
@@ -910,7 +918,10 @@ in fields as wide as the coordinates with one more decimal (`%8.3f` and
 `%8.4f` by default). A line has either three velocities that read in such
 fields or none, and every line alike; anything else, such as velocities
 wider than the coordinates, is an error that names the line, where
-GROMACS takes a field that does not read as 0 (#365).
+GROMACS takes a field that does not read as 0 (#365). Before, velocities
+written one column wider than the coordinates (`%12.7f`, then `%13.8f`)
+kept the first component, cut to the width, and lost the other two: 81
+waters written at 300 K started at 89 K.
 The common finite decimal coordinate and velocity fields use a direct
 binary64 conversion (D323); other numeric forms retain the
 general parser, with the same accepted input and diagnostics.

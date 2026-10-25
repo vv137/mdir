@@ -115,7 +115,20 @@ Every PR adds its entry to the Unreleased section of
 [CHANGELOG.md](../CHANGELOG.md), under Added, Changed, Fixed, or Removed,
 with its decision label. A change that breaks a control file, a checkpoint,
 or an output of an earlier release says so there, with what a user has to
-do. The entry is part of what the review checks before it labels the PR
+do.
+
+An entry is one or two sentences in a user's terms: what a user can now do,
+or what now behaves differently. It ends with its decision label or number
+and its issue or PR, for example "Checkpoints are written on a thread beside
+the steps (D336, #564)." It is a single `- ` item, with no nested list or
+table. Measurements, alternatives, file names, and the reasoning stay in
+the decision's row of `docs/decisions.md` and in the topic document, which
+the entry may link. Purely internal changes (refactors, test
+infrastructure) are said in a few words, and a release may group them. Each
+subsection (Added, Changed, Removed, Fixed, Validated, Performance, Known
+limitations, in the order of `scripts/release/changelog.py`) appears once
+in a section; a PR adds its entry to the existing subsection rather than
+opening a second one. The entry is part of what the review checks before it labels the PR
 `merge-recommended`. Whether a change counts as breaking, when that is in
 doubt, is a design question for the maintainer: ask it in a PR comment and
 label the PR `needs-decision`.
@@ -314,7 +327,13 @@ A release is two steps, scripted so that nothing is done by hand
 
 1. `scripts/release/prepare.sh VERSION` opens the release PR: it sets
    `project(mdir VERSION ...)` in `CMakeLists.txt` and moves the
-   changelog's [Unreleased] under [VERSION] and the date. The release notes
+   changelog's [Unreleased] under [VERSION] and the date with
+   `scripts/release/changelog.py release`, which joins the blocks of a
+   subsection that [Unreleased] repeats in file order and stops before it
+   writes unless the new section holds every top-level entry
+   (`test/Lit/changelog-release.test`; before #596 it kept only the last
+   block of a subsection, which lost 78 of the 271 entries of the
+   [Unreleased] of 0.2.0 without an error). The release notes
    (`docs/release-notes/vVERSION.md`) and the Known limitations are edited
    on that branch. The PR goes through the labels like any other.
 2. After its merge, `scripts/release/publish.sh VERSION` builds the merged

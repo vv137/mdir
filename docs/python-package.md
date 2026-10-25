@@ -156,6 +156,16 @@ check, since no notice is known for it.
 clause that asks for each. The metadata names MDIR's own license
 (`License-Expression: MIT`, `License-File: LICENSE`).
 
+The other distributions carry the same notices (#194, #221). Every install
+of MDIR puts the notices of what its binaries hold into
+`share/mdir/licenses`; `scripts/release/check-binary.sh` fails on a release
+tree without them (HDF5's `COPYING` beside the bundled `libhdf5`, and the
+licenses of pocketfft, toml++, LLVM, and LLVM's OpenMP runtime; the 0.1.0
+tarball had only MDIR's license and the CUDA EULA). The container image has
+MDIR's license and the same files with `HDF5-COPYING` in
+`/opt/mdir/share/mdir`, and the CUDA EULA for libdevice as
+`/usr/local/cuda/EULA.txt`, which `scripts/release/check-image.sh` checks.
+
 A CLI-only build is unchanged: with `MDIR_ENABLE_PYTHON` off it needs
 neither Python nor NumPy.
 
