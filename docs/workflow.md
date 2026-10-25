@@ -243,14 +243,16 @@ the cluster.
   the tests, from the stages `ci-hdf5` and `ci-prebuilt` of
   `packaging/Dockerfile`, tagged with a hash of the Dockerfile and of
   `scripts/build-llvm.sh` and `scripts/build-hdf5.sh`, which `ci.yml`
-  computes the same way. It is built by hand (workflow_dispatch) and when
-  one of those files changes on `main`, never on a pull request. One hosted
+  computes the same way. It runs only when the maintainer starts it
+  (workflow_dispatch), never on a push or a pull request, and builds
+  nothing when the tag is present already. One hosted
   job (4 cores, six hours) cannot build LLVM, so `ci-llvm-part.yml` builds it
   with `scripts/build-llvm.sh` in up to three parts that share a compile
   cache, and the image is made over the install tree; the stage `ci` builds
   the same image in one go on a machine that can. A change of the LLVM
-  version or of the Dockerfile thus makes a new tag, which the next run of
-  `ci-image.yml` builds before `ci.yml` can take it.
+  version, of the Dockerfile, or of the two build scripts thus makes a new
+  tag: the maintainer then runs `scripts/ci/build-image.sh --push` or starts
+  `ci-image.yml`, and `ci.yml` takes the image once it is pushed.
 - **The image by hand** (`scripts/ci/build-image.sh`): on a machine with
   Docker, the stage `ci` builds LLVM in one go, in about an hour with 16 to
   32 jobs, against several hours of the hosted parts. Use it after a change

@@ -8,18 +8,11 @@ name: ci-image
 # (ci-llvm-part.yml), since one hosted job cannot build it in six hours;
 # the image is then the stage `ci-prebuilt` of packaging/Dockerfile over
 # that install (the stage `ci` builds the same image in one go where a
-# machine can). Run by hand, and when one of those files changes on main;
-# never on a pull request.
+# machine can). It pushes, so it runs only when the maintainer starts it
+# (workflow_dispatch; the maintainer, 2026-10-26), and builds nothing when
+# the tag is present already.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - 'packaging/Dockerfile'
-      - 'scripts/build-llvm.sh'
-      - 'scripts/build-hdf5.sh'
-      - '.github/workflows/ci-image.yml'
-      - '.github/workflows/ci-llvm-part.yml'
 
 permissions:
   contents: read
