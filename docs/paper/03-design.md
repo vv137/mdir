@@ -5,7 +5,9 @@ A run of MDIR passes through four levels of IR, each a dialect of MLIR
 advances*; the third says *over which set, with which pattern of access*;
 the fourth is the interface to a small runtime. Every pass between them
 either rewrites within a level or lowers to the next, and a pass may rely
-only on what the IR states (Section 12).
+only on what the IR states (Section 12). The pipeline, one step, and the
+path from facts to strategies are drawn in brief in
+[overview.md](../overview.md).
 
 *Table 3.1. The levels of the IR.*
 

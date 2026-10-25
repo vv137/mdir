@@ -52,7 +52,8 @@ the white paper ([docs/paper/10-performance.md](docs/paper/10-performance.md))
 measures it against the first milestone's target (D114), the rate of
 pmemd.cuda, with both programs under one protocol. A driver reads a control file and writes a log, a
 trajectory, and checkpoints, from which a run continues exactly. The white
-paper of the first milestone is in [docs/paper/](docs/paper/README.md).
+paper of the first milestone is in [docs/paper/](docs/paper/README.md), and
+[docs/overview.md](docs/overview.md) gives the whole design in brief.
 
 ## MDIR at a glance
 
@@ -189,7 +190,8 @@ apptainer run --nv mdir-0.1.0.sif doctor
 
 | Document | Contents |
 |---|---|
-| [docs/architecture.md](docs/architecture.md) | The design |
+| [docs/overview.md](docs/overview.md) | An overview: why MDIR exists, its dialects, passes, lowerings, runtime, and front ends, one step, and what it guarantees, with diagrams |
+| [docs/architecture.md](docs/architecture.md) | The first design (M0), and where each of its parts went |
 | [docs/future-architecture-plan.md](docs/future-architecture-plan.md) | Future plan: architecture review against Saunders, Cornel, and P4IRS, with staged dependencies, MLIP semantics, and model interoperability |
 | [docs/ops.md](docs/ops.md) | Types and ops for the first milestone |
 | [docs/runtime.md](docs/runtime.md) | Proposal for the runtime and execution of the first milestone |

@@ -80,4 +80,6 @@ lowering to a GPU. Section 9 collects the evidence of correctness and
 Section 10 the measurements of performance. Section 11 places MDIR among
 related work, Section 12 states the principles of development and the
 defects that taught them, and Section 13 the limitations. The appendices
-give the control file and a guide for contributors.
+give the control file and a guide for contributors. A short overview of
+the system, kept current with the code, is in
+[overview.md](../overview.md).

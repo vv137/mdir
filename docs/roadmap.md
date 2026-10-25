@@ -582,14 +582,11 @@ replanning that does not change generated code can reuse it. Preserve
 artifact identity and restart contracts from ML1, initially with same-plan
 continuation; changes of rank count require later validation.
 
-To bring into line with the detailed plan: [architecture.md](architecture.md),
-Section 6 still calls the plan an ordered list of stages, where the plan
-makes the graph primary; its Section 4.3 names spherical harmonics as op
-families and asks the halo to cover the receptive field of the energy,
-where the plan is agnostic of the basis and separates the support of the
-forces from that of the energy; its milestones (Section 12) have neither
-EAM, the verifier, nor the adapter. [decisions.md](decisions.md), Section
-7 still tags the dependency interface M2b, which A14 moved into M1.
+To bring into line with the detailed plan: [decisions.md](decisions.md),
+Section 7 still tags the dependency interface M2b, which A14 moved into M1.
+(The first design's description of the plan as an ordered list of stages,
+and of `mlff`'s op families, was removed from
+[architecture.md](architecture.md) by #587.)
 
 ## 8. Analysis
 
