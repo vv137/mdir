@@ -18,6 +18,16 @@ void markInputSetBoundary(mlir::memref::CastOp cast);
 mlir::LogicalResult verifyInputSetBoundaryAttribute(mlir::Operation *op,
                                                      mlir::Attribute value);
 
+inline constexpr llvm::StringLiteral kTypedStorageAttrName =
+    "md_exec.typed_storage";
+
+/// The module's checked storage-form declaration.
+bool hasTypedStorage(mlir::ModuleOp module);
+void markTypedStorage(mlir::ModuleOp module);
+void clearTypedStorage(mlir::ModuleOp module);
+mlir::LogicalResult verifyTypedStorageAttribute(mlir::Operation *op,
+                                                mlir::Attribute value);
+
 /// Verify every cast into set-tagged storage in a typed-storage module.
 mlir::LogicalResult verifyStorageSetCasts(mlir::ModuleOp module);
 

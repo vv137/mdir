@@ -2357,8 +2357,7 @@ public:
                    .run()))
       signalPassFailure();
     else
-      getOperation()->setAttr("md_exec.typed_storage",
-                              UnitAttr::get(getOperation().getContext()));
+      markTypedStorage(getOperation());
   }
 };
 } // namespace
