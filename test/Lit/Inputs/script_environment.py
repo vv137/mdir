@@ -45,7 +45,7 @@ def program(name):
 publish = "scripts/release/publish.sh"
 run("the release, nothing set", publish, "0.1.0")
 run("a dry run without the binary, nothing set", publish, "0.1.0", "--dry-run", "--no-binary")
-run("the release without its binary", publish, "0.1.0", "--no-binary")
+run("a release without the binary, nothing set", publish, "0.1.0", "--no-binary")
 run("a dry run that publishes", publish, "0.1.0", "--dry-run", "--publish")
 run("the release, an unknown option", publish, "0.1.0", "--tag")
 
@@ -70,6 +70,16 @@ run("the release, a prefix that is no directory", publish, "0.1.0",
     MDIR_ENV_FILE=machine, HDF5_PREFIX=os.path.join(work, "none"),
     PANDOC=os.path.join(work, "tools", "no-pandoc"),
     MDIR_TORCH_PYTHON=os.path.join(work, "tools", "no-torch"))
+# The machine's command of the suite (#593): with it and without the binary
+# no device is needed; with the binary, the run of the manylinux tree still
+# needs one.
+run("a release without the binary through the machine's command, no device",
+    publish, "0.1.0", "--no-binary", MDIR_ENV_FILE=machine, MDIR_RELEASE_GPU="",
+    MDIR_RELEASE_SUITE=program("suite"), HDF5_PREFIX=os.path.join(work, "none"))
+run("a release with the binary through the machine's command, no device",
+    publish, "0.1.0", MDIR_ENV_FILE=machine, MDIR_RELEASE_GPU="",
+    MDIR_RELEASE_SUITE=os.path.join(work, "tools", "no-suite"))
+print("  the release directory was made:", os.path.exists(os.path.join(work, "release")))
 run("a file of the machine that is missing", publish, "0.1.0",
     MDIR_ENV_FILE=os.path.join(work, "no.env"))
 with open(os.path.join(work, "bad.env"), "w") as file:

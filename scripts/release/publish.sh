@@ -2,7 +2,7 @@
 # Builds, tests, tags, and (with --publish) publishes a release, after the
 # release PR of scripts/release/prepare.sh has merged:
 #
-#   scripts/release/publish.sh VERSION [--publish] [--container]
+#   scripts/release/publish.sh VERSION [--publish] [--no-binary] [--container]
 #   scripts/release/publish.sh VERSION --dry-run [--no-binary] [--container]
 #
 # From origin/main, in a fresh worktree and build tree under
@@ -13,7 +13,8 @@
 #     (MDIR_ENABLE_PYTHON, so that the suite holds the Python tests, #297),
 #     and runs the full suite on the GPU
 #     MDIR_RELEASE_GPU under the locks of the machine, if it has them
-#     (MDIR_RELEASE_SUITE_LOCK, then MDIR_RELEASE_GPU_LOCK),
+#     (MDIR_RELEASE_SUITE_LOCK, then MDIR_RELEASE_GPU_LOCK), or, if the
+#     machine names one, through its command MDIR_RELEASE_SUITE,
 #     with the tests of a release (lit's -Drelease=1: the whole matrix of
 #     the tests that run a part of their cases by default) and, where the
 #     machine names their interpreters, the tests of PyTorch and of h5py;
@@ -23,7 +24,8 @@
 #     (git archive), the installed tree for manylinux_2_28 x86-64 with CUDA
 #     (packaging/Dockerfile.manylinux; checked by check-binary.sh and run
 #     on the CPU and on that GPU without CUDA_ROOT), the PDF, the release
-#     notes, and SHA256SUMS; --container also builds the Docker
+#     notes, and SHA256SUMS (--no-binary leaves out the installed tree and
+#     its two runs, and the notes say so); --container also builds the Docker
 #     image mdir:VERSION (checked by check-image.sh; not uploaded);
 #  5. makes the annotated tag vVERSION on that commit.
 # Without --publish it stops there and prints the two publishing commands;
@@ -35,8 +37,14 @@
 # it does steps 1 to 4 in trees of its own (src-vVERSION-dry-run,
 # build-vVERSION-dry-run, vVERSION-dry-run, and logs of that name) and
 # stops before the tag. Nothing is tagged, pushed, or published, and
-# --publish is refused with it. With it, --no-binary leaves out the
-# manylinux tree and its two runs, for a machine without Docker.
+# --publish is refused with it.
+#
+# --no-binary, for a machine without Docker, makes a release (or a dry run)
+# without the manylinux tree: it is neither built nor run, SHA256SUMS and
+# the assets of the GitHub Release leave it out, and the notes of the
+# release (notes.md, the body of the GitHub Release) start by saying that
+# the release has no binary tarball and where the build from the source is
+# described.
 #
 # The worktree is removed when the script ends, however it ends. The build
 # tree, the assets, and the logs stay under MDIR_RELEASE_DIR, those of a
@@ -58,7 +66,18 @@
 #                      that compare with it)
 #   PYBIND11_DIR       the directory of pybind11's CMake package
 #   MDIR_RELEASE_GPU   the index of the GPU of the suite and of the run of
-#                      the manylinux tree
+#                      the manylinux tree; not needed with MDIR_RELEASE_SUITE
+#                      and --no-binary
+#   MDIR_RELEASE_SUITE optional: a program of the machine that runs the full
+#                      suite, for a machine whose GPUs belong to a batch
+#                      scheduler. It is called as
+#                        MDIR_RELEASE_SUITE BUILD_TREE LIT_OPTION...
+#                      with the options of a release below, after the tree
+#                      is built (it may build it again); it runs the suite
+#                      (check-mdir) of that tree on a GPU, waits for it,
+#                      prints its log, and returns lit's status. It may add
+#                      options of lit of its own. With it, the suite takes
+#                      neither MDIR_RELEASE_GPU nor the locks
 #   MDIR_TORCH_PYTHON, MDIR_H5MD_PYTHON
 #                      optional: interpreters with PyTorch (and torch-pme)
 #                      and with h5py, given to lit as -Dtorch_python and
@@ -67,7 +86,8 @@
 #                      unsupported if it lacks it
 #   MDIR_RELEASE_GPU_LOCK, MDIR_RELEASE_SUITE_LOCK
 #                      optional: lock files held, with flock, while the GPU
-#                      is used and around the suite (the suite's first)
+#                      is used and around the suite (the suite's first);
+#                      without MDIR_RELEASE_SUITE
 #   CMAKE, NINJA, LIT, PANDOC, TECTONIC, DOCKER
 #                      optional: the programs, by name or path; cmake,
 #                      ninja, pandoc, tectonic, and docker on the path by
@@ -75,14 +95,13 @@
 # CC, CXX, PATH, LD_LIBRARY_PATH, LIT_OPTS, CUDA_CACHE_PATH, and
 # MDIR_BENCH_DIR reach the build and the suite as the environment has them.
 set -euo pipefail
-usage="usage: $0 VERSION [--publish] [--container] | VERSION --dry-run [--no-binary] [--container]"
+usage="usage: $0 VERSION [--publish] [--no-binary] [--container] | VERSION --dry-run [--no-binary] [--container]"
 version=${1:?$usage}; shift
 publish=0; container=0; dry=0; binary=1
 for a in "$@"; do case $a in
   --publish) publish=1;; --container) container=1;; --dry-run) dry=1;; --no-binary) binary=0;;
   *) echo "unknown: $a" >&2; echo "$usage" >&2; exit 2;;
 esac; done
-(( dry || binary )) || { echo "--no-binary is for --dry-run: a release has its binary" >&2; exit 2; }
 (( dry && publish )) && { echo "--dry-run publishes nothing: not with --publish" >&2; exit 2; }
 
 . "$(dirname "$0")/../environment.sh"
@@ -94,7 +113,12 @@ need_program MDIR_PYTHON "" "the Python interpreter of the build, which runs the
 need_directory PYBIND11_DIR "the directory of pybind11's CMake package"
 if [[ -n ${MDIR_TORCH_PYTHON:-} ]]; then need_program MDIR_TORCH_PYTHON "" "a Python interpreter with PyTorch, for the tests that need it"; fi
 if [[ -n ${MDIR_H5MD_PYTHON:-} ]]; then need_program MDIR_H5MD_PYTHON "" "a Python interpreter with h5py, for the tests that need it"; fi
-need_variable MDIR_RELEASE_GPU "the index of the GPU that runs the suite"
+# The machine's command of the suite (MDIR_RELEASE_SUITE) uses no device of
+# this script; the run of the manylinux tree still does.
+suite_command=0; [[ -z ${MDIR_RELEASE_SUITE:-} ]] || suite_command=1
+if (( suite_command )); then need_program MDIR_RELEASE_SUITE "" "the command of the machine that runs the full suite of a build tree"; fi
+use_gpu=0; (( suite_command && ! binary )) || use_gpu=1
+if (( use_gpu )); then need_variable MDIR_RELEASE_GPU "the index of the GPU that runs the suite"; fi
 need_program CMAKE cmake "CMake"
 need_program NINJA ninja "ninja"
 if [[ -z ${LIT:-} && -n ${NINJA:-} && -x $(dirname "$NINJA")/lit ]]; then LIT=$(dirname "$NINJA")/lit; fi
@@ -103,13 +127,15 @@ need_program PANDOC pandoc "pandoc 3, for the white paper"
 need_program TECTONIC tectonic "tectonic, for the white paper"
 if (( binary || container )); then need_program DOCKER docker "Docker with BuildKit, for the manylinux tree and the image"; fi
 if (( publish )); then need_program GH gh "the GitHub CLI, which creates the release"; fi
-if [[ -n ${MDIR_RELEASE_GPU_LOCK:-}${MDIR_RELEASE_SUITE_LOCK:-} ]]; then need_program FLOCK flock "flock, for the locks"; fi
+if (( use_gpu )) && [[ -n ${MDIR_RELEASE_GPU_LOCK:-}${MDIR_RELEASE_SUITE_LOCK:-} ]]; then need_program FLOCK flock "flock, for the locks"; fi
 need_check
-[[ $MDIR_RELEASE_GPU =~ ^[0-9]+$ ]] || { echo "MDIR_RELEASE_GPU is not the index of a GPU: $MDIR_RELEASE_GPU" >&2; exit 2; }
+if (( use_gpu )); then
+  [[ $MDIR_RELEASE_GPU =~ ^[0-9]+$ ]] || { echo "MDIR_RELEASE_GPU is not the index of a GPU: $MDIR_RELEASE_GPU" >&2; exit 2; }
+fi
 export PANDOC TECTONIC
 
 repo=$(git rev-parse --show-toplevel)
-gpu=$MDIR_RELEASE_GPU
+gpu=${MDIR_RELEASE_GPU:-}
 # What the suite of a release adds to lit's options: the tests of a
 # release, the interpreters that the machine names, and the names of the
 # tests that are unsupported, in the log.
@@ -119,8 +145,10 @@ lit_release="-Drelease=1 --show-unsupported"
 # The lock of the suite is taken before that of the GPU, as everything else
 # on a machine that has both does (docs/workflow.md, Shared machines).
 gpu_locked=(); suite_locked=()
-[[ -z ${MDIR_RELEASE_GPU_LOCK:-} ]] || gpu_locked=("$FLOCK" "$MDIR_RELEASE_GPU_LOCK")
-[[ -z ${MDIR_RELEASE_SUITE_LOCK:-} ]] || suite_locked=("$FLOCK" "$MDIR_RELEASE_SUITE_LOCK")
+if (( use_gpu )); then
+  [[ -z ${MDIR_RELEASE_GPU_LOCK:-} ]] || gpu_locked=("$FLOCK" "$MDIR_RELEASE_GPU_LOCK")
+  [[ -z ${MDIR_RELEASE_SUITE_LOCK:-} ]] || suite_locked=("$FLOCK" "$MDIR_RELEASE_SUITE_LOCK")
+fi
 tag=v$version
 name=$tag; (( dry )) && name=$tag-dry-run
 mkdir -p "$MDIR_RELEASE_DIR/logs"
@@ -150,9 +178,19 @@ echo "== build $commit"
   -DCMAKE_INSTALL_PREFIX=/ > "$log-cmake.log"
 "$NINJA" -C "$build" > "$log-build.log"
 
-echo "== suite on GPU $gpu (log $log-check.log)"
-"${suite_locked[@]}" "${gpu_locked[@]}" sh -c "nvidia-smi -i $gpu; CUDA_VISIBLE_DEVICES=$gpu LIT_OPTS=\"\${LIT_OPTS:-} $lit_release\" '$NINJA' -C '$build' check-mdir" > "$log-check.log" 2>&1 \
-  || { grep -E '^FAIL:|Failed' "$log-check.log" >&2; echo "the suite failed: nothing is tagged" >&2; exit 1; }
+if (( suite_command )); then
+  # The machine's command runs the suite where its GPUs are (a job of its
+  # scheduler) and returns lit's status; LIT_OPTS reaches it in the
+  # environment.
+  read -r -a lit_release_options <<< "$lit_release"
+  echo "== suite through $MDIR_RELEASE_SUITE (log $log-check.log)"
+  "$MDIR_RELEASE_SUITE" "$build" "${lit_release_options[@]}" > "$log-check.log" 2>&1 \
+    || { grep -E '^FAIL:|Failed' "$log-check.log" >&2; echo "the suite failed: nothing is tagged" >&2; exit 1; }
+else
+  echo "== suite on GPU $gpu (log $log-check.log)"
+  "${suite_locked[@]}" "${gpu_locked[@]}" sh -c "nvidia-smi -i $gpu; CUDA_VISIBLE_DEVICES=$gpu LIT_OPTS=\"\${LIT_OPTS:-} $lit_release\" '$NINJA' -C '$build' check-mdir" > "$log-check.log" 2>&1 \
+    || { grep -E '^FAIL:|Failed' "$log-check.log" >&2; echo "the suite failed: nothing is tagged" >&2; exit 1; }
+fi
 grep -E '^\s+(Passed|Unsupported)' "$log-check.log"
 # A build that lost the Python interface would pass with its tests
 # unsupported, as the releases before #297 did.
@@ -188,7 +226,21 @@ fi
 scripts/paper/build-pdf.sh "$build/paper" > "$log-pdf.log" 2>&1
 cp "$build/paper/main.pdf" "$out/mdir-$version-white-paper.pdf"
 cp "docs/release-notes/$tag.md" "$out/"
-python3 scripts/release/changelog.py notes "$version" > "$out/notes.md"
+if (( binary )); then
+  python3 scripts/release/changelog.py notes "$version" > "$out/notes.md"
+else
+  # The notes are the body of the GitHub Release: a link there is absolute,
+  # at the tag.
+  {
+    echo "**This release has no binary tarball.** Its assets are the source"
+    echo "archive, the white paper, the release notes, and SHA256SUMS. Build MDIR"
+    echo "from the source archive as the README describes, from its section"
+    echo "[Requirements](https://github.com/vv137/mdir/blob/$tag/README.md#requirements)"
+    echo "to [Building MDIR](https://github.com/vv137/mdir/blob/$tag/README.md#building-mdir)."
+    echo
+    python3 scripts/release/changelog.py notes "$version"
+  } > "$out/notes.md"
+fi
 if (( container )); then
   "$DOCKER" build -f packaging/Dockerfile -t "mdir:$version" --build-arg MDIR_GIT_COMMIT="$commit" . > "$log-docker.log" 2>&1
   scripts/release/check-image.sh "mdir:$version"
