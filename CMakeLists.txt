@@ -54,5 +54,11 @@ option(MDIR_ENABLE_PYTHON "Build the optional Python compilation interface" OFF)
 if(MDIR_ENABLE_PYTHON)
   add_subdirectory(python)
 endif()
-add_subdirectory(test)
+# The tests (test/) and what only they use: the test passes of mdir-opt and
+# the tools under test/. The Python sdist leaves test/ out, so its wheel
+# builds with MDIR_BUILD_TESTS=OFF (pyproject.toml, #624).
+option(MDIR_BUILD_TESTS "Build the tests, their tools, and mdir-opt" ON)
+if(MDIR_BUILD_TESTS)
+  add_subdirectory(test)
+endif()
 add_subdirectory(tools)

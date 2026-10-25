@@ -71,6 +71,9 @@ sdist.exclude = ["docs/paper", "test", "examples/*/*.dcd"]
 
 [tool.scikit-build.cmake.define]
 MDIR_ENABLE_PYTHON = "ON"
+# The sdist leaves test/ out (sdist.exclude), and the wheel needs neither the
+# tests nor mdir-opt (#624).
+MDIR_BUILD_TESTS = "OFF"
 
 [tool.scikit-build.metadata.version]
 # The one version of MDIR (D174): project(mdir VERSION ...) of CMakeLists.txt.
