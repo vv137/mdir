@@ -11,6 +11,10 @@ lowerings, the runtime, and the driver alike.
 A pass may rely only on what the IR states: types, attributes, and the
 structure of ops. A fact that one pass knows and another assumes, kept in a
 map of a pass or in a comment, is a defect waiting for a new input.
+An attribute carrying semantic meaning is written through a named dialect
+helper or an inherent op accessor and is verified where it is read. A raw
+string attribute name in a pass is not a contract (D[input-set-boundary-attr],
+#625).
 
 | Case | What was implicit | What the IR states now, or should |
 |---|---|---|

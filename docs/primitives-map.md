@@ -82,6 +82,10 @@ scatter-accumulate, and reduction a shared index-domain check in the loop
 verifier; it is erased at the CPU/GPU conversion boundary without changing
 the selected strategy. The existing set-keyed pool still handles lifetime
 reuse; a separate memory-planning pass remains planned.
+An external input enters a set's storage through a `memref.cast` marked
+`md_exec.input_set_boundary` (D[input-set-boundary-attr], #625). Its declared
+set is an invariant input assertion; the dialect rejects a malformed marker
+or a cast that changes a known set before any primitive uses the buffer.
 
 | Property | Meaning here |
 |---|---|
