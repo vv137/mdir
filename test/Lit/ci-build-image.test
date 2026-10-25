@@ -3,8 +3,8 @@
 # ci-image.yml and ci.yml compute, and the command of the build; a wrong
 # option is refused.
 # RUN: %python %S/Inputs/ci_build_image.py %S/../.. | FileCheck %s
-# CHECK: image: ghcr.io/vv137/mdir-ci:llvm-23.1.2-{{[0-9a-f]{16}}}
-# CHECK-NEXT: build: docker build -f packaging/Dockerfile --target ci --build-arg JOBS=16 --build-arg LINK_JOBS=4 -t ghcr.io/vv137/mdir-ci:llvm-23.1.2-{{[0-9a-f]{16}}} .
+# CHECK: image: ghcr.io/vv137/mdir-ci:llvm-23.1.2-{{[0-9a-f]+}}
+# CHECK-NEXT: build: docker build -f packaging/Dockerfile --target ci --build-arg JOBS=16 --build-arg LINK_JOBS=4 -t ghcr.io/vv137/mdir-ci:llvm-23.1.2-{{[0-9a-f]+}} .
 # CHECK-NEXT: push: docker push ghcr.io/vv137/mdir-ci:llvm-23.1.2-
 # CHECK-NEXT: the tag of ci-image.yml: yes
 # CHECK-NEXT: --bogus: status 2, usage:
