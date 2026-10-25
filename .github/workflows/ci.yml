@@ -53,8 +53,10 @@ jobs:
         run: |
           hash=$(cat packaging/Dockerfile scripts/build-llvm.sh scripts/build-hdf5.sh | sha256sum | cut -c1-16)
           echo "name=ghcr.io/vv137/mdir-ci:llvm-23.1.2-$hash" >> "$GITHUB_OUTPUT"
+      # Restored and saved apart, so that the cache is kept also when a test
+      # fails (the build is what it holds).
       - name: Compile cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: .ccache
           key: ccache-${{ steps.image.outputs.name }}-${{ github.sha }}
@@ -64,7 +66,12 @@ jobs:
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           docker pull -q "${{ steps.image.outputs.name }}" || {
             echo "::error::no image ${{ steps.image.outputs.name }}; run the workflow ci-image"; exit 1; }
-          docker run --rm -v "$PWD":/src -w /src -e CCACHE_DIR=/src/.ccache \
+          # As the runner's user, not root: root writes into a directory of
+          # mode 555 (checkpoint-write-failure.test), and git refuses a
+          # repository that another user owns (the commit of the manifest,
+          # script-paths.test).
+          docker run --rm --user "$(id -u):$(id -g)" -e HOME=/tmp \
+            -v "$PWD":/src -w /src -e CCACHE_DIR=/src/.ccache \
             -e CCACHE_MAXSIZE=2G "${{ steps.image.outputs.name }}" bash -euo pipefail -c '
             start=$(date +%s)
             ccache -z
@@ -100,3 +107,9 @@ jobs:
                 cmake.define.CMAKE_CXX_COMPILER_LAUNCHER=ccache
             fi
           '
+      - name: Save the compile cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .ccache
+          key: ccache-${{ steps.image.outputs.name }}-${{ github.sha }}
