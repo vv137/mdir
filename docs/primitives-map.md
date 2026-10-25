@@ -66,7 +66,7 @@ the deterministic mode (D84) accepts, and whether a sum can be split over
 domains (#422, D285).
 
 Its storage-form field and loop-reduction scratch buffers also state the row set in the
-identity layout `#md_exec.set_layout<@set, rank>` (D[typed-storage-set],
+identity layout `#md_exec.set_layout<@set, rank>` (D337,
 #565). Tuple-member buffers carry the tuple set. This gives map, gather,
 scatter-accumulate, and reduction a shared index-domain check in the loop
 verifier; it is erased at the CPU/GPU conversion boundary without changing

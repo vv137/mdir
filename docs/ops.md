@@ -1258,7 +1258,7 @@ buffers. An op takes fields only or buffers only.
 
 | | Value form | Storage form |
 |---|---|---|
-| Operands | Fields | The buffers that hold the fields, of type `memref` (D33). Storage assignment gives each row set an identity layout, for example `memref<?x3xf64, #md_exec.set_layout<@atoms, 2>>` (D[typed-storage-set]). A device buffer keeps its numeric memory space after the layout: `memref<?x3xf64, #md_exec.set_layout<@atoms, 2>, 1>`. |
+| Operands | Fields | The buffers that hold the fields, of type `memref` (D33). Storage assignment gives each row set an identity layout, for example `memref<?x3xf64, #md_exec.set_layout<@atoms, 2>>` (D337). A device buffer keeps its numeric memory space after the layout: `memref<?x3xf64, #md_exec.set_layout<@atoms, 2>, 1>`. |
 | Results | One per `outs` and `reduce` operand | One per `reduce` operand; a buffer in `outs` is updated where it is |
 | Effects | None. The op can be removed, moved, and merged like any pure op. | Reads and writes of the buffers, declared to the upstream analyses |
 | Ordering | By data dependency | By the order of the ops in their block (A12) |

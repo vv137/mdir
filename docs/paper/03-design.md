@@ -90,7 +90,7 @@ contracts, the runtime and backends, and the toolchain. This is the design
 of D334 (#574); individual checks and witnesses belong
 to later decisions. Existing inputs and emitted programs do not change.
 
-The extended D[execution-contract-boundaries] design refines a contract into
+The extended D338 design refines a contract into
 requirements, established facts, effects, numerical policy, and named
 external assumptions. A fact is tied to the versions of the positions,
 cell, ordering, ownership, and allocation that establish it; a function or
@@ -601,7 +601,7 @@ follow, in the order of the pipeline that `tools/mdir/Run.cpp` builds:
 | `md-exec-assign-precision` | Assigns a type to every field and kernel by its role (below) |
 | `md-exec-approximate`, `md-exec-expand-radial` | Approximations of f32 kernels of terms, with stated bounds (Section 7.2) |
 | `md-exec-choose-scatter` | On a device, chooses the strategy of each scatter-accumulate, `#md_exec.scatter`: tiles of block memory for the spreading of PME in f32 on a grid of at least 500,000 points, `scatter(tile(8))` on `md_exec.reciprocal` (D282), and a table of the particles of a block for the loops over tuples evaluated once, `scatter(hash(S, P, L))` on `md_exec.tuple_for` (D283); outside the deterministic mode, each where its preconditions hold (Section 8.5, D285) |
-| `md-exec-assign-storage` | Turns the value form into the storage form: every field gets a buffer with its row set in an identity layout (D[typed-storage-set]), loops update buffers in place, scratch comes from a pool keyed by set and type; never copies a field, and fails with the reason where it would have to; never takes a buffer that the entry declares read-only |
+| `md-exec-assign-storage` | Turns the value form into the storage form: every field gets a buffer with its row set in an identity layout (D337), loops update buffers in place, scratch comes from a pool keyed by set and type; never copies a field, and fails with the reason where it would have to; never takes a buffer that the entry declares read-only |
 | `check-read-only-arguments` | Where the lowering to loops or to a device ends, proves that the code writes no buffer that the entry declares read-only, the model, or fails the compile naming the use (D258) |
 | `md-exec-assign-streams` | Optionally moves an op to a second stream where an independence proof holds (D87; off by default) |
 
@@ -637,7 +637,7 @@ over tuples (D79), and a loop over groups converts each position after it
 has added the shift of its frame in f64 (D101). Scalars outside loops stay
 f64, and tables go to the device in f32 when their kernels are f32.
 
-**Set identity in storage** (D[typed-storage-set]). Storage assignment
+**Set identity in storage** (D337). Storage assignment
 types a field with the set of its rows, for example
 `memref<?x3xf32, #md_exec.set_layout<@atoms, 2>>`; loop-reduction scratch and the members
 of tuples carry their corresponding particle and tuple sets; incidence

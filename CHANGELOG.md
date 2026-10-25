@@ -12,7 +12,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ### Added
 
-- **Execution contract boundary design** (D[execution-contract-boundaries],
+- **Execution contract boundary design** (D338,
   #574): documents scoped evidence, effect and lifetime queries, numerical
   legality, and positive and negative acceptance cases across the dialects.
   This documentation change adds no operation, control key, or runtime
@@ -60,7 +60,7 @@ format, or the outputs; every such change is listed under **Changed** or
   affinity, and thread conditions in the original job records. It changes
   no control-file key, simulation result,
   output format, or overwrite behavior.
-- **Set-bearing storage-form buffers** (D[typed-storage-set], #565):
+- **Set-bearing storage-form buffers** (D337, #565):
   field, loop-reduction scratch, tuple-member, and incidence buffers carry their row set in an
   identity memref layout. Loop verification rejects cross-set use, and
   CPU/GPU conversion rejects cross-set casts before removing the layout.

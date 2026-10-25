@@ -8,7 +8,7 @@ include "mlir/IR/BuiltinAttributeInterfaces.td"
 include "mdir/Dialect/MDExec/MDExecDialect.td"
 
 // A physical identity layout that also names the particle or tuple set
-// whose elements the rows of a storage-form buffer hold (D[typed-storage-set]).
+// whose elements the rows of a storage-form buffer hold (D337).
 def MDExec_SetLayoutAttr : AttrDef<MDExec_Dialect, "SetLayout",
     [DeclareAttrInterfaceMethods<MemRefLayoutAttrInterface, ["getAffineMap"]>]> {
   let mnemonic = "set_layout";

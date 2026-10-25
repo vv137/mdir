@@ -23,7 +23,7 @@ reads a copied buffer; an available token is insufficient. Physical plans
 retain their numerical order and target preconditions before measurement.
 
 The storage-form operands of these primitives carry their row set in
-`#md_exec.set_layout<@set, rank>` (D[typed-storage-set], #565). The
+`#md_exec.set_layout<@set, rank>` (D337, #565). The
 identity layout leaves the numeric GPU memory space and addressing alone.
 This invariant set is the buffer-provenance case of the
 [execution contract](execution-contracts.md) (D334); changing validity
