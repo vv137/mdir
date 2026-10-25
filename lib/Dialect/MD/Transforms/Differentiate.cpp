@@ -454,13 +454,18 @@ Operation *DerivativeBuilder::createTupleOp(StringRef opName,
 /// Returns the kernel arguments of `op`, an op over tuples, that hold the
 /// displacements `wanted`. Those that the op does not take yet become
 /// coordinates of it.
+template <typename Fn>
+static auto withTupleOp(Operation *op, Fn &&fn) {
+  if (auto sum = dyn_cast<SumTuplesOp>(op))
+    return fn(sum);
+  return fn(cast<GatherTuplesOp>(op));
+}
+
 static SmallVector<Value, 3> getDisplacementArguments(Operation *op,
                                                       ArrayRef<Coordinate> wanted) {
   Block &block = op->getRegion(0).front();
-  auto kinds = op->getAttrOfType<DenseI32ArrayAttr>("coordinate_kinds");
-  auto members = op->getAttrOfType<DenseI64ArrayAttr>("coordinate_members");
-  SmallVector<Coordinate, 2> coordinates =
-      getCoordinates(kinds.asArrayRef(), members.asArrayRef());
+  SmallVector<Coordinate, 2> coordinates = withTupleOp(
+      op, [](auto tuple) { return tuple.getCoordinates(); });
 
   SmallVector<Value, 3> arguments;
   for (const Coordinate &displacement : wanted) {
@@ -480,9 +485,13 @@ static SmallVector<Value, 3> getDisplacementArguments(Operation *op,
   }
 
   Builder attributes(op->getContext());
+  DenseI32ArrayAttr kinds;
+  DenseI64ArrayAttr members;
   getCoordinateAttrs(attributes, coordinates, kinds, members);
-  op->setAttr("coordinate_kinds", kinds);
-  op->setAttr("coordinate_members", members);
+  withTupleOp(op, [&](auto tuple) {
+    tuple.setCoordinateKindsAttr(kinds);
+    tuple.setCoordinateMembersAttr(members);
+  });
   return arguments;
 }
 
@@ -501,10 +510,8 @@ LogicalResult DerivativeBuilder::emitTupleForces(Operation *op, Value weight,
     *virial = Value();
 
   // The coordinates of the sum. The op receives more of them below.
-  SmallVector<Coordinate, 2> coordinates = getCoordinates(
-      op->getAttrOfType<DenseI32ArrayAttr>("coordinate_kinds").asArrayRef(),
-      op->getAttrOfType<DenseI64ArrayAttr>("coordinate_members")
-          .asArrayRef());
+  SmallVector<Coordinate, 2> coordinates = withTupleOp(
+      op, [](auto tuple) { return tuple.getCoordinates(); });
 
   ScalarEmitter emit(kernel, loc);
   SmallVector<Value, 9> elements(9, Value());

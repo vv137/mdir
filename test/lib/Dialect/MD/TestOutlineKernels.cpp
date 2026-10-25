@@ -88,10 +88,10 @@ LogicalResult TestOutlineKernels::outline(Operation *op,
   SmallVector<Coordinate, 2> coordinates;
   unsigned arity = 0;
   if (isa<SumTuplesOp, GatherTuplesOp>(op)) {
-    coordinates = getCoordinates(
-        op->getAttrOfType<DenseI32ArrayAttr>("coordinate_kinds").asArrayRef(),
-        op->getAttrOfType<DenseI64ArrayAttr>("coordinate_members")
-            .asArrayRef());
+    if (auto sum = dyn_cast<SumTuplesOp>(op))
+      coordinates = sum.getCoordinates();
+    else
+      coordinates = cast<GatherTuplesOp>(op).getCoordinates();
     arity = cast<RelationType>(op->getOperand(0).getType()).getArity();
   }
   ArrayRef<BlockArgument> kernelArguments =
