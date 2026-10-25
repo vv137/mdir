@@ -101,14 +101,6 @@ void ScatterAddOp::getLoopEffectSummary(LoopEffectSummary &summary) {
   summary.complete &= rule.has_value();
 }
 
-static bool isLocalTo(Operation *loop, Value value) {
-  if (Operation *definition = value.getDefiningOp())
-    return loop->isAncestor(definition);
-  if (auto argument = dyn_cast<BlockArgument>(value))
-    return loop->isAncestor(argument.getOwner()->getParentOp());
-  return false;
-}
-
 LoopEffectSummary mdir::md_exec::summarizeLoop(Operation *op) {
   LoopEffectSummary summary;
   auto loop = dyn_cast<LoopEffectOpInterface>(op);
@@ -130,19 +122,26 @@ LoopEffectSummary mdir::md_exec::summarizeLoop(Operation *op) {
             summary.complete = false;
             continue;
           }
-          if (isLocalTo(op, value))
-            continue;
           // A non-buffer resource outside the loop has no row or set in this
           // summary. It cannot establish independence for a later consumer.
           if (!isa<MemRefType>(value.getType())) {
             summary.complete = false;
             continue;
           }
-          bool writes = isa<MemoryEffects::Write, MemoryEffects::Free>(
-              effect.getEffect());
+          // This interface describes reads and writes only. Allocation,
+          // release, other resources, and locally produced aliases need
+          // additional facts before a consumer may call the record complete.
+          bool reads = isa<MemoryEffects::Read>(effect.getEffect());
+          bool writes = isa<MemoryEffects::Write>(effect.getEffect());
+          if ((!reads && !writes) ||
+              effect.getResource() != SideEffects::DefaultResource::get()) {
+            summary.complete = false;
+            continue;
+          }
           bool declared = llvm::any_of(summary.accesses, [&](const Access &a) {
             return a.operand->get() == value &&
-                   (!writes || a.effect != Effect::Read);
+                   (a.effect == Effect::Accumulate ||
+                    a.effect == (reads ? Effect::Read : Effect::Write));
           });
           summary.complete &= declared;
         }
