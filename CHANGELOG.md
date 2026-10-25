@@ -262,6 +262,11 @@ format, or the outputs; every such change is listed under **Changed** or
 - **The comparison with pmemd.cuda on the Amber suite** runs both programs
   under one protocol with `bench.py run --suite-protocol`; the white
   paper's Section 10 is measured again with it (D327, #534).
+- **`scripts/release/publish.sh` can release on a machine whose GPUs
+  belong to a batch scheduler and that has no Docker**:
+  `MDIR_RELEASE_SUITE` names the machine's command of the suite, and
+  `--no-binary` makes a release without the manylinux tree
+  ([docs/workflow.md](docs/workflow.md#releases); #593).
 - **Scripts take what a machine provides from the environment**
   (`MDIR_ENV_FILE` and the variables in
   [docs/environment.md](docs/environment.md#scripts)) and stop naming what
@@ -380,6 +385,9 @@ format, or the outputs; every such change is listed under **Changed** or
   (D110, #347, #413), persistent simulations register their exception
   frames safely (D199, #89), and the host code is compiled at LLVM's
   default level (D197, #90).
+- **`scripts/release/changelog.py release`** keeps every entry of a
+  subsection that [Unreleased] repeats, and stops before it writes if an
+  entry would be lost (#596).
 - **Tests and scripts**: intermittent failures of `not-numbers-gpu.test`
   (#425) and of `pme-tiles-gpu.test` (D79, #427, #428, #429), the
   device-memory report test (D311, #559), the JAX reference of

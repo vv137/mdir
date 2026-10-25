@@ -327,7 +327,13 @@ A release is two steps, scripted so that nothing is done by hand
 
 1. `scripts/release/prepare.sh VERSION` opens the release PR: it sets
    `project(mdir VERSION ...)` in `CMakeLists.txt` and moves the
-   changelog's [Unreleased] under [VERSION] and the date. The release notes
+   changelog's [Unreleased] under [VERSION] and the date with
+   `scripts/release/changelog.py release`, which joins the blocks of a
+   subsection that [Unreleased] repeats in file order and stops before it
+   writes unless the new section holds every top-level entry
+   (`test/Lit/changelog-release.test`; before #596 it kept only the last
+   block of a subsection, which lost 78 of the 271 entries of the
+   [Unreleased] of 0.2.0 without an error). The release notes
    (`docs/release-notes/vVERSION.md`) and the Known limitations are edited
    on that branch. The PR goes through the labels like any other.
 2. After its merge, `scripts/release/publish.sh VERSION` builds the merged
