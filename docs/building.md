@@ -97,7 +97,10 @@ cmake --install build --prefix $HOME/opt/mdir
 ```
 
 The installed tree is `bin/mdir` with its runtime and the OpenMP runtime in
-`lib/`; it does not need the build trees of MDIR or LLVM. At run time it
+`lib/`; it does not need the build trees of MDIR or LLVM. With the Python
+interface, `cmake --install` puts the package in `MDIR_PYTHON_INSTALL_DIR`,
+which names the package's directory (by default
+`lib/pythonX.Y/site-packages/mdir`; D228). At run time it
 needs HDF5 (found through the RPATH of the build), and on a GPU the NVIDIA
 driver and the CUDA toolkit's `nvvm/libdevice` and cuFFT, under `CUDA_ROOT`
 or the toolkit it was built with.
@@ -126,6 +129,40 @@ and the suite of a release (`scripts/release/publish.sh`). On a machine
 that others share, hold a lock of the device around the whole suite, as
 [workflow.md](workflow.md) says, so that no other suite or timing
 run uses the device at the same time.
+
+With sixteen GPU tests at once in place of four, and the three Python
+tests that bounded its wall time split into one file per scenario, the
+suite took about 260 s instead of about 1090 s on one RTX 3090 (D208,
+#141). The suite hands `CUDA_CACHE_PATH` to its tests, as it hands `HOME`,
+so that the driver's kernel cache of a suite goes where it says (#223).
+
+Some tests check the tree itself:
+
+- `test/Docs/markdown-links.test` checks that every relative link of
+  `README.md`, `CHANGELOG.md`, and `docs/` names a file and a heading that
+  exist (#390).
+- `test/Runtime/generated-templates.test` compares what
+  `scripts/generate-pme-gpu-template.py` and
+  `scripts/generate-groups-gpu-template.py` generate with the checked-in
+  templates, byte for byte (#211); the generators emit the guards of #168
+  that the templates hold.
+- `test/Lit/test-outputs.test` lists any test that runs `mdir run` or a
+  Python interpreter on a path under `%t` that no `rm` removes before its
+  first use (#423). A test starts from an empty `%t`
+  (`rm -rf %t && mkdir -p %t`, or `rm -rf %t` before `split-file` or a
+  script) and writes inside it, not next to it (`%t.dcd`, `%t.toml`):
+  outputs written at fixed paths left one numbered backup more
+  (`#name.dcd.N#`) at every run of the suite in one build tree, and after
+  99 runs `mdir` refused to write.
+- Under compute-sanitizer (`-Dsanitize=1`,
+  [debugging.md](debugging.md)), `test/Sanitizer/npt-velocity-verlet-gpu.test`
+  runs 20 steps of NPT on examples/ala3 in mixed precision under initcheck,
+  memcheck, and racecheck, whose initcheck reported 4.7 million reads of
+  unwritten slots of the incidence structure before the build wrote zeros
+  past each particle's count (D110, #347);
+  `test/Sanitizer/groups-empty-gpu.test` builds three empty groups (#413);
+  and `test/Sanitizer/pme-tiles-gpu.test` runs the spreading of order 8,
+  with and without tiles, synccheck included (#427).
 
 ## 7. Tools
 

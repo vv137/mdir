@@ -199,3 +199,13 @@ array bytes (0 differing bytes, tolerance 0) and CLI semantic IR/pipelines
 exactly. The full local suite passes with 265 passed, 6 unsupported and
 0 failures. See [host-array validation](python-arrays.md#validation-environment)
 for the dependency, ownership and malformed-input checks.
+
+Lowering a program whose pair kernels take tables in f32 (D94) searches the
+table of a function of the distance once for a function, a cutoff, and a
+tolerance in a process, instead of three times in each lowering, and
+evaluates the function through a list of steps (#236). On the dipeptide in
+water with PME (CPU, mixed precision) `md-exec-expand-radial` takes 0.025 s
+instead of 0.38 and `md-exec-simplify-distance` 0.013 s instead of 0.21, and
+`pipeline_seconds` of a `Simulation` falls by about 40%; a pair term that
+no table holds (the Stillinger-Weber form, D159) lowers in 0.56 s instead
+of 10.9. The tables and the compiled programs are the same to the bit.
