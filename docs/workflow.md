@@ -450,3 +450,26 @@ a defect, and an issue.
 GitHub has no GPU, so the build and the suite run on the maintainer's
 machine; the workflow `release-check` checks on the pushed tag that the
 version, the changelog, the notes, and the decision numbers agree.
+
+The release path is also exercised before release day (#609), since its
+defects otherwise surface on that day (the lost entries of #596, the
+scheduler of #593, a test that pinned the version of the tree):
+
+- **On every push to `main`**, `scripts/release/check-path.sh` runs the
+  edits of `prepare.sh` (`scripts/release/bump.sh`, which `prepare.sh` runs
+  too) on a copy of the tree with the next minor version and a dummy
+  fragment, and checks the move of the changelog with its count, the notes
+  of the GitHub Release (`changelog.py notes --absolute`: every link
+  absolute at the tag and naming a file), the links of the moved changelog,
+  and the version of the tree in a test or in code outside comments, which
+  the release would leave stale. A use of a released version that stays
+  right after the next release is listed, with its reason, in
+  `scripts/release/version-pins.txt`. The script needs no build and no GPU
+  and takes seconds; it runs in CI and by hand, and `test/Lit/release-path.test`
+  checks it on a small tree.
+- **Once a week, and before a release PR opens**, the coordinator runs
+  `publish.sh <the last version> --dry-run --no-binary` through the
+  machine's command of the suite (`MDIR_RELEASE_SUITE`) and records its
+  result, the commit, the suite's counts, and the time, on the release
+  tracking issue. A failure there is a defect of the release path, and an
+  issue.

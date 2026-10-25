@@ -1,0 +1,20 @@
+# Uses of a released version outside comments that stay right after the
+# next release, which check-path.sh (#609) accepts: one a line,
+#
+#   <version> <path> <text of the line>
+#
+# where the text is any part of the line that holds the version. Each says
+# why the version is fixed there; a test or code that pins the version of
+# the tree instead matches its pattern to any version.
+
+# The checkpoint format 1 is the contract of release 0.1.0 (D173); a file of
+# a development build before it is refused with that release named.
+0.1.0 lib/Driver/Checkpoint.cpp 0.1.0, whose checkpoints this one does not read
+0.1.0 test/Driver/checkpoint-contract.test before release 0.1.0, whose check
+
+# Versions given to the release scripts and to fixture changelogs by their
+# own tests, which do not depend on the version of the tree.
+0.1.0 test/Lit/Inputs/script_environment.py publish, "0.1.0"
+0.1.0 test/Lit/changelog-fragments.test ## [0.1.0] - 2026-10-04
+0.1.0 test/Lit/changelog-release.test ## [0.1.0] - 2026-10-04
+0.1.0 test/Lit/changelog-release.test [0.1.0]: https://github.com/vv137/mdir/releases/tag/v0.1.0
