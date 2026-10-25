@@ -39,6 +39,17 @@ Operand lists, result lists, and the mathematical definitions are normative.
 It follows the accepted decisions in [decisions.md](decisions.md). Tags such
 as (S1) or (B4) name the decision behind a section.
 
+The reference of each op, type, and attribute (its syntax, operands,
+results, attributes, traits, and description) is generated from the
+TableGen definitions (#610): [`md`](dialects/md.md), [`dyn`](dialects/dyn.md),
+[`md_exec`](dialects/md_exec.md), [`md_dist`](dialects/md_dist.md), and
+[`mdrt`](dialects/mdrt.md). This document keeps what the definitions do
+not say: the semantics across ops, the contracts, the precision, the
+lowerings, and the passes that consume each op. A fact of one op belongs in
+its TableGen description, from which the reference follows
+(`ninja mdir-dialect-docs`; `test/Docs/dialect-docs.test` fails while
+`docs/dialects/` is out of date).
+
 ## 1. Notation
 
 | Symbol | Meaning |
@@ -211,6 +222,8 @@ is needed when the kernels are compiled, not when LLVM is built.
 ## 4. `md` ops
 
 ### 4.1 Summary
+
+The reference of every op is [dialects/md.md](dialects/md.md).
 
 | Op | Purpose |
 |---|---|
@@ -712,6 +725,8 @@ forces, virial, and a parameter derivative. The reference values for
 
 ### 6.1 Summary
 
+The reference of every op is [dialects/dyn.md](dialects/dyn.md).
+
 | Op | Definition |
 |---|---|
 | `dyn.kick %v, %f, %m, %dt` | $\mathbf v'_i = \mathbf v_i + \Delta t\, \mathbf f_i / m_i$ |
@@ -1023,6 +1038,8 @@ double mode (Section 10.9).
 ## 8. `md_exec` ops
 
 ### 8.1 Summary
+
+The reference of every op is [dialects/md_exec.md](dialects/md_exec.md).
 
 | Op | Purpose |
 |---|---|

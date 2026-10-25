@@ -1,0 +1,10 @@
+# The reference of the dialects in docs/dialects/ is what mlir-tblgen
+# generates from their TableGen definitions (#610), byte for byte: a .td
+# change without `ninja mdir-dialect-docs` fails here. Every op that
+# docs/ops.md names is in that reference, and ops.md links it.
+#
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: bash %S/../../scripts/generate-dialect-docs.sh mlir-tblgen %mlir_include_dir %t
+# RUN: diff -r %t %S/../../docs/dialects
+# RUN: %python %S/Inputs/dialect_coverage.py %S/../.. | FileCheck %s
+# CHECK: 0 missing, 0 references unlinked
