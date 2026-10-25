@@ -14,3 +14,8 @@ set(LLVM_TARGET_DEFINITIONS MDExecAttrs.td)
 mlir_tablegen(MDExecAttrs.h.inc -gen-attrdef-decls -attrdefs-dialect=md_exec)
 mlir_tablegen(MDExecAttrs.cpp.inc -gen-attrdef-defs -attrdefs-dialect=md_exec)
 add_public_tablegen_target(MDIRMDExecAttrsIncGen)
+
+set(LLVM_TARGET_DEFINITIONS LoopEffects.td)
+mlir_tablegen(LoopEffects.h.inc -gen-op-interface-decls)
+mlir_tablegen(LoopEffects.cpp.inc -gen-op-interface-defs)
+add_public_tablegen_target(MDIRMDExecLoopEffectsIncGen)

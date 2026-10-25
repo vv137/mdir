@@ -2,6 +2,7 @@ add_mlir_dialect_library(MDIRMDExec
   Algebra.cpp
   MDExecDialect.cpp
   Independence.cpp
+  LoopEffects.cpp
   MDExecOps.cpp
   Scatter.cpp
   StorageSet.cpp
@@ -13,6 +14,7 @@ add_mlir_dialect_library(MDIRMDExec
   MDIRMDExecIncGen
   MDIRMDExecEnumsIncGen
   MDIRMDExecAttrsIncGen
+  MDIRMDExecLoopEffectsIncGen
 
   LINK_LIBS PUBLIC
   MDIRMD

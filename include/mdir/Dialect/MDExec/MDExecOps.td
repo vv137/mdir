@@ -16,6 +16,7 @@ include "mdir/Dialect/MD/MDTypes.td"
 include "mdir/Dialect/MDExec/MDExecAttrs.td"
 include "mdir/Dialect/MDExec/MDExecDialect.td"
 include "mdir/Dialect/MDExec/MDExecEnums.td"
+include "mdir/Dialect/MDExec/LoopEffects.td"
 include "mdir/Dialect/MDRT/MDRTTypes.td"
 
 def MDExec_Buffer : Type<
@@ -949,7 +950,8 @@ def MDExec_TabulateOp : MDExec_Op<"tabulate", [
 
 def MDExec_PairForOp : MDExec_Op<"pair_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    DeclareOpInterfaceMethods<MDExec_LoopEffectOpInterface>
   ]> {
   let summary = "Runs a kernel over the pairs of a neighbor structure";
   let description = [{
@@ -1113,7 +1115,8 @@ def MDExec_PairForOp : MDExec_Op<"pair_for", [
 }
 
 def MDExec_ScatterAddOp : MDExec_Op<"scatter_add", [
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    DeclareOpInterfaceMethods<MDExec_LoopEffectOpInterface>
   ]> {
   let summary = "Adds values into a field at the rows that indices name";
   let description = [{
@@ -1174,7 +1177,8 @@ def MDExec_ScatterAddOp : MDExec_Op<"scatter_add", [
 
 def MDExec_ParticleForOp : MDExec_Op<"particle_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    DeclareOpInterfaceMethods<MDExec_LoopEffectOpInterface>
   ]> {
   let summary = "Runs a kernel over particles";
   let description = [{
@@ -1473,7 +1477,8 @@ def MDExec_RenumberOp : MDExec_Op<"renumber", [
 
 def MDExec_TupleForOp : MDExec_Op<"tuple_for", [
     AttrSizedOperandSegments, RecursiveMemoryEffects, SingleBlock,
-    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>,
+    DeclareOpInterfaceMethods<MDExec_LoopEffectOpInterface>
   ]> {
   let summary = "Runs a kernel over the tuples of each particle";
   let description = [{

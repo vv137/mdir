@@ -1,0 +1,29 @@
+# RUN: mdir-opt %S/scatter-add.mlir --test-md-exec-loop-effects -o /dev/null | FileCheck %s --check-prefix=MISSING
+# RUN: mdir-opt %S/scatter-add.mlir --md-exec-assign-algebra --test-md-exec-loop-effects -o /dev/null | FileCheck %s --check-prefix=SCATTER
+# RUN: mdir-opt %S/Transforms/choose-scatter-pairs.mlir --md-exec-assign-algebra --test-md-exec-loop-effects -o /dev/null | FileCheck %s --check-prefix=PAIR
+# RUN: mdir-opt %S/domain-rows.mlir --md-exec-assign-algebra --test-md-exec-loop-effects -o /dev/null | FileCheck %s --check-prefix=ATOMIC
+# RUN: mdir-opt %S/Transforms/fuse-particle-loops.mlir --md-exec-assign-algebra --test-md-exec-loop-effects -o /dev/null | FileCheck %s --check-prefix=PARTICLE
+# RUN: mdir-opt %S/tuples.mlir --md-exec-assign-algebra --test-md-exec-loop-effects -o /dev/null | FileCheck %s --check-prefix=TUPLE
+
+# MISSING: md_exec.scatter_add complete=0 accesses=4 reductions=1
+# MISSING: operand=2 effect=accumulate rows=indexed set=@atoms
+
+# SCATTER: md_exec.scatter_add complete=1 accesses=4 reductions=1
+# SCATTER: operand=0 effect=read rows=own set=@ghosts
+# SCATTER: operand=2 effect=accumulate rows=indexed set=@atoms
+
+# PAIR: md_exec.pair_for complete=1 accesses=4 reductions=1
+# PAIR: operand=1 effect=read rows=neighbor set=@atoms
+# PAIR: operand=3 effect=accumulate rows=own set=@atoms
+
+# ATOMIC: md_exec.pair_for complete=1 accesses=4 reductions=1
+# ATOMIC: operand=3 effect=accumulate rows=neighbor set=@local
+
+# PARTICLE: md_exec.particle_for complete=1 accesses=4 reductions=0
+# PARTICLE: operand=0 effect=read rows=own set=@atoms
+# PARTICLE: operand=3 effect=write rows=own set=@atoms
+
+# TUPLE: md_exec.tuple_for complete=1 accesses=6 reductions=2
+# TUPLE: operand=4 effect=read rows=tuple_members set=@angles
+# TUPLE: operand=5 effect=accumulate rows=own set=@atoms
+# TUPLE: md_exec.tuple_for complete=0 accesses=4 reductions=2

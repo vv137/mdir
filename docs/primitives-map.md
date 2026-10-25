@@ -23,6 +23,11 @@ Its [async contract](execution-contracts.md#11-async-readiness-borrows-and-order
 applies to the halo copy and sum as well as host-device transfer: completed
 payload, candidate coverage, and reverse contribution completeness remain
 different facts. The first transfer migration keeps current waits.
+The loop effect interface (D[loop-effect-summary], #566) records the exact
+operand and row scope of each map, gather, scatter, or reduction access of
+`md_exec.particle_for`, `pair_for`, `tuple_for`, and `scatter_add`. An absent
+set or accumulation algebra, or an opaque body effect, yields an incomplete
+summary. Existing fusion and scheduling do not yet use this interface.
 
 ## 1. The primitive set
 

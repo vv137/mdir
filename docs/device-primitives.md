@@ -35,6 +35,13 @@ the existing emitters receive the same plain memrefs and produce the same
 device code. Dynamic row counts remain checked by the input and set size
 map. The lifetime-based planner is a separate follow-up.
 
+The derived loop effect interface (D[loop-effect-summary], #566) names each
+access's SSA operand, row scope, and set, and records reduction algebra.
+Unknown declarations and opaque body effects make the summary incomplete.
+This first interface slice does not change strategy selection, fusion,
+stream assignment, or device code; moving their checks to a shared rule is
+follow-up work.
+
 ## 1. Status
 
 | Primitive | CUB's counterpart | Issue | Status | Decision |
