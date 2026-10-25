@@ -2202,6 +2202,18 @@ compiler::SimulationView Simulation::describeView() const {
   return view;
 }
 
+uint64_t compiler::trimDeviceMemory() {
+  // Looked up at each call: the library is loaded with the first program
+  // of a device.
+  auto trim = findRuntime<uint64_t()>("mdrtDeviceTrim");
+  if (!trim)
+    return 0;
+  // Between the parts of the simulations, which use the device under this
+  // lock.
+  std::lock_guard<std::mutex> lock(getRunMutex());
+  return trim();
+}
+
 void Simulation::handOff(uint64_t consumer) {
   if (!activation || !activation->onDevice)
     return;

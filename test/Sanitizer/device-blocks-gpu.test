@@ -1,0 +1,12 @@
+# REQUIRES: cuda, compute-sanitizer
+# The registry and the pool of the blocks of the device (#622) under
+# compute-sanitizer: more than 4096 blocks in use, closed, served again
+# from the pool, and trimmed; the budget of the pool; and a request made
+# again after a refusal (Runtime/device-blocks-gpu.test). No access beyond
+# a block, no leak of the driver's memory at the end.
+# RUN: %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda registry | FileCheck %s --check-prefix=REGISTRY
+# REGISTRY: device blocks registry passed
+# RUN: env MDIR_DEVICE_POOL_BYTES=1048576 %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda budget | FileCheck %s --check-prefix=BUDGET
+# BUDGET: device blocks budget passed
+# RUN: env MDRT_FAIL_ALLOCATION=101 %compute_sanitizer --tool memcheck --leak-check full --error-exitcode 1 %python %S/../Runtime/Inputs/device_blocks.py %mdrt_cuda retry | FileCheck %s --check-prefix=RETRY
+# RETRY: device blocks retry passed

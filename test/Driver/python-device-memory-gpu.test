@@ -1,0 +1,13 @@
+# REQUIRES: cuda, python-api
+# A Python process that alternates simulations of other sizes, PME grids,
+# and precisions on one device (#622, Inputs/python_device_memory.py): the
+# idle blocks of the pool stay within its budget, and
+# mdir.trim_device_memory() gives them and the plans of cuFFT back.
+# RUN: env MDIR_DEVICE_POOL_BYTES=67108864 %mdir_python %S/Inputs/python_device_memory.py %S/Inputs %mdrt_cuda | FileCheck %s
+# CHECK: dipeptide grid 24 Double: no block in use, idle within the budget
+# CHECK-NEXT: opc grid 32 Mixed: no block in use, idle within the budget
+# CHECK-NEXT: dipeptide grid 36 Mixed: no block in use, idle within the budget
+# CHECK-NEXT: opc grid 40 Double: no block in use, idle within the budget
+# CHECK-NEXT: dipeptide grid 24 Double: no block in use, idle within the budget
+# CHECK-NEXT: the most idle at once within the budget: True
+# CHECK-NEXT: after the trim: no idle block, no plan, no block of the pool held by the driver
