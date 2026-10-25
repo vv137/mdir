@@ -36,6 +36,9 @@ with tempfile.TemporaryDirectory(prefix="mdir-release-path-") as temporary:
         "docs/topic.md": "# Topic\n\n## Notes\n",
         "docs/decisions.md": f"# Decisions\n\n{BEGIN}\n{END}\n",
         "docs/decisions/D1.md": "# D1\n\nRecorded 2026-10-01.\n\n**One.**\n",
+        # A decision that waits for its number, as a PR adds it (#602): the
+        # release path takes the PR with it.
+        "docs/decisions/pending-thing.md": "# D" + "[pending-thing]\n\nRecorded at its merge.\n\n**Pending.**\n",
         "test/Driver/version.test": "# RUN: mdir --version | FileCheck %s\n"
                                     "# A comment that names 1.4.0 is not read.\n"
                                     "# CHECK: MDIR 1.4.0\n",
