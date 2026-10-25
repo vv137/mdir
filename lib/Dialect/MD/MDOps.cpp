@@ -15,6 +15,38 @@
 using namespace mlir;
 using namespace mdir::md;
 
+IntegerAttr mdir::md::getStageRows(Operation *body) {
+  return body->getAttrOfType<IntegerAttr>(kStageRowsAttrName);
+}
+
+void mdir::md::setStageRows(Operation *body, int64_t rows) {
+  body->setAttr(kStageRowsAttrName,
+                IntegerAttr::get(IntegerType::get(body->getContext(), 64),
+                                 rows));
+}
+
+LogicalResult mdir::md::verifyStageRowsAttribute(Operation *body,
+                                                  Attribute value) {
+  auto function = dyn_cast<FunctionOpInterface>(body);
+  auto rows = dyn_cast<IntegerAttr>(value);
+  if (!function || !rows || !rows.getType().isSignlessInteger(64))
+    return body->emitError()
+           << "expects '" << kStageRowsAttrName
+           << "' as an i64 attribute on a function";
+
+  auto type = dyn_cast<FunctionType>(function.getFunctionType());
+  if (!type || type.getNumInputs() == 0)
+    return success();
+  auto first = dyn_cast<ShapedType>(type.getInput(0));
+  if (first && first.hasRank() && first.getRank() > 0 &&
+      !first.isDynamicDim(0) && first.getDimSize(0) != rows.getInt())
+    return body->emitError() << "'" << kStageRowsAttrName << "' is "
+                             << rows.getInt() << ", expected "
+                             << first.getDimSize(0) << " rows from the "
+                             << "first input";
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // Custom directive: exchange(<kind>[, <basis>])
 //===----------------------------------------------------------------------===//
@@ -1179,7 +1211,7 @@ LogicalResult StageOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     auto rowsOf = [&](FlatSymbolRefAttr name) -> int64_t {
       auto body = cast<FunctionOpInterface>(
           symbolTable.lookupNearestSymbolFrom(*this, name));
-      if (auto rows = body->getAttrOfType<IntegerAttr>("md.stage_rows"))
+      if (auto rows = getStageRows(body.getOperation()))
         return rows.getInt();
       if (!isBatchedType(body.getFunctionType()))
         return 0;
@@ -1201,7 +1233,7 @@ int64_t StageOp::getRows() {
   if (!body)
     return 0;
   // A body lowered to buffers keeps its rows (md-exec-lower-stage-bodies).
-  if (auto rows = body->getAttrOfType<IntegerAttr>("md.stage_rows"))
+  if (auto rows = getStageRows(body.getOperation()))
     return rows.getInt();
   if (!isBatchedType(body.getFunctionType()))
     return 0;

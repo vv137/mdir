@@ -18,10 +18,15 @@ def MD_Dialect : Dialect {
 
     All ops are pure. Nothing in this dialect says how or where a computation
     is carried out.
+
+    The transient `md.stage_rows` attribute on a batched function retains
+    its checked leading row count after the function's tensors become
+    buffers (D[stage-rows-attr]).
   }];
   let cppNamespace = "::mdir::md";
 
   let useDefaultTypePrinterParser = 1;
+  let hasOperationAttrVerify = 1;
   let extraClassDeclaration = [{
     void registerTypes();
   }];

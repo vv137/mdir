@@ -21,9 +21,18 @@
 
 #include "llvm/ADT/ArrayRef.h"
 #include "llvm/ADT/SmallVector.h"
+#include "llvm/ADT/StringRef.h"
 
 namespace mdir {
 namespace md {
+
+inline constexpr llvm::StringLiteral kStageRowsAttrName = "md.stage_rows";
+
+/// Static row count retained when a stage body is bufferized.
+mlir::IntegerAttr getStageRows(mlir::Operation *body);
+void setStageRows(mlir::Operation *body, int64_t rows);
+mlir::LogicalResult verifyStageRowsAttribute(mlir::Operation *body,
+                                              mlir::Attribute value);
 
 /// Σ c_k T_k(y) by Clenshaw's recurrence [Clenshaw1955], in f64.
 double evaluateChebyshev(llvm::ArrayRef<double> coefficients, double y);
