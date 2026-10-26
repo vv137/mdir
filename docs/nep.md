@@ -275,16 +275,15 @@ products of step 4b). The VJPs are closed forms:
   derivative of $f_k$ (the derivative of $T_k$ by the same recurrence, and
   $f_c'$) and of the polynomials $Y_{lm}(\mathbf d/r)$.
 
-D167 says that MDIR writes no neural derivative and that external AD
-generates the backward of a stage. NEP is not an imported graph: its
-functional form is fixed by the file format, as EAM's is, and the VJPs
-above are the derivatives of that form. The proposal is that the reader
-writes them, checked against central differences of the forward bodies and
-by the adjoint identity of ml4-ir.md, Section 6. This needs the
-maintainer's ruling (Section 12, question 3); the alternative is the pair
-kernel in plain `arith` differentiated by `md-differentiate`'s rules, which
-already cover kernels of the distance (EAM) but would have to be checked
-for a kernel of 202 results that depends on the displacement.
+D167 says that MDIR writes no neural derivative of an imported graph and
+that external AD generates the backward of such a stage. NEP is not an
+imported graph: its functional form is fixed by the file format, as EAM's
+is, and the VJPs above are the derivatives of that form. **Ruled** (the
+maintainer, 2026-10-27, Section 12): the reader writes the forward and VJP
+bodies of both stages in closed form, checked against central differences
+of the forward bodies and by the adjoint identity of ml4-ir.md, Section 6,
+as for EAM. The network stays in the ML4 neural stage, so D167 holds for
+it.
 
 ## 4. The derivative
 
@@ -391,10 +390,10 @@ kJ/mol per eV ($e N_A$, exact in the SI since 2019; the value of
 The ZBL term is converted as a function of $r$. No conversion runs per
 step.
 
-## 6. Keys (a proposal; the names are the maintainer's to decide)
+## 6. Keys
 
-The term would be a model of the existing table `[[energy.model]]`, with a
-new backend:
+Ruled by the maintainer on 2026-10-27 (Section 12). The term is a model
+of the existing table `[[energy.model]]`, with a new backend:
 
 ```toml
 [[energy.model]]
@@ -413,15 +412,14 @@ cutoffs, and $N_\text{des}$.
 
 Unlike the backends of ML1, NEP is compiled by MDIR (no plugin, no
 external framework), so the restrictions of ML1 that come from the plugin
-would not apply: the CPU as well as the GPU, `mixed` and `double`, and
-`[free_energy]` and tunables later if asked. The first version, as
-proposed: one NEP term, alone (no classical terms beside it), in a periodic
+do not apply: the CPU as well as the GPU, `mixed` and `double`, and
+`[free_energy]` and tunables later if asked. The first version: one NEP
+term, alone (no classical terms beside it), in a periodic
 cell (orthorhombic or triclinic), without constraints or virtual sites,
 under `[minimize]`, NVE, NVT, and NPT. Combining NEP with classical terms
 (for example a NEP solute in classical water, or dispersion beside a
-NEP model) is a later step with its own rules of exclusion.
-
-The questions of Section 12 ask for the names and these limits.
+NEP model) is a later decision, with its own rules of exclusion. qNEP
+(#585) takes the same key; its mode is read from the header of the file.
 
 ## 7. Precision
 
@@ -610,32 +608,34 @@ Ratios are reported plainly.
 | Carbon, `nep4`, $r_c^R$ = 7 Å, $r_c^A$ = 4 Å, four-body and five-body terms | `potentials/nep/C_2024_NEP4.txt` of GPUMD 5.9.1 | [[Fan2024]](references.md#fan2024), as GPUMD's `potentials/nep/readme.md` cites it | GPUMD's license covers `src/`; none stated for the models |
 | 16 metals (UNEP-v1), `nep4_zbl`, Ag Al Au Cr Cu Mg Mo Ni Pb Pd Pt Ta Ti V W Zr | `potentials/nep/Song-2024-UNEP-v1-AgAlAuCrCuMgMoNiPbPdPtTaTiVWZr.txt` of GPUMD 5.9.1 | [[Song2024]](references.md#song2024) | none stated |
 
-No license is stated for the model files, so the tests of #584 download
-them, or a script generates small models of the same layout with random
-parameters; the files are not committed until their licenses are known.
+No license is stated for the model files. As ruled (Section 12), the
+validation scripts of #584 download them, the lit tests use generated
+models of the same layout with random parameters, and nothing of the model
+files is committed.
 GPUMD's own test fixtures include a small water model of `nep4` and one of
 `nep4_charge1` (`tests_pytest/fixtures/models/`), for qNEP's tests.
 
-## 12. Questions for the maintainer
+## 12. What was ruled (the maintainer, 2026-10-27, on #653)
 
-1. **Names.** `[[energy.model]]` with `backend = "NEP"` and `path`, and in
-   Python `mdir.ModelTerm(..., backend="NEP")`, or a table of its own (for
-   example `[energy.nep]`)? qNEP would take the same key, its mode read from
-   the header of the file.
+1. **Names.** `[[energy.model]]` with `backend = "NEP"` and `path`, and
+   `mdir.ModelTerm(..., backend="NEP")` in Python. qNEP takes the same key,
+   its mode read from the header of the file.
 2. **Scope of the first version.** NEP alone, without classical terms
-   beside it (Section 6), on the CPU and the GPU?
-3. **The VJP bodies (D167).** May the reader of `nep.txt` write the
-   forward and VJP bodies of the two stages (Section 3.2), checked by
-   central differences and the adjoint identity, since NEP's form is fixed
-   by the file format?
-4. **Reference models.** Download in the tests, generate random models of
-   the same layout, or ask the authors for the licenses of the models
-   (Section 11)?
+   beside it, on the CPU and the GPU, in `mixed` and `double` (Section 6).
+   Combining it with classical terms is a later decision.
+3. **The VJP bodies.** The reader of `nep.txt` writes the forward and VJP
+   bodies of the pair and atom stages in closed form, checked by central
+   differences and the adjoint identity of ml4-ir.md, Section 6, as for
+   EAM (Section 3.2). The network stays in the ML4 neural stage, so D167
+   holds for it.
+4. **Reference models.** The validation scripts download them; the lit
+   tests use generated models of the same layout with random parameters;
+   nothing of the model files is committed (Section 11).
 
 ## 13. Order of the work
 
 1. This design (#583).
-2. #584 after step 3 of #568: the reader, the two stages, the term, the
+2. #584 after #568 is done (its step 3, the builder's interface for registering a term): the reader, the two stages, the term, the
    CPU reference with the triplet sum, validation (Section 8) and
    performance (Section 10).
 3. #585 after #584: qNEP (Section 9).

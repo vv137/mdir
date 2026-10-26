@@ -24,7 +24,14 @@ descriptors; f32 per pair with f64 sums differs from f64 by at most
 $4.1\times10^{-7}$ eV per atom and $2.1\times10^{-5}$ eV/Å, GPUMD's f32
 from calorine by $7.1\times10^{-7}$ and $6.3\times10^{-5}$.
 
-The keys are proposed, not ruled: `[[energy.model]]` with `backend =
-"NEP"`. The reader writes the forward and VJP bodies of both stages, if the
-maintainer rules so against D167. The implementation is #584, qNEP's
-charges #585. Closes #583.
+Ruled by the maintainer on 2026-10-27: the key is `[[energy.model]]`
+with `backend = "NEP"` and `path` (`mdir.ModelTerm(..., backend="NEP")` in
+Python), which qNEP takes as well, its mode from the file's header; the
+first version is NEP alone, on the CPU and the GPU, in `mixed` and
+`double`; the reader writes the forward and VJP bodies of the pair and atom
+stages in closed form, checked by central differences and the adjoint
+identity, with the network in the ML4 neural stage, so that D167 holds for
+it; the validation scripts download the reference models, the lit tests
+generate models of the same layout with random parameters, and no model
+file is committed. The implementation is #584, after #568; qNEP's charges
+are #585, after #584. Closes #583.
