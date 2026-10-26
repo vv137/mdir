@@ -245,7 +245,7 @@ backend required.
 | Distributed PME (#452) | In progress: the execution-level transform (D306, #480), the semantic transform (D319, #502), and its storage (D341, #526). Next: its use by `md-differentiate` in the reciprocal chain, the spread/influence/gather decomposition, and the transfer of grids (#452) |
 | ML3, ML5 | Planned. A four-GPU measurement follows ML3's gate. Distributed PME, global attention or charge solvers, constraints across domains, training, arbitrary PyTorch/JAX import, and trajectory differentiation remain outside ML5 |
 | Companion work | A persistent kernel cache and runnable compiled artifacts, with keys of the model, the backend, and the plan choices that change code; same-plan continuation first |
-| NEP and qNEP (#583) | Designed ([nep.md](nep.md), D[nep-design]): NEP4 from GPUMD's `nep.txt` as one gather of moments and a neural stage of each atom, no triplets. Next: NEP4 against GPUMD and calorine after step 3 of #568 (#584), then qNEP's charges through `md.reciprocal` (#585) |
+| NEP and qNEP (#583) | Designed ([nep.md](nep.md), D356): NEP4 from GPUMD's `nep.txt` as one gather of moments and a neural stage of each atom, no triplets. Next: NEP4 against GPUMD and calorine after step 3 of #568 (#584), then qNEP's charges through `md.reciprocal` (#585) |
 
 To bring into line with the detailed plan: [decisions.md](decisions.md),
 Section 7 still tags the dependency interface M2b, which A14 moved into M1.

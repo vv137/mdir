@@ -609,7 +609,7 @@ A program takes the state and the parameters and returns the new state.
 | `provides` | Properties of the program. |
 | `effects` | The effects of the body: `{read = [...], write = [...]}`, the names of the resources. Unknown if absent. |
 
-`effects` is the summary that `dyn.step` takes for the program (D[program-effects],
+`effects` is the summary that `dyn.step` takes for the program (D355,
 #673). The verifier checks it against the body: every effect of an op of
 the body is in it, on its resource, and no op of the body has unknown
 effects. A `func.call` has the effects that its function declares in
@@ -937,7 +937,7 @@ operation ::= `dyn.step` $callee `(` $operands `)` attr-dict
 ```
 
 A step has the effects that its program states in `effects`, which the
-verifier of the program checks against its body (D[program-effects],
+verifier of the program checks against its body (D355,
 #673): a program that calls the host, or writes a state of the host, is
 not moved across another step or removed (docs/dynamics.md, Section
 2.2.3). A step of a program without `effects` reads and writes every

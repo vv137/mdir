@@ -412,7 +412,7 @@ and application to heat transport," *Phys. Rev. B* **104**, 104309 (2021).
 [doi:10.1103/PhysRevB.104.104309](https://doi.org/10.1103/PhysRevB.104.104309)
 
 Used for: the neuroevolution potential (NEP), its radial and angular
-descriptors and its per-species network ([nep.md](nep.md), D[nep-design]).
+descriptors and its per-species network ([nep.md](nep.md), D356).
 
 ### Fan2022
 
@@ -423,7 +423,7 @@ potential for multi-component systems," *J. Phys.: Condens. Matter*
 
 Used for: the radial functions of NEP that depend on the pair of species,
 and the angular descriptors as squared moments of spherical harmonics
-([nep.md](nep.md), D[nep-design]).
+([nep.md](nep.md), D356).
 
 ### Fan2022GPUMD
 
@@ -434,7 +434,7 @@ atomistic simulations," *J. Chem. Phys.* **157**, 114801 (2022).
 
 Used for: GPUMD, the reference program of NEP models and their file
 `nep.txt`, and the 4-body and 5-body descriptors of NEP ([nep.md](nep.md),
-D[nep-design]).
+D356).
 
 ### Fan2024
 
@@ -446,7 +446,7 @@ electronic transports in complex materials," *J. Phys.: Condens. Matter*
 
 Used for: the NEP4 model of carbon of GPUMD (`C_2024_NEP4.txt`), a model
 of the validation of MDIR's NEP term ([nep.md](nep.md), Sections 8 and 11,
-D[nep-design]).
+D356).
 
 ### Fan2026
 
@@ -456,7 +456,7 @@ simulations," *J. Chem. Theory Comput.* **22**, 4787–4801 (2026).
 [doi:10.1021/acs.jctc.6c00146](https://doi.org/10.1021/acs.jctc.6c00146)
 
 Used for: qNEP, NEP with charges that the network predicts and an
-electrostatic sum over them ([nep.md](nep.md), Section 9, D[nep-design]).
+electrostatic sum over them ([nep.md](nep.md), Section 9, D356).
 
 ### Fennell2006
 
@@ -911,7 +911,7 @@ Source Softw.* **9**, 6264 (2024).
 [doi:10.21105/joss.06264](https://doi.org/10.21105/joss.06264)
 
 Used for: calorine, whose evaluator of NEP models on the CPU is an oracle
-of MDIR's NEP term ([nep.md](nep.md), Section 8, D[nep-design]).
+of MDIR's NEP term ([nep.md](nep.md), Section 8, D356).
 
 ### Lingenheil2008
 
@@ -1468,7 +1468,7 @@ potential for 16 elemental metals and their alloys," *Nat. Commun.* **15**,
 
 Used for: NEP4, the version of NEP that MDIR reads, and its model of 16
 metals, a reference model of the validation ([nep.md](nep.md),
-D[nep-design]).
+D356).
 
 ### Srinivasan1999
 
@@ -1710,7 +1710,7 @@ conductivity of water by a neuroevolution potential," *J. Chem. Phys.*
 
 Used for: the NEP4 model of liquid water that is the water model of the
 validation and the measurements of MDIR's NEP term ([nep.md](nep.md),
-Sections 7, 8, 10, and 11, D[nep-design]).
+Sections 7, 8, 10, and 11, D356).
 
 ### Zhang2019
 

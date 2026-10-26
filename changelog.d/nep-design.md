@@ -5,4 +5,4 @@
   over the pairs, the IR of two neural stages in the shape of EAM, reading
   GPUMD's `nep.txt`, the keys as ruled, precision, validation against
   calorine and GPUMD, and the scope of qNEP's charges; an independent
-  evaluator in `scripts/validation/nep/` (D[nep-design], #583).
+  evaluator in `scripts/validation/nep/` (D356, #583).

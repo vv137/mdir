@@ -1,5 +1,5 @@
 """An independent evaluator of NEP4 models in PyTorch, for docs/nep.md
-(D[nep-design], #583).
+(D356, #583).
 
 Written from the formulas of the papers (Fan et al., Phys. Rev. B 104,
 104309, 2021; Fan, J. Phys.: Condens. Matter 34, 125902, 2022; Fan et al.,

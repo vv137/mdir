@@ -492,7 +492,7 @@ LogicalResult StepOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 }
 
 //===----------------------------------------------------------------------===//
-// Effects of a program (D[program-effects], #673)
+// Effects of a program (D355, #673)
 //===----------------------------------------------------------------------===//
 
 /// The resource of the name `name` in a summary of effects, or null.

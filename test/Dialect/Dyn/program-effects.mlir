@@ -1,6 +1,6 @@
 // RUN: mdir-opt %s --canonicalize | FileCheck %s
 
-// A step takes the effects that its program states (D[program-effects],
+// A step takes the effects that its program states (D355,
 // #673): canonicalize removes a step whose results are unused if its
 // program has none, and keeps one whose program writes a stop or states
 // nothing.

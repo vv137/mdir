@@ -243,7 +243,7 @@ run.
 
 `dyn.step` loses `Pure`: it takes the effects of the ops of the program it
 applies, so that a step whose program holds `dyn.store_pressure_state` or a
-stop is not moved across another. As built (D[program-effects], #673),
+stop is not moved across another. As built (D355, #673),
 `dyn.program` carries the summary `effects = {read = [...], write =
 [...]}`, the names of the resources its body reads and writes, and
 `dyn.step` takes that summary, without walking the body. The verifier of

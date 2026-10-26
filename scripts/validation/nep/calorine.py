@@ -1,6 +1,6 @@
 """The energies, forces, virials, and descriptors of a NEP model from
 calorine's CPUNEP, in double precision (Lindgren et al., J. Open Source
-Softw. 9, 6264, 2024), for docs/nep.md (D[nep-design], #583).
+Softw. 9, 6264, 2024), for docs/nep.md (D356, #583).
 
 Usage: calorine.py MODEL XYZ NFRAMES OUT.npz
 Reads the first NFRAMES frames of an extended XYZ file. The virial is

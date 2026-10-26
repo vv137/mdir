@@ -800,7 +800,7 @@ dyn.program @velocity_verlet(%x: !vec, %v: !vec, %f: !vec,
 | `requires` | What the program needs from the thermodynamic state, such as a temperature. |
 | `provides` | Properties of the program, such as `symplectic`, `time_reversible`, `thermostatting`, or `no_global_sums`. Neither integrator conserves energy exactly [[Hairer2003]](references.md#hairer2003), so neither claims to (B9). The verifier checks the claims against the body ([dynamics.md](dynamics.md), Section 2.2.4): a body with `dyn.noise` requires `temperature`, provides `thermostatting`, and is neither `symplectic` nor `time_reversible`; a program that provides `no_global_sums` computes no global sum. |
 | `velocity_offset` | Time of the stored velocities relative to the positions, in units of `dt`. Zero if absent. |
-| `effects` | The effects of the body, `{read = [...], write = [...]}` with the names of the resources, which `dyn.step` takes; the verifier checks that it covers the body, a call having the effects that its function declares in `dyn.effects`. Unknown, every resource, if absent (D[program-effects]). |
+| `effects` | The effects of the body, `{read = [...], write = [...]}` with the names of the resources, which `dyn.step` takes; the verifier checks that it covers the body, a call having the effects that its function declares in `dyn.effects`. Unknown, every resource, if absent (D355). |
 
 ### 6.4 Leapfrog
 

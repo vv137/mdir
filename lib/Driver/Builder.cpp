@@ -6142,7 +6142,7 @@ void Builder::emitPrograms() {
        << ")\n"
        << "    attributes {"
        << (leapfrog ? "velocity_offset = -0.5,\n                " : "")
-       // The effects of the body, which dyn.step takes (D[program-effects]):
+       // The effects of the body, which dyn.step takes (D355):
        // the deferred stops of the constraints, or none.
        << (constraints ? "effects = {read = [\"dyn.stop\"], "
                          "write = [\"dyn.stop\"]},\n                "
@@ -10831,7 +10831,7 @@ void Builder::emitEntry() {
     os << "func.func private @mdrtWriteSolvent(f64, f64)\n";
   if (hasConstraints() && !control.minimize)
     // With their effects, which a program that calls them states
-    // (D[program-effects]): each records or delivers a stop of the run.
+    // (D355): each records or delivers a stop of the run.
     os << "func.func private @mdrtStopConstraintFailure(i64, i64)\n"
        << "    attributes {dyn.effects = {write = [\"dyn.stop\"]}}\n"
        << "func.func private @mdrtDeferStops()\n"

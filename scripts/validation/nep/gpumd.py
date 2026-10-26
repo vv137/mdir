@@ -1,5 +1,5 @@
 """GPUMD on the frames of a reference, and its comparison with calorine, for
-docs/nep.md (D[nep-design], #583).
+docs/nep.md (D356, #583).
 
 Usage:
   gpumd.py setup REF.npz MODEL DIR     one directory DIR/frameN per frame,

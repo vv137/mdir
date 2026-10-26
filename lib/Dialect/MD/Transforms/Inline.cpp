@@ -143,7 +143,7 @@ public:
       if (isCallee(&op) && SymbolTable::symbolKnownUseEmpty(&op, module))
         op.erase();
     // The effects that the functions of the host declare are read by the
-    // summaries of the programs (D[program-effects]), which are inlined
+    // summaries of the programs (D355), which are inlined
     // now; they leave with them, so that the lowered program is that of
     // before.
     for (Operation &op : module)

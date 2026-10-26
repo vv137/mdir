@@ -1,6 +1,6 @@
 # NEP: the neuroevolution potential as `md` ops
 
-Step 1 of NEP and qNEP (#583, `D[nep-design]`): the design of a term that
+Step 1 of NEP and qNEP (#583, `D356`): the design of a term that
 evaluates a NEP4 model of GPUMD
 [[Fan2021]](references.md#fan2021) [[Fan2022]](references.md#fan2022)
 [[Fan2022GPUMD]](references.md#fan2022gpumd) [[Song2024]](references.md#song2024)
