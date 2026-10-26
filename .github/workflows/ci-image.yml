@@ -3,7 +3,8 @@ name: ci-image
 # The image of the CPU tier of CI (#611): HDF5, LLVM/MLIR 23.1.2, and the
 # tools of the tests, pushed to ghcr.io/vv137/mdir-ci with the tag
 # `llvm-23.1.2-<hash>`, a hash of packaging/Dockerfile and of the two build
-# scripts, which ci.yml computes the same way. LLVM is built by
+# scripts, which scripts/packaging/build.sh computes for this workflow and
+# for ci.yml (#639). LLVM is built by
 # scripts/build-llvm.sh in up to three parts that share a compile cache
 # (ci-llvm-part.yml), since one hosted job cannot build it in six hours;
 # the image is then the stage `ci-prebuilt` of packaging/Dockerfile over
@@ -28,8 +29,7 @@ jobs:
       - uses: actions/checkout@v4
       - id: tag
         run: |
-          hash=$(cat packaging/Dockerfile scripts/build-llvm.sh scripts/build-hdf5.sh | sha256sum | cut -c1-16)
-          echo "image=ghcr.io/vv137/mdir-ci:llvm-23.1.2-$hash" >> "$GITHUB_OUTPUT"
+          echo "image=$(scripts/packaging/build.sh ci --print-tag)" >> "$GITHUB_OUTPUT"
       - id: present
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
@@ -68,16 +68,18 @@ jobs:
           name: llvm-install
       - name: The install of LLVM in the context
         run: mkdir ci-llvm && tar -C ci-llvm -xzf llvm-install.tar.gz && rm llvm-install.tar.gz && du -sh ci-llvm
-      - uses: docker/setup-buildx-action@v3
       - name: Login
         run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
-      - uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: packaging/Dockerfile
-          target: ci-prebuilt
-          push: true
-          tags: ${{ needs.tag.outputs.image }}
+      # The entry point of the packaging (#639) builds the stage ci-prebuilt
+      # over ci-llvm/ and pushes it under the tag of the job `tag`. A hosted
+      # runner has less free disk than the script's default floor.
+      - name: Build and push
+        env:
+          WORK: ${{ runner.temp }}
+          MIN_FREE_GB: "0"
+        run: |
+          test "$(scripts/packaging/build.sh ci-prebuilt --print-tag)" = "${{ needs.tag.outputs.image }}"
+          scripts/packaging/build.sh ci-prebuilt --push
       - name: Size
         run: |
           docker pull -q "${{ needs.tag.outputs.image }}"

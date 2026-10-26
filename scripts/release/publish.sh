@@ -175,6 +175,20 @@ build=$root/build-$name
 out=$root/$name
 log=$root/logs/release-$name
 
+# The containers and the binaries are built by the one entry point of the
+# packaging (scripts/packaging/build.sh beside this script, #639), from the
+# worktree at the commit, with the log of each step; the release has its own
+# check of the disk, so the entry point's is off. A failure returns to the
+# caller, whose trap on ERR reports the step.
+build() {
+  local target=$1; shift
+  local log_of=$log-docker.log
+  case $target in tarball) log_of=$log-manylinux.log ;; wheels) log_of=$log-wheels.log ;; esac
+  DOCKER="$DOCKER" WORK="$root" LOG="$log_of" MIN_FREE_GB=0 \
+    "$here/../packaging/build.sh" "$target" --source "$src" --commit "$commit" --version "$version" "$@" ||
+    return
+}
+
 git -C "$repo" fetch -q origin
 commit=$(git -C "$repo" rev-parse origin/main)
 (( dry )) || { git -C "$repo" rev-parse -q --verify "refs/tags/$tag" >/dev/null && { echo "$tag exists" >&2; exit 1; }; }
@@ -229,9 +243,7 @@ if (( binary )); then
   # the CPU and on the GPU of the suite.
   tarball=mdir-$version-manylinux_2_28_x86_64.tar.gz
   step="the manylinux tree"; step_log=$log-manylinux.log
-  DOCKER_BUILDKIT=1 "$DOCKER" build -f packaging/Dockerfile.manylinux \
-    --build-arg MDIR_GIT_COMMIT="$commit" --build-arg VERSION="$version" \
-    --target tarball --output "type=local,dest=$out" . > "$log-manylinux.log" 2>&1
+  build tarball --out "$out" > /dev/null
   step="the check of the manylinux tree"; step_log=""
   tree=$(mktemp -d)
   tar -C "$tree" -xzf "$out/$tarball"
@@ -251,9 +263,7 @@ if (( binary )); then
   # suite (check-wheel-install.sh).
   step="the wheels"; step_log=$log-wheels.log
   wheels=$(mktemp -d)
-  DOCKER_BUILDKIT=1 "$DOCKER" build -f packaging/Dockerfile.manylinux \
-    --build-arg MDIR_GIT_COMMIT="$commit" --build-arg VERSION="$version" \
-    --target wheels --output "type=local,dest=$wheels" . > "$log-wheels.log" 2>&1
+  build wheels --out "$wheels" > /dev/null
   step="the check of the wheels"; step_log=""
   scripts/release/check-wheel.sh "$wheels"/mdir-"$version"-*.whl
   cp "$wheels"/mdir-"$version"-*.whl "$out/"
@@ -288,7 +298,7 @@ else
 fi
 if (( container )); then
   step="the image"; step_log=$log-docker.log
-  "$DOCKER" build -f packaging/Dockerfile -t "mdir:$version" --build-arg MDIR_GIT_COMMIT="$commit" . > "$log-docker.log" 2>&1
+  build runtime > /dev/null
   step="the check of the image"; step_log=""
   scripts/release/check-image.sh "mdir:$version"
 fi

@@ -10,6 +10,32 @@ needs only Docker or Apptainer and the NVIDIA driver.
 | [mdir.def](mdir.def) | An Apptainer (Singularity) image made from the Docker image |
 | [Dockerfile.manylinux](Dockerfile.manylinux) | The release tarball (D177) and the Python wheels (D228) for manylinux_2_28 (glibc 2.28 and later), built on the PyPA image of that baseline |
 
+## Targets
+
+`scripts/packaging/build.sh TARGET` builds each of them, from the root of a
+tree, and is what `scripts/release/publish.sh` and the workflows of CI call
+(#639). It takes the container program from `DOCKER` (default `docker`;
+one with `docker build` and BuildKit's `--output`, such as podman), the jobs
+of the CI image's LLVM from `JOBS` and `LINK_JOBS`, writes the build's output to a log
+(`LOG`, default `WORK/build-TARGET.log`), reports the commit of the tree
+(`MDIR_GIT_COMMIT`; `--commit SHA` checks it), and refuses to start with
+less than `MIN_FREE_GB` (default 30) free in `WORK`. `--dry-run` prints the
+command and stops, without Docker.
+
+| Target | File and stage | Result | Checked by |
+|---|---|---|---|
+| `runtime` | [Dockerfile](Dockerfile), the last stage | the image `mdir:VERSION` (`--tag NAME`) | `scripts/release/check-image.sh` |
+| `tarball` | [Dockerfile.manylinux](Dockerfile.manylinux), `tarball` | `mdir-VERSION-manylinux_2_28_x86_64.tar.gz` in `--out DIR` (default `dist/tarball`) | `scripts/release/check-binary.sh` |
+| `wheels` | [Dockerfile.manylinux](Dockerfile.manylinux), `wheels` | one wheel per CPython in `--out DIR` (default `dist/wheels`) | `scripts/release/check-wheel.sh`, `check-wheel-install.sh` |
+| `ci` | [Dockerfile](Dockerfile), `ci` (LLVM built in one go) | `ghcr.io/vv137/mdir-ci:llvm-23.1.2-<hash>`, the hash of the Dockerfile and the two build scripts (`--print-tag`) | the CPU tier of CI ([docs/workflow.md](../docs/workflow.md#continuous-integration)) |
+| `ci-prebuilt` | [Dockerfile](Dockerfile), `ci-prebuilt` (over an install of LLVM in `ci-llvm/`) | the same tag | `.github/workflows/ci-image.yml` builds it |
+
+`VERSION` is that of `CMakeLists.txt` unless `--version` gives one. Only
+the CI image is pushed by the script (`--push`, with `--login` for the
+token of `gh`); pushing publishes, so only the maintainer runs it. The
+runtime image, the tarball, and the wheels are published by a release
+(docs/workflow.md, Releases).
+
 **Layers.** The stages go from what changes least to what changes most:
 the base image (pinned by digest) and its packages, HDF5 1.14.6, LLVM
 23.1.2, and MDIR's sources last. Each copies only the script it builds
@@ -25,8 +51,7 @@ Build from the root of the source tree. Building LLVM takes most of the
 time: about an hour with 32 jobs.
 
 ```sh
-docker build -f packaging/Dockerfile -t mdir:0.1.0 \
-    --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) .
+scripts/packaging/build.sh runtime          # mdir:VERSION
 ```
 
 Build arguments:
@@ -103,9 +128,7 @@ that it runs on RHEL, Rocky, and Alma 8 and later, Ubuntu 20.04 and later,
 and Debian 11 and later:
 
 ```sh
-DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
-  --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) --build-arg VERSION=0.1.0 \
-  --target tarball --output type=local,dest=out .
+scripts/packaging/build.sh tarball --out out
 scripts/release/check-binary.sh <extracted tree>
 ```
 
@@ -152,9 +175,7 @@ the same toolchain as the tarball, and repairs them with auditwheel to
 [python-package.md](../docs/python-package.md)):
 
 ```sh
-DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
-  --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) \
-  --target wheels --output type=local,dest=dist .
+scripts/packaging/build.sh wheels --out dist
 scripts/release/check-wheel.sh dist/*.whl
 scripts/release/check-wheel-install.sh --gpu 0 dist/*.whl
 ```
