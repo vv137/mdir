@@ -254,7 +254,7 @@ tensors become buffers (D351, #642). The MD dialect checks
 placement, type, and agreement with a known first-input dimension; the
 forward and VJP bodies use the same row accessor.
 An outlined batched function carries the verified `md.stage_body` unit
-attribute after its tensor form has been checked (D[stage-body-attr], #647).
+attribute after its tensor form has been checked (D353, #647).
 It requires a function with a body; the stage and device lowerings query it
 through the same MD dialect helper.
 

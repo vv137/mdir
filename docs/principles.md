@@ -185,7 +185,7 @@ The batched stage's row count is one such invariant: `md.stage_rows` is
 checked against a known tensor dimension before bufferization and retained
 as a static function attribute afterward (D351, #642).
 An outlined stage body uses the checked `md.stage_body` unit marker only on
-a function with a body (D[stage-body-attr], #647); lowering reads it through
+a function with a body (D353, #647); lowering reads it through
 the MD dialect helper.
 
 A required condition is either proved or established by a sound runtime

@@ -648,6 +648,7 @@ specification follow those made with it.
 | [D350](decisions/D350.md) | The compiler and runtime share one versioned neighbor-group buffer slot contract. | 2026-10-26 |
 | [D351](decisions/D351.md) | A batched stage body retains a verified static row declaration through bufferization. | 2026-10-26 |
 | [D352](decisions/D352.md) | The module of a program is the builder's text parsed and printed again by MLIR's printer, with the locations of its ops, and `mdir emit --stage=module` and `Program.ir` print it without the positions in the builder's text | 2026-10-26 |
+| [D353](decisions/D353.md) | An outlined batched body is identified by a checked function marker. | 2026-10-26 |
 <!-- end decisions-table -->
 
 

@@ -24,7 +24,7 @@ as the checked function attribute `md.stage_rows` (D351,
 #642). It selects no new primitive or physical reduction strategy.
 
 An outlined ML4 stage body carries the verified `md.stage_body` function
-marker (D[stage-body-attr], #647). It selects the existing tile-body path
+marker (D353, #647). It selects the existing tile-body path
 without adding a primitive or changing a device strategy.
 
 The [execution contract](execution-contracts.md) (#574) checks whether a

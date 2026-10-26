@@ -128,7 +128,7 @@ the declaration is the same for all forms:
 
 After a batched tensor body is checked and outlined, `md.stage_body` records
 that transition as a verified unit attribute on a function with a body
-(D[stage-body-attr], #647). The stage verifier and both device lowering
+(D353, #647). The stage verifier and both device lowering
 passes use the same MD dialect query; the marker is not a new model input.
 
 | Form | The symbol names | Lowering |
