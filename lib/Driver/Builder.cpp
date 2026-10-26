@@ -1096,8 +1096,12 @@ struct Coupled {
   /// Emits `chunk`, code of the start, as the branch of %is_first: a loop of
   /// one iteration on the first call and none on the others, whose results
   /// `results` are the values `inside` of the chunk on the first call and the
-  /// values given, `otherwise`, which it carries, on a later one. In the
-  /// chunk, the values named as the results and those given are renamed.
+  /// values given, `otherwise`, which it carries, on a later one. The chunk
+  /// is written as it is: a value that it defines under the name of a result
+  /// is its own (a name of a region hides that of the result after it), and
+  /// its uses of the values given become the loop's arguments when the
+  /// module is parsed (`mdir.start_branch`, carryStartBranches in
+  /// ProgramModule.cpp, #568).
   /// With `segment`, the loop is a segment of the run (mdrt.segment): the
   /// neighbor structures that the chunk builds do not carry into the steps
   /// after it (D218).
@@ -1353,18 +1357,6 @@ void Builder::emitStartBranch(std::string chunk,
                               bool segment) {
   if (chunk.empty() && results.empty())
     return;
-  // The values of the start take the names of the results with `_s`, and
-  // the values given, which the loop carries, those of its arguments, `_a`.
-  std::vector<std::string> first(inside.begin(), inside.end());
-  auto rename = [&](StringRef from, const std::string &to) {
-    chunk = renameValue(chunk, from, to);
-    for (std::string &value : first)
-      value = renameValue(value, from, to);
-  };
-  for (const std::string &result : results)
-    rename(result, result + "_s");
-  for (const std::string &given : otherwise)
-    rename(given, given + "_a");
   std::string types;
   for (size_t i = 0; i != results.size(); ++i)
     types += (i ? ", " : "") + std::string("!vec");
@@ -1390,10 +1382,23 @@ void Builder::emitStartBranch(std::string chunk,
   os << " {\n" << chunk;
   if (!results.empty()) {
     os << "    scf.yield ";
-    llvm::interleaveComma(first, os);
+    llvm::interleaveComma(inside, os);
     os << " : " << types << "\n";
   }
-  os << "  }" << (segment ? " {mdrt.segment}" : "") << "\n";
+  // The loop that carries values asks for its arguments in the place of
+  // those values (carryStartBranches).
+  std::vector<std::string> attributes;
+  if (!otherwise.empty())
+    attributes.push_back("mdir.start_branch");
+  if (segment)
+    attributes.push_back("mdrt.segment");
+  os << "  }";
+  if (!attributes.empty()) {
+    os << " {";
+    llvm::interleaveComma(attributes, os);
+    os << "}";
+  }
+  os << "\n";
 }
 
 void Builder::emitRenumber(StringRef indent, const llvm::Twine &ids,
