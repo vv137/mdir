@@ -404,6 +404,60 @@ Gitterpotentiale," *Ann. Phys.* **369**, 253–287 (1921).
 Used for: the Ewald sum, of which particle mesh Ewald is a fast
 evaluation, and against which it is validated.
 
+### Fan2021
+
+Z. Fan, Z. Zeng, C. Zhang, et al., "Neuroevolution machine learning
+potentials: Combining high accuracy and low cost in atomistic simulations
+and application to heat transport," *Phys. Rev. B* **104**, 104309 (2021).
+[doi:10.1103/PhysRevB.104.104309](https://doi.org/10.1103/PhysRevB.104.104309)
+
+Used for: the neuroevolution potential (NEP), its radial and angular
+descriptors and its per-species network ([nep.md](nep.md), D[nep-design]).
+
+### Fan2022
+
+Z. Fan, "Improving the accuracy of the neuroevolution machine learning
+potential for multi-component systems," *J. Phys.: Condens. Matter*
+**34**, 125902 (2022).
+[doi:10.1088/1361-648X/ac462b](https://doi.org/10.1088/1361-648X/ac462b)
+
+Used for: the radial functions of NEP that depend on the pair of species,
+and the angular descriptors as squared moments of spherical harmonics
+([nep.md](nep.md), D[nep-design]).
+
+### Fan2022GPUMD
+
+Z. Fan, Y. Wang, P. Ying, et al., "GPUMD: A package for constructing
+accurate machine-learned potentials and performing highly efficient
+atomistic simulations," *J. Chem. Phys.* **157**, 114801 (2022).
+[doi:10.1063/5.0106617](https://doi.org/10.1063/5.0106617)
+
+Used for: GPUMD, the reference program of NEP models and their file
+`nep.txt`, and the 4-body and 5-body descriptors of NEP ([nep.md](nep.md),
+D[nep-design]).
+
+### Fan2024
+
+Z. Fan, Y. Xiao, Y. Wang, et al., "Combining linear-scaling quantum
+transport and machine-learning molecular dynamics to study thermal and
+electronic transports in complex materials," *J. Phys.: Condens. Matter*
+**36**, 245901 (2024).
+[doi:10.1088/1361-648X/ad31c2](https://doi.org/10.1088/1361-648X/ad31c2)
+
+Used for: the NEP4 model of carbon of GPUMD (`C_2024_NEP4.txt`), a model
+of the validation of MDIR's NEP term ([nep.md](nep.md), Sections 8 and 11,
+D[nep-design]).
+
+### Fan2026
+
+Z. Fan, B. Tang, E. Berger, et al., "qNEP: A highly efficient
+neuroevolution potential with dynamic charges for large-scale atomistic
+simulations," *J. Chem. Theory Comput.* **22**, 4787–4801 (2026).
+[doi:10.1021/acs.jctc.6c00146](https://doi.org/10.1021/acs.jctc.6c00146)
+
+Used for: qNEP, NEP with charges that the network predicts and an
+electrostatic sum over them ([nep.md](nep.md), Section 9, D[nep-design]).
+
 ### Fennell2006
 
 C. J. Fennell, J. D. Gezelter, "Is the Ewald summation still necessary?
@@ -848,6 +902,16 @@ function of order zero as the splitting and the spreading kernel of
 particle mesh Ewald, its parameters from a tolerance (Table 2), and the
 relative force error of eq. 16 (issue #334, D266). Its code
 (doi:10.5281/zenodo.19547608) served as an oracle of normalizations only.
+
+### Lindgren2024
+
+E. Lindgren, M. Rahm, E. Fransson, et al., "calorine: A Python package
+for constructing and sampling neuroevolution potential models," *J. Open
+Source Softw.* **9**, 6264 (2024).
+[doi:10.21105/joss.06264](https://doi.org/10.21105/joss.06264)
+
+Used for: calorine, whose evaluator of NEP models on the CPU is an oracle
+of MDIR's NEP term ([nep.md](nep.md), Section 8, D[nep-design]).
 
 ### Lingenheil2008
 
@@ -1395,6 +1459,17 @@ Used for: the prolate spheroidal wave functions as the functions of a
 given band limit most concentrated on an interval, the property that ESP
 uses (issue #334, D266).
 
+### Song2024
+
+K. Song, R. Zhao, J. Liu, et al., "General-purpose machine-learned
+potential for 16 elemental metals and their alloys," *Nat. Commun.* **15**,
+10208 (2024).
+[doi:10.1038/s41467-024-54554-x](https://doi.org/10.1038/s41467-024-54554-x)
+
+Used for: NEP4, the version of NEP that MDIR reads, and its model of 16
+metals, a reference model of the validation ([nep.md](nep.md),
+D[nep-design]).
+
 ### Srinivasan1999
 
 J. Srinivasan, M. W. Trevathan, P. Beroza, D. A. Case, "Application of a
@@ -1625,6 +1700,17 @@ quadrature and interpolation," *Inverse Problems* **17**, 805–838 (2001).
 Used for: $\psi_0^c$ as a series of normalized Legendre polynomials whose
 coefficients are the eigenvector of a symmetric tridiagonal matrix, and
 its eigenvalue from the integral equation (issue #334, D266).
+
+### Xu2023
+
+K. Xu, Y. Hao, T. Liang, et al., "Accurate prediction of heat
+conductivity of water by a neuroevolution potential," *J. Chem. Phys.*
+**158**, 204114 (2023).
+[doi:10.1063/5.0147039](https://doi.org/10.1063/5.0147039)
+
+Used for: the NEP4 model of liquid water that is the water model of the
+validation and the measurements of MDIR's NEP term ([nep.md](nep.md),
+Sections 7, 8, 10, and 11, D[nep-design]).
 
 ### Zhang2019
 
