@@ -57,22 +57,39 @@ mlir::DialectRegistry getProgramDialects() {
 
 /// The module of `text` as the printer prints it with `flags`, or nothing
 /// if the text does not parse.
-/// The loops of the start of a program of segments that carry values
-/// (Builder::emitStartBranch, #568): the builder writes the code of the
-/// start inside such a loop as it is, using the values given, and marks
-/// the loop `mdir.start_branch`. Inside the loop those values are the
-/// loop's arguments, which the given values initialize; the builder
-/// renamed them in its text before (`%x0` to `%x0_a`, renameValue).
-void carryStartBranches(mlir::ModuleOp module) {
+/// The loops that carry values into code that the builder wrote outside
+/// them (#568): the branches of the start of a program of segments
+/// (Builder::emitStartBranch) and the loop over its parts
+/// (Builder::emitPartLoop). The builder writes that code inside the loop
+/// as it is, using the values given, and marks the loop `mdir.carries`.
+/// Inside the loop those values are the loop's arguments, which the given
+/// values initialize. In the loop over parts, a cast marked
+/// `mdir.part_start` takes the step that the part begins after and the
+/// %start of the entry: inside the loop, the uses of the second are the
+/// first, and the cast goes. The builder renamed these values in its text
+/// before (`%x0` to `%x0_a` and `%x0$part`, `%start` to `%start$part`;
+/// renameValue).
+void carryLoopValues(mlir::ModuleOp module) {
   module.walk([](mlir::scf::ForOp loop) {
-    if (!loop->hasAttr("mdir.start_branch"))
+    if (!loop->hasAttr("mdir.carries"))
       return;
-    loop->removeAttr("mdir.start_branch");
+    loop->removeAttr("mdir.carries");
+    auto inside = [&](mlir::OpOperand &use) {
+      return loop->isProperAncestor(use.getOwner());
+    };
     for (auto [given, argument] :
          llvm::zip(loop.getInitArgs(), loop.getRegionIterArgs()))
-      given.replaceUsesWithIf(argument, [&](mlir::OpOperand &use) {
-        return loop->isProperAncestor(use.getOwner());
-      });
+      given.replaceUsesWithIf(argument, inside);
+    llvm::SmallVector<mlir::UnrealizedConversionCastOp> marks;
+    loop.getBody()->walk([&](mlir::UnrealizedConversionCastOp cast) {
+      if (cast->hasAttr("mdir.part_start"))
+        marks.push_back(cast);
+    });
+    for (mlir::UnrealizedConversionCastOp mark : marks) {
+      mlir::Value part = mark.getOperand(0), start = mark.getOperand(1);
+      mark.erase();
+      start.replaceUsesWithIf(part, inside);
+    }
   });
 }
 
@@ -88,7 +105,7 @@ std::optional<std::string> reprint(llvm::StringRef text,
   if (!module)
     return std::nullopt;
   if (carry)
-    carryStartBranches(*module);
+    carryLoopValues(*module);
   std::string printed;
   llvm::raw_string_ostream os(printed);
   module->print(os, flags);
