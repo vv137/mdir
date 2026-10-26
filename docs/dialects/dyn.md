@@ -61,6 +61,50 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `dyn.half_step_excess` (::mdir::dyn::HalfStepExcessOp)
+
+_The excess of the kinetic energy of the half steps_
+
+Syntax:
+
+```
+operation ::= `dyn.half_step_excess` $forces `,` $masses `,` $dt attr-dict `:` qualified(type($forces))
+```
+
+```text
+E_a = (Δt² / 8) Σ_i F_{i,a}² / m_i
+```
+
+A particle of mass 0 is left out. Without constraints `K + E` is the
+mean of the kinetic energies of the two half steps around the step
+(Jung et al., J. Chem. Phys. 148, 164109 (2018)). One global sum.
+
+```mlir
+%e = dyn.half_step_excess %f, %m, %dt : !md.field<@atoms, 3 x f64>
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `forces` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `masses` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `dt` | 64-bit float |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | vector of 64-bit float values of length 3 |
+
+
+
 ### `dyn.kick` (::mdir::dyn::KickOp)
 
 _Advances the velocities under a force_
@@ -105,6 +149,207 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `dyn.kinetic` (::mdir::dyn::KineticOp)
+
+_The kinetic energy of the particles_
+
+Syntax:
+
+```
+operation ::= `dyn.kinetic` $velocities `,` $masses attr-dict `:` qualified(type($velocities))
+              `->` type($result)
+```
+
+```text
+K_a = ½ Σ_i m_i v_{i,a}²     (vector<3xf64>, each axis)
+K   = Σ_i ½ (m_i (v_i · v_i)) (f64)
+```
+
+One global sum. The two results are summed in different orders, and
+each is what the driver computes where it takes that result: the axes
+with a barostat, the total without one.
+
+```mlir
+%k = dyn.kinetic %v, %m : !md.field<@atoms, 3 x f64> -> f64
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `velocities` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `masses` | field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | 64-bit float or vector of 64-bit float values of length 3 |
+
+
+
+### `dyn.momentum` (::mdir::dyn::MomentumOp)
+
+_The momentum of the particles_
+
+Syntax:
+
+```
+operation ::= `dyn.momentum` $velocities `,` $masses attr-dict `:` qualified(type($velocities))
+```
+
+```text
+P = Σ_i m_i v_i
+```
+
+One global sum. With `P / M` the velocity of the center of mass, which
+`dyn.shift` removes.
+
+```mlir
+%p = dyn.momentum %v, %m : !md.field<@atoms, 3 x f64>
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `velocities` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `masses` | field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | vector of 64-bit float values of length 3 |
+
+
+
+### `dyn.noise` (::mdir::dyn::NoiseOp)
+
+_Damps the velocities and adds normal numbers_
+
+Syntax:
+
+```
+operation ::= `dyn.noise` $velocities `,` $masses `,` $step `,` $ids attr-dict `:`
+              qualified(type($velocities)) `,` qualified(type($ids))
+```
+
+```text
+v'_i = c v_i + (σ / √m_i) R_i
+```
+
+`R_i` are three standard normal numbers of particle `i` at the step:
+one block of Philox 4×32-10 under `seed`, with the counter of the step,
+the number of the particle in the input (`ids`), and stream 2
+(docs/dynamics.md, Section 2.2.6). A particle of mass 0 keeps its
+velocity. With `c = exp(−γ Δt)` and `σ = √((1 − c²) k_B T_0)` the O
+step of Langevin dynamics; with `c = 1` and `σ = √(2 k_B T_0 / (γ Δt))`
+on the velocity of the drift, the noise of Brownian dynamics.
+
+```mlir
+%v1 = dyn.noise %v, %m, %step, %ids
+    {seed = 314159 : i64, decay = 0.99, spread = 0.22}
+    : !md.field<@atoms, 3 x f64>, !md.field<@atoms, i32>
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>seed</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>decay</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>spread</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `velocities` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `masses` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `step` | 64-bit signless integer |
+| `ids` | field at the reference precision, with elements of type f64, i32, or i64 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | field at the reference precision, with elements of type f64, i32, or i64 |
+
+
+
+### `dyn.nose_hoover` (::mdir::dyn::NoseHooverOp)
+
+_The factor of a Nose-Hoover chain over a period_
+
+Syntax:
+
+```
+operation ::= `dyn.nose_hoover` $kinetic `,` $step attr-dict `:` type($result)
+```
+
+Moves the chain of `chain_length` thermostats over the period by the
+kinetic energy `K`, and returns the factor of the velocities (Martyna,
+Klein, and Tuckerman, J. Chem. Phys. 97, 2635 (1992); Martyna et al.,
+Mol. Phys. 87, 1117 (1996); D163a). The chain is a state of the host,
+which the checkpoint keeps. The step names the step in the message of
+a stop, when the factorization no longer follows the chain (D206).
+
+```mlir
+%alpha = dyn.nose_hoover %k, %step
+    {temperature = 300.0, time_constant = 1.0, chain_length = 3 : i64,
+     period = 0.02, freedom = 8.9e+03} : f64
+```
+
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Read on ::mdir::dyn::ChainResource, MemoryEffects::Write on ::mdir::dyn::ChainResource, MemoryEffects::Write on ::mdir::dyn::StopResource}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>temperature</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>time_constant</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>chain_length</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>period</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>freedom</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `kinetic` | 64-bit float |
+| `step` | 64-bit signless integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | 64-bit float |
+
+
+
 ### `dyn.program` (::mdir::dyn::ProgramOp)
 
 _Defines one time step_
@@ -120,7 +365,18 @@ A program takes the state and the parameters and returns the new state.
 Known requirements: `temperature`, `pressure`.
 
 Known properties: `symplectic`, `time_reversible`, `thermostatting`,
-`barostatting`.
+`barostatting`, `no_global_sums`.
+
+The verifier checks the claims against the body (docs/dynamics.md,
+Section 2.2.4). A claim stays true when `dyn-expand-couplings` expands
+the ops it rests on, so a rule holds in the direction from the body to
+the claim:
+
+| Name | Rule |
+|---|---|
+| `requires = ["temperature"]`, `provides = ["thermostatting"]` | If the body has a `dyn.noise` |
+| `provides = ["symplectic"]`, `["time_reversible"]` | Only if the body has no `dyn.noise` |
+| `provides = ["no_global_sums"]` | Only if the body computes no global sum: no measurement of `dyn`, no `md.sum_particles`, `md.sum_tuples`, or `md.sum_relation` of a floating-point result, and no `md.evaluate` of the energy, the virial, or a derivative |
 
 ```mlir
 dyn.program @leapfrog(%x: !vec, %v: !vec, %m: !real, %cell: !md.cell,
@@ -176,6 +432,88 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `dyn.scale` (::mdir::dyn::ScaleOp)
+
+_Scales every velocity_
+
+Syntax:
+
+```
+operation ::= `dyn.scale` $velocities `,` $factor attr-dict `:` qualified(type($result)) `,`
+              type($factor)
+```
+
+```text
+v'_i = s v_i      (f64)
+v'_i = s ⊙ v_i    (vector<3xf64>)
+```
+
+```mlir
+%v1 = dyn.scale %v, %alpha : !md.field<@atoms, 3 x f64>, f64
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `velocities` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `factor` | 64-bit float or vector of 64-bit float values of length 3 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | field at the reference precision, with elements of type f64, i32, or i64 |
+
+
+
+### `dyn.shift` (::mdir::dyn::ShiftOp)
+
+_Subtracts a vector from every velocity_
+
+Syntax:
+
+```
+operation ::= `dyn.shift` $velocities `,` $shift attr-dict `:` qualified(type($result))
+```
+
+```text
+v'_i = v_i − u
+```
+
+With `u = P / M` the removal of the motion of the center of mass.
+
+```mlir
+%v1 = dyn.shift %v, %u : !md.field<@atoms, 3 x f64>
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `velocities` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `shift` | vector of 64-bit float values of length 3 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | field at the reference precision, with elements of type f64, i32, or i64 |
+
+
+
 ### `dyn.step` (::mdir::dyn::StepOp)
 
 _Applies a program_
@@ -187,16 +525,18 @@ operation ::= `dyn.step` $callee `(` $operands `)` attr-dict
               `:` functional-type($operands, results)
 ```
 
+A step has the effects of the ops of the program it applies, on the
+resources those ops name: a program that calls the host, or writes a
+state of the host, is not moved across another step or removed (docs/
+dynamics.md, Section 2.2.3). An op of unknown effects, such as a
+`func.call`, reads and writes every resource.
+
 ```mlir
 %x1, %v1 = dyn.step @leapfrog(%x, %v, %m, %cell, %dt)
              : (!vec, !vec, !real, !md.cell, f64) -> (!vec, !vec)
 ```
 
-Traits: `AlwaysSpeculatableImplTrait`
-
-Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`, `SymbolUserOpInterface`
-
-Effects: `MemoryEffects::Effect{}`
+Interfaces: `MemoryEffectOpInterface`, `SymbolUserOpInterface`
 
 #### Attributes:
 
@@ -216,6 +556,92 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | &laquo;unnamed&raquo; | variadic of any non-token type |
+
+
+
+### `dyn.to_bath` (::mdir::dyn::ToBathOp)
+
+_Adds an energy to the bath_
+
+Syntax:
+
+```
+operation ::= `dyn.to_bath` $energy attr-dict `:` type($energy)
+```
+
+Adds `e`, the energy that a coupling took from the system, to the
+energy of the bath, which the conserved energy of the log and the
+checkpoint's `bath` take (D129).
+
+```mlir
+dyn.to_bath %heat : f64
+```
+
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Read on ::mdir::dyn::BathResource, MemoryEffects::Write on ::mdir::dyn::BathResource}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `energy` | 64-bit float |
+
+
+
+### `dyn.velocity_rescaling` (::mdir::dyn::VelocityRescalingOp)
+
+_The factor of stochastic velocity rescaling_
+
+Syntax:
+
+```
+operation ::= `dyn.velocity_rescaling` $kinetic `,` $step attr-dict `:` type($result)
+```
+
+The factor `α` of the velocities that brings the kinetic energy `K`
+to the next value of the stochastic process of Bussi, Donadio, and
+Parrinello, J. Chem. Phys. 126, 014101 (2007), its appendix, with the
+target `K̄ = ½ N_f k_B T_0`, `N_f` degrees of freedom, and the decay
+`exp(−N_T Δt / τ_T)` over the period; 1 if `K ≤ 0`. The numbers are
+drawn from Philox 4×32-10 under `seed`, at the step, in stream 0
+(docs/dynamics.md, Section 2.2.6): the op is a function of its
+operands and attributes.
+
+```mlir
+%alpha = dyn.velocity_rescaling %k, %step
+    {seed = 314159 : i64, target_kinetic = 1.1e+04, freedom = 8.9e+03,
+     decay = 0.99} : f64
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>seed</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>target_kinetic</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>freedom</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>decay</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `kinetic` | 64-bit float |
+| `step` | 64-bit signless integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | 64-bit float |
 
 
 

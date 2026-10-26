@@ -81,3 +81,68 @@ func.func @run_segment(%x0: !vec, %v0: !vec, %f0: !vec, %m: !real,
   }
   return %x, %v, %f : !vec, !vec, !vec
 }
+
+// The ops of a coupling (docs/dynamics.md, Section 2.2.3): a period of
+// stochastic velocity rescaling with the removal of the motion of the
+// center of mass.
+//
+// CHECK-LABEL: func.func @couple(
+func.func @couple(%v: !vec, %f: !vec, %m: !real, %dt: f64, %step: i64,
+                  %total: vector<3xf64>) -> !vec {
+  // CHECK: dyn.momentum %{{[a-z0-9]+}}, %{{[a-z0-9]+}} : !md.field<@atoms, 3 x f64>
+  %p = dyn.momentum %v, %m : !vec
+  %vcm = arith.divf %p, %total : vector<3xf64>
+  // CHECK: dyn.kinetic %{{[a-z0-9]+}}, %{{[a-z0-9]+}} : !md.field<@atoms, 3 x f64> -> f64
+  %k = dyn.kinetic %v, %m : !vec -> f64
+  // CHECK: dyn.kinetic %{{[a-z0-9]+}}, %{{[a-z0-9]+}} : !md.field<@atoms, 3 x f64> -> vector<3xf64>
+  %ka = dyn.kinetic %v, %m : !vec -> vector<3xf64>
+  // CHECK: dyn.half_step_excess %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} : !md.field<@atoms, 3 x f64>
+  %e = dyn.half_step_excess %f, %m, %dt : !vec
+  // CHECK: %[[ALPHA:[0-9]+]] = dyn.velocity_rescaling %{{[0-9]+}}, %{{[a-z0-9]+}} {decay = 0.98999999999999999 : f64, freedom = 8.900000e+03 : f64, seed = 314159 : i64, target_kinetic = 1.100000e+04 : f64} : f64
+  %alpha = dyn.velocity_rescaling %k, %step
+      {seed = 314159 : i64, target_kinetic = 1.1e+04, freedom = 8.9e+03,
+       decay = 0.99} : f64
+  // CHECK: dyn.nose_hoover %{{[0-9]+}}, %{{[a-z0-9]+}} {chain_length = 3 : i64, freedom = 8.900000e+03 : f64, period = 2.000000e-02 : f64, temperature = 3.000000e+02 : f64, time_constant = 1.000000e+00 : f64} : f64
+  %beta = dyn.nose_hoover %k, %step
+      {temperature = 300.0, time_constant = 1.0, chain_length = 3 : i64,
+       period = 0.02, freedom = 8.9e+03} : f64
+  // CHECK: %[[V1:[0-9]+]] = dyn.shift %{{[a-z0-9]+}}, %{{[0-9]+}} : !md.field<@atoms, 3 x f64>
+  %v1 = dyn.shift %v, %vcm : !vec
+  // CHECK: %[[V2:[0-9]+]] = dyn.scale %[[V1]], %[[ALPHA]] : !md.field<@atoms, 3 x f64>, f64
+  %v2 = dyn.scale %v1, %alpha : !vec, f64
+  // CHECK: dyn.scale %[[V2]], %{{[0-9]+}} : !md.field<@atoms, 3 x f64>, vector<3xf64>
+  %v3 = dyn.scale %v2, %e : !vec, vector<3xf64>
+  // CHECK: dyn.to_bath %{{[0-9]+}} : f64
+  dyn.to_bath %beta : f64
+  return %v3 : !vec
+}
+
+// The O step of Langevin dynamics, and the claims that a program with it
+// makes.
+//
+// CHECK-LABEL: dyn.program @langevin(
+// CHECK-SAME:    attributes {provides = ["thermostatting"], requires = ["temperature"]}
+dyn.program @langevin(%v: !vec, %m: !real, %step: i64,
+                      %ids: !md.field<@atoms, i32>) -> !vec
+    attributes {provides = ["thermostatting"], requires = ["temperature"]} {
+  // CHECK: dyn.noise %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} {decay = 0.98999999999999999 : f64, seed = 314159 : i64, spread = 2.200000e-01 : f64} : !md.field<@atoms, 3 x f64>, !md.field<@atoms, i32>
+  %v1 = dyn.noise %v, %m, %step, %ids
+      {seed = 314159 : i64, decay = 0.99, spread = 0.22}
+      : !vec, !md.field<@atoms, i32>
+  dyn.return %v1 : !vec
+}
+
+// A step between couplings computes no global sum (D67): the forces are
+// not one.
+//
+// CHECK-LABEL: dyn.program @plain(
+// CHECK-SAME:    attributes {provides = ["no_global_sums"]}
+dyn.program @plain(%x: !vec, %v: !vec, %f: !vec, %m: !real,
+                   %cell: !md.cell, %dt: f64, %eps: f64, %sigma: f64)
+    -> (!vec, !vec, !vec) attributes {provides = ["no_global_sums"]} {
+  %v1 = dyn.kick %v, %f, %m, %dt : !vec
+  %x1 = dyn.drift %x, %v1, %dt : !vec
+  %f1 = md.evaluate @lj(%x1, %cell, %eps, %sigma) request [forces]
+      : (!vec, !md.cell, f64, f64) -> !vec
+  dyn.return %x1, %v1, %f1 : !vec, !vec, !vec
+}
