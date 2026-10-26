@@ -1,0 +1,5 @@
+# D[typed-storage-marker]
+
+Recorded at its merge.
+
+**The module's checked storage form has one declared marker contract.** #636, part of #607. `md_exec.typed_storage` remains a unit marker on the module after storage assignment. A named MDExec helper writes, queries, verifies, and clears it; loop verifiers use that query, and the existing verifier still checks type, placement, and every cast's set provenance. The marker's meaning, printed IR, lowerings, PTX, numerical results, control-file keys, formats, defaults, overwrite behavior, and memory use do not change. `md_exec.tuple_set` and the other semantic attributes remain separate #607 slices. Validation is recorded in PR #637.

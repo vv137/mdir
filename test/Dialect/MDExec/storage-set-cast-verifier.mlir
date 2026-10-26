@@ -1,5 +1,21 @@
 // RUN: mdir-opt %s -split-input-file -verify-diagnostics
 
+// The marker remains a unit attribute of the module itself.
+// expected-error@+1 {{expects 'md_exec.typed_storage' on a module}}
+module attributes {md_exec.typed_storage = true} {
+}
+
+// -----
+
+module {
+  // expected-error@+1 {{expects 'md_exec.typed_storage' on a module}}
+  func.func @misplaced_typed_storage() attributes {md_exec.typed_storage} {
+    return
+  }
+}
+
+// -----
+
 module attributes {md_exec.typed_storage} {
   md.particle_set @atoms
   md.particle_set @other

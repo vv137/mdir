@@ -88,6 +88,27 @@ LogicalResult mdir::md_exec::verifyStorageSetCasts(ModuleOp module) {
   return result.wasInterrupted() ? failure() : success();
 }
 
+bool mdir::md_exec::hasTypedStorage(ModuleOp module) {
+  return module && module->hasAttr(kTypedStorageAttrName);
+}
+
+void mdir::md_exec::markTypedStorage(ModuleOp module) {
+  module->setAttr(kTypedStorageAttrName, UnitAttr::get(module.getContext()));
+}
+
+void mdir::md_exec::clearTypedStorage(ModuleOp module) {
+  module->removeAttr(kTypedStorageAttrName);
+}
+
+LogicalResult mdir::md_exec::verifyTypedStorageAttribute(Operation *op,
+                                                          Attribute value) {
+  auto module = dyn_cast<ModuleOp>(op);
+  if (!module || !isa<UnitAttr>(value))
+    return op->emitError()
+           << "expects '" << kTypedStorageAttrName << "' on a module";
+  return verifyStorageSetCasts(module);
+}
+
 LogicalResult mdir::md_exec::eraseStorageSets(ModuleOp module) {
   if (failed(verifyStorageSetCasts(module)))
     return failure();
@@ -127,6 +148,6 @@ LogicalResult mdir::md_exec::eraseStorageSets(ModuleOp module) {
     function.setType(FunctionType::get(module.getContext(), inputs, results));
   });
   module.walk([](Operation *op) { op->removeAttr("md_exec.tuple_set"); });
-  module->removeAttr("md_exec.typed_storage");
+  clearTypedStorage(module);
   return success();
 }

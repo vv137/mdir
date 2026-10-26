@@ -3,6 +3,7 @@
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
+#include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/TypeUtilities.h"
 #include "mlir/IR/OpImplementation.h"
@@ -230,7 +231,7 @@ static LogicalResult verifyBufferSet(Operation *op, Value value,
                                      FlatSymbolRefAttr expected) {
   FlatSymbolRefAttr actual = getBufferSet(value.getType());
   auto module = op->getParentOfType<ModuleOp>();
-  if (module && module->hasAttr("md_exec.typed_storage") && expected &&
+  if (hasTypedStorage(module) && expected &&
       isa<MemRefType>(value.getType()) && !actual)
     return op->emitOpError() << "expected a buffer tagged with set "
                              << expected;
@@ -625,7 +626,7 @@ LogicalResult ScatterAddOp::verify() {
                              << type;
     }
     auto module = (*this)->getParentOfType<ModuleOp>();
-    if (module && module->hasAttr("md_exec.typed_storage")) {
+    if (hasTypedStorage(module)) {
       FlatSymbolRefAttr rowSet = getBufferSet(values);
       if (!rowSet)
         return emitOpError() << "expected tagged values in the storage form";
@@ -864,7 +865,7 @@ static LogicalResult verifyLoop(OpTy op, FlatSymbolRefAttr particleSet,
   if (isStorage && !particleSet && !op.getOuts().empty())
     particleSet = getBufferSet(op.getOuts().front().getType());
   auto module = op.getOperation()->template getParentOfType<ModuleOp>();
-  if (isStorage && module && module->hasAttr("md_exec.typed_storage") &&
+  if (isStorage && hasTypedStorage(module) &&
       !particleSet)
     return op.emitOpError() << "expected tagged buffers in the storage form";
   for (Value field : llvm::concat<Value>(op.getIns(), op.getOuts())) {
@@ -1251,7 +1252,7 @@ LogicalResult BuildIncidenceOp::verify() {
     auto tupleSet =
         (*this)->getAttrOfType<FlatSymbolRefAttr>("md_exec.tuple_set");
     auto module = (*this)->getParentOfType<ModuleOp>();
-    if (module && module->hasAttr("md_exec.typed_storage") &&
+    if (hasTypedStorage(module) &&
         getBufferSet(getRelation().getType()) && !tupleSet)
       return emitOpError() << "expected 'md_exec.tuple_set' for tagged members";
     if (tupleSet)
@@ -1419,7 +1420,7 @@ LogicalResult TupleForOp::verify() {
     particleSet = getBufferSet(getIncidence().getType());
     tupleSet = (*this)->getAttrOfType<FlatSymbolRefAttr>("md_exec.tuple_set");
     auto module = (*this)->getParentOfType<ModuleOp>();
-    if (module && module->hasAttr("md_exec.typed_storage") &&
+    if (hasTypedStorage(module) &&
         !getParameters().empty() && !tupleSet)
       return emitOpError()
              << "expected 'md_exec.tuple_set' for tuple parameters";
