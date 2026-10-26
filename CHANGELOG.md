@@ -57,8 +57,9 @@ format, or the outputs; every such change is listed under **Changed** or
   short table in [docs/decisions.md](docs/decisions.md), and each PR's
   changelog entry is a fragment in `changelog.d/` that a release moves into
   CHANGELOG.md (#602).
-- Declare the neighbor-group buffer slots once for the compiler and runtime,
-  and diagnose an invalid slot before accessing runtime storage.
+- **The neighbor-group buffer slots are declared once** for the compiler
+  and the runtime, and an invalid slot is diagnosed before runtime storage
+  is accessed (D350, #626).
 
 ### Fixed
 
