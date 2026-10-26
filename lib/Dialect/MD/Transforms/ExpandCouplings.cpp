@@ -8,6 +8,7 @@
 #include "mdir/Dialect/MD/Transforms/Passes.h"
 
 #include "mdir/Dialect/Dyn/DynOps.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -15,6 +16,7 @@
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
+#include "mlir/IR/Matchers.h"
 #include "mlir/IR/SymbolTable.h"
 
 using namespace mlir;
@@ -125,6 +127,8 @@ private:
   /// writes them (emitStrain).
   LogicalResult expandCell(dyn::ScaleCellOp scale, dyn::StoreCellOp store);
   LogicalResult expandStoreCell(dyn::StoreCellOp op);
+  void expandGroupKinetic(dyn::GroupKineticOp op);
+  void expandScalePositions(dyn::ScalePositionsOp op);
 };
 
 } // namespace
@@ -509,6 +513,228 @@ LogicalResult ExpandCouplings::expandStoreCell(dyn::StoreCellOp op) {
   return success();
 }
 
+/// Builds the op `name`, md.sum_tuples or md.gather_tuples, over the tuples
+/// of `relation` at `positions` in `cell`, with the displacements of its
+/// members 1 to `last` from member 0 and the fields `gathered`; `body`
+/// writes the kernel from its arguments (the displacements, then each
+/// field for each member) and returns what it yields.
+static Operation *
+buildTupleOp(OpBuilder &b, Location loc, StringRef name, Type result,
+             Value relation, Value positions, Value cell, unsigned last,
+             ValueRange gathered,
+             function_ref<SmallVector<Value>(Emitter &, ValueRange)> body) {
+  auto type = cast<md::RelationType>(relation.getType());
+  SmallVector<md::Coordinate> coordinates;
+  for (unsigned k = 1; k <= last; ++k)
+    coordinates.push_back({md::CoordinateKind::Displacement,
+                           {static_cast<int64_t>(k), 0}});
+  DenseI32ArrayAttr kinds;
+  DenseI64ArrayAttr members;
+  md::getCoordinateAttrs(b, coordinates, kinds, members);
+  OperationState state(loc, name);
+  state.addOperands({relation, positions, cell});
+  state.addOperands(gathered);
+  state.addAttribute("coordinate_kinds", kinds);
+  state.addAttribute("coordinate_members", members);
+  state.addAttribute("operandSegmentSizes",
+                     b.getDenseI32ArrayAttr(
+                         {1, 1, 1, static_cast<int32_t>(gathered.size()), 0}));
+  Region *region = state.addRegion();
+  state.addTypes(result);
+  Block *kernel = new Block();
+  region->push_back(kernel);
+  for (const md::Coordinate &coordinate : coordinates)
+    kernel->addArgument(md::getCoordinateType(coordinate.kind, b.getF64Type()),
+                        loc);
+  for (Value field : gathered)
+    for (unsigned k = 0; k != type.getArity(); ++k)
+      kernel->addArgument(getKernelType(field), loc);
+  Operation *op;
+  {
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointToStart(kernel);
+    Emitter e{b, loc};
+    SmallVector<Value> yielded = body(e, kernel->getArguments());
+    md::YieldOp::create(b, loc, yielded);
+  }
+  op = b.create(state);
+  return op;
+}
+
+/// `factor` (f64) times `value` (vector<3xf64>), as SiteKernel::scale
+/// writes it.
+static Value scaleBy(Emitter &e, Value factor, Value value) {
+  return e.mul(e.splat(factor), value);
+}
+
+/// K_g, E_g, and K_half,g of the centers of the groups (emitGroupKinetic):
+/// over the particles first, less the motion within each group
+/// [Jung2020, eq. 42].
+void ExpandCouplings::expandGroupKinetic(dyn::GroupKineticOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Emitter e{b, loc};
+  Value x = op.getPositions(), v = op.getVelocities(), f = op.getForces(),
+        m = op.getMasses(), cell = op.getCell();
+  VectorType vec3 = e.vector3();
+  Value kinetic = buildLoop<md::SumParticlesOp>(
+      b, loc, vec3, {v, m}, [](Emitter &e, ValueRange args) {
+        Value half = e.real(0.5);
+        Value halfMass = e.splat(e.mul(half, args[1]));
+        return e.mul(halfMass, e.mul(args[0], args[0]));
+      });
+  Value force = buildLoop<md::SumParticlesOp>(
+      b, loc, vec3, {f, m}, [](Emitter &e, ValueRange args) {
+        Value squares = e.mul(args[0], args[0]);
+        Value zero = e.real(0.0), one = e.real(1.0);
+        Value massless =
+            e.compare(arith::CmpFPredicate::OEQ, args[1], zero);
+        Value safe = e.select(massless, one, args[1]);
+        Value inverse = e.div(one, safe);
+        Value weight = e.select(massless, zero, inverse);
+        return e.mul(squares, e.splat(weight));
+      });
+  for (Value group : op.getGroups()) {
+    unsigned arity = cast<md::RelationType>(group.getType()).getArity();
+    unsigned count = arity - 1;
+    // Twice the kinetic energy of the motion about the center, and
+    // Σ F_k² / m_k − F_g² / M_g, of each axis.
+    for (int part = 0; part != 2; ++part) {
+      Operation *sum = buildTupleOp(
+          b, loc, md::SumTuplesOp::getOperationName(), vec3, group, x, cell,
+          1, {part == 0 ? v : f, m},
+          [&](Emitter &e, ValueRange args) -> SmallVector<Value> {
+            ValueRange values = args.slice(1, arity);
+            ValueRange masses = args.slice(1 + arity, arity);
+            Value total = masses[0];
+            for (unsigned j = 1; j <= count; ++j)
+              total = e.add(total, masses[j]);
+            Value result;
+            if (part == 0) {
+              Value moment = scaleBy(e, masses[0], values[0]);
+              for (unsigned j = 1; j <= count; ++j)
+                moment = e.add(moment, scaleBy(e, masses[j], values[j]));
+              Value center = scaleBy(e, e.div(e.real(1.0), total), moment);
+              for (unsigned j = 0; j <= count; ++j) {
+                Value relative = e.sub(values[j], center);
+                Value term =
+                    scaleBy(e, masses[j], e.mul(relative, relative));
+                result = j == 0 ? term : e.add(result, term);
+              }
+            } else {
+              Value resultant = values[0];
+              for (unsigned j = 1; j <= count; ++j)
+                resultant = e.add(resultant, values[j]);
+              for (unsigned j = 0; j <= count; ++j) {
+                // The order of the arguments of SiteKernel::scale as the
+                // compiler of the driver evaluates them.
+                Value square = e.mul(values[j], values[j]);
+                Value term =
+                    scaleBy(e, e.div(e.real(1.0), masses[j]), square);
+                result = j == 0 ? term : e.add(result, term);
+              }
+              Value square = e.mul(resultant, resultant);
+              Value whole = scaleBy(e, e.div(e.real(1.0), total), square);
+              result = e.sub(result, whole);
+            }
+            return {result};
+          });
+      Value within = sum->getResult(0);
+      if (part == 0) {
+        Value half = e.mul(within, e.reals(0.5));
+        kinetic = e.sub(kinetic, half);
+      } else {
+        force = e.sub(force, within);
+      }
+    }
+  }
+  // Without the motion of the center of mass, if the run removes it.
+  if (Value total = op.getCenter()) {
+    Value momentum = buildLoop<md::SumParticlesOp>(
+        b, loc, vec3, {v, m}, [](Emitter &e, ValueRange args) {
+          return e.mul(e.splat(args[1]), args[0]);
+        });
+    Value velocity = e.div(momentum, total);
+    Value product = e.mul(momentum, velocity);
+    Value center = e.mul(e.reals(0.5), product);
+    kinetic = e.sub(kinetic, center);
+  }
+  Value dt = op.getDt();
+  Value dt2 = e.mul(dt, dt);
+  Value scale = e.mul(dt2, e.real(1.25e-01));
+  Value excess = e.mul(force, e.splat(scale));
+  Value half = e.add(kinetic, excess);
+  op.getKinetic().replaceAllUsesWith(kinetic);
+  op.getExcess().replaceAllUsesWith(excess);
+  op.getHalf().replaceAllUsesWith(half);
+  op.erase();
+}
+
+/// The value 1 − μ, `arith.subf dense<1.0>, mu`, that the block of `op`
+/// computes before it, or null.
+static Value findOneMinus(Operation *op, Value mu) {
+  for (Operation *before = op->getPrevNode(); before;
+       before = before->getPrevNode()) {
+    auto sub = dyn_cast<arith::SubFOp>(before);
+    if (!sub || sub.getRhs() != mu)
+      continue;
+    DenseElementsAttr one;
+    if (matchPattern(sub.getLhs(), m_Constant(&one)) && one.isSplat() &&
+        one.getSplatValue<APFloat>().isExactlyValue(1.0))
+      return sub.getResult();
+  }
+  return {};
+}
+
+/// μ ⊙ x, and each rigid group back by (μ − 1) times the places of its
+/// members about its center (emitGroupScaling, D72).
+void ExpandCouplings::expandScalePositions(dyn::ScalePositionsOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Emitter e{b, loc};
+  Value x = op.getPositions(), mu = op.getFactors();
+  // 1 − μ: that which the block computes before the op, as the driver
+  // writes it once for the work of the scaling and the groups, or a new one.
+  Value oneMinusMu = findOneMinus(op, mu);
+  if (!oneMinusMu)
+    oneMinusMu = e.sub(e.reals(1.0), mu);
+  Value scaled = buildLoop<md::MapParticlesOp>(
+      b, loc, x.getType(), {x},
+      [&](Emitter &e, ValueRange args) { return e.mul(mu, args[0]); });
+  for (Value group : op.getGroups()) {
+    unsigned arity = cast<md::RelationType>(group.getType()).getArity();
+    unsigned count = arity - 1;
+    Operation *change = buildTupleOp(
+        b, loc, md::GatherTuplesOp::getOperationName(), x.getType(), group,
+        x, op.getCell(), count, {op.getMasses()},
+        [&](Emitter &e, ValueRange args) -> SmallVector<Value> {
+          ValueRange places = args.take_front(count);
+          ValueRange masses = args.slice(count, arity);
+          Value total = masses[0];
+          Value moment = e.reals(0.0);
+          for (unsigned j = 1; j <= count; ++j) {
+            total = e.add(total, masses[j]);
+            moment = e.add(moment, scaleBy(e, masses[j], places[j - 1]));
+          }
+          Value one = e.real(1.0);
+          Value center = scaleBy(e, e.div(one, total), moment);
+          SmallVector<Value> yielded;
+          for (unsigned j = 0; j <= count; ++j) {
+            Value place = j == 0 ? Value(arith::NegFOp::create(e.b, e.loc,
+                                                               center))
+                                 : e.sub(places[j - 1], center);
+            yielded.push_back(e.mul(oneMinusMu, place));
+          }
+          return yielded;
+        });
+    scaled = buildLoop<md::MapParticlesOp>(
+        b, loc, x.getType(), {scaled, change->getResult(0)},
+        [](Emitter &e, ValueRange args) { return e.add(args[0], args[1]); });
+  }
+  op.replaceAllUsesWith(scaled);
+  op.erase();
+}
+
 void ExpandCouplings::runOnOperation() {
   ModuleOp module = getOperation();
   SmallVector<Operation *> ops;
@@ -532,7 +758,8 @@ void ExpandCouplings::runOnOperation() {
   SmallVector<Operation *> barostat;
   module.walk([&](Operation *op) {
     if (isa<dyn::PressureOp, dyn::CellRescalingOp, dyn::LoadCellOp,
-            dyn::ScaleCellOp, dyn::StoreCellOp>(op))
+            dyn::ScaleCellOp, dyn::StoreCellOp, dyn::GroupKineticOp,
+            dyn::ScalePositionsOp>(op))
       barostat.push_back(op);
   });
   llvm::SmallPtrSet<Operation *, 8> fused;
@@ -546,6 +773,10 @@ void ExpandCouplings::runOnOperation() {
         return signalPassFailure();
     } else if (auto load = dyn_cast<dyn::LoadCellOp>(op)) {
       expandLoadCell(load);
+    } else if (auto groups = dyn_cast<dyn::GroupKineticOp>(op)) {
+      expandGroupKinetic(groups);
+    } else if (auto positions = dyn_cast<dyn::ScalePositionsOp>(op)) {
+      expandScalePositions(positions);
     } else if (auto scale = dyn_cast<dyn::ScaleCellOp>(op)) {
       auto store = dyn_cast_or_null<dyn::StoreCellOp>(scale->getNextNode());
       if (store && store.getCell() != ValueRange(scale.getResults()))

@@ -20,6 +20,8 @@ loop, and call of the host that an op of a coupling of `dyn` expands to
   the arithmetic of the pressure              dyn.pressure
   func.call @mdrtBarostatStrain...            dyn.cell_rescaling
   the scaled cell, its stores, mdrtSetBox     dyn.scale_cell, dyn.store_cell
+  the sums of the centers of the groups       dyn.group_kinetic
+  the scaled positions and groups             dyn.scale_positions
 
 `dyn-expand-couplings` then expands the ops; the module it gives must be
 that of the input, which shows that each op expands to the text the driver
@@ -558,6 +560,161 @@ class Lifter:
             text += ", tension = %s : f64" % self.value(tension, i)
         return text + "}"
 
+    def loop_at(self, i):
+        """The loop whose header is line i: (result, op, the text after the
+        op's name up to its kernel, the index of its last line, the text
+        after `} : `), or None."""
+        match = re.match(r"^(\s*)(%\S+) = md\.(\w+) (.*) \{$", self.lines[i])
+        if not match:
+            return None
+        indent = match.group(1)
+        j = i + 1
+        while j < len(self.lines):
+            end = re.match(r"^(\s*)\} : (.*)$", self.lines[j])
+            if end and len(end.group(1)) == len(indent):
+                return match.group(2), match.group(3), match.group(4), j, end.group(2)
+            j += 1
+        return None
+
+    def kernel_of(self, i, j):
+        """The normalized lines of the kernel of the loop from line i to j."""
+        block = BLOCK.match(self.lines[i + 1])
+        arguments = [a.split(":")[0].strip() for a in split_top(block.group(1))]
+        return normalize(self.lines[i + 2:j], arguments)[0]
+
+    def lift_group_kinetic(self, i):
+        """The kinetic energy of the centers of the groups."""
+        first = self.loop_at(i)
+        if not first or first[1] != "sum_particles":
+            return None
+        if self.kernel_of(i, first[3]) != KINETIC_AXES:
+            return None
+        kinetic = first[0]
+        v, m = [g.strip() for g in re.match(r"gather\((.*) :", first[2]).group(1).split(",")]
+        k = first[3] + 1
+        second = self.loop_at(k)
+        if not second or second[1] != "sum_particles" or \
+                self.kernel_of(k, second[3]) != EXCESS:
+            return None
+        force = second[0]
+        f = re.match(r"gather\((%\S+), ", second[2]).group(1)
+        k = second[3] + 1
+        groups, types, x, cell = [], [], None, None
+        f_ = r"(%\S+)"
+        while True:
+            loop = self.loop_at(k)
+            if not loop or loop[1] != "sum_tuples":
+                break
+            head = re.match(f_ + r", " + f_ + r", " + f_ +
+                            r" coordinates\(displacement\(1, 0\)\) gather\(" + f_ + r", " +
+                            f_ + r" :", loop[2])
+            if not head or head.group(4) != v or head.group(5) != m:
+                return None
+            relation, x0, cell0 = head.group(1), head.group(2), head.group(3)
+            after = self.match_lines(loop[3] + 1, [
+                f_ + r" = arith\.constant dense<5\.000000e-01> : vector<3xf64>",
+                f_ + r" = arith\.mulf " + f_ + r", " + f_ + r" : vector<3xf64>",
+                f_ + r" = arith\.subf " + f_ + r", " + f_ + r" : vector<3xf64>"])
+            if not after or after[1].group(2) != loop[0] or after[2].group(2) != kinetic:
+                return None
+            kinetic = after[2].group(1)
+            k = loop[3] + 4
+            forces = self.loop_at(k)
+            if not forces or forces[1] != "sum_tuples" or not forces[2].startswith(
+                    "%s, %s, %s coordinates(displacement(1, 0)) gather(%s, %s :" %
+                    (relation, x0, cell0, f, m)):
+                return None
+            sub = self.match_lines(forces[3] + 1, [
+                f_ + r" = arith\.subf " + f_ + r", " + f_ + r" : vector<3xf64>"])
+            if not sub or sub[0].group(2) != force or sub[0].group(3) != forces[0]:
+                return None
+            force = sub[0].group(1)
+            k = forces[3] + 2
+            if x not in (None, x0) or cell not in (None, cell0):
+                return None
+            x, cell = x0, cell0
+            groups.append(relation)
+            types.append(split_top(loop[4].split(" -> ")[0])[0])
+        if not groups:
+            return None
+        center = None
+        momentum = self.loop_at(k)
+        if momentum and momentum[1] == "sum_particles" and \
+                self.kernel_of(k, momentum[3]) == MOMENTUM:
+            com = self.match_lines(momentum[3] + 1, [
+                f_ + r" = arith\.divf " + f_ + r", " + f_ + r" : vector<3xf64>",
+                f_ + r" = arith\.mulf " + f_ + r", " + f_ + r" : vector<3xf64>",
+                f_ + r" = arith\.constant dense<5\.000000e-01> : vector<3xf64>",
+                f_ + r" = arith\.mulf " + f_ + r", " + f_ + r" : vector<3xf64>",
+                f_ + r" = arith\.subf " + f_ + r", " + f_ + r" : vector<3xf64>"])
+            if not com or com[4].group(2) != kinetic:
+                return None
+            center = com[0].group(3)
+            kinetic = com[4].group(1)
+            k = momentum[3] + 6
+        tail = self.match_lines(k, [
+            f_ + r" = arith\.mulf " + f_ + r", " + f_ + r" : f64",
+            f_ + r" = arith\.constant 1\.250000e-01 : f64",
+            f_ + r" = arith\.mulf " + f_ + r", " + f_ + r" : f64",
+            f_ + r" = vector\.broadcast " + f_ + r" : f64 to vector<3xf64>",
+            f_ + r" = arith\.mulf " + f_ + r", " + f_ + r" : vector<3xf64>",
+            f_ + r" = arith\.addf " + f_ + r", " + f_ + r" : vector<3xf64>"])
+        if not tail or tail[4].group(2) != force or tail[5].group(2) != kinetic or \
+                tail[5].group(3) != tail[4].group(1):
+            return None
+        dt = tail[0].group(2)
+        indent = self.lines[i][:len(self.lines[i]) - len(self.lines[i].lstrip())]
+        line = "%s%s, %s, %s = dyn.group_kinetic %s, %s, %s, %s, %s, %s groups(%s : %s)%s : %s" % (
+            indent, kinetic, tail[4].group(1), tail[5].group(1), x, v, f, m, cell, dt,
+            ", ".join(groups), ", ".join(types),
+            " center(%s)" % center if center else "", "!md.field<@atoms, 3 x f64>")
+        self.emit("dyn.group_kinetic", line)
+        return k + 6
+
+    def lift_scale_positions(self, i):
+        """The positions scaled by μ, and each rigid group by its center."""
+        first = self.loop_at(i)
+        if not first or first[1] != "map_particles":
+            return None
+        head = re.fullmatch(r"gather\((%\S+) : (.*)\)", first[2])
+        body = self.lines[i + 2:first[3]]
+        if not head or len(body) != 2:
+            return None
+        mul = re.fullmatch(r"(%\S+) = arith\.mulf (%\S+), (%\S+) : vector<3xf64>",
+                           body[0].strip())
+        block = BLOCK.match(self.lines[i + 1])
+        argument = block.group(1).split(":")[0].strip()
+        if not mul or mul.group(3) != argument:
+            return None
+        x, mu, field = head.group(1), mul.group(2), head.group(2)
+        scaled, k, groups, types, masses, cell = first[0], first[3] + 1, [], [], None, None
+        while True:
+            change = self.loop_at(k)
+            if not change or change[1] != "gather_tuples":
+                break
+            m = re.match(r"(%\S+), " + re.escape(x) + r", (%\S+) coordinates\(.*\) gather\((%\S+) :",
+                         change[2])
+            if not m:
+                break
+            moved = self.loop_at(change[3] + 1)
+            if not moved or moved[1] != "map_particles" or not moved[2].startswith(
+                    "gather(%s, %s :" % (scaled, change[0])):
+                break
+            groups.append(m.group(1))
+            types.append(split_top(change[4].split(" -> ")[0])[0])
+            cell, masses = m.group(2), m.group(3)
+            scaled = moved[0]
+            k = moved[3] + 1
+        indent = self.lines[i][:len(self.lines[i]) - len(self.lines[i].lstrip())]
+        if not groups:
+            # No rigid groups: the mass and the cell are not in the text, and
+            # the scaling alone is not lifted.
+            return None
+        line = "%s%s = dyn.scale_positions %s, %s, %s, %s groups(%s : %s) : %s" % (
+            indent, scaled, x, mu, masses, cell, ", ".join(groups), ", ".join(types), field)
+        self.emit("dyn.scale_positions", line)
+        return k
+
     def lift_scale_cell(self, i):
         """The scaled cell and its stores, then mdrtSetBox and mdrtSetTilt."""
         f = r"(%\S+)"
@@ -615,7 +772,13 @@ class Lifter:
     def run(self):
         i = 0
         while i < len(self.lines):
-            following = self.lift_loop(i) if "md." in self.lines[i] else None
+            following = None
+            if "md.sum_particles" in self.lines[i]:
+                following = self.lift_group_kinetic(i)
+            if following is None and "md.map_particles" in self.lines[i]:
+                following = self.lift_scale_positions(i)
+            if following is None and "md." in self.lines[i]:
+                following = self.lift_loop(i)
             if following is None and "memref.load" in self.lines[i]:
                 following = self.lift_load_cell(i)
             if following is None and "arith.addf" in self.lines[i]:
