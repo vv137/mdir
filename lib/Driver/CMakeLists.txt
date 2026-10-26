@@ -37,6 +37,12 @@ configure_file(Templates.cpp.in Templates.cpp @ONLY)
 add_mlir_library(MDIRDriver
   Amber.cpp
   Builder.cpp
+  BuilderConstraints.cpp
+  BuilderDynamics.cpp
+  BuilderOutput.cpp
+  BuilderParameters.cpp
+  BuilderPotential.cpp
+  BuilderSchedule.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp
