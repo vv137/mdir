@@ -1,6 +1,6 @@
-# The driver compiles and runs in its own process, so it links the passes
-# and the dialects of MLIR, the translation to LLVM IR, and the execution
-# engine.
+# The driver compiles and runs in its own process, so it links the compiler
+# (MDIRCompiler, with the MLIR of the lowerings alone, #655) and the
+# execution engine.
 set(LLVM_LINK_COMPONENTS
   Core
   Support
@@ -45,10 +45,6 @@ target_link_libraries(mdir PRIVATE
   MDIRMDToMDExec
   MDIRMDTransforms
   MLIRExecutionEngine
-  MLIRRegisterAllDialects
-  MLIRRegisterAllExtensions
-  MLIRRegisterAllPasses
-  MLIRToLLVMIRTranslationRegistration
   )
 # Compiled code calls functions of the driver.
 set_target_properties(mdir PROPERTIES ENABLE_EXPORTS ON)

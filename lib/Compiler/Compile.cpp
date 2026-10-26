@@ -10,13 +10,9 @@
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "mlir/IR/Diagnostics.h"
-#include "mlir/InitAllDialects.h"
-#include "mlir/InitAllExtensions.h"
-#include "mlir/InitAllPasses.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Pass/PassRegistry.h"
-#include "mlir/Target/LLVMIR/Dialect/All.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/Module.h"
 #include "llvm/Passes/PassBuilder.h"
@@ -342,25 +338,7 @@ compiler::compile(const model::PreparedModel &prepared, bool cache) {
   return lower(prepared.control, std::move(*program), prepared.execution,
                cache);
 }
-mlir::DialectRegistry compiler::getRegistry() {
-  // Process-wide registries are initialized once; each lowering owns a context.
-  static std::once_flag registration;
-  std::call_once(registration, [] {
-    mlir::registerAllPasses();
-    md::registerMDPasses();
-    md_exec::registerMDExecPasses();
-    registerMDIRConversionPasses();
-    registerGpuLowerToNVVMPipeline();
-  });
-  mlir::DialectRegistry registry;
-  mlir::registerAllDialects(registry);
-  mlir::registerAllExtensions(registry);
-  md::registerDerivativeInterfaces(registry);
-  mlir::registerAllToLLVMIRTranslations(registry);
-  registry.insert<dyn::DynDialect, md::MDDialect, md_exec::MDExecDialect,
-                  mdrt::MDRTDialect>();
-  return registry;
-}
+// getRegistry: Registry.cpp, the dialects and passes of the lowerings (#655).
 llvm::ThreadPoolInterface &compiler::getThreadPool() {
   // The pool is never destroyed: a lowering may still use it while the
   // process exits, and a forked child, in which the threads of its parent's

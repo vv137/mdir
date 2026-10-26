@@ -53,7 +53,7 @@ These are described in [debugging.md](debugging.md). They act on `mdir run`.
 
 | Variable | Effect |
 |---|---|
-| `MDIR_PIPELINE=<passes>` | Replaces the pass pipeline, to try another order of passes or to stop part of the way. |
+| `MDIR_PIPELINE=<passes>` | Replaces the pass pipeline, to try another order of passes or to stop part of the way. It may name the passes of MDIR and the upstream passes that MDIR's own pipelines name (`lib/Compiler/Registry.cpp`, #655); `mdir-opt` knows every pass of MLIR. |
 | `MDIR_PRINT_AFTER=<pass>` | Prints the module after each run of that pass, for example `gpu-kernel-outlining` for the kernels. |
 | `MDIR_REPRODUCER=<file>` | Where a failing pass writes the module and pipeline that `mdir-opt --run-reproducer` repeats; `mdir-reproducer.mlir` by default. `mdir bug-report` sets it. |
 | `MDRT_TRACE` (set) | The device runtime prints each module that it loads, its kernels, and each launch with its grid. |
