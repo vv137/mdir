@@ -57,8 +57,28 @@ mlir::DialectRegistry getProgramDialects() {
 
 /// The module of `text` as the printer prints it with `flags`, or nothing
 /// if the text does not parse.
+/// The loops of the start of a program of segments that carry values
+/// (Builder::emitStartBranch, #568): the builder writes the code of the
+/// start inside such a loop as it is, using the values given, and marks
+/// the loop `mdir.start_branch`. Inside the loop those values are the
+/// loop's arguments, which the given values initialize; the builder
+/// renamed them in its text before (`%x0` to `%x0_a`, renameValue).
+void carryStartBranches(mlir::ModuleOp module) {
+  module.walk([](mlir::scf::ForOp loop) {
+    if (!loop->hasAttr("mdir.start_branch"))
+      return;
+    loop->removeAttr("mdir.start_branch");
+    for (auto [given, argument] :
+         llvm::zip(loop.getInitArgs(), loop.getRegionIterArgs()))
+      given.replaceUsesWithIf(argument, [&](mlir::OpOperand &use) {
+        return loop->isProperAncestor(use.getOwner());
+      });
+  });
+}
+
 std::optional<std::string> reprint(llvm::StringRef text,
-                                   mlir::OpPrintingFlags flags) {
+                                   mlir::OpPrintingFlags flags,
+                                   bool carry = false) {
   mlir::MLIRContext context(getProgramDialects(),
                             mlir::MLIRContext::Threading::DISABLED);
   mlir::ScopedDiagnosticHandler quiet(
@@ -67,6 +87,8 @@ std::optional<std::string> reprint(llvm::StringRef text,
       mlir::parseSourceString<mlir::ModuleOp>(text, &context);
   if (!module)
     return std::nullopt;
+  if (carry)
+    carryStartBranches(*module);
   std::string printed;
   llvm::raw_string_ostream os(printed);
   module->print(os, flags);
@@ -125,7 +147,7 @@ void driver::printParsedModule(Program &program) {
   // again and reports the error, as it did before the text was printed.
   mlir::OpPrintingFlags flags;
   flags.enableDebugInfo(/*enable=*/true, /*prettyForm=*/false);
-  if (auto printed = reprint(program.module, flags))
+  if (auto printed = reprint(program.module, flags, /*carry=*/true))
     program.module = std::move(*printed);
 }
 

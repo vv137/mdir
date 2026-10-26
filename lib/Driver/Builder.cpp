@@ -1096,8 +1096,12 @@ struct Coupled {
   /// Emits `chunk`, code of the start, as the branch of %is_first: a loop of
   /// one iteration on the first call and none on the others, whose results
   /// `results` are the values `inside` of the chunk on the first call and the
-  /// values given, `otherwise`, which it carries, on a later one. In the
-  /// chunk, the values named as the results and those given are renamed.
+  /// values given, `otherwise`, which it carries, on a later one. The chunk
+  /// is written as it is: a value that it defines under the name of a result
+  /// is its own (a name of a region hides that of the result after it), and
+  /// its uses of the values given become the loop's arguments when the
+  /// module is parsed (`mdir.start_branch`, carryStartBranches in
+  /// ProgramModule.cpp, #568).
   /// With `segment`, the loop is a segment of the run (mdrt.segment): the
   /// neighbor structures that the chunk builds do not carry into the steps
   /// after it (D218).
@@ -1353,23 +1357,6 @@ void Builder::emitStartBranch(std::string chunk,
                               bool segment) {
   if (chunk.empty() && results.empty())
     return;
-  // A `call` in the loop names its dialect, which the body of a `func.func`
-  // lets the ops directly in it leave out.
-  for (size_t at = chunk.find(" call @"); at != std::string::npos;
-       at = chunk.find(" call @", at))
-    chunk.replace(at, 7, " func.call @");
-  // The values of the start take the names of the results with `_s`, and
-  // the values given, which the loop carries, those of its arguments, `_a`.
-  std::vector<std::string> first(inside.begin(), inside.end());
-  auto rename = [&](StringRef from, const std::string &to) {
-    chunk = renameValue(chunk, from, to);
-    for (std::string &value : first)
-      value = renameValue(value, from, to);
-  };
-  for (const std::string &result : results)
-    rename(result, result + "_s");
-  for (const std::string &given : otherwise)
-    rename(given, given + "_a");
   std::string types;
   for (size_t i = 0; i != results.size(); ++i)
     types += (i ? ", " : "") + std::string("!vec");
@@ -1395,10 +1382,23 @@ void Builder::emitStartBranch(std::string chunk,
   os << " {\n" << chunk;
   if (!results.empty()) {
     os << "    scf.yield ";
-    llvm::interleaveComma(first, os);
+    llvm::interleaveComma(inside, os);
     os << " : " << types << "\n";
   }
-  os << "  }" << (segment ? " {mdrt.segment}" : "") << "\n";
+  // The loop that carries values asks for its arguments in the place of
+  // those values (carryStartBranches).
+  std::vector<std::string> attributes;
+  if (!otherwise.empty())
+    attributes.push_back("mdir.start_branch");
+  if (segment)
+    attributes.push_back("mdrt.segment");
+  os << "  }";
+  if (!attributes.empty()) {
+    os << " {";
+    llvm::interleaveComma(attributes, os);
+    os << "}";
+  }
+  os << "\n";
 }
 
 void Builder::emitRenumber(StringRef indent, const llvm::Twine &ids,
@@ -10630,7 +10630,7 @@ void Builder::emitTerms(StringRef x) {
        << "  memref.store %u0_r, %terms[%i_restraints] : " << type << "\n";
   os << "  %terms_cast = memref.cast %terms : " << type << " to "
         "memref<?xf64>\n"
-     << "  call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
+     << "  func.call @mdrtWriteTerms(%terms_cast) : (memref<?xf64>) -> ()\n";
 }
 
 void Builder::collectStartValues() {
@@ -11020,7 +11020,7 @@ void Builder::emitEntry() {
   os.flush();
   size_t frameMark = program.module.size();
   if (control.frames) {
-    os << "  %frame_positions = call @mdrtFrameBoundary(%frame_cell, "
+    os << "  %frame_positions = func.call @mdrtFrameBoundary(%frame_cell, "
           "%frame_asks) : (memref<6xf64>, memref<2xf64>) -> memref<?x3x"
        << state << ">\n";
     for (int k = 0; k != getCellSize(); ++k)
@@ -11289,7 +11289,7 @@ void Builder::emitEntry() {
       for (int k = 0; k != 9; ++k)
         os << "    %frame_w" << k << " = vector.extract " << tensor << "[" << k
            << "] : f64 from vector<9xf64>\n";
-      os << "    call @mdrtWriteFrameVirial(";
+      os << "    func.call @mdrtWriteFrameVirial(";
       for (int k = 0; k != 9; ++k)
         os << (k ? ", " : "") << "%frame_w" << k;
       os << ")\n        : (f64, f64, f64, f64, f64, f64, f64, f64, f64) -> ()\n"
@@ -11300,7 +11300,7 @@ void Builder::emitEntry() {
     // by axis, for comparison with other programs (D119).
     if (system.topology) {
       emitDiagonal(os, "%dgw0", virial, "  ");
-      os << "  call @mdrtWriteVirial(%dgw0_0, %dgw0_4, %dgw0_8)"
+      os << "  func.call @mdrtWriteVirial(%dgw0_0, %dgw0_4, %dgw0_8)"
             " : (f64, f64, f64) -> ()\n";
     }
     emitKineticEnergy(os, "%k0", velocities, "%m", "  ");
@@ -11332,7 +11332,7 @@ void Builder::emitEntry() {
           emitGroupKinetic("  ", "%x0", velocities, "%f0", "s0");
       emitSum3(os, "%kph0", centers.half, "  ");
     }
-    os << "  call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
+    os << "  func.call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
        << ", " << pressureKinetic << ")\n"
        << "      : (i64, f64, f64, f64, f64, f64) -> ()\n";
     emitPullOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
@@ -11387,9 +11387,6 @@ void Builder::emitEntry() {
                         program.module.substr(startMark) +
                         "  } {mdrt.segment}\n";
     program.module.resize(startMark);
-    for (size_t at = chunk.find(" call @"); at != std::string::npos;
-         at = chunk.find(" call @", at))
-      chunk.replace(at, 7, " func.call @");
     // What this assembly assumes of the text, which would otherwise break
     // without a sign (#302).
     frameLoopError = checkFrameLoop(chunk);
@@ -11618,10 +11615,6 @@ void Builder::emitPartLoop(std::string chunk,
                            llvm::ArrayRef<std::string> types,
                            llvm::ArrayRef<std::string> yielded,
                            llvm::ArrayRef<std::string> boundary) {
-  // A `call` in the loop names its dialect (emitStartBranch).
-  for (size_t at = chunk.find(" call @"); at != std::string::npos;
-       at = chunk.find(" call @", at))
-    chunk.replace(at, 7, " func.call @");
   for (const std::string &value : carried)
     chunk = renameValue(chunk, value, value + "$part");
   chunk = renameValue(chunk, "%start", "%start$part");

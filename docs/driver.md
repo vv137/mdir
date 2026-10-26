@@ -1105,6 +1105,17 @@ but must keep the printed form and the lowered program identical. It runs
 file of hashes depends on the corpus: record it and verify against it on
 one machine, with one `MDIR_BENCH_DIR`.
 
+**What step 2 has moved from text to IR so far.**
+- The emitters write `func.call`; no text replaces `call` by it when a
+  chunk moves into a loop.
+- The branches of the start of a program of segments
+  (`Builder::emitStartBranch`): the builder writes the chunk of the start
+  as it is, inside a loop marked `mdir.start_branch`, and once the module
+  is parsed, the uses of the values that the loop carries become its
+  arguments (`carryStartBranches`, `ProgramModule.cpp`). Before, the
+  builder renamed them in its text (`%x0` to `%x0_a`, and the values of
+  the start to `_s`).
+
 On main at 98e41261, a separate build of main's sources compared with a
 second build on the CPU of the login node, with the Amber suite prepared,
 gave these results:
