@@ -194,6 +194,7 @@ def ExpandCouplings : Pass<"dyn-expand-couplings", "::mlir::ModuleOp"> {
   let dependentDialects = ["::mlir::arith::ArithDialect",
                            "::mlir::func::FuncDialect",
                            "::mlir::math::MathDialect",
+                           "::mlir::memref::MemRefDialect",
                            "::mlir::vector::VectorDialect"];
 }
 

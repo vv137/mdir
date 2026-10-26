@@ -12,6 +12,7 @@
 #include "mlir/Dialect/Arith/IR/Arith.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/SymbolTable.h"
@@ -114,6 +115,16 @@ private:
   void expandHalfStepExcess(dyn::HalfStepExcessOp op);
   void expandVelocities(Operation *last);
   void expandNoise(dyn::NoiseOp op);
+
+  // The barostat (step 2b of #541).
+  void expandPressure(dyn::PressureOp op);
+  LogicalResult expandCellRescaling(dyn::CellRescalingOp op);
+  void expandLoadCell(dyn::LoadCellOp op);
+  /// dyn.scale_cell, and the dyn.store_cell of its results that follows it
+  /// at once, if `store` is given, interleaved axis by axis as the driver
+  /// writes them (emitStrain).
+  LogicalResult expandCell(dyn::ScaleCellOp scale, dyn::StoreCellOp store);
+  LogicalResult expandStoreCell(dyn::StoreCellOp op);
 };
 
 } // namespace
@@ -330,6 +341,174 @@ void ExpandCouplings::expandNoise(dyn::NoiseOp op) {
   op.erase();
 }
 
+/// The places of the edges that each value of the cell is scaled by: the
+/// edges by their own, b_x and c_x by that of x, c_y by that of y (D127).
+static const int kColumn[] = {0, 1, 2, 0, 0, 1};
+
+/// The volume (L_0 L_1) L_2, as emitStrain computes it; the pipeline's cse
+/// takes the first of the ops that compute it.
+static Value buildVolume(Emitter &e, Value l0, Value l1, Value l2) {
+  return e.mul(e.mul(l0, l1), l2);
+}
+
+/// P_aa = c_bar (2 K_a + W_aa + C / (3 V)) / V (emitStrain).
+void ExpandCouplings::expandPressure(dyn::PressureOp op) {
+  OpBuilder b(op);
+  Emitter e{b, op.getLoc()};
+  Value volume = buildVolume(e, op.getL0(), op.getL1(), op.getL2());
+  Value twice = e.add(op.getKinetic(), op.getKinetic());
+  Value virial = e.add(twice, op.getVirial());
+  Value constant = e.div(op.getConstant(), volume);
+  Value third = e.mul(constant, e.real(1.0 / 3.0));
+  Value total = e.add(virial, e.splat(third));
+  Value bar = e.div(e.real(16.6053906717), volume);
+  op.replaceAllUsesWith(e.mul(total, e.splat(bar)));
+  op.erase();
+}
+
+/// The strain of [Bernetti2020] from libmdrt, stream 1 of the key of A13
+/// (emitStrain).
+LogicalResult
+ExpandCouplings::expandCellRescaling(dyn::CellRescalingOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Emitter e{b, loc};
+  Type f64 = e.f64();
+  Value volume = buildVolume(e, op.getL0(), op.getL1(), op.getL2());
+  Value p = op.getPressures();
+  Value seed = e.i64(op.getSeed());
+  Value step = op.getStep();
+  auto beta = [&](unsigned k) {
+    return e.real(cast<FloatAttr>(op.getCompressibility()[k])
+                      .getValueAsDouble());
+  };
+  Value target = e.real(op.getTarget().convertToDouble());
+  Value kT = e.real(op.getKT().convertToDouble());
+  Value rate = e.real(op.getRate().convertToDouble());
+  auto call = [&](StringRef name, ArrayRef<Value> arguments) -> Value {
+    FailureOr<func::CallOp> done = callHost(op, name, arguments, {f64});
+    return succeeded(done) ? done->getResult(0) : Value();
+  };
+  Value strain;
+  StringRef coupling = op.getCoupling();
+  if (coupling == "anisotropic") {
+    // Each axis by the strain of its own pressure and noise, eq. (9b) of
+    // [Bernetti2020] on each (D163c).
+    Value strains[3];
+    for (int k = 0; k != 3; ++k) {
+      Value pressure = vector::ExtractOp::create(b, loc, p, k);
+      Value axis = e.i64(k);
+      strains[k] = call("mdrtBarostatStrainAxis",
+                        {seed, step, axis, pressure, target, volume, kT,
+                         beta(k), rate});
+      if (!strains[k])
+        return failure();
+    }
+    strain = vector::FromElementsOp::create(b, loc, e.vector3(),
+                                            ValueRange(strains));
+  } else if (coupling == "isotropic") {
+    // The mean pressure gives ε, the change of ln V, by a step of λ = √V
+    // (eq. S7 of [Bernetti2020]); each axis scales by ε / 3.
+    Value third = e.real(1.0 / 3.0);
+    Value mean = e.mul(e.sum3(p), third);
+    Value change = call("mdrtBarostatStrain", {seed, step, mean, target,
+                                               volume, kT, beta(0), rate});
+    if (!change)
+      return failure();
+    strain = e.splat(e.mul(change, third));
+  } else {
+    // The mean pressure of x and y gives the change of ln A, that of z the
+    // change of ln L, by eqs. (9a) and (9b) of [Bernetti2020] (D119).
+    Value px = vector::ExtractOp::create(b, loc, p, 0);
+    Value py = vector::ExtractOp::create(b, loc, p, 1);
+    Value pz = vector::ExtractOp::create(b, loc, p, 2);
+    Value half = e.real(0.5);
+    Value area = e.mul(e.add(px, py), half);
+    Value tension = e.real(op.getTension() ? op.getTension()->convertToDouble()
+                                           : 0.0);
+    Value xy = call("mdrtBarostatStrainArea",
+                    {seed, step, area, target, volume, op.getL2(), kT, beta(0),
+                     rate, tension});
+    Value z = call("mdrtBarostatStrainHeight",
+                   {seed, step, pz, target, volume, kT, beta(1), rate});
+    if (!xy || !z)
+      return failure();
+    Value halfXY = e.mul(xy, half);
+    strain = vector::FromElementsOp::create(b, loc, e.vector3(),
+                                            ValueRange{halfXY, halfXY, z});
+  }
+  op.replaceAllUsesWith(strain);
+  op.erase();
+  return success();
+}
+
+void ExpandCouplings::expandLoadCell(dyn::LoadCellOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  SmallVector<Value> values;
+  for (unsigned k = 0, n = op.getNumResults(); k != n; ++k) {
+    Value index = arith::ConstantIndexOp::create(b, loc, k);
+    values.push_back(memref::LoadOp::create(b, loc, op.getMemory(), index));
+  }
+  op.replaceAllUsesWith(values);
+  op.erase();
+}
+
+LogicalResult ExpandCouplings::expandCell(dyn::ScaleCellOp scale,
+                                          dyn::StoreCellOp store) {
+  OpBuilder b(scale);
+  Location loc = scale.getLoc();
+  ValueRange cell = scale.getCell();
+  Value factors[3];
+  SmallVector<Value> scaled;
+  for (unsigned k = 0, n = cell.size(); k != n; ++k) {
+    if (k < 3)
+      factors[k] = vector::ExtractOp::create(b, loc, scale.getFactors(), k);
+    scaled.push_back(
+        arith::MulFOp::create(b, loc, cell[k], factors[kColumn[k]]));
+    if (store) {
+      Value index = arith::ConstantIndexOp::create(b, loc, k);
+      memref::StoreOp::create(b, loc, scaled.back(), store.getMemory(),
+                              index);
+    }
+  }
+  scale.replaceAllUsesWith(scaled);
+  scale.erase();
+  if (!store)
+    return success();
+  // The record, after the stores: before the dyn.store_cell, which follows
+  // them.
+  ValueRange values = store.getCell();
+  if (failed(callHost(store, "mdrtSetBox", values.take_front(3), {},
+                      /*cInterface=*/true)))
+    return failure();
+  if (values.size() == 6 &&
+      failed(callHost(store, "mdrtSetTilt", values.drop_front(3), {},
+                      /*cInterface=*/true)))
+    return failure();
+  store.erase();
+  return success();
+}
+
+LogicalResult ExpandCouplings::expandStoreCell(dyn::StoreCellOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  ValueRange values = op.getCell();
+  for (unsigned k = 0, n = values.size(); k != n; ++k) {
+    Value index = arith::ConstantIndexOp::create(b, loc, k);
+    memref::StoreOp::create(b, loc, values[k], op.getMemory(), index);
+  }
+  if (failed(callHost(op, "mdrtSetBox", values.take_front(3), {},
+                      /*cInterface=*/true)))
+    return failure();
+  if (values.size() == 6 &&
+      failed(callHost(op, "mdrtSetTilt", values.drop_front(3), {},
+                      /*cInterface=*/true)))
+    return failure();
+  op.erase();
+  return success();
+}
+
 void ExpandCouplings::runOnOperation() {
   ModuleOp module = getOperation();
   SmallVector<Operation *> ops;
@@ -348,6 +527,37 @@ void ExpandCouplings::runOnOperation() {
         ops.push_back(op);
     }
   });
+
+  // The barostat (step 2b).
+  SmallVector<Operation *> barostat;
+  module.walk([&](Operation *op) {
+    if (isa<dyn::PressureOp, dyn::CellRescalingOp, dyn::LoadCellOp,
+            dyn::ScaleCellOp, dyn::StoreCellOp>(op))
+      barostat.push_back(op);
+  });
+  llvm::SmallPtrSet<Operation *, 8> fused;
+  for (Operation *op : barostat) {
+    if (fused.contains(op))
+      continue;
+    if (auto pressure = dyn_cast<dyn::PressureOp>(op)) {
+      expandPressure(pressure);
+    } else if (auto rescaling = dyn_cast<dyn::CellRescalingOp>(op)) {
+      if (failed(expandCellRescaling(rescaling)))
+        return signalPassFailure();
+    } else if (auto load = dyn_cast<dyn::LoadCellOp>(op)) {
+      expandLoadCell(load);
+    } else if (auto scale = dyn_cast<dyn::ScaleCellOp>(op)) {
+      auto store = dyn_cast_or_null<dyn::StoreCellOp>(scale->getNextNode());
+      if (store && store.getCell() != ValueRange(scale.getResults()))
+        store = {};
+      if (store)
+        fused.insert(store);
+      if (failed(expandCell(scale, store)))
+        return signalPassFailure();
+    } else if (failed(expandStoreCell(cast<dyn::StoreCellOp>(op)))) {
+      return signalPassFailure();
+    }
+  }
 
   for (Operation *op : ops) {
     Location loc = op->getLoc();

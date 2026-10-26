@@ -16,12 +16,22 @@ loop, and call of the host that an op of a coupling of `dyn` expands to
   func.call @mdrtBussiFactor                  dyn.velocity_rescaling
   func.call @mdrtNoseHooverFactor             dyn.nose_hoover
   func.call @mdrtAddBath                      dyn.to_bath
+  memref.load of the cell                     dyn.load_cell
+  the arithmetic of the pressure              dyn.pressure
+  func.call @mdrtBarostatStrain...            dyn.cell_rescaling
+  the scaled cell, its stores, mdrtSetBox     dyn.scale_cell, dyn.store_cell
 
 `dyn-expand-couplings` then expands the ops; the module it gives must be
 that of the input, which shows that each op expands to the text the driver
 writes (#541, step 2). The lifting reads the shapes of the text and does
 not check the arithmetic: a shape that it lifts and that the expansion does
 not give back shows as a difference.
+
+An op of the barostat takes the place of the first line that it replaces;
+the lines of pure arithmetic between that do not depend on a call that it
+replaces stay after it. The expansion computes them again, and the cse of
+the pipeline keeps the first of the two, so the lowered program is that of
+the text where the expansion is.
 
 The attributes of `dyn.nose_hoover` are not in the text (the chain is
 configured on the host) and take placeholders, which the expansion does
@@ -321,10 +331,300 @@ class Lifter:
             return True
         return False
 
+    # The barostat (step 2b of #541).
+
+    def value(self, name, before):
+        """The value of the constant `name`, or None."""
+        try:
+            return self.constant(name, before)
+        except ValueError:
+            return None
+
+    def definition(self, name, before):
+        """The text after `name = ` of the last line before `before` that
+        defines `name`, or None."""
+        pattern = re.compile(r"^\s*" + re.escape(name) + r" = (.*)$")
+        for line in reversed(self.lines[max(0, before - 400):before]):
+            match = pattern.match(line)
+            if match:
+                return match.group(1)
+        return None
+
+    def edges_of(self, volume, before):
+        """The edges L0, L1, L2 of the volume `volume` = (L0 L1) L2."""
+        text = self.definition(volume, before)
+        match = text and re.fullmatch(r"arith\.mulf (%\S+), (%\S+) : f64", text)
+        if not match:
+            return None
+        xy = self.definition(match.group(1), before)
+        first = xy and re.fullmatch(r"arith\.mulf (%\S+), (%\S+) : f64", xy)
+        if not first:
+            return None
+        return first.group(1), first.group(2), match.group(2)
+
+    def replace(self, i, j, ops, results):
+        """Lines i to j (exclusive) by `ops`; the lines of pure arithmetic
+        between that depend on no removed value stay after them."""
+        removed = set(results)
+        kept = []
+        for line in self.lines[i:j]:
+            match = DEFINE.match(line.strip())
+            defined = [d.strip() for d in match.group(1).split(",")] if match else []
+            uses = set(NAME.findall(match.group(2) if match else line))
+            if (not defined or "func.call" in line or
+                    any(d in removed for d in defined) or uses & removed):
+                removed.update(defined)
+                continue
+            kept.append(line)
+        for op, line in ops:
+            self.emit(op, line)
+        self.out.extend(kept)
+        return j
+
+    def match_lines(self, i, patterns):
+        """The matches of `patterns` on the lines from i, or None."""
+        found = []
+        for k, pattern in enumerate(patterns):
+            if i + k >= len(self.lines):
+                return None
+            match = re.fullmatch(pattern, self.lines[i + k].strip())
+            if not match:
+                return None
+            found.append(match)
+        return found
+
+    def lift_load_cell(self, i):
+        first = re.fullmatch(r"(%\S+) = memref\.load (%\S+)\[(%\S+)\] : memref<([36])xf64>",
+                             self.lines[i].strip())
+        if not first:
+            return None
+        memory, count = first.group(2), int(first.group(4))
+        indent = self.lines[i][:len(self.lines[i]) - len(self.lines[i].lstrip())]
+        names = []
+        for k in range(count):
+            match = re.fullmatch(r"(%\S+) = memref\.load " + re.escape(memory) +
+                                 r"\[(%\S+)\] : memref<" + str(count) + "xf64>",
+                                 self.lines[i + k].strip())
+            if not match or self.value(match.group(2), i) != str(k):
+                return None
+            names.append(match.group(1))
+        self.emit("dyn.load_cell", "%s%s = dyn.load_cell %s : memref<%dxf64> -> %s" %
+                  (indent, ", ".join(names), memory, count, ", ".join(["f64"] * count)))
+        return i + count
+
+    def is_value(self, name, i, value):
+        text = self.value(name, i)
+        try:
+            return text is not None and float(text) == value
+        except ValueError:
+            return False
+
+    def lift_pressure(self, i):
+        f = r"(%\S+)"
+        found = self.match_lines(i, [
+            f + r" = arith\.addf " + f + r", " + f + r" : vector<3xf64>",
+            f + r" = arith\.addf " + f + r", " + f + r" : vector<3xf64>",
+            f + r" = arith\.divf " + f + r", " + f + r" : f64",
+            f + r" = arith\.mulf " + f + r", " + f + r" : f64",
+            f + r" = vector\.broadcast " + f + r" : f64 to vector<3xf64>",
+            f + r" = arith\.addf " + f + r", " + f + r" : vector<3xf64>",
+            f + r" = arith\.divf " + f + r", " + f + r" : f64",
+            f + r" = vector\.broadcast " + f + r" : f64 to vector<3xf64>",
+            f + r" = arith\.mulf " + f + r", " + f + r" : vector<3xf64>",
+        ])
+        if not found:
+            return None
+        k2, w0, wc, wc3, wcb, w, pc, pcb, p3 = found
+        kinetic, volume = k2.group(2), wc.group(3)
+        if not (k2.group(3) == kinetic and w0.group(2) == k2.group(1) and
+                wc3.group(2) == wc.group(1) and self.is_value(wc3.group(3), i, 1.0 / 3.0) and
+                wcb.group(2) == wc3.group(1) and w.group(2) == w0.group(1) and
+                w.group(3) == wcb.group(1) and pc.group(3) == volume and
+                self.is_value(pc.group(2), i, 16.6053906717) and
+                pcb.group(2) == pc.group(1) and p3.group(2) == w.group(1) and
+                p3.group(3) == pcb.group(1)):
+            return None
+        edges = self.edges_of(volume, i)
+        if not edges:
+            return None
+        indent = self.lines[i][:len(self.lines[i]) - len(self.lines[i].lstrip())]
+        line = "%s%s = dyn.pressure %s, %s, %s, %s, %s, %s : vector<3xf64>" % (
+            indent, p3.group(1), kinetic, w0.group(3), *edges, wc.group(2))
+        return self.replace(i, i + 9, [("dyn.pressure", line)], [p3.group(1)])
+
+    def lift_strain(self, i):
+        """The calls of the strain and the arithmetic about them."""
+        f = r"(%\S+)"
+        call = r" = func\.call @(mdrtBarostatStrain\w*)\((.*)\) : .*"
+        indent = self.lines[i][:len(self.lines[i]) - len(self.lines[i].lstrip())]
+        third = 1.0 / 3.0
+        # Isotropic.
+        found = self.match_lines(i, [
+            f + r" = vector\.reduction <add>, " + f + r" : vector<3xf64> into f64",
+            f + r" = arith\.mulf " + f + r", " + f + r" : f64",
+            f + call,
+            f + r" = arith\.mulf " + f + r", " + f + r" : f64",
+            f + r" = vector\.broadcast " + f + r" : f64 to vector<3xf64>",
+        ])
+        if found and found[2].group(2) == "mdrtBarostatStrain":
+            reduce, mean, strain, scaled, splat = found
+            args = [a.strip() for a in strain.group(3).split(",")]
+            seed, step, pressure, target, volume, kt, beta, rate = args
+            if not (mean.group(2) == reduce.group(1) and self.is_value(mean.group(3), i, third)
+                    and pressure == mean.group(1) and scaled.group(2) == strain.group(1)
+                    and self.is_value(scaled.group(3), i, third)
+                    and splat.group(2) == scaled.group(1)):
+                return None
+            edges = self.edges_of(volume, i)
+            if not edges:
+                return None
+            attrs = self.strain_attrs(i, "isotropic", seed, target, [beta], rate, kt, None)
+            line = "%s%s = dyn.cell_rescaling %s, %s, %s, %s, %s %s : vector<3xf64>" % (
+                indent, splat.group(1), reduce.group(2), *edges, step, attrs)
+            return self.replace(i, i + 5, [("dyn.cell_rescaling", line)], [splat.group(1)])
+        # Semi-isotropic.
+        found = self.match_lines(i, [
+            f + r" = vector\.extract " + f + r"\[0\] : f64 from vector<3xf64>",
+            f + r" = vector\.extract " + f + r"\[1\] : f64 from vector<3xf64>",
+            f + r" = vector\.extract " + f + r"\[2\] : f64 from vector<3xf64>",
+            f + r" = arith\.addf " + f + r", " + f + r" : f64",
+            f + r" = arith\.mulf " + f + r", " + f + r" : f64",
+            f + call,
+            f + call,
+            f + r" = arith\.mulf " + f + r", " + f + r" : f64",
+            f + r" = vector\.from_elements " + f + r", " + f + r", " + f + r" : vector<3xf64>",
+        ])
+        if found and found[5].group(2) == "mdrtBarostatStrainArea":
+            px, py, pz, s, area, xy, z, half, out = found
+            a = [x.strip() for x in xy.group(3).split(",")]
+            h = [x.strip() for x in z.group(3).split(",")]
+            seed, step, pxy, target, volume, l2, kt, beta, rate, tension = a
+            if not (px.group(2) == py.group(2) == pz.group(2) and pxy == area.group(1)
+                    and self.is_value(area.group(3), i, 0.5) and h[2] == pz.group(1)
+                    and h[0] == seed and h[1] == step and out.group(2) == half.group(1)
+                    and out.group(3) == half.group(1) and out.group(4) == z.group(1)
+                    and half.group(2) == xy.group(1)):
+                return None
+            edges = self.edges_of(volume, i)
+            if not edges or edges[2] != l2:
+                return None
+            attrs = self.strain_attrs(i, "semi_isotropic", seed, target, [beta, h[6]], rate,
+                                      kt, tension)
+            line = "%s%s = dyn.cell_rescaling %s, %s, %s, %s, %s %s : vector<3xf64>" % (
+                indent, out.group(1), px.group(2), *edges, step, attrs)
+            return self.replace(i, i + 9, [("dyn.cell_rescaling", line)], [out.group(1)])
+        # Anisotropic.
+        patterns = []
+        for k in range(3):
+            patterns += [f + r" = vector\.extract " + f + r"\[%d\] : f64 from vector<3xf64>" % k,
+                         f + r" = arith\.constant %d : i64" % k, f + call]
+        patterns.append(f + r" = vector\.from_elements " + f + r", " + f + r", " + f +
+                        r" : vector<3xf64>")
+        found = self.match_lines(i, patterns)
+        if found and found[2].group(2) == "mdrtBarostatStrainAxis":
+            betas = []
+            calls = [found[3 * k + 2] for k in range(3)]
+            args = [[x.strip() for x in c.group(3).split(",")] for c in calls]
+            seed, step, _, _, target, volume, kt, _, rate = args[0]
+            for k in range(3):
+                a = args[k]
+                if not (a[0] == seed and a[1] == step and a[2] == found[3 * k + 1].group(1)
+                        and a[3] == found[3 * k].group(1) and a[4] == target and
+                        a[5] == volume and a[6] == kt and a[8] == rate and
+                        found[3 * k].group(2) == found[0].group(2)):
+                    return None
+                betas.append(a[7])
+            out = found[9]
+            if [out.group(2), out.group(3), out.group(4)] != [c.group(1) for c in calls]:
+                return None
+            edges = self.edges_of(volume, i)
+            if not edges:
+                return None
+            attrs = self.strain_attrs(i, "anisotropic", seed, target, betas, rate, kt, None)
+            line = "%s%s = dyn.cell_rescaling %s, %s, %s, %s, %s %s : vector<3xf64>" % (
+                indent, out.group(1), found[0].group(2), *edges, step, attrs)
+            return self.replace(i, i + 10, [("dyn.cell_rescaling", line)], [out.group(1)])
+        return None
+
+    def strain_attrs(self, i, coupling, seed, target, betas, rate, kt, tension):
+        values = [self.value(n, i) for n in [seed, target, rate, kt] + betas]
+        if any(v is None for v in values):
+            raise ValueError("a constant of the strain is not in the text")
+        seed, target, rate, kt = values[:4]
+        text = ("{compressibility = [%s], coupling = \"%s\", kT = %s : f64, rate = %s : f64, "
+                "seed = %s : i64, target = %s : f64" %
+                (", ".join(values[4:]), coupling, kt, rate, seed, target))
+        if tension is not None:
+            text += ", tension = %s : f64" % self.value(tension, i)
+        return text + "}"
+
+    def lift_scale_cell(self, i):
+        """The scaled cell and its stores, then mdrtSetBox and mdrtSetTilt."""
+        f = r"(%\S+)"
+        first = re.fullmatch(f + r" = vector\.extract " + f + r"\[0\] : f64 from vector<3xf64>",
+                             self.lines[i].strip())
+        if not first:
+            return None
+        mu = first.group(2)
+        column = [0, 1, 2, 0, 0, 1]
+        k, line, factors, edges, scaled, memory, count = 0, i, {}, [], [], None, None
+        while k < 6:
+            if k < 3:
+                m = re.fullmatch(f + r" = vector\.extract " + re.escape(mu) +
+                                 r"\[%d\] : f64 from vector<3xf64>" % k, self.lines[line].strip())
+                if not m:
+                    return None
+                factors[k] = m.group(1)
+                line += 1
+            m = re.fullmatch(f + r" = arith\.mulf " + f + r", " + f + r" : f64",
+                             self.lines[line].strip())
+            st = re.fullmatch(r"memref\.store " + f + r", " + f + r"\[" + f +
+                              r"\] : memref<([36])xf64>", self.lines[line + 1].strip())
+            if not (m and st and m.group(3) == factors[column[k]] and st.group(1) == m.group(1)
+                    and self.value(st.group(3), i) == str(k)):
+                return None
+            if memory is None:
+                memory, count = st.group(2), int(st.group(4))
+            if st.group(2) != memory:
+                return None
+            edges.append(m.group(2))
+            scaled.append(m.group(1))
+            line += 2
+            k += 1
+            if k == count:
+                break
+        box = re.fullmatch(r"func\.call @mdrtSetBox\((.*)\) : \(f64, f64, f64\) -> \(\)",
+                           self.lines[line].strip())
+        if not box or [x.strip() for x in box.group(1).split(",")] != scaled[:3]:
+            return None
+        line += 1
+        if count == 6:
+            tilt = re.fullmatch(r"func\.call @mdrtSetTilt\((.*)\) : \(f64, f64, f64\) -> \(\)",
+                                self.lines[line].strip())
+            if not tilt or [x.strip() for x in tilt.group(1).split(",")] != scaled[3:]:
+                return None
+            line += 1
+        indent = self.lines[i][:len(self.lines[i]) - len(self.lines[i].lstrip())]
+        types = ", ".join(["f64"] * count)
+        ops = [("dyn.scale_cell", "%s%s = dyn.scale_cell %s by %s : %s -> %s" %
+                (indent, ", ".join(scaled), ", ".join(edges), mu, types, types)),
+               ("dyn.store_cell", "%sdyn.store_cell %s into %s : memref<%dxf64>" %
+                (indent, ", ".join(scaled), memory, count))]
+        return self.replace(i, line, ops, scaled)
+
     def run(self):
         i = 0
         while i < len(self.lines):
             following = self.lift_loop(i) if "md." in self.lines[i] else None
+            if following is None and "memref.load" in self.lines[i]:
+                following = self.lift_load_cell(i)
+            if following is None and "arith.addf" in self.lines[i]:
+                following = self.lift_pressure(i)
+            if following is None and ("vector.reduction" in self.lines[i] or
+                                      "vector.extract" in self.lines[i]):
+                following = self.lift_strain(i)
+            if following is None and "vector.extract" in self.lines[i]:
+                following = self.lift_scale_cell(i)
             if following is not None:
                 i = following
                 continue
