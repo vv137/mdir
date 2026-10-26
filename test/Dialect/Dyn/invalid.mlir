@@ -211,3 +211,98 @@ dyn.program @p(%dt: f64) -> f64 attributes {effects = {write = ["cell"]}} {
 dyn.program @p(%dt: f64) -> f64 attributes {effects = {allocate = []}} {
   dyn.return %dt : f64
 }
+
+// -----
+
+func.func @f(%p: vector<3xf64>, %l: f64, %step: i64) -> vector<3xf64> {
+  // expected-error@+1 {{expected 2 numbers in 'compressibility' for the coupling 'semi_isotropic', got 1}}
+  %de = dyn.cell_rescaling %p, %l, %l, %l, %step
+      {coupling = "semi_isotropic", seed = 1 : i64, target = 1.0,
+       compressibility = [4.5e-05], rate = 0.01, kT = 2.5} : vector<3xf64>
+  return %de : vector<3xf64>
+}
+
+// -----
+
+func.func @f(%p: vector<3xf64>, %l: f64, %step: i64) -> vector<3xf64> {
+  // expected-error@+1 {{'tension' needs the coupling 'semi_isotropic'}}
+  %de = dyn.cell_rescaling %p, %l, %l, %l, %step
+      {coupling = "isotropic", seed = 1 : i64, target = 1.0,
+       compressibility = [4.5e-05], rate = 0.01, kT = 2.5, tension = 1.0}
+      : vector<3xf64>
+  return %de : vector<3xf64>
+}
+
+// -----
+
+func.func @f(%p: vector<3xf64>, %l: f64, %step: i64) -> vector<3xf64> {
+  // expected-error@+1 {{expected a 'compressibility' that is not 0}}
+  %de = dyn.cell_rescaling %p, %l, %l, %l, %step
+      {coupling = "anisotropic", seed = 1 : i64, target = 1.0,
+       compressibility = [0.0, 0.0, 0.0], rate = 0.01, kT = 2.5}
+      : vector<3xf64>
+  return %de : vector<3xf64>
+}
+
+// -----
+
+func.func @f(%box: memref<3xf64>) -> f64 {
+  // expected-error@+1 {{expected the memory of 6 values of the cell, got 'memref<3xf64>'}}
+  %t:6 = dyn.load_cell %box : memref<3xf64> -> f64, f64, f64, f64, f64, f64
+  return %t#0 : f64
+}
+
+// -----
+
+func.func @f(%l: f64, %box: memref<4xf64>) {
+  // expected-error@+1 {{expected the 3 edges, or with the 3 tilts 6 values, of the cell, got 4}}
+  dyn.store_cell %l, %l, %l, %l into %box : memref<4xf64>
+  return
+}
+
+// -----
+
+func.func @f(%k: vector<3xf64>, %mu: vector<3xf64>, %w: vector<3xf64>,
+             %c: f64, %v: f64) -> f64 {
+  // expected-error@+1 {{the count 'trotter' takes log_strain, virial_before, virial_after, and 2 volumes}}
+  %work = dyn.scaling_work kinetic(%k) strain(%mu) virial_before(%w)
+      constant(%c) volumes(%v) {count = "trotter"} : f64
+  return %work : f64
+}
+
+// -----
+
+func.func @f(%x: !md.field<@atoms, 3 x f64>, %mu: vector<3xf64>,
+             %m: !md.field<@atoms, f64>, %cell: !md.cell,
+             %r: !md.relation<@ions, 3, ordered, @settles>)
+    -> !md.field<@atoms, 3 x f64> {
+  // expected-error@+1 {{expected the groups as relations of two or more members of @atoms, got '!md.relation<@ions, 3, ordered, @settles>'}}
+  %x1 = dyn.scale_positions %x, %mu, %m, %cell
+      groups(%r : !md.relation<@ions, 3, ordered, @settles>)
+      : !md.field<@atoms, 3 x f64>
+  return %x1 : !md.field<@atoms, 3 x f64>
+}
+
+// -----
+
+// A scaling within the step is neither symplectic nor time-reversible.
+// expected-error@+1 {{provides 'symplectic', which a scaling within the step is not}}
+dyn.program @p(%x: !md.field<@atoms, 3 x f64>, %mu: vector<3xf64>,
+               %m: !md.field<@atoms, f64>, %cell: !md.cell)
+    -> !md.field<@atoms, 3 x f64>
+    attributes {provides = ["barostatting", "symplectic"],
+                requires = ["pressure"]} {
+  // expected-note@+1 {{the scaling}}
+  %x1 = dyn.scale_positions %x, %mu, %m, %cell : !md.field<@atoms, 3 x f64>
+  dyn.return %x1 : !md.field<@atoms, 3 x f64>
+}
+
+// -----
+
+// expected-error@+1 {{has a 'dyn.scale_positions' and does not require 'pressure'}}
+dyn.program @p(%x: !md.field<@atoms, 3 x f64>, %mu: vector<3xf64>,
+               %m: !md.field<@atoms, f64>, %cell: !md.cell)
+    -> !md.field<@atoms, 3 x f64> attributes {provides = ["barostatting"]} {
+  %x1 = dyn.scale_positions %x, %mu, %m, %cell : !md.field<@atoms, 3 x f64>
+  dyn.return %x1 : !md.field<@atoms, 3 x f64>
+}

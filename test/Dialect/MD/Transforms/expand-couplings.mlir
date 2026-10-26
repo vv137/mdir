@@ -144,3 +144,58 @@ func.func @split(%v: !vec, %u: vector<3xf64>, %alpha: f64) -> (!vec, !vec) {
   %v2 = dyn.scale %v1, %alpha : !vec, f64
   return %v1, %v2 : !vec, !vec
 }
+
+// The work of a scaling counted exactly (emitCoupling, D77): the kinetic
+// part, Σ (μ⁻² − 1) K, then the change of the energy in the new cell. The
+// driver writes the kinetic part before the evaluation in the new cell; the
+// op, which takes the energies, comes after it (#541, step 2b).
+// CHECK-LABEL: func.func @exact_work(
+// CHECK-SAME:    %[[K:[a-z0-9]+]]: vector<3xf64>, %[[MU:[a-z0-9]+]]: vector<3xf64>, %[[U:[a-z0-9]+]]: f64, %[[U1:[a-z0-9]+]]: f64, %[[C:[a-z0-9]+]]: f64, %[[V:[a-z0-9]+]]: f64, %[[V1:[a-z0-9]+]]: f64
+// CHECK:         %[[ONE3:.+]] = arith.constant dense<1.000000e+00> : vector<3xf64>
+// CHECK-NEXT:    %[[INV:[0-9]+]] = arith.divf %[[ONE3]], %[[MU]] : vector<3xf64>
+// CHECK-NEXT:    %[[SQ:[0-9]+]] = arith.mulf %[[INV]], %[[INV]] : vector<3xf64>
+// CHECK-NEXT:    %[[LESS:[0-9]+]] = arith.subf %[[SQ]], %[[ONE3]] : vector<3xf64>
+// CHECK-NEXT:    %[[KV:[0-9]+]] = arith.mulf %[[LESS]], %[[K]] : vector<3xf64>
+// CHECK-NEXT:    %[[DK:[0-9]+]] = vector.reduction <add>, %[[KV]] : vector<3xf64> into f64
+// CHECK-NEXT:    %[[ONE:.+]] = arith.constant 1.000000e+00 : f64
+// CHECK-NEXT:    %[[NVI:[0-9]+]] = arith.divf %[[ONE]], %[[V1]] : f64
+// CHECK-NEXT:    %[[OVI:[0-9]+]] = arith.divf %[[ONE]], %[[V]] : f64
+// CHECK-NEXT:    %[[DVI:[0-9]+]] = arith.subf %[[NVI]], %[[OVI]] : f64
+// CHECK-NEXT:    %[[DC:[0-9]+]] = arith.mulf %[[C]], %[[DVI]] : f64
+// CHECK-NEXT:    %[[DUE:[0-9]+]] = arith.subf %[[U1]], %[[U]] : f64
+// CHECK-NEXT:    %[[DU:[0-9]+]] = arith.addf %[[DUE]], %[[DC]] : f64
+// CHECK-NEXT:    %[[GAIN:[0-9]+]] = arith.addf %[[DU]], %[[DK]] : f64
+// CHECK-NEXT:    return %[[GAIN]]
+func.func @exact_work(%k: vector<3xf64>, %mu: vector<3xf64>, %u: f64,
+                      %u1: f64, %c: f64, %v: f64, %v1: f64) -> f64 {
+  %work = dyn.scaling_work kinetic(%k) strain(%mu) energies(%u, %u1)
+      constant(%c) volumes(%v, %v1) {count = "exact"} : f64
+  return %work : f64
+}
+
+// The cell: loads and stores of its memory, and a dyn.store_cell of the
+// scaled cell interleaved with its scaling axis by axis, then the record
+// (emitStrain).
+// CHECK-LABEL: func.func @cell(
+// CHECK-SAME:    %[[BOX:[a-z0-9]+]]: memref<3xf64>, %[[MU:[a-z0-9]+]]: vector<3xf64>
+// CHECK:         %[[L0:[0-9]+]] = memref.load %[[BOX]][%{{.+}}] : memref<3xf64>
+// CHECK:         %[[L1:[0-9]+]] = memref.load %[[BOX]][%{{.+}}] : memref<3xf64>
+// CHECK:         %[[L2:[0-9]+]] = memref.load %[[BOX]][%{{.+}}] : memref<3xf64>
+// CHECK-NEXT:    %[[M0:[0-9]+]] = vector.extract %[[MU]][0] : f64 from vector<3xf64>
+// CHECK-NEXT:    %[[N0:[0-9]+]] = arith.mulf %[[L0]], %[[M0]] : f64
+// CHECK:         memref.store %[[N0]], %[[BOX]][%{{.+}}] : memref<3xf64>
+// CHECK-NEXT:    %[[M1:[0-9]+]] = vector.extract %[[MU]][1] : f64 from vector<3xf64>
+// CHECK-NEXT:    %[[N1:[0-9]+]] = arith.mulf %[[L1]], %[[M1]] : f64
+// CHECK:         memref.store %[[N1]], %[[BOX]][%{{.+}}] : memref<3xf64>
+// CHECK-NEXT:    %[[M2:[0-9]+]] = vector.extract %[[MU]][2] : f64 from vector<3xf64>
+// CHECK-NEXT:    %[[N2:[0-9]+]] = arith.mulf %[[L2]], %[[M2]] : f64
+// CHECK:         memref.store %[[N2]], %[[BOX]][%{{.+}}] : memref<3xf64>
+// CHECK-NEXT:    call @mdrtSetBox(%[[N0]], %[[N1]], %[[N2]]) : (f64, f64, f64) -> ()
+// CHECK-NEXT:    return
+func.func @cell(%box: memref<3xf64>, %mu: vector<3xf64>) {
+  %l:3 = dyn.load_cell %box : memref<3xf64> -> f64, f64, f64
+  %n:3 = dyn.scale_cell %l#0, %l#1, %l#2 by %mu
+      : f64, f64, f64 -> f64, f64, f64
+  dyn.store_cell %n#0, %n#1, %n#2 into %box : memref<3xf64>
+  return
+}

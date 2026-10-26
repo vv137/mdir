@@ -18,6 +18,73 @@ it.
 
 ## Operations
 
+### `dyn.cell_rescaling` (::mdir::dyn::CellRescalingOp)
+
+_The change of the strain of stochastic cell rescaling_
+
+Syntax:
+
+```
+operation ::= `dyn.cell_rescaling` $pressures `,` $l0 `,` $l1 `,` $l2 `,` $step attr-dict `:` type($result)
+```
+
+The change Δε_a of the strain of each axis over the period, from the
+pressures `p` of the axes in bar (Bernetti and Bussi, J. Chem. Phys.
+153, 114107 (2020)):
+
+| `coupling` | Δε |
+|---|---|
+| `isotropic` | A third of Δε of the step of λ = √V, eq. (S7), from the mean of the three pressures, on every axis |
+| `semi_isotropic` | Half of Δε_xy, eq. (9a), on x and y, and Δε_z, eq. (9b), on z (D119) |
+| `anisotropic` | Δε_a of each axis from its own pressure (D163c) |
+
+`compressibility` holds one number, two (of x and y, and of z), or
+three, in 1/bar; `rate` is N_P Δt / τ_P, `kT` in kJ/mol, and
+`tension` γ in bar nm, semi-isotropic only. The noise is drawn from
+Philox 4×32-10 under `seed`, at the step, in stream 1
+(docs/dynamics.md, Section 2.2.6). Semi-isotropic and anisotropic
+coupling also write the statistics of the pressures of the axes that
+the log reports at the end of the run.
+
+```mlir
+%de = dyn.cell_rescaling %p, %l0, %l1, %l2, %step
+    {coupling = "isotropic", seed = 314159 : i64, target = 1.01325,
+     compressibility = [4.5e-05], rate = 0.01, kT = 2.494} : vector<3xf64>
+```
+
+Interfaces: `MemoryEffectOpInterface`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>coupling</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+<tr><td><code>seed</code></td><td>::mlir::IntegerAttr</td><td>64-bit signless integer attribute</td></tr>
+<tr><td><code>target</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>compressibility</code></td><td>::mlir::ArrayAttr</td><td>64-bit float array attribute</td></tr>
+<tr><td><code>rate</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>kT</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+<tr><td><code>tension</code></td><td>::mlir::FloatAttr</td><td>64-bit float attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `pressures` | vector of 64-bit float values of length 3 |
+| `l0` | 64-bit float |
+| `l1` | 64-bit float |
+| `l2` | 64-bit float |
+| `step` | 64-bit signless integer |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | vector of 64-bit float values of length 3 |
+
+
+
 ### `dyn.drift` (::mdir::dyn::DriftOp)
 
 _Advances the positions at constant velocity_
@@ -58,6 +125,69 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `result` | field at the reference precision, with elements of type f64, i32, or i64 |
+
+
+
+### `dyn.group_kinetic` (::mdir::dyn::GroupKineticOp)
+
+_The kinetic energy of the centers of the groups_
+
+Syntax:
+
+```
+operation ::= `dyn.group_kinetic` $positions `,` $velocities `,` $forces `,` $masses `,` $cell `,` $dt
+              (`groups` `(` $groups^ `:` qualified(type($groups)) `)`)?
+              (`center` `(` $center^ `)`)? attr-dict `:` qualified(type($velocities))
+```
+
+The groups are those that a barostat scales by their centers: each
+rigid group of the relations in `groups`, and each other particle
+alone (D264). The results, axis by axis:
+
+```text
+K_g      = Σ_g ½ M_g V_g²            (less that of the center of mass,
+                                       with `center`, the total mass)
+E_g      = (Δt² / 8) Σ_g F_g² / M_g
+K_half_g = K_g + E_g
+```
+
+`K_half_g` is the mean of the kinetic energies of the centers at the
+half steps around the step, exactly (Jung and Sugita, J. Chem. Phys. 153,
+234115 (2020), eq. 42): a center moves by its force alone. Global sums
+over the particles and over the tuples of each relation.
+
+```mlir
+%k, %e, %h = dyn.group_kinetic %x, %v, %f, %m, %cell, %dt
+    groups(%w : !md.relation<@atoms, 3, ordered, @settles>)
+    center(%total) : !md.field<@atoms, 3 x f64>
+```
+
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `velocities` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `forces` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `masses` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `dt` | 64-bit float |
+| `groups` | variadic of A set of tuples of distinct particles |
+| `center` | vector of 64-bit float values of length 3 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `kinetic` | vector of 64-bit float values of length 3 |
+| `excess` | vector of 64-bit float values of length 3 |
+| `half` | vector of 64-bit float values of length 3 |
 
 
 
@@ -191,6 +321,38 @@ Effects: `MemoryEffects::Effect{}`
 | Result | Description |
 | :----: | ----------- |
 | `result` | 64-bit float or vector of 64-bit float values of length 3 |
+
+
+
+### `dyn.load_cell` (::mdir::dyn::LoadCellOp)
+
+_Reads the cell_
+
+Syntax:
+
+```
+operation ::= `dyn.load_cell` $memory attr-dict `:` type($memory) `->` type($cell)
+```
+
+The edges, and of a triclinic cell the tilts b_x, c_x, c_y, from the
+memory of the cell, a memref of 3 or 6 f64 in any memory space (D72):
+on the host today, on a device for a barostat there.
+
+```mlir
+%e:3 = dyn.load_cell %box : memref<3xf64> -> f64, f64, f64
+```
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `memory` | 1D memref of 64-bit float values |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `cell` | variadic of 64-bit float |
 
 
 
@@ -350,6 +512,54 @@ Effects: `MemoryEffects::Effect{MemoryEffects::Read on ::mdir::dyn::ChainResourc
 
 
 
+### `dyn.pressure` (::mdir::dyn::PressureOp)
+
+_The pressure of each axis_
+
+Syntax:
+
+```
+operation ::= `dyn.pressure` $kinetic `,` $virial `,` $l0 `,` $l1 `,` $l2 `,` $constant attr-dict
+              `:` type($result)
+```
+
+```text
+P_aa = c_bar (2 K_a + W_aa + C / (3 V)) / V,   V = (L_0 L_1) L_2
+```
+
+In bar, with `K` the kinetic energy of the groups at the half steps,
+`W` the diagonal of their virial, `C` the virials of the constant terms
+times the volume, and c_bar = 16.6053906717 bar nm³ mol/kJ (D264).
+
+```mlir
+%p = dyn.pressure %k, %w, %l0, %l1, %l2, %c : vector<3xf64>
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `kinetic` | vector of 64-bit float values of length 3 |
+| `virial` | vector of 64-bit float values of length 3 |
+| `l0` | 64-bit float |
+| `l1` | 64-bit float |
+| `l2` | 64-bit float |
+| `constant` | 64-bit float |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | vector of 64-bit float values of length 3 |
+
+
+
 ### `dyn.program` (::mdir::dyn::ProgramOp)
 
 _Defines one time step_
@@ -383,7 +593,8 @@ the claim:
 | Name | Rule |
 |---|---|
 | `requires = ["temperature"]`, `provides = ["thermostatting"]` | If the body has a `dyn.noise` |
-| `provides = ["symplectic"]`, `["time_reversible"]` | Only if the body has no `dyn.noise` |
+| `requires = ["pressure"]`, `provides = ["barostatting"]` | If the body has a `dyn.scale_positions` |
+| `provides = ["symplectic"]`, `["time_reversible"]` | Only if the body has neither |
 | `provides = ["no_global_sums"]` | Only if the body computes no global sum: no measurement of `dyn`, no `md.sum_particles`, `md.sum_tuples`, or `md.sum_relation` of a floating-point result, and no `md.evaluate` of the energy, the virial, or a derivative |
 
 ```mlir
@@ -482,6 +693,161 @@ Effects: `MemoryEffects::Effect{}`
 
 
 
+### `dyn.scale_cell` (::mdir::dyn::ScaleCellOp)
+
+_Scales the cell by the factor of each axis_
+
+Syntax:
+
+```
+operation ::= `dyn.scale_cell` $cell `by` $factors attr-dict `:` type($cell) `->` type($results)
+```
+
+`H diag(μ)`: the edges by their μ_a and, of a triclinic cell, the tilts
+b_x and c_x by μ_x and c_y by μ_y (D127). Three or six values, as many
+as the results.
+
+```mlir
+%n:3 = dyn.scale_cell %l0, %l1, %l2 by %mu : f64, f64, f64 -> f64, f64, f64
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `cell` | variadic of 64-bit float |
+| `factors` | vector of 64-bit float values of length 3 |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `results` | variadic of 64-bit float |
+
+
+
+### `dyn.scale_positions` (::mdir::dyn::ScalePositionsOp)
+
+_Scales the positions by the factor of each axis_
+
+Syntax:
+
+```
+operation ::= `dyn.scale_positions` $positions `,` $factors `,` $masses `,` $cell
+              (`groups` `(` $groups^ `:` qualified(type($groups)) `)`)?
+              attr-dict `:` qualified(type($positions))
+```
+
+`μ ⊙ x_i` for a particle alone; each rigid group of the relations in
+`groups` moves with its center of mass X_g to μ ⊙ X_g and keeps its
+shape (D72): a particle of a group moves back by (μ − 1) times its
+place about the center.
+
+```mlir
+%x1 = dyn.scale_positions %x, %mu, %m, %cell
+    groups(%w : !md.relation<@atoms, 3, ordered, @settles>)
+    : !md.field<@atoms, 3 x f64>
+```
+
+Traits: `AlwaysSpeculatableImplTrait`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `positions` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `factors` | vector of 64-bit float values of length 3 |
+| `masses` | field at the reference precision, with elements of type f64, i32, or i64 |
+| `cell` | A simulation cell |
+| `groups` | variadic of A set of tuples of distinct particles |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | field at the reference precision, with elements of type f64, i32, or i64 |
+
+
+
+### `dyn.scaling_work` (::mdir::dyn::ScalingWorkOp)
+
+_The energy that a scaling of the cell gives the system_
+
+Syntax:
+
+```
+operation ::= `dyn.scaling_work` `kinetic` `(` $kinetic `)` (`strain` `(` $strain^ `)`)?
+              (`log_strain` `(` $log_strain^ `)`)?
+              (`virial_before` `(` $virial_before^ `)`)?
+              (`virial_after` `(` $virial_after^ `)`)?
+              (`energies` `(` $energies^ `)`)? `constant` `(` $constant `)`
+              `volumes` `(` $volumes `)` attr-dict `:` type($result)
+```
+
+ΔE_sys, of the velocities exactly, Σ_a (μ_a⁻² − 1) K_a, and of the
+positions as `count` says (docs/dynamics.md, Section 2.2.7), with `C`
+the constant terms and V, V' the volumes before and after:
+
+| `count` | Operands | Positions |
+|---|---|---|
+| `trotter` | `log_strain`, `virial_before`, `virial_after`, `volumes(V, V')` | −Σ_a ln μ_a ½ (W_b,aa + C/(3V) + W_a,aa + C/(3V')) |
+| `trotter_before` | `log_strain`, `virial_before`, `volumes(V)` | −Σ_a ln μ_a (W_b,aa + C/(3V)) |
+| `exact` | `strain`, `energies(U, U')`, `volumes(V, V')` | U' − U + C (1/V' − 1/V) |
+| `first_order` | `strain`, `virial_before`, `volumes(V)` | −Σ_a (μ_a − 1) ⅓ (tr W + C/V) |
+
+`kinetic` is that of the velocities that the scaling scales; with
+`log_strain` μ = exp(ln μ). `constant` is C: the virials of the
+constant terms times the volume, or with `exact` their energy times it.
+
+```mlir
+%w = dyn.scaling_work kinetic(%k) strain(%mu) virial_before(%wg)
+    constant(%c) volumes(%v) {count = "first_order"} : f64
+```
+
+Traits: `AlwaysSpeculatableImplTrait`, `AttrSizedOperandSegments`
+
+Interfaces: `ConditionallySpeculatable`, `NoMemoryEffect (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{}`
+
+#### Attributes:
+
+<table>
+<tr><th>Attribute</th><th>MLIR Type</th><th>Description</th></tr>
+<tr><td><code>count</code></td><td>::mlir::StringAttr</td><td>string attribute</td></tr>
+</table>
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `kinetic` | vector of 64-bit float values of length 3 |
+| `strain` | vector of 64-bit float values of length 3 |
+| `log_strain` | vector of 64-bit float values of length 3 |
+| `virial_before` | vector of 64-bit float values of length 3 |
+| `virial_after` | vector of 64-bit float values of length 3 |
+| `energies` | variadic of 64-bit float |
+| `constant` | 64-bit float |
+| `volumes` | variadic of 64-bit float |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `result` | 64-bit float |
+
+
+
 ### `dyn.shift` (::mdir::dyn::ShiftOp)
 
 _Subtracts a vector from every velocity_
@@ -566,6 +932,38 @@ Interfaces: `MemoryEffectOpInterface`, `SymbolUserOpInterface`
 | Result | Description |
 | :----: | ----------- |
 | &laquo;unnamed&raquo; | variadic of any non-token type |
+
+
+
+### `dyn.store_cell` (::mdir::dyn::StoreCellOp)
+
+_Writes the cell_
+
+Syntax:
+
+```
+operation ::= `dyn.store_cell` $cell `into` $memory attr-dict `:` type($memory)
+```
+
+Writes the edges, and of a triclinic cell the tilts, into the memory of
+the cell, and gives them to the log, the trajectory, and the checkpoint.
+A cell that is not finite, or that one coupling has scaled by more than
+a factor of 2 along an axis, stops the run (#168, D225).
+
+```mlir
+dyn.store_cell %n#0, %n#1, %n#2 into %box : memref<3xf64>
+```
+
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::mdir::dyn::RecordResource, MemoryEffects::Write on ::mdir::dyn::StopResource}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `cell` | variadic of 64-bit float |
+| `memory` | 1D memref of 64-bit float values |
 
 
 

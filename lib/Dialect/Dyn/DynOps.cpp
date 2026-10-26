@@ -330,7 +330,7 @@ static Operation *findGlobalSum(Region &body) {
   Operation *found = nullptr;
   body.walk([&](Operation *op) {
     bool isSum = false;
-    if (isa<MomentumOp, KineticOp, HalfStepExcessOp>(op)) {
+    if (isa<MomentumOp, KineticOp, HalfStepExcessOp, GroupKineticOp>(op)) {
       isSum = true;
     } else if (isa<mdir::md::SumParticlesOp, mdir::md::SumTuplesOp,
                    mdir::md::SumRelationOp>(op)) {
@@ -387,6 +387,27 @@ LogicalResult ProgramOp::verify() {
                         << "', which the friction and the noise of "
                            "'dyn.noise' are not";
       diagnostic.attachNote(noise->getLoc()) << "the noise";
+      return diagnostic;
+    }
+  // A scaling of the positions within the step: the strain comes from the
+  // pressure that the barostat computes (step_trotter).
+  Operation *scaling = nullptr;
+  getBody().walk([&](ScalePositionsOp op) {
+    scaling = op;
+    return WalkResult::interrupt();
+  });
+  if (scaling && !hasName(getRequires(), "pressure"))
+    return emitOpError() << "has a 'dyn.scale_positions' and does not "
+                            "require 'pressure'";
+  if (scaling && !hasName(getProvides(), "barostatting"))
+    return emitOpError() << "has a 'dyn.scale_positions' and does not "
+                            "provide 'barostatting'";
+  for (StringRef name : {"symplectic", "time_reversible"})
+    if (scaling && hasName(getProvides(), name)) {
+      InFlightDiagnostic diagnostic =
+          emitOpError() << "provides '" << name
+                        << "', which a scaling within the step is not";
+      diagnostic.attachNote(scaling->getLoc()) << "the scaling";
       return diagnostic;
     }
   if (hasName(getProvides(), "no_global_sums"))

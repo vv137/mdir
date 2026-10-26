@@ -953,10 +953,11 @@ CLAIMS = re.compile(r"attributes \{(.*)\} \{$")
 
 
 def claim_noise(lines):
-    """The claims of a program whose body has a dyn.noise, as the verifier
-    of dyn.program requires them (docs/dynamics.md, Section 2.2.4): it
-    requires the temperature and provides thermostatting, and neither
-    symplectic nor time_reversible."""
+    """The claims of a program whose body has a dyn.noise or a
+    dyn.scale_positions, as the verifier of dyn.program requires them
+    (docs/dynamics.md, Section 2.2.4): it requires the temperature and
+    provides thermostatting, or requires the pressure and provides
+    barostatting, and is neither symplectic nor time_reversible."""
     out = list(lines)
     for i, line in enumerate(lines):
         if not line.lstrip().startswith("dyn.program @"):
@@ -965,15 +966,22 @@ def claim_noise(lines):
         j = i + 1
         while lines[j] != indent + "}":
             j += 1
-        if not any("= dyn.noise " in l for l in lines[i:j]):
+        noise = any("= dyn.noise " in l for l in lines[i:j])
+        scaling = any("= dyn.scale_positions " in l for l in lines[i:j])
+        if not noise and not scaling:
             continue
         match = CLAIMS.search(line)
         items = split_top(match.group(1)) if match else []
         items = [item for item in items
                  if not item.startswith("provides =") and
                  not item.startswith("requires =")]
-        items.append('provides = ["thermostatting"]')
-        items.append('requires = ["temperature"]')
+        provides = (['"thermostatting"'] if noise else []) + \
+            (['"barostatting"'] if scaling else [])
+        requires = (['"temperature"'] if noise else []) + \
+            (['"pressure"'] if scaling else [])
+        # The names in the order that the printer sorts them in.
+        items.append("provides = [%s]" % ", ".join(sorted(provides)))
+        items.append("requires = [%s]" % ", ".join(sorted(requires)))
         claims = "attributes {" + ", ".join(sorted(items)) + "} {"
         out[i] = (line[:match.start()] + claims if match
                   else line[:-1] + claims)

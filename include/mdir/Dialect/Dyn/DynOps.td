@@ -685,7 +685,8 @@ def Dyn_ProgramOp : Dyn_Op<"program", [
     | Name | Rule |
     |---|---|
     | `requires = ["temperature"]`, `provides = ["thermostatting"]` | If the body has a `dyn.noise` |
-    | `provides = ["symplectic"]`, `["time_reversible"]` | Only if the body has no `dyn.noise` |
+    | `requires = ["pressure"]`, `provides = ["barostatting"]` | If the body has a `dyn.scale_positions` |
+    | `provides = ["symplectic"]`, `["time_reversible"]` | Only if the body has neither |
     | `provides = ["no_global_sums"]` | Only if the body computes no global sum: no measurement of `dyn`, no `md.sum_particles`, `md.sum_tuples`, or `md.sum_relation` of a floating-point result, and no `md.evaluate` of the energy, the virial, or a derivative |
 
     ```mlir
