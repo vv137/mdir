@@ -8,6 +8,7 @@ add_mlir_dialect_library(MDIRMDTransforms
   Adjoints.cpp
   Differentiate.cpp
   Distribute.cpp
+  ExpandCouplings.cpp
   ExpandTruncation.cpp
   Inline.cpp
   OwnerComputes.cpp

@@ -79,7 +79,7 @@ flowchart TD
     CF --> MODEL["One model and one IR builder<br/>lib/Driver: Model, Builder"]
     PY --> MODEL
     MODEL --> SEM["md and dyn<br/>potential, relations, tuple sets,<br/>step programs, the schedule of the run"]
-    SEM --> MDP["Passes on md<br/>md-check-exchange, md-differentiate,<br/>md-expand-truncation, md-inline, md-bypass-updates"]
+    SEM --> MDP["Passes on md<br/>md-check-exchange, md-differentiate,<br/>md-expand-truncation, md-inline,<br/>dyn-expand-couplings, md-bypass-updates"]
     MDP --> CONV["convert-md-to-md-exec"]
     CONV --> EXV["md_exec, value form<br/>reuse-neighbors, expose-validity, fuse-loops,<br/>accumulate-destinations, fold-tables,<br/>assign-precision, assign-algebra"]
     EXV --> CPU["CPU: assign-storage, convert-md-exec-to-loops,<br/>fixed-order-reductions, OpenMP, LLVM"]
@@ -104,7 +104,7 @@ simulation takes it yet.
 | Dialect | Says | Main objects | State |
 |---|---|---|---|
 | `md` | What is computed | `md.particle_set`, `md.tuple_set`, `md.disjoint_union`; the cell; `md.potential` and `md.function`; `md.neighborhood`; sums and gathers over relations, tuples, and particles (`md.sum_relation`, `md.gather_relation`, `md.sum_tuples`, `md.map_particles`, ...); `md.reciprocal`; `md.linear_transform`; neural stages (`md.stage`, `md.apply_stage`); `md.evaluate` with requests for energy, forces, virial, and parameter derivatives | Built ([ops.md](ops.md), [tuples.md](tuples.md)) |
-| `dyn` | How the state advances | `dyn.program`, `dyn.step`, `dyn.kick`, `dyn.drift`; a program states what it provides (`symplectic`, `time_reversible`, ...) and requires | Built. The couplings (thermostats, barostat, removal of the motion of the center of mass) are written by the builder as sums, host calls, and loops; making them `dyn` ops is designed, not built (D326, [dynamics.md](dynamics.md), Section 2.2) |
+| `dyn` | How the state advances | `dyn.program`, `dyn.step`, `dyn.kick`, `dyn.drift`; a program states what it provides (`symplectic`, `time_reversible`, ...) and requires | Built. The couplings (thermostats, barostat, removal of the motion of the center of mass) are written by the builder as sums, host calls, and loops; making them `dyn` ops is designed (D326, [dynamics.md](dynamics.md), Section 2.2), and the ops of the thermostats and of the removal exist with their expansion, which the driver does not use yet (#541, step 2a) |
 | `md_exec` | Over which set, with which access | `particle_for`, `pair_for`, `tuple_for`; neighbor builds, refreshes, and their tests; `spatial_order`, `permute`; `reciprocal`, `linear_transform`; `scatter_add`; tables; a value form and a storage form | Built ([ops.md](ops.md), [neighbors.md](neighbors.md)) |
 | `md_dist` | Where it is computed | `decomposition`, `partition`, `halo`, `halo_copy` ($G$) and `halo_sum` ($G^\mathsf T$) as declared adjoints, `migrate`, `redistribute`, `covered`, `partition_centers`, loops over the rows of each domain | Built with its verifier and an in-process executor (D275, D290, D307, D310, D313, D332); not yet taken by a run ([distributed-ml2.md](distributed-ml2.md)) |
 | `mdrt` | The interface to the runtime | Opaque types for cells, permutations, neighbor structures, incidences, and events; `mdrt.from_buffer`, `mdrt.to_buffer`, `mdrt.host_call`; halo start and wait events (D310) | Built ([runtime.md](runtime.md)) |
@@ -128,7 +128,7 @@ Table 3.3 describes those over `md_exec`
 
 | Stage | Passes | Effect |
 |---|---|---|
-| Semantic | `md-check-exchange`, `md-differentiate`, `md-expand-truncation`, `md-inline`, `md-bypass-updates` | Proves exchange contracts; replaces `md.evaluate` with generated derivative functions; expands truncation (shift, switch) into kernels; inlines; lets the loops over the sets of a disjoint union, such as the constraint groups, read the fields before the updates of the other sets (D83) |
+| Semantic | `md-check-exchange`, `md-differentiate`, `md-expand-truncation`, `md-inline`, `dyn-expand-couplings`, `md-bypass-updates` | Proves exchange contracts; replaces `md.evaluate` with generated derivative functions; expands truncation (shift, switch) into kernels; inlines; expands the ops of the couplings of `dyn` into sums, loops, and calls of the host (D326); lets the loops over the sets of a disjoint union, such as the constraint groups, read the fields before the updates of the other sets (D83) |
 | To loops | `convert-md-to-md-exec` | Neighborhoods become neighbor builds; sums over relations, tuples, and particles become `pair_for`, `tuple_for`, and `particle_for` |
 | Neighbor structures | `md-exec-reuse-neighbors`, `md-exec-expose-validity`, `md-exec-rebuild-at-interval` (opt-in, D88), `md-exec-choose-neighbors` (GPU groups) | Carries a structure across steps and rebuilds it when its test of validity asks; writes the test as a loop that fusion can join |
 | Loops | `md-exec-fuse-loops`, `md-exec-accumulate-destinations`, `md-exec-narrow-sums`, `md-exec-fold-tables`, `md-exec-simplify-distance` and `md-exec-approximate` (with `fast_math`) | Fuses loops, sums forces into one destination in a fixed order, computes table entries once |

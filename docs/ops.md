@@ -740,9 +740,22 @@ The reference of every op is [dialects/dyn.md](dialects/dyn.md).
 |---|---|
 | `dyn.kick %v, %f, %m, %dt` | $\mathbf v'_i = \mathbf v_i + \Delta t\, \mathbf f_i / m_i$ |
 | `dyn.drift %x, %v, %dt` | $\mathbf x'_i = \mathbf x_i + \Delta t\, \mathbf v_i$ |
+| `dyn.momentum %v, %m` | $\mathbf P = \sum_i m_i\mathbf v_i$; a global sum |
+| `dyn.kinetic %v, %m` | $K_a = \tfrac12\sum_i m_iv_{i,a}^2$ (`vector<3xf64>`) or $K$ (f64); a global sum |
+| `dyn.half_step_excess %f, %m, %dt` | $E_a = \tfrac{\Delta t^2}{8}\sum_i F_{i,a}^2/m_i$, a particle of mass 0 left out; a global sum |
+| `dyn.velocity_rescaling %k, %step` | The factor of stochastic velocity rescaling [[Bussi2007]](references.md#bussi2007), drawn on the host |
+| `dyn.nose_hoover %k, %step` | The factor of a Nosé–Hoover chain over a period, whose state is on the host (D163a) |
+| `dyn.shift %v, %u` | $\mathbf v'_i = \mathbf v_i - \mathbf u$ |
+| `dyn.scale %v, %s` | $\mathbf v'_i = s\,\mathbf v_i$ or $\mathbf s\odot\mathbf v_i$ |
+| `dyn.noise %v, %m, %step, %ids` | $\mathbf v'_i = c\,\mathbf v_i + (\sigma/\sqrt{m_i})\,\mathbf R_i$, Philox in the kernel |
+| `dyn.to_bath %e` | Adds $e$ to the energy of the bath (D129) |
 | `dyn.program` | Defines one time step. |
-| `dyn.step` | Applies a program. |
+| `dyn.step` | Applies a program, with the effects of its body. |
 | `dyn.return` | Terminator. |
+
+The ops of the couplings, from `dyn.momentum` to `dyn.to_bath`, are those
+of [dynamics.md](dynamics.md), Section 2.2 (D326); the driver does not
+write them yet (#541, step 3).
 
 Force evaluation is `md.evaluate`. `dyn` has no op of its own for it.
 
@@ -777,7 +790,7 @@ dyn.program @velocity_verlet(%x: !vec, %v: !vec, %f: !vec,
 | Attribute | Meaning |
 |---|---|
 | `requires` | What the program needs from the thermodynamic state, such as a temperature. |
-| `provides` | Properties of the program, such as `symplectic`, `time_reversible`, or `thermostatting`. Neither integrator conserves energy exactly [[Hairer2003]](references.md#hairer2003), so neither claims to (B9). |
+| `provides` | Properties of the program, such as `symplectic`, `time_reversible`, `thermostatting`, or `no_global_sums`. Neither integrator conserves energy exactly [[Hairer2003]](references.md#hairer2003), so neither claims to (B9). The verifier checks the claims against the body ([dynamics.md](dynamics.md), Section 2.2.4): a body with `dyn.noise` requires `temperature`, provides `thermostatting`, and is neither `symplectic` nor `time_reversible`; a program that provides `no_global_sums` computes no global sum. |
 | `velocity_offset` | Time of the stored velocities relative to the positions, in units of `dt`. Zero if absent. |
 
 ### 6.4 Leapfrog
@@ -1427,6 +1440,7 @@ measurements.
 | `md.sum_particles` | `md_exec.particle_for` with a `reduce` clause |
 | `md.map_particles` | `md_exec.particle_for` with an `outs` clause |
 | `dyn.kick`, `dyn.drift` | `md_exec.particle_for` with an `outs` clause |
+| The ops of the couplings | Before the conversion, `dyn-expand-couplings` expands them into `md.sum_particles`, `md.map_particles`, and calls of the host, as the driver writes them ([dynamics.md](dynamics.md), Section 2.2) |
 
 The conversion builds the neighbor structure where the neighborhood was. In
 the body of a loop that would be a build in every iteration; the pass

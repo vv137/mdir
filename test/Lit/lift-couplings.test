@@ -1,0 +1,179 @@
+# The ops of the couplings of dyn expand to the text that the driver writes
+# (#541, step 2; docs/dynamics.md, Section 2.2.3). For each control file,
+# scripts/builder-equivalence/lift_couplings.py lifts the sums, loops, and
+# calls of the host that `mdir emit` prints into ops of dyn; the module of
+# the ops and the module of the text are lowered by mdir-opt with the
+# pipeline of `mdir emit --stage=pipeline` (on a device, up to the kernels
+# in the gpu dialect, since mdir-opt does not translate to LLVM IR), and
+# the two lowered programs must be the same text. emit uses no device.
+# RUN: rm -rf %t && split-file %s %t
+# RUN: cp %S/../../examples/argon/argon.pdb %t
+# RUN: %python %t/roundtrip.py %S/../../scripts/builder-equivalence/lift_couplings.py \
+# RUN:   mdir mdir-opt %t/v-rescale.toml %t/nose-hoover.toml %t/langevin.toml | FileCheck %s
+
+# CHECK: v-rescale.toml CPU: lowered identical; dyn.half_step_excess: 3 dyn.kinetic: 7 dyn.momentum: 4 dyn.scale: 2 dyn.shift: 2 dyn.to_bath: 2 dyn.velocity_rescaling: 2
+# CHECK-NEXT: v-rescale.toml GPU: lowered identical; dyn.half_step_excess: 3 dyn.kinetic: 7 dyn.momentum: 4 dyn.scale: 2 dyn.shift: 2 dyn.to_bath: 2 dyn.velocity_rescaling: 2
+# CHECK-NEXT: nose-hoover.toml CPU: lowered identical; dyn.half_step_excess: 3 dyn.kinetic: 7 dyn.momentum: 4 dyn.nose_hoover: 2 dyn.scale: 2 dyn.shift: 2 dyn.to_bath: 2
+# CHECK-NEXT: nose-hoover.toml GPU: lowered identical; dyn.half_step_excess: 3 dyn.kinetic: 7 dyn.momentum: 4 dyn.nose_hoover: 2 dyn.scale: 2 dyn.shift: 2 dyn.to_bath: 2
+# CHECK-NEXT: langevin.toml CPU: lowered identical; dyn.half_step_excess: 4 dyn.kinetic: 4 dyn.noise: 2
+# CHECK-NEXT: langevin.toml GPU: lowered identical; dyn.half_step_excess: 4 dyn.kinetic: 4 dyn.noise: 2
+
+#--- roundtrip.py
+import os, subprocess, sys
+
+lift, mdir, opt, controls = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+for control in controls:
+    text = open(control).read()
+    for target in ("CPU", "GPU"):
+        path = control[:-5] + "-" + target.lower() + ".toml"
+        open(path, "w").write(text.replace('target    = "CPU"', 'target    = "%s"' % target))
+        def emit(stage):
+            return subprocess.run([mdir, "emit", "--stage=" + stage, path],
+                                  capture_output=True, check=True).stdout
+        module, pipeline = emit("module"), emit("pipeline").decode().strip()
+        if ",mdir-gpu-lower-to-nvvm" in pipeline:
+            pipeline = pipeline[:pipeline.index(",mdir-gpu-lower-to-nvvm")]
+        lifted = subprocess.run([sys.executable, lift, "/dev/stdin", "--counts"],
+                                input=module, capture_output=True, check=True)
+        def lower(source):
+            return subprocess.run([opt, "-", "--pass-pipeline=builtin.module(%s)" % pipeline],
+                                  input=source, capture_output=True, check=True).stdout
+        same = lower(module) == lower(lifted.stdout)
+        counts = lifted.stderr.decode().strip().replace("\n", " ")
+        print("%s %s: lowered %s; %s" % (os.path.basename(control), target,
+                                         "identical" if same else "DIFFERS", counts))
+
+#--- v-rescale.toml
+[input]
+coordinates = "argon.pdb"
+
+[output]
+energy_interval = 100
+
+[energy]
+switch_distance   = 7.5
+cutoff            = 8.5
+pairlist_distance = 9.5
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.005
+steps      = 2000
+seed       = 314159
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 183.0
+
+[thermostat]
+method        = "V-RESCALE"
+time_constant = 0.5
+interval      = 10
+
+[boundary]
+type = "PERIODIC"
+box  = [34.7786, 34.7786, 34.7786]
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- nose-hoover.toml
+[input]
+coordinates = "argon.pdb"
+
+[output]
+energy_interval = 100
+
+[energy]
+switch_distance   = 7.5
+cutoff            = 8.5
+pairlist_distance = 9.5
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.005
+steps      = 2000
+seed       = 314159
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 183.0
+
+[thermostat]
+method        = "NOSE-HOOVER"
+time_constant = 1.0
+interval      = 10
+
+[boundary]
+type = "PERIODIC"
+box  = [34.7786, 34.7786, 34.7786]
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- langevin.toml
+[input]
+coordinates = "argon.pdb"
+
+[output]
+energy_interval = 100
+
+[energy]
+switch_distance   = 7.5
+cutoff            = 8.5
+pairlist_distance = 9.5
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.005
+steps      = 2000
+seed       = 314159
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 183.0
+
+[thermostat]
+method   = "LANGEVIN"
+friction = 1.0
+
+[boundary]
+type = "PERIODIC"
+box  = [34.7786, 34.7786, 34.7786]
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"

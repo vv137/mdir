@@ -3,6 +3,7 @@
 #include "mdir/Dialect/Dyn/DynOps.h"
 
 #include "mdir/Dialect/Dyn/DynDialect.h"
+#include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "llvm/ADT/StringExtras.h"
@@ -36,6 +37,87 @@ LogicalResult DriftOp::verify() {
   if (!isVectorField(getPositions().getType()))
     return emitOpError() << "expected a field with 3 components of f64, got "
                          << getPositions().getType();
+  return success();
+}
+
+//===----------------------------------------------------------------------===//
+// Couplings
+//===----------------------------------------------------------------------===//
+
+/// Verifies that `value` is a field with 3 components of f64.
+static LogicalResult verifyVectorField(Operation *op, Value value) {
+  if (!isVectorField(value.getType()))
+    return op->emitOpError() << "expected a field with 3 components of f64, "
+                                "got "
+                             << value.getType();
+  return success();
+}
+
+LogicalResult MomentumOp::verify() {
+  return verifyVectorField(getOperation(), getVelocities());
+}
+
+LogicalResult KineticOp::verify() {
+  return verifyVectorField(getOperation(), getVelocities());
+}
+
+LogicalResult HalfStepExcessOp::verify() {
+  return verifyVectorField(getOperation(), getForces());
+}
+
+LogicalResult ShiftOp::verify() {
+  return verifyVectorField(getOperation(), getVelocities());
+}
+
+LogicalResult ScaleOp::verify() {
+  return verifyVectorField(getOperation(), getVelocities());
+}
+
+LogicalResult NoiseOp::verify() {
+  if (failed(verifyVectorField(getOperation(), getVelocities())))
+    return failure();
+  auto velocities = cast<FieldType>(getVelocities().getType());
+  auto ids = cast<FieldType>(getIds().getType());
+  if (ids.getParticleSet() != velocities.getParticleSet() ||
+      ids.getNumComponents() != 1 || !ids.getElementType().isInteger(32))
+    return emitOpError() << "expected the numbers of the particles as a "
+                            "field of i32 on "
+                         << velocities.getParticleSet() << ", got " << ids;
+  if (getSpread().convertToDouble() < 0.0)
+    return emitOpError() << "expected 'spread' >= 0, got "
+                         << getSpread().convertToDouble();
+  return success();
+}
+
+LogicalResult VelocityRescalingOp::verify() {
+  double target = getTargetKinetic().convertToDouble();
+  double freedom = getFreedom().convertToDouble();
+  double decay = getDecay().convertToDouble();
+  if (!(freedom > 0.0))
+    return emitOpError() << "expected 'freedom' > 0, got " << freedom;
+  if (!(target > 0.0))
+    return emitOpError() << "expected 'target_kinetic' > 0, got " << target;
+  if (!(decay > 0.0 && decay < 1.0))
+    return emitOpError() << "expected 0 < 'decay' < 1, got " << decay;
+  return success();
+}
+
+LogicalResult NoseHooverOp::verify() {
+  if (getChainLength() < 1)
+    return emitOpError() << "expected 'chain_length' >= 1, got "
+                         << getChainLength();
+  if (!(getTimeConstant().convertToDouble() > 0.0))
+    return emitOpError() << "expected 'time_constant' > 0, got "
+                         << getTimeConstant().convertToDouble();
+  if (!(getTemperature().convertToDouble() > 0.0))
+    return emitOpError() << "expected 'temperature' > 0, got "
+                         << getTemperature().convertToDouble();
+  if (!(getFreedom().convertToDouble() > 0.0))
+    return emitOpError() << "expected 'freedom' > 0, got "
+                         << getFreedom().convertToDouble();
+  if (!(getPeriod().convertToDouble() > 0.0))
+    return emitOpError() << "expected 'period' > 0, got "
+                         << getPeriod().convertToDouble();
   return success();
 }
 
@@ -80,6 +162,45 @@ static LogicalResult verifyNames(Operation *op, StringRef attribute,
   return success();
 }
 
+/// Returns true if `names` holds `name`.
+static bool hasName(std::optional<ArrayAttr> names, StringRef name) {
+  if (!names)
+    return false;
+  return llvm::any_of(*names, [&](Attribute attribute) {
+    return cast<StringAttr>(attribute).getValue() == name;
+  });
+}
+
+/// The first op of `body` that computes a global sum, a sum whose result
+/// the host reads (docs/dynamics.md, Section 2.2.4), or null. The flags
+/// of the constraints, an i1, are not one: they are exact in any order.
+static Operation *findGlobalSum(Region &body) {
+  Operation *found = nullptr;
+  body.walk([&](Operation *op) {
+    bool isSum = false;
+    if (isa<MomentumOp, KineticOp, HalfStepExcessOp>(op)) {
+      isSum = true;
+    } else if (isa<mdir::md::SumParticlesOp, mdir::md::SumTuplesOp,
+                   mdir::md::SumRelationOp>(op)) {
+      isSum = llvm::any_of(op->getResultTypes(), [](Type type) {
+        return isa<FloatType>(getElementTypeOrSelf(type));
+      });
+    } else if (auto evaluate = dyn_cast<mdir::md::EvaluateOp>(op)) {
+      isSum = llvm::any_of(evaluate.getRequestKinds(), [](int32_t kind) {
+        auto request = static_cast<mdir::md::Request>(kind);
+        return request == mdir::md::Request::Energy ||
+               request == mdir::md::Request::Virial ||
+               request == mdir::md::Request::Derivative;
+      });
+    }
+    if (!isSum)
+      return WalkResult::advance();
+    found = op;
+    return WalkResult::interrupt();
+  });
+  return found;
+}
+
 LogicalResult ProgramOp::verify() {
   if (failed(mdir::md::verifyReferencePrecision(getOperation(),
                                                  getFunctionType())))
@@ -87,9 +208,44 @@ LogicalResult ProgramOp::verify() {
   if (failed(verifyNames(getOperation(), "requires", getRequires(),
                          {"temperature", "pressure"})))
     return failure();
-  return verifyNames(getOperation(), "provides", getProvides(),
-                     {"symplectic", "time_reversible", "thermostatting",
-                      "barostatting"});
+  if (failed(verifyNames(getOperation(), "provides", getProvides(),
+                         {"symplectic", "time_reversible", "thermostatting",
+                          "barostatting", "no_global_sums"})))
+    return failure();
+  if (isExternal())
+    return success();
+
+  // The claims against the body (docs/dynamics.md, Section 2.2.4).
+  Operation *noise = nullptr;
+  getBody().walk([&](NoiseOp op) {
+    noise = op;
+    return WalkResult::interrupt();
+  });
+  bool temperature = hasName(getRequires(), "temperature");
+  if (noise && !temperature)
+    return emitOpError() << "has a 'dyn.noise' and does not require "
+                            "'temperature'";
+  if (noise && !hasName(getProvides(), "thermostatting"))
+    return emitOpError() << "has a 'dyn.noise' and does not provide "
+                            "'thermostatting'";
+  for (StringRef name : {"symplectic", "time_reversible"})
+    if (noise && hasName(getProvides(), name)) {
+      InFlightDiagnostic diagnostic =
+          emitOpError() << "provides '" << name
+                        << "', which the friction and the noise of "
+                           "'dyn.noise' are not";
+      diagnostic.attachNote(noise->getLoc()) << "the noise";
+      return diagnostic;
+    }
+  if (hasName(getProvides(), "no_global_sums"))
+    if (Operation *sum = findGlobalSum(getBody())) {
+      InFlightDiagnostic diagnostic =
+          emitOpError() << "provides 'no_global_sums' and computes a "
+                           "global sum";
+      diagnostic.attachNote(sum->getLoc()) << "the sum";
+      return diagnostic;
+    }
+  return success();
 }
 
 //===----------------------------------------------------------------------===//
@@ -142,4 +298,37 @@ LogicalResult StepOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
              << "expected result " << i << " to have type "
              << type.getResult(i) << ", got " << getResult(i).getType();
   return success();
+}
+
+void StepOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  auto unknown = [&] {
+    effects.emplace_back(MemoryEffects::Read::get());
+    effects.emplace_back(MemoryEffects::Write::get());
+  };
+  auto program = SymbolTable::lookupNearestSymbolFrom<ProgramOp>(
+      getOperation(), getCalleeAttr());
+  if (!program || program.isExternal())
+    return unknown();
+  // The effects of the body, on the resources they name. An effect on a
+  // value of the body is one on its resource, since the value is not
+  // visible here.
+  bool isUnknown = false;
+  program.getBody().walk([&](Operation *op) {
+    if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>())
+      return WalkResult::advance();
+    auto memory = dyn_cast<MemoryEffectOpInterface>(op);
+    if (!memory) {
+      isUnknown = true;
+      return WalkResult::interrupt();
+    }
+    SmallVector<MemoryEffects::EffectInstance> nested;
+    memory.getEffects(nested);
+    for (const MemoryEffects::EffectInstance &effect : nested)
+      effects.emplace_back(effect.getEffect(), effect.getResource());
+    return WalkResult::advance();
+  });
+  if (isUnknown)
+    unknown();
 }

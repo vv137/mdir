@@ -145,7 +145,7 @@ that kind still lack, in the order of how often they are needed:
 | F7 | Free energy and enhanced sampling | In part: decoupling with $\partial U/\partial\lambda$ and MBAR (D161, D2), and `observe` (D189, #16). Next: relative transformations, annihilation, Coulomb soft-core, $\lambda(t)$, replica exchange (P4), one pass over the selection's pairs; for #16 profiles, RDF, RMSD, adaptive biases, and a bridge to PLUMED |
 | F8 | Learned potentials | Section 7 |
 | F9 | The custom forces of OpenMM beyond tuples | In progress (D137, D138, D139, D140, D142, D143, D144, D150, D152, D160, D165, D178, D188, #67). Next: the triplets' GPU kernel, selections, topology, and bond order (D160); the first reduction inside the loop of the sums (D150); GROMACS's seven-column tables for F6 |
-| F10 | Thermostats, integrators, and barostats beyond M1 | In progress (D163; D163a with D206, D163b, D163c). Next, as designs: multiple time steps ([[Tuckerman1992]](references.md#tuckerman1992), [dynamics.md](dynamics.md#multiple-time-steps)), a flexible cell with the pressure tensor (F4), and the couplings as ops of `dyn` (#541, D326, [dynamics.md](dynamics.md), Section 2.2) for M2b and the fusion of #356 |
+| F10 | Thermostats, integrators, and barostats beyond M1 | In progress (D163; D163a with D206, D163b, D163c). Next, as designs: multiple time steps ([[Tuckerman1992]](references.md#tuckerman1992), [dynamics.md](dynamics.md#multiple-time-steps)), a flexible cell with the pressure tensor (F4), and the couplings as ops of `dyn` (#541, D326, [dynamics.md](dynamics.md), Section 2.2) for M2b and the fusion of #356, whose ops of the thermostats and of the removal of the motion of the center of mass exist (step 2a) |
 
 ## 6. Python API (M2a)
 
