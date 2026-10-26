@@ -17,6 +17,9 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/Matchers.h"
+#include "mlir/IR/OperationSupport.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
+#include "llvm/ADT/ScopeExit.h"
 #include "mlir/IR/SymbolTable.h"
 
 using namespace mlir;
@@ -129,6 +132,7 @@ private:
   LogicalResult expandStoreCell(dyn::StoreCellOp op);
   void expandGroupKinetic(dyn::GroupKineticOp op);
   void expandScalePositions(dyn::ScalePositionsOp op);
+  void expandScalingWork(dyn::ScalingWorkOp op);
 };
 
 } // namespace
@@ -735,6 +739,146 @@ void ExpandCouplings::expandScalePositions(dyn::ScalePositionsOp op) {
   op.erase();
 }
 
+/// ΔE_sys of a scaling of the cell, as emitCoupling counts it: of the
+/// velocities exactly, Σ (μ⁻² − 1) K, and of the positions by the count
+/// (docs/dynamics.md, Section 2.2.7).
+void ExpandCouplings::expandScalingWork(dyn::ScalingWorkOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Emitter e{b, loc};
+  StringRef count = op.getCount();
+  Value constant = op.getConstant();
+  ValueRange volumes = op.getVolumes();
+  Value third = e.real(1.0 / 3.0);
+  // C / (3 V) on each axis, as emitStrain computes it for the pressure.
+  auto constantShare = [&](Value volume) {
+    Value share = e.div(constant, volume);
+    return e.splat(e.mul(share, third));
+  };
+  // Σ (μ⁻² − 1) K, from μ⁻¹.
+  auto velocities = [&](Value inverse) {
+    Value squared = e.mul(inverse, inverse);
+    Value less = e.sub(squared, e.reals(1.0));
+    return e.sum3(e.mul(less, op.getKinetic()));
+  };
+  Value result;
+  if (count == "trotter" || count == "trotter_before") {
+    // The scaling was made within the drift of the step (Trotter type,
+    // [Bernetti2020], SI Sec. V.C): −Σ ln μ_a W_aa, W the mean of the
+    // virials before and after the scaling with those of the constant
+    // terms, or that before alone (D92, D116).
+    Value logMu = op.getLogStrain();
+    Value before = e.add(op.getVirialBefore(), constantShare(volumes[0]));
+    Value mu = math::ExpOp::create(b, loc, logMu);
+    Value inverse = e.div(e.reals(1.0), mu);
+    Value work;
+    if (count == "trotter") {
+      Value after = e.add(op.getVirialAfter(), constantShare(volumes[1]));
+      Value both = e.add(before, after);
+      Value mean = e.mul(both, e.reals(0.5));
+      work = e.sum3(e.mul(mean, logMu));
+    } else {
+      work = e.sum3(e.mul(before, logMu));
+    }
+    result = e.sub(velocities(inverse), work);
+  } else {
+    Value mu = op.getStrain();
+    Value inverse = e.div(e.reals(1.0), mu);
+    if (count == "first_order") {
+      // −Σ (μ_a − 1) ⅓ (tr W + C / V), isotropic only.
+      Value oneMinus = findOneMinus(op, mu);
+      if (!oneMinus)
+        oneMinus = e.sub(e.reals(1.0), mu);
+      Value trace = e.sum3(op.getVirialBefore());
+      Value share = e.div(constant, volumes[0]);
+      Value total = e.add(trace, share);
+      Value split = e.splat(e.mul(total, third));
+      Value work = e.sum3(e.mul(oneMinus, split));
+      result = e.add(work, velocities(inverse));
+    } else {
+      // U' − U + C (1/V' − 1/V), counted exactly in the new cell (D77).
+      Value kinetic = velocities(inverse);
+      ValueRange energies = op.getEnergies();
+      Value one = e.real(1.0);
+      Value newInverse = e.div(one, volumes[1]);
+      Value oldInverse = e.div(one, volumes[0]);
+      Value change = e.mul(constant, e.sub(newInverse, oldInverse));
+      Value potential = e.add(e.sub(energies[1], energies[0]), change);
+      result = e.add(potential, kinetic);
+    }
+  }
+  op.replaceAllUsesWith(result);
+  op.erase();
+}
+
+/// Replaces each op of pure arithmetic of `block` after `before` (or from
+/// its start) up to `after` (or its end) with an equal op that comes
+/// before it, in its block or before the ops that hold it, if there is
+/// one. The expansion of an op of the
+/// barostat computes again what the driver's text computes once and uses
+/// in several places, the volume, C / (3 V), 1 - mu, or 1 / mu; a value
+/// whose other uses an op has taken over would otherwise be removed as
+/// dead before the cse of the pipeline merged the two, and computed at the
+/// place of the op instead of its own.
+/// Returns true if the ops `a` and `b` compute the same value: the same op
+/// with the same attributes on operands that are the same values, as the
+/// canonicalization and the cse of the pipeline find them. Two operands are
+/// the same if they are one value, or defined by pure ops without regions
+/// that compute the same value, up to `depth` ops deep; constants by their
+/// values.
+static bool isSameValue(Operation *a, Operation *b, unsigned depth = 8) {
+  if (a == b)
+    return true;
+  if (a->getName() != b->getName() || a->getNumRegions() != 0 ||
+      b->getNumRegions() != 0 || !isMemoryEffectFree(a) ||
+      !isMemoryEffectFree(b))
+    return false;
+  return OperationEquivalence::isEquivalentTo(
+      a, b,
+      [&](Value x, Value y) {
+        if (x == y)
+          return success();
+        auto left = dyn_cast<OpResult>(x), right = dyn_cast<OpResult>(y);
+        return success(depth != 0 && left && right &&
+                       left.getResultNumber() == right.getResultNumber() &&
+                       isSameValue(left.getOwner(), right.getOwner(),
+                                   depth - 1));
+      },
+      /*markEquivalent=*/nullptr, OperationEquivalence::IgnoreLocations);
+}
+
+static void mergeWithBefore(Block *block, Operation *before,
+                            Operation *after) {
+  Operation *op = before ? before->getNextNode()
+                         : (block->empty() ? nullptr : &block->front());
+  while (op && op != after) {
+    Operation *next = op->getNextNode();
+    if (op->getNumRegions() == 0 && op->getNumResults() != 0 &&
+        isMemoryEffectFree(op)) {
+      // The first equal op among those before it in its block and before
+      // the ops that hold the block, up to the function, each of which
+      // dominates it: the one that the canonicalization and the cse of the
+      // pipeline would keep, constants being equal by their values.
+      Operation *first = nullptr;
+      for (Operation *at = op; at;) {
+        for (Operation *other = at->getPrevNode(); other;
+             other = other->getPrevNode())
+          if (isSameValue(op, other))
+            first = other;
+        Operation *parent = at->getParentOp();
+        if (!parent || parent->hasTrait<OpTrait::IsIsolatedFromAbove>())
+          break;
+        at = parent;
+      }
+      if (first) {
+        op->replaceAllUsesWith(first);
+        op->erase();
+      }
+    }
+    op = next;
+  }
+}
+
 void ExpandCouplings::runOnOperation() {
   ModuleOp module = getOperation();
   SmallVector<Operation *> ops;
@@ -759,13 +903,27 @@ void ExpandCouplings::runOnOperation() {
   module.walk([&](Operation *op) {
     if (isa<dyn::PressureOp, dyn::CellRescalingOp, dyn::LoadCellOp,
             dyn::ScaleCellOp, dyn::StoreCellOp, dyn::GroupKineticOp,
-            dyn::ScalePositionsOp>(op))
+            dyn::ScalePositionsOp, dyn::ScalingWorkOp>(op))
       barostat.push_back(op);
   });
   llvm::SmallPtrSet<Operation *, 8> fused;
   for (Operation *op : barostat) {
     if (fused.contains(op))
       continue;
+    // The ops that the expansion writes are those between `before` and
+    // `after`; a value that the block computes before them is taken
+    // again (mergeWithBefore).
+    Block *block = op->getBlock();
+    Operation *before = op->getPrevNode();
+    Operation *last = op;
+    if (auto scale = dyn_cast<dyn::ScaleCellOp>(op))
+      if (auto store =
+              dyn_cast_or_null<dyn::StoreCellOp>(scale->getNextNode()))
+        if (store.getCell() == ValueRange(scale.getResults()))
+          last = store;
+    Operation *after = last->getNextNode();
+    auto merge = llvm::make_scope_exit(
+        [&] { mergeWithBefore(block, before, after); });
     if (auto pressure = dyn_cast<dyn::PressureOp>(op)) {
       expandPressure(pressure);
     } else if (auto rescaling = dyn_cast<dyn::CellRescalingOp>(op)) {
@@ -777,6 +935,8 @@ void ExpandCouplings::runOnOperation() {
       expandGroupKinetic(groups);
     } else if (auto positions = dyn_cast<dyn::ScalePositionsOp>(op)) {
       expandScalePositions(positions);
+    } else if (auto work = dyn_cast<dyn::ScalingWorkOp>(op)) {
+      expandScalingWork(work);
     } else if (auto scale = dyn_cast<dyn::ScaleCellOp>(op)) {
       auto store = dyn_cast_or_null<dyn::StoreCellOp>(scale->getNextNode());
       if (store && store.getCell() != ValueRange(scale.getResults()))
