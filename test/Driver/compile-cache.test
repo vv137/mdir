@@ -3,8 +3,10 @@
 # (D217), also while another process writes; the cache
 # across processes is in compile-cache-*.test. The total of the cache
 # (D234, #196): of 300 stores below the bound, one
-# lists the directory.
+# lists the directory; after an eviction at the bound, which goes down to
+# 90% of it, the 31 stores that fit under the bound list nothing (#675).
 # RUN: rm -rf %t
 # RUN: mdir-compile-cache-test %t | FileCheck %s
 # CHECK: size file: 300 stores, listings 1
+# CHECK: after an eviction: 31 stores fit
 # CHECK: compile cache checks passed

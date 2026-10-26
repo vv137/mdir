@@ -381,9 +381,9 @@ int main(int argc, char **argv) {
         "the total kept is the bytes of the entries");
 
   // At the bound: no listing while the total fits; the store that exceeds
-  // it lists and removes the entry used least recently, and the total kept
-  // is what the listing found.
-  uint64_t bound = (kStores + 2) * entrySize;
+  // it lists and removes the entries used least recently, down to 90% of
+  // the bound (#675), and the total kept is what the listing found.
+  uint64_t bound = (kStores + 2) * entrySize, low = bound - bound / 10;
   age(sizedEntry(7), std::chrono::seconds(60));
   before = getCacheListingCount();
   store(kStores, bound);
@@ -393,19 +393,32 @@ int main(int argc, char **argv) {
   store(kStores + 2, bound);
   check(getCacheListingCount() == before + 1 &&
             !sys::fs::exists(sizedEntry(7)) &&
-            sys::fs::exists(sizedEntry(kStores + 2)) && onDisk() == bound &&
-            recorded() == bound,
-        "the store that exceeds the bound lists once and evicts the entry "
-        "used least recently");
+            sys::fs::exists(sizedEntry(kStores + 2)) && onDisk() <= low &&
+            onDisk() + entrySize > low && recorded() == onDisk(),
+        "the store that exceeds the bound lists once and evicts the entries "
+        "used least recently down to 90% of the bound");
+
+  // After that eviction the stores that fit under the bound do not list:
+  // a tenth of the bound is written before the next listing (#675).
+  int room = int((bound - onDisk()) / entrySize), next = 5000;
+  outs() << "after an eviction: " << room << " stores fit\n";
+  before = getCacheListingCount();
+  for (int i = 0; i < room; ++i)
+    store(next++, bound);
+  check(room >= int(kStores / 10) && getCacheListingCount() == before &&
+            recorded() == onDisk() && onDisk() <= bound,
+        "after one eviction the stores under the bound do not list");
 
   // An entry removed by hand leaves the total too large, never too small:
   // the next store over the bound lists, finds room, and evicts nothing.
-  cantFail(errorCodeToError(sys::fs::remove(sizedEntry(8))));
+  cantFail(errorCodeToError(sys::fs::remove(sizedEntry(next - 1))));
+  uint64_t held = onDisk();
   before = getCacheListingCount();
-  store(kStores + 3, bound);
-  check(getCacheListingCount() == before + 1 && onDisk() == bound &&
-            recorded() == bound && sys::fs::exists(sizedEntry(9)),
-        "a total that is too large is corrected by a listing");
+  store(next++, bound);
+  check(getCacheListingCount() == before + 1 && onDisk() == held + entrySize &&
+            recorded() == onDisk() && sys::fs::exists(sizedEntry(next - 3)),
+        "a total that is too large is corrected by a listing that evicts "
+        "nothing");
 
   // A total whose listing is older than a day, one without a readable
   // total, and a file that cannot be used each list.
@@ -433,10 +446,10 @@ int main(int argc, char **argv) {
   cantFail(errorCodeToError(sys::fs::remove(sizeFile)));
   cantFail(errorCodeToError(sys::fs::create_directory(sizeFile)));
   before = getCacheListingCount();
-  uint64_t held = onDisk();
+  held = onDisk();
   store(kStores + 7, kUnbounded);
   store(kStores + 8, held);
-  check(getCacheListingCount() == before + 2 && onDisk() == held,
+  check(getCacheListingCount() == before + 2 && onDisk() <= held,
         "without a usable file every store lists, and the bound holds");
   cantFail(errorCodeToError(sys::fs::remove(sizeFile)));
 

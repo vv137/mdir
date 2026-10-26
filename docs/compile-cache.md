@@ -39,7 +39,7 @@ empties it and `cache=False` bypasses it for one compile
 |---|---|
 | `MDIR_COMPILE_CACHE_DIR=<dir>` | Enables the cache. Host objects go in `<dir>/host/` and the PTX and cubins of GPU modules in `<dir>/gpu/`, each made when its first entry is written. |
 | `MDIR_COMPILE_CACHE=off` | Disables the cache even when a directory is set. |
-| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory, host and GPU entries together, to $n$ MiB (2048 by default). When entries written take the total over the bound, the entries used least recently are removed until the directory is within it; 0 keeps none ([The bound](#the-bound)). |
+| `MDIR_COMPILE_CACHE_MAX_MB=<n>` | Bounds the directory, host and GPU entries together, to $n$ MiB (2048 by default). When entries written take the total over the bound, the entries used least recently are removed until the directory holds at most 90% of it (#675); 0 keeps none ([The bound](#the-bound)). |
 
 A directory may be shared by processes that run at the same time, and by
 builds of MDIR (see the key below). Removing it, or any entry in it, is
@@ -507,8 +507,9 @@ The directory is listed, under the same lock, only when
 - the last listing is more than 24 hours old. The 24 hours are a fixed
   number of the implementation; no environment variable changes them.
 
-A listing evicts as described above, removes stale temporary files, and
-writes the exact total back. `mdir.clear_compile_cache` takes the bytes
+A listing that finds the entries over the bound evicts as described
+above, but down to 90% of the bound, not to the bound itself (#675). It
+also removes stale temporary files and writes the exact total back. `mdir.clear_compile_cache` takes the bytes
 it removed off the total.
 
 What the total can get wrong, and what follows:
@@ -530,9 +531,22 @@ What the total can get wrong, and what follows:
   before.
 
 A bound of 0 is exceeded by every store, so each lists and keeps nothing.
-At the bound, each store that exceeds it lists and evicts down to the
-bound and no further; a cache that is meant to stay full of entries in use
-is better given a larger bound.
+At the bound, the store that exceeds it lists once and evicts to 90% of the
+bound. The stores after it then fit without a listing until a tenth of the
+bound has been written again: at the default of 2 GiB, about 200 MiB of
+entries per listing.
+
+Before #675 the eviction stopped at the bound. The cache then stayed full,
+the next store exceeded the bound again, and so every store listed the
+directory while it held the lock of `size`. A suite on a network file
+system was serialized on that lock: in one shard about 57,000 entries were
+listed at every store, and Python simulations timed out after 15 minutes.
+
+The listing stays under the lock. Outside it, several processes over the
+bound would each list the directory and evict, and the total that each
+writes back would leave out the others' stores and evictions. With the
+low-water mark, the listings are rare enough that holding the lock for one
+costs little.
 
 The file belongs to the directory, not to a format of entries: removing it
 is safe, and the next store lists.
