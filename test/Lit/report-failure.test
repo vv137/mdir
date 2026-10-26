@@ -10,6 +10,15 @@
 # ERRORS-NEXT: Gromacs.cpp:471:22: error: 'std::chars_format' has not been declared
 # ERRORS-NOT: build stopped
 #
+# A configure that failed: CMake's error, with its message (#662).
+# RUN: %S/../../scripts/release/report-failure.sh publish.sh configure 1 %S/Inputs/report-failure-cmake.log 2>&1 | FileCheck %s --check-prefix=CMAKE
+# CMAKE: publish.sh: the step 'configure' failed (status 1); its log:
+# CMAKE-NEXT: publish.sh: the first errors of the log:
+# CMAKE-NEXT: CMake Error at cmake/CheckFloatFromChars.cmake:21 (message):
+# CMAKE-NEXT: MDIR needs a C++ standard library with the floating-point std::from_chars
+# CMAKE-NEXT: of C++17 (std::chars_format)
+# CMAKE-NOT: Call Stack
+#
 # RUN: printf 'one\ntwo\nthe end\n' > %t/quiet.log
 # RUN: %S/../../scripts/release/report-failure.sh publish.sh 'the white paper' 2 %t/quiet.log 2>&1 | FileCheck %s --check-prefix=QUIET
 # QUIET: publish.sh: the step 'the white paper' failed (status 2); its log:
