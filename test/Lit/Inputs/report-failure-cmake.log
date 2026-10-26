@@ -1,0 +1,8 @@
+-- The CXX compiler identification is GNU 9.5.0
+-- Performing Test MDIR_HAVE_FLOAT_FROM_CHARS - Failed
+CMake Error at cmake/CheckFloatFromChars.cmake:21 (message):
+  MDIR needs a C++ standard library with the floating-point std::from_chars
+  of C++17 (std::chars_format)
+Call Stack (most recent call first):
+  CMakeLists.txt:9 (mdir_check_float_from_chars)
+-- Configuring incomplete, errors occurred!
