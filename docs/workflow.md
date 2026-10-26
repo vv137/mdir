@@ -483,6 +483,36 @@ assets of the GitHub Release and are in SHA256SUMS. The install test runs
 by hand as well: `scripts/release/check-wheel-install.sh [--gpu INDEX]
 WHEEL...`, `--dry-run` to see what each wheel takes.
 
+**PyPI** (#650). After the GitHub Release, the maintainer publishes its
+wheels and an sdist built from the tag on PyPI with the workflow
+`.github/workflows/pypi.yml`, which runs only when the maintainer starts it.
+It downloads the wheels of the release, checks them against its SHA256SUMS,
+builds the sdist from the tag, reports each file's size and refuses one
+above the index's limit (100 MB unless PyPI granted the project more; the
+input `size_limit_mb` then gives the new limit), runs `twine check`, and
+uploads with trusted publishing (OIDC), with no stored token. TestPyPI
+comes first:
+
+1. **Once, before the first upload, on each index** (TestPyPI and PyPI):
+   in the account of the maintainer, Publishing, "Add a new pending
+   publisher": PyPI project name `mdir`, owner `vv137`, repository `mdir`,
+   workflow `pypi.yml`, environment `testpypi` on TestPyPI and `pypi` on
+   PyPI. In the repository's settings, Environments, create `testpypi` and
+   `pypi`; a required reviewer on `pypi` holds every upload to it for a
+   confirmation. Confirm the licensing of a public wheel first
+   (`packaging/licenses/README.md`, Before the first upload to PyPI).
+2. **TestPyPI:** `gh workflow run pypi.yml -f tag=vVERSION -f
+   target=testpypi`. Then check the package as a user takes it, on the CPU
+   and on a GPU: `scripts/release/check-wheel-install.sh --index
+   https://test.pypi.org/simple/ --version VERSION --gpu INDEX 3.10 3.11
+   3.12 3.13`, which installs `mdir[cuda]==VERSION` from TestPyPI, with PyPI
+   for NVIDIA's wheels, into a fresh environment of each CPython.
+3. **PyPI:** `gh workflow run pypi.yml -f tag=vVERSION -f target=pypi`, and
+   the same check with `--index https://pypi.org/simple/`.
+
+A version on an index cannot be uploaded again with other files, so a
+failed check after an upload is fixed by the next patch release.
+
 `--no-binary`, for a machine without Docker, makes a release without the
 manylinux tree and the wheels: they are neither built nor run, and the assets that the
 GitHub Release attaches are the source archive, the PDF, the release notes

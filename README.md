@@ -115,6 +115,10 @@ binary tarball and Python wheels. Its changes are in
   mdir-env/bin/python -c "import mdir; print(mdir.__version__)"
   ```
 
+  Once the maintainer has published a release on PyPI (#650), pip takes it
+  by name: `pip install "mdir[cuda]"`, or `pip install mdir` for the CPU
+  alone.
+
 - **From a release.** Download the source archive and build it with LLVM
   23.1.2 and HDF5 as [docs/building.md](docs/building.md) describes; the
   installed tree, `bin/mdir` with its runtime, needs neither build tree.
