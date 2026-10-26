@@ -1,0 +1,29 @@
+# A step of publish.sh that fails names itself, its log, and the log's first
+# errors (#654): a failed ninja, whose output goes to a log, ended the script
+# with no message. publish.sh calls scripts/release/report-failure.sh from
+# its trap on ERR; here it runs on logs of each kind.
+# RUN: rm -rf %t && mkdir -p %t
+# RUN: %S/../../scripts/release/report-failure.sh publish.sh build 1 %S/Inputs/report-failure-build.log 2>&1 | FileCheck %s --check-prefix=ERRORS -DLOG=%S/Inputs/report-failure-build.log
+# ERRORS: publish.sh: the step 'build' failed (status 1); its log: [[LOG]]
+# ERRORS-NEXT: publish.sh: the first errors of the log:
+# ERRORS-NEXT: FAILED: lib/Driver/Gromacs.cpp.o
+# ERRORS-NEXT: Gromacs.cpp:471:22: error: 'std::chars_format' has not been declared
+# ERRORS-NOT: build stopped
+#
+# RUN: printf 'one\ntwo\nthe end\n' > %t/quiet.log
+# RUN: %S/../../scripts/release/report-failure.sh publish.sh 'the white paper' 2 %t/quiet.log 2>&1 | FileCheck %s --check-prefix=QUIET
+# QUIET: publish.sh: the step 'the white paper' failed (status 2); its log:
+# QUIET-NEXT: publish.sh: the log names no error; its last lines:
+# QUIET-NEXT: one
+# QUIET-NEXT: two
+# QUIET-NEXT: the end
+#
+# RUN: %S/../../scripts/release/report-failure.sh publish.sh 'the tag' 128 2>&1 | FileCheck %s --check-prefix=NOLOG
+# NOLOG: publish.sh: the step 'the tag' failed (status 128); its output is above
+#
+# publish.sh sets the trap, and removes its build tree before it configures.
+# RUN: grep -c -E "^trap '.*report-failure.sh\" \"\\\$0\" \"\\\$step\" \"\\\$status\" \"\\\$step_log\"; exit \"\\\$status\"' ERR$" %S/../../scripts/release/publish.sh | FileCheck %s --check-prefix=TRAP
+# TRAP: {{^}}1{{$}}
+# RUN: grep -A1 -F 'rm -rf "$build"' %S/../../scripts/release/publish.sh | FileCheck %s --check-prefix=FRESH
+# FRESH: rm -rf "$build"
+# FRESH-NEXT: step="configure"

@@ -53,7 +53,12 @@
 # The worktree is removed when the script ends, however it ends. The build
 # tree, the assets, and the logs stay under MDIR_RELEASE_DIR, those of a
 # dry run as well: remove them when they are no longer needed. A run
-# replaces those of the same name.
+# replaces those of the same name: it removes the build tree before it
+# configures, so that the compiler of CC and CXX is the one of the build
+# (CMake keeps the compiler of an existing tree, #654).
+#
+# A step that fails stops the script with its name, its log, and the log's
+# first lines that name an error (scripts/release/report-failure.sh).
 #
 # The script names no path of the machine: it reads these from the
 # environment, or from the file that MDIR_ENV_FILE names
@@ -102,6 +107,10 @@
 # CC, CXX, PATH, LD_LIBRARY_PATH, LIT_OPTS, CUDA_CACHE_PATH, and
 # MDIR_BENCH_DIR reach the build and the suite as the environment has them.
 set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+# The step that runs and its log, for the report of a failure (#654).
+step="the checks of the environment"; step_log=""
+trap 'status=$?; "$here/report-failure.sh" "$0" "$step" "$status" "$step_log"; exit "$status"' ERR
 usage="usage: $0 VERSION [--publish] [--no-binary] [--container] | VERSION --dry-run [--no-binary] [--container]"
 version=${1:?$usage}; shift
 publish=0; container=0; dry=0; binary=1
@@ -172,19 +181,24 @@ commit=$(git -C "$repo" rev-parse origin/main)
 rm -rf "$src" && git -C "$repo" worktree add -q --detach "$src" "$commit"
 trap 'git -C "$repo" worktree remove --force "$src" 2>/dev/null || true' EXIT
 cd "$src"
+step="the checks of the version, the changelog, and the decisions"; step_log=""
 grep -q "project(mdir VERSION $version " CMakeLists.txt || { echo "CMakeLists.txt does not say $version" >&2; exit 1; }
 python3 scripts/release/changelog.py check "$version"
 scripts/decision-number.sh check
 [[ -f docs/release-notes/$tag.md ]] || { echo "docs/release-notes/$tag.md is missing" >&2; exit 1; }
 
 echo "== build $commit"
+rm -rf "$build"
+step="configure"; step_log=$log-cmake.log
 "$CMAKE" -G Ninja -S "$src" -B "$build" -DCMAKE_BUILD_TYPE=Release \
   -DLLVM_DIR="$MDIR_LLVM/lib/cmake/llvm" -DMLIR_DIR="$MDIR_LLVM/lib/cmake/mlir" \
   -DLLVM_EXTERNAL_LIT="$LIT" -DHDF5_ROOT="$HDF5_PREFIX" \
   -DCUDAToolkit_ROOT="$CUDA_ROOT" -DCMAKE_MAKE_PROGRAM="$NINJA" \
   -DMDIR_ENABLE_PYTHON=ON -Dpybind11_DIR="$PYBIND11_DIR" -DPython_EXECUTABLE="$MDIR_PYTHON" \
-  -DCMAKE_INSTALL_PREFIX=/ > "$log-cmake.log"
-"$NINJA" -C "$build" > "$log-build.log"
+  -DCMAKE_INSTALL_PREFIX=/ > "$log-cmake.log" 2>&1
+step="build"; step_log=$log-build.log
+"$NINJA" -C "$build" > "$log-build.log" 2>&1
+step="the suite"; step_log=$log-check.log
 
 if (( suite_command )); then
   # The machine's command runs the suite where its GPUs are (a job of its
@@ -205,6 +219,7 @@ grep -E '^\s+(Passed|Unsupported)' "$log-check.log"
 grep -q '^MDIR_ENABLE_PYTHON:BOOL=ON$' "$build/CMakeCache.txt" || { echo "the build has no Python interface: nothing is tagged" >&2; exit 1; }
 
 echo "== assets in $out"
+step="the source archive"; step_log=""
 rm -rf "$out" && mkdir -p "$out"
 git archive --format=tar.gz --prefix="mdir-$version/" -o "$out/mdir-$version-source.tar.gz" "$commit"
 if (( binary )); then
@@ -213,9 +228,11 @@ if (( binary )); then
   # it is checked, then run from its extracted tree, without CUDA_ROOT, on
   # the CPU and on the GPU of the suite.
   tarball=mdir-$version-manylinux_2_28_x86_64.tar.gz
+  step="the manylinux tree"; step_log=$log-manylinux.log
   DOCKER_BUILDKIT=1 "$DOCKER" build -f packaging/Dockerfile.manylinux \
     --build-arg MDIR_GIT_COMMIT="$commit" --build-arg VERSION="$version" \
     --target tarball --output "type=local,dest=$out" . > "$log-manylinux.log" 2>&1
+  step="the check of the manylinux tree"; step_log=""
   tree=$(mktemp -d)
   tar -C "$tree" -xzf "$out/$tarball"
   scripts/release/check-binary.sh "$tree/mdir-$version"
@@ -232,10 +249,12 @@ if (( binary )); then
   # installed by pip as a user does, into a fresh environment of each of
   # their CPythons, and run on the CPU, and the first on the GPU of the
   # suite (check-wheel-install.sh).
+  step="the wheels"; step_log=$log-wheels.log
   wheels=$(mktemp -d)
   DOCKER_BUILDKIT=1 "$DOCKER" build -f packaging/Dockerfile.manylinux \
     --build-arg MDIR_GIT_COMMIT="$commit" --build-arg VERSION="$version" \
     --target wheels --output "type=local,dest=$wheels" . > "$log-wheels.log" 2>&1
+  step="the check of the wheels"; step_log=""
   scripts/release/check-wheel.sh "$wheels"/mdir-"$version"-*.whl
   cp "$wheels"/mdir-"$version"-*.whl "$out/"
   rm -rf "$wheels"
@@ -247,7 +266,9 @@ if (( binary )); then
 else
   echo "== --no-binary: no manylinux tree and no wheels"
 fi
+step="the white paper"; step_log=$log-pdf.log
 scripts/paper/build-pdf.sh "$build/paper" > "$log-pdf.log" 2>&1
+step="the notes"; step_log=""
 cp "$build/paper/main.pdf" "$out/mdir-$version-white-paper.pdf"
 cp "docs/release-notes/$tag.md" "$out/"
 if (( binary )); then
@@ -266,9 +287,12 @@ else
   } > "$out/notes.md"
 fi
 if (( container )); then
+  step="the image"; step_log=$log-docker.log
   "$DOCKER" build -f packaging/Dockerfile -t "mdir:$version" --build-arg MDIR_GIT_COMMIT="$commit" . > "$log-docker.log" 2>&1
+  step="the check of the image"; step_log=""
   scripts/release/check-image.sh "mdir:$version"
 fi
+step="the checksums"; step_log=""
 (cd "$out" && sha256sum mdir-* "$tag.md" > SHA256SUMS)
 ls -la "$out"
 
@@ -276,9 +300,11 @@ if (( dry )); then
   echo "== dry run of $tag at $commit: nothing is tagged"
   exit 0
 fi
+step="the tag"; step_log=""
 git -C "$repo" tag -a "$tag" "$commit" -m "MDIR $version"
 echo "== tagged $tag at $commit"
 if (( publish )); then
+  step="the publication"; step_log=""
   git -C "$repo" push origin "$tag"
   "$GH" release create "$tag" --repo vv137/mdir --title "MDIR $version" \
     --notes-file "$out/notes.md" "$out"/mdir-* "$out/$tag.md" "$out/SHA256SUMS"

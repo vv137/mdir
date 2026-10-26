@@ -1,0 +1,12 @@
+# The configure step refuses a standard library without the floating-point
+# std::from_chars (#654): GCC 9.5's libstdc++ failed deep in the build, at
+# lib/Driver/Gromacs.cpp. Inputs/float_from_chars.py configures a small
+# project with cmake/CheckFloatFromChars.cmake twice: with the compiler of
+# the machine, and with a wrapper of it that rejects <charconv>'s floating
+# std::from_chars as such a library does.
+# RUN: rm -rf %t
+# RUN: %python %S/Inputs/float_from_chars.py %S/../../cmake/CheckFloatFromChars.cmake %t | FileCheck %s
+# CHECK: the compiler of the machine: configured
+# CHECK-NEXT: a library without it: refused
+# CHECK-NEXT: MDIR needs a C++ standard library with the floating-point std::from_chars of C++17 (std::chars_format)
+# CHECK-NEXT: use GCC 11 or later, or a Clang whose libc++ or libstdc++ has it

@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# Says which step of a script failed, where its log is, and the first lines
+# of the log that name an error, on standard error (#654):
+#
+#   scripts/release/report-failure.sh SCRIPT STEP STATUS [LOG]
+#
+# publish.sh calls it from its trap on ERR. Without LOG, or with a log that
+# does not exist, the step's own output is above. The lines are the first
+# ten that start with `FAILED:` (ninja) or contain `error:` (compilers,
+# CMake, Python).
+set -uo pipefail
+script=${1:?usage: $0 SCRIPT STEP STATUS [LOG]}
+step=${2:?usage: $0 SCRIPT STEP STATUS [LOG]}
+status=${3:?usage: $0 SCRIPT STEP STATUS [LOG]}
+log=${4:-}
+{
+  if [[ -n $log && -f $log ]]; then
+    echo "$script: the step '$step' failed (status $status); its log: $log"
+    lines=$(grep -m 10 -E '^FAILED:|error:' "$log" || true)
+    if [[ -n $lines ]]; then
+      echo "$script: the first errors of the log:"
+      printf '%s\n' "$lines" | sed 's/^/  /'
+    else
+      echo "$script: the log names no error; its last lines:"
+      tail -n 10 "$log" | sed 's/^/  /'
+    fi
+  else
+    echo "$script: the step '$step' failed (status $status); its output is above"
+  fi
+} >&2

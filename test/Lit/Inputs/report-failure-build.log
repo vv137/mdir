@@ -1,0 +1,5 @@
+ninja: Entering directory
+[1/2] CXX a.o
+FAILED: lib/Driver/Gromacs.cpp.o
+Gromacs.cpp:471:22: error: 'std::chars_format' has not been declared
+ninja: build stopped

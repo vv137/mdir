@@ -4,6 +4,10 @@ project(mdir VERSION 0.2.1 LANGUAGES CXX C)
 set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 
+# The standard library must have the floating-point std::from_chars (#654).
+include(${PROJECT_SOURCE_DIR}/cmake/CheckFloatFromChars.cmake)
+mdir_check_float_from_chars()
+
 find_package(MLIR REQUIRED CONFIG)
 
 # Default arguments for lit.
