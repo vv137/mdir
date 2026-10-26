@@ -10,6 +10,7 @@ add_mlir_dialect_library(MDIRDyn
 
   LINK_LIBS PUBLIC
   MDIRMD
+  MLIRFuncDialect
   MLIRControlFlowInterfaces
   MLIRFunctionInterfaces
   MLIRIR

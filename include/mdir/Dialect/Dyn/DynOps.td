@@ -374,7 +374,8 @@ def Dyn_ToBathOp : Dyn_Op<"to_bath", [
 //===----------------------------------------------------------------------===//
 
 def Dyn_ProgramOp : Dyn_Op<"program", [
-    FunctionOpInterface, IsolatedFromAbove
+    FunctionOpInterface, IsolatedFromAbove,
+    DeclareOpInterfaceMethods<SymbolUserOpInterface>
   ]> {
   let summary = "Defines one time step";
   let description = [{
@@ -385,6 +386,14 @@ def Dyn_ProgramOp : Dyn_Op<"program", [
     | `velocity_offset` | Time of the stored velocities relative to the positions, in units of the time step. 0 if absent. |
     | `requires` | What the program needs from the thermodynamic state. |
     | `provides` | Properties of the program. |
+    | `effects` | The effects of the body: `{read = [...], write = [...]}`, the names of the resources. Unknown if absent. |
+
+    `effects` is the summary that `dyn.step` takes for the program (D[program-effects],
+    #673). The verifier checks it against the body: every effect of an op of
+    the body is in it, on its resource, and no op of the body has unknown
+    effects. A `func.call` has the effects that its function declares in
+    `dyn.effects`, in the same form; a call of a function without them has
+    unknown effects. The summary may name more than the body does.
 
     Known requirements: `temperature`, `pressure`.
 
@@ -420,7 +429,8 @@ def Dyn_ProgramOp : Dyn_Op<"program", [
     OptionalAttr<DictArrayAttr>:$res_attrs,
     OptionalAttr<F64Attr>:$velocity_offset,
     OptionalAttr<StrArrayAttr>:$requires,
-    OptionalAttr<StrArrayAttr>:$provides
+    OptionalAttr<StrArrayAttr>:$provides,
+    OptionalAttr<DictionaryAttr>:$effects
   );
   let regions = (region AnyRegion:$body);
   let extraClassDeclaration = [{
@@ -461,11 +471,12 @@ def Dyn_StepOp : Dyn_Op<"step", [
   ]> {
   let summary = "Applies a program";
   let description = [{
-    A step has the effects of the ops of the program it applies, on the
-    resources those ops name: a program that calls the host, or writes a
-    state of the host, is not moved across another step or removed (docs/
-    dynamics.md, Section 2.2.3). An op of unknown effects, such as a
-    `func.call`, reads and writes every resource.
+    A step has the effects that its program states in `effects`, which the
+    verifier of the program checks against its body (D[program-effects],
+    #673): a program that calls the host, or writes a state of the host, is
+    not moved across another step or removed (docs/dynamics.md, Section
+    2.2.3). A step of a program without `effects` reads and writes every
+    resource.
 
     ```mlir
     %x1, %v1 = dyn.step @leapfrog(%x, %v, %m, %cell, %dt)
