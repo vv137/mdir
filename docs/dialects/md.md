@@ -15,6 +15,10 @@ that core, of which a potential energy function is one kind.
 All ops are pure. Nothing in this dialect says how or where a computation
 is carried out.
 
+The transient `md.stage_rows` attribute on a batched function retains
+its checked leading row count after the function's tensors become
+buffers (D[stage-rows-attr]).
+
 
 ## Operations
 

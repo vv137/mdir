@@ -19,6 +19,9 @@ The internal-coordinate kinds and member places of tuple maps and gathers
 are declared op attributes (D343); differentiation
 uses the typed tuple-op accessors when it composes their transposes. This
 changes no primitive or lowering strategy.
+The row count of a batched neural stage is retained through bufferization
+as the checked function attribute `md.stage_rows` (D[stage-rows-attr],
+#642). It selects no new primitive or physical reduction strategy.
 
 The [execution contract](execution-contracts.md) (#574) checks whether a
 composition may run or be transformed for its stated sets, effects, state,

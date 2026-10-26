@@ -16,3 +16,10 @@ void MDDialect::initialize() {
       >();
   registerTypes();
 }
+
+LogicalResult MDDialect::verifyOperationAttribute(Operation *op,
+                                                  NamedAttribute attr) {
+  if (attr.getName() == kStageRowsAttrName)
+    return verifyStageRowsAttribute(op, attr.getValue());
+  return success();
+}

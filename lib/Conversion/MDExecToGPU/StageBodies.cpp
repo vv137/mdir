@@ -1452,9 +1452,7 @@ public:
         function.emitOpError() << "is a batched body without tensors";
         return signalPassFailure();
       }
-      function->setAttr("md.stage_rows",
-                        IntegerAttr::get(IntegerType::get(context, 64),
-                                         first.getDimSize(0)));
+      md::setStageRows(function.getOperation(), first.getDimSize(0));
       // A body used only through md.stage is called by the tiled lowering,
       // whose planTiles allocates a separate buffer for every result. Do not
       // assume that contract when another symbol user can call this body.
