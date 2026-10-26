@@ -1071,6 +1071,9 @@ when their allocation contract is proved. These are fusion choices around
 the existing reduction and map primitives, not new semantic operations;
 unproved aliases keep the separate copies. The device GEMM calls and their
 completion dependencies remain separate.
+The verified `md.stage_body` marker identifies an outlined function already
+lowered from its batched tensor form (D[stage-body-attr], #647); the same
+stage caller contract still governs these fusion choices.
 
 ### 5.5 Tests
 

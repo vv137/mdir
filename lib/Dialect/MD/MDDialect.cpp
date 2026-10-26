@@ -21,5 +21,7 @@ LogicalResult MDDialect::verifyOperationAttribute(Operation *op,
                                                   NamedAttribute attr) {
   if (attr.getName() == kStageRowsAttrName)
     return verifyStageRowsAttribute(op, attr.getValue());
+  if (attr.getName() == kStageBodyAttrName)
+    return verifyStageBodyAttribute(op, attr.getValue());
   return success();
 }

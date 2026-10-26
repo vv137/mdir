@@ -1,0 +1,5 @@
+# D[stage-body-attr]
+
+Recorded at its merge.
+
+**An outlined batched body is identified by a checked function marker.** #647, part of #607. `md.stage_body` remains a unit attribute on the function after its tensor form is checked and lowered. A named MD dialect helper writes and reads it. The dialect rejects another value, placement outside a function, or a function declaration without a body. Valid IR, emitted code, control-file keys, formats, numerical results, and device strategies remain unchanged. `md.stage_rows`, `md.stage_disjoint_results`, and other semantic attribute families remain separate. Validation is recorded in PR #648.

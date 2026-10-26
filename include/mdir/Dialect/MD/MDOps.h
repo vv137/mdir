@@ -34,6 +34,14 @@ void setStageRows(mlir::Operation *body, int64_t rows);
 mlir::LogicalResult verifyStageRowsAttribute(mlir::Operation *body,
                                               mlir::Attribute value);
 
+inline constexpr llvm::StringLiteral kStageBodyAttrName = "md.stage_body";
+
+/// Marks an outlined stage body whose tensor form was already verified.
+bool hasStageBody(mlir::Operation *body);
+void markStageBody(mlir::Operation *body);
+mlir::LogicalResult verifyStageBodyAttribute(mlir::Operation *body,
+                                              mlir::Attribute value);
+
 /// Σ c_k T_k(y) by Clenshaw's recurrence [Clenshaw1955], in f64.
 double evaluateChebyshev(llvm::ArrayRef<double> coefficients, double y);
 

@@ -47,6 +47,28 @@ LogicalResult mdir::md::verifyStageRowsAttribute(Operation *body,
   return success();
 }
 
+bool mdir::md::hasStageBody(Operation *body) {
+  return bool(body->getAttrOfType<UnitAttr>(kStageBodyAttrName));
+}
+
+void mdir::md::markStageBody(Operation *body) {
+  body->setAttr(kStageBodyAttrName, UnitAttr::get(body->getContext()));
+}
+
+LogicalResult mdir::md::verifyStageBodyAttribute(Operation *body,
+                                                  Attribute value) {
+  auto function = dyn_cast<FunctionOpInterface>(body);
+  if (!function || !isa<UnitAttr>(value))
+    return body->emitError()
+           << "expects '" << kStageBodyAttrName
+           << "' as a unit attribute on a function";
+  if (function.isExternal())
+    return body->emitError()
+           << "expects '" << kStageBodyAttrName
+           << "' on a function with a body";
+  return success();
+}
+
 //===----------------------------------------------------------------------===//
 // Custom directive: exchange(<kind>[, <basis>])
 //===----------------------------------------------------------------------===//
@@ -1159,7 +1181,7 @@ static LogicalResult verifyStageBody(StageOp stage, StringRef role,
            << " body, does not name a function";
   // A batched body that md-exec-lower-stage-bodies has lowered to buffers
   // was checked in its form of tensors.
-  if (body->hasAttr("md.stage_body"))
+  if (hasStageBody(body.getOperation()))
     return success();
   if (isBatchedType(body.getFunctionType())) {
     auto actual = cast<FunctionType>(body.getFunctionType());
