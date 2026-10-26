@@ -142,6 +142,12 @@ public:
     for (Operation &op : llvm::make_early_inc_range(module))
       if (isCallee(&op) && SymbolTable::symbolKnownUseEmpty(&op, module))
         op.erase();
+    // The effects that the functions of the host declare are read by the
+    // summaries of the programs (D[program-effects]), which are inlined
+    // now; they leave with them, so that the lowered program is that of
+    // before.
+    for (Operation &op : module)
+      op.removeAttr("dyn.effects");
   }
 };
 } // namespace

@@ -4,6 +4,7 @@
 
 #include "mdir/Dialect/Dyn/DynDialect.h"
 #include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/Interfaces/FunctionImplementation.h"
 #include "llvm/ADT/StringExtras.h"
@@ -300,27 +301,88 @@ LogicalResult StepOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
   return success();
 }
 
-void StepOp::getEffects(
-    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
-        &effects) {
-  auto unknown = [&] {
-    effects.emplace_back(MemoryEffects::Read::get());
-    effects.emplace_back(MemoryEffects::Write::get());
-  };
-  auto program = SymbolTable::lookupNearestSymbolFrom<ProgramOp>(
-      getOperation(), getCalleeAttr());
-  if (!program || program.isExternal())
-    return unknown();
-  // The effects of the body, on the resources they name. An effect on a
-  // value of the body is one on its resource, since the value is not
-  // visible here.
-  bool isUnknown = false;
-  program.getBody().walk([&](Operation *op) {
+//===----------------------------------------------------------------------===//
+// Effects of a program (D[program-effects], #673)
+//===----------------------------------------------------------------------===//
+
+/// The resource of the name `name` in a summary of effects, or null.
+static SideEffects::Resource *getResource(StringRef name) {
+  for (SideEffects::Resource *resource :
+       {static_cast<SideEffects::Resource *>(BathResource::get()),
+        static_cast<SideEffects::Resource *>(ChainResource::get()),
+        static_cast<SideEffects::Resource *>(StopResource::get()),
+        static_cast<SideEffects::Resource *>(
+            SideEffects::DefaultResource::get())})
+    if (resource->getName() == name)
+      return resource;
+  return nullptr;
+}
+
+/// The effects that `summary`, `{read = [...], write = [...]}`, states, or
+/// failure with a message in `error`.
+static LogicalResult
+parseSummary(DictionaryAttr summary,
+             SmallVectorImpl<MemoryEffects::EffectInstance> &effects,
+             std::string &error) {
+  for (NamedAttribute entry : summary) {
+    StringRef kind = entry.getName().getValue();
+    if (kind != "read" && kind != "write") {
+      error = ("unknown kind of effect '" + kind +
+               "'; expected 'read' or 'write'")
+                  .str();
+      return failure();
+    }
+    auto names = dyn_cast<ArrayAttr>(entry.getValue());
+    if (!names) {
+      error = ("expected an array of the names of resources in '" + kind +
+               "'")
+                  .str();
+      return failure();
+    }
+    for (Attribute name : names) {
+      auto text = dyn_cast<StringAttr>(name);
+      SideEffects::Resource *resource =
+          text ? getResource(text.getValue()) : nullptr;
+      if (!resource) {
+        error = "unknown resource in '" + kind.str() + "'; known: dyn.bath, "
+                "dyn.chain, dyn.stop, <Default>";
+        return failure();
+      }
+      if (kind == "read")
+        effects.emplace_back(MemoryEffects::Read::get(), resource);
+      else
+        effects.emplace_back(MemoryEffects::Write::get(), resource);
+    }
+  }
+  return success();
+}
+
+/// Adds the effects of the ops of `body` to `effects`, each on its
+/// resource; returns the first op of unknown effects, or null. A call has
+/// the effects that its function declares in `dyn.effects`.
+static Operation *
+collectEffects(Region &body, SymbolTableCollection &symbols,
+               SmallVectorImpl<MemoryEffects::EffectInstance> &effects) {
+  Operation *unknown = nullptr;
+  body.walk([&](Operation *op) {
+    if (auto call = dyn_cast<func::CallOp>(op)) {
+      auto function = symbols.lookupNearestSymbolFrom<func::FuncOp>(
+          op, call.getCalleeAttr());
+      auto declared = function ? function->getAttrOfType<DictionaryAttr>(
+                                     "dyn.effects")
+                               : DictionaryAttr();
+      std::string error;
+      if (!declared || failed(parseSummary(declared, effects, error))) {
+        unknown = op;
+        return WalkResult::interrupt();
+      }
+      return WalkResult::advance();
+    }
     if (op->hasTrait<OpTrait::HasRecursiveMemoryEffects>())
       return WalkResult::advance();
     auto memory = dyn_cast<MemoryEffectOpInterface>(op);
     if (!memory) {
-      isUnknown = true;
+      unknown = op;
       return WalkResult::interrupt();
     }
     SmallVector<MemoryEffects::EffectInstance> nested;
@@ -329,6 +391,59 @@ void StepOp::getEffects(
       effects.emplace_back(effect.getEffect(), effect.getResource());
     return WalkResult::advance();
   });
-  if (isUnknown)
-    unknown();
+  return unknown;
+}
+
+LogicalResult
+ProgramOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
+  DictionaryAttr summary = getEffectsAttr();
+  if (!summary || isExternal())
+    return success();
+  SmallVector<MemoryEffects::EffectInstance> stated, body;
+  std::string error;
+  if (failed(parseSummary(summary, stated, error)))
+    return emitOpError() << "in 'effects': " << error;
+  if (Operation *unknown = collectEffects(getBody(), symbolTable, body)) {
+    InFlightDiagnostic diagnostic =
+        emitOpError() << "states its effects, and an op of its body has "
+                         "unknown effects";
+    diagnostic.attachNote(unknown->getLoc())
+        << "the op; a call has the effects that its function declares in "
+           "'dyn.effects'";
+    return diagnostic;
+  }
+  for (const MemoryEffects::EffectInstance &effect : body) {
+    bool covered = llvm::any_of(stated, [&](const auto &other) {
+      return other.getEffect() == effect.getEffect() &&
+             other.getResource() == effect.getResource();
+    });
+    if (covered)
+      continue;
+    StringRef kind = isa<MemoryEffects::Read>(effect.getEffect()) ? "read"
+                     : isa<MemoryEffects::Write>(effect.getEffect())
+                         ? "write"
+                         : "allocate or free";
+    return emitOpError() << "does not state the effect of its body: "
+                         << kind << " of '" << effect.getResource()->getName()
+                         << "'";
+  }
+  return success();
+}
+
+void StepOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // The summary of the program, which its verifier checked against the
+  // body; without one, every resource.
+  auto program = SymbolTable::lookupNearestSymbolFrom<ProgramOp>(
+      getOperation(), getCalleeAttr());
+  DictionaryAttr summary = program ? program.getEffectsAttr() : DictionaryAttr();
+  SmallVector<MemoryEffects::EffectInstance> stated;
+  std::string error;
+  if (!summary || failed(parseSummary(summary, stated, error))) {
+    effects.emplace_back(MemoryEffects::Read::get());
+    effects.emplace_back(MemoryEffects::Write::get());
+    return;
+  }
+  effects.append(stated.begin(), stated.end());
 }

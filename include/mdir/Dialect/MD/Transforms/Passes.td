@@ -164,7 +164,9 @@ def Inline : Pass<"md-inline", "::mlir::ModuleOp"> {
   let description = [{
     Replaces every `md.call` and `dyn.step` with the body of what it calls,
     then removes the potentials, functions, and programs that are no longer
-    referenced. What remains is code in ordinary functions.
+    referenced, and the `dyn.effects` of the functions of the host, which
+    only the summaries of the programs read. What remains is code in
+    ordinary functions.
   }];
 }
 

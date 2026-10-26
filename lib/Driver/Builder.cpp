@@ -6142,6 +6142,11 @@ void Builder::emitPrograms() {
        << ")\n"
        << "    attributes {"
        << (leapfrog ? "velocity_offset = -0.5,\n                " : "")
+       // The effects of the body, which dyn.step takes (D[program-effects]):
+       // the deferred stops of the constraints, or none.
+       << (constraints ? "effects = {read = [\"dyn.stop\"], "
+                         "write = [\"dyn.stop\"]},\n                "
+                       : "effects = {},\n                ")
        << (brownian ? "provides = [\"thermostatting\"]} {\n"
                     : "provides = [\"symplectic\", \"time_reversible\"]} {\n")
        << "  %c = arith.constant 5.0e-01 : f64\n"
@@ -10169,7 +10174,8 @@ void Builder::emitDescend() {
       "(!vec, !md.cell" + getFieldTypes() + getTimeType() + ")";
   os << "dyn.program @descend(%x: !vec, %f: !vec, %m: !real, "
         "%cell: !md.cell,\n    %h: f64"
-     << getFieldParameters() << ")\n    -> (!vec, !vec, f64) {\n"
+     << getFieldParameters() << ")\n    -> (!vec, !vec, f64)"
+     << " attributes {effects = {}} {\n"
      << "  %zero = arith.constant 0.0 : f64\n"
      << "  %tiny = arith.constant 1.0e-300 : f64\n"
      << "  %count = arith.constant "
@@ -10824,9 +10830,15 @@ void Builder::emitEntry() {
   if (reportsSolvent())
     os << "func.func private @mdrtWriteSolvent(f64, f64)\n";
   if (hasConstraints() && !control.minimize)
+    // With their effects, which a program that calls them states
+    // (D[program-effects]): each records or delivers a stop of the run.
     os << "func.func private @mdrtStopConstraintFailure(i64, i64)\n"
+       << "    attributes {dyn.effects = {write = [\"dyn.stop\"]}}\n"
        << "func.func private @mdrtDeferStops()\n"
-       << "func.func private @mdrtStopPending()\n";
+       << "    attributes {dyn.effects = {write = [\"dyn.stop\"]}}\n"
+       << "func.func private @mdrtStopPending()\n"
+       << "    attributes {dyn.effects = {read = [\"dyn.stop\"], "
+          "write = [\"dyn.stop\"]}}\n";
   if (rescalesVelocities() && control.isNoseHoover())
     os << "func.func private @mdrtNoseHooverFactor(i64, f64) -> f64\n";
   else if (rescalesVelocities())

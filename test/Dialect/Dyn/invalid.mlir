@@ -175,3 +175,39 @@ dyn.program @p(%v: !md.field<@atoms, 3 x f64>) -> vector<3xf64>
   } : vector<3xf64>
   dyn.return %s : vector<3xf64>
 }
+
+// -----
+
+func.func private @mdrtDeferStops()
+
+// expected-error@+1 {{states its effects, and an op of its body has unknown effects}}
+dyn.program @p(%dt: f64) -> f64 attributes {effects = {}} {
+  // expected-note@+1 {{the op; a call has the effects that its function declares in 'dyn.effects'}}
+  func.call @mdrtDeferStops() : () -> ()
+  dyn.return %dt : f64
+}
+
+// -----
+
+func.func private @mdrtDeferStops()
+    attributes {dyn.effects = {write = ["dyn.stop"]}}
+
+// expected-error@+1 {{does not state the effect of its body: write of 'dyn.stop'}}
+dyn.program @p(%dt: f64) -> f64 attributes {effects = {read = ["dyn.stop"]}} {
+  func.call @mdrtDeferStops() : () -> ()
+  dyn.return %dt : f64
+}
+
+// -----
+
+// expected-error@+1 {{in 'effects': unknown resource in 'write'; known: dyn.bath, dyn.chain, dyn.stop, <Default>}}
+dyn.program @p(%dt: f64) -> f64 attributes {effects = {write = ["cell"]}} {
+  dyn.return %dt : f64
+}
+
+// -----
+
+// expected-error@+1 {{in 'effects': unknown kind of effect 'allocate'; expected 'read' or 'write'}}
+dyn.program @p(%dt: f64) -> f64 attributes {effects = {allocate = []}} {
+  dyn.return %dt : f64
+}
