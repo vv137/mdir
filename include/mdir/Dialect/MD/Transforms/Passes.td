@@ -168,6 +168,33 @@ def Inline : Pass<"md-inline", "::mlir::ModuleOp"> {
   }];
 }
 
+def ExpandCouplings : Pass<"dyn-expand-couplings", "::mlir::ModuleOp"> {
+  let summary = "Expands the ops of the couplings of dyn into sums, loops, "
+                "and calls of the host";
+  let description = [{
+    Replaces each op of a coupling of `dyn` with the operations that the
+    driver writes for it (docs/dynamics.md, Section 2.2; D326), on the same
+    operands and in the same order of dependence:
+
+    | Op | Expansion |
+    |---|---|
+    | `dyn.momentum`, `dyn.kinetic`, `dyn.half_step_excess` | `md.sum_particles`, and for the excess the factor `Δt² / 8` on the host |
+    | `dyn.shift`, `dyn.scale` | One `md.map_particles` for each chain on one field whose intermediate values have no other use, which applies them in order |
+    | `dyn.noise` | `md.map_particles` with Philox 4×32-10 as `arith` ops |
+    | `dyn.velocity_rescaling` | `func.call @mdrtBussiFactor` |
+    | `dyn.nose_hoover` | `func.call @mdrtNoseHooverFactor` |
+    | `dyn.to_bath` | `func.call @mdrtAddBath` |
+
+    The functions of the host are declared when the module does not
+    declare them. The pass runs after `md-inline`, which brings the bodies
+    of the programs into `@mdir_run`.
+  }];
+  let dependentDialects = ["::mlir::arith::ArithDialect",
+                           "::mlir::func::FuncDialect",
+                           "::mlir::math::MathDialect",
+                           "::mlir::vector::VectorDialect"];
+}
+
 def CheckExchange : Pass<"md-check-exchange", "::mlir::ModuleOp"> {
   let summary = "Proves the exchange contracts that rest on a proof";
   let description = [{

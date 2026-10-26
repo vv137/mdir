@@ -289,7 +289,7 @@ config.substitutions.append(
     (
         "%md_passes",
         "--md-check-exchange --md-differentiate --md-expand-truncation"
-        " --md-inline",
+        " --md-inline --dyn-expand-couplings",
     )
 )
 
