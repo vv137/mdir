@@ -356,6 +356,42 @@ on the host today, on a device for a barostat there.
 
 
 
+### `dyn.load_pressure_state` (::mdir::dyn::LoadPressureStateOp)
+
+_Reads the state of the pressure that the step before left_
+
+Syntax:
+
+```
+operation ::= `dyn.load_pressure_state` $memory attr-dict `:` type($memory)
+```
+
+The diagonal of the virial, that of the virial of the groups, and the
+kinetic energy of the centers of the groups at the half steps after the
+thermostat, of the step before: the pressure of a barostat of Trotter
+type with a period of one step (D92). The memory is a memref of 9 f64 in
+any memory space.
+
+```mlir
+%w, %wg, %k = dyn.load_pressure_state %state : memref<9xf64>
+```
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `memory` | 1D memref of 64-bit float values |
+
+#### Results:
+
+| Result | Description |
+| :----: | ----------- |
+| `virial` | vector of 64-bit float values of length 3 |
+| `groups` | vector of 64-bit float values of length 3 |
+| `kinetic` | vector of 64-bit float values of length 3 |
+
+
+
 ### `dyn.momentum` (::mdir::dyn::MomentumOp)
 
 _The momentum of the particles_
@@ -963,6 +999,40 @@ Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::mdir::dyn::RecordResou
 | Operand | Description |
 | :-----: | ----------- |
 | `cell` | variadic of 64-bit float |
+| `memory` | 1D memref of 64-bit float values |
+
+
+
+### `dyn.store_pressure_state` (::mdir::dyn::StorePressureStateOp)
+
+_Writes the state of the pressure for the next step_
+
+Syntax:
+
+```
+operation ::= `dyn.store_pressure_state` $virial `,` $groups `,` $kinetic `into` $memory attr-dict `:`
+              type($memory)
+```
+
+Writes the state that `dyn.load_pressure_state` reads into the memory,
+and gives it to the checkpoint (`/parameters/mdir/barostat_state`), so
+that a run that continues takes the same.
+
+```mlir
+dyn.store_pressure_state %w, %wg, %k into %state : memref<9xf64>
+```
+
+Interfaces: `MemoryEffectOpInterface (MemoryEffectOpInterface)`
+
+Effects: `MemoryEffects::Effect{MemoryEffects::Write on ::mdir::dyn::RecordResource}`
+
+#### Operands:
+
+| Operand | Description |
+| :-----: | ----------- |
+| `virial` | vector of 64-bit float values of length 3 |
+| `groups` | vector of 64-bit float values of length 3 |
+| `kinetic` | vector of 64-bit float values of length 3 |
 | `memory` | 1D memref of 64-bit float values |
 
 

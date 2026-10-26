@@ -627,6 +627,54 @@ def Dyn_ScalingWorkOp : Dyn_Op<"scaling_work", [
   let hasVerifier = 1;
 }
 
+// The state of the pressure of a barostat of Trotter type that scales
+// every step (step 2c of #541; D92).
+
+def Dyn_StateMemory : MemRefRankOf<[F64], [1]>;
+
+def Dyn_LoadPressureStateOp : Dyn_Op<"load_pressure_state"> {
+  let summary = "Reads the state of the pressure that the step before left";
+  let description = [{
+    The diagonal of the virial, that of the virial of the groups, and the
+    kinetic energy of the centers of the groups at the half steps after the
+    thermostat, of the step before: the pressure of a barostat of Trotter
+    type with a period of one step (D92). The memory is a memref of 9 f64 in
+    any memory space.
+
+    ```mlir
+    %w, %wg, %k = dyn.load_pressure_state %state : memref<9xf64>
+    ```
+  }];
+  let arguments = (ins Arg<Dyn_StateMemory, "the state", [MemRead]>:$memory);
+  let results = (outs Dyn_Vector3:$virial, Dyn_Vector3:$groups,
+                      Dyn_Vector3:$kinetic);
+  let assemblyFormat = "$memory attr-dict `:` type($memory)";
+  let hasVerifier = 1;
+}
+
+def Dyn_StorePressureStateOp : Dyn_Op<"store_pressure_state", [
+    MemoryEffects<[MemWrite<Dyn_RecordResource>]>
+  ]> {
+  let summary = "Writes the state of the pressure for the next step";
+  let description = [{
+    Writes the state that `dyn.load_pressure_state` reads into the memory,
+    and gives it to the checkpoint (`/parameters/mdir/barostat_state`), so
+    that a run that continues takes the same.
+
+    ```mlir
+    dyn.store_pressure_state %w, %wg, %k into %state : memref<9xf64>
+    ```
+  }];
+  let arguments = (ins Dyn_Vector3:$virial, Dyn_Vector3:$groups,
+                       Dyn_Vector3:$kinetic,
+                       Arg<Dyn_StateMemory, "the state", [MemWrite]>:$memory);
+  let assemblyFormat = [{
+    $virial `,` $groups `,` $kinetic `into` $memory attr-dict `:`
+    type($memory)
+  }];
+  let hasVerifier = 1;
+}
+
 // The state of the host.
 
 def Dyn_ToBathOp : Dyn_Op<"to_bath", [

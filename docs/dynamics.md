@@ -65,8 +65,9 @@ thermostats and of the removal of the motion of the center of mass in
 `dyn.step`, the rules of Section 2.2.4, and the pass `dyn-expand-couplings`;
 step 2b those of the barostat (`dyn.group_kinetic`, `dyn.pressure`,
 `dyn.cell_rescaling`, `dyn.scale_cell`, `dyn.load_cell`, `dyn.store_cell`,
-`dyn.scale_positions`, `dyn.scaling_work`). The driver does not write the
-ops yet. The ops formalize what the driver writes today. They add no
+`dyn.scale_positions`, `dyn.scaling_work`); step 2c the state of the
+pressure of a barostat that scales every step (`dyn.load_pressure_state`,
+`dyn.store_pressure_state`). The driver does not write the ops yet. The ops formalize what the driver writes today. They add no
 thermostat or barostat, change no key of the control file and no default,
 and change no number. The rest of steps 2 to 4 of #541 builds them
 (Section 2.2.9). Until step 3 Sections 1, 2.3, 2.4, 2.6, and 6 describe
@@ -230,8 +231,8 @@ driver's runtime (`lib/Driver/Output.cpp`).
 |---|---|---|
 | `dyn.load_cell` | `%memory` → 3 or 6 × f64, the edges and the tilts | Reads the cell from `%memory`, a memref of 3 or 6 f64 in any memory space (`%box_memory` on the host today) |
 | `dyn.store_cell` | 3 or 6 × f64 `into %memory` | Writes the cell into `%memory`, and the box of the log, the trajectory, and the checkpoint (`mdrtSetBox`, `mdrtSetTilt`); stops a run whose cell is not finite or changed by more than a factor of 2 along an axis at one coupling (#168, D225) |
-| `dyn.load_pressure_state` | → three `vector<3xf64>`: the diagonals of $\mathsf W$ and of $\mathsf W_g$, and $K_{\text{half},g}$ after the thermostat | Reads `%trotter_memory` |
-| `dyn.store_pressure_state` | the same three | Writes `%trotter_memory` and the checkpoint's `/parameters/mdir/barostat_state` (`mdrtSetBarostatState`) |
+| `dyn.load_pressure_state` | `%memory` → three `vector<3xf64>`: the diagonals of $\mathsf W$ and of $\mathsf W_g$, and $K_{\text{half},g}$ after the thermostat | Reads `%memory`, a memref of 9 f64 in any memory space (`%trotter_memory` on the host today) |
+| `dyn.store_pressure_state` | the same three `into %memory` | Writes `%memory` and the checkpoint's `/parameters/mdir/barostat_state` (`mdrtSetBarostatState`) |
 | `dyn.to_bath` | `%e: f64` | Adds $-\Delta E_\text{sys}$ to $E_\text{bath}$ (`mdrtAddBath`), which the conserved energy of the log and the checkpoint's `bath` take (D129) |
 
 The pair `dyn.load_pressure_state` and `dyn.store_pressure_state` appears
@@ -506,7 +507,7 @@ provenance, which no continuation compares
 | Step | What | Done when |
 |---|---|---|
 | 1 | This design | Reviewed |
-| 2 | The ops in `DynOps.td`, with their verifiers and effects, `no_global_sums` in the verifier of `dyn.program`, round-trip and invalid tests in `test/Dialect/Dyn`, and `dyn-expand-couplings`, with a test for each op that its expansion is the text the driver writes today; ops.md, Sections 6 and 9.1. In three parts, as step 3: 2a the ops of 3a (built), 2b those of 3b (built), 2c those of 3c | The driver unchanged; the suite passes |
+| 2 | The ops in `DynOps.td`, with their verifiers and effects, `no_global_sums` in the verifier of `dyn.program`, round-trip and invalid tests in `test/Dialect/Dyn`, and `dyn-expand-couplings`, with a test for each op that its expansion is the text the driver writes today; ops.md, Sections 6 and 9.1. In three parts, as step 3: 2a the ops of 3a (built), 2b those of 3b (built), 2c those of 3c (built) | The driver unchanged; the suite passes |
 | 3a | The driver writes the thermostats: the removal of the motion of the center of mass, `V-RESCALE`, `NOSE-HOOVER`, `dyn.to_bath`, and `dyn.noise` for `LANGEVIN` and `BROWNIAN` | In the deterministic mode the NVT and Langevin runs of `examples/ala3`, `thermostat.test`, `nose-hoover.test`, `langevin.test`, and `brownian.test` are bitwise those of `main`, on the CPU and a GPU, in `mixed` and `double`; otherwise within the tolerances of the tests; a checkpoint of `main` continues bitwise |
 | 3b | The barostat with `"EXACT"` and `"FIRST_ORDER"`, isotropic, semi-isotropic, and anisotropic: `dyn.group_kinetic`, `dyn.pressure`, `dyn.cell_rescaling`, the cell, `dyn.scale_positions`, `dyn.scaling_work` | The same for `barostat.test` and NPT of `examples/ala3` with these counts |
 | 3c | The Trotter steps: `@step_trotter` with `dyn.scale_positions` in its body, `"TROTTER"` and `"TROTTER_FIRST_ORDER"`, the period of one step with `dyn.load_pressure_state` and `dyn.store_pressure_state`; the claims of Section 2.2.4 | The same with the default `work`, `barostat-pme-restart.test` bitwise; the Amber suite and NPT of `examples/ala3` at the rate of `main` on one device |
@@ -555,6 +556,12 @@ and the counts of the work in `emitCoupling`, on the operands of Section
    $\sum_a(\mu_a^{-2} - 1)K_a$, which the text computes before the
    evaluation, moves after it. That is an order of pure arithmetic on the
    same values; the checkpoints of step 3b are the bitwise check.
+
+**Step 2c, as built.** `dyn.load_pressure_state` and
+`dyn.store_pressure_state` take the memory of the state as a memref of 9
+f64 in any memory space, as the cell ops do; the first expands to the nine
+loads and the three vectors of `emitLevel`, the second to the nine stores
+of `emitStoreTrotterState` and `mdrtSetBarostatState`.
 
 `lift_couplings.py` lifts every op of the barostat from the text but the
 work counted exactly, whose lines are not together; over the corpus of
