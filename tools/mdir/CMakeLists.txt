@@ -46,8 +46,11 @@ target_link_libraries(mdir PRIVATE
   MDIRMDTransforms
   MLIRExecutionEngine
   )
-# Compiled code calls functions of the driver.
-set_target_properties(mdir PROPERTIES ENABLE_EXPORTS ON)
+# Compiled code calls the functions of the driver through the symbols that
+# Run.cpp gives the engine, and those of the runtime through its library, so
+# the driver exports nothing: with every symbol exported (-rdynamic) the
+# linker kept all of LLVM and MLIR reachable from the export table, and
+# --gc-sections, which add_llvm_executable passes, removed little (#655).
 
 target_compile_definitions(mdir PRIVATE
   MDIR_LLVM_LIBRARY_DIR="${LLVM_LIBRARY_DIR}"

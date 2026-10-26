@@ -24,6 +24,11 @@ set_target_properties(mdir_python PROPERTIES OUTPUT_NAME _core
 target_compile_options(mdir_python PRIVATE -fexceptions)
 target_compile_definitions(mdir_python PRIVATE MDIR_VERSION="${PROJECT_VERSION}")
 target_link_libraries(mdir_python PRIVATE MDIRCompiler MDIRSimulation)
+# The extension exports its module init alone: the symbols of the static
+# libraries are not exported (--exclude-libs), so that --gc-sections removes
+# the sections nothing reaches (#655). Compiled code finds the functions of
+# the driver through the symbols that Simulation.cpp gives the engine.
+target_link_options(mdir_python PRIVATE LINKER:--exclude-libs,ALL LINKER:--gc-sections)
 configure_file(mdir/__init__.py ${MDIR_PYTHON_PACKAGE_DIR}/__init__.py COPYONLY)
 # The frame evaluator and its PyTorch adapter (docs/python-frames.md);
 # `mdir.torch` imports torch and is imported only by a script that asks.
