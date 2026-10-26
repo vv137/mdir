@@ -120,11 +120,12 @@ then MDIR's sources. The tarball holds:
 | `lib/libomp.so` | The OpenMP runtime of LLVM, for threaded runs on the CPU |
 | `lib/libhdf5.so.*` | HDF5, for checkpoints |
 | `lib/libcufft.so.*` | cuFFT, for particle mesh Ewald on a GPU |
+| `lib/libcublas.so.*`, `lib/libcublasLt.so.*` | cuBLAS and the cuBLASLt that it loads, for the products of the shape of a GEMM in the stage bodies (D302) |
 | `share/mdir/cuda` | libdevice, the math functions the kernels link, with the CUDA EULA |
 | `share/mdir/examples`, `share/mdir/LICENSE` | The examples and MDIR's license |
 | `share/mdir/licenses` | The notices of the third parties whose code the tarball distributes in binary form: `HDF5-COPYING`, `pocketfft-LICENSE`, `tomlplusplus-LICENSE`, `LLVM-LICENSE.TXT`, `OpenMP-LICENSE.TXT` |
 
-cuFFT and libdevice are redistributable under Attachment A of the CUDA
+cuFFT, cuBLAS, and libdevice are redistributable under Attachment A of the CUDA
 EULA, which the tarball carries. With them a GPU run needs only the NVIDIA
 driver: when `CUDA_ROOT`, `CUDA_HOME`, and `CUDA_PATH` are unset, the driver
 links the kernels against `share/mdir/cuda`. Setting `CUDA_ROOT` still
@@ -167,8 +168,9 @@ builds the wheels with the tarball and runs both (docs/workflow.md,
 Releases).
 
 A wheel holds the extension, the runtime, libdevice with the CUDA EULA,
-and HDF5 (in `mdir.libs`); cuFFT and ptxas come from NVIDIA's wheels
-`nvidia-cufft` and `nvidia-cuda-nvcc` through the extra `mdir[cuda]`, and
+and HDF5 (in `mdir.libs`); cuFFT, cuBLAS, and ptxas come from NVIDIA's
+wheels `nvidia-cufft`, `nvidia-cublas`, and `nvidia-cuda-nvcc` through the
+extra `mdir[cuda]`, and
 the driver's `libcuda` from the system. The `mdir` command is not in the wheels.
 
 **Notices.** A wheel holds pybind11, toml++, and LLVM in the extension,
