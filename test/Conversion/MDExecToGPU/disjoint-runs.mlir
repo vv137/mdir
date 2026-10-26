@@ -10,7 +10,7 @@ md.particle_set @atoms
 // field.
 //
 // CHECK-LABEL: func.func @independent(
-// CHECK:         gpu.launch {{.*}} function(@independent_tuple_for_l{{[0-9]+}}_run2_{{[0-9]+}})
+// CHECK:         gpu.launch {{.*}} function(@independent_tuple_for_run2_{{[0-9]+}})
 // CHECK-NOT:     gpu.launch
 // CHECK:         return
 func.func @independent(%pairs: memref<?xi32, 1>, %trios: memref<?xi32, 1>,

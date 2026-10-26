@@ -16,9 +16,9 @@ md.particle_set @atoms
 // CHECK-LABEL: func.func @integrate(
 // CHECK:         gpu.launch
 // CHECK:         %[[FLAG:[0-9]+]] = call @mdrtFlagMemory(
-// CHECK:         gpu.launch {{.*}} function(@integrate_particle_for_l{{[0-9]+}}_integration1_{{[0-9]+}})
+// CHECK:         gpu.launch {{.*}} function(@integrate_particle_for_integration1_{{[0-9]+}})
 // CHECK:             memref.store %{{[a-z0-9_]+}}, %[[FLAG]][
-// CHECK:         gpu.launch {{.*}} function(@integrate_particle_for_l{{[0-9]+}}_integration1_{{[0-9]+}})
+// CHECK:         gpu.launch {{.*}} function(@integrate_particle_for_integration1_{{[0-9]+}})
 // CHECK:             memref.store %{{[a-z0-9_]+}}, %[[FLAG]][
 // CHECK:         %[[SLOT:[0-9]+]] = call @mdrtFlagStart(
 // CHECK-NOT:     gpu.launch

@@ -20,7 +20,7 @@ md.particle_set @atoms
 //
 // CHECK:         %[[FLAG1:[0-9]+]] = call @mdrtFlagMemory(
 // CHECK:         %[[FLAG0:[0-9]+]] = call @mdrtFlagMemory(
-// CHECK:         gpu.launch {{.*}} function(@two_sets_tuple_for_l{{[0-9]+}}_run2_{{[0-9]+}})
+// CHECK:         gpu.launch {{.*}} function(@two_sets_tuple_for_run2_{{[0-9]+}})
 // CHECK:             memref.store %{{[a-z0-9_]+}}, %[[FLAG0]][
 // CHECK:             memref.store %{{[a-z0-9_]+}}, %[[FLAG1]][
 // CHECK:         memref.extract_aligned_pointer_as_index %[[FLAG0]]

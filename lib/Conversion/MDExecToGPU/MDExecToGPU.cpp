@@ -733,7 +733,7 @@ private:
   /// The function that is being lowered.
   func::FuncOp current;
   /// What the kernels that are being made compute, for their names: the op
-  /// and the line of the input that it comes from (nameKernel).
+  /// that they come from (nameKernel).
   std::string purpose = "kernel";
   int64_t numKernels = 0;
   /// The flags of the module so far: each place that a function takes a
@@ -828,18 +828,20 @@ void Lowering::createTransfer(OpBuilder &builder, Location loc,
   gpu::WaitOp::create(builder, loc, Type(), ValueRange{copied});
 }
 
-/// The purpose of the kernels of `op`: its name, and the line of the input
-/// where it begins, such as `tuple_for_l2449`: the line of the module that
-/// `mdir emit` prints for a run.
+/// The purpose of the kernels of `op`: its name, such as `tuple_for`
+/// (D[kernel-names]). Before, the line of the input where the op begins
+/// followed (`tuple_for_l2449`); a kernel's name then changed with every
+/// line added above its loop in the builder's text, and with how that text
+/// was printed (#568).
 void Lowering::setPurpose(Operation *op) {
-  std::string name = op->getName().stripDialect().str();
-  if (auto location = dyn_cast<FileLineColLoc>(op->getLoc()))
-    name += "_l" + std::to_string(location.getLine());
-  purpose = name;
+  purpose = op->getName().stripDialect().str();
 }
 
 /// Names the kernel that `launch` becomes, and its module: the function,
-/// the purpose, and a number that makes the name unique. A profiler, a
+/// the purpose, and the ordinal of the kernel in the lowering of the module,
+/// which makes the name unique (D[kernel-names]). The name depends on the
+/// ops of the program and their order alone: not on the locations of the
+/// ops, nor on the text the program was parsed from. A profiler, a
 /// sanitizer, and the trace of the runtime report kernels by these names.
 void Lowering::nameKernel(gpu::LaunchOp launch) {
   if (launch.getFunctionAttr())

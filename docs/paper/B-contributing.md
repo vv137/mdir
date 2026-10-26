@@ -99,9 +99,11 @@ decision (Section 12).
 | `MDRT_WAIT=1`, `MDRT_TRACE=1`, `MDRT_PROFILE=1` | Waits after every launch and names the kernel that fails; prints modules, kernels, and launches; times each kernel |
 | `mdir bug-report FILE -o DIR [--run]` | Collects the build, the machine, the inputs with their hashes, and every stage of the compilation into one directory for a report |
 
-Kernels are named `<function>_<op>_l<line>_<n>`, where `<line>` is the line
-of the op in the output of `mdir emit`, so a profile or a report of the
-sanitizer points at the IR.
+Kernels are named `<function>_<op>[_<kind>]_<n>`, where `<n>` is the
+ordinal of the kernel in the lowering, so a profile or a report of the
+sanitizer points at the IR (`MDIR_PRINT_AFTER=gpu-kernel-outlining` prints
+the kernels in that order), and a name does not change with the text the
+program was built from (D[kernel-names]).
 
 ## B.4 How a change is recorded and reviewed
 

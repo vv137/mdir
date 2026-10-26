@@ -123,10 +123,16 @@ at a later call. To find the kernel that failed:
 2. `compute-sanitizer --tool memcheck mdir run run.toml` names the access,
    the thread, and the kernel. `initcheck` finds reads of memory that was
    never written; `racecheck`, races through shared memory.
-3. Kernels are named `<function>_<op>_l<line>_<n>`, where `<line>` is the
-   line of the op in the output of `mdir emit`. `MDRT_TRACE=1` prints each
-   module, its kernels, and each launch with its grid;
-   `MDIR_PRINT_AFTER=gpu-kernel-outlining` prints the kernels themselves.
+3. Kernels are named `<function>_<op>[_<kind>]_<n>`, such as
+   `mdir_run_particle_for_integration3_188`: the function, the op of the
+   loop that the kernel comes from, what a fused kernel holds
+   (`integration3`, `run2`), and the ordinal of the kernel in the lowering
+   of the module (D[kernel-names]). The ordinal follows the ops of the
+   program, not the lines of a text, so a name stays when the builder's
+   text changes around its loop. `MDRT_TRACE=1` prints each module, its
+   kernels, and each launch with its grid;
+   `MDIR_PRINT_AFTER=gpu-kernel-outlining` prints the kernels themselves,
+   in the order of their ordinals.
 4. `MDRT_PROFILE=1` (with `MDRT_WAIT=1`, the time of each kernel) reports
    where the time goes.
 5. `MDIR_DEVICE_MEMORY=2` reports where the device memory goes, for a run

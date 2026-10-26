@@ -241,9 +241,10 @@ before a physical plan is selected.
    residual of iterative solvers.
 5. Done: the tests have a tier under compute-sanitizer (`lit -Dsanitize=1`,
    `test/Sanitizer`) and a tier of short runs of the Amber suite
-   (`MDIR_BENCH_DIR`, `test/Scale`). Kernels are named after the op and the
-   line of the module of `mdir emit` that they come from, such as
-   `mdir_run_particle_for_l44_121`, in profiles and in the reports of the
-   sanitizer.
+   (`MDIR_BENCH_DIR`, `test/Scale`). Kernels are named after the op that
+   they come from and their ordinal in the lowering, such as
+   `mdir_run_particle_for_121`, in profiles and in the reports of the
+   sanitizer (D[kernel-names]; until it, the line of the op in the module
+   of `mdir emit` stood after the op).
 
 Compiler/runtime buffer roles must come from a shared, versioned declaration (D350); a parallel enum or numeric selector is insufficient. Validate externally supplied selectors before indexing runtime storage, and include ABI compatibility versions in compiled-object cache identity.
