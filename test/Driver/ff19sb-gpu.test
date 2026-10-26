@@ -36,7 +36,7 @@
 # the constraints of the step.)
 #
 # MODULE: md.disjoint_union @constraints on(@atoms) of [@settles, @shake1
-# KERNELS: particle_for_l{{[0-9]+}}_integration{{[2-9]}}
+# KERNELS: particle_for_integration{{[2-9]}}
 
 #--- run.toml
 [input]

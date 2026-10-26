@@ -60,9 +60,10 @@ cells are cases of the tests of the templates.
 **6. Tools check what tests cannot.** The GPU tests run under
 compute-sanitizer (`lit -Dsanitize=1`); the host code is built with
 AddressSanitizer and UndefinedBehaviorSanitizer; kernels are named after
-the op and the line of the module they come from, such as
-`mdir_run_particle_for_l279_integration3_82`, so that a profile or a report
-of the sanitizer points at the IR. A hang of the device at 100% utilization
+the op they come from and their ordinal in the lowering, such as
+`mdir_run_particle_for_integration3_82`, so that a profile or a report of
+the sanitizer points at the IR, and a name does not change with the text
+the program was built from (D[kernel-names]). A hang of the device at 100% utilization
 and half the power was found with `cuda-gdb` to be a sort of every particle
 into one bin after positions had become NaN (D106, D107).
 

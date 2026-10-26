@@ -39,9 +39,9 @@
 # RUN: mdir checkpoint %t/mixed/run.h5 %t/mixed/fused.h5 | FileCheck %s
 
 # PIPELINE: md-exec-fuse-loops{integration-runs=true},
-# APART-COUNT-10: mdir_run_particle_for_l{{[0-9]+}}_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
+# APART-COUNT-10: mdir_run_particle_for_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
 # APART-NOT: _integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
-# FUSED-COUNT-6: mdir_run_particle_for_l{{[0-9]+}}_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
+# FUSED-COUNT-6: mdir_run_particle_for_integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
 # FUSED-NOT: _integration{{[0-9]+}}_{{[0-9]+}} 19 {{[0-9]}}
 # CHECK: the states are identical
 
