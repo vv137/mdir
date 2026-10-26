@@ -1143,6 +1143,38 @@ comment, which only the raw form sees, and a different cutoff, which both
 forms see. Recorded hashes are verified with the build and with the
 second wrapper.
 
+### 2.12 The files of the builder
+
+`lib/Driver/Builder.cpp` held the whole builder, 12,500 lines, and most
+pull requests edited the same few functions of it (#568: `emitEntry`,
+`emitPrograms`, `emitLevel`, `emitTopologyPotential`, `emitCoupling`, and
+`build`). Step 3 of #568 splits it by responsibility, in two parts.
+
+**Part 1, the files.** The class `Builder` and the helpers that more than
+one part takes move to `lib/Driver/BuilderImpl.h`, in the namespace
+`mdir::driver::builder`; the definitions move, unchanged, to one file for
+each responsibility:
+
+| File | What it builds |
+|---|---|
+| `Builder.cpp` | `build`, the order of the parts, and the entry points of `mdir/Driver/Builder.h` |
+| `BuilderParameters.cpp` | The fields, tables, and constants of the program: the topology, the dispersion and its tails, PME, LJPME, the prolate splitting, the meshes, the tunable gradients |
+| `BuilderPotential.cpp` | `md.potential @energy` and the other potentials: the terms of pairs, of tuples, and of the topology, the Born and external terms, the centroids, the pulls, the observables, the staged models, the restraints |
+| `BuilderDynamics.cpp` | The programs of a step (`emitPrograms`), the kinetic energies, the noise, the couplings and the barostat, and the minimization |
+| `BuilderConstraints.cpp` | SETTLE, SHAKE and RATTLE, the virtual sites, and the tests and stops of the constraints |
+| `BuilderSchedule.cpp` | `@mdir_run`: the levels of the loops, the branches of the start, the parts of a program of segments, and the frames |
+| `BuilderOutput.cpp` | The outputs of the pulls, the free energy, the observables, the tunable gradients, and the solvent |
+
+The program that the builder writes does not change: the printed module
+and the lowered program of the corpus of Section 2.11 are those of
+before. Since the names of kernels no longer carry lines of the builder
+(D354), moving code changes no name.
+
+**Part 2, the registration.** A term provides its builder in a file of its
+own, behind an interface that the central functions iterate, so that a new
+term adds a file rather than a case in `emitTopologyPotential`,
+`emitTerms`, and `emitEntry`. Its design follows part 1 in the same issue.
+
 ## 3. Decided
 
 | # | Question | Decision |
