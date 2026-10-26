@@ -1,7 +1,7 @@
 // Expansion of the ops of the couplings of dyn.
 //
 // See docs/dynamics.md, Section 2.2, and docs/decisions/D326.md. Each op
-// becomes the operations that lib/Driver/Builder.cpp writes for it, on the
+// becomes the operations that lib/Driver/Builder*.cpp write for it, on the
 // same operands and in the same order of dependence, so that a run in the
 // deterministic mode stays bitwise that of the text (Section 2.2.8).
 

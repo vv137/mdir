@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --dyn-expand-couplings | FileCheck %s
 
 // dyn.noise expands to the text that the driver writes for the O step of
-// Langevin dynamics (emitNoise in lib/Driver/Builder.cpp): the CHECK lines
+// Langevin dynamics (emitNoise in lib/Driver/BuilderDynamics.cpp): the CHECK lines
 // are the program @step of `mdir emit` for examples/argon/argon.toml under
 // LANGEVIN with a friction of 1/ps, verbatim, but for the claims of the
 // program, which a program with dyn.noise makes (docs/dynamics.md,

@@ -69,7 +69,7 @@ wrote at fixed paths failed after 99 runs of the suite in one build tree
 | `scripts/validation`, `scripts/benchmarks`, `scripts/render` | The comparisons with other programs (Section 9), the measurements of Section 10, and movies of trajectories |
 
 **A new term of the potential** is a function of the builder
-(`lib/Driver/Builder.cpp`) that writes an `md.potential` term over a
+(`lib/Driver/BuilderPotential.cpp`) that writes an `md.potential` term over a
 relation, with its parameters as fields of the tuple set; its forces and
 virial follow by differentiation. If the term is a pair term with an
 exchange contract, it runs over groups on a device with no further work.
