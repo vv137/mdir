@@ -10,6 +10,7 @@ format, or the outputs; every such change is listed under **Changed** or
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-26
 ### Added
 
 - **The suite checks which tests are unsupported**: `test/expected-unsupported.txt`
@@ -22,12 +23,74 @@ format, or the outputs; every such change is listed under **Changed** or
   and the Amber suite
   ([docs/driver.md](docs/driver.md#211-the-equivalence-check-of-the-builder);
   #568).
+- **The release path is checked before release day**:
+  `scripts/release/check-path.sh` runs the edits of a release on a copy of
+  the tree and checks the changelog's move, the notes with absolute links,
+  and versions pinned in tests or code, and the notes of a GitHub Release
+  now link into the repository at the tag (#609).
+- **A generated reference of the dialects**: `docs/dialects/` holds the
+  ops, types, and attributes of `md`, `dyn`, `md_exec`, `md_dist`, and
+  `mdrt`, generated from TableGen and kept in sync by a test, and
+  `docs/ops.md` links it (#610).
+- **`scripts/ci/build-image.sh`** builds and pushes the image of CI on a
+  machine with Docker, under the tag that the workflows compute, with a
+  `--dry-run` that prints the tag (#611).
+- **CI on GitHub for the CPU tier**: fast checks on every pull request,
+  and on a ready pull request and on main a build with Python and the CPU
+  tests in an image with LLVM/MLIR 23.1.2 and HDF5 (#611).
+- **`MDIR_BUILD_TESTS`** (CMake, on by default) builds the tests and
+  `mdir-opt`; the wheel turns it off, so the wheel builds from its sdist,
+  which leaves `test/` out ([docs/building.md](docs/building.md), #624).
+- **A release builds, checks, and installs its Python wheels**:
+  `scripts/release/publish.sh` builds the wheels with the tarball, checks
+  them, installs each by pip into a fresh environment of its CPython and
+  runs it on the CPU, and one on the GPU
+  (`scripts/release/check-wheel-install.sh`), and attaches them to the
+  release (#641).
 
 ### Changed
 
 - **Tuple coordinate attributes** are accessed through their declared op
   interface during differentiation; emitted programs and results are
   unchanged (D343, #612).
+- **Each decision is a file of its own**, `docs/decisions/Dnnn.md`, under a
+  short table in [docs/decisions.md](docs/decisions.md), and each PR's
+  changelog entry is a fragment in `changelog.d/` that a release moves into
+  CHANGELOG.md (#602).
+- Declare the neighbor-group buffer slots once for the compiler and runtime,
+  and diagnose an invalid slot before accessing runtime storage.
+
+### Fixed
+
+- **A pull request with a pending decision passes the checks**: the table of
+  `docs/decisions.md` lists numbered decisions only, so a PR that adds
+  `docs/decisions/<label>.md` leaves it as it is, and the release path
+  (`check-path.sh`) and `decision-number.sh check --pending` pass on it;
+  the check of the release path no longer fails now and then while its
+  temporary repository is removed (#602, #609).
+- On a GPU, a run with more than 4096 device blocks alive at once no longer
+  leaves memory allocated after it ends. The memory that the runtime keeps
+  for reuse is now bounded in bytes (`MDIR_DEVICE_POOL_BYTES`,
+  `MDIR_FFT_PLAN_BYTES`). It is given back to the driver when an
+  allocation would otherwise run out of memory, or by
+  `mdir.trim_device_memory()` (D348, #622).
+- A seed of $2^{53}$ or more is now fingerprinted exactly, so `--continue`
+  and a Python continuation refuse a changed large seed. Integers below
+  $2^{53}$ keep their text, and their checkpoints continue
+  (D347, #620).
+- **Invalid input storage-set boundary markers are diagnosed** before lowering; valid inputs run as before (D345, #625).
+- Reading `sim.tunables` from another thread during an update now gives the
+  values, version, and history of before, whole, and
+  `sim.tunables.snapshot()` returns all three at once. A buffer exported to
+  a consumer stream keeps the simulation from running even if its view is
+  released during the hand-off (D346, #621).
+- **The shards of a suite cover it**: a shard needs `--order=lexical`, which
+  `lit.cfg.py` now requires, since the default order followed the times
+  recorded in each build tree and two trees took overlapping shards; the
+  check of the expected unsupported tests compares a shard's own tests
+  (D344, #608).
+- **Invalid batched stage row declarations are diagnosed** before lowering; valid staged models run as before (D351, #642).
+- **The checked storage form uses one declared module marker contract** across assignment, loop verification, and lowering, with unchanged simulation behavior (D349, #636).
 
 ## [0.2.0] - 2026-10-26
 ### Added
@@ -707,6 +770,7 @@ mean ± standard deviation of three runs (white paper, Table 10.2):
   Rocky, and Alma 8+, Ubuntu 20.04+, Debian 11+) and x86-64 with an NVIDIA
   driver supporting CUDA 13.0 or newer for the GPU (D177).
 
-[Unreleased]: https://github.com/vv137/mdir/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/vv137/mdir/compare/v0.2.1...HEAD
 [0.1.0]: https://github.com/vv137/mdir/releases/tag/v0.1.0
 [0.2.0]: https://github.com/vv137/mdir/releases/tag/v0.2.0
+[0.2.1]: https://github.com/vv137/mdir/releases/tag/v0.2.1
