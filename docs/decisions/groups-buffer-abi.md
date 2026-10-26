@@ -1,4 +1,8 @@
-# D[groups-buffer-abi]: shared neighbor-group buffer ABI
+# D[groups-buffer-abi]
+
+Recorded at its merge.
+
+**The compiler and runtime share one versioned neighbor-group buffer slot contract.**
 
 The compiler and CUDA runtime include `mdir/Runtime/GroupsABI.h`. Explicit
 slot numbers, element kinds, physical shapes, and roles are declared there.
