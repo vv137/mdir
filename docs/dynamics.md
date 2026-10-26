@@ -240,13 +240,21 @@ run.
 
 `dyn.step` loses `Pure`: it takes the effects of the ops of the program it
 applies, so that a step whose program holds `dyn.store_pressure_state` or a
-stop is not moved across another. As built (step 2a), `dyn.step` collects
-them itself from the body of its program: an effect on a value of the body
-becomes one on its resource, and an op of unknown effects, such as the
-`func.call` of `mdrtDeferStops`, reads and writes every resource. The
-resources of step 2a are `dyn.bath`, `dyn.chain`, and `dyn.stop`; the
-lowered programs of the corpus of #606 are those of before (Section
-2.2.9).
+stop is not moved across another. As built (D[program-effects], #673),
+`dyn.program` carries the summary `effects = {read = [...], write =
+[...]}`, the names of the resources its body reads and writes, and
+`dyn.step` takes that summary, without walking the body. The verifier of
+the program checks the summary against the body: every effect of an op of
+the body is in it, on its resource, and no op of the body has unknown
+effects. A call of the host has the effects that its function declares in
+`dyn.effects`, in the same form: the driver declares `mdrtDeferStops` and
+`mdrtStopConstraintFailure` as writes of `dyn.stop` and `mdrtStopPending`
+as its read and write, and states `{read = ["dyn.stop"], write =
+["dyn.stop"]}` for a program of a step with constraints and `{}` for the
+others. A step of a program without a summary reads and writes every
+resource. The resources so far are `dyn.bath`, `dyn.chain`, and
+`dyn.stop`. `md-inline` removes the `dyn.effects` with the programs, which
+alone read them, so that the lowered program is that of before.
 
 #### 2.2.4 The contract of `dyn.program`
 

@@ -1,0 +1,22 @@
+# D[program-effects]
+
+Recorded at its merge.
+
+**A `dyn.program` states the effects of its body in `effects`, which its verifier checks against the body and `dyn.step` takes; the functions of the host declare theirs in `dyn.effects`.** #673, part of #541; the maintainer's ruling in the review of #672, before step 3a.
+
+**Before (#672).** `dyn.step` was no longer `Pure` and collected its effects by a symbol lookup of its program and a walk of the program's body. An op without an effect interface had unknown effects, and so did every `func.call`. The programs of a run with constraints call `mdrtDeferStops`, `mdrtStopConstraintFailure`, and `mdrtStopPending`, so nearly every step read and wrote every resource. That would block steps that overlap, asynchronous output (#579), distribution, and fusion across steps.
+
+**Now.**
+- `dyn.program` has an optional attribute `effects = {read = [...], write = [...]}` that names resources: `dyn.bath`, `dyn.chain`, `dyn.stop`, or `<Default>`.
+- Its verifier checks the summary against the body, in the manner of the access summary of the loops of `md_exec` (D342). Every read and write of an op of the body is in the summary, on the op's resource, and no op of the body has unknown effects. A `func.call` has the effects that its function declares in the attribute `dyn.effects`, in the same form, and a call of a function without them has unknown effects. The summary may state more than the body has, which is conservative.
+- `dyn.step` takes the summary of its program and does not walk the body. A program without a summary reads and writes every resource, as an op of unknown effects does.
+- The driver declares `mdrtDeferStops` and `mdrtStopConstraintFailure` as writes of `dyn.stop`, and `mdrtStopPending` as a read and a write of it. It states `{read = ["dyn.stop"], write = ["dyn.stop"]}` for each program of a step with constraints, and `{}` for the other programs, `@descend` included.
+- `md-inline` removes the `dyn.effects` of the functions together with the programs, the only readers of those attributes, so that the lowered program stays that of before.
+
+**Alternatives.**
+- Keeping the walk would leave the calls of the host unknown, the reason for this decision.
+- Declaring the effects of the runtime in a table of the dialect, rather than on the declarations in the module, would hide them from the IR that a pass reads.
+- Requiring a summary equal to the body's effects would refuse a conservative summary.
+- Keeping `dyn.effects` through the lowering would change the printed `llvm.func` declarations, but not the code.
+
+No key of the control file, default, or format changes, and no number changes.
