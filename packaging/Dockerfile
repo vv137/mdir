@@ -79,6 +79,49 @@ RUN --mount=type=cache,target=/build/mdir,id=mdir-build \
  && rm -rf /opt/mdir \
  && cmake --install /build/mdir
 
+# --- CI: HDF5, LLVM, MLIR, and the tools of the tests, without CUDA --------
+# The image of the CPU tier of GitHub Actions (#611): `docker build --target
+# ci`, which .github/workflows/ci-image.yml builds and pushes to
+# ghcr.io/vv137/mdir-ci, tagged with a hash of this file and of the two
+# build scripts, and .github/workflows/ci.yml pulls. It shares the two build
+# scripts with the stages above, without CUDA (the GPU tests are
+# unsupported there) and without MDIR, which each CI run builds. Ubuntu
+# 24.04, pinned by digest. It stands before the runtime stage, which stays
+# the last and so the default target.
+FROM ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac AS ci-base
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      build-essential cmake ninja-build git python3 python3-dev python3-venv \
+      ca-certificates curl zlib1g-dev ccache lld \
+ && rm -rf /var/lib/apt/lists/*
+# The interpreter of the tests: lit, pybind11 (the version CMake requires),
+# and NumPy, in a virtual environment on the path.
+RUN python3 -m venv /opt/venv \
+ && /opt/venv/bin/pip install --no-cache-dir lit==23.1.2 pybind11==3.0.1 'numpy>=1.23'
+ENV PATH=/opt/venv/bin:${PATH}
+
+FROM ci-base AS ci-hdf5
+ARG JOBS=4
+COPY scripts/build-hdf5.sh /src/scripts/build-hdf5.sh
+RUN HDF5_ROOT=/opt/hdf5 HDF5_VERSION=1.14.6 JOBS=${JOBS} \
+      /src/scripts/build-hdf5.sh \
+ && rm -rf /opt/hdf5/src /opt/hdf5/build
+
+FROM ci-hdf5 AS ci
+ARG JOBS=4
+ARG LINK_JOBS=2
+COPY scripts/build-llvm.sh /src/scripts/build-llvm.sh
+RUN LLVM_ROOT=/opt/llvm LLVM_VERSION=23.1.2 LLVM_TARGETS="X86;NVPTX" \
+      JOBS=${JOBS} LINK_JOBS=${LINK_JOBS} /src/scripts/build-llvm.sh \
+ && rm -rf /opt/llvm/src /opt/llvm/build
+
+# The same image from an install of LLVM that the jobs of ci-image.yml built
+# with scripts/build-llvm.sh, in parts that share a compile cache, since one
+# hosted job cannot build it within its six hours: the context holds the
+# install tree as ci-llvm/.
+FROM ci-hdf5 AS ci-prebuilt
+COPY ci-llvm/ /opt/llvm/23.1.2/
+
 # --- Runtime -----------------------------------------------------------------
 # The runtime image of CUDA carries cuFFT; the kernels also take the math
 # functions of libdevice, from CUDA_ROOT, which only the devel image has.

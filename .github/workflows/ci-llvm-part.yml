@@ -1,0 +1,81 @@
+name: ci-llvm-part
+
+# One part of the build of LLVM/MLIR 23.1.2 for the image of CI (#611),
+# called by ci-image.yml. A hosted job has 4 cores and six hours, which the
+# whole build exceeds, so each part builds for at most 320 minutes with
+# scripts/build-llvm.sh and keeps its compile cache (ccache) in the Actions
+# cache; the next part takes it and goes on. The part that finishes uploads
+# the install tree.
+on:
+  workflow_call:
+    inputs:
+      part:
+        type: number
+        required: true
+      skip:
+        type: boolean
+        default: false
+    outputs:
+      done:
+        value: ${{ jobs.build.outputs.done }}
+
+jobs:
+  build:
+    if: ${{ !inputs.skip }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    outputs:
+      done: ${{ steps.build.outputs.done }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          df -h /
+      - name: Tools
+        run: sudo apt-get update -q && sudo apt-get install -y -q ninja-build ccache lld
+      - name: Key
+        id: key
+        run: echo "hash=$(cat packaging/Dockerfile scripts/build-llvm.sh scripts/build-hdf5.sh | sha256sum | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache/restore@v4
+        with:
+          path: ~/.ccache
+          key: llvm-ccache-${{ steps.key.outputs.hash }}-${{ github.run_id }}-${{ inputs.part }}
+          restore-keys: llvm-ccache-${{ steps.key.outputs.hash }}-
+      - name: Build
+        id: build
+        env:
+          CCACHE_DIR: ~/.ccache
+          CCACHE_MAXSIZE: 6G
+          CCACHE_COMPRESS: "true"
+        run: |
+          export CCACHE_DIR=$HOME/.ccache
+          ccache -z
+          start=$(date +%s)
+          status=0
+          LLVM_ROOT=$HOME/llvm LLVM_PREFIX=$HOME/llvm-install LLVM_VERSION=23.1.2 \
+            LLVM_TARGETS="X86;NVPTX" JOBS=4 LINK_JOBS=2 \
+            LLVM_EXTRA_CMAKE_ARGS="-DCMAKE_C_COMPILER_LAUNCHER=ccache -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DLLVM_USE_LINKER=lld" \
+            timeout 320m scripts/build-llvm.sh || status=$?
+          echo "part ${{ inputs.part }}: status $status after $(( $(date +%s) - start )) s" | tee -a "$GITHUB_STEP_SUMMARY"
+          ccache -s | tee -a "$GITHUB_STEP_SUMMARY"
+          df -h / | tee -a "$GITHUB_STEP_SUMMARY"
+          if [ "$status" -eq 0 ]; then
+            echo "done=true" >> "$GITHUB_OUTPUT"
+          elif [ "$status" -ne 124 ]; then
+            exit "$status"
+          fi
+      - uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ~/.ccache
+          key: llvm-ccache-${{ steps.key.outputs.hash }}-${{ github.run_id }}-${{ inputs.part }}
+      - name: Install tree
+        if: steps.build.outputs.done == 'true'
+        run: tar -C "$HOME/llvm-install" -czf llvm-install.tar.gz .
+      - uses: actions/upload-artifact@v4
+        if: steps.build.outputs.done == 'true'
+        with:
+          name: llvm-install
+          path: llvm-install.tar.gz
+          retention-days: 3
