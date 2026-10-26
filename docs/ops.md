@@ -756,11 +756,12 @@ The reference of every op is [dialects/dyn.md](dialects/dyn.md).
 | `dyn.load_cell %memory`, `dyn.store_cell ... into %memory` | The cell in a memref of any memory space |
 | `dyn.scale_positions %x, %mu, %m, %cell groups(...)` | $\boldsymbol\mu\odot\mathbf x_i$, each rigid group by its center |
 | `dyn.scaling_work` | $\Delta E_\text{sys}$ of a scaling of the cell, by its `count` |
+| `dyn.load_pressure_state %memory`, `dyn.store_pressure_state ... into %memory` | The state of the pressure of a barostat that scales every step (D92), in a memref of any memory space |
 | `dyn.program` | Defines one time step. |
 | `dyn.step` | Applies a program, with the effects of its body. |
 | `dyn.return` | Terminator. |
 
-The ops of the couplings, from `dyn.momentum` to `dyn.scaling_work`, are
+The ops of the couplings, from `dyn.momentum` to `dyn.store_pressure_state`, are
 those of [dynamics.md](dynamics.md), Section 2.2 (D326); the driver does
 not write them yet (#541, step 3).
 
