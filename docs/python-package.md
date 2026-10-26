@@ -144,9 +144,7 @@ linked statically, repaired by auditwheel to `manylinux_2_28_x86_64`
 --exclude libcublasLt.so.13`):
 
 ```sh
-DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
-  --build-arg MDIR_GIT_COMMIT=$(git rev-parse HEAD) \
-  --target wheels --output type=local,dest=dist .
+scripts/packaging/build.sh wheels --out dist     # packaging/README.md, Targets
 scripts/release/check-wheel.sh dist/*.whl
 ```
 

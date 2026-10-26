@@ -246,8 +246,8 @@ the cluster.
 - **The image** (`ci-image.yml`): HDF5, LLVM/MLIR 23.1.2, and the tools of
   the tests, from the stages `ci-hdf5` and `ci-prebuilt` of
   `packaging/Dockerfile`, tagged with a hash of the Dockerfile and of
-  `scripts/build-llvm.sh` and `scripts/build-hdf5.sh`, which `ci.yml`
-  computes the same way. It runs only when the maintainer starts it
+  `scripts/build-llvm.sh` and `scripts/build-hdf5.sh`, which both
+  workflows take from `scripts/packaging/build.sh ci --print-tag` (#639). It runs only when the maintainer starts it
   (workflow_dispatch), never on a push or a pull request, and builds
   nothing when the tag is present already. One hosted
   job (4 cores, six hours) cannot build LLVM, so `ci-llvm-part.yml` builds it
@@ -255,20 +255,23 @@ the cluster.
   cache, and the image is made over the install tree; the stage `ci` builds
   the same image in one go on a machine that can. A change of the LLVM
   version, of the Dockerfile, or of the two build scripts thus makes a new
-  tag: the maintainer then runs `scripts/ci/build-image.sh --push` or starts
-  `ci-image.yml`, and `ci.yml` takes the image once it is pushed.
-- **The image by hand** (`scripts/ci/build-image.sh`): on a machine with
+  tag: the maintainer then runs `scripts/packaging/build.sh ci --clone main
+  --push --login` or starts `ci-image.yml`, and `ci.yml` takes the image
+  once it is pushed.
+- **The image by hand** (`scripts/packaging/build.sh ci`, the entry point
+  of every container and binary build, [packaging/README.md](../packaging/README.md#targets)): on a machine with
   Docker, the stage `ci` builds LLVM in one go, in about an hour with 16 to
   32 jobs, against several hours of the hosted parts. Use it after a change
   of the LLVM version, the Dockerfile, or the two build scripts (a new
   tag), or whenever the hosted build is too slow:
-  `scripts/ci/build-image.sh --push` clones `BRANCH` (default `main`), builds
-  the image with the tag that `ci-image.yml` and `ci.yml` compute, and
-  pushes it to GHCR with the token of `gh`, which needs the scope
-  `write:packages`; `--source DIR` builds a tree as it is, and
-  `--dry-run --source DIR` prints the tag and the command without Docker.
-  `WORK` (default `/var/tmp/$USER`), `JOBS`, `LINK_JOBS`, `COMMIT`, and
-  `MIN_FREE_GB` adapt it to the machine. `ci-image.yml` then finds the tag
+  `scripts/packaging/build.sh ci --clone main --push --login` clones
+  `main`, builds the image with the tag that `ci-image.yml` and `ci.yml`
+  take, and pushes it to GHCR with the token of `gh`, which needs the scope
+  `write:packages`; without `--clone` it builds the tree it is in (or
+  `--source DIR`) as it is, and `--dry-run` prints the tag and the command
+  without Docker. `--commit SHA` checks the commit of the tree; `WORK`
+  (default `/var/tmp/$USER`), `JOBS`, `LINK_JOBS`, `MIN_FREE_GB`, and
+  `DOCKER` adapt it to the machine. `ci-image.yml` then finds the tag
   present and builds nothing. Pushing publishes, so only the maintainer
   runs `--push`, and only the maintainer starts a run of `ci-image.yml`,
   which pushes; a contributor builds without it, or stops before it, and
