@@ -35,6 +35,10 @@ struct RunOptions {
   /// The wall time that the run may take, in s, or 0 for no limit. The run
   /// stops at the last checkpoint that leaves time for the next interval.
   double maxWalltime = 0.0;
+  /// `mdir emit --segments`: the program of segments that a Python
+  /// simulation of the same model runs (compiler::getSegmentsControl,
+  /// D215), not the program of the run (#568).
+  bool segments = false;
 };
 
 /// Reads the control file `controlFile`, builds the program of the run,

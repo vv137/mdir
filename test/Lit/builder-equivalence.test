@@ -2,7 +2,8 @@
 # docs/driver.md): the script finds the control files of a corpus, emits
 # each with two builds for the CPU and the GPU target, and reports every
 # case that differs. Here a small corpus of the kind "tests" (a test that
-# split-file divides, with an input that its RUN line copies) is checked
+# split-file divides, with an input that its RUN line copies), each control
+# file as the program of a run and of segments (`mdir emit --segments`), is checked
 # with one build against itself, and against two wrappers of it that
 # perturb the module: one adds a comment, which only the raw form sees, and
 # one changes the cutoff, which both forms see. A file of hashes recorded
@@ -37,31 +38,31 @@
 # Two control files: one that builds, and one that stops with an error (an
 # unknown key), whose message is compared as well.
 # SAME: control files: 2
-# SAME-NEXT: cases (control file and target): 4
+# SAME-NEXT: cases (control file, target, and kind): 8
 # SAME-NEXT: compared: module printed, module raw
-# SAME-NEXT: identical: 4 (of which stop with the same error in both: 2)
+# SAME-NEXT: identical: 8 (of which stop with the same error in both: 4)
 # SAME-NEXT: different: 0
 
 # COMMENT: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module raw
 # COMMENT-NEXT: output: lines removed or added: 1
 # COMMENT: +// a comment
 # COMMENT: DIFFERENT: test/Driver/argon.test:argon.toml [gpu] module raw
-# COMMENT: identical: 2 (of which stop with the same error in both: 2)
-# COMMENT-NEXT: different: 2
+# COMMENT: identical: 4 (of which stop with the same error in both: 4)
+# COMMENT-NEXT: different: 4
 
 # PRINTED: compared: module printed
-# PRINTED-NEXT: identical: 4 (of which stop with the same error in both: 2)
+# PRINTED-NEXT: identical: 8 (of which stop with the same error in both: 4)
 # PRINTED-NEXT: different: 0
 
 # CUTOFF: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module printed
 # CUTOFF: -{{.*}}cutoff(0.85000000000000008){{.*}}
 # CUTOFF-NEXT: +{{.*}}cutoff(9.000000e-01){{.*}}
 # CUTOFF: DIFFERENT: test/Driver/argon.test:argon.toml [gpu] module printed
-# CUTOFF: different: 2
+# CUTOFF: different: 4
 
 # VERIFY: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module printed: the output differs from the recorded hash
 # VERIFY-NEXT: DIFFERENT: test/Driver/argon.test:argon.toml [cpu] module raw: the output differs from the recorded hash
-# VERIFY: different: 2
+# VERIFY: different: 4
 
 #--- argon.test.in
 # R-U-N: cp %S/argon.pdb %t

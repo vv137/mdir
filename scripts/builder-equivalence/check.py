@@ -30,7 +30,12 @@ The corpus (all by default; --only takes one or more of the kinds):
 
 Each control file is a case for each target of --targets (cpu and gpu by
 default): a copy of the file with `target` set in [execution]. `mdir emit`
-uses no device; the GPU target only changes the program. A case runs in a
+uses no device; the GPU target only changes the program. Each is a case
+for each kind of program of --kinds as well: `run`, the program of the
+run, and `segments`, the program of segments that a Python simulation of
+the same model runs (`mdir emit --segments`, which builds the branches of
+the start and the loop over the parts). Both by default; a build of
+before `--segments` takes `--kinds run`. A case runs in a
 scratch directory that mirrors the directories above the control file with
 links, so that the paths of its inputs (relative to the control file or to
 the directory it runs in) resolve as they would beside it. The outputs of a
@@ -280,16 +285,19 @@ def run(command, cwd, hide, input=None):
 def outputs(mdir, printer, case, target, stages, forms, scratch, index):
     """The outputs of one build for one case and target:
     {(stage, form): (status, out, err)}."""
-    place = os.path.join(scratch, f"{index}-{target}-{hashlib.sha1(mdir.encode()).hexdigest()[:8]}")
+    target, _, kind = target.partition(" ")
+    place = os.path.join(scratch, f"{index}-{target}{kind}-{hashlib.sha1(mdir.encode()).hexdigest()[:8]}")
     directory, hide = mirror(case, place)
     stem = os.path.splitext(os.path.basename(case.relative))[0]
     control = f"{stem}.equivalence-{target}.toml"
     with open(os.path.join(directory, control), "w", encoding="utf-8",
               errors="surrogateescape") as file:
         file.write(with_target(source_text(case), target))
+    segments = ["--segments"] if kind == "segments" else []
     result = {}
     for stage in stages:
-        status, out, err = run([mdir, "emit", f"--stage={stage}", control], directory, hide)
+        status, out, err = run([mdir, "emit", f"--stage={stage}", *segments, control],
+                               directory, hide)
         if stage == "lowered":
             result[(stage, "printed")] = (status, out, err)
             continue
@@ -316,7 +324,7 @@ def summary(cases, rows):
     failed = {(case, target) for case, target, _, _, same, failed in rows if same and failed}
     stages = sorted({(stage, form) for _, _, stage, form, _, _ in rows})
     print(f"control files: {len(cases)}")
-    print(f"cases (control file and target): {len(keys)}")
+    print(f"cases (control file, target, and kind): {len(keys)}")
     print("compared: " + ", ".join(f"{stage} {form}" for stage, form in stages))
     print(f"identical: {len(keys) - len(different)}"
           f" (of which stop with the same error in both: {len(failed - different)})")
@@ -350,6 +358,8 @@ def main():
     parser.add_argument("--control", action="append", help="a control file of its own")
     parser.add_argument("--root", default=ROOT, help="the repository (this one)")
     parser.add_argument("--targets", default="cpu,gpu")
+    parser.add_argument("--kinds", default="run,segments",
+                        help="the programs: of the run, and of segments (mdir emit --segments)")
     parser.add_argument("--stages", default="module")
     parser.add_argument("--forms", default="raw,printed")
     parser.add_argument("--printer", help="mdir-opt for the printed form")
@@ -365,9 +375,11 @@ def main():
         parser.error(f"{args.command} takes {count} mdir program(s)")
     programs = [program(path) for path in args.programs]
     targets = [t for t in args.targets.split(",") if t]
+    kinds = [k for k in args.kinds.split(",") if k]
     stages = [s for s in args.stages.split(",") if s]
     forms = [f for f in args.forms.split(",") if f]
-    for value, allowed in ((targets, {"cpu", "gpu"}), (stages, {"module", "lowered"}),
+    for value, allowed in ((targets, {"cpu", "gpu"}), (kinds, {"run", "segments"}),
+                           (stages, {"module", "lowered"}),
                            (forms, {"raw", "printed"})):
         if not value or set(value) - allowed:
             parser.error(f"expected some of {', '.join(sorted(allowed))}")
@@ -388,7 +400,9 @@ def main():
             source_text(case)
         if not cases:
             sys.exit("check.py: the corpus is empty")
-        work = [(i, case, target) for i, case in enumerate(cases) for target in targets]
+        # A case of the program of segments is named "<target> segments".
+        work = [(i, case, target + ("" if kind == "run" else " " + kind))
+                for i, case in enumerate(cases) for target in targets for kind in kinds]
         with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
             results = list(pool.map(
                 lambda item: [outputs(mdir, printer, item[1], item[2], stages, forms,

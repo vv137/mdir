@@ -882,6 +882,7 @@ subcommands; `mdir-opt` stays a program for developers.
 | `mdir template md` | Prints a control file with every keyword |
 | `mdir check control.toml` | Reads the input and prints what it found: particles, types, the mass and the density, the cell, the degrees of freedom, the integrator and the target; with a topology also the tuples of each kind, the charges and their sum. Compiles nothing, so it gives no energies: a run of zero steps does. |
 | `mdir emit control.toml --stage=<module\|lowered>` | Prints the program of the run, as `--emit` does in M0 |
+| `mdir emit control.toml --segments` | Prints instead the program of segments that a Python simulation of the same model runs (D215): with the branches of the start and the loop over the parts, built from the control of a simulation (`compiler::getSegmentsControl`); with `--stage`, as above (#568) |
 | `mdir checkpoint <file>` | Prints what a checkpoint holds (`mdir-checkpoint` of M0) |
 | `mdir version` | The version, the LLVM it was built with, the targets it has |
 
@@ -1041,7 +1042,11 @@ them:
 
 **The cases.** Each control file is a case for each target of `--targets`
 (`cpu,gpu` by default), emitted from a copy of the file with `target` set
-in `[execution]`. A case runs in a scratch directory that mirrors the
+in `[execution]`, and for each kind of program of `--kinds`: `run`, the
+program of the run, and `segments`, the program of segments of a Python
+simulation (`mdir emit --segments`), which alone has the branches of the
+start and the loop over the parts (both by default; `--kinds run` for a
+build of before the option). A case runs in a scratch directory that mirrors the
 directories above the control file with links, so a relative input
 resolves as it would beside the file. No case writes into the corpus.
 `mdir emit` uses no device: the module is printed before anything is
