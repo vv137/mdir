@@ -10,7 +10,11 @@ must carry and the tiers of tests.
 
 ## 1. Requirements
 
-- A C++17 compiler
+- A C++17 compiler whose standard library has the floating-point
+  `std::from_chars` (`std::chars_format`): GCC 11 or later, or a Clang whose
+  libc++ or libstdc++ has it. The configure step checks it and refuses an
+  older library, such as that of GCC 9 (#654); CMake keeps the compiler of
+  an existing build tree, so a new compiler takes a new tree
 - CMake 3.20 or later
 - Ninja
 - LLVM and MLIR 23.1.2, built with `scripts/build-llvm.sh`
