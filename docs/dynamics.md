@@ -57,14 +57,18 @@ MDIR takes the one of 2020 (D50). A checkpoint needs nothing for it.
 
 ### 2.2 In `dyn`
 
-*A design, not implemented (D326, #541).* Nothing in this
-section is built yet. `include/mdir/Dialect/Dyn/DynOps.td` has
-`dyn.kick`, `dyn.drift`, `dyn.program`, `dyn.return`, and `dyn.step`, and
-no op of a coupling. The ops below formalize what the driver writes
-today. They add no thermostat or barostat, change no key of the control
-file and no default, and change no number. Steps 2 to 4 of #541 build
-them (Section 2.2.9). Until then Sections 1, 2.3, 2.4, 2.6, and 6
-describe what runs.
+*A design, partly built (D326, #541).* Step 2a has built the ops of the
+thermostats and of the removal of the motion of the center of mass in
+`include/mdir/Dialect/Dyn/DynOps.td` (`dyn.momentum`, `dyn.kinetic`,
+`dyn.half_step_excess`, `dyn.velocity_rescaling`, `dyn.nose_hoover`,
+`dyn.shift`, `dyn.scale`, `dyn.noise`, `dyn.to_bath`), the effects of
+`dyn.step`, the rules of Section 2.2.4 that need no op of the barostat,
+and the pass `dyn-expand-couplings`; the driver does not write the ops
+yet. The ops formalize what the driver writes today. They add no
+thermostat or barostat, change no key of the control file and no default,
+and change no number. The rest of steps 2 to 4 of #541 builds them
+(Section 2.2.9). Until step 3 Sections 1, 2.3, 2.4, 2.6, and 6 describe
+what runs.
 
 #### 2.2.1 What runs today
 
@@ -137,7 +141,7 @@ loops on the device and reductions.
 
 | Op | Operands → results | Value |
 |---|---|---|
-| `dyn.kinetic` | `%v: !vec, %m: !real` → `vector<3xf64>` | $K_a = \tfrac12\sum_i m_iv_{i,a}^2$; one sum |
+| `dyn.kinetic` | `%v: !vec, %m: !real` → `vector<3xf64>` or f64 | $K_a = \tfrac12\sum_i m_iv_{i,a}^2$, or $K = \sum_i \tfrac12\big(m_i(\mathbf v_i\cdot\mathbf v_i)\big)$; one sum. The two round differently, and the driver takes the axes with a barostat and the total without one (`emitKineticVector`, `emitKineticEnergy`), so the op has both (step 2a) |
 | `dyn.momentum` | `%v, %m` → `vector<3xf64>` | $\mathbf P = \sum_i m_i\mathbf v_i$; one sum |
 | `dyn.half_step_excess` | `%f: !vec, %m, %dt: f64` → `vector<3xf64>` | $E_a = \tfrac{\Delta t^2}{8}\sum_i F_{i,a}^2/m_i$, a particle of mass 0 left out: $K_{\text{half},a} - K_a$, exact without constraints [[Jung2018]](references.md#jung2018); one sum |
 | `dyn.group_kinetic` | `%x, %v, %f, %m, %cell: !md.cell, %dt`, `groups(%r: !md.relation, …)`, optional `center(%M: vector<3xf64>)` → three `vector<3xf64>` | $K_{g,a}$, $E_{g,a} = \tfrac{\Delta t^2}{8}\sum_g F_{g,a}^2/M_g$, and $K_{\text{half},g,a} = K_{g,a} + E_{g,a}$ of the centers of the groups (D264, [[Jung2020]](references.md#jung2020)). With `center`, the total mass, $K_g$ is without the motion of the center of mass, as when the run removes it. Two sums over the particles, two over the tuples of each set of groups, and one more with `center` |
@@ -191,7 +195,7 @@ control file today; step 3 checks that the two agree.
 | `dyn.shift` | `%v: !vec, %u: vector<3xf64>` → `!vec` | $\mathbf v_i - \mathbf u$; with $\mathbf u = \mathbf P/M$ the removal of the motion of the center of mass |
 | `dyn.scale` | `%v: !vec, %s: f64` or `vector<3xf64>` → `!vec` | $s\,\mathbf v_i$, or $\mathbf s\odot\mathbf v_i$ |
 | `dyn.scale_positions` | `%x: !vec, %mu: vector<3xf64>, %m: !real, %cell`, `groups(%r: !md.relation, …)` → `!vec` | $\boldsymbol\mu\odot\mathbf x_i$ for a particle alone; each rigid group moves with its center of mass $\mathbf X_g$ to $\boldsymbol\mu\odot\mathbf X_g$ and keeps its shape (D72) |
-| `dyn.noise` | `%v: !vec, %m: !real, %step: i64, %ids: !ids`; attributes `seed`, `decay` $c$, `spread` $\sigma$ → `!vec` | $c\,\mathbf v_i + (\sigma/\sqrt{m_i})\,\mathbf R_i$, with $\mathbf R_i$ three normal numbers of stream 2 of particle $i$ and the step; a particle of mass 0 keeps $\mathbf v_i$. Philox as `arith` ops in the loop, as `emitNoise` writes it |
+| `dyn.noise` | `%v: !vec, %m: !real, %step: i64, %ids: !ids` (a field of i32); attributes `seed`, `decay` $c$, `spread` $\sigma$ → `!vec` | $c\,\mathbf v_i + (\sigma/\sqrt{m_i})\,\mathbf R_i$, with $\mathbf R_i$ three normal numbers of stream 2 of particle $i$ and the step; a particle of mass 0 keeps $\mathbf v_i$. Philox as `arith` ops in the loop, as `emitNoise` writes it |
 
 A chain of `dyn.shift` and `dyn.scale` on one field whose intermediate
 values have no other use lowers to one `md.map_particles` that applies
@@ -224,9 +228,14 @@ values; every op of a module takes the same count, that of the cell of the
 run.
 
 `dyn.step` loses `Pure`: it takes the effects of the ops of the program it
-applies, through an interface that `dyn.program` implements over its body,
-so that a step whose program holds `dyn.store_pressure_state` or a stop is
-not moved across another.
+applies, so that a step whose program holds `dyn.store_pressure_state` or a
+stop is not moved across another. As built (step 2a), `dyn.step` collects
+them itself from the body of its program: an effect on a value of the body
+becomes one on its resource, and an op of unknown effects, such as the
+`func.call` of `mdrtDeferStops`, reads and writes every resource. The
+resources of step 2a are `dyn.bath`, `dyn.chain`, and `dyn.stop`; the
+lowered programs of the corpus of #606 are those of before (Section
+2.2.9).
 
 #### 2.2.4 The contract of `dyn.program`
 
@@ -237,12 +246,20 @@ body holds:
 
 | Name | Rule |
 |---|---|
-| `requires = ["temperature"]` | If and only if the body has a `dyn.noise` |
+| `requires = ["temperature"]` | If and only if the body has a `dyn.noise`; built: if |
 | `requires = ["pressure"]` | If and only if the body has a `dyn.scale_positions`, whose strain the barostat computes from the pressure (`step_trotter`) |
-| `provides = ["thermostatting"]` | If and only if the body has a `dyn.noise` |
+| `provides = ["thermostatting"]` | If and only if the body has a `dyn.noise`; built: if |
 | `provides = ["barostatting"]` | If and only if the body has a `dyn.scale_positions` |
-| `provides = ["symplectic", "time_reversible"]` | Only if the body has neither: friction, noise, and a scaling within the drift are neither. Neither integrator conserves energy exactly [[Hairer2003]](references.md#hairer2003), and neither claims to (ops.md, Section 6.3) |
-| `provides = ["no_global_sums"]` (new) | Only if the body computes no global sum: no op of the measurements above, no `md.sum_particles`, `md.sum_tuples`, or `md.sum_relation` with a floating-point result, and no `md.evaluate` that requests the energy or the virial |
+| `provides = ["symplectic", "time_reversible"]` | Only if the body has neither: friction, noise, and a scaling within the drift are neither. Neither integrator conserves energy exactly [[Hairer2003]](references.md#hairer2003), and neither claims to (ops.md, Section 6.3); built for `dyn.noise` |
+| `provides = ["no_global_sums"]` (new) | Only if the body computes no global sum: no op of the measurements above, no `md.sum_particles`, `md.sum_tuples`, or `md.sum_relation` with a floating-point result, and no `md.evaluate` that requests the energy, the virial, or a derivative; built |
+
+The rules of the barostat wait for `dyn.scale_positions` (step 2b). Of the
+others, step 2a checks the direction from the body to the claim. The
+converse would refuse the driver's programs until step 3a writes
+`dyn.noise`: the programs of Brownian dynamics claim `thermostatting` and
+hold their noise as `arith` ops. A program also keeps its claims when
+`dyn-expand-couplings` expands the ops that they rest on, which a check
+from the claim to the body would refuse after the expansion.
 
 `no_global_sums` allows what a plain step reduces today and does not wait
 for: the flags of the constraints, an `i1` that `md.gather_tuples` yields
@@ -461,11 +478,27 @@ provenance, which no continuation compares
 | Step | What | Done when |
 |---|---|---|
 | 1 | This design | Reviewed |
-| 2 | The ops in `DynOps.td`, with their verifiers and effects, `no_global_sums` in the verifier of `dyn.program`, round-trip and invalid tests in `test/Dialect/Dyn`, and `dyn-expand-couplings`, with a test for each op that its expansion is the text the driver writes today; ops.md, Sections 6 and 9.1 | The driver unchanged; the suite passes |
+| 2 | The ops in `DynOps.td`, with their verifiers and effects, `no_global_sums` in the verifier of `dyn.program`, round-trip and invalid tests in `test/Dialect/Dyn`, and `dyn-expand-couplings`, with a test for each op that its expansion is the text the driver writes today; ops.md, Sections 6 and 9.1. In three parts, as step 3: 2a the ops of 3a (built), 2b those of 3b, 2c those of 3c | The driver unchanged; the suite passes |
 | 3a | The driver writes the thermostats: the removal of the motion of the center of mass, `V-RESCALE`, `NOSE-HOOVER`, `dyn.to_bath`, and `dyn.noise` for `LANGEVIN` and `BROWNIAN` | In the deterministic mode the NVT and Langevin runs of `examples/ala3`, `thermostat.test`, `nose-hoover.test`, `langevin.test`, and `brownian.test` are bitwise those of `main`, on the CPU and a GPU, in `mixed` and `double`; otherwise within the tolerances of the tests; a checkpoint of `main` continues bitwise |
 | 3b | The barostat with `"EXACT"` and `"FIRST_ORDER"`, isotropic, semi-isotropic, and anisotropic: `dyn.group_kinetic`, `dyn.pressure`, `dyn.cell_rescaling`, the cell, `dyn.scale_positions`, `dyn.scaling_work` | The same for `barostat.test` and NPT of `examples/ala3` with these counts |
 | 3c | The Trotter steps: `@step_trotter` with `dyn.scale_positions` in its body, `"TROTTER"` and `"TROTTER_FIRST_ORDER"`, the period of one step with `dyn.load_pressure_state` and `dyn.store_pressure_state`; the claims of Section 2.2.4 | The same with the default `work`, `barostat-pme-restart.test` bitwise; the Amber suite and NPT of `examples/ala3` at the rate of `main` on one device |
 | 4 | In the PRs of step 3: this section describes the ops as built, the white paper's Section 6 and decisions.md say so | Each PR of step 3 updates them for what it moves |
+
+**Step 2a, as built.** `dyn-expand-couplings` (in
+`lib/Dialect/MD/Transforms/ExpandCouplings.cpp`) runs after `md-inline` and
+before `md-bypass-updates`; it declares the functions of the host it calls
+as the driver declares them. Two checks show that each op expands to the
+text that the driver writes. `test/Dialect/MD/Transforms/expand-couplings-noise.mlir`
+holds the program of a Langevin step of `mdir emit` with its noise as
+`dyn.noise`, and the expansion must print that program verbatim.
+`scripts/builder-equivalence/lift_couplings.py` replaces, in a module that
+`mdir emit` prints, each sum, loop, and call that an op expands to with the
+op; the module of the ops and that of the text, lowered by `mdir-opt` with
+the pipeline of the run, must be the same text (`test/Lit/lift-couplings.test`,
+and the corpus of #606 in #672). The ops change no
+program the driver builds, and the lowered programs of the corpus with
+`dyn.step` no longer `Pure` and the pass in the pipeline are those of
+`main`.
 
 Each part of step 3 checks the drift and distribution tests of Section 2.4
 as they stand. Derivatives through the couplings (M2b), groups with a

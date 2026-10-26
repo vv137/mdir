@@ -13,7 +13,10 @@ into the schedule of the run as sums, calls of the host, and loops over
 the particles, are to become ops of `dyn` that lower to the same
 operations, so that the step program states which global sums a coupling
 takes and what state of the host it changes, with no change of the
-numbers below (D326, [dynamics.md](../dynamics.md), Section 2.2).
+numbers below (D326, [dynamics.md](../dynamics.md), Section 2.2). The ops
+of the thermostats and of the removal of the motion of the center of mass
+exist, with a pass that expands them to the text the driver writes; the
+driver does not write them yet.
 
 ## 6.1 Integrators
 
