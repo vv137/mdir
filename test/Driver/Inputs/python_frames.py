@@ -1305,13 +1305,29 @@ LOOP_IN_USE_BOUND = 64
 
 def frame_loop(text):
     """The lines of the entry before its loop over frames, and those of the
-    loop, which ends the entry."""
+    loop, which ends the entry. The module names its values as the printer
+    numbers them (#568): the loop over frames is the one that runs to the
+    largest index, 2^63 - 1."""
     lines = text.splitlines()
-    heads = [n for n, line in enumerate(lines) if line.lstrip().startswith("scf.for %i_frame = ")]
+    heads = [n for n, line in enumerate(lines)
+             if line.lstrip().startswith("scf.for ") and " to %c9223372036854775807 step " in line]
     assert len(heads) == 1, heads
-    entry = max(n for n in range(heads[0]) if lines[n].startswith("func.func @"))
-    assert lines[-3:] == ["  }", "  return", "}"], lines[-3:]
-    return lines[entry:heads[0]], lines[heads[0] + 1:-3]
+    entry = max(n for n in range(heads[0]) if lines[n].startswith("  func.func @"))
+    assert lines[-4:] == ["    }", "    return", "  }", "}"], lines[-4:]
+    return lines[entry:heads[0]], lines[heads[0] + 1:-4]
+
+
+def replaced_arguments(evaluator, signature):
+    """The arguments of the entry that a frame replaces: the positions (the
+    first), the edges of the cell (the first three f64), and the tilts of a
+    triclinic cell, which are values of the start, the last arguments, in
+    the order of `_start_values` (D227)."""
+    arguments = re.findall(r"(%arg\d+): ([^ ,)]+)", signature)
+    reals = [name for name, kind in arguments if kind == "f64"]
+    starts = evaluator._simulation._start_values
+    tail = [name for name, _ in arguments[len(arguments) - len(starts):]] if starts else []
+    tilts = [name for name, value in zip(tail, starts) if value.startswith("tilt_")]
+    return [arguments[0][0]] + reals[:3] + tilts
 
 
 class Mallinfo2(ctypes.Structure):
@@ -1351,7 +1367,7 @@ def run_loop():
     allocation = re.compile(r"\.alloca(?!\w)")
     constant = re.compile(r"^\s*%[\w$.-]+ = memref\.alloca\(\) : memref<[^?>]*>$")
     generic = re.compile(r"(?<![\w.])call\b")
-    replaced = re.compile(r"%(positions|lx|ly|lz|tilt_bx|tilt_cx|tilt_cy|box_memory)(?![\w$.-])")
+
     program = dipeptide_program()
     whole = mdir.FrameEvaluator(program)
     evaluators = {"the whole potential": whole,
@@ -1360,6 +1376,7 @@ def run_loop():
                   "a triclinic cell": mdir.FrameEvaluator(triclinic_program())}
     for name, evaluator in evaluators.items():
         before, loop = frame_loop(evaluator._simulation._ir)
+        replaced = re.compile("(" + "|".join(replaced_arguments(evaluator, before[0])) + r")(?![\w$.-])")
         rows = [line.strip() for line in loop if allocation.search(line)]
         found = {what: [line.strip() for line in loop if pattern.search(line)]
                  for what, pattern in (("calls in the generic form", generic),
@@ -1368,7 +1385,7 @@ def run_loop():
             line for line in rows if not constant.search(line)]
         # The cell of a frame, which the boundary fills, is taken before the
         # loop in every program of frames.
-        cells = sum(1 for line in before if "%frame_cell = memref.alloca() : memref<6xf64>" in line)
+        cells = sum(1 for line in before if "= memref.alloca() : memref<6xf64>" in line)
         boundaries = sum(1 for line in loop if "func.call @mdrtFrameBoundary(" in line)
         evaluations = sum(1 for line in loop if "md.evaluate " in line)
         clean = (not any(found.values()) and boundaries == 1 and evaluations >= 1 and

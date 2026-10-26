@@ -17,14 +17,15 @@
 # The term with an override looks its parameters up in tables of the pairs
 # of types; the other gathers the charges and multiplies them.
 #
-# MODULE:      !table = !md.table<2, f64, symmetric>
-# MODULE:      md.potential @energy(%x: !vec, %cell: !md.cell, %p_type: !ids, %p_q: !real, %t_lj_epsilon: !table, %t_lj_sigma: !table) -> f64
-# MODULE:        md.sum_relation %n, %x, %cell gather(%p_type : !ids)
-# MODULE-DAG:      %sigma = md.lookup %t_lj_sigma[%type_i, %type_j] : !table, i32, i32 -> f64
-# MODULE-DAG:      %epsilon = md.lookup %t_lj_epsilon[%type_i, %type_j] : !table, i32, i32 -> f64
-# MODULE:        md.sum_relation %n, %x, %cell gather(%p_q : !real)
-# MODULE:          %coulomb = arith.constant 3.3206371329919{{[0-9]*}}e+02 : f64
-# MODULE:          %q = arith.mulf %q_i, %q_j : f64
+# MODULE:      md.potential @energy({{%[a-z0-9]+}}: !md.field<@atoms, 3 x f64>, {{%[a-z0-9]+}}: !md.cell, [[TYPE:%[a-z0-9]+]]: !md.field<@atoms, i32>, [[Q:%[a-z0-9]+]]: !md.field<@atoms, f64>, [[EPSILON:%[a-z0-9]+]]: !md.table<2, f64, symmetric>, [[SIGMA:%[a-z0-9]+]]: !md.table<2, f64, symmetric>) -> f64
+# MODULE:        md.sum_relation {{.*}} gather([[TYPE]] : !md.field<@atoms, i32>)
+# MODULE-NEXT:   ^bb0({{%[a-z0-9]+}}: f64, {{%[a-z0-9]+}}: vector<3xf64>, [[TI:%[a-z0-9]+]]: i32, [[TJ:%[a-z0-9]+]]: i32):
+# MODULE-DAG:      md.lookup [[SIGMA]]{{\[}}[[TI]], [[TJ]]] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+# MODULE-DAG:      md.lookup [[EPSILON]]{{\[}}[[TI]], [[TJ]]] : !md.table<2, f64, symmetric>, i32, i32 -> f64
+# MODULE:        md.sum_relation {{.*}} gather([[Q]] : !md.field<@atoms, f64>)
+# MODULE-NEXT:   ^bb0({{%[a-z0-9]+}}: f64, {{%[a-z0-9]+}}: vector<3xf64>, [[QI:%[a-z0-9]+]]: f64, [[QJ:%[a-z0-9]+]]: f64):
+# MODULE:          arith.constant 332.0637132991{{[0-9]*}} : f64
+# MODULE:          arith.mulf [[QI]], [[QJ]] : f64
 
 [input]
 coordinates = "Inputs/mixture.pdb"

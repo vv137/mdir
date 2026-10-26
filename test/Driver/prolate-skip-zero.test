@@ -30,10 +30,10 @@
 
 # COUNT: 1860 of 4905 particles charged
 
-# MODULE: md.reciprocal %x, %p_q, %cell, %t_pme_moduli listed(%p_pme_listed)
-# MODULE-NEXT: prolate gather_all{{$}}
-# HALF-MODULE: md.reciprocal %x, %p_q, %cell, %t_pme_moduli listed(%p_pme_listed)
-# HALF-MODULE-NEXT: prolate{{$}}
+# MODULE: md.reciprocal %arg0, {{%arg[0-9]+}}, %arg1, {{%arg[0-9]+}} listed({{%arg[0-9]+}})
+# MODULE-SAME: prolate gather_all :
+# HALF-MODULE: md.reciprocal %arg0, {{%arg[0-9]+}}, %arg1, {{%arg[0-9]+}} listed({{%arg[0-9]+}})
+# HALF-MODULE-SAME: prolate :
 
 # DOUBLE: INFO: {{ *}}0 {{ *}}0.0000 {{ *}}-10338.1234 {{ *}}-12540.0451 {{ *}}2201.9217 {{ *}}300.0000 {{ *}}-2248.5499 {{ *}}-24.3685 {{ *}}-10338.1234 {{ *}}52632.8855 {{ *}}1400.8698
 # DOUBLE: INFO: {{ *}}20 {{ *}}0.0400 {{ *}}-10357.8745 {{ *}}-12863.8849 {{ *}}2506.0104 {{ *}}343.4605 {{ *}}-3236.3605 {{ *}}-408.5596 {{ *}}-10341.6288 {{ *}}52582.7312 {{ *}}1399.9797

@@ -499,6 +499,13 @@ const std::string &Simulation::getProgramText() const {
   return compiled->program.module;
 }
 
+std::vector<std::string> Simulation::getStartValueNames() const {
+  std::vector<std::string> names;
+  for (const auto &value : compiled->program.startValues)
+    names.push_back(value.name);
+  return names;
+}
+
 size_t Simulation::getStackInUse() const {
   if (!activation || !activation->boundary)
     return 0;

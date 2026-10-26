@@ -49,6 +49,8 @@ The forms compared (--forms, both by default):
 --stages takes module (the default), lowered, or both: lowered is the
 program after the passes, as `mdir emit --stage=lowered` prints it, with
 the kernels of a GPU target (no device is used, but the CUDA toolkit is).
+MLIR's printer already prints it, so it has one form, "printed", which is
+compared whatever --forms says.
 
 A case is identical when the status, the output, and the error output are
 the same in every form; a case that stops with an error in both builds,
@@ -144,6 +146,7 @@ class Case:
     def __init__(self, name, top, relative, parts=None, copies=()):
         self.name, self.top, self.relative = name, top, relative
         self.parts, self.copies = parts, copies
+        self.text = None
 
 
 def corpus(args, scratch):
@@ -248,11 +251,16 @@ def mirror(case, place):
 
 
 def source_text(case):
+    """The control file of the case, read once: both builds take this text,
+    even if the file changes while the check runs (another run in the
+    prepared Amber suite may write its control files)."""
     if case.parts is not None:
         return case.parts[case.relative]
-    with open(os.path.join(case.top, case.relative), encoding="utf-8",
-              errors="surrogateescape") as file:
-        return file.read()
+    if case.text is None:
+        with open(os.path.join(case.top, case.relative), encoding="utf-8",
+                  errors="surrogateescape") as file:
+            case.text = file.read()
+    return case.text
 
 
 def run(command, cwd, hide, input=None):
@@ -282,6 +290,9 @@ def outputs(mdir, printer, case, target, stages, forms, scratch, index):
     result = {}
     for stage in stages:
         status, out, err = run([mdir, "emit", f"--stage={stage}", control], directory, hide)
+        if stage == "lowered":
+            result[(stage, "printed")] = (status, out, err)
+            continue
         if "raw" in forms:
             result[(stage, "raw")] = (status, out, err)
         if stage == "module" and "printed" in forms:
@@ -373,6 +384,8 @@ def main():
     scratch = tempfile.mkdtemp(prefix="builder-equivalence-", dir=args.scratch)
     try:
         cases = corpus(args, scratch)
+        for case in cases:
+            source_text(case)
         if not cases:
             sys.exit("check.py: the corpus is empty")
         work = [(i, case, target) for i, case in enumerate(cases) for target in targets]
@@ -386,7 +399,7 @@ def main():
     if args.show_errors:
         for (_, case, target), result in zip(work, results):
             for (stage, form), (status, _, err) in sorted(result[-1].items()):
-                if status != 0 and form == forms[0]:
+                if status != 0 and (form == forms[0] or stage == "lowered"):
                     first = err.decode(errors="replace").strip().splitlines()[:1]
                     print(f"ERROR: {case.name} [{target}] {stage}: {first[0] if first else status}")
 

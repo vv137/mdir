@@ -25,16 +25,13 @@
 # A parameter that differs between the types is a field, and the kernel
 # mixes the values of the two particles.
 #
-# MODULE:      md.potential @energy(%x: !vec, %cell: !md.cell, %p_epsilon: !real, %p_sigma: !real) -> f64
-# MODULE:        md.sum_relation %n, %x, %cell gather(%p_epsilon, %p_sigma : !real, !real)
-# MODULE-NEXT:       exchange(symmetric) truncation(switch, from = 7.5{{0*}}e-01)
-# MODULE-NEXT:   ^bb0(%r: f64, %d: vector<3xf64>, %epsilon_i: f64, %epsilon_j: f64, %sigma_i: f64, %sigma_j: f64):
-# MODULE:          %product_epsilon = arith.mulf %epsilon_i, %epsilon_j : f64
-# MODULE-NEXT:     %epsilon = math.sqrt %product_epsilon : f64
-# MODULE:          %sum_sigma = arith.addf %sigma_i, %sigma_j : f64
-# MODULE:        func.func @mdir_run(
-# MODULE-NEXT:       %positions: memref<?x3xf64>, %velocities: memref<?x3xf64>,
-# MODULE-NEXT:       %masses: memref<?xf64> {mdrt.read_only}, %b_epsilon: memref<?xf64> {mdrt.read_only}, %b_sigma: memref<?xf64> {mdrt.read_only},
+# MODULE:      md.potential @energy([[X:%[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, [[CELL:%[a-z0-9]+]]: !md.cell, [[EPSILON:%[a-z0-9]+]]: !md.field<@atoms, f64>, [[SIGMA:%[a-z0-9]+]]: !md.field<@atoms, f64>) -> f64
+# MODULE:        md.sum_relation {{%[a-z0-9]+}}, [[X]], [[CELL]] gather([[EPSILON]], [[SIGMA]] : !md.field<@atoms, f64>, !md.field<@atoms, f64>) exchange(symmetric) truncation(switch, from = 7.500000e-01)
+# MODULE-NEXT:   ^bb0({{%[a-z0-9]+}}: f64, {{%[a-z0-9]+}}: vector<3xf64>, [[EI:%[a-z0-9]+]]: f64, [[EJ:%[a-z0-9]+]]: f64, [[SI:%[a-z0-9]+]]: f64, [[SJ:%[a-z0-9]+]]: f64):
+# MODULE:          [[PRODUCT:%[a-z0-9]+]] = arith.mulf [[EI]], [[EJ]] : f64
+# MODULE-NEXT:     math.sqrt [[PRODUCT]] : f64
+# MODULE:          arith.addf [[SI]], [[SJ]] : f64
+# MODULE:        func.func @mdir_run({{%[a-z0-9]+}}: memref<?x3xf64>, {{%[a-z0-9]+}}: memref<?x3xf64>, {{%[a-z0-9]+}}: memref<?xf64> {mdrt.read_only}, {{%[a-z0-9]+}}: memref<?xf64> {mdrt.read_only}, {{%[a-z0-9]+}}: memref<?xf64> {mdrt.read_only},
 
 [input]
 coordinates = "Inputs/mixture.pdb"

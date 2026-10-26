@@ -22,5 +22,5 @@
 # Verify that the step potential exercises the mapped-charge producer,
 # rather than masking #26 with the former host-computed q_rec field.
 # MAP-LABEL: md.potential @energy(
-# MAP: %q_scaled = md.map_particles
-# MAP: md.reciprocal %x, %q_scaled,
+# MAP: [[QSCALED:%[0-9]+]] = md.map_particles
+# MAP: md.reciprocal %arg0, [[QSCALED]],

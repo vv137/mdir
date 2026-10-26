@@ -130,10 +130,14 @@
 # EVALUATES:      MDIR: note: '{{.*}}first.h5' was written by a run of other physics or coupling; the run evaluates the forces and the state of the barostat at its first step (checkpoint -> control file):
 # EVALUATES-NEXT:   {{\[\[}}energy.pair{{\]\]}}: [{expression={{.*}}] -> [{dispersion_correction="NONE",expression={{.*}}]
 
-# GIVEN:         mdrt.from_buffer %forces
-# EVALUATED-NOT: mdrt.from_buffer %forces
-# EVALUATED:     md.evaluate @energy(%x0
-# EVALUATED-NOT: mdrt.from_buffer %forces
+# The entry takes the positions, the velocities, and, when the forces are
+# given, the forces, the three buffers of 3 x f64 first.
+# GIVEN:         func.func @mdir_run(%arg0: memref<?x3xf64>, %arg1: memref<?x3xf64>, %arg2: memref<?x3xf64>,
+# GIVEN:         mdrt.from_buffer %arg2 : memref<?x3xf64> to !md.field<@atoms, 3 x f64>
+# EVALUATED:     func.func @mdir_run(%arg0: memref<?x3xf64>, %arg1: memref<?x3xf64>, %arg2: memref<?xf64>
+# EVALUATED:     mdrt.from_buffer %arg1 : memref<?x3xf64>
+# EVALUATED-NOT: : memref<?x3xf64> to
+# EVALUATED:     md.evaluate @energy(
 
 # A chain of other length begins at rest; the cell of another run's
 # barostat is worth a warning.

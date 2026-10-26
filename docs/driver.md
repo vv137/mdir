@@ -529,7 +529,12 @@ loops that compute the energy and the forces.
 
 ### 2.5 What the driver builds
 
-`mdir emit control.toml` prints the module that the driver builds,
+`mdir emit control.toml` prints the module that the driver builds, as
+MLIR's printer prints it once the builder's text is parsed (#568: the SSA
+names, the numbers, and the layout are the printer's, and the text holds
+no comments and no type aliases of the builder; the locations that the
+builder gives, the terms of custom expressions, stand after their ops as
+before),
 `mdir emit control.toml --stage=lowered` the module that is executed, and
 `--stage=pipeline` the passes between them.
 
@@ -995,9 +1000,12 @@ for the dispersion are conventions of MDIR ([nonbonded.md](nonbonded.md), Sectio
 
 ### 2.11 The equivalence check of the builder
 
-The builder writes the module as MLIR text (`Builder.cpp`), and
-`mdir emit --stage=module` prints that text as it is built, before it is
-parsed (`tools/mdir/Run.cpp`). #568 moves the builder to IR built with
+The builder writes the module as MLIR text (`Builder.cpp`). Since step 2
+of #568 the program keeps it as MLIR's printer prints it once the text is
+parsed (`printParsedModule`, `lib/Driver/ProgramModule.cpp`, called by
+`buildProgram`), with the locations of its ops, and `mdir emit
+--stage=module` and Python's `Program.ir` print it for reading
+(`printModuleForReading`); before, they printed the builder's text itself. #568 moves the builder to IR built with
 `OpBuilder`, in stages, and no stage may change the generated program.
 `scripts/builder-equivalence/check.py` shows this for two builds of the
 driver, over a fixed corpus. It is the gate of every later stage of #568.
@@ -1047,22 +1055,42 @@ replaced by `<corpus>`. A case that stops with an error is therefore
 identical only if both builds stop with the same message. `--forms`
 selects the forms of the module stage, both by default:
 
-- `raw`: the bytes that `mdir emit --stage=module` prints, which today is
-  the builder's own text: its SSA names, its type aliases, its comments,
-  and its formats of numbers.
+- `raw`: the bytes that `mdir emit --stage=module` prints. Until step 2
+  of #568 that was the builder's own text, with its SSA names, its type
+  aliases, its comments, and its formats of numbers; since, it is the
+  printed module, so the two forms agree.
 - `printed`: the module after a round trip through `mdir-opt` (by default
   the one beside NEW; `--printer`) with MLIR's default printer. The
   printer numbers the SSA values itself and prints no comments, no
   aliases of the text, and no locations.
 
-Locations are not part of the contract. The builder's text has none, emit
-has no option that prints them, and the default printer leaves out the
-locations that parsing gives the ops. `mdir-opt --mlir-print-debuginfo`
-would print them, and the check does not use it.
+**Locations.** The program holds two kinds, and both are part of it:
+
+- The locations that the builder gives. The ops of a custom expression
+  carry the name of their term (`loc("control-file term: wall")`,
+  `Expression.cpp`), which the diagnostics of the passes name
+  (`external-terms.test`). Emit prints them after their ops, as the
+  builder's text had them.
+- The positions of the ops in the builder's text (`loc("-":2451:5)`). The
+  lowering names a kernel that it outlines from a loop by the line of the
+  loop (`mdir_run_particle_for_l2451_...`, `MDExecToGPU`). The program's
+  text keeps them, so that a text printed and parsed again names its
+  kernels as the builder's text did; emit leaves them out, since they
+  refer to a text that nobody reads.
+
+The `printed` form leaves out every location, and the lowered program
+holds the positions in the names of its kernels. A later stage that builds
+a loop with `OpBuilder` keeps its kernel's name only with the position of
+the loop that the text gave; kernel names that do not depend on the lines
+of the text would be a change of the lowering, for a decision of its own.
+Step 1 of #568 said that locations were not part of the contract; that was
+wrong for both kinds, and is corrected here.
 
 `--stages module,lowered` adds the program after the passes, as
 `mdir emit --stage=lowered` prints it, with the kernels of the GPU target.
-That needs the CUDA toolkit but no device.
+That needs the CUDA toolkit but no device. MLIR's printer prints it, so it
+has the one form `printed`, compared whatever `--forms` says (before step
+2 of #568, `--forms printed` left it out).
 
 **What each stage keeps.** Step 1 of #568, which adds the check, keeps
 both forms, and the lowered program as well. A stage that builds ops with

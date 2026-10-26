@@ -26,9 +26,9 @@
 #
 # MODULE:      func.func private @mdrtNoseHooverFactor(i64, f64) -> f64
 # MODULE-NOT:  @mdrtBussiFactor
-# MODULE:      %alpha1 = func.call @mdrtNoseHooverFactor(%{{[a-z0-9_]+}}, %kot1) : (i64, f64) -> f64
-# MODULE:      %heat1 = arith.subf %kc1, %kn1 : f64
-# MODULE:      func.call @mdrtAddBath(%heat1) : (f64) -> ()
+# MODULE:      [[ALPHA:%[0-9]+]] = func.call @mdrtNoseHooverFactor(%{{[a-z0-9_]+}}, {{%[0-9]+}}) : (i64, f64) -> f64
+# MODULE:      [[HEAT:%[0-9]+]] = arith.subf {{%[0-9]+}}, {{%[0-9]+}} : f64
+# MODULE-NEXT: func.call @mdrtAddBath([[HEAT]]) : (f64) -> ()
 
 # CHECK-TOOL: thermostat:         NOSE-HOOVER
 

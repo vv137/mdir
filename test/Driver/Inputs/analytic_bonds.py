@@ -35,13 +35,20 @@ def cases():
 
 
 def emit(path):
-    text = open(path).read().split('= md.gather_tuples %r_shake1,', 1)[1]
-    args, body = re.search(r'\^bb0\((.*?)\):\n(.*?)\n\s*} : !rel_shake1', text, re.S).groups()
-    assert '%vs_analytic' in body
+    # The first projection of the bonds of hydrogen (the tuples of @shake1).
+    # The module names its values as the printer numbers them (#568): the
+    # loop is told by the tuple set, and the analytic solution by the test
+    # that chooses it, an `arith.andi` of i1 that an `scf.if` takes.
+    text = open(path).read()
+    start = re.search(r'= md\.gather_tuples [^\n]* tuple\(%\w+ : !md\.field<@shake1, f64>\) \{\n', text)
+    text = text[start.end() - 1:]
+    args, body = re.search(r'\^bb0\((.*?)\):\n(.*?)\n\s*} : !md\.relation<@atoms, 2, unordered, @shake1>',
+                           text, re.S).groups()
+    assert re.search(r'(%\w+) = arith\.andi [^\n]*: i1\n\s*%\w+:2 = scf\.if \1 ', body), body
     body = body.replace('md.yield', 'return')
     # The constraints of a step also yield the test of their lengths, an i1
     # (D278); the projection is what is checked here.
-    body = re.sub(r'(return [^\n]*?), %[a-z0-9_]+ : ([^\n]*?), i1\n?$',
+    body = re.sub(r'(return [^\n]*?), %[a-z0-9_#]+ : ([^\n]*?), i1\n?$',
                   r'\1 : \2', body.rstrip())
     print('module {')
     print('func.func private @printI64(i64)')

@@ -98,8 +98,10 @@ capacity = first.plan["neighbor_capacity"]
 assert first.ir == second.ir, "the starting cell changes the program text"
 assert first.pipeline == second.pipeline, (first.pipeline, second.pipeline)
 assert f"width={capacity}" in first.pipeline, first.pipeline
-for name in ("baro_constant", "baro_energy_constant", "rest_edge0", "rest_edge1", "rest_edge2"):
-    assert f"%{name}: f64" in first.ir and f"%{name} = arith.constant" not in first.ir, name
+# The values that the starting cell gives (the constants of the exact work
+# of the barostat, the edges of the reference of the restraints) are
+# arguments of the entry, not constants of the text (D227): the equality
+# above holds only so, as the two cells differ by 1%.
 print(f"{target} {precision}: the starting cell leaves the text and the pipeline as they are, "
       f"capacity {capacity}")
 

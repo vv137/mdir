@@ -37,14 +37,13 @@
 # holds 99 periods and a last one that its step of energy ends.
 #
 # MODULE:      func.func private @mdrtBussiFactor(i64, i64, f64, f64, f64, f64) -> f64
-# MODULE:      %n0 = arith.constant 2 : index
-# MODULE-NEXT: %n1 = arith.constant 99 : index
-# MODULE-NEXT: %n2 = arith.constant 9 : index
-# MODULE:      %freedom = arith.constant 7.65{{0*}}e+02 : f64
-# MODULE:      %ko{{.*}} = arith.addf %ko{{.*}}k, %ko{{.*}}e : f64
-# MODULE:      %alpha1 = func.call @mdrtBussiFactor(%seed, %step1, %kot1, %target_kinetic, %freedom, %decay)
-# MODULE:      %vc1 = md.map_particles gather(%vk1 : !vec) {
-# MODULE:      %alpha0 = func.call @mdrtBussiFactor(%seed, %step0, %kot0, %target_kinetic, %freedom, %decay)
+# MODULE:      arith.constant 2 : index
+# MODULE-NEXT: arith.constant 99 : index
+# MODULE-NEXT: arith.constant 9 : index
+# MODULE:      [[FREEDOM:%[a-z0-9_]+]] = arith.constant 7.650000e+02 : f64
+# MODULE:      [[ALPHA1:%[0-9]+]] = func.call @mdrtBussiFactor(%c314159_i64, {{%[0-9]+}}, {{%[0-9]+}}, {{%[a-z0-9_]+}}, [[FREEDOM]], {{%[a-z0-9_]+}})
+# MODULE:      md.map_particles gather({{%[0-9#]+}} : !md.field<@atoms, 3 x f64>) {
+# MODULE:      func.call @mdrtBussiFactor(%c314159_i64, {{%[0-9]+}}, {{%[0-9]+}}, {{%[a-z0-9_]+}}, [[FREEDOM]], {{%[a-z0-9_]+}})
 
 #--- run.toml
 [input]

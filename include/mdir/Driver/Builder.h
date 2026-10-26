@@ -422,6 +422,20 @@ llvm::Expected<Program> buildProgram(const Control &control,
                                      const System &system,
                                      const BuildKept *kept = nullptr);
 
+/// Replaces the module text of `program` with the module as MLIR's printer
+/// prints it once the text is parsed (#568, ProgramModule.cpp): its SSA
+/// names, numbers, and layout are the printer's, not the builder's. A text
+/// that does not parse is left as it is, for the lowering to report.
+/// buildProgram calls it on every program it returns. The text keeps the
+/// locations of the ops: those that the builder gives (the terms of custom
+/// expressions), and the positions in its text, which name the kernels of
+/// the lowering.
+void printParsedModule(Program &program);
+/// The module of `program` for a reader, as `mdir emit --stage=module` and
+/// Python's `Program.ir` show it: the locations that the builder gives
+/// inline, and not the positions in its text.
+std::string printModuleForReading(const Program &program);
+
 /// The arrays alone, as a build of `control` and `system` makes them.
 llvm::Expected<std::shared_ptr<BuildKept>> buildArrays(const Control &control,
                                                        const System &system);
