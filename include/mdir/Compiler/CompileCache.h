@@ -184,10 +184,12 @@ void evictCache(llvm::StringRef directory, uint64_t maxBytes);
 /// (D234). The total of the entries is kept in the
 /// file `<directory>/size`, which processes update under a lock, so a
 /// store costs a fixed number of file operations whatever the directory
-/// holds. The directory is listed, and entries evicted as evictCache does,
-/// only when the total with these bytes exceeds the bound, when the file
-/// holds no total, or when the last listing is a day old; without a usable
-/// file (no locks on the file system) every call lists.
+/// holds. The directory is listed only when the total with these bytes
+/// exceeds the bound, when the file holds no total, or when the last listing
+/// is a day old; without a usable file (no locks on the file system) every
+/// call lists. A listing that finds the entries over the bound evicts as
+/// evictCache does, but down to 90% of the bound, so that the stores after
+/// it fit without another listing (#675).
 void noteCacheStores(llvm::StringRef directory, uint64_t bytes,
                      uint64_t maxBytes);
 /// How many times this process listed a cache directory for eviction; for

@@ -326,9 +326,11 @@ void mdir::compiler::touchCacheEntry(StringRef path) {
 
 namespace {
 /// Lists the entries of every kind, removes the temporary files left by
-/// processes that died and, least recently used first, entries until at
-/// most `maxBytes` are left. Returns the bytes left.
-uint64_t listAndEvict(StringRef directory, uint64_t maxBytes) {
+/// processes that died and, when they exceed `maxBytes`, entries least
+/// recently used first until at most `target` (at most `maxBytes`) are
+/// left. Returns the bytes left.
+uint64_t listAndEvict(StringRef directory, uint64_t maxBytes,
+                      uint64_t target) {
   ++listings;
   struct Entry {
     std::string path;
@@ -369,7 +371,7 @@ uint64_t listAndEvict(StringRef directory, uint64_t maxBytes) {
   std::sort(entries.begin(), entries.end(),
             [](const Entry &a, const Entry &b) { return a.used < b.used; });
   for (const Entry &entry : entries) {
-    if (total <= maxBytes)
+    if (total <= target)
       break;
     // A file another process removed first counts as removed.
     sys::fs::remove(entry.path);
@@ -441,6 +443,13 @@ private:
   int fd = -1;
 };
 
+/// Where the eviction of a store at the bound stops: 90% of the bound, so
+/// that the stores after it fit without a listing until a tenth of the
+/// bound is written again (#675). Evicting only to the bound left the
+/// cache at it, and every later store listed the directory while it held
+/// the lock of `size`, which serialized a suite on a network file system.
+uint64_t lowWater(uint64_t maxBytes) { return maxBytes - maxBytes / 10; }
+
 int64_t secondsSinceEpoch() {
   return std::chrono::duration_cast<std::chrono::seconds>(
              std::chrono::system_clock::now().time_since_epoch())
@@ -450,7 +459,7 @@ int64_t secondsSinceEpoch() {
 
 void mdir::compiler::evictCache(StringRef directory, uint64_t maxBytes) {
   SizeFile file(directory, /*create=*/false);
-  uint64_t total = listAndEvict(directory, maxBytes);
+  uint64_t total = listAndEvict(directory, maxBytes, maxBytes);
   if (file.usable())
     file.write(total, secondsSinceEpoch());
 }
@@ -461,7 +470,7 @@ void mdir::compiler::noteCacheStores(StringRef directory, uint64_t bytes,
   if (!file.usable()) {
     // No total to rely on: the directory is listed, as after every store
     // before the total was kept.
-    listAndEvict(directory, maxBytes);
+    listAndEvict(directory, maxBytes, lowWater(maxBytes));
     return;
   }
   uint64_t total = 0;
@@ -480,7 +489,7 @@ void mdir::compiler::noteCacheStores(StringRef directory, uint64_t bytes,
     file.write(total, listed);
     return;
   }
-  file.write(listAndEvict(directory, maxBytes), current);
+  file.write(listAndEvict(directory, maxBytes, lowWater(maxBytes)), current);
 }
 
 uint64_t mdir::compiler::getCacheListingCount() { return listings; }
