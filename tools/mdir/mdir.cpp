@@ -84,6 +84,12 @@ static llvm::cl::opt<Emit> stage(
                    "The passes that lower it")),
     llvm::cl::init(Emit::Module), llvm::cl::sub(emitCommand));
 
+static llvm::cl::opt<bool> emitSegments(
+    "segments",
+    llvm::cl::desc("Print the program of segments that a Python simulation "
+                   "of the same model runs, instead of that of the run"),
+    llvm::cl::sub(emitCommand));
+
 static llvm::cl::opt<std::string>
     templateName(llvm::cl::Positional,
                  llvm::cl::desc("<kind>: md, amber, minimize, nvt, npt, production"),
@@ -107,7 +113,8 @@ int main(int argc, char **argv) {
       "MDIR: compiles and runs molecular dynamics\n\n"
       "  mdir run <control file> [--continue [--no-append]] "
       "[--max-walltime=<time>]\n"
-      "  mdir emit <control file> [--stage=module|lowered|pipeline]\n"
+      "  mdir emit <control file> [--stage=module|lowered|pipeline] "
+      "[--segments]\n"
       "  mdir check <control file> [--json]\n"
       "  mdir template md|amber|minimize|nvt|npt|production\n"
       "  mdir checkpoint <checkpoint> [<checkpoint>] "
@@ -135,8 +142,11 @@ int main(int argc, char **argv) {
     }
     return runControl(controlFile, Emit::Run, argv[0], options);
   }
-  if (emitCommand)
-    return runControl(controlFile, stage, argv[0]);
+  if (emitCommand) {
+    RunOptions options;
+    options.segments = emitSegments;
+    return runControl(controlFile, stage, argv[0], options);
+  }
   if (checkCommand)
     return checkControl(controlFile, checkJSON);
   if (templateCommand) {

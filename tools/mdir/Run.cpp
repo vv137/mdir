@@ -556,6 +556,11 @@ int mdir::tool::runControl(StringRef controlFile, Emit emit,
     llvm::sys::path::append(directory, "lib");
     setPluginDirectory(directory);
   }
+  // The program of segments of a Python simulation of the same model,
+  // which is built with the control of a simulation and lowered by it
+  // (#568, the equivalence check of the builder).
+  if (options.segments)
+    *control = compiler::getSegmentsControl(*control);
   auto program = buildProgram(*control, *system);
   if (!program)
     return fail(program.takeError());
