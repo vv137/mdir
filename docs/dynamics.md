@@ -62,9 +62,11 @@ thermostats and of the removal of the motion of the center of mass in
 `include/mdir/Dialect/Dyn/DynOps.td` (`dyn.momentum`, `dyn.kinetic`,
 `dyn.half_step_excess`, `dyn.velocity_rescaling`, `dyn.nose_hoover`,
 `dyn.shift`, `dyn.scale`, `dyn.noise`, `dyn.to_bath`), the effects of
-`dyn.step`, the rules of Section 2.2.4 that need no op of the barostat,
-and the pass `dyn-expand-couplings`; the driver does not write the ops
-yet. The ops formalize what the driver writes today. They add no
+`dyn.step`, the rules of Section 2.2.4, and the pass `dyn-expand-couplings`;
+step 2b those of the barostat (`dyn.group_kinetic`, `dyn.pressure`,
+`dyn.cell_rescaling`, `dyn.scale_cell`, `dyn.load_cell`, `dyn.store_cell`,
+`dyn.scale_positions`, `dyn.scaling_work`). The driver does not write the
+ops yet. The ops formalize what the driver writes today. They add no
 thermostat or barostat, change no key of the control file and no default,
 and change no number. The rest of steps 2 to 4 of #541 builds them
 (Section 2.2.9). Until step 3 Sections 1, 2.3, 2.4, 2.6, and 6 describe
@@ -226,8 +228,8 @@ driver's runtime (`lib/Driver/Output.cpp`).
 
 | Op | Operands → results | Effects |
 |---|---|---|
-| `dyn.load_cell` | → 3 or 6 × f64, the edges and the tilts | Reads the cell (`%box_memory`) |
-| `dyn.store_cell` | 3 or 6 × f64 | Writes the cell, and the box of the log, the trajectory, and the checkpoint (`mdrtSetBox`, `mdrtSetTilt`); stops a run whose cell is not finite or changed by more than a factor of 2 along an axis at one coupling (#168, D225) |
+| `dyn.load_cell` | `%memory` → 3 or 6 × f64, the edges and the tilts | Reads the cell from `%memory`, a memref of 3 or 6 f64 in any memory space (`%box_memory` on the host today) |
+| `dyn.store_cell` | 3 or 6 × f64 `into %memory` | Writes the cell into `%memory`, and the box of the log, the trajectory, and the checkpoint (`mdrtSetBox`, `mdrtSetTilt`); stops a run whose cell is not finite or changed by more than a factor of 2 along an axis at one coupling (#168, D225) |
 | `dyn.load_pressure_state` | → three `vector<3xf64>`: the diagonals of $\mathsf W$ and of $\mathsf W_g$, and $K_{\text{half},g}$ after the thermostat | Reads `%trotter_memory` |
 | `dyn.store_pressure_state` | the same three | Writes `%trotter_memory` and the checkpoint's `/parameters/mdir/barostat_state` (`mdrtSetBarostatState`) |
 | `dyn.to_bath` | `%e: f64` | Adds $-\Delta E_\text{sys}$ to $E_\text{bath}$ (`mdrtAddBath`), which the conserved energy of the log and the checkpoint's `bath` take (D129) |
@@ -272,8 +274,11 @@ body holds:
 | `provides = ["symplectic", "time_reversible"]` | Only if the body has neither: friction, noise, and a scaling within the drift are neither. Neither integrator conserves energy exactly [[Hairer2003]](references.md#hairer2003), and neither claims to (ops.md, Section 6.3); built for `dyn.noise` |
 | `provides = ["no_global_sums"]` (new) | Only if the body computes no global sum: no op of the measurements above, no `md.sum_particles`, `md.sum_tuples`, or `md.sum_relation` with a floating-point result, and no `md.evaluate` that requests the energy, the virial, or a derivative; built |
 
-The rules of the barostat wait for `dyn.scale_positions` (step 2b). Of the
-others, step 2a checks the direction from the body to the claim. The
+As built (steps 2a and 2b), each rule holds in the direction from the body
+to the claim: a body with `dyn.noise` requires `temperature` and provides
+`thermostatting`, one with `dyn.scale_positions` requires `pressure` and
+provides `barostatting`, and neither provides `symplectic` or
+`time_reversible`. The
 converse would refuse the driver's programs until step 3a writes
 `dyn.noise`: the programs of Brownian dynamics claim `thermostatting` and
 hold their noise as `arith` ops. A program also keeps its claims when
@@ -501,7 +506,7 @@ provenance, which no continuation compares
 | Step | What | Done when |
 |---|---|---|
 | 1 | This design | Reviewed |
-| 2 | The ops in `DynOps.td`, with their verifiers and effects, `no_global_sums` in the verifier of `dyn.program`, round-trip and invalid tests in `test/Dialect/Dyn`, and `dyn-expand-couplings`, with a test for each op that its expansion is the text the driver writes today; ops.md, Sections 6 and 9.1. In three parts, as step 3: 2a the ops of 3a (built), 2b those of 3b, 2c those of 3c | The driver unchanged; the suite passes |
+| 2 | The ops in `DynOps.td`, with their verifiers and effects, `no_global_sums` in the verifier of `dyn.program`, round-trip and invalid tests in `test/Dialect/Dyn`, and `dyn-expand-couplings`, with a test for each op that its expansion is the text the driver writes today; ops.md, Sections 6 and 9.1. In three parts, as step 3: 2a the ops of 3a (built), 2b those of 3b (built), 2c those of 3c | The driver unchanged; the suite passes |
 | 3a | The driver writes the thermostats: the removal of the motion of the center of mass, `V-RESCALE`, `NOSE-HOOVER`, `dyn.to_bath`, and `dyn.noise` for `LANGEVIN` and `BROWNIAN` | In the deterministic mode the NVT and Langevin runs of `examples/ala3`, `thermostat.test`, `nose-hoover.test`, `langevin.test`, and `brownian.test` are bitwise those of `main`, on the CPU and a GPU, in `mixed` and `double`; otherwise within the tolerances of the tests; a checkpoint of `main` continues bitwise |
 | 3b | The barostat with `"EXACT"` and `"FIRST_ORDER"`, isotropic, semi-isotropic, and anisotropic: `dyn.group_kinetic`, `dyn.pressure`, `dyn.cell_rescaling`, the cell, `dyn.scale_positions`, `dyn.scaling_work` | The same for `barostat.test` and NPT of `examples/ala3` with these counts |
 | 3c | The Trotter steps: `@step_trotter` with `dyn.scale_positions` in its body, `"TROTTER"` and `"TROTTER_FIRST_ORDER"`, the period of one step with `dyn.load_pressure_state` and `dyn.store_pressure_state`; the claims of Section 2.2.4 | The same with the default `work`, `barostat-pme-restart.test` bitwise; the Amber suite and NPT of `examples/ala3` at the rate of `main` on one device |
@@ -522,6 +527,39 @@ and the corpus of #606 in #672). The ops change no
 program the driver builds, and the lowered programs of the corpus with
 `dyn.step` no longer `Pure` and the pass in the pipeline are those of
 `main`.
+
+**Step 2b, as built.** The cell is independent of the memory space, as
+the maintainer asked in the review of #672: `dyn.load_cell` and
+`dyn.store_cell` take the memory of the cell as a memref of any memory
+space, so that a barostat on a device needs no new ops. The expansion of
+each op is the text of `emitStrain`, `emitGroupKinetic`, `emitGroupScaling`,
+and the counts of the work in `emitCoupling`, on the operands of Section
+2.2.3, with three rules where the ops and the text part:
+
+1. An op computes again what the text computes once and uses in several
+   places: the volume $(L_0L_1)L_2$ in `dyn.pressure` and
+   `dyn.cell_rescaling`, $C/V$ and $C/(3V)$ in `dyn.scaling_work`,
+   $1 - \boldsymbol\mu$ in `dyn.scale_positions` and `first_order`, and
+   $\boldsymbol\mu$ and $\boldsymbol\mu^{-1}$ from the log strain. After the
+   expansion of an op of the barostat, each of its ops of pure arithmetic
+   takes the first equal op before it, in its block or in those that hold
+   it, constants being equal by their values, as the canonicalization and
+   the cse of the pipeline would; a value whose other uses the op took
+   over is then not removed as dead and computed at the place of the op.
+2. A `dyn.store_cell` right after the `dyn.scale_cell` of its values
+   expands interleaved by axis (the scaled value, then its store), then
+   `mdrtSetBox` and `mdrtSetTilt`, as `emitStrain` writes them; elsewhere
+   the stores and the record follow one another.
+3. `dyn.scaling_work` with `exact` takes the energies of the evaluation in
+   the new cell and comes after it; its kinetic part,
+   $\sum_a(\mu_a^{-2} - 1)K_a$, which the text computes before the
+   evaluation, moves after it. That is an order of pure arithmetic on the
+   same values; the checkpoints of step 3b are the bitwise check.
+
+`lift_couplings.py` lifts every op of the barostat from the text but the
+work counted exactly, whose lines are not together; over the corpus of
+#606 and the runs of ala3 at constant pressure of `test/Lit/lift-couplings.test`,
+the lowered programs of the ops and of the text are the same.
 
 Each part of step 3 checks the drift and distribution tests of Section 2.4
 as they stand. Derivatives through the couplings (M2b), groups with a

@@ -6,10 +6,15 @@
 # pipeline of `mdir emit --stage=pipeline` (on a device, up to the kernels
 # in the gpu dialect, since mdir-opt does not translate to LLVM IR), and
 # the two lowered programs must be the same text. emit uses no device.
+# The runs of argon take the ops of the thermostats (step 2a); those of
+# ala3 at constant pressure, with SETTLE and SHAKE, the barostat's (step
+# 2b): with the work counted exactly, and of Trotter type with anisotropic
+# coupling, whose scaling of the positions is within @step_trotter.
 # RUN: rm -rf %t && split-file %s %t
-# RUN: cp %S/../../examples/argon/argon.pdb %t
+# RUN: cp %S/../../examples/argon/argon.pdb %S/../../examples/ala3/ala3.prmtop %S/../../examples/ala3/ala3.inpcrd %t
 # RUN: %python %t/roundtrip.py %S/../../scripts/builder-equivalence/lift_couplings.py \
-# RUN:   mdir mdir-opt %t/v-rescale.toml %t/nose-hoover.toml %t/langevin.toml | FileCheck %s
+# RUN:   mdir mdir-opt %t/v-rescale.toml %t/nose-hoover.toml %t/langevin.toml \
+# RUN:   %t/ala3-exact.toml %t/ala3-trotter.toml | FileCheck %s
 
 # CHECK: v-rescale.toml CPU: lowered identical; dyn.half_step_excess: 3 dyn.kinetic: 7 dyn.momentum: 4 dyn.scale: 2 dyn.shift: 2 dyn.to_bath: 2 dyn.velocity_rescaling: 2
 # CHECK-NEXT: v-rescale.toml GPU: lowered identical; dyn.half_step_excess: 3 dyn.kinetic: 7 dyn.momentum: 4 dyn.scale: 2 dyn.shift: 2 dyn.to_bath: 2 dyn.velocity_rescaling: 2
@@ -17,6 +22,10 @@
 # CHECK-NEXT: nose-hoover.toml GPU: lowered identical; dyn.half_step_excess: 3 dyn.kinetic: 7 dyn.momentum: 4 dyn.nose_hoover: 2 dyn.scale: 2 dyn.shift: 2 dyn.to_bath: 2
 # CHECK-NEXT: langevin.toml CPU: lowered identical; dyn.half_step_excess: 4 dyn.kinetic: 4 dyn.noise: 2
 # CHECK-NEXT: langevin.toml GPU: lowered identical; dyn.half_step_excess: 4 dyn.kinetic: 4 dyn.noise: 2
+# CHECK-NEXT: ala3-exact.toml CPU: lowered identical; dyn.cell_rescaling: 2 dyn.group_kinetic: 4 dyn.kinetic: 7 dyn.load_cell: 7 dyn.momentum: 2 dyn.pressure: 2 dyn.scale: 4 dyn.scale_cell: 2 dyn.scale_positions: 2 dyn.shift: 2 dyn.store_cell: 2 dyn.to_bath: 2 dyn.velocity_rescaling: 2
+# CHECK-NEXT: ala3-exact.toml GPU: lowered identical; dyn.cell_rescaling: 2 dyn.group_kinetic: 4 dyn.kinetic: 7 dyn.load_cell: 7 dyn.momentum: 2 dyn.pressure: 2 dyn.scale: 4 dyn.scale_cell: 2 dyn.scale_positions: 2 dyn.shift: 2 dyn.store_cell: 2 dyn.to_bath: 2 dyn.velocity_rescaling: 2
+# CHECK-NEXT: ala3-trotter.toml CPU: lowered identical; dyn.cell_rescaling: 2 dyn.group_kinetic: 4 dyn.kinetic: 9 dyn.load_cell: 7 dyn.momentum: 2 dyn.pressure: 2 dyn.scale: 4 dyn.scale_cell: 2 dyn.scale_positions: 2 dyn.scaling_work: 2 dyn.shift: 2 dyn.store_cell: 2 dyn.to_bath: 2 dyn.velocity_rescaling: 2
+# CHECK-NEXT: ala3-trotter.toml GPU: lowered identical; dyn.cell_rescaling: 2 dyn.group_kinetic: 4 dyn.kinetic: 9 dyn.load_cell: 7 dyn.momentum: 2 dyn.pressure: 2 dyn.scale: 4 dyn.scale_cell: 2 dyn.scale_positions: 2 dyn.scaling_work: 2 dyn.shift: 2 dyn.store_cell: 2 dyn.to_bath: 2 dyn.velocity_rescaling: 2
 
 #--- roundtrip.py
 import os, subprocess, sys
@@ -173,6 +182,94 @@ friction = 1.0
 [boundary]
 type = "PERIODIC"
 box  = [34.7786, 34.7786, 34.7786]
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- ala3-exact.toml
+[input]
+topology    = "ala3.prmtop"
+coordinates = "ala3.inpcrd"
+
+[output]
+energy_interval = 50
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+coulomb_modifier  = "POTENTIAL_SHIFT"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 100
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 1.0
+
+[thermostat]
+method        = "V-RESCALE"
+time_constant = 0.5
+interval      = 10
+
+[barostat]
+method        = "C-RESCALE"
+time_constant = 2.0
+work          = "EXACT"
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+#--- ala3-trotter.toml
+[input]
+topology    = "ala3.prmtop"
+coordinates = "ala3.inpcrd"
+
+[output]
+energy_interval = 50
+
+[energy]
+cutoff            = 9.0
+pairlist_distance = 10.0
+electrostatics    = "PME"
+coulomb_modifier  = "POTENTIAL_SHIFT"
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.002
+steps      = 100
+
+[ensemble]
+ensemble    = "NPT"
+temperature = 300.0
+pressure    = 1.0
+
+[thermostat]
+method        = "V-RESCALE"
+time_constant = 0.5
+interval      = 10
+
+[barostat]
+method        = "C-RESCALE"
+time_constant = 2.0
+coupling      = "ANISOTROPIC"
+
+[constraints]
+hydrogen_bonds = true
+rigid_water    = true
+
+[boundary]
+type = "PERIODIC"
 
 [execution]
 target    = "CPU"

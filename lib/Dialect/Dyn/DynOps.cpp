@@ -123,6 +123,157 @@ LogicalResult NoseHooverOp::verify() {
 }
 
 //===----------------------------------------------------------------------===//
+// The barostat
+//===----------------------------------------------------------------------===//
+
+/// Verifies that each relation of `groups` is a set of tuples of the
+/// particle set of `field`.
+static LogicalResult verifyGroups(Operation *op, Value field,
+                                  ValueRange groups) {
+  auto set = cast<FieldType>(field.getType()).getParticleSet();
+  for (Value group : groups) {
+    auto relation = cast<mdir::md::RelationType>(group.getType());
+    if (relation.getParticleSet() != set || relation.getArity() < 2)
+      return op->emitOpError()
+             << "expected the groups as relations of two or more members "
+                "of "
+             << set << ", got " << relation;
+  }
+  return success();
+}
+
+LogicalResult GroupKineticOp::verify() {
+  if (failed(verifyVectorField(getOperation(), getVelocities())))
+    return failure();
+  return verifyGroups(getOperation(), getVelocities(), getGroups());
+}
+
+LogicalResult ScalePositionsOp::verify() {
+  if (failed(verifyVectorField(getOperation(), getPositions())))
+    return failure();
+  return verifyGroups(getOperation(), getPositions(), getGroups());
+}
+
+LogicalResult CellRescalingOp::verify() {
+  StringRef coupling = getCoupling();
+  size_t count = coupling == "isotropic"        ? 1
+                 : coupling == "semi_isotropic" ? 2
+                 : coupling == "anisotropic"    ? 3
+                                                : 0;
+  if (!count)
+    return emitOpError() << "unknown coupling '" << coupling
+                         << "'; expected 'isotropic', 'semi_isotropic', or "
+                            "'anisotropic'";
+  ArrayAttr compressibility = getCompressibility();
+  if (compressibility.size() != count)
+    return emitOpError() << "expected " << count
+                         << " numbers in 'compressibility' for the coupling '"
+                         << coupling << "', got " << compressibility.size();
+  bool any = false;
+  for (Attribute value : compressibility) {
+    double beta = cast<FloatAttr>(value).getValueAsDouble();
+    if (beta < 0.0)
+      return emitOpError() << "expected no negative 'compressibility'";
+    any |= beta > 0.0;
+  }
+  if (count == 3 && !any)
+    return emitOpError() << "expected a 'compressibility' that is not 0";
+  if (getTension() && coupling != "semi_isotropic")
+    return emitOpError() << "'tension' needs the coupling 'semi_isotropic'";
+  if (!(getRate().convertToDouble() > 0.0))
+    return emitOpError() << "expected 'rate' > 0";
+  if (!(getKT().convertToDouble() > 0.0))
+    return emitOpError() << "expected 'kT' > 0";
+  return success();
+}
+
+void CellRescalingOp::getEffects(
+    SmallVectorImpl<SideEffects::EffectInstance<MemoryEffects::Effect>>
+        &effects) {
+  // The strains of semi-isotropic and anisotropic coupling add to the
+  // statistics of the pressures of the axes; step 3b of #541 moves them
+  // into a call of their own.
+  if (getCoupling() != "isotropic") {
+    effects.emplace_back(MemoryEffects::Read::get(),
+                         StatisticsResource::get());
+    effects.emplace_back(MemoryEffects::Write::get(),
+                         StatisticsResource::get());
+  }
+}
+
+/// Verifies that `count` values of the cell are 3 or 6, and `memory`, if
+/// given, holds as many.
+static LogicalResult verifyCell(Operation *op, size_t count, Value memory) {
+  if (count != 3 && count != 6)
+    return op->emitOpError()
+           << "expected the 3 edges, or with the 3 tilts 6 values, of the "
+              "cell, got "
+           << count;
+  if (memory) {
+    auto type = cast<MemRefType>(memory.getType());
+    if (!type.hasStaticShape() ||
+        type.getDimSize(0) != static_cast<int64_t>(count))
+      return op->emitOpError() << "expected the memory of " << count
+                               << " values of the cell, got " << type;
+  }
+  return success();
+}
+
+LogicalResult ScaleCellOp::verify() {
+  if (getCell().size() != getResults().size())
+    return emitOpError() << "expected as many results as values of the "
+                            "cell";
+  return verifyCell(getOperation(), getCell().size(), Value());
+}
+
+LogicalResult LoadCellOp::verify() {
+  return verifyCell(getOperation(), getCell().size(), getMemory());
+}
+
+LogicalResult StoreCellOp::verify() {
+  return verifyCell(getOperation(), getCell().size(), getMemory());
+}
+
+LogicalResult ScalingWorkOp::verify() {
+  StringRef count = getCount();
+  bool strain = static_cast<bool>(getStrain());
+  bool logStrain = static_cast<bool>(getLogStrain());
+  bool before = static_cast<bool>(getVirialBefore());
+  bool after = static_cast<bool>(getVirialAfter());
+  size_t energies = getEnergies().size(), volumes = getVolumes().size();
+  // The operands of each count (docs/dynamics.md, Section 2.2.3).
+  struct Rule {
+    StringRef count;
+    bool strain, logStrain, before, after;
+    size_t energies, volumes;
+  };
+  static const Rule rules[] = {
+      {"trotter", false, true, true, true, 0, 2},
+      {"trotter_before", false, true, true, false, 0, 1},
+      {"exact", true, false, false, false, 2, 2},
+      {"first_order", true, false, true, false, 0, 1},
+  };
+  for (const Rule &rule : rules) {
+    if (rule.count != count)
+      continue;
+    if (rule.strain != strain || rule.logStrain != logStrain ||
+        rule.before != before || rule.after != after ||
+        rule.energies != energies || rule.volumes != volumes)
+      return emitOpError()
+             << "the count '" << count << "' takes "
+             << (rule.strain ? "strain" : "log_strain")
+             << (rule.before ? ", virial_before" : "")
+             << (rule.after ? ", virial_after" : "")
+             << (rule.energies ? ", energies (2)" : "") << ", and "
+             << rule.volumes << " volume" << (rule.volumes == 1 ? "" : "s");
+    return success();
+  }
+  return emitOpError() << "unknown count '" << count
+                       << "'; expected 'trotter', 'trotter_before', "
+                          "'exact', or 'first_order'";
+}
+
+//===----------------------------------------------------------------------===//
 // ProgramOp
 //===----------------------------------------------------------------------===//
 
@@ -179,7 +330,7 @@ static Operation *findGlobalSum(Region &body) {
   Operation *found = nullptr;
   body.walk([&](Operation *op) {
     bool isSum = false;
-    if (isa<MomentumOp, KineticOp, HalfStepExcessOp>(op)) {
+    if (isa<MomentumOp, KineticOp, HalfStepExcessOp, GroupKineticOp>(op)) {
       isSum = true;
     } else if (isa<mdir::md::SumParticlesOp, mdir::md::SumTuplesOp,
                    mdir::md::SumRelationOp>(op)) {
@@ -236,6 +387,27 @@ LogicalResult ProgramOp::verify() {
                         << "', which the friction and the noise of "
                            "'dyn.noise' are not";
       diagnostic.attachNote(noise->getLoc()) << "the noise";
+      return diagnostic;
+    }
+  // A scaling of the positions within the step: the strain comes from the
+  // pressure that the barostat computes (step_trotter).
+  Operation *scaling = nullptr;
+  getBody().walk([&](ScalePositionsOp op) {
+    scaling = op;
+    return WalkResult::interrupt();
+  });
+  if (scaling && !hasName(getRequires(), "pressure"))
+    return emitOpError() << "has a 'dyn.scale_positions' and does not "
+                            "require 'pressure'";
+  if (scaling && !hasName(getProvides(), "barostatting"))
+    return emitOpError() << "has a 'dyn.scale_positions' and does not "
+                            "provide 'barostatting'";
+  for (StringRef name : {"symplectic", "time_reversible"})
+    if (scaling && hasName(getProvides(), name)) {
+      InFlightDiagnostic diagnostic =
+          emitOpError() << "provides '" << name
+                        << "', which a scaling within the step is not";
+      diagnostic.attachNote(scaling->getLoc()) << "the scaling";
       return diagnostic;
     }
   if (hasName(getProvides(), "no_global_sums"))
@@ -311,6 +483,8 @@ static SideEffects::Resource *getResource(StringRef name) {
        {static_cast<SideEffects::Resource *>(BathResource::get()),
         static_cast<SideEffects::Resource *>(ChainResource::get()),
         static_cast<SideEffects::Resource *>(StopResource::get()),
+        static_cast<SideEffects::Resource *>(RecordResource::get()),
+        static_cast<SideEffects::Resource *>(StatisticsResource::get()),
         static_cast<SideEffects::Resource *>(
             SideEffects::DefaultResource::get())})
     if (resource->getName() == name)
@@ -345,7 +519,7 @@ parseSummary(DictionaryAttr summary,
           text ? getResource(text.getValue()) : nullptr;
       if (!resource) {
         error = "unknown resource in '" + kind.str() + "'; known: dyn.bath, "
-                "dyn.chain, dyn.stop, <Default>";
+                "dyn.chain, dyn.stop, dyn.record, dyn.statistics, <Default>";
         return failure();
       }
       if (kind == "read")
