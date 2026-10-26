@@ -749,13 +749,20 @@ The reference of every op is [dialects/dyn.md](dialects/dyn.md).
 | `dyn.scale %v, %s` | $\mathbf v'_i = s\,\mathbf v_i$ or $\mathbf s\odot\mathbf v_i$ |
 | `dyn.noise %v, %m, %step, %ids` | $\mathbf v'_i = c\,\mathbf v_i + (\sigma/\sqrt{m_i})\,\mathbf R_i$, Philox in the kernel |
 | `dyn.to_bath %e` | Adds $e$ to the energy of the bath (D129) |
+| `dyn.group_kinetic %x, %v, %f, %m, %cell, %dt groups(...)` | $K_g$, $E_g$, and $K_{\text{half},g}$ of the centers of the rigid groups; global sums |
+| `dyn.pressure %k, %w, %l0, %l1, %l2, %c` | $P_{aa} = c_\text{bar}(2K_a + W_{aa} + C/(3V))/V$ |
+| `dyn.cell_rescaling %p, %l0, %l1, %l2, %step` | The change of the strain of stochastic cell rescaling [[Bernetti2020]](references.md#bernetti2020), drawn on the host |
+| `dyn.scale_cell ... by %mu` | $H\,\mathrm{diag}(\boldsymbol\mu)$ |
+| `dyn.load_cell %memory`, `dyn.store_cell ... into %memory` | The cell in a memref of any memory space |
+| `dyn.scale_positions %x, %mu, %m, %cell groups(...)` | $\boldsymbol\mu\odot\mathbf x_i$, each rigid group by its center |
+| `dyn.scaling_work` | $\Delta E_\text{sys}$ of a scaling of the cell, by its `count` |
 | `dyn.program` | Defines one time step. |
 | `dyn.step` | Applies a program, with the effects of its body. |
 | `dyn.return` | Terminator. |
 
-The ops of the couplings, from `dyn.momentum` to `dyn.to_bath`, are those
-of [dynamics.md](dynamics.md), Section 2.2 (D326); the driver does not
-write them yet (#541, step 3).
+The ops of the couplings, from `dyn.momentum` to `dyn.scaling_work`, are
+those of [dynamics.md](dynamics.md), Section 2.2 (D326); the driver does
+not write them yet (#541, step 3).
 
 Force evaluation is `md.evaluate`. `dyn` has no op of its own for it.
 
