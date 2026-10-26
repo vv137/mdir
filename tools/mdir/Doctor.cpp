@@ -196,7 +196,8 @@ bool checkResults(StringRef path) {
   return initial && final;
 }
 
-bool smokeRun(StringRef executable, StringRef directory, bool gpu) {
+bool smokeRun(StringRef executable, StringRef directory, bool gpu,
+              unsigned timeout) {
   StringRef target = gpu ? "gpu" : "cpu";
   std::string control = getPath(directory, (target + ".toml").str());
   std::string out = getPath(directory, (target + ".out").str());
@@ -220,7 +221,7 @@ bool smokeRun(StringRef executable, StringRef directory, bool gpu) {
   std::string error;
   int status = llvm::sys::ExecuteAndWait(
       executable, arguments, environmentRefs, redirects,
-      /*SecondsToWait=*/120, /*MemoryLimit=*/0, &error);
+      /*SecondsToWait=*/timeout, /*MemoryLimit=*/0, &error);
   if (status != 0 || !checkResults(out)) {
     llvm::outs() << "FAIL " << target << ": ";
     if (status != 0)
@@ -229,6 +230,9 @@ bool smokeRun(StringRef executable, StringRef directory, bool gpu) {
       llvm::outs() << "the run did not produce the expected finite energies";
     if (!error.empty())
       llvm::outs() << " (" << error << ")";
+    if (status == -2)
+      llvm::outs() << " after the limit of " << timeout
+                   << " s; on a busy machine, raise it with --timeout=<seconds>";
     llvm::outs() << "\n  Read " << err << " and " << out
                  << "; rerun with:\n    mdir run '";
     for (char c : control)
@@ -245,7 +249,7 @@ bool smokeRun(StringRef executable, StringRef directory, bool gpu) {
 }
 } // namespace
 
-int mdir::tool::doctor(StringRef target, const char *argv0) {
+int mdir::tool::doctor(StringRef target, unsigned timeout, const char *argv0) {
   if (target != "all" && target != "cpu" && target != "gpu") {
     llvm::errs() << "mdir: doctor expects --target=all, cpu, or gpu, got '"
                  << target << "'\n";
@@ -274,11 +278,12 @@ int mdir::tool::doctor(StringRef target, const char *argv0) {
     static int anchor;
     std::string executable = llvm::sys::fs::getMainExecutable(argv0, &anchor);
     if (target != "gpu")
-      ok = smokeRun(executable, directory, /*gpu=*/false);
+      ok = smokeRun(executable, directory, /*gpu=*/false, timeout);
     if (target != "cpu") {
       if (hasGPU) {
         // Do not short-circuit a GPU check after a CPU failure.
-        bool gpuOK = probeGPU() && smokeRun(executable, directory, /*gpu=*/true);
+        bool gpuOK =
+            probeGPU() && smokeRun(executable, directory, /*gpu=*/true, timeout);
         ok = gpuOK && ok;
       } else {
         llvm::outs() << "SKIP gpu: this build has no CUDA target\n";

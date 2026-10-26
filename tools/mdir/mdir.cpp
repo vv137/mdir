@@ -31,6 +31,10 @@ static llvm::cl::SubCommand doctorCommand(
 static llvm::cl::opt<std::string> doctorTarget(
     "target", llvm::cl::desc("Targets to check: all (default), cpu, or gpu"),
     llvm::cl::init("all"), llvm::cl::sub(doctorCommand));
+static llvm::cl::opt<unsigned> doctorTimeout(
+    "timeout",
+    llvm::cl::desc("Seconds that each check run may take (default 120)"),
+    llvm::cl::init(120), llvm::cl::sub(doctorCommand));
 
 static llvm::cl::opt<std::string>
     controlFile(llvm::cl::Positional, llvm::cl::desc("<control file>"),
@@ -121,7 +125,7 @@ int main(int argc, char **argv) {
       "[--print=positions|velocities|forces|fingerprint]\n"
       "  mdir bug-report <control file> [-o <directory>] [--run]\n"
       "  mdir version\n"
-      "  mdir doctor [--target=all|cpu|gpu]\n");
+      "  mdir doctor [--target=all|cpu|gpu] [--timeout=<seconds>]\n");
 
   if (runCommand) {
     RunOptions options;
@@ -177,7 +181,7 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (doctorCommand)
-    return doctor(doctorTarget, argv[0]);
+    return doctor(doctorTarget, doctorTimeout, argv[0]);
 
   llvm::errs() << "mdir: expected a subcommand; see 'mdir --help'\n";
   return 1;

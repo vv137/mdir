@@ -2,3 +2,4 @@
 # RUN: %python %S/Inputs/check_doctor.py mdir cpu
 # RUN: mdir doctor --help | FileCheck %s
 # CHECK: --target={{.*}}Targets to check: all (default), cpu, or gpu
+# CHECK: --timeout={{.*}}Seconds that each check run may take (default 120)
