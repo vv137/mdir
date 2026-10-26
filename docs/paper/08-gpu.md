@@ -584,4 +584,4 @@ each generated occurrence, is the migration point. Runtime allocation,
 transfer, launch, and FFT plans form a separate device interface; the
 FFT itself remains the same linear-transform primitive (Section 2).
 
-The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D[groups-buffer-abi]). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.
+The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D350). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.

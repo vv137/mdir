@@ -1060,7 +1060,7 @@ with `gpu.shuffle` itself rather than as two halves, so that moving it would
 change the code of double precision.
 The batched body's static row count is retained as the verified
 `md.stage_rows` function attribute through bufferization
-(D[stage-rows-attr], #642). It does not select a different reduction
+(D351, #642). It does not select a different reduction
 strategy or change the tile's numerical order.
 
 The short-row strategy can carry a pure, adjacent pointwise consumer of
@@ -1241,4 +1241,4 @@ the runtime ABI. These parts share the plan and only the state needed for
 their operations. This is a future behavior-preserving refactor, with
 byte-identical PTX as its gate, rather than five new semantic primitives.
 
-The neighbor-group runtime boundary declares stable buffer slots and their element/shape/role descriptors in a C-compatible shared header (D[groups-buffer-abi]). Slot range checking precedes indexing. This is an ABI formalization with unchanged kernels and storage sizes, not a new primitive strategy.
+The neighbor-group runtime boundary declares stable buffer slots and their element/shape/role descriptors in a C-compatible shared header (D350). Slot range checking precedes indexing. This is an ABI formalization with unchanged kernels and storage sizes, not a new primitive strategy.

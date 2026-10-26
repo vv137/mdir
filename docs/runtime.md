@@ -284,4 +284,4 @@ The generated code did not change: the run times are the same as before.
 | 5 | Vector field layout for M0 | Decided: `memref<?x3xT>` first (D30) |
 | 6 | Storage form of `md_exec` | Decided and implemented (D17, D33, A12) |
 
-Neighbor-group buffers use the shared slot descriptors in `mdir/Runtime/GroupsABI.h` (D[groups-buffer-abi]). Their explicit numbers, element kinds, shapes, and roles form one compiler/runtime contract. The runtime validates each generic slot before indexing storage; the host compile cache includes the contract version. Allocation ownership and teardown are unchanged.
+Neighbor-group buffers use the shared slot descriptors in `mdir/Runtime/GroupsABI.h` (D350). Their explicit numbers, element kinds, shapes, and roles form one compiler/runtime contract. The runtime validates each generic slot before indexing storage; the host compile cache includes the contract version. Allocation ownership and teardown are unchanged.

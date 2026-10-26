@@ -183,7 +183,7 @@ not read or write such an attribute by a string name outside its dialect;
 the op verifier checks that the value satisfies the declared contract.
 The batched stage's row count is one such invariant: `md.stage_rows` is
 checked against a known tensor dimension before bufferization and retained
-as a static function attribute afterward (D[stage-rows-attr], #642).
+as a static function attribute afterward (D351, #642).
 
 A required condition is either proved or established by a sound runtime
 guard with a legal recovery. If it remains unknown, the path is not executed
@@ -243,4 +243,4 @@ before a physical plan is selected.
    `mdir_run_particle_for_l44_121`, in profiles and in the reports of the
    sanitizer.
 
-Compiler/runtime buffer roles must come from a shared, versioned declaration (D[groups-buffer-abi]); a parallel enum or numeric selector is insufficient. Validate externally supplied selectors before indexing runtime storage, and include ABI compatibility versions in compiled-object cache identity.
+Compiler/runtime buffer roles must come from a shared, versioned declaration (D350); a parallel enum or numeric selector is insufficient. Validate externally supplied selectors before indexing runtime storage, and include ABI compatibility versions in compiled-object cache identity.

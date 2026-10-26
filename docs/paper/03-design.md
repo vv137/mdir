@@ -473,7 +473,7 @@ element, since the leading dimension is parallel in every op of the body:
 row $t$ of the result is the body applied to row $t$ of the operands, and
 no row reads another. A loop whose kernel applies such a body therefore
 retains the verified static leading row count as `md.stage_rows` when the
-body's tensors become buffers (D[stage-rows-attr]); the forward and VJP
+body's tensors become buffers (D351); the forward and VJP
 bodies must agree on that count. The loop then
 runs as a host loop over tiles, each packing the operands of its rows,
 calling the body, and unpacking the results into the rest of the kernel;

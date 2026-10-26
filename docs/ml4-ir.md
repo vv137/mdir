@@ -725,7 +725,7 @@ not lowered: the slots of D277 are found on a device only.
 
 Before a batched body becomes a function of buffers, its first tensor input
 states the leading row count. The `md.stage_rows` i64 attribute retains
-that count on the function through bufferization (D[stage-rows-attr],
+that count on the function through bufferization (D351,
 #642). The MD dialect checks its placement and type and compares it with a
 known leading dimension. The stage verifier uses the same named accessor
 for forward/VJP row agreement; lowering keeps the existing tile plan.

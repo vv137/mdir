@@ -29,7 +29,7 @@ Features of classical MD (Section 5) continue between milestones.
 | Tests under compute-sanitizer; short runs of the Amber suite | Done (`test/Sanitizer`, `test/Scale`) |
 | Full-suite wall time (#485) | Done in part: two Slurm shards (D309), the release tier for the long Python matrices (D324, #530). Next: profile the other long Python driver tests |
 | Portable device primitive boundary (#558, #433) | In progress: the inventory of NVVM, PTX, and GPU operations with their emitters (D340, [device-primitives.md](device-primitives.md#6-portability-one-target-contract-several-implementations)). Next: one operation group per PR behind emitters, one capability and measured-policy record, then the runtime's device calls behind an interface; NVIDIA output stays identical |
-| Declared semantic attributes (#607) | In progress: differentiation uses the typed accessors of tuple coordinate kinds and member places (D343), the storage-form module marker has one checked helper (D349, #636), and batched stage rows use a checked function attribute (D[stage-rows-attr], #642). Next: the other stage, storage, transfer, and attribute families, and the ops without a verifier, each a slice of its own |
+| Declared semantic attributes (#607) | In progress: differentiation uses the typed accessors of tuple coordinate kinds and member places (D343), the storage-form module marker has one checked helper (D349, #636), and batched stage rows use a checked function attribute (D351, #642). Next: the other stage, storage, transfer, and attribute families, and the ops without a verifier, each a slice of its own |
 | Kernels named after their op and line | Done |
 | Reports of defects that can be reproduced | Done: `mdir bug-report`, crash reproducers of the passes, versions, an issue template ([debugging.md](debugging.md)) |
 | The set of each buffer in the type of the storage form; memory planning as a pass of its own | In progress: field, scratch, tuple-member, and incidence buffers carry their set (D337, #565). Next: a lifetime-based memory planner and set types for the other structural buffers |
@@ -270,4 +270,4 @@ Not taken: reimplementing the actions of cpptraj. A device pays where pairs
 are involved, where all pairs of frames are (clustering), or where the
 frames never reach a file.
 
-The first runtime-interface slice of #558 stage 2 is #623: a shared, versioned neighbor-group slot contract, with descriptor-driven extents and range checks (D[groups-buffer-abi]).
+The first runtime-interface slice of #558 stage 2 is #623: a shared, versioned neighbor-group slot contract, with descriptor-driven extents and range checks (D350).

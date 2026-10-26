@@ -21,7 +21,7 @@ def MD_Dialect : Dialect {
 
     The transient `md.stage_rows` attribute on a batched function retains
     its checked leading row count after the function's tensors become
-    buffers (D[stage-rows-attr]).
+    buffers (D351).
   }];
   let cppNamespace = "::mdir::md";
 

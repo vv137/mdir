@@ -20,7 +20,7 @@ are declared op attributes (D343); differentiation
 uses the typed tuple-op accessors when it composes their transposes. This
 changes no primitive or lowering strategy.
 The row count of a batched neural stage is retained through bufferization
-as the checked function attribute `md.stage_rows` (D[stage-rows-attr],
+as the checked function attribute `md.stage_rows` (D351,
 #642). It selects no new primitive or physical reduction strategy.
 
 The [execution contract](execution-contracts.md) (#574) checks whether a
@@ -429,4 +429,4 @@ missing (Section 3.3), not unfitting.
 | Skins and other choices by measurement | A choice among programs, not a computation |
 | Reweighting | Reductions over frames on the host, outside the step and its lowering |
 
-The group-buffer interface uses the shared slot contract of D[groups-buffer-abi]. Compiler selection and runtime allocation lengths use the same declaration; target-independent metadata introduces no NVIDIA instruction or tuning change.
+The group-buffer interface uses the shared slot contract of D350. Compiler selection and runtime allocation lengths use the same declaration; target-independent metadata introduces no NVIDIA instruction or tuning change.

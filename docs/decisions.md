@@ -645,6 +645,8 @@ specification follow those made with it.
 | [D347](decisions/D347.md) | **An integer of a fingerprint is written exactly, and the text of an integer below $2^{53}$ in magnitude does not change** (#620). | 2026-10-25 |
 | [D348](decisions/D348.md) | The registry of the device's blocks grows with them, the idle blocks of the pool and the cached plans of cuFFT are bounded in bytes, a request that the driver refuses for want of memory is made again after they are given back, and an embedding program may give them back itself | 2026-10-25 |
 | [D349](decisions/D349.md) | The module's checked storage form has one declared marker contract. | 2026-10-26 |
+| [D350](decisions/D350.md) | The compiler and runtime share one versioned neighbor-group buffer slot contract. | 2026-10-26 |
+| [D351](decisions/D351.md) | A batched stage body retains a verified static row declaration through bufferization. | 2026-10-26 |
 <!-- end decisions-table -->
 
 

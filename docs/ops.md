@@ -250,7 +250,7 @@ The reference of every op is [dialects/md.md](dialects/md.md).
 All `md` ops are pure.
 The batched function referenced by `md.stage` retains its leading row
 dimension as the checked i64 function attribute `md.stage_rows` when its
-tensors become buffers (D[stage-rows-attr], #642). The MD dialect checks
+tensors become buffers (D351, #642). The MD dialect checks
 placement, type, and agreement with a known first-input dimension; the
 forward and VJP bodies use the same row accessor.
 
