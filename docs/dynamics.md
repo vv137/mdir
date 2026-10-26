@@ -146,6 +146,17 @@ loops on the device and reductions.
 | `dyn.half_step_excess` | `%f: !vec, %m, %dt: f64` → `vector<3xf64>` | $E_a = \tfrac{\Delta t^2}{8}\sum_i F_{i,a}^2/m_i$, a particle of mass 0 left out: $K_{\text{half},a} - K_a$, exact without constraints [[Jung2018]](references.md#jung2018); one sum |
 | `dyn.group_kinetic` | `%x, %v, %f, %m, %cell: !md.cell, %dt`, `groups(%r: !md.relation, …)`, optional `center(%M: vector<3xf64>)` → three `vector<3xf64>` | $K_{g,a}$, $E_{g,a} = \tfrac{\Delta t^2}{8}\sum_g F_{g,a}^2/M_g$, and $K_{\text{half},g,a} = K_{g,a} + E_{g,a}$ of the centers of the groups (D264, [[Jung2020]](references.md#jung2020)). With `center`, the total mass, $K_g$ is without the motion of the center of mass, as when the run removes it. Two sums over the particles, two over the tuples of each set of groups, and one more with `center` |
 
+**The shape of the result of `dyn.kinetic` selects its components.** Each
+shape has one documented order of summation, which the expansion keeps:
+f64 is $K = \sum_i \tfrac12\big(m_i(\mathbf v_i\cdot\mathbf v_i)\big)$, the
+square summed over the axes within each particle and halved with the mass
+(`emitKineticEnergy`); `vector<3xf64>` is the diagonal
+$K_a = \sum_i \big((\tfrac12m_i)\,v_{i,a}^2\big)$, axis by axis
+(`emitKineticVector`). A further component is a further shape of the same
+op, not a new op: the kinetic tensor $\tfrac12\sum_i m_i\mathbf v_i\otimes
+\mathbf v_i$ of an anisotropic or triclinic barostat (D163c) would be
+`vector<6xf64>` or `vector<9xf64>`, with its own documented order.
+
 The verifier of `dyn.group_kinetic` requires each relation to be a set of
 groups of the particle set of the fields; a particle in no relation is a
 group of one.
@@ -259,7 +270,11 @@ converse would refuse the driver's programs until step 3a writes
 `dyn.noise`: the programs of Brownian dynamics claim `thermostatting` and
 hold their noise as `arith` ops. A program also keeps its claims when
 `dyn-expand-couplings` expands the ops that they rest on, which a check
-from the claim to the body would refuse after the expansion.
+from the claim to the body would refuse after the expansion. Once step 3a
+writes `dyn.noise`, the converse returns for the programs that are not
+expanded yet, those before `dyn-expand-couplings`. A claim is never a
+source of ops: no pass infers or inserts an op, such as `dyn.noise`, from
+`requires` or `provides`; a claim only states what the body already holds.
 
 `no_global_sums` allows what a plain step reduces today and does not wait
 for: the flags of the constraints, an `i1` that `md.gather_tuples` yields
