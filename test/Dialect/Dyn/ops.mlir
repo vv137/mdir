@@ -146,3 +146,45 @@ dyn.program @plain(%x: !vec, %v: !vec, %f: !vec, %m: !real,
       : (!vec, !md.cell, f64, f64) -> !vec
   dyn.return %x1, %v1, %f1 : !vec, !vec, !vec
 }
+
+// A period of stochastic cell rescaling (docs/dynamics.md, Section 2.2.5,
+// item 2): the pressure of the groups, the strain, the cell, the positions,
+// and the work. The memory of the cell may be in any memory space.
+//
+// CHECK-LABEL: func.func @barostat(
+func.func @barostat(%x: !vec, %v: !vec, %f: !vec, %m: !real, %cell: !md.cell,
+                    %dt: f64, %step: i64, %total: vector<3xf64>,
+                    %w: vector<3xf64>, %c: f64, %box: memref<3xf64>,
+                    %tilted: memref<6xf64, 1>,
+                    %settles: !md.relation<@atoms, 3, ordered, @settles>)
+    -> (!vec, f64) {
+  // CHECK: %kinetic, %excess, %half = dyn.group_kinetic %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} groups(%{{[a-z0-9]+}} : !md.relation<@atoms, 3, ordered, @settles>) center(%{{[a-z0-9]+}}) : !md.field<@atoms, 3 x f64>
+  %k, %e, %h = dyn.group_kinetic %x, %v, %f, %m, %cell, %dt
+      groups(%settles : !md.relation<@atoms, 3, ordered, @settles>)
+      center(%total) : !vec
+  // CHECK: dyn.load_cell %{{[a-z0-9]+}} : memref<3xf64> -> f64, f64, f64
+  %l:3 = dyn.load_cell %box : memref<3xf64> -> f64, f64, f64
+  // CHECK: dyn.load_cell %{{[a-z0-9]+}} : memref<6xf64, 1> -> f64, f64, f64, f64, f64, f64
+  %t:6 = dyn.load_cell %tilted : memref<6xf64, 1> -> f64, f64, f64, f64, f64, f64
+  // CHECK: dyn.pressure
+  %p = dyn.pressure %h, %w, %l#0, %l#1, %l#2, %c : vector<3xf64>
+  // CHECK: dyn.cell_rescaling %{{[0-9]+}}, %{{[0-9]+}}#0, %{{[0-9]+}}#1, %{{[0-9]+}}#2, %{{[a-z0-9]+}} {compressibility = [4.500000e-05, 4.500000e-05], coupling = "semi_isotropic", kT = 2.494000e+00 : f64, rate = 1.000000e-02 : f64, seed = 314159 : i64, target = 1.013250e+00 : f64, tension = 0.000000e+00 : f64} : vector<3xf64>
+  %de = dyn.cell_rescaling %p, %l#0, %l#1, %l#2, %step
+      {coupling = "semi_isotropic", seed = 314159 : i64, target = 1.01325,
+       compressibility = [4.5e-05, 4.5e-05], rate = 0.01, kT = 2.494,
+       tension = 0.0} : vector<3xf64>
+  %mu = math.exp %de : vector<3xf64>
+  // CHECK: dyn.scale_cell %{{[0-9]+}}#0, %{{[0-9]+}}#1, %{{[0-9]+}}#2 by %{{[0-9]+}} : f64, f64, f64 -> f64, f64, f64
+  %n:3 = dyn.scale_cell %l#0, %l#1, %l#2 by %mu : f64, f64, f64 -> f64, f64, f64
+  // CHECK: dyn.store_cell %{{[0-9]+}}#0, %{{[0-9]+}}#1, %{{[0-9]+}}#2 into %{{[a-z0-9]+}} : memref<3xf64>
+  dyn.store_cell %n#0, %n#1, %n#2 into %box : memref<3xf64>
+  // CHECK: dyn.scale_positions %{{[a-z0-9]+}}, %{{[0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}} groups(%{{[a-z0-9]+}} : !md.relation<@atoms, 3, ordered, @settles>) : !md.field<@atoms, 3 x f64>
+  %x1 = dyn.scale_positions %x, %mu, %m, %cell
+      groups(%settles : !md.relation<@atoms, 3, ordered, @settles>) : !vec
+  %v0 = arith.mulf %l#0, %l#1 : f64
+  %vol = arith.mulf %v0, %l#2 : f64
+  // CHECK: dyn.scaling_work kinetic(%kinetic) strain(%{{[0-9]+}}) virial_before(%{{[a-z0-9]+}}) constant(%{{[a-z0-9]+}}) volumes(%{{[0-9]+}}) {count = "first_order"} : f64
+  %work = dyn.scaling_work kinetic(%k) strain(%mu) virial_before(%w)
+      constant(%c) volumes(%vol) {count = "first_order"} : f64
+  return %x1, %work : !vec, f64
+}

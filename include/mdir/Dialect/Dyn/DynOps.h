@@ -35,6 +35,19 @@ struct StopResource : mlir::SideEffects::Resource::Base<StopResource> {
   llvm::StringRef getName() const override { return "dyn.stop"; }
 };
 
+/// What the log, the trajectory, and the checkpoint keep of the cell and of
+/// the state of the pressure.
+struct RecordResource : mlir::SideEffects::Resource::Base<RecordResource> {
+  llvm::StringRef getName() const override { return "dyn.record"; }
+};
+
+/// The statistics of the pressures of the axes that the log reports at the
+/// end of a run of semi-isotropic or anisotropic coupling.
+struct StatisticsResource
+    : mlir::SideEffects::Resource::Base<StatisticsResource> {
+  llvm::StringRef getName() const override { return "dyn.statistics"; }
+};
+
 } // namespace dyn
 } // namespace mdir
 

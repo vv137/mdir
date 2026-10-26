@@ -200,7 +200,7 @@ dyn.program @p(%dt: f64) -> f64 attributes {effects = {read = ["dyn.stop"]}} {
 
 // -----
 
-// expected-error@+1 {{in 'effects': unknown resource in 'write'; known: dyn.bath, dyn.chain, dyn.stop, <Default>}}
+// expected-error@+1 {{in 'effects': unknown resource in 'write'; known: dyn.bath, dyn.chain, dyn.stop, dyn.record, dyn.statistics, <Default>}}
 dyn.program @p(%dt: f64) -> f64 attributes {effects = {write = ["cell"]}} {
   dyn.return %dt : f64
 }

@@ -92,6 +92,8 @@ def Dyn_DriftOp : Dyn_Op<"drift", [
 def Dyn_BathResource : Resource<"::mdir::dyn::BathResource">;
 def Dyn_ChainResource : Resource<"::mdir::dyn::ChainResource">;
 def Dyn_StopResource : Resource<"::mdir::dyn::StopResource">;
+def Dyn_RecordResource : Resource<"::mdir::dyn::RecordResource">;
+def Dyn_StatisticsResource : Resource<"::mdir::dyn::StatisticsResource">;
 
 def Dyn_Vector3 : VectorOfLengthAndType<[3], [F64]>,
     BuildableType<"::mlir::VectorType::get({3}, $_builder.getF64Type())">;
@@ -346,6 +348,281 @@ def Dyn_NoiseOp : Dyn_Op<"noise", [
   let assemblyFormat = [{
     $velocities `,` $masses `,` $step `,` $ids attr-dict `:`
     qualified(type($velocities)) `,` qualified(type($ids))
+  }];
+  let hasVerifier = 1;
+}
+
+// The barostat (step 2b of #541).
+
+def Dyn_CellMemory : MemRefRankOf<[F64], [1]>;
+
+def Dyn_GroupKineticOp : Dyn_Op<"group_kinetic", [
+    Pure, AttrSizedOperandSegments,
+    AllTypesMatch<["positions", "velocities", "forces"]>,
+    TypesMatchWith<"the masses are a scalar field on the same particle set",
+                   "velocities", "masses", Dyn_ScalarFieldOf>
+  ]> {
+  let summary = "The kinetic energy of the centers of the groups";
+  let description = [{
+    The groups are those that a barostat scales by their centers: each
+    rigid group of the relations in `groups`, and each other particle
+    alone (D264). The results, axis by axis:
+
+    ```text
+    K_g      = Σ_g ½ M_g V_g²            (less that of the center of mass,
+                                           with `center`, the total mass)
+    E_g      = (Δt² / 8) Σ_g F_g² / M_g
+    K_half_g = K_g + E_g
+    ```
+
+    `K_half_g` is the mean of the kinetic energies of the centers at the
+    half steps around the step, exactly (Jung and Sugita, J. Chem. Phys. 153,
+    234115 (2020), eq. 42): a center moves by its force alone. Global sums
+    over the particles and over the tuples of each relation.
+
+    ```mlir
+    %k, %e, %h = dyn.group_kinetic %x, %v, %f, %m, %cell, %dt
+        groups(%w : !md.relation<@atoms, 3, ordered, @settles>)
+        center(%total) : !md.field<@atoms, 3 x f64>
+    ```
+  }];
+  let arguments = (ins
+    MD_ReferenceFieldType:$positions,
+    MD_ReferenceFieldType:$velocities,
+    MD_ReferenceFieldType:$forces,
+    MD_ReferenceFieldType:$masses,
+    MD_CellType:$cell,
+    F64:$dt,
+    Variadic<MD_RelationType>:$groups,
+    Optional<Dyn_Vector3>:$center
+  );
+  let results = (outs Dyn_Vector3:$kinetic, Dyn_Vector3:$excess,
+                      Dyn_Vector3:$half);
+  let assemblyFormat = [{
+    $positions `,` $velocities `,` $forces `,` $masses `,` $cell `,` $dt
+    (`groups` `(` $groups^ `:` qualified(type($groups)) `)`)?
+    (`center` `(` $center^ `)`)? attr-dict `:` qualified(type($velocities))
+  }];
+  let hasVerifier = 1;
+}
+
+def Dyn_PressureOp : Dyn_Op<"pressure", [Pure]> {
+  let summary = "The pressure of each axis";
+  let description = [{
+    ```text
+    P_aa = c_bar (2 K_a + W_aa + C / (3 V)) / V,   V = (L_0 L_1) L_2
+    ```
+
+    In bar, with `K` the kinetic energy of the groups at the half steps,
+    `W` the diagonal of their virial, `C` the virials of the constant terms
+    times the volume, and c_bar = 16.6053906717 bar nm³ mol/kJ (D264).
+
+    ```mlir
+    %p = dyn.pressure %k, %w, %l0, %l1, %l2, %c : vector<3xf64>
+    ```
+  }];
+  let arguments = (ins Dyn_Vector3:$kinetic, Dyn_Vector3:$virial, F64:$l0,
+                       F64:$l1, F64:$l2, F64:$constant);
+  let results = (outs Dyn_Vector3:$result);
+  let assemblyFormat = [{
+    $kinetic `,` $virial `,` $l0 `,` $l1 `,` $l2 `,` $constant attr-dict
+    `:` type($result)
+  }];
+}
+
+def Dyn_CellRescalingOp : Dyn_Op<"cell_rescaling", [
+    DeclareOpInterfaceMethods<MemoryEffectsOpInterface>
+  ]> {
+  let summary = "The change of the strain of stochastic cell rescaling";
+  let description = [{
+    The change Δε_a of the strain of each axis over the period, from the
+    pressures `p` of the axes in bar (Bernetti and Bussi, J. Chem. Phys.
+    153, 114107 (2020)):
+
+    | `coupling` | Δε |
+    |---|---|
+    | `isotropic` | A third of Δε of the step of λ = √V, eq. (S7), from the mean of the three pressures, on every axis |
+    | `semi_isotropic` | Half of Δε_xy, eq. (9a), on x and y, and Δε_z, eq. (9b), on z (D119) |
+    | `anisotropic` | Δε_a of each axis from its own pressure (D163c) |
+
+    `compressibility` holds one number, two (of x and y, and of z), or
+    three, in 1/bar; `rate` is N_P Δt / τ_P, `kT` in kJ/mol, and
+    `tension` γ in bar nm, semi-isotropic only. The noise is drawn from
+    Philox 4×32-10 under `seed`, at the step, in stream 1
+    (docs/dynamics.md, Section 2.2.6). Semi-isotropic and anisotropic
+    coupling also write the statistics of the pressures of the axes that
+    the log reports at the end of the run.
+
+    ```mlir
+    %de = dyn.cell_rescaling %p, %l0, %l1, %l2, %step
+        {coupling = "isotropic", seed = 314159 : i64, target = 1.01325,
+         compressibility = [4.5e-05], rate = 0.01, kT = 2.494} : vector<3xf64>
+    ```
+  }];
+  let arguments = (ins
+    Dyn_Vector3:$pressures,
+    F64:$l0, F64:$l1, F64:$l2,
+    I64:$step,
+    StrAttr:$coupling,
+    I64Attr:$seed,
+    F64Attr:$target,
+    F64ArrayAttr:$compressibility,
+    F64Attr:$rate,
+    F64Attr:$kT,
+    OptionalAttr<F64Attr>:$tension
+  );
+  let results = (outs Dyn_Vector3:$result);
+  let assemblyFormat = [{
+    $pressures `,` $l0 `,` $l1 `,` $l2 `,` $step attr-dict `:` type($result)
+  }];
+  let hasVerifier = 1;
+}
+
+def Dyn_ScaleCellOp : Dyn_Op<"scale_cell", [Pure]> {
+  let summary = "Scales the cell by the factor of each axis";
+  let description = [{
+    `H diag(μ)`: the edges by their μ_a and, of a triclinic cell, the tilts
+    b_x and c_x by μ_x and c_y by μ_y (D127). Three or six values, as many
+    as the results.
+
+    ```mlir
+    %n:3 = dyn.scale_cell %l0, %l1, %l2 by %mu : f64, f64, f64 -> f64, f64, f64
+    ```
+  }];
+  let arguments = (ins Variadic<F64>:$cell, Dyn_Vector3:$factors);
+  let results = (outs Variadic<F64>:$results);
+  let assemblyFormat = [{
+    $cell `by` $factors attr-dict `:` type($cell) `->` type($results)
+  }];
+  let builders = [OpBuilder<(ins "::mlir::ValueRange":$cell,
+                                 "::mlir::Value":$factors), [{
+    build($_builder, $_state,
+          ::llvm::SmallVector<::mlir::Type>(cell.size(),
+                                            $_builder.getF64Type()),
+          cell, factors);
+  }]>];
+  let hasVerifier = 1;
+}
+
+def Dyn_LoadCellOp : Dyn_Op<"load_cell"> {
+  let summary = "Reads the cell";
+  let description = [{
+    The edges, and of a triclinic cell the tilts b_x, c_x, c_y, from the
+    memory of the cell, a memref of 3 or 6 f64 in any memory space (D72):
+    on the host today, on a device for a barostat there.
+
+    ```mlir
+    %e:3 = dyn.load_cell %box : memref<3xf64> -> f64, f64, f64
+    ```
+  }];
+  let arguments = (ins Arg<Dyn_CellMemory, "the cell", [MemRead]>:$memory);
+  let results = (outs Variadic<F64>:$cell);
+  let assemblyFormat = [{
+    $memory attr-dict `:` type($memory) `->` type($cell)
+  }];
+  let hasVerifier = 1;
+}
+
+def Dyn_StoreCellOp : Dyn_Op<"store_cell", [
+    MemoryEffects<[MemWrite<Dyn_RecordResource>, MemWrite<Dyn_StopResource>]>
+  ]> {
+  let summary = "Writes the cell";
+  let description = [{
+    Writes the edges, and of a triclinic cell the tilts, into the memory of
+    the cell, and gives them to the log, the trajectory, and the checkpoint.
+    A cell that is not finite, or that one coupling has scaled by more than
+    a factor of 2 along an axis, stops the run (#168, D225).
+
+    ```mlir
+    dyn.store_cell %n#0, %n#1, %n#2 into %box : memref<3xf64>
+    ```
+  }];
+  let arguments = (ins Variadic<F64>:$cell,
+                       Arg<Dyn_CellMemory, "the cell", [MemWrite]>:$memory);
+  let assemblyFormat = [{
+    $cell `into` $memory attr-dict `:` type($memory)
+  }];
+  let hasVerifier = 1;
+}
+
+def Dyn_ScalePositionsOp : Dyn_Op<"scale_positions", [
+    Pure, AllTypesMatch<["positions", "result"]>,
+    TypesMatchWith<"the masses are a scalar field on the same particle set",
+                   "positions", "masses", Dyn_ScalarFieldOf>
+  ]> {
+  let summary = "Scales the positions by the factor of each axis";
+  let description = [{
+    `μ ⊙ x_i` for a particle alone; each rigid group of the relations in
+    `groups` moves with its center of mass X_g to μ ⊙ X_g and keeps its
+    shape (D72): a particle of a group moves back by (μ − 1) times its
+    place about the center.
+
+    ```mlir
+    %x1 = dyn.scale_positions %x, %mu, %m, %cell
+        groups(%w : !md.relation<@atoms, 3, ordered, @settles>)
+        : !md.field<@atoms, 3 x f64>
+    ```
+  }];
+  let arguments = (ins
+    MD_ReferenceFieldType:$positions,
+    Dyn_Vector3:$factors,
+    MD_ReferenceFieldType:$masses,
+    MD_CellType:$cell,
+    Variadic<MD_RelationType>:$groups
+  );
+  let results = (outs MD_ReferenceFieldType:$result);
+  let assemblyFormat = [{
+    $positions `,` $factors `,` $masses `,` $cell
+    (`groups` `(` $groups^ `:` qualified(type($groups)) `)`)?
+    attr-dict `:` qualified(type($positions))
+  }];
+  let hasVerifier = 1;
+}
+
+def Dyn_ScalingWorkOp : Dyn_Op<"scaling_work", [
+    Pure, AttrSizedOperandSegments
+  ]> {
+  let summary = "The energy that a scaling of the cell gives the system";
+  let description = [{
+    ΔE_sys, of the velocities exactly, Σ_a (μ_a⁻² − 1) K_a, and of the
+    positions as `count` says (docs/dynamics.md, Section 2.2.7), with `C`
+    the constant terms and V, V' the volumes before and after:
+
+    | `count` | Operands | Positions |
+    |---|---|---|
+    | `trotter` | `log_strain`, `virial_before`, `virial_after`, `volumes(V, V')` | −Σ_a ln μ_a ½ (W_b,aa + C/(3V) + W_a,aa + C/(3V')) |
+    | `trotter_before` | `log_strain`, `virial_before`, `volumes(V)` | −Σ_a ln μ_a (W_b,aa + C/(3V)) |
+    | `exact` | `strain`, `energies(U, U')`, `volumes(V, V')` | U' − U + C (1/V' − 1/V) |
+    | `first_order` | `strain`, `virial_before`, `volumes(V)` | −Σ_a (μ_a − 1) ⅓ (tr W + C/V) |
+
+    `kinetic` is that of the velocities that the scaling scales; with
+    `log_strain` μ = exp(ln μ). `constant` is C: the virials of the
+    constant terms times the volume, or with `exact` their energy times it.
+
+    ```mlir
+    %w = dyn.scaling_work kinetic(%k) strain(%mu) virial_before(%wg)
+        constant(%c) volumes(%v) {count = "first_order"} : f64
+    ```
+  }];
+  let arguments = (ins
+    Dyn_Vector3:$kinetic,
+    Optional<Dyn_Vector3>:$strain,
+    Optional<Dyn_Vector3>:$log_strain,
+    Optional<Dyn_Vector3>:$virial_before,
+    Optional<Dyn_Vector3>:$virial_after,
+    Variadic<F64>:$energies,
+    F64:$constant,
+    Variadic<F64>:$volumes,
+    StrAttr:$count
+  );
+  let results = (outs F64:$result);
+  let assemblyFormat = [{
+    `kinetic` `(` $kinetic `)` (`strain` `(` $strain^ `)`)?
+    (`log_strain` `(` $log_strain^ `)`)?
+    (`virial_before` `(` $virial_before^ `)`)?
+    (`virial_after` `(` $virial_after^ `)`)?
+    (`energies` `(` $energies^ `)`)? `constant` `(` $constant `)`
+    `volumes` `(` $volumes `)` attr-dict `:` type($result)
   }];
   let hasVerifier = 1;
 }
