@@ -2990,7 +2990,7 @@ static LogicalResult planTiles(Operation *loop, OpBuilder &builder,
     FlatSymbolRefAttr name =
         apply.getVjp() ? stage.getVjpAttr() : stage.getForwardAttr();
     auto body = module.lookupSymbol<func::FuncOp>(name.getAttr());
-    if (!body || !body->hasAttr("md.stage_body"))
+    if (!body || !md::hasStageBody(body.getOperation()))
       return apply.emitOpError()
              << "applies the body '" << name.getValue()
              << "', which is not lowered; run 'md-exec-lower-stage-bodies' "
@@ -8682,7 +8682,7 @@ LogicalResult Lowering::run() {
   SmallVector<func::FuncOp> functions;
   for (Operation &op : module)
     if (auto function = dyn_cast<func::FuncOp>(&op))
-      if (!function->hasAttr("md.stage_body"))
+      if (!md::hasStageBody(function.getOperation()))
         functions.push_back(function);
   for (func::FuncOp function : functions)
     if (failed(lowerFunction(function)))

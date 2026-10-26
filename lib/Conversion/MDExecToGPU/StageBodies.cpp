@@ -1441,7 +1441,7 @@ public:
                               "module";
         return signalPassFailure();
       }
-      if (function->hasAttr("md.stage_body"))
+      if (md::hasStageBody(function.getOperation()))
         continue;
       // The rows stay known once the tensors are buffers.
       auto first = dyn_cast<RankedTensorType>(
@@ -1653,7 +1653,7 @@ public:
       } else {
         releaseOnHost(function);
       }
-      function->setAttr("md.stage_body", UnitAttr::get(context));
+      md::markStageBody(function.getOperation());
       function->removeAttr("md.stage_disjoint_results");
     }
 
