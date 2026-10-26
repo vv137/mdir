@@ -109,7 +109,7 @@ interface, `cmake --install` puts the package in `MDIR_PYTHON_INSTALL_DIR`,
 which names the package's directory (by default
 `lib/pythonX.Y/site-packages/mdir`; D228). At run time it
 needs HDF5 (found through the RPATH of the build), and on a GPU the NVIDIA
-driver and the CUDA toolkit's `nvvm/libdevice` and cuFFT, under `CUDA_ROOT`
+driver and the CUDA toolkit's `nvvm/libdevice`, cuFFT, and cuBLAS, under `CUDA_ROOT`
 or the toolkit it was built with.
 
 ## 6. Testing
