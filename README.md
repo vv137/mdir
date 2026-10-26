@@ -92,37 +92,40 @@ Cellulose (408,609 atoms; white paper, Table 10.8). Both are in
 
 ## Installing
 
-The current release is [v0.2.0](docs/release-notes/v0.2.0.md), a source
-release: it has no binary tarball and no wheel. Its changes are in
+The current release is [v0.2.1](docs/release-notes/v0.2.1.md), with a
+binary tarball and Python wheels. Its changes are in
 [CHANGELOG.md](CHANGELOG.md).
 
-- **From a release.** Download the source archive from
-  [GitHub Releases](https://github.com/vv137/mdir/releases) and build it
-  with LLVM 23.1.2 and HDF5 as [docs/building.md](docs/building.md)
-  describes; the installed tree, `bin/mdir` with its runtime, needs
-  neither build tree.
+- **The binary tarball.** `mdir-0.2.1-manylinux_2_28_x86_64.tar.gz`, from
+  [GitHub Releases](https://github.com/vv137/mdir/releases), runs on Linux
+  x86-64 with glibc 2.28 or later (RHEL, Rocky, and Alma 8 and later,
+  Ubuntu 20.04 and later, Debian 11 and later). Extract it anywhere and run
+  `bin/mdir doctor`. It carries HDF5, cuFFT, the OpenMP runtime, and
+  libdevice, so a GPU run needs only an NVIDIA driver that supports CUDA
+  13.0 ([packaging/README.md](packaging/README.md)).
+- **The Python wheel**, for CPython 3.10–3.13 on Linux x86-64
+  (manylinux_2_28), among the assets of the same release. A GPU needs only
+  the NVIDIA driver; the extra `cuda` brings cuFFT and ptxas. The `mdir`
+  command is not in the wheel; it comes with the tarball
+  ([docs/python-package.md](docs/python-package.md)):
+
+  ```sh
+  python -m venv mdir-env
+  mdir-env/bin/pip install "mdir-0.2.1-cp312-cp312-manylinux_2_28_x86_64.whl[cuda]"
+  mdir-env/bin/python -c "import mdir; print(mdir.__version__)"
+  ```
+
+- **From a release.** Download the source archive and build it with LLVM
+  23.1.2 and HDF5 as [docs/building.md](docs/building.md) describes; the
+  installed tree, `bin/mdir` with its runtime, needs neither build tree.
 - **In a container.** [packaging/](packaging/README.md) builds a Docker
   or an Apptainer image with LLVM, HDF5, CUDA, and MDIR:
 
   ```sh
-  docker build -f packaging/Dockerfile -t mdir:0.2.0 .
-  docker run --rm --gpus all -v "$PWD":/work mdir:0.2.0 doctor
-  apptainer build mdir-0.2.0.sif docker-daemon://mdir:0.2.0
-  apptainer run --nv mdir-0.2.0.sif doctor
-  ```
-
-- **The Python package.** No wheel is published with 0.2.0. A wheel for
-  CPython 3.10–3.13 on Linux x86-64 is built from the source tree, with
-  `pip wheel .` or the target `wheels` of `packaging/Dockerfile.manylinux`
-  for manylinux_2_28, as [docs/python-package.md](docs/python-package.md),
-  Section 6, describes; its extra `cuda` brings cuFFT and ptxas. The
-  `mdir` command is not in the wheel. A wheel built that way installs
-  with:
-
-  ```sh
-  python -m venv mdir-env
-  mdir-env/bin/pip install "dist/mdir-0.2.0-cp312-cp312-manylinux_2_28_x86_64.whl[cuda]"
-  mdir-env/bin/python -c "import mdir; print(mdir.__version__)"
+  docker build -f packaging/Dockerfile -t mdir:0.2.1 .
+  docker run --rm --gpus all -v "$PWD":/work mdir:0.2.1 doctor
+  apptainer build mdir-0.2.1.sif docker-daemon://mdir:0.2.1
+  apptainer run --nv mdir-0.2.1.sif doctor
   ```
 
 Building from source, the CMake options, the tests, and `mdir-opt` are in
