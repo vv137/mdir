@@ -644,6 +644,7 @@ specification follow those made with it.
 | [D346](decisions/D346.md) | The readers of the tunables read a snapshot that a successful operation publishes whole, and an export of a buffer takes its own lease before it releases the GIL | 2026-10-25 |
 | [D347](decisions/D347.md) | **An integer of a fingerprint is written exactly, and the text of an integer below $2^{53}$ in magnitude does not change** (#620). | 2026-10-25 |
 | [D348](decisions/D348.md) | The registry of the device's blocks grows with them, the idle blocks of the pool and the cached plans of cuFFT are bounded in bytes, a request that the driver refuses for want of memory is made again after they are given back, and an embedding program may give them back itself | 2026-10-25 |
+| [D349](decisions/D349.md) | The module's checked storage form has one declared marker contract. | 2026-10-26 |
 <!-- end decisions-table -->
 
 

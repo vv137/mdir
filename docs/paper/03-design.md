@@ -653,7 +653,7 @@ explicit `md_exec.tuple_set` attribute on the builder and tuple loop. The layout
 maps each index to itself and the numeric memory space remains separate.
 The unit module marker `md_exec.typed_storage` declares this form; a
 single checked dialect helper writes, queries, and removes it
-(D[typed-storage-marker]).
+(D349).
 The verifier compares a loop's buffers with its particle or tuple domain,
 and rejects a buffer from another set. The current pool can reuse a buffer
 only for the same set and full type. Before either CPU or GPU lowering a

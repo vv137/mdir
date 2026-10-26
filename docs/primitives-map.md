@@ -87,7 +87,7 @@ An external input enters a set's storage through a `memref.cast` marked
 set is an invariant input assertion; the dialect rejects a malformed marker
 or a cast that changes a known set before any primitive uses the buffer.
 The unit module declaration `md_exec.typed_storage` makes the storage-form
-set checks applicable (D[typed-storage-marker], #636). One MDExec helper is
+set checks applicable (D349, #636). One MDExec helper is
 the writer, query, verifier, and erasure path; invalid placement or value is
 diagnosed before a primitive uses a buffer.
 
