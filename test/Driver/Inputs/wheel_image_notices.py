@@ -51,6 +51,7 @@ if kind == "wheel":
             f"Metadata-Version: 2.4\nName: mdir\nVersion: {version}\n"
             "License-Expression: MIT\nLicense-File: LICENSE\n"
             "Provides-Extra: cuda\n"
+            'Requires-Dist: nvidia-cublas<14,>=13.0; extra == "cuda"\n'
             'Requires-Dist: nvidia-cufft<13,>=12.0; extra == "cuda"\n'
             'Requires-Dist: nvidia-cuda-nvcc<14,>=13.0; extra == "cuda"\n',
     }

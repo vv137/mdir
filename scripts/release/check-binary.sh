@@ -18,7 +18,7 @@
 # (packaging/licenses/README.md): MDIR's license; in share/mdir/licenses,
 # HDF5's beside a bundled libhdf5, pocketfft's (in libmdrt), toml++'s (in
 # mdir), and LLVM's and its OpenMP runtime's (in mdir, and libomp.so); and
-# the CUDA EULA beside a bundled cuFFT or libdevice. Exit status 1 on any
+# the CUDA EULA beside a bundled cuFFT, cuBLAS, or libdevice. Exit status 1 on any
 # failure, with each one listed.
 set -euo pipefail
 dir=${1:?usage: $0 DIR}
@@ -73,8 +73,8 @@ fi
 if exists "$dir/lib/libhdf5*.so*"; then
   notice licenses/HDF5-COPYING 'The HDF Group' "lib/libhdf5 is bundled"
 fi
-if exists "$dir/lib/libcufft.so*" || [[ -d "$dir/share/mdir/cuda" ]]; then
-  notice cuda/EULA.txt 'NVIDIA' "cuFFT or libdevice is bundled"
+if exists "$dir/lib/libcufft.so*" || exists "$dir/lib/libcublas*.so*" || [[ -d "$dir/share/mdir/cuda" ]]; then
+  notice cuda/EULA.txt 'NVIDIA' "cuFFT, cuBLAS, or libdevice is bundled"
 fi
 if (( fail )); then echo "check-binary: FAILED" >&2; exit 1; fi
 echo "check-binary: ok"

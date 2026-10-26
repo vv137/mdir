@@ -10,7 +10,8 @@
 #     --build-arg VERSION=0.1.0 --target tarball --output type=local,dest=out .
 #
 # writes out/mdir-VERSION-manylinux_2_28_x86_64.tar.gz: bin/mdir, lib/ with
-# the runtime, the OpenMP runtime, HDF5, and cuFFT under their sonames, and
+# the runtime, the OpenMP runtime, HDF5, cuFFT, and cuBLAS under their
+# sonames, and
 # share/mdir/cuda with libdevice and the CUDA EULA, and share/mdir/licenses
 # with the notices of HDF5, pocketfft, toml++, LLVM, and its OpenMP runtime
 # (packaging/licenses/README.md). libstdc++ and libgcc are
@@ -20,7 +21,7 @@
 # Layers go from what changes least to what changes most, as in
 # packaging/Dockerfile: the base image (pinned by digest) and its packages;
 # the parts of CUDA 13.0 for RHEL 8 that the build needs (headers, the
-# driver's stub, cuFFT, libdevice, and nvcc, which CMake reads the version
+# driver's stub, cuFFT, cuBLAS, libdevice, and nvcc, which CMake reads the version
 # from); HDF5 from scripts/build-hdf5.sh alone; LLVM from
 # scripts/build-llvm.sh alone (about an hour); and MDIR's sources last, in a
 # BuildKit cache mount so that a rebuild compiles only what changed.
@@ -40,6 +41,7 @@ RUN dnf config-manager --add-repo \
  && dnf install -y --setopt=install_weak_deps=False \
       cuda-nvcc-${CUDA}-13.0.88 cuda-cudart-devel-${CUDA}-13.0.88 \
       cuda-driver-devel-${CUDA}-13.0.88 libcufft-devel-${CUDA}-12.0.0.61 \
+      libcublas-devel-${CUDA}-13.0.2.14 \
  && dnf clean all \
  && ln -sfn /usr/local/cuda-13.0 /usr/local/cuda
 ENV PATH=/usr/local/cuda/bin:${PATH}
@@ -101,8 +103,9 @@ COPY --from=build /mdir-*-manylinux_2_28_x86_64.tar.gz /
 # One wheel per CPython of the image (PYTHONS), built by pyproject.toml with
 # the toolchain above, libstdc++ and libgcc linked statically as for the
 # tarball, and repaired by auditwheel to manylinux_2_28: HDF5 is grafted
-# into mdir.libs under a unique name; the driver's libcuda and cuFFT, which
-# comes from NVIDIA's wheel (the extra `cuda`), are left to the system. A
+# into mdir.libs under a unique name; the driver's libcuda, and cuFFT and
+# cuBLAS, which come from NVIDIA's wheels (the extra `cuda`), are left to the
+# system. A
 # wheel carries in mdir/licenses the notices of what it holds in binary
 # form (packaging/licenses/README.md). From the root of the repository:
 #
@@ -134,6 +137,7 @@ RUN --mount=type=cache,target=/build/wheels,id=mdir-manylinux-wheels \
     LD_LIBRARY_PATH=/opt/hdf5/1.14.6/lib auditwheel repair \
       --plat manylinux_2_28_x86_64 \
       --exclude libcuda.so.1 --exclude libcufft.so.12 \
+      --exclude libcublas.so.13 --exclude libcublasLt.so.13 \
       -w /wheels /build/wheels/raw/*.whl
 
 # --- The wheels alone, for --output ------------------------------------------

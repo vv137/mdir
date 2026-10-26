@@ -28,7 +28,7 @@ wheels and the image say what differs there.
 | toml++ | compiled into `bin/mdir` | MIT | `licenses/tomlplusplus-LICENSE`, from `third_party/tomlplusplus/LICENSE`: "The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software." |
 | LLVM and MLIR 23.1.2 | linked statically into `bin/mdir` | Apache 2.0 with LLVM exceptions; parts under the legacy license of the University of Illinois | `licenses/LLVM-LICENSE.TXT`, the `llvm/LICENSE.TXT` of the release; see below |
 | The OpenMP runtime of LLVM 23.1.2 | `lib/libomp.so`, bundled whole | Apache 2.0 with LLVM exceptions; parts under the University of Illinois and MIT licenses | `licenses/OpenMP-LICENSE.TXT`, the `openmp/LICENSE.TXT` of the release; see below |
-| cuFFT, libdevice (CUDA 13.0) | `lib/libcufft.so.*`, `share/mdir/cuda/nvvm/libdevice` | The CUDA EULA, which lists both as redistributable (Attachment A) | `cuda/EULA.txt`, from the toolkit |
+| cuFFT, cuBLAS, cuBLASLt, libdevice (CUDA 13.0) | `lib/libcufft.so.*`, `lib/libcublas.so.*`, `lib/libcublasLt.so.*`, `share/mdir/cuda/nvvm/libdevice` | The CUDA EULA, which lists them as redistributable (Attachment A) | `cuda/EULA.txt`, from the toolkit |
 | libstdc++, libgcc (GCC 14) | linked statically into `bin/mdir`, `lib/libmdrt.so`, `lib/libmdrt_cuda.so` | GPL 3 with the GCC Runtime Library Exception 3.1 | None; see below |
 | glibc, libz, the driver's `libcuda` | not in the tarball; taken from the system | | None: they are not distributed |
 
@@ -85,7 +85,7 @@ file needs, and the symbols and strings of the extension):
 | HDF5 1.14.6 | `mdir.libs/libhdf5-<hash>.so.310.5.1`, grafted by auditwheel | `mdir/licenses/HDF5-COPYING` |
 | libdevice (CUDA 13.0) | `mdir/cuda/nvvm/libdevice/libdevice.10.bc` | `mdir/cuda/EULA.txt`; Attachment A of the EULA lists `libdevice.10.bc` among the files that "may be distributed with applications developed by you" |
 | libstdc++, libgcc (GCC 14) | linked statically into the extension and the runtime | None, as for the tarball |
-| cuFFT, ptxas | not in the wheel: NVIDIA's wheels `nvidia-cufft` and `nvidia-cuda-nvcc` (the extra `cuda`) distribute them, with their own licenses | None |
+| cuFFT, cuBLAS, ptxas | not in the wheel: NVIDIA's wheels `nvidia-cufft`, `nvidia-cublas`, and `nvidia-cuda-nvcc` (the extra `cuda`) distribute them, with their own licenses | None |
 | glibc, libz, the driver's `libcuda` | not in the wheel; taken from the system | None |
 
 The clauses for toml++, LLVM, pocketfft, the OpenMP runtime, and HDF5 are

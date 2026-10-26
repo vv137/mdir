@@ -12,10 +12,10 @@
 #    system libstdc++ only up to GLIBCXX_3.4.25 and CXXABI_1.3.11;
 #  - every needed library is in mdir/lib or mdir.libs, is one that
 #    manylinux_2_28 lets a binary take from the system, is the driver's
-#    libcuda, or is cuFFT (libcufft.so.12, from NVIDIA's wheel, the extra
-#    `cuda`);
-#  - the extra `cuda` of its metadata requires nvidia-cufft and
-#    nvidia-cuda-nvcc (ptxas), and nothing else;
+#    libcuda, or is cuFFT or cuBLAS (libcufft.so.12, libcublas.so.13,
+#    libcublasLt.so.13, from NVIDIA's wheels, the extra `cuda`);
+#  - the extra `cuda` of its metadata requires nvidia-cufft, nvidia-cublas,
+#    and nvidia-cuda-nvcc (ptxas), and nothing else;
 #  - mdir/cuda holds libdevice;
 #  - it carries the notices that the licenses of what it distributes in
 #    binary form ask for (packaging/licenses/README.md): in mdir/licenses,
@@ -34,7 +34,7 @@ version=$(sed -n 's/^project(mdir VERSION \([0-9.]*\) .*/\1/p' "$repo/CMakeLists
 fail=0
 complain() { echo "check-wheel: $*" >&2; fail=1; }
 
-allowed='^(libc|libm|libdl|libpthread|librt|libgcc_s|libstdc\+\+|libz|libcuda|libcufft)\.so\.[0-9]+$|^ld-linux-x86-64\.so\.2$|^linux-vdso\.so\.1$'
+allowed='^(libc|libm|libdl|libpthread|librt|libgcc_s|libstdc\+\+|libz|libcuda|libcufft|libcublas|libcublasLt)\.so\.[0-9]+$|^ld-linux-x86-64\.so\.2$|^linux-vdso\.so\.1$'
 max_version() { { grep -o "$1_[0-9.]*" || true; } | sed "s/$1_//" | sort -V | tail -1; }
 newer() { [[ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | tail -1)" != "$2" ]]; }
 exists() { compgen -G "$1" > /dev/null; }
@@ -61,8 +61,8 @@ for wheel in "$@"; do
   grep -qx "Version: $version" "$tree"/mdir-*.dist-info/METADATA \
     || complain "$name: METADATA does not say Version: $version"
   extra=$(sed -n 's/^Requires-Dist: \(.*\); extra == "cuda"$/\1/p' "$tree"/mdir-*.dist-info/METADATA | sort | tr '\n' ' ')
-  [[ "$extra" == "nvidia-cuda-nvcc<14,>=13.0 nvidia-cufft<13,>=12.0 " ]] \
-    || complain "$name: the extra cuda requires '$extra', not nvidia-cuda-nvcc<14,>=13.0 and nvidia-cufft<13,>=12.0"
+  [[ "$extra" == "nvidia-cublas<14,>=13.0 nvidia-cuda-nvcc<14,>=13.0 nvidia-cufft<13,>=12.0 " ]] \
+    || complain "$name: the extra cuda requires '$extra', not nvidia-cublas<14,>=13.0, nvidia-cuda-nvcc<14,>=13.0, and nvidia-cufft<13,>=12.0"
   while IFS= read -r -d '' f; do
     file "$f" | grep -q ELF || continue
     base=$(basename "$f")

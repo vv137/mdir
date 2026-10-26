@@ -17,9 +17,9 @@ mdir-env/bin/pip install "mdir-0.1.0-cp312-cp312-manylinux_2_28_x86_64.whl[cuda]
 mdir-env/bin/python -c "import mdir; print(mdir.__version__)"
 ```
 
-The wheel depends on NumPy 1.23 or later. The extra `cuda` adds two of
-NVIDIA's wheels of CUDA 13, `nvidia-cufft` (cuFFT, which GPU runs need)
-and `nvidia-cuda-nvcc` (for its ptxas, which compiles the kernels);
+The wheel depends on NumPy 1.23 or later. The extra `cuda` adds three of
+NVIDIA's wheels of CUDA 13, `nvidia-cufft` and `nvidia-cublas` (cuFFT and
+cuBLAS, which GPU runs need) and `nvidia-cuda-nvcc` (for its ptxas, which compiles the kernels);
 CPU-only installs leave it out. The `mdir` command is not in the wheel: it
 comes with the release tarball and the container (D177, D174), which carry
 their own copy of the same version.
@@ -53,6 +53,7 @@ the build as before.
 | HDF5 | the wheel, `mdir.libs`, renamed by auditwheel so that another HDF5 in the process (h5py's) is not taken for it | the extension's RPATH |
 | libdevice | the wheel, `mdir/cuda`, 464 KB | without `CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH`: `cuda` beside the extension, else `../share/mdir/cuda` of an installed tree, else the toolkit of the build |
 | cuFFT (`libcufft.so.12`) | NVIDIA's `nvidia-cufft` wheel (extra `cuda`) | `libmdrt_cuda.so`'s RPATH, `$ORIGIN/../../nvidia/cu13/lib`, else the system's search path (a CUDA toolkit on `LD_LIBRARY_PATH` or in the loader's cache) |
+| cuBLAS (`libcublas.so.13`, `libcublasLt.so.13`) | NVIDIA's `nvidia-cublas` wheel (extra `cuda`) | as cuFFT |
 | `libcuda.so.1` | the NVIDIA driver | the loader, when a GPU program is loaded |
 | ptxas | NVIDIA's `nvidia-cuda-nvcc` wheel (extra `cuda`) | the `bin` of a toolkit that `CUDA_ROOT` names, else `nvidia/cu13/bin/ptxas` beside the package, else `PATH` (D214) |
 
@@ -131,7 +132,8 @@ Release wheels come from the target `wheels` of
 manylinux_2_28 image, GCC 14, LLVM/MLIR 23.1.2, HDF5 1.14.6, CUDA 13.0):
 one wheel per CPython 3.10–3.13 of the image, with libstdc++ and libgcc
 linked statically, repaired by auditwheel to `manylinux_2_28_x86_64`
-(`--exclude libcuda.so.1 --exclude libcufft.so.12`):
+(`--exclude libcuda.so.1 --exclude libcufft.so.12 --exclude libcublas.so.13
+--exclude libcublasLt.so.13`):
 
 ```sh
 DOCKER_BUILDKIT=1 docker build -f packaging/Dockerfile.manylinux \
