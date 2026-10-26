@@ -100,12 +100,12 @@ binary tarball and Python wheels. Its changes are in
   [GitHub Releases](https://github.com/vv137/mdir/releases), runs on Linux
   x86-64 with glibc 2.28 or later (RHEL, Rocky, and Alma 8 and later,
   Ubuntu 20.04 and later, Debian 11 and later). Extract it anywhere and run
-  `bin/mdir doctor`. It carries HDF5, cuFFT, the OpenMP runtime, and
-  libdevice, so a GPU run needs only an NVIDIA driver that supports CUDA
+  `bin/mdir doctor`. It carries HDF5, cuFFT, cuBLAS, the OpenMP runtime,
+  and libdevice, so a GPU run needs only an NVIDIA driver that supports CUDA
   13.0 ([packaging/README.md](packaging/README.md)).
 - **The Python wheel**, for CPython 3.10–3.13 on Linux x86-64
   (manylinux_2_28), among the assets of the same release. A GPU needs only
-  the NVIDIA driver; the extra `cuda` brings cuFFT and ptxas. The `mdir`
+  the NVIDIA driver; the extra `cuda` brings cuFFT, cuBLAS, and ptxas. The `mdir`
   command is not in the wheel; it comes with the tarball
   ([docs/python-package.md](docs/python-package.md)):
 
