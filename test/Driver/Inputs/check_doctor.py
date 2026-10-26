@@ -19,9 +19,11 @@ with tempfile.TemporaryDirectory(prefix="doctor-test-") as temporary:
         environment.pop(key, None)
 
     def run(arguments, status, **overrides):
-        result = subprocess.run([executable, "doctor", *arguments], cwd=root,
+        # A limit for each check run that a full suite on a shared node
+        # does not reach (#663: 120 s, the default, was reached twice).
+        result = subprocess.run([executable, "doctor", "--timeout=600", *arguments], cwd=root,
                                 env=dict(environment, **overrides), text=True,
-                                capture_output=True, timeout=300)
+                                capture_output=True, timeout=1500)
         assert result.returncode == status, result.stdout + result.stderr
         assert set(root.iterdir()) == {scratch}, list(root.iterdir())
         return result.stdout + result.stderr

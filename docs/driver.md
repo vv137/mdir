@@ -291,7 +291,7 @@ end, independently of the simulation schedule.
 
 ### 1.5 Installation doctor
 
-`mdir doctor [--target=all|cpu|gpu]` checks the installation (D155). It
+`mdir doctor [--target=all|cpu|gpu] [--timeout=<seconds>]` checks the installation (D155). It
 prints the build information of `mdir version`, then compiles and runs an
 embedded two-atom Lennard-Jones system for two steps on each requested
 target. The CPU uses double precision and two OpenMP threads; the GPU uses
@@ -306,8 +306,10 @@ probe dynamically loads the driver and reports its supported CUDA API
 version, visible device names, compute capabilities, and selected device.
 `CUDA_VISIBLE_DEVICES` and `MDRT_DEVICE` select devices as in a normal run.
 
-Each run uses the same executable in a child process, with a timeout of
-120 seconds, so a failed CPU run does not prevent checking the GPU. The
+Each run uses the same executable in a child process, with a limit of
+120 seconds (`--timeout=<seconds>` changes it, for a machine busy with
+other work; 0 waits without a limit), so a failed CPU run does not prevent
+checking the GPU; a run stopped at the limit says so (#663). The
 control files, coordinates, captured output, and any compiler reproducer
 are in a unique temporary directory. Success removes it; failure prints
 its path, the log paths and a rerun command when a run was attempted,
