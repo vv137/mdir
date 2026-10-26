@@ -1,0 +1,3 @@
+# REQUIRES: cuda
+# RUN: %python %S/Inputs/groups_buffer_range.py %mdrt_cuda | FileCheck %s
+# CHECK: Three invalid slots diagnosed before any handle or array access

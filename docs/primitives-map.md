@@ -425,3 +425,5 @@ missing (Section 3.3), not unfitting.
 | The opaque model term | The model's structure is outside the IR by design; ML4 replaces it by stages, and it stays as the baseline |
 | Skins and other choices by measurement | A choice among programs, not a computation |
 | Reweighting | Reductions over frames on the host, outside the step and its lowering |
+
+The group-buffer interface uses the shared slot contract of D[groups-buffer-abi]. Compiler selection and runtime allocation lengths use the same declaration; target-independent metadata introduces no NVIDIA instruction or tuning change.

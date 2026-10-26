@@ -7,6 +7,7 @@
 // (D234): stores list the directory only at the
 // bound, without a total, or once a day.
 #include "mdir/Compiler/CompileCache.h"
+#include "mdir/Runtime/GroupsABI.h"
 #include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 #include "llvm/IR/IRBuilder.h"
 #include "llvm/IR/LLVMContext.h"
@@ -97,6 +98,9 @@ int main(int argc, char **argv) {
   // Keys: the CPU and its features, the scheduler, and the module.
   auto host = machine(true);
   std::string hostKey = describeMachine(*host, "pre-RA-sched=fast");
+  check(StringRef(hostKey).contains("groups-abi " +
+                                  std::to_string(MDRT_GROUPS_ABI_VERSION) + "\n"),
+        "group buffer ABI participates in cache compatibility");
   check(hostKey != describeMachine(*machine(false), "pre-RA-sched=fast"),
         "another CPU and features change the key");
   check(hostKey != describeMachine(*host, ""),

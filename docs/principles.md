@@ -239,3 +239,5 @@ before a physical plan is selected.
    line of the module of `mdir emit` that they come from, such as
    `mdir_run_particle_for_l44_121`, in profiles and in the reports of the
    sanitizer.
+
+Compiler/runtime buffer roles must come from a shared, versioned declaration (D[groups-buffer-abi]); a parallel enum or numeric selector is insufficient. Validate externally supplied selectors before indexing runtime storage, and include ABI compatibility versions in compiled-object cache identity.
