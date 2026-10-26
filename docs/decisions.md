@@ -649,6 +649,7 @@ specification follow those made with it.
 | [D351](decisions/D351.md) | A batched stage body retains a verified static row declaration through bufferization. | 2026-10-26 |
 | [D352](decisions/D352.md) | The module of a program is the builder's text parsed and printed again by MLIR's printer, with the locations of its ops, and `mdir emit --stage=module` and `Program.ir` print it without the positions in the builder's text | 2026-10-26 |
 | [D353](decisions/D353.md) | An outlined batched body is identified by a checked function marker. | 2026-10-26 |
+| [D354](decisions/D354.md) | A kernel is named after its function, the op of the loop it comes from, what a fused kernel holds, and its ordinal in the lowering, not after the line of that op in the text of the module | 2026-10-26 |
 <!-- end decisions-table -->
 
 

@@ -12,7 +12,7 @@
 // carry the name of their term (`loc("control-file term: wall")`,
 // Expression.cpp), which the diagnostics of the passes name; the other
 // ops carry their position in the builder's text, which nothing reads
-// since the kernels are named without it (D[kernel-names]) and which
+// since the kernels are named without it (D354) and which
 // diagnostics may still point at. `mdir emit --stage=module` and Python's
 // `Program.ir` show the
 // module for reading (printModuleForReading): the locations that the

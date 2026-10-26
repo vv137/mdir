@@ -127,7 +127,7 @@ at a later call. To find the kernel that failed:
    `mdir_run_particle_for_integration3_188`: the function, the op of the
    loop that the kernel comes from, what a fused kernel holds
    (`integration3`, `run2`), and the ordinal of the kernel in the lowering
-   of the module (D[kernel-names]). The ordinal follows the ops of the
+   of the module (D354). The ordinal follows the ops of the
    program, not the lines of a text, so a name stays when the builder's
    text changes around its loop. `MDRT_TRACE=1` prints each module, its
    kernels, and each launch with its grid;

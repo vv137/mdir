@@ -829,7 +829,7 @@ void Lowering::createTransfer(OpBuilder &builder, Location loc,
 }
 
 /// The purpose of the kernels of `op`: its name, such as `tuple_for`
-/// (D[kernel-names]). Before, the line of the input where the op begins
+/// (D354). Before, the line of the input where the op begins
 /// followed (`tuple_for_l2449`); a kernel's name then changed with every
 /// line added above its loop in the builder's text, and with how that text
 /// was printed (#568).
@@ -839,7 +839,7 @@ void Lowering::setPurpose(Operation *op) {
 
 /// Names the kernel that `launch` becomes, and its module: the function,
 /// the purpose, and the ordinal of the kernel in the lowering of the module,
-/// which makes the name unique (D[kernel-names]). The name depends on the
+/// which makes the name unique (D354). The name depends on the
 /// ops of the program and their order alone: not on the locations of the
 /// ops, nor on the text the program was parsed from. A profiler, a
 /// sanitizer, and the trace of the runtime report kernels by these names.

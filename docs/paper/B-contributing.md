@@ -103,7 +103,7 @@ Kernels are named `<function>_<op>[_<kind>]_<n>`, where `<n>` is the
 ordinal of the kernel in the lowering, so a profile or a report of the
 sanitizer points at the IR (`MDIR_PRINT_AFTER=gpu-kernel-outlining` prints
 the kernels in that order), and a name does not change with the text the
-program was built from (D[kernel-names]).
+program was built from (D354).
 
 ## B.4 How a change is recorded and reviewed
 

@@ -1073,7 +1073,7 @@ selects the forms of the module stage, both by default:
   builder's text had them.
 - The positions of the ops in the builder's text (`loc("-":2451:5)`). The
   program's text keeps them, and emit leaves them out, since they refer
-  to a text that nobody reads. Until D[kernel-names] the lowering named a
+  to a text that nobody reads. Until D354 the lowering named a
   kernel that it outlines from a loop by the line of the loop
   (`mdir_run_particle_for_l2451_...`), so the positions were part of the
   lowered program; since, a kernel is named after its op and its ordinal,

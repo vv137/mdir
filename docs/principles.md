@@ -244,7 +244,7 @@ before a physical plan is selected.
    (`MDIR_BENCH_DIR`, `test/Scale`). Kernels are named after the op that
    they come from and their ordinal in the lowering, such as
    `mdir_run_particle_for_121`, in profiles and in the reports of the
-   sanitizer (D[kernel-names]; until it, the line of the op in the module
+   sanitizer (D354; until it, the line of the op in the module
    of `mdir emit` stood after the op).
 
 Compiler/runtime buffer roles must come from a shared, versioned declaration (D350); a parallel enum or numeric selector is insufficient. Validate externally supplied selectors before indexing runtime storage, and include ABI compatibility versions in compiled-object cache identity.
