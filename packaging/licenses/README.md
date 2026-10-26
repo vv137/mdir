@@ -113,6 +113,27 @@ project; it states that it does not "cover cases where the source
 distribution and binary distribution packages don't have the same
 licenses". The source distribution holds none of the bundled binaries.
 
+### Before the first upload to PyPI (#650)
+
+A wheel on PyPI is redistributed by the index to anyone who installs it,
+not only by the release of this repository. The maintainer confirms, before
+the first public upload, and records here with the date:
+
+- **The CUDA EULA.** That its terms for redistributing libdevice
+  (Attachment A, the files that "may be distributed with applications") and
+  the EULA's other conditions on redistribution cover a wheel on a public
+  package index, as they cover the release tarball. NVIDIA distributes
+  libdevice in wheels of its own on PyPI (`nvidia-cuda-nvcc`), which is a
+  point of comparison and not a conclusion. If the terms do not cover it,
+  the wheel can take libdevice from `nvidia-cuda-nvcc` at run time instead
+  of carrying it.
+- **The other notices.** That HDF5's, pocketfft's, toml++'s, LLVM's, the
+  OpenMP runtime's, and pybind11's notices are in every wheel, which
+  `check-wheel.sh` already checks, and that the project's metadata on PyPI
+  (`License-Expression: MIT`) names MDIR's own license and no more.
+
+Nothing here is a legal conclusion; it lists what is to be confirmed.
+
 ## The container image
 
 The runtime stage of `packaging/Dockerfile` starts from NVIDIA's image

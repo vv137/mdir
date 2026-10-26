@@ -4,6 +4,13 @@
 #
 #   scripts/release/check-wheel-install.sh [--work DIR] [--gpu INDEX]
 #       [--examples DIR] [--dry-run] WHEEL...
+#   scripts/release/check-wheel-install.sh --index URL --version VERSION
+#       [--work DIR] [--gpu INDEX] [--examples DIR] [--dry-run] X.Y...
+#
+# The second form installs `mdir[cuda]==VERSION` from the package index URL
+# (with PyPI as the extra index, for NVIDIA's wheels) for each CPython X.Y,
+# as a user does after the upload to TestPyPI or PyPI (#650), and checks it
+# the same way.
 #
 # For each wheel, mdir-VERSION-cpXY-cpXY-*.whl: the CPython X.Y of its tag
 # from `uv python install` (UV, or uv on the path; its interpreters and cache
@@ -27,9 +34,10 @@ set -euo pipefail
 
 usage() {
   echo "usage: $0 [--work DIR] [--gpu INDEX] [--examples DIR] [--dry-run] WHEEL..." >&2
+  echo "       $0 --index URL --version VERSION [--work DIR] [--gpu INDEX] [--examples DIR] [--dry-run] X.Y..." >&2
   exit 2
 }
-work=; gpu=; dry=0
+work=; gpu=; dry=0; index=; index_version=
 examples=$(cd "$(dirname "$0")/../.." && pwd)/examples/ala3
 wheels=()
 while (( $# )); do
@@ -37,6 +45,8 @@ while (( $# )); do
     --work) (( $# >= 2 )) || usage; work=$2; shift ;;
     --gpu) (( $# >= 2 )) || usage; gpu=$2; shift ;;
     --examples) (( $# >= 2 )) || usage; examples=$2; shift ;;
+    --index) (( $# >= 2 )) || usage; index=$2; shift ;;
+    --version) (( $# >= 2 )) || usage; index_version=$2; shift ;;
     --dry-run) dry=1 ;;
     -*) usage ;;
     *) wheels+=("$1") ;;
@@ -44,6 +54,17 @@ while (( $# )); do
   shift
 done
 (( ${#wheels[@]} )) || usage
+# From an index, each argument is a CPython; it stands as the name of the
+# wheel that pip will choose for it.
+if [[ -n $index || -n $index_version ]]; then
+  [[ -n $index && $index_version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+    { echo "--index takes --version VERSION, and --version takes --index" >&2; exit 2; }
+  pythons=("${wheels[@]}"); wheels=()
+  for python in "${pythons[@]}"; do
+    [[ $python =~ ^3\.[0-9]+$ ]] || { echo "not a CPython X.Y: $python" >&2; exit 2; }
+    wheels+=("mdir-$index_version-cp${python/./}-cp${python/./}-index.whl")
+  done
+fi
 [[ -z $gpu || $gpu =~ ^[0-9]+$ ]] || { echo "--gpu takes the index of a GPU, not '$gpu'" >&2; exit 2; }
 
 # The version and the CPython of each wheel, from its name (PEP 427).
@@ -59,7 +80,8 @@ if (( dry )); then
     [[ $(basename "$wheel") =~ $pattern ]]
     version=${BASH_REMATCH[1]} python=${BASH_REMATCH[2]}.${BASH_REMATCH[3]}
     runs="cpu"; (( first )) && [[ -n $gpu ]] && runs="cpu, gpu $gpu"
-    echo "$(basename "$wheel"): CPython $python, version $version, runs: $runs"
+    from=file; [[ -n $index ]] && from="$index"
+    echo "$(basename "$wheel"): CPython $python, version $version, from $from, runs: $runs"
     first=0
   done
   exit 0
@@ -107,12 +129,16 @@ for wheel in "${wheels[@]}"; do
   name=$(basename "$wheel" .whl)
   log=$work/$name.log
   env=$work/venv-cp${BASH_REMATCH[2]}${BASH_REMATCH[3]}
-  wheel=$(cd "$(dirname "$wheel")" && pwd)/$(basename "$wheel")
+  if [[ -n $index ]]; then
+    source=("mdir[cuda]==$version" --index-url "$index" --extra-index-url https://pypi.org/simple)
+  else
+    source=("$(cd "$(dirname "$wheel")" && pwd)/$(basename "$wheel")[cuda]")
+  fi
   if ! {
     "$uv" python install -q "$python" &&
     interpreter=$("$uv" python find "$python") &&
     rm -rf "$env" && "$interpreter" -m venv "$env" &&
-    "$env/bin/pip" install -q "$wheel[cuda]" &&
+    "$env/bin/pip" install -q "${source[@]}" &&
     found=$(cd "$work/empty" && env -u PYTHONPATH "$env/bin/python" -I -c \
       'import mdir; print(mdir.__version__, mdir.__file__)') &&
     echo "import: $found" &&

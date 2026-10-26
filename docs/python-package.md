@@ -17,6 +17,14 @@ mdir-env/bin/pip install "mdir-0.1.0-cp312-cp312-manylinux_2_28_x86_64.whl[cuda]
 mdir-env/bin/python -c "import mdir; print(mdir.__version__)"
 ```
 
+From PyPI, once the maintainer has published a release there (#650;
+[workflow.md](workflow.md#releases)), pip takes the package by name:
+
+```sh
+mdir-env/bin/pip install "mdir[cuda]"   # the CPU and NVIDIA GPUs
+mdir-env/bin/pip install mdir           # the CPU alone
+```
+
 The wheel depends on NumPy 1.23 or later. The extra `cuda` adds three of
 NVIDIA's wheels of CUDA 13, `nvidia-cufft` and `nvidia-cublas` (cuFFT and
 cuBLAS, which GPU runs need) and `nvidia-cuda-nvcc` (for its ptxas, which compiles the kernels);

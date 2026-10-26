@@ -10,8 +10,17 @@
 # RUN: not bash %S/../../scripts/release/check-wheel-install.sh --gpu first mdir-9.9.9-cp312-cp312-manylinux_2_28_x86_64.whl 2>&1 | FileCheck --check-prefix=GPU %s
 # RUN: not bash %S/../../scripts/release/check-wheel-install.sh --dry-run mdir-9.9.9.tar.gz 2>&1 | FileCheck --check-prefix=NAME %s
 # RUN: env UV=%t/no-uv not bash %S/../../scripts/release/check-wheel-install.sh --work %t/w mdir-9.9.9-cp312-cp312-manylinux_2_28_x86_64.whl 2>&1 | FileCheck --check-prefix=UV %s
-# DRY: mdir-9.9.9-cp310-cp310-manylinux_2_28_x86_64.whl: CPython 3.10, version 9.9.9, runs: cpu, gpu 1
-# DRY-NEXT: mdir-9.9.9-cp313-cp313-manylinux_2_28_x86_64.whl: CPython 3.13, version 9.9.9, runs: cpu
+# From a package index (#650), each argument is a CPython, and --index and
+# --version go together.
+# RUN: bash %S/../../scripts/release/check-wheel-install.sh --dry-run --index https://test.pypi.org/simple/ --version 9.9.9 --gpu 0 3.10 3.13 | FileCheck --check-prefix=INDEX %s
+# RUN: not bash %S/../../scripts/release/check-wheel-install.sh --index https://test.pypi.org/simple/ 3.12 2>&1 | FileCheck --check-prefix=PAIR %s
+# RUN: not bash %S/../../scripts/release/check-wheel-install.sh --dry-run --index https://test.pypi.org/simple/ --version 9.9.9 312 2>&1 | FileCheck --check-prefix=PYTHON %s
+# INDEX: mdir-9.9.9-cp310-cp310-index.whl: CPython 3.10, version 9.9.9, from https://test.pypi.org/simple/, runs: cpu, gpu 0
+# INDEX-NEXT: mdir-9.9.9-cp313-cp313-index.whl: CPython 3.13, version 9.9.9, from https://test.pypi.org/simple/, runs: cpu
+# PAIR: --index takes --version VERSION, and --version takes --index
+# PYTHON: not a CPython X.Y: 312
+# DRY: mdir-9.9.9-cp310-cp310-manylinux_2_28_x86_64.whl: CPython 3.10, version 9.9.9, from file, runs: cpu, gpu 1
+# DRY-NEXT: mdir-9.9.9-cp313-cp313-manylinux_2_28_x86_64.whl: CPython 3.13, version 9.9.9, from file, runs: cpu
 # USAGE: usage: {{.*}}check-wheel-install.sh [--work DIR] [--gpu INDEX] [--examples DIR] [--dry-run] WHEEL...
 # GPU: --gpu takes the index of a GPU, not 'first'
 # NAME: not a wheel of mdir for CPython: mdir-9.9.9.tar.gz

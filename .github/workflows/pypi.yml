@@ -1,0 +1,111 @@
+name: pypi
+
+# Publishes the Python package `mdir` of a GitHub Release on TestPyPI or
+# PyPI (#650; docs/workflow.md, Releases). Only the maintainer starts it,
+# after the trusted publisher of this workflow is registered on the target
+# (docs/workflow.md): it runs on workflow_dispatch alone and uploads with
+# trusted publishing (OIDC), so no token is stored.
+#
+# 1. `files`: the wheels of the release of TAG, checked against its
+#    SHA256SUMS, and the sdist built from the tag; each file's size, refused
+#    above the limit of the index (100 MB unless the project was granted
+#    more), and `twine check`.
+# 2. `upload`: those files, to the target, in the environment of that name.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release tag, for example v0.2.1"
+        required: true
+        type: string
+      target:
+        description: "Where to publish"
+        required: true
+        type: choice
+        options: [testpypi, pypi]
+      size_limit_mb:
+        description: "The largest file the index takes, in MB (100 unless PyPI granted the project more)"
+        required: false
+        default: "100"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  files:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+      - name: The wheels of the release, checked
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          [[ $TAG =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::not a release tag: $TAG"; exit 1; }
+          version=${TAG#v}
+          grep -q "project(mdir VERSION $version " CMakeLists.txt ||
+            { echo "::error::CMakeLists.txt of $TAG does not say $version"; exit 1; }
+          mkdir -p release dist
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir release \
+            --pattern 'mdir-*.whl' --pattern SHA256SUMS
+          ls release/mdir-"$version"-*.whl > /dev/null 2>&1 ||
+            { echo "::error::the release $TAG has no wheel of $version"; exit 1; }
+          cd release
+          for wheel in mdir-*.whl; do
+            grep -q "  $wheel\$" SHA256SUMS || { echo "::error::$wheel is not in SHA256SUMS"; exit 1; }
+          done
+          sha256sum --check --ignore-missing SHA256SUMS
+          cp mdir-*.whl ../dist/
+      - name: The sdist, from the tag
+        run: |
+          python3 -m pip install -q build twine
+          python3 -m build --sdist --outdir dist .
+      - name: Sizes and metadata
+        env:
+          LIMIT_MB: ${{ inputs.size_limit_mb }}
+        run: |
+          [[ $LIMIT_MB =~ ^[0-9]+$ ]] || { echo "::error::size_limit_mb is not a number: $LIMIT_MB"; exit 1; }
+          status=0
+          echo "| File | Size (MB) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "|---|---|" >> "$GITHUB_STEP_SUMMARY"
+          for file in dist/*; do
+            bytes=$(stat -c %s "$file")
+            mb=$(awk -v b="$bytes" 'BEGIN {printf "%.1f", b / 1e6}')
+            echo "$(basename "$file"): $mb MB"
+            echo "| $(basename "$file") | $mb |" >> "$GITHUB_STEP_SUMMARY"
+            if (( bytes > LIMIT_MB * 1000000 )); then
+              echo "::error::$(basename "$file") is $mb MB, above the limit of $LIMIT_MB MB: ask PyPI for a larger limit for the project, then give size_limit_mb"
+              status=1
+            fi
+          done
+          python3 -m twine check --strict dist/* || status=1
+          exit $status
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          retention-days: 7
+
+  upload:
+    needs: files
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The environment is that of the trusted publisher on the target; its
+    # protection rules, if the maintainer sets any, hold the upload.
+    environment:
+      name: ${{ inputs.target }}
+      url: ${{ inputs.target == 'pypi' && 'https://pypi.org/p/mdir' || 'https://test.pypi.org/p/mdir' }}
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: ${{ inputs.target == 'pypi' && 'https://upload.pypi.org/legacy/' || 'https://test.pypi.org/legacy/' }}
