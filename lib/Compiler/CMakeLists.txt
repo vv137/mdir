@@ -5,14 +5,80 @@ add_mlir_library(MDIRCompileCache CompileCache.cpp
   LINK_COMPONENTS BitWriter Core Object Support
 )
 
-add_mlir_library(MDIRCompiler Compile.cpp
+add_mlir_library(MDIRCompiler Compile.cpp Registry.cpp
   PARTIAL_SOURCES_INTENDED
   LINK_COMPONENTS OrcJIT Passes
   LINK_LIBS PUBLIC
   MDIRDriver MDIRDyn MDIRMD MDIRMDExec MDIRMDExecToGPU MDIRGPUToBinary MDIRMDExecToLoops MDIRMDDistToLoops
   MDIRMDExecTransforms MDIRMDRT MDIRMDToMDExec MDIRMDTransforms
-  MLIRRegisterAllDialects MLIRRegisterAllExtensions MLIRRegisterAllPasses
-  MLIRToLLVMIRTranslationRegistration
+  # The MLIR of the lowerings alone (Registry.cpp, #655): its dialects, the
+  # interfaces attached to them, its conversions, and its translations.
+  # Dialects
+  MLIRAffineDialect
+  MLIRArithDialect
+  MLIRBufferizationDialect
+  MLIRComplexDialect
+  MLIRControlFlowDialect
+  MLIRDLTIDialect
+  MLIRFuncDialect
+  MLIRGPUDialect
+  MLIRIndexDialect
+  MLIRLinalgDialect
+  MLIRLLVMDialect
+  MLIRMathDialect
+  MLIRMemRefDialect
+  MLIRNVVMDialect
+  MLIRNVGPUDialect
+  MLIROpenMPDialect
+  MLIRSCFDialect
+  MLIRTensorDialect
+  MLIRUBDialect
+  MLIRVectorDialect
+  # Interfaces attached from outside the dialects
+  MLIRArithValueBoundsOpInterfaceImpl
+  MLIRArithTransforms
+  MLIRBufferizationTransforms
+  MLIRCastInterfaces
+  MLIRControlFlowTransforms
+  MLIRGPUTransforms
+  MLIRLLVMIRTransforms
+  MLIRLinalgTransforms
+  MLIRMemRefTransforms
+  MLIRNVGPUTransforms
+  MLIRSCFTransforms
+  MLIRTensorTransforms
+  MLIRTensorInferTypeOpInterfaceImpl
+  MLIRTensorTilingInterfaceImpl
+  MLIRVectorTransforms
+  MLIRNVVMTarget
+  MLIRValueBoundsOpInterface
+  # Conversions and the passes of the textual pipelines
+  MLIRArithToLLVM
+  MLIRComplexToLLVM
+  MLIRControlFlowToLLVM
+  MLIRFuncInlinerExtension
+  MLIRFuncToLLVM
+  MLIRIndexToLLVM
+  MLIRMathToLLVM
+  MLIRMathToLibm
+  MLIRMemRefToLLVM
+  MLIRNVVMToLLVM
+  MLIROpenMPToLLVM
+  MLIRUBToLLVM
+  MLIRGPUToGPURuntimeTransforms
+  MLIRGPUToNVVMTransforms
+  MLIRVectorToLLVMPass
+  MLIRVectorToLLVM
+  MLIRSCFToControlFlow
+  MLIRSCFToOpenMP
+  MLIRReconcileUnrealizedCasts
+  MLIRTransforms
+  # Translations to LLVM IR
+  MLIRBuiltinToLLVMIRTranslation
+  MLIRLLVMToLLVMIRTranslation
+  MLIRNVVMToLLVMIRTranslation
+  MLIROpenMPToLLVMIRTranslation
+  MLIRGPUToLLVMIRTranslation
 )
 foreach(target MDIRCompiler obj.MDIRCompiler)
   if(TARGET ${target})
