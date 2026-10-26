@@ -24,6 +24,9 @@ loop, and call of the host that an op of a coupling of `dyn` expands to
   the scaled positions and groups             dyn.scale_positions
   the work of a scaling, `trotter`, `trotter_before`, and `first_order`
                                               dyn.scaling_work
+  the loads and the stores of the state of the pressure, and
+  mdrtSetBarostatState                        dyn.load_pressure_state,
+                                              dyn.store_pressure_state
 
 `dyn-expand-couplings` then expands the ops; the module it gives must be
 that of the input, which shows that each op expands to the text the driver
@@ -861,6 +864,64 @@ class Lifter:
                                         [last[0].group(1)])
         return None
 
+    def lift_pressure_state(self, i):
+        """The state of the pressure of a barostat that scales every step
+        (D92): its nine loads and three vectors, or its nine stores and
+        mdrtSetBarostatState."""
+        f = r"(%\S+)"
+        indent = self.lines[i][:len(self.lines[i]) - len(self.lines[i].lstrip())]
+        patterns = []
+        for slot in range(9):
+            patterns += [f + r" = arith\.constant %d : index" % slot,
+                         f + r" = memref\.load " + f + r"\[" + f + r"\] : memref<9xf64>"]
+        for v in range(3):
+            patterns.append(f + r" = vector\.from_elements " + f + r", " + f + r", " + f +
+                            r" : vector<3xf64>")
+        found = self.match_lines(i, patterns)
+        if found:
+            memory = found[1].group(2)
+            loaded = []
+            for slot in range(9):
+                index, load = found[2 * slot], found[2 * slot + 1]
+                if load.group(2) != memory or load.group(3) != index.group(1):
+                    found = None
+                    break
+                loaded.append(load.group(1))
+            if found:
+                vectors = found[18:]
+                if all([v.group(2), v.group(3), v.group(4)] == loaded[3 * k:3 * k + 3]
+                       for k, v in enumerate(vectors)):
+                    names = [v.group(1) for v in vectors]
+                    line = "%s%s = dyn.load_pressure_state %s : memref<9xf64>" % (
+                        indent, ", ".join(names), memory)
+                    return self.replace(i, i + 21, [("dyn.load_pressure_state", line)], names)
+        patterns = []
+        for slot in range(9):
+            patterns += [f + r" = vector\.extract " + f + r"\[%d\] : f64 from vector<3xf64>" % (slot % 3),
+                         f + r" = arith\.constant %d : index" % slot,
+                         r"memref\.store " + f + r", " + f + r"\[" + f + r"\] : memref<9xf64>"]
+        patterns.append(r"func\.call @mdrtSetBarostatState\((.*)\) : .*")
+        found = self.match_lines(i, patterns)
+        if not found:
+            return None
+        memory = found[2].group(2)
+        values, vectors = [], []
+        for slot in range(9):
+            extract, index, store = found[3 * slot:3 * slot + 3]
+            if store.group(1) != extract.group(1) or store.group(2) != memory or \
+                    store.group(3) != index.group(1):
+                return None
+            if slot % 3 == 0:
+                vectors.append(extract.group(2))
+            elif extract.group(2) != vectors[-1]:
+                return None
+            values.append(extract.group(1))
+        if [x.strip() for x in found[27].group(1).split(",")] != values:
+            return None
+        line = "%sdyn.store_pressure_state %s into %s : memref<9xf64>" % (
+            indent, ", ".join(vectors), memory)
+        return self.replace(i, i + 28, [("dyn.store_pressure_state", line)], [])
+
     def lift_scale_cell(self, i):
         """The scaled cell and its stores, then mdrtSetBox and mdrtSetTilt."""
         f = r"(%\S+)"
@@ -934,6 +995,9 @@ class Lifter:
                 following = self.lift_strain(i)
             if following is None and "vector.extract" in self.lines[i]:
                 following = self.lift_scale_cell(i)
+            if following is None and ("vector.extract" in self.lines[i] or
+                                      ": index" in self.lines[i]):
+                following = self.lift_pressure_state(i)
             if following is None and ("arith.divf" in self.lines[i] or
                                       "arith.mulf" in self.lines[i] or
                                       "arith.subf" in self.lines[i]):

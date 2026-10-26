@@ -133,6 +133,8 @@ private:
   void expandGroupKinetic(dyn::GroupKineticOp op);
   void expandScalePositions(dyn::ScalePositionsOp op);
   void expandScalingWork(dyn::ScalingWorkOp op);
+  void expandLoadPressureState(dyn::LoadPressureStateOp op);
+  LogicalResult expandStorePressureState(dyn::StorePressureStateOp op);
 };
 
 } // namespace
@@ -879,6 +881,48 @@ static void mergeWithBefore(Block *block, Operation *before,
   }
 }
 
+/// The state of the pressure of the step before (D92), as emitLevel
+/// loads it: the nine values, then the three vectors.
+void ExpandCouplings::expandLoadPressureState(dyn::LoadPressureStateOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Value loaded[9];
+  for (int slot = 0; slot != 9; ++slot) {
+    Value index = arith::ConstantIndexOp::create(b, loc, slot);
+    loaded[slot] = memref::LoadOp::create(b, loc, op.getMemory(), index);
+  }
+  Emitter e{b, loc};
+  for (int v = 0; v != 3; ++v) {
+    Value vector = vector::FromElementsOp::create(
+        b, loc, e.vector3(),
+        ValueRange{loaded[3 * v], loaded[3 * v + 1], loaded[3 * v + 2]});
+    op->getResult(v).replaceAllUsesWith(vector);
+  }
+  op.erase();
+}
+
+/// The state of the pressure for the next step, and for the checkpoint
+/// (emitStoreTrotterState).
+LogicalResult
+ExpandCouplings::expandStorePressureState(dyn::StorePressureStateOp op) {
+  OpBuilder b(op);
+  Location loc = op.getLoc();
+  Value vectors[] = {op.getVirial(), op.getGroups(), op.getKinetic()};
+  SmallVector<Value> values;
+  for (int v = 0; v != 3; ++v)
+    for (int k = 0; k != 3; ++k) {
+      int slot = 3 * v + k;
+      values.push_back(vector::ExtractOp::create(b, loc, vectors[v], k));
+      Value index = arith::ConstantIndexOp::create(b, loc, slot);
+      memref::StoreOp::create(b, loc, values.back(), op.getMemory(), index);
+    }
+  if (failed(callHost(op, "mdrtSetBarostatState", values, {},
+                      /*cInterface=*/true)))
+    return failure();
+  op.erase();
+  return success();
+}
+
 void ExpandCouplings::runOnOperation() {
   ModuleOp module = getOperation();
   SmallVector<Operation *> ops;
@@ -903,7 +947,8 @@ void ExpandCouplings::runOnOperation() {
   module.walk([&](Operation *op) {
     if (isa<dyn::PressureOp, dyn::CellRescalingOp, dyn::LoadCellOp,
             dyn::ScaleCellOp, dyn::StoreCellOp, dyn::GroupKineticOp,
-            dyn::ScalePositionsOp, dyn::ScalingWorkOp>(op))
+            dyn::ScalePositionsOp, dyn::ScalingWorkOp,
+            dyn::LoadPressureStateOp, dyn::StorePressureStateOp>(op))
       barostat.push_back(op);
   });
   llvm::SmallPtrSet<Operation *, 8> fused;
@@ -937,6 +982,11 @@ void ExpandCouplings::runOnOperation() {
       expandScalePositions(positions);
     } else if (auto work = dyn_cast<dyn::ScalingWorkOp>(op)) {
       expandScalingWork(work);
+    } else if (auto load = dyn_cast<dyn::LoadPressureStateOp>(op)) {
+      expandLoadPressureState(load);
+    } else if (auto store = dyn_cast<dyn::StorePressureStateOp>(op)) {
+      if (failed(expandStorePressureState(store)))
+        return signalPassFailure();
     } else if (auto scale = dyn_cast<dyn::ScaleCellOp>(op)) {
       auto store = dyn_cast_or_null<dyn::StoreCellOp>(scale->getNextNode());
       if (store && store.getCell() != ValueRange(scale.getResults()))

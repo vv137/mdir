@@ -199,3 +199,23 @@ func.func @cell(%box: memref<3xf64>, %mu: vector<3xf64>) {
   dyn.store_cell %n#0, %n#1, %n#2 into %box : memref<3xf64>
   return
 }
+
+// The state of the pressure (emitLevel and emitStoreTrotterState, D92):
+// nine loads and three vectors; nine extracts and stores, then the record
+// of the checkpoint.
+// CHECK-LABEL: func.func @pressure_state(
+// CHECK-SAME:    %[[STATE:[a-z0-9]+]]: memref<9xf64>
+// CHECK-COUNT-9: memref.load %[[STATE]][%{{.+}}] : memref<9xf64>
+// CHECK:         %[[W:[0-9]+]] = vector.from_elements
+// CHECK-NEXT:    %[[G:[0-9]+]] = vector.from_elements
+// CHECK-NEXT:    %[[K:[0-9]+]] = vector.from_elements
+// CHECK:         %[[S0:[0-9]+]] = vector.extract %[[W]][0] : f64 from vector<3xf64>
+// CHECK:         memref.store %[[S0]], %[[STATE]][%{{.+}}] : memref<9xf64>
+// CHECK:         %[[S8:[0-9]+]] = vector.extract %[[K]][2] : f64 from vector<3xf64>
+// CHECK:         memref.store %[[S8]], %[[STATE]][%{{.+}}] : memref<9xf64>
+// CHECK-NEXT:    call @mdrtSetBarostatState(%[[S0]], %{{.+}}, %[[S8]]) : (f64, f64, f64, f64, f64, f64, f64, f64, f64) -> ()
+func.func @pressure_state(%state: memref<9xf64>) {
+  %w, %wg, %k = dyn.load_pressure_state %state : memref<9xf64>
+  dyn.store_pressure_state %w, %wg, %k into %state : memref<9xf64>
+  return
+}

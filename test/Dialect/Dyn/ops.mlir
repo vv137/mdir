@@ -188,3 +188,15 @@ func.func @barostat(%x: !vec, %v: !vec, %f: !vec, %m: !real, %cell: !md.cell,
       constant(%c) volumes(%vol) {count = "first_order"} : f64
   return %x1, %work : !vec, f64
 }
+
+// The state of the pressure of a barostat of Trotter type that scales every
+// step (D92), in a memref of any memory space.
+//
+// CHECK-LABEL: func.func @pressure_state(
+// CHECK: %virial, %groups, %kinetic = dyn.load_pressure_state %{{[a-z0-9]+}} : memref<9xf64, 1>
+// CHECK: dyn.store_pressure_state %virial, %groups, %kinetic into %{{[a-z0-9]+}} : memref<9xf64, 1>
+func.func @pressure_state(%state: memref<9xf64, 1>) {
+  %w, %wg, %k = dyn.load_pressure_state %state : memref<9xf64, 1>
+  dyn.store_pressure_state %w, %wg, %k into %state : memref<9xf64, 1>
+  return
+}

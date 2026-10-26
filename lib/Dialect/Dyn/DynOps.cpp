@@ -234,6 +234,24 @@ LogicalResult StoreCellOp::verify() {
   return verifyCell(getOperation(), getCell().size(), getMemory());
 }
 
+/// Verifies that `memory` holds the 9 values of the state of the pressure.
+static LogicalResult verifyPressureState(Operation *op, Value memory) {
+  auto type = cast<MemRefType>(memory.getType());
+  if (!type.hasStaticShape() || type.getDimSize(0) != 9)
+    return op->emitOpError() << "expected the memory of the 9 values of the "
+                                "state of the pressure, got "
+                             << type;
+  return success();
+}
+
+LogicalResult LoadPressureStateOp::verify() {
+  return verifyPressureState(getOperation(), getMemory());
+}
+
+LogicalResult StorePressureStateOp::verify() {
+  return verifyPressureState(getOperation(), getMemory());
+}
+
 LogicalResult ScalingWorkOp::verify() {
   StringRef count = getCount();
   bool strain = static_cast<bool>(getStrain());

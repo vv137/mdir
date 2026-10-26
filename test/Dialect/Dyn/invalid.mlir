@@ -306,3 +306,11 @@ dyn.program @p(%x: !md.field<@atoms, 3 x f64>, %mu: vector<3xf64>,
   %x1 = dyn.scale_positions %x, %mu, %m, %cell : !md.field<@atoms, 3 x f64>
   dyn.return %x1 : !md.field<@atoms, 3 x f64>
 }
+
+// -----
+
+func.func @f(%state: memref<3xf64>) -> vector<3xf64> {
+  // expected-error@+1 {{expected the memory of the 9 values of the state of the pressure, got 'memref<3xf64>'}}
+  %w, %wg, %k = dyn.load_pressure_state %state : memref<3xf64>
+  return %w : vector<3xf64>
+}
