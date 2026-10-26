@@ -126,6 +126,11 @@ element and binds its bodies:
 The *form* of a body is the form of the function that the symbol names;
 the declaration is the same for all forms:
 
+After a batched tensor body is checked and outlined, `md.stage_body` records
+that transition as a verified unit attribute on a function with a body
+(D[stage-body-attr], #647). The stage verifier and both device lowering
+passes use the same MD dialect query; the marker is not a new model input.
+
 | Form | The symbol names | Lowering |
 |---|---|---|
 | A body in the module (step 3) | a `func.func` of `arith`, `math`, and `vector` ops over the element's values | `md-inline` inlines it into the kernel before `md_exec`, so it lowers on the CPU and on a device as any kernel does |

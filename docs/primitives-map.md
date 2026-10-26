@@ -23,6 +23,10 @@ The row count of a batched neural stage is retained through bufferization
 as the checked function attribute `md.stage_rows` (D351,
 #642). It selects no new primitive or physical reduction strategy.
 
+An outlined ML4 stage body carries the verified `md.stage_body` function
+marker (D[stage-body-attr], #647). It selects the existing tile-body path
+without adding a primitive or changing a device strategy.
+
 The [execution contract](execution-contracts.md) (#574) checks whether a
 composition may run or be transformed for its stated sets, effects, state,
 and numerical order. It is shared by the primitive sites in this map and

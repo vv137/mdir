@@ -18,6 +18,9 @@ is carried out.
 The transient `md.stage_rows` attribute on a batched function retains
 its checked leading row count after the function's tensors become
 buffers (D351).
+The transient `md.stage_body` unit attribute on a function records that
+its batched tensor body was checked before device buffer lowering. The
+dialect verifies the attribute's type and carrier.
 
 
 ## Operations

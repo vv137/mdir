@@ -471,11 +471,12 @@ is the rows of a tile, exported by JAX to StableHLO and legalized to
 `linalg` when the model is exported. Its semantics stay those of one
 element, since the leading dimension is parallel in every op of the body:
 row $t$ of the result is the body applied to row $t$ of the operands, and
-no row reads another. A loop whose kernel applies such a body therefore
-retains the verified static leading row count as `md.stage_rows` when the
-body's tensors become buffers (D351); the forward and VJP
-bodies must agree on that count. The loop then
-runs as a host loop over tiles, each packing the operands of its rows,
+no row reads another. Once the batched tensor body is checked, its outlined
+buffer form retains the verified static leading row count as `md.stage_rows`
+(D351) and carries the verified `md.stage_body` marker
+(D[stage-body-attr]). The forward and VJP bodies agree on that row count.
+A loop whose kernel applies the body then runs as a host loop over tiles,
+each packing the operands of its rows,
 calling the body, and unpacking the results into the rest of the kernel;
 the sum over the pairs of a center, $\mathbf A_i = \sum_j\phi(i,j)$, is
 the same sum taken in the order of the center's slots, one thread a
