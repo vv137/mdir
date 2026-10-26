@@ -8,20 +8,18 @@
 // the same program.
 //
 // The text keeps the locations of the ops, printed as aliases at its end
-// (`loc(#loc12)`, `#loc12 = loc(...)`). They are part of the program: the
-// ops of a custom expression carry the name of their term
-// (`loc("control-file term: wall")`, Expression.cpp), which the
-// diagnostics of the passes name; and the lowering names the kernels that
-// it outlines from loops by the line of the loop in the builder's text
-// (`..._l2451_...`, MDExecToGPU), so a text printed without the locations,
-// and parsed again, would name the kernels by the lines of the printed
-// text. `mdir emit --stage=module` and Python's `Program.ir` show the
+// (`loc(#loc12)`, `#loc12 = loc(...)`). The ops of a custom expression
+// carry the name of their term (`loc("control-file term: wall")`,
+// Expression.cpp), which the diagnostics of the passes name; the other
+// ops carry their position in the builder's text, which nothing reads
+// since the kernels are named without it (D[kernel-names]) and which
+// diagnostics may still point at. `mdir emit --stage=module` and Python's
+// `Program.ir` show the
 // module for reading (printModuleForReading): the locations that the
 // builder gives inline, as its text had them, and the positions in its
 // text left out. The equivalence check of the builder (docs/driver.md,
 // Section 2.11) compares the module as the default printer prints it,
-// without locations, and the lowered program, whose kernels' names hold
-// the positions.
+// without locations, and the lowered program.
 //
 //===----------------------------------------------------------------------===//
 

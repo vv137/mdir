@@ -1072,19 +1072,18 @@ selects the forms of the module stage, both by default:
   (`external-terms.test`). Emit prints them after their ops, as the
   builder's text had them.
 - The positions of the ops in the builder's text (`loc("-":2451:5)`). The
-  lowering names a kernel that it outlines from a loop by the line of the
-  loop (`mdir_run_particle_for_l2451_...`, `MDExecToGPU`). The program's
-  text keeps them, so that a text printed and parsed again names its
-  kernels as the builder's text did; emit leaves them out, since they
-  refer to a text that nobody reads.
+  program's text keeps them, and emit leaves them out, since they refer
+  to a text that nobody reads. Until D[kernel-names] the lowering named a
+  kernel that it outlines from a loop by the line of the loop
+  (`mdir_run_particle_for_l2451_...`), so the positions were part of the
+  lowered program; since, a kernel is named after its op and its ordinal,
+  and the positions bear on neither the module nor the lowered program
+  that the check compares. A stage that builds a loop with `OpBuilder`
+  gives it no position of the text.
 
-The `printed` form leaves out every location, and the lowered program
-holds the positions in the names of its kernels. A later stage that builds
-a loop with `OpBuilder` keeps its kernel's name only with the position of
-the loop that the text gave; kernel names that do not depend on the lines
-of the text would be a change of the lowering, for a decision of its own.
-Step 1 of #568 said that locations were not part of the contract; that was
-wrong for both kinds, and is corrected here.
+The `printed` form leaves out every location. Step 1 of #568 said that
+locations were not part of the contract; that was wrong for the
+builder's own locations, which diagnostics name, and is corrected here.
 
 `--stages module,lowered` adds the program after the passes, as
 `mdir emit --stage=lowered` prints it, with the kernels of the GPU target.
