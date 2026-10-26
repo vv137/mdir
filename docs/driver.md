@@ -1108,13 +1108,17 @@ one machine, with one `MDIR_BENCH_DIR`.
 **What step 2 has moved from text to IR so far.**
 - The emitters write `func.call`; no text replaces `call` by it when a
   chunk moves into a loop.
-- The branches of the start of a program of segments
-  (`Builder::emitStartBranch`): the builder writes the chunk of the start
-  as it is, inside a loop marked `mdir.start_branch`, and once the module
-  is parsed, the uses of the values that the loop carries become its
-  arguments (`carryStartBranches`, `ProgramModule.cpp`). Before, the
-  builder renamed them in its text (`%x0` to `%x0_a`, and the values of
-  the start to `_s`).
+- The loops of a program of segments that carry values into code written
+  outside them: the branches of the start (`Builder::emitStartBranch`) and
+  the loop over the parts (`Builder::emitPartLoop`). The builder writes
+  the code as it is, inside a loop marked `mdir.carries`, and once the
+  module is parsed, the uses of the values that the loop carries become
+  its arguments (`carryLoopValues`, `ProgramModule.cpp`); in the loop over
+  the parts, a cast marked `mdir.part_start` makes the uses of `%start`
+  those of the step that the part begins after. Before, the builder
+  renamed them in its text (`%x0` to `%x0_a` and `%x0$part`, the values of
+  the start to `_s`, `%start` to `%start$part`) with `renameValue`, which
+  is gone.
 
 On main at 98e41261, a separate build of main's sources compared with a
 second build on the CPU of the login node, with the Amber suite prepared,

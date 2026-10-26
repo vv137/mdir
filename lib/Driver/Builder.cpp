@@ -1100,8 +1100,8 @@ struct Coupled {
   /// is written as it is: a value that it defines under the name of a result
   /// is its own (a name of a region hides that of the result after it), and
   /// its uses of the values given become the loop's arguments when the
-  /// module is parsed (`mdir.start_branch`, carryStartBranches in
-  /// ProgramModule.cpp, #568).
+  /// module is parsed (`mdir.carries`, carryLoopValues in ProgramModule.cpp,
+  /// #568).
   /// With `segment`, the loop is a segment of the run (mdrt.segment): the
   /// neighbor structures that the chunk builds do not carry into the steps
   /// after it (D218).
@@ -1330,26 +1330,6 @@ void Builder::emitReorder(StringRef indent, StringRef from,
   emitRenumber(indent, "%id" + otherTo, "%r" + otherTo + "_");
 }
 
-/// `text` with the value `name` renamed `to` where it is a whole name.
-static std::string renameValue(StringRef text, StringRef name, StringRef to) {
-  std::string renamed;
-  size_t from = 0;
-  while (true) {
-    size_t at = text.find(name, from);
-    if (at == StringRef::npos) {
-      renamed += text.substr(from).str();
-      return renamed;
-    }
-    size_t end = at + name.size();
-    bool whole = end == text.size() ||
-                 !(llvm::isAlnum(text[end]) || text[end] == '_' ||
-                   text[end] == '$' || text[end] == '.');
-    renamed += text.substr(from, at - from).str();
-    renamed += whole ? to.str() : name.str();
-    from = end;
-  }
-}
-
 void Builder::emitStartBranch(std::string chunk,
                               llvm::ArrayRef<std::string> results,
                               llvm::ArrayRef<std::string> inside,
@@ -1386,10 +1366,10 @@ void Builder::emitStartBranch(std::string chunk,
     os << " : " << types << "\n";
   }
   // The loop that carries values asks for its arguments in the place of
-  // those values (carryStartBranches).
+  // those values (carryLoopValues).
   std::vector<std::string> attributes;
   if (!otherwise.empty())
-    attributes.push_back("mdir.start_branch");
+    attributes.push_back("mdir.carries");
   if (segment)
     attributes.push_back("mdrt.segment");
   os << "  }";
@@ -11615,9 +11595,11 @@ void Builder::emitPartLoop(std::string chunk,
                            llvm::ArrayRef<std::string> types,
                            llvm::ArrayRef<std::string> yielded,
                            llvm::ArrayRef<std::string> boundary) {
-  for (const std::string &value : carried)
-    chunk = renameValue(chunk, value, value + "$part");
-  chunk = renameValue(chunk, "%start", "%start$part");
+  // The chunk is written as it is: its uses of the values carried become
+  // the loop's arguments, and its uses of %start the step that the part
+  // begins after, when the module is parsed (`mdir.carries`,
+  // `mdir.part_start`, ProgramModule.cpp, #568). The builder renamed them
+  // in the text before.
   std::string typeList;
   for (size_t i = 0; i != types.size(); ++i)
     typeList += (i ? ", " : "") + types[i];
@@ -11664,9 +11646,12 @@ void Builder::emitPartLoop(std::string chunk,
      << ", " << idName << ", %nf, %part_counts) {in_place}\n"
      << "        : (!vec, !vec, !vec, !ids, f64, " << counts << ")\n";
   emitPartCounts();
+  // %start of the chunk is the step of the part (carryLoopValues).
+  os << "    %start$mark = builtin.unrealized_conversion_cast %start$part, "
+        "%start : i64, i64 to i64 {mdir.part_start}\n";
   os << chunk << "    scf.yield ";
   llvm::interleaveComma(yielded, os);
-  os << " : " << typeList << "\n  }\n";
+  os << " : " << typeList << "\n  } {mdir.carries}\n";
 }
 
 void Builder::emitFrameIfDue(StringRef indent, StringRef step,
