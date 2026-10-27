@@ -68,8 +68,11 @@ check those facts, not evidence that they hold.
 
 Other callers of `mgpuMemcpy` keep their existing implementation. The PR
 must inventory them and state which dependencies remain unproved. This
-adapter is the FFT use of D338's transfer contract; it does not claim the
-general #567 verifier or asynchronous halo transport is implemented.
+adapter applies D338 and D358: checked `gpu.memcpy` tokens and blocking
+`gpu.wait` completions remain in IR until the scoped adapter is selected.
+Selection must prove allocation roots, extents, queue identity, and release;
+the D358 check runs before lowering and cannot be bypassed by an attribute.
+Asynchronous halo transport and general wait scheduling remain separate.
 D336's checkpoint copy completion, staging release, file commit, waits,
 and error points remain separate events.
 
