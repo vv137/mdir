@@ -1195,6 +1195,17 @@ functions iterate, so that a new term adds a file rather than a case in
 - The kinds move one or two in a pull request, with the gate of part 1
   (the corpus of Section 2.11 byte-identical, printed and lowered).
 
+The adapter boundary is narrowed in D[term-adapter] (#683). Read-only
+hooks take `TermInputs`: the system, topology, control, and deterministic
+indexed names. Parameter hooks take `TermParameters`, adding the field,
+table, and tuple-set collections. Emission hooks take `TermEmission`,
+adding the output stream and named shared emitters for topology potentials,
+lambda bindings, and observed bindings. `Builder` implements this interface
+privately; an adapter never receives `Builder&`, the whole mutable program,
+or friendship. The explicit registry and each hook's emission position stay
+as in D359. Additional capabilities are added deliberately when a later
+migration needs them, rather than exposing the builder's scheduling state.
+
 The first adapter is `TermExternal.cpp`. It collects the external fields,
 emits the selected potential contributions and standalone term potentials,
 and supplies energy-output names and observable lookup. The shared field
