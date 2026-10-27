@@ -227,8 +227,12 @@ Host-device copies currently have token-bearing `gpu.memcpy` operations
 followed by immediate waits, and their runtime path synchronizes both
 runtime streams when work is pending and a host buffer participates.
 D[async-copy-contract]
-(#567) proposes a verifier for copy readiness and source/destination
+(#567) checks copy readiness and source/destination
 lifetimes using the same completion contract as distributed halo transfers.
+The check is read-only, after storage assignment and after the GPU
+readback rewrites. It tracks root generations and slices, accepts only
+recognized completion paths, and diagnoses unresolved required alias or
+effect facts.
 Its first slice preserves every existing wait and numerical result. An
 explicit token does not by itself make a copy asynchronous to the host or
 license a read of an unfinished destination; moving waits or removing the

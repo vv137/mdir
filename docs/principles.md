@@ -232,7 +232,7 @@ before a physical plan is selected.
    deferral and merging of readbacks become a general scheduling pass, and
    the path to CUDA graphs is open.
    Storage assignment already emits token-bearing copies with immediate
-   waits. #567 first checks readiness and buffer lifetimes without moving
+   waits. #567 checks readiness and buffer lifetimes without moving
    them; delayed readbacks are a separate measured step.
 3. The `md_exec` loop interface now derives a summary of each operand's
    read, write, or accumulation and its row scope (D342,

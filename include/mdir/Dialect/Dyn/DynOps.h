@@ -17,6 +17,14 @@
 namespace mdir {
 namespace dyn {
 
+/// Parses the D355 resource summary shared by programs and declared calls.
+/// This query does not assert that an arbitrary function body has the
+/// declared effects; callers that inspect a definition must check its body.
+mlir::LogicalResult parseEffectSummary(
+    mlir::DictionaryAttr summary,
+    llvm::SmallVectorImpl<mlir::MemoryEffects::EffectInstance> &effects,
+    std::string &error);
+
 /// The energy of the bath, which the conserved energy of the log and the
 /// checkpoint's `bath` take (D129; docs/dynamics.md, Section 2.2.3).
 struct BathResource : mlir::SideEffects::Resource::Base<BathResource> {

@@ -1815,7 +1815,7 @@ the shape: they belong to the refreshes.
 | Buffers are never freed. | A function that allocates leaks when it is called repeatedly. The tests run everything from one `main`. |
 | Marking a field so that a copy is accepted is not implemented. | A program that needs a copy, such as a Metropolis step, cannot be lowered. |
 | A neighbor structure is refreshed where it is. | A loop cannot carry two structures and exchange them. |
-| Ops run in the order of their block. | Storage assignment already emits token-bearing GPU copies with immediate waits. #567 will verify their readiness and lifetime before any wait moves. |
+| Ops run in the order of their block. | Storage assignment already emits token-bearing GPU copies with immediate waits. #567 verifies their readiness and lifetime without moving waits. |
 
 ### 10.7 From the storage form to loops
 
@@ -1845,7 +1845,7 @@ With `memory=device`, storage assignment puts the buffers on a device.
 
 The current copy sequence is `gpu.wait async`, `gpu.memcpy async`, and an
 immediate `gpu.wait` for that copy. [The #567 contract](runtime.md#53-transfer-readiness-and-lifetime-design-for-567)
-will verify token completion, buffer borrows, and host visibility without
+verifies token completion, buffer borrows, and host visibility without
 moving the first slice's waits. The runtime still synchronizes both streams
 on host-device copies, so the token sequence alone makes no overlap claim.
 

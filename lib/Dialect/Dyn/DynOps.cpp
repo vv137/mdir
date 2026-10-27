@@ -512,10 +512,10 @@ static SideEffects::Resource *getResource(StringRef name) {
 
 /// The effects that `summary`, `{read = [...], write = [...]}`, states, or
 /// failure with a message in `error`.
-static LogicalResult
-parseSummary(DictionaryAttr summary,
-             SmallVectorImpl<MemoryEffects::EffectInstance> &effects,
-             std::string &error) {
+LogicalResult
+mdir::dyn::parseEffectSummary(DictionaryAttr summary,
+                              SmallVectorImpl<MemoryEffects::EffectInstance> &effects,
+                              std::string &error) {
   for (NamedAttribute entry : summary) {
     StringRef kind = entry.getName().getValue();
     if (kind != "read" && kind != "write") {
@@ -564,7 +564,7 @@ collectEffects(Region &body, SymbolTableCollection &symbols,
                                      "dyn.effects")
                                : DictionaryAttr();
       std::string error;
-      if (!declared || failed(parseSummary(declared, effects, error))) {
+      if (!declared || failed(parseEffectSummary(declared, effects, error))) {
         unknown = op;
         return WalkResult::interrupt();
       }
@@ -593,7 +593,7 @@ ProgramOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return success();
   SmallVector<MemoryEffects::EffectInstance> stated, body;
   std::string error;
-  if (failed(parseSummary(summary, stated, error)))
+  if (failed(parseEffectSummary(summary, stated, error)))
     return emitOpError() << "in 'effects': " << error;
   if (Operation *unknown = collectEffects(getBody(), symbolTable, body)) {
     InFlightDiagnostic diagnostic =
@@ -632,7 +632,7 @@ void StepOp::getEffects(
   DictionaryAttr summary = program ? program.getEffectsAttr() : DictionaryAttr();
   SmallVector<MemoryEffects::EffectInstance> stated;
   std::string error;
-  if (!summary || failed(parseSummary(summary, stated, error))) {
+  if (!summary || failed(parseEffectSummary(summary, stated, error))) {
     effects.emplace_back(MemoryEffects::Read::get());
     effects.emplace_back(MemoryEffects::Write::get());
     return;
