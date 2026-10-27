@@ -35,7 +35,7 @@ Features of classical MD (Section 5) continue between milestones.
 | Reports of defects that can be reproduced | Done: `mdir bug-report`, crash reproducers of the passes, versions, an issue template ([debugging.md](debugging.md)) |
 | The set of each buffer in the type of the storage form; memory planning as a pass of its own | In progress: field, scratch, tuple-member, and incidence buffers carry their set (D337, #565). Next: a lifetime-based memory planner and set types for the other structural buffers |
 | A summary of the effects of each loop op, from which fusion decides | In progress: the loop effect interface (D342, #566). Next: checked summaries shared by fusion, streams, and distribution |
-| Copies between host and device ordered by async tokens in the IR | After the effects |
+| Copies between host and device ordered by async tokens in the IR (#567) | In progress: the read-only completion and lifetime checker retains immediate waits and deferred readback groups (D[async-copy-contract], #579; [runtime.md](runtime.md), Section 5.3). Next: separately measured wait scheduling and scoped runtime synchronization |
 | A debug lowering that checks bounds and the residuals of iterative solvers | With the storage types |
 | The barostat with positional restraints: a defect | Fixed 2026-10-02 (D124; `reference_scaling`, [validation.md](validation.md#the-barostat-with-positional-restraints-d124)) |
 | The conserved energy of the Trotter count under a fast compression | Closed 2026-10-02, not a defect (D92); a run that changes its volume fast is checked with `work = "EXACT"` |

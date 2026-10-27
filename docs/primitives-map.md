@@ -41,6 +41,9 @@ operand and row scope of each map, gather, scatter, or reduction access of
 set or accumulation algebra, or an opaque body effect, yields an incomplete
 summary. Existing fusion and scheduling do not yet use this interface.
 
+The #567 [transfer-readiness design](runtime.md#53-transfer-readiness-and-lifetime-design-for-567)
+maps this contract to the existing copy and wait sequence.
+
 ## 1. The primitive set
 
 ![The primitives and their transposes](figures/primitives/transpose-pairs.svg)

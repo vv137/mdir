@@ -495,60 +495,6 @@ LogicalResult StepOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
 // Effects of a program (D355, #673)
 //===----------------------------------------------------------------------===//
 
-/// The resource of the name `name` in a summary of effects, or null.
-static SideEffects::Resource *getResource(StringRef name) {
-  for (SideEffects::Resource *resource :
-       {static_cast<SideEffects::Resource *>(BathResource::get()),
-        static_cast<SideEffects::Resource *>(ChainResource::get()),
-        static_cast<SideEffects::Resource *>(StopResource::get()),
-        static_cast<SideEffects::Resource *>(RecordResource::get()),
-        static_cast<SideEffects::Resource *>(StatisticsResource::get()),
-        static_cast<SideEffects::Resource *>(
-            SideEffects::DefaultResource::get())})
-    if (resource->getName() == name)
-      return resource;
-  return nullptr;
-}
-
-/// The effects that `summary`, `{read = [...], write = [...]}`, states, or
-/// failure with a message in `error`.
-static LogicalResult
-parseSummary(DictionaryAttr summary,
-             SmallVectorImpl<MemoryEffects::EffectInstance> &effects,
-             std::string &error) {
-  for (NamedAttribute entry : summary) {
-    StringRef kind = entry.getName().getValue();
-    if (kind != "read" && kind != "write") {
-      error = ("unknown kind of effect '" + kind +
-               "'; expected 'read' or 'write'")
-                  .str();
-      return failure();
-    }
-    auto names = dyn_cast<ArrayAttr>(entry.getValue());
-    if (!names) {
-      error = ("expected an array of the names of resources in '" + kind +
-               "'")
-                  .str();
-      return failure();
-    }
-    for (Attribute name : names) {
-      auto text = dyn_cast<StringAttr>(name);
-      SideEffects::Resource *resource =
-          text ? getResource(text.getValue()) : nullptr;
-      if (!resource) {
-        error = "unknown resource in '" + kind.str() + "'; known: dyn.bath, "
-                "dyn.chain, dyn.stop, dyn.record, dyn.statistics, <Default>";
-        return failure();
-      }
-      if (kind == "read")
-        effects.emplace_back(MemoryEffects::Read::get(), resource);
-      else
-        effects.emplace_back(MemoryEffects::Write::get(), resource);
-    }
-  }
-  return success();
-}
-
 /// Adds the effects of the ops of `body` to `effects`, each on its
 /// resource; returns the first op of unknown effects, or null. A call has
 /// the effects that its function declares in `dyn.effects`.
@@ -564,7 +510,7 @@ collectEffects(Region &body, SymbolTableCollection &symbols,
                                      "dyn.effects")
                                : DictionaryAttr();
       std::string error;
-      if (!declared || failed(parseSummary(declared, effects, error))) {
+      if (!declared || failed(mdir::effects::parseEffectSummary(declared, effects, error))) {
         unknown = op;
         return WalkResult::interrupt();
       }
@@ -593,7 +539,7 @@ ProgramOp::verifySymbolUses(SymbolTableCollection &symbolTable) {
     return success();
   SmallVector<MemoryEffects::EffectInstance> stated, body;
   std::string error;
-  if (failed(parseSummary(summary, stated, error)))
+  if (failed(mdir::effects::parseEffectSummary(summary, stated, error)))
     return emitOpError() << "in 'effects': " << error;
   if (Operation *unknown = collectEffects(getBody(), symbolTable, body)) {
     InFlightDiagnostic diagnostic =
@@ -632,7 +578,7 @@ void StepOp::getEffects(
   DictionaryAttr summary = program ? program.getEffectsAttr() : DictionaryAttr();
   SmallVector<MemoryEffects::EffectInstance> stated;
   std::string error;
-  if (!summary || failed(parseSummary(summary, stated, error))) {
+  if (!summary || failed(mdir::effects::parseEffectSummary(summary, stated, error))) {
     effects.emplace_back(MemoryEffects::Read::get());
     effects.emplace_back(MemoryEffects::Write::get());
     return;

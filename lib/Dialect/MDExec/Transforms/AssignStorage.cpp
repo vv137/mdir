@@ -12,6 +12,7 @@
 #include "mdir/Dialect/MDExec/Algebra.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/StorageSet.h"
+#include "mdir/Dialect/MDExec/Transfers.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
@@ -2324,7 +2325,7 @@ LogicalResult Assignment::run() {
   for (func::FuncOp function : functions)
     if (failed(convertFunction(function)))
       return failure();
-  return success();
+  return verifyTransfers(module);
 }
 
 namespace mdir {

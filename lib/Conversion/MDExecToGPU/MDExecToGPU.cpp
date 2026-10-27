@@ -18,6 +18,7 @@
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 #include "mdir/Dialect/MDExec/StorageSet.h"
+#include "mdir/Dialect/MDExec/Transfers.h"
 #include "mdir/Dialect/MDExec/Scatter.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
 #include "mdir/Dialect/MDRT/MDRTOps.h"
@@ -8638,7 +8639,7 @@ LogicalResult Lowering::lowerFunction(func::FuncOp function) {
   deferReadbacks(function);
 
   releaseStack(function);
-  return success();
+  return md_exec::verifyTransfers(function);
 }
 
 /// Makes every loop of the host in `function` that launches kernels or calls
@@ -8728,6 +8729,8 @@ public:
       ConvertMDExecToGPU>::ConvertMDExecToGPUBase;
 
   void runOnOperation() final {
+    if (failed(md_exec::verifyTransfers(getOperation())))
+      return signalPassFailure();
     if (failed(md_exec::eraseStorageSets(getOperation())))
       return signalPassFailure();
     if (getOperation()->hasAttr("md.derivative_check")) {

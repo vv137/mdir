@@ -7,6 +7,7 @@ add_mlir_dialect_library(MDIRMDExec
   NeighborCoverage.cpp
   Scatter.cpp
   StorageSet.cpp
+  Transfers.cpp
 
   ADDITIONAL_HEADER_DIRS
   ${PROJECT_SOURCE_DIR}/include/mdir/Dialect/MDExec
@@ -19,12 +20,15 @@ add_mlir_dialect_library(MDIRMDExec
 
   LINK_LIBS PUBLIC
   MDIRMD
+  MDIREffects
   MDIRMDDist
   MDIRMDRT
   MLIRControlFlowInterfaces
   MLIRFuncDialect
   MLIRFunctionInterfaces
   MLIRIR
+  MLIRGPUDialect
+  MLIRMemRefDialect
   MLIRLoopLikeInterface
   MLIRSCFDialect
   MLIRSideEffectInterfaces

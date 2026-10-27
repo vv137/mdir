@@ -5,6 +5,17 @@
 
 include "mlir/Pass/PassBase.td"
 
+def CheckTransfers : Pass<"md-exec-check-transfers", "::mlir::ModuleOp"> {
+  let summary = "Checks copy completion and buffer lifetimes without moving waits";
+  let description = [{
+    Checks gpu.memcpy source and destination borrows until a recognized
+    same-block blocking gpu.wait completes the copy. A token definition or
+    an asynchronous wait alone is not host completion. Refuses conflicting
+    accesses, frees, and unsupported required alias or effect contracts.
+    The analysis changes no operation or attribute (D[async-copy-contract]).
+  }];
+}
+
 def ReuseNeighbors : Pass<"md-exec-reuse-neighbors", "::mlir::ModuleOp"> {
   let summary = "Reuses neighbor structures across the iterations of a loop";
   let description = [{

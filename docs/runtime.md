@@ -210,6 +210,97 @@ Open questions:
 | 2 | Size of a block of threads | 128, a numeric plan parameter |
 | 3 | Which GPU | The first one that `CUDA_VISIBLE_DEVICES` leaves visible |
 
+### 5.3 Transfer readiness and lifetime (design for #567)
+
+Storage assignment currently emits an asynchronous `gpu.memcpy` token
+between `gpu.wait async` and an immediate `gpu.wait`. Thus each copy is
+complete before the next host access, while the blocking wait is a
+synchronization point. In `runtime/mdrt_cuda.c`, `mgpuMemcpy` also calls
+`finish()` for a host-device copy; `finish()` synchronizes both runtime
+streams when work is pending. An IR token alone does not remove that
+runtime-wide wait.
+
+The first #567 slice checks the existing behavior with a read-only
+transfer record (`md-exec-check-transfers`, D[async-copy-contract]). The
+record associates the completion token with
+the exact source and destination storage roots and slices, their allocation
+generations, and the visibility domain. The source is read-borrowed and the
+destination write-borrowed from initiation until completion. A consumer
+may read the destination only after a completion dependency with the right
+visibility; a conflicting write, free, or reuse of either storage waits for
+the borrow to end. An SSA token definition dominating a use is not itself
+completion. Proved disjoint work may run between start and wait.
+
+| Event | What it establishes | What it does not establish |
+|---|---|---|
+| Transfer start | An in-flight copy and source/destination borrows | Ready destination data |
+| Transfer completion/dependency | Data visible to the stated consumer domain; transfer borrows end | Initialization of unwritten elements or release of a later host writer's borrow |
+| Host writer release (D336) | Staging storage may be reused | Checkpoint file committed |
+| File commit (D336) | Checkpoint visibility under its existing rename protocol | Permission to skip a required copy dependency |
+
+The verifier and lowering use the same provenance, alias, and effect
+queries from D334 and D338. D337 supplies storage-set
+identity, D342 supplies checked loop effects, and D355 supplies declared
+function and program resource effects; a buffer's set tag does not prove
+that aliases are disjoint. The initial verifier is bounded to recognized
+same-block transfer/wait pairs and checked loop/function effects. It refuses
+a known conflicting use without completion, and diagnoses an unsupported
+contract where required alias or completion facts remain unknown. It does
+not turn an unresolved dependency into a presumed safe serial path.
+
+The checker runs after storage assignment and GPU conversion, including
+reduction readbacks. GPU conversion may remove
+readbacks with `keepReadbacksOnDevice` or move and combine their copy/wait
+groups with `deferReadbacks`; the final groups are checked after those
+rewrites, after stack-release insertion. The same query also checks the
+input to GPU conversion. While `md_exec` loops exist, the checker uses
+D342's exact operand
+and row summary; after conversion it uses the conservative projection to
+MLIR memory effects and generic alias tracking. A token operand or a marker
+on a copy is not a substitute for a checked completion path. Positive cases
+include the emitted immediate-wait
+sequence and the existing deferred readback sequence; negative cases put a
+read, conflicting write, or deallocation between a copy and its wait,
+including through a recognized alias.
+
+The record is analysis state, not printed IR. Its source and destination
+slices retain their SSA descriptors, with casts and recognized views traced
+to a storage root. The root SSA identity denotes its generation for this
+activation or loop iteration; rejecting every intervening free prevents
+reuse of that generation. Static byte envelopes prove disjoint slices only
+when their offsets, extents, strides, and element sizes are known. An
+unknown slice is not a disjoint slice, and a free concerns the whole root,
+even through a disjoint view. Distinct allocations and D87's checked root
+provenance can prove separation; different set tags cannot.
+
+Only a blocking same-block `gpu.wait` whose dependencies include the copy
+token, directly or through asynchronous waits or dependent copies, ends its
+host-side borrows. A copy dependency orders that copy's accesses after its
+predecessor, and its token carries completion to a later blocking wait. An async
+wait alone does not establish host visibility. Synchronous copies complete
+at the copy operation. The destination memory space determines host or
+device visibility; an unsupported memory-space representation is diagnosed.
+The checker uses D342 loop summaries only when complete. It checks defined
+functions with actual-argument substitution and rejects recursion and
+unrecognized control flow. External calls need a valid D355 `dyn.effects`
+summary with no default-memory effect. The parser and named resource singletons are shared through `MDIREffects`,
+so execution checks do not depend on the `dyn` dialect library.
+Named resources remain distinct from
+buffer storage. Loop-carried aliases inside a substituted call remain
+unsupported where their relation to the caller's buffers is unresolved.
+
+The first implementation retains the existing waits, copy placement,
+checkpoint release/commit points, and failure propagation. It shares the
+readiness and borrow contract with `mdrt.halo_copy_start`,
+`mdrt.halo_sum_start`, and `mdrt.halo_wait` (#481), whose current in-process
+transport and same-block, one-wait restriction remain. Moving waits,
+merging readbacks, pinned-memory transport, CUDA graph capture, and actual
+MPI/GPU halo overlap are separate measured strategies with explicit
+preconditions. A change that removes `mgpuMemcpy`'s runtime-wide `finish()`
+must establish scoped stream dependencies and host visibility before it may
+claim overlap. No control key, output format, or result changes in this
+first slice.
+
 ## 6. Reference interpreter
 
 V1 decided against an interpreter. The options that were considered:
