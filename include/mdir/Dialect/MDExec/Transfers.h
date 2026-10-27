@@ -1,4 +1,4 @@
-// Checked copy readiness and buffer borrows (D[async-copy-contract]).
+// Checked copy readiness and buffer borrows (D358).
 
 #ifndef MDIR_DIALECT_MDEXEC_TRANSFERS_H
 #define MDIR_DIALECT_MDEXEC_TRANSFERS_H

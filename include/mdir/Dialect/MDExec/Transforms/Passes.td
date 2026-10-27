@@ -12,7 +12,7 @@ def CheckTransfers : Pass<"md-exec-check-transfers", "::mlir::ModuleOp"> {
     same-block blocking gpu.wait completes the copy. A token definition or
     an asynchronous wait alone is not host completion. Refuses conflicting
     accesses, frees, and unsupported required alias or effect contracts.
-    The analysis changes no operation or attribute (D[async-copy-contract]).
+    The analysis changes no operation or attribute (D358).
   }];
 }
 

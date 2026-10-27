@@ -226,7 +226,7 @@ Three mechanisms keep the device busy.
 Host-device copies currently have token-bearing `gpu.memcpy` operations
 followed by immediate waits, and their runtime path synchronizes both
 runtime streams when work is pending and a host buffer participates.
-D[async-copy-contract]
+D358
 (#567) checks copy readiness and source/destination
 lifetimes using the same completion contract as distributed halo transfers.
 The check is read-only, after storage assignment and after the GPU

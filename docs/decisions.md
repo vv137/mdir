@@ -653,6 +653,7 @@ specification follow those made with it.
 | [D355](decisions/D355.md) | A `dyn.program` states the effects of its body in `effects`, which its verifier checks against the body and `dyn.step` takes; the functions of the host declare theirs in `dyn.effects`. | 2026-10-26 |
 | [D356](decisions/D356.md) | A NEP4 model of GPUMD is evaluated as the shape of EAM: one gather over the pairs into a field of radial descriptors and angular moments, then a neural stage of each atom for the invariants and the network, with forces and virial from `md-differentiate`; no triplet loop and no new op. | 2026-10-26 |
 | [D357](decisions/D357.md) | A pair loop must prove its required neighbor cutoff, exact centers, and image convention through SSA provenance at recognized boundaries; unresolved proofs are rejected. | 2026-10-27 |
+| [D358](decisions/D358.md) | Host-device copies have checked completion dependencies and source/destination borrows that forbid a dependent read, conflicting write, free, or reuse while the copy is in flight. | 2026-10-27 |
 <!-- end decisions-table -->
 
 

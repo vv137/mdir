@@ -221,7 +221,7 @@ streams when work is pending. An IR token alone does not remove that
 runtime-wide wait.
 
 The first #567 slice checks the existing behavior with a read-only
-transfer record (`md-exec-check-transfers`, D[async-copy-contract]). The
+transfer record (`md-exec-check-transfers`, D358). The
 record associates the completion token with
 the exact source and destination storage roots and slices, their allocation
 generations, and the visibility domain. The source is read-borrowed and the

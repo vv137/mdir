@@ -4,7 +4,7 @@ D357 rejects compiler IR whose neighbor coverage cannot be
 proved across a boundary. It changes no control key, neighbor strategy,
 default, format, checkpoint, or overwrite behavior.
 
-D[async-copy-contract] checks compiler-IR copy completion and buffer
+D358 checks compiler-IR copy completion and buffer
 lifetimes without moving waits. It adds no control key and changes no
 default, file format, checkpoint, or overwrite behavior.
 
