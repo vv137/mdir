@@ -12,76 +12,81 @@ namespace builder {
 
 class ExternalTermBuilder final : public TermBuilder {
 public:
-  void collectParameters(Builder &builder) const override {
-    const Topology &topology = *builder.system.topology;
+  void collectParameters(TermParameters &context) const override {
+    const Topology &topology = context.getTopology();
     size_t count = topology.getNumParticles();
-    Program &program = builder.program;
+    auto &fields = context.getFields();
     // The terms of the absolute positions (D148): a flag for each particle,
     // 1 for those of the term, and each parameter given as a list.
     for (auto [k, term] : llvm::enumerate(topology.externalTerms)) {
-      std::string flag = "ext" + std::to_string(k);
+      std::string flag = context.indexedName("ext", k);
       Program::Field on;
       on.name = flag;
       on.values.assign(count, 0.0);
       for (unsigned particle : term.particles)
         on.values.edit()[particle] = 1.0;
-      program.fields.push_back(std::move(on));
+      fields.push_back(std::move(on));
       for (const auto &[name, values] : term.parameters) {
         Program::Field field;
         field.name = flag + "_" + name;
         field.values.assign(count, 0.0);
         for (auto [place, particle] : llvm::enumerate(term.particles))
           field.values.edit()[particle] = values[place];
-        program.fields.push_back(std::move(field));
+        fields.push_back(std::move(field));
       }
     }
   }
 
   void emitTopologyPotential(
-      Builder &builder, const PotentialSelection &selection,
+      TermEmission &context, const PotentialSelection &selection,
       llvm::function_ref<void(StringRef)> add) const override {
-    if (selection.terms & Builder::ExternalTerms)
+    if (selection.terms & TermInputs::ExternalTerms)
       for (auto [index, term] :
-           llvm::enumerate(builder.system.topology->externalTerms))
+           llvm::enumerate(context.getTopology().externalTerms))
         if ((selection.externalTerm < 0 ||
              static_cast<int>(index) == selection.externalTerm) &&
-            !(selection.alchemicalOnly && !builder.usesLambda(term.expression)))
-          builder.emitExternalTerm(index, term, add);
+            !(selection.alchemicalOnly && !context.usesLambda(term.expression)))
+          emitExternalTerm(context, index, term, add);
   }
 
-  void emitTermPotentials(Builder &builder) const override {
-    for (size_t k = 0, e = builder.system.topology->externalTerms.size();
+  void emitTermPotentials(TermEmission &context) const override {
+    for (size_t k = 0, e = context.getTopology().externalTerms.size();
          k != e; ++k)
-      builder.emitTopologyPotential("term_external" + std::to_string(k),
-                                     Builder::ExternalTerms, -1, -1,
+      context.emitTopologyPotential("term_external" + std::to_string(k),
+                                     TermInputs::ExternalTerms, -1, -1,
                                      static_cast<int>(k));
   }
 
-  void appendTermNames(const Builder &builder,
+  void appendTermNames(const TermInputs &context,
                        std::vector<std::string> &names) const override {
-    for (size_t k = 0, e = builder.system.topology->externalTerms.size();
+    for (size_t k = 0, e = context.getTopology().externalTerms.size();
          k != e; ++k)
       names.push_back("term_external" + std::to_string(k));
   }
 
-  std::pair<unsigned, int> findObservedTerm(const Builder &builder,
+  std::pair<unsigned, int> findObservedTerm(const TermInputs &context,
                                            StringRef name) const override {
     for (auto [index, term] :
-         llvm::enumerate(builder.system.topology->externalTerms))
+         llvm::enumerate(context.getTopology().externalTerms))
       if (term.name == name)
-        return {Builder::ExternalTerms, static_cast<int>(index)};
+        return {TermInputs::ExternalTerms, static_cast<int>(index)};
     return {0, -1};
   }
 
-  std::optional<double> getObservedValue(const Builder &builder, unsigned kind,
+  std::optional<double> getObservedValue(const TermInputs &context, unsigned kind,
                                         int index, StringRef name) const override {
-    if (kind == Builder::ExternalTerms)
+    if (kind == TermInputs::ExternalTerms)
       for (const auto &[key, value] :
-           builder.system.topology->externalTerms[index].constants)
+           context.getTopology().externalTerms[index].constants)
         if (key == name)
           return value;
     return std::nullopt;
   }
+
+private:
+  static void emitExternalTerm(TermEmission &context, size_t index,
+                              const ExternalTerm &term,
+                              llvm::function_ref<void(StringRef)> add);
 };
 
 } // namespace builder
@@ -93,8 +98,12 @@ const TermBuilder &mdir::driver::builder::getExternalTermBuilder() {
   return builder;
 }
 
-void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
-                                llvm::function_ref<void(StringRef)> add) {
+void ExternalTermBuilder::emitExternalTerm(
+    TermEmission &context, size_t index, const ExternalTerm &term,
+    llvm::function_ref<void(StringRef)> add) {
+  const Control &control = context.getControl();
+  const System &system = context.getSystem();
+  llvm::raw_ostream &os = context.getOutput();
   // Σ_i k(x_i) over the particles of the term [Eastman2017] (D148),
   // the flag `ext<k>` 1 for
   // them and 0 for the others, which the kernel selects on: the positions
@@ -104,8 +113,8 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
       Expression::parse(term.expression, control.functions));
   std::vector<std::string> names = expression.getNames();
   bool charges = llvm::is_contained(names, "q");
-  std::string flag = "ext" + std::to_string(index);
-  std::string prefix = "%xe" + std::to_string(index) + "_";
+  std::string flag = context.indexedName("ext", index);
+  std::string prefix = context.indexedName("%xe", index) + "_";
   // In the frame of the cell (D154), the positions scaled by the edges of
   // the cell of the input over those of the cell.
   bool frame = term.scaling == ExternalTerm::Scaling::Cell;
@@ -167,8 +176,8 @@ void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
   }
   if (control.usesTime)
     values["t"] = "%time";
-  bindLambdas(values);
-  bindObserved(term.name, values);
+  context.bindLambdas(values);
+  context.bindObserved(term.name, values);
   std::string energy = expression.emit(os, values, prefix + "e", "    ", term.name);
   os << "    " << prefix << "kj = arith.constant " << formatReal(units::energy)
      << " : f64\n"
