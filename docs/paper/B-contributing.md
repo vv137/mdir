@@ -146,6 +146,6 @@ follow #683, one or two per PR under the unchanged-program gates.
 
 The pull-coordinate adapter (#683, D359) owns its auxiliary potentials,
 column selection, time-dependent output, and energy/force rows. It uses
-named shared centroid and argument-format emitters. The generated private
+named shared centroid and argument-format emitters. The generated semantic
 potentials and their evaluation sites stay where they were, preserving
 inlining, fusion, and contribution order.
