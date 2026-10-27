@@ -37,6 +37,15 @@ every program, `mdir run` with and without checkpoints and a Python
 simulation in any number of parts rebuild at the same steps up to the first
 checkpoint, and give the same state to the bit in the deterministic mode.
 
+The proposed coverage-boundary check (D[neighbor-coverage], #572) separates
+the construction's cutoff, centers, and image convention from the
+current-state validity discussed below (#571). Its design compares a
+contract in the neighbor type with proof through SSA provenance. The
+recommendation is to check every initial and yielded loop path and every
+private-function call site, and refuse an unresolved boundary. The choice
+and implementation remain pending; no strategy or generated code changes
+in this design draft.
+
 ## 4.1 The test of validity
 
 **Theorem (validity under scaling, D80).** Let a structure be built at

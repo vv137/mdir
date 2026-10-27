@@ -1,5 +1,13 @@
 # MDIR Op Specification, Milestone M0
 
+The design of [D[neighbor-coverage]](decisions/neighbor-coverage.md), #572,
+compares coverage in the neighbor type with proof through SSA provenance.
+It recommends requiring a proof of cutoff, exact centers, and images
+across recognized loop and private-function boundaries, including every
+initial/yielded path and every call site, and rejecting unresolved
+boundaries. The representation choice and implementation are pending;
+the current direct-source checks are unchanged by this design draft.
+
 Status: kept current (last checked against the ops of the dialects on
 2026-10-21). Everything in this document is implemented, except where a
 section says otherwise. It began as the specification of milestone M0, a

@@ -1,0 +1,59 @@
+# D[neighbor-coverage]
+
+Recorded at its merge.
+
+**Proposed: prove a pair loop's required neighbor cutoff, centers, and image convention through SSA provenance at recognized boundaries, and reject an unresolved proof.**
+
+Design draft for #572; implementation and the maintainer's choice remain
+open. The current `PairForOp::verify` compares these facts only for a
+direct `build_neighbors` or `refresh_neighbors` result. Its unknown-source
+path silently omits the comparison. This proposal removes that path.
+
+Two alternatives were considered:
+
+| Cost | Coverage in `!mdrt.neighbors` | Proof through the IR (recommended) |
+|---|---|---|
+| Printing | Changes every spelling to carry the cutoff and image contract; exact center subjects need an additional representation | Keeps the existing type and operation spelling |
+| Producers | Builds, refreshes, empty structures, loop results, and distributed lowering must construct consistent annotated types | Builds and refreshes provide facts to one pure query; unknown producers remain unresolved |
+| Consumers | Every signature, forwarding use, and type equality must preserve the contract | Consumers ask whether the particular required fact is established; unknown boundaries are diagnosed |
+| Function signatures | Public functions can require a type-level contract, but SSA-valued center subjects cannot live directly in a type | Private arguments are checked against every direct call site with argument substitution; public and address-taken boundaries are unresolved |
+| Structured loops | Types must agree for the initial, carried, yielded, and result values, even when several cutoffs all cover the same requested cutoff | All initial and yielded values must prove the requested coverage, including the zero-trip path |
+| `md_dist` | The type must also describe distributed structures and interact with the halo's subject/version evidence | Existing distributed coverage checks keep their exact subjects; no unresolved boundary is accepted as evidence |
+| Test and migration cost | Updates type builders and existing type spellings; 45 current source/test files mention the type explicitly | Rewrites fixtures that currently pass arbitrary neighbor arguments through public functions to provide real construction/call-site evidence |
+
+The recommended alternative follows D334 and D338: the particle set is an
+invariant type identity, while the exact center subjects and coverage
+evidence belong to SSA values and checked analysis. It also allows two
+different built cutoffs to satisfy one smaller requested cutoff without
+making their otherwise interchangeable loop values have different types.
+Its cost is stricter boundary verification and explicit evidence in tests
+that currently use unconstrained public neighbor arguments. This tradeoff
+needs the maintainer's ruling before implementation.
+
+The query is parameterized by the required cutoff, exact centers value,
+and image convention, rather than inferring a strategy or changing one.
+For a structured loop it checks its initial value and every yielded value
+under the corresponding argument substitution. A carried invariant can
+be proved inductively only with established initial evidence; an
+unanchored cycle is not proof. A result also includes the zero-trip path.
+Private function arguments require at least one known call site and all
+call sites to establish the obligation. Public, recursive, indirect,
+address-taken, or unrecognized boundaries are unresolved and name that
+boundary in the diagnostic. No boolean marker substitutes for evidence.
+
+This slice checks the cutoff/centers/images contract of #572. It does not
+claim current-position freshness or content-version validity, which are
+separate obligations of #571. The existing `md_dist.covered` halo-source
+check from #546 remains strict; traversing a distributed boundary must
+prove the corresponding subjects and contract, or reject it. It must not
+weaken a direct-source requirement into a presumed valid unknown source.
+
+Validation requires negative loop and private-function cutoff tests,
+loop-carried centers and image mismatches, and unresolved-boundary
+diagnostics, with positive all-call-site and all-loop-path evidence.
+Printed modules and lowered programs must remain byte-identical over the
+builder-equivalence corpus, followed by two lexical full-suite shards.
+If the type alternative is chosen instead, its printing change is
+declared explicitly and the lowered program and PTX remain identical.
+No control key, numerical method, neighbor strategy, checkpoint, file
+format, default, or overwrite behavior changes.

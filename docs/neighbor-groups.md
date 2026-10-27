@@ -23,6 +23,24 @@ loop computes each pair once. The neighbor matrix
 cannot be computed once a pair, in the deterministic comparison of the
 two, and on a device where it is faster.
 
+### Coverage across IR boundaries (proposed, #572)
+
+The neighbor structure's type identifies its particle set, while coverage
+for a pair loop depends on the required cutoff, exact centers value, and
+image convention. The proposed coverage query follows SSA provenance
+through a structured loop only when its initial value and every yielded
+value establish the required fact, including the zero-trip path. A private
+function argument has the fact only when every known call site establishes
+it with the corresponding actual arguments. Public, recursive, indirect,
+or unrecognized boundaries leave the obligation unresolved and are
+diagnosed. No boolean attribute substitutes for evidence. Current-state
+freshness remains the separate obligation of #571.
+
+[D[neighbor-coverage]](decisions/neighbor-coverage.md) compares this query
+with a contract in the neighbor type. The recommendation is provenance;
+the maintainer's choice and implementation are pending. Neither approach
+adds a control-file key or changes the neighbor strategy.
+
 ## 1. Why
 
 Measured on Cellulose (408,609 atoms, RTX 3090,
