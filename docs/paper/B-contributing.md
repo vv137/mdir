@@ -149,3 +149,9 @@ column selection, time-dependent output, and energy/force rows. It uses
 named shared centroid and argument-format emitters. The generated semantic
 potentials and their evaluation sites stay where they were, preserving
 inlining, fusion, and contribution order.
+The restraint adapter (`TermRestraint.cpp`, D359 and D361, #683) collects
+its fields before external fields through an explicit parameter-hook rank.
+Its borrowed correction-site arguments retain reference scaling and the
+force, energy, and virial contribution positions. The stored restraint
+energy column stays last, through its own count/emission hooks; no new
+potential evaluation or IR call boundary is added.

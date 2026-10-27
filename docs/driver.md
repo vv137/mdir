@@ -1170,7 +1170,7 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, the registration (D359, external terms and pulls built).** A term provides its
+**Part 2, the registration (D359, externals, pulls, and restraints built).** A term provides its
 builder in a file of its own, behind an interface that the central
 functions iterate, so that a new term adds a file rather than a case in
 `emitTopologyPotential`, `emitTerms`, and `emitEntry`:
@@ -1221,7 +1221,27 @@ original sites. The pull adapter owns its step-time emission, while
 centroid-coordinate geometry and the common runtime writer declaration
 remain shared. The registry lists external terms before pulls; only the
 pull adapter emits at these new hook sites, so no rank conflict arises.
-The remaining kinds still use the central builder and move in later PRs. No control-file behavior changes.
+
+`TermRestraint.cpp` owns the positional-restraint fields, force/energy/virial
+correction, and stored energy column. The parameter hook has an explicit
+`parameterRank`: restraints rank -1, external terms rank 0, and pulls rank 0, with stable
+registry order (externals, pulls, restraints) for equal ranks. Pulls collect no
+parameters; only pulls emit auxiliary potentials/output, and only restraints
+emit force corrections/stored columns. These hooks currently have no shared
+active pull/restraint site needing a second rank. This preserves restraint fields before
+external fields while the stored restraint energy remains after all
+evaluated energy columns. A separate count/emission hook writes that stored
+column; it does not evaluate a new potential. Borrowed `TermCorrection`
+names pass each force-correction site's inputs, outputs, and reference
+scale. The central scheduling sites query the registry's force-correction
+capability and retain their original names and emission positions. Only
+the restraint adapter currently supplies this correction; adding another
+writer requires explicitly composing its output names rather than giving
+two adapters the same result names. Reference scaling and the D124 virial
+formula do not change.
+
+The remaining kinds still use the central builder and move in later PRs.
+No control-file behavior changes.
 
 ## 3. Decided
 

@@ -719,7 +719,7 @@ void Builder::emitMinimization(StringRef velocities) {
   }
   // The energy and the forces at the start, and the terms.
   std::string raw = hasSites() ? "e" : "";
-  std::string held = hasRestraints() ? "p" : "";
+  std::string held = hasForceCorrections() ? "p" : "";
   bool models = !control.models.empty();
   std::string modelled = !models || !held.empty() ? "" : "c";
   os << "  %u0" << held << modelled << ", %f0" << held << raw << modelled
@@ -730,9 +730,9 @@ void Builder::emitMinimization(StringRef velocities) {
      << ") -> (f64, !vec)\n";
   if (hasSites())
     emitSpreadSites("  ", x0, "%f0" + held + "e", "%f0" + held, "%r_");
-  if (hasRestraints()) {
+  if (hasForceCorrections()) {
     os << "  %w0z = arith.constant dense<0.0> : vector<9xf64>\n";
-    emitRestraints("  ", x0, "%p_", "%f0p", models ? "%f0c" : "%f0", "%u0p",
+    emitForceCorrections("  ", x0, "%p_", "%f0p", models ? "%f0c" : "%f0", "%u0p",
                    models ? "%u0c" : "%u0", "%w0z", "%w0r");
   }
   // A learned potential (D270).
@@ -1383,7 +1383,7 @@ void Builder::emitEntry() {
   // %u0, %f0, and %w0; returns the name of the virial.
   auto emitStartForces = [&]() -> std::string {
     StringRef raw = hasSites() ? "e" : "";
-    std::string held = hasRestraints() ? "p" : "";
+    std::string held = hasForceCorrections() ? "p" : "";
     // With a learned potential, `%f0c` and `%u0c` before its terms
     // (D270).
     bool models = !control.models.empty();
@@ -1399,8 +1399,8 @@ void Builder::emitEntry() {
     if (hasSites())
       virial = emitSpreadSites("  ", "%x0", "%f0" + held + "e", "%f0" + held,
                                "%r_", "%w0" + held + "e", "%w0" + held);
-    if (hasRestraints()) {
-      emitRestraints("  ", "%x0", "%p_", "%f0p", models ? "%f0c" : "%f0",
+    if (hasForceCorrections()) {
+      emitForceCorrections("  ", "%x0", "%p_", "%f0p", models ? "%f0c" : "%f0",
                      "%u0p", models ? "%u0c" : "%u0", virial, "%w0");
       virial = "%w0";
     }
@@ -1449,7 +1449,7 @@ void Builder::emitEntry() {
       // 45.65 ms in it where `main` takes 44.84 to 45.30 ms and this text
       // 44.75 to 45.04 ms.
       StringRef raw = hasSites() ? "e" : "";
-      std::string held = hasRestraints() ? "p" : "";
+      std::string held = hasForceCorrections() ? "p" : "";
       auto emitAsked = [&](StringRef tag, bool withVirial) {
         std::string f = ("%f" + tag + "0").str(), w = ("%w" + tag + "0").str();
         os << "    " << f << held << raw;
@@ -1466,8 +1466,8 @@ void Builder::emitEntry() {
           tensor = emitSpreadSites(
               "    ", "%x0", f + held + "e", f + held, "%r_", tensor,
               withVirial ? w + held : std::string());
-        if (hasRestraints()) {
-          emitRestraints("    ", "%x0", "%p_", f + "p", f, "", "", tensor,
+        if (hasForceCorrections()) {
+          emitForceCorrections("    ", "%x0", "%p_", f + "p", f, "", "", tensor,
                          withVirial ? w : std::string());
           if (withVirial)
             tensor = w;
@@ -1648,7 +1648,7 @@ void Builder::emitEntry() {
     // once (D92). With leapfrog the stored velocities are half a kick
     // behind those of the time of the positions.
     StringRef raw = hasSites() ? "e" : "";
-    std::string held = hasRestraints() ? "p" : "";
+    std::string held = hasForceCorrections() ? "p" : "";
     // A learned potential adds its terms to `%ubsc`, `%fbsc`, and the virial
     // (D270).
     bool models = !control.models.empty();
@@ -1664,8 +1664,8 @@ void Builder::emitEntry() {
     if (hasSites())
       virial = emitSpreadSites("  ", "%x0", "%fbs" + held + "e", "%fbs" + held,
                                "%r_", "%wbs" + held + "e", "%wbs" + held);
-    if (hasRestraints()) {
-      emitRestraints("  ", "%x0", "%p_", "%fbsp", models ? "%fbsc" : "%fbs",
+    if (hasForceCorrections()) {
+      emitForceCorrections("  ", "%x0", "%p_", "%fbsp", models ? "%fbsc" : "%fbs",
                      "%ubsp", models ? "%ubsc" : "%ubs", virial, "%wbs");
       virial = "%wbs";
     }
