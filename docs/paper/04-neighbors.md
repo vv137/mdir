@@ -37,7 +37,7 @@ every program, `mdir run` with and without checkpoints and a Python
 simulation in any number of parts rebuild at the same steps up to the first
 checkpoint, and give the same state to the bit in the deterministic mode.
 
-The coverage-boundary check (D[neighbor-coverage], #572) separates the
+The coverage-boundary check (D357, #572) separates the
 construction's cutoff, centers, and image convention from current-state
 validity (#571). The compiler proves these facts through direct builds and
 refreshes, every initial and yielded path of a recognized `scf.for`, and

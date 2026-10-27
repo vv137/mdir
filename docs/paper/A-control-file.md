@@ -1,6 +1,6 @@
 # Appendix A. The control file
 
-D[neighbor-coverage] rejects compiler IR whose neighbor coverage cannot be
+D357 rejects compiler IR whose neighbor coverage cannot be
 proved across a boundary. It changes no control key, neighbor strategy,
 default, format, checkpoint, or overwrite behavior.
 

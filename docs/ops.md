@@ -1217,7 +1217,7 @@ be repaired afterward, which is why `interval` is not the default.
 
 The neighbor structure must prove that its built cutoff covers this loop,
 and that its exact centers and image convention match
-(D[neighbor-coverage], #572). The read-only query follows direct builds and
+(D357, #572). The read-only query follows direct builds and
 refreshes, every initial/yielded path of `scf.for` (zero trips included),
 and every direct call site of a private function with actual-argument
 substitution. Identity-carried centers are exact forwarding, not numeric

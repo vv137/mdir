@@ -23,7 +23,7 @@ loop computes each pair once. The neighbor matrix
 cannot be computed once a pair, in the deterministic comparison of the
 two, and on a device where it is faster.
 
-### Coverage across IR boundaries (D[neighbor-coverage], #572)
+### Coverage across IR boundaries (D357, #572)
 
 The neighbor structure's type identifies its particle set, while coverage
 for a pair loop depends on the required cutoff, exact centers value, and
@@ -36,7 +36,7 @@ or unrecognized boundaries leave the obligation unresolved and are
 diagnosed. No boolean attribute substitutes for evidence. Current-state
 freshness remains the separate obligation of #571.
 
-[D[neighbor-coverage]](decisions/neighbor-coverage.md) compares this query
+[D357](decisions/D357.md) compares this query
 with a contract in the neighbor type. Provenance was chosen: the type and
 printing remain unchanged, and unresolved required facts are errors.
 Identity forwarding of center subjects is checked, while body expressions,

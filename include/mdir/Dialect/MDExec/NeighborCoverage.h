@@ -1,4 +1,4 @@
-// Construction coverage across checked SSA boundaries (D[neighbor-coverage]).
+// Construction coverage across checked SSA boundaries (D357).
 
 #ifndef MDIR_DIALECT_MDEXEC_NEIGHBORCOVERAGE_H
 #define MDIR_DIALECT_MDEXEC_NEIGHBORCOVERAGE_H
