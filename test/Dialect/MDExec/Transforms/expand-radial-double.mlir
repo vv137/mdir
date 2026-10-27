@@ -22,8 +22,14 @@ func.func private @md_radial(%s: f64) -> f64 {
 // CHECK:           %[[R:[0-9]+]] = math.sqrt %[[R2]] : f64
 // CHECK:           math.erfc
 // CHECK-NOT:       md_exec.radial
-func.func @double(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
+func.func @double(%x: !vec, %cell: !md.cell) -> f64 {
   %u0 = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(0.8)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(0.8) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(0.8)
       weights [0.5] exchange [symmetric] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):

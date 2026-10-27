@@ -1215,6 +1215,19 @@ be repaired afterward, which is why `interval` is not the default.
 
 ### 8.3 `md_exec.pair_for`
 
+The neighbor structure must prove that its built cutoff covers this loop,
+and that its exact centers and image convention match
+(D[neighbor-coverage], #572). The read-only query follows direct builds and
+refreshes, every initial/yielded path of `scf.for` (zero trips included),
+and every direct call site of a private function with actual-argument
+substitution. Identity-carried centers are exact forwarding, not numeric
+equality. Public, recursive, address-taken, indirect, or unrecognized
+boundaries are refused with the boundary named. A private function without
+known call sites has no proof. IR fixtures must supply construction or
+closed call-site evidence rather than an unconstrained neighbor argument.
+The type remains `!mdrt.neighbors<@set>`; current-state freshness is #571.
+The strict `md_dist.covered` halo-source check remains unchanged.
+
 ```mlir
 %f0 = md_exec.zeros : !vec
 %u0 = arith.constant 0.0 : f64

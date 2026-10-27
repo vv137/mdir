@@ -24,8 +24,14 @@ md.tuple_set @groups on(@atoms) arity(2) orientation(unordered) disjoint
 // CHECK-NOT:       math.erfc
 // CHECK-NOT:       math.exp
 // CHECK:           md_exec.yield
-func.func @ewald(%x: !vec, %cell: !md.cell, %nl: !nl) -> !vec {
+func.func @ewald(%x: !vec, %cell: !md.cell) -> !vec {
   %f0 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(8.0)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(8.0) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(8.0)
       exchange [antisymmetric] policy(directed, owner_only) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
@@ -59,8 +65,14 @@ func.func @ewald(%x: !vec, %cell: !md.cell, %nl: !nl) -> !vec {
 // CHECK:           math.erfc %{{.*}} : f64
 // CHECK:           arith.divf %{{.*}}, %{{.*}} : f64
 // CHECK:           md_exec.yield
-func.func @alone(%x: !vec, %cell: !md.cell, %nl: !nl) -> !vec {
+func.func @alone(%x: !vec, %cell: !md.cell) -> !vec {
   %f0 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(8.0)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(8.0) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(8.0)
       exchange [antisymmetric] policy(directed, owner_only) {
   ^bb0(%yi: f32, %d: vector<3xf32>):

@@ -30,13 +30,19 @@ md.particle_set @atoms
 // CHECK-NOT:       md.lookup
 // CHECK:         md_exec.pair_for
 // CHECK:           md.lookup %[[A]]
-func.func @lennard_jones(%x: !vec, %cell: !md.cell, %nl: !nl,
+func.func @lennard_jones(%x: !vec, %cell: !md.cell,
                          %types: !md.field<@atoms, i32>,
                          %sb: memref<?x?xf64>, %eb: memref<?x?xf64>)
     -> (!vec, f64) {
   %sigma = mdrt.from_buffer %sb : memref<?x?xf64> to !t
   %epsilon = mdrt.from_buffer %eb : memref<?x?xf64> to !t
   %f0 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(2.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(2.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f = md_exec.pair_for %nl, %x, %cell ins(%types : !md.field<@atoms, i32>)
       outs(%f0 : !vec) cutoff(2.5) exchange [antisymmetric]
       policy(directed, owner_only) {

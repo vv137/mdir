@@ -37,6 +37,18 @@ every program, `mdir run` with and without checkpoints and a Python
 simulation in any number of parts rebuild at the same steps up to the first
 checkpoint, and give the same state to the bit in the deterministic mode.
 
+The coverage-boundary check (D[neighbor-coverage], #572) separates the
+construction's cutoff, centers, and image convention from current-state
+validity (#571). The compiler proves these facts through direct builds and
+refreshes, every initial and yielded path of a recognized `scf.for`, and
+every direct call site of a private function. The initial path is needed
+even when the loop takes zero iterations; induction on a carried value
+needs an established initial fact. Exact center subjects are substituted
+at each boundary. Unresolved public, recursive, indirect, address-taken,
+or unrecognized boundaries are refused. The neighbor type and generated
+program remain unchanged, and the distributed halo-source check remains
+strict. This check changes no neighbor strategy or numerical method.
+
 ## 4.1 The test of validity
 
 **Theorem (validity under scaling, D80).** Let a structure be built at

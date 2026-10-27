@@ -58,9 +58,14 @@ md.function @forces(%x: !vec, %cell: !md.cell, %a: f64,
 // A loop over pairs with per-particle parameters.
 //
 // CHECK-LABEL: md.function @charges(
-md.function @charges(%x: !vec, %cell: !md.cell, %q: !real,
-                     %nl: !mdrt.neighbors<@atoms>) -> f64 {
+md.function @charges(%x: !vec, %cell: !md.cell, %q: !real) -> f64 {
   %u0 = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.0)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.0) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !mdrt.neighbors<@atoms>
   // CHECK: md_exec.pair_for %{{[a-z0-9]+}}, %{{[a-z0-9]+}}, %{{[a-z0-9]+}}
   // CHECK-SAME: ins(%{{[a-z0-9]+}} : !md.field<@atoms, f64>)
   // CHECK-SAME: reduce(

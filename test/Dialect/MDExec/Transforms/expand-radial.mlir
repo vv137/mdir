@@ -32,9 +32,15 @@ func.func private @md_radial(%s: f64) -> f64 {
 // CHECK:           vector.load %[[T]][%{{.*}}, %{{.*}}] : memref<{{[0-9]+}}x4xf32>, vector<4xf32>
 // CHECK-COUNT-3:   math.fma %{{.*}}, %[[U]], %{{.*}} : f32
 // CHECK-NOT:       md_exec.radial
-func.func @single(%x: !md.field<@atoms, 3 x f32>, %cell: !md.cell, %nl: !nl)
+func.func @single(%x: !md.field<@atoms, 3 x f32>, %cell: !md.cell)
     -> f64 {
   %u0 = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(0.8)
+      : !md.field<@atoms, 3 x f32> -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(0.8) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !md.field<@atoms, 3 x f32> -> !nl
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(0.8)
       weights [0.5] exchange [symmetric] policy(directed, owner_only) {
   ^bb0(%r2: f32, %d: vector<3xf32>):

@@ -4,6 +4,7 @@ add_mlir_dialect_library(MDIRMDExec
   Independence.cpp
   LoopEffects.cpp
   MDExecOps.cpp
+  NeighborCoverage.cpp
   Scatter.cpp
   StorageSet.cpp
 
@@ -21,9 +22,11 @@ add_mlir_dialect_library(MDIRMDExec
   MDIRMDDist
   MDIRMDRT
   MLIRControlFlowInterfaces
+  MLIRFuncDialect
   MLIRFunctionInterfaces
   MLIRIR
   MLIRLoopLikeInterface
+  MLIRSCFDialect
   MLIRSideEffectInterfaces
   MLIRViewLikeInterface
   )

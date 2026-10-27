@@ -11,10 +11,11 @@ md.particle_set @atoms
 // second loop, then the sum of the first.
 //
 // CHECK-LABEL: func.func @energy_forces(
-// CHECK-SAME:    %[[X:[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, %[[CELL:[a-z0-9]+]]: !md.cell, %[[NL:[a-z0-9]+]]: !mdrt.neighbors<@atoms>, %[[A:[a-z0-9]+]]: f64)
-func.func @energy_forces(%x: !vec, %cell: !md.cell, %nl: !nl, %a: f64)
+// CHECK-SAME:    %[[X:[a-z0-9]+]]: !md.field<@atoms, 3 x f64>, %[[CELL:[a-z0-9]+]]: !md.cell, %[[A:[a-z0-9]+]]: f64)
+func.func @energy_forces(%x: !vec, %cell: !md.cell, %a: f64)
     -> (f64, !vec) {
   // CHECK:      %[[U0:[a-z0-9_]+]] = arith.constant 0.000000e+00 : f64
+  // CHECK:      %[[NL:[0-9]+]] = md_exec.build_neighbors
   // CHECK:      %[[F0:[0-9]+]] = md_exec.zeros
   // CHECK:      %[[LOOP:[0-9]+]]:2 = md_exec.pair_for %[[NL]], %[[X]], %[[CELL]]
   // CHECK-SAME:   outs(%[[F0]] : !md.field<@atoms, 3 x f64>) reduce(%[[U0]] : f64)
@@ -27,6 +28,12 @@ func.func @energy_forces(%x: !vec, %cell: !md.cell, %nl: !nl, %a: f64)
   // CHECK:        md_exec.yield %{{[0-9]+}}, %[[K]] : vector<3xf64>, f64
   // CHECK-NOT:  md_exec.pair_for
   %u0 = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %u = md_exec.pair_for %nl, %x, %cell reduce(%u0 : f64) cutoff(1.5)
       weights [0.5] exchange [symmetric] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
@@ -54,7 +61,7 @@ func.func @energy_forces(%x: !vec, %cell: !md.cell, %nl: !nl, %a: f64)
 // A field that both kernels read is read once.
 //
 // CHECK-LABEL: func.func @shared_field(
-func.func @shared_field(%x: !vec, %cell: !md.cell, %nl: !nl, %q: !real,
+func.func @shared_field(%x: !vec, %cell: !md.cell, %q: !real,
                         %s: !real) -> (f64, f64) {
   // CHECK:      md_exec.pair_for
   // CHECK-SAME:   ins(%[[Q:[a-z0-9]+]], %[[S:[a-z0-9]+]] : !md.field<@atoms, f64>, !md.field<@atoms, f64>)
@@ -68,6 +75,12 @@ func.func @shared_field(%x: !vec, %cell: !md.cell, %nl: !nl, %q: !real,
   // CHECK-NEXT:   md_exec.yield %[[QQ]], %[[QS]]
   // CHECK-NOT:  md_exec.pair_for
   %zero = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %a = md_exec.pair_for %nl, %x, %cell ins(%q : !real) reduce(%zero : f64)
       cutoff(1.5) policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>, %q1: f64, %q2: f64):
@@ -88,10 +101,16 @@ func.func @shared_field(%x: !vec, %cell: !md.cell, %nl: !nl, %q: !real,
 // The second loop uses a result of the first, so the two stay apart.
 //
 // CHECK-LABEL: func.func @dependent(
-func.func @dependent(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
+func.func @dependent(%x: !vec, %cell: !md.cell) -> f64 {
   // CHECK:      md_exec.pair_for
   // CHECK:      md_exec.pair_for
   %zero = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %a = md_exec.pair_for %nl, %x, %cell reduce(%zero : f64) cutoff(1.5)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
@@ -109,11 +128,17 @@ func.func @dependent(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
 // Different cutoffs: the loops run over different pairs.
 //
 // CHECK-LABEL: func.func @different_cutoffs(
-func.func @different_cutoffs(%x: !vec, %cell: !md.cell, %nl: !nl)
+func.func @different_cutoffs(%x: !vec, %cell: !md.cell)
     -> (f64, f64) {
   // CHECK:      md_exec.pair_for
   // CHECK:      md_exec.pair_for
   %zero = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %a = md_exec.pair_for %nl, %x, %cell reduce(%zero : f64) cutoff(1.5)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
@@ -133,8 +158,16 @@ func.func @different_cutoffs(%x: !vec, %cell: !md.cell, %nl: !nl)
 // CHECK:         md_exec.pair_for
 // CHECK:         md_exec.pair_for
 func.func @storage(%x: memref<?x3xf64>, %f: memref<?x3xf64>,
-                   %g: memref<?x3xf64>, %cell: !md.cell,
-                   %nl: !mdrt.neighbors<@atoms>) {
+                   %g: memref<?x3xf64>, %cell: !md.cell) {
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_zero = arith.constant 0 : index
+  %coverage_count = memref.dim %x, %coverage_zero : memref<?x3xf64>
+  %coverage_empty = md_exec.empty_neighbors size(%coverage_count)
+      positions(memref<?x3xf64>) kind(matrix) width(64) : !mdrt.neighbors<@atoms>
+  %nl = md_exec.refresh_neighbors %coverage_empty, %x, %cell
+      cutoff(2.5) skin(0.0) cell_width(2.5) policy(always)
+      : !mdrt.neighbors<@atoms>, memref<?x3xf64>
+
   md_exec.pair_for %nl, %x, %cell outs(%f : memref<?x3xf64>)
       cutoff(2.5) overwrite [true] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
