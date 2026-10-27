@@ -204,7 +204,7 @@ llvm::Error Builder::build() {
   if (control.tunables) {
     if (!system.topology)
       return makeError("tunable parameters are for a model with a topology");
-    if (control.hasFreeEnergy || control.ljpme || !getPullColumns().empty())
+    if (control.hasFreeEnergy || control.ljpme || hasCoordinateOutput())
       return makeError("tunable parameters do not take [free_energy], "
                        "LJPME, or pulls yet");
     program.tunable = true;
@@ -492,7 +492,8 @@ llvm::Error Builder::build() {
   shiftsAtCutoff = true;
   emitObservedPotentials();
   shiftsAtCutoff = false;
-  emitPullPotentials();
+  for (const TermBuilder *term : registerTermBuilders())
+    term->emitAuxiliaryPotentials(*this);
   emitSitePotentials();
   emitPrograms();
   emitEntry();

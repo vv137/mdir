@@ -1170,7 +1170,7 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, the registration (D359, external terms built).** A term provides its
+**Part 2, the registration (D359, external terms and pulls built).** A term provides its
 builder in a file of its own, behind an interface that the central
 functions iterate, so that a new term adds a file rather than a case in
 `emitTopologyPotential`, `emitTerms`, and `emitEntry`:
@@ -1214,8 +1214,14 @@ entry declaration of its own. `TermBuilders.cpp` references the adapter
 explicitly; stateless adapter instances are constructed on first use, not
 by global registration. The existing hook sites keep the external fields
 after restraints, potential contributions after Born, and output columns
-before restraints. The remaining kinds still use the central builder and
-move in later PRs. No control-file behavior changes.
+before restraints. Pull-coordinate potentials and output are owned by `TermPull.cpp`
+(#683), using the narrow adapter interface. A capability query replaces
+pull-specific checks; auxiliary potentials and output hooks run at their
+original sites. The pull adapter owns its step-time emission, while
+centroid-coordinate geometry and the common runtime writer declaration
+remain shared. The registry lists external terms before pulls; only the
+pull adapter emits at these new hook sites, so no rank conflict arises.
+The remaining kinds still use the central builder and move in later PRs. No control-file behavior changes.
 
 ## 3. Decided
 

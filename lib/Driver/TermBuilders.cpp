@@ -7,6 +7,7 @@ using namespace mdir::driver::builder;
 
 llvm::ArrayRef<const TermBuilder *>
 mdir::driver::builder::registerTermBuilders() {
-  static const TermBuilder *const builders[] = {&getExternalTermBuilder()};
+  static const TermBuilder *const builders[] = {&getExternalTermBuilder(),
+                                                &getPullTermBuilder()};
   return builders;
 }
