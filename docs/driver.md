@@ -1214,8 +1214,14 @@ entry declaration of its own. `TermBuilders.cpp` references the adapter
 explicitly; stateless adapter instances are constructed on first use, not
 by global registration. The existing hook sites keep the external fields
 after restraints, potential contributions after Born, and output columns
-before restraints. The remaining kinds still use the central builder and
-move in later PRs. No control-file behavior changes.
+before restraints. Pull-coordinate potentials and output move next into `TermPull.cpp`
+(#683), using the narrow adapter interface. A capability query replaces
+pull-specific checks; auxiliary potentials and output hooks run at their
+original sites. The pull adapter owns its step-time emission, while
+centroid-coordinate geometry and the common runtime writer declaration
+remain shared. The registry lists external terms before pulls; only the
+pull adapter emits at these new hook sites, so no rank conflict arises.
+The remaining kinds still use the central builder and move in later PRs. No control-file behavior changes.
 
 ## 3. Decided
 
