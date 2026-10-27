@@ -3,6 +3,7 @@
 #include "mdir/Dialect/MDExec/MDExecOps.h"
 
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
+#include "mdir/Dialect/MDExec/NeighborCoverage.h"
 #include "mdir/Dialect/MDExec/StorageSet.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/TypeUtilities.h"
@@ -1118,38 +1119,9 @@ LogicalResult PairForOp::verify() {
                            << overwrite->size();
   }
 
-  // The list must contain every pair within the cutoff of this loop.
-  // The centers and the images are those of the structure (D290).
-  std::optional<double> built;
-  Value builtCenters;
-  Images builtImages = Images::Minimum;
-  bool known = false;
-  if (auto build = getNeighbors().getDefiningOp<BuildNeighborsOp>()) {
-    built = build.getCutoff().convertToDouble();
-    builtCenters = build.getCenters();
-    builtImages = build.getImages();
-    known = true;
-  } else if (auto refresh =
-                 getNeighbors().getDefiningOp<RefreshNeighborsOp>()) {
-    built = refresh.getCutoff().convertToDouble();
-    builtCenters = refresh.getCenters();
-    builtImages = refresh.getImages();
-    known = true;
-  }
-  if (built && cutoff > *built)
-    return emitOpError()
-           << "the cutoff, " << cutoff
-           << ", exceeds the cutoff that the neighbor structure was "
-              "built with, "
-           << *built;
-  if (known && builtCenters != getCenters())
-    return emitOpError() << "the centers of the loop are not those of the "
-                            "neighbor structure";
-  if (known && builtImages != getImages())
-    return emitOpError() << "the loop takes images("
-                         << stringifyImages(getImages())
-                         << "), but the neighbor structure holds images("
-                         << stringifyImages(builtImages) << ")";
+  // Construction coverage must be proved even across SSA boundaries.
+  if (failed(verifyNeighborCoverage(*this)))
+    return failure();
 
   return verifyLoop(*this, neighbors.getParticleSet(),
                     /*allowsFlags=*/false);

@@ -18,8 +18,14 @@ md.particle_set @atoms
 // CHECK:         } : !mdrt.neighbors<@atoms>, !md.field<@atoms, 3 x f64> -> vector<3xf64>
 // CHECK:         %[[F:[0-9]+]] = vector.from_elements %{{.*}} : vector<9xf64>
 // CHECK:         vector.extract %[[F]][0]
-func.func @trace(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
+func.func @trace(%x: !vec, %cell: !md.cell) -> f64 {
   %w0 = arith.constant dense<0.0> : vector<9xf64>
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(2.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(2.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %w = md_exec.pair_for %nl, %x, %cell reduce(%w0 : vector<9xf64>)
       cutoff(2.5) weights [0.5] exchange [symmetric]
       policy(directed, owner_only) {
@@ -44,8 +50,14 @@ func.func @trace(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
 // CHECK-LABEL: func.func @whole(
 // CHECK:         md_exec.pair_for
 // CHECK-SAME:      reduce(%{{.*}} : vector<9xf64>)
-func.func @whole(%x: !vec, %cell: !md.cell, %nl: !nl) -> vector<9xf64> {
+func.func @whole(%x: !vec, %cell: !md.cell) -> vector<9xf64> {
   %w0 = arith.constant dense<0.0> : vector<9xf64>
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(2.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(2.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %w = md_exec.pair_for %nl, %x, %cell reduce(%w0 : vector<9xf64>)
       cutoff(2.5) exchange [symmetric] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):

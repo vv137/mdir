@@ -1,5 +1,9 @@
 # Appendix A. The control file
 
+D[neighbor-coverage] rejects compiler IR whose neighbor coverage cannot be
+proved across a boundary. It changes no control key, neighbor strategy,
+default, format, checkpoint, or overwrite behavior.
+
 D343 changes how differentiation accesses declared
 tuple-coordinate attributes inside the compiler. It adds no key and changes
 no default, format, checkpoint, or overwrite behavior.

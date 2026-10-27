@@ -23,12 +23,12 @@ loop computes each pair once. The neighbor matrix
 cannot be computed once a pair, in the deterministic comparison of the
 two, and on a device where it is faster.
 
-### Coverage across IR boundaries (proposed, #572)
+### Coverage across IR boundaries (D[neighbor-coverage], #572)
 
 The neighbor structure's type identifies its particle set, while coverage
 for a pair loop depends on the required cutoff, exact centers value, and
-image convention. The proposed coverage query follows SSA provenance
-through a structured loop only when its initial value and every yielded
+image convention. The coverage query follows SSA provenance through a
+recognized `scf.for` loop only when its initial value and every yielded
 value establish the required fact, including the zero-trip path. A private
 function argument has the fact only when every known call site establishes
 it with the corresponding actual arguments. Public, recursive, indirect,
@@ -37,9 +37,14 @@ diagnosed. No boolean attribute substitutes for evidence. Current-state
 freshness remains the separate obligation of #571.
 
 [D[neighbor-coverage]](decisions/neighbor-coverage.md) compares this query
-with a contract in the neighbor type. The recommendation is provenance;
-the maintainer's choice and implementation are pending. Neither approach
-adds a control-file key or changes the neighbor strategy.
+with a contract in the neighbor type. Provenance was chosen: the type and
+printing remain unchanged, and unresolved required facts are errors.
+Identity forwarding of center subjects is checked, while body expressions,
+other loop forms, function results, and CFG block arguments remain
+unrecognized boundaries where the query has no proof. Private functions
+need at least one known call site, and every use must be a direct call.
+The existing strict distributed halo-source rule is preserved. No
+control-file key or neighbor strategy changes.
 
 ## 1. Why
 

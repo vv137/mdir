@@ -1,13 +1,5 @@
 # MDIR Op Specification, Milestone M0
 
-The design of [D[neighbor-coverage]](decisions/neighbor-coverage.md), #572,
-compares coverage in the neighbor type with proof through SSA provenance.
-It recommends requiring a proof of cutoff, exact centers, and images
-across recognized loop and private-function boundaries, including every
-initial/yielded path and every call site, and rejecting unresolved
-boundaries. The representation choice and implementation are pending;
-the current direct-source checks are unchanged by this design draft.
-
 Status: kept current (last checked against the ops of the dialects on
 2026-10-21). Everything in this document is implemented, except where a
 section says otherwise. It began as the specification of milestone M0, a
@@ -1222,6 +1214,19 @@ violation means that pairs may have been missed in earlier steps. That cannot
 be repaired afterward, which is why `interval` is not the default.
 
 ### 8.3 `md_exec.pair_for`
+
+The neighbor structure must prove that its built cutoff covers this loop,
+and that its exact centers and image convention match
+(D[neighbor-coverage], #572). The read-only query follows direct builds and
+refreshes, every initial/yielded path of `scf.for` (zero trips included),
+and every direct call site of a private function with actual-argument
+substitution. Identity-carried centers are exact forwarding, not numeric
+equality. Public, recursive, address-taken, indirect, or unrecognized
+boundaries are refused with the boundary named. A private function without
+known call sites has no proof. IR fixtures must supply construction or
+closed call-site evidence rather than an unconstrained neighbor argument.
+The type remains `!mdrt.neighbors<@set>`; current-state freshness is #571.
+The strict `md_dist.covered` halo-source check remains unchanged.
 
 ```mlir
 %f0 = md_exec.zeros : !vec

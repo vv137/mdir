@@ -13,9 +13,15 @@ md.particle_set @atoms
 //
 // CHECK-LABEL: func.func @lennard_jones(
 // CHECK-SAME:    %[[EPS:[a-z0-9]+]]: f64, %[[SIGMA:[a-z0-9]+]]: f64)
-func.func @lennard_jones(%x: !vec, %cell: !md.cell, %nl: !nl, %eps: f64,
+func.func @lennard_jones(%x: !vec, %cell: !md.cell, %eps: f64,
                          %sigma: f64) -> f64 {
   %zero = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(2.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(2.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   // CHECK:      md_exec.pair_for
   // CHECK-NEXT: ^bb0(%[[R2:[a-z0-9]+]]: f64,
   // CHECK-NEXT:   %[[INVERSE:[0-9]+]] = arith.divf %{{[a-z0-9_]+}}, %[[R2]]
@@ -53,8 +59,14 @@ func.func @lennard_jones(%x: !vec, %cell: !md.cell, %nl: !nl, %eps: f64,
 // An odd power needs the distance: q1 q2 / r = q1 q2 (1 / r2) r.
 //
 // CHECK-LABEL: func.func @coulomb(
-func.func @coulomb(%x: !vec, %cell: !md.cell, %nl: !nl, %q: !real) -> f64 {
+func.func @coulomb(%x: !vec, %cell: !md.cell, %q: !real) -> f64 {
   %zero = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(2.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(2.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   // CHECK:      md_exec.pair_for
   // CHECK-NEXT: ^bb0(%[[R2:[a-z0-9]+]]: f64, %{{[a-z0-9]+}}: vector<3xf64>, %[[Q1:[a-z0-9]+]]: f64, %[[Q2:[a-z0-9]+]]: f64):
   // CHECK-DAG:    %[[R:[0-9]+]] = math.sqrt %[[R2]]
@@ -75,8 +87,14 @@ func.func @coulomb(%x: !vec, %cell: !md.cell, %nl: !nl, %q: !real) -> f64 {
 //
 // CHECK-LABEL: func.func @cancel(
 // CHECK-SAME:    %[[A:[a-z0-9]+]]: f64)
-func.func @cancel(%x: !vec, %cell: !md.cell, %nl: !nl, %a: f64) -> f64 {
+func.func @cancel(%x: !vec, %cell: !md.cell, %a: f64) -> f64 {
   %zero = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(2.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(2.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   // CHECK:      md_exec.pair_for
   // CHECK-NEXT: ^bb0(
   // CHECK-NEXT:   md_exec.yield %[[A]] : f64
@@ -95,8 +113,14 @@ func.func @cancel(%x: !vec, %cell: !md.cell, %nl: !nl, %a: f64) -> f64 {
 // value, and its result is a factor like any other.
 //
 // CHECK-LABEL: func.func @exponential(
-func.func @exponential(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
+func.func @exponential(%x: !vec, %cell: !md.cell) -> f64 {
   %zero = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(2.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(2.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   // CHECK:      md_exec.pair_for
   // CHECK-NEXT: ^bb0(%[[R2:[a-z0-9]+]]: f64,
   // CHECK-NEXT:   %[[R:[0-9]+]] = math.sqrt %[[R2]]
@@ -121,8 +145,14 @@ func.func @exponential(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
 // value, and their sum loses digits.
 //
 // CHECK-LABEL: func.func @polynomial(
-func.func @polynomial(%x: !vec, %cell: !md.cell, %nl: !nl) -> f64 {
+func.func @polynomial(%x: !vec, %cell: !md.cell) -> f64 {
   %zero = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(2.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(2.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   // CHECK:      md_exec.pair_for
   // CHECK-NEXT: ^bb0(%[[R2:[a-z0-9]+]]: f64,
   // CHECK-NEXT:   %[[R:[0-9]+]] = math.sqrt %[[R2]]

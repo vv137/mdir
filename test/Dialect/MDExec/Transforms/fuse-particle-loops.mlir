@@ -164,7 +164,7 @@ func.func @uses_sum(%v: !vec) -> !vec {
 // CHECK:         md_exec.particle_for
 // CHECK:         md_exec.pair_for
 // CHECK:         md_exec.particle_for
-func.func @forces_between(%x: !vec, %v: !vec, %cell: !md.cell, %nl: !nl)
+func.func @forces_between(%x: !vec, %v: !vec, %cell: !md.cell)
     -> (!vec, !vec) {
   %e0 = md_exec.empty : !vec
   %x1 = md_exec.particle_for ins(%x, %v : !vec, !vec) outs(%e0 : !vec) {
@@ -174,6 +174,12 @@ func.func @forces_between(%x: !vec, %v: !vec, %cell: !md.cell, %nl: !nl)
   } -> !vec
 
   %f0 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x1, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x1, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f = md_exec.pair_for %nl, %x1, %cell outs(%f0 : !vec) cutoff(1.5)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):

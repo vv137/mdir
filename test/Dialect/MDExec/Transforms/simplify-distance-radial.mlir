@@ -20,8 +20,14 @@ md.particle_set @atoms
 // CHECK:       func.func private @md_radial(%{{[a-z0-9]+}}: f64) -> f64
 // CHECK:         math.erfc
 // CHECK:         math.exp
-func.func @ewald(%x: !vec, %cell: !md.cell, %nl: !nl, %q: !real) -> !vec {
+func.func @ewald(%x: !vec, %cell: !md.cell, %q: !real) -> !vec {
   %f0 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(0.8)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(0.8) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f = md_exec.pair_for %nl, %x, %cell ins(%q : !real) outs(%f0 : !vec)
       cutoff(0.8) exchange [antisymmetric] policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>, %qi: f64, %qj: f64):

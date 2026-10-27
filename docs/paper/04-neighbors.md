@@ -37,14 +37,17 @@ every program, `mdir run` with and without checkpoints and a Python
 simulation in any number of parts rebuild at the same steps up to the first
 checkpoint, and give the same state to the bit in the deterministic mode.
 
-The proposed coverage-boundary check (D[neighbor-coverage], #572) separates
-the construction's cutoff, centers, and image convention from the
-current-state validity discussed below (#571). Its design compares a
-contract in the neighbor type with proof through SSA provenance. The
-recommendation is to check every initial and yielded loop path and every
-private-function call site, and refuse an unresolved boundary. The choice
-and implementation remain pending; no strategy or generated code changes
-in this design draft.
+The coverage-boundary check (D[neighbor-coverage], #572) separates the
+construction's cutoff, centers, and image convention from current-state
+validity (#571). The compiler proves these facts through direct builds and
+refreshes, every initial and yielded path of a recognized `scf.for`, and
+every direct call site of a private function. The initial path is needed
+even when the loop takes zero iterations; induction on a carried value
+needs an established initial fact. Exact center subjects are substituted
+at each boundary. Unresolved public, recursive, indirect, address-taken,
+or unrecognized boundaries are refused. The neighbor type and generated
+program remain unchanged, and the distributed halo-source check remains
+strict. This check changes no neighbor strategy or numerical method.
 
 ## 4.1 The test of validity
 

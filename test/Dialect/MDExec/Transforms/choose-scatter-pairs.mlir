@@ -51,8 +51,15 @@ md.particle_set @atoms
 // WHY: remark: scatter: hash(512, 8, 0)
 // WHYOFF: remark: scatter: no hash: pair-hash=off
 // AUTO: remark: scatter: no hash: the table was measured slower at every loop over pairs, 1.18 to 2.06 times the atomics (pair-hash=auto)
-func.func @groups(%x: !vec, %cell: !md.cell, %nl: !nl, %f0: !vec,
+func.func @groups(%x: !vec, %cell: !md.cell, %f0: !vec,
                   %rho0: !real) -> (!vec, !real) {
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.0)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.0) skin(0.0) kind(groups) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
+
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       exchange [antisymmetric] policy(unique, atomic) {
   ^bb0(%r2: f32, %d: vector<3xf32>):
@@ -71,7 +78,14 @@ func.func @groups(%x: !vec, %cell: !md.cell, %nl: !nl, %f0: !vec,
 // CHECK-LABEL: func.func @none(
 // CHECK-NOT: scatter(
 // CHECK: return
-func.func @none(%x: !vec, %cell: !md.cell, %nl: !nl, %f0: !vec) -> (!vec, f64) {
+func.func @none(%x: !vec, %cell: !md.cell, %f0: !vec) -> (!vec, f64) {
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.0)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.0) skin(0.0) kind(groups) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
+
   %f = md_exec.pair_for %nl, %x, %cell outs(%f0 : !vec) cutoff(1.0)
       policy(directed, owner_only) {
   ^bb0(%r2: f32, %d: vector<3xf32>):

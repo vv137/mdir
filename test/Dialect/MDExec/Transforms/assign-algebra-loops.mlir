@@ -21,13 +21,19 @@ md.tuple_set @bonds on(@atoms) arity(2) orientation(ordered)
 // CHECK: } {md_exec.algebra = #md_exec.algebra<any_order, any_order>}
 // DET-LABEL: func.func @pairs(
 // DET: } {md_exec.algebra = #md_exec.algebra<fixed_order, fixed_order>}
-func.func @pairs(%x: !vec, %cell: !md.cell, %nl: !nl) -> (!vec, f64) {
+func.func @pairs(%x: !vec, %cell: !md.cell) -> (!vec, f64) {
   %f0 = md_exec.zeros : !vec
   %y = md_exec.particle_for ins(%x : !vec) outs(%f0 : !vec) {
   ^bb0(%x_i: vector<3xf32>):
     md_exec.yield %x_i : vector<3xf32>
   } -> !vec
   %u0 = arith.constant 0.0 : f64
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %y, %cell width(1.0)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %y, %cell
+      cutoff(1.0) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f, %u = md_exec.pair_for %nl, %y, %cell outs(%f0 : !vec) reduce(%u0 : f64)
       cutoff(1.0) policy(directed, owner_only) {
   ^bb0(%r2: f32, %d: vector<3xf32>):

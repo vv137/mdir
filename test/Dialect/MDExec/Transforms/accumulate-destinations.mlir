@@ -19,9 +19,15 @@ md.tuple_set @bonds on(@atoms) arity(2) orientation(unordered)
 // CHECK-NEXT:    ^bb0(%[[SUM:[a-z0-9]+]]: vector<3xf64>, %[[V:[a-z0-9]+]]: vector<3xf64>):
 // CHECK-NEXT:      %[[KICKED:[0-9]+]] = arith.addf %[[V]], %[[SUM]]
 // CHECK-NEXT:      md_exec.yield %[[KICKED]]
-func.func @terms(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc, %v: !vec)
+func.func @terms(%x: !vec, %cell: !md.cell, %bonds: !inc, %v: !vec)
     -> !vec {
   %z1 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f1 = md_exec.pair_for %nl, %x, %cell outs(%z1 : !vec) cutoff(1.5)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
@@ -56,8 +62,14 @@ func.func @terms(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc, %v: !vec)
 // CHECK-NOT:     md_exec.zeros
 // CHECK:         %[[F1:[0-9]+]] = md_exec.pair_for {{.*}} outs(%[[F2]] :
 // CHECK:         md_exec.particle_for ins(%[[F1]] : !md.field<@atoms, 3 x f64>)
-func.func @reversed(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc) -> !vec {
+func.func @reversed(%x: !vec, %cell: !md.cell, %bonds: !inc) -> !vec {
   %z1 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f1 = md_exec.pair_for %nl, %x, %cell outs(%z1 : !vec) cutoff(1.5)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
@@ -95,10 +107,16 @@ func.func @reversed(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc) -> !vec {
 // CHECK:         %[[U:[0-9]+]] = arith.addf %[[F2]]#1, %{{[a-z0-9]+}} : f64
 // CHECK:         md_exec.particle_for ins(%[[F2]]#0 : !md.field<@atoms, 3 x f64>)
 // CHECK:         return %{{[0-9]+}}, %[[U]]
-func.func @energies(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc,
+func.func @energies(%x: !vec, %cell: !md.cell, %bonds: !inc,
     %a: f64) -> (!vec, f64) {
   %zero = arith.constant 0.0 : f64
   %z2 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f2, %u2 = md_exec.pair_for %nl, %x, %cell outs(%z2 : !vec)
       reduce(%zero : f64) cutoff(1.5) policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
@@ -129,10 +147,16 @@ func.func @energies(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc,
 //
 // CHECK-LABEL: func.func @dependent(
 // CHECK:         md_exec.particle_for ins(%{{[0-9]+}}, %{{[0-9]+}}#0 :
-func.func @dependent(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc)
+func.func @dependent(%x: !vec, %cell: !md.cell, %bonds: !inc)
     -> !vec {
   %zero = arith.constant 0.0 : f64
   %z2 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f2, %u2 = md_exec.pair_for %nl, %x, %cell outs(%z2 : !vec)
       reduce(%zero : f64) cutoff(1.5) policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
@@ -172,9 +196,15 @@ func.func @dependent(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc)
 // CHECK:         } : !mdrt.incidence<@atoms, 2, @bonds>, !md.field<@atoms, 3 x f64> -> !md.field<@atoms, 3 x f64>
 // CHECK-NOT:     md_exec.zeros
 // CHECK:         md_exec.particle_for ins(%[[F2]], %{{[a-z0-9]+}} : !md.field<@atoms, 3 x f64>, !md.field<@atoms, 3 x f64>)
-func.func @merged(%x: !vec, %cell: !md.cell, %nl: !nl, %bonds: !inc, %v: !vec)
+func.func @merged(%x: !vec, %cell: !md.cell, %bonds: !inc, %v: !vec)
     -> !vec {
   %z1 = md_exec.zeros : !vec
+  // Real construction evidence for the pair loops below (#572).
+  %coverage_cells = md_exec.build_cells %x, %cell width(1.5)
+      : !vec -> !mdrt.cells<@atoms>
+  %nl = md_exec.build_neighbors %coverage_cells, %x, %cell
+      cutoff(1.5) skin(0.0) kind(matrix) width(64)
+      : !mdrt.cells<@atoms>, !vec -> !nl
   %f1 = md_exec.pair_for %nl, %x, %cell outs(%z1 : !vec) cutoff(1.5)
       policy(directed, owner_only) {
   ^bb0(%r2: f64, %d: vector<3xf64>):
