@@ -256,8 +256,8 @@ effects. A call of the host has the effects that its function declares in
 as its read and write, and states `{read = ["dyn.stop"], write =
 ["dyn.stop"]}` for a program of a step with constraints and `{}` for the
 others. A step of a program without a summary reads and writes every
-resource. The resources so far are `dyn.bath`, `dyn.chain`, and
-`dyn.stop`. `md-inline` removes the `dyn.effects` with the programs, which
+resource. The named resources are `dyn.bath`, `dyn.chain`, `dyn.stop`,
+`dyn.record`, and `dyn.statistics`; `<Default>` names ordinary memory. `md-inline` removes the `dyn.effects` with the programs, which
 alone read them, so that the lowered program is that of before.
 
 #### 2.2.4 The contract of `dyn.program`

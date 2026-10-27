@@ -615,6 +615,8 @@ the body is in it, on its resource, and no op of the body has unknown
 effects. A `func.call` has the effects that its function declares in
 `dyn.effects`, in the same form; a call of a function without them has
 unknown effects. The summary may name more than the body does.
+Accepted named resources are `dyn.bath`, `dyn.chain`, `dyn.stop`,
+`dyn.record`, and `dyn.statistics`; `<Default>` names ordinary memory.
 
 Known requirements: `temperature`, `pressure`.
 

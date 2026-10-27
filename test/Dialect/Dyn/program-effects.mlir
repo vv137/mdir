@@ -26,6 +26,15 @@ dyn.program @stops(%v: !vec, %f: !vec, %m: !real, %dt: f64) -> !vec
   dyn.return %v1 : !vec
 }
 
+func.func private @record()
+    attributes {dyn.effects = {write = ["dyn.record", "dyn.statistics"]}}
+
+dyn.program @records(%v: !vec) -> !vec
+    attributes {effects = {write = ["dyn.record", "dyn.statistics"]}} {
+  func.call @record() : () -> ()
+  dyn.return %v : !vec
+}
+
 dyn.program @unstated(%v: !vec, %f: !vec, %m: !real, %dt: f64) -> !vec {
   %v1 = dyn.kick %v, %f, %m, %dt : !vec
   dyn.return %v1 : !vec
@@ -34,11 +43,13 @@ dyn.program @unstated(%v: !vec, %f: !vec, %m: !real, %dt: f64) -> !vec {
 // CHECK-LABEL: func.func @steps(
 // CHECK-NOT:     dyn.step @pure
 // CHECK:         dyn.step @stops
+// CHECK-NEXT:    dyn.step @records
 // CHECK-NEXT:    dyn.step @unstated
 // CHECK-NEXT:    return
 func.func @steps(%v: !vec, %f: !vec, %m: !real, %dt: f64) {
   %a = dyn.step @pure(%v, %f, %m, %dt) : (!vec, !vec, !real, f64) -> !vec
   %b = dyn.step @stops(%v, %f, %m, %dt) : (!vec, !vec, !real, f64) -> !vec
+  %r = dyn.step @records(%v) : (!vec) -> !vec
   %c = dyn.step @unstated(%v, %f, %m, %dt) : (!vec, !vec, !real, f64) -> !vec
   return
 }
