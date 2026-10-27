@@ -1257,6 +1257,15 @@ Born intermediates. The central builder no longer selects Born/surface
 fields, definitions, contributions, or evaluated output columns. Custom
 tuple, custom pair, triplet, model, bonded, and nonbonded kinds remain.
 
+The custom-tuple migration (#683) moves tuple/centroid collection,
+potential emission, output names, observable lookup, and tuple tunable
+bookkeeping into `TermTuple.cpp`. Shared centroid geometry remains a named
+borrowed emitter used by pulls. Explicit hook positions preserve tuple
+contributions among bonded terms and tuple definitions/output names before
+custom pairs. Parameter access adds only the tuple gradient records and
+gradient fields needed by this adapter, with no complete builder/program
+access. Existing names, expressions, errors, and numerical order remain.
+
 ## 3. Decided
 
 | # | Question | Decision |
