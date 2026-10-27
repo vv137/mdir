@@ -112,7 +112,7 @@ jobs:
             # The Python package from its sdist, built and installed as a
             # user does (#624), in shard 1, where the script exists.
             if [ "$SHARD" = 1 ] && [ -x scripts/check-sdist.sh ]; then
-              HDF5_LIBRARY_DIR=/opt/hdf5/1.14.6/lib scripts/check-sdist.sh /tmp/sdist \
+              scripts/check-sdist.sh /tmp/sdist \
                 cmake.define.LLVM_DIR=/opt/llvm/23.1.2/lib/cmake/llvm \
                 cmake.define.MLIR_DIR=/opt/llvm/23.1.2/lib/cmake/mlir \
                 cmake.define.HDF5_ROOT=/opt/hdf5/1.14.6 \
