@@ -163,7 +163,8 @@ fields (rank -1) and external fields (rank 0). Its potential rank -1
 preserves Born then surface before external contributions, standalone
 potentials, and evaluated energy-column names (rank 0). The radii and Debye
 screening remain adapter details; the interface exposes no GB buffers.
-The moved kinds are external terms, pulls, restraints, and Born/surface;
+The moved kinds are external terms, pulls, restraints, Born/surface, and
+custom tuples;
 the remaining kinds continue through #683 under unchanged-program gates.
 
 The custom-tuple adapter (`TermTuple.cpp`, D359/D361, #683) owns ordinary,
@@ -173,6 +174,5 @@ shared centroid geometry is still available to the pull adapter. Explicit
 topology and potential ranks preserve contributions among bonded terms
 and definitions/output names before custom pairs. Read-only tuple gradient
 plans and the required mutable gradient/tuple collections are borrowed by
-name, with no complete builder/program access. The moved kinds in this
-branch are external terms, pulls, restraints, and custom tuples; GB/surface
-are being moved separately in #689.
+name, with no complete builder/program access. The moved kinds are external terms, pulls, restraints, Born/surface, and
+custom tuples. Custom pair terms are next in #683.
