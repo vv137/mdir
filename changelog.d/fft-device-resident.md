@@ -1,3 +1,3 @@
 ### Added
 
-- Plan an opt-in device-resident semantic FFT strategy with checked transfer completion (D[fft-device-resident], #580).
+- Keep opt-in semantic FFT compositions resident on the device with private inverse inputs and checked scoped completion (D[fft-device-resident], #580).

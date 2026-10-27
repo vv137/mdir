@@ -402,11 +402,12 @@ in either order. It is off by default: once the kernels of PME became
 cheap, sharing the device with the loop over pairs, the longest part of a
 step, lengthened the step.
 
-The proposed resident FFT strategy (D[fft-device-resident], #580) retains
-intermediate values in owned device storage. Layout views require a proof
-or guard from the target representation; a backward input remains private.
+The opt-in resident FFT strategy (D[fft-device-resident], #580) retains
+intermediate packed scalar values in owned device storage. It explicitly
+packs external complex values; native complex views remain future work
+and require a target layout proof. A backward input remains private.
 Boundary copies must establish completion and host visibility on the actual
-producer queue before storage is released. This plan does not infer overlap
+producer queue before storage is released. It does not infer overlap
 from tokens or change the existing reciprocal implementation.
 
 ## 8.4 Where the time of a step goes
@@ -608,3 +609,13 @@ transfer, launch, and FFT plans form a separate device interface; the
 FFT itself remains the same linear-transform primitive (Section 2).
 
 The neighbor-group buffer ABI shares explicit slot identifiers and descriptors between compilation and execution (D350). Each descriptor states the element representation, physical shape, and role. The runtime checks the slot before indexing storage. The compiled-object cache includes the ABI version, while the emitted numerical program remains unchanged.
+
+D[fft-device-resident] retains packed scalar buffers between same-block
+semantic transforms. External complex values are explicitly packed and
+unpacked, so native complex layout is not assumed. Each destructive inverse
+receives a private device copy. Bufferization and host ownership precede
+device placement; D358 checks the actual copy/wait pairs before the scoped
+runtime adapter replaces them. Completion records an event on the current
+producer queue and waits for it before host access, and a scoped completion
+precedes device release even for unused results. Legacy copies, the host
+default, and the current reciprocal route are unchanged.

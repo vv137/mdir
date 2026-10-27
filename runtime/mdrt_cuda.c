@@ -1131,6 +1131,42 @@ void mgpuMemcpy(void *destination, void *source, size_t size,
     finish();
 }
 
+/* Completion on one actual producer queue, without draining the other.
+   MDRT_WAIT retains its explicitly requested debugging synchronization. */
+static void waitScoped(CUstream stream) {
+  double start = begin();
+  CUevent completed = mgpuEventCreate();
+  mgpuEventRecord(completed, stream);
+  mgpuEventSynchronize(completed);
+  mgpuEventDestroy(completed);
+  end(WAIT, start);
+  mgpuStreamSynchronize(stream);
+}
+
+/* A checked host boundary of the resident FFT strategy
+   (D[fft-device-resident]). The compiler establishes the source/destination
+   extents, lifetime, and producer queue before selecting this entry point.
+   Completion is host-visible when it returns, but unrelated side work is
+   not drained. Keep isPending conservative: that work may still be live. */
+void mdrtCudaMemcpyScoped(uintptr_t destination, uintptr_t source,
+                          uint64_t size) {
+  if (size == 0)
+    return;
+  CUstream stream = mgpuStreamCreate();
+  double start = begin();
+  check(cuMemcpyAsync((CUdeviceptr)destination, (CUdeviceptr)source,
+                      (size_t)size, stream),
+        "cuMemcpyAsync");
+  isPending = 1;
+  end(COPY, start);
+  waitScoped(stream);
+}
+
+/* An unused resident result also completes before its storage is released. */
+void mdrtCudaWaitScoped(void) {
+  waitScoped(mgpuStreamCreate());
+}
+
 void mgpuMemset32(void *destination, unsigned int value, size_t count,
                   CUstream stream) {
   check(cuMemsetD32Async((CUdeviceptr)destination, value, count, stream),

@@ -1,0 +1,5 @@
+# REQUIRES: cuda
+# The timeout bounds the missing-dependency failure without timing a kernel.
+# RUN: env -u MDRT_WAIT timeout 30 mdir-cuda-copy-scope-test | FileCheck %s
+# CHECK: Scoped copies: 16 exact integers; difference 0, tolerance 0
+# CHECK: Unrelated side work stayed pending until explicit release

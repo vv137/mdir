@@ -41,7 +41,7 @@ private packed input copy; the semantic tensor operand remains unchanged.
 It adds no control-file key, checkpoint or output format, or overwrite
 behavior change.
 
-The planned resident FFT strategy (D[fft-device-resident], #580) is a
+The opt-in resident FFT strategy (D[fft-device-resident], #580) is a
 compiler storage choice. It adds no control-file or Python key, checkpoint
 or output format, or overwrite behavior.
 

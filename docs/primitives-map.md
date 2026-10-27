@@ -250,9 +250,9 @@ Two things that MDIR computes are not primitives of the set:
 - **Run-time choices by measurement**, such as the skins of D281: they
   choose among compiled programs, and compute nothing that the step uses.
 
-The [resident FFT plan](fft-device-resident.md) (#580,
-D[fft-device-resident]) is the next transfer/layout adapter for the linear
-transform. It retains the existing primitive and adjoint rather than adding
+The [resident FFT strategy](fft-device-resident.md) (#580,
+D[fft-device-resident]) is an opt-in packed-buffer transfer adapter for the
+linear transform, checked by D358 before scoped copy lowering. It retains the existing primitive and adjoint rather than adding
 a separate FFT meaning for a device.
 
 ## 2. Reading the map
