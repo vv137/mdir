@@ -571,18 +571,10 @@ void Builder::emitLevel(unsigned level, StringRef indent) {
       // potentials of the outputs take the minimum image and the frame of
       // the cell from it.
       std::string rowCell = scalesHere ? scaling.cell : cellName;
-      if (!getPullColumns().empty()) {
-        // The coordinates of the terms over centers at the positions after
-        // the step, at its time (D145).
-        std::string time = "%pull_time" + here;
-        if (control.usesTime)
-          os << inner << time << "_steps = arith.sitofp %step" << here
-             << " : i64 to f64\n"
-             << inner << time << " = arith.mulf " << time << "_steps, %dt"
-             << " : f64\n";
-        emitPullOutput(inner, "%xl", rowCell, fieldPrefix, "%step" + here,
-                       time);
-      }
+      std::string outputStep = "%step" + here;
+      for (const TermBuilder *term : registerTermBuilders())
+        term->emitOutput(*this, {inner, "%xl", rowCell, fieldPrefix,
+                                 outputStep, "", here, true});
       if (!control.freeEnergyFile.empty()) {
         // dH/dλ and the energies of the other states at the positions
         // after the step (D161).
@@ -1550,7 +1542,9 @@ void Builder::emitEntry() {
     os << "  func.call @mdrtWriteEnergies(%start, %u0, %k0, %g0, " << trace
        << ", " << pressureKinetic << ")\n"
        << "      : (i64, f64, f64, f64, f64, f64) -> ()\n";
-    emitPullOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
+    for (const TermBuilder *term : registerTermBuilders())
+      term->emitOutput(*this, {"  ", "%x0", "%cell", "%p_", "%start",
+                               "%time0", "", false});
     emitFreeEnergyOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     emitObservablesOutput("  ", "%x0", "%cell", "%p_", "%start", "%time0");
     emitTunableGradientOutput("  ", "%x0", "%cell", "%p_", "%time0");

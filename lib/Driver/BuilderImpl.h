@@ -199,9 +199,27 @@ public:
   virtual void emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm = -1, int pairTerm = -1,
                                     int externalTerm = -1) = 0;
+  virtual std::string getFieldParameters() const = 0;
+  virtual std::string getFieldValues(StringRef prefix = "%p_") const = 0;
+  virtual std::string getFieldTypes() const = 0;
+  virtual std::string getTimeParameter() const = 0;
+  virtual std::string getTimeType() const = 0;
+  virtual std::string getTimeValue(StringRef name) const = 0;
+  virtual unsigned getNumPotentialArguments() const = 0;
+  virtual void emitLambdaConstants(StringRef indent) = 0;
+  virtual llvm::StringMap<std::string>
+  emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
+                          StringRef x, StringRef cell, StringRef relations,
+                          StringRef prefix) = 0;
   virtual void bindLambdas(llvm::StringMap<std::string> &values) const = 0;
   virtual void bindObserved(StringRef term,
                             llvm::StringMap<std::string> &values) const = 0;
+};
+
+/// One output site; borrowed names remain valid for the hook call.
+struct TermOutput {
+  StringRef indent, x, cell, prefix, step, time, loopSuffix;
+  bool deriveTime = false;
 };
 
 /// Hooks for the term kinds already moved out of the central builder
@@ -222,6 +240,9 @@ public:
   virtual void appendTermNames(const TermInputs &,
                                std::vector<std::string> &) const {}
   virtual void emitEntry(TermEmission &) const {}
+  virtual bool hasCoordinateOutput(const TermInputs &) const { return false; }
+  virtual void emitAuxiliaryPotentials(TermEmission &) const {}
+  virtual void emitOutput(TermEmission &, const TermOutput &) const {}
   virtual std::pair<unsigned, int> findObservedTerm(const TermInputs &,
                                                   StringRef) const {
     return {0, -1};
@@ -234,6 +255,7 @@ public:
 
 llvm::ArrayRef<const TermBuilder *> registerTermBuilders();
 const TermBuilder &getExternalTermBuilder();
+const TermBuilder &getPullTermBuilder();
 
 class Builder : private TermEmission {
 public:
@@ -320,14 +342,12 @@ private:
   llvm::StringMap<std::string>
   emitCentroidCoordinates(const TupleTerm &term, StringRef indent,
                           StringRef x, StringRef cell, StringRef relations,
-                          StringRef prefix);
-  /// The coordinates of the terms over centers that `[output] pull`
-  /// writes (D145, D149): the index of the term over tuples and the
-  /// quantity of each column.
-  std::vector<std::pair<size_t, std::string>> getPullColumns() const;
-  /// Emits for each term over centers its energy as a function of its
-  /// coordinates, `@pullterm<k>`, whose derivatives give its forces.
-  void emitPullPotentials();
+                          StringRef prefix) override;
+  bool hasCoordinateOutput() const {
+    return llvm::any_of(registerTermBuilders(), [&](const TermBuilder *term) {
+      return term->hasCoordinateOutput(*this);
+    });
+  }
   /// Whether the force on each virtual site is spread by the derivative of
   /// its placement (`MDIR_SITE_SPREAD=derived`) or by the transpose written
   /// out in `emitSpreadSites` (`written`), D298.
@@ -344,12 +364,7 @@ private:
                                 StringRef next, StringRef relations,
                                 StringRef virial, StringRef virialResult);
   /// The number of arguments of a potential, before those of its own.
-  unsigned getNumPotentialArguments() const;
-  /// Emits the evaluation of the columns at the positions `x` in the cell
-  /// `cell`, the fields of `prefix`, the step `step`, and the time `time`,
-  /// and their call to the writer.
-  void emitPullOutput(StringRef indent, StringRef x, StringRef cell,
-                      StringRef prefix, StringRef step, StringRef time);
+  unsigned getNumPotentialArguments() const override;
   /// Emits generalized Born (D144), `%u_born` and `%u_surface` as `terms`
   /// asks, and passes their names to `add`.
   void emitBorn(unsigned terms, llvm::function_ref<void(StringRef)> add);
@@ -533,11 +548,11 @@ private:
   /// it in ps as their last argument. A program of a step computes it from
   /// the number of the step, `%time`; the entry has `%time0`, that of the
   /// first step.
-  std::string getTimeParameter() const {
+  std::string getTimeParameter() const override {
     return control.usesTime ? ", %time: f64" : "";
   }
-  std::string getTimeType() const { return control.usesTime ? ", f64" : ""; }
-  std::string getTimeValue(StringRef name) const {
+  std::string getTimeType() const override { return control.usesTime ? ", f64" : ""; }
+  std::string getTimeValue(StringRef name) const override {
     return control.usesTime ? (", " + name).str() : "";
   }
   /// [free_energy] (D161): whether the run decouples a selection.
@@ -557,7 +572,7 @@ private:
         text += ", %lambda_" + name + ": f64";
     return text;
   }
-  void emitLambdaConstants(StringRef indent) {
+  void emitLambdaConstants(StringRef indent) override {
     if (lambdaArguments)
       return;
     for (const auto &[name, values] : control.freeEnergy.lambdas)
@@ -1146,11 +1161,11 @@ struct Coupled {
 
   /// The arguments that pass the fields of the parameters on: their
   /// declarations, their values, and their types, each after a comma.
-  std::string getFieldParameters() const;
+  std::string getFieldParameters() const override;
   /// The fields of the parameters, as arguments that follow others.
   /// `prefix` comes before the name of each.
-  std::string getFieldValues(StringRef prefix = "%p_") const;
-  std::string getFieldTypes() const;
+  std::string getFieldValues(StringRef prefix = "%p_") const override;
+  std::string getFieldTypes() const override;
 
   /// Emits the order of the particles at the positions `positions`, and
   /// the fields in that order. `from` and `to` are the ends of the names

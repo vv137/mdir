@@ -171,47 +171,6 @@ void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
      << prefix << "kj : f64\n";
 }
 
-void Builder::emitPullPotentials() {
-  // The energy of each term as a function of its coordinates, which follow
-  // the other arguments, so that the derivatives with respect to them give
-  // the forces along the coordinates.
-  std::vector<std::pair<size_t, std::string>> columns = getPullColumns();
-  if (columns.empty())
-    return;
-  for (size_t index = 0, e = system.topology->tupleTerms.size(); index != e;
-       ++index) {
-    const TupleTerm &term = system.topology->tupleTerms[index];
-    if (!term.isCentroid())
-      continue;
-    std::vector<std::string> quantities;
-    for (const auto &[k, quantity] : columns)
-      if (k == index)
-        quantities.push_back(quantity);
-    os << "md.potential @pullterm" << index << "(%x: !vec, %cell: !md.cell"
-       << getFieldParameters() << getTimeParameter();
-    for (size_t q = 0; q != quantities.size(); ++q)
-      os << ", %pq" << q << ": f64";
-    os << ") -> f64 {\n";
-    emitLambdaConstants("  ");
-    llvm::StringMap<std::string> values;
-    for (auto [q, quantity] : llvm::enumerate(quantities))
-      values[quantity] = "%pq" + std::to_string(q);
-    for (auto [p, parameter] : llvm::enumerate(term.parameters)) {
-      std::string name = "%pp" + std::to_string(p);
-      os << "  " << name << " = arith.constant "
-         << formatReal(parameter.second.front()) << " : f64\n";
-      values[parameter.first] = name;
-    }
-    if (control.usesTime)
-      values["t"] = "%time";
-    bindLambdas(values);
-    Expression expression = llvm::cantFail(
-        Expression::parse(term.expression, control.functions));
-    std::string energy = expression.emit(os, values, "%pe", "  ", term.name);
-    os << "  md.return " << energy << " : f64\n}\n\n";
-  }
-}
-
 unsigned Builder::getNumPotentialArguments() const {
   unsigned count = 2 + program.fields.size() + program.tables.size();
   for (const Program::TupleSet &set : program.tupleSets)
