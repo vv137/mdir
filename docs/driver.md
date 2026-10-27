@@ -1170,7 +1170,7 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, the registration (D[term-registry], external terms built).** A term provides its
+**Part 2, the registration (D359, external terms built).** A term provides its
 builder in a file of its own, behind an interface that the central
 functions iterate, so that a new term adds a file rather than a case in
 `emitTopologyPotential`, `emitTerms`, and `emitEntry`:

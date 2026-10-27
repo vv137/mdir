@@ -75,7 +75,7 @@ virial follow by differentiation. If the term is a pair term with an
 exchange contract, it runs over groups on a device with no further work.
 The migrated kinds instead implement `TermBuilder` in a translation unit
 of their own and are listed explicitly in `lib/Driver/TermBuilders.cpp`
-(D[term-registry]). External terms are the first: their fields, potentials,
+(D359). External terms are the first: their fields, potentials,
 energy-output names, and observable lookup live in `TermExternal.cpp`.
 Their entry buffers still follow the shared field list. Every migration
 keeps the printed module and lowered program byte-identical to main over

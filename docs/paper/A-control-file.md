@@ -8,7 +8,7 @@ D358 checks compiler-IR copy completion and buffer
 lifetimes without moving waits. It adds no control key and changes no
 default, file format, checkpoint, or overwrite behavior.
 
-D[term-registry] moves external-term emission into an internal adapter.
+D359 moves external-term emission into an internal adapter.
 It adds no key and changes no default, format, checkpoint, or overwrite
 behavior; `[[energy.external]]` keeps its existing meaning.
 

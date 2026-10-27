@@ -1,5 +1,5 @@
 // The external terms: parameter fields, potentials, and energy output
-// (D[term-registry]). Entry buffers follow the shared field list.
+// (D359). Entry buffers follow the shared field list.
 
 #include "BuilderImpl.h"
 

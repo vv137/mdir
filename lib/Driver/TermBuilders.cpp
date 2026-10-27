@@ -1,4 +1,4 @@
-// The explicit order of the migrated term builders (D[term-registry]).
+// The explicit order of the migrated term builders (D359).
 // These references keep their translation units in the static library link.
 
 #include "BuilderImpl.h"

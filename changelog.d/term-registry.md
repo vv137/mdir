@@ -1,3 +1,3 @@
 ### Changed
 
-- Added an explicit internal term-builder registry, beginning with external energy terms (D[term-registry], #568, #680).
+- Added an explicit internal term-builder registry, beginning with external energy terms (D359, #568, #680).

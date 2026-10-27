@@ -127,7 +127,7 @@ class SiteKernel;
 class Builder;
 
 /// Hooks for the term kinds already moved out of the central builder
-/// (D[term-registry]). The explicit list fixes their emission order.
+/// (D359). The explicit list fixes their emission order.
 class TermBuilder {
 public:
   struct PotentialSelection {
