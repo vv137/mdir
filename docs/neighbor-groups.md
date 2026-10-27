@@ -34,7 +34,9 @@ function argument has the fact only when every known call site establishes
 it with the corresponding actual arguments. Public, recursive, indirect,
 or unrecognized boundaries leave the obligation unresolved and are
 diagnosed. No boolean attribute substitutes for evidence. Current-state
-freshness remains the separate obligation of #571.
+freshness, that the structure is valid for the positions and cell that
+the loop reads, is a separate obligation: a refresh tests it at run time
+(D80), and no open issue tracks a proof of it in the IR.
 
 [D357](decisions/D357.md) compares this query
 with a contract in the neighbor type. Provenance was chosen: the type and
