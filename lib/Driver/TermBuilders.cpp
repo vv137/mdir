@@ -8,6 +8,17 @@ using namespace mdir::driver::builder;
 llvm::ArrayRef<const TermBuilder *>
 mdir::driver::builder::registerTermBuilders() {
   static const TermBuilder *const builders[] = {&getExternalTermBuilder(),
-                                                &getPullTermBuilder()};
+                                                &getPullTermBuilder(),
+                                                &getRestraintTermBuilder()};
   return builders;
+}
+
+std::vector<const TermBuilder *>
+mdir::driver::builder::termBuildersByParameterRank() {
+  auto builders = registerTermBuilders();
+  std::vector<const TermBuilder *> ordered(builders.begin(), builders.end());
+  llvm::stable_sort(ordered, [](const TermBuilder *a, const TermBuilder *b) {
+    return a->parameterRank() < b->parameterRank();
+  });
+  return ordered;
 }

@@ -222,6 +222,11 @@ struct TermOutput {
   bool deriveTime = false;
 };
 
+/// Borrowed names at one force-correction site, including its reference scale.
+struct TermCorrection {
+  StringRef scale, indent, x, prefix, f, fResult, u, uResult, w, wResult;
+};
+
 /// Hooks for the term kinds already moved out of the central builder
 /// (D359). The explicit list fixes their emission order.
 class TermBuilder {
@@ -232,7 +237,12 @@ public:
     bool alchemicalOnly;
   };
   virtual ~TermBuilder() = default;
+  virtual int parameterRank() const { return 0; }
   virtual void collectParameters(TermParameters &) const {}
+  virtual bool hasForceCorrection(const TermInputs &) const { return false; }
+  virtual void emitForceCorrection(TermEmission &, const TermCorrection &) const {}
+  virtual unsigned getStoredTermCount(const TermInputs &) const { return 0; }
+  virtual void emitStoredTerms(TermEmission &, StringRef, int &) const {}
   virtual void emitTopologyPotential(
       TermEmission &, const PotentialSelection &,
       llvm::function_ref<void(StringRef)>) const {}
@@ -256,6 +266,8 @@ public:
 llvm::ArrayRef<const TermBuilder *> registerTermBuilders();
 const TermBuilder &getExternalTermBuilder();
 const TermBuilder &getPullTermBuilder();
+const TermBuilder &getRestraintTermBuilder();
+std::vector<const TermBuilder *> termBuildersByParameterRank();
 
 class Builder : private TermEmission {
 public:
@@ -513,11 +525,15 @@ private:
     os << "\n";
   }
 
-  bool hasRestraints() const { return !system.restraintConstants.empty(); }
+  bool hasForceCorrections() const {
+    return llvm::any_of(registerTermBuilders(), [&](const TermBuilder *term) {
+      return term->hasForceCorrection(*this);
+    });
+  }
   /// Whether the reference positions of the restraints follow the cell,
   /// which a barostat changes: they are those of the file times
   /// `scaleName`, the edge of the cell over that of the file.
-  bool scalesReference() const { return hasRestraints() && changesCell(); }
+  bool scalesReference() const { return hasForceCorrections() && changesCell(); }
   std::string getScaleValue() const {
     return scalesReference() ? ", " + scaleName : "";
   }
@@ -818,10 +834,14 @@ private:
   /// `u` is given, `uResult` and `wResult`, the energy `u` and the virial
   /// `w` with theirs added. The virial of a restraint, Σ d ⊗ F with
   /// d = x − x_ref, has its diagonal only; its trace, −2 U, is whole.
-  void emitRestraints(StringRef indent, StringRef x, StringRef prefix,
+  void emitForceCorrections(StringRef indent, StringRef x, StringRef prefix,
                       StringRef f, StringRef fResult, StringRef u = "",
                       StringRef uResult = "", StringRef w = "",
-                      StringRef wResult = "");
+                      StringRef wResult = "") {
+    for (const TermBuilder *term : registerTermBuilders())
+      term->emitForceCorrection(*this, {scaleName, indent, x, prefix, f, fResult,
+                                        u, uResult, w, wResult});
+  }
   /// Emits the learned potentials of [[energy.model]] at the positions `x`
   /// in the cell `cell` (D270): `fResult` is the forces `f`
   /// with theirs added and, if `u` is given, `uResult` the energy `u` with

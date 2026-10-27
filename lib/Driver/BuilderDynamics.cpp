@@ -45,7 +45,7 @@ void Builder::emitPrograms() {
 
   // With restraints the names of an evaluation have `p`, and the
   // restraints give those that the step goes on with.
-  std::string held = hasRestraints() ? "p" : "";
+  std::string held = hasForceCorrections() ? "p" : "";
   // The velocities that leave none along a constrained bond (the second
   // half of RATTLE), with the virial of the impulses if `virial` is given.
   // Returns the velocities and the virial.
@@ -455,8 +455,8 @@ void Builder::emitPrograms() {
       virial = emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held,
                                "%r_", withVirial ? "%w1" + held + "e" : "",
                                "%w1" + held);
-    if (hasRestraints()) {
-      emitRestraints("  ", "%x1", "%p_", "%f1p", models ? "%f1c" : "%f1",
+    if (hasForceCorrections()) {
+      emitForceCorrections("  ", "%x1", "%p_", "%f1p", models ? "%f1c" : "%f1",
                      withEnergy ? "%u1p" : "",
                      withEnergy ? (models ? "%u1c" : "%u1") : "",
                      withVirial ? virial : "", withVirial ? "%w1" : "");
@@ -1626,7 +1626,7 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
         emitPlaceSites(indent, newPositions, placed, relations);
         newPositions = placed;
       }
-      std::string held = hasRestraints() ? "p" : "";
+      std::string held = hasForceCorrections() ? "p" : "";
       std::string raw = hasSites() ? "e" : "";
       // The work takes the energy, and the next step the forces; the
       // virial of the scaled positions is not needed.
@@ -1654,8 +1654,8 @@ Builder::emitCoupling(StringRef indent, StringRef positions,
       if (hasSites())
         emitSpreadSites(indent, newPositions, f + held + "e", f + held,
                         relations);
-      if (hasRestraints())
-        emitRestraints(indent, newPositions, fieldPrefix, f + "p",
+      if (hasForceCorrections())
+        emitForceCorrections(indent, newPositions, fieldPrefix, f + "p",
                        models ? f + "c" : f, u + "p", models ? u + "c" : u);
       if (models)
         emitModelTerms(indent, newPositions, cell, fieldPrefix, f + "c", f,
@@ -1821,7 +1821,7 @@ void Builder::emitDescend() {
   if (sites)
     emitPlaceSites("  ", constraints ? "%x1s" : "%x1d", "%x1", "%r_");
   std::string raw = sites ? "e" : "";
-  std::string held = hasRestraints() ? "p" : "";
+  std::string held = hasForceCorrections() ? "p" : "";
   // A learned potential adds its energy and forces to `%u1c` and `%f1c`
   // (D270).
   bool models = !control.models.empty();
@@ -1831,9 +1831,9 @@ void Builder::emitDescend() {
      << "      : " << signature << " -> (f64, !vec)\n";
   if (sites)
     emitSpreadSites("  ", "%x1", "%f1" + held + "e", "%f1" + held, "%r_");
-  if (hasRestraints()) {
+  if (hasForceCorrections()) {
     os << "  %w1z = arith.constant dense<0.0> : vector<9xf64>\n";
-    emitRestraints("  ", "%x1", "%p_", "%f1p", models ? "%f1c" : "%f1",
+    emitForceCorrections("  ", "%x1", "%p_", "%f1p", models ? "%f1c" : "%f1",
                    "%u1p", models ? "%u1c" : "%u1", "%w1z", "%w1r");
   }
   if (models)

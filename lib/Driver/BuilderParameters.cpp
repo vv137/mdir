@@ -473,57 +473,8 @@ void Builder::collectTopologyArrays() {
     program.fields.push_back(std::move(radius));
   }
   (void)count;
-  // The restraints: the constant of each particle, 0 for one that is not
-  // restrained, and its reference position, in nm.
-  if (hasRestraints()) {
-    Program::Field constants;
-    constants.name = "rest_k";
-    constants.values = system.restraintConstants;
-    program.fields.push_back(std::move(constants));
-    // Under a barostat each reference is its center c, which scales with
-    // the cell, plus its offset o from it, which stays (D124). The center of
-    // the references of `reference_scaling = "CENTER"` is their mean, so
-    // that their shape stays: scaled about the origin, the restraints would
-    // hold a solute as much smaller as the cell has become. That of `"ALL"`
-    // is the reference itself, with no offset. Without a barostat the
-    // offsets are the references.
-    size_t count = system.getNumParticles(), centered = 0;
-    double mean[3] = {0.0, 0.0, 0.0};
-    for (size_t i = 0; i != count; ++i)
-      if (system.restraintConstants[i] > 0.0 &&
-          system.restraintScaling[i] == ReferenceScaling::Center) {
-        ++centered;
-        for (int c = 0; c != 3; ++c)
-          mean[c] += system.referencePositions[3 * i + c];
-      }
-    for (int c = 0; c != 3; ++c)
-      mean[c] = centered ? mean[c] / centered : 0.0;
-    std::vector<double> centers(3 * count, 0.0);
-    if (scalesReference())
-      for (size_t i = 0; i != count; ++i)
-        for (int c = 0; c != 3; ++c)
-          centers[3 * i + c] =
-              system.restraintScaling[i] == ReferenceScaling::All
-                  ? system.referencePositions[3 * i + c]
-                  : mean[c];
-    for (int c = 0; c != 3; ++c) {
-      Program::Field reference;
-      reference.name = std::string("rest_") + "xyz"[c];
-      for (size_t i = 0; i != count; ++i)
-        reference.values.push_back(system.referencePositions[3 * i + c] -
-                                   centers[3 * i + c]);
-      program.fields.push_back(std::move(reference));
-    }
-    for (int c = 0; scalesReference() && c != 3; ++c) {
-      Program::Field center;
-      center.name = std::string("rest_c") + "xyz"[c];
-      for (size_t i = 0; i != count; ++i)
-        center.values.push_back(centers[3 * i + c]);
-      program.fields.push_back(std::move(center));
-    }
-  }
 
-  for (const TermBuilder *builder : registerTermBuilders())
+  for (const TermBuilder *builder : termBuildersByParameterRank())
     builder->collectParameters(*this);
 
   // The interaction groups of the pair terms, a flag for each particle
