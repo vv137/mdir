@@ -155,3 +155,13 @@ Its borrowed correction-site arguments retain reference scaling and the
 force, energy, and virial contribution positions. The stored restraint
 energy column stays last, through its own count/emission hooks; no new
 potential evaluation or IR call boundary is added.
+
+Generalized Born and its nonpolar surface contribution share `TermBorn.cpp`
+(D359, D361, #683), because the surface energy consumes the computed Born
+radii. Its parameter rank -2 preserves radius fields before restraint
+fields (rank -1) and external fields (rank 0). Its potential rank -1
+preserves Born then surface before external contributions, standalone
+potentials, and evaluated energy-column names (rank 0). The radii and Debye
+screening remain adapter details; the interface exposes no GB buffers.
+The moved kinds are external terms, pulls, restraints, and Born/surface;
+the remaining kinds continue through #683 under unchanged-program gates.

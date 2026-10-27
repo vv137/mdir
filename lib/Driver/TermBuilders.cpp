@@ -9,7 +9,8 @@ llvm::ArrayRef<const TermBuilder *>
 mdir::driver::builder::registerTermBuilders() {
   static const TermBuilder *const builders[] = {&getExternalTermBuilder(),
                                                 &getPullTermBuilder(),
-                                                &getRestraintTermBuilder()};
+                                                &getRestraintTermBuilder(),
+                                                &getBornTermBuilder()};
   return builders;
 }
 
@@ -19,6 +20,16 @@ mdir::driver::builder::termBuildersByParameterRank() {
   std::vector<const TermBuilder *> ordered(builders.begin(), builders.end());
   llvm::stable_sort(ordered, [](const TermBuilder *a, const TermBuilder *b) {
     return a->parameterRank() < b->parameterRank();
+  });
+  return ordered;
+}
+
+std::vector<const TermBuilder *>
+mdir::driver::builder::termBuildersByPotentialRank() {
+  auto builders = registerTermBuilders();
+  std::vector<const TermBuilder *> ordered(builders.begin(), builders.end());
+  llvm::stable_sort(ordered, [](const TermBuilder *a, const TermBuilder *b) {
+    return a->potentialRank() < b->potentialRank();
   });
   return ordered;
 }

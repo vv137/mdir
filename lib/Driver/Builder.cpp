@@ -453,13 +453,8 @@ llvm::Error Builder::build() {
       for (size_t k = 0, e = control.pairs.size(); k != e; ++k)
         emitTopologyPotential("term_pair" + std::to_string(k), PairTerms, -1,
                               static_cast<int>(k));
-    if (!isRestart() && !system.bornTermNames.empty()) {
-      emitTopologyPotential("term_born", GeneralizedBorn);
-      if (system.bornTermNames.size() > 1)
-        emitTopologyPotential("term_surface", Surface);
-    }
     if (!isRestart())
-      for (const TermBuilder *builder : registerTermBuilders())
+      for (const TermBuilder *builder : termBuildersByPotentialRank())
         builder->emitTermPotentials(*this);
   }
   else if (llvm::Error error = emitPotential())

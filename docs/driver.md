@@ -1170,7 +1170,7 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, the registration (D359, externals, pulls, and restraints built).** A term provides its
+**Part 2, the registration (D359, externals, pulls, restraints, and Born/surface built).** A term provides its
 builder in a file of its own, behind an interface that the central
 functions iterate, so that a new term adds a file rather than a case in
 `emitTopologyPotential`, `emitTerms`, and `emitEntry`:
@@ -1224,8 +1224,8 @@ pull adapter emits at these new hook sites, so no rank conflict arises.
 
 `TermRestraint.cpp` owns the positional-restraint fields, force/energy/virial
 correction, and stored energy column. The parameter hook has an explicit
-`parameterRank`: restraints rank -1, external terms rank 0, and pulls rank 0, with stable
-registry order (externals, pulls, restraints) for equal ranks. Pulls collect no
+`parameterRank`: Born/surface rank -2, restraints rank -1, external terms rank 0, and pulls rank 0, with stable
+registry order (externals, pulls, restraints, Born/surface) for equal ranks. Pulls collect no
 parameters; only pulls emit auxiliary potentials/output, and only restraints
 emit force corrections/stored columns. These hooks currently have no shared
 active pull/restraint site needing a second rank. This preserves restraint fields before
@@ -1243,13 +1243,19 @@ formula do not change.
 The remaining kinds still use the central builder and move in later PRs.
 No control-file behavior changes.
 
-The next migration (#683) keeps generalized Born and its nonpolar surface
+The combined migration (#683) keeps generalized Born and its nonpolar surface
 term in one adapter, `TermBorn.cpp`: surface uses the same computed Born
 radii. Its parameter rank precedes restraint and external fields. An
 explicit potential rank preserves Born/surface before external terms for
 topology contributions, standalone potentials, and energy-column names.
-The shared radii, Debye screening, names, and emission order stay internal
-to the adapter; it adds no capability exposing Born intermediates.
+The potential hooks use `potentialRank`: Born/surface rank -1 and the
+other adapters rank 0, stable by registry order on ties. The parameter and
+potential ranks are separate because their hook sites have different
+ordering needs. The shared radii and Debye screening remain private to the
+adapter, with unchanged names and emission order; no capability exposes
+Born intermediates. The central builder no longer selects Born/surface
+fields, definitions, contributions, or evaluated output columns. Custom
+tuple, custom pair, triplet, model, bonded, and nonbonded kinds remain.
 
 ## 3. Decided
 
