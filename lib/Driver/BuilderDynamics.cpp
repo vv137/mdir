@@ -793,56 +793,6 @@ void Builder::emitNoise(StringRef indent, StringRef velocities,
      << indent << "} : !vec\n";
 }
 
-std::string Builder::emitGroupTrace(StringRef indent, StringRef trace,
-                                    StringRef positions, StringRef velocities,
-                                    StringRef cell, StringRef masses,
-                                    StringRef relations, StringRef tag) {
-  std::string t = tag.str();
-  std::string inner = (indent + "  ").str();
-  std::string groupTrace = trace.str();
-  for (const Program::TupleSet *set : getRigidGroups()) {
-    unsigned count = set->arity - 1;
-    std::string arguments = "%vs_r: vector<3xf64>, ";
-    for (unsigned k = 0; k <= count; ++k)
-      arguments += "%vs_v" + std::to_string(k) + ": vector<3xf64>, ";
-    for (unsigned k = 0; k <= count; ++k)
-      arguments += "%vs_m" + std::to_string(k) + ": f64" +
-                   (k == count ? "" : ", ");
-    std::string internal = "%bki" + t + "_" + set->name;
-    os << indent << internal << " = md.sum_tuples " << relations
-       << set->name << ", " << positions << ", " << cell << "\n"
-       << indent << "    coordinates(displacement(1, 0))\n"
-       << indent << "    gather(" << velocities << ", " << masses
-       << " : !vec, !real) {\n"
-       << indent << "^bb0(" << arguments << "):\n";
-    SiteKernel k(os, inner);
-    std::string total = "%vs_m0";
-    std::string moment = k.scale("%vs_m0", "%vs_v0");
-    for (unsigned j = 1; j <= count; ++j) {
-      std::string n = std::to_string(j);
-      total = k.real("addf", total, "%vs_m" + n);
-      moment = k.vector("addf", moment, k.scale("%vs_m" + n, "%vs_v" + n));
-    }
-    std::string center =
-        k.scale(k.real("divf", k.constant(1.0), total), moment);
-    std::string twice;
-    for (unsigned j = 0; j <= count; ++j) {
-      std::string n = std::to_string(j);
-      std::string relative = k.vector("subf", "%vs_v" + n, center);
-      std::string term =
-          k.real("mulf", "%vs_m" + n, k.dot(relative, relative));
-      twice = twice.empty() ? term : k.real("addf", twice, term);
-    }
-    os << inner << "md.yield " << twice << " : f64\n"
-       << indent << "} : !rel_" << set->name << ", !vec -> f64\n";
-    std::string next = "%bgt" + t + "_" + set->name;
-    os << indent << next << " = arith.addf " << groupTrace << ", "
-       << internal << " : f64\n";
-    groupTrace = next;
-  }
-  return groupTrace;
-}
-
 std::string Builder::emitMolecularDiagonal(StringRef indent,
                                            StringRef diagonal,
                                         StringRef positions, StringRef forces,
