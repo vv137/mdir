@@ -73,5 +73,5 @@ or write it in their own code around the model.
 Strictly local equivariant potentials such as
 Allegro [[Musaelian2023]](references.md#musaelian2023), and message-passing potentials whose features
 cross the boundaries of domains at each layer, as in [[Park2024]](references.md#park2024), set the
-requirements that a planned `mlff` dialect and a distributed lowering will
-have to meet (Section 13). They are not part of the first milestone.
+requirements that the neural stages of `md` (D288) and the distributed
+lowering will have to meet (Section 13). They are not part of the first milestone.
