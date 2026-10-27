@@ -313,18 +313,30 @@ LogicalResult Checker::check(gpu::MemcpyOp copy) {
     return success();
 
   llvm::DenseSet<Value> completionTokens{transfer.token};
+  auto covers = [&](ValueRange dependencies) {
+    return llvm::any_of(dependencies, [&](Value token) {
+      return completionTokens.contains(token);
+    });
+  };
   for (Operation *op = copy->getNextNode(); op; op = op->getNextNode()) {
     if (auto wait = dyn_cast<gpu::WaitOp>(op)) {
-      bool covers = llvm::any_of(wait.getAsyncDependencies(), [&](Value token) {
-        return completionTokens.contains(token);
-      });
-      if (covers) {
+      if (covers(wait.getAsyncDependencies())) {
         if (Value token = wait.getAsyncToken())
           completionTokens.insert(token);
         else {
           transfer.completion = wait;
           return success();
         }
+      }
+    }
+    if (auto next = dyn_cast<gpu::MemcpyOp>(op)) {
+      if (next.getAsyncToken() && covers(next.getAsyncDependencies())) {
+        // This copy's explicit dependency completes the earlier copy
+        // before its own memory accesses. Its token also carries that
+        // completion to a later blocking wait. Its own borrows are checked
+        // independently; no host access is licensed by this async edge.
+        completionTokens.insert(next.getAsyncToken());
+        continue;
       }
     }
     if (failed(operation(op, transfer, arguments)))

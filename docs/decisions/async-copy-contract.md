@@ -22,7 +22,10 @@ static byte envelopes can prove disjoint slices. Unknown required facts
 produce an unsupported-contract diagnostic, never a safe-path assumption.
 
 Only a blocking wait in the copy's block ends the borrows. Its dependencies
-must include that copy's token, directly or through asynchronous waits.
+must include that copy's token, directly or through asynchronous waits or
+dependent copies. A copy with an explicit dependency may access the earlier
+copy's buffers after that predecessor completes; its own borrows are
+checked independently. This async edge does not license a host access.
 SSA dominance and an asynchronous wait alone are not host completion.
 A synchronous copy completes at the copy operation. No completion through
 an unresolved region, returned token, or recursive call is inferred.

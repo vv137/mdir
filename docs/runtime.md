@@ -274,7 +274,9 @@ even through a disjoint view. Distinct allocations and D87's checked root
 provenance can prove separation; different set tags cannot.
 
 Only a blocking same-block `gpu.wait` whose dependencies include the copy
-token, directly or through asynchronous waits, ends its borrows. An async
+token, directly or through asynchronous waits or dependent copies, ends its
+host-side borrows. A copy dependency orders that copy's accesses after its
+predecessor, and its token carries completion to a later blocking wait. An async
 wait alone does not establish host visibility. Synchronous copies complete
 at the copy operation. The destination memory space determines host or
 device visibility; an unsupported memory-space representation is diagnosed.

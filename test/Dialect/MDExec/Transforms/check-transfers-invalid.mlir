@@ -328,3 +328,19 @@ func.func @conditional_completion(%src: memref<4xf64>, %dst: memref<4xf64>, %tak
   gpu.wait [%copy]
   return
 }
+
+// -----
+
+func.func @unordered_copy_chain() {
+  %src = memref.alloc() : memref<4xf64>
+  %first = memref.alloc() : memref<4xf64>
+  %second = memref.alloc() : memref<4xf64>
+  %begin = gpu.wait async
+  // expected-note @+1 {{copy starts here}}
+  %one = gpu.memcpy async [%begin] %first, %src : memref<4xf64>, memref<4xf64>
+  // The shared begin token does not order this read after the first copy.
+  // expected-error @+1 {{transfer destination read before copy completion}}
+  %two = gpu.memcpy async [%begin] %second, %first : memref<4xf64>, memref<4xf64>
+  gpu.wait [%one, %two]
+  return
+}

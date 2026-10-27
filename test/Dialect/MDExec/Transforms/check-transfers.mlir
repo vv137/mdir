@@ -51,6 +51,22 @@ func.func @deferred_group() {
   return
 }
 
+// An explicit copy dependency orders the second copy's memory accesses.
+// A blocking wait on the last token completes the whole chain.
+func.func @copy_chain() {
+  %src = memref.alloc() : memref<4xf64>
+  %first = memref.alloc() : memref<4xf64>
+  %second = memref.alloc() : memref<4xf64>
+  %begin = gpu.wait async
+  %one = gpu.memcpy async [%begin] %first, %src : memref<4xf64>, memref<4xf64>
+  %two = gpu.memcpy async [%one] %second, %first : memref<4xf64>, memref<4xf64>
+  gpu.wait [%two]
+  memref.dealloc %src : memref<4xf64>
+  memref.dealloc %first : memref<4xf64>
+  memref.dealloc %second : memref<4xf64>
+  return
+}
+
 func.func @disjoint_slice() {
   %c0 = arith.constant 0 : index
   %zero = arith.constant 0.0 : f64
