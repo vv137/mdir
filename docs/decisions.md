@@ -656,6 +656,7 @@ specification follow those made with it.
 | [D358](decisions/D358.md) | Host-device copies have checked completion dependencies and source/destination borrows that forbid a dependent read, conflicting write, free, or reuse while the copy is in flight. | 2026-10-27 |
 | [D359](decisions/D359.md) | An explicit registry of term builders owns the dispatch for each migrated kind of energy term, beginning with external terms. | 2026-10-27 |
 | [D360](decisions/D360.md) | Keep a bounded semantic FFT component resident on the device with checked layout, private backward inputs, and scoped host-boundary completion. | 2026-10-27 |
+| [D361](decisions/D361.md) | Term adapters receive borrowed capabilities for inputs, parameter collections, and emission rather than access to the complete builder. | 2026-10-27 |
 <!-- end decisions-table -->
 
 

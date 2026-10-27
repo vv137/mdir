@@ -1195,7 +1195,7 @@ functions iterate, so that a new term adds a file rather than a case in
 - The kinds move one or two in a pull request, with the gate of part 1
   (the corpus of Section 2.11 byte-identical, printed and lowered).
 
-The adapter boundary is narrowed in D[term-adapter] (#683). Read-only
+The adapter boundary is narrowed in D361 (#683). Read-only
 hooks take `TermInputs`: the system, topology, control, and deterministic
 indexed names. Parameter hooks take `TermParameters`, adding the field,
 table, and tuple-set collections. Emission hooks take `TermEmission`,

@@ -126,7 +126,7 @@ struct Parameter {
 class SiteKernel;
 class Builder;
 
-/// The borrowed read-only inputs of a term adapter (D[term-adapter]).
+/// The borrowed read-only inputs of a term adapter (D361).
 /// No accessor returns the builder or its scheduling state.
 class TermInputs {
 public:

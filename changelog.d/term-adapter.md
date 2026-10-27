@@ -1,3 +1,3 @@
 ### Changed
 
-- Narrow the internal term-adapter interface without changing generated programs (D[term-adapter], #683).
+- Narrow the internal term-adapter interface without changing generated programs (D361, #683).
