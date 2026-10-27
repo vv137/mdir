@@ -238,8 +238,9 @@ completion. Proved disjoint work may run between start and wait.
 | File commit (D336) | Checkpoint visibility under its existing rename protocol | Permission to skip a required copy dependency |
 
 The verifier and lowering use the same provenance, alias, and effect
-queries from D334 and the #574 boundary design. #565 supplies storage-set
-identity, and #566 supplies loop effects; a buffer's set tag does not prove
+queries from D334 and D338. D337 supplies storage-set
+identity, D342 supplies checked loop effects, and D355 supplies declared
+function and program resource effects; a buffer's set tag does not prove
 that aliases are disjoint. The initial verifier is bounded to recognized
 same-block transfer/wait pairs and checked loop/function effects. It refuses
 a known conflicting use without completion, and diagnoses an unsupported
@@ -251,7 +252,7 @@ conversion, including reduction readbacks. GPU conversion may remove
 readbacks with `keepReadbacksOnDevice` or move and combine their copy/wait
 groups with `deferReadbacks`; the final groups must be checked after those
 rewrites, or each rewrite must establish that it preserves the same
-contract. While `md_exec` loops exist, the checker uses #566's exact operand
+contract. While `md_exec` loops exist, the checker uses D342's exact operand
 and row summary; after conversion it uses the conservative projection to
 MLIR memory effects and generic alias tracking. A token operand or a marker
 on a copy is not a substitute for a checked completion path. Positive cases
