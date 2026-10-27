@@ -523,25 +523,8 @@ void Builder::collectTopologyArrays() {
     }
   }
 
-  // The terms of the absolute positions (D148): a flag for each particle,
-  // 1 for those of the term, and each parameter given as a list.
-  for (auto [k, term] : llvm::enumerate(topology.externalTerms)) {
-    std::string flag = "ext" + std::to_string(k);
-    Program::Field on;
-    on.name = flag;
-    on.values.assign(count, 0.0);
-    for (unsigned particle : term.particles)
-      on.values.edit()[particle] = 1.0;
-    program.fields.push_back(std::move(on));
-    for (const auto &[name, values] : term.parameters) {
-      Program::Field field;
-      field.name = flag + "_" + name;
-      field.values.assign(count, 0.0);
-      for (auto [place, particle] : llvm::enumerate(term.particles))
-        field.values.edit()[particle] = values[place];
-      program.fields.push_back(std::move(field));
-    }
-  }
+  for (const TermBuilder *builder : registerTermBuilders())
+    builder->collectParameters(*this);
 
   // The interaction groups of the pair terms, a flag for each particle
   // (D137).

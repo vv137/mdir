@@ -238,10 +238,11 @@ std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
       for (auto [k, tuple] : llvm::enumerate(system.topology->tupleTerms))
         if (tuple.name == term.name)
           term.kind = TupleTerms, term.index = static_cast<int>(k);
-      for (auto [k, external] :
-           llvm::enumerate(system.topology->externalTerms))
-        if (external.name == term.name)
-          term.kind = ExternalTerms, term.index = static_cast<int>(k);
+      for (const TermBuilder *builder : registerTermBuilders()) {
+        auto [kind, index] = builder->findObservedTerm(*this, term.name);
+        if (kind)
+          term.kind = kind, term.index = index;
+      }
       terms.push_back(std::move(term));
       it = std::prev(terms.end());
     }
@@ -483,97 +484,6 @@ void Builder::emitBorn(unsigned terms,
        << "  } : f64\n";
     add("surface");
   }
-}
-
-void Builder::emitExternalTerm(size_t index, const ExternalTerm &term,
-                                llvm::function_ref<void(StringRef)> add) {
-  // Σ_i k(x_i) over the particles of the term, the custom external force of
-  // OpenMM [Eastman2017] (D148), the flag `ext<k>` 1 for
-  // them and 0 for the others, which the kernel selects on: the positions
-  // in Å, the energy in kcal/mol. The positions are never wrapped (D74), so
-  // that the term is continuous along a trajectory.
-  Expression expression = llvm::cantFail(
-      Expression::parse(term.expression, control.functions));
-  std::vector<std::string> names = expression.getNames();
-  bool charges = llvm::is_contained(names, "q");
-  std::string flag = "ext" + std::to_string(index);
-  std::string prefix = "%xe" + std::to_string(index) + "_";
-  // In the frame of the cell (D154), the positions scaled by the edges of
-  // the cell of the input over those of the cell.
-  bool frame = term.scaling == ExternalTerm::Scaling::Cell;
-  if (frame) {
-    os << "  " << prefix << "edges = md_exec.cell_edges %cell : vector<3xf64>\n"
-       << "  " << prefix << "input = arith.constant dense<[";
-    for (int k = 0; k != 3; ++k)
-      os << (k ? ", " : "")
-         << formatReal(system.inputBox[k] > 0.0 ? system.inputBox[k]
-                                                 : system.box[k]);
-    os << "]> : vector<3xf64>\n"
-       << "  " << prefix << "frame = arith.divf " << prefix << "input, "
-       << prefix << "edges : vector<3xf64>\n";
-  }
-  os << "  %u_external_" << term.name << " = md.sum_particles gather(%x, %p_"
-     << flag;
-  if (charges)
-    os << ", %p_q";
-  for (const auto &parameter : term.parameters)
-    os << ", %p_" << flag << "_" << parameter.first;
-  os << " : !vec, !real";
-  if (charges)
-    os << ", !real";
-  for (size_t k = 0; k != term.parameters.size(); ++k)
-    os << ", !real";
-  os << ") {\n  ^bb0(" << prefix << "pos: vector<3xf64>, " << prefix
-     << "on: f64";
-  if (charges)
-    os << ", " << prefix << "q: f64";
-  for (size_t k = 0; k != term.parameters.size(); ++k)
-    os << ", " << prefix << "p" << k << ": f64";
-  os << "):\n";
-  llvm::StringMap<std::string> values;
-  os << "    " << prefix << "a = arith.constant "
-     << formatReal(1.0 / units::length) << " : f64\n";
-  std::string position = prefix + "pos";
-  if (frame) {
-    os << "    " << prefix << "posf = arith.mulf " << prefix << "pos, "
-       << prefix << "frame : vector<3xf64>\n";
-    position = prefix + "posf";
-  }
-  for (int c = 0; c != 3; ++c) {
-    std::string component = prefix + "xyz"[c];
-    os << "    " << component << "n = vector.extract " << position << "["
-       << c << "] : f64 from vector<3xf64>\n"
-       << "    " << component << " = arith.mulf " << component << "n, "
-       << prefix << "a : f64\n";
-    values[std::string(1, "xyz"[c])] = component;
-  }
-  if (charges)
-    values["q"] = prefix + "q";
-  for (auto [k, parameter] : llvm::enumerate(term.parameters))
-    values[parameter.first] = prefix + "p" + std::to_string(k);
-  for (auto [k, constant] : llvm::enumerate(term.constants)) {
-    std::string name = prefix + "c" + std::to_string(k);
-    os << "    " << name << " = arith.constant "
-       << formatReal(constant.second) << " : f64\n";
-    values[constant.first] = name;
-  }
-  if (control.usesTime)
-    values["t"] = "%time";
-  bindLambdas(values);
-  bindObserved(term.name, values);
-  std::string energy = expression.emit(os, values, prefix + "e", "    ", term.name);
-  os << "    " << prefix << "kj = arith.constant " << formatReal(units::energy)
-     << " : f64\n"
-     << "    " << prefix << "u = arith.mulf " << energy << ", " << prefix
-     << "kj : f64\n"
-     << "    " << prefix << "zero = arith.constant 0.0 : f64\n"
-     << "    " << prefix << "in = arith.cmpf one, " << prefix << "on, "
-     << prefix << "zero : f64\n"
-     << "    " << prefix << "k = arith.select " << prefix << "in, " << prefix
-     << "u, " << prefix << "zero : f64\n"
-     << "    md.yield " << prefix << "k : f64\n"
-     << "  } : f64\n";
-  add("external_" + term.name);
 }
 
 /// A part of the splitting of the prolate kernel at `x` = r / r_c, from the
@@ -964,11 +874,9 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
   if ((terms & (GeneralizedBorn | Surface)) &&
       control.implicitSolvent != Control::ImplicitSolvent::None)
     emitBorn(terms, add);
-  if (terms & ExternalTerms)
-    for (auto [index, term] : llvm::enumerate(system.topology->externalTerms))
-      if ((externalTerm < 0 || static_cast<int>(index) == externalTerm) &&
-          !(alchemicalOnly && !usesLambda(term.expression)))
-        emitExternalTerm(index, term, add);
+  for (const TermBuilder *builder : registerTermBuilders())
+    builder->emitTopologyPotential(
+        *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, add);
   if (lj || coulomb) {
     // [free_energy] (D161): a pair with one particle in the selection,
     // `%al_x` = 1, is decoupled. Its Lennard-Jones is that of the
@@ -2359,7 +2267,10 @@ void Builder::emitTerms(StringRef x) {
   int custom = static_cast<int>(system.topology->tupleTerms.size());
   int pairs = static_cast<int>(control.pairs.size());
   int born = static_cast<int>(system.bornTermNames.size());
-  int external = static_cast<int>(system.topology->externalTerms.size());
+  std::vector<std::string> registeredNames;
+  for (const TermBuilder *builder : registerTermBuilders())
+    builder->appendTermNames(*this, registeredNames);
+  int external = static_cast<int>(registeredNames.size());
   int size =
       14 + custom + pairs + born + external + (hasRestraints() ? 1 : 0);
   std::string type = "memref<" + std::to_string(size) + "xf64>";
@@ -2386,7 +2297,7 @@ void Builder::emitTerms(StringRef x) {
         : k == custom + pairs && born > 0 ? "term_born"
         : k < custom + pairs + born
             ? "term_surface"
-            : "term_external" + std::to_string(k - custom - pairs - born);
+            : registeredNames[k - custom - pairs - born];
     os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
        << getFieldValues() << getTimeValue("%time0") << ") request [energy]\n"
        << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()

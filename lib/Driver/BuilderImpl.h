@@ -124,6 +124,38 @@ struct Parameter {
 };
 
 class SiteKernel;
+class Builder;
+
+/// Hooks for the term kinds already moved out of the central builder
+/// (D[term-registry]). The explicit list fixes their emission order.
+class TermBuilder {
+public:
+  struct PotentialSelection {
+    unsigned terms;
+    int tupleTerm, pairTerm, externalTerm;
+    bool alchemicalOnly;
+  };
+  virtual ~TermBuilder() = default;
+  virtual void collectParameters(Builder &) const {}
+  virtual void emitTopologyPotential(
+      Builder &, const PotentialSelection &,
+      llvm::function_ref<void(StringRef)>) const {}
+  virtual void emitTermPotentials(Builder &) const {}
+  virtual void appendTermNames(const Builder &,
+                               std::vector<std::string> &) const {}
+  virtual void emitEntry(Builder &) const {}
+  virtual std::pair<unsigned, int> findObservedTerm(const Builder &,
+                                                  StringRef) const {
+    return {0, -1};
+  }
+  virtual std::optional<double> getObservedValue(const Builder &, unsigned,
+                                                int, StringRef) const {
+    return std::nullopt;
+  }
+};
+
+llvm::ArrayRef<const TermBuilder *> registerTermBuilders();
+const TermBuilder &getExternalTermBuilder();
 
 class Builder {
 public:
@@ -144,6 +176,7 @@ public:
   BuildKept *capture = nullptr;
 
 private:
+  friend class ExternalTermBuilder;
   /// The stage of `collectTopology` that makes the arrays of the program
   /// from the topology: every field, table, and tuple set, each one number
   /// or one row for each particle, type, or tuple.
@@ -582,11 +615,10 @@ private:
       for (const auto &[key, value] : control.pairs[term.index].constants)
         if (key == name)
           return value;
-    if (term.kind == ExternalTerms)
-      for (const auto &[key, value] :
-           system.topology->externalTerms[term.index].constants)
-        if (key == name)
-          return value;
+    for (const TermBuilder *builder : registerTermBuilders())
+      if (auto value =
+              builder->getObservedValue(*this, term.kind, term.index, name))
+        return *value;
     if (term.kind == TupleTerms)
       for (const auto &[key, values] :
            system.topology->tupleTerms[term.index].parameters)

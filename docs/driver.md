@@ -1170,7 +1170,7 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, the registration (designed, not built).** A term provides its
+**Part 2, the registration (D[term-registry], external terms built).** A term provides its
 builder in a file of its own, behind an interface that the central
 functions iterate, so that a new term adds a file rather than a case in
 `emitTopologyPotential`, `emitTerms`, and `emitEntry`:
@@ -1194,6 +1194,17 @@ functions iterate, so that a new term adds a file rather than a case in
   explicit rank.
 - The kinds move one or two in a pull request, with the gate of part 1
   (the corpus of Section 2.11 byte-identical, printed and lowered).
+
+The first adapter is `TermExternal.cpp`. It collects the external fields,
+emits the selected potential contributions and standalone term potentials,
+and supplies energy-output names and observable lookup. The shared field
+list supplies its entry arguments, buffers, and reordering, so it needs no
+entry declaration of its own. `TermBuilders.cpp` references the adapter
+explicitly; stateless adapter instances are constructed on first use, not
+by global registration. The existing hook sites keep the external fields
+after restraints, potential contributions after Born, and output columns
+before restraints. The remaining kinds still use the central builder and
+move in later PRs. No control-file behavior changes.
 
 ## 3. Decided
 
