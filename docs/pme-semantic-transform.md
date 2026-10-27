@@ -75,7 +75,7 @@ influence map, and differentiation of their composition. Distributed grid
 transfer can then become a dependency between these primitive stages.
 
 The proposed [resident strategy](fft-device-resident.md)
-(D[fft-device-resident], #580) keeps connected transforms in owned device
+(D360, #580) keeps connected transforms in owned device
 storage and checks layout views and scoped boundary completion. The existing
 host bridge remains the baseline while this strategy is implemented and
 measured.

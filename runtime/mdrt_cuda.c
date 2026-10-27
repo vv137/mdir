@@ -1144,7 +1144,7 @@ static void waitScoped(CUstream stream) {
 }
 
 /* A checked host boundary of the resident FFT strategy
-   (D[fft-device-resident]). The compiler establishes the source/destination
+   (D360). The compiler establishes the source/destination
    extents, lifetime, and producer queue before selecting this entry point.
    Completion is host-visible when it returns, but unrelated side work is
    not drained. Keep isPending conservative: that work may still be live. */

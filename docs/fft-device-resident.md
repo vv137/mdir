@@ -1,6 +1,6 @@
 # Device-resident semantic FFT composition
 
-Status: bounded opt-in implementation for #580, D[fft-device-resident].
+Status: bounded opt-in implementation for #580, D360.
 The host strategy remains the default.
 It follows the executable host-boundary bridge D341 (#563) and is part of
 #526 and the transfer contract of #567. One session owns this path through

@@ -1,6 +1,6 @@
 # The semantic FFT bridge executes through a private buffer on a GPU.
 # Each transfer waits only on its own dependency, and the independent direct
-# DFT verifies forward, backward, transpose, and immutable source. D[fft-device-resident].
+# DFT verifies forward, backward, transpose, and immutable source. D360.
 # REQUIRES: cuda
 #
 # RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 5 --precision double \

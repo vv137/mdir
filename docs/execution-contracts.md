@@ -359,7 +359,7 @@ logging effects: storage reordering must not change stable particle and step
 keys, and a memory-effect-free evaluation is not automatically speculatable.
 
 The opt-in [FFT transfer adapter](fft-device-resident.md)
-(D[fft-device-resident], #580) preserves this contract with immediate scoped
+(D360, #580) preserves this contract with immediate scoped
 completion at host boundaries, after D358 verifies its copy/wait sequence.
 It uses explicit scalar packing rather than sharing native complex bytes;
 neither a matching tensor shape nor an available token establishes both.

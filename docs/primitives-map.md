@@ -251,7 +251,7 @@ Two things that MDIR computes are not primitives of the set:
   choose among compiled programs, and compute nothing that the step uses.
 
 The [resident FFT strategy](fft-device-resident.md) (#580,
-D[fft-device-resident]) is an opt-in packed-buffer transfer adapter for the
+D360) is an opt-in packed-buffer transfer adapter for the
 linear transform, checked by D358 before scoped copy lowering. It retains the existing primitive and adjoint rather than adding
 a separate FFT meaning for a device.
 

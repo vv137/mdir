@@ -1,6 +1,6 @@
 # Semantic FFT values lowered through private execution buffers on the host.
 # The direct DFT oracle also checks the Hermitian transpose and repeated
-# backward use of an unchanged input tensor, in f32 and f64. D[fft-device-resident].
+# backward use of an unchanged input tensor, in f32 and f64. D360.
 #
 # RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 5 --precision double \
 # RUN: | mdir-opt '--convert-linear-transform-values=memory=device' --one-shot-bufferize \

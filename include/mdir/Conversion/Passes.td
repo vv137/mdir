@@ -23,7 +23,7 @@ def ConvertLinearTransformValues
     after ownership analysis proves provenance, extents, aliases, queue, and
     release, then checks copy completion with D358 before scoped lowering.
     `memory=host` remains the default. No control-file behavior changes.
-    D341, D[fft-device-resident].
+    D341, D360.
   }];
   let options = [Option<"memory", "memory", "std::string", "\"host\"",
     "host (default) or device-resident packed components">];
@@ -50,7 +50,7 @@ def PlaceLinearTransformDevice
     before selecting producer-queue-scoped host completion. Unknown optional
     facts retain the host bridge with an explain remark. The pack/unpack
     path remains independent of native complex layout. D341,
-    D[fft-device-resident].
+    D360.
   }];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect",

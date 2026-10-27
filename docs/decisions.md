@@ -655,6 +655,7 @@ specification follow those made with it.
 | [D357](decisions/D357.md) | A pair loop must prove its required neighbor cutoff, exact centers, and image convention through SSA provenance at recognized boundaries; unresolved proofs are rejected. | 2026-10-27 |
 | [D358](decisions/D358.md) | Host-device copies have checked completion dependencies and source/destination borrows that forbid a dependent read, conflicting write, free, or reuse while the copy is in flight. | 2026-10-27 |
 | [D359](decisions/D359.md) | An explicit registry of term builders owns the dispatch for each migrated kind of energy term, beginning with external terms. | 2026-10-27 |
+| [D360](decisions/D360.md) | Keep a bounded semantic FFT component resident on the device with checked layout, private backward inputs, and scoped host-boundary completion. | 2026-10-27 |
 <!-- end decisions-table -->
 
 

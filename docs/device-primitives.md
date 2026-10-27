@@ -206,7 +206,7 @@ under #567. This synchronization is distinct from the FFT call's stream
 ordering and is not reported as overlap.
 
 The [resident FFT strategy](fft-device-resident.md) (#580,
-D[fft-device-resident]) uses explicit scalar packing as the portable
+D360) uses explicit scalar packing as the portable
 recovery and shares only already packed buffers between connected transforms.
 Native complex byte sharing is not selected; a future typed view still needs
 a proved layout or sound guard. D358 checks every copy/completion pair before

@@ -219,7 +219,7 @@ completion is not release of a host writer's staging buffer. The first
 dependencies verifiable. Collective order and numerical policy are checked
 before a physical plan is selected.
 
-The [resident FFT strategy](fft-device-resident.md) (D[fft-device-resident],
+The [resident FFT strategy](fft-device-resident.md) (D360,
 #580) applies these rules to a bounded composition: target layout is proved
 or guarded, backward inputs stay private, and copy completion releases only
 the buffers and queue dependencies it actually covers. D358 checks its copy/completion pairs before backend selection; general
