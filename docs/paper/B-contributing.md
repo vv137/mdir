@@ -137,3 +137,9 @@ early. Its decision carries a label until the merge gives it a number in
 the order of the merges. A reviewer runs the full suite on a GPU and
 reports the result on the pull request before the maintainer approves the
 merge.
+
+D[term-adapter] narrows the D359 registry hooks: read-only inputs,
+parameter collections, and emission have separate borrowed interfaces.
+Adapters cannot reach the complete builder or its scheduling state and need
+no friendship. The external adapter is migrated; the remaining term kinds
+follow #683, one or two per PR under the unchanged-program gates.

@@ -1,0 +1,22 @@
+# D[term-adapter]
+
+Recorded at its merge.
+
+**Term adapters receive borrowed capabilities for inputs, parameter collections, and emission rather than access to the complete builder.** #683, part of #568, refining D359's internal hook interface. `TermInputs` provides const system/topology/control access and deterministic indexed names; `TermParameters` adds fields, tables, and tuple sets; `TermEmission` adds the output stream and the named shared emitters. `Builder` implements the interface privately. No adapter is a friend or receives the builder or complete mutable program.
+
+The first migration updates the external adapter. Its expression emitter
+belongs to that adapter; topology-potential assembly and lambda/observed
+bindings remain shared. Existing masks, alchemical selection, emission
+positions, names, and registration reachability are preserved. A later kind
+adds only the capability it requires, with explicit hook rank when its
+sites need different orders. Pulls and the remaining kinds stay in #683.
+
+The alternative, a friend for every kind or an accessor returning the whole
+builder, does not bound what an adapter may change. Exposing scheduling and
+checkpoint state would couple term additions to unrelated responsibilities.
+
+No generated program, numerical method, control key, default, output format,
+checkpoint, or overwrite behavior changes. Validation compares the printed
+and lowered corpus against archived main, requires all five deterministic
+checkpoint comparisons to be bitwise identical, and runs the full suite in
+two independent lexical shards.

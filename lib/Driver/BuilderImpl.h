@@ -126,6 +126,84 @@ struct Parameter {
 class SiteKernel;
 class Builder;
 
+/// The borrowed read-only inputs of a term adapter (D[term-adapter]).
+/// No accessor returns the builder or its scheduling state.
+class TermInputs {
+public:
+  virtual ~TermInputs() = default;
+  virtual const System &getSystem() const = 0;
+  virtual const Control &getControl() const = 0;
+  const Topology &getTopology() const { return *getSystem().topology; }
+
+  /// Deterministic indexed names; no process-global counter or registration.
+  std::string indexedName(StringRef prefix, size_t index) const {
+    return (prefix + llvm::Twine(index)).str();
+  }
+
+  /// The terms of the potential of a topology.
+  enum Term : unsigned {
+    LennardJones = 1,
+    Coulomb = 2,
+    Bonds = 4,
+    Angles = 8,
+    Dihedrals = 16,
+    LennardJones14 = 32,
+    Coulomb14 = 64,
+    CMaps = 128,
+    CoulombExcluded = 256,
+    CoulombReciprocal = 512,
+    UreyBradleys = 1024,
+    HarmonicImpropers = 2048,
+    TupleTerms = 4096,
+    PairTerms = 8192,
+    GeneralizedBorn = 16384,
+    Surface = 32768,
+    ExternalTerms = 65536,
+    LennardJonesExcluded = 131072,
+    LennardJonesReciprocal = 262144,
+    /// The Coulomb of the pairs within the selection of [free_energy] that
+    /// the reciprocal sum of scaled charges leaves out (D161).
+    CoulombWithin = 524288,
+    AllTerms = 1048575,
+    /// Only what depends on λ (D161): the pairs that the selection
+    /// decouples, the Coulomb within it, the reciprocal sum, and the terms
+    /// whose expressions take a λ.
+    Alchemical = 1048576,
+  };
+  bool usesLambda(StringRef text) const {
+    const Control &control = getControl();
+    llvm::Expected<Expression> expression =
+        Expression::parse(text, control.functions);
+    if (!expression) {
+      llvm::consumeError(expression.takeError());
+      return false;
+    }
+    return llvm::any_of(expression->getNames(), [&](const std::string &n) {
+      return control.isLambda(n);
+    });
+  }
+};
+
+/// Parameter collection adds only the program's term data collections.
+class TermParameters : public TermInputs {
+public:
+  virtual std::vector<Program::Field> &getFields() = 0;
+  virtual std::vector<Program::Table> &getTables() = 0;
+  virtual std::vector<Program::TupleSet> &getTupleSets() = 0;
+};
+
+/// Emission adds the output stream and explicitly named shared operations.
+class TermEmission : public TermParameters {
+public:
+  virtual llvm::raw_ostream &getOutput() = 0;
+  virtual void emitTopologyPotential(StringRef name, unsigned terms,
+                                    int tupleTerm = -1, int pairTerm = -1,
+                                    int externalTerm = -1) = 0;
+  virtual void bindLambdas(llvm::StringMap<std::string> &values) const = 0;
+  virtual void bindObserved(StringRef term,
+                            llvm::StringMap<std::string> &values) const = 0;
+};
+
 /// Hooks for the term kinds already moved out of the central builder
 /// (D359). The explicit list fixes their emission order.
 class TermBuilder {
@@ -136,19 +214,19 @@ public:
     bool alchemicalOnly;
   };
   virtual ~TermBuilder() = default;
-  virtual void collectParameters(Builder &) const {}
+  virtual void collectParameters(TermParameters &) const {}
   virtual void emitTopologyPotential(
-      Builder &, const PotentialSelection &,
+      TermEmission &, const PotentialSelection &,
       llvm::function_ref<void(StringRef)>) const {}
-  virtual void emitTermPotentials(Builder &) const {}
-  virtual void appendTermNames(const Builder &,
+  virtual void emitTermPotentials(TermEmission &) const {}
+  virtual void appendTermNames(const TermInputs &,
                                std::vector<std::string> &) const {}
-  virtual void emitEntry(Builder &) const {}
-  virtual std::pair<unsigned, int> findObservedTerm(const Builder &,
+  virtual void emitEntry(TermEmission &) const {}
+  virtual std::pair<unsigned, int> findObservedTerm(const TermInputs &,
                                                   StringRef) const {
     return {0, -1};
   }
-  virtual std::optional<double> getObservedValue(const Builder &, unsigned,
+  virtual std::optional<double> getObservedValue(const TermInputs &, unsigned,
                                                 int, StringRef) const {
     return std::nullopt;
   }
@@ -157,7 +235,7 @@ public:
 llvm::ArrayRef<const TermBuilder *> registerTermBuilders();
 const TermBuilder &getExternalTermBuilder();
 
-class Builder {
+class Builder : private TermEmission {
 public:
   Builder(const Control &control, const System &system, Program &program)
       : control(control), system(system), program(program),
@@ -176,7 +254,15 @@ public:
   BuildKept *capture = nullptr;
 
 private:
-  friend class ExternalTermBuilder;
+  const System &getSystem() const override { return system; }
+  const Control &getControl() const override { return control; }
+  std::vector<Program::Field> &getFields() override { return program.fields; }
+  std::vector<Program::Table> &getTables() override { return program.tables; }
+  std::vector<Program::TupleSet> &getTupleSets() override {
+    return program.tupleSets;
+  }
+  llvm::raw_ostream &getOutput() override { return os; }
+
   /// The stage of `collectTopology` that makes the arrays of the program
   /// from the topology: every field, table, and tuple set, each one number
   /// or one row for each particle, type, or tuple.
@@ -216,47 +302,13 @@ private:
   /// of the program, and the potential of the topology.
   llvm::Error collectTopology();
 
-  /// The terms of the potential of a topology.
-  enum Term : unsigned {
-    LennardJones = 1,
-    Coulomb = 2,
-    Bonds = 4,
-    Angles = 8,
-    Dihedrals = 16,
-    LennardJones14 = 32,
-    Coulomb14 = 64,
-    CMaps = 128,
-    CoulombExcluded = 256,
-    CoulombReciprocal = 512,
-    UreyBradleys = 1024,
-    HarmonicImpropers = 2048,
-    TupleTerms = 4096,
-    PairTerms = 8192,
-    GeneralizedBorn = 16384,
-    Surface = 32768,
-    ExternalTerms = 65536,
-    LennardJonesExcluded = 131072,
-    LennardJonesReciprocal = 262144,
-    /// The Coulomb of the pairs within the selection of [free_energy] that
-    /// the reciprocal sum of scaled charges leaves out (D161).
-    CoulombWithin = 524288,
-    AllTerms = 1048575,
-    /// Only what depends on λ (D161): the pairs that the selection
-    /// decouples, the Coulomb within it, the reciprocal sum, and the terms
-    /// whose expressions take a λ.
-    Alchemical = 1048576,
-  };
   /// Emits the potential `name` of the terms `terms` of the topology; of
   /// the terms given by expressions over tuples, pairs, or positions, only
   /// the one of index `tupleTerm`, `pairTerm`, or `externalTerm` if it is
   /// not -1.
   void emitTopologyPotential(StringRef name, unsigned terms,
                              int tupleTerm = -1, int pairTerm = -1,
-                             int externalTerm = -1);
-  /// Emits `%u_external_<name>`, the term `index` of the absolute positions
-  /// (D148), and passes its name to `add`.
-  void emitExternalTerm(size_t index, const ExternalTerm &term,
-                        llvm::function_ref<void(StringRef)> add);
+                             int externalTerm = -1) override;
   /// Emits `%u_centroid_<name>`, the energy of the term `term` over the
   /// centers of groups, the term `index` over tuples (D139).
   void emitCentroidTerm(size_t index, const TupleTerm &term);
@@ -513,7 +565,7 @@ private:
          << formatReal(getLambda(name)) << " : f64\n";
   }
   /// Binds the parameters `lambda_<name>` of the expressions.
-  void bindLambdas(llvm::StringMap<std::string> &values) const {
+  void bindLambdas(llvm::StringMap<std::string> &values) const override {
     for (const auto &[name, v] : control.freeEnergy.lambdas)
       values["lambda_" + name] = "%lambda_" + name;
   }
@@ -545,7 +597,7 @@ private:
   /// Binds the observed constants of the term `term` to the arguments of
   /// `@observe<k>`, after the term has bound its own values.
   void bindObserved(StringRef term,
-                    llvm::StringMap<std::string> &values) const {
+                    llvm::StringMap<std::string> &values) const override {
     if (term != observedTerm)
       return;
     for (const std::string &name : observedConstants)
@@ -635,17 +687,7 @@ private:
                              StringRef prefix, StringRef step,
                              StringRef time);
   /// Whether the expression `text` takes a component of λ.
-  bool usesLambda(StringRef text) const {
-    llvm::Expected<Expression> expression =
-        Expression::parse(text, control.functions);
-    if (!expression) {
-      llvm::consumeError(expression.takeError());
-      return false;
-    }
-    return llvm::any_of(expression->getNames(), [&](const std::string &n) {
-      return control.isLambda(n);
-    });
-  }
+
   /// Emits dH/dλ of each component and the energy of `@alchemical` at
   /// every state, at the positions `x` in the cell `cell`, and their call
   /// to the writer (D161).
