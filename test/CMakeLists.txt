@@ -83,7 +83,13 @@ set(MDIR_TEST_DEPENDS
   mdrt
   )
 if(MDIR_CUDA_FOUND)
+  find_package(CUDAToolkit REQUIRED)
+  add_executable(mdir-cuda-copy-scope-test Integration/Inputs/cuda_scoped_copy.c)
+  target_link_libraries(mdir-cuda-copy-scope-test PRIVATE mdrt_cuda CUDA::cuda_driver)
+  set_target_properties(mdir-cuda-copy-scope-test PROPERTIES
+    RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/bin)
   list(APPEND MDIR_TEST_DEPENDS mdrt_cuda)
+  list(APPEND MDIR_TEST_DEPENDS mdir-cuda-copy-scope-test)
 endif()
 
 add_lit_testsuite(check-mdir "Running the MDIR regression tests"

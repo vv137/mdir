@@ -30,6 +30,7 @@ without compute-sanitizer: Sanitizer/centroid-gpu.test
 without compute-sanitizer: Sanitizer/device-blocks-gpu.test
 without compute-sanitizer: Sanitizer/dist-center-filter-gpu.test
 without compute-sanitizer: Sanitizer/dist-exec-gpu.test
+without compute-sanitizer: Sanitizer/fft-resident-gpu.test
 without compute-sanitizer: Sanitizer/free-energy-reorder-gpu.test
 without compute-sanitizer: Sanitizer/fused-prune-gpu.test
 without compute-sanitizer: Sanitizer/group-scatter-gpu.test

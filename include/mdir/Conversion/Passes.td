@@ -17,8 +17,16 @@ def ConvertLinearTransformValues
     The semantic input remains immutable. Run one-shot bufferization and
     ownership-based deallocation after this pass; optionally place the
     marked execution transform on a device after those two passes.
-    No control-file behavior changes. D341.
+    `memory=device` shares already packed scalar buffers within one block.
+    External semantic boundaries retain explicit scalar packing, independent
+    of native complex byte layout. Inverse inputs remain private. Placement
+    after ownership analysis proves provenance, extents, aliases, queue, and
+    release, then checks copy completion with D358 before scoped lowering.
+    `memory=host` remains the default. No control-file behavior changes.
+    D341, D[fft-device-resident].
   }];
+  let options = [Option<"memory", "memory", "std::string", "\"host\"",
+    "host (default) or device-resident packed components">];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect",
                            "::mlir::complex::ComplexDialect",
@@ -35,11 +43,18 @@ def PlaceLinearTransformDevice
     deallocation, move only the marked `md_exec.linear_transform` to
     device buffers. Allocate two distinct device buffers, copy the private
     input, execute the FFT, copy the result back, and free both buffers.
-    Each transfer waits on its own dependency; there is no whole-step wait.
-    The pack/unpack path remains independent of the target. D341.
+    Each transfer carries its own dependency token. The current host-copy
+    runtime also synchronizes both streams at that boundary.
+    For a bounded `memory=device` component, rederive ownership and extent
+    facts, keep packed intermediates resident, and check D358 copy/wait pairs
+    before selecting producer-queue-scoped host completion. Unknown optional
+    facts retain the host bridge with an explain remark. The pack/unpack
+    path remains independent of native complex layout. D341,
+    D[fft-device-resident].
   }];
   let dependentDialects = ["::mdir::md_exec::MDExecDialect",
                            "::mlir::arith::ArithDialect",
+                           "::mlir::func::FuncDialect",
                            "::mlir::gpu::GPUDialect",
                            "::mlir::memref::MemRefDialect"];
 }

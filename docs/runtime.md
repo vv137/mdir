@@ -301,6 +301,12 @@ must establish scoped stream dependencies and host visibility before it may
 claim overlap. No control key, output format, or result changes in this
 first slice.
 
+The opt-in [device-resident FFT contract](fft-device-resident.md)
+(#580, D[fft-device-resident]) uses completion events scoped to its producer
+queue at host boundaries. Existing `mgpuMemcpy` callers retain their waits;
+the new path must establish host visibility and release before reuse instead
+of relying on the runtime-wide `finish()`.
+
 ## 6. Reference interpreter
 
 V1 decided against an interpreter. The options that were considered:

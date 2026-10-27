@@ -1,0 +1,32 @@
+# Semantic FFT values lowered through private execution buffers on the host.
+# The direct DFT oracle also checks the Hermitian transpose and repeated
+# backward use of an unchanged input tensor, in f32 and f64. D[fft-device-resident].
+#
+# RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 5 --precision double \
+# RUN: | mdir-opt '--convert-linear-transform-values=memory=device' --one-shot-bufferize \
+# RUN:     --buffer-deallocation-pipeline \
+# RUN:     --convert-linalg-to-loops --convert-md-exec-to-loops --convert-complex-to-llvm \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | %mdir_python %S/Inputs/semantic_linear_transform_oracle.py check --length 5 --precision double
+# RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 6 --precision double \
+# RUN: | mdir-opt '--convert-linear-transform-values=memory=device' --one-shot-bufferize \
+# RUN:     --buffer-deallocation-pipeline \
+# RUN:     --convert-linalg-to-loops --convert-md-exec-to-loops --convert-complex-to-llvm \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | %mdir_python %S/Inputs/semantic_linear_transform_oracle.py check --length 6 --precision double
+# RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 5 --precision mixed \
+# RUN: | mdir-opt '--convert-linear-transform-values=memory=device' --one-shot-bufferize \
+# RUN:     --buffer-deallocation-pipeline \
+# RUN:     --convert-linalg-to-loops --convert-md-exec-to-loops --convert-complex-to-llvm \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | %mdir_python %S/Inputs/semantic_linear_transform_oracle.py check --length 5 --precision mixed
+# RUN: %mdir_python %S/Inputs/semantic_linear_transform_oracle.py emit --length 6 --precision mixed \
+# RUN: | mdir-opt '--convert-linear-transform-values=memory=device' --one-shot-bufferize \
+# RUN:     --buffer-deallocation-pipeline \
+# RUN:     --convert-linalg-to-loops --convert-md-exec-to-loops --convert-complex-to-llvm \
+# RUN: | mlir-opt %lower_loops_to_llvm \
+# RUN: | mlir-runner -e main --entry-point-result=void --shared-libs=%mlir_c_runner_utils,%mdrt \
+# RUN: | %mdir_python %S/Inputs/semantic_linear_transform_oracle.py check --length 6 --precision mixed
