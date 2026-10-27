@@ -454,24 +454,6 @@ void Builder::collectTopologyArrays() {
                                    : 0);
     program.fields.push_back(std::move(numbers));
   }
-  // Generalized Born (D144): the radius less its offset, 0.009 nm, the
-  // radius that screens the others, that times the scale of the particle,
-  // and the radius itself, in nm.
-  if (control.implicitSolvent != Control::ImplicitSolvent::None) {
-    Program::Field offset, scaled, radius;
-    offset.name = "gb_offset";
-    scaled.name = "gb_scaled";
-    radius.name = "gb_radius";
-    for (size_t i = 0; i != count; ++i) {
-      double rho = topology.bornRadii[i];
-      offset.values.push_back(rho - 0.009);
-      scaled.values.push_back(topology.bornScreens[i] * (rho - 0.009));
-      radius.values.push_back(rho);
-    }
-    program.fields.push_back(std::move(offset));
-    program.fields.push_back(std::move(scaled));
-    program.fields.push_back(std::move(radius));
-  }
   (void)count;
 
   for (const TermBuilder *builder : termBuildersByParameterRank())
@@ -1998,19 +1980,6 @@ llvm::Error Builder::collectTunableGradient() {
   return llvm::Error::success();
 }
 
-double Builder::getDebyeKappa() const {
-  // κ² = 2 N_A e² c / (ε0 ε_r k_B T) for a 1:1 salt of c mol/L, with the
-  // constants of CODATA 2018 in SI units, c in mol/m³; κ in nm⁻¹.
-  if (control.saltConcentration <= 0.0)
-    return 0.0;
-  const double avogadro = 6.02214076e23, charge = 1.602176634e-19,
-               permittivity = 8.8541878128e-12, boltzmann = 1.380649e-23;
-  double concentration = control.saltConcentration * 1000.0;
-  double kappa2 = 2.0 * avogadro * charge * charge * concentration /
-                  (permittivity * control.solventDielectric * boltzmann *
-                   control.temperature);
-  return 0.73 * std::sqrt(kappa2) * 1e-9;
-}
 
 void Builder::collectStartValues() {
   // Every value of the state at the start that the text would otherwise

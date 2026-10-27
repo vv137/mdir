@@ -44,6 +44,7 @@ add_mlir_library(MDIRDriver
   BuilderPotential.cpp
   BuilderSchedule.cpp
   TermBuilders.cpp
+  TermBorn.cpp
   TermExternal.cpp
   TermPull.cpp
   TermRestraint.cpp

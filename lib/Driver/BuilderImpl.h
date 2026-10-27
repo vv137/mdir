@@ -238,6 +238,7 @@ public:
   };
   virtual ~TermBuilder() = default;
   virtual int parameterRank() const { return 0; }
+  virtual int potentialRank() const { return 0; }
   virtual void collectParameters(TermParameters &) const {}
   virtual bool hasForceCorrection(const TermInputs &) const { return false; }
   virtual void emitForceCorrection(TermEmission &, const TermCorrection &) const {}
@@ -267,7 +268,9 @@ llvm::ArrayRef<const TermBuilder *> registerTermBuilders();
 const TermBuilder &getExternalTermBuilder();
 const TermBuilder &getPullTermBuilder();
 const TermBuilder &getRestraintTermBuilder();
+const TermBuilder &getBornTermBuilder();
 std::vector<const TermBuilder *> termBuildersByParameterRank();
+std::vector<const TermBuilder *> termBuildersByPotentialRank();
 
 class Builder : private TermEmission {
 public:
@@ -377,11 +380,6 @@ private:
                                 StringRef virial, StringRef virialResult);
   /// The number of arguments of a potential, before those of its own.
   unsigned getNumPotentialArguments() const override;
-  /// Emits generalized Born (D144), `%u_born` and `%u_surface` as `terms`
-  /// asks, and passes their names to `add`.
-  void emitBorn(unsigned terms, llvm::function_ref<void(StringRef)> add);
-  /// κ of the salt of generalized Born in nm⁻¹, scaled by 0.73, or 0.
-  double getDebyeKappa() const;
   /// β, the grid, the influence function, and the constant terms of
   /// particle mesh Ewald (docs/pme.md).
   llvm::Error collectPME();
