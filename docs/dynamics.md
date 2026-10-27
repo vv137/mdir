@@ -75,9 +75,10 @@ what runs.
 
 #### 2.2.1 What runs today
 
-`lib/Driver/Builder.cpp` writes the couplings as text into the schedule of
-`@mdir_run`, at the end of each period of coupling (`emitCoupling`,
-`emitStrain`, and the closing steps in `emitLevel`):
+The builder writes the couplings as text into the schedule of
+`@mdir_run`, at the end of each period of coupling (`emitCoupling` and
+`emitStrain` in `lib/Driver/BuilderDynamics.cpp`, and the closing steps in
+`emitLevel` in `lib/Driver/BuilderSchedule.cpp`):
 
 | What | How it is written |
 |---|---|

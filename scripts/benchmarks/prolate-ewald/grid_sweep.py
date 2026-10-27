@@ -44,7 +44,7 @@ SPACINGS = [3.0, 2.8, 2.6, 2.4, 2.2, 2.1, 2.0, 1.9, 1.8, 1.7, 1.6, 1.5, 1.45,
 
 
 def smooth(least):
-    """getSmoothSize of lib/Driver/Builder.cpp: even and 7-smooth."""
+    """getSmoothSize of lib/Driver/BuilderParameters.cpp: even and 7-smooth."""
     size = least
     while True:
         if size % 2 == 0:

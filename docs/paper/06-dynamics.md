@@ -21,7 +21,7 @@ driver writes; the driver does not write them yet.
 ## 6.1 Integrators
 
 **Velocity Verlet** [[Swope1982]](references.md#swope1982) with constraints, as written by
-`emitPrograms` in `lib/Driver/Builder.cpp`:
+`emitPrograms` in `lib/Driver/BuilderDynamics.cpp`:
 
 $$
 \begin{aligned}

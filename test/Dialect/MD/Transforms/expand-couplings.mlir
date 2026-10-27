@@ -1,7 +1,7 @@
 // RUN: mdir-opt %s --dyn-expand-couplings | FileCheck %s
 
 // Each op of a coupling expands to the text that the driver writes for it
-// (lib/Driver/Builder.cpp; docs/dynamics.md, Section 2.2.3), in its order.
+// (lib/Driver/Builder*.cpp; docs/dynamics.md, Section 2.2.3), in its order.
 // expand-couplings-noise.mlir checks dyn.noise against the driver's text
 // verbatim, and Lit/lift-couplings.test every op on whole programs.
 
