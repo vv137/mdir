@@ -20,7 +20,7 @@ add_mlir_dialect_library(MDIRMDExec
 
   LINK_LIBS PUBLIC
   MDIRMD
-  MDIRDyn
+  MDIREffects
   MDIRMDDist
   MDIRMDRT
   MLIRControlFlowInterfaces

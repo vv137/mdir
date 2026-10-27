@@ -34,7 +34,9 @@ The effect checks use complete D342 operand/row summaries, ordinary MLIR
 memory effects, recursively checked regions, and checked function bodies
 with actual arguments substituted. External functions need a valid D355
 resource summary; a default-memory effect has no sufficient footprint.
-The D355 parser is shared with program verification. Loop-carried aliases
+The D355 parser and named resource singletons live in the dialect-independent
+`MDIREffects` library, shared with program verification. `MDIRMDExec` does
+not link `MDIRDyn`; existing resource types and printed names are preserved. Loop-carried aliases
 inside a called function remain unsupported where substitution does not
 establish their relationship to the caller's buffers. D337 set identity
 is not alias separation. D334 and D338 describe the shared boundary.

@@ -2,7 +2,7 @@
 
 #include "mdir/Dialect/MDExec/Transfers.h"
 
-#include "mdir/Dialect/Dyn/DynOps.h"
+#include "mdir/Effects/Effects.h"
 #include "mdir/Dialect/MDExec/Independence.h"
 #include "mdir/Dialect/MDExec/LoopEffects.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -214,7 +214,7 @@ LogicalResult Checker::operation(Operation *op, const Transfer &transfer,
       auto summary = function->getAttrOfType<DictionaryAttr>("dyn.effects");
       SmallVector<MemoryEffects::EffectInstance> effects;
       std::string error;
-      if (!summary || failed(dyn::parseEffectSummary(summary, effects, error)))
+      if (!summary || failed(mdir::effects::parseEffectSummary(summary, effects, error)))
         return unsupported(op, transfer, "unknown declared function effects");
       // D355's named resources are distinct from buffer storage. A default
       // resource effect, however, gives no footprint for this borrow.

@@ -283,7 +283,9 @@ device visibility; an unsupported memory-space representation is diagnosed.
 The checker uses D342 loop summaries only when complete. It checks defined
 functions with actual-argument substitution and rejects recursion and
 unrecognized control flow. External calls need a valid D355 `dyn.effects`
-summary with no default-memory effect. Named resources remain distinct from
+summary with no default-memory effect. The parser and named resource singletons are shared through `MDIREffects`,
+so execution checks do not depend on the `dyn` dialect library.
+Named resources remain distinct from
 buffer storage. Loop-carried aliases inside a substituted call remain
 unsupported where their relation to the caller's buffers is unresolved.
 
