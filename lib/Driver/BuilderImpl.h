@@ -133,6 +133,10 @@ public:
   virtual ~TermInputs() = default;
   virtual const System &getSystem() const = 0;
   virtual const Control &getControl() const = 0;
+  virtual llvm::ArrayRef<BuildKept::TupleGradient> getTupleGradients() const = 0;
+  virtual bool hasGradientArguments() const = 0;
+  virtual bool hasTunableGradient() const = 0;
+  virtual bool includesTuple(unsigned index) const = 0;
   const Topology &getTopology() const { return *getSystem().topology; }
 
   /// Deterministic indexed names; no process-global counter or registration.
@@ -190,6 +194,8 @@ public:
   virtual std::vector<Program::Field> &getFields() = 0;
   virtual std::vector<Program::Table> &getTables() = 0;
   virtual std::vector<Program::TupleSet> &getTupleSets() = 0;
+  virtual std::vector<Program::GradientField> &getGradientFields() = 0;
+  virtual std::vector<BuildKept::TupleGradient> &getMutableTupleGradients() = 0;
 };
 
 /// Emission adds the output stream and explicitly named shared operations.
@@ -239,6 +245,13 @@ public:
   virtual ~TermBuilder() = default;
   virtual int parameterRank() const { return 0; }
   virtual int potentialRank() const { return 0; }
+  virtual int topologyRank() const { return 0; }
+  virtual void collectTupleSets(TermParameters &) const {}
+  virtual void refillTupleSet(TermParameters &, Program::TupleSet &) const {}
+  virtual llvm::Expected<std::optional<Program::GradientOutcome>>
+  getTunableOutcome(const TermInputs &, unsigned) const {
+    return std::optional<Program::GradientOutcome>();
+  }
   virtual void collectParameters(TermParameters &) const {}
   virtual bool hasForceCorrection(const TermInputs &) const { return false; }
   virtual void emitForceCorrection(TermEmission &, const TermCorrection &) const {}
@@ -269,6 +282,7 @@ const TermBuilder &getExternalTermBuilder();
 const TermBuilder &getPullTermBuilder();
 const TermBuilder &getRestraintTermBuilder();
 const TermBuilder &getBornTermBuilder();
+const TermBuilder &getTupleTermBuilder();
 std::vector<const TermBuilder *> termBuildersByParameterRank();
 std::vector<const TermBuilder *> termBuildersByPotentialRank();
 
@@ -299,6 +313,20 @@ private:
     return program.tupleSets;
   }
   llvm::raw_ostream &getOutput() override { return os; }
+  llvm::ArrayRef<BuildKept::TupleGradient> getTupleGradients() const override {
+    return tupleGradients;
+  }
+  bool hasGradientArguments() const override { return gradientArguments; }
+  bool hasTunableGradient() const override { return program.tunableGradient; }
+  bool includesTuple(unsigned index) const override {
+    return !dependent || dependent->hasTuple(index);
+  }
+  std::vector<Program::GradientField> &getGradientFields() override {
+    return program.gradientFields;
+  }
+  std::vector<BuildKept::TupleGradient> &getMutableTupleGradients() override {
+    return tupleGradients;
+  }
 
   /// The stage of `collectTopology` that makes the arrays of the program
   /// from the topology: every field, table, and tuple set, each one number
@@ -318,7 +346,6 @@ private:
   /// charges of the 1-4 pairs.
   void fillCharges(Program::Field &field) const;
   void fillTypeTable(Program::Table &table) const;
-  void fillTupleParameter(Program::Field &field, const TupleTerm &term) const;
   void fillPairProducts(Program::Field &field) const;
   /// With Control::dependentTerms, the terms that the program keeps: every
   /// potential has only these, and the host adds to the energy only what
@@ -348,7 +375,6 @@ private:
                              int externalTerm = -1) override;
   /// Emits `%u_centroid_<name>`, the energy of the term `term` over the
   /// centers of groups, the term `index` over tuples (D139).
-  void emitCentroidTerm(size_t index, const TupleTerm &term);
   /// Emits the coordinates of the term `term` over centers, the term
   /// `index` over tuples, at the positions `x` in the cell `cell`, with
   /// the members of its tuples named `relations` and the name of the set:
@@ -700,11 +726,6 @@ private:
       if (auto value =
               builder->getObservedValue(*this, term.kind, term.index, name))
         return *value;
-    if (term.kind == TupleTerms)
-      for (const auto &[key, values] :
-           system.topology->tupleTerms[term.index].parameters)
-        if (key == name)
-          return values.front();
     llvm_unreachable("Control checks the observed constants");
   }
   /// Emits `@observe<k>` for each term of `[output] observe`.

@@ -1170,7 +1170,7 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, the registration (D359, externals, pulls, restraints, and Born/surface built).** A term provides its
+**Part 2, the registration (D359, externals, pulls, restraints, Born/surface, and custom tuples built).** A term provides its
 builder in a file of its own, behind an interface that the central
 functions iterate, so that a new term adds a file rather than a case in
 `emitTopologyPotential`, `emitTerms`, and `emitEntry`:
@@ -1264,7 +1264,14 @@ borrowed emitter used by pulls. Explicit hook positions preserve tuple
 contributions among bonded terms and tuple definitions/output names before
 custom pairs. Parameter access adds only the tuple gradient records and
 gradient fields needed by this adapter, with no complete builder/program
-access. Existing names, expressions, errors, and numerical order remain.
+access. `topologyRank` 0 is the earlier contribution site and rank 1 is
+the custom-tuple site among bonded terms. `potentialRank` -3 puts tuple
+definitions/output names before the still-central custom-pair range at
+rank -2; remaining registered definitions/names follow that range. Tuple
+sets and gradient coloring are collected at their original tuple-set site;
+kept-array refill and tunable-outcome classification are separate hooks.
+Existing names, expressions, errors, and numerical order remain. GB/surface
+are independently moving in #689 and are not duplicated in this PR.
 
 ## 3. Decided
 

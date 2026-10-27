@@ -10,7 +10,8 @@ mdir::driver::builder::registerTermBuilders() {
   static const TermBuilder *const builders[] = {&getExternalTermBuilder(),
                                                 &getPullTermBuilder(),
                                                 &getRestraintTermBuilder(),
-                                                &getBornTermBuilder()};
+                                                &getBornTermBuilder(),
+                                                &getTupleTermBuilder()};
   return builders;
 }
 

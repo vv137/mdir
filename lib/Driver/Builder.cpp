@@ -446,16 +446,17 @@ llvm::Error Builder::build() {
             {"term_lj_reciprocal", LennardJonesReciprocal}})
         emitTopologyPotential(name, term);
     if (!isRestart())
-      for (size_t k = 0, e = system.topology->tupleTerms.size(); k != e; ++k)
-        emitTopologyPotential("term_custom" + std::to_string(k), TupleTerms,
-                              static_cast<int>(k));
+      for (const TermBuilder *builder : termBuildersByPotentialRank())
+        if (builder->potentialRank() < -2)
+          builder->emitTermPotentials(*this);
     if (!isRestart())
       for (size_t k = 0, e = control.pairs.size(); k != e; ++k)
         emitTopologyPotential("term_pair" + std::to_string(k), PairTerms, -1,
                               static_cast<int>(k));
     if (!isRestart())
       for (const TermBuilder *builder : termBuildersByPotentialRank())
-        builder->emitTermPotentials(*this);
+        if (builder->potentialRank() >= -2)
+          builder->emitTermPotentials(*this);
   }
   else if (llvm::Error error = emitPotential())
     return error;
