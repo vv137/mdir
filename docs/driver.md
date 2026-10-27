@@ -1263,3 +1263,12 @@ when unused, so a constant cannot silently replace a coordinate and its
 force. Compound terms accept declared `lambda_<name>` components through
 the existing lambda bindings, with forces, component derivatives, and
 state energy differences computed by the same differentiation path.
+
+### Planned restraint adapter (#683)
+
+The restraint migration moves field collection, force/energy/virial emission,
+and the stored energy column into `TermRestraint.cpp`. A parameter-hook rank
+keeps restraint fields before external fields, while stored energy columns
+stay after the evaluated terms. Scheduling keeps the same reference-scale
+names and contribution positions through borrowed emission arguments. No
+control key, generated program, or numerical order changes.
