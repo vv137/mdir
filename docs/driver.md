@@ -1270,6 +1270,7 @@ definitions/output names before the still-central custom-pair range at
 rank -2; remaining registered definitions/names follow that range. Tuple
 sets and gradient coloring are collected at their original tuple-set site;
 kept-array refill and tunable-outcome classification are separate hooks.
+Refill receives read-only inputs and only the tuple set it may fill.
 Existing names, expressions, errors, and numerical order remain. GB/surface
 are independently moving in #689 and are not duplicated in this PR.
 

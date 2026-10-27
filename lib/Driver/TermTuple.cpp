@@ -11,7 +11,8 @@ public:
   int potentialRank() const override { return -3; }
   int topologyRank() const override { return 1; }
   void collectTupleSets(TermParameters &context) const override;
-  void refillTupleSet(TermParameters &context, Program::TupleSet &set) const override {
+  void refillTupleSet(const TermInputs &context,
+                      Program::TupleSet &set) const override {
     const Topology &topology = context.getTopology();
     for (const TupleTerm &term : topology.tupleTerms)
       if (!term.isCentroid() && set.name == "custom_" + term.name)

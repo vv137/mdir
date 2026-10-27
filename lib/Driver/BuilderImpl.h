@@ -247,7 +247,7 @@ public:
   virtual int potentialRank() const { return 0; }
   virtual int topologyRank() const { return 0; }
   virtual void collectTupleSets(TermParameters &) const {}
-  virtual void refillTupleSet(TermParameters &, Program::TupleSet &) const {}
+  virtual void refillTupleSet(const TermInputs &, Program::TupleSet &) const {}
   virtual llvm::Expected<std::optional<Program::GradientOutcome>>
   getTunableOutcome(const TermInputs &, unsigned) const {
     return std::optional<Program::GradientOutcome>();
