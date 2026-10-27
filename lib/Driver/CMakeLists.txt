@@ -43,6 +43,8 @@ add_mlir_library(MDIRDriver
   BuilderParameters.cpp
   BuilderPotential.cpp
   BuilderSchedule.cpp
+  TermBuilders.cpp
+  TermExternal.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

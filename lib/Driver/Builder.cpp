@@ -459,10 +459,8 @@ llvm::Error Builder::build() {
         emitTopologyPotential("term_surface", Surface);
     }
     if (!isRestart())
-      for (size_t k = 0, e = system.topology->externalTerms.size(); k != e;
-           ++k)
-        emitTopologyPotential("term_external" + std::to_string(k),
-                              ExternalTerms, -1, -1, static_cast<int>(k));
+      for (const TermBuilder *builder : registerTermBuilders())
+        builder->emitTermPotentials(*this);
   }
   else if (llvm::Error error = emitPotential())
     return error;

@@ -1170,10 +1170,41 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, the registration.** A term provides its builder in a file of its
-own, behind an interface that the central functions iterate, so that a new
-term adds a file rather than a case in `emitTopologyPotential`,
-`emitTerms`, and `emitEntry`. Its design follows part 1 in the same issue.
+**Part 2, the registration (D[term-registry], external terms built).** A term provides its
+builder in a file of its own, behind an interface that the central
+functions iterate, so that a new term adds a file rather than a case in
+`emitTopologyPotential`, `emitTerms`, and `emitEntry`:
+
+- `TermBuilder` (in `BuilderImpl.h`) has one hook for each place where a
+  central function dispatches on the kind of term today: the collection of
+  its parameters (`collectParameters`), its part of the potentials
+  (`emitTopologyPotential`, `emitPotential`), its row of the energy terms
+  (`emitTerms`), its arguments and buffers of the entry (`emitEntry`), and
+  its output at a step of energy. A hook that a kind does not need does
+  nothing.
+- Each kind of term (the pulls, the Born and surface terms, the external
+  terms, the custom terms over tuples and pairs, the restraints, the
+  staged models, ...) is a class in a file of its own.
+- `registerTermBuilders` lists them explicitly. Static objects that
+  register themselves are not used: the libraries are static and linked
+  with gc-sections (#655), which drops an object that nothing references,
+  and the order of static initialization is not defined.
+- The list fixes the order of emission, which the printed module takes:
+  today's order; a hook whose sites emit in different orders takes an
+  explicit rank.
+- The kinds move one or two in a pull request, with the gate of part 1
+  (the corpus of Section 2.11 byte-identical, printed and lowered).
+
+The first adapter is `TermExternal.cpp`. It collects the external fields,
+emits the selected potential contributions and standalone term potentials,
+and supplies energy-output names and observable lookup. The shared field
+list supplies its entry arguments, buffers, and reordering, so it needs no
+entry declaration of its own. `TermBuilders.cpp` references the adapter
+explicitly; stateless adapter instances are constructed on first use, not
+by global registration. The existing hook sites keep the external fields
+after restraints, potential contributions after Born, and output columns
+before restraints. The remaining kinds still use the central builder and
+move in later PRs. No control-file behavior changes.
 
 ## 3. Decided
 

@@ -1041,6 +1041,8 @@ void Builder::emitEntry() {
        << ", memref<1xf64>, memref<9xf64>)\n"
        << "    attributes {llvm.emit_c_interface}\n";
   }
+  for (const TermBuilder *builder : registerTermBuilders())
+    builder->emitEntry(*this);
   if (control.minimize)
     os << "func.func private @mdrtWriteMinimization(i64, f64, f64, memref<?x3x"
        << force << ">, memref<?xi32>)\n"

@@ -73,6 +73,13 @@ wrote at fixed paths failed after 99 runs of the suite in one build tree
 relation, with its parameters as fields of the tuple set; its forces and
 virial follow by differentiation. If the term is a pair term with an
 exchange contract, it runs over groups on a device with no further work.
+The migrated kinds instead implement `TermBuilder` in a translation unit
+of their own and are listed explicitly in `lib/Driver/TermBuilders.cpp`
+(D[term-registry]). External terms are the first: their fields, potentials,
+energy-output names, and observable lookup live in `TermExternal.cpp`.
+Their entry buffers still follow the shared field list. Every migration
+keeps the printed module and lowered program byte-identical to main over
+the builder-equivalence corpus; other kinds follow in separate PRs.
 
 **A new pass** has its description and options in
 `include/mdir/Dialect/MDExec/Transforms/Passes.td`, its code in
