@@ -19,7 +19,27 @@
 
 # RUN: sed 's/"METATOMIC"/"TORCHSCRIPT"/' %t/run.toml > %t/backend.toml
 # RUN: not mdir check %t/backend.toml 2>&1 | FileCheck %s --check-prefix=BACKEND
-# BACKEND: expected 'backend' as "METATOMIC", a TorchScript artifact of metatomic, "AOTI", an AOTInductor package of the `nequip` package, or "STAGES", a model in stages of MDIR's IR
+# BACKEND: expected one of METATOMIC, AOTI, STAGES for 'backend', got 'TORCHSCRIPT'
+
+# The choices are read without regard to case and kept in upper case
+# (#551): "metatomic" is "METATOMIC", and "Stages" takes the checks of a
+# model in stages.
+# RUN: sed 's/"METATOMIC"/"metatomic"/' %t/run.toml > %t/lower.toml
+# RUN: mdir check %t/lower.toml | FileCheck %s --check-prefix=CHECK-OK
+# RUN: sed 's/"METATOMIC"/"Stages"/' %t/run.toml > %t/mixed-case.toml
+# RUN: not mdir check %t/mixed-case.toml 2>&1 | FileCheck %s --check-prefix=STAGES-CENTERS
+# The same choices of `mdir.ModelTerm` (lib/Driver/Model.cpp).
+# RUN: %mdir_python %S/Inputs/model_choice_case.py %t | FileCheck %s --check-prefix=PYTHON-CASE
+# PYTHON-CASE: STAGES: model: the model 'allegro' of {{.*}} in stages runs on a GPU only yet
+# PYTHON-CASE-NEXT: stages: model: the model 'allegro' of {{.*}} in stages runs on a GPU only yet
+# PYTHON-CASE-NEXT: Stages: model: the model 'allegro' of {{.*}} in stages runs on a GPU only yet
+# PYTHON-CASE-NEXT: METATOMIC: model: the model 'allegro' of {{.*}} runs on a GPU only yet
+# PYTHON-CASE-NEXT: metatomic: model: the model 'allegro' of {{.*}} runs on a GPU only yet
+# PYTHON-CASE-NEXT: Aoti: model: the model 'allegro' of {{.*}} runs on a GPU only yet
+# PYTHON-CASE-NEXT: TORCHSCRIPT: the model term 'allegro': backend takes "METATOMIC"
+# PYTHON-CASE-NEXT: DOUBLE: cannot read the model in stages 'allegro'
+# PYTHON-CASE-NEXT: double: cannot read the model in stages 'allegro'
+# PYTHON-CASE-NEXT: SINGLE: model: the model 'allegro' of {{.*}} in stages takes 'stage_field_precision = "DOUBLE"' or no 'stage_field_precision'
 
 # A model in stages (D294) takes no chunks of centers, and
 # runs on a GPU.
@@ -36,7 +56,15 @@
 # FIELD-PLUGIN: 'stage_field_precision' is for backend = "STAGES" only
 # RUN: sed -e 's/"METATOMIC"/"STAGES"/' -e '/^centers_per_call/d' -e '/^path = /a stage_field_precision = "SINGLE"' %t/run.toml > %t/field-value.toml
 # RUN: not mdir check %t/field-value.toml 2>&1 | FileCheck %s --check-prefix=FIELD-VALUE
-# FIELD-VALUE: 'stage_field_precision' takes "DOUBLE"
+# FIELD-VALUE: expected one of DOUBLE for 'stage_field_precision', got 'SINGLE'
+# "double" is "DOUBLE" (#551): accepted for a model in stages on a GPU in
+# double precision, and refused in single precision as "DOUBLE" is.
+# RUN: sed -e 's/"METATOMIC"/"STAGES"/' -e '/^centers_per_call/d' -e '/^path = /a stage_field_precision = "double"' %t/run.toml > %t/field-lower.toml
+# RUN: mdir check %t/field-lower.toml | FileCheck %s --check-prefix=FIELD-LOWER
+# FIELD-LOWER: target: gpu, double precision
+# RUN: sed 's/^precision = "DOUBLE"/precision = "SINGLE"/' %t/field-lower.toml > %t/field-single.toml
+# RUN: not mdir check %t/field-single.toml 2>&1 | FileCheck %s --check-prefix=FIELD-SINGLE
+# FIELD-SINGLE: takes 'stage_field_precision = "DOUBLE"' only in mixed or double precision
 
 # RUN: sed '/^path/d' %t/run.toml > %t/nopath.toml
 # RUN: not mdir check %t/nopath.toml 2>&1 | FileCheck %s --check-prefix=NOPATH

@@ -598,7 +598,14 @@ llvm::Expected<PreparedModel> mdir::model::prepare(
   // The learned potentials (D270), checked as the reader of
   // the control file checks [[energy.model]]; validateControl refuses what
   // ML1 does not reach.
-  for (const driver::Control::ModelTerm &term : s.models) {
+  for (driver::Control::ModelTerm term : s.models) {
+    // The choices, without regard to case and kept in upper case, as the
+    // reader of the control file keeps them (#551).
+    for (const char *name : {"METATOMIC", "AOTI", "STAGES"})
+      if (llvm::StringRef(term.backend).equals_insensitive(name))
+        term.backend = name;
+    if (llvm::StringRef(term.stageFieldPrecision).equals_insensitive("DOUBLE"))
+      term.stageFieldPrecision = "DOUBLE";
     if (term.name.empty() ||
         !llvm::all_of(term.name, [](char ch) { return llvm::isAlnum(ch) || ch == '_'; }))
       return input("a model term needs a name of letters, digits, and '_'");
