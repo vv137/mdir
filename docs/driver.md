@@ -1243,6 +1243,14 @@ formula do not change.
 The remaining kinds still use the central builder and move in later PRs.
 No control-file behavior changes.
 
+The next migration (#683) keeps generalized Born and its nonpolar surface
+term in one adapter, `TermBorn.cpp`: surface uses the same computed Born
+radii. Its parameter rank precedes restraint and external fields. An
+explicit potential rank preserves Born/surface before external terms for
+topology contributions, standalone potentials, and energy-column names.
+The shared radii, Debye screening, names, and emission order stay internal
+to the adapter; it adds no capability exposing Born intermediates.
+
 ## 3. Decided
 
 | # | Question | Decision |
