@@ -244,11 +244,46 @@ static void endAccount(int account, int64_t before, int64_t asked) {
   accountEvents[account] += 1;
 }
 
+/* The driver must support the major version of CUDA that this library was
+   built with: under CUDA's minor version compatibility, a driver of that
+   major version runs what the toolkit of any of its minor versions makes,
+   which is why a release needs a driver of CUDA 13.0 (D177). A driver of an
+   older major version crashed inside the driver at the first load of a
+   module (#657), so the version is compared before anything is loaded,
+   once, as the first context is made, and the run ends with both versions.
+   MDRT_DRIVER_VERSION=<n>, for the tests, stands for the version that the
+   driver reports, in its encoding (1000 major + 10 minor). */
+static void checkDriverVersion(void) {
+  int driver = 0;
+  const char *forced = getenv("MDRT_DRIVER_VERSION");
+  if (forced && *forced)
+    driver = (int)strtol(forced, NULL, 10);
+  else if (cuDriverGetVersion(&driver) != CUDA_SUCCESS)
+    return; /* cuInit reports a driver that does not answer. */
+  int needed = CUDA_VERSION / 1000 * 1000;
+  if (driver >= needed)
+    return;
+  fprintf(stderr,
+          "mdrt: the NVIDIA driver supports CUDA %d.%d; this build of MDIR, "
+          "with CUDA %d.%d, needs a driver that supports CUDA %d.0 or later "
+          "(D177). Update the NVIDIA driver, or run on the CPU "
+          "(target = \"CPU\")\n",
+          driver / 1000, driver % 1000 / 10, CUDA_VERSION / 1000,
+          CUDA_VERSION % 1000 / 10, needed / 1000);
+  fflush(stderr);
+  exit(1);
+}
+
 /* Makes the context of the device current for the calling thread. The
    device is the one that MDRT_DEVICE names, among those that
    CUDA_VISIBLE_DEVICES leaves visible, or the first. */
 static void enter(void) {
   if (!context) {
+    static int checked = 0;
+    if (!checked) {
+      checkDriverVersion();
+      checked = 1;
+    }
     check(cuInit(0), "cuInit");
     const char *chosen = getenv("MDRT_DEVICE");
     if (chosen)

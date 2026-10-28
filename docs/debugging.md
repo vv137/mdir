@@ -31,6 +31,16 @@ the PTX ISA version that MDIR emits cannot do that, and the run, or the
 doctor's GPU check, ends with `mdrt: the NVIDIA driver supports CUDA
 <x.y>, which cannot compile kernels of PTX ISA <a.b>`; update the driver.
 
+The driver must support the major version of CUDA of the toolkit that
+MDIR was built with (D177): CUDA 13.0 or later for a build with CUDA 13.x.
+The runtime compares the version that the driver reports before it loads
+the first module, and a run on an older driver ends with `mdrt: the NVIDIA
+driver supports CUDA <x.y>; this build of MDIR, with CUDA <a.b>, needs a
+driver that supports CUDA <a>.0 or later`; `mdir doctor --target=gpu`
+reports the same as a `FAIL CUDA driver` line. Before that check such a
+run crashed inside `libcuda` at the load of the module (#657). Update the
+driver, or build MDIR with a toolkit that the driver supports.
+
 `MDIR_GPU_BINARY=ptx` keeps the kernels PTX, to rule out `ptxas`, and
 `MDIR_GPU_ARCH=sm_XY` sets the architecture
 ([compile-cache.md](compile-cache.md#cubins-for-the-device)).
