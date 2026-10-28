@@ -1,0 +1,4 @@
+# Identical frozen synthetic weights, evaluated with one and 64 rows per tile.
+# No JAX, model download, or exporter is needed during the test.
+# REQUIRES: cuda, hdf5
+# RUN: %mdir_python %S/Inputs/model-stages/unit_rows.py evaluate %S/../.. %t --mdir mdir --printer mdir-opt

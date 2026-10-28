@@ -491,6 +491,9 @@ no row reads another. Once the batched tensor body is checked, its outlined
 buffer form retains the verified static leading row count as `md.stage_rows`
 (D351) and carries the verified `md.stage_body` marker
 (D353). The forward and VJP bodies agree on that row count.
+On a device, each parallel loop of the buffer body becomes a kernel;
+an operation whose dimensions all fold away runs in a single-thread
+kernel, so its scalar accesses still read and write device buffers.
 A loop whose kernel applies the body then runs as a host loop over tiles,
 each packing the operands of its rows,
 calling the body, and unpacking the results into the rest of the kernel;

@@ -7,8 +7,9 @@
 // MDIR lowers it with upstream passes: elementwise fusion, one-shot
 // bufferization with the results as buffers that the caller passes, and
 // `linalg` to parallel loops. On a device each parallel loop becomes one
-// kernel with a thread for each of its iterations; the constants of the
-// body (the weights) are read from the kernels' own globals, and the body's
+// kernel with a thread for each of its iterations. All-unit work runs in
+// a single-thread kernel even when folding removes every loop; the constants of
+// the body (the weights) are read from the kernels' own globals, and the body's
 // intermediate buffers are allocated on the device for the call, from the
 // runtime's pool of blocks.
 
@@ -1627,6 +1628,32 @@ public:
                              copy.getTarget());
       copy.erase();
     });
+    // Folding unit extents can remove every loop of a linalg operation.
+    // Its scalar loads and stores still access device buffers. Launch that
+    // work before loop conversion, which otherwise leaves it on the host.
+    // Include unit-extent copies: loop canonicalization can erase their
+    // one-iteration parallel loops too. Non-unit loops keep their launch path.
+    if (device) {
+      SmallVector<linalg::LinalgOp> scalars;
+      bodies->walk([&](linalg::LinalgOp op) {
+        if (op.hasPureBufferSemantics() &&
+            llvm::all_of(op.getStaticLoopRanges(),
+                         [](int64_t extent) { return extent == 1; }) &&
+            !op->getParentOfType<gpu::LaunchOp>())
+          scalars.push_back(op);
+      });
+      for (linalg::LinalgOp op : scalars) {
+        OpBuilder builder(op);
+        Location loc = op.getLoc();
+        Value one = index(builder, loc, 1);
+        auto launch =
+            gpu::LaunchOp::create(builder, loc, one, one, one, one, one, one);
+        op->moveBefore(&launch.getBody().front(),
+                       launch.getBody().front().end());
+        builder.setInsertionPointToEnd(&launch.getBody().front());
+        gpu::TerminatorOp::create(builder, loc);
+      }
+    }
     PassManager loops(context);
     loops.addNestedPass<func::FuncOp>(createConvertLinalgToParallelLoopsPass());
     loops.addPass(createCanonicalizerPass());

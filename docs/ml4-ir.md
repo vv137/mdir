@@ -543,7 +543,11 @@ and the loops of `md_exec` carry them to the lowering for a device:
   buffers: elementwise fusion (below), one-shot bufferization with the
   results as buffers that the caller passes, `linalg` to parallel loops,
   and on a device one kernel of a thread for each iteration of each
-  parallel loop; the constants go into the kernels that read them, and the
+  parallel loop. Work whose loop dimensions all fold away runs in a
+  single-thread kernel, including a one-row, one-feature body or an
+  all-unit operation independent of the rows. The host-access check remains
+  in force; CPU body lowering is unchanged. The constants go into the
+  kernels that read them, and the
   bodies' intermediate buffers are taken from the runtime's pool for the
   call. The 39 bodies of nablaDFT's PaiNN become 363 kernels and 112
   calls of cuBLAS (532 kernels with loops for the products, 933 with
