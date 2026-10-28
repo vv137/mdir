@@ -14,61 +14,11 @@ llvm::Error Builder::collectParameters() {
     if (llvm::Error error = builder->collectBareParameters(*this))
       return error;
 
-  // The parameters of the types that the terms over triplets take for a
-  // particle by its place, `sigma1` for the center (D160): a field where
-  // they differ between the types, a number where they do not.
-  for (const TripletTerm &term : control.triplets) {
-    Expression expression =
-        llvm::cantFail(Expression::parse(term.expression, control.functions));
-    for (const std::string &name : expression.getNames()) {
-      std::string stem = getTripletParameter(term, name);
-      if (stem.empty() ||
-          llvm::any_of(parameters,
-                       [&](Parameter &known) { return known.name == stem; }))
-        continue;
-      std::vector<double> values;
-      for (const ParticleType &type : control.types)
-        values.push_back(llvm::find_if(type.parameters, [&](auto &entry) {
-                           return entry.first == stem;
-                         })->second);
-      Parameter parameter;
-      parameter.name = stem;
-      parameter.value = values.front();
-      parameter.isUniform = llvm::all_of(
-          values, [&](double value) { return value == values.front(); });
-      if (!parameter.isUniform) {
-        parameter.field = program.fields.size();
-        Program::Field field;
-        field.name = stem;
-        for (unsigned type : system.types)
-          field.values.push_back(values[type]);
-        program.fields.push_back(std::move(field));
-      }
-      parameters.push_back(std::move(parameter));
-    }
-  }
   for (const TermBuilder *builder : registerTermBuilders())
     if (llvm::Error error = builder->collectBareConstants(*this))
       return error;
   return llvm::Error::success();
 }
-
-std::string Builder::getTripletParameter(const TripletTerm &term,
-                                         StringRef name) const {
-  if (name.size() < 2 || !llvm::is_contained("123", name.back()) ||
-      llvm::any_of(term.constants,
-                   [&](const auto &c) { return c.first == name; }))
-    return "";
-  StringRef stem = name.drop_back();
-  if (control.types.empty() ||
-      !llvm::all_of(control.types, [&](const ParticleType &type) {
-        return llvm::any_of(type.parameters,
-                            [&](const auto &p) { return p.first == stem; });
-      }))
-    return "";
-  return stem.str();
-}
-
 
 void Builder::fillCharges(Program::Field &field) const {
   field.values = system.topology->charges;

@@ -164,7 +164,7 @@ preserves Born then surface before external contributions, standalone
 potentials, and evaluated energy-column names (rank 0). The radii and Debye
 screening remain adapter details; the interface exposes no GB buffers.
 The moved kinds are external terms, pulls, restraints, Born/surface, and
-custom tuples;
+custom tuples, custom pairs, and triplets;
 the remaining kinds continue through #683 under unchanged-program gates.
 
 The custom-tuple adapter (`TermTuple.cpp`, D359/D361, #683) owns ordinary,
@@ -175,7 +175,8 @@ topology and potential ranks preserve contributions among bonded terms
 and definitions/output names before custom pairs. Read-only tuple gradient
 plans and the required mutable gradient/tuple collections are borrowed by
 name, with no complete builder/program access. The moved kinds are external terms, pulls, restraints, Born/surface, and
-custom tuples. Custom pair terms are now registered; triplets are next in #683.
+custom tuples, custom pairs, and triplets. Model, bonded, and nonbonded
+terms are next in #683.
 
 The custom-pair adapter (`TermPair.cpp`, D359/D361, #683) owns bare and
 topology pair emission, type/particle fields, tunable tables, observable
@@ -189,3 +190,14 @@ The particle-field rank 1 keeps pair groups/parameters after externals.
 The quadrature, derivatives, field order, SSA names, and contribution order
 are unchanged. External, pull, restraint, Born/surface, tuple, and pair
 kinds are registered; triplet, model, bonded, and nonbonded kinds remain.
+
+The custom-triplet adapter (`TermTriplet.cpp`, D359/D361, #683) owns
+particle-place type parameters and triplet expression emission. Its named
+partial collection retains shared pair/triplet descriptors without
+exposing the builder or complete program. The same bare-collection hook
+collects pair descriptors before triplet descriptors, before dispersion
+validation; potential ranks -2 and 1 retain pair then triplet contributions.
+Coordinate order, particle-place mapping, SSA names, and numerical operation
+order remain unchanged. No triplet-specific virtual hook is introduced.
+Externals, pulls, restraints, Born/surface, custom tuples, custom pairs,
+and triplets have moved; model, bonded, and nonbonded terms remain.

@@ -12,7 +12,8 @@ mdir::driver::builder::registerTermBuilders() {
                                                 &getRestraintTermBuilder(),
                                                 &getBornTermBuilder(),
                                                 &getTupleTermBuilder(),
-                                                &getPairTermBuilder()};
+                                                &getPairTermBuilder(),
+                                                &getTripletTermBuilder()};
   return builders;
 }
 
