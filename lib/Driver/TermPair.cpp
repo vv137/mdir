@@ -6,62 +6,61 @@ using namespace mdir::driver::builder;
 
 /// The overrides of the pair term `term`: those that name it, and those
 /// that name no term where there is one term.
-static std::vector<const PairOverride *>
-getOverrides(const Control &control, const PairTerm &term) {
+static std::vector<const PairOverride *> getOverrides(const Control &control,
+                                                      const PairTerm &term) {
   std::vector<const PairOverride *> found;
-    for (const PairOverride &entry : control.overrides)
-      if (entry.term == term.name ||
-          (entry.term.empty() && control.pairs.size() == 1))
-        found.push_back(&entry);
-    return found;
+  for (const PairOverride &entry : control.overrides)
+    if (entry.term == term.name ||
+        (entry.term.empty() && control.pairs.size() == 1))
+      found.push_back(&entry);
+  return found;
+}
+
+/// The index of the type named `name`, or -1.
+static int findType(const Control &control, StringRef name) {
+  for (auto [index, type] : llvm::enumerate(control.types))
+    if (type.name == name)
+      return static_cast<int>(index);
+  return -1;
+}
+
+/// The attribute of an md.sum_relation that truncates its energy at the
+/// cutoff as `truncation` says, with the switching distance of `control`;
+/// the power force switch is for the Lennard-Jones of a topology only, and
+/// the reader rejects it elsewhere.
+static std::string getTruncation(const Control &control,
+                                 Truncation truncation) {
+  double from = control.switchDistance * units::length;
+  switch (truncation) {
+  case Truncation::None:
+  case Truncation::PowerForceSwitch:
+  case Truncation::SquaredDistanceSwitch:
+    return "";
+  case Truncation::Shift:
+    return " truncation(shift)";
+  case Truncation::Switch:
+    return " truncation(switch, from = " + formatReal(from) + ")";
+  case Truncation::ForceSwitch:
+    return " truncation(force_switch, from = " + formatReal(from) + ")";
   }
+  llvm_unreachable("unknown truncation");
+}
 
-  /// The index of the type named `name`, or -1.
-  static int findType(const Control &control, StringRef name) {
-    for (auto [index, type] : llvm::enumerate(control.types))
-      if (type.name == name)
-        return static_cast<int>(index);
-    return -1;
-  }
+static std::string getTruncation(const Control &control) {
+  return getTruncation(control, control.truncation);
+}
 
-  /// The attribute of an md.sum_relation that truncates its energy at the
-  /// cutoff as `truncation` says, with the switching distance of `control`;
-  /// the power force switch is for the Lennard-Jones of a topology only, and
-  /// the reader rejects it elsewhere.
-  static std::string getTruncation(const Control &control,
-                                   Truncation truncation) {
-    double from = control.switchDistance * units::length;
-    switch (truncation) {
-    case Truncation::None:
-    case Truncation::PowerForceSwitch:
-    case Truncation::SquaredDistanceSwitch:
-      return "";
-    case Truncation::Shift:
-      return " truncation(shift)";
-    case Truncation::Switch:
-      return " truncation(switch, from = " + formatReal(from) + ")";
-    case Truncation::ForceSwitch:
-      return " truncation(force_switch, from = " + formatReal(from) + ")";
-    }
-    llvm_unreachable("unknown truncation");
-  }
-
-  static std::string getTruncation(const Control &control) {
-    return getTruncation(control, control.truncation);
-  }
-
-
-  namespace mdir::driver::builder {
-  class PairTermBuilder final : public TermBuilder {
-  public:
-    int parameterRank() const override { return 1; }
-    int potentialRank() const override { return -2; }
-    llvm::Error collectBareParameters(TermParameters &context) const override {
-      const Control &control = context.getControl();
-      const System &system = context.getSystem();
-      auto &parameters = context.getMutableTypeParameters();
-      auto &termTables = context.getMutablePairPlan().tables;
-      auto &expressions = context.getMutablePairPlan().expressions;
+namespace mdir::driver::builder {
+class PairTermBuilder final : public TermBuilder {
+public:
+  int parameterRank() const override { return 1; }
+  int potentialRank() const override { return -2; }
+  llvm::Error collectBareParameters(TermParameters &context) const override {
+    const Control &control = context.getControl();
+    const System &system = context.getSystem();
+    auto &parameters = context.getMutableTypeParameters();
+    auto &termTables = context.getMutablePairPlan().tables;
+    auto &expressions = context.getMutablePairPlan().expressions;
     for (const PairOverride &entry : control.overrides) {
       if (entry.term.empty() && control.pairs.size() != 1)
         return makeError("[[energy.nbfix]] needs 'pair' to name the pair term "
@@ -88,8 +87,9 @@ getOverrides(const Control &control, const PairTerm &term) {
       for (const std::string &name : expression->getNames()) {
         if (name == "r" || name == "coulomb")
           continue;
-        if (llvm::any_of(term.constants,
-                         [&](auto &constant) { return constant.first == name; }))
+        if (llvm::any_of(term.constants, [&](auto &constant) {
+              return constant.first == name;
+            }))
           continue;
 
         // A parameter of the types. Every type must have it.
@@ -100,16 +100,21 @@ getOverrides(const Control &control, const PairTerm &term) {
           });
           if (found == type.parameters.end())
             return makeError("the expression of '" + term.name + "' uses '" +
-                             name + "', which is neither 'r', nor 'coulomb', "
+                             name +
+                             "', which is neither 'r', nor 'coulomb', "
                              "nor a number of the term, nor a parameter of the "
-                             "type '" + type.name + "'");
+                             "type '" +
+                             type.name + "'");
           values.push_back(found->second);
         }
         bool isUniform = llvm::all_of(
             values, [&](double value) { return value == values.front(); });
         if (!isUniform && !term.mixing.count(name))
-          return makeError("'" + name + "' differs between the types, but the "
-                           "term '" + term.name + "' has no rule of 'mixing' "
+          return makeError("'" + name +
+                           "' differs between the types, but the "
+                           "term '" +
+                           term.name +
+                           "' has no rule of 'mixing' "
                            "for it");
 
         // A term with overrides looks every parameter up in a table of the
@@ -122,8 +127,9 @@ getOverrides(const Control &control, const PairTerm &term) {
           for (unsigned a = 0; a != table.count; ++a)
             for (unsigned b = 0; b != table.count; ++b)
               table.values[a * table.count + b] =
-                  isUniform ? values.front()
-                            : mix(term.mixing.lookup(name), values[a], values[b]);
+                  isUniform
+                      ? values.front()
+                      : mix(term.mixing.lookup(name), values[a], values[b]);
           for (const PairOverride *entry : overrides)
             for (auto &[parameter, value] : entry->parameters)
               if (parameter == name) {
@@ -161,14 +167,14 @@ getOverrides(const Control &control, const PairTerm &term) {
           if (!tables.count(parameter))
             return makeError("[[energy.nbfix]] sets '" + parameter +
                              "', which is not a parameter of the types that "
-                             "the term '" + term.name + "' uses");
+                             "the term '" +
+                             term.name + "' uses");
 
       // The types of the particles, which the lookups take.
       if (!tables.empty() &&
-          llvm::none_of(context.getFields(),
-                        [](const Program::Field &field) {
-                          return field.isInteger;
-                        })) {
+          llvm::none_of(context.getFields(), [](const Program::Field &field) {
+            return field.isInteger;
+          })) {
         Program::Field field;
         field.name = "type";
         field.isInteger = true;
@@ -179,7 +185,6 @@ getOverrides(const Control &control, const PairTerm &term) {
       termTables.push_back(std::move(tables));
       expressions.push_back(std::move(*expression));
     }
-
 
     return llvm::Error::success();
   }
@@ -216,8 +221,6 @@ getOverrides(const Control &control, const PairTerm &term) {
       field.values = values;
       context.getFields().push_back(std::move(field));
     }
-
-
   }
   void collectTopologyTables(TermParameters &context) const override {
     const Control &control = context.getControl();
@@ -231,10 +234,9 @@ getOverrides(const Control &control, const PairTerm &term) {
       refillTable(context, table);
       context.getTables().push_back(std::move(table));
     }
-
-
   }
-  bool refillTable(const TermInputs &context, Program::Table &table) const override {
+  bool refillTable(const TermInputs &context,
+                   Program::Table &table) const override {
     if (table.name != "tunable_constants")
       return false;
     const Control &control = context.getControl();
@@ -249,17 +251,20 @@ getOverrides(const Control &control, const PairTerm &term) {
 
     return true;
   }
-  bool needsPairNeighborhood(const TermInputs &context,
-                            const PotentialSelection &selection) const override {
-    return (selection.terms & TermInputs::PairTerms) && !context.getControl().pairs.empty();
+  bool
+  needsPairNeighborhood(const TermInputs &context,
+                        const PotentialSelection &selection) const override {
+    return (selection.terms & TermInputs::PairTerms) &&
+           !context.getControl().pairs.empty();
   }
-  void emitTopologyPotential(TermEmission &context,
-      const PotentialSelection &selection,
+  void emitTopologyPotential(
+      TermEmission &context, const PotentialSelection &selection,
       llvm::function_ref<void(StringRef)> add) const override {
     const Control &control = context.getControl();
     const System &system = context.getSystem();
     llvm::raw_ostream &os = context.getOutput();
-    bool pairTerms = (selection.terms & TermInputs::PairTerms) && !control.pairs.empty();
+    bool pairTerms =
+        (selection.terms & TermInputs::PairTerms) && !control.pairs.empty();
     int pairTerm = selection.pairTerm;
     bool alchemicalOnly = selection.alchemicalOnly;
     Truncation truncation = context.getPairTruncation();
@@ -278,17 +283,22 @@ getOverrides(const Control &control, const PairTerm &term) {
         continue;
       if (alchemicalOnly && !context.usesLambda(term.expression))
         continue;
-      bool grouped = k < system.pairGroups.size() && !system.pairGroups[k].empty();
+      bool grouped =
+          k < system.pairGroups.size() && !system.pairGroups[k].empty();
       std::string g = std::to_string(k), set = "pair_" + term.name;
-      Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
+      Expression expression =
+          llvm::cantFail(Expression::parse(term.expression, control.functions));
       const std::vector<std::string> &used = expression.getNames();
-      auto uses = [&](StringRef name) { return llvm::is_contained(used, name); };
+      auto uses = [&](StringRef name) {
+        return llvm::is_contained(used, name);
+      };
       // The parameters of each particle that the term takes (D165).
       std::vector<std::string> stems;
       for (const auto &[name, values] : system.particleParameters)
         if (uses(name + "1") || uses(name + "2"))
           stems.push_back(name);
-      os << "  %u_" << set << " = md.sum_relation %n, %x, %cell gather(%p_type, "
+      os << "  %u_" << set
+         << " = md.sum_relation %n, %x, %cell gather(%p_type, "
          << "%p_q" << (grouped ? ", %p_pg" + g + "a, %p_pg" + g + "b" : "");
       for (const std::string &stem : stems)
         os << ", %p_pp_" << stem;
@@ -297,16 +307,15 @@ getOverrides(const Control &control, const PairTerm &term) {
         os << ", !real";
       os << ")\n"
          << "      exchange(symmetric, asserted)"
-         << getTruncation(control, truncation)
-         << " {\n"
+         << getTruncation(control, truncation) << " {\n"
          << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
          << "%q_i: f64, %q_j: f64"
          << (grouped ? ", %ga_i: f64, %ga_j: f64, %gb_i: f64, %gb_j: f64" : "");
       for (const std::string &stem : stems)
         os << ", %pp_" << stem << "_i: f64, %pp_" << stem << "_j: f64";
       os << "):\n"
-         << "    %pt_angstrom = arith.constant " << formatReal(1.0 / units::length)
-         << " : f64\n"
+         << "    %pt_angstrom = arith.constant "
+         << formatReal(1.0 / units::length) << " : f64\n"
          << "    %pt_kcal = arith.constant " << formatReal(1.0 / units::energy)
          << " : f64\n"
          << "    %pt_r = arith.mulf %r, %pt_angstrom : f64\n";
@@ -348,10 +357,12 @@ getOverrides(const Control &control, const PairTerm &term) {
         std::string value = "%pt_c" + std::to_string(c);
         // A tunable constant is a value of the program's table, which an
         // update changes without compiling (D213).
-        auto tunable = llvm::find(control.tunableConstants,
-                                  std::pair<unsigned, std::string>(
-                                      static_cast<unsigned>(k), constant.first));
-        if (tunable != control.tunableConstants.end() && context.hasGradientArguments()) {
+        auto tunable =
+            llvm::find(control.tunableConstants,
+                       std::pair<unsigned, std::string>(
+                           static_cast<unsigned>(k), constant.first));
+        if (tunable != control.tunableConstants.end() &&
+            context.hasGradientArguments()) {
           values[constant.first] =
               "%tg_c" +
               std::to_string(tunable - control.tunableConstants.begin());
@@ -370,7 +381,8 @@ getOverrides(const Control &control, const PairTerm &term) {
         values[constant.first] = value;
       }
       context.bindObserved(term.name, values);
-      std::string energy = expression.emit(os, values, "%pte", "    ", term.name);
+      std::string energy =
+          expression.emit(os, values, "%pte", "    ", term.name);
       os << "    %pt_kj = arith.constant " << formatReal(units::energy)
          << " : f64\n"
          << "    %pt_e = arith.mulf " << energy << ", %pt_kj : f64\n";
@@ -390,9 +402,9 @@ getOverrides(const Control &control, const PairTerm &term) {
          << "  } : !pairs, !vec -> f64\n";
       add(set);
     }
-
   }
-  void emitBareContributions(TermEmission &context, std::string &total) const override {
+  void emitBareContributions(TermEmission &context,
+                             std::string &total) const override {
     const Control &control = context.getControl();
     const auto &expressions = context.getPairPlan().expressions;
     const auto &termTables = context.getPairPlan().tables;
@@ -417,8 +429,8 @@ getOverrides(const Control &control, const PairTerm &term) {
           continue;
         gathered += (gathered.empty() ? "" : ", ") + ("%p_" + parameter.name);
         types += std::string(types.empty() ? "" : ", ") + "!real";
-        arguments += ", %" + parameter.name + "_i: f64, %" + parameter.name +
-                     "_j: f64";
+        arguments +=
+            ", %" + parameter.name + "_i: f64, %" + parameter.name + "_j: f64";
       }
 
       std::string result = "%u" + std::to_string(index);
@@ -469,8 +481,8 @@ getOverrides(const Control &control, const PairTerm &term) {
           os << "    %" << name << " = arith.mulf %" << name << "_i, %" << name
              << "_j : f64\n";
         } else {
-          os << "    %product_" << name << " = arith.mulf %" << name
-             << "_i, %" << name << "_j : f64\n";
+          os << "    %product_" << name << " = arith.mulf %" << name << "_i, %"
+             << name << "_j : f64\n";
           os << "    %" << name << " = math.sqrt %product_" << name
              << " : f64\n";
         }
@@ -493,39 +505,43 @@ getOverrides(const Control &control, const PairTerm &term) {
         total = sum;
       }
     }
-
   }
   void emitTermPotentials(TermEmission &context) const override {
     for (size_t k = 0, e = context.getControl().pairs.size(); k != e; ++k)
       context.emitTopologyPotential("term_pair" + std::to_string(k),
-                                    TermInputs::PairTerms, -1, static_cast<int>(k));
+                                    TermInputs::PairTerms, -1,
+                                    static_cast<int>(k));
   }
-  void appendTermNames(const TermInputs &context, std::vector<std::string> &names) const override {
+  void appendTermNames(const TermInputs &context,
+                       std::vector<std::string> &names) const override {
     for (size_t k = 0, e = context.getControl().pairs.size(); k != e; ++k)
       names.push_back("term_pair" + std::to_string(k));
   }
-  std::pair<unsigned, int> findObservedTerm(const TermInputs &context, StringRef name) const override {
+  std::pair<unsigned, int> findObservedTerm(const TermInputs &context,
+                                            StringRef name) const override {
     for (auto [k, term] : llvm::enumerate(context.getControl().pairs))
       if (term.name == name)
         return {TermInputs::PairTerms, static_cast<int>(k)};
     return {0, -1};
   }
-  std::optional<double> getObservedValue(const TermInputs &context, unsigned kind,
-                                        int index, StringRef name) const override {
+  std::optional<double> getObservedValue(const TermInputs &context,
+                                         unsigned kind, int index,
+                                         StringRef name) const override {
     if (kind == TermInputs::PairTerms)
-      for (const auto &[key, value] : context.getControl().pairs[index].constants)
+      for (const auto &[key, value] :
+           context.getControl().pairs[index].constants)
         if (key == name)
           return value;
     return std::nullopt;
   }
-  llvm::Error collectDispersionConstants(TermParameters &context) const override {
+  llvm::Error
+  collectDispersionConstants(TermParameters &context) const override {
     const System &system = context.getSystem();
     bool shifted = context.getControl().truncation == Truncation::Shift;
     // The tails of the pair terms (D209).
     if (llvm::Error error = collectPairTails(context))
       return error;
-    for (unsigned index = 0, e = system.pairTails.size(); index != e;
-         ++index) {
+    for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index) {
       PairTermTail tail = llvm::cantFail(getCustomPairTail(context, index, {}));
       context.addDispersion(tail.energy + (shifted ? tail.shift : 0.0),
                             shifted ? tail.shiftFixed : 0.0, tail.virial);
@@ -541,8 +557,10 @@ getOverrides(const Control &control, const PairTerm &term) {
         if (term.name != observable.term || index >= system.pairTails.size())
           continue;
         if (observable.constant.empty()) {
-          PairTermTail tail = llvm::cantFail(getCustomPairTail(context, index, {}));
-          context.getObservableVolumeConstants()[column] = tail.energy + tail.shift;
+          PairTermTail tail =
+              llvm::cantFail(getCustomPairTail(context, index, {}));
+          context.getObservableVolumeConstants()[column] =
+              tail.energy + tail.shift;
           context.getObservableFixedConstants()[column] = tail.shiftFixed;
           continue;
         }
@@ -551,15 +569,16 @@ getOverrides(const Control &control, const PairTerm &term) {
           if (name == observable.constant)
             value = v;
         context.getObservableVolumeConstants()[column] =
-            getCustomPairTailDerivative(context, index, observable.constant, value, true, false);
-        context.getObservableFixedConstants()[column] = getCustomPairTailDerivative(context,
-            index, observable.constant, value, /*shift=*/true, /*fixed=*/true);
+            getCustomPairTailDerivative(context, index, observable.constant,
+                                        value, true, false);
+        context.getObservableFixedConstants()[column] =
+            getCustomPairTailDerivative(context, index, observable.constant,
+                                        value, /*shift=*/true, /*fixed=*/true);
       }
   }
   void collectGradientShiftConstants(TermParameters &context) const override {
     const System &system = context.getSystem();
-    for (unsigned index = 0, e = system.pairTails.size(); index != e;
-         ++index) {
+    for (unsigned index = 0, e = system.pairTails.size(); index != e; ++index) {
       PairTermTail pair = llvm::cantFail(getCustomPairTail(context, index, {}));
       context.addGradientShift(pair.shift, pair.shiftFixed);
     }
@@ -595,30 +614,31 @@ getOverrides(const Control &control, const PairTerm &term) {
     slot.tunable = static_cast<unsigned>(k);
     if (dispersion && index < context.getPairPlan().tailExpressions.size() &&
         index < system.pairTails.size())
-      slot.volumeConstant =
-          getCustomPairTailDerivative(context, index, declaration.parameter, value, true, false);
+      slot.volumeConstant = getCustomPairTailDerivative(
+          context, index, declaration.parameter, value, true, false);
     if (dispersion && index < context.getPairPlan().tailExpressions.size() &&
         index < system.pairTails.size())
-      slot.fixedConstant =
-          getCustomPairTailDerivative(context, index, declaration.parameter, value,
-                                /*shift=*/true, /*fixed=*/true);
+      slot.fixedConstant = getCustomPairTailDerivative(
+          context, index, declaration.parameter, value,
+          /*shift=*/true, /*fixed=*/true);
     if (!std::isfinite(slot.volumeConstant) ||
         !std::isfinite(slot.fixedConstant))
-      return makeError("the derivative of the tail of the pair term '" +
-                       term.name + "' in its constant '" +
-                       declaration.parameter +
-                       "' cannot be integrated, for the tunable '" +
-                       declaration.name + "'");
+      return makeError(
+          "the derivative of the tail of the pair term '" + term.name +
+          "' in its constant '" + declaration.parameter +
+          "' cannot be integrated, for the tunable '" + declaration.name + "'");
     context.getGradientSlots().push_back(slot);
     context.getGradientColumns().push_back(
         static_cast<unsigned>(column - control.tunableConstants.begin()));
 
     return std::optional(Program::GradientOutcome::Rule);
   }
+
 private:
   static llvm::Error collectPairTails(TermParameters &);
-  static llvm::Error collectPairValues(const TermInputs &, unsigned,
-      std::vector<std::vector<llvm::StringMap<double>>> &);
+  static llvm::Error
+  collectPairValues(const TermInputs &, unsigned,
+                    std::vector<std::vector<llvm::StringMap<double>>> &);
   static llvm::Error computeDispersion(TermParameters &);
 };
 } // namespace mdir::driver::builder
@@ -628,8 +648,9 @@ const TermBuilder &mdir::driver::builder::getPairTermBuilder() {
   return builder;
 }
 
-llvm::Error PairTermBuilder::collectPairValues(const TermInputs &context,
-    unsigned index, std::vector<std::vector<llvm::StringMap<double>>> &values) {
+llvm::Error PairTermBuilder::collectPairValues(
+    const TermInputs &context, unsigned index,
+    std::vector<std::vector<llvm::StringMap<double>>> &values) {
   const Control &control = context.getControl();
   const auto &parameters = context.getTypeParameters();
   const auto &termTables = context.getPairPlan().tables;
@@ -649,11 +670,10 @@ llvm::Error PairTermBuilder::collectPairValues(const TermInputs &context,
               return value;
           return 0.0;
         };
-        pair[parameter.name] =
-            parameter.isUniform
-                ? parameter.value
-                : mix(term.mixing.lookup(parameter.name), valueOf(a),
-                      valueOf(b));
+        pair[parameter.name] = parameter.isUniform
+                                   ? parameter.value
+                                   : mix(term.mixing.lookup(parameter.name),
+                                         valueOf(a), valueOf(b));
       }
       for (auto &[name, table] : termTables[index])
         pair[name] = context.getParameterTables()[table].values[a * count + b];
@@ -718,11 +738,12 @@ llvm::Error PairTermBuilder::computeDispersion(TermParameters &context) {
                            "' needs a term that decays as 1/r^6 beyond the "
                            "cutoff");
         double pairs = numbers[a] * (numbers[b] - (a == b ? 1.0 : 0.0));
-        energy += -2.0 * M_PI / (3.0 * volume) * scale * pairs * far /
-                  (rc * rc * rc);
+        energy +=
+            -2.0 * M_PI / (3.0 * volume) * scale * pairs * far / (rc * rc * rc);
       }
   }
-  context.setBareDispersion(energy * units::energy, 6.0 * energy * units::energy);
+  context.setBareDispersion(energy * units::energy,
+                            6.0 * energy * units::energy);
   return llvm::Error::success();
 }
 
@@ -766,8 +787,8 @@ static double integrateUnit(llvm::function_ref<double(double)> f,
       if (k % 2 == 1)
         gauss += wg[k / 2] * sum;
     }
-    return Interval{a, b, kronrod * half,
-                    std::fabs((kronrod - gauss) * half), sized * half};
+    return Interval{a, b, kronrod * half, std::fabs((kronrod - gauss) * half),
+                    sized * half};
   };
   std::vector<Interval> intervals = {rule(0.0, 1.0)};
   for (int iteration = 0; iteration != 4000; ++iteration) {
@@ -779,8 +800,7 @@ static double integrateUnit(llvm::function_ref<double(double)> f,
     }
     if (!std::isfinite(value) || !std::isfinite(error))
       return std::nan("");
-    if (error <= 1.0e-13 * std::fmax(std::fabs(value), sized) ||
-        error == 0.0)
+    if (error <= 1.0e-13 * std::fmax(std::fabs(value), sized) || error == 0.0)
       return value;
     auto worst = std::max_element(
         intervals.begin(), intervals.end(),
@@ -801,14 +821,16 @@ llvm::Error PairTermBuilder::collectPairTails(TermParameters &context) {
   // (D209); a term that the correction leaves out
   // has none.
   for (const PairTerm &term : control.pairs)
-    tailExpressions.push_back(llvm::cantFail(
-        Expression::parse(term.expression, control.functions)));
+    tailExpressions.push_back(
+        llvm::cantFail(Expression::parse(term.expression, control.functions)));
   for (auto [index, term] : llvm::enumerate(control.pairs)) {
     auto tail = getCustomPairTail(context, index, {});
     if (!tail) {
       llvm::consumeError(tail.takeError());
       return makeError("the correction for the dispersion integrates the "
-                       "pair term '" + term.name + "' beyond the cutoff, "
+                       "pair term '" +
+                       term.name +
+                       "' beyond the cutoff, "
                        "and its tail cannot be integrated; give "
                        "'dispersion_correction = \"NONE\"' in the term to "
                        "leave it out");
@@ -817,9 +839,9 @@ llvm::Error PairTermBuilder::collectPairTails(TermParameters &context) {
   return llvm::Error::success();
 }
 
-llvm::Expected<PairTermTail>
-mdir::driver::builder::getCustomPairTail(const TermInputs &context, unsigned index,
-                     const llvm::StringMap<double> &changes) {
+llvm::Expected<PairTermTail> mdir::driver::builder::getCustomPairTail(
+    const TermInputs &context, unsigned index,
+    const llvm::StringMap<double> &changes) {
   const Control &control = context.getControl();
   const System &system = context.getSystem();
   const auto &tailExpressions = context.getPairPlan().tailExpressions;
@@ -913,8 +935,9 @@ mdir::driver::builder::getCustomPairTail(const TermInputs &context, unsigned ind
   return tail;
 }
 
-double mdir::driver::builder::getCustomPairTails(const TermInputs &context, const llvm::StringMap<double> &changes,
-                             bool fixed) {
+double mdir::driver::builder::getCustomPairTails(
+    const TermInputs &context, const llvm::StringMap<double> &changes,
+    bool fixed) {
   const System &system = context.getSystem();
   // A tail that a state makes diverge is NaN in the output, not 0.
   double sum = 0.0;
@@ -929,9 +952,9 @@ double mdir::driver::builder::getCustomPairTails(const TermInputs &context, cons
   return sum;
 }
 
-double mdir::driver::builder::getCustomPairTailDerivative(const TermInputs &context, unsigned index, StringRef name,
-                                      double value, bool shift,
-                                      bool fixed) {
+double mdir::driver::builder::getCustomPairTailDerivative(
+    const TermInputs &context, unsigned index, StringRef name, double value,
+    bool shift, bool fixed) {
   const auto &tailExpressions = context.getPairPlan().tailExpressions;
   if (!llvm::is_contained(tailExpressions[index].getNames(), name))
     return 0.0;
@@ -959,8 +982,9 @@ double mdir::driver::builder::getCustomPairTailDerivative(const TermInputs &cont
     return d;
   for (double sign : {1.0, -1.0}) {
     double step = sign * 1.0e-4 * std::max(std::fabs(value), 1.0);
-    double one = (-3.0 * at(value) + 4.0 * at(value + step) -
-                  at(value + 2.0 * step)) / (2.0 * step);
+    double one =
+        (-3.0 * at(value) + 4.0 * at(value + step) - at(value + 2.0 * step)) /
+        (2.0 * step);
     if (std::isfinite(one))
       return one;
   }
