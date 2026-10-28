@@ -113,3 +113,6 @@ separate. CPU cases retain the GPU-only support error.
 Built-in bond cases add zero bond force constants beside all other CHARMM
 families and custom terms during a two-step trajectory, in both precisions
 and targets. Coordinate and tuple-field order remain compared at both stages.
+
+Zero angle force constants retain the independent Urey-Bradley contributions
+in both precisions and targets, including run and segmented forms.

@@ -492,6 +492,28 @@ phase = 0.4
         text = text.replace('steps      = 0', 'steps      = 2').replace('energy_interval = 0', 'energy_interval = 1')
         write(f"bonded-zero-bonds-{precision}", text)
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-FORCE_SWITCH-{precision}.toml")
+        parameters = (fixtures / "toy.prm").read_text()
+        begin = parameters.index('ANGLES\n') + len('ANGLES\n')
+        end = parameters.index('\nDIHEDRALS\n', begin)
+        lines = parameters[begin:end].splitlines(keepends=True)
+        changed = 0
+        for index, line in enumerate(lines):
+            if not line.strip() or line.lstrip().startswith('!'):
+                continue
+            words = line.split()
+            if len(words) >= 5:
+                words[3] = '0.0'
+                lines[index] = '  '.join(words) + '\n'
+                changed += 1
+        assert changed
+        zero = fixtures / "zero-angle.prm"
+        zero.write_text(parameters[:begin] + ''.join(lines) + parameters[end:])
+        text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(zero))
+        text = text.replace('steps      = 0', 'steps      = 2').replace('energy_interval = 0', 'energy_interval = 1')
+        write(f"bonded-zero-angle-{precision}", text)
+
     return ordinary, hosted
 
 

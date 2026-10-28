@@ -1435,8 +1435,13 @@ Built-in harmonic bonds construct the complete typed tuple reduction,
 including its distance coordinate, tuple-field order, scalar kernel, and
 yield. The half constant, displacement, squared displacement, half-force
 constant, and final multiplication retain their original order.
-`TermBond.cpp` no longer writes operation text. The
-existing `control-file term: <name>` diagnostic location is preserved; it
+`TermBond.cpp` no longer writes operation text.
+
+Built-in harmonic angles construct the complete typed tuple reduction with its
+angle coordinate and original tuple-field/scalar operation order.
+`TermAngle.cpp` no longer writes operation text.
+
+For custom expressions, the existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 
 Materialization rejects missing, repeated, or invalid connections and result

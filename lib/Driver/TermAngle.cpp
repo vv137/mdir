@@ -1,5 +1,9 @@
 // Built-in bonded family: tuple data, potential, and logged columns (#683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Builders.h"
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
@@ -32,25 +36,46 @@ public:
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,
                              const TermPotentialAddition &add) const override {
-    auto &os = context.getOutput();
     unsigned terms = selection.terms;
     auto has = [&](StringRef name) {
       return llvm::any_of(context.getTupleSets(),
                           [&](const auto &set) { return set.name == name; });
     };
     if ((terms & TermInputs::Angles) && has("angles")) {
-      os << "  %u_angles = md.sum_tuples %r_angles, %x, %cell coordinates("
-            "angle(0, 1, 2))\n"
-         << "      tuple(%f_angles_k, %f_angles_theta0 : !of_angles, "
-            "!of_angles) {\n"
-         << "  ^bb0(%theta: f64, %k: f64, %theta0: f64):\n"
-         << "    %half = arith.constant 0.5 : f64\n"
-         << "    %dt = arith.subf %theta, %theta0 : f64\n"
-         << "    %dt2 = arith.mulf %dt, %dt : f64\n"
-         << "    %hk = arith.mulf %half, %k : f64\n"
-         << "    %e = arith.mulf %hk, %dt2 : f64\n"
-         << "    md.yield %e : f64\n"
-         << "  } : !rel_angles, !vec -> f64\n";
+      context.emitIRFragment(
+          "  ", {"%u_angles"}, {"f64"},
+          {"%r_angles", "%x", "%cell", "%f_angles_k", "%f_angles_theta0"},
+          {"!rel_angles", "!vec", "!md.cell", "!of_angles", "!of_angles"},
+          [](mlir::OpBuilder &builder,
+             mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            llvm::SmallVector<mdir::md::Coordinate> coordinates = {
+                {mdir::md::CoordinateKind::Angle, {0, 1, 2}}};
+            DenseI32ArrayAttr kinds;
+            DenseI64ArrayAttr members;
+            mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+            auto sum = mdir::md::SumTuplesOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], ValueRange{}, values.drop_front(3), kinds, members);
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              llvm::SmallVector<Type> types(3, builder.getF64Type());
+              llvm::SmallVector<Location> locations(3, loc);
+              Block *block =
+                  builder.createBlock(&sum.getKernel(), {}, types, locations);
+              auto args = block->getArguments();
+              Value half = arith::ConstantOp::create(
+                  builder, loc, builder.getF64FloatAttr(0.5));
+              Value delta =
+                  arith::SubFOp::create(builder, loc, args[0], args[2]);
+              Value square = arith::MulFOp::create(builder, loc, delta, delta);
+              Value hk = arith::MulFOp::create(builder, loc, half, args[1]);
+              Value energy = arith::MulFOp::create(builder, loc, hk, square);
+              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            }
+            return {sum.getResult()};
+          });
       add("angles");
     }
   }
