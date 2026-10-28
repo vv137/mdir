@@ -210,6 +210,13 @@ complete builder/program is exposed. Field, topology-site, and declaration
 orders are explicit, and staged bodies remain in the shared potential so
 inlining and loop fusion retain their existing order. Model contributions
 follow the existing restraint correction at the same evaluation sites.
-The remaining stage-A kinds are bonded and nonbonded. The hook inventory
+All bonded families now own their tuple data, potential contributions, and
+energy-column definitions in registered adapters: bonds, angles, dihedrals,
+Urey–Bradley, harmonic impropers, special 1–4 pairs, and CMAP. Shared ordered
+definition records supply both declarations and energy output. Explicit
+collection and contribution ranks retain their interleaving with custom
+tuples, gradient fields, constraints, and staged models. The 1–4 adapter
+owns charge-product refilling; its scalar Lennard-Jones emitter is shared
+with ordinary pairs. Nonbonded kinds remain in stage A. The hook inventory
 and single-implementer audit complete that stage; #568 steps 4 and 5 then
 replace term templates with typed IR and leave text only at user boundaries.

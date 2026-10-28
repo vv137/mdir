@@ -100,8 +100,8 @@ and tested through `mdir-opt`, and no run of `mdir run` or of a Python
 simulation takes it yet.
 
 The driver's explicit term registry (D359, D361) currently owns external,
-pull, restraint, Born/surface, custom tuple/pair, triplet, and model
-adapters. Stage A of #683 moves the remaining bonded and nonbonded kinds.
+pull, restraint, Born/surface, custom tuple/pair, triplet, model, and bonded
+adapters. Stage A of #683 next moves the nonbonded kinds.
 Each build owns its adapters, and specialized roles borrow bounded inputs
 and emission services (D[builder-term-roles]); model preparation data stays
 private. Field, contribution, output, and declaration order stay explicit.

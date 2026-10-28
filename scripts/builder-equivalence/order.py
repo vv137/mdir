@@ -90,6 +90,28 @@ a = 0.01
         for precision in ("DOUBLE", "MIXED"):
             write(f"combined-{solvent}-{precision}",
                   combo.replace("SOLVENT", solvent).replace("PRECISION", precision))
+    # The synthetic CHARMM chain has all bonded families, including CMAP,
+    # Urey-Bradley, harmonic impropers, and special 1-4 parameters.
+    charmm = (root / "test/Driver/charmm.test").read_text()
+    sections = re.split(r"^#--- (.+)\n", charmm, flags=re.MULTILINE)
+    fixtures = out / "bonded-inputs"
+    fixtures.mkdir(exist_ok=True)
+    for name, content in zip(sections[1::2], sections[2::2]):
+        (fixtures / name.strip()).write_text(content)
+    bonded = (fixtures / "run.toml").read_text()
+    for name in ("toy.psf", "toy.crd", "toy.rtf", "toy.prm"):
+        bonded = bonded.replace('"' + name + '"', quoted(fixtures / name))
+    bonded = bonded.replace('target    = "CPU"\n', '')
+    combined = combo[combo.index('[[energy.external]]'):]
+    combined = combined[:combined.index('[execution]')] + combined[combined.index('[[energy.bond]]'):]
+    for precision in ("DOUBLE", "MIXED"):
+        for modifier in ("FORCE_SWITCH", "POWER_FORCE_SWITCH"):
+            # Power switching is defined for the built-in LJ powers only.
+            extra = combined if modifier == "FORCE_SWITCH" else combined.split('[[energy.pair]]')[0]
+            text = bonded.replace('precision = "DOUBLE"', f'precision = "{precision}"')
+            text = text.replace('"POWER_FORCE_SWITCH"', quoted(modifier))
+            write(f"bonded-combined-{modifier}-{precision}", text + "\n" + extra)
+
     bare = (root / "test/Driver/charged.toml").read_text().replace(
         '"Inputs/', '"' + str(inputs) + "/")
     for precision in ("DOUBLE", "MIXED"):

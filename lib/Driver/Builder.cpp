@@ -387,27 +387,12 @@ llvm::Error Builder::build() {
         return error;
   if (system.topology) {
     emitTopologyPotential("energy", AllTerms);
-    // Each term on its own, for the log at the start.
+    // One definition list fixes both the declaration and output-column order.
     if (!isRestart())
-      for (auto [name, term] :
-           {std::pair<StringRef, unsigned>{"term_lj", LennardJones},
-            {"term_coulomb", Coulomb},
-            {"term_bonds", Bonds},
-            {"term_angles", Angles},
-            {"term_dihedrals", Dihedrals},
-            {"term_lj14", LennardJones14},
-            {"term_coulomb14", Coulomb14},
-            {"term_cmap", CMaps},
-            {"term_excluded", CoulombExcluded | CoulombWithin},
-            {"term_reciprocal", CoulombReciprocal},
-            {"term_urey_bradley", UreyBradleys},
-            {"term_impropers", HarmonicImpropers},
-            {"term_lj_excluded", LennardJonesExcluded},
-            {"term_lj_reciprocal", LennardJonesReciprocal}})
-        emitTopologyPotential(name, term);
-    if (!isRestart())
-      for (const TermBuilder *builder : termBuildersByPotentialRank())
-        builder->emitTermPotentials(*this);
+      for (const TermDefinition &definition : getTermDefinitions())
+        emitTopologyPotential(definition.name, definition.terms,
+                              definition.tupleTerm, definition.pairTerm,
+                              definition.externalTerm);
   }
   else if (llvm::Error error = emitPotential())
     return error;
@@ -778,4 +763,21 @@ std::string mdir::driver::describeDifference(const Program &a,
         !sameBits(a.startValues[k].value, b.startValues[k].value))
       return "the start value '" + a.startValues[k].name + "'";
   return "";
+}
+
+std::vector<TermDefinition> Builder::getTermDefinitions() const {
+  std::vector<TermDefinition> definitions = {
+      {0, 0, "term_lj", LennardJones},
+      {1, 0, "term_coulomb", Coulomb},
+      {8, 0, "term_excluded", CoulombExcluded | CoulombWithin},
+      {9, 0, "term_reciprocal", CoulombReciprocal},
+      {12, 0, "term_lj_excluded", LennardJonesExcluded},
+      {13, 0, "term_lj_reciprocal", LennardJonesReciprocal},
+  };
+  for (const TermBuilder *builder : getTermBuilders())
+    builder->appendTermDefinitions(*this, definitions);
+  llvm::stable_sort(definitions, [](const auto &a, const auto &b) {
+    return std::tie(a.rank, a.ordinal) < std::tie(b.rank, b.ordinal);
+  });
+  return definitions;
 }

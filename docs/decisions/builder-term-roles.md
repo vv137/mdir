@@ -21,6 +21,12 @@ driver Section 2.12 identifies the implementers and the scope of each role;
 one-implementer behavior is folded into a shared role or a narrower
 interface rather than added as another generic virtual hook.
 
+One ordered `TermDefinition` record list supplies both independent potential
+declarations and output-column names. Ranks retain all 14 built-in columns,
+including empty contributions, before the variable-length custom groups.
+Tuple collection ranks retain the interleaving with common gradient and
+constraint data without a new kind-specific virtual operation.
+
 Parameter and contribution-site ranks and an explicit declaration site
 preserve the existing positions. A bounded potential accumulator accepts a named contribution
 or an explicit SSA result, retaining the sum order and the existing names

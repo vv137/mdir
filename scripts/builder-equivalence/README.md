@@ -24,3 +24,9 @@ retained explicitly. Staged-model controls successfully reach printed and
 lowered IR. `--host-raw` additionally compares hosted module text before
 these baseline verifier failures; this supplementary check is for stage A,
 where text is preserved, rather than the later typed-IR stage.
+
+The order matrix also generates the synthetic CHARMM chain from the reader
+fixture, combined with custom tuple, centroid, pair, external, and restraint
+terms in both precisions. It exercises all bonded families, their independent
+energy columns, special 1–4 switching, and the CMAP table in both targets and
+both program forms, alongside the existing Born/model cases.

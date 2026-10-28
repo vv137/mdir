@@ -1351,10 +1351,30 @@ site rank 2 retains staged contributions after CMAP. The hosted-evaluation decla
 previously unused generic entry hook is removed. `TermPotentialAddition` preserves ordinary named sums and the
 explicit staged-result sums without exposing the whole builder/program.
 Hosted evaluation remains after the existing restraint correction, with
-unchanged force, energy, virial, and stream dependencies. Models have moved;
-bonded and nonbonded families remain in stage A. The complete hook table
-and the fold/narrow audit follow the nonbonded move. Typed term IR and
-text parsing only at user boundaries remain #568 steps 4 and 5.
+unchanged force, energy, virial, and stream dependencies.
+
+Models and all bonded families have moved. `TermBond.cpp`, `TermAngle.cpp`,
+`TermDihedral.cpp`, `TermUreyBradley.cpp`, `TermImproper.cpp`,
+`TermPairs14.cpp`, and `TermCMap.cpp` each own their tuple data, potential
+contribution, and independent energy-column definitions. The special 1–4
+pairs own charge-product refilling as well. Their scalar Lennard-Jones
+emitter is shared with the primary pairs in `TermLennardJones.cpp`.
+
+`TermDefinition` records give declarations and output columns one stable
+order. Built-in ranks 0–13 retain every existing column, including empty
+contributions; groups 14–17 retain tuples, pairs, Born/surface, and externals.
+Within a variable-length group the ordinal is its original topology index.
+The bonded tuple collection rank -1 retains bonds, angles, Urey–Bradley,
+dihedrals, and impropers before custom tuples; rank 1 retains 1–4 pairs
+after gradient fields, and rank 2 retains CMAP after constraints and anchors.
+Topology site 3 emits the first five families after nonbonded contributions
+and before custom tuples; site 4 emits 1–4 pairs and CMAP after those tuples
+and before staged models. Registry order resolves ties explicitly in those
+family orders. No bonded-family-specific generic virtual hook is added.
+
+Nonbonded families remain in stage A. The complete hook table and the
+fold/narrow audit follow that move. Typed term IR and text parsing only at
+user boundaries remain #568 steps 4 and 5.
 
 ## 3. Decided
 

@@ -162,6 +162,7 @@ public:
   virtual double getShiftFixedFactor() const = 0;
   virtual llvm::ArrayRef<BuildKept::TupleGradient> getTupleGradients() const = 0;
   virtual bool hasGradientArguments() const = 0;
+  virtual bool hasGradientCharges() const = 0;
   virtual bool hasTunableGradient() const = 0;
   virtual bool includesTuple(unsigned index) const = 0;
   const Topology &getTopology() const { return *getSystem().topology; }
@@ -214,6 +215,21 @@ public:
     });
   }
 };
+
+inline Program::TupleSet &addTupleSet(std::vector<Program::TupleSet> &sets,
+                                      StringRef name, unsigned arity) {
+  Program::TupleSet set;
+  set.name = name.str();
+  set.arity = arity;
+  sets.push_back(std::move(set));
+  return sets.back();
+}
+inline size_t addTupleField(Program::TupleSet &set, StringRef name) {
+  Program::Field field;
+  field.name = name.str();
+  set.fields.push_back(std::move(field));
+  return set.fields.size() - 1;
+}
 
 /// Parameter collection adds only the program's term data collections.
 class TermParameters : public TermInputs {
@@ -303,6 +319,20 @@ struct TermPotentialAddition {
   void append(StringRef value, StringRef sum) const { result(value, sum); }
 };
 
+/// The shared scalar kernel of ordinary and special 1-4 LJ pairs.
+void emitLennardJones(llvm::raw_ostream &, const Control &, StringRef sigma,
+                      StringRef epsilon, StringRef result, Truncation,
+                      StringRef distance = "%r");
+
+/// One independently evaluated/logged potential, in stable column order.
+struct TermDefinition {
+  unsigned rank;
+  size_t ordinal;
+  std::string name;
+  unsigned terms;
+  int tupleTerm = -1, pairTerm = -1, externalTerm = -1;
+};
+
 /// Hooks for the term kinds already moved out of the central builder
 /// (D359). The explicit list fixes their emission order.
 class TermBuilder {
@@ -314,6 +344,7 @@ public:
   };
   virtual ~TermBuilder() = default;
   const TermRoles &getRoles() const { return roles; }
+  int getTupleRank() const { return tupleRank; }
   virtual int parameterRank() const { return 0; }
   virtual int potentialRank() const { return 0; }
   virtual int topologyRank() const { return 0; }
@@ -352,9 +383,8 @@ public:
   virtual void emitTopologyPotential(
       TermEmission &, const PotentialSelection &,
       const TermPotentialAddition &) const {}
-  virtual void emitTermPotentials(TermEmission &) const {}
-  virtual void appendTermNames(const TermInputs &,
-                               std::vector<std::string> &) const {}
+  virtual void appendTermDefinitions(const TermInputs &,
+                                     std::vector<TermDefinition> &) const {}
   virtual bool hasCoordinateOutput(const TermInputs &) const { return false; }
   virtual void emitAuxiliaryPotentials(TermEmission &) const {}
   virtual void emitOutput(TermEmission &, const TermOutput &) const {}
@@ -367,6 +397,7 @@ public:
     return std::nullopt;
   }
 protected:
+  int tupleRank = 0;
   TermRoles roles;
 
 };
@@ -381,6 +412,13 @@ std::unique_ptr<TermBuilder> createTupleTermBuilder();
 std::unique_ptr<TermBuilder> createPairTermBuilder();
 std::unique_ptr<TermBuilder> createTripletTermBuilder();
 std::unique_ptr<TermBuilder> createModelTermBuilder();
+std::unique_ptr<TermBuilder> createBondTermBuilder();
+std::unique_ptr<TermBuilder> createCMapTermBuilder();
+std::unique_ptr<TermBuilder> createPairs14TermBuilder();
+std::unique_ptr<TermBuilder> createImproperTermBuilder();
+std::unique_ptr<TermBuilder> createDihedralTermBuilder();
+std::unique_ptr<TermBuilder> createUreyBradleyTermBuilder();
+std::unique_ptr<TermBuilder> createAngleTermBuilder();
 llvm::Expected<PairTermTail> getCustomPairTail(const TermInputs &, unsigned,
                                              const llvm::StringMap<double> &);
 double getCustomPairTails(const TermInputs &, const llvm::StringMap<double> &, bool);
@@ -476,6 +514,7 @@ private:
     return tupleGradients;
   }
   bool hasGradientArguments() const override { return gradientArguments; }
+  bool hasGradientCharges() const override { return gradientCharges; }
   bool hasTunableGradient() const override { return program.tunableGradient; }
   bool includesTuple(unsigned index) const override {
     return !dependent || dependent->hasTuple(index);
@@ -491,6 +530,7 @@ private:
   /// from the topology: every field, table, and tuple set, each one number
   /// or one row for each particle, type, or tuple.
   void collectTopologyArrays();
+  std::vector<TermDefinition> getTermDefinitions() const;
   /// The stage after it: the constants of the energy that the host adds,
   /// from the arrays and the model.
   llvm::Error collectTopologyConstants();
@@ -505,7 +545,6 @@ private:
   /// charges of the 1-4 pairs.
   void fillCharges(Program::Field &field) const;
   void fillTypeTable(Program::Table &table) const;
-  void fillPairProducts(Program::Field &field) const;
   /// With Control::dependentTerms, the terms that the program keeps: every
   /// potential has only these, and the host adds to the energy only what
   /// belongs to them (D243).

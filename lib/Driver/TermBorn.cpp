@@ -18,22 +18,16 @@ public:
         context.getControl().implicitSolvent != Control::ImplicitSolvent::None)
       emitBorn(context, selection.terms, add);
   }
-  void emitTermPotentials(TermEmission &context) const override {
-    const auto &names = context.getSystem().bornTermNames;
-    if (names.empty())
-      return;
-    context.emitTopologyPotential("term_born", TermInputs::GeneralizedBorn);
-    if (names.size() > 1)
-      context.emitTopologyPotential("term_surface", TermInputs::Surface);
-  }
-  void appendTermNames(const TermInputs &context,
-                       std::vector<std::string> &names) const override {
+
+  void appendTermDefinitions(
+      const TermInputs &context,
+      std::vector<TermDefinition> &definitions) const override {
     const auto &terms = context.getSystem().bornTermNames;
     if (terms.empty())
       return;
-    names.push_back("term_born");
+    definitions.push_back({16, 0, "term_born", TermInputs::GeneralizedBorn});
     if (terms.size() > 1)
-      names.push_back("term_surface");
+      definitions.push_back({16, 1, "term_surface", TermInputs::Surface});
   }
 private:
   static void emitBorn(TermEmission &, unsigned,

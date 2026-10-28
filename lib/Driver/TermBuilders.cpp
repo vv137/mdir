@@ -6,10 +6,14 @@ using namespace mdir::driver::builder;
 llvm::ArrayRef<TermBuilderFactory>
 mdir::driver::builder::registerTermBuilders() {
   static const TermBuilderFactory factories[] = {
-      &createExternalTermBuilder,  &createPullTermBuilder,
-      &createRestraintTermBuilder, &createBornTermBuilder,
-      &createTupleTermBuilder,     &createPairTermBuilder,
-      &createTripletTermBuilder,   &createModelTermBuilder,
+      &createExternalTermBuilder,    &createPullTermBuilder,
+      &createRestraintTermBuilder,   &createBornTermBuilder,
+      &createTupleTermBuilder,       &createPairTermBuilder,
+      &createTripletTermBuilder,     &createModelTermBuilder,
+      &createBondTermBuilder,        &createAngleTermBuilder,
+      &createUreyBradleyTermBuilder, &createDihedralTermBuilder,
+      &createImproperTermBuilder,    &createPairs14TermBuilder,
+      &createCMapTermBuilder,
   };
   return factories;
 }

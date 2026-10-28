@@ -49,19 +49,16 @@ public:
           emitExternalTerm(context, index, term, add);
   }
 
-  void emitTermPotentials(TermEmission &context) const override {
-    for (size_t k = 0, e = context.getTopology().externalTerms.size();
-         k != e; ++k)
-      context.emitTopologyPotential("term_external" + std::to_string(k),
-                                     TermInputs::ExternalTerms, -1, -1,
-                                     static_cast<int>(k));
-  }
 
-  void appendTermNames(const TermInputs &context,
-                       std::vector<std::string> &names) const override {
-    for (size_t k = 0, e = context.getTopology().externalTerms.size();
-         k != e; ++k)
-      names.push_back("term_external" + std::to_string(k));
+
+  void appendTermDefinitions(
+      const TermInputs &context,
+      std::vector<TermDefinition> &definitions) const override {
+    for (size_t k = 0, e = context.getTopology().externalTerms.size(); k != e;
+         ++k)
+      definitions.push_back({17, k, "term_external" + std::to_string(k),
+                             TermInputs::ExternalTerms, -1, -1,
+                             static_cast<int>(k)});
   }
 
   std::pair<unsigned, int> findObservedTerm(const TermInputs &context,

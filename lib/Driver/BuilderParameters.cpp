@@ -39,17 +39,6 @@ void Builder::fillTypeTable(Program::Table &table) const {
 }
 
 
-void Builder::fillPairProducts(Program::Field &field) const {
-  // f q_i q_j s_C of each 1-4 pair.
-  const Topology &topology = *system.topology;
-  std::vector<double> products;
-  products.reserve(topology.pairs.size());
-  for (const Topology::Pair &pair : topology.pairs)
-    products.push_back(coulombInternal * topology.charges[pair.i] *
-                       topology.charges[pair.j] * pair.scaleCoulomb);
-  field.values = std::move(products);
-}
-
 /// Whether `name` is the table of the weights of a seed, `tgw<c>`.
 static bool isSeedTable(StringRef name) {
   unsigned seed;
@@ -81,10 +70,6 @@ llvm::Error Builder::adoptArrays() {
         fillTypeTable(table);
     }
   for (Program::TupleSet &set : program.tupleSets) {
-    if (set.name == "pairs14")
-      for (Program::Field &field : set.fields)
-        if (field.values.empty() && field.name == "qq")
-          fillPairProducts(field);
     for (const TermBuilder *builder : getTermBuilders())
       builder->refillTupleSet(*this, set);
   }
@@ -212,61 +197,12 @@ void Builder::collectTopologyArrays() {
   };
 
   mark.next("rebuild.build.topology.tuples");
-  if (!topology.bonds.empty()) {
-    Program::TupleSet &set = addSet("bonds", 2);
-    size_t k = addField(set, "k"), r0 = addField(set, "r0");
-    for (const Topology::Bond &bond : topology.bonds) {
-      set.members.push_back(bond.i);
-      set.members.push_back(bond.j);
-      set.fields[k].values.push_back(bond.k);
-      set.fields[r0].values.push_back(bond.r0);
-    }
-  }
-  if (!topology.angles.empty()) {
-    Program::TupleSet &set = addSet("angles", 3);
-    size_t k = addField(set, "k"), t0 = addField(set, "theta0");
-    for (const Topology::Angle &angle : topology.angles) {
-      for (unsigned member : {angle.i, angle.j, angle.k})
-        set.members.push_back(member);
-      set.fields[k].values.push_back(angle.force);
-      set.fields[t0].values.push_back(angle.theta0);
-    }
-  }
-  if (!topology.ureyBradleys.empty()) {
-    Program::TupleSet &set = addSet("urey_bradley", 2);
-    size_t k = addField(set, "k"), r0 = addField(set, "r0");
-    for (const Topology::UreyBradley &term : topology.ureyBradleys) {
-      set.members.push_back(term.i);
-      set.members.push_back(term.k);
-      set.fields[k].values.push_back(term.force);
-      set.fields[r0].values.push_back(term.r0);
-    }
-  }
-  if (!topology.dihedrals.empty()) {
-    Program::TupleSet &set = addSet("dihedrals", 4);
-    size_t k = addField(set, "k"), n = addField(set, "n"),
-           phase = addField(set, "phase");
-    for (const Topology::Dihedral &dihedral : topology.dihedrals) {
-      for (unsigned member :
-           {dihedral.i, dihedral.j, dihedral.k, dihedral.l})
-        set.members.push_back(member);
-      set.fields[k].values.push_back(dihedral.force);
-      set.fields[n].values.push_back(dihedral.n);
-      set.fields[phase].values.push_back(dihedral.phase);
-    }
-  }
-  if (!topology.harmonicImpropers.empty()) {
-    Program::TupleSet &set = addSet("impropers", 4);
-    size_t k = addField(set, "k"), xi0 = addField(set, "xi0");
-    for (const Topology::HarmonicImproper &term : topology.harmonicImpropers) {
-      for (unsigned member : {term.i, term.j, term.k, term.l})
-        set.members.push_back(member);
-      set.fields[k].values.push_back(term.force);
-      set.fields[xi0].values.push_back(term.xi0);
-    }
-  }
   for (const TermBuilder *builder : getTermBuilders())
-    builder->collectTupleSets(*this);
+    if (builder->getTupleRank() < 0)
+      builder->collectTupleSets(*this);
+  for (const TermBuilder *builder : getTermBuilders())
+    if (builder->getTupleRank() == 0)
+      builder->collectTupleSets(*this);
   // The field of zeros that `@tunable` takes for each of those fields.
   if (!program.gradientFields.empty()) {
     Program::Field zero;
@@ -286,26 +222,9 @@ void Builder::collectTopologyArrays() {
         program.gradientFields.push_back(std::move(field));
         gradientCharges = true;
       }
-  if (!topology.pairs.empty()) {
-    // The factors enter the parameters: ε s_LJ, and f q_i q_j s_C.
-    Program::TupleSet &set = addSet("pairs14", 2);
-    size_t sigma = addField(set, "sigma"), epsilon = addField(set, "epsilon"),
-           qq = addField(set, "qq");
-    // In `@tunable` the pairs take f s_C and the charges of their members,
-    // so that the derivative in the charges covers them.
-    if (gradientCharges) {
-      size_t scale = addField(set, "tgs");
-      for (const Topology::Pair &pair : topology.pairs)
-        set.fields[scale].values.push_back(coulombInternal * pair.scaleCoulomb);
-    }
-    for (const Topology::Pair &pair : topology.pairs) {
-      set.members.push_back(pair.i);
-      set.members.push_back(pair.j);
-      set.fields[sigma].values.push_back(pair.sigma);
-      set.fields[epsilon].values.push_back(pair.epsilon * pair.scaleLJ);
-    }
-    fillPairProducts(set.fields[qq]);
-  }
+  for (const TermBuilder *builder : getTermBuilders())
+    if (builder->getTupleRank() == 1)
+      builder->collectTupleSets(*this);
   // The virtual sites: the site, then the atoms that it is built from.
   for (auto [kind, name] :
        {std::pair{Topology::VirtualSite::AmberWater, "sites_amber"},
@@ -390,24 +309,9 @@ void Builder::collectTopologyArrays() {
       set.members.push_back(anchors[i]);
     }
   }
-  if (!topology.cmaps.empty()) {
-    // The map of each term, and the bicubic patches of every map: a row
-    // of 16 coefficients for each cell.
-    Program::TupleSet &set = addSet("cmap", 5);
-    set.reversible = false;
-    size_t map = addField(set, "map");
-    for (const Topology::CMap &cmap : topology.cmaps) {
-      for (unsigned member : {cmap.i, cmap.j, cmap.k, cmap.l, cmap.m})
-        set.members.push_back(member);
-      set.fields[map].values.push_back(cmap.map);
-    }
-    Program::Table table;
-    table.name = "cmap";
-    table.values = getCMapCoefficients(topology);
-    table.columns = 16;
-    table.count = table.values.size() / 16;
-    program.tables.push_back(std::move(table));
-  }
+  for (const TermBuilder *builder : getTermBuilders())
+    if (builder->getTupleRank() == 2)
+      builder->collectTupleSets(*this);
   if (!topology.exclusions.empty()) {
     Program::TupleSet &set = addSet("excluded", 2);
     for (auto [i, j] : topology.exclusions) {
