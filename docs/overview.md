@@ -104,7 +104,7 @@ pull, restraint, Born/surface, custom tuple/pair, triplet, model, bonded,
 and nonbonded adapters. Stage A of #683 covers every kind and audits all
 hook implementers.
 Each build owns its adapters, and specialized roles borrow bounded inputs
-and emission services (D[builder-term-roles]); model preparation data stays
+and emission services (D362); model preparation data stays
 private. Mesh/correction values use a narrow reference projection. Shared
 array/definition/correction hooks and specialized reporting/evaluation roles
 replace central kind dispatch. Field, contribution, output, and declaration

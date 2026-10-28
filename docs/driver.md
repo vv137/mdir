@@ -1194,7 +1194,7 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, registration and all term kinds (D359, D361, D[builder-term-roles], #683).**
+**Part 2, registration and all term kinds (D359, D361, D362, #683).**
 The central assembly sites iterate registered adapters: parameter arrays,
 shared potential contributions, independent energy columns, entry layouts,
 and reporting. They no longer branch on the kind of a term. Every kind has

@@ -147,7 +147,7 @@ special 1–4 pairs, and CMAP. Nonbonded owns primary, excluded, reciprocal,
 and within-selection LJ/Coulomb contributions and mesh/correction preparation.
 
 Each build owns the adapter instances returned by the explicit factory list
-(D[builder-term-roles]). The list retains static-link reachability. Adapters
+(D362). The list retains static-link reachability. Adapters
 borrow physical inputs, named parameter collections, streams, and shared
 emission services; none receives the complete builder/program or scheduling
 state. Born radii stay private to the combined Born/surface adapter. Imported

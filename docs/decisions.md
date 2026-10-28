@@ -657,6 +657,7 @@ specification follow those made with it.
 | [D359](decisions/D359.md) | An explicit registry of term builders owns the dispatch for each migrated kind of energy term, beginning with external terms. | 2026-10-27 |
 | [D360](decisions/D360.md) | Keep a bounded semantic FFT component resident on the device with checked layout, private backward inputs, and scoped host-boundary completion. | 2026-10-27 |
 | [D361](decisions/D361.md) | Term adapters receive borrowed capabilities for inputs, parameter collections, and emission rather than access to the complete builder. | 2026-10-27 |
+| [D362](decisions/D362.md) | The explicit registry supplies owned term adapters for each build, with specialized behavior exposed through role interfaces that borrow only the capabilities they need. | 2026-10-28 |
 <!-- end decisions-table -->
 
 

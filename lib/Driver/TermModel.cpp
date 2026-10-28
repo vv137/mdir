@@ -1,5 +1,5 @@
 // Staged and hosted model terms, with private preparation per build
-// (D359, D361, D[builder-term-roles], #683).
+// (D359, D361, D362, #683).
 #include "BuilderImpl.h"
 
 using namespace mdir::driver;
