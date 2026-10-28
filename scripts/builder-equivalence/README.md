@@ -88,3 +88,7 @@ targets retain the existing support error.
 External-term cases combine charges, particle parameter lists, coordinates, time,
 lambda, and a function table in cell and fixed frames, in both precisions and
 targets. Existing combined controls retain the ungathered and uncharged paths.
+
+Pull-potential fixtures combine radial and Cartesian distance terms with angle
+and dihedral terms, lambda and time, retaining their complete common argument
+signature and coordinate derivative order in both precisions and targets.

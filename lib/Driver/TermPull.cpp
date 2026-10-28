@@ -1,8 +1,22 @@
 // Pull-coordinate potentials and output, registered under D359 (#683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/BuiltinOps.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
+
+struct PullPotentialIRConfig {
+  explicit PullPotentialIRConfig(ExpressionIR expression)
+      : expression(std::move(expression)) {}
+  ExpressionIR expression;
+  std::string symbol, termName;
+  std::vector<std::string> quantities;
+  std::vector<std::pair<std::string, double>> lambdas, parameters;
+  std::vector<std::pair<std::string, size_t>> argumentBindings, tableBindings;
+};
 
 namespace mdir::driver::builder {
 class PullTermBuilder final : public TermBuilder, public TermCoordinateOutput {
@@ -67,45 +81,114 @@ PullTermBuilder::getColumns(const TermInputs &context) {
 void PullTermBuilder::emitAuxiliaryPotentials(TermEmission &context) const {
   const Control &control = context.getControl();
   const System &system = context.getSystem();
-  llvm::raw_ostream &os = context.getOutput();
-  // The energy of each term as a function of its coordinates, which follow
-  // the other arguments, so that the derivatives with respect to them give
-  // the forces along the coordinates.
-  std::vector<std::pair<size_t, std::string>> columns = getColumns(context);
+  auto columns = getColumns(context);
   if (columns.empty())
     return;
-  for (size_t index = 0, e = system.topology->tupleTerms.size(); index != e;
-       ++index) {
-    const TupleTerm &term = system.topology->tupleTerms[index];
+  // The shared energy potential supplies the exact common argument types.
+  // A recipe borrows those types only when it constructs the auxiliary IR.
+  std::vector<std::string> commonNames = {"%x", "%cell"};
+  for (const auto &field : context.getFields())
+    commonNames.push_back("%p_" + field.name);
+  for (const auto &table : context.getTables())
+    commonNames.push_back("%t_" + table.name);
+  for (const auto &set : context.getTupleSets()) {
+    commonNames.push_back("%r_" + set.name);
+    for (const auto &field : set.fields)
+      commonNames.push_back("%f_" + set.name + "_" + field.name);
+  }
+  if (control.usesTime)
+    commonNames.push_back("%time");
+  auto argument = [&](StringRef name) -> size_t {
+    auto found = llvm::find(commonNames, name);
+    assert(found != commonNames.end() && "missing pull potential argument");
+    return found - commonNames.begin();
+  };
+  for (auto [index, term] : llvm::enumerate(system.topology->tupleTerms)) {
     if (!term.isCentroid())
       continue;
-    std::vector<std::string> quantities;
+    Expression expression =
+        llvm::cantFail(Expression::parse(term.expression, control.functions));
+    PullPotentialIRConfig config(expression.prepareIR());
+    config.symbol = "pullterm" + std::to_string(index);
+    config.termName = term.name;
+    llvm::StringMap<std::string> variables;
     for (const auto &[k, quantity] : columns)
-      if (k == index)
-        quantities.push_back(quantity);
-    os << "md.potential @pullterm" << index << "(%x: !vec, %cell: !md.cell"
-       << context.getFieldParameters() << context.getTimeParameter();
-    for (size_t q = 0; q != quantities.size(); ++q)
-      os << ", %pq" << q << ": f64";
-    os << ") -> f64 {\n";
-    context.emitLambdaConstants("  ");
-    llvm::StringMap<std::string> values;
-    for (auto [q, quantity] : llvm::enumerate(quantities))
-      values[quantity] = "%pq" + std::to_string(q);
-    for (auto [p, parameter] : llvm::enumerate(term.parameters)) {
-      std::string name = "%pp" + std::to_string(p);
-      os << "  " << name << " = arith.constant "
-         << formatReal(parameter.second.front()) << " : f64\n";
-      values[parameter.first] = name;
+      if (k == index) {
+        variables[quantity] = "";
+        config.quantities.push_back(quantity);
+      }
+    for (const auto &parameter : term.parameters) {
+      config.parameters.emplace_back(parameter.first, parameter.second.front());
+      variables[parameter.first] = "";
     }
     if (control.usesTime)
-      values["t"] = "%time";
-    context.bindLambdas(values);
-    Expression expression = llvm::cantFail(
-        Expression::parse(term.expression, control.functions));
-    std::string energy =
-        emitExpressionIR(context, expression, values, "%pe", "  ", term.name);
-    os << "  md.return " << energy << " : f64\n}\n\n";
+      variables["t"] = "%time";
+    context.bindLambdas(variables);
+    for (const auto &[name, values] : control.freeEnergy.lambdas)
+      config.lambdas.emplace_back(
+          "lambda_" + name,
+          control.freeEnergy.get(name, control.freeEnergy.state));
+    llvm::SmallVector<StringRef> supplied;
+    for (const auto &entry : variables)
+      supplied.push_back(entry.getKey());
+    auto inputs = config.expression.getInputs(supplied);
+    for (const auto &name : inputs.names) {
+      auto found = variables.find(name);
+      assert(found != variables.end() && "missing pull expression binding");
+      if (!found->second.empty() && found->second == "%time")
+        config.argumentBindings.emplace_back(name, argument(found->second));
+    }
+    for (const auto &name : inputs.tables)
+      config.tableBindings.emplace_back(name, argument("%t_" + name));
+    context.emitIRFragment(
+        "", {}, {}, {}, {},
+        [config](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+          using namespace mlir;
+          auto module =
+              cast<ModuleOp>(builder.getInsertionBlock()->getParentOp());
+          auto energy = module.lookupSymbol<mdir::md::PotentialOp>("energy");
+          assert(energy && "missing shared energy potential");
+          llvm::SmallVector<Type> types(energy.getFunctionType().getInputs());
+          size_t coordinateBase = types.size();
+          types.append(config.quantities.size(), builder.getF64Type());
+          auto functionType =
+              builder.getFunctionType(types, {builder.getF64Type()});
+          auto loc = builder.getUnknownLoc();
+          auto potential = mdir::md::PotentialOp::create(
+              builder, loc, config.symbol, functionType, StringAttr{},
+              ArrayAttr{}, ArrayAttr{});
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            llvm::SmallVector<Location> locations(types.size(), loc);
+            Block *block =
+                builder.createBlock(&potential.getBody(), {}, types, locations);
+            auto args = block->getArguments();
+            auto constant = [&](double value) -> Value {
+              return arith::ConstantOp::create(builder, loc,
+                                               builder.getF64FloatAttr(value));
+            };
+            llvm::StringMap<Value> bindings, tables, lambdas;
+            // Constants retain their original order even when unused.
+            for (const auto &[name, value] : config.lambdas)
+              lambdas[name] = constant(value);
+            for (auto [q, name] : llvm::enumerate(config.quantities))
+              bindings[name] = args[coordinateBase + q];
+            for (const auto &[name, value] : config.parameters)
+              bindings[name] = constant(value);
+            for (const auto &[name, slot] : config.argumentBindings)
+              bindings[name] = args[slot];
+            // Apply lambda bindings after parameters, as the textual emitter
+            // did.
+            for (const auto &entry : lambdas)
+              bindings[entry.getKey()] = entry.getValue();
+            for (const auto &[name, slot] : config.tableBindings)
+              tables[name] = args[slot];
+            Value result = config.expression.build(builder, bindings, tables,
+                                                   config.termName);
+            mdir::md::ReturnOp::create(builder, loc, ValueRange{result});
+          }
+          return {};
+        });
   }
 }
 

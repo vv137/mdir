@@ -1398,7 +1398,14 @@ External terms also construct cell-frame scaling, particle gathers, scalar
 coordinates and bindings, expression results, membership selection, and yields
 with typed operations. Owned configuration preserves field and constant order,
 charge and parameter arguments, and time/lambda/observed binding precedence.
-`TermExternal.cpp` no longer writes operation text. The
+`TermExternal.cpp` no longer writes operation text.
+
+Auxiliary pull potentials now construct their complete function and scalar
+body with typed operations. They borrow the common argument types from the
+shared energy potential at materialization, then append coordinate arguments
+in their existing order. Owned expression metadata and parameter/lambda values
+preserve constant emission and binding precedence; no hook-local state escapes.
+Pull output calls remain a separate conversion. The
 existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

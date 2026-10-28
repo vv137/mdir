@@ -1,6 +1,5 @@
 // Typed fragments become operations in their original shared regions (#568).
 #include "TermIR.h"
-#include "BuilderImpl.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/STLExtras.h"
@@ -26,6 +25,16 @@ void TermIRPlan::emit(llvm::raw_ostream &os, llvm::StringRef indent,
     llvm::interleaveComma(results, os);
     os << " = ";
   }
+  if (resultTypes.empty()) {
+    // The custom cast parser requires a nonempty output type list. Generic
+    // syntax can express the zero-result connection removed at materialization.
+    os << "\"builtin.unrealized_conversion_cast\"(";
+    llvm::interleaveComma(operands, os);
+    os << ") {" << recipeAttribute << " = " << index << " : i64} : (";
+    llvm::interleaveComma(operandTypes, os);
+    os << ") -> ()\n";
+    return;
+  }
   os << "builtin.unrealized_conversion_cast";
   if (!operands.empty()) {
     os << " ";
@@ -34,9 +43,7 @@ void TermIRPlan::emit(llvm::raw_ostream &os, llvm::StringRef indent,
     llvm::interleaveComma(operandTypes, os);
   }
   os << " to ";
-  if (resultTypes.empty())
-    os << "()";
-  else
+  if (!resultTypes.empty())
     llvm::interleaveComma(resultTypes, os);
   os << " {" << recipeAttribute << " = " << index << " : i64}\n";
 }
@@ -88,43 +95,4 @@ llvm::Error TermIRPlan::materialize(mlir::ModuleOp module) {
         "internal term IR connection survived materialization");
   recipes.clear();
   return llvm::Error::success();
-}
-
-std::string mdir::driver::builder::emitExpressionIR(
-    TermEmission &context, const mdir::driver::Expression &expression,
-    const llvm::StringMap<std::string> &bindings, llvm::StringRef prefix,
-    llvm::StringRef indent, llvm::StringRef termName) {
-  auto program = expression.prepareIR();
-  llvm::SmallVector<llvm::StringRef> supplied;
-  for (const auto &entry : bindings)
-    supplied.push_back(entry.getKey());
-  auto inputs = program.getInputs(supplied);
-  std::vector<std::string> names;
-  llvm::SmallVector<llvm::StringRef> types;
-  for (const auto &name : inputs.names) {
-    auto found = bindings.find(name);
-    assert(found != bindings.end() && "missing expression binding");
-    names.push_back(found->second);
-    types.push_back("f64");
-  }
-  for (const auto &name : inputs.tables) {
-    names.push_back("%t_" + name);
-    types.push_back("!grid");
-  }
-  llvm::SmallVector<llvm::StringRef> operands;
-  for (const auto &name : names)
-    operands.push_back(name);
-  std::string result = prefix.str() + "ir_result";
-  context.emitIRFragment(
-      indent, {result}, {"f64"}, operands, types,
-      [program, inputs, term = termName.str()](
-          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
-        llvm::StringMap<mlir::Value> bindings, tables;
-        for (size_t k = 0; k != inputs.names.size(); ++k)
-          bindings[inputs.names[k]] = values[k];
-        for (size_t k = 0; k != inputs.tables.size(); ++k)
-          tables[inputs.tables[k]] = values[inputs.names.size() + k];
-        return {program.build(builder, bindings, tables, term)};
-      });
-  return result;
 }

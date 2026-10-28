@@ -249,6 +249,13 @@ with typed operations. Owned configuration preserves field and constant order,
 charge and parameter arguments, and time/lambda/observed binding precedence.
 `TermExternal.cpp` no longer writes operation text.
 
+Auxiliary pull potentials now construct their complete function and scalar
+body with typed operations. They borrow the common argument types from the
+shared energy potential at materialization, then append coordinate arguments
+in their existing order. Owned expression metadata and parameter/lambda values
+preserve constant emission and binding precedence; no hook-local state escapes.
+Pull output calls remain a separate conversion.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and the unchanged legacy parse-error path; the corpus also rejects internal

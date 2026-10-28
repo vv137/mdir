@@ -340,6 +340,28 @@ a = 0.01
         assert 'scaling = "CELL"' in text
         write(f"external-fixed-{precision}", text.replace('scaling = "CELL"', 'scaling = "NONE"'))
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"centroid-expression-{precision}.toml")
+        text = source.read_text().replace(
+            'lambda_vdw*k*(r-r0)^2+lambda_coulomb*a*(1+r*r)+t',
+            'lambda_vdw*k*(r-r0)^2+lambda_coulomb*a*(dx+dy+dz)^2+t')
+        text += '''
+[[energy.angle]]
+name = "rank_pull_angle"
+expression = "lambda_vdw*k*(theta-theta0)^2+t"
+groups = ["@1", "@2", "@3"]
+k = 0.1
+theta0 = 1.0
+[[energy.dihedral]]
+name = "rank_pull_dihedral"
+expression = "lambda_coulomb*k*(1+cos(n*theta-phase))+t"
+groups = ["@1", "@2", "@3", "@4"]
+k = 0.1
+n = 2.0
+phase = 0.4
+'''
+        write(f"pull-potential-{precision}", text)
+
     model_ir = '''md.potential @order_model(%positions: !md.field<@atoms, 3 x f64>, %box: !md.cell, %numbers: !md.field<@atoms, i32>) -> f64 {
   %total = md.sum_particles gather(%positions : !md.field<@atoms, 3 x f64>) {
   ^bb0(%position: vector<3xf64>):

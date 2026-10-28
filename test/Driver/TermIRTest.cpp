@@ -52,6 +52,18 @@ int main() {
 
   {
     TermIRPlan plan;
+    std::string source;
+    llvm::raw_string_ostream stream(source);
+    plan.emit(stream, "", {}, {}, {}, {},
+              [](OpBuilder &, ValueRange) { return TermIRValues{}; });
+    stream.flush();
+    auto module = parse("module { " + source + " }");
+    require(!plan.materialize(*module), "zero-result connection was rejected");
+    require(module->getBody()->empty(), "zero-result connection survived");
+    require(succeeded(verify(*module)), "zero-result module did not verify");
+  }
+  {
+    TermIRPlan plan;
     registerRecipe(plan);
     auto module = parse("module {}");
     reject(plan.materialize(*module),
