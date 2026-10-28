@@ -1,0 +1,1 @@
+- Hosted models with positional restraints store the restraint energy produced by the initial correction instead of referring to an undefined value (#706).
