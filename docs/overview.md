@@ -117,7 +117,10 @@ expressions and `ModelTerm` at their input boundaries.
 [Driver Section 2.12](driver.md#212-the-files-of-the-builder) describes the
 files and roles.
 The prolate near/far splitting emitter also constructs its clamped table
-lookup and Horner polynomial with typed operations at the original site.
+lookup and Horner polynomial with typed operations at the original site. Direct
+Coulomb kernels now use typed operations too: cutoff and reaction field,
+Gaussian Ewald, prolate series/cells, alchemical charge scaling, and the
+clamped distance retain their original operation order.
 
 ### 2.2 The dialects
 

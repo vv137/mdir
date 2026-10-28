@@ -1330,7 +1330,10 @@ no new call boundary or SSA-name hint. The other term emitters follow in
 separate commits. Step 5 subsequently removes generated-text assembly;
 custom expressions and `ModelTerm` are parsed only at their input boundaries.
 The prolate near/far splitting emitter also constructs its clamped table
-lookup and Horner polynomial with typed operations at the original site.
+lookup and Horner polynomial with typed operations at the original site. Direct
+Coulomb kernels now use typed operations too: cutoff and reaction field,
+Gaussian Ewald, prolate series/cells, alchemical charge scaling, and the
+clamped distance retain their original operation order.
 
 ## 3. Decided
 

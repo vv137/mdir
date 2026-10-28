@@ -183,4 +183,7 @@ Other emitters follow one per commit. The following stage removes the
 remaining generated-text boundary and keeps parsing at user input boundaries.
 
 The prolate near/far splitting emitter also constructs its clamped table
-lookup and Horner polynomial with typed operations at the original site.
+lookup and Horner polynomial with typed operations at the original site. Direct
+Coulomb kernels now use typed operations too: cutoff and reaction field,
+Gaussian Ewald, prolate series/cells, alchemical charge scaling, and the
+clamped distance retain their original operation order.

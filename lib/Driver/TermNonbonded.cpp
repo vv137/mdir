@@ -111,6 +111,45 @@ mdir::driver::builder::getTopologyShiftFactor(const TermInputs &context) {
   return 1.0 - volume / (n * 4.0 * M_PI / 3.0 * rc * rc * rc);
 }
 
+static mlir::Value buildProlateSplitting(mlir::OpBuilder &builder,
+                                         mlir::Value table, mlir::Value x,
+                                         int64_t prolateCells,
+                                         int64_t prolateTerms) {
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  auto constant = [&](double value) -> Value {
+    return arith::ConstantOp::create(builder, loc,
+                                     builder.getF64FloatAttr(value));
+  };
+  Value cells = constant(static_cast<double>(prolateCells));
+  Value top = constant(static_cast<double>(prolateCells - 1));
+  Value nil = constant(0.0);
+  Value one = constant(1.0);
+  Value two = constant(2.0);
+  Value u = arith::MulFOp::create(builder, loc, x, cells);
+  Value floor = math::FloorOp::create(builder, loc, u);
+  Value low = arith::MaximumFOp::create(builder, loc, floor, nil);
+  Value place = arith::MinimumFOp::create(builder, loc, low, top);
+  Value s = arith::SubFOp::create(builder, loc, u, place);
+  Value s2 = arith::MulFOp::create(builder, loc, two, s);
+  Value t = arith::SubFOp::create(builder, loc, s2, one);
+  Value row =
+      arith::FPToSIOp::create(builder, loc, builder.getI32Type(), place);
+  llvm::SmallVector<Value> coefficients;
+  for (int64_t j = 0; j != prolateTerms; ++j) {
+    Value column =
+        arith::ConstantOp::create(builder, loc, builder.getI32IntegerAttr(j));
+    coefficients.push_back(mdir::md::LookupOp::create(
+        builder, loc, builder.getF64Type(), table, ValueRange{row, column}));
+  }
+  Value value = coefficients.back();
+  for (int64_t j = prolateTerms - 2; j >= 0; --j) {
+    Value product = arith::MulFOp::create(builder, loc, value, t);
+    value = arith::AddFOp::create(builder, loc, product, coefficients[j]);
+  }
+  return value;
+}
+
 /// A part of the splitting of the prolate kernel at `x` = r / r_c, from the
 /// table `table` (prolate::getSplittingTable): the polynomial of the cell
 /// of x in t = 2 (x cells − k) − 1, the cell clamped to the table. The
@@ -126,40 +165,8 @@ static std::string emitProlateSplitting(TermEmission &context, StringRef table,
       "    ", {result}, {"f64"}, {tableName, x}, {"!grid", "f64"},
       [prolateCells, prolateTerms](mlir::OpBuilder &builder,
                                    mlir::ValueRange operands) -> TermIRValues {
-        using namespace mlir;
-        auto loc = builder.getUnknownLoc();
-        auto constant = [&](double value) -> Value {
-          return arith::ConstantOp::create(builder, loc,
-                                           builder.getF64FloatAttr(value));
-        };
-        Value cells = constant(static_cast<double>(prolateCells));
-        Value top = constant(static_cast<double>(prolateCells - 1));
-        Value nil = constant(0.0);
-        Value one = constant(1.0);
-        Value two = constant(2.0);
-        Value u = arith::MulFOp::create(builder, loc, operands[1], cells);
-        Value floor = math::FloorOp::create(builder, loc, u);
-        Value low = arith::MaximumFOp::create(builder, loc, floor, nil);
-        Value place = arith::MinimumFOp::create(builder, loc, low, top);
-        Value s = arith::SubFOp::create(builder, loc, u, place);
-        Value s2 = arith::MulFOp::create(builder, loc, two, s);
-        Value t = arith::SubFOp::create(builder, loc, s2, one);
-        Value row =
-            arith::FPToSIOp::create(builder, loc, builder.getI32Type(), place);
-        llvm::SmallVector<Value> coefficients;
-        for (int64_t j = 0; j != prolateTerms; ++j) {
-          Value column = arith::ConstantOp::create(
-              builder, loc, builder.getI32IntegerAttr(j));
-          coefficients.push_back(
-              mdir::md::LookupOp::create(builder, loc, builder.getF64Type(),
-                                         operands[0], ValueRange{row, column}));
-        }
-        Value value = coefficients.back();
-        for (int64_t j = prolateTerms - 2; j >= 0; --j) {
-          Value product = arith::MulFOp::create(builder, loc, value, t);
-          value = arith::AddFOp::create(builder, loc, product, coefficients[j]);
-        }
-        return {value};
+        return {buildProlateSplitting(builder, operands[0], operands[1],
+                                      prolateCells, prolateTerms)};
       });
   return result;
 }
@@ -1406,94 +1413,118 @@ public:
         }
       }
       if (coulomb) {
-        os << "    %f = arith.constant " << formatReal(coulombInternal)
-           << " : f64\n";
-        if (scalesCoulomb)
-          os << "    %qq0 = arith.mulf %q_i, %q_j : f64\n"
-             << "    %qq_cl = arith.mulf %cross, %lambda_coulomb : f64\n"
-             << "    %qq_scale = arith.subf %al_one, %qq_cl : f64\n"
-             << "    %qq = arith.mulf %qq0, %qq_scale : f64\n";
-        else
-          os << "    %qq = arith.mulf %q_i, %q_j : f64\n";
-        os << "    %fqq = arith.mulf %f, %qq : f64\n";
-        // A decoupled pair may overlap once its Lennard-Jones is off; its
-        // TermInputs::Coulomb, then 0, takes a distance of at least 1e-4 nm,
-        // which no pair that interacts comes near, so that it is not 0 times ∞.
-        std::string rq = "%r";
+        // The clamped distance prevents a decoupled overlapping pair from
+        // producing zero times infinity. Reaction-field r² keeps physical r.
+        auto reaction = program.reactionField ? getReactionField(control)
+                                              : std::pair<double, double>{};
+        bool prolateSeries = takesProlateSeries(control) && !scalesCoulomb;
+        auto [prolateCells, prolateTerms] =
+            getProlateTableShape(control.precision);
+        llvm::SmallVector<StringRef> operands = {"%q_i", "%q_j", "%r"};
+        llvm::SmallVector<StringRef> operandTypes = {"f64", "f64", "f64"};
         if (scalesCoulomb) {
-          os << "    %rq_least = arith.constant 1.0e-04 : f64\n"
-             << "    %rq = arith.maximumf %r, %rq_least : f64\n";
-          rq = "%rq";
+          operands.append({"%cross", "%al_one", "%lambda_coulomb"});
+          operandTypes.append({"f64", "f64", "f64"});
         }
-        if (program.pme && program.pmeProlate) {
-          // The direct sum of the prolate kernel, f q q (1 − Φ(r/r_c)) / r
-          // [Liang2026, eq. 3]; Φ(1) = 1, so a shift at the cutoff is 0.
-          os << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
-             << " : f64\n"
-             << "    %xr = arith.mulf " << rq << ", %rc_inverse : f64\n";
-          if (takesProlateSeries(control) && !scalesCoulomb) {
-            // f q q (1 − x) P(t) / r, P = (1 − Φ(x))/(1 − x) a Chebyshev
-            // series in t = 2x − 1: a function of r² alone, which a table of
-            // r² then holds as it holds erfc(βr)/r (D94,
-            // D280).
-            os << "    %pf_two = arith.constant 2.0 : f64\n"
-               << "    %pf_one = arith.constant 1.0 : f64\n"
-               << "    %pf_2x = arith.mulf %pf_two, %xr : f64\n"
-               << "    %pf_t = arith.subf %pf_2x, %pf_one : f64\n"
-               << "    %pf_mean = md.chebyshev %pf_t [";
-            llvm::interleaveComma(program.pmeFarSeries, os,
-                                  [&](double c) { os << formatReal(c); });
-            os << "] : f64\n"
-               << "    %pf_rest = arith.subf %pf_one, %xr : f64\n"
-               << "    %pf_far = arith.mulf %pf_rest, %pf_mean : f64\n"
-               << "    %screened = arith.divf %pf_far, " << rq << " : f64\n"
-               << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
-          } else {
-            std::string far = emitProlateSplitting(context, "pme_far", "%xr",
-                                                   "%pf_", control.precision);
-            os << "    %screened = arith.divf " << far << ", " << rq
-               << " : f64\n"
-               << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
-          }
-        } else if (program.pme) {
-          // The direct sum of particle mesh Ewald, f q q erfc(β r) / r,
-          // shifted to 0 at the cutoff if the control file asks.
-          double beta = program.pmeBeta;
-          os << "    %beta = arith.constant " << formatReal(beta) << " : f64\n"
-             << "    %br = arith.mulf %beta, " << rq << " : f64\n"
-             << "    %erfc = math.erfc %br : f64\n"
-             << "    %screened = arith.divf %erfc, " << rq << " : f64\n";
-          std::string kernel = "%screened";
-          if (control.pmeShift || shiftsAtCutoff) {
-            os << "    %shift = arith.constant "
-               << formatReal(std::erfc(beta * cutoff) / cutoff) << " : f64\n"
-               << "    %shifted = arith.subf %screened, %shift : f64\n";
-            kernel = "%shifted";
-          }
-          os << "    %coulomb = arith.mulf %fqq, " << kernel << " : f64\n";
-        } else if (program.reactionField) {
-          // f q q (1/r + k r² − c), 0 at the cutoff (D140).
-          auto [k, c] = getReactionField(control);
-          os << "    %one = arith.constant 1.0 : f64\n"
-             << "    %krf = arith.constant " << formatReal(k) << " : f64\n"
-             << "    %crf = arith.constant " << formatReal(c) << " : f64\n"
-             << "    %inverse = arith.divf %one, " << rq << " : f64\n"
-             << "    %rr = arith.mulf %r, %r : f64\n"
-             << "    %field = arith.mulf %krf, %rr : f64\n"
-             << "    %near = arith.addf %inverse, %field : f64\n"
-             << "    %rf = arith.subf %near, %crf : f64\n"
-             << "    %coulomb = arith.mulf %fqq, %rf : f64\n";
-        } else if (shiftsAtCutoff) {
-          // f q q (1/r − 1/r_c), the cutoff shifted (D210).
-          os << "    %one = arith.constant 1.0 : f64\n"
-             << "    %inverse = arith.divf %one, " << rq << " : f64\n"
-             << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
-             << " : f64\n"
-             << "    %cut = arith.subf %inverse, %rc_inverse : f64\n"
-             << "    %coulomb = arith.mulf %fqq, %cut : f64\n";
-        } else {
-          os << "    %coulomb = arith.divf %fqq, " << rq << " : f64\n";
+        if (program.pme && program.pmeProlate && !prolateSeries) {
+          operands.push_back("%t_pme_far");
+          operandTypes.push_back("!grid");
         }
+        context.emitIRFragment(
+            "    ", {"%coulomb"}, {"f64"}, operands, operandTypes,
+            [scalesCoulomb, pme = program.pme, prolate = program.pmeProlate,
+             prolateSeries, farSeries = program.pmeFarSeries,
+             beta = program.pmeBeta, shift = control.pmeShift || shiftsAtCutoff,
+             reactionField = program.reactionField, reaction, cutoff,
+             shiftsAtCutoff, prolateCells,
+             prolateTerms](mlir::OpBuilder &builder,
+                           mlir::ValueRange values) -> TermIRValues {
+              using namespace mlir;
+              auto loc = builder.getUnknownLoc();
+              auto constant = [&](double value) -> Value {
+                return arith::ConstantOp::create(
+                    builder, loc, builder.getF64FloatAttr(value));
+              };
+              auto mul = [&](Value a, Value b) -> Value {
+                return arith::MulFOp::create(builder, loc, a, b);
+              };
+              auto sub = [&](Value a, Value b) -> Value {
+                return arith::SubFOp::create(builder, loc, a, b);
+              };
+              auto div = [&](Value a, Value b) -> Value {
+                return arith::DivFOp::create(builder, loc, a, b);
+              };
+              Value f = constant(coulombInternal);
+              Value qq = mul(values[0], values[1]);
+              if (scalesCoulomb) {
+                Value cl = mul(values[3], values[5]);
+                Value scale = sub(values[4], cl);
+                qq = mul(qq, scale);
+              }
+              Value fqq = mul(f, qq);
+              Value r = values[2], rq = r;
+              if (scalesCoulomb) {
+                Value least = constant(1.0e-4);
+                rq = arith::MaximumFOp::create(builder, loc, r, least);
+              }
+              if (pme && prolate) {
+                // Direct prolate kernel [Liang2026, eq. 3]. Its cutoff shift is
+                // zero.
+                Value inverse = constant(1.0 / cutoff);
+                Value xr = mul(rq, inverse);
+                Value far;
+                if (prolateSeries) {
+                  Value two = constant(2.0);
+                  Value one = constant(1.0);
+                  Value twice = mul(two, xr);
+                  Value t = sub(twice, one);
+                  Value mean = mdir::md::ChebyshevOp::create(
+                      builder, loc, t, builder.getF64ArrayAttr(farSeries));
+                  Value rest = sub(one, xr);
+                  far = mul(rest, mean);
+                } else {
+                  far = buildProlateSplitting(builder, values.back(), xr,
+                                              prolateCells, prolateTerms);
+                }
+                Value screened = div(far, rq);
+                return {mul(fqq, screened)};
+              }
+              if (pme) {
+                // Gaussian Ewald direct kernel, optionally shifted at the
+                // cutoff.
+                Value betaValue = constant(beta);
+                Value br = mul(betaValue, rq);
+                Value erfc = math::ErfcOp::create(builder, loc, br);
+                Value screened = div(erfc, rq);
+                if (shift) {
+                  Value shiftValue =
+                      constant(std::erfc(beta * cutoff) / cutoff);
+                  screened = sub(screened, shiftValue);
+                }
+                return {mul(fqq, screened)};
+              }
+              if (reactionField) {
+                // Reaction field f q q (1/r + k r² - c), zero at cutoff (D140).
+                Value one = constant(1.0);
+                Value k = constant(reaction.first);
+                Value c = constant(reaction.second);
+                Value inverse = div(one, rq);
+                Value rr = mul(r, r);
+                Value field = mul(k, rr);
+                Value near =
+                    arith::AddFOp::create(builder, loc, inverse, field);
+                Value rf = sub(near, c);
+                return {mul(fqq, rf)};
+              }
+              if (shiftsAtCutoff) {
+                Value one = constant(1.0);
+                Value inverse = div(one, rq);
+                Value rcInverse = constant(1.0 / cutoff);
+                Value cut = sub(inverse, rcInverse);
+                return {mul(fqq, cut)};
+              }
+              return {div(fqq, rq)};
+            });
         if (value.empty()) {
           value = "%coulomb";
         } else {
