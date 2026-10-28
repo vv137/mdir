@@ -155,6 +155,8 @@ static mlir::Value buildProlateSplitting(mlir::OpBuilder &builder,
   return value;
 }
 
+/// The reciprocal share of 1/r at r: erf(βr)/r, or the prolate
+/// Φ(r/r_c)/r = (Φ(x)/x)/r_c within the cutoff and 1/r beyond it (D266).
 static mlir::Value buildShieldedCoulomb(mlir::OpBuilder &builder,
                                         mlir::Value source, mlir::Value r,
                                         bool prolate, double cutoff,
@@ -1622,22 +1624,6 @@ public:
       add("nonbonded");
     }
 
-    // %shielded, the share of 1/r that the reciprocal sum holds at %r:
-    // erf(β r)/r, or of the prolate kernel Φ(r/r_c)/r, which is Φ(x)/x / r_c
-    // within the cutoff and 1/r beyond it (D266).
-    auto emitShielded = [&] {
-      auto [cells, terms] = getProlateTableShape(control.precision);
-      StringRef source = program.pmeProlate ? "%t_pme_near" : "%beta";
-      StringRef type = program.pmeProlate ? "!grid" : "f64";
-      context.emitIRFragment(
-          "    ", {"%shielded"}, {"f64"}, {source, "%r"}, {type, "f64"},
-          [prolate = program.pmeProlate, cutoff, cells,
-           terms](mlir::OpBuilder &builder,
-                  mlir::ValueRange values) -> TermIRValues {
-            return {buildShieldedCoulomb(builder, values[0], values[1], prolate,
-                                         cutoff, cells, terms)};
-          });
-    };
     if (program.pme && (terms & TermInputs::CoulombExcluded) &&
         has("excluded")) {
       // The excluded pairs take their share of the reciprocal sum out again:
@@ -1724,25 +1710,64 @@ public:
       // TermInputs::Coulomb, which the reciprocal sum of the scaled charges
       // takes times (1 − λ)²: (1 − (1 − λ)²) f q_i q_j erf(β r) / r adds the
       // rest (D161).
-      os << "  %u_within = md.sum_tuples %r_alchemical_pairs, %x, %cell "
-            "coordinates(distance(0, 1))\n"
-         << "      gather(%p_q : !real) {\n"
-         << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64):\n"
-         << "    %f = arith.constant " << formatReal(coulombInternal)
-         << " : f64\n"
-         << "    %beta = arith.constant " << formatReal(program.pmeBeta)
-         << " : f64\n"
-         << "    %one = arith.constant 1.0 : f64\n"
-         << "    %s = arith.subf %one, %lambda_coulomb : f64\n"
-         << "    %s2 = arith.mulf %s, %s : f64\n"
-         << "    %w = arith.subf %one, %s2 : f64\n"
-         << "    %qq = arith.mulf %q_i, %q_j : f64\n"
-         << "    %fqq = arith.mulf %f, %qq : f64\n"
-         << "    %fw = arith.mulf %fqq, %w : f64\n";
-      emitShielded();
-      os << "    %e = arith.mulf %fw, %shielded : f64\n"
-         << "    md.yield %e : f64\n"
-         << "  } : !rel_alchemical_pairs, !vec -> f64\n";
+      llvm::SmallVector<StringRef> operands = {
+          "%r_alchemical_pairs", "%x", "%cell", "%p_q", "%lambda_coulomb"};
+      llvm::SmallVector<StringRef> types = {"!rel_alchemical_pairs", "!vec",
+                                            "!md.cell", "!real", "f64"};
+      if (program.pmeProlate) {
+        operands.push_back("%t_pme_near");
+        types.push_back("!grid");
+      }
+      auto [cells, polynomialTerms] = getProlateTableShape(control.precision);
+      context.emitIRFragment(
+          "  ", {"%u_within"}, {"f64"}, operands, types,
+          [prolate = program.pmeProlate, beta = program.pmeBeta, cutoff, cells,
+           polynomialTerms](mlir::OpBuilder &builder,
+                            mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            DenseI32ArrayAttr coordinateKinds;
+            DenseI64ArrayAttr coordinateMembers;
+            mdir::md::Coordinate distance{mdir::md::CoordinateKind::Distance,
+                                          {0, 1}};
+            mdir::md::getCoordinateAttrs(builder, {distance}, coordinateKinds,
+                                         coordinateMembers);
+            auto sum = mdir::md::SumTuplesOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], values.slice(3, 1), ValueRange{}, coordinateKinds,
+                coordinateMembers);
+            llvm::SmallVector<Type> blockTypes(3, builder.getF64Type());
+            llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+            Block *block = builder.createBlock(&sum.getKernel(), {}, blockTypes,
+                                               locations);
+            auto args = block->getArguments();
+            auto constant = [&](double value) -> Value {
+              return arith::ConstantOp::create(builder, loc,
+                                               builder.getF64FloatAttr(value));
+            };
+            auto mul = [&](Value a, Value b) -> Value {
+              return arith::MulFOp::create(builder, loc, a, b);
+            };
+            auto sub = [&](Value a, Value b) -> Value {
+              return arith::SubFOp::create(builder, loc, a, b);
+            };
+            Value f = constant(coulombInternal);
+            Value betaValue = constant(beta);
+            Value one = constant(1.0);
+            Value scale = sub(one, values[4]);
+            Value square = mul(scale, scale);
+            Value weight = sub(one, square);
+            Value qq = mul(args[1], args[2]);
+            Value fqq = mul(f, qq);
+            Value fw = mul(fqq, weight);
+            Value source = prolate ? values.back() : betaValue;
+            Value shielded =
+                buildShieldedCoulomb(builder, source, args[0], prolate, cutoff,
+                                     cells, polynomialTerms);
+            Value energy = mul(fw, shielded);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            return {sum.getResult()};
+          });
       add("within");
     }
     if (program.reactionField && (terms & TermInputs::CoulombExcluded) &&
