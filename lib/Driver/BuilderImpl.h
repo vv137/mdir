@@ -337,7 +337,6 @@ const TermBuilder &getRestraintTermBuilder();
 const TermBuilder &getBornTermBuilder();
 const TermBuilder &getTupleTermBuilder();
 const TermBuilder &getPairTermBuilder();
-llvm::Error collectCustomPairTails(TermParameters &);
 llvm::Expected<PairTermTail> getCustomPairTail(const TermInputs &, unsigned,
                                              const llvm::StringMap<double> &);
 double getCustomPairTails(const TermInputs &, const llvm::StringMap<double> &, bool);
@@ -468,8 +467,8 @@ private:
   void emitTopologyPotential(StringRef name, unsigned terms,
                              int tupleTerm = -1, int pairTerm = -1,
                              int externalTerm = -1) override;
-  /// Emits the coordinates of the term `term` over centers, the term
-  /// `index` over tuples, at the positions `x` in the cell `cell`, with
+  /// Emits the coordinates of the term `term` over centers, at the
+  /// positions `x` in the cell `cell`, with
   /// the members of its tuples named `relations` and the name of the set:
   /// `r`, `dx`, `dy`, `dz` in Å for two centers, `theta` in radians
   /// otherwise, mapped to their names, which begin with `prefix`.

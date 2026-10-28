@@ -522,7 +522,7 @@ getOverrides(const Control &control, const PairTerm &term) {
     const System &system = context.getSystem();
     bool shifted = context.getControl().truncation == Truncation::Shift;
     // The tails of the pair terms (D209).
-    if (llvm::Error error = collectCustomPairTails(context))
+    if (llvm::Error error = collectPairTails(context))
       return error;
     for (unsigned index = 0, e = system.pairTails.size(); index != e;
          ++index) {
@@ -616,6 +616,7 @@ getOverrides(const Control &control, const PairTerm &term) {
     return std::optional(Program::GradientOutcome::Rule);
   }
 private:
+  static llvm::Error collectPairTails(TermParameters &);
   static llvm::Error collectPairValues(const TermInputs &, unsigned,
       std::vector<std::vector<llvm::StringMap<double>>> &);
   static llvm::Error computeDispersion(TermParameters &);
@@ -793,7 +794,7 @@ static double integrateUnit(llvm::function_ref<double(double)> f,
   return std::nan("");
 }
 
-llvm::Error mdir::driver::builder::collectCustomPairTails(TermParameters &context) {
+llvm::Error PairTermBuilder::collectPairTails(TermParameters &context) {
   const Control &control = context.getControl();
   auto &tailExpressions = context.getMutablePairPlan().tailExpressions;
   // The pairs that each term counts, from the system
