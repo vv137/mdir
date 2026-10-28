@@ -36,7 +36,7 @@ for control in controls:
             check=False)
         assert emitted.returncode == 0, emitted.stderr
         text = emitted.stdout
-        calls = list(re.finditer(r"func.call @mdrtWriteTerms\((" + ssa + r")\)", text))
+        calls = list(re.finditer(r"(?:func\.)?call @mdrtWriteTerms\((" + ssa + r")\)", text))
         assert calls, "missing initial energy-column report"
         for call in calls:
             # Check data flow, independent of the correction's SSA spelling.
