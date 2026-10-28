@@ -109,3 +109,7 @@ Hosted-model cases add force-only scheduling and multi-particle CENTER restraint
 scaling under NPT in both precisions, with exact/padded/search pair-list modes.
 Each contains the single opaque model supported by ML1; staged models remain
 separate. CPU cases retain the GPU-only support error.
+
+Built-in bond cases add zero bond force constants beside all other CHARMM
+families and custom terms during a two-step trajectory, in both precisions
+and targets. Coordinate and tuple-field order remain compared at both stages.

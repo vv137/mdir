@@ -479,6 +479,19 @@ phase = 0.4
         centered = source.read_text().replace('selection = "@1"\nforce_constant = 1.0\n', 'selection = "@1-3"\nforce_constant = 1.0\nreference_scaling = "CENTER"\n')
         hosted.append(write(f"model-host-center-npt-{precision}", centered))
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-FORCE_SWITCH-{precision}.toml")
+        parameters = (fixtures / "toy.prm").read_text()
+        begin = parameters.index('BONDS\n') + len('BONDS\n')
+        end = parameters.index('\nANGLES\n', begin)
+        bonds = re.sub(r'(?m)^(\w+\s+\w+\s+)[0-9.]+', r'\g<1>0.0', parameters[begin:end])
+        assert bonds != parameters[begin:end]
+        zero = fixtures / "zero-bonds.prm"
+        zero.write_text(parameters[:begin] + bonds + parameters[end:])
+        text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(zero))
+        text = text.replace('steps      = 0', 'steps      = 2').replace('energy_interval = 0', 'energy_interval = 1')
+        write(f"bonded-zero-bonds-{precision}", text)
+
     return ordinary, hosted
 
 

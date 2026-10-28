@@ -214,6 +214,12 @@ energy/virial accumulations with typed operations. The host role keeps read-only
 recipes without exposing mutable parameter access. Staged user `ModelTerm`
 text remains at its existing boundary for step 5.
 
+Built-in harmonic bonds construct the complete typed tuple reduction,
+including its distance coordinate, tuple-field order, scalar kernel, and
+yield. The half constant, displacement, squared displacement, half-force
+constant, and final multiplication retain their original order.
+`TermBond.cpp` no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and invalid builder assembly, which fails at its construction boundary with
