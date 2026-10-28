@@ -319,12 +319,6 @@ void Builder::fillTypeTable(Program::Table &table) const {
   }
 }
 
-void Builder::fillTupleParameter(Program::Field &field,
-                                 const TupleTerm &term) const {
-  for (const auto &[name, values] : term.parameters)
-    if (name == field.name)
-      field.values = values;
-}
 
 void Builder::fillPairProducts(Program::Field &field) const {
   // f q_i q_j s_C of each 1-4 pair.
@@ -368,11 +362,8 @@ llvm::Error Builder::adoptArrays() {
       for (Program::Field &field : set.fields)
         if (field.values.empty() && field.name == "qq")
           fillPairProducts(field);
-    for (const TupleTerm &term : topology.tupleTerms)
-      if (!term.isCentroid() && set.name == "custom_" + term.name)
-        for (Program::Field &field : set.fields)
-          if (field.values.empty())
-            fillTupleParameter(field, term);
+    for (const TermBuilder *builder : registerTermBuilders())
+      builder->refillTupleSet(*this, set);
   }
   // Nothing is left without its numbers: an array that a value of a
   // tunable enters and that nothing above makes would be one, and the
@@ -601,98 +592,8 @@ void Builder::collectTopologyArrays() {
       set.fields[xi0].values.push_back(term.xi0);
     }
   }
-  // The terms given by expressions (D136), with their parameters as fields
-  // of their tuples, in the units of the control file.
-  for (const TupleTerm &term : topology.tupleTerms) {
-    // A term over the centers of groups (D139), one set of pairs: for
-    // each group the pairs of a member and the reference of the group, and
-    // for each group after the first the pair of its reference and that of
-    // the first. A field for each group and each such link, `w<k>`, holds
-    // the weight of the member in its pairs, 1 in the pair of the link,
-    // and 0 elsewhere, so that one loop gives all the sums.
-    if (term.isCentroid()) {
-      size_t groups = term.centers.size();
-      Program::TupleSet &set = addSet("cg_" + term.name, 2);
-      set.oriented = true;
-      set.reversible = false;
-      for (size_t k = 0; k != 2 * groups - 1; ++k)
-        addField(set, "w" + std::to_string(k));
-      auto addPair = [&](unsigned i, unsigned j, size_t slot, double weight) {
-        set.members.push_back(i);
-        set.members.push_back(j);
-        for (size_t k = 0; k != 2 * groups - 1; ++k)
-          set.fields[k].values.push_back(k == slot ? weight : 0.0);
-      };
-      for (auto [g, center] : llvm::enumerate(term.centers)) {
-        for (auto [i, weight] :
-             llvm::zip_equal(center.members, center.weights))
-          if (i != center.reference)
-            addPair(i, center.reference, g, weight);
-        if (g > 0)
-          addPair(center.reference, term.centers.front().reference,
-                  groups + g - 1, 1.0);
-      }
-      continue;
-    }
-    Program::TupleSet &set = addSet("custom_" + term.name, term.arity);
-    for (unsigned member : term.particles)
-      set.members.push_back(member);
-    for (const auto &[name, values] : term.parameters)
-      fillTupleParameter(set.fields[addField(set, name)], term);
-    // The tunable parameters of the term whose derivatives the program
-    // carries (D230): for each, the place whose members are
-    // shared by the fewest tuples, and for each tuple its number among the
-    // tuples of its member there.
-    if (program.tunableGradient)
-      for (auto [k, declaration] :
-           llvm::enumerate(control.tunableDeclarations)) {
-        if (declaration.kind != Control::TunableKind::TupleParameter ||
-            &topology.tupleTerms[declaration.termIndex] != &term)
-          continue;
-        Expression expression = llvm::cantFail(
-            Expression::parse(term.expression, control.functions));
-        if (!llvm::is_contained(expression.getNames(), declaration.parameter))
-          continue;
-        size_t tuples = term.particles.size() / term.arity;
-        unsigned place = 0, count = 0;
-        std::vector<double> colors;
-        for (unsigned candidate = 0; candidate != term.arity; ++candidate) {
-          std::map<unsigned, unsigned> seen;
-          std::vector<double> numbers;
-          unsigned most = 0;
-          for (size_t t = 0; t != tuples; ++t) {
-            unsigned number = seen[term.particles[t * term.arity + candidate]]++;
-            numbers.push_back(number);
-            most = std::max(most, number + 1);
-          }
-          if (candidate == 0 || most < count) {
-            place = candidate;
-            count = most;
-            colors = std::move(numbers);
-          }
-        }
-        TupleGradient gradient;
-        gradient.tunable = static_cast<unsigned>(k);
-        gradient.term = declaration.termIndex;
-        gradient.parameter = declaration.parameter;
-        gradient.place = place;
-        gradient.count = count;
-        gradient.first = static_cast<unsigned>(program.gradientFields.size());
-        for (unsigned c = 0; c != count; ++c) {
-          Program::GradientField field;
-          field.tunable = gradient.tunable;
-          for (size_t t = 0; t != tuples; ++t)
-            if (colors[t] == c)
-              field.sites.push_back(
-                  {static_cast<uint32_t>(t),
-                   term.particles[t * term.arity + place]});
-          program.gradientFields.push_back(std::move(field));
-        }
-        size_t field = addField(set, "tgc_" + declaration.parameter);
-        set.fields[field].values = std::move(colors);
-        tupleGradients.push_back(std::move(gradient));
-      }
-  }
+  for (const TermBuilder *builder : registerTermBuilders())
+    builder->collectTupleSets(*this);
   // The field of zeros that `@tunable` takes for each of those fields.
   if (!program.gradientFields.empty()) {
     Program::Field zero;
@@ -1791,137 +1692,136 @@ llvm::Error Builder::collectTunableGradient() {
   }
   for (auto [k, declaration] : llvm::enumerate(control.tunableDeclarations)) {
     Program::GradientOutcome outcome = Program::GradientOutcome::Zero;
-    switch (declaration.kind) {
-    case Control::TunableKind::PairConstant: {
-      // A constant that the expression of its term does not read enters
-      // no value of the program.
-      unsigned index = declaration.termIndex;
-      const PairTerm &term = control.pairs[index];
-      Expression expression =
-          llvm::cantFail(Expression::parse(term.expression, control.functions));
-      if (!llvm::is_contained(expression.getNames(), declaration.parameter))
+    bool registered = false;
+    for (const TermBuilder *builder : registerTermBuilders()) {
+      auto result = builder->getTunableOutcome(*this, static_cast<unsigned>(k));
+      if (!result)
+        return result.takeError();
+      if (*result) {
+        outcome = **result;
+        registered = true;
         break;
-      outcome = Program::GradientOutcome::Rule;
-      auto column = llvm::find(
-          control.tunableConstants,
-          std::pair<unsigned, std::string>(index, declaration.parameter));
-      double value = 0.0;
-      for (const auto &[name, v] : term.constants)
-        if (name == declaration.parameter)
-          value = v;
-      // The tail of the term and the estimate of its shift, which the
-      // host adds to the energy, by the quadrature that computes them
-      // (D209, D210).
-      Program::GradientSlot slot;
-      slot.tunable = static_cast<unsigned>(k);
-      if (dispersion && index < tailExpressions.size() &&
-          index < system.pairTails.size())
-        slot.volumeConstant =
-            getPairTailDerivative(index, declaration.parameter, value);
-      if (dispersion && index < tailExpressions.size() &&
-          index < system.pairTails.size())
-        slot.fixedConstant =
-            getPairTailDerivative(index, declaration.parameter, value,
-                                  /*shift=*/true, /*fixed=*/true);
-      if (!std::isfinite(slot.volumeConstant) ||
-          !std::isfinite(slot.fixedConstant))
-        return makeError("the derivative of the tail of the pair term '" +
-                         term.name + "' in its constant '" +
-                         declaration.parameter +
-                         "' cannot be integrated, for the tunable '" +
-                         declaration.name + "'");
-      program.gradientSlots.push_back(slot);
-      gradientColumns.push_back(
-          static_cast<unsigned>(column - control.tunableConstants.begin()));
-      break;
+      }
     }
-    case Control::TunableKind::TupleParameter: {
-      // A parameter that the expression of its term reads has its fields
-      // (collectTopology); one that it does not read enters no value.
-      const TupleTerm &term =
-          system.topology->tupleTerms[declaration.termIndex];
-      if (term.isCentroid())
-        return makeError(
-            "System.tunable_gradient: the derivative of the energy in the "
-            "tunable '" + declaration.name + "', a parameter of the term '" +
-            term.name + "' over centers of groups, is not implemented yet");
-      if (llvm::any_of(tupleGradients, [&](const TupleGradient &gradient) {
-            return gradient.tunable == k;
-          }))
+    if (!registered) {
+      switch (declaration.kind) {
+      case Control::TunableKind::PairConstant: {
+        // A constant that the expression of its term does not read enters
+        // no value of the program.
+        unsigned index = declaration.termIndex;
+        const PairTerm &term = control.pairs[index];
+        Expression expression =
+            llvm::cantFail(Expression::parse(term.expression, control.functions));
+        if (!llvm::is_contained(expression.getNames(), declaration.parameter))
+          break;
         outcome = Program::GradientOutcome::Rule;
-      break;
-    }
-    case Control::TunableKind::Charge: {
-      auto refuse = [&](const llvm::Twine &what) {
-        return makeError("System.tunable_gradient: the derivative of the "
-                         "energy in the tunable '" + declaration.name +
-                         "' (charges) " + what + " is not implemented yet");
-      };
-      if (control.implicitSolvent != Control::ImplicitSolvent::None)
-        return refuse("with an implicit solvent");
-      // The tail of a pair term that reads the charges follows them through
-      // its classes of particles (D209).
-      for (auto [index, term] : llvm::enumerate(control.pairs)) {
-        Expression expression = llvm::cantFail(
-            Expression::parse(term.expression, control.functions));
-        bool reads = llvm::is_contained(expression.getNames(), "q1") ||
-                     llvm::is_contained(expression.getNames(), "q2");
-        if (reads && dispersion && index < system.pairTails.size() &&
-            !system.pairTails[index].empty())
-          return refuse("through the tail of the pair term '" + term.name +
-                        "', which reads the charges,");
+        auto column = llvm::find(
+            control.tunableConstants,
+            std::pair<unsigned, std::string>(index, declaration.parameter));
+        double value = 0.0;
+        for (const auto &[name, v] : term.constants)
+          if (name == declaration.parameter)
+            value = v;
+        // The tail of the term and the estimate of its shift, which the
+        // host adds to the energy, by the quadrature that computes them
+        // (D209, D210).
+        Program::GradientSlot slot;
+        slot.tunable = static_cast<unsigned>(k);
+        if (dispersion && index < tailExpressions.size() &&
+            index < system.pairTails.size())
+          slot.volumeConstant =
+              getPairTailDerivative(index, declaration.parameter, value);
+        if (dispersion && index < tailExpressions.size() &&
+            index < system.pairTails.size())
+          slot.fixedConstant =
+              getPairTailDerivative(index, declaration.parameter, value,
+                                    /*shift=*/true, /*fixed=*/true);
+        if (!std::isfinite(slot.volumeConstant) ||
+            !std::isfinite(slot.fixedConstant))
+          return makeError("the derivative of the tail of the pair term '" +
+                           term.name + "' in its constant '" +
+                           declaration.parameter +
+                           "' cannot be integrated, for the tunable '" +
+                           declaration.name + "'");
+        program.gradientSlots.push_back(slot);
+        gradientColumns.push_back(
+            static_cast<unsigned>(column - control.tunableConstants.begin()));
+        break;
       }
-      // The Python model has no reaction field; its self term and its
-      // excluded pairs would follow the charges as well (D140).
-      if (control.reactionField)
-        return refuse("with the reaction field");
-      // Nothing that the host adds to the energy follows the charges under
-      // a Coulomb cutoff. With particle mesh Ewald the self term,
-      // −f β Σ q² / √π, and the background of a net charge Q,
-      // −f π Q² / (2 V β²), do (getPMEConstants): −2 f β q_i / √π, which
-      // does not depend on the cell, and −f π Q / (V β²)
-      // (D231).
-      const std::vector<double> &charges = system.topology->charges;
-      program.gradientChargeFixed.assign(charges.size(), 0.0);
-      program.gradientChargeVolume.assign(charges.size(), 0.0);
-      if (program.pme) {
-        // −2 f s q_i and −2 f π Q b / V, with s and b of the kernel.
-        double net = 0.0;
-        for (double q : charges)
-          net += q;
-        double volume = system.box[0] * system.box[1] * system.box[2];
-        for (size_t i = 0; i != charges.size(); ++i) {
-          program.gradientChargeFixed[i] =
-              -2.0 * coulombInternal * program.pmeSelfFactor * charges[i];
-          program.gradientChargeVolume[i] = -2.0 * coulombInternal * M_PI *
-                                            net * program.pmeBackgroundFactor /
-                                            volume;
+      case Control::TunableKind::Charge: {
+        auto refuse = [&](const llvm::Twine &what) {
+          return makeError("System.tunable_gradient: the derivative of the "
+                           "energy in the tunable '" + declaration.name +
+                           "' (charges) " + what + " is not implemented yet");
+        };
+        if (control.implicitSolvent != Control::ImplicitSolvent::None)
+          return refuse("with an implicit solvent");
+        // The tail of a pair term that reads the charges follows them through
+        // its classes of particles (D209).
+        for (auto [index, term] : llvm::enumerate(control.pairs)) {
+          Expression expression = llvm::cantFail(
+              Expression::parse(term.expression, control.functions));
+          bool reads = llvm::is_contained(expression.getNames(), "q1") ||
+                       llvm::is_contained(expression.getNames(), "q2");
+          if (reads && dispersion && index < system.pairTails.size() &&
+              !system.pairTails[index].empty())
+            return refuse("through the tail of the pair term '" + term.name +
+                          "', which reads the charges,");
         }
+        // The Python model has no reaction field; its self term and its
+        // excluded pairs would follow the charges as well (D140).
+        if (control.reactionField)
+          return refuse("with the reaction field");
+        // Nothing that the host adds to the energy follows the charges under
+        // a Coulomb cutoff. With particle mesh Ewald the self term,
+        // −f β Σ q² / √π, and the background of a net charge Q,
+        // −f π Q² / (2 V β²), do (getPMEConstants): −2 f β q_i / √π, which
+        // does not depend on the cell, and −f π Q / (V β²)
+        // (D231).
+        const std::vector<double> &charges = system.topology->charges;
+        program.gradientChargeFixed.assign(charges.size(), 0.0);
+        program.gradientChargeVolume.assign(charges.size(), 0.0);
+        if (program.pme) {
+          // −2 f s q_i and −2 f π Q b / V, with s and b of the kernel.
+          double net = 0.0;
+          for (double q : charges)
+            net += q;
+          double volume = system.box[0] * system.box[1] * system.box[2];
+          for (size_t i = 0; i != charges.size(); ++i) {
+            program.gradientChargeFixed[i] =
+                -2.0 * coulombInternal * program.pmeSelfFactor * charges[i];
+            program.gradientChargeVolume[i] = -2.0 * coulombInternal * M_PI *
+                                              net * program.pmeBackgroundFactor /
+                                              volume;
+          }
+        }
+        outcome = Program::GradientOutcome::Rule;
+        break;
       }
-      outcome = Program::GradientOutcome::Rule;
-      break;
-    }
-    case Control::TunableKind::Sigma:
-    case Control::TunableKind::Epsilon:
-    case Control::TunableKind::SigmaPair:
-    case Control::TunableKind::EpsilonPair:
-      // The Lennard-Jones of the topology reads the tables; so would a
-      // pair term that names sigma or epsilon, whose kernel and tail have
-      // no seeds yet.
-      for (const PairTerm &term : control.pairs) {
-        Expression expression = llvm::cantFail(
-            Expression::parse(term.expression, control.functions));
-        for (const char *name : {"sigma", "epsilon", "sigma1", "sigma2",
-                                 "epsilon1", "epsilon2"})
-          if (llvm::is_contained(expression.getNames(), name))
-            return makeError(
-                "System.tunable_gradient: the derivative of the energy in "
-                "the tunable '" + declaration.name + "' through the pair "
-                "term '" + term.name + "', which reads '" + name +
-                "', is not implemented yet");
+      case Control::TunableKind::Sigma:
+      case Control::TunableKind::Epsilon:
+      case Control::TunableKind::SigmaPair:
+      case Control::TunableKind::EpsilonPair:
+        // The Lennard-Jones of the topology reads the tables; so would a
+        // pair term that names sigma or epsilon, whose kernel and tail have
+        // no seeds yet.
+        for (const PairTerm &term : control.pairs) {
+          Expression expression = llvm::cantFail(
+              Expression::parse(term.expression, control.functions));
+          for (const char *name : {"sigma", "epsilon", "sigma1", "sigma2",
+                                   "epsilon1", "epsilon2"})
+            if (llvm::is_contained(expression.getNames(), name))
+              return makeError(
+                  "System.tunable_gradient: the derivative of the energy in "
+                  "the tunable '" + declaration.name + "' through the pair "
+                  "term '" + term.name + "', which reads '" + name +
+                  "', is not implemented yet");
+        }
+        outcome = Program::GradientOutcome::Rule;
+        break;
+      default:
+        llvm_unreachable("a registered adapter handles this tunable kind");
       }
-      outcome = Program::GradientOutcome::Rule;
-      break;
     }
     program.gradientOutcomes.push_back(outcome);
   }

@@ -147,29 +147,6 @@ llvm::StringMap<std::string> Builder::emitCentroidCoordinates(
   return values;
 }
 
-void Builder::emitCentroidTerm(size_t index, const TupleTerm &term) {
-  // Numbers outside the kernels, named after the term.
-  std::string prefix = "%cb" + std::to_string(index) + "_";
-  llvm::StringMap<std::string> values =
-      emitCentroidCoordinates(term, "  ", "%x", "%cell", "%r_", prefix);
-  for (auto [k, parameter] : llvm::enumerate(term.parameters)) {
-    std::string name = prefix + "p" + std::to_string(k);
-    os << "  " << name << " = arith.constant "
-       << formatReal(parameter.second.front()) << " : f64\n";
-    values[parameter.first] = name;
-  }
-  if (control.usesTime)
-    values["t"] = "%time";
-  bindLambdas(values);
-  bindObserved(term.name, values);
-  Expression expression = llvm::cantFail(
-      Expression::parse(term.expression, control.functions));
-  std::string energy = expression.emit(os, values, prefix + "e", "  ", term.name);
-  os << "  " << prefix << "kj = arith.constant " << formatReal(units::energy)
-     << " : f64\n"
-     << "  %u_centroid_" << term.name << " = arith.mulf " << energy << ", "
-     << prefix << "kj : f64\n";
-}
 
 unsigned Builder::getNumPotentialArguments() const {
   unsigned count = 2 + program.fields.size() + program.tables.size();
@@ -194,9 +171,6 @@ std::vector<Builder::ObservedTerm> Builder::getObservedTerms() const {
       for (auto [k, pair] : llvm::enumerate(control.pairs))
         if (pair.name == term.name)
           term.kind = PairTerms, term.index = static_cast<int>(k);
-      for (auto [k, tuple] : llvm::enumerate(system.topology->tupleTerms))
-        if (tuple.name == term.name)
-          term.kind = TupleTerms, term.index = static_cast<int>(k);
       for (const TermBuilder *builder : registerTermBuilders()) {
         auto [kind, index] = builder->findObservedTerm(*this, term.name);
         if (kind)
@@ -618,7 +592,8 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
     add(set);
   }
   for (const TermBuilder *builder : termBuildersByPotentialRank())
-    builder->emitTopologyPotential(
+    if (builder->topologyRank() == 0)
+      builder->emitTopologyPotential(
         *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, add);
   if (lj || coulomb) {
     // [free_energy] (D161): a pair with one particle in the selection,
@@ -1224,137 +1199,10 @@ void Builder::emitTopologyPotential(StringRef name, unsigned terms,
        << "  } : !rel_impropers, !vec -> f64\n";
     add("impropers");
   }
-  // The terms given by expressions (D136), in the units of the control
-  // file: the distance in Å, the angles in radians, the energy in kcal/mol.
-  for (auto [index, term] : llvm::enumerate(system.topology->tupleTerms)) {
-    if (!(terms & TupleTerms) ||
-        (tupleTerm >= 0 && static_cast<int>(index) != tupleTerm))
-      continue;
-    if (dependent && !dependent->hasTuple(static_cast<unsigned>(index)))
-      continue;
-    if (alchemicalOnly && !usesLambda(term.expression))
-      continue;
-    if (term.isCentroid()) {
-      emitCentroidTerm(index, term);
-      add("centroid_" + term.name);
-      continue;
-    }
-    static const char *const coordinates[] = {
-        "", "", "distance(0, 1)", "angle(0, 1, 2)", "dihedral(0, 1, 2, 3)"};
-    std::string set = "custom_" + term.name;
-    // A compound term (D165) takes the coordinates that its expression
-    // names, of any members of its tuples.
-    std::string list = term.isCompound() ? "" : coordinates[term.arity];
-    for (auto [k, coordinate] : llvm::enumerate(term.coordinates)) {
-      list += (k ? ", " : "") + coordinate.kind + "(";
-      for (auto [p, place] : llvm::enumerate(coordinate.places))
-        list += (p ? ", " : "") + std::to_string(place);
-      list += ")";
-    }
-    os << "  %u_" << set << " = md.sum_tuples %r_" << set
-       << ", %x, %cell coordinates(" << list << ")";
-    // In `@tunable`, the tunable parameters of the term take the fields of
-    // zeros through which their derivatives leave (D230).
-    std::vector<const TupleGradient *> gradients;
-    if (gradientArguments)
-      for (const TupleGradient &gradient : tupleGradients)
-        if (gradient.term == index)
-          gradients.push_back(&gradient);
-    if (!gradients.empty()) {
-      std::string fields, types;
-      for (const TupleGradient *gradient : gradients)
-        for (unsigned c = 0; c != gradient->count; ++c) {
-          fields += (fields.empty() ? "%tg_d" : ", %tg_d") +
-                    std::to_string(gradient->first + c);
-          types += types.empty() ? "!real" : ", !real";
-        }
-      os << "\n      gather(" << fields << " : " << types << ")";
-    }
-    if (!term.parameters.empty()) {
-      os << "\n      tuple(";
-      for (auto [k, parameter] : llvm::enumerate(term.parameters))
-        os << (k ? ", " : "") << "%f_" << set << "_" << parameter.first;
-      for (const TupleGradient *gradient : gradients)
-        os << ", %f_" << set << "_tgc_" << gradient->parameter;
-      os << " : ";
-      for (size_t k = 0; k != term.parameters.size() + gradients.size(); ++k)
-        os << (k ? ", " : "") << "!of_" << set;
-      os << ")";
-    }
-    llvm::StringMap<std::string> values;
-    if (term.isCompound()) {
-      os << " {\n  ^bb0(";
-      for (size_t k = 0; k != term.coordinates.size(); ++k)
-        os << (k ? ", " : "") << "%c" << k << ": f64";
-    } else {
-      os << " {\n  ^bb0(%c: f64";
-    }
-    for (const TupleGradient *gradient : gradients)
-      for (unsigned c = 0; c != gradient->count; ++c)
-        for (unsigned member = 0; member != term.arity; ++member)
-          os << ", %tgd" << gradient->first + c << "_" << member << ": f64";
-    for (const auto &parameter : term.parameters)
-      os << ", %cp_" << parameter.first << ": f64";
-    for (const TupleGradient *gradient : gradients)
-      os << ", %cp_tgc_" << gradient->parameter << ": f64";
-    os << "):\n";
-    if (term.isCompound() || term.arity == 2)
-      os << "    %c_scale = arith.constant " << formatReal(1.0 / units::length)
-         << " : f64\n";
-    if (term.isCompound()) {
-      // Distances in Å, angles in radians.
-      for (auto [k, coordinate] : llvm::enumerate(term.coordinates)) {
-        std::string variable = "%c" + std::to_string(k);
-        if (coordinate.kind == "distance") {
-          os << "    " << variable << "_a = arith.mulf " << variable
-             << ", %c_scale : f64\n";
-          variable += "_a";
-        }
-        values[coordinate.name] = variable;
-      }
-    } else {
-      std::string variable = "%c";
-      if (term.arity == 2) {
-        os << "    %c_a = arith.mulf %c, %c_scale : f64\n";
-        variable = "%c_a";
-      }
-      values[term.getVariable()] = variable;
-    }
-    if (control.usesTime)
-      values["t"] = "%time";
-    bindLambdas(values);
-    for (const auto &parameter : term.parameters)
-      values[parameter.first] = "%cp_" + parameter.first;
-    for (const TupleGradient *gradient : gradients) {
-      // p + d_c[member] for the field c of the tuple: p, since d is zero.
-      std::string stem = "%tgp_" + gradient->parameter;
-      std::string value = "%cp_" + gradient->parameter;
-      os << "    " << stem << "_zero = arith.constant 0.0 : f64\n";
-      for (unsigned c = 0; c != gradient->count; ++c) {
-        std::string at = stem + "_" + std::to_string(c);
-        os << "    " << at << "_n = arith.constant " << formatReal(c)
-           << " : f64\n"
-           << "    " << at << "_is = arith.cmpf oeq, %cp_tgc_"
-           << gradient->parameter << ", " << at << "_n : f64\n"
-           << "    " << at << "_d = arith.select " << at << "_is, %tgd"
-           << gradient->first + c << "_" << gradient->place << ", " << stem
-           << "_zero : f64\n"
-           << "    " << at << " = arith.addf " << value << ", " << at
-           << "_d : f64\n";
-        value = at;
-      }
-      values[gradient->parameter] = value;
-    }
-    bindObserved(term.name, values);
-    Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
-    std::string energy = expression.emit(os, values, "%ce", "    ", term.name);
-    os << "    %c_kj = arith.constant " << formatReal(units::energy)
-       << " : f64\n"
-       << "    %c_e = arith.mulf " << energy << ", %c_kj : f64\n"
-       << "    md.yield %c_e : f64\n"
-       << "  } : !rel_" << set << ", !vec -> f64\n";
-    add(set);
-  }
+  for (const TermBuilder *builder : termBuildersByPotentialRank())
+    if (builder->topologyRank() == 1)
+      builder->emitTopologyPotential(
+          *this, {terms, tupleTerm, pairTerm, externalTerm, alchemicalOnly}, add);
   bool lj14 = terms & LennardJones14, coulomb14 = terms & Coulomb14;
   if ((lj14 || coulomb14) && has("pairs14")) {
     // In `@tunable` with the derivative in the charges, the product of
@@ -1908,17 +1756,21 @@ void Builder::emitTerms(StringRef x) {
   // evaluation before the terms.
   // The terms given by expressions follow those of the topology, those
   // over tuples (D136) and then those over pairs (D137).
-  int custom = static_cast<int>(system.topology->tupleTerms.size());
   int pairs = static_cast<int>(control.pairs.size());
   std::vector<std::string> registeredNames;
   for (const TermBuilder *builder : termBuildersByPotentialRank())
-    builder->appendTermNames(*this, registeredNames);
-  int registered = static_cast<int>(registeredNames.size());
+    if (builder->potentialRank() < -2)
+      builder->appendTermNames(*this, registeredNames);
+  for (int k = 0; k != pairs; ++k)
+    registeredNames.push_back("term_pair" + std::to_string(k));
+  for (const TermBuilder *builder : termBuildersByPotentialRank())
+    if (builder->potentialRank() >= -2)
+      builder->appendTermNames(*this, registeredNames);
   unsigned storedTermCount = 0;
   for (const TermBuilder *builder : registerTermBuilders())
     storedTermCount += builder->getStoredTermCount(*this);
   int size =
-      14 + custom + pairs + registered + storedTermCount;
+      14 + registeredNames.size() + storedTermCount;
   std::string type = "memref<" + std::to_string(size) + "xf64>";
   os << "  %terms = memref.alloca() : " << type << "\n";
   int index = 0;
@@ -1936,11 +1788,7 @@ void Builder::emitTerms(StringRef x) {
        << "  memref.store %" << name << ", %terms[%i_" << name
        << "] : " << type << "\n";
   }
-  for (int k = 0; k != custom + pairs + registered; ++k) {
-    std::string name =
-        k < custom ? "term_custom" + std::to_string(k)
-        : k < custom + pairs ? "term_pair" + std::to_string(k - custom)
-        : registeredNames[k - custom - pairs];
+  for (const std::string &name : registeredNames) {
     os << "  %" << name << " = md.evaluate @" << name << "(" << x << ", %cell"
        << getFieldValues() << getTimeValue("%time0") << ") request [energy]\n"
        << "      : (!vec, !md.cell" << getFieldTypes() << getTimeType()

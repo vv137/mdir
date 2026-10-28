@@ -1170,7 +1170,7 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, the registration (D359, externals, pulls, restraints, and Born/surface built).** A term provides its
+**Part 2, the registration (D359, externals, pulls, restraints, Born/surface, and custom tuples built).** A term provides its
 builder in a file of its own, behind an interface that the central
 functions iterate, so that a new term adds a file rather than a case in
 `emitTopologyPotential`, `emitTerms`, and `emitEntry`:
@@ -1225,7 +1225,7 @@ pull adapter emits at these new hook sites, so no rank conflict arises.
 `TermRestraint.cpp` owns the positional-restraint fields, force/energy/virial
 correction, and stored energy column. The parameter hook has an explicit
 `parameterRank`: Born/surface rank -2, restraints rank -1, external terms rank 0, and pulls rank 0, with stable
-registry order (externals, pulls, restraints, Born/surface) for equal ranks. Pulls collect no
+registry order (externals, pulls, restraints, Born/surface, tuples) for equal ranks. Pulls collect no
 parameters; only pulls emit auxiliary potentials/output, and only restraints
 emit force corrections/stored columns. These hooks currently have no shared
 active pull/restraint site needing a second rank. This preserves restraint fields before
@@ -1249,13 +1249,32 @@ radii. Its parameter rank precedes restraint and external fields. An
 explicit potential rank preserves Born/surface before external terms for
 topology contributions, standalone potentials, and energy-column names.
 The potential hooks use `potentialRank`: Born/surface rank -1 and the
-other adapters rank 0, stable by registry order on ties. The parameter and
+tuple definitions/names rank -3, and the remaining adapters rank 0, stable
+by registry order on ties. The parameter and
 potential ranks are separate because their hook sites have different
 ordering needs. The shared radii and Debye screening remain private to the
 adapter, with unchanged names and emission order; no capability exposes
 Born intermediates. The central builder no longer selects Born/surface
 fields, definitions, contributions, or evaluated output columns. Custom
-tuple, custom pair, triplet, model, bonded, and nonbonded kinds remain.
+pair, triplet, model, bonded, and nonbonded kinds remain.
+
+The custom-tuple migration (#683) moves tuple/centroid collection,
+potential emission, output names, observable lookup, and tuple tunable
+bookkeeping into `TermTuple.cpp`. Shared centroid geometry remains a named
+borrowed emitter used by pulls. Explicit hook positions preserve tuple
+contributions among bonded terms and tuple definitions/output names before
+custom pairs. Parameter access adds only the tuple gradient records and
+gradient fields needed by this adapter, with no complete builder/program
+access. `topologyRank` 0 is the earlier contribution site and rank 1 is
+the custom-tuple site among bonded terms. `potentialRank` -3 puts tuple
+definitions/output names before the still-central custom-pair range at
+rank -2; remaining registered definitions/names follow that range. Tuple
+sets and gradient coloring are collected at their original tuple-set site;
+kept-array refill and tunable-outcome classification are separate hooks.
+Refill receives read-only inputs and only the tuple set it may fill.
+Existing names, expressions, errors, and numerical order remain. The
+combined GB/surface adapter is already merged (#689) and retains its own
+parameter/potential ranks and private intermediates.
 
 ## 3. Decided
 
