@@ -14,6 +14,8 @@
 #    manylinux_2_28 lets a binary take from the system, is the driver's
 #    libcuda, or is cuFFT or cuBLAS (libcufft.so.12, libcublas.so.13,
 #    libcublasLt.so.13, from NVIDIA's wheels, the extra `cuda`);
+#  - every entry of an RPATH or RUNPATH starts with $ORIGIN: an absolute
+#    one is a directory of the machine that built the wheel (#634);
 #  - the extra `cuda` of its metadata requires nvidia-cufft, nvidia-cublas,
 #    and nvidia-cuda-nvcc (ptxas), and nothing else;
 #  - mdir/cuda holds libdevice;
@@ -82,6 +84,9 @@ for wheel in "$@"; do
       [[ "$needed" =~ $allowed ]] && continue
       [[ -e "$tree/mdir/lib/$needed" || -e "$tree/mdir.libs/$needed" ]] && continue
       complain "$base needs $needed, which is neither in the wheel nor allowed"
+    done
+    for entry in $(objdump -p "$f" | awk '$1 == "RPATH" || $1 == "RUNPATH" {print $2}' | tr ':' ' '); do
+      [[ "$entry" == '$ORIGIN'* ]] || complain "$base has the RPATH entry $entry, outside the wheel"
     done
     printf '%-44s GLIBC %-6s GLIBCXX %-8s CXXABI %s\n' "${f#$tree/}" "${glibc:--}" "${glibcxx:--}" "${cxxabi:--}"
   done < <(find "$tree" -type f -name '*.so*' -print0)

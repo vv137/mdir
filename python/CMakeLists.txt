@@ -37,10 +37,21 @@ configure_file(mdir/torch.py ${MDIR_PYTHON_PACKAGE_DIR}/torch.py COPYONLY)
 
 if(SKBUILD)
   # A wheel (pyproject.toml): the package is the root of the wheel's
-  # platlib, with the runtime in mdir/lib (runtime/CMakeLists.txt), where
-  # the extension also finds HDF5 until auditwheel moves it to mdir.libs.
+  # platlib, with the runtime in mdir/lib (runtime/CMakeLists.txt). The
+  # extension also takes HDF5 from the directory where the build found it,
+  # so that a wheel that auditwheel has not repaired imports without
+  # LD_LIBRARY_PATH (#634). auditwheel's repair grafts libhdf5 into
+  # mdir.libs and keeps only the entries of the RPATH that lie in the wheel
+  # (append_rpath_within_wheel), so a repaired wheel does not carry this
+  # directory; check-wheel.sh refuses an entry outside the wheel.
   set(MDIR_PYTHON_INSTALL_DIR mdir)
-  set_target_properties(mdir_python PROPERTIES INSTALL_RPATH "$ORIGIN/lib")
+  set(MDIR_PYTHON_RPATH "$ORIGIN/lib")
+  get_property(MDIR_PYTHON_HDF5 GLOBAL PROPERTY MDIR_HDF5_FOUND)
+  if(MDIR_PYTHON_HDF5)
+    get_filename_component(MDIR_PYTHON_HDF5_DIR "${MDIR_HDF5_LIBRARY}" DIRECTORY)
+    list(APPEND MDIR_PYTHON_RPATH "${MDIR_PYTHON_HDF5_DIR}")
+  endif()
+  set_target_properties(mdir_python PROPERTIES INSTALL_RPATH "${MDIR_PYTHON_RPATH}")
 else()
   set(MDIR_PYTHON_INSTALL_DIR
     "lib/python${Python_VERSION_MAJOR}.${Python_VERSION_MINOR}/site-packages/mdir"

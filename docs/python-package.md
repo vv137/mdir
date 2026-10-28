@@ -58,7 +58,7 @@ the build as before.
 | Library | Source | Found by |
 |---|---|---|
 | `libmdrt.so`, `libmdrt_cuda.so`, `libomp.so` | the wheel, `mdir/lib` | the extension: `MDIR_RUNTIME_DIR`, else `lib` beside the extension (dladdr), else `lib` beside a directory above it (a build tree, an installed prefix), else the build's |
-| HDF5 | the wheel, `mdir.libs`, renamed by auditwheel so that another HDF5 in the process (h5py's) is not taken for it | the extension's RPATH |
+| HDF5 | the wheel, `mdir.libs`, renamed by auditwheel so that another HDF5 in the process (h5py's) is not taken for it; in a wheel built from source and not repaired, the HDF5 that the build found | the extension's RPATH: `$ORIGIN/lib` and the directory of the HDF5 of the build; auditwheel's repair keeps only the entries inside the wheel and adds `mdir.libs` (#634) |
 | libdevice | the wheel, `mdir/cuda`, 464 KB | without `CUDA_ROOT`, `CUDA_HOME`, `CUDA_PATH`: `cuda` beside the extension, else `../share/mdir/cuda` of an installed tree, else the toolkit of the build |
 | cuFFT (`libcufft.so.12`) | NVIDIA's `nvidia-cufft` wheel (extra `cuda`) | `libmdrt_cuda.so`'s RPATH, `$ORIGIN/../../nvidia/cu13/lib`, else the system's search path (a CUDA toolkit on `LD_LIBRARY_PATH` or in the loader's cache) |
 | cuBLAS (`libcublas.so.13`, `libcublasLt.so.13`) | NVIDIA's `nvidia-cublas` wheel (extra `cuda`) | as cuFFT |
@@ -135,6 +135,11 @@ pip wheel . --no-deps -w dist \
   -C cmake.define.HDF5_ROOT=<hdf5> -C cmake.define.CUDAToolkit_ROOT=<cuda>
 ```
 
+Such a wheel is not repaired by auditwheel: it links the HDF5 of
+`<hdf5>`, which its extension finds through its RPATH, so it runs on the
+machine that built it, or on one with HDF5 at the same path, without
+`LD_LIBRARY_PATH` (#634). `scripts/check-sdist.sh` builds and runs it so.
+
 Release wheels come from the target `wheels` of
 `packaging/Dockerfile.manylinux`, on the toolchain of the tarball (PyPA's
 manylinux_2_28 image, GCC 14, LLVM/MLIR 23.1.2, HDF5 1.14.6, CUDA 13.0):
@@ -153,7 +158,9 @@ minutes, most of it auditwheel's repair of the 270 MB extension.
 `check-wheel.sh` checks the tag and the version, that no ELF file needs
 GLIBC newer than 2.28, that the extension and the runtime need no system
 libstdc++, that every needed library is in the wheel or allowed (the
-manylinux_2_28 list, the driver's libcuda, cuFFT), that libdevice is
+manylinux_2_28 list, the driver's libcuda, cuFFT), that every RPATH entry
+starts with `$ORIGIN` (an absolute one names a directory of the machine
+that built the wheel, #634), that libdevice is
 there, and that the wheel carries the notice of each third party whose
 code it holds in binary form: in `mdir/licenses`, those of pybind11,
 toml++, and LLVM (in the extension), pocketfft (in `libmdrt.so`), the
