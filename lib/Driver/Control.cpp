@@ -51,8 +51,8 @@ private:
 
   Error readReal(const toml::table &table, StringRef key, double &value);
   Error readPositive(const toml::table &table, StringRef key, double &value);
-  /// A positive number, or "AUTO", which sets `automatic` and leaves
-  /// `value` (D281).
+  /// A positive number, or "AUTO" in any case, which sets `automatic`
+  /// and leaves `value` (D281).
   Error readPositiveOrAuto(const toml::table &table, StringRef key,
                            double &value, bool &automatic);
   Error readCount(const toml::table &table, StringRef key, int64_t &value,
@@ -232,7 +232,9 @@ Error Reader::readPositiveOrAuto(const toml::table &table, StringRef key,
                                  double &value, bool &automatic) {
   const toml::node *node = table.get(std::string_view(key));
   if (node && node->is_string()) {
-    if (*node->value<std::string>() != "AUTO")
+    // "AUTO" is read without regard to case, as the values of a choice
+    // are (docs/driver.md, Section 1; #551).
+    if (!StringRef(*node->value<std::string>()).equals_insensitive("AUTO"))
       return fail(*node, "expected a positive number or \"AUTO\" for '" +
                              key + "'");
     automatic = true;
