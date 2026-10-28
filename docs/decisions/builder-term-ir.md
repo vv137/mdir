@@ -2,7 +2,7 @@
 
 Recorded at its merge.
 
-**Built-in term fragments are constructed with `OpBuilder` at the same shared potential insertion sites, with typed operands and owned per-build construction state.**
+**Term fragments are constructed with `OpBuilder` at the same shared potential insertion sites, with typed operands and owned per-build construction state.**
 
 This is step 4 of #568, after the complete adapter registry of #683.
 A fragment borrows an `OpBuilder`, its insertion point, and typed operands.
@@ -23,6 +23,13 @@ The shared Lennard-Jones scalar emitter moves first, followed by the other
 term emitters in their change-frequency order. One commit moves one
 emitter. Custom expression and `ModelTerm` input remain text at their
 boundaries; step 5 removes the remaining generated-text assembly boundary.
+
+Custom-expression scalar operations are built from an immutable owned
+`ExpressionIR` snapshot. It keeps the AST and grid geometry, with coefficient
+data remaining in the program tables. Caller bindings retain precedence over
+named definitions, and definitions are computed lazily once. The existing
+user-term diagnostic location remains independent of SSA naming. Deferred
+recipes receive typed values and never retain borrowed binding maps.
 
 No control key, default, precision support, format, numerical method,
 tolerance, or overwrite behavior changes. The printed module and lowered

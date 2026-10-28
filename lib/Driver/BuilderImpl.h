@@ -397,6 +397,12 @@ struct TermPotentialAddition {
   void append(StringRef value, StringRef sum) const { result(value, sum); }
 };
 
+/// Typed expression construction with an owned AST and bounded value bindings.
+std::string emitExpressionIR(TermEmission &, const Expression &,
+                             const llvm::StringMap<std::string> &values,
+                             StringRef prefix, StringRef indent,
+                             StringRef termName = {});
+
 /// Typed scalar operands: sigma, epsilon, soft-core distance, physical distance.
 mlir::Value buildLennardJonesIR(mlir::OpBuilder &, mlir::ValueRange,
                                 double cutoff, double from, Truncation);

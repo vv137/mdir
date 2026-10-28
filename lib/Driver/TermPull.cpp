@@ -103,7 +103,8 @@ void PullTermBuilder::emitAuxiliaryPotentials(TermEmission &context) const {
     context.bindLambdas(values);
     Expression expression = llvm::cantFail(
         Expression::parse(term.expression, control.functions));
-    std::string energy = expression.emit(os, values, "%pe", "  ", term.name);
+    std::string energy =
+        emitExpressionIR(context, expression, values, "%pe", "  ", term.name);
     os << "  md.return " << energy << " : f64\n}\n\n";
   }
 }

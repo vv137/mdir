@@ -210,7 +210,8 @@ std::string TripletTermBuilder::emitTripletTerm(TermEmission &context,
   }
   if (control.usesTime)
     values["t"] = "%time";
-  std::string value = expression.emit(os, values, p + "e", "    ", term.name);
+  std::string value =
+      emitExpressionIR(context, expression, values, p + "e", "    ", term.name);
   os << "    " << p << "to_energy = arith.constant "
      << formatReal(units::energy) << " : f64\n";
   os << "    " << p << "u = arith.mulf " << value << ", " << p

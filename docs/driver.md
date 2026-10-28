@@ -1353,7 +1353,12 @@ and Coulomb emission share a typed constructor with owned grid/configuration
 data; charge scaling is a typed particle map before the same reciprocal op. The complete
 primary nonbonded relation loop is also typed, including alchemical flags,
 tunable-table seeds, scalar kernels, and the ordered final contribution.
-`TermNonbonded.cpp` no longer writes operation text.
+`TermNonbonded.cpp` no longer writes operation text. The shared custom-expression
+scalar emitter also builds typed operations from an owned `ExpressionIR`
+snapshot of the parsed AST and grid geometry. Lazy definitions and caller
+binding precedence are preserved without retaining borrowed hook state. The
+existing `control-file term: <name>` diagnostic location is preserved; it
+does not provide SSA-name hints.
 
 ## 3. Decided
 

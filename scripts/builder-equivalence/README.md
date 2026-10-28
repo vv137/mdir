@@ -51,3 +51,6 @@ for this diagnostic presentation policy.
 
 The nonbonded matrix includes the supported power-two soft-core paths with
 a plain cutoff and potential shift, in both precision modes and targets.
+
+Expression cases cover all scalar primitives, lazy definitions, and a
+constant with no bound inputs, in both precisions and targets.

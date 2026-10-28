@@ -139,6 +139,22 @@ a = 0.01
         alchemical += '\n[free_energy]\ncouple = "@1-7"\nstate = 1\n' \
                       '[free_energy.lambdas]\ncoulomb = [0.0, 0.5, 1.0]\nvdw = [0.0, 0.5, 1.0]\n'
         write(f"nonbonded-alchemical-{precision}", alchemical)
+        # Every scalar primitive, lazy named definitions, and a zero-input
+        # constant expression exercise the shared typed expression emitter.
+        primitives = ["sqrt(s)", "exp(s)", "log(s)", "sin(s)", "cos(s)",
+            "tan(s)", "asin(s)", "acos(s)", "atan(s)", "sinh(s)", "cosh(s)",
+            "tanh(s)", "abs(s)", "floor(s)", "ceil(s)", "erf(s)", "erfc(s)",
+            "min(s,1-s)", "max(s,1-s)", "atan2(s,1-s)",
+            "select(s,square(s),cube(s))", "step(s)", "delta(s-s)",
+            "recip(1+s)", "sec(s)", "csc(s)", "cot(s)", "(1+s)^(-2)", "(1+s)^2.5"]
+        scalar = direct.replace('electrostatics    = "PME"', 'electrostatics = "CUTOFF"')
+        assert scalar.count('expression = "a/r^6"') == 1
+        expression = "a*(" + "+".join(primitives) + ");s=r/(1+r)"
+        write(f"expression-primitives-{precision}", scalar.replace(
+            'expression = "a/r^6"', 'expression = "' + expression + '"'))
+        constant = scalar.replace('expression = "a/r^6"', 'expression = "1.2345"')
+        constant = re.sub(r'(?m)^a\s*=.*\n', '', constant)
+        write(f"expression-constant-{precision}", constant)
         # The supported root-free soft-core paths with the second lambda
         # power retain their original intermediate operation order.
         for modifier in ("NONE", "POTENTIAL_SHIFT"):

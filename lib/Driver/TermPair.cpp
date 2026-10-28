@@ -392,8 +392,8 @@ public:
         values[constant.first] = value;
       }
       context.bindObserved(term.name, values);
-      std::string energy =
-          expression.emit(os, values, "%pte", "    ", term.name);
+      std::string energy = emitExpressionIR(context, expression, values, "%pte",
+                                            "    ", term.name);
       os << "    %pt_kj = arith.constant " << formatReal(units::energy)
          << " : f64\n"
          << "    %pt_e = arith.mulf " << energy << ", %pt_kj : f64\n";
@@ -500,7 +500,8 @@ public:
         values[name] = "%" + name;
       }
 
-      std::string value = expression.emit(os, values, "%e", "    ", term.name);
+      std::string value = emitExpressionIR(context, expression, values, "%e",
+                                           "    ", term.name);
       os << "    %to_energy = arith.constant " << formatReal(units::energy)
          << " : f64\n";
       os << "    %u = arith.mulf " << value << ", %to_energy : f64\n";

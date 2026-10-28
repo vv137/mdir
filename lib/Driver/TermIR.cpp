@@ -1,5 +1,6 @@
 // Typed fragments become operations in their original shared regions (#568).
 #include "TermIR.h"
+#include "BuilderImpl.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 #include "llvm/ADT/STLExtras.h"
@@ -78,4 +79,43 @@ llvm::Error TermIRPlan::materialize(mlir::ModuleOp module) {
         "a term IR recipe has no assembly connection");
   recipes.clear();
   return llvm::Error::success();
+}
+
+std::string mdir::driver::builder::emitExpressionIR(
+    TermEmission &context, const mdir::driver::Expression &expression,
+    const llvm::StringMap<std::string> &bindings, llvm::StringRef prefix,
+    llvm::StringRef indent, llvm::StringRef termName) {
+  auto program = expression.prepareIR();
+  llvm::SmallVector<llvm::StringRef> supplied;
+  for (const auto &entry : bindings)
+    supplied.push_back(entry.getKey());
+  auto inputs = program.getInputs(supplied);
+  std::vector<std::string> names;
+  llvm::SmallVector<llvm::StringRef> types;
+  for (const auto &name : inputs.names) {
+    auto found = bindings.find(name);
+    assert(found != bindings.end() && "missing expression binding");
+    names.push_back(found->second);
+    types.push_back("f64");
+  }
+  for (const auto &name : inputs.tables) {
+    names.push_back("%t_" + name);
+    types.push_back("!grid");
+  }
+  llvm::SmallVector<llvm::StringRef> operands;
+  for (const auto &name : names)
+    operands.push_back(name);
+  std::string result = prefix.str() + "ir_result";
+  context.emitIRFragment(
+      indent, {result}, {"f64"}, operands, types,
+      [program, inputs, term = termName.str()](
+          mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        llvm::StringMap<mlir::Value> bindings, tables;
+        for (size_t k = 0; k != inputs.names.size(); ++k)
+          bindings[inputs.names[k]] = values[k];
+        for (size_t k = 0; k != inputs.tables.size(); ++k)
+          tables[inputs.tables[k]] = values[inputs.names.size() + k];
+        return {program.build(builder, bindings, tables, term)};
+      });
+  return result;
 }

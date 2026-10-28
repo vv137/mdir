@@ -179,7 +179,8 @@ void ExternalTermBuilder::emitExternalTerm(
     values["t"] = "%time";
   context.bindLambdas(values);
   context.bindObserved(term.name, values);
-  std::string energy = expression.emit(os, values, prefix + "e", "    ", term.name);
+  std::string energy = emitExpressionIR(context, expression, values,
+                                        prefix + "e", "    ", term.name);
   os << "    " << prefix << "kj = arith.constant " << formatReal(units::energy)
      << " : f64\n"
      << "    " << prefix << "u = arith.mulf " << energy << ", " << prefix

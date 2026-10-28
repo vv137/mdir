@@ -18,8 +18,15 @@
 #include <string>
 #include <vector>
 
+namespace mlir {
+class OpBuilder;
+class Value;
+} // namespace mlir
+
 namespace mdir {
 namespace driver {
+
+class ExpressionIR;
 
 /// A tabulated function of one, two, or three arguments. A continuous one
 /// is given by its values at evenly spaced points from `mins` to `maxs`
@@ -91,14 +98,8 @@ public:
   /// Whether the expression calls a tabulated function.
   bool callsTabulated() const { return !splines.empty(); }
 
-  /// Writes ops that compute the expression in `f64`, one on a line, each
-  /// after `indent`. `values` gives the SSA value of every name. The values
-  /// that the ops define begin with `prefix`. Returns the value of the
-  /// expression.
-  std::string emit(llvm::raw_ostream &os,
-                   const llvm::StringMap<std::string> &values,
-                   llvm::StringRef prefix, llvm::StringRef indent,
-                   llvm::StringRef termName = {}) const;
+  /// Owns the AST and grid geometry needed for deferred typed IR construction.
+  ExpressionIR prepareIR() const;
 
   /// The value of the expression, with `values` giving the value of every
   /// name.
@@ -142,6 +143,27 @@ private:
   std::vector<std::string> names;
   /// The names defined after semicolons, and their expressions.
   std::vector<std::pair<std::string, std::unique_ptr<Node>>> definitions;
+};
+
+/// An immutable owned construction plan, independent of its source Expression.
+class ExpressionIR {
+public:
+  struct Inputs {
+    std::vector<std::string> names;
+    std::vector<std::string> tables;
+  };
+  /// Bindings override named definitions, as in expression evaluation.
+  Inputs getInputs(llvm::ArrayRef<llvm::StringRef> supplied) const;
+  mlir::Value build(mlir::OpBuilder &,
+                    const llvm::StringMap<mlir::Value> &values,
+                    const llvm::StringMap<mlir::Value> &tables,
+                    llvm::StringRef termName = {}) const;
+
+private:
+  friend class Expression;
+  struct Impl;
+  explicit ExpressionIR(std::shared_ptr<const Impl>);
+  std::shared_ptr<const Impl> state;
 };
 
 /// A number as MLIR reads a constant of a floating-point type.

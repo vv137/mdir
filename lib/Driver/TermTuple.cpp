@@ -228,7 +228,8 @@ void TupleTermBuilder::emitCentroidTerm(TermEmission &context, size_t index, con
   context.bindObserved(term.name, values);
   Expression expression = llvm::cantFail(
       Expression::parse(term.expression, control.functions));
-  std::string energy = expression.emit(os, values, prefix + "e", "  ", term.name);
+  std::string energy = emitExpressionIR(context, expression, values,
+                                        prefix + "e", "  ", term.name);
   os << "  " << prefix << "kj = arith.constant " << formatReal(units::energy)
      << " : f64\n"
      << "  %u_centroid_" << term.name << " = arith.mulf " << energy << ", "
@@ -368,7 +369,8 @@ void TupleTermBuilder::emitTopologyPotential(TermEmission &context,
     }
     context.bindObserved(term.name, values);
     Expression expression = llvm::cantFail(Expression::parse(term.expression, control.functions));
-    std::string energy = expression.emit(os, values, "%ce", "    ", term.name);
+    std::string energy =
+        emitExpressionIR(context, expression, values, "%ce", "    ", term.name);
     os << "    %c_kj = arith.constant " << formatReal(units::energy)
        << " : f64\n"
        << "    %c_e = arith.mulf " << energy << ", %c_kj : f64\n"
