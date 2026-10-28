@@ -51,6 +51,16 @@ add_mlir_library(MDIRDriver
   TermTuple.cpp
   TermPair.cpp
   TermTriplet.cpp
+  TermBond.cpp
+  TermAngle.cpp
+  TermUreyBradley.cpp
+  TermDihedral.cpp
+  TermImproper.cpp
+  TermPairs14.cpp
+  TermCMap.cpp
+  TermLennardJones.cpp
+  TermNonbonded.cpp
+  TermModel.cpp
   Cell.cpp
   Charmm.cpp
   CMap.cpp

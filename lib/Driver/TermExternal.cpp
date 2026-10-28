@@ -12,6 +12,10 @@ namespace builder {
 
 class ExternalTermBuilder final : public TermBuilder {
 public:
+  ExternalTermBuilder() {
+    potentialMask = TermInputs::ExternalTerms;
+    alchemicalMask = TermInputs::ExternalTerms;
+  }
   void collectParameters(TermParameters &context) const override {
     const Topology &topology = context.getTopology();
     size_t count = topology.getNumParticles();
@@ -39,7 +43,7 @@ public:
 
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,
-      llvm::function_ref<void(StringRef)> add) const override {
+      const TermPotentialAddition & add) const override {
     if (selection.terms & TermInputs::ExternalTerms)
       for (auto [index, term] :
            llvm::enumerate(context.getTopology().externalTerms))
@@ -49,28 +53,26 @@ public:
           emitExternalTerm(context, index, term, add);
   }
 
-  void emitTermPotentials(TermEmission &context) const override {
-    for (size_t k = 0, e = context.getTopology().externalTerms.size();
-         k != e; ++k)
-      context.emitTopologyPotential("term_external" + std::to_string(k),
-                                     TermInputs::ExternalTerms, -1, -1,
-                                     static_cast<int>(k));
+
+
+  void appendTermDefinitions(
+      const TermInputs &context,
+      std::vector<TermDefinition> &definitions) const override {
+    for (size_t k = 0, e = context.getTopology().externalTerms.size(); k != e;
+         ++k)
+      definitions.push_back({17, k, "term_external" + std::to_string(k),
+                             TermInputs::ExternalTerms, -1, -1,
+                             static_cast<int>(k)});
   }
 
-  void appendTermNames(const TermInputs &context,
-                       std::vector<std::string> &names) const override {
-    for (size_t k = 0, e = context.getTopology().externalTerms.size();
-         k != e; ++k)
-      names.push_back("term_external" + std::to_string(k));
-  }
-
-  std::pair<unsigned, int> findObservedTerm(const TermInputs &context,
-                                           StringRef name) const override {
+  ObservedSelection findObservedTerm(const TermInputs &context,
+                                     StringRef name) const override {
     for (auto [index, term] :
          llvm::enumerate(context.getTopology().externalTerms))
       if (term.name == name)
-        return {TermInputs::ExternalTerms, static_cast<int>(index)};
-    return {0, -1};
+        return {TermInputs::ExternalTerms, static_cast<int>(index),
+                {TermInputs::ExternalTerms, -1, -1, static_cast<int>(index), false}};
+    return {};
   }
 
   std::optional<double> getObservedValue(const TermInputs &context, unsigned kind,
@@ -86,21 +88,20 @@ public:
 private:
   static void emitExternalTerm(TermEmission &context, size_t index,
                               const ExternalTerm &term,
-                              llvm::function_ref<void(StringRef)> add);
+                              const TermPotentialAddition & add);
 };
 
 } // namespace builder
 } // namespace driver
 } // namespace mdir
 
-const TermBuilder &mdir::driver::builder::getExternalTermBuilder() {
-  static const ExternalTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createExternalTermBuilder() {
+  return std::make_unique<ExternalTermBuilder>();
 }
 
 void ExternalTermBuilder::emitExternalTerm(
     TermEmission &context, size_t index, const ExternalTerm &term,
-    llvm::function_ref<void(StringRef)> add) {
+    const TermPotentialAddition & add) {
   const Control &control = context.getControl();
   const System &system = context.getSystem();
   llvm::raw_ostream &os = context.getOutput();

@@ -8,37 +8,46 @@ using TupleGradient = BuildKept::TupleGradient;
 namespace mdir::driver::builder {
 class TupleTermBuilder final : public TermBuilder {
 public:
+  TupleTermBuilder() {
+    potentialMask = TermInputs::TupleTerms;
+    alchemicalMask = TermInputs::TupleTerms;
+  }
+  unsigned getPotentialMask(const TermInputs &, const DependentTerms *dependent,
+                            bool) const override {
+    return !dependent || !dependent->tuples.empty() ? potentialMask : 0;
+  }
   int potentialRank() const override { return -3; }
-  int topologyRank() const override { return 1; }
+  int topologyRank() const override { return 3; }
   void collectTupleSets(TermParameters &context) const override;
-  void refillTupleSet(const TermInputs &context,
-                      Program::TupleSet &set) const override {
+  void refillArrays(TermParameters &context) const override {
     const Topology &topology = context.getTopology();
-    for (const TupleTerm &term : topology.tupleTerms)
-      if (!term.isCentroid() && set.name == "custom_" + term.name)
-        for (Program::Field &field : set.fields)
-          if (field.values.empty())
-            fillTupleParameter(field, term);
+    for (Program::TupleSet &set : context.getTupleSets()) {
+      for (const TupleTerm &term : topology.tupleTerms)
+        if (!term.isCentroid() && set.name == "custom_" + term.name)
+          for (Program::Field &field : set.fields)
+            if (field.values.empty())
+              fillTupleParameter(field, term);
+    }
   }
   void emitTopologyPotential(TermEmission &context,
       const PotentialSelection &selection,
-      llvm::function_ref<void(StringRef)> add) const override;
-  void emitTermPotentials(TermEmission &context) const override {
+      const TermPotentialAddition & add) const override;
+
+  void appendTermDefinitions(
+      const TermInputs &context,
+      std::vector<TermDefinition> &definitions) const override {
     for (size_t k = 0, e = context.getTopology().tupleTerms.size(); k != e; ++k)
-      context.emitTopologyPotential("term_custom" + std::to_string(k),
-                                    TermInputs::TupleTerms, static_cast<int>(k));
+      definitions.push_back({14, k, "term_custom" + std::to_string(k),
+                             TermInputs::TupleTerms, static_cast<int>(k)});
   }
-  void appendTermNames(const TermInputs &context,
-                       std::vector<std::string> &names) const override {
-    for (size_t k = 0, e = context.getTopology().tupleTerms.size(); k != e; ++k)
-      names.push_back("term_custom" + std::to_string(k));
-  }
-  std::pair<unsigned, int> findObservedTerm(const TermInputs &context,
-                                           StringRef name) const override {
+  ObservedSelection findObservedTerm(const TermInputs &context,
+                                     StringRef name) const override {
     for (auto [k, term] : llvm::enumerate(context.getTopology().tupleTerms))
       if (term.name == name)
-        return {TermInputs::TupleTerms, static_cast<int>(k)};
-    return {0, -1};
+        return {TermInputs::TupleTerms,
+                static_cast<int>(k),
+                {TermInputs::TupleTerms, static_cast<int>(k), -1, -1, false}};
+    return {};
   }
   std::optional<double> getObservedValue(const TermInputs &context, unsigned kind,
                                         int index, StringRef name) const override {
@@ -49,7 +58,7 @@ public:
     return std::nullopt;
   }
   llvm::Expected<std::optional<Program::GradientOutcome>>
-  getTunableOutcome(const TermInputs &context, unsigned k) const override {
+  collectTunableOutcome(TermParameters &context, unsigned k) const override {
     const Control &control = context.getControl();
     const auto &declaration = control.tunableDeclarations[k];
     if (declaration.kind != Control::TunableKind::TupleParameter)
@@ -70,15 +79,15 @@ public:
 
     return std::optional(Program::GradientOutcome::Zero);
   }
+
 private:
   static void fillTupleParameter(Program::Field &, const TupleTerm &);
   static void emitCentroidTerm(TermEmission &, size_t, const TupleTerm &);
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getTupleTermBuilder() {
-  static const TupleTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createTupleTermBuilder() {
+  return std::make_unique<TupleTermBuilder>();
 }
 
 void TupleTermBuilder::fillTupleParameter(Program::Field &field,
@@ -229,7 +238,7 @@ void TupleTermBuilder::emitCentroidTerm(TermEmission &context, size_t index, con
 
 void TupleTermBuilder::emitTopologyPotential(TermEmission &context,
     const PotentialSelection &selection,
-    llvm::function_ref<void(StringRef)> add) const {
+    const TermPotentialAddition & add) const {
   const System &system = context.getSystem();
   const Control &control = context.getControl();
   llvm::raw_ostream &os = context.getOutput();

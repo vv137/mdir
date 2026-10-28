@@ -51,8 +51,16 @@ static std::string getTruncation(const Control &control) {
 }
 
 namespace mdir::driver::builder {
-class PairTermBuilder final : public TermBuilder {
+class PairTermBuilder final : public TermBuilder, public TermScalarParameters {
 public:
+  PairTermBuilder() {
+    roles.scalarParameters = this;
+    potentialMask = alchemicalMask = TermInputs::PairTerms;
+  }
+  unsigned getPotentialMask(const TermInputs &, const DependentTerms *dependent,
+                            bool) const override {
+    return !dependent || !dependent->pairs.empty() ? potentialMask : 0;
+  }
   int parameterRank() const override { return 1; }
   int potentialRank() const override { return -2; }
   llvm::Error collectBareParameters(TermParameters &context) const override {
@@ -231,14 +239,19 @@ public:
       table.name = "tunable_constants";
       table.count = 1;
       table.columns = control.tunableConstants.size();
-      refillTable(context, table);
+      fillTunableConstants(context, table);
       context.getTables().push_back(std::move(table));
     }
   }
-  bool refillTable(const TermInputs &context,
-                   Program::Table &table) const override {
+  void refillArrays(TermParameters &context) const override {
+    for (Program::Table &table : context.getTables())
+      if (table.values.empty())
+        fillTunableConstants(context, table);
+  }
+  static void fillTunableConstants(const TermInputs &context,
+                                   Program::Table &table) {
     if (table.name != "tunable_constants")
-      return false;
+      return;
     const Control &control = context.getControl();
 
     // The tunable constants of the pair terms (D213), a row that the
@@ -248,8 +261,6 @@ public:
       for (const auto &[key, value] : control.pairs[term].constants)
         if (key == name)
           table.values.push_back(value);
-
-    return true;
   }
   bool
   needsPairNeighborhood(const TermInputs &context,
@@ -259,7 +270,7 @@ public:
   }
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,
-      llvm::function_ref<void(StringRef)> add) const override {
+      const TermPotentialAddition & add) const override {
     const Control &control = context.getControl();
     const System &system = context.getSystem();
     llvm::raw_ostream &os = context.getOutput();
@@ -506,23 +517,22 @@ public:
       }
     }
   }
-  void emitTermPotentials(TermEmission &context) const override {
+
+  void appendTermDefinitions(
+      const TermInputs &context,
+      std::vector<TermDefinition> &definitions) const override {
     for (size_t k = 0, e = context.getControl().pairs.size(); k != e; ++k)
-      context.emitTopologyPotential("term_pair" + std::to_string(k),
-                                    TermInputs::PairTerms, -1,
-                                    static_cast<int>(k));
+      definitions.push_back({15, k, "term_pair" + std::to_string(k),
+                             TermInputs::PairTerms, -1, static_cast<int>(k)});
   }
-  void appendTermNames(const TermInputs &context,
-                       std::vector<std::string> &names) const override {
-    for (size_t k = 0, e = context.getControl().pairs.size(); k != e; ++k)
-      names.push_back("term_pair" + std::to_string(k));
-  }
-  std::pair<unsigned, int> findObservedTerm(const TermInputs &context,
-                                            StringRef name) const override {
+  ObservedSelection findObservedTerm(const TermInputs &context,
+                                     StringRef name) const override {
     for (auto [k, term] : llvm::enumerate(context.getControl().pairs))
       if (term.name == name)
-        return {TermInputs::PairTerms, static_cast<int>(k)};
-    return {0, -1};
+        return {TermInputs::PairTerms,
+                static_cast<int>(k),
+                {TermInputs::PairTerms, -1, static_cast<int>(k), -1, false}};
+    return {};
   }
   std::optional<double> getObservedValue(const TermInputs &context,
                                          unsigned kind, int index,
@@ -548,6 +558,15 @@ public:
     }
 
     return llvm::Error::success();
+  }
+  void appendInitialConstants(
+      const TermInputs &context,
+      llvm::function_ref<void(std::string, double)> add) const override {
+    const auto &control = context.getControl();
+    for (auto [k, constant] : llvm::enumerate(control.tunableConstants))
+      for (const auto &[name, value] : control.pairs[constant.first].constants)
+        if (name == constant.second)
+          add("tg_c" + std::to_string(k), value);
   }
   void collectObservedConstants(TermParameters &context) const override {
     const Control &control = context.getControl();
@@ -589,7 +608,7 @@ public:
     const System &system = context.getSystem();
     const auto &declaration = control.tunableDeclarations[k];
     if (declaration.kind != Control::TunableKind::PairConstant)
-      return getTunableOutcome(context, k);
+      return std::optional<Program::GradientOutcome>();
     bool dispersion = control.topologyDispersion != DispersionCorrection::None;
     // A constant that the expression of its term does not read enters
     // no value of the program.
@@ -643,9 +662,8 @@ private:
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getPairTermBuilder() {
-  static const PairTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createPairTermBuilder() {
+  return std::make_unique<PairTermBuilder>();
 }
 
 llvm::Error PairTermBuilder::collectPairValues(

@@ -5,8 +5,10 @@ using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
 namespace mdir::driver::builder {
-class RestraintTermBuilder final : public TermBuilder {
+class RestraintTermBuilder final : public TermBuilder,
+                                   public TermPostEvaluation {
 public:
+  RestraintTermBuilder() { roles.postEvaluation = this; }
   int parameterRank() const override { return -1; }
   void collectParameters(TermParameters &context) const override;
   bool hasForceCorrection(const TermInputs &context) const override {
@@ -37,9 +39,8 @@ private:
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getRestraintTermBuilder() {
-  static const RestraintTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createRestraintTermBuilder() {
+  return std::make_unique<RestraintTermBuilder>();
 }
 
 void RestraintTermBuilder::collectParameters(TermParameters &context) const {

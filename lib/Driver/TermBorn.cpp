@@ -8,43 +8,40 @@ using namespace mdir::driver::builder;
 namespace mdir::driver::builder {
 class BornTermBuilder final : public TermBuilder {
 public:
+  BornTermBuilder() {
+    potentialMask = TermInputs::GeneralizedBorn | TermInputs::Surface;
+    alchemicalMask = 0;
+  }
   int parameterRank() const override { return -2; }
   int potentialRank() const override { return -1; }
   void collectParameters(TermParameters &context) const override;
   void emitTopologyPotential(
       TermEmission &context, const PotentialSelection &selection,
-      llvm::function_ref<void(StringRef)> add) const override {
+      const TermPotentialAddition & add) const override {
     if ((selection.terms & (TermInputs::GeneralizedBorn | TermInputs::Surface)) &&
         context.getControl().implicitSolvent != Control::ImplicitSolvent::None)
       emitBorn(context, selection.terms, add);
   }
-  void emitTermPotentials(TermEmission &context) const override {
-    const auto &names = context.getSystem().bornTermNames;
-    if (names.empty())
-      return;
-    context.emitTopologyPotential("term_born", TermInputs::GeneralizedBorn);
-    if (names.size() > 1)
-      context.emitTopologyPotential("term_surface", TermInputs::Surface);
-  }
-  void appendTermNames(const TermInputs &context,
-                       std::vector<std::string> &names) const override {
+
+  void appendTermDefinitions(
+      const TermInputs &context,
+      std::vector<TermDefinition> &definitions) const override {
     const auto &terms = context.getSystem().bornTermNames;
     if (terms.empty())
       return;
-    names.push_back("term_born");
+    definitions.push_back({16, 0, "term_born", TermInputs::GeneralizedBorn});
     if (terms.size() > 1)
-      names.push_back("term_surface");
+      definitions.push_back({16, 1, "term_surface", TermInputs::Surface});
   }
 private:
   static void emitBorn(TermEmission &, unsigned,
-                       llvm::function_ref<void(StringRef)>);
+                       const TermPotentialAddition &);
   static double getDebyeKappa(const Control &);
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getBornTermBuilder() {
-  static const BornTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createBornTermBuilder() {
+  return std::make_unique<BornTermBuilder>();
 }
 
 void BornTermBuilder::collectParameters(TermParameters &context) const {
@@ -72,7 +69,7 @@ void BornTermBuilder::collectParameters(TermParameters &context) const {
 }
 
 void BornTermBuilder::emitBorn(TermEmission &context, unsigned terms,
-                       llvm::function_ref<void(StringRef)> add) {
+                       const TermPotentialAddition & add) {
   const Control &control = context.getControl();
   const System &system = context.getSystem();
   llvm::raw_ostream &os = context.getOutput();

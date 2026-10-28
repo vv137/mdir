@@ -5,8 +5,12 @@ using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
 namespace mdir::driver::builder {
-class PullTermBuilder final : public TermBuilder {
+class PullTermBuilder final : public TermBuilder, public TermCoordinateOutput {
 public:
+  PullTermBuilder() { roles.coordinateOutput = this; }
+  bool rejectsTunables(const TermInputs &context) const override {
+    return hasCoordinateOutput(context);
+  }
   bool hasCoordinateOutput(const TermInputs &context) const override {
     return !getColumns(context).empty();
   }
@@ -37,9 +41,8 @@ private:
 };
 } // namespace mdir::driver::builder
 
-const TermBuilder &mdir::driver::builder::getPullTermBuilder() {
-  static const PullTermBuilder builder;
-  return builder;
+std::unique_ptr<TermBuilder> mdir::driver::builder::createPullTermBuilder() {
+  return std::make_unique<PullTermBuilder>();
 }
 
 std::vector<std::pair<size_t, std::string>>
