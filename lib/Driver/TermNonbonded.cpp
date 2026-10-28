@@ -1775,26 +1775,54 @@ public:
       // The field acts on the excluded pairs within the cutoff as well:
       // f q_i q_j (k r² − c), as GROMACS has it (D140).
       auto [k, c] = getReactionField(control);
-      os << "  %u_excluded = md.sum_tuples %r_excluded, %x, %cell coordinates("
-            "distance(0, 1))\n"
-         << "      gather(%p_q : !real) {\n"
-         << "  ^bb0(%r: f64, %q_i: f64, %q_j: f64):\n"
-         << "    %f = arith.constant " << formatReal(coulombInternal)
-         << " : f64\n"
-         << "    %krf = arith.constant " << formatReal(k) << " : f64\n"
-         << "    %crf = arith.constant " << formatReal(c) << " : f64\n"
-         << "    %rc = arith.constant " << formatReal(cutoff) << " : f64\n"
-         << "    %zero = arith.constant 0.0 : f64\n"
-         << "    %qq = arith.mulf %q_i, %q_j : f64\n"
-         << "    %fqq = arith.mulf %f, %qq : f64\n"
-         << "    %rr = arith.mulf %r, %r : f64\n"
-         << "    %field = arith.mulf %krf, %rr : f64\n"
-         << "    %rf = arith.subf %field, %crf : f64\n"
-         << "    %all = arith.mulf %fqq, %rf : f64\n"
-         << "    %inside = arith.cmpf olt, %r, %rc : f64\n"
-         << "    %e = arith.select %inside, %all, %zero : f64\n"
-         << "    md.yield %e : f64\n"
-         << "  } : !rel_excluded, !vec -> f64\n";
+      context.emitIRFragment(
+          "  ", {"%u_excluded"}, {"f64"},
+          {"%r_excluded", "%x", "%cell", "%p_q"},
+          {"!rel_excluded", "!vec", "!md.cell", "!real"},
+          [k, c, cutoff](mlir::OpBuilder &builder,
+                         mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            DenseI32ArrayAttr coordinateKinds;
+            DenseI64ArrayAttr coordinateMembers;
+            mdir::md::Coordinate distance{mdir::md::CoordinateKind::Distance,
+                                          {0, 1}};
+            mdir::md::getCoordinateAttrs(builder, {distance}, coordinateKinds,
+                                         coordinateMembers);
+            auto sum = mdir::md::SumTuplesOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], values.slice(3, 1), ValueRange{}, coordinateKinds,
+                coordinateMembers);
+            llvm::SmallVector<Type> blockTypes(3, builder.getF64Type());
+            llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+            Block *block = builder.createBlock(&sum.getKernel(), {}, blockTypes,
+                                               locations);
+            auto args = block->getArguments();
+            auto constant = [&](double value) -> Value {
+              return arith::ConstantOp::create(builder, loc,
+                                               builder.getF64FloatAttr(value));
+            };
+            auto mul = [&](Value a, Value b) -> Value {
+              return arith::MulFOp::create(builder, loc, a, b);
+            };
+            Value f = constant(coulombInternal);
+            Value krf = constant(k);
+            Value crf = constant(c);
+            Value rc = constant(cutoff);
+            Value zero = constant(0.0);
+            Value qq = mul(args[1], args[2]);
+            Value fqq = mul(f, qq);
+            Value rr = mul(args[0], args[0]);
+            Value field = mul(krf, rr);
+            Value rf = arith::SubFOp::create(builder, loc, field, crf);
+            Value all = mul(fqq, rf);
+            Value inside = arith::CmpFOp::create(
+                builder, loc, arith::CmpFPredicate::OLT, args[0], rc);
+            Value energy =
+                arith::SelectOp::create(builder, loc, inside, all, zero);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            return {sum.getResult()};
+          });
       add("excluded");
     }
     if (program.ljpme && (terms & TermInputs::LennardJonesExcluded) &&

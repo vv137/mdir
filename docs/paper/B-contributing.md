@@ -193,5 +193,6 @@ root-free or switched potential, and alchemical scaling also use typed
 fragments, preserving the original intermediate operations and branch order. Shielded
 Coulomb kernels for excluded and within-selection pairs use typed Gaussian
 or prolate operations, sharing the same typed prolate polynomial builder. The
-excluded and within-selection Coulomb terms also build their complete tuple
-loops, typed block arguments, charge scaling, and yields with `OpBuilder`.
+excluded and within-selection Coulomb terms, including reaction-field
+exclusions, also build their complete tuple loops, typed block arguments,
+charge scaling, cutoff selection, and yields with `OpBuilder`.
