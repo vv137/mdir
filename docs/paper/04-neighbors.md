@@ -39,7 +39,8 @@ checkpoint, and give the same state to the bit in the deterministic mode.
 
 The coverage-boundary check (D357, #572) separates the
 construction's cutoff, centers, and image convention from current-state
-validity (#571). The compiler proves these facts through direct builds and
+validity, which a refresh tests at run time (D80) and this check does not
+prove. The compiler proves these facts through direct builds and
 refreshes, every initial and yielded path of a recognized `scf.for`, and
 every direct call site of a private function. The initial path is needed
 even when the loop takes zero iterations; induction on a carried value
