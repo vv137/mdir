@@ -1832,54 +1832,87 @@ public:
       // y + y²/2) = 1 − g(β r) (D162). Below y = 1, P is taken from its
       // series exp(−y) y³ Σ_k y^k / (k + 3)!, which has no cancellation;
       // the pairs of a molecule are close, where 1 − g is small.
-      os << "  %u_lj_excluded = md.sum_tuples %r_excluded, %x, %cell "
-            "coordinates(distance(0, 1))\n"
-         << "      gather(%p_type : !ids) {\n"
-         << "  ^bb0(%r: f64, %type_i: i32, %type_j: i32):\n"
-         << "    %c6 = md.lookup %t_ljpme_c6[%type_i, %type_j] : !table, i32, "
-            "i32 -> f64\n"
-         << "    %beta = arith.constant " << formatReal(program.ljpmeBeta)
-         << " : f64\n"
-         << "    %bx = arith.mulf %beta, %r : f64\n"
-         << "    %y = arith.mulf %bx, %bx : f64\n"
-         << "    %ny = arith.negf %y : f64\n"
-         << "    %ey = math.exp %ny : f64\n"
-         << "    %one = arith.constant 1.0 : f64\n"
-         << "    %half = arith.constant 0.5 : f64\n";
-      // The series, by Horner's rule, to k = 10: the rest is below 1e-10 of
-      // it.
+      // Horner series through k = 10; the omitted tail is below 1e-10.
       double factorial = 6.0;
       std::vector<double> coefficients;
       for (int k = 0; k <= 10; ++k) {
         coefficients.push_back(1.0 / factorial);
         factorial *= k + 4;
       }
-      os << "    %s10 = arith.constant " << formatReal(coefficients[10])
-         << " : f64\n";
-      for (int k = 9; k >= 0; --k)
-        os << "    %a" << k << " = arith.constant "
-           << formatReal(coefficients[k]) << " : f64\n"
-           << "    %sy" << k << " = arith.mulf %s" << k + 1 << ", %y : f64\n"
-           << "    %s" << k << " = arith.addf %sy" << k << ", %a" << k
-           << " : f64\n";
-      os << "    %y2 = arith.mulf %y, %y : f64\n"
-         << "    %y3 = arith.mulf %y2, %y : f64\n"
-         << "    %ey3 = arith.mulf %ey, %y3 : f64\n"
-         << "    %series = arith.mulf %ey3, %s0 : f64\n"
-         << "    %hy2 = arith.mulf %half, %y2 : f64\n"
-         << "    %p1 = arith.addf %one, %y : f64\n"
-         << "    %p = arith.addf %p1, %hy2 : f64\n"
-         << "    %g = arith.mulf %ey, %p : f64\n"
-         << "    %closed = arith.subf %one, %g : f64\n"
-         << "    %small = arith.cmpf olt, %y, %one : f64\n"
-         << "    %kept = arith.select %small, %series, %closed : f64\n"
-         << "    %r2 = arith.mulf %r, %r : f64\n"
-         << "    %r4 = arith.mulf %r2, %r2 : f64\n"
-         << "    %r6 = arith.mulf %r4, %r2 : f64\n"
-         << "    %cr = arith.divf %c6, %r6 : f64\n"
-         << "    %e = arith.mulf %cr, %kept : f64\n"
-         << "    md.yield %e : f64\n"
-         << "  } : !rel_excluded, !vec -> f64\n";
+      context.emitIRFragment(
+          "  ", {"%u_lj_excluded"}, {"f64"},
+          {"%r_excluded", "%x", "%cell", "%p_type", "%t_ljpme_c6"},
+          {"!rel_excluded", "!vec", "!md.cell", "!ids", "!table"},
+          [beta = program.ljpmeBeta,
+           coefficients](mlir::OpBuilder &builder,
+                         mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            DenseI32ArrayAttr coordinateKinds;
+            DenseI64ArrayAttr coordinateMembers;
+            mdir::md::Coordinate distance{mdir::md::CoordinateKind::Distance,
+                                          {0, 1}};
+            mdir::md::getCoordinateAttrs(builder, {distance}, coordinateKinds,
+                                         coordinateMembers);
+            auto sum = mdir::md::SumTuplesOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], values.slice(3, 1), ValueRange{}, coordinateKinds,
+                coordinateMembers);
+            llvm::SmallVector<Type> blockTypes = {builder.getF64Type(),
+                                                  builder.getI32Type(),
+                                                  builder.getI32Type()};
+            llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+            Block *block = builder.createBlock(&sum.getKernel(), {}, blockTypes,
+                                               locations);
+            auto args = block->getArguments();
+            auto constant = [&](double value) -> Value {
+              return arith::ConstantOp::create(builder, loc,
+                                               builder.getF64FloatAttr(value));
+            };
+            auto mul = [&](Value a, Value b) -> Value {
+              return arith::MulFOp::create(builder, loc, a, b);
+            };
+            auto add = [&](Value a, Value b) -> Value {
+              return arith::AddFOp::create(builder, loc, a, b);
+            };
+            Value r = args[0];
+            Value c6 = mdir::md::LookupOp::create(
+                builder, loc, builder.getF64Type(), values[4],
+                ValueRange{args[1], args[2]});
+            Value betaValue = constant(beta);
+            Value bx = mul(betaValue, r);
+            Value y = mul(bx, bx);
+            Value ny = arith::NegFOp::create(builder, loc, y);
+            Value ey = math::ExpOp::create(builder, loc, ny);
+            Value one = constant(1.0);
+            Value half = constant(0.5);
+            Value polynomial = constant(coefficients[10]);
+            for (int k = 9; k >= 0; --k) {
+              Value a = constant(coefficients[k]);
+              Value product = mul(polynomial, y);
+              polynomial = add(product, a);
+            }
+            Value y2 = mul(y, y);
+            Value y3 = mul(y2, y);
+            Value ey3 = mul(ey, y3);
+            Value series = mul(ey3, polynomial);
+            Value hy2 = mul(half, y2);
+            Value p1 = add(one, y);
+            Value p = add(p1, hy2);
+            Value g = mul(ey, p);
+            Value closed = arith::SubFOp::create(builder, loc, one, g);
+            Value small = arith::CmpFOp::create(
+                builder, loc, arith::CmpFPredicate::OLT, y, one);
+            Value kept =
+                arith::SelectOp::create(builder, loc, small, series, closed);
+            Value r2 = mul(r, r);
+            Value r4 = mul(r2, r2);
+            Value r6 = mul(r4, r2);
+            Value cr = arith::DivFOp::create(builder, loc, c6, r6);
+            Value energy = mul(cr, kept);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            return {sum.getResult()};
+          });
       add("lj_excluded");
     }
     if (program.ljpme && (terms & TermInputs::LennardJonesReciprocal)) {

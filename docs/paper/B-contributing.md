@@ -195,4 +195,6 @@ Coulomb kernels for excluded and within-selection pairs use typed Gaussian
 or prolate operations, sharing the same typed prolate polynomial builder. The
 excluded and within-selection Coulomb terms, including reaction-field
 exclusions, also build their complete tuple loops, typed block arguments,
-charge scaling, cutoff selection, and yields with `OpBuilder`.
+charge scaling, cutoff selection, and yields with `OpBuilder`. The LJPME
+excluded-pair loop is typed as well, including its cancellation-free
+small-distance Horner series and closed-form selection.
