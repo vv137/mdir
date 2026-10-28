@@ -5,6 +5,9 @@
 # matrix at 1.5 Å); only `mdir run` of a long run with the groups on a GPU,
 # outside the deterministic mode, measures candidates. A number is fixed,
 # and a value that is neither a positive number nor "AUTO" is refused.
+# "AUTO" is read without regard to case (#551): "auto" and "Auto" give what
+# "AUTO" gives (the run of `mdir check --json` and the program of
+# `mdir emit`, compared whole), and numbers give something else.
 #
 # RUN: rm -rf %t && mkdir -p %t
 # RUN: %python %S/Inputs/argon_lattice.py 40 %t/big.pdb
@@ -17,7 +20,8 @@
 # RUN: sed -e 's|big.pdb|small.pdb|' -e 's|152.0|76.0|g' %t/long.toml > %t/matrix.toml
 # RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 11.0\npruned_distance = "AUTO"|' -e 's|^steps = 20|steps = 100000000|' %t/big.toml > %t/outer.toml
 # RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = 11.0\npruned_distance = 9.3|' %t/big.toml > %t/given.toml
-# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "auto"|' %t/big.toml > %t/lower.toml
+# RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npairlist_distance = "auto"\npruned_distance = "Auto"|' %t/big.toml > %t/lower.toml
+# RUN: sed -e 's|"AUTO"|"Auto"|' %t/outer.toml > %t/lower-outer.toml
 # RUN: sed -e 's|^cutoff = 9.0|cutoff = 9.0\npruned_distance = true|' %t/big.toml > %t/boolean.toml
 # RUN: cd %t && mdir check big.toml | FileCheck %s --check-prefix=OMITTED
 # RUN: cd %t && mdir check auto.toml | FileCheck %s --check-prefix=SHORT
@@ -29,7 +33,22 @@
 # RUN: cd %t && mdir check matrix.toml | FileCheck %s --check-prefix=MATRIX
 # RUN: cd %t && mdir check outer.toml | FileCheck %s --check-prefix=OUTER
 # RUN: cd %t && mdir check given.toml | FileCheck %s --check-prefix=GIVEN --implicit-check-not=skins:
-# RUN: cd %t && not mdir check lower.toml 2>&1 | FileCheck %s --check-prefix=LOWER
+# RUN: cd %t && mdir check lower.toml | FileCheck %s --check-prefix=SHORT
+# RUN: cd %t && mdir check lower-outer.toml | FileCheck %s --check-prefix=OUTER
+# RUN: cd %t && mdir check --json auto.toml > auto.json
+# RUN: cd %t && mdir check --json lower.toml > lower.json
+# RUN: cd %t && mdir check --json outer.toml > outer.json
+# RUN: cd %t && mdir check --json lower-outer.toml > lower-outer.json
+# RUN: cd %t && mdir check --json given.toml > given.json
+# RUN: %python -c "import json, sys; a, b = (json.load(open(f))['run'] for f in sys.argv[1:]); sys.exit(a != b)" %t/auto.json %t/lower.json
+# RUN: %python -c "import json, sys; a, b = (json.load(open(f))['run'] for f in sys.argv[1:]); sys.exit(a != b)" %t/outer.json %t/lower-outer.json
+# RUN: not %python -c "import json, sys; a, b = (json.load(open(f))['run'] for f in sys.argv[1:]); sys.exit(a != b)" %t/auto.json %t/given.json
+# RUN: not %python -c "import json, sys; a, b = (json.load(open(f))['run'] for f in sys.argv[1:]); sys.exit(a != b)" %t/outer.json %t/given.json
+# RUN: cd %t && mdir emit auto.toml > auto.mlir
+# RUN: cd %t && mdir emit lower.toml > lower.mlir
+# RUN: cd %t && mdir emit given.toml > given.mlir
+# RUN: cmp %t/auto.mlir %t/lower.mlir
+# RUN: not cmp -s %t/auto.mlir %t/given.mlir
 # RUN: cd %t && not mdir check boolean.toml 2>&1 | FileCheck %s --check-prefix=BOOLEAN
 # RUN: cd %t && mdir check --json auto.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['skins'], sort_keys=True))" | FileCheck %s --check-prefix=JSON
 # RUN: cd %t && mdir check --json given.toml | %python -c "import json, sys; print(json.dumps(json.load(sys.stdin)['run']['skins'], sort_keys=True))" | FileCheck %s --check-prefix=JSON-GIVEN
@@ -50,7 +69,6 @@
 # OUTER: neighbors: groups of 16, reach 11 Å, pruned to 9.6 Å
 # OUTER-NEXT: skins: default (`mdir run` measures candidates; this does not)
 # GIVEN: neighbors: groups of 16, reach 11 Å, pruned to 9.3 Å
-# LOWER: expected a positive number or "AUTO" for 'pairlist_distance'
 # BOOLEAN: expected a positive number or "AUTO" for 'pruned_distance'
 # JSON: {"pairlist_distance_source": "default", "pruned_distance_source": "default", "reason": "a short run: 64000 particles times 20 steps, below 5e+12"}
 # JSON-GIVEN: {"pairlist_distance_source": "given", "pruned_distance_source": "given", "reason": ""}
