@@ -271,9 +271,9 @@ def main():
     place.mkdir(parents=True, exist_ok=True)
     ordinary, hosted = controls(root, place)
     library = metadata_plugin(root, place, args.compiler)
-    for mode, files, expected_errors in (("exact", ordinary, 68),
-                                         ("padded", hosted, 24),
-                                         ("search", hosted, 24)):
+    for mode, files, expected_errors in (("exact", ordinary, 56),
+                                         ("padded", hosted, 12),
+                                         ("search", hosted, 12)):
         scratch = place / ("compare-" + mode)
         scratch.mkdir(exist_ok=True)
         cmd = [sys.executable, str(Path(__file__).with_name("check.py")), "compare",
@@ -302,9 +302,6 @@ def main():
                        "runs on a GPU only" in line)
             baseline = ("extra/model-host-restraints-" in line and "[gpu" in line and
                         "use of undeclared SSA value name" in line)
-            baseline |= ("extra/model-host-" in line and "[gpu" in line and
-                         "does not state the effect of its body" in line and
-                         "'<Default>'" in line)  # #707, independently checked on the base.
             if not support and not baseline:
                 unexpected.append(line)
         if not match or int(match[2]) != expected_errors or unexpected:

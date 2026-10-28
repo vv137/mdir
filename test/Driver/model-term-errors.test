@@ -7,6 +7,9 @@
 # REQUIRES: python-api
 #
 # RUN: rm -rf %t && mkdir -p %t
+# RUN: %python %S/Inputs/hosted_default_effects.py %S/../.. %t/hosted-effects mdir mdir-opt | FileCheck %s --check-prefix=HOSTED-EFFECTS
+# HOSTED-EFFECTS: effect modules: 72 verified (36 hosted, 36 classical constrained)
+# HOSTED-EFFECTS-NEXT: exact/padded/search; double/mixed; NVE/NPT/min; run/segments
 # RUN: %mdir_python %S/../../scripts/mlip/water-box.py %t --n 2 --spacing 4.0
 # RUN: sed -n '/^#--- run.toml/,/^#--- end/p' %s | sed '1d;$d' > %t/run.toml
 # RUN: mdir check %t/run.toml | FileCheck %s --check-prefix=CHECK-OK

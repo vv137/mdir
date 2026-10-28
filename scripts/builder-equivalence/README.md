@@ -18,11 +18,10 @@ and makes no numerical claim about a model. CPU models and GPU triplets
 retain their expected support errors; unexpected fixture errors are
 reported separately from generated-program differences. The known hosted
 model/restraint stored-energy SSA error (#706) is retained as a baseline
-error case, alongside hosted controls without restraints. Those controls
-expose the separate default-resource effect declaration error (#707), also
-retained explicitly. Staged-model controls successfully reach printed and
-lowered IR. `--host-raw` additionally compares hosted module text before
-these baseline verifier failures; this supplementary check is for stage A,
+error case. Hosted controls without restraints are successful module/lowered
+cases after the default-resource effect declaration fix (#707), alongside
+the staged-model controls. `--host-raw` additionally compares hosted module
+text before the known baseline failures; this supplementary check is for stage A,
 where text is preserved, rather than the later typed-IR stage.
 
 The order matrix also generates the synthetic CHARMM chain from the reader
