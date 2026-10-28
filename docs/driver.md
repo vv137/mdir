@@ -1276,6 +1276,16 @@ Existing names, expressions, errors, and numerical order remain. The
 combined GB/surface adapter is already merged (#689) and retains its own
 parameter/potential ranks and private intermediates.
 
+The custom-pair migration (#683) moves pair-specific type/field collection,
+bare-system and topology emission, definitions, output names, observables,
+and host tail calculations into `TermPair.cpp`. A borrowed per-builder
+pair plan holds expressions, lookup indices, and tail memoization; type
+parameter descriptors shared with triplets remain a named collection.
+Named scalar pair services support shared host energy aggregation without
+exposing the complete builder/program. Potential rank -2 preserves pairs
+between custom tuples (-3) and Born/surface (-1); existing fields, names,
+errors, quadrature, and floating-point operation order remain unchanged.
+
 ## 3. Decided
 
 | # | Question | Decision |
