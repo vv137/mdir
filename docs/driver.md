@@ -1170,7 +1170,7 @@ and the lowered program of the corpus of Section 2.11 are those of
 before. Since the names of kernels no longer carry lines of the builder
 (D354), moving code changes no name.
 
-**Part 2, the registration (D359, externals, pulls, restraints, Born/surface, and custom tuples built).** A term provides its
+**Part 2, the registration (D359, externals, pulls, restraints, Born/surface, custom tuples, and custom pairs built).** A term provides its
 builder in a file of its own, behind an interface that the central
 functions iterate, so that a new term adds a file rather than a case in
 `emitTopologyPotential`, `emitTerms`, and `emitEntry`:
@@ -1224,8 +1224,8 @@ pull adapter emits at these new hook sites, so no rank conflict arises.
 
 `TermRestraint.cpp` owns the positional-restraint fields, force/energy/virial
 correction, and stored energy column. The parameter hook has an explicit
-`parameterRank`: Born/surface rank -2, restraints rank -1, external terms rank 0, and pulls rank 0, with stable
-registry order (externals, pulls, restraints, Born/surface, tuples) for equal ranks. Pulls collect no
+`parameterRank`: Born/surface rank -2, restraints rank -1, external terms rank 0, pulls rank 0, and custom-pair fields rank 1, with stable
+registry order (externals, pulls, restraints, Born/surface, tuples, pairs) for equal ranks. Pulls collect no
 parameters; only pulls emit auxiliary potentials/output, and only restraints
 emit force corrections/stored columns. These hooks currently have no shared
 active pull/restraint site needing a second rank. This preserves restraint fields before
@@ -1255,8 +1255,7 @@ potential ranks are separate because their hook sites have different
 ordering needs. The shared radii and Debye screening remain private to the
 adapter, with unchanged names and emission order; no capability exposes
 Born intermediates. The central builder no longer selects Born/surface
-fields, definitions, contributions, or evaluated output columns. Custom
-pair, triplet, model, bonded, and nonbonded kinds remain.
+fields, definitions, contributions, or evaluated output columns. Triplet, model, bonded, and nonbonded kinds remain.
 
 The custom-tuple migration (#683) moves tuple/centroid collection,
 potential emission, output names, observable lookup, and tuple tunable
@@ -1266,9 +1265,8 @@ contributions among bonded terms and tuple definitions/output names before
 custom pairs. Parameter access adds only the tuple gradient records and
 gradient fields needed by this adapter, with no complete builder/program
 access. `topologyRank` 0 is the earlier contribution site and rank 1 is
-the custom-tuple site among bonded terms. `potentialRank` -3 puts tuple
-definitions/output names before the still-central custom-pair range at
-rank -2; remaining registered definitions/names follow that range. Tuple
+the custom-tuple site among bonded terms. `potentialRank` orders all migrated definitions/output names in one loop:
+tuples -3, custom pairs -2, Born/surface -1, and externals 0. Tuple
 sets and gradient coloring are collected at their original tuple-set site;
 kept-array refill and tunable-outcome classification are separate hooks.
 Refill receives read-only inputs and only the tuple set it may fill.
@@ -1279,12 +1277,27 @@ parameter/potential ranks and private intermediates.
 The custom-pair migration (#683) moves pair-specific type/field collection,
 bare-system and topology emission, definitions, output names, observables,
 and host tail calculations into `TermPair.cpp`. A borrowed per-builder
-pair plan holds expressions, lookup indices, and tail memoization; type
+`PairTermPlan` holds expressions, lookup indices, and logically const tail
+memoization; type
 parameter descriptors shared with triplets remain a named collection.
 Named scalar pair services support shared host energy aggregation without
 exposing the complete builder/program. Potential rank -2 preserves pairs
 between custom tuples (-3) and Born/surface (-1); existing fields, names,
 errors, quadrature, and floating-point operation order remain unchanged.
+
+The pair adapter collects bare-system type parameters before the shared
+triplet descriptors, then bare dispersion constants after them, retaining
+validation order. Its topology particle fields use parameter rank 1, after
+external fields; its tunable table retains its original table site.
+Refill receives read-only inputs plus its one table. A generic neighborhood
+query replaces the central `PairTerms` branch. Bare and topology pair
+emission use separate hooks. Mutable tunable-outcome collection defaults to
+the existing read-only classification hook, so tuples keep the narrower
+interface while pairs append their gradient slots/columns in the same
+declaration order. Named scalar dispersion/shift updates expose only their
+quantities, not the complete mutable program. Definitions and output names
+now use one ranked loop without the temporary -2 split. The obsolete
+centroid-term comment has been removed from the shared geometry method.
 
 ## 3. Decided
 

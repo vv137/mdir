@@ -447,16 +447,7 @@ llvm::Error Builder::build() {
         emitTopologyPotential(name, term);
     if (!isRestart())
       for (const TermBuilder *builder : termBuildersByPotentialRank())
-        if (builder->potentialRank() < -2)
-          builder->emitTermPotentials(*this);
-    if (!isRestart())
-      for (size_t k = 0, e = control.pairs.size(); k != e; ++k)
-        emitTopologyPotential("term_pair" + std::to_string(k), PairTerms, -1,
-                              static_cast<int>(k));
-    if (!isRestart())
-      for (const TermBuilder *builder : termBuildersByPotentialRank())
-        if (builder->potentialRank() >= -2)
-          builder->emitTermPotentials(*this);
+        builder->emitTermPotentials(*this);
   }
   else if (llvm::Error error = emitPotential())
     return error;

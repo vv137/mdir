@@ -175,4 +175,17 @@ topology and potential ranks preserve contributions among bonded terms
 and definitions/output names before custom pairs. Read-only tuple gradient
 plans and the required mutable gradient/tuple collections are borrowed by
 name, with no complete builder/program access. The moved kinds are external terms, pulls, restraints, Born/surface, and
-custom tuples. Custom pair terms are next in #683.
+custom tuples. Custom pair terms are now registered; triplets are next in #683.
+
+The custom-pair adapter (`TermPair.cpp`, D359/D361, #683) owns bare and
+topology pair emission, type/particle fields, tunable tables, observable
+constants, pair-gradient slots, and the bounded scalar tail services used
+by shared host energy aggregation. Expressions, lookup indices, and tail
+memoization live in a per-builder `PairTermPlan`; adapters borrow named
+partial collections and quantities rather than the builder or complete
+mutable program. The potential rank -2 places pairs between tuples (-3)
+and Born/surface (-1), restoring a single definition/output-name loop.
+The particle-field rank 1 keeps pair groups/parameters after externals.
+The quadrature, derivatives, field order, SSA names, and contribution order
+are unchanged. External, pull, restraint, Born/surface, tuple, and pair
+kinds are registered; triplet, model, bonded, and nonbonded kinds remain.

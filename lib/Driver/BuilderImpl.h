@@ -123,6 +123,23 @@ struct Parameter {
   unsigned field = 0;
 };
 
+/// Per-builder custom-pair data; memoization is logically const and never
+/// changes the physical inputs or the generated program.
+struct PairTermPlan {
+  std::vector<Expression> expressions;
+  std::vector<llvm::StringMap<unsigned>> tables;
+  std::vector<Expression> tailExpressions;
+  struct TailIntegral {
+    bool finite = false;
+    double integral = 0.0, edge = 0.0;
+  };
+  mutable std::vector<std::map<std::vector<uint64_t>, TailIntegral>>
+      tailIntegrals;
+};
+struct PairTermTail {
+  double energy = 0.0, virial = 0.0, shift = 0.0, shiftFixed = 0.0;
+};
+
 class SiteKernel;
 class Builder;
 
@@ -133,6 +150,11 @@ public:
   virtual ~TermInputs() = default;
   virtual const System &getSystem() const = 0;
   virtual const Control &getControl() const = 0;
+  virtual const PairTermPlan &getPairPlan() const = 0;
+  virtual llvm::ArrayRef<Parameter> getTypeParameters() const = 0;
+  virtual llvm::ArrayRef<Program::Table> getParameterTables() const = 0;
+  virtual bool includesPair(unsigned index) const = 0;
+  virtual double getShiftFixedFactor() const = 0;
   virtual llvm::ArrayRef<BuildKept::TupleGradient> getTupleGradients() const = 0;
   virtual bool hasGradientArguments() const = 0;
   virtual bool hasTunableGradient() const = 0;
@@ -196,12 +218,22 @@ public:
   virtual std::vector<Program::TupleSet> &getTupleSets() = 0;
   virtual std::vector<Program::GradientField> &getGradientFields() = 0;
   virtual std::vector<BuildKept::TupleGradient> &getMutableTupleGradients() = 0;
+  virtual PairTermPlan &getMutablePairPlan() = 0;
+  virtual std::vector<Parameter> &getMutableTypeParameters() = 0;
+  virtual std::vector<Program::GradientSlot> &getGradientSlots() = 0;
+  virtual std::vector<unsigned> &getGradientColumns() = 0;
+  virtual std::vector<double> &getObservableVolumeConstants() = 0;
+  virtual std::vector<double> &getObservableFixedConstants() = 0;
+  virtual void setBareDispersion(double energy, double virial) = 0;
+  virtual void addDispersion(double energy, double fixed, double virial) = 0;
+  virtual void addGradientShift(double scaled, double fixed) = 0;
 };
 
 /// Emission adds the output stream and explicitly named shared operations.
 class TermEmission : public TermParameters {
 public:
   virtual llvm::raw_ostream &getOutput() = 0;
+  virtual Truncation getPairTruncation() const = 0;
   virtual void emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm = -1, int pairTerm = -1,
                                     int externalTerm = -1) = 0;
@@ -252,6 +284,27 @@ public:
   getTunableOutcome(const TermInputs &, unsigned) const {
     return std::optional<Program::GradientOutcome>();
   }
+  virtual llvm::Expected<std::optional<Program::GradientOutcome>>
+  collectTunableOutcome(TermParameters &context, unsigned index) const {
+    return getTunableOutcome(context, index);
+  }
+  virtual llvm::Error collectBareParameters(TermParameters &) const {
+    return llvm::Error::success();
+  }
+  virtual llvm::Error collectBareConstants(TermParameters &) const {
+    return llvm::Error::success();
+  }
+  virtual void collectTopologyTables(TermParameters &) const {}
+  virtual bool refillTable(const TermInputs &, Program::Table &) const { return false; }
+  virtual llvm::Error collectDispersionConstants(TermParameters &) const {
+    return llvm::Error::success();
+  }
+  virtual void collectObservedConstants(TermParameters &) const {}
+  virtual void collectGradientShiftConstants(TermParameters &) const {}
+  virtual bool needsPairNeighborhood(const TermInputs &, const PotentialSelection &) const {
+    return false;
+  }
+  virtual void emitBareContributions(TermEmission &, std::string &) const {}
   virtual void collectParameters(TermParameters &) const {}
   virtual bool hasForceCorrection(const TermInputs &) const { return false; }
   virtual void emitForceCorrection(TermEmission &, const TermCorrection &) const {}
@@ -283,6 +336,13 @@ const TermBuilder &getPullTermBuilder();
 const TermBuilder &getRestraintTermBuilder();
 const TermBuilder &getBornTermBuilder();
 const TermBuilder &getTupleTermBuilder();
+const TermBuilder &getPairTermBuilder();
+llvm::Error collectCustomPairTails(TermParameters &);
+llvm::Expected<PairTermTail> getCustomPairTail(const TermInputs &, unsigned,
+                                             const llvm::StringMap<double> &);
+double getCustomPairTails(const TermInputs &, const llvm::StringMap<double> &, bool);
+double getCustomPairTailDerivative(const TermInputs &, unsigned, StringRef,
+                                   double, bool, bool);
 std::vector<const TermBuilder *> termBuildersByParameterRank();
 std::vector<const TermBuilder *> termBuildersByPotentialRank();
 
@@ -307,6 +367,41 @@ public:
 private:
   const System &getSystem() const override { return system; }
   const Control &getControl() const override { return control; }
+  const PairTermPlan &getPairPlan() const override { return pairPlan; }
+  PairTermPlan &getMutablePairPlan() override { return pairPlan; }
+  llvm::ArrayRef<Parameter> getTypeParameters() const override { return parameters; }
+  std::vector<Parameter> &getMutableTypeParameters() override { return parameters; }
+  llvm::ArrayRef<Program::Table> getParameterTables() const override {
+    return program.tables;
+  }
+  bool includesPair(unsigned index) const override {
+    return !dependent || dependent->hasPair(index);
+  }
+  std::vector<Program::GradientSlot> &getGradientSlots() override {
+    return program.gradientSlots;
+  }
+  std::vector<unsigned> &getGradientColumns() override {
+    return gradientColumns;
+  }
+  std::vector<double> &getObservableVolumeConstants() override {
+    return program.observableVolumeConstants;
+  }
+  std::vector<double> &getObservableFixedConstants() override {
+    return program.observableFixedConstants;
+  }
+  void setBareDispersion(double energy, double virial) override {
+    program.dispersionEnergy = energy;
+    program.dispersionVirial = virial;
+  }
+  void addDispersion(double energy, double fixed, double virial) override {
+    program.dispersionEnergy += energy;
+    program.dispersionFixedEnergy += fixed;
+    program.dispersionVirial += virial;
+  }
+  void addGradientShift(double scaled, double fixed) override {
+    program.gradientShiftEnergy += scaled;
+    program.gradientShiftFixedEnergy += fixed;
+  }
   std::vector<Program::Field> &getFields() override { return program.fields; }
   std::vector<Program::Table> &getTables() override { return program.tables; }
   std::vector<Program::TupleSet> &getTupleSets() override {
@@ -373,8 +468,6 @@ private:
   void emitTopologyPotential(StringRef name, unsigned terms,
                              int tupleTerm = -1, int pairTerm = -1,
                              int externalTerm = -1) override;
-  /// Emits `%u_centroid_<name>`, the energy of the term `term` over the
-  /// centers of groups, the term `index` over tuples (D139).
   /// Emits the coordinates of the term `term` over centers, the term
   /// `index` over tuples, at the positions `x` in the cell `cell`, with
   /// the members of its tuples named `relations` and the name of the set:
@@ -633,7 +726,7 @@ private:
   /// gradient of that potential and the dynamics samples it.
   bool shiftsAtCutoff = false;
   /// The truncation of the pair terms of the potential being emitted.
-  Truncation getPairTruncation() const {
+  Truncation getPairTruncation() const override {
     return shiftsAtCutoff && control.truncation == Truncation::None
                ? Truncation::Shift
                : control.truncation;
@@ -718,10 +811,6 @@ private:
   std::vector<ObservedTerm> getObservedTerms() const;
   /// The value of the constant `name` of the observed term `term`.
   double getObservedValue(const ObservedTerm &term, StringRef name) const {
-    if (term.kind == PairTerms)
-      for (const auto &[key, value] : control.pairs[term.index].constants)
-        if (key == name)
-          return value;
     for (const TermBuilder *builder : registerTermBuilders())
       if (auto value =
               builder->getObservedValue(*this, term.kind, term.index, name))
@@ -755,67 +844,42 @@ private:
   /// from the pairs within it, estimated at a uniform density, in kJ/mol at
   /// the volume of the file (D210).
   double getTopologyShift(bool decoupled) const;
-  /// The expressions of the pair terms, whose tails beyond the cutoff
-  /// System::pairTails counts (D209).
-  std::vector<Expression> tailExpressions;
-  /// The integral of the tail of a pair term and its value at the cutoff,
-  /// for the values of the names that its expression reads: a build asks
-  /// for the same one for every pair of classes of particles that differ
-  /// in what the expression does not read, and again for each derivative
-  /// of the correction (D254: 114 ms of an update of JAC and
-  /// 164 ms of Factor IX were these quadratures, for a exp(-r/l), which
-  /// reads neither the types nor the charges). Not finite where the tail
-  /// diverges. The memo is the build's: it holds what one build asked for,
-  /// at most one entry for each pair of classes and each point of a
-  /// derivative, and ends with it.
-  struct TailIntegral {
-    bool finite = false;
-    double integral = 0.0, edge = 0.0;
-  };
-  mutable std::vector<std::map<std::vector<uint64_t>, TailIntegral>>
-      tailIntegrals;
   /// Collects the tails of the observed pair terms and their derivatives
   /// in the observed constants, for the columns of `observe`.
   void collectObservedTails();
-  /// Parses the expressions of the pair terms and refuses a tail that the
-  /// quadrature cannot integrate.
-  llvm::Error collectPairTails();
   /// The tail of the pair term `index` at the volume of the file, in
   /// kJ/mol, with the values `changes` in place of those of the run (a
   /// component `lambda_<name>` of λ, or a constant of the term), and its
   /// share of the trace of the virial; an error if the integral fails.
-  struct PairTail {
-    /// The tail, its share of the trace of the virial, and the estimate of
-    /// what a shift to 0 at the cutoff takes from the pairs within it
-    /// (D210), in kJ/mol at the volume of the file.
-    double energy = 0.0, virial = 0.0, shift = 0.0;
-    /// The estimate is X (1 - V / (N (4π/3) r_c³)): `shift` is X,
-    /// proportional to 1 / V as the tail, and `shiftFixed` the rest, which
-    /// does not depend on the volume (#224).
-    double shiftFixed = 0.0;
-  };
+  using PairTail = PairTermTail;
   llvm::Expected<PairTail>
-  getPairTail(unsigned index, const llvm::StringMap<double> &changes) const;
+  getPairTail(unsigned index, const llvm::StringMap<double> &changes) const {
+    return getCustomPairTail(*this, index, changes);
+  }
   /// 1 − V / (N (4π/3) r_c³), which takes the particle itself out of the
   /// neighbors within r_c in the estimate of the shift.
   double getShiftFactor() const;
   /// Its part that does not depend on the volume once it multiplies a
   /// quantity proportional to 1 / V: −V / (N (4π/3) r_c³) (#224).
-  double getShiftFixedFactor() const { return getShiftFactor() - 1.0; }
+  double getShiftFixedFactor() const override { return getShiftFactor() - 1.0; }
   /// The sum over the pair terms, at the values `changes`, of the tail and
   /// the estimate of the shift: what the correction adds to the quantities
   /// of the shifted potential (D210).
   /// With `fixed`, the part of the estimates that does not depend on the
   /// volume instead (#224).
   double getPairTails(const llvm::StringMap<double> &changes,
-                      bool fixed = false) const;
+                      bool fixed = false) const {
+    return getCustomPairTails(*this, changes, fixed);
+  }
   /// The derivative of the tail of the pair term `index` in the value
   /// `name`, with that of the estimate of the shift if `shift`: exactly 0
   /// if its expression does not read it.
   /// With `fixed`, that of the part of the estimate that does not depend
   /// on the volume instead (#224).
   double getPairTailDerivative(unsigned index, StringRef name, double value,
-                               bool shift = true, bool fixed = false) const;
+                               bool shift = true, bool fixed = false) const {
+    return getCustomPairTailDerivative(*this, index, name, value, shift, fixed);
+  }
   /// The values of the components of λ at the state `k`.
   llvm::StringMap<double> getLambdaValues(size_t k) const {
     llvm::StringMap<double> values;
@@ -1281,20 +1345,8 @@ struct Coupled {
   /// The name of the cell, which changes with a barostat.
   std::string cellName = "%cell";
 
-  std::vector<Expression> expressions;
+  PairTermPlan pairPlan;
   std::vector<Parameter> parameters;
-
-  /// For each pair term that looks its parameters up: the table of each
-  /// parameter, by name. Empty for a term that gathers them.
-  std::vector<llvm::StringMap<unsigned>> termTables;
-
-  /// The values of the parameters of each term for each pair of types, in
-  /// the units of the control file: the constants of the term, and the
-  /// parameters as the mixing rules and the overrides give them.
-  llvm::Error collectPairValues(
-      unsigned term,
-      std::vector<std::vector<llvm::StringMap<double>>> &values);
-  llvm::Error computeDispersion();
 
   /// The type of the field `field` in the program.
   static StringRef getFieldType(const Program::Field &field) {
