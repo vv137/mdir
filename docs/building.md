@@ -20,7 +20,10 @@ must carry and the tiers of tests.
 - LLVM and MLIR 23.1.2, built with `scripts/build-llvm.sh`
 - `lit`, for the tests (`pip install lit`)
 - For NVIDIA GPUs: the driver, and the CUDA toolkit for its header and its
-  device math library. Versions 11.2 and 13.x are known to work.
+  device math library. Versions 11.2 and 13.x are known to work. The
+  driver must support at least the major version of the toolkit, for
+  example CUDA 13.0 for a build with CUDA 13.2; a run on an older driver
+  stops with both versions ([debugging.md](debugging.md), #657)
 - For checkpoints: HDF5, built with `scripts/build-hdf5.sh`
 - For the Python interface (optional): Python 3.10 to 3.13, pybind11
   3.0.1, and NumPy 1.23 or later

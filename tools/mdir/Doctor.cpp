@@ -71,8 +71,29 @@ bool probeGPU() {
       !checked(version(&driver), "cuDriverGetVersion") ||
       !checked(count(&devices), "cuDeviceGetCount"))
     return false;
+  // MDRT_DRIVER_VERSION, for the tests, stands for the version that the
+  // driver reports, as in the runtime (runtime/mdrt_cuda.c).
+  if (const char *forced = std::getenv("MDRT_DRIVER_VERSION"))
+    if (*forced)
+      StringRef(forced).getAsInteger(10, driver);
   llvm::outs() << "CUDA driver API: " << driver / 1000 << "."
                << (driver % 1000) / 10 << "\n";
+  // The driver supports the major version of CUDA of the build, which the
+  // runtime checks before it loads a module (D177, #657).
+  StringRef toolkit = MDIR_CUDA_VERSION;
+  unsigned major = 0, minor = 0;
+  StringRef rest = toolkit;
+  if (!rest.consumeInteger(10, major) && rest.consume_front("."))
+    rest.consumeInteger(10, minor);
+  if (major != 0 && driver < static_cast<int>(major) * 1000) {
+    llvm::outs() << "FAIL CUDA driver: the NVIDIA driver supports CUDA "
+                 << driver / 1000 << "." << (driver % 1000) / 10
+                 << "; this build of MDIR, with CUDA " << major << "." << minor
+                 << ", needs a driver that supports CUDA " << major
+                 << ".0 or later (D177); update the NVIDIA driver, or use "
+                    "--target=cpu\n";
+    return false;
+  }
   if (devices == 0) {
     llvm::outs() << "FAIL CUDA devices: no visible device; check "
                     "CUDA_VISIBLE_DEVICES and GPU access, or use --target=cpu\n";
