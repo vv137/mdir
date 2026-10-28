@@ -111,6 +111,11 @@ mdir::driver::builder::getTopologyShiftFactor(const TermInputs &context) {
   return 1.0 - volume / (n * 4.0 * M_PI / 3.0 * rc * rc * rc);
 }
 
+/// A part of the splitting of the prolate kernel at `x` = r / r_c, from the
+/// table `table` (prolate::getSplittingTable): the polynomial of the cell
+/// of x in t = 2 (x cells − k) − 1, the cell clamped to the table. The
+/// place in the cell carries the derivative; the index and the lookups do
+/// not, as in a tabulated function of the control file (D138).
 static mlir::Value buildProlateSplitting(mlir::OpBuilder &builder,
                                          mlir::Value table, mlir::Value x,
                                          int64_t prolateCells,
@@ -148,27 +153,6 @@ static mlir::Value buildProlateSplitting(mlir::OpBuilder &builder,
     value = arith::AddFOp::create(builder, loc, product, coefficients[j]);
   }
   return value;
-}
-
-/// A part of the splitting of the prolate kernel at `x` = r / r_c, from the
-/// table `table` (prolate::getSplittingTable): the polynomial of the cell
-/// of x in t = 2 (x cells − k) − 1, the cell clamped to the table. The
-/// place in the cell carries the derivative; the index and the lookups do
-/// not, as in a tabulated function of the control file (D138).
-static std::string emitProlateSplitting(TermEmission &context, StringRef table,
-                                        StringRef x, StringRef p,
-                                        Precision precision) {
-  auto [prolateCells, prolateTerms] = getProlateTableShape(precision);
-  std::string result = (p + (prolateTerms > 1 ? "h0" : "a0")).str();
-  std::string tableName = ("%t_" + table).str();
-  context.emitIRFragment(
-      "    ", {result}, {"f64"}, {tableName, x}, {"!grid", "f64"},
-      [prolateCells, prolateTerms](mlir::OpBuilder &builder,
-                                   mlir::ValueRange operands) -> TermIRValues {
-        return {buildProlateSplitting(builder, operands[0], operands[1],
-                                      prolateCells, prolateTerms)};
-      });
-  return result;
 }
 
 llvm::Error NonbondedWork::collectTopologyConstants() {
@@ -1617,23 +1601,38 @@ public:
     // %shielded, the share of 1/r that the reciprocal sum holds at %r:
     // erf(β r)/r, or of the prolate kernel Φ(r/r_c)/r, which is Φ(x)/x / r_c
     // within the cutoff and 1/r beyond it (D266).
-    auto emitShielded = [&](llvm::raw_ostream &os) {
-      if (!program.pmeProlate) {
-        os << "    %br = arith.mulf %beta, %r : f64\n"
-           << "    %erf = math.erf %br : f64\n"
-           << "    %shielded = arith.divf %erf, %r : f64\n";
-        return;
-      }
-      os << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
-         << " : f64\n"
-         << "    %xr = arith.mulf %r, %rc_inverse : f64\n";
-      std::string near = emitProlateSplitting(context, "pme_near", "%xr",
-                                              "%pn_", control.precision);
-      os << "    %near = arith.mulf " << near << ", %rc_inverse : f64\n"
-         << "    %r_one = arith.constant 1.0 : f64\n"
-         << "    %r_inverse = arith.divf %r_one, %r : f64\n"
-         << "    %r_inside = arith.cmpf olt, %xr, %r_one : f64\n"
-         << "    %shielded = arith.select %r_inside, %near, %r_inverse : f64\n";
+    auto emitShielded = [&] {
+      auto [cells, terms] = getProlateTableShape(control.precision);
+      StringRef source = program.pmeProlate ? "%t_pme_near" : "%beta";
+      StringRef type = program.pmeProlate ? "!grid" : "f64";
+      context.emitIRFragment(
+          "    ", {"%shielded"}, {"f64"}, {source, "%r"}, {type, "f64"},
+          [prolate = program.pmeProlate, cutoff, cells,
+           terms](mlir::OpBuilder &builder,
+                  mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            Value r = values[1];
+            if (!prolate) {
+              Value br = arith::MulFOp::create(builder, loc, values[0], r);
+              Value erf = math::ErfOp::create(builder, loc, br);
+              return {arith::DivFOp::create(builder, loc, erf, r)};
+            }
+            Value inverse = arith::ConstantOp::create(
+                builder, loc, builder.getF64FloatAttr(1.0 / cutoff));
+            Value xr = arith::MulFOp::create(builder, loc, r, inverse);
+            Value polynomial =
+                buildProlateSplitting(builder, values[0], xr, cells, terms);
+            Value near =
+                arith::MulFOp::create(builder, loc, polynomial, inverse);
+            Value one = arith::ConstantOp::create(builder, loc,
+                                                  builder.getF64FloatAttr(1.0));
+            Value rInverse = arith::DivFOp::create(builder, loc, one, r);
+            Value inside = arith::CmpFOp::create(
+                builder, loc, arith::CmpFPredicate::OLT, xr, one);
+            return {
+                arith::SelectOp::create(builder, loc, inside, near, rInverse)};
+          });
     };
     if (program.pme && (terms & TermInputs::CoulombExcluded) &&
         has("excluded")) {
@@ -1664,7 +1663,7 @@ public:
         qq = "%qq";
       }
       os << "    %fqq = arith.mulf %f, " << qq << " : f64\n";
-      emitShielded(os);
+      emitShielded();
       os << "    %e = arith.mulf %fqq, %shielded : f64\n";
       std::string e = "%e";
       if (alchemicalOnly) {
@@ -1698,7 +1697,7 @@ public:
          << "    %qq = arith.mulf %q_i, %q_j : f64\n"
          << "    %fqq = arith.mulf %f, %qq : f64\n"
          << "    %fw = arith.mulf %fqq, %w : f64\n";
-      emitShielded(os);
+      emitShielded();
       os << "    %e = arith.mulf %fw, %shielded : f64\n"
          << "    md.yield %e : f64\n"
          << "  } : !rel_alchemical_pairs, !vec -> f64\n";

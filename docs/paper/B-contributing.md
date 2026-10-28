@@ -190,4 +190,6 @@ clamped distance retain their original operation order. The direct LJPME
 dispersion subtraction and its optional cutoff shift are typed fragments
 at that same pair-kernel site. Soft-core Lennard-Jones distance,
 root-free or switched potential, and alchemical scaling also use typed
-fragments, preserving the original intermediate operations and branch order.
+fragments, preserving the original intermediate operations and branch order. Shielded
+Coulomb kernels for excluded and within-selection pairs use typed Gaussian
+or prolate operations, sharing the same typed prolate polynomial builder.
