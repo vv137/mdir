@@ -244,6 +244,12 @@ indices, 16 table lookups, and bicubic Horner evaluation. The build owns the
 resolution; lookup and row/column accumulation order remain unchanged.
 `TermCMap.cpp` no longer writes operation text.
 
+Special 1-4 pairs construct their complete typed distance reduction, optional
+charge-gradient gather/products, selected Lennard-Jones and Coulomb terms,
+and final sum. The shared typed Lennard-Jones kernel keeps the original
+switch choices and scalar order; its final transitional scalar writer is removed.
+`TermPairs14.cpp` no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and invalid builder assembly, which fails at its construction boundary with

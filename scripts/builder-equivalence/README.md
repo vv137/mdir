@@ -128,3 +128,6 @@ in both precisions and targets, including run and segmented forms.
 
 CMAP cases vary the grid resolution while retaining all other bonded and custom terms
 in both precisions and targets, including run and segmented forms.
+
+Special 1-4 cases exercise the squared-distance switch beside the other bonded families
+in both precisions and targets, including run and segmented forms.

@@ -1461,6 +1461,12 @@ indices, 16 table lookups, and bicubic Horner evaluation. The build owns the
 resolution; lookup and row/column accumulation order remain unchanged.
 `TermCMap.cpp` no longer writes operation text.
 
+Special 1-4 pairs construct their complete typed distance reduction, optional
+charge-gradient gather/products, selected Lennard-Jones and Coulomb terms,
+and final sum. The shared typed Lennard-Jones kernel keeps the original
+switch choices and scalar order; its final transitional scalar writer is removed.
+`TermPairs14.cpp` no longer writes operation text.
+
 For custom expressions, the existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

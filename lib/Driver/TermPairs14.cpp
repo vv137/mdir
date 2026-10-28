@@ -1,5 +1,9 @@
 // Built-in bonded family: tuple data, potential, and logged columns (#683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Builders.h"
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
@@ -74,7 +78,6 @@ public:
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,
                              const TermPotentialAddition &add) const override {
-    auto &os = context.getOutput();
     const auto &control = context.getControl();
     unsigned terms = selection.terms;
     auto has = [&](StringRef name) {
@@ -89,42 +92,81 @@ public:
       // themselves (D230).
       bool products = context.hasGradientArguments() &&
                       context.hasGradientCharges() && coulomb14;
-      os << "  %u_pairs14 = md.sum_tuples %r_pairs14, %x, %cell coordinates("
-            "distance(0, 1))\n"
-         << (products ? "      gather(%p_q : !real)\n" : "")
-         << "      tuple(%f_pairs14_sigma, %f_pairs14_epsilon, %f_pairs14_qq"
-         << (products ? ", %f_pairs14_tgs" : "")
-         << " : !of_pairs14, !of_pairs14, !of_pairs14"
-         << (products ? ", !of_pairs14" : "") << ") {\n"
-         << "  ^bb0(%r: f64" << (products ? ", %q14_i: f64, %q14_j: f64" : "")
-         << ", %sigma: f64, %epsilon: f64, %qq" << (products ? "_held" : "")
-         << ": f64" << (products ? ", %tgs: f64" : "") << "):\n";
-      if (products)
-        os << "    %q14 = arith.mulf %q14_i, %q14_j : f64\n"
-           << "    %qq = arith.mulf %tgs, %q14 : f64\n";
-      std::string value;
-      if (lj14) {
-        // The pairs three bonds apart as they are, except under the power
-        // force or squared-distance switch, which also switches these pairs.
-        emitLennardJones(
-            context, control, "%sigma", "%epsilon", "%lj",
-            (control.truncation == Truncation::PowerForceSwitch ||
-             control.truncation == Truncation::SquaredDistanceSwitch)
-                ? control.truncation
-                : Truncation::None);
-        value = "%lj";
+      double cutoff = control.cutoffDistance * units::length;
+      double from = control.switchDistance * units::length;
+      Truncation modifier =
+          (control.truncation == Truncation::PowerForceSwitch ||
+           control.truncation == Truncation::SquaredDistanceSwitch)
+              ? control.truncation
+              : Truncation::None;
+      std::vector<std::string> names = {"%r_pairs14", "%x", "%cell"};
+      std::vector<StringRef> types = {"!rel_pairs14", "!vec", "!md.cell"};
+      if (products) {
+        names.push_back("%p_q");
+        types.push_back("!real");
       }
-      if (coulomb14) {
-        os << "    %coulomb = arith.divf %qq, %r : f64\n";
-        if (value.empty()) {
-          value = "%coulomb";
-        } else {
-          os << "    %k = arith.addf " << value << ", %coulomb : f64\n";
-          value = "%k";
-        }
+      for (StringRef field : {"sigma", "epsilon", "qq"}) {
+        names.push_back(("%f_pairs14_" + field).str());
+        types.push_back("!of_pairs14");
       }
-      os << "    md.yield " << value << " : f64\n"
-         << "  } : !rel_pairs14, !vec -> f64\n";
+      if (products) {
+        names.push_back("%f_pairs14_tgs");
+        types.push_back("!of_pairs14");
+      }
+      llvm::SmallVector<StringRef> operands;
+      for (const auto &name : names)
+        operands.push_back(name);
+      context.emitIRFragment(
+          "  ", {"%u_pairs14"}, {"f64"}, operands, types,
+          [lj14, coulomb14, products, cutoff, from,
+           modifier](mlir::OpBuilder &builder,
+                     mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            llvm::SmallVector<mdir::md::Coordinate> coordinates = {
+                {mdir::md::CoordinateKind::Distance, {0, 1}}};
+            DenseI32ArrayAttr kinds;
+            DenseI64ArrayAttr members;
+            mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+            size_t gathered = products ? 1 : 0;
+            auto sum = mdir::md::SumTuplesOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], values.slice(3, gathered),
+                values.drop_front(3 + gathered), kinds, members);
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              unsigned count = products ? 7 : 4;
+              llvm::SmallVector<Type> types(count, builder.getF64Type());
+              llvm::SmallVector<Location> locations(count, loc);
+              Block *block =
+                  builder.createBlock(&sum.getKernel(), {}, types, locations);
+              auto args = block->getArguments();
+              unsigned tuple = products ? 3 : 1;
+              Value qq = args[tuple + 2];
+              if (products) {
+                Value charges =
+                    arith::MulFOp::create(builder, loc, args[1], args[2]);
+                qq = arith::MulFOp::create(builder, loc, args[tuple + 3],
+                                           charges);
+              }
+              Value energy;
+              if (lj14)
+                energy = buildLennardJonesIR(
+                    builder,
+                    ValueRange{args[tuple], args[tuple + 1], args[0], args[0]},
+                    cutoff, from, modifier);
+              if (coulomb14) {
+                Value coulomb =
+                    arith::DivFOp::create(builder, loc, qq, args[0]);
+                if (energy)
+                  energy = arith::AddFOp::create(builder, loc, energy, coulomb);
+                else
+                  energy = coulomb;
+              }
+              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            }
+            return {sum.getResult()};
+          });
       add("pairs14");
     }
   }

@@ -401,11 +401,6 @@ struct TermPotentialAddition {
 mlir::Value buildLennardJonesIR(mlir::OpBuilder &, mlir::ValueRange,
                                 double cutoff, double from, Truncation);
 
-/// The shared scalar kernel of ordinary and special 1-4 LJ pairs.
-void emitLennardJones(TermEmission &, const Control &, StringRef sigma,
-                      StringRef epsilon, StringRef result, Truncation,
-                      StringRef distance = "%r");
-
 /// One independently evaluated/logged potential, in stable column order.
 struct TermDefinition {
   unsigned rank;

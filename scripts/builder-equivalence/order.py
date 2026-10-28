@@ -598,6 +598,11 @@ phase = 0.4
             text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(path))
             write(f"bonded-cmap-resolution-{resolution}-{precision}", text)
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-POWER_FORCE_SWITCH-{precision}.toml")
+        text = source.read_text().replace('"POWER_FORCE_SWITCH"', '"SQUARED_DISTANCE_SWITCH"')
+        write(f"bonded-pairs14-squared-switch-{precision}", text)
+
     return ordinary, hosted
 
 

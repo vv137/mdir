@@ -166,20 +166,3 @@ mlir::Value mdir::driver::builder::buildLennardJonesIR(OpBuilder &builder,
   Value t = sub(a, b);
   return mul(e4, t);
 }
-
-void mdir::driver::builder::emitLennardJones(TermEmission &context,
-                                             const Control &control,
-                                             StringRef sigma, StringRef epsilon,
-                                             StringRef result,
-                                             Truncation modifier,
-                                             StringRef distance) {
-  double cutoff = control.cutoffDistance * units::length;
-  double from = control.switchDistance * units::length;
-  context.emitIRFragment(
-      "    ", {result}, {"f64"}, {sigma, epsilon, distance, "%r"},
-      {"f64", "f64", "f64", "f64"},
-      [cutoff, from, modifier](OpBuilder &builder,
-                               ValueRange operands) -> TermIRValues {
-        return {buildLennardJonesIR(builder, operands, cutoff, from, modifier)};
-      });
-}
