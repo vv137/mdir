@@ -186,4 +186,6 @@ The prolate near/far splitting emitter also constructs its clamped table
 lookup and Horner polynomial with typed operations at the original site. Direct
 Coulomb kernels now use typed operations too: cutoff and reaction field,
 Gaussian Ewald, prolate series/cells, alchemical charge scaling, and the
-clamped distance retain their original operation order.
+clamped distance retain their original operation order. The direct LJPME
+dispersion subtraction and its optional cutoff shift are typed fragments
+at that same pair-kernel site.

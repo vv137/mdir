@@ -1377,38 +1377,57 @@ public:
           // has its own Lennard-Jones there [Essmann1995, Wennberg2013]
           // (D162); shifted with it to 0 at the cutoff if it is.
           double beta = program.ljpmeBeta;
-          os << "    %lp_c6 = md.lookup %t_ljpme_c6[%type_i, %type_j] : "
-                "!table, i32, i32 -> f64\n"
-             << "    %lp_beta = arith.constant " << formatReal(beta)
-             << " : f64\n"
-             << "    %lp_x = arith.mulf %lp_beta, %r : f64\n"
-             << "    %lp_x2 = arith.mulf %lp_x, %lp_x : f64\n"
-             << "    %lp_nx2 = arith.negf %lp_x2 : f64\n"
-             << "    %lp_e = math.exp %lp_nx2 : f64\n"
-             << "    %lp_x4 = arith.mulf %lp_x2, %lp_x2 : f64\n"
-             << "    %lp_half = arith.constant 0.5 : f64\n"
-             << "    %lp_h4 = arith.mulf %lp_half, %lp_x4 : f64\n"
-             << "    %lp_one = arith.constant 1.0 : f64\n"
-             << "    %lp_p1 = arith.addf %lp_one, %lp_x2 : f64\n"
-             << "    %lp_p = arith.addf %lp_p1, %lp_h4 : f64\n"
-             << "    %lp_g = arith.mulf %lp_e, %lp_p : f64\n"
-             << "    %lp_kept = arith.subf %lp_one, %lp_g : f64\n"
-             << "    %lp_r2 = arith.mulf %r, %r : f64\n"
-             << "    %lp_r4 = arith.mulf %lp_r2, %lp_r2 : f64\n"
-             << "    %lp_r6 = arith.mulf %lp_r4, %lp_r2 : f64\n"
-             << "    %lp_cr = arith.divf %lp_c6, %lp_r6 : f64\n"
-             << "    %lp_d = arith.mulf %lp_cr, %lp_kept : f64\n";
-          std::string correction = "%lp_d";
-          if (truncation == Truncation::Shift) {
-            double shift = (1.0 - getDispersionScreen(beta * cutoff)) /
-                           std::pow(cutoff, 6.0);
-            os << "    %lp_shift = arith.constant " << formatReal(shift)
-               << " : f64\n"
-               << "    %lp_cs = arith.mulf %lp_c6, %lp_shift : f64\n"
-               << "    %lp_ds = arith.subf %lp_d, %lp_cs : f64\n";
-            correction = "%lp_ds";
-          }
-          os << "    %ljp = arith.addf %lj, " << correction << " : f64\n";
+          double shift = truncation == Truncation::Shift
+                             ? (1.0 - getDispersionScreen(beta * cutoff)) /
+                                   std::pow(cutoff, 6.0)
+                             : 0.0;
+          context.emitIRFragment(
+              "    ", {"%ljp"}, {"f64"},
+              {"%t_ljpme_c6", "%type_i", "%type_j", "%r", "%lj"},
+              {"!table", "i32", "i32", "f64", "f64"},
+              [beta, shift,
+               truncation](mlir::OpBuilder &builder,
+                           mlir::ValueRange operands) -> TermIRValues {
+                using namespace mlir;
+                auto loc = builder.getUnknownLoc();
+                auto constant = [&](double value) -> Value {
+                  return arith::ConstantOp::create(
+                      builder, loc, builder.getF64FloatAttr(value));
+                };
+                auto mul = [&](Value a, Value b) -> Value {
+                  return arith::MulFOp::create(builder, loc, a, b);
+                };
+                Value c6 = mdir::md::LookupOp::create(
+                    builder, loc, builder.getF64Type(), operands[0],
+                    ValueRange{operands[1], operands[2]});
+                Value betaValue = constant(beta);
+                Value r = operands[3];
+                Value x = mul(betaValue, r);
+                Value x2 = mul(x, x);
+                Value nx2 = arith::NegFOp::create(builder, loc, x2);
+                Value e = math::ExpOp::create(builder, loc, nx2);
+                Value x4 = mul(x2, x2);
+                Value half = constant(0.5);
+                Value h4 = mul(half, x4);
+                Value one = constant(1.0);
+                Value p1 = arith::AddFOp::create(builder, loc, one, x2);
+                Value polynomial = arith::AddFOp::create(builder, loc, p1, h4);
+                Value g = mul(e, polynomial);
+                Value kept = arith::SubFOp::create(builder, loc, one, g);
+                Value r2 = mul(r, r);
+                Value r4 = mul(r2, r2);
+                Value r6 = mul(r4, r2);
+                Value cr = arith::DivFOp::create(builder, loc, c6, r6);
+                Value correction = mul(cr, kept);
+                if (truncation == Truncation::Shift) {
+                  Value shiftValue = constant(shift);
+                  Value cs = mul(c6, shiftValue);
+                  correction =
+                      arith::SubFOp::create(builder, loc, correction, cs);
+                }
+                return {arith::AddFOp::create(builder, loc, operands[4],
+                                              correction)};
+              });
           value = "%ljp";
         }
       }
