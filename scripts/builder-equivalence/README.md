@@ -122,3 +122,6 @@ in both precisions and targets, including run and segmented forms.
 
 Zero periodic-dihedral force constants retain the original multiple Fourier terms
 in both precisions and targets, including run and segmented forms.
+
+Zero harmonic-improper force constants retain the existing wrapped-coordinate kernel
+in both precisions and targets, including run and segmented forms.

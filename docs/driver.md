@@ -1451,6 +1451,11 @@ period-times-angle, phase subtraction, cosine, offset, and force multiplication
 in their original order. Multiple Fourier terms retain their tuple order.
 `TermDihedral.cpp` no longer writes operation text.
 
+Harmonic impropers construct their complete typed dihedral reduction. The
+three wrapping constants, floor-based reduction into the original interval,
+and harmonic scalar arithmetic retain their order.
+`TermImproper.cpp` no longer writes operation text.
+
 For custom expressions, the existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

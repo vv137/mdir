@@ -234,6 +234,11 @@ period-times-angle, phase subtraction, cosine, offset, and force multiplication
 in their original order. Multiple Fourier terms retain their tuple order.
 `TermDihedral.cpp` no longer writes operation text.
 
+Harmonic impropers construct their complete typed dihedral reduction. The
+three wrapping constants, floor-based reduction into the original interval,
+and harmonic scalar arithmetic retain their order.
+`TermImproper.cpp` no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and invalid builder assembly, which fails at its construction boundary with
