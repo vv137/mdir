@@ -1300,7 +1300,7 @@ No generic behavioral hook has only one implementer.
 | Narrow role and its complete hooks | Implementer |
 |---|---|
 | `TermPreparation`: `validate`, `prepare` | Models; read-only inputs and a stream |
-| `TermHostEvaluation`: `applies`, `emitDeclarations`, `emit` | Opaque models; borrowed evaluation names |
+| `TermHostEvaluation`: `applies`, `emitDeclarations`, `emit` | Opaque models; borrowed evaluation names and a synchronous `TermIRWriter` |
 | `TermPostEvaluation`: `hasForceCorrection`, `emitForceCorrection`, `getStoredTermCount`, `emitStoredTerms` | Restraints; borrowed correction names and the stored-column destination |
 | `TermCoordinateOutput`: `hasCoordinateOutput`, `emitAuxiliaryPotentials`, `emitOutput` | Pulls; borrowed output-site names and shared centroid geometry |
 | `TermScalarParameters`: `collectBareConstants`, `collectObservedConstants`, `appendInitialConstants` | Custom pairs; named scalar collections and a bounded start-value appender |
@@ -1422,7 +1422,14 @@ scaling, reductions, diagonal tensors, and their stored energy column with
 typed operations. The per-build energy name and missing-state diagnostic from
 #706 remain; force-only requests preserve the recorded energy. Loop and scalar
 arithmetic order remain unchanged, including the separate barostat virial sum.
-`TermRestraint.cpp` no longer writes operation text. The
+`TermRestraint.cpp` no longer writes operation text.
+
+Opaque hosted models construct their private force/energy ABI declarations,
+cell projections, typed neighborhood/edge lists, host calls, and ordered
+energy/virial accumulations with typed operations. The host role keeps read-only
+`TermInputs` and borrows a synchronous `TermIRWriter`; callers submit owned
+recipes without exposing mutable parameter access. Staged user `ModelTerm`
+text remains at its existing boundary for step 5. The
 existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

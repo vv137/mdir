@@ -4,6 +4,7 @@
 
 #include "mlir/IR/ValueRange.h"
 #include "llvm/ADT/ArrayRef.h"
+#include "llvm/ADT/STLFunctionalExtras.h"
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ADT/StringRef.h"
 #include "llvm/Support/Error.h"
@@ -22,6 +23,13 @@ namespace builder {
 using TermIRValues = llvm::SmallVector<mlir::Value, 4>;
 using TermIRRecipe =
     std::function<TermIRValues(mlir::OpBuilder &, mlir::ValueRange)>;
+
+/// Hooks borrow this synchronous capability; the plan owns each submitted
+/// recipe.
+using TermIRWriter = llvm::function_ref<void(
+    llvm::StringRef, llvm::ArrayRef<llvm::StringRef>,
+    llvm::ArrayRef<llvm::StringRef>, llvm::ArrayRef<llvm::StringRef>,
+    llvm::ArrayRef<llvm::StringRef>, TermIRRecipe)>;
 
 /// A build owns its recipes and every capture. Names/types are borrowed only
 /// while their connection to the remaining assembly is written; recipes see

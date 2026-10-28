@@ -273,6 +273,13 @@ typed operations. The per-build energy name and missing-state diagnostic from
 arithmetic order remain unchanged, including the separate barostat virial sum.
 `TermRestraint.cpp` no longer writes operation text.
 
+Opaque hosted models construct their private force/energy ABI declarations,
+cell projections, typed neighborhood/edge lists, host calls, and ordered
+energy/virial accumulations with typed operations. The host role keeps read-only
+`TermInputs` and borrows a synchronous `TermIRWriter`; callers submit owned
+recipes without exposing mutable parameter access. Staged user `ModelTerm`
+text remains at its existing boundary for step 5.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and invalid builder assembly, which fails at its construction boundary with

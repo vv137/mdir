@@ -440,8 +440,7 @@ phase = 0.4
         opaque = text + ('\n[[energy.model]]\nname = "hosted"\nbackend = "METATOMIC"\n'
                          f'path = {quoted(placeholder)}\n')
         def host_case(kind, body):
-            # #706 is a pre-existing stored-energy SSA error. Keep it in
-            # the matrix; hosts without restraints retain baseline #707.
+            # Both hosted forms must verify after the separate #706/#707 fixes.
             write(f"model-host-restraints-{kind}-{precision}", body)
             body = body.replace('[[restraints]]\nselection = "@1"\n'
                                 'force_constant = 1.0\n', '')
@@ -470,6 +469,15 @@ phase = 0.4
         body = source.read_text()
         write(f"model-tensor-helper-{precision}", body.replace(quoted(models[0]), quoted(tensor_model)))
         write(f"model-exporter-tensor-linalg-{precision}", body.replace(quoted(models[0]), quoted(exporter_model)))
+
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"model-host-restraints-nve-{precision}.toml")
+        body = source.read_text()
+        force_only = body.replace('steps = 1\n', 'steps = 10\n').replace('energy_interval = 1\n', 'energy_interval = 10\n').replace('checkpoint_interval = 1\n', 'checkpoint_interval = 10\n')
+        hosted.append(write(f"model-host-force-only-{precision}", force_only))
+        source = next(path for path in ordinary if path.name == f"model-host-restraints-npt-{precision}.toml")
+        centered = source.read_text().replace('selection = "@1"\nforce_constant = 1.0\n', 'selection = "@1-3"\nforce_constant = 1.0\nreference_scaling = "CENTER"\n')
+        hosted.append(write(f"model-host-center-npt-{precision}", centered))
 
     return ordinary, hosted
 
@@ -512,9 +520,9 @@ def main():
     place.mkdir(parents=True, exist_ok=True)
     ordinary, hosted = controls(root, place)
     library = metadata_plugin(root, place, args.compiler)
-    for mode, files, expected_errors in (("exact", ordinary, 52),
-                                         ("padded", hosted, 12),
-                                         ("search", hosted, 12)):
+    for mode, files, expected_errors in (("exact", ordinary, 60),
+                                         ("padded", hosted, 20),
+                                         ("search", hosted, 20)):
         scratch = place / ("compare-" + mode)
         scratch.mkdir(exist_ok=True)
         cmd = [sys.executable, str(Path(__file__).with_name("check.py")), "compare",

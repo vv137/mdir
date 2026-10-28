@@ -1,9 +1,24 @@
 // Staged and hosted model terms, with private preparation per build
 // (D359, D361, D362, #683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mdir/Dialect/MDExec/MDExecOps.h"
+#include "mdir/Dialect/MDRT/MDRTOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/IR/Builders.h"
+#include "llvm/ADT/STLExtras.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
+
+struct HostedModelIRConfig {
+  bool edges = false, energy = false, virial = false;
+  int stateBits = 64, forceBits = 64;
+  size_t count = 0, energySlot = 0, virialSlot = 0;
+  std::vector<double> cutoffs;
+};
 
 namespace mdir::driver::builder {
 class ModelTermBuilder final : public TermPreparation,
@@ -29,7 +44,7 @@ public:
   bool applies(const TermInputs &context) const override {
     return !context.getControl().models.empty();
   }
-  std::string emit(const TermInputs &context, llvm::raw_ostream &os,
+  std::string emit(const TermInputs &context, TermIRWriter emitIR,
                    const TermEvaluation &point) const override;
   void collectParameters(TermParameters &context) const override {
     const Control &control = context.getControl();
@@ -62,7 +77,7 @@ public:
   }
 
 private:
-  void emitDeclarations(const TermInputs &, llvm::raw_ostream &) const override;
+  void emitDeclarations(const TermInputs &, TermIRWriter) const override;
 };
 } // namespace mdir::driver::builder
 
@@ -201,104 +216,181 @@ llvm::Error ModelTermBuilder::prepare(const TermInputs &context,
 }
 
 std::string ModelTermBuilder::emit(const TermInputs &context,
-                                   llvm::raw_ostream &os,
+                                   TermIRWriter emitIR,
                                    const TermEvaluation &point) const {
   const Control &control = context.getControl();
-  StringRef indent = point.indent, x = point.x, cell = point.cell,
-            prefix = point.prefix, f = point.f, fResult = point.fResult,
-            u = point.u, uResult = point.uResult, w = point.w, tag = point.tag;
-
-  std::string t = ("_m" + tag).str();
-  bool numbers = !u.empty() || !w.empty();
-  // The cell, as the diagonal and the tilts.
-  os << indent << "%mcell" << t << " = md_exec.cell_numbers " << cell
-     << " : vector<6xf64>\n";
-  for (int k = 0; k != 6; ++k)
-    os << indent << "%mcell" << t << "_" << k << " = vector.extract %mcell" << t
-       << "[" << k << "] : f64 from vector<6xf64>\n";
-  int bits = context.getStateElement() == Element::F64 ? 64 : 32;
-  int forceBits = context.getForceElement() == Element::F64 ? 64 : 32;
-  os << indent << "%mbits" << t << " = arith.constant " << bits << " : i64\n"
-     << indent << "%mfbits" << t << " = arith.constant " << forceBits
-     << " : i64\n";
-  std::string forces = f.str(), energy = u.str(), virial = w.str();
-  for (size_t index = 0; index != control.models.size(); ++index) {
-    std::string k = t + "_" + std::to_string(index);
-    bool last = index + 1 == control.models.size();
-    std::string next = last ? fResult.str() : "%mf" + k;
-    // The model's pair list (D277): the pairs of images
-    // within its cutoff, from a neighborhood at that cutoff, which the
-    // program refreshes with the skin of the run.
-    if (state->edges) {
-      std::string cutoff = formatReal(state->cutoffs[index]);
-      os << indent << "%mn" << k << " = md.neighborhood " << x << ", " << cell
-         << " cutoff(" << cutoff << ") : !vec -> !pairs\n"
-         << indent << "%me" << k << " = md.edges %mn" << k << ", " << x << ", "
-         << cell << " cutoff(" << cutoff
-         << ") : !pairs, !vec -> !md.edges<@atoms>\n";
-    }
-    os << indent << "%mi" << k << " = arith.constant " << index << " : i64\n"
-       << indent << next;
-    if (numbers)
-      os << ", %mu" << k << ", %mw" << k;
-    os << " = mdrt.host_call @mdrtModelEvaluate"
-       << (state->edges ? "Edges" : "") << (numbers ? "Energy" : "") << "(%mi"
-       << k << ", " << x << ", " << prefix << "model_z";
-    if (state->edges)
-      os << ", %me" << k;
-    for (int c = 0; c != 6; ++c)
-      os << ", %mcell" << t << "_" << c;
-    os << ", %mbits" << t << ", %mfbits" << t << ")\n"
-       << indent << "    outs(" << forces << " : !vec) {in_place}\n"
-       << indent << "    : (i64, !vec, !ids, "
-       << (state->edges ? "!md.edges<@atoms>, " : "")
-       << "f64, f64, f64, f64, f64, f64, i64, i64)\n"
-       << indent << "    -> (!vec" << (numbers ? ", f64, vector<9xf64>" : "")
-       << ")\n";
-    forces = next;
-    if (!u.empty()) {
-      std::string sum = last ? uResult.str() : "%mus" + k;
-      os << indent << sum << " = arith.addf " << energy << ", %mu" << k
-         << " : f64\n";
-      energy = sum;
-    }
-    if (!w.empty()) {
-      std::string sum = "%mws" + k;
-      os << indent << sum << " = arith.addf " << virial << ", %mw" << k
-         << " : vector<9xf64>\n";
-      virial = sum;
-    }
+  HostedModelIRConfig config;
+  config.edges = state->edges;
+  config.energy = !point.u.empty();
+  config.virial = !point.w.empty();
+  config.stateBits = context.getStateElement() == Element::F64 ? 64 : 32;
+  config.forceBits = context.getForceElement() == Element::F64 ? 64 : 32;
+  config.count = control.models.size();
+  config.cutoffs = state->cutoffs;
+  std::vector<std::string> names = {point.cell.str(), point.x.str(),
+                                    (point.prefix + "model_z").str(),
+                                    point.f.str()};
+  std::vector<std::string> types = {"!md.cell", "!vec", "!ids", "!vec"};
+  auto operand = [&](std::string name, std::string type) {
+    size_t slot = names.size();
+    names.push_back(std::move(name));
+    types.push_back(std::move(type));
+    return slot;
+  };
+  if (config.energy)
+    config.energySlot = operand(point.u.str(), "f64");
+  if (config.virial)
+    config.virialSlot = operand(point.w.str(), "vector<9xf64>");
+  std::string virial = point.w.str();
+  if (config.virial && config.count)
+    virial =
+        "%mws_m" + point.tag.str() + "_" + std::to_string(config.count - 1);
+  std::vector<std::string> results = {point.fResult.str()},
+                           resultTypes = {"!vec"};
+  if (config.energy) {
+    results.push_back(point.uResult.str());
+    resultTypes.push_back("f64");
   }
+  if (config.virial) {
+    results.push_back(virial);
+    resultTypes.push_back("vector<9xf64>");
+  }
+  llvm::SmallVector<StringRef> in, inTypes, out, outTypes;
+  for (const auto &s : names)
+    in.push_back(s);
+  for (const auto &s : types)
+    inTypes.push_back(s);
+  for (const auto &s : results)
+    out.push_back(s);
+  for (const auto &s : resultTypes)
+    outTypes.push_back(s);
+  emitIR(
+      point.indent, out, outTypes, in, inTypes,
+      [config](mlir::OpBuilder &builder,
+               mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto *ctx = builder.getContext();
+        auto f64 = builder.getF64Type();
+        auto vec6 = VectorType::get({6}, f64), vec9 = VectorType::get({9}, f64);
+        Value cell =
+            mdir::md_exec::CellNumbersOp::create(builder, loc, vec6, values[0]);
+        llvm::SmallVector<Value> cells;
+        for (int c = 0; c != 6; ++c)
+          cells.push_back(vector::ExtractOp::create(builder, loc, cell, c));
+        Value bits =
+            arith::ConstantIntOp::create(builder, loc, config.stateBits, 64);
+        Value forceBits =
+            arith::ConstantIntOp::create(builder, loc, config.forceBits, 64);
+        Value forces = values[3], energy, virial;
+        if (config.energy)
+          energy = values[config.energySlot];
+        if (config.virial)
+          virial = values[config.virialSlot];
+        auto atoms =
+            cast<mdir::md::FieldType>(values[1].getType()).getParticleSet();
+        auto pairsType = mdir::md::RelationType::get(
+            ctx, atoms, 2, mdir::md::Orientation::Unordered,
+            FlatSymbolRefAttr{});
+        auto edgesType = mdir::md::EdgesType::get(ctx, atoms);
+        bool numbers = config.energy || config.virial;
+        std::string callee = std::string("mdrtModelEvaluate") +
+                             (config.edges ? "Edges" : "") +
+                             (numbers ? "Energy" : "");
+        for (size_t index = 0; index != config.count; ++index) {
+          Value edges;
+          if (config.edges) {
+            auto cutoff = builder.getF64FloatAttr(config.cutoffs[index]);
+            Value neighborhood = mdir::md::NeighborhoodOp::create(
+                builder, loc, pairsType, values[1], values[0], Value{}, cutoff);
+            edges =
+                mdir::md::EdgesOp::create(builder, loc, edgesType, neighborhood,
+                                          values[1], values[0], cutoff);
+          }
+          Value model = arith::ConstantIntOp::create(builder, loc, index, 64);
+          llvm::SmallVector<Value> inputs = {model, values[1], values[2]};
+          if (config.edges)
+            inputs.push_back(edges);
+          llvm::append_range(inputs, cells);
+          inputs.push_back(bits);
+          inputs.push_back(forceBits);
+          llvm::SmallVector<Type> results = {forces.getType()};
+          if (numbers) {
+            results.push_back(f64);
+            results.push_back(vec9);
+          }
+          auto call = mdir::mdrt::HostCallOp::create(
+              builder, loc, results, FlatSymbolRefAttr::get(ctx, callee),
+              inputs, ValueRange{forces}, builder.getUnitAttr());
+          forces = call.getResults()[0];
+          if (config.energy)
+            energy = arith::AddFOp::create(builder, loc, energy,
+                                           call.getResults()[1]);
+          if (config.virial)
+            virial = arith::AddFOp::create(builder, loc, virial,
+                                           call.getResults()[2]);
+        }
+        TermIRValues results = {forces};
+        if (config.energy)
+          results.push_back(energy);
+        if (config.virial)
+          results.push_back(virial);
+        return results;
+      });
   return virial;
 }
 
 void ModelTermBuilder::emitDeclarations(const TermInputs &context,
-                                        llvm::raw_ostream &os) const {
-  const Control &control = context.getControl();
-  StringRef stateType = getName(context.getStateElement());
-  StringRef force = getName(context.getForceElement());
-  // A learned potential (D270): the host evaluates it at the
-  // positions where they are, in the cell of the step, and adds its forces
-  // to those of the program where they are; with `Energy`, it gives its
-  // energy and its virial as well.
-  if (!control.models.empty()) {
-    // With the pair list of the program, its slots, counts, offsets, and
-    // the number of their build (D277).
-    std::string edges =
-        state->edges ? "memref<?x5xi32> {mdrt.read_only}, memref<?xi32> "
-                       "{mdrt.read_only}, memref<?xi32> {mdrt.read_only}, i64, "
-                     : "";
-    std::string arguments =
-        (llvm::Twine("i64, memref<?x3x") + stateType +
-         "> {mdrt.read_only}, memref<?xi32> {mdrt.read_only}, " + edges +
-         "f64, f64, f64, f64, f64, f64, i64, i64, memref<?x3x" + force + ">")
-            .str();
-    std::string name =
-        state->edges ? "@mdrtModelEvaluateEdges" : "@mdrtModelEvaluate";
-    os << "func.func private " << name << "(" << arguments << ")\n"
-       << "    attributes {llvm.emit_c_interface}\n"
-       << "func.func private " << name << "Energy(" << arguments
-       << ", memref<1xf64>, memref<9xf64>)\n"
-       << "    attributes {llvm.emit_c_interface}\n";
-  }
+                                        TermIRWriter emitIR) const {
+  if (context.getControl().models.empty())
+    return;
+  bool edges = state->edges;
+  bool state64 = context.getStateElement() == Element::F64;
+  bool force64 = context.getForceElement() == Element::F64;
+  emitIR(
+      "", {}, {}, {}, {},
+      [edges, state64, force64](mlir::OpBuilder &builder,
+                                mlir::ValueRange) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        Type state =
+            state64 ? Type(builder.getF64Type()) : Type(builder.getF32Type());
+        Type force =
+            force64 ? Type(builder.getF64Type()) : Type(builder.getF32Type());
+        auto i32 = builder.getI32Type(), i64 = builder.getI64Type();
+        auto dynamic = ShapedType::kDynamic;
+        llvm::SmallVector<Type> inputs = {i64,
+                                          MemRefType::get({dynamic, 3}, state),
+                                          MemRefType::get({dynamic}, i32)};
+        if (edges) {
+          inputs.push_back(MemRefType::get({dynamic, 5}, i32));
+          inputs.push_back(MemRefType::get({dynamic}, i32));
+          inputs.push_back(MemRefType::get({dynamic}, i32));
+          inputs.push_back(i64);
+        }
+        inputs.append(6, builder.getF64Type());
+        inputs.append(2, i64);
+        inputs.push_back(MemRefType::get({dynamic, 3}, force));
+        std::string name =
+            std::string("mdrtModelEvaluate") + (edges ? "Edges" : "");
+        for (bool energy : {false, true}) {
+          llvm::SmallVector<Type> arguments = inputs;
+          if (energy) {
+            arguments.push_back(MemRefType::get({1}, builder.getF64Type()));
+            arguments.push_back(MemRefType::get({9}, builder.getF64Type()));
+          }
+          auto type = builder.getFunctionType(arguments, {});
+          auto function = func::FuncOp::create(
+              builder, loc, name + (energy ? "Energy" : ""), type);
+          function.setPrivate();
+          function->setAttr("llvm.emit_c_interface", builder.getUnitAttr());
+          for (unsigned index : {1u, 2u})
+            function.setArgAttr(index, "mdrt.read_only", builder.getUnitAttr());
+          if (edges)
+            for (unsigned index : {3u, 4u, 5u})
+              function.setArgAttr(index, "mdrt.read_only",
+                                  builder.getUnitAttr());
+        }
+        return {};
+      });
 }

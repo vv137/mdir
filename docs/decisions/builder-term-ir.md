@@ -9,6 +9,9 @@ A fragment borrows an `OpBuilder`, its insertion point, and typed operands.
 It returns IR values rather than inventing SSA names or exposing the
 complete builder or mutable program. The build owns every deferred recipe
 and its captures; borrowed hook-local references never escape their calls.
+The narrow hosted-model role borrows a synchronous `TermIRWriter` instead
+of an output stream. It keeps read-only `TermInputs`; the writer submits
+owned recipes and never escapes the hook call.
 
 During the transition, a bounded join with the remaining assembly may use
 internal typed placeholders. They are materialized into their original

@@ -104,3 +104,8 @@ and separate Born/surface energy columns.
 Restraint cases add multi-particle ALL/CENTER reference scaling under NPT and
 restrained minimization in both precisions and targets. Existing hosted and
 NVE controls retain force-only frame and initial stored-energy coverage.
+
+Hosted-model cases add force-only scheduling and multi-particle CENTER restraint
+scaling under NPT in both precisions, with exact/padded/search pair-list modes.
+Each contains the single opaque model supported by ML1; staged models remain
+separate. CPU cases retain the GPU-only support error.

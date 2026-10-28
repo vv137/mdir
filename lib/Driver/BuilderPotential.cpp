@@ -366,11 +366,19 @@ std::string Builder::emitHostEvaluation(StringRef indent, StringRef x,
     StringRef cell, StringRef prefix, StringRef f, StringRef fResult,
     StringRef u, StringRef uResult, StringRef w, StringRef tag) {
   TermEvaluation point{indent, x, cell, prefix, f, fResult, u, uResult, w, tag};
+  auto emitIR = [this](StringRef indent, llvm::ArrayRef<StringRef> results,
+                       llvm::ArrayRef<StringRef> resultTypes,
+                       llvm::ArrayRef<StringRef> operands,
+                       llvm::ArrayRef<StringRef> operandTypes,
+                       TermIRRecipe recipe) {
+    emitIRFragment(indent, results, resultTypes, operands, operandTypes,
+                   std::move(recipe));
+  };
   std::string virial = w.str();
   for (const TermBuilder *builder : getTermBuilders())
     if (const TermHostEvaluation *role = builder->getRoles().hostEvaluation)
       if (role->applies(*this))
-        virial = role->emit(*this, os, point);
+        virial = role->emit(*this, emitIR, point);
   return virial;
 }
 

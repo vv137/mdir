@@ -305,9 +305,9 @@ class TermHostEvaluation {
 public:
   virtual ~TermHostEvaluation() = default;
   virtual bool applies(const TermInputs &) const = 0;
-  virtual void emitDeclarations(const TermInputs &, llvm::raw_ostream &) const = 0;
-  virtual std::string emit(const TermInputs &, llvm::raw_ostream &,
-                            const TermEvaluation &) const = 0;
+  virtual void emitDeclarations(const TermInputs &, TermIRWriter) const = 0;
+  virtual std::string emit(const TermInputs &, TermIRWriter,
+                           const TermEvaluation &) const = 0;
 };
 /// Narrow roles for operations that are not shared by all term adapters.
 class TermPostEvaluation {
