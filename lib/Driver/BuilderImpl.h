@@ -1103,14 +1103,6 @@ struct Coupled {
   /// The groups that the constraints keep rigid: the waters of SETTLE and
   /// the sets of SHAKE.
   std::vector<const Program::TupleSet *> getRigidGroups() const;
-  /// `trace` with twice the kinetic energy of the motion within each rigid
-  /// group added: the trace of the virial of the groups, which scale with
-  /// their centers of mass, for a step that does not scale (the
-  /// first-order count).
-  std::string emitGroupTrace(StringRef indent, StringRef trace,
-                             StringRef positions, StringRef velocities,
-                             StringRef cell, StringRef masses,
-                             StringRef relations, StringRef tag);
   /// `diagonal`, the diagonal of the virial of the forces `forces` at the
   /// positions `positions` without that of the constraints, less
   /// Σ (x_j − X) ⊙ F_j over the particles of each rigid group about its
