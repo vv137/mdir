@@ -101,8 +101,10 @@ prints the module after each run of that pass, and `MDIR_PIPELINE=<passes>`
 replaces the pipeline (`mdir emit --stage=pipeline` prints the one that
 `mdir run` uses). `mdir` and the Python package register only the dialects
 and passes of MLIR that their lowerings use (dialects in
-`lib/Dialect/ProgramDialects.cpp`, passes in `lib/Compiler/Registry.cpp`, #655), so `MDIR_PIPELINE` may name those and MDIR's own; `mdir-opt` knows
-every pass and dialect of MLIR, for trying others on a reproducer.
+`lib/Dialect/Program/ProgramDialects.cpp`, passes in
+`lib/Compiler/Registry.cpp`, #655), so `MDIR_PIPELINE` may name those and
+MDIR's own; `mdir-opt` knows every pass and dialect of MLIR, for trying
+others on a reproducer.
 
 ## Failures of a run
 

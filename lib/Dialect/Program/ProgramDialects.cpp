@@ -1,4 +1,6 @@
 // One accepted dialect set for program construction, printing, and lowering.
+// Extend this list and its libraries in lib/Dialect/Program/CMakeLists.txt
+// together; the driver and compiler deliberately consume the same set.
 // The driver deliberately parses with the full set, including lowering-only
 // dialects such as LLVM and NVVM. Do not narrow its registry independently:
 // staged user input must parse wherever a valid program is consumed.

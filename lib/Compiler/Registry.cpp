@@ -2,17 +2,19 @@
 // `mdir` and of the Python package use, and no others (#655). The
 // `registerAll*` functions of MLIR referenced every upstream dialect and
 // pass, so that the linker kept all of MLIR in each binary. A program text
-// that names a dialect outside this list fails to parse ("unregistered
-// dialect"), and a pipeline that names a pass outside it fails to parse
-// ("does not refer to a registered pass"): extend the shared dialect set in
-// lib/Dialect/ProgramDialects.cpp and its libraries in lib/CMakeLists.txt, or
-// the passes/interfaces below and lib/Compiler/CMakeLists.txt, together.
+// that names a dialect outside the shared set
+// (lib/Dialect/Program/ProgramDialects.cpp) fails to parse ("unregistered dialect"),
+// and a pipeline that names a pass outside the list below fails to parse
+// ("does not refer to a registered pass"): extend the shared dialect set
+// in lib/Dialect/Program/ProgramDialects.cpp and its libraries in
+// lib/Dialect/Program/CMakeLists.txt, or the passes/interfaces below and
+// lib/Compiler/CMakeLists.txt, together.
 // `mdir-opt` keeps all of MLIR, for replaying and developing pipelines
 // (docs/debugging.md).
 //
 // What is listed, and why:
 // - Dialects: the shared set and its rationale are in
-//   lib/Dialect/ProgramDialects.cpp; construction and lowering use it.
+//   lib/Dialect/Program/ProgramDialects.cpp; construction and lowering use it.
 // - Interfaces of those dialects that MLIR attaches from outside the
 //   dialect (bufferization, value bounds, inlining, the conversion of
 //   `gpu-to-llvm` to the LLVM dialect, the NVVM target), as
