@@ -239,6 +239,11 @@ three wrapping constants, floor-based reduction into the original interval,
 and harmonic scalar arithmetic retain their order.
 `TermImproper.cpp` no longer writes operation text.
 
+CMAP constructs its complete typed two-dihedral reduction, wrapped cell
+indices, 16 table lookups, and bicubic Horner evaluation. The build owns the
+resolution; lookup and row/column accumulation order remain unchanged.
+`TermCMap.cpp` no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and invalid builder assembly, which fails at its construction boundary with

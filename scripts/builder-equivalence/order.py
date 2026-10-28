@@ -580,6 +580,24 @@ phase = 0.4
         text = text.replace('steps      = 0', 'steps      = 2').replace('energy_interval = 0', 'energy_interval = 1')
         write(f"bonded-zero-improper-{precision}", text)
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"bonded-combined-FORCE_SWITCH-{precision}.toml")
+        parameters = (fixtures / "toy.prm").read_text()
+        begin = parameters.index('\nCMAP\n') + len('\nCMAP\n')
+        end = parameters.index('\nNONBONDED ', begin)
+        header = next(line.split() for line in parameters[begin:end].splitlines()
+                      if line.strip() and not line.lstrip().startswith('!'))
+        assert len(header) == 9
+        for resolution in (2, 8):
+            header[-1] = str(resolution)
+            grid = [' '.join(str(((i * 7 + j * 3) % 17 - 8) / 10.0)
+                             for j in range(resolution)) for i in range(resolution)]
+            path = fixtures / f"cmap-{resolution}.prm"
+            path.write_text(parameters[:begin] + '  '.join(header) + '\n' +
+                            '\n'.join(grid) + '\n' + parameters[end:])
+            text = source.read_text().replace(quoted(fixtures / "toy.prm"), quoted(path))
+            write(f"bonded-cmap-resolution-{resolution}-{precision}", text)
+
     return ordinary, hosted
 
 

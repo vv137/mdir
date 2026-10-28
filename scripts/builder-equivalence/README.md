@@ -125,3 +125,6 @@ in both precisions and targets, including run and segmented forms.
 
 Zero harmonic-improper force constants retain the existing wrapped-coordinate kernel
 in both precisions and targets, including run and segmented forms.
+
+CMAP cases vary the grid resolution while retaining all other bonded and custom terms
+in both precisions and targets, including run and segmented forms.

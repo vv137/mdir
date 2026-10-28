@@ -1456,6 +1456,11 @@ three wrapping constants, floor-based reduction into the original interval,
 and harmonic scalar arithmetic retain their order.
 `TermImproper.cpp` no longer writes operation text.
 
+CMAP constructs its complete typed two-dihedral reduction, wrapped cell
+indices, 16 table lookups, and bicubic Horner evaluation. The build owns the
+resolution; lookup and row/column accumulation order remain unchanged.
+`TermCMap.cpp` no longer writes operation text.
+
 For custom expressions, the existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

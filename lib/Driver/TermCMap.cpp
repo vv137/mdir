@@ -1,5 +1,10 @@
 // Built-in bonded family: tuple data, potential, and logged columns (#683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/IR/Builders.h"
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 
@@ -40,7 +45,6 @@ public:
   void emitTopologyPotential(TermEmission &context,
                              const PotentialSelection &selection,
                              const TermPotentialAddition &add) const override {
-    auto &os = context.getOutput();
     unsigned terms = selection.terms;
     auto has = [&](StringRef name) {
       return llvm::any_of(context.getTupleSets(),
@@ -51,57 +55,85 @@ public:
       // places t and u in it; φ = 180° is the first cell again. The patch
       // is E = Σ c_ij t^i u^j [MacKerell2004].
       unsigned n = context.getTopology().cmapResolution;
-      os << "  %u_cmap = md.sum_tuples %r_cmap, %x, %cell coordinates("
-            "dihedral(0, 1, 2, 3), dihedral(1, 2, 3, 4))\n"
-         << "      tuple(%f_cmap_map : !of_cmap) {\n"
-         << "  ^bb0(%phi: f64, %psi: f64, %map: f64):\n"
-         << "    %scale = arith.constant " << formatReal(n / (2.0 * M_PI))
-         << " : f64\n"
-         << "    %shift = arith.constant " << formatReal(n / 2.0) << " : f64\n"
-         << "    %cmap_n = arith.constant " << n << " : i32\n";
-      for (StringRef angle : {"phi", "psi"}) {
-        std::string a = angle.str();
-        os << "    %" << a << "_s = arith.mulf %" << a << ", %scale : f64\n"
-           << "    %" << a << "_x = arith.addf %" << a << "_s, %shift : f64\n"
-           << "    %" << a << "_f = math.floor %" << a << "_x : f64\n"
-           << "    %" << a << "_t = arith.subf %" << a << "_x, %" << a
-           << "_f : f64\n"
-           << "    %" << a << "_i = arith.fptosi %" << a << "_f : f64 to i32\n"
-           << "    %" << a << "_j = arith.addi %" << a << "_i, %cmap_n : i32\n"
-           << "    %" << a << "_k = arith.remsi %" << a
-           << "_j, %cmap_n : i32\n";
-      }
-      os << "    %m = arith.fptosi %map : f64 to i32\n"
-         << "    %mn = arith.muli %m, %cmap_n : i32\n"
-         << "    %row = arith.addi %mn, %phi_k : i32\n"
-         << "    %rown = arith.muli %row, %cmap_n : i32\n"
-         << "    %cellid = arith.addi %rown, %psi_k : i32\n";
-      for (int k = 0; k != 16; ++k)
-        os << "    %k" << k << " = arith.constant " << k << " : i32\n"
-           << "    %c" << k << " = md.lookup %t_cmap[%cellid, %k" << k
-           << "] : !grid, i32, i32 -> f64\n";
-      // Horner in u for each power of t, then in t.
-      for (int i = 0; i != 4; ++i) {
-        std::string last = "%c" + std::to_string(4 * i + 3);
-        for (int j = 2; j >= 0; --j) {
-          std::string name = "%r" + std::to_string(i) + std::to_string(j);
-          os << "    " << name << "m = arith.mulf " << last
-             << ", %psi_t : f64\n"
-             << "    " << name << " = arith.addf " << name << "m, %c"
-             << 4 * i + j << " : f64\n";
-          last = name;
-        }
-      }
-      std::string last = "%r30";
-      for (int i = 2; i >= 0; --i) {
-        std::string name = "%e" + std::to_string(i);
-        os << "    " << name << "m = arith.mulf " << last << ", %phi_t : f64\n"
-           << "    " << name << " = arith.addf " << name << "m, %r" << i
-           << "0 : f64\n";
-        last = name;
-      }
-      os << "    md.yield %e0 : f64\n"
-         << "  } : !rel_cmap, !vec -> f64\n";
+      context.emitIRFragment(
+          "  ", {"%u_cmap"}, {"f64"},
+          {"%r_cmap", "%x", "%cell", "%f_cmap_map", "%t_cmap"},
+          {"!rel_cmap", "!vec", "!md.cell", "!of_cmap", "!grid"},
+          [n](mlir::OpBuilder &builder,
+              mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            llvm::SmallVector<mdir::md::Coordinate> coordinates = {
+                {mdir::md::CoordinateKind::Dihedral, {0, 1, 2, 3}},
+                {mdir::md::CoordinateKind::Dihedral, {1, 2, 3, 4}}};
+            DenseI32ArrayAttr kinds;
+            DenseI64ArrayAttr members;
+            mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+            auto sum = mdir::md::SumTuplesOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], ValueRange{}, values.slice(3, 1), kinds, members);
+            {
+              OpBuilder::InsertionGuard guard(builder);
+              llvm::SmallVector<Type> types(3, builder.getF64Type());
+              llvm::SmallVector<Location> locations(3, loc);
+              Block *block =
+                  builder.createBlock(&sum.getKernel(), {}, types, locations);
+              auto args = block->getArguments();
+              Value scale = arith::ConstantOp::create(
+                  builder, loc, builder.getF64FloatAttr(n / (2.0 * M_PI)));
+              Value shift = arith::ConstantOp::create(
+                  builder, loc, builder.getF64FloatAttr(n / 2.0));
+              Value count = arith::ConstantIntOp::create(builder, loc, n, 32);
+              llvm::SmallVector<Value> fractions, indices;
+              for (unsigned angle : {0u, 1u}) {
+                Value scaled =
+                    arith::MulFOp::create(builder, loc, args[angle], scale);
+                Value x = arith::AddFOp::create(builder, loc, scaled, shift);
+                Value floor = math::FloorOp::create(builder, loc, x);
+                fractions.push_back(
+                    arith::SubFOp::create(builder, loc, x, floor));
+                Value i = arith::FPToSIOp::create(builder, loc,
+                                                  builder.getI32Type(), floor);
+                Value j = arith::AddIOp::create(builder, loc, i, count);
+                indices.push_back(
+                    arith::RemSIOp::create(builder, loc, j, count));
+              }
+              Value map = arith::FPToSIOp::create(
+                  builder, loc, builder.getI32Type(), args[2]);
+              Value mn = arith::MulIOp::create(builder, loc, map, count);
+              Value row = arith::AddIOp::create(builder, loc, mn, indices[0]);
+              Value rown = arith::MulIOp::create(builder, loc, row, count);
+              Value cell =
+                  arith::AddIOp::create(builder, loc, rown, indices[1]);
+              llvm::SmallVector<Value> coefficients;
+              for (unsigned k = 0; k != 16; ++k) {
+                Value column =
+                    arith::ConstantIntOp::create(builder, loc, k, 32);
+                coefficients.push_back(mdir::md::LookupOp::create(
+                    builder, loc, builder.getF64Type(), values[4],
+                    ValueRange{cell, column}));
+              }
+              llvm::SmallVector<Value> rows;
+              for (unsigned i = 0; i != 4; ++i) {
+                Value last = coefficients[4 * i + 3];
+                for (int j = 2; j >= 0; --j) {
+                  Value product =
+                      arith::MulFOp::create(builder, loc, last, fractions[1]);
+                  last = arith::AddFOp::create(builder, loc, product,
+                                               coefficients[4 * i + j]);
+                }
+                rows.push_back(last);
+              }
+              Value energy = rows[3];
+              for (int i = 2; i >= 0; --i) {
+                Value product =
+                    arith::MulFOp::create(builder, loc, energy, fractions[0]);
+                energy = arith::AddFOp::create(builder, loc, product, rows[i]);
+              }
+              mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            }
+            return {sum.getResult()};
+          });
       add("cmap");
     }
   }
