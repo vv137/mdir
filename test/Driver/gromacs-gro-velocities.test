@@ -16,8 +16,9 @@
 # RUN: not mdir check %t/partial.toml 2>&1 | FileCheck %s --check-prefix=PARTIAL
 # RUN: not mdir check %t/mixed.toml 2>&1 | FileCheck %s --check-prefix=MIXED
 
-# Both argon atoms move at |v|^2 = 0.1764 nm^2/ps^2: a kinetic energy of
-# 39.948 * 0.1764 kJ/mol = 1.8108 kcal/mol, with every component read.
+# Both argon atoms move at |v|^2 = 0.1234^2 + 0.2345^2 + 0.3456^2
+# = 0.18965717 nm^2/ps^2: a kinetic energy of 2 * (1/2) * 39.948 * 0.18965717
+# = 7.5764 kJ/mol = 1.8108 kcal/mol, with every component read.
 #
 # KINETIC: INFO: 0 0.0000 1.8108 0.0000 1.8108
 
