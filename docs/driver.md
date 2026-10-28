@@ -1295,7 +1295,7 @@ restraint, pull, and scalar operations are narrowed into their roles; the
 unused generic entry hook is removed. Long-range dispersion and gradient
 shift corrections are shared by custom pairs and built-in nonbonded terms.
 Adding a new writer at a correction site requires explicitly composing its
-SSA outputs, rather than reusing another adapter's names.
+SSA outputs, rather than reusing another adapter's names. The restraint adapter owns its recorded correction energy for one program build; force-only hooks retain it, and the stored-column hook diagnoses a missing energy before emitting a store.
 
 No control key, support restriction, precision, numerical method, diagnostic,
 or output format changes. Each kind commit compares printed module/lowered

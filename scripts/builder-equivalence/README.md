@@ -16,13 +16,12 @@ C plugin supplies cutoff metadata and refuses evaluation. This checks the
 host-call and pair-list emission paths without an optional model framework,
 and makes no numerical claim about a model. CPU models and GPU triplets
 retain their expected support errors; unexpected fixture errors are
-reported separately from generated-program differences. The known hosted
-model/restraint stored-energy SSA error (#706) is retained as a baseline
-error case. Hosted controls without restraints are successful module/lowered
-cases after the default-resource effect declaration fix (#707), alongside
-the staged-model controls. `--host-raw` additionally compares hosted module
-text before the known baseline failures; this supplementary check is for stage A,
-where text is preserved, rather than the later typed-IR stage.
+reported separately from generated-program differences. Hosted controls with
+and without restraints are successful module/lowered cases after #706 and
+#707, alongside the staged-model controls. No parser or verifier failure is
+accepted as a baseline in this matrix. `--host-raw` additionally compares
+hosted module text; this supplementary check is for stage A, where text is
+preserved, rather than the later typed-IR stage.
 
 The order matrix also generates the synthetic CHARMM chain from the reader
 fixture, combined with custom tuple, centroid, pair, external, and restraint

@@ -1,5 +1,6 @@
 // Positional-restraint fields and contributions (D359, D361, #683).
 #include "BuilderImpl.h"
+#include "llvm/Support/ErrorHandling.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
@@ -21,6 +22,11 @@ public:
     emitCorrection(context, point.scale, point.indent, point.x, point.prefix,
                    point.f, point.fResult, point.u, point.uResult, point.w,
                    point.wResult);
+    // The initial term report consumes this correction's energy. A hosted
+    // evaluation uses a different result name; force-only frame requests do
+    // not replace the energy that the report needs. This adapter is per build.
+    if (!point.uResult.empty())
+      storedEnergy = (point.uResult + "_r").str();
   }
   unsigned getStoredTermCount(const TermInputs &context) const override {
     return hasForceCorrection(context) ? 1 : 0;
@@ -29,10 +35,15 @@ public:
                        int &index) const override {
     if (!hasForceCorrection(context))
       return;
-    context.getOutput() << "  %i_restraints = arith.constant " << index++ << " : index\n"
-       << "  memref.store %u0_r, %terms[%i_restraints] : " << type << "\n";
+    if (storedEnergy.empty())
+      llvm::report_fatal_error("the builder has no recorded restraint energy");
+    context.getOutput() << "  %i_restraints = arith.constant " << index++
+                        << " : index\n"
+                        << "  memref.store " << storedEnergy
+                        << ", %terms[%i_restraints] : " << type << "\n";
   }
 private:
+  mutable std::string storedEnergy;
   static void emitCorrection(TermEmission &, StringRef scaleName, StringRef indent,
       StringRef x, StringRef prefix, StringRef f, StringRef fResult,
       StringRef u, StringRef uResult, StringRef w, StringRef wResult);

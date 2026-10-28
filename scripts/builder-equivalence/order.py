@@ -271,7 +271,7 @@ def main():
     place.mkdir(parents=True, exist_ok=True)
     ordinary, hosted = controls(root, place)
     library = metadata_plugin(root, place, args.compiler)
-    for mode, files, expected_errors in (("exact", ordinary, 56),
+    for mode, files, expected_errors in (("exact", ordinary, 44),
                                          ("padded", hosted, 12),
                                          ("search", hosted, 12)):
         scratch = place / ("compare-" + mode)
@@ -300,9 +300,7 @@ def main():
                        "run on the CPU only" in line) or (
                        "extra/model-" in line and "[cpu" in line and
                        "runs on a GPU only" in line)
-            baseline = ("extra/model-host-restraints-" in line and "[gpu" in line and
-                        "use of undeclared SSA value name" in line)
-            if not support and not baseline:
+            if not support:
                 unexpected.append(line)
         if not match or int(match[2]) != expected_errors or unexpected:
             print(f"order-matrix fixture error: expected {expected_errors} support/baseline error cases",
