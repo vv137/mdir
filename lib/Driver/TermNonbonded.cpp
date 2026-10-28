@@ -1299,74 +1299,127 @@ public:
           double alpha = control.freeEnergy.softCoreAlpha;
           std::string distance = "%r";
           if (alpha > 0.0) {
-            os << "    %sc_alpha = arith.constant " << formatReal(alpha)
-               << " : f64\n"
-               << "    %sc_zero = arith.constant 0.0 : f64\n"
-               << "    %sc_floor = arith.constant 3.0e-01 : f64\n"
-               << "    %sc_has = arith.cmpf ogt, %sigma, %sc_zero : f64\n"
-               << "    %sc_sigma = arith.select %sc_has, %sigma, %sc_floor : "
-                  "f64\n"
-               << "    %sc_i3 = arith.constant 3 : i32\n"
-               << "    %sc_s3 = math.fpowi %sc_sigma, %sc_i3 : f64, i32\n"
-               << "    %sc_s6 = arith.mulf %sc_s3, %sc_s3 : f64\n"
-               << "    %sc_r3 = math.fpowi %r, %sc_i3 : f64, i32\n"
-               << "    %sc_r6 = arith.mulf %sc_r3, %sc_r3 : f64\n";
-            std::string power = "%lambda_vdw";
-            if (control.freeEnergy.softCorePower == 2) {
-              os << "    %sc_lp = arith.mulf %lambda_vdw, %lambda_vdw : f64\n";
-              power = "%sc_lp";
-            }
-            os << "    %sc_as = arith.mulf %sc_alpha, %sc_s6 : f64\n"
-               << "    %sc_asl = arith.mulf %sc_as, " << power << " : f64\n"
-               << "    %sc_x = arith.addf %sc_r6, %sc_asl : f64\n";
-            if (truncation != Truncation::None &&
-                truncation != Truncation::Shift) {
-              os << "    %sc_sixth = arith.constant " << formatReal(1.0 / 6.0)
-                 << " : f64\n"
-                 << "    %sc_ra = math.powf %sc_x, %sc_sixth : f64\n"
-                 << "    %sc_half = arith.constant 5.0e-01 : f64\n"
-                 << "    %sc_is = arith.cmpf ogt, %cross, %sc_half : f64\n"
-                 << "    %sc_r = arith.select %sc_is, %sc_ra, %r : f64\n";
+            bool root = truncation != Truncation::None &&
+                        truncation != Truncation::Shift;
+            llvm::SmallVector<StringRef> results =
+                root ? llvm::SmallVector<StringRef>{"%sc_r"}
+                     : llvm::SmallVector<StringRef>{"%sc_asl", "%sc_r6",
+                                                    "%sc_i3"};
+            llvm::SmallVector<StringRef> types =
+                root ? llvm::SmallVector<StringRef>{"f64"}
+                     : llvm::SmallVector<StringRef>{"f64", "f64", "i32"};
+            context.emitIRFragment(
+                "    ", results, types,
+                {"%sigma", "%r", "%lambda_vdw", "%cross"},
+                {"f64", "f64", "f64", "f64"},
+                [alpha, power = control.freeEnergy.softCorePower,
+                 root](mlir::OpBuilder &builder,
+                       mlir::ValueRange values) -> TermIRValues {
+                  using namespace mlir;
+                  auto loc = builder.getUnknownLoc();
+                  auto constant = [&](double value) -> Value {
+                    return arith::ConstantOp::create(
+                        builder, loc, builder.getF64FloatAttr(value));
+                  };
+                  auto mul = [&](Value a, Value b) -> Value {
+                    return arith::MulFOp::create(builder, loc, a, b);
+                  };
+                  Value alphaValue = constant(alpha);
+                  Value zero = constant(0.0);
+                  Value floor = constant(0.3);
+                  Value has = arith::CmpFOp::create(
+                      builder, loc, arith::CmpFPredicate::OGT, values[0], zero);
+                  Value sigma = arith::SelectOp::create(builder, loc, has,
+                                                        values[0], floor);
+                  Value i3 = arith::ConstantOp::create(
+                      builder, loc, builder.getI32IntegerAttr(3));
+                  Value s3 = math::FPowIOp::create(builder, loc, sigma, i3);
+                  Value s6 = mul(s3, s3);
+                  Value r3 = math::FPowIOp::create(builder, loc, values[1], i3);
+                  Value r6 = mul(r3, r3);
+                  Value lambda = values[2];
+                  if (power == 2)
+                    lambda = mul(lambda, lambda);
+                  Value as = mul(alphaValue, s6);
+                  Value asl = mul(as, lambda);
+                  Value x = arith::AddFOp::create(builder, loc, r6, asl);
+                  if (!root)
+                    return {asl, r6, i3};
+                  Value sixth = constant(1.0 / 6.0);
+                  Value ra = math::PowFOp::create(builder, loc, x, sixth);
+                  Value half = constant(0.5);
+                  Value cross = arith::CmpFOp::create(
+                      builder, loc, arith::CmpFPredicate::OGT, values[3], half);
+                  return {arith::SelectOp::create(builder, loc, cross, ra,
+                                                  values[1])};
+                });
+            if (root)
               distance = "%sc_r";
-            }
           }
           bool plain =
               truncation == Truncation::None || truncation == Truncation::Shift;
           if (alpha > 0.0 && plain) {
-            // Without a switch, (σ/r_A)⁶ = σ⁶ / x needs no root: one
-            // expression for every pair, x = r⁶ for those not decoupled.
-            os << "    %sc_xs = arith.mulf %sc_asl, %cross : f64\n"
-               << "    %sc_xx = arith.addf %sc_r6, %sc_xs : f64\n"
-               << "    %sc_g3 = math.fpowi %sigma, %sc_i3 : f64, i32\n"
-               << "    %sc_g6 = arith.mulf %sc_g3, %sc_g3 : f64\n"
-               << "    %sc_q6 = arith.divf %sc_g6, %sc_xx : f64\n"
-               << "    %sc_q12 = arith.mulf %sc_q6, %sc_q6 : f64\n";
-            std::string a = "%sc_q12", b = "%sc_q6";
-            if (truncation == Truncation::Shift) {
-              double cut6 = std::pow(cutoff, -6.0);
-              os << "    %sc_rc6 = arith.constant " << formatReal(cut6)
-                 << " : f64\n"
-                 << "    %sc_rc12 = arith.constant " << formatReal(cut6 * cut6)
-                 << " : f64\n"
-                 << "    %sc_g12 = arith.mulf %sc_g6, %sc_g6 : f64\n"
-                 << "    %sc_c12 = arith.mulf %sc_g12, %sc_rc12 : f64\n"
-                 << "    %sc_c6 = arith.mulf %sc_g6, %sc_rc6 : f64\n"
-                 << "    %sc_a = arith.subf %sc_q12, %sc_c12 : f64\n"
-                 << "    %sc_b = arith.subf %sc_q6, %sc_c6 : f64\n";
-              a = "%sc_a";
-              b = "%sc_b";
-            }
-            os << "    %sc_c4 = arith.constant 4.0 : f64\n"
-               << "    %sc_e4 = arith.mulf %sc_c4, %epsilon : f64\n"
-               << "    %sc_t = arith.subf " << a << ", " << b << " : f64\n"
-               << "    %lj_full = arith.mulf %sc_e4, %sc_t : f64\n";
+            // The unswitched soft-core potential needs no sixth root
+            // [Beutler1994]; retain its original arithmetic sequence.
+            context.emitIRFragment(
+                "    ", {"%lj_full"}, {"f64"},
+                {"%sigma", "%epsilon", "%cross", "%sc_asl", "%sc_r6", "%sc_i3"},
+                {"f64", "f64", "f64", "f64", "f64", "i32"},
+                [truncation, cutoff](mlir::OpBuilder &builder,
+                                     mlir::ValueRange values) -> TermIRValues {
+                  using namespace mlir;
+                  auto loc = builder.getUnknownLoc();
+                  auto constant = [&](double value) -> Value {
+                    return arith::ConstantOp::create(
+                        builder, loc, builder.getF64FloatAttr(value));
+                  };
+                  auto mul = [&](Value a, Value b) -> Value {
+                    return arith::MulFOp::create(builder, loc, a, b);
+                  };
+                  auto sub = [&](Value a, Value b) -> Value {
+                    return arith::SubFOp::create(builder, loc, a, b);
+                  };
+                  Value xs = mul(values[3], values[2]);
+                  Value xx = arith::AddFOp::create(builder, loc, values[4], xs);
+                  Value g3 =
+                      math::FPowIOp::create(builder, loc, values[0], values[5]);
+                  Value g6 = mul(g3, g3);
+                  Value q6 = arith::DivFOp::create(builder, loc, g6, xx);
+                  Value q12 = mul(q6, q6);
+                  Value a = q12, b = q6;
+                  if (truncation == Truncation::Shift) {
+                    double cut6 = std::pow(cutoff, -6.0);
+                    Value rc6 = constant(cut6);
+                    Value rc12 = constant(cut6 * cut6);
+                    Value g12 = mul(g6, g6);
+                    Value c12 = mul(g12, rc12);
+                    Value c6 = mul(g6, rc6);
+                    a = sub(q12, c12);
+                    b = sub(q6, c6);
+                  }
+                  Value c4 = constant(4.0);
+                  Value e4 = mul(c4, values[1]);
+                  Value t = sub(a, b);
+                  return {mul(e4, t)};
+                });
           } else {
             emitLennardJones("%sigma", "%epsilon", "%lj_full", truncation,
                              distance);
           }
-          os << "    %lj_cl = arith.mulf %cross, %lambda_vdw : f64\n"
-             << "    %lj_scale = arith.subf %al_one, %lj_cl : f64\n"
-             << "    %lj = arith.mulf %lj_scale, %lj_full : f64\n";
+          context.emitIRFragment(
+              "    ", {"%lj"}, {"f64"},
+              {"%cross", "%lambda_vdw", "%al_one", "%lj_full"},
+              {"f64", "f64", "f64", "f64"},
+              [](mlir::OpBuilder &builder,
+                 mlir::ValueRange values) -> TermIRValues {
+                auto loc = builder.getUnknownLoc();
+                mlir::Value cl = mlir::arith::MulFOp::create(
+                    builder, loc, values[0], values[1]);
+                mlir::Value scale =
+                    mlir::arith::SubFOp::create(builder, loc, values[2], cl);
+                return {mlir::arith::MulFOp::create(builder, loc, scale,
+                                                    values[3])};
+              });
         } else {
           emitLennardJones("%sigma", "%epsilon", "%lj", truncation);
         }

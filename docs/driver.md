@@ -1335,7 +1335,9 @@ Coulomb kernels now use typed operations too: cutoff and reaction field,
 Gaussian Ewald, prolate series/cells, alchemical charge scaling, and the
 clamped distance retain their original operation order. The direct LJPME
 dispersion subtraction and its optional cutoff shift are typed fragments
-at that same pair-kernel site.
+at that same pair-kernel site. Soft-core Lennard-Jones distance,
+root-free or switched potential, and alchemical scaling also use typed
+fragments, preserving the original intermediate operations and branch order.
 
 ## 3. Decided
 
