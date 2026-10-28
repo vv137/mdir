@@ -100,6 +100,43 @@ COUPLING_INTERVAL = 25
 # A skin that MDIR chooses (D281).
 AUTO = "AUTO"
 
+# The element of an atom type of the suite's force fields (ff14SB, GLYCAM,
+# TIP3P, the ions of Amber): the types that do not begin with the symbol of
+# their element, and otherwise the first letter. The topologies of the
+# suite have no atomic numbers, and the masses of repartitioned systems do
+# not tell the element (#469): CT of 9.994 amu is carbon, not boron.
+TYPE_ELEMENTS = {"IP": "Na", "IM": "Cl", "C0": "Ca"}
+ATOMIC_NUMBERS = {"H": 1, "C": 6, "N": 7, "O": 8, "Na": 11, "P": 15,
+                  "S": 16, "Cl": 17, "Ca": 20}
+
+
+def type_element(name):
+    """The symbol of the element of the atom type `name`."""
+    element = TYPE_ELEMENTS.get(name, name[:1])
+    if element not in ATOMIC_NUMBERS:
+        raise SystemExit(f"error: no element is known for the atom type "
+                         f"{name!r}; add it to TYPE_ELEMENTS in bench.py")
+    return element
+
+
+def check_atomtypes(path):
+    """The types of `[ atomtypes ]` of the GROMACS topology `path` whose
+    atomic number is not that of their element, as (type, written,
+    expected)."""
+    wrong = []
+    section = None
+    with open(path) as f:
+        for line in f:
+            line = line.split(";")[0].strip()
+            if line.startswith("["):
+                section = line.strip("[] ")
+            elif section == "atomtypes" and line:
+                name, number = line.split()[:2]
+                expected = ATOMIC_NUMBERS[type_element(name)]
+                if int(number) != expected:
+                    wrong.append((name, int(number), expected))
+    return wrong
+
 
 def skin_value(text):
     """A skin in Å, or AUTO."""
@@ -180,10 +217,15 @@ def prepare(args):
         parm = os.path.join(target, "system.parm7")
         rst = os.path.join(target, "system.rst7")
         # ParmEd takes the elements of a topology without atomic numbers
-        # from the masses, and a hydrogen of 3.024 amu, whose mass has been
-        # repartitioned, for helium; the topology is then made again from
-        # the corrected atoms, so that the bonds of hydrogen are those
-        # that SHAKE constrains.
+        # from the masses: a hydrogen of 3.024 amu, whose mass has been
+        # repartitioned, for helium, and a carbon of 9.994 amu for boron
+        # (#469). Every atom takes the element of its type instead
+        # (TYPE_ELEMENTS), which is checked against its mass with the
+        # repartitioned mass of its hydrogens given back. The topology is
+        # then made again from the corrected atoms, so that the bonds of
+        # hydrogen are those that SHAKE constrains, and the GROMACS file,
+        # written from a second load, takes the same elements: in
+        # `[ atomtypes ]`, and for the SETTLE of rigid water.
         #
         # A topology in the format before Amber 7 (Factor IX) gives a
         # dihedral of several terms with one entry: a negative periodicity
@@ -195,9 +237,40 @@ def prepare(args):
         # now: each its own entry, without a 1-4 pair.
         script = f"""
 import parmed
+from parmed.periodic_table import Mass
 from parmed.topologyobjects import Dihedral
+TYPE_ELEMENTS = {TYPE_ELEMENTS!r}
+ATOMIC_NUMBERS = {ATOMIC_NUMBERS!r}
+
+def elements(structure):
+    symbol = lambda t: TYPE_ELEMENTS.get(t.strip(), t.strip()[:1])
+    symbols = [symbol(a.type) for a in structure.atoms]
+    for atom, element in zip(structure.atoms, symbols):
+        if element not in ATOMIC_NUMBERS:
+            raise SystemExit(f"error: no element for the atom type {{atom.type}}")
+        if element == "H":
+            mass = atom.mass
+            ok = 0.0 < mass < 4.1
+        else:
+            mass = atom.mass + sum(
+                b.mass - Mass["H"] for b in atom.bond_partners
+                if symbol(b.type) == "H")
+            ok = abs(mass - Mass[element]) < 0.05
+        if not ok:
+            raise SystemExit(f"error: atom {{atom.idx + 1}} ({{atom.name}}, type "
+                             f"{{atom.type}}) has the mass {{mass:.3f}} with its "
+                             f"hydrogens, not that of {{element}}")
+    return [ATOMIC_NUMBERS[element] for element in symbols]
+
+def assign(structure, numbers):
+    for atom, number in zip(structure.atoms, numbers):
+        atom.atomic_number = number
+        if isinstance(atom.atom_type, parmed.topologyobjects.AtomType):
+            atom.atom_type.atomic_number = number
+
 p = parmed.load_file({os.path.join(source, "prmtop")!r},
                      {os.path.join(source, "inpcrd")!r})
+numbers = elements(p)
 types = list(p.dihedral_types)
 terms = []
 for d in p.dihedrals:
@@ -209,18 +282,30 @@ for d in p.dihedrals:
 p.dihedrals.extend(terms)
 for t in types:
     t.per = abs(t.per)
-for atom in p.atoms:
-    if atom.name.startswith("H") and 0.0 < atom.mass < 4.1:
-        atom.atomic_number = 1
+assign(p, numbers)
 p = parmed.amber.AmberParm.from_structure(p)
 p.save({parm!r}, format="amber", overwrite=True)
 p.save({rst!r}, format="rst7", overwrite=True)
 q = parmed.load_file({parm!r}, {rst!r})
+assert len(q.atoms) == len(numbers)
+assign(q, numbers)
 q.save({os.path.join(target, "system.gro")!r}, overwrite=True)
 q.save({os.path.join(target, "system.top")!r}, format="gromacs",
        overwrite=True)
 """
         subprocess.run([args.parmed_python, "-c", script], check=True)
+    # The elements of every system's GROMACS topology, converted now or
+    # before (#469).
+    failed = False
+    for name in SYSTEMS:
+        top = os.path.join(args.work, name, "system.top")
+        for atom_type, written, expected in check_atomtypes(top):
+            print(f"error: {name}: the atom type {atom_type} has the atomic "
+                  f"number {written} in system.top, not {expected}; remove "
+                  f"{top} and run prepare again")
+            failed = True
+    if failed:
+        raise SystemExit(1)
 
 
 def write_mdir(name, system, target, steps=None, path="mdir.toml",
