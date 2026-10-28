@@ -20,8 +20,9 @@ polarizable model and no learned potential. Terms over triplets (D160) run
 on the CPU only.
 The distributed lowering (`md_dist`) runs its domains in one process
 only, on the CPU or one GPU (D275, D290); the joint planner that
-would choose structures and layouts, and the `mlff` and `ensemble`
-dialects of the architecture are designs, not code.
+would choose structures and layouts, and the `ensemble` dialect of the
+architecture, are designs, not code. Its `mlff` dialect will not be
+built: neural stages of `md` take its place (D288).
 
 **The deterministic mode does not take groups.** The loop over groups adds
 with floating-point atomics; in the deterministic mode a run keeps the

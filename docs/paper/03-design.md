@@ -5,23 +5,39 @@ A run of MDIR passes through four levels of IR, each a dialect of MLIR
 advances*; the third says *over which set, with which pattern of access*;
 the fourth is the interface to a small runtime. Every pass between them
 either rewrites within a level or lowers to the next, and a pass may rely
-only on what the IR states (Section 12). The pipeline, one step, and the
-path from facts to strategies are drawn in brief in
+only on what the IR states (Section 12). A fifth dialect, for distributed
+computation, is built but not yet on the path of a run. The pipeline, one
+step, and the path from facts to strategies are drawn in brief in
 [overview.md](../overview.md).
 
-*Table 3.1. The levels of the IR.*
+*Table 3.1. The dialects of the IR.*
 
 | Dialect | Says | Objects |
 |---|---|---|
-| `md` | What is computed | Particle sets, tuple sets and their disjoint unions; relations that name the members of tuples; fields over a set; the cell; potentials as functions of positions, cell, and parameters; sums over relations and tuples; neighborhoods; the reciprocal sum of Ewald; `md.evaluate` with requests for energy, forces, virial, or a derivative with respect to a parameter |
-| `dyn` | How the state advances | `dyn.kick`, `dyn.drift`, and `dyn.program`, a step whose state is the set of its SSA values, with the properties it provides (`symplectic`, `time_reversible`) and requires |
+| `md` | What is computed | Particle sets, tuple sets and their disjoint unions; relations that name the members of tuples; fields over a set; the cell; potentials as functions of positions, cell, and parameters; sums over relations and tuples; neighborhoods; the reciprocal sum of Ewald; neural stages (`md.stage`, `md.apply_stage`); `md.evaluate` with requests for energy, forces, virial, or a derivative with respect to a parameter |
+| `dyn` | How the state advances | `dyn.kick`, `dyn.drift`, and `dyn.program`, a step whose state is the set of its SSA values, with the properties it provides (`symplectic`, `time_reversible`) and requires and the effects of its body, which `dyn.step` applies (D355); the couplings (D326): measurements by global sums (`dyn.kinetic`, `dyn.momentum`, `dyn.half_step_excess`, `dyn.group_kinetic`), arithmetic of the host (`dyn.pressure`, `dyn.scale_cell`, `dyn.scaling_work`), the thermostats and the barostat (`dyn.velocity_rescaling`, `dyn.nose_hoover`, `dyn.cell_rescaling`), updates of the particles (`dyn.shift`, `dyn.scale`, `dyn.scale_positions`, `dyn.noise`), and the state of the host (`dyn.load_cell`, `dyn.store_cell`, `dyn.load_pressure_state`, `dyn.store_pressure_state`, `dyn.to_bath`) |
 | `md_exec` | Over which set, with which access | Loops over particles, pairs, and tuples (`particle_for`, `pair_for`, `tuple_for`); neighbor structures and their tests; the order of the particles; tables; streams |
+| `md_dist` | Where it is computed | Decompositions into domains and layouts of ownership with their epochs; distributed fields and halos; the transfers between domains (`distribute`, `collect`, `halo_copy`, `halo_sum`, `migrate`, `redistribute`); neighborhoods and partitions of their centers; sums, gathers, and maps over the rows of each domain, and reductions over all domains; the skin predicate `covered` |
 | `mdrt` | The interface to the runtime | Opaque types for cells, permutations, neighbor structures, and incidences; buffers in and out; calls to the host |
 
-The four dialects have 50 operations; the passes over them number 22
-(5 on `md`, 14 on `md_exec`, and 3 lowerings). Planned levels for
-distributed runs (`md_dist`), learned potentials (`mlff`), and ensembles
-of runs (`ensemble`) are designs, not code (Section 13).
+The fifth dialect, `md_dist`, says on which domain each value lives and
+what moves between domains. `md-distribute` rewrites a potential of `md`
+into it (D276); `convert-md-dist-to-loops` runs its domains in one
+process as the reference executor (D275), and
+`convert-md-dist-to-md-exec` gives the loops of each domain to `md_exec`
+(D290). It is built with its verifier, but no run of `mdir` or of the
+Python package takes it yet (Section 13). The operations
+of each dialect are those of its TableGen file,
+`include/mdir/Dialect/*/*Ops.td`, from which their reference in
+`docs/dialects/` is generated, and the passes those of the `Passes.td`
+files; this section does not count them. The `dyn` ops of the couplings
+exist with `dyn-expand-couplings`, which expands them to what the driver
+writes; the driver does not write them yet (#541, Section 6). The
+planned dialect of learned potentials (`mlff`) will not be built: neural
+stages of `md` take its place (D288). A neural stage is a symbol of `md`,
+which `md.apply_stage` applies in the kernel of a gather, a map, or a sum.
+A dialect for ensembles of runs (`ensemble`) is a design, not code
+(Section 13).
 
 The distributed level now includes `md_dist.partition_centers`
 (D317). For each owned center $i$ of a neighborhood
