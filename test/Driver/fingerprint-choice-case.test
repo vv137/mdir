@@ -1,0 +1,159 @@
+# The fingerprint records a value that names a choice in the spelling that
+# the reader documents for it, upper case but for the rules of `mixing`, in
+# lower case (#702). The reader reads a choice without regard to case
+# (docs/driver.md, Section 1), so a run written with "VELOCITY_VERLET" is
+# continued by a file that writes "velocity_verlet": before #702 the
+# fingerprint kept the case of the file, refused that continuation as a
+# change of the coupling, and noted a change of the execution for "auto" in
+# place of "AUTO". Which values are choices comes from the reader, which
+# records each value that it reads as one, so a nested choice (`scaling` of
+# [[energy.external]], `mixing` of [[energy.pair]]) is one too. A string
+# that is not a choice (a name, an expression) keeps its case, and a change
+# of its case is a change of the run, as before. The fingerprint of the
+# documented spellings is the text of before #702, which the checks of
+# PRINT name: such checkpoints continue as they did.
+#
+# RUN: rm -rf %t && split-file %s %t && cp -r %S/Inputs/dipeptide %t/
+# RUN: %python %S/Inputs/argon_lattice.py 8 %t/argon.pdb
+# RUN: cd %t && mdir run run.toml > run.log
+# RUN: cd %t && mdir checkpoint --print=fingerprint run.h5 > upper.fingerprint
+# RUN: FileCheck %s --check-prefix=PRINT < %t/upper.fingerprint
+# PRINT-DAG: coupling [dynamics] integrator = "VELOCITY_VERLET"
+# PRINT-DAG: coupling [ensemble] ensemble = "NVT"
+# PRINT-DAG: coupling [thermostat] method = "V-RESCALE"
+# PRINT-DAG: execution [energy] pairlist_distance = "AUTO"
+# PRINT-DAG: execution [execution] precision = "DOUBLE"
+# PRINT-DAG: execution [execution] target = "CPU"
+# PRINT-DAG: physics [boundary] type = "PERIODIC"
+# PRINT-DAG: physics [energy] electrostatics = "CUTOFF"
+# PRINT-DAG: physics {{\[\[}}energy.external{{\]\]}} = [{expression="k*max(0, z - z0)^2",k=2,name="wall",particles=[1,2,3],scaling="NONE",z0=13}]
+#
+# Every choice in another case: the run continues, with no note, and its
+# checkpoint has the fingerprint of the first.
+# RUN: cd %t && sed -e 's|"VELOCITY_VERLET"|"velocity_verlet"|' \
+# RUN:     -e 's|"NONE"|"none"|' -e 's|"NVT"|"nvt"|' \
+# RUN:     -e 's|"V-RESCALE"|"v-rescale"|' -e 's|"PERIODIC"|"Periodic"|' -e 's|"CUTOFF"|"Cutoff"|' \
+# RUN:     -e 's|"AUTO"|"auto"|' -e 's|"CPU"|"cpu"|' -e 's|"DOUBLE"|"double"|' \
+# RUN:     -e 's|^steps = 2|steps = 4|' run.toml > lower.toml
+# RUN: cd %t && mdir run --continue lower.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=LOWER --implicit-check-not=note
+# LOWER: MDIR: continues
+# RUN: cd %t && mdir checkpoint --print=fingerprint run.h5 > lower.fingerprint
+# RUN: cmp %t/upper.fingerprint %t/lower.fingerprint
+#
+# Another integrator, in any case, is still refused.
+# RUN: cd %t && sed -e 's|"VELOCITY_VERLET"|"leapfrog"|' -e 's|^steps = 2|steps = 6|' \
+# RUN:     run.toml > leapfrog.toml
+# RUN: cd %t && not mdir run --continue leapfrog.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=INTEGRATOR
+# INTEGRATOR: was written by a run of other physics or coupling, which --continue does not change
+# INTEGRATOR: [dynamics] integrator: "VELOCITY_VERLET" -> "LEAPFROG"
+#
+# A name is not a choice: another case of it is another run.
+# RUN: cd %t && sed -e 's|"wall"|"Wall"|' -e 's|^steps = 2|steps = 6|' \
+# RUN:     run.toml > name.toml
+# RUN: cd %t && not mdir run --continue name.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=NAME
+# NAME: was written by a run of other physics or coupling, which --continue does not change
+# NAME: {{\[\[}}energy.external{{\]\]}}: [{{.*}}name="wall"{{.*}}] -> [{{.*}}name="Wall"{{.*}}]
+#
+# A rule of mixing in another case continues the run of the documented
+# spelling, in lower case.
+# RUN: cd %t && mdir run argon.toml > argon.log
+# RUN: cd %t && mdir checkpoint --print=fingerprint argon.h5 > argon.fingerprint
+# RUN: FileCheck %s --check-prefix=MIXING < %t/argon.fingerprint
+# MIXING: physics {{\[\[}}energy.pair{{\]\]}} = [{expression="4*epsilon*((sigma/r)^12 - (sigma/r)^6)",mixing="lorentz-berthelot",name="lj"}]
+# RUN: cd %t && sed -e 's|"lorentz-berthelot"|"Lorentz-Berthelot"|' \
+# RUN:     -e 's|^steps = 2|steps = 4|' argon.toml > argon-case.toml
+# RUN: cd %t && mdir run --continue argon-case.toml 2>&1 \
+# RUN: | FileCheck %s --check-prefix=LOWER --implicit-check-not=note
+# RUN: cd %t && mdir checkpoint --print=fingerprint argon.h5 > argon-case.fingerprint
+# RUN: cmp %t/argon.fingerprint %t/argon-case.fingerprint
+
+#--- run.toml
+[input]
+topology    = "dipeptide/dipeptide.prmtop"
+coordinates = "dipeptide/dipeptide.inpcrd"
+
+[output]
+energy_interval     = 2
+checkpoint          = "run.h5"
+checkpoint_interval = 2
+
+[energy]
+cutoff            = 8.0
+pairlist_distance = "AUTO"
+electrostatics    = "CUTOFF"
+
+[[energy.external]]
+name       = "wall"
+expression = "k*max(0, z - z0)^2"
+particles  = [1, 2, 3]
+scaling    = "NONE"
+k  = 2.0
+z0 = 13.0
+
+[constraints]
+rigid_water = false
+
+[dynamics]
+integrator = "VELOCITY_VERLET"
+time_step  = 0.0005
+steps = 2
+seed  = 314159
+
+[ensemble]
+ensemble    = "NVT"
+temperature = 300.0
+
+[thermostat]
+method        = "V-RESCALE"
+interval      = 2
+time_constant = 0.5
+
+[boundary]
+type = "PERIODIC"
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"
+
+#--- argon.toml
+[input]
+coordinates = "argon.pdb"
+
+[output]
+energy_interval     = 2
+checkpoint          = "argon.h5"
+checkpoint_interval = 2
+
+[energy]
+cutoff = 9.0
+
+[[energy.pair]]
+name       = "lj"
+expression = "4*epsilon*((sigma/r)^12 - (sigma/r)^6)"
+mixing     = "lorentz-berthelot"
+
+[[energy.type]]
+name    = "AR"
+mass    = 39.95
+epsilon = 0.238465
+sigma   = 3.4
+
+[dynamics]
+time_step = 0.002
+steps = 2
+seed  = 314159
+
+[ensemble]
+ensemble    = "NVE"
+temperature = 100.0
+
+[boundary]
+type = "PERIODIC"
+box  = [30.4, 30.4, 30.4]
+
+[execution]
+target    = "CPU"
+precision = "DOUBLE"

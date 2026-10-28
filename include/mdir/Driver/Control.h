@@ -14,6 +14,7 @@
 #include "llvm/Support/Error.h"
 
 #include <cstdint>
+#include <map>
 #include <string>
 #include <vector>
 
@@ -388,6 +389,14 @@ struct Control {
   /// What the control file asks that its author may not intend, by a code
   /// and a message (D158); the system adds them to its own warnings.
   std::vector<std::pair<std::string, std::string>> warnings;
+  /// The values of the file that name a choice, which the reader reads
+  /// without regard to case, by the line and the column where each begins,
+  /// and the spelling that the reader documents for it: upper case, but
+  /// the rules of `mixing`, which are in lower case. The fingerprint
+  /// records that spelling, so that a value written in another case is the
+  /// same entry (#702); the strings that the reader keeps as written
+  /// (names, paths, expressions, selections) are not here.
+  std::map<std::pair<uint32_t, uint32_t>, std::string> choiceSpellings;
   /// Terms of the absolute positions of single particles given by
   /// expressions (D148): [[energy.external]].
   std::vector<ExternalTerm> externalTerms;

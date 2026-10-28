@@ -78,11 +78,16 @@ std::string quote(StringRef text) {
   return result + "\"";
 }
 
+/// The spellings of the choices of the control file, by the place where
+/// each value begins (Control::choiceSpellings).
+using Spellings = std::map<std::pair<uint32_t, uint32_t>, std::string>;
+
 /// The canonical text of a value of a control file: the keys of a table in
 /// the order of their names, a floating-point number as the shortest text of
-/// its double, an integer as its exact decimal (formatInteger), and no
-/// spaces.
-std::string canonical(const toml::node &node) {
+/// its double, an integer as its exact decimal (formatInteger), a string
+/// that names a choice in the spelling that the reader documents for it
+/// (#702) and any other string as written, and no spaces.
+std::string canonical(const toml::node &node, const Spellings &spellings) {
   if (const toml::table *table = node.as_table()) {
     std::map<std::string, const toml::node *> sorted;
     for (const auto &[key, value] : *table)
@@ -93,7 +98,7 @@ std::string canonical(const toml::node &node) {
       if (!first)
         result += ",";
       first = false;
-      result += key + "=" + canonical(*value);
+      result += key + "=" + canonical(*value, spellings);
     }
     return result + "}";
   }
@@ -102,12 +107,19 @@ std::string canonical(const toml::node &node) {
     for (size_t i = 0, e = array->size(); i != e; ++i) {
       if (i != 0)
         result += ",";
-      result += canonical(*array->get(i));
+      result += canonical(*array->get(i), spellings);
     }
     return result + "]";
   }
-  if (const auto *text = node.as_string())
+  if (const auto *text = node.as_string()) {
+    // The reader read this file and recorded its choices; this is the same
+    // file, read again, so a value begins where it did then.
+    const toml::source_position &begin = node.source().begin;
+    auto found = spellings.find({begin.line, begin.column});
+    if (found != spellings.end())
+      return quote(found->second);
     return quote(text->get());
+  }
   if (const auto *integer = node.as_integer())
     return getFingerprintInteger(integer->get());
   if (const auto *real = node.as_floating_point())
@@ -207,8 +219,12 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
     }
 
   Fingerprint fingerprint;
-  auto add = [&](StringRef group, std::string name, std::string value) {
-    fingerprint.push_back({group.str(), std::move(name), std::move(value)});
+  auto add = [&](StringRef group, std::string name, std::string value,
+                 std::string written = {}) {
+    if (written == value)
+      written.clear();
+    fingerprint.push_back(
+        {group.str(), std::move(name), std::move(value), std::move(written)});
   };
   // The keys of the tables of a group, each an entry; a table that is an
   // array, such as [[restraints]], is one.
@@ -238,11 +254,14 @@ mdir::driver::getRunFingerprint(StringRef controlFile, const Control &control,
           add(neighbors ? StringRef("execution") : group,
               tables ? "[[" + name.str() + "." + keyName + "]]"
                      : "[" + name.str() + "] " + keyName,
-              shown(canonical(value)));
+              shown(canonical(value, control.choiceSpellings)),
+              shown(canonical(value, {})));
         }
         continue;
       }
-      add(group, "[[" + name.str() + "]]", shown(canonical(*node)));
+      add(group, "[[" + name.str() + "]]",
+          shown(canonical(*node, control.choiceSpellings)),
+          shown(canonical(*node, {})));
     }
   };
   addTables("physics", {"energy", "pme", "lj_pme", "constraints",
@@ -303,8 +322,14 @@ mdir::driver::compareFingerprints(const Fingerprint &stored,
     if (entry.group == group) {
       auto [found, inserted] =
           values.try_emplace(entry.name, "(none)", entry.value);
-      if (!inserted)
-        found->second.second = entry.value;
+      if (inserted)
+        continue;
+      // A checkpoint written before #702 holds a choice in the case of its
+      // file: the same file continues it as it did then.
+      found->second.second =
+          !entry.written.empty() && found->second.first == entry.written
+              ? entry.written
+              : entry.value;
     }
   std::vector<FingerprintChange> changes;
   for (const auto &[name, pair] : values)

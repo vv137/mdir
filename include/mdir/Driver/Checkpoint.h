@@ -23,6 +23,12 @@ struct FingerprintEntry {
   std::string group;
   std::string name;
   std::string value;
+  /// The value with every string as the file writes it, where a choice in
+  /// another case than its documented spelling makes it differ from
+  /// `value`; empty otherwise. It is not stored: it lets the run continue a
+  /// checkpoint written before #702, whose fingerprint kept the case of the
+  /// file.
+  std::string written = {};
 };
 using Fingerprint = std::vector<FingerprintEntry>;
 
