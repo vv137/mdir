@@ -1248,11 +1248,10 @@ term in one adapter, `TermBorn.cpp`: surface uses the same computed Born
 radii. Its parameter rank precedes restraint and external fields. An
 explicit potential rank preserves Born/surface before external terms for
 topology contributions, standalone potentials, and energy-column names.
-The potential hooks use `potentialRank`: Born/surface rank -1 and the
-tuple definitions/names rank -3, and the remaining adapters rank 0, stable
-by registry order on ties. The parameter and
-potential ranks are separate because their hook sites have different
-ordering needs. The shared radii and Debye screening remain private to the
+The potential hooks use `potentialRank`: tuple definitions/names rank -3,
+custom pairs rank -2, Born/surface rank -1, and the remaining adapters
+rank 0, stable by registry order on ties. Parameter and potential ranks
+are separate because their hook sites have different ordering needs. The shared radii and Debye screening remain private to the
 adapter, with unchanged names and emission order; no capability exposes
 Born intermediates. The central builder no longer selects Born/surface
 fields, definitions, contributions, or evaluated output columns. Triplet, model, bonded, and nonbonded kinds remain.
