@@ -14,6 +14,17 @@ dihedral terms by the convention of a negative periodicity, which a
 topology that ParmEd writes again loses. The conversion for GROMACS makes
 those terms explicit first.
 
+The topologies of the suite carry no atomic numbers, and ParmEd would take
+the elements from the masses. In the systems with repartitioned masses
+that gives helium for a hydrogen of 3.024 amu and boron for a carbon of
+9.994 amu (#469). The conversion takes each atom's element from its type
+instead (`TYPE_ELEMENTS` in `bench.py`), and refuses an atom whose mass,
+with the repartitioned mass of its hydrogens given back, is not that of the
+element. The elements reach `[ atomtypes ]` of the GROMACS topology and
+its SETTLE of rigid water. After converting, `prepare` checks
+`[ atomtypes ]` of every system, also of those converted before, and names
+a topology to convert again.
+
 `scripts/validation/suite/run.py` compares the energy terms at the start
 and the forces of every system with pmemd on the CPU (or sander).
 
