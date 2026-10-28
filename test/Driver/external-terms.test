@@ -65,6 +65,11 @@
 # RUN: not mdir check %t/npt.toml 2>&1 | FileCheck %s --check-prefix=BAROSTAT
 # RUN: sed -e 's/^scaling    = "CELL"/scaling    = "FRAME"/' %t/cell.toml > %t/scaling.toml
 # RUN: not mdir check %t/scaling.toml 2>&1 | FileCheck %s --check-prefix=SCALING
+# A choice is read without regard to case (#551): "Cell" is "CELL", to the
+# program.
+# RUN: sed -e 's/^scaling    = "CELL"/scaling    = "Cell"/' %t/cell.toml > %t/cell-case.toml
+# RUN: cd %t && mdir emit cell.toml > cell.mlir && mdir emit cell-case.toml > cell-case.mlir
+# RUN: cmp %t/cell.mlir %t/cell-case.mlir
 # RUN: awk '/^\[\[energy.external\]\]/{print; print "scaling    = \"NONE\""; next} {print}' %t/npt.toml | sed 's/terms.h5/npt-none.h5/' > %t/npt-none.toml
 # RUN: cd %t && mdir run npt-none.toml | FileCheck %s --check-prefix=NPT
 # RUN: awk '/^\[\[energy.external\]\]/{print; print "scaling    = \"CELL\""; next} {print}' %t/npt.toml | sed 's/terms.h5/npt-cell.h5/' > %t/npt-cell.toml

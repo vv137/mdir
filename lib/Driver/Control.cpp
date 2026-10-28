@@ -504,16 +504,14 @@ Error Reader::readModel(const toml::table &table) {
   // The loader: a TorchScript artifact of metatomic, or an AOTInductor
   // package of the `nequip` package (docs/metatomic-ml1.md, Sections 5.3
   // and 11).
-  if (const toml::node *node = table.get("backend")) {
-    std::optional<std::string> value = node->value<std::string>();
-    if (!value ||
-        (*value != "METATOMIC" && *value != "AOTI" && *value != "STAGES"))
-      return fail(*node, "expected 'backend' as \"METATOMIC\", a "
-                         "TorchScript artifact of metatomic, \"AOTI\", an "
-                         "AOTInductor package of the `nequip` package, or "
-                         "\"STAGES\", a model in stages of MDIR's IR");
-    term.backend = *value;
-  }
+  // A choice, read without regard to case and kept in upper case (#551).
+  StringRef backend = term.backend;
+  if (Error error = readChoice<StringRef>(table, "backend", backend,
+                                          {{"METATOMIC", "METATOMIC"},
+                                           {"AOTI", "AOTI"},
+                                           {"STAGES", "STAGES"}}))
+    return error;
+  term.backend = backend.str();
   for (const Control::ModelTerm &other : control.stagedModels)
     if (other.name == term.name)
       return fail(*table.get("name"),
@@ -526,14 +524,14 @@ Error Reader::readModel(const toml::table &table) {
   if (Error error = readCount(table, "centers_per_call", term.centersPerCall,
                               0))
     return error;
-  if (Error error = readString(table, "stage_field_precision",
-                               term.stageFieldPrecision))
+  // "DOUBLE", f64 staged feature and adjoint storage, without regard to
+  // case (#551); empty when the key is not given.
+  StringRef fieldPrecision;
+  if (Error error = readChoice<StringRef>(table, "stage_field_precision",
+                                          fieldPrecision,
+                                          {{"DOUBLE", "DOUBLE"}}))
     return error;
-  if (table.get("stage_field_precision") &&
-      term.stageFieldPrecision != "DOUBLE")
-    return fail(*table.get("stage_field_precision"),
-                "'stage_field_precision' takes \"DOUBLE\" for f64 staged "
-                "feature and adjoint storage");
+  term.stageFieldPrecision = fieldPrecision.str();
   // A model in stages (D294, docs/ml4-ir.md, Section 8) is
   // a potential of the program, which MDIR differentiates; the plugin does
   // not take it.
@@ -604,9 +602,9 @@ Error Reader::readExternal(const toml::table &table) {
   // How the term follows a barostat (D154).
   if (const toml::node *node = table.get("scaling")) {
     std::optional<std::string> value = node->value<std::string>();
-    if (value && *value == "NONE")
+    if (value && StringRef(*value).equals_insensitive("NONE"))
       term.scaling = ExternalTerm::Scaling::None;
-    else if (value && *value == "CELL")
+    else if (value && StringRef(*value).equals_insensitive("CELL"))
       term.scaling = ExternalTerm::Scaling::Cell;
     else
       return fail(*node, "expected 'scaling' as \"NONE\", fixed in space, "
@@ -723,10 +721,11 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
     std::string weighting = "MASS";
     if (Error error = readString(table, "weighting", weighting))
       return error;
-    if (weighting != "MASS" && weighting != "NONE")
+    if (!StringRef(weighting).equals_insensitive("MASS") &&
+        !StringRef(weighting).equals_insensitive("NONE"))
       return fail(*table.get("weighting"),
                   "expected 'weighting' as \"MASS\" or \"NONE\"");
-    term.massWeighted = weighting == "MASS";
+    term.massWeighted = StringRef(weighting).equals_insensitive("MASS");
   } else if (table.contains("weighting")) {
     return fail(*table.get("weighting"),
                 "'weighting' is for the centers of 'groups'");

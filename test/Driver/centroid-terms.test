@@ -29,6 +29,12 @@
 # RUN: FileCheck %s < %t/terms.log
 # RUN: mdir checkpoint --print=forces %t/plain.h5 > %t/plain.forces
 # RUN: mdir checkpoint --print=forces %t/terms.h5 > %t/terms.forces
+# A choice is read without regard to case (#551): "none" is "NONE", to the
+# bit of the forces.
+# RUN: sed -e 's/^weighting  = "NONE"/weighting  = "none"/' -e 's/terms.h5/lower.h5/' %t/terms.toml > %t/lower.toml
+# RUN: cd %t && mdir run lower.toml > lower.log
+# RUN: mdir checkpoint --print=forces %t/lower.h5 > %t/lower.forces
+# RUN: cmp %t/terms.forces %t/lower.forces
 # RUN: %python %S/Inputs/check_centroid.py %t/dipeptide.prmtop %t/dipeptide.inpcrd %t/plain.forces %t/terms.forces %t/plain.log %t/terms.log | FileCheck %s --check-prefix=PYTHON
 #
 # RUN: sed -e 's/^energy_interval = 0/energy_interval = 1\npull = "pull.dat"/' -e 's/terms.h5/pull.h5/' %t/terms.toml > %t/pull.toml
