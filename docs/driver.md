@@ -1446,6 +1446,11 @@ existing endpoint tuple. Tuple fields and half/displacement/square/multiply
 order remain unchanged.
 `TermUreyBradley.cpp` no longer writes operation text.
 
+Periodic dihedrals construct the complete typed tuple reduction and its
+period-times-angle, phase subtraction, cosine, offset, and force multiplication
+in their original order. Multiple Fourier terms retain their tuple order.
+`TermDihedral.cpp` no longer writes operation text.
+
 For custom expressions, the existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

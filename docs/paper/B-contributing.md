@@ -295,6 +295,11 @@ existing endpoint tuple. Tuple fields and half/displacement/square/multiply
 order remain unchanged.
 `TermUreyBradley.cpp` no longer writes operation text.
 
+Periodic dihedrals construct the complete typed tuple reduction and its
+period-times-angle, phase subtraction, cosine, offset, and force multiplication
+in their original order. Multiple Fourier terms retain their tuple order.
+`TermDihedral.cpp` no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and invalid builder assembly, which fails at its construction boundary with

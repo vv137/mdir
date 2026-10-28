@@ -119,3 +119,6 @@ in both precisions and targets, including run and segmented forms.
 
 Zero Urey-Bradley force constants retain the independent angle contributions
 in both precisions and targets, including run and segmented forms.
+
+Zero periodic-dihedral force constants retain the original multiple Fourier terms
+in both precisions and targets, including run and segmented forms.
