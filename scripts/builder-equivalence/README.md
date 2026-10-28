@@ -95,3 +95,8 @@ signature and coordinate derivative order in both precisions and targets.
 
 Pull-output fixtures add NPT time dependence and time-independent output to the
 radial/Cartesian, angle, and dihedral cases, in both precisions and targets.
+
+Born/surface cases add salt screening with a radius cutoff for HCT, OBC1, and
+OBC2 in both precisions and targets, plus a zero-surface-tension case. The
+existing combined cases exercise the unscreened, unrestricted-radius paths
+and separate Born/surface energy columns.

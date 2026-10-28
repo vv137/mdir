@@ -259,6 +259,13 @@ derivative requests, ordered force arithmetic, column stores, casts, and runtime
 call with typed operations. Captures own only counts, indices, and names used by
 their recipes. `TermPull.cpp` no longer writes operation text.
 
+Born and surface terms construct their neighborhoods, descreening integral,
+HCT/OBC radii, screened pair/self energies, and nonpolar surface energy with
+typed operations. Their owned configuration contains scalar method data only;
+Born radii remain private to the adapter. The Born energy is added to the outer
+sum before surface construction, preserving accumulation order as well as
+loop order. `TermBorn.cpp` no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and invalid builder assembly, which fails at its construction boundary with

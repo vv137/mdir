@@ -1,9 +1,20 @@
 // Generalized Born and its dependent nonpolar surface contribution
 // (D359, D361, #683). Computed Born radii stay private to this adapter.
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/IR/Builders.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
+
+struct BornIRConfig {
+  bool hct = false, energy = false;
+  double cutoff = 0.0, radiusCutoff = 0.0, reachCutoff = 0.0;
+  double alpha = 0.0, beta = 0.0, gamma = 0.0;
+  double kappa = 0.0, tau = 0.0, inverseSolute = 0.0, inverseSolvent = 0.0;
+};
 
 namespace mdir::driver::builder {
 class BornTermBuilder final : public TermBuilder {
@@ -72,214 +83,249 @@ void BornTermBuilder::emitBorn(TermEmission &context, unsigned terms,
                        const TermPotentialAddition & add) {
   const Control &control = context.getControl();
   const System &system = context.getSystem();
-  llvm::raw_ostream &os = context.getOutput();
-  // Every pair within the cutoff, those that the topology excludes as
-  // well.
-  double cutoff = control.cutoffDistance * units::length;
-  os << "  %ngb = md.neighborhood %x, %cell cutoff(" << formatReal(cutoff)
-     << ") : !vec -> !pairs\n";
-  // With a cutoff R of the radii (D152), the descreening reaches R and the
-  // largest screened radius beyond it, which System checked is within the
-  // cutoff.
-  double radiusCutoff = control.bornRadiusCutoff * units::length;
-  std::string reach = "%ngb";
-  if (radiusCutoff > 0.0) {
+  BornIRConfig config;
+  config.cutoff = control.cutoffDistance * units::length;
+  config.radiusCutoff = control.bornRadiusCutoff * units::length;
+  config.reachCutoff = config.cutoff;
+  if (config.radiusCutoff > 0.0) {
     double largest = 0.0;
     for (size_t i = 0, e = system.topology->bornRadii.size(); i != e; ++i)
       largest = std::max(largest, system.topology->bornScreens[i] *
                                       (system.topology->bornRadii[i] - 0.009));
-    reach = "%ngb_radii";
-    os << "  %ngb_radii = md.neighborhood %x, %cell cutoff("
-       << formatReal(std::min(radiusCutoff + largest, cutoff))
-       << ") : !vec -> !pairs\n";
+    config.reachCutoff = std::min(config.radiusCutoff + largest, config.cutoff);
   }
-  // The integral of the descreening of i by the sphere of j of the radius
-  // s_j [Hawkins1996]: with L = max(ρ̃_i, |r − s_j|) and U = r + s_j,
-  //   ½ (1/L − 1/U + r/4 (1/U² − 1/L²) + ln(L/U) / (2r) + s_j²/(4r) (1/L² − 1/U²)),
-  // and 1/ρ̃_i − 1/L more where i lies within the sphere of j, 0 where the
-  // sphere does not reach it, L ≥ U. A cutoff R of the radii takes the
-  // integral over the shells within R alone, U = min(r + s_j, R), so that
-  // the radii do not jump where a sphere crosses it: the smooth cutoff
-  // `rgbmax` of Amber's pmemd (gb_ene.F90), written here from the integral
-  // rather than its series (D152).
-  os << "  %gb_integral = md.gather_relation " << reach << ", %x, %cell gather("
-        "%p_gb_offset, %p_gb_scaled : !real, !real)\n"
-     << "      exchange(none) {\n"
-     << "  ^bb0(%r: f64, %d: vector<3xf64>, %ri: f64, %rj: f64, %si: f64, "
-        "%sj: f64):\n"
-     << "    %zero = arith.constant 0.0 : f64\n"
-     << "    %one = arith.constant 1.0 : f64\n"
-     << "    %two = arith.constant 2.0 : f64\n"
-     << "    %quarter = arith.constant 0.25 : f64\n"
-     << "    %half = arith.constant 0.5 : f64\n"
-     << "    %upper" << (radiusCutoff > 0.0 ? "_sphere" : "")
-     << " = arith.addf %r, %sj : f64\n";
-  if (radiusCutoff > 0.0)
-    os << "    %rgb = arith.constant " << formatReal(radiusCutoff)
-       << " : f64\n"
-       << "    %upper = arith.minimumf %upper_sphere, %rgb : f64\n";
-  os << "    %gap = arith.subf %r, %sj : f64\n"
-     << "    %agap = math.absf %gap : f64\n"
-     << "    %lower = arith.maximumf %ri, %agap : f64\n"
-     << "    %l = arith.divf %one, %lower : f64\n"
-     << "    %u = arith.divf %one, %upper : f64\n"
-     << "    %l2 = arith.mulf %l, %l : f64\n"
-     << "    %u2 = arith.mulf %u, %u : f64\n"
-     << "    %t0 = arith.subf %l, %u : f64\n"
-     << "    %du = arith.subf %u2, %l2 : f64\n"
-     << "    %qr = arith.mulf %quarter, %r : f64\n"
-     << "    %t1 = arith.mulf %qr, %du : f64\n"
-     << "    %ratio = arith.divf %u, %l : f64\n"
-     << "    %log = math.log %ratio : f64\n"
-     << "    %hr = arith.divf %half, %r : f64\n"
-     << "    %t2 = arith.mulf %hr, %log : f64\n"
-     << "    %sj2 = arith.mulf %sj, %sj : f64\n"
-     << "    %qs = arith.mulf %quarter, %sj2 : f64\n"
-     << "    %qsr = arith.divf %qs, %r : f64\n"
-     << "    %dl = arith.subf %l2, %u2 : f64\n"
-     << "    %t3 = arith.mulf %qsr, %dl : f64\n"
-     << "    %a0 = arith.addf %t0, %t1 : f64\n"
-     << "    %a1 = arith.addf %a0, %t2 : f64\n"
-     << "    %a2 = arith.addf %a1, %t3 : f64\n"
-     << "    %inner = arith.subf %sj, %r : f64\n"
-     << "    %within = arith.cmpf olt, %ri, %inner : f64\n"
-     << "    %iri = arith.divf %one, %ri : f64\n"
-     << "    %e0 = arith.subf %iri, %l : f64\n"
-     << "    %e1 = arith.mulf %two, %e0 : f64\n"
-     << "    %a3 = arith.addf %a2, %e1 : f64\n"
-     << "    %a4 = arith.select %within, %a3, %a2 : f64\n"
-     << "    %reach = arith.cmpf olt, %lower, %upper : f64\n"
-     << "    %k = arith.select %reach, %a4, %zero : f64\n"
-     << "    md.yield %k : f64\n"
-     << "  } : !pairs, !vec -> !real\n";
-  // The Born radii of Hawkins, Cramer, and Truhlar [Hawkins1996],
-  // B = 1 / (1/ρ̃ − I/2) (the factor ½ of the integral).
-  if (control.implicitSolvent == Control::ImplicitSolvent::HCT)
-    os << "  %gb_born = md.map_particles gather(%gb_integral, %p_gb_offset "
-          ": !real, !real) {\n"
-       << "  ^bb0(%i: f64, %ri: f64):\n"
-       << "    %half = arith.constant 0.5 : f64\n"
-       << "    %one = arith.constant 1.0 : f64\n"
-       << "    %hi = arith.mulf %half, %i : f64\n"
-       << "    %iri = arith.divf %one, %ri : f64\n"
-       << "    %den = arith.subf %iri, %hi : f64\n"
-       << "    %bi = arith.divf %one, %den : f64\n"
-       << "    md.yield %bi : f64\n"
-       << "  } : !real\n";
-  // Those of Onufriev, Bashford, and Case [Onufriev2004]: with ψ = I ρ̃ / 2,
-  // B = 1 / (1/ρ̃ − tanh(α ψ − β ψ² + γ ψ³) / ρ).
+  config.hct = control.implicitSolvent == Control::ImplicitSolvent::HCT;
   bool first = control.implicitSolvent == Control::ImplicitSolvent::OBC1;
-  double alpha = first ? 0.8 : 1.0, beta = first ? 0.0 : 0.8,
-         gamma = first ? 2.909125 : 4.85;
-  if (control.implicitSolvent != Control::ImplicitSolvent::HCT)
-    os << "  %gb_born = md.map_particles gather(%gb_integral, %p_gb_offset, "
-          "%p_gb_radius : !real, !real, !real) {\n"
-       << "  ^bb0(%i: f64, %ri: f64, %r0: f64):\n"
-       << "    %half = arith.constant 0.5 : f64\n"
-       << "    %one = arith.constant 1.0 : f64\n"
-       << "    %alpha = arith.constant " << formatReal(alpha) << " : f64\n"
-       << "    %beta = arith.constant " << formatReal(beta) << " : f64\n"
-       << "    %gamma = arith.constant " << formatReal(gamma) << " : f64\n"
-       << "    %hi = arith.mulf %half, %i : f64\n"
-       << "    %psi = arith.mulf %hi, %ri : f64\n"
-       << "    %psi2 = arith.mulf %psi, %psi : f64\n"
-       << "    %psi3 = arith.mulf %psi2, %psi : f64\n"
-       << "    %a = arith.mulf %alpha, %psi : f64\n"
-       << "    %b = arith.mulf %beta, %psi2 : f64\n"
-       << "    %c = arith.mulf %gamma, %psi3 : f64\n"
-       << "    %s0 = arith.subf %a, %b : f64\n"
-       << "    %s1 = arith.addf %s0, %c : f64\n"
-       << "    %t = math.tanh %s1 : f64\n"
-       << "    %tr = arith.divf %t, %r0 : f64\n"
-       << "    %iri = arith.divf %one, %ri : f64\n"
-       << "    %den = arith.subf %iri, %tr : f64\n"
-       << "    %bi = arith.divf %one, %den : f64\n"
-       << "    md.yield %bi : f64\n"
-       << "  } : !real\n";
-  if (terms & TermInputs::GeneralizedBorn) {
-    // −τ f q_i q_j / f_GB over the pairs and −τ f q_i² / (2 B_i) for each
-    // particle, f_GB = sqrt(r² + B_i B_j exp(−r² / (4 B_i B_j))) and
-    // τ = 1/ε_solute − 1/ε_solvent. A salt screens the solvent with the
-    // Debye length 1/κ, τ = 1/ε_solute − exp(−κ f_GB)/ε_solvent, with κ
-    // scaled by 0.73 for the layer around the solute that excludes the ions
-    // [Srinivasan1999] (D152); f_GB is B_i for a particle.
-    double tau = 1.0 / control.soluteDielectric -
-                 1.0 / control.solventDielectric;
-    double kappa = getDebyeKappa(control);
-    // Emits `%ct`, f τ with the factor `factor` of f, for the distance
-    // `distance`.
-    auto emitScreening = [&](double factor, StringRef distance) {
-      if (kappa == 0.0) {
-        os << "    %ct = arith.constant "
-           << formatReal(-factor * tau * coulombInternal) << " : f64\n";
-        return;
-      }
-      os << "    %cf = arith.constant " << formatReal(-factor * coulombInternal)
-         << " : f64\n"
-         << "    %ein = arith.constant "
-         << formatReal(1.0 / control.soluteDielectric) << " : f64\n"
-         << "    %eout = arith.constant "
-         << formatReal(1.0 / control.solventDielectric) << " : f64\n"
-         << "    %nkappa = arith.constant " << formatReal(-kappa) << " : f64\n"
-         << "    %kd = arith.mulf %nkappa, " << distance << " : f64\n"
-         << "    %ekd = math.exp %kd : f64\n"
-         << "    %screened = arith.mulf %ekd, %eout : f64\n"
-         << "    %tau = arith.subf %ein, %screened : f64\n"
-         << "    %ct = arith.mulf %cf, %tau : f64\n";
-    };
-    os << "  %u_gb_pairs = md.sum_relation %ngb, %x, %cell gather(%p_q, "
-          "%gb_born : !real, !real)\n"
-       << "      exchange(symmetric) {\n"
-       << "  ^bb0(%r: f64, %d: vector<3xf64>, %qi: f64, %qj: f64, %bi: f64, "
-          "%bj: f64):\n"
-       << "    %quarter = arith.constant 0.25 : f64\n"
-       << "    %bb = arith.mulf %bi, %bj : f64\n"
-       << "    %r2 = arith.mulf %r, %r : f64\n"
-       << "    %bb4 = arith.divf %quarter, %bb : f64\n"
-       << "    %x0 = arith.mulf %r2, %bb4 : f64\n"
-       << "    %nx = arith.negf %x0 : f64\n"
-       << "    %ex = math.exp %nx : f64\n"
-       << "    %be = arith.mulf %bb, %ex : f64\n"
-       << "    %s = arith.addf %r2, %be : f64\n"
-       << "    %fgb = math.sqrt %s : f64\n";
-    emitScreening(1.0, "%fgb");
-    os << "    %qq = arith.mulf %qi, %qj : f64\n"
-       << "    %cq = arith.mulf %ct, %qq : f64\n"
-       << "    %e = arith.divf %cq, %fgb : f64\n"
-       << "    md.yield %e : f64\n"
-       << "  } : !pairs, !vec -> f64\n"
-       << "  %u_gb_self = md.sum_particles gather(%p_q, %gb_born : !real, "
-          "!real) {\n"
-       << "  ^bb0(%qi: f64, %bi: f64):\n";
-    emitScreening(0.5, "%bi");
-    os << "    %qq = arith.mulf %qi, %qi : f64\n"
-       << "    %cq = arith.mulf %ct, %qq : f64\n"
-       << "    %e = arith.divf %cq, %bi : f64\n"
-       << "    md.yield %e : f64\n"
-       << "  } : f64\n"
-       << "  %u_born = arith.addf %u_gb_pairs, %u_gb_self : f64\n";
-    add("born");
+  config.alpha = first ? 0.8 : 1.0;
+  config.beta = first ? 0.0 : 0.8;
+  config.gamma = first ? 2.909125 : 4.85;
+  config.energy = terms & TermInputs::GeneralizedBorn;
+  if (config.energy) {
+    config.inverseSolute = 1.0 / control.soluteDielectric;
+    config.inverseSolvent = 1.0 / control.solventDielectric;
+    config.tau = config.inverseSolute - config.inverseSolvent;
+    config.kappa = getDebyeKappa(control);
   }
+  llvm::SmallVector<StringRef> outputs = {"%gb_born"}, resultTypes = {"!real"};
+  llvm::SmallVector<StringRef> operands = {"%x", "%cell", "%p_gb_offset",
+                                           "%p_gb_scaled", "%p_gb_radius"};
+  llvm::SmallVector<StringRef> operandTypes = {"!vec", "!md.cell", "!real",
+                                               "!real", "!real"};
+  if (config.energy) {
+    outputs.push_back("%u_born");
+    resultTypes.push_back("f64");
+    operands.push_back("%p_q");
+    operandTypes.push_back("!real");
+  }
+  context.emitIRFragment(
+      "  ", outputs, resultTypes, operands, operandTypes,
+      [config](mlir::OpBuilder &builder,
+               mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto *ctx = builder.getContext();
+        auto loc = builder.getUnknownLoc();
+        auto f64 = builder.getF64Type();
+        auto vec = VectorType::get({3}, f64);
+        Type real = values[2].getType();
+        auto pairsType = mdir::md::RelationType::get(
+            ctx, cast<mdir::md::FieldType>(real).getParticleSet(), 2,
+            mdir::md::Orientation::Unordered, FlatSymbolRefAttr{});
+        auto constant = [&](double value) -> Value {
+          return arith::ConstantOp::create(builder, loc,
+                                           builder.getF64FloatAttr(value));
+        };
+        auto add = [&](Value a, Value b) -> Value {
+          return arith::AddFOp::create(builder, loc, a, b);
+        };
+        auto sub = [&](Value a, Value b) -> Value {
+          return arith::SubFOp::create(builder, loc, a, b);
+        };
+        auto mul = [&](Value a, Value b) -> Value {
+          return arith::MulFOp::create(builder, loc, a, b);
+        };
+        auto div = [&](Value a, Value b) -> Value {
+          return arith::DivFOp::create(builder, loc, a, b);
+        };
+        Value neighborhood = mdir::md::NeighborhoodOp::create(
+            builder, loc, pairsType, values[0], values[1], Value{},
+            builder.getF64FloatAttr(config.cutoff));
+        Value reach = neighborhood;
+        if (config.radiusCutoff > 0.0)
+          reach = mdir::md::NeighborhoodOp::create(
+              builder, loc, pairsType, values[0], values[1], Value{},
+              builder.getF64FloatAttr(config.reachCutoff));
+        // Descreening [Hawkins1996], integrated only over shells inside the
+        // smooth radius cutoff when one is selected (D152).
+        auto integral = mdir::md::GatherRelationOp::create(
+            builder, loc, TypeRange{real}, reach, values[0], values[1],
+            ValueRange{values[2], values[3]}, mdir::md::Exchange::None);
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          llvm::SmallVector<Type> types = {f64, vec, f64, f64, f64, f64};
+          llvm::SmallVector<Location> locations(types.size(), loc);
+          Block *block =
+              builder.createBlock(&integral.getKernel(), {}, types, locations);
+          auto args = block->getArguments();
+          Value r = args[0], ri = args[2], sj = args[5];
+          Value zero = constant(0.0), one = constant(1.0), two = constant(2.0);
+          Value quarter = constant(0.25), half = constant(0.5);
+          Value upper = add(r, sj);
+          if (config.radiusCutoff > 0.0) {
+            Value rgb = constant(config.radiusCutoff);
+            upper = arith::MinimumFOp::create(builder, loc, upper, rgb);
+          }
+          Value gap = sub(r, sj);
+          Value agap = math::AbsFOp::create(builder, loc, gap);
+          Value lower = arith::MaximumFOp::create(builder, loc, ri, agap);
+          Value l = div(one, lower), u = div(one, upper);
+          Value l2 = mul(l, l), u2 = mul(u, u);
+          Value t0 = sub(l, u), du = sub(u2, l2);
+          Value qr = mul(quarter, r), t1 = mul(qr, du);
+          Value ratio = div(u, l);
+          Value logarithm = math::LogOp::create(builder, loc, ratio);
+          Value hr = div(half, r), t2 = mul(hr, logarithm);
+          Value sj2 = mul(sj, sj), qs = mul(quarter, sj2);
+          Value qsr = div(qs, r), dl = sub(l2, u2), t3 = mul(qsr, dl);
+          Value a0 = add(t0, t1), a1 = add(a0, t2), a2 = add(a1, t3);
+          Value inner = sub(sj, r);
+          Value within = arith::CmpFOp::create(
+              builder, loc, arith::CmpFPredicate::OLT, ri, inner);
+          Value iri = div(one, ri), e0 = sub(iri, l), e1 = mul(two, e0),
+                a3 = add(a2, e1);
+          Value a4 = arith::SelectOp::create(builder, loc, within, a3, a2);
+          Value reaches = arith::CmpFOp::create(
+              builder, loc, arith::CmpFPredicate::OLT, lower, upper);
+          Value result =
+              arith::SelectOp::create(builder, loc, reaches, a4, zero);
+          mdir::md::YieldOp::create(builder, loc, ValueRange{result});
+        }
+        // HCT [Hawkins1996] or OBC [Onufriev2004] radii.
+        llvm::SmallVector<Value> fields = {integral.getResult(), values[2]};
+        if (!config.hct)
+          fields.push_back(values[4]);
+        auto radii =
+            mdir::md::MapParticlesOp::create(builder, loc, real, fields);
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          llvm::SmallVector<Type> types(fields.size(), f64);
+          llvm::SmallVector<Location> locations(types.size(), loc);
+          Block *block =
+              builder.createBlock(&radii.getKernel(), {}, types, locations);
+          auto args = block->getArguments();
+          Value half = constant(0.5), one = constant(1.0);
+          Value result;
+          if (config.hct) {
+            Value hi = mul(half, args[0]), iri = div(one, args[1]);
+            Value den = sub(iri, hi);
+            result = div(one, den);
+          } else {
+            Value alpha = constant(config.alpha), beta = constant(config.beta),
+                  gamma = constant(config.gamma);
+            Value hi = mul(half, args[0]), psi = mul(hi, args[1]);
+            Value psi2 = mul(psi, psi), psi3 = mul(psi2, psi);
+            Value a = mul(alpha, psi), b = mul(beta, psi2),
+                  c = mul(gamma, psi3);
+            Value s0 = sub(a, b), s1 = add(s0, c);
+            Value t = math::TanhOp::create(builder, loc, s1);
+            Value tr = div(t, args[2]), iri = div(one, args[1]);
+            Value den = sub(iri, tr);
+            result = div(one, den);
+          }
+          mdir::md::YieldOp::create(builder, loc, ValueRange{result});
+        }
+        // Generalized Born pair/self energy with salt screening
+        // [Srinivasan1999] (D152), at the same ordered insertion site.
+        TermIRValues results = {radii.getResult()};
+        if (config.energy) {
+          auto screening = [&](double factor, Value distance) -> Value {
+            if (config.kappa == 0.0)
+              return constant(-factor * config.tau * coulombInternal);
+            Value cf = constant(-factor * coulombInternal);
+            Value ein = constant(config.inverseSolute),
+                  eout = constant(config.inverseSolvent);
+            Value nkappa = constant(-config.kappa), kd = mul(nkappa, distance);
+            Value ekd = math::ExpOp::create(builder, loc, kd);
+            Value screened = mul(ekd, eout), tau = sub(ein, screened);
+            return mul(cf, tau);
+          };
+          auto pairs = mdir::md::SumRelationOp::create(
+              builder, loc, f64, neighborhood, values[0], values[1],
+              ValueRange{values[5], radii.getResult()},
+              mdir::md::Exchange::Symmetric, mdir::md::ExchangeBasis::Proof,
+              mdir::md::Truncation::None, FloatAttr{});
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            llvm::SmallVector<Type> types = {f64, vec, f64, f64, f64, f64};
+            llvm::SmallVector<Location> locations(types.size(), loc);
+            Block *block =
+                builder.createBlock(&pairs.getKernel(), {}, types, locations);
+            auto args = block->getArguments();
+            Value quarter = constant(0.25), bb = mul(args[4], args[5]),
+                  r2 = mul(args[0], args[0]);
+            Value bb4 = div(quarter, bb), x0 = mul(r2, bb4);
+            Value nx = arith::NegFOp::create(builder, loc, x0);
+            Value ex = math::ExpOp::create(builder, loc, nx);
+            Value be = mul(bb, ex), s = add(r2, be);
+            Value fgb = math::SqrtOp::create(builder, loc, s);
+            Value ct = screening(1.0, fgb), qq = mul(args[2], args[3]);
+            Value cq = mul(ct, qq), energy = div(cq, fgb);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+          }
+          auto self = mdir::md::SumParticlesOp::create(
+              builder, loc, f64, ValueRange{values[5], radii.getResult()});
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            llvm::SmallVector<Type> types(2, f64);
+            llvm::SmallVector<Location> locations(types.size(), loc);
+            Block *block =
+                builder.createBlock(&self.getKernel(), {}, types, locations);
+            auto args = block->getArguments();
+            Value ct = screening(0.5, args[1]), qq = mul(args[0], args[0]);
+            Value cq = mul(ct, qq), energy = div(cq, args[1]);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+          }
+          results.push_back(add(pairs.getResult(), self.getResult()));
+        }
+        return results;
+      });
+  // Add the Born contribution before constructing the dependent surface
+  // energy, preserving the outer accumulation order as well as loop order.
+  if (config.energy)
+    add("born");
   if ((terms & TermInputs::Surface) && control.surfaceAreaEnergy > 0.0) {
-    // The nonpolar term of Schaefer et al., 4π γ (ρ + 0.14 nm)² (ρ/B)⁶,
-    // with γ from kcal/(mol Å²) in kJ/(mol nm²).
     double tension = control.surfaceAreaEnergy * units::energy /
                      (units::length * units::length);
-    os << "  %u_surface = md.sum_particles gather(%p_gb_radius, %gb_born : "
-          "!real, !real) {\n"
-       << "  ^bb0(%r0: f64, %bi: f64):\n"
-       << "    %c = arith.constant " << formatReal(4.0 * M_PI * tension)
-       << " : f64\n"
-       << "    %probe = arith.constant 0.14 : f64\n"
-       << "    %six = arith.constant 6 : i32\n"
-       << "    %rp = arith.addf %r0, %probe : f64\n"
-       << "    %rp2 = arith.mulf %rp, %rp : f64\n"
-       << "    %ratio = arith.divf %r0, %bi : f64\n"
-       << "    %r6 = math.fpowi %ratio, %six : f64, i32\n"
-       << "    %a = arith.mulf %c, %rp2 : f64\n"
-       << "    %e = arith.mulf %a, %r6 : f64\n"
-       << "    md.yield %e : f64\n"
-       << "  } : f64\n";
+    context.emitIRFragment(
+        "  ", {"%u_surface"}, {"f64"}, {"%p_gb_radius", "%gb_born"},
+        {"!real", "!real"},
+        [tension](mlir::OpBuilder &builder,
+                  mlir::ValueRange values) -> TermIRValues {
+          using namespace mlir;
+          auto loc = builder.getUnknownLoc();
+          auto sum = mdir::md::SumParticlesOp::create(
+              builder, loc, builder.getF64Type(), values);
+          {
+            OpBuilder::InsertionGuard guard(builder);
+            llvm::SmallVector<Type> types(2, builder.getF64Type());
+            llvm::SmallVector<Location> locations(2, loc);
+            Block *block =
+                builder.createBlock(&sum.getKernel(), {}, types, locations);
+            auto args = block->getArguments();
+            Value c = arith::ConstantOp::create(
+                builder, loc, builder.getF64FloatAttr(4.0 * M_PI * tension));
+            Value probe = arith::ConstantOp::create(
+                builder, loc, builder.getF64FloatAttr(0.14));
+            Value six = arith::ConstantIntOp::create(builder, loc, 6, 32);
+            Value rp = arith::AddFOp::create(builder, loc, args[0], probe);
+            Value rp2 = arith::MulFOp::create(builder, loc, rp, rp);
+            Value ratio = arith::DivFOp::create(builder, loc, args[0], args[1]);
+            Value r6 = math::FPowIOp::create(builder, loc, ratio, six);
+            Value a = arith::MulFOp::create(builder, loc, c, rp2);
+            Value energy = arith::MulFOp::create(builder, loc, a, r6);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+          }
+          return {sum.getResult()};
+        });
     add("surface");
   }
 }

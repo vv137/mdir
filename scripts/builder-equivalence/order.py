@@ -376,6 +376,18 @@ phase = 0.4
         text = re.sub(r"(?m)^steps\s*=.*$", "steps = 10", text)
         write(f"pull-output-static-{precision}", text)
 
+    for precision in ("DOUBLE", "MIXED"):
+        for method in ("HCT", "OBC1", "OBC2"):
+            source = next(path for path in ordinary if path.name == f"combined-{method}-{precision}.toml")
+            text = source.read_text().replace('[energy]\n',
+                '[energy]\nsalt_concentration = 0.15\nborn_radius_cutoff = 8.0\n')
+            text = re.sub(r'(?m)^temperature\s*=.*$', 'temperature = 300.0', text)
+            write(f"born-screened-cutoff-{method}-{precision}", text)
+        source = next(path for path in ordinary if path.name == f"combined-OBC2-{precision}.toml")
+        text = source.read_text()
+        assert text.count('surface_area_energy = 0.0054') == 1
+        write(f"born-no-surface-{precision}", text.replace('surface_area_energy = 0.0054', 'surface_area_energy = 0.0'))
+
     model_ir = '''md.potential @order_model(%positions: !md.field<@atoms, 3 x f64>, %box: !md.cell, %numbers: !md.field<@atoms, i32>) -> f64 {
   %total = md.sum_particles gather(%positions : !md.field<@atoms, 3 x f64>) {
   ^bb0(%position: vector<3xf64>):
