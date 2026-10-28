@@ -1182,7 +1182,7 @@ public:
     auto emitLennardJones = [&](StringRef sigma, StringRef epsilon,
                                 StringRef result, Truncation modifier,
                                 StringRef distance = "%r") {
-      mdir::driver::builder::emitLennardJones(os, control, sigma, epsilon,
+      mdir::driver::builder::emitLennardJones(context, control, sigma, epsilon,
                                               result, modifier, distance);
     };
     // Which λ the kernels of the pairs take: as arguments, or as constants

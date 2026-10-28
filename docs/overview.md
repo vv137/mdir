@@ -109,9 +109,11 @@ private. Mesh/correction values use a narrow reference projection. Shared
 array/definition/correction hooks and specialized reporting/evaluation roles
 replace central kind dispatch. Field, contribution, output, and declaration
 order stay explicit.
-This stage preserves the generated programs. The later #568 stages build
-term IR with `OpBuilder` at the same inlined/fused sites, then retain text
-only for user expressions and `ModelTerm` at their parsing boundaries.
+This stage preserves the generated programs. Stage B (#568 step 4, #708,
+D[builder-term-ir]) starts with the shared Lennard-Jones scalar emitter:
+typed `OpBuilder` fragments reach the same shared/inlined/fused sites.
+The other term emitters follow. Step 5 retains parsed text only for user
+expressions and `ModelTerm` at their input boundaries.
 [Driver Section 2.12](driver.md#212-the-files-of-the-builder) describes the
 files and roles.
 

@@ -107,7 +107,7 @@ public:
         // The pairs three bonds apart as they are, except under the power
         // force or squared-distance switch, which also switches these pairs.
         emitLennardJones(
-            os, control, "%sigma", "%epsilon", "%lj",
+            context, control, "%sigma", "%epsilon", "%lj",
             (control.truncation == Truncation::PowerForceSwitch ||
              control.truncation == Truncation::SquaredDistanceSwitch)
                 ? control.truncation

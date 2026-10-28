@@ -58,8 +58,11 @@ MLIR's printer already prints it, so it has one form, "printed", which is
 compared whatever --forms says.
 
 A case is identical when the status, the output, and the error output are
-the same in every form; a case that stops with an error in both builds,
-with the same message, is identical too, and is counted as such. The
+the same in every form. Failed printed-form diagnostics ignore only generated
+buffer positions and redundant source excerpts before complete operation
+notes; messages, severities, operation dumps, parser excerpts, and user-file
+locations remain checked. Raw failures are byte-exact. A case that stops
+with the same error in both builds is identical too, and is counted as such. The
 report names cases by their place in the corpus, never by a path of the
 machine. The exit status is 0 when every case is identical, 1 when one
 differs, and 2 for an error of the script.
@@ -77,7 +80,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MARKER = re.compile(r"^(?:#|//)--- (\S+)\s*$")
-HASHES_HEADER = "# builder-equivalence hashes 1"
+HASHES_HEADER = "# builder-equivalence hashes 2"
 
 
 def program(path):
@@ -282,6 +285,50 @@ def run(command, cwd, hide, input=None):
     return status, out, err
 
 
+
+GENERATED_DIAGNOSTIC = re.compile(
+    rb'^(?P<location>(?:<stdin>|-):[0-9]+:[0-9]+|'
+    rb'loc\("(?:<stdin>|-)":[0-9]+:[0-9]+\)):'
+    rb'\s*(?P<severity>error|warning|note|remark):')
+SOURCE_CARET = re.compile(rb'^[ \t]*[~^]+[ \t\r\n]*$')
+
+
+def normalize_generated_diagnostics(error):
+    """Ignore generated-buffer positions, not diagnostic semantics.
+
+    A source manager may print a source line/caret before its full generic
+    operation note. An explicit IR location prints that same operation note
+    without the excerpt. Retain the complete note, message, severity, and
+    parser excerpts (including an undefined SSA name); user-file locations
+    are unchanged. Successful output and raw-form failures stay byte-exact.
+    """
+    lines = error.splitlines(keepends=True)
+    result = []
+    index = 0
+    while index < len(lines):
+        match = GENERATED_DIAGNOSTIC.match(lines[index])
+        if not match:
+            result.append(lines[index])
+            index += 1
+            continue
+        result.append(b"<generated>: " + lines[index][match.start("severity"):])
+        index += 1
+        if index + 2 < len(lines) and SOURCE_CARET.match(lines[index + 1]):
+            note = GENERATED_DIAGNOSTIC.match(lines[index + 2])
+            if (note and note.group("location") == match.group("location") and
+                    lines[index + 2][note.start("severity"):].startswith(
+                        b"note: see current operation:")):
+                index += 2  # Its complete semantic operation dump follows.
+    return b"".join(result)
+
+
+def printed_result(entry):
+    status, output, error = entry
+    if status != 0:
+        error = normalize_generated_diagnostics(error)
+    return status, output, error
+
+
 def outputs(mdir, printer, case, target, stages, forms, scratch, index):
     """The outputs of one build for one case and target:
     {(stage, form): (status, out, err)}."""
@@ -299,15 +346,16 @@ def outputs(mdir, printer, case, target, stages, forms, scratch, index):
         status, out, err = run([mdir, "emit", f"--stage={stage}", *segments, control],
                                directory, hide)
         if stage == "lowered":
-            result[(stage, "printed")] = (status, out, err)
+            result[(stage, "printed")] = printed_result((status, out, err))
             continue
         if "raw" in forms:
             result[(stage, "raw")] = (status, out, err)
         if stage == "module" and "printed" in forms:
             if status == 0:
-                result[(stage, "printed")] = run([printer, "-"], directory, hide, input=out)
+                result[(stage, "printed")] = printed_result(
+                    run([printer, "-"], directory, hide, input=out))
             else:
-                result[(stage, "printed")] = (status, b"", err)
+                result[(stage, "printed")] = printed_result((status, b"", err))
     shutil.rmtree(place, ignore_errors=True)
     return result
 

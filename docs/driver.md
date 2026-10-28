@@ -1174,6 +1174,15 @@ comment, which only the raw form sees, and a different cutoff, which both
 forms see. Recorded hashes are verified with the build and with the
 second wrapper.
 
+
+For failed printed-form comparisons, generated-buffer diagnostic coordinates
+are ignored. A source excerpt is omitted only when the same diagnostic also
+supplies its complete generic operation dump. Diagnostic reasons, severity,
+operation dumps, parser excerpts (including missing SSA names), user-file
+locations, exit status, and output remain compared. Successful program output
+and raw-form failures remain byte-exact. Recorded hash files use version 2
+for this diagnostic presentation policy.
+
 ### 2.12 The files of the builder
 
 `lib/Driver/Builder.cpp` held the whole builder, 12,500 lines, and most
@@ -1311,6 +1320,15 @@ archived PR base. The completed PR head additionally requires five bitwise
 checkpoints and two D309 suite shards. The next stages of #568 replace term
 text templates with `OpBuilder` IR, then retain text only for user expressions
 and `ModelTerm` at their parsing boundaries.
+
+Stage B (#708, D[builder-term-ir]) begins the conversion of built-in term
+bodies to typed `OpBuilder` fragments. The first emitter is the shared
+Lennard-Jones scalar kernel. Fragments borrow typed operands and an insertion
+point, with owned per-build construction captures. Their operations reach
+the same shared potential/loop regions before printing and lowering, with
+no new call boundary or SSA-name hint. The other term emitters follow in
+separate commits. Step 5 subsequently removes generated-text assembly;
+custom expressions and `ModelTerm` are parsed only at their input boundaries.
 
 ## 3. Decided
 

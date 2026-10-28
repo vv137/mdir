@@ -210,7 +210,7 @@ a = 0.01
                          f'path = {quoted(placeholder)}\n')
         def host_case(kind, body):
             # #706 is a pre-existing stored-energy SSA error. Keep it in
-            # the matrix, alongside valid host paths without restraints.
+            # the matrix; hosts without restraints retain baseline #707.
             write(f"model-host-restraints-{kind}-{precision}", body)
             body = body.replace('[[restraints]]\nselection = "@1"\n'
                                 'force_constant = 1.0\n', '')

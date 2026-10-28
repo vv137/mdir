@@ -6,6 +6,7 @@
 #define MDIR_LIB_DRIVER_BUILDERIMPL_H
 
 #include "mdir/Driver/Builder.h"
+#include "TermIR.h"
 #include "mdir/Driver/Expression.h"
 #include "mdir/Driver/Influence.h"
 #include "mdir/Driver/ModelTerm.h"
@@ -253,6 +254,9 @@ public:
 class TermEmission : public TermParameters {
 public:
   virtual llvm::raw_ostream &getOutput() = 0;
+  virtual void emitIRFragment(StringRef indent, llvm::ArrayRef<StringRef> results,
+      llvm::ArrayRef<StringRef> resultTypes, llvm::ArrayRef<StringRef> operands,
+      llvm::ArrayRef<StringRef> operandTypes, TermIRRecipe recipe) = 0;
   virtual Truncation getPairTruncation() const = 0;
   virtual void emitTopologyPotential(StringRef name, unsigned terms,
                                     int tupleTerm = -1, int pairTerm = -1,
@@ -394,7 +398,7 @@ struct TermPotentialAddition {
 };
 
 /// The shared scalar kernel of ordinary and special 1-4 LJ pairs.
-void emitLennardJones(llvm::raw_ostream &, const Control &, StringRef sigma,
+void emitLennardJones(TermEmission &, const Control &, StringRef sigma,
                       StringRef epsilon, StringRef result, Truncation,
                       StringRef distance = "%r");
 
@@ -534,6 +538,7 @@ public:
   }
 
   llvm::Error build();
+  llvm::Error finishIR() { return finishTermIRProgram(program, termIR); }
 
   /// The arrays of another build of the same model at other values of its
   /// tunables, which this build takes in place of making them from the
@@ -601,6 +606,12 @@ private:
     return program.tupleSets;
   }
   llvm::raw_ostream &getOutput() override { return os; }
+  void emitIRFragment(StringRef indent, llvm::ArrayRef<StringRef> results,
+      llvm::ArrayRef<StringRef> resultTypes, llvm::ArrayRef<StringRef> operands,
+      llvm::ArrayRef<StringRef> operandTypes, TermIRRecipe recipe) override {
+    termIR.emit(os, indent, results, resultTypes, operands, operandTypes,
+                 std::move(recipe));
+  }
   llvm::ArrayRef<BuildKept::TupleGradient> getTupleGradients() const override {
     return tupleGradients;
   }
@@ -1436,6 +1447,7 @@ struct Coupled {
   /// (D172).
   bool recomputes() const { return isRestart() && control.restartRecomputes; }
 
+  TermIRPlan termIR;
   std::vector<std::unique_ptr<TermBuilder>> ownedTermBuilders;
   std::vector<const TermBuilder *> termBuilders;
 

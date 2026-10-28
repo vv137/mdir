@@ -40,3 +40,11 @@ export from `scripts/mlip/painn-stages.py` (one feature, no message layers,
 targets, and run forms without needing JAX or a device. Ordinary comparisons
 remain strict; the #714 repair separately enumerates the segmented GPU
 transitions against the old main that skipped the carry rewrite.
+
+For failed printed-form comparisons, generated-buffer diagnostic coordinates
+are ignored. A source excerpt is omitted only when the same diagnostic also
+supplies its complete generic operation dump. Diagnostic reasons, severity,
+operation dumps, parser excerpts (including missing SSA names), user-file
+locations, exit status, and output remain compared. Successful program output
+and raw-form failures remain byte-exact. Recorded hash files use version 2
+for this diagnostic presentation policy.

@@ -23,6 +23,7 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "TermIR.h"
 #include "mdir/Dialect/ProgramDialects.h"
 #include "mdir/Driver/Builder.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
@@ -81,9 +82,8 @@ void carryLoopValues(mlir::ModuleOp module) {
   });
 }
 
-std::optional<std::string> reprint(llvm::StringRef text,
-                                   mlir::OpPrintingFlags flags,
-                                   bool carry = false) {
+std::optional<std::string>
+reprint(llvm::StringRef text, mlir::OpPrintingFlags flags, bool carry = false) {
   mlir::MLIRContext context(getProgramDialects(),
                             mlir::MLIRContext::Threading::DISABLED);
   mlir::ScopedDiagnosticHandler quiet(
@@ -156,3 +156,34 @@ void driver::printParsedModule(Program &program) {
     program.module = std::move(*printed);
 }
 
+llvm::Error mdir::driver::builder::finishTermIRProgram(Program &program,
+                                                       TermIRPlan &plan) {
+  if (plan.empty()) {
+    mdir::driver::printParsedModule(program);
+    return llvm::Error::success();
+  }
+  mlir::MLIRContext context(getProgramDialects(),
+                            mlir::MLIRContext::Threading::DISABLED);
+  context.loadAllAvailableDialects();
+  mlir::ScopedDiagnosticHandler quiet(
+      &context, [](mlir::Diagnostic &) { return mlir::success(); });
+  // The transitional connections are not executable scalar operations.
+  // Materialize their checked bodies before the ordinary verification boundary.
+  mlir::ParserConfig config(&context, /*verifyAfterParse=*/false);
+  auto module = mlir::parseSourceString<mlir::ModuleOp>(program.module, config);
+  if (!module)
+    return llvm::Error::success(); // The lowering reports the original parse
+                                   // error.
+  if (llvm::Error error = plan.materialize(*module))
+    return error;
+  carryLoopValues(*module);
+  std::string printed;
+  llvm::raw_string_ostream os(printed);
+  mlir::OpPrintingFlags flags;
+  flags.enableDebugInfo(/*enable=*/true, /*prettyForm=*/false);
+  module->print(os, flags);
+  os << "\n";
+  os.flush();
+  program.module = std::move(printed);
+  return llvm::Error::success();
+}

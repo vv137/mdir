@@ -529,7 +529,8 @@ llvm::Expected<Program> mdir::driver::buildProgram(const Control &control,
   builder.kept = kept;
   if (llvm::Error error = builder.build())
     return std::move(error);
-  printParsedModule(program);
+  if (llvm::Error error = builder.finishIR())
+    return std::move(error);
   return std::move(program);
 }
 
