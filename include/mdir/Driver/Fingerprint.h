@@ -23,6 +23,10 @@ namespace driver {
 ///   - coupling: the keys of [dynamics] but `steps`, and of [ensemble],
 ///     [thermostat], and [barostat];
 ///   - execution: the keys of [execution].
+/// A value that names a choice is recorded in the spelling that the reader
+/// documents for it, whatever its case in the file (#702): `control` must be
+/// the control file read from `controlFile`, whose choiceSpellings say which
+/// values those are.
 llvm::Expected<Fingerprint> getRunFingerprint(llvm::StringRef controlFile,
                                               const Control &control,
                                               const System &system);

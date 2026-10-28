@@ -62,6 +62,13 @@ private:
                    std::string &value);
   Error readPath(const toml::table &table, StringRef key, std::string &value);
 
+  /// Records that `node` names a choice, which the fingerprint holds as
+  /// `spelling` whatever the case of the file (#702). Every reading of a
+  /// choice calls it, readChoice and the comparisons without regard to case
+  /// alike, so that the fingerprint takes the choices from the reader and
+  /// keeps no list of its own.
+  void noteChoice(const toml::node &node, StringRef spelling);
+
   /// Reads a keyword whose value names one of `choices`, without regard to
   /// case.
   template <typename T>
@@ -238,6 +245,7 @@ Error Reader::readPositiveOrAuto(const toml::table &table, StringRef key,
       return fail(*node, "expected a positive number or \"AUTO\" for '" +
                              key + "'");
     automatic = true;
+    noteChoice(*node, "AUTO");
     control.skinsRequested = true;
     return Error::success();
   }
@@ -296,6 +304,14 @@ Error Reader::readPath(const toml::table &table, StringRef key,
   return Error::success();
 }
 
+void Reader::noteChoice(const toml::node &node, StringRef spelling) {
+  const toml::source_position &begin = node.source().begin;
+  // A node that the reader made itself has no place in the file.
+  if (begin.line == 0)
+    return;
+  control.choiceSpellings[{begin.line, begin.column}] = spelling.str();
+}
+
 template <typename T>
 Error Reader::readChoice(
     const toml::table &table, StringRef key, T &value,
@@ -310,6 +326,9 @@ Error Reader::readChoice(
   for (auto [name, choice] : choices) {
     if (StringRef(text).equals_insensitive(name)) {
       value = choice;
+      // The documented spelling is upper case; a few tables list theirs
+      // in lower case ("cpu", "mixed").
+      noteChoice(*node, name.upper());
       return Error::success();
     }
     names += (names.empty() ? "" : ", ") + name.str();
@@ -611,6 +630,7 @@ Error Reader::readExternal(const toml::table &table) {
     else
       return fail(*node, "expected 'scaling' as \"NONE\", fixed in space, "
                          "or \"CELL\", in the frame of the cell");
+    noteChoice(*node, StringRef(*value).upper());
   }
 
   // Every other keyword is a parameter: a number for every particle, or a
@@ -728,6 +748,8 @@ Error Reader::readTupleTerm(const toml::table &table, unsigned arity) {
       return fail(*table.get("weighting"),
                   "expected 'weighting' as \"MASS\" or \"NONE\"");
     term.massWeighted = StringRef(weighting).equals_insensitive("MASS");
+    if (const toml::node *node = table.get("weighting"))
+      noteChoice(*node, StringRef(weighting).upper());
   } else if (table.contains("weighting")) {
     return fail(*table.get("weighting"),
                 "'weighting' is for the centers of 'groups'");
@@ -1333,6 +1355,8 @@ Error Reader::readPair(const toml::table &table) {
       return fail(node, "expected 'arithmetic', 'geometric', or 'product', "
                         "got '" +
                             text + "'");
+    // The rules of mixing are documented in lower case.
+    noteChoice(node, text.lower());
     return Error::success();
   };
 
@@ -1378,6 +1402,7 @@ Error Reader::readPair(const toml::table &table) {
                           "table with a rule for each parameter, got '" +
                               rule + "'");
       }
+      noteChoice(node, StringRef(rule).lower());
       continue;
     }
     if (keyword == "groups") {
