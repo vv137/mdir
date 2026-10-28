@@ -1415,7 +1415,14 @@ HCT/OBC radii, screened pair/self energies, and nonpolar surface energy with
 typed operations. Their owned configuration contains scalar method data only;
 Born radii remain private to the adapter. The Born energy is added to the outer
 sum before surface construction, preserving accumulation order as well as
-loop order. `TermBorn.cpp` no longer writes operation text. The
+loop order. `TermBorn.cpp` no longer writes operation text.
+
+Positional restraints construct force maps, energy/virial sums, reference
+scaling, reductions, diagonal tensors, and their stored energy column with
+typed operations. The per-build energy name and missing-state diagnostic from
+#706 remain; force-only requests preserve the recorded energy. Loop and scalar
+arithmetic order remain unchanged, including the separate barostat virial sum.
+`TermRestraint.cpp` no longer writes operation text. The
 existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

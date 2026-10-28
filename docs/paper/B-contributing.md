@@ -266,6 +266,13 @@ Born radii remain private to the adapter. The Born energy is added to the outer
 sum before surface construction, preserving accumulation order as well as
 loop order. `TermBorn.cpp` no longer writes operation text.
 
+Positional restraints construct force maps, energy/virial sums, reference
+scaling, reductions, diagonal tensors, and their stored energy column with
+typed operations. The per-build energy name and missing-state diagnostic from
+#706 remain; force-only requests preserve the recorded energy. Loop and scalar
+arithmetic order remain unchanged, including the separate barostat virial sum.
+`TermRestraint.cpp` no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and invalid builder assembly, which fails at its construction boundary with

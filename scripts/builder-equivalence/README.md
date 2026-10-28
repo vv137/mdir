@@ -100,3 +100,7 @@ Born/surface cases add salt screening with a radius cutoff for HCT, OBC1, and
 OBC2 in both precisions and targets, plus a zero-surface-tension case. The
 existing combined cases exercise the unscreened, unrestricted-radius paths
 and separate Born/surface energy columns.
+
+Restraint cases add multi-particle ALL/CENTER reference scaling under NPT and
+restrained minimization in both precisions and targets. Existing hosted and
+NVE controls retain force-only frame and initial stored-energy coverage.

@@ -388,6 +388,21 @@ phase = 0.4
         assert text.count('surface_area_energy = 0.0054') == 1
         write(f"born-no-surface-{precision}", text.replace('surface_area_energy = 0.0054', 'surface_area_energy = 0.0'))
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"pull-output-npt-{precision}.toml")
+        for scaling in ("ALL", "CENTER"):
+            text = source.read_text()
+            old = '[[restraints]]\nselection = "@1"\nforce_constant = 1.0\n'
+            assert text.count(old) == 1
+            text = text.replace(old, '[[restraints]]\nselection = "@1-3"\nforce_constant = 1.0\nreference_scaling = "' + scaling + '"\n')
+            write(f"restraint-npt-{scaling}-{precision}", text)
+        source = next(path for path in ordinary if path.name == f"combined-HCT-{precision}.toml")
+        text = re.sub(r'\[dynamics\]\n.*?(?=\[ensemble\])',
+                      '[minimize]\nmethod = "STEEPEST_DESCENT"\nsteps = 1\n', source.read_text(), flags=re.S)
+        text = re.sub(r'(?m)^(pull|checkpoint_interval)\s*=.*\n', '', text)
+        text = text.replace('selection = "@1"\nforce_constant', 'selection = "@1-3"\nforce_constant')
+        write(f"restraint-min-{precision}", text)
+
     model_ir = '''md.potential @order_model(%positions: !md.field<@atoms, 3 x f64>, %box: !md.cell, %numbers: !md.field<@atoms, i32>) -> f64 {
   %total = md.sum_particles gather(%positions : !md.field<@atoms, 3 x f64>) {
   ^bb0(%position: vector<3xf64>):
