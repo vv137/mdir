@@ -181,6 +181,49 @@ a = 0.01
                 assert count == 1
             write(f"nonbonded-alchemical-power2-{modifier}-{precision}", powered)
 
+    # Regular angle/dihedral kernels and compound coordinate mixtures join the
+    # existing combined kinds, including the time and alchemical bindings.
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"topology-pair-inputs-{precision}.toml")
+        geometry = source.read_text() + '''
+[[energy.angle]]
+name = "rank_angle"
+expression = "k*(theta-theta0)^2"
+particles = [[1, 2, 3]]
+k = 0.1
+theta0 = 1.0
+[[energy.dihedral]]
+name = "rank_torsion"
+expression = "k*(1+cos(n*theta-phase))"
+particles = [[1, 2, 3, 4]]
+k = 0.1
+n = 2.0
+phase = 0.4
+[[energy.compound]]
+name = "rank_compound"
+expression = "k*(distance(p1,p3)-r0)^2+ka*(angle(p1,p2,p3)-a0)^2+kd*(1+cos(2*dihedral(p1,p2,p3,p4)-phi0))+t*w2"
+particles = [[1, 2, 3, 4]]
+k = 0.1
+r0 = 1.0
+ka = 0.1
+a0 = 1.0
+kd = 0.1
+phi0 = 0.4
+'''
+        write(f"tuple-geometry-{precision}", geometry)
+        source = next(path for path in ordinary if path.name == f"nonbonded-alchemical-{precision}.toml")
+        alchemical = source.read_text() + '''
+[[energy.compound]]
+name = "rank_compound_lambda"
+expression = "lambda_vdw*k*(distance(p1,p3)-r0)^2+lambda_coulomb*ka*(angle(p1,p2,p3)-a0)^2"
+particles = [[1, 2, 3, 4]]
+k = 0.1
+r0 = 1.0
+ka = 0.1
+a0 = 1.0
+'''
+        write(f"tuple-alchemical-{precision}", alchemical)
+
     bare = (root / "test/Driver/charged.toml").read_text().replace(
         '"Inputs/', '"' + str(inputs) + "/")
     for precision in ("DOUBLE", "MIXED"):

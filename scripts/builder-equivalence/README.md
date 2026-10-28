@@ -68,3 +68,6 @@ precisions and targets. Their modules and lowered programs must verify.
 Bare-pair cases additionally cover arithmetic/geometric/product mixing without
 overrides and an ungathered uniform-parameter function term, including the
 ordered addition of several pair contributions in both precisions and targets.
+
+Tuple cases combine regular angles/dihedrals and compound distance/angle/dihedral
+coordinates with the other kinds, particle fields, time, and alchemical bindings.

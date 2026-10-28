@@ -219,6 +219,12 @@ mixing, constants, function tables, cutoff modifiers, and ordered total-energy
 addition retain the original operation order. Both topology and bare pair
 kernels use owned expression snapshots and bounded configuration.
 
+Regular and compound custom-tuple loops also use typed coordinates, regions,
+arguments, and yields. Distance conversion, angle/dihedral coordinates,
+per-tuple parameters, gradient-field selectors and seeds, function tables,
+time/lambda/observed bindings, and energy conversion keep their operation order.
+Owned loop configuration replaces borrowed term and gradient references.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and the unchanged legacy parse-error path; the corpus also rejects internal

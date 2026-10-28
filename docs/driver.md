@@ -1368,7 +1368,13 @@ Bare custom-pair loops also construct their regions and yields with typed
 operations. Table overrides, uniform and nonuniform arithmetic/geometric/product
 mixing, constants, function tables, cutoff modifiers, and ordered total-energy
 addition retain the original operation order. Both topology and bare pair
-kernels use owned expression snapshots and bounded configuration. The
+kernels use owned expression snapshots and bounded configuration.
+
+Regular and compound custom-tuple loops also use typed coordinates, regions,
+arguments, and yields. Distance conversion, angle/dihedral coordinates,
+per-tuple parameters, gradient-field selectors and seeds, function tables,
+time/lambda/observed bindings, and energy conversion keep their operation order.
+Owned loop configuration replaces borrowed term and gradient references. The
 existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 
