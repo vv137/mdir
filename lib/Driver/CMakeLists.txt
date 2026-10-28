@@ -94,9 +94,7 @@ add_mlir_library(MDIRDriver
 
   # The module of a program is parsed and printed (ProgramModule.cpp, #568).
   LINK_LIBS PUBLIC
-  MDIRDyn MDIRMD MDIRMDExec MDIRMDRT
-  MLIRArithDialect MLIRFuncDialect MLIRMathDialect MLIRMemRefDialect
-  MLIRSCFDialect MLIRVectorDialect MLIRParser MLIRIR
+  MDIRProgramDialects MLIRParser MLIRIR
   )
 # The sweep of the count of neighbors (D316) is vectorized only
 # where a comparison may be evaluated before it is needed, which

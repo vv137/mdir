@@ -1049,6 +1049,13 @@ error of the script. The report names a case by its place in the corpus,
 for example `test/Driver/x.test:run.toml [gpu] module printed`, never by a
 path of the machine.
 
+Construction and canonical printing use the same accepted program dialect set
+as lowering: `insertProgramDialects` in `lib/Dialect/ProgramDialects.cpp`.
+This includes tensor/linalg staged-model functions and lowering-only dialects.
+Valid staged input therefore reaches canonical printing and the loop-carried
+value rewrite, including segmented programs. D352's fallback for text that
+fails to parse remains unchanged.
+
 **The corpus.** By default it has all of these; `--only` takes some of
 them:
 

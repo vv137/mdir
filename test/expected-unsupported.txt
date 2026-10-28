@@ -17,6 +17,7 @@
 
 # A build or a node without a device, without Python, or without HDF5.
 without cuda: *
+without cuda-toolkit: *
 without python-api: *
 without hdf5: *
 

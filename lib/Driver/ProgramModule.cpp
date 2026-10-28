@@ -23,20 +23,12 @@
 //
 //===----------------------------------------------------------------------===//
 
+#include "mdir/Dialect/ProgramDialects.h"
 #include "mdir/Driver/Builder.h"
-#include "mdir/Dialect/Dyn/DynDialect.h"
-#include "mdir/Dialect/MD/MDDialect.h"
-#include "mdir/Dialect/MDExec/MDExecDialect.h"
-#include "mdir/Dialect/MDRT/MDRTDialect.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Math/IR/Math.h"
-#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/Location.h"
 #include "mlir/IR/Diagnostics.h"
+#include "mlir/IR/Location.h"
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/IR/OperationSupport.h"
 #include "mlir/Parser/Parser.h"
@@ -47,11 +39,7 @@ using namespace mdir;
 namespace {
 mlir::DialectRegistry getProgramDialects() {
   mlir::DialectRegistry registry;
-  registry.insert<mlir::arith::ArithDialect, mlir::func::FuncDialect,
-                  mlir::math::MathDialect, mlir::memref::MemRefDialect,
-                  mlir::scf::SCFDialect, mlir::vector::VectorDialect,
-                  dyn::DynDialect, md::MDDialect, md_exec::MDExecDialect,
-                  mdrt::MDRTDialect>();
+  insertProgramDialects(registry);
   return registry;
 }
 

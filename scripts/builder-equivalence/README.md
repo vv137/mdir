@@ -33,3 +33,10 @@ The nonbonded extension combines the same kinds with direct cutoff, reaction
 field, P3M, prolate PME, LJPME, and alchemical selection. Both precision modes,
 targets, and program forms are compared in printed module/lowered output,
 including the order of the loops that lower to fused kernels.
+
+The staged-dialect controls add a minimal tensor helper and a small frozen
+export from `scripts/mlip/painn-stages.py` (one feature, no message layers,
+64 rows per tile). They exercise tensor/linalg functions in both precisions,
+targets, and run forms without needing JAX or a device. Ordinary comparisons
+remain strict; the #714 repair separately enumerates the segmented GPU
+transitions against the old main that skipped the carry rewrite.

@@ -12,4 +12,28 @@ add_subdirectory(Conversion/MDDistToLoops)
 add_subdirectory(Conversion/MDExecToGPU)
 add_subdirectory(Conversion/GPUToBinary)
 add_subdirectory(Dialect/MDExec/Transforms)
+# No driver/compiler dependency cycle: both parse the same program dialects.
+add_mlir_library(MDIRProgramDialects Dialect/ProgramDialects.cpp
+  LINK_LIBS PUBLIC MDIRDyn MDIRMD MDIRMDExec MDIRMDRT
+  MLIRAffineDialect
+  MLIRArithDialect
+  MLIRBufferizationDialect
+  MLIRComplexDialect
+  MLIRControlFlowDialect
+  MLIRDLTIDialect
+  MLIRFuncDialect
+  MLIRGPUDialect
+  MLIRIndexDialect
+  MLIRLinalgDialect
+  MLIRLLVMDialect
+  MLIRMathDialect
+  MLIRMemRefDialect
+  MLIRNVVMDialect
+  MLIRNVGPUDialect
+  MLIROpenMPDialect
+  MLIRSCFDialect
+  MLIRTensorDialect
+  MLIRUBDialect
+  MLIRVectorDialect
+)
 add_subdirectory(Driver)

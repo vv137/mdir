@@ -4,19 +4,15 @@
 // pass, so that the linker kept all of MLIR in each binary. A program text
 // that names a dialect outside this list fails to parse ("unregistered
 // dialect"), and a pipeline that names a pass outside it fails to parse
-// ("does not refer to a registered pass"): extend the lists below and the
-// libraries of lib/Compiler/CMakeLists.txt together. `mdir-opt` keeps all of
-// MLIR, for replaying and developing pipelines (docs/debugging.md).
+// ("does not refer to a registered pass"): extend the shared dialect set in
+// lib/Dialect/ProgramDialects.cpp and its libraries in lib/CMakeLists.txt, or
+// the passes/interfaces below and lib/Compiler/CMakeLists.txt, together.
+// `mdir-opt` keeps all of MLIR, for replaying and developing pipelines
+// (docs/debugging.md).
 //
 // What is listed, and why:
-// - Dialects: those of the programs that the builder writes and of the
-//   templates that the lowerings parse (arith, func, math, memref, scf,
-//   vector, gpu, ...), those of a model in stages (linalg, tensor,
-//   bufferization), and those that the lowerings produce on the way to
-//   LLVM IR (cf, index, affine, ub, omp, nvgpu, NVVM, LLVM, DLTI), and
-//   complex, which tensor loads: `gpu-to-llvm` requires the conversion to
-//   the LLVM dialect of every dialect loaded, and stops the process
-//   without it.
+// - Dialects: the shared set and its rationale are in
+//   lib/Dialect/ProgramDialects.cpp; construction and lowering use it.
 // - Interfaces of those dialects that MLIR attaches from outside the
 //   dialect (bufferization, value bounds, inlining, the conversion of
 //   `gpu-to-llvm` to the LLVM dialect, the NVVM target), as
@@ -37,6 +33,7 @@
 #include "mdir/Dialect/MDExec/MDExecDialect.h"
 #include "mdir/Dialect/MDExec/Transforms/Passes.h"
 #include "mdir/Dialect/MDRT/MDRTDialect.h"
+#include "mdir/Dialect/ProgramDialects.h"
 
 #include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
 #include "mlir/Conversion/ComplexToLLVM/ComplexToLLVM.h"
@@ -144,18 +141,6 @@ void registerPipelinePasses() {
   registerReconcileUnrealizedCastsPass();
 }
 
-/// The dialects of the programs and of their lowerings.
-void insertPipelineDialects(DialectRegistry &registry) {
-  registry.insert<affine::AffineDialect, arith::ArithDialect,
-                  bufferization::BufferizationDialect, complex::ComplexDialect,
-                  cf::ControlFlowDialect,
-                  DLTIDialect, func::FuncDialect, gpu::GPUDialect,
-                  index::IndexDialect, linalg::LinalgDialect, LLVM::LLVMDialect,
-                  math::MathDialect, memref::MemRefDialect, NVVM::NVVMDialect,
-                  nvgpu::NVGPUDialect, omp::OpenMPDialect, scf::SCFDialect,
-                  tensor::TensorDialect, ub::UBDialect, vector::VectorDialect>();
-}
-
 /// The interfaces of those dialects that MLIR attaches from outside them.
 void registerPipelineInterfaces(DialectRegistry &registry) {
   affine::registerValueBoundsOpInterfaceExternalModels(registry);
@@ -238,11 +223,9 @@ DialectRegistry mdir::compiler::getRegistry() {
     registerGpuLowerToNVVMPipeline();
   });
   DialectRegistry registry;
-  insertPipelineDialects(registry);
+  insertProgramDialects(registry);
   registerPipelineInterfaces(registry);
   md::registerDerivativeInterfaces(registry);
   registerPipelineTranslations(registry);
-  registry.insert<dyn::DynDialect, md::MDDialect, md_exec::MDExecDialect,
-                  mdrt::MDRTDialect>();
   return registry;
 }

@@ -13,27 +13,7 @@ add_mlir_library(MDIRCompiler Compile.cpp Registry.cpp
   MDIRMDExecTransforms MDIRMDRT MDIRMDToMDExec MDIRMDTransforms
   # The MLIR of the lowerings alone (Registry.cpp, #655): its dialects, the
   # interfaces attached to them, its conversions, and its translations.
-  # Dialects
-  MLIRAffineDialect
-  MLIRArithDialect
-  MLIRBufferizationDialect
-  MLIRComplexDialect
-  MLIRControlFlowDialect
-  MLIRDLTIDialect
-  MLIRFuncDialect
-  MLIRGPUDialect
-  MLIRIndexDialect
-  MLIRLinalgDialect
-  MLIRLLVMDialect
-  MLIRMathDialect
-  MLIRMemRefDialect
-  MLIRNVVMDialect
-  MLIRNVGPUDialect
-  MLIROpenMPDialect
-  MLIRSCFDialect
-  MLIRTensorDialect
-  MLIRUBDialect
-  MLIRVectorDialect
+  MDIRProgramDialects
   # Interfaces attached from outside the dialects
   MLIRArithValueBoundsOpInterfaceImpl
   MLIRArithTransforms
