@@ -181,6 +181,251 @@ static mlir::Value buildShieldedCoulomb(mlir::OpBuilder &builder,
   return arith::SelectOp::create(builder, loc, inside, near, rInverse);
 }
 
+// The soft-core distance and root-free potential [Beutler1994].
+static TermIRValues buildSoftCoreDistance(mlir::OpBuilder &builder,
+                                          mlir::ValueRange values, double alpha,
+                                          int64_t power, bool root) {
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  auto constant = [&](double value) -> Value {
+    return arith::ConstantOp::create(builder, loc,
+                                     builder.getF64FloatAttr(value));
+  };
+  auto mul = [&](Value a, Value b) -> Value {
+    return arith::MulFOp::create(builder, loc, a, b);
+  };
+  Value alphaValue = constant(alpha);
+  Value zero = constant(0.0);
+  Value floor = constant(0.3);
+  Value has = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OGT,
+                                    values[0], zero);
+  Value sigma = arith::SelectOp::create(builder, loc, has, values[0], floor);
+  Value i3 =
+      arith::ConstantOp::create(builder, loc, builder.getI32IntegerAttr(3));
+  Value s3 = math::FPowIOp::create(builder, loc, sigma, i3);
+  Value s6 = mul(s3, s3);
+  Value r3 = math::FPowIOp::create(builder, loc, values[1], i3);
+  Value r6 = mul(r3, r3);
+  Value lambda = values[2];
+  if (power == 2)
+    lambda = mul(lambda, lambda);
+  Value as = mul(alphaValue, s6);
+  Value asl = mul(as, lambda);
+  Value x = arith::AddFOp::create(builder, loc, r6, asl);
+  if (!root)
+    return {asl, r6, i3};
+  Value sixth = constant(1.0 / 6.0);
+  Value ra = math::PowFOp::create(builder, loc, x, sixth);
+  Value half = constant(0.5);
+  Value cross = arith::CmpFOp::create(builder, loc, arith::CmpFPredicate::OGT,
+                                      values[3], half);
+  return {arith::SelectOp::create(builder, loc, cross, ra, values[1])};
+}
+
+static mlir::Value buildSoftCorePotential(mlir::OpBuilder &builder,
+                                          mlir::ValueRange values,
+                                          Truncation truncation,
+                                          double cutoff) {
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  auto constant = [&](double value) -> Value {
+    return arith::ConstantOp::create(builder, loc,
+                                     builder.getF64FloatAttr(value));
+  };
+  auto mul = [&](Value a, Value b) -> Value {
+    return arith::MulFOp::create(builder, loc, a, b);
+  };
+  auto sub = [&](Value a, Value b) -> Value {
+    return arith::SubFOp::create(builder, loc, a, b);
+  };
+  Value xs = mul(values[3], values[2]);
+  Value xx = arith::AddFOp::create(builder, loc, values[4], xs);
+  Value g3 = math::FPowIOp::create(builder, loc, values[0], values[5]);
+  Value g6 = mul(g3, g3);
+  Value q6 = arith::DivFOp::create(builder, loc, g6, xx);
+  Value q12 = mul(q6, q6);
+  Value a = q12, b = q6;
+  if (truncation == Truncation::Shift) {
+    double cut6 = std::pow(cutoff, -6.0);
+    Value rc6 = constant(cut6);
+    Value rc12 = constant(cut6 * cut6);
+    Value g12 = mul(g6, g6);
+    Value c12 = mul(g12, rc12);
+    Value c6 = mul(g6, rc6);
+    a = sub(q12, c12);
+    b = sub(q6, c6);
+  }
+  Value c4 = constant(4.0);
+  Value e4 = mul(c4, values[1]);
+  Value t = sub(a, b);
+  return mul(e4, t);
+}
+
+// The direct dispersion-grid share [Essmann1995, Wennberg2013].
+static mlir::Value buildLJPMEDirect(mlir::OpBuilder &builder,
+                                    mlir::ValueRange operands, double beta,
+                                    double shift, Truncation truncation) {
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  auto constant = [&](double value) -> Value {
+    return arith::ConstantOp::create(builder, loc,
+                                     builder.getF64FloatAttr(value));
+  };
+  auto mul = [&](Value a, Value b) -> Value {
+    return arith::MulFOp::create(builder, loc, a, b);
+  };
+  Value c6 = mdir::md::LookupOp::create(builder, loc, builder.getF64Type(),
+                                        operands[0],
+                                        ValueRange{operands[1], operands[2]});
+  Value betaValue = constant(beta);
+  Value r = operands[3];
+  Value x = mul(betaValue, r);
+  Value x2 = mul(x, x);
+  Value nx2 = arith::NegFOp::create(builder, loc, x2);
+  Value e = math::ExpOp::create(builder, loc, nx2);
+  Value x4 = mul(x2, x2);
+  Value half = constant(0.5);
+  Value h4 = mul(half, x4);
+  Value one = constant(1.0);
+  Value p1 = arith::AddFOp::create(builder, loc, one, x2);
+  Value polynomial = arith::AddFOp::create(builder, loc, p1, h4);
+  Value g = mul(e, polynomial);
+  Value kept = arith::SubFOp::create(builder, loc, one, g);
+  Value r2 = mul(r, r);
+  Value r4 = mul(r2, r2);
+  Value r6 = mul(r4, r2);
+  Value cr = arith::DivFOp::create(builder, loc, c6, r6);
+  Value correction = mul(cr, kept);
+  if (truncation == Truncation::Shift) {
+    Value shiftValue = constant(shift);
+    Value cs = mul(c6, shiftValue);
+    correction = arith::SubFOp::create(builder, loc, correction, cs);
+  }
+  return arith::AddFOp::create(builder, loc, operands[4], correction);
+}
+
+struct DirectCoulombIRConfig {
+  bool scalesCoulomb = false, pme = false, prolate = false;
+  bool prolateSeries = false, shift = false, reactionField = false;
+  bool shiftsAtCutoff = false;
+  std::vector<double> farSeries;
+  double beta = 0.0, cutoff = 0.0;
+  std::pair<double, double> reaction;
+  int64_t prolateCells = 0, prolateTerms = 0;
+};
+
+static mlir::Value buildDirectCoulomb(mlir::OpBuilder &builder,
+                                      mlir::ValueRange values,
+                                      const DirectCoulombIRConfig &config) {
+  bool scalesCoulomb = config.scalesCoulomb, pme = config.pme;
+  bool prolate = config.prolate, prolateSeries = config.prolateSeries;
+  bool shift = config.shift, reactionField = config.reactionField;
+  bool shiftsAtCutoff = config.shiftsAtCutoff;
+  const auto &farSeries = config.farSeries;
+  double beta = config.beta, cutoff = config.cutoff;
+  auto reaction = config.reaction;
+  int64_t prolateCells = config.prolateCells,
+          prolateTerms = config.prolateTerms;
+  using namespace mlir;
+  auto loc = builder.getUnknownLoc();
+  auto constant = [&](double value) -> Value {
+    return arith::ConstantOp::create(builder, loc,
+                                     builder.getF64FloatAttr(value));
+  };
+  auto mul = [&](Value a, Value b) -> Value {
+    return arith::MulFOp::create(builder, loc, a, b);
+  };
+  auto sub = [&](Value a, Value b) -> Value {
+    return arith::SubFOp::create(builder, loc, a, b);
+  };
+  auto div = [&](Value a, Value b) -> Value {
+    return arith::DivFOp::create(builder, loc, a, b);
+  };
+  Value f = constant(coulombInternal);
+  Value qq = mul(values[0], values[1]);
+  if (scalesCoulomb) {
+    Value cl = mul(values[3], values[5]);
+    Value scale = sub(values[4], cl);
+    qq = mul(qq, scale);
+  }
+  Value fqq = mul(f, qq);
+  Value r = values[2], rq = r;
+  if (scalesCoulomb) {
+    Value least = constant(1.0e-4);
+    rq = arith::MaximumFOp::create(builder, loc, r, least);
+  }
+  if (pme && prolate) {
+    // Direct prolate kernel [Liang2026, eq. 3]. Its cutoff shift is
+    // zero.
+    Value inverse = constant(1.0 / cutoff);
+    Value xr = mul(rq, inverse);
+    Value far;
+    if (prolateSeries) {
+      Value two = constant(2.0);
+      Value one = constant(1.0);
+      Value twice = mul(two, xr);
+      Value t = sub(twice, one);
+      Value mean = mdir::md::ChebyshevOp::create(
+          builder, loc, t, builder.getF64ArrayAttr(farSeries));
+      Value rest = sub(one, xr);
+      far = mul(rest, mean);
+    } else {
+      far = buildProlateSplitting(builder, values.back(), xr, prolateCells,
+                                  prolateTerms);
+    }
+    Value screened = div(far, rq);
+    return mul(fqq, screened);
+  }
+  if (pme) {
+    // Gaussian Ewald direct kernel, optionally shifted at the
+    // cutoff.
+    Value betaValue = constant(beta);
+    Value br = mul(betaValue, rq);
+    Value erfc = math::ErfcOp::create(builder, loc, br);
+    Value screened = div(erfc, rq);
+    if (shift) {
+      Value shiftValue = constant(std::erfc(beta * cutoff) / cutoff);
+      screened = sub(screened, shiftValue);
+    }
+    return mul(fqq, screened);
+  }
+  if (reactionField) {
+    // Reaction field f q q (1/r + k r² - c), zero at cutoff (D140).
+    Value one = constant(1.0);
+    Value k = constant(reaction.first);
+    Value c = constant(reaction.second);
+    Value inverse = div(one, rq);
+    Value rr = mul(r, r);
+    Value field = mul(k, rr);
+    Value near = arith::AddFOp::create(builder, loc, inverse, field);
+    Value rf = sub(near, c);
+    return mul(fqq, rf);
+  }
+  if (shiftsAtCutoff) {
+    Value one = constant(1.0);
+    Value inverse = div(one, rq);
+    Value rcInverse = constant(1.0 / cutoff);
+    Value cut = sub(inverse, rcInverse);
+    return mul(fqq, cut);
+  }
+  return div(fqq, rq);
+}
+
+struct PrimaryNonbondedIRConfig {
+  bool lj = false, coulomb = false, flags = false, scalesVdw = false;
+  bool alchemicalOnly = false, ljpme = false;
+  double cutoff = 0.0, from = 0.0, alpha = 0.0;
+  double ljpmeBeta = 0.0, ljpmeShift = 0.0;
+  int64_t power = 1;
+  Truncation truncation = Truncation::None;
+  llvm::SmallVector<bool, 4> sigmaSeeds;
+  llvm::SmallVector<size_t, 4> seedTables;
+  size_t gatheredCount = 0, sigmaTable = 0, epsilonTable = 0;
+  size_t lambdaVdw = 0, lambdaCoulomb = 0, dispersionTable = 0,
+         prolateTable = 0;
+  DirectCoulombIRConfig coulombSpec;
+};
+
 // Construction data is owned by the deferred recipe, including grid sizes.
 struct ReciprocalIRConfig {
   llvm::SmallVector<int64_t, 3> grid;
@@ -1212,7 +1457,6 @@ public:
   void emit(TermEmission &context, TermNonbondedData program,
             const PotentialSelection &selection,
             const TermPotentialAddition &add) const override {
-    auto &os = context.getOutput();
     const auto &control = context.getControl();
     const auto &system = context.getSystem();
     unsigned terms = selection.terms;
@@ -1244,12 +1488,6 @@ public:
                  field.values.size();
       return false;
     };
-    auto emitLennardJones = [&](StringRef sigma, StringRef epsilon,
-                                StringRef result, Truncation modifier,
-                                StringRef distance = "%r") {
-      mdir::driver::builder::emitLennardJones(context, control, sigma, epsilon,
-                                              result, modifier, distance);
-    };
     // Which λ the kernels of the pairs take: as arguments, or as constants
     // of the state of the run that are not 0.
     bool scalesCoulomb =
@@ -1259,400 +1497,225 @@ public:
     bool lj = terms & TermInputs::LennardJones,
          coulomb = terms & TermInputs::Coulomb;
     if (lj || coulomb) {
-      // [free_energy] (D161): a pair with one particle in the selection,
-      // `%al_x` = 1, is decoupled. Its Lennard-Jones is that of the
-      // soft-core distance r_A, r_A^6 = alpha sigma^6 lambda^p + r^6, times
-      // 1 - lambda [Beutler1994], and its Coulomb is times 1 - lambda: the
-      // charge of the particle in the selection scaled. The pairs within the
-      // selection stay.
-      bool flags = (lj && scalesVdw) || (coulomb && scalesCoulomb) ||
-                   (alchemicalOnly && decouples());
-      // In `@tunable`, σ and ε of a pair take the seeds of the derivatives
-      // in their tables (D230, Control::TunableTableSeed).
+      // The same pair kernel and contribution order, including soft core
+      // [Beutler1994] and the original tunable-table seed sequence.
+      PrimaryNonbondedIRConfig config;
+      config.lj = lj;
+      config.coulomb = coulomb;
+      config.flags = (lj && scalesVdw) || (coulomb && scalesCoulomb) ||
+                     (alchemicalOnly && decouples());
+      config.scalesVdw = scalesVdw;
+      config.alchemicalOnly = alchemicalOnly;
+      config.ljpme = lj && program.ljpme;
+      config.cutoff = cutoff;
+      config.from = control.switchDistance * units::length;
+      config.alpha = control.freeEnergy.softCoreAlpha;
+      config.power = control.freeEnergy.softCorePower;
+      config.truncation = truncation;
       size_t seeds =
           gradientArguments && lj ? control.tunableTableSeeds.size() : 0;
-      std::string seedFields, seedTypes, seedArguments;
-      for (size_t c = 0; c != seeds; ++c) {
-        seedFields += ", %tg_d" + std::to_string(c);
-        seedTypes += ", !real";
-        seedArguments += ", %tgd" + std::to_string(c) + "_i: f64, %tgd" +
-                         std::to_string(c) + "_j: f64";
-      }
-      os << "  %u_nonbonded = md.sum_relation %n, %x, %cell gather(%p_type, "
-            "%p_q"
-         << (flags ? ", %p_alch" : "") << seedFields << " : !ids, !real"
-         << (flags ? ", !real" : "") << seedTypes << ")\n"
-         << "      exchange(symmetric" << (seeds ? ", asserted" : "") << ") {\n"
-         << "  ^bb0(%r: f64, %d: vector<3xf64>, %type_i: i32, %type_j: i32, "
-            "%q_i: f64, %q_j: f64"
-         << (flags ? ", %al_i: f64, %al_j: f64" : "") << seedArguments
-         << "):\n";
-      if (flags)
-        os << "    %al_ij = arith.mulf %al_i, %al_j : f64\n"
-           << "    %al_sum = arith.addf %al_i, %al_j : f64\n"
-           << "    %al_twice = arith.addf %al_ij, %al_ij : f64\n"
-           << "    %cross = arith.subf %al_sum, %al_twice : f64\n"
-           << "    %al_one = arith.constant 1.0 : f64\n";
-      std::string value;
-      if (lj) {
-        bool seedsSigma = false, seedsEpsilon = false;
-        for (size_t c = 0; c != seeds; ++c)
-          (control.tunableTableSeeds[c].sigma ? seedsSigma : seedsEpsilon) =
-              true;
-        os << "    %sigma" << (seedsSigma ? "_table" : "")
-           << " = md.lookup %t_lj_sigma[%type_i, %type_j] : !table, "
-              "i32, i32 -> f64\n"
-           << "    %epsilon" << (seedsEpsilon ? "_table" : "")
-           << " = md.lookup %t_lj_epsilon[%type_i, %type_j] : "
-              "!table, i32, i32 -> f64\n";
-        // The value of the table plus d_i w[a, b] + d_j w[b, a] for each
-        // seed: the value itself, d being zero.
-        for (bool sigma : {true, false}) {
-          std::string value = sigma ? "%sigma_table" : "%epsilon_table";
-          size_t left = 0;
-          for (size_t c = 0; c != seeds; ++c)
-            left += control.tunableTableSeeds[c].sigma == sigma;
-          for (size_t c = 0; c != seeds; ++c) {
-            if (control.tunableTableSeeds[c].sigma != sigma)
-              continue;
-            std::string n = std::to_string(c);
-            std::string next = --left
-                                   ? "%tgs" + n
-                                   : std::string(sigma ? "%sigma" : "%epsilon");
-            os << "    %tgw" << n << "_ij = md.lookup %t_tgw" << n
-               << "[%type_i, %type_j] : !grid, i32, i32 -> f64\n"
-               << "    %tgw" << n << "_ji = md.lookup %t_tgw" << n
-               << "[%type_j, %type_i] : !grid, i32, i32 -> f64\n"
-               << "    %tgs" << n << "_i = arith.mulf %tgd" << n << "_i, %tgw"
-               << n << "_ij : f64\n"
-               << "    %tgs" << n << "_j = arith.mulf %tgd" << n << "_j, %tgw"
-               << n << "_ji : f64\n"
-               << "    %tgs" << n << "_ij = arith.addf %tgs" << n << "_i, %tgs"
-               << n << "_j : f64\n"
-               << "    " << next << " = arith.addf " << value << ", %tgs" << n
-               << "_ij : f64\n";
-            value = next;
-          }
-        }
-        if (scalesVdw) {
-          // The distance r_A of a decoupled pair, r of the others. A pair
-          // without a σ, which has no Lennard-Jones, takes 0.3 nm in r_A,
-          // so that r_A stays above 0 where its particles overlap.
-          double alpha = control.freeEnergy.softCoreAlpha;
-          std::string distance = "%r";
-          if (alpha > 0.0) {
-            bool root = truncation != Truncation::None &&
-                        truncation != Truncation::Shift;
-            llvm::SmallVector<StringRef> results =
-                root ? llvm::SmallVector<StringRef>{"%sc_r"}
-                     : llvm::SmallVector<StringRef>{"%sc_asl", "%sc_r6",
-                                                    "%sc_i3"};
-            llvm::SmallVector<StringRef> types =
-                root ? llvm::SmallVector<StringRef>{"f64"}
-                     : llvm::SmallVector<StringRef>{"f64", "f64", "i32"};
-            context.emitIRFragment(
-                "    ", results, types,
-                {"%sigma", "%r", "%lambda_vdw", "%cross"},
-                {"f64", "f64", "f64", "f64"},
-                [alpha, power = control.freeEnergy.softCorePower,
-                 root](mlir::OpBuilder &builder,
-                       mlir::ValueRange values) -> TermIRValues {
-                  using namespace mlir;
-                  auto loc = builder.getUnknownLoc();
-                  auto constant = [&](double value) -> Value {
-                    return arith::ConstantOp::create(
-                        builder, loc, builder.getF64FloatAttr(value));
-                  };
-                  auto mul = [&](Value a, Value b) -> Value {
-                    return arith::MulFOp::create(builder, loc, a, b);
-                  };
-                  Value alphaValue = constant(alpha);
-                  Value zero = constant(0.0);
-                  Value floor = constant(0.3);
-                  Value has = arith::CmpFOp::create(
-                      builder, loc, arith::CmpFPredicate::OGT, values[0], zero);
-                  Value sigma = arith::SelectOp::create(builder, loc, has,
-                                                        values[0], floor);
-                  Value i3 = arith::ConstantOp::create(
-                      builder, loc, builder.getI32IntegerAttr(3));
-                  Value s3 = math::FPowIOp::create(builder, loc, sigma, i3);
-                  Value s6 = mul(s3, s3);
-                  Value r3 = math::FPowIOp::create(builder, loc, values[1], i3);
-                  Value r6 = mul(r3, r3);
-                  Value lambda = values[2];
-                  if (power == 2)
-                    lambda = mul(lambda, lambda);
-                  Value as = mul(alphaValue, s6);
-                  Value asl = mul(as, lambda);
-                  Value x = arith::AddFOp::create(builder, loc, r6, asl);
-                  if (!root)
-                    return {asl, r6, i3};
-                  Value sixth = constant(1.0 / 6.0);
-                  Value ra = math::PowFOp::create(builder, loc, x, sixth);
-                  Value half = constant(0.5);
-                  Value cross = arith::CmpFOp::create(
-                      builder, loc, arith::CmpFPredicate::OGT, values[3], half);
-                  return {arith::SelectOp::create(builder, loc, cross, ra,
-                                                  values[1])};
-                });
-            if (root)
-              distance = "%sc_r";
-          }
-          bool plain =
-              truncation == Truncation::None || truncation == Truncation::Shift;
-          if (alpha > 0.0 && plain) {
-            // The unswitched soft-core potential needs no sixth root
-            // [Beutler1994]; retain its original arithmetic sequence.
-            context.emitIRFragment(
-                "    ", {"%lj_full"}, {"f64"},
-                {"%sigma", "%epsilon", "%cross", "%sc_asl", "%sc_r6", "%sc_i3"},
-                {"f64", "f64", "f64", "f64", "f64", "i32"},
-                [truncation, cutoff](mlir::OpBuilder &builder,
-                                     mlir::ValueRange values) -> TermIRValues {
-                  using namespace mlir;
-                  auto loc = builder.getUnknownLoc();
-                  auto constant = [&](double value) -> Value {
-                    return arith::ConstantOp::create(
-                        builder, loc, builder.getF64FloatAttr(value));
-                  };
-                  auto mul = [&](Value a, Value b) -> Value {
-                    return arith::MulFOp::create(builder, loc, a, b);
-                  };
-                  auto sub = [&](Value a, Value b) -> Value {
-                    return arith::SubFOp::create(builder, loc, a, b);
-                  };
-                  Value xs = mul(values[3], values[2]);
-                  Value xx = arith::AddFOp::create(builder, loc, values[4], xs);
-                  Value g3 =
-                      math::FPowIOp::create(builder, loc, values[0], values[5]);
-                  Value g6 = mul(g3, g3);
-                  Value q6 = arith::DivFOp::create(builder, loc, g6, xx);
-                  Value q12 = mul(q6, q6);
-                  Value a = q12, b = q6;
-                  if (truncation == Truncation::Shift) {
-                    double cut6 = std::pow(cutoff, -6.0);
-                    Value rc6 = constant(cut6);
-                    Value rc12 = constant(cut6 * cut6);
-                    Value g12 = mul(g6, g6);
-                    Value c12 = mul(g12, rc12);
-                    Value c6 = mul(g6, rc6);
-                    a = sub(q12, c12);
-                    b = sub(q6, c6);
-                  }
-                  Value c4 = constant(4.0);
-                  Value e4 = mul(c4, values[1]);
-                  Value t = sub(a, b);
-                  return {mul(e4, t)};
-                });
-          } else {
-            emitLennardJones("%sigma", "%epsilon", "%lj_full", truncation,
-                             distance);
-          }
-          context.emitIRFragment(
-              "    ", {"%lj"}, {"f64"},
-              {"%cross", "%lambda_vdw", "%al_one", "%lj_full"},
-              {"f64", "f64", "f64", "f64"},
-              [](mlir::OpBuilder &builder,
-                 mlir::ValueRange values) -> TermIRValues {
-                auto loc = builder.getUnknownLoc();
-                mlir::Value cl = mlir::arith::MulFOp::create(
-                    builder, loc, values[0], values[1]);
-                mlir::Value scale =
-                    mlir::arith::SubFOp::create(builder, loc, values[2], cl);
-                return {mlir::arith::MulFOp::create(builder, loc, scale,
-                                                    values[3])};
-              });
-        } else {
-          emitLennardJones("%sigma", "%epsilon", "%lj", truncation);
-        }
-        value = "%lj";
-        if (program.ljpme) {
-          // The dispersion that the grid sums within the cutoff,
-          // −c_i c_j (1 − g(β r)) / r⁶, taken out again, so that the pair
-          // has its own Lennard-Jones there [Essmann1995, Wennberg2013]
-          // (D162); shifted with it to 0 at the cutoff if it is.
-          double beta = program.ljpmeBeta;
-          double shift = truncation == Truncation::Shift
-                             ? (1.0 - getDispersionScreen(beta * cutoff)) /
-                                   std::pow(cutoff, 6.0)
-                             : 0.0;
-          context.emitIRFragment(
-              "    ", {"%ljp"}, {"f64"},
-              {"%t_ljpme_c6", "%type_i", "%type_j", "%r", "%lj"},
-              {"!table", "i32", "i32", "f64", "f64"},
-              [beta, shift,
-               truncation](mlir::OpBuilder &builder,
-                           mlir::ValueRange operands) -> TermIRValues {
-                using namespace mlir;
-                auto loc = builder.getUnknownLoc();
-                auto constant = [&](double value) -> Value {
-                  return arith::ConstantOp::create(
-                      builder, loc, builder.getF64FloatAttr(value));
-                };
-                auto mul = [&](Value a, Value b) -> Value {
-                  return arith::MulFOp::create(builder, loc, a, b);
-                };
-                Value c6 = mdir::md::LookupOp::create(
-                    builder, loc, builder.getF64Type(), operands[0],
-                    ValueRange{operands[1], operands[2]});
-                Value betaValue = constant(beta);
-                Value r = operands[3];
-                Value x = mul(betaValue, r);
-                Value x2 = mul(x, x);
-                Value nx2 = arith::NegFOp::create(builder, loc, x2);
-                Value e = math::ExpOp::create(builder, loc, nx2);
-                Value x4 = mul(x2, x2);
-                Value half = constant(0.5);
-                Value h4 = mul(half, x4);
-                Value one = constant(1.0);
-                Value p1 = arith::AddFOp::create(builder, loc, one, x2);
-                Value polynomial = arith::AddFOp::create(builder, loc, p1, h4);
-                Value g = mul(e, polynomial);
-                Value kept = arith::SubFOp::create(builder, loc, one, g);
-                Value r2 = mul(r, r);
-                Value r4 = mul(r2, r2);
-                Value r6 = mul(r4, r2);
-                Value cr = arith::DivFOp::create(builder, loc, c6, r6);
-                Value correction = mul(cr, kept);
-                if (truncation == Truncation::Shift) {
-                  Value shiftValue = constant(shift);
-                  Value cs = mul(c6, shiftValue);
-                  correction =
-                      arith::SubFOp::create(builder, loc, correction, cs);
-                }
-                return {arith::AddFOp::create(builder, loc, operands[4],
-                                              correction)};
-              });
-          value = "%ljp";
-        }
+      for (size_t c = 0; c != seeds; ++c)
+        config.sigmaSeeds.push_back(control.tunableTableSeeds[c].sigma);
+      if (config.ljpme) {
+        config.ljpmeBeta = program.ljpmeBeta;
+        if (truncation == Truncation::Shift)
+          config.ljpmeShift =
+              (1.0 - getDispersionScreen(program.ljpmeBeta * cutoff)) /
+              std::pow(cutoff, 6.0);
       }
       if (coulomb) {
-        // The clamped distance prevents a decoupled overlapping pair from
-        // producing zero times infinity. Reaction-field r² keeps physical r.
-        auto reaction = program.reactionField ? getReactionField(control)
+        auto &spec = config.coulombSpec;
+        spec.scalesCoulomb = scalesCoulomb;
+        spec.pme = program.pme;
+        spec.prolate = program.pmeProlate;
+        spec.prolateSeries = takesProlateSeries(control) && !scalesCoulomb;
+        spec.farSeries = program.pmeFarSeries;
+        spec.beta = program.pmeBeta;
+        spec.shift = control.pmeShift || shiftsAtCutoff;
+        spec.reactionField = program.reactionField;
+        spec.reaction = program.reactionField ? getReactionField(control)
                                               : std::pair<double, double>{};
-        bool prolateSeries = takesProlateSeries(control) && !scalesCoulomb;
-        auto [prolateCells, prolateTerms] =
-            getProlateTableShape(control.precision);
-        llvm::SmallVector<StringRef> operands = {"%q_i", "%q_j", "%r"};
-        llvm::SmallVector<StringRef> operandTypes = {"f64", "f64", "f64"};
-        if (scalesCoulomb) {
-          operands.append({"%cross", "%al_one", "%lambda_coulomb"});
-          operandTypes.append({"f64", "f64", "f64"});
-        }
-        if (program.pme && program.pmeProlate && !prolateSeries) {
-          operands.push_back("%t_pme_far");
-          operandTypes.push_back("!grid");
-        }
-        context.emitIRFragment(
-            "    ", {"%coulomb"}, {"f64"}, operands, operandTypes,
-            [scalesCoulomb, pme = program.pme, prolate = program.pmeProlate,
-             prolateSeries, farSeries = program.pmeFarSeries,
-             beta = program.pmeBeta, shift = control.pmeShift || shiftsAtCutoff,
-             reactionField = program.reactionField, reaction, cutoff,
-             shiftsAtCutoff, prolateCells,
-             prolateTerms](mlir::OpBuilder &builder,
-                           mlir::ValueRange values) -> TermIRValues {
-              using namespace mlir;
-              auto loc = builder.getUnknownLoc();
-              auto constant = [&](double value) -> Value {
-                return arith::ConstantOp::create(
-                    builder, loc, builder.getF64FloatAttr(value));
-              };
-              auto mul = [&](Value a, Value b) -> Value {
-                return arith::MulFOp::create(builder, loc, a, b);
-              };
-              auto sub = [&](Value a, Value b) -> Value {
-                return arith::SubFOp::create(builder, loc, a, b);
-              };
-              auto div = [&](Value a, Value b) -> Value {
-                return arith::DivFOp::create(builder, loc, a, b);
-              };
-              Value f = constant(coulombInternal);
-              Value qq = mul(values[0], values[1]);
-              if (scalesCoulomb) {
-                Value cl = mul(values[3], values[5]);
-                Value scale = sub(values[4], cl);
-                qq = mul(qq, scale);
-              }
-              Value fqq = mul(f, qq);
-              Value r = values[2], rq = r;
-              if (scalesCoulomb) {
-                Value least = constant(1.0e-4);
-                rq = arith::MaximumFOp::create(builder, loc, r, least);
-              }
-              if (pme && prolate) {
-                // Direct prolate kernel [Liang2026, eq. 3]. Its cutoff shift is
-                // zero.
-                Value inverse = constant(1.0 / cutoff);
-                Value xr = mul(rq, inverse);
-                Value far;
-                if (prolateSeries) {
-                  Value two = constant(2.0);
-                  Value one = constant(1.0);
-                  Value twice = mul(two, xr);
-                  Value t = sub(twice, one);
-                  Value mean = mdir::md::ChebyshevOp::create(
-                      builder, loc, t, builder.getF64ArrayAttr(farSeries));
-                  Value rest = sub(one, xr);
-                  far = mul(rest, mean);
-                } else {
-                  far = buildProlateSplitting(builder, values.back(), xr,
-                                              prolateCells, prolateTerms);
-                }
-                Value screened = div(far, rq);
-                return {mul(fqq, screened)};
-              }
-              if (pme) {
-                // Gaussian Ewald direct kernel, optionally shifted at the
-                // cutoff.
-                Value betaValue = constant(beta);
-                Value br = mul(betaValue, rq);
-                Value erfc = math::ErfcOp::create(builder, loc, br);
-                Value screened = div(erfc, rq);
-                if (shift) {
-                  Value shiftValue =
-                      constant(std::erfc(beta * cutoff) / cutoff);
-                  screened = sub(screened, shiftValue);
-                }
-                return {mul(fqq, screened)};
-              }
-              if (reactionField) {
-                // Reaction field f q q (1/r + k r² - c), zero at cutoff (D140).
-                Value one = constant(1.0);
-                Value k = constant(reaction.first);
-                Value c = constant(reaction.second);
-                Value inverse = div(one, rq);
-                Value rr = mul(r, r);
-                Value field = mul(k, rr);
-                Value near =
-                    arith::AddFOp::create(builder, loc, inverse, field);
-                Value rf = sub(near, c);
-                return {mul(fqq, rf)};
-              }
-              if (shiftsAtCutoff) {
-                Value one = constant(1.0);
-                Value inverse = div(one, rq);
-                Value rcInverse = constant(1.0 / cutoff);
-                Value cut = sub(inverse, rcInverse);
-                return {mul(fqq, cut)};
-              }
-              return {div(fqq, rq)};
-            });
-        if (value.empty()) {
-          value = "%coulomb";
-        } else {
-          os << "    %k = arith.addf " << value << ", %coulomb : f64\n";
-          value = "%k";
-        }
+        spec.cutoff = cutoff;
+        spec.shiftsAtCutoff = shiftsAtCutoff;
+        auto shape = getProlateTableShape(control.precision);
+        spec.prolateCells = shape.first;
+        spec.prolateTerms = shape.second;
       }
-      // In `@alchemical` the pairs that λ leaves alone add nothing.
-      if (alchemicalOnly) {
-        os << "    %masked = arith.mulf " << value << ", %cross : f64\n";
-        value = "%masked";
+      // Names are owned until the immediate assembly join has consumed them.
+      // Recipes capture only configuration and later receive typed values.
+      std::vector<std::string> names = {"%n", "%x", "%cell", "%p_type", "%p_q"};
+      llvm::SmallVector<StringRef> types = {"!pairs", "!vec", "!md.cell",
+                                            "!ids", "!real"};
+      if (config.flags) {
+        names.emplace_back("%p_alch");
+        types.push_back("!real");
       }
-      os << "    md.yield " << value << " : f64\n"
-         << "  } : !pairs, !vec -> f64\n";
+      for (size_t c = 0; c != seeds; ++c) {
+        names.push_back("%tg_d" + std::to_string(c));
+        types.push_back("!real");
+      }
+      config.gatheredCount = names.size() - 3;
+      auto operand = [&](std::string name, StringRef type) {
+        size_t index = names.size();
+        names.push_back(std::move(name));
+        types.push_back(type);
+        return index;
+      };
+      if (lj) {
+        config.sigmaTable = operand("%t_lj_sigma", "!table");
+        config.epsilonTable = operand("%t_lj_epsilon", "!table");
+        for (size_t c = 0; c != seeds; ++c)
+          config.seedTables.push_back(
+              operand("%t_tgw" + std::to_string(c), "!grid"));
+        if (scalesVdw)
+          config.lambdaVdw = operand("%lambda_vdw", "f64");
+        if (config.ljpme)
+          config.dispersionTable = operand("%t_ljpme_c6", "!table");
+      }
+      if (coulomb) {
+        if (scalesCoulomb)
+          config.lambdaCoulomb = operand("%lambda_coulomb", "f64");
+        if (config.coulombSpec.pme && config.coulombSpec.prolate &&
+            !config.coulombSpec.prolateSeries)
+          config.prolateTable = operand("%t_pme_far", "!grid");
+      }
+      llvm::SmallVector<StringRef> operands;
+      for (const auto &name : names)
+        operands.push_back(name);
+      context.emitIRFragment(
+          "  ", {"%u_nonbonded"}, {"f64"}, operands, types,
+          [config](mlir::OpBuilder &builder,
+                   mlir::ValueRange values) -> TermIRValues {
+            using namespace mlir;
+            auto loc = builder.getUnknownLoc();
+            auto *ctx = builder.getContext();
+            auto sum = mdir::md::SumRelationOp::create(
+                builder, loc, builder.getF64Type(), values[0], values[1],
+                values[2], values.slice(3, config.gatheredCount),
+                mdir::md::ExchangeAttr::get(ctx, mdir::md::Exchange::Symmetric),
+                mdir::md::ExchangeBasisAttr::get(
+                    ctx, config.sigmaSeeds.empty()
+                             ? mdir::md::ExchangeBasis::Proof
+                             : mdir::md::ExchangeBasis::Asserted),
+                mdir::md::TruncationAttr::get(ctx, mdir::md::Truncation::None),
+                FloatAttr{});
+            llvm::SmallVector<Type> blockTypes = {
+                builder.getF64Type(),
+                VectorType::get({3}, builder.getF64Type()),
+                builder.getI32Type(),
+                builder.getI32Type(),
+                builder.getF64Type(),
+                builder.getF64Type()};
+            if (config.flags)
+              blockTypes.append(2, builder.getF64Type());
+            blockTypes.append(2 * config.sigmaSeeds.size(),
+                              builder.getF64Type());
+            llvm::SmallVector<Location> locations(blockTypes.size(), loc);
+            Block *block = builder.createBlock(&sum.getKernel(), {}, blockTypes,
+                                               locations);
+            auto args = block->getArguments();
+            auto mul = [&](Value a, Value b) -> Value {
+              return arith::MulFOp::create(builder, loc, a, b);
+            };
+            auto add = [&](Value a, Value b) -> Value {
+              return arith::AddFOp::create(builder, loc, a, b);
+            };
+            auto sub = [&](Value a, Value b) -> Value {
+              return arith::SubFOp::create(builder, loc, a, b);
+            };
+            auto lookup = [&](Value table, Value i, Value j) -> Value {
+              return mdir::md::LookupOp::create(
+                  builder, loc, builder.getF64Type(), table, ValueRange{i, j});
+            };
+            Value r = args[0], cross, one;
+            if (config.flags) {
+              Value both = mul(args[6], args[7]);
+              Value total = add(args[6], args[7]);
+              Value twice = add(both, both);
+              cross = sub(total, twice);
+              one = arith::ConstantOp::create(builder, loc,
+                                              builder.getF64FloatAttr(1.0));
+            }
+            Value energy;
+            if (config.lj) {
+              Value sigma = lookup(values[config.sigmaTable], args[2], args[3]);
+              Value epsilon =
+                  lookup(values[config.epsilonTable], args[2], args[3]);
+              size_t firstSeed = 6 + (config.flags ? 2 : 0);
+              for (bool isSigma : {true, false}) {
+                Value current = isSigma ? sigma : epsilon;
+                for (size_t c = 0; c != config.sigmaSeeds.size(); ++c) {
+                  if (config.sigmaSeeds[c] != isSigma)
+                    continue;
+                  Value table = values[config.seedTables[c]];
+                  Value wij = lookup(table, args[2], args[3]);
+                  Value wji = lookup(table, args[3], args[2]);
+                  Value di = mul(args[firstSeed + 2 * c], wij);
+                  Value dj = mul(args[firstSeed + 2 * c + 1], wji);
+                  Value both = add(di, dj);
+                  current = add(current, both);
+                }
+                if (isSigma)
+                  sigma = current;
+                else
+                  epsilon = current;
+              }
+              Value lj;
+              if (config.scalesVdw) {
+                bool root = config.truncation != Truncation::None &&
+                            config.truncation != Truncation::Shift;
+                Value distance = r;
+                TermIRValues softened;
+                if (config.alpha > 0.0) {
+                  softened = buildSoftCoreDistance(
+                      builder,
+                      ValueRange{sigma, r, values[config.lambdaVdw], cross},
+                      config.alpha, config.power, root);
+                  if (root)
+                    distance = softened[0];
+                }
+                Value full;
+                if (config.alpha > 0.0 && !root)
+                  full = buildSoftCorePotential(
+                      builder,
+                      ValueRange{sigma, epsilon, cross, softened[0],
+                                 softened[1], softened[2]},
+                      config.truncation, config.cutoff);
+                else
+                  full = buildLennardJonesIR(
+                      builder, ValueRange{sigma, epsilon, distance, r},
+                      config.cutoff, config.from, config.truncation);
+                Value cl = mul(cross, values[config.lambdaVdw]);
+                Value scale = sub(one, cl);
+                lj = mul(scale, full);
+              } else {
+                lj = buildLennardJonesIR(
+                    builder, ValueRange{sigma, epsilon, r, r}, config.cutoff,
+                    config.from, config.truncation);
+              }
+              if (config.ljpme)
+                lj = buildLJPMEDirect(builder,
+                                      ValueRange{values[config.dispersionTable],
+                                                 args[2], args[3], r, lj},
+                                      config.ljpmeBeta, config.ljpmeShift,
+                                      config.truncation);
+              energy = lj;
+            }
+            if (config.coulomb) {
+              llvm::SmallVector<Value> inputs = {args[4], args[5], r};
+              if (config.coulombSpec.scalesCoulomb)
+                inputs.append({cross, one, values[config.lambdaCoulomb]});
+              if (config.coulombSpec.pme && config.coulombSpec.prolate &&
+                  !config.coulombSpec.prolateSeries)
+                inputs.push_back(values[config.prolateTable]);
+              Value q = buildDirectCoulomb(builder, inputs, config.coulombSpec);
+              energy = energy ? add(energy, q) : q;
+            }
+            if (config.alchemicalOnly)
+              energy = mul(energy, cross);
+            mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+            return {sum.getResult()};
+          });
       add("nonbonded");
     }
 

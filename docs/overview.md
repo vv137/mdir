@@ -133,7 +133,10 @@ charge scaling, cutoff selection, and yields with `OpBuilder`. The LJPME
 excluded-pair loop is typed as well, including its cancellation-free
 small-distance Horner series and closed-form selection. Reciprocal dispersion
 and Coulomb emission share a typed constructor with owned grid/configuration
-data; charge scaling is a typed particle map before the same reciprocal op.
+data; charge scaling is a typed particle map before the same reciprocal op. The complete
+primary nonbonded relation loop is also typed, including alchemical flags,
+tunable-table seeds, scalar kernels, and the ordered final contribution.
+`TermNonbonded.cpp` no longer writes operation text.
 
 ### 2.2 The dialects
 

@@ -48,3 +48,6 @@ operation dumps, parser excerpts (including missing SSA names), user-file
 locations, exit status, and output remain compared. Successful program output
 and raw-form failures remain byte-exact. Recorded hash files use version 2
 for this diagnostic presentation policy.
+
+The nonbonded matrix includes the supported power-two soft-core paths with
+a plain cutoff and potential shift, in both precision modes and targets.

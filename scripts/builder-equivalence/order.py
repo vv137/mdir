@@ -139,6 +139,21 @@ a = 0.01
         alchemical += '\n[free_energy]\ncouple = "@1-7"\nstate = 1\n' \
                       '[free_energy.lambdas]\ncoulomb = [0.0, 0.5, 1.0]\nvdw = [0.0, 0.5, 1.0]\n'
         write(f"nonbonded-alchemical-{precision}", alchemical)
+        # The supported root-free soft-core paths with the second lambda
+        # power retain their original intermediate operation order.
+        for modifier in ("NONE", "POTENTIAL_SHIFT"):
+            powered, count = re.subn(
+                r'(?m)^(lennard_jones_modifier\s*=\s*)"POTENTIAL_SHIFT"',
+                lambda match: match[1] + '"' + modifier + '"', alchemical)
+            assert count == 1
+            powered = powered.replace('[free_energy]\n',
+                '[free_energy]\nsoft_core_power = 2\n')
+            if modifier == "NONE":
+                cutoff = re.search(r'(?m)^cutoff\s*=\s*([^\n#]+)', powered)[1].strip()
+                powered, count = re.subn(r'(?m)^(switch_distance\s*=\s*)[^\n#]+',
+                    lambda match: match[1] + cutoff, powered)
+                assert count == 1
+            write(f"nonbonded-alchemical-power2-{modifier}-{precision}", powered)
 
     bare = (root / "test/Driver/charged.toml").read_text().replace(
         '"Inputs/', '"' + str(inputs) + "/")

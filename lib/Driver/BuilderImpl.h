@@ -397,6 +397,10 @@ struct TermPotentialAddition {
   void append(StringRef value, StringRef sum) const { result(value, sum); }
 };
 
+/// Typed scalar operands: sigma, epsilon, soft-core distance, physical distance.
+mlir::Value buildLennardJonesIR(mlir::OpBuilder &, mlir::ValueRange,
+                                double cutoff, double from, Truncation);
+
 /// The shared scalar kernel of ordinary and special 1-4 LJ pairs.
 void emitLennardJones(TermEmission &, const Control &, StringRef sigma,
                       StringRef epsilon, StringRef result, Truncation,
