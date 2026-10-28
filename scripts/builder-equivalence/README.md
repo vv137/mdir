@@ -60,3 +60,7 @@ a plain cutoff and potential shift, in both precision modes and targets.
 
 Expression cases cover all scalar primitives, lazy definitions, and a
 constant with no bound inputs, in both precisions and targets.
+
+Grouped topology-pair cases combine every LJ parameter lookup with overlapping
+groups, particle fields, a tabulated function, and time dependence in both
+precisions and targets. Their modules and lowered programs must verify.

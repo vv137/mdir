@@ -155,6 +155,16 @@ a = 0.01
         constant = scalar.replace('expression = "a/r^6"', 'expression = "1.2345"')
         constant = re.sub(r'(?m)^a\s*=.*\n', '', constant)
         write(f"expression-constant-{precision}", constant)
+        # A grouped topology pair uses every lookup, particle fields, a table,
+        # and the current time at the same insertion site as the other kinds.
+        pair_expression = ('a*(sigma/r+epsilon+(sigma1+sigma2)/r+epsilon1+epsilon2+'
+            'coulomb*q1*q2/r+w1*w2+rank_wave(r)+t)')
+        pair = scalar.replace('expression = "a/r^6"',
+            'groups = ["@1-2", "@2-3"]\nexpression = "' + pair_expression + '"')
+        pair += '\n[[energy.parameter]]\nname = "w"\nvalue = 1.0\n' \
+                '[[energy.parameter]]\nname = "w"\nselection = "@1"\nvalue = 0.5\n' \
+                '[[energy.function]]\nname = "rank_wave"\nmin = 0.0\nmax = 50.0\nvalues = [0.0, 1.0, 0.0]\n'
+        write(f"topology-pair-inputs-{precision}", pair)
         # The supported root-free soft-core paths with the second lambda
         # power retain their original intermediate operation order.
         for modifier in ("NONE", "POTENTIAL_SHIFT"):

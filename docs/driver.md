@@ -1356,7 +1356,13 @@ tunable-table seeds, scalar kernels, and the ordered final contribution.
 `TermNonbonded.cpp` no longer writes operation text. The shared custom-expression
 scalar emitter also builds typed operations from an owned `ExpressionIR`
 snapshot of the parsed AST and grid geometry. Lazy definitions and caller
-binding precedence are preserved without retaining borrowed hook state. The
+binding precedence are preserved without retaining borrowed hook state.
+
+The complete topology custom-pair relation loop also uses typed operations:
+overlapping group masks, particle-field arguments, all six LJ parameter
+lookups, tunable constants, time/lambda/observed bindings, truncation, energy
+conversion, and the yield retain their original order. Each loop owns its
+configuration and expression snapshot; no hook-local state escapes. The
 existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

@@ -207,6 +207,12 @@ scalar emitter also builds typed operations from an owned `ExpressionIR`
 snapshot of the parsed AST and grid geometry. Lazy definitions and caller
 binding precedence are preserved without retaining borrowed hook state.
 
+The complete topology custom-pair relation loop also uses typed operations:
+overlapping group masks, particle-field arguments, all six LJ parameter
+lookups, tunable constants, time/lambda/observed bindings, truncation, energy
+conversion, and the yield retain their original order. Each loop owns its
+configuration and expression snapshot; no hook-local state escapes.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and the unchanged legacy parse-error path; the corpus also rejects internal
