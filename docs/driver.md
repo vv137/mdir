@@ -1441,6 +1441,11 @@ Built-in harmonic angles construct the complete typed tuple reduction with its
 angle coordinate and original tuple-field/scalar operation order.
 `TermAngle.cpp` no longer writes operation text.
 
+Urey-Bradley terms construct the complete typed distance reduction over their
+existing endpoint tuple. Tuple fields and half/displacement/square/multiply
+order remain unchanged.
+`TermUreyBradley.cpp` no longer writes operation text.
+
 For custom expressions, the existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

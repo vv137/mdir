@@ -290,6 +290,11 @@ Built-in harmonic angles construct the complete typed tuple reduction with its
 angle coordinate and original tuple-field/scalar operation order.
 `TermAngle.cpp` no longer writes operation text.
 
+Urey-Bradley terms construct the complete typed distance reduction over their
+existing endpoint tuple. Tuple fields and half/displacement/square/multiply
+order remain unchanged.
+`TermUreyBradley.cpp` no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and invalid builder assembly, which fails at its construction boundary with

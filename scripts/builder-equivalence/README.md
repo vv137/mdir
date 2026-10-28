@@ -116,3 +116,6 @@ and targets. Coordinate and tuple-field order remain compared at both stages.
 
 Zero angle force constants retain the independent Urey-Bradley contributions
 in both precisions and targets, including run and segmented forms.
+
+Zero Urey-Bradley force constants retain the independent angle contributions
+in both precisions and targets, including run and segmented forms.
