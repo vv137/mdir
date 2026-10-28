@@ -75,3 +75,7 @@ coordinates with the other kinds, particle fields, time, and alchemical bindings
 Centroid geometry cases combine all three arities with overlapping weighted
 groups, regular/compound tuples, the other term kinds, and pull output in both
 precisions and targets.
+
+Centroid expression cases combine lambda, time, polynomial parameter dependence,
+weighted groups, and pull output in both precisions and targets, retaining the
+reader's existing restriction on tabulated functions in centroid terms.

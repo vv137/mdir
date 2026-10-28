@@ -23,6 +23,15 @@ struct TupleLoopIRConfig {
   std::vector<std::pair<std::string, size_t>> externalBindings, functionTables;
 };
 
+struct CentroidTermIRConfig {
+  explicit CentroidTermIRConfig(ExpressionIR expression)
+      : expression(std::move(expression)) {}
+  ExpressionIR expression;
+  std::string termName;
+  std::vector<std::pair<std::string, double>> parameters;
+  std::vector<std::pair<std::string, size_t>> externalBindings, functionTables;
+};
+
 namespace mdir::driver::builder {
 class TupleTermBuilder final : public TermBuilder {
 public:
@@ -229,29 +238,67 @@ void TupleTermBuilder::collectTupleSets(TermParameters &context) const {
 
 void TupleTermBuilder::emitCentroidTerm(TermEmission &context, size_t index, const TupleTerm &term) {
   const Control &control = context.getControl();
-  llvm::raw_ostream &os = context.getOutput();
-  // Numbers outside the kernels, named after the term.
   std::string prefix = "%cb" + std::to_string(index) + "_";
-  llvm::StringMap<std::string> values =
+  llvm::StringMap<std::string> variables =
       context.emitCentroidCoordinates(term, "  ", "%x", "%cell", "%r_", prefix);
-  for (auto [k, parameter] : llvm::enumerate(term.parameters)) {
-    std::string name = prefix + "p" + std::to_string(k);
-    os << "  " << name << " = arith.constant "
-       << formatReal(parameter.second.front()) << " : f64\n";
-    values[parameter.first] = name;
+  Expression expression =
+      llvm::cantFail(Expression::parse(term.expression, control.functions));
+  CentroidTermIRConfig config(expression.prepareIR());
+  config.termName = term.name;
+  for (const auto &parameter : term.parameters) {
+    config.parameters.emplace_back(parameter.first, parameter.second.front());
+    variables[parameter.first] = "";
   }
   if (control.usesTime)
-    values["t"] = "%time";
-  context.bindLambdas(values);
-  context.bindObserved(term.name, values);
-  Expression expression = llvm::cantFail(
-      Expression::parse(term.expression, control.functions));
-  std::string energy = emitExpressionIR(context, expression, values,
-                                        prefix + "e", "  ", term.name);
-  os << "  " << prefix << "kj = arith.constant " << formatReal(units::energy)
-     << " : f64\n"
-     << "  %u_centroid_" << term.name << " = arith.mulf " << energy << ", "
-     << prefix << "kj : f64\n";
+    variables["t"] = "%time";
+  context.bindLambdas(variables);
+  context.bindObserved(term.name, variables);
+  llvm::SmallVector<StringRef> supplied;
+  for (const auto &entry : variables)
+    supplied.push_back(entry.getKey());
+  auto inputs = config.expression.getInputs(supplied);
+  std::vector<std::string> names;
+  llvm::SmallVector<StringRef> types;
+  auto operand = [&](std::string name, StringRef type) {
+    size_t slot = names.size();
+    names.push_back(std::move(name));
+    types.push_back(type);
+    return slot;
+  };
+  for (const auto &name : inputs.names) {
+    auto found = variables.find(name);
+    assert(found != variables.end() && "missing centroid expression binding");
+    if (!found->second.empty())
+      config.externalBindings.emplace_back(name, operand(found->second, "f64"));
+  }
+  for (const auto &name : inputs.tables)
+    config.functionTables.emplace_back(name, operand("%t_" + name, "!grid"));
+  llvm::SmallVector<StringRef> operands;
+  for (const auto &name : names)
+    operands.push_back(name);
+  std::string result = "%u_centroid_" + term.name;
+  context.emitIRFragment(
+      "  ", {result}, {"f64"}, operands, types,
+      [config](mlir::OpBuilder &builder,
+               mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto constant = [&](double value) -> Value {
+          return arith::ConstantOp::create(builder, loc,
+                                           builder.getF64FloatAttr(value));
+        };
+        llvm::StringMap<Value> bindings, tables;
+        for (const auto &[name, value] : config.parameters)
+          bindings[name] = constant(value);
+        for (const auto &[name, slot] : config.externalBindings)
+          bindings[name] = values[slot];
+        for (const auto &[name, slot] : config.functionTables)
+          tables[name] = values[slot];
+        Value expression =
+            config.expression.build(builder, bindings, tables, config.termName);
+        Value kj = constant(units::energy);
+        return {arith::MulFOp::create(builder, loc, expression, kj)};
+      });
 }
 
 

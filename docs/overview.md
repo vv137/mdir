@@ -165,6 +165,11 @@ retain their explicit arithmetic and loop order. Deferred construction owns
 only group count and arity, with typed relation/position/cell/weight operands;
 it does not retain center membership arrays or hook-local references.
 
+Centroid scalar terms also construct their parameter constants, expression,
+and energy conversion with typed operations. Owned scalar metadata preserves
+constant order and geometry/time/lambda/observed binding precedence.
+`TermTuple.cpp` no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and the unchanged legacy parse-error path; the corpus also rejects internal

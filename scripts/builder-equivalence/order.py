@@ -244,6 +244,21 @@ phase = 0.4
 '''
         write(f"centroid-geometry-{precision}", text)
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"nonbonded-alchemical-{precision}.toml")
+        text = source.read_text().replace('[output]\n', '[output]\npull = "centroid-lambda.dat"\n')
+        text += '''
+[[energy.bond]]
+name = "rank_centroid_lambda"
+expression = "lambda_vdw*k*(r-r0)^2+lambda_coulomb*a*(1+r*r)+t"
+groups = ["@1-2", "@2-4"]
+weighting = "NONE"
+k = 0.1
+r0 = 1.0
+a = 0.01
+'''
+        write(f"centroid-expression-{precision}", text)
+
     bare = (root / "test/Driver/charged.toml").read_text().replace(
         '"Inputs/', '"' + str(inputs) + "/")
     for precision in ("DOUBLE", "MIXED"):
