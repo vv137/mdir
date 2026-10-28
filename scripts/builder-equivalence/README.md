@@ -84,3 +84,7 @@ Triplet cases cover all distance/angle/cosine coordinates, particle-place fields
 uniform parameters, time, tabulated functions, and a constant-zero expression
 with its required fallback coordinate. Both precisions verify on the CPU; GPU
 targets retain the existing support error.
+
+External-term cases combine charges, particle parameter lists, coordinates, time,
+lambda, and a function table in cell and fixed frames, in both precisions and
+targets. Existing combined controls retain the ungathered and uncharged paths.

@@ -328,6 +328,18 @@ a = 0.01
         assert count == 1
         write(f"triplet-zero-{precision}", before + marker + changed)
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"nonbonded-alchemical-{precision}.toml")
+        text = source.read_text()
+        old = 'expression = "k*(x-t)^2"'
+        assert text.count(old) == 1
+        text = text.replace(old, 'expression = "lambda_vdw*(k*(x-t)^2+a*y+b*z+q*rank_external_wave(z))+lambda_coulomb*c"\na = [0.2]\nb = [0.3]\nc = 0.4')
+        text += ('\n[[energy.function]]\nname = "rank_external_wave"\n'
+                 'min = -100.0\nmax = 100.0\nvalues = [0.0, 0.1, 0.0]\n')
+        write(f"external-cell-{precision}", text)
+        assert 'scaling = "CELL"' in text
+        write(f"external-fixed-{precision}", text.replace('scaling = "CELL"', 'scaling = "NONE"'))
+
     model_ir = '''md.potential @order_model(%positions: !md.field<@atoms, 3 x f64>, %box: !md.cell, %numbers: !md.field<@atoms, i32>) -> f64 {
   %total = md.sum_particles gather(%positions : !md.field<@atoms, 3 x f64>) {
   ^bb0(%position: vector<3xf64>):

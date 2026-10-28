@@ -1392,7 +1392,13 @@ particle-place arguments, scalar body, yield, and ordered energy additions with
 typed operations. Owned configuration preserves coordinate order, unit
 conversions, uniform and gathered parameters, time and table bindings, and the
 unused-distance fallback. Triplet execution remains CPU-only; `TermTriplet.cpp`
-no longer writes operation text. The
+no longer writes operation text.
+
+External terms also construct cell-frame scaling, particle gathers, scalar
+coordinates and bindings, expression results, membership selection, and yields
+with typed operations. Owned configuration preserves field and constant order,
+charge and parameter arguments, and time/lambda/observed binding precedence.
+`TermExternal.cpp` no longer writes operation text. The
 existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 
