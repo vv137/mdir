@@ -311,6 +311,23 @@ a = 0.01
             write(f"triplet-{name}-{precision}", text.replace(
                 'precision = "DOUBLE"', f'precision = "{precision}"'))
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"triplet-shared-{precision}.toml")
+        before, marker, tail = source.read_text().partition('[[energy.triplet]]')
+        assert marker
+        formula = ('(lambda1+sqrt(lambda2*lambda3))*epsilon*'
+                   '(r12+r13+r23+theta+cos(theta)+rank_triplet_wave(r23)+t)*'
+                   'exp(gamma*sigma/(r12-a*sigma))*exp(gamma*sigma/(r13-a*sigma))')
+        changed, count = re.subn(r'(?m)^expression\s*=.*$',
+            lambda match: 'expression = "' + formula + '"', tail, count=1)
+        assert count == 1
+        text = before + marker + changed + ('\n[[energy.function]]\nname = "rank_triplet_wave"\n'
+            'min = 0.0\nmax = 20.0\nvalues = [0.0, 0.1, 0.0]\n')
+        write(f"triplet-primitives-{precision}", text)
+        changed, count = re.subn(r'(?m)^expression\s*=.*$', 'expression = "0.0"', tail, count=1)
+        assert count == 1
+        write(f"triplet-zero-{precision}", before + marker + changed)
+
     model_ir = '''md.potential @order_model(%positions: !md.field<@atoms, 3 x f64>, %box: !md.cell, %numbers: !md.field<@atoms, i32>) -> f64 {
   %total = md.sum_particles gather(%positions : !md.field<@atoms, 3 x f64>) {
   ^bb0(%position: vector<3xf64>):

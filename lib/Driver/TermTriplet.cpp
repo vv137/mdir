@@ -1,8 +1,34 @@
 // Custom triplet terms and particle-place parameters (D359, D361, #683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDCoordinates.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/IR/Builders.h"
 
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
+
+struct TripletCoordinateIR {
+  std::string name;
+  mdir::md::Coordinate coordinate;
+};
+struct TripletParameterIR {
+  std::string name;
+  double value = 0.0;
+  std::optional<size_t> argument;
+};
+struct TripletIRConfig {
+  explicit TripletIRConfig(ExpressionIR expression)
+      : expression(std::move(expression)) {}
+  ExpressionIR expression;
+  std::string termName;
+  double cutoff = 0.0;
+  size_t gatheredCount = 0;
+  std::vector<TripletCoordinateIR> coordinates;
+  std::vector<std::pair<std::string, double>> constants;
+  std::vector<TripletParameterIR> parameters;
+  std::vector<std::pair<std::string, size_t>> externalBindings, functionTables;
+};
 
 namespace mdir::driver::builder {
 class TripletTermBuilder final : public TermBuilder {
@@ -86,12 +112,15 @@ std::string TripletTermBuilder::getTripletParameter(const Control &control,
 void TripletTermBuilder::emitBareContributions(TermEmission &context,
                                                std::string &total) const {
   const Control &control = context.getControl();
-  auto &os = context.getOutput();
   for (auto [index, term] : llvm::enumerate(control.triplets)) {
     std::string result = emitTripletTerm(context, index, term);
     std::string sum = "%total_t" + std::to_string(index);
-    os << "  " << sum << " = arith.addf " << total << ", " << result
-       << " : f64\n";
+    context.emitIRFragment(
+        "  ", {sum}, {"f64"}, {total, result}, {"f64", "f64"},
+        [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          return {mlir::arith::AddFOp::create(builder, builder.getUnknownLoc(),
+                                              values[0], values[1])};
+        });
     total = sum;
   }
 }
@@ -101,122 +130,154 @@ std::string TripletTermBuilder::emitTripletTerm(TermEmission &context,
                                                 const TripletTerm &term) {
   const Control &control = context.getControl();
   auto parameters = context.getTypeParameters();
-  auto &os = context.getOutput();
-  // The triplets of the neighborhood within the cutoff of the term, each
-  // center with each unordered pair of its legs once (D160); the center is
-  // particle 1 of the expression and place 1 of the IR, so the ends 2 and
-  // 3 are places 0 and 2.
-  std::string k = std::to_string(index);
-  std::string relation = "%triplets" + k, result = "%u_triplet" + k;
-  os << "  " << relation << " = md.triplets %n cutoff("
-     << formatReal(term.cutoff * units::length)
-     << ") : !pairs -> !md.relation<@atoms, 3, reversal>\n";
-
   Expression expression =
       llvm::cantFail(Expression::parse(term.expression, control.functions));
-  // cos(theta) is the coordinate cosine(0, 1, 2), whose derivative has no
-  // 1/sin(theta), which a collinear triplet makes infinite
-  // (tuples.md, Section 3.1); theta alone is the angle.
+  // The cosine coordinate avoids the angle derivative's 1/sin(theta) at
+  // collinear triplets (docs/tuples.md, Section 3.1).
   expression.replaceCall("cos", "theta", "cos(theta)");
-  const std::vector<std::string> &names = expression.getNames();
-  struct Variable {
-    const char *name, *coordinate;
-    bool isLength;
-  };
-  static const Variable variables[] = {
-      {"r12", "distance(0, 1)", true},
-      {"r13", "distance(2, 1)", true},
-      {"r23", "distance(0, 2)", true},
-      {"theta", "angle(0, 1, 2)", false},
-      {"cos(theta)", "cosine(0, 1, 2)", false}};
-  // A loop over tuples takes at least one coordinate: r12, if the
-  // expression uses none.
-  std::vector<const Variable *> used;
-  for (const Variable &variable : variables)
+  const auto &names = expression.getNames();
+  TripletIRConfig config(expression.prepareIR());
+  config.termName = term.name;
+  config.cutoff = term.cutoff * units::length;
+  const TripletCoordinateIR variables[] = {
+      {"r12", {mdir::md::CoordinateKind::Distance, {0, 1}}},
+      {"r13", {mdir::md::CoordinateKind::Distance, {2, 1}}},
+      {"r23", {mdir::md::CoordinateKind::Distance, {0, 2}}},
+      {"theta", {mdir::md::CoordinateKind::Angle, {0, 1, 2}}},
+      {"cos(theta)", {mdir::md::CoordinateKind::Cosine, {0, 1, 2}}}};
+  for (const auto &variable : variables)
     if (llvm::is_contained(names, variable.name))
-      used.push_back(&variable);
-  if (used.empty())
-    used.push_back(&variables[0]);
-
-  // The parameters of the particles that differ between the types, one
-  // value for each place.
+      config.coordinates.push_back(variable);
+  if (config.coordinates.empty())
+    config.coordinates.push_back(variables[0]);
   std::vector<std::string> gathered;
-  for (const std::string &name : names) {
+  auto parameterFor = [&](StringRef stem) -> const Parameter & {
+    auto found = llvm::find_if(
+        parameters, [&](const Parameter &p) { return p.name == stem; });
+    assert(found != parameters.end() && "missing triplet type parameter");
+    return *found;
+  };
+  for (const auto &name : names) {
     std::string stem = getTripletParameter(control, term, name);
     if (stem.empty() || llvm::is_contained(gathered, stem))
       continue;
-    const Parameter &parameter = *llvm::find_if(
-        parameters, [&](const Parameter &p) { return p.name == stem; });
-    if (!parameter.isUniform)
+    if (!parameterFor(stem).isUniform)
       gathered.push_back(stem);
   }
-
-  std::string p = "%t" + k + "_";
-  os << "  " << result << " = md.sum_tuples " << relation
-     << ", %x, %cell coordinates(";
-  llvm::interleaveComma(used, os,
-                        [&](const Variable *v) { os << v->coordinate; });
-  os << ")";
-  if (!gathered.empty()) {
-    os << "\n      gather(";
-    llvm::interleaveComma(gathered, os,
-                          [&](const std::string &s) { os << "%p_" << s; });
-    os << " : ";
-    llvm::interleaveComma(gathered, os,
-                          [&](const std::string &) { os << "!real"; });
-    os << ")";
-  }
-  os << " {\n  ^bb0(";
-  llvm::StringMap<std::string> values;
-  for (auto [i, v] : llvm::enumerate(used))
-    os << (i ? ", " : "") << p << "v" << i << ": f64";
-  for (const std::string &stem : gathered)
-    for (int place = 0; place != 3; ++place)
-      os << ", " << p << stem << "_" << place << ": f64";
-  os << "):\n";
-
-  // The expression is evaluated in the units of the control file.
-  os << "    " << p << "to_length = arith.constant "
-     << formatReal(1.0 / units::length) << " : f64\n";
-  for (auto [i, v] : llvm::enumerate(used)) {
-    std::string argument = p + "v" + std::to_string(i);
-    if (v->isLength) {
-      os << "    " << argument << "_in = arith.mulf " << argument << ", " << p
-         << "to_length : f64\n";
-      argument += "_in";
-    }
-    values[v->name] = argument;
-  }
-  for (auto &[name, value] : term.constants) {
-    os << "    " << p << "c_" << name << " = arith.constant "
-       << formatReal(value) << " : f64\n";
-    values[name] = p + "c_" + name;
-  }
-  // Particle 1 is the center, place 1; 2 and 3 are places 0 and 2.
+  config.gatheredCount = gathered.size();
+  for (const auto &constant : term.constants)
+    config.constants.push_back(constant);
+  // Particle 1 is the center at tuple place 1; ends 2 and 3 occupy 0 and 2.
   static const int places[] = {1, 0, 2};
-  for (const std::string &name : names) {
+  for (const auto &name : names) {
     std::string stem = getTripletParameter(control, term, name);
     if (stem.empty())
       continue;
-    if (llvm::is_contained(gathered, stem)) {
-      values[name] = p + stem + "_" + std::to_string(places[name.back() - '1']);
-      continue;
-    }
-    const Parameter &parameter = *llvm::find_if(
-        parameters, [&](const Parameter &q) { return q.name == stem; });
-    os << "    " << p << "u_" << name << " = arith.constant "
-       << formatReal(parameter.value) << " : f64\n";
-    values[name] = p + "u_" + name;
+    TripletParameterIR parameter{name, parameterFor(stem).value, std::nullopt};
+    auto found = llvm::find(gathered, stem);
+    if (found != gathered.end())
+      parameter.argument = config.coordinates.size() +
+                           3 * (found - gathered.begin()) +
+                           places[name.back() - '1'];
+    config.parameters.push_back(std::move(parameter));
   }
+  std::vector<std::string> operandsStorage = {"%n", "%x", "%cell"};
+  llvm::SmallVector<StringRef> types = {"!pairs", "!vec", "!md.cell"};
+  auto operand = [&](std::string name, StringRef type) {
+    size_t slot = operandsStorage.size();
+    operandsStorage.push_back(std::move(name));
+    types.push_back(type);
+    return slot;
+  };
+  for (const auto &stem : gathered)
+    operand("%p_" + stem, "!real");
+  llvm::StringMap<std::string> bindings;
+  for (const auto &coordinate : config.coordinates)
+    bindings[coordinate.name] = "";
+  for (const auto &[name, value] : config.constants)
+    bindings[name] = "";
+  for (const auto &parameter : config.parameters)
+    bindings[parameter.name] = "";
   if (control.usesTime)
-    values["t"] = "%time";
-  std::string value =
-      emitExpressionIR(context, expression, values, p + "e", "    ", term.name);
-  os << "    " << p << "to_energy = arith.constant "
-     << formatReal(units::energy) << " : f64\n";
-  os << "    " << p << "u = arith.mulf " << value << ", " << p
-     << "to_energy : f64\n";
-  os << "    md.yield " << p << "u : f64\n";
-  os << "  } : !md.relation<@atoms, 3, reversal>, !vec -> f64\n";
+    bindings["t"] = "%time";
+  llvm::SmallVector<StringRef> supplied;
+  for (const auto &entry : bindings)
+    supplied.push_back(entry.getKey());
+  auto inputs = config.expression.getInputs(supplied);
+  for (const auto &name : inputs.names) {
+    auto found = bindings.find(name);
+    assert(found != bindings.end() && "missing triplet expression binding");
+    if (!found->second.empty())
+      config.externalBindings.emplace_back(name, operand(found->second, "f64"));
+  }
+  for (const auto &name : inputs.tables)
+    config.functionTables.emplace_back(name, operand("%t_" + name, "!grid"));
+  llvm::SmallVector<StringRef> operands;
+  for (const auto &name : operandsStorage)
+    operands.push_back(name);
+  std::string result = "%u_triplet" + std::to_string(index);
+  context.emitIRFragment(
+      "  ", {result}, {"f64"}, operands, types,
+      [config](mlir::OpBuilder &builder,
+               mlir::ValueRange values) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto pairType = cast<mdir::md::RelationType>(values[0].getType());
+        auto relationType = mdir::md::RelationType::get(
+            builder.getContext(), pairType.getParticleSet(), 3,
+            mdir::md::Orientation::Reversal, FlatSymbolRefAttr{});
+        auto relation = mdir::md::TripletsOp::create(
+            builder, loc, relationType, values[0],
+            builder.getF64FloatAttr(config.cutoff));
+        llvm::SmallVector<mdir::md::Coordinate> coordinates;
+        for (const auto &coordinate : config.coordinates)
+          coordinates.push_back(coordinate.coordinate);
+        DenseI32ArrayAttr kinds;
+        DenseI64ArrayAttr members;
+        mdir::md::getCoordinateAttrs(builder, coordinates, kinds, members);
+        auto sum = mdir::md::SumTuplesOp::create(
+            builder, loc, builder.getF64Type(), relation.getResult(), values[1],
+            values[2], values.slice(3, config.gatheredCount), ValueRange{},
+            kinds, members);
+        {
+          OpBuilder::InsertionGuard guard(builder);
+          size_t count = config.coordinates.size() + 3 * config.gatheredCount;
+          llvm::SmallVector<Type> blockTypes(count, builder.getF64Type());
+          llvm::SmallVector<Location> locations(count, loc);
+          Block *block =
+              builder.createBlock(&sum.getKernel(), {}, blockTypes, locations);
+          auto args = block->getArguments();
+          auto constant = [&](double value) -> Value {
+            return arith::ConstantOp::create(builder, loc,
+                                             builder.getF64FloatAttr(value));
+          };
+          Value toLength = constant(1.0 / units::length);
+          llvm::StringMap<Value> bindings, tables;
+          for (auto [k, coordinate] : llvm::enumerate(config.coordinates)) {
+            Value value = args[k];
+            if (coordinate.coordinate.kind ==
+                mdir::md::CoordinateKind::Distance)
+              value = arith::MulFOp::create(builder, loc, value, toLength);
+            bindings[coordinate.name] = value;
+          }
+          for (const auto &[name, value] : config.constants)
+            bindings[name] = constant(value);
+          for (const auto &parameter : config.parameters)
+            bindings[parameter.name] = parameter.argument
+                                           ? args[*parameter.argument]
+                                           : constant(parameter.value);
+          for (const auto &[name, slot] : config.externalBindings)
+            bindings[name] = values[slot];
+          for (const auto &[name, slot] : config.functionTables)
+            tables[name] = values[slot];
+          Value expression = config.expression.build(builder, bindings, tables,
+                                                     config.termName);
+          Value toEnergy = constant(units::energy);
+          Value energy =
+              arith::MulFOp::create(builder, loc, expression, toEnergy);
+          mdir::md::YieldOp::create(builder, loc, ValueRange{energy});
+        }
+        return {sum.getResult()};
+      });
   return result;
 }

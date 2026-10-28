@@ -79,3 +79,8 @@ precisions and targets.
 Centroid expression cases combine lambda, time, polynomial parameter dependence,
 weighted groups, and pull output in both precisions and targets, retaining the
 reader's existing restriction on tabulated functions in centroid terms.
+
+Triplet cases cover all distance/angle/cosine coordinates, particle-place fields,
+uniform parameters, time, tabulated functions, and a constant-zero expression
+with its required fallback coordinate. Both precisions verify on the CPU; GPU
+targets retain the existing support error.

@@ -170,6 +170,13 @@ and energy conversion with typed operations. Owned scalar metadata preserves
 constant order and geometry/time/lambda/observed binding precedence.
 `TermTuple.cpp` no longer writes operation text.
 
+Custom triplet terms also construct their neighborhood relation, coordinate and
+particle-place arguments, scalar body, yield, and ordered energy additions with
+typed operations. Owned configuration preserves coordinate order, unit
+conversions, uniform and gathered parameters, time and table bindings, and the
+unused-distance fallback. Triplet execution remains CPU-only; `TermTriplet.cpp`
+no longer writes operation text.
+
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections
 and the unchanged legacy parse-error path; the corpus also rejects internal
