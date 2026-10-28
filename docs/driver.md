@@ -1329,6 +1329,8 @@ the same shared potential/loop regions before printing and lowering, with
 no new call boundary or SSA-name hint. The other term emitters follow in
 separate commits. Step 5 subsequently removes generated-text assembly;
 custom expressions and `ModelTerm` are parsed only at their input boundaries.
+The prolate near/far splitting emitter also constructs its clamped table
+lookup and Horner polynomial with typed operations at the original site.
 
 ## 3. Decided
 

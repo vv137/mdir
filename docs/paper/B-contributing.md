@@ -181,3 +181,6 @@ same shared potential and loop bodies before printing/lowering, preserving
 inlining and fusion without an opaque/public call boundary or SSA-name hints.
 Other emitters follow one per commit. The following stage removes the
 remaining generated-text boundary and keeps parsing at user input boundaries.
+
+The prolate near/far splitting emitter also constructs its clamped table
+lookup and Horner polynomial with typed operations at the original site.

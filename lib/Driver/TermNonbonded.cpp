@@ -1,5 +1,9 @@
 // Primary, excluded, reciprocal, and within-selection nonbonded terms (#683).
 #include "BuilderImpl.h"
+#include "mdir/Dialect/MD/MDOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Math/IR/Math.h"
+#include "mlir/IR/Builders.h"
 using namespace mdir::driver;
 using namespace mdir::driver::builder;
 namespace prolate = mdir::prolate;
@@ -112,40 +116,52 @@ mdir::driver::builder::getTopologyShiftFactor(const TermInputs &context) {
 /// of x in t = 2 (x cells − k) − 1, the cell clamped to the table. The
 /// place in the cell carries the derivative; the index and the lookups do
 /// not, as in a tabulated function of the control file (D138).
-static std::string emitProlateSplitting(llvm::raw_ostream &os, StringRef table,
+static std::string emitProlateSplitting(TermEmission &context, StringRef table,
                                         StringRef x, StringRef p,
                                         Precision precision) {
   auto [prolateCells, prolateTerms] = getProlateTableShape(precision);
-  os << "    " << p << "cells = arith.constant "
-     << formatReal(static_cast<double>(prolateCells)) << " : f64\n"
-     << "    " << p << "top = arith.constant "
-     << formatReal(static_cast<double>(prolateCells - 1)) << " : f64\n"
-     << "    " << p << "nil = arith.constant 0.0 : f64\n"
-     << "    " << p << "one = arith.constant 1.0 : f64\n"
-     << "    " << p << "two = arith.constant 2.0 : f64\n"
-     << "    " << p << "u = arith.mulf " << x << ", " << p << "cells : f64\n"
-     << "    " << p << "floor = math.floor " << p << "u : f64\n"
-     << "    " << p << "low = arith.maximumf " << p << "floor, " << p
-     << "nil : f64\n"
-     << "    " << p << "place = arith.minimumf " << p << "low, " << p
-     << "top : f64\n"
-     << "    " << p << "s = arith.subf " << p << "u, " << p << "place : f64\n"
-     << "    " << p << "s2 = arith.mulf " << p << "two, " << p << "s : f64\n"
-     << "    " << p << "t = arith.subf " << p << "s2, " << p << "one : f64\n"
-     << "    " << p << "row = arith.fptosi " << p << "place : f64 to i32\n";
-  for (int64_t j = 0; j != prolateTerms; ++j)
-    os << "    " << p << "col" << j << " = arith.constant " << j << " : i32\n"
-       << "    " << p << "a" << j << " = md.lookup %t_" << table << "[" << p
-       << "row, " << p << "col" << j << "] : !grid, i32, i32 -> f64\n";
-  std::string value = (p + "a" + llvm::Twine(prolateTerms - 1)).str();
-  for (int64_t j = prolateTerms - 2; j >= 0; --j) {
-    os << "    " << p << "m" << j << " = arith.mulf " << value << ", " << p
-       << "t : f64\n"
-       << "    " << p << "h" << j << " = arith.addf " << p << "m" << j << ", "
-       << p << "a" << j << " : f64\n";
-    value = (p + "h" + llvm::Twine(j)).str();
-  }
-  return value;
+  std::string result = (p + (prolateTerms > 1 ? "h0" : "a0")).str();
+  std::string tableName = ("%t_" + table).str();
+  context.emitIRFragment(
+      "    ", {result}, {"f64"}, {tableName, x}, {"!grid", "f64"},
+      [prolateCells, prolateTerms](mlir::OpBuilder &builder,
+                                   mlir::ValueRange operands) -> TermIRValues {
+        using namespace mlir;
+        auto loc = builder.getUnknownLoc();
+        auto constant = [&](double value) -> Value {
+          return arith::ConstantOp::create(builder, loc,
+                                           builder.getF64FloatAttr(value));
+        };
+        Value cells = constant(static_cast<double>(prolateCells));
+        Value top = constant(static_cast<double>(prolateCells - 1));
+        Value nil = constant(0.0);
+        Value one = constant(1.0);
+        Value two = constant(2.0);
+        Value u = arith::MulFOp::create(builder, loc, operands[1], cells);
+        Value floor = math::FloorOp::create(builder, loc, u);
+        Value low = arith::MaximumFOp::create(builder, loc, floor, nil);
+        Value place = arith::MinimumFOp::create(builder, loc, low, top);
+        Value s = arith::SubFOp::create(builder, loc, u, place);
+        Value s2 = arith::MulFOp::create(builder, loc, two, s);
+        Value t = arith::SubFOp::create(builder, loc, s2, one);
+        Value row =
+            arith::FPToSIOp::create(builder, loc, builder.getI32Type(), place);
+        llvm::SmallVector<Value> coefficients;
+        for (int64_t j = 0; j != prolateTerms; ++j) {
+          Value column = arith::ConstantOp::create(
+              builder, loc, builder.getI32IntegerAttr(j));
+          coefficients.push_back(
+              mdir::md::LookupOp::create(builder, loc, builder.getF64Type(),
+                                         operands[0], ValueRange{row, column}));
+        }
+        Value value = coefficients.back();
+        for (int64_t j = prolateTerms - 2; j >= 0; --j) {
+          Value product = arith::MulFOp::create(builder, loc, value, t);
+          value = arith::AddFOp::create(builder, loc, product, coefficients[j]);
+        }
+        return {value};
+      });
+  return result;
 }
 
 llvm::Error NonbondedWork::collectTopologyConstants() {
@@ -1433,8 +1449,8 @@ public:
                << "    %screened = arith.divf %pf_far, " << rq << " : f64\n"
                << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
           } else {
-            std::string far = emitProlateSplitting(os, "pme_far", "%xr", "%pf_",
-                                                   control.precision);
+            std::string far = emitProlateSplitting(context, "pme_far", "%xr",
+                                                   "%pf_", control.precision);
             os << "    %screened = arith.divf " << far << ", " << rq
                << " : f64\n"
                << "    %coulomb = arith.mulf %fqq, %screened : f64\n";
@@ -1508,8 +1524,8 @@ public:
       os << "    %rc_inverse = arith.constant " << formatReal(1.0 / cutoff)
          << " : f64\n"
          << "    %xr = arith.mulf %r, %rc_inverse : f64\n";
-      std::string near = emitProlateSplitting(os, "pme_near", "%xr", "%pn_",
-                                              control.precision);
+      std::string near = emitProlateSplitting(context, "pme_near", "%xr",
+                                              "%pn_", control.precision);
       os << "    %near = arith.mulf " << near << ", %rc_inverse : f64\n"
          << "    %r_one = arith.constant 1.0 : f64\n"
          << "    %r_inverse = arith.divf %r_one, %r : f64\n"

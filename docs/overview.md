@@ -116,6 +116,8 @@ The other term emitters follow. Step 5 retains parsed text only for user
 expressions and `ModelTerm` at their input boundaries.
 [Driver Section 2.12](driver.md#212-the-files-of-the-builder) describes the
 files and roles.
+The prolate near/far splitting emitter also constructs its clamped table
+lookup and Horner polynomial with typed operations at the original site.
 
 ### 2.2 The dialects
 
