@@ -92,3 +92,6 @@ targets. Existing combined controls retain the ungathered and uncharged paths.
 Pull-potential fixtures combine radial and Cartesian distance terms with angle
 and dihedral terms, lambda and time, retaining their complete common argument
 signature and coordinate derivative order in both precisions and targets.
+
+Pull-output fixtures add NPT time dependence and time-independent output to the
+radial/Cartesian, angle, and dihedral cases, in both precisions and targets.

@@ -2,6 +2,8 @@
 #include "BuilderImpl.h"
 #include "mdir/Dialect/MD/MDOps.h"
 #include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/MemRef/IR/MemRef.h"
 #include "mlir/IR/Builders.h"
 #include "mlir/IR/BuiltinOps.h"
 
@@ -37,11 +39,16 @@ public:
       // Preserve the coordinates at the end of the step and its time (D145).
       time = ("%pull_time" + point.loopSuffix).str();
       if (context.getControl().usesTime)
-        context.getOutput()
-            << point.indent << time << "_steps = arith.sitofp " << point.step
-            << " : i64 to f64\n"
-            << point.indent << time << " = arith.mulf " << time << "_steps, %dt"
-            << " : f64\n";
+        context.emitIRFragment(
+            point.indent, {time}, {"f64"}, {point.step, "%dt"}, {"i64", "f64"},
+            [](mlir::OpBuilder &builder,
+               mlir::ValueRange values) -> TermIRValues {
+              auto loc = builder.getUnknownLoc();
+              mlir::Value steps = mlir::arith::SIToFPOp::create(
+                  builder, loc, builder.getF64Type(), values[0]);
+              return {
+                  mlir::arith::MulFOp::create(builder, loc, steps, values[1])};
+            });
     }
     emitPullOutput(context, point.indent, point.x, point.cell, point.prefix,
                    point.step, time);
@@ -197,116 +204,204 @@ void PullTermBuilder::emitPullOutput(TermEmission &context, StringRef indent,
                              StringRef prefix, StringRef step,
                              StringRef time) {
   const System &system = context.getSystem();
-  llvm::raw_ostream &os = context.getOutput();
-  std::vector<std::pair<size_t, std::string>> columns = getColumns(context);
+  auto columns = getColumns(context);
   if (columns.empty())
     return;
-  // The coordinates of each term, its centers computed once. The members
-  // of the tuples follow the order of the particles, as in
-  // getFieldValues.
   std::string type = "memref<" + std::to_string(columns.size()) + "xf64>";
   std::string values = ("%pull_values" + step.drop_front()).str();
   std::string relations = ("%r" + prefix.drop_front(2)).str();
-  os << indent << values << " = memref.alloca() : " << type << "\n";
+  context.emitIRFragment(
+      indent, {values}, {type}, {}, {},
+      [count = columns.size()](mlir::OpBuilder &builder,
+                               mlir::ValueRange) -> TermIRValues {
+        auto type =
+            mlir::MemRefType::get({int64_t(count)}, builder.getF64Type());
+        return {mlir::memref::AllocaOp::create(builder, builder.getUnknownLoc(),
+                                               type)};
+      });
   std::vector<std::string> names(columns.size());
-  for (size_t index = 0, e = system.topology->tupleTerms.size(); index != e;
-       ++index) {
-    const TupleTerm &term = system.topology->tupleTerms[index];
+  for (auto [index, term] : llvm::enumerate(system.topology->tupleTerms)) {
     if (!term.isCentroid())
       continue;
-    llvm::StringMap<std::string> coordinates = context.emitCentroidCoordinates(
+    auto coordinates = context.emitCentroidCoordinates(
         term, indent, x, cell, relations,
         values + "_c" + std::to_string(index) + "_");
-    for (size_t column = 0; column != columns.size(); ++column)
-      if (columns[column].first == index)
-        names[column] = coordinates.lookup(columns[column].second);
+    for (auto [column, entry] : llvm::enumerate(columns))
+      if (entry.first == index)
+        names[column] = coordinates.lookup(entry.second);
   }
-  for (size_t column = 0, e = columns.size(); column != e; ++column) {
-    std::string place = values + "_i" + std::to_string(column);
-    os << indent << place << " = arith.constant " << column << " : index\n"
-       << indent << "memref.store " << names[column] << ", " << values << "["
-       << place << "] : " << type << "\n";
+  for (auto [column, name] : llvm::enumerate(names)) {
+    context.emitIRFragment(
+        indent, {}, {}, {values, name}, {type, "f64"},
+        [column](mlir::OpBuilder &builder,
+                 mlir::ValueRange operands) -> TermIRValues {
+          auto loc = builder.getUnknownLoc();
+          mlir::Value place =
+              mlir::arith::ConstantIndexOp::create(builder, loc, column);
+          mlir::memref::StoreOp::create(builder, loc, operands[1], operands[0],
+                                        mlir::ValueRange{place});
+          return {};
+        });
   }
-  // The energy of each term, in kcal/mol, and its force: of a term over
-  // two centers, the force on the second, F = −(∂E/∂r d/r + ∂E/∂d) with d
-  // the vector from the first, and its component along d, in kcal/mol/Å;
-  // of an angle or a dihedral, −∂E/∂θ, in kcal/mol/rad.
+  // For two centers, F = -(dE/dr d/r + dE/dd); report its radial
+  // component and Cartesian components. For an angle, report -dE/dtheta.
   std::string terms = ("%pull_terms" + step.drop_front()).str();
   unsigned numTerms = 0;
-  for (const TupleTerm &term : system.topology->tupleTerms)
+  for (const auto &term : system.topology->tupleTerms)
     numTerms += term.isCentroid() ? (term.arity == 2 ? 5 : 2) : 0;
   std::string termType = "memref<" + std::to_string(numTerms) + "xf64>";
-  os << indent << terms << " = memref.alloca() : " << termType << "\n";
-  unsigned slot = 0;
-  unsigned base = context.getNumPotentialArguments();
-  for (size_t index = 0, e = system.topology->tupleTerms.size(); index != e;
-       ++index) {
-    if (!system.topology->tupleTerms[index].isCentroid())
+  context.emitIRFragment(
+      indent, {terms}, {termType}, {}, {},
+      [numTerms](mlir::OpBuilder &builder, mlir::ValueRange) -> TermIRValues {
+        auto type =
+            mlir::MemRefType::get({int64_t(numTerms)}, builder.getF64Type());
+        return {mlir::memref::AllocaOp::create(builder, builder.getUnknownLoc(),
+                                               type)};
+      });
+  std::vector<std::string> commonNames = {x.str(), cell.str()};
+  std::vector<std::string> commonTypes = {"!vec", "!md.cell"};
+  auto common = [&](std::string name, std::string type) {
+    commonNames.push_back(std::move(name));
+    commonTypes.push_back(std::move(type));
+  };
+  for (const auto &field : context.getFields())
+    common((prefix + field.name).str(), field.isInteger ? "!ids" : "!real");
+  for (const auto &table : context.getTables())
+    common("%t_" + table.name, table.getType().str());
+  for (const auto &set : context.getTupleSets()) {
+    common(relations + set.name, "!rel_" + set.name);
+    for (const auto &field : set.fields)
+      common("%f_" + set.name + "_" + field.name, "!of_" + set.name);
+  }
+  if (context.getControl().usesTime)
+    common(time.str(), "f64");
+  unsigned slot = 0, base = context.getNumPotentialArguments();
+  assert(commonNames.size() == base &&
+         "pull potential argument count mismatch");
+  for (auto [index, term] : llvm::enumerate(system.topology->tupleTerms)) {
+    if (!term.isCentroid())
       continue;
     std::vector<std::string> coordinates;
-    for (size_t column = 0; column != columns.size(); ++column)
-      if (columns[column].first == index)
+    for (auto [column, entry] : llvm::enumerate(columns))
+      if (entry.first == index)
         coordinates.push_back(names[column]);
     std::string name = terms + "_" + std::to_string(index);
-    os << indent << name << "_e";
-    for (size_t q = 0; q != coordinates.size(); ++q)
-      os << ", " << name << "_d" << q;
-    os << " = md.evaluate @pullterm" << index << "(" << x << ", " << cell
-       << context.getFieldValues(prefix) << context.getTimeValue(time);
-    for (const std::string &coordinate : coordinates)
-      os << ", " << coordinate;
-    os << ")\n" << indent << "    request [energy";
-    for (size_t q = 0; q != coordinates.size(); ++q)
-      os << ", derivative(" << base + q << ")";
-    os << "]\n" << indent << "    : (!vec, !md.cell" << context.getFieldTypes()
-       << context.getTimeType();
-    for (size_t q = 0; q != coordinates.size(); ++q)
-      os << ", f64";
-    os << ") -> (f64";
-    for (size_t q = 0; q != coordinates.size(); ++q)
-      os << ", f64";
-    os << ")\n";
-    auto store = [&](const std::string &value) {
-      std::string place = name + "_s" + std::to_string(slot);
-      os << indent << place << " = arith.constant " << slot++ << " : index\n"
-         << indent << "memref.store " << value << ", " << terms << "["
-         << place << "] : " << termType << "\n";
-    };
-    store(name + "_e");
-    unsigned counter = 0;
-    auto op = [&](StringRef operation,
-                  std::initializer_list<std::string> operands) {
-      std::string result = name + "_v" + std::to_string(counter++);
-      os << indent << result << " = " << operation << " "
-         << llvm::join(operands, ", ") << " : f64\n";
-      return result;
-    };
-    auto derivative = [&](size_t q) { return name + "_d" + std::to_string(q); };
-    if (coordinates.size() == 1) {
-      store(op("arith.negf", {derivative(0)}));
-      continue;
+    std::vector<std::string> inputs = commonNames, inputTypes = commonTypes,
+                             outputs = {name + "_e"};
+    for (auto [q, coordinate] : llvm::enumerate(coordinates)) {
+      inputs.push_back(coordinate);
+      inputTypes.push_back("f64");
+      outputs.push_back(name + "_d" + std::to_string(q));
     }
-    std::string radial = op("arith.divf", {derivative(0), coordinates[0]});
-    std::array<std::string, 3> force;
-    for (int c = 0; c != 3; ++c)
-      force[c] = op("arith.negf",
-                    {op("arith.addf",
-                        {op("arith.mulf", {radial, coordinates[1 + c]}),
-                         derivative(1 + c)})});
-    std::string along = op("arith.mulf", {force[0], coordinates[1]});
-    for (int c = 1; c != 3; ++c)
-      along = op("arith.addf",
-                 {along, op("arith.mulf", {force[c], coordinates[1 + c]})});
-    store(op("arith.divf", {along, coordinates[0]}));
-    for (int c = 0; c != 3; ++c)
-      store(force[c]);
+    llvm::SmallVector<StringRef> in, inTypes, out,
+        outTypes(outputs.size(), "f64");
+    for (const auto &s : inputs)
+      in.push_back(s);
+    for (const auto &s : inputTypes)
+      inTypes.push_back(s);
+    for (const auto &s : outputs)
+      out.push_back(s);
+    context.emitIRFragment(
+        indent, out, outTypes, in, inTypes,
+        [index, base, count = coordinates.size()](
+            mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          llvm::SmallVector<int32_t> kinds = {
+              int32_t(mdir::md::Request::Energy)};
+          llvm::SmallVector<int64_t> arguments = {-1};
+          for (size_t q = 0; q != count; ++q) {
+            kinds.push_back(int32_t(mdir::md::Request::Derivative));
+            arguments.push_back(base + q);
+          }
+          llvm::SmallVector<mlir::Type> types(count + 1, builder.getF64Type());
+          auto op = mdir::md::EvaluateOp::create(
+              builder, builder.getUnknownLoc(), types,
+              mlir::FlatSymbolRefAttr::get(builder.getContext(),
+                                           "pullterm" + std::to_string(index)),
+              values, builder.getDenseI32ArrayAttr(kinds),
+              builder.getDenseI64ArrayAttr(arguments));
+          return TermIRValues(op.getResults());
+        });
+    inputs = {terms};
+    inputTypes = {termType};
+    for (const auto &result : outputs) {
+      inputs.push_back(result);
+      inputTypes.push_back("f64");
+    }
+    for (const auto &coordinate : coordinates) {
+      inputs.push_back(coordinate);
+      inputTypes.push_back("f64");
+    }
+    in.clear();
+    inTypes.clear();
+    for (const auto &s : inputs)
+      in.push_back(s);
+    for (const auto &s : inputTypes)
+      inTypes.push_back(s);
+    context.emitIRFragment(
+        indent, {}, {}, in, inTypes,
+        [slot, count = coordinates.size()](
+            mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+          using namespace mlir;
+          auto loc = builder.getUnknownLoc();
+          unsigned next = slot;
+          auto store = [&](Value value) {
+            Value place = arith::ConstantIndexOp::create(builder, loc, next++);
+            memref::StoreOp::create(builder, loc, value, values[0],
+                                    ValueRange{place});
+          };
+          auto derivative = [&](size_t q) -> Value { return values[2 + q]; };
+          auto coordinate = [&](size_t q) -> Value {
+            return values[2 + count + q];
+          };
+          auto mul = [&](Value a, Value b) -> Value {
+            return arith::MulFOp::create(builder, loc, a, b);
+          };
+          auto add = [&](Value a, Value b) -> Value {
+            return arith::AddFOp::create(builder, loc, a, b);
+          };
+          auto div = [&](Value a, Value b) -> Value {
+            return arith::DivFOp::create(builder, loc, a, b);
+          };
+          auto neg = [&](Value a) -> Value {
+            return arith::NegFOp::create(builder, loc, a);
+          };
+          store(values[1]);
+          if (count == 1) {
+            store(neg(derivative(0)));
+            return {};
+          }
+          Value radial = div(derivative(0), coordinate(0));
+          std::array<Value, 3> force;
+          for (int c = 0; c != 3; ++c) {
+            Value product = mul(radial, coordinate(1 + c));
+            Value sum = add(product, derivative(1 + c));
+            force[c] = neg(sum);
+          }
+          Value along = mul(force[0], coordinate(1));
+          for (int c = 1; c != 3; ++c) {
+            Value product = mul(force[c], coordinate(1 + c));
+            along = add(along, product);
+          }
+          store(div(along, coordinate(0)));
+          for (Value value : force)
+            store(value);
+          return {};
+        });
+    slot += coordinates.size() == 1 ? 2 : 5;
   }
-  os << indent << values << "_cast = memref.cast " << values << " : " << type
-     << " to memref<?xf64>\n"
-     << indent << terms << "_cast = memref.cast " << terms << " : "
-     << termType << " to memref<?xf64>\n"
-     << indent << "func.call @mdrtWritePull(" << step << ", " << values
-     << "_cast, " << terms << "_cast) : (i64, memref<?xf64>, memref<?xf64>) "
-        "-> ()\n";
+  context.emitIRFragment(
+      indent, {}, {}, {step, values, terms}, {"i64", type, termType},
+      [](mlir::OpBuilder &builder, mlir::ValueRange values) -> TermIRValues {
+        auto loc = builder.getUnknownLoc();
+        auto dynamic = mlir::MemRefType::get({mlir::ShapedType::kDynamic},
+                                             builder.getF64Type());
+        mlir::Value coordinates =
+            mlir::memref::CastOp::create(builder, loc, dynamic, values[1]);
+        mlir::Value terms =
+            mlir::memref::CastOp::create(builder, loc, dynamic, values[2]);
+        mlir::func::CallOp::create(
+            builder, loc, "mdrtWritePull", mlir::TypeRange{},
+            mlir::ValueRange{values[0], coordinates, terms});
+        return {};
+      });
 }
-

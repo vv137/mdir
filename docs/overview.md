@@ -188,7 +188,10 @@ body with typed operations. They borrow the common argument types from the
 shared energy potential at materialization, then append coordinate arguments
 in their existing order. Owned expression metadata and parameter/lambda values
 preserve constant emission and binding precedence; no hook-local state escapes.
-Pull output calls remain a separate conversion.
+Pull output also constructs its time conversion, coordinate/term buffers,
+derivative requests, ordered force arithmetic, column stores, casts, and runtime
+call with typed operations. Captures own only counts, indices, and names used by
+their recipes. `TermPull.cpp` no longer writes operation text.
 
 The materialization boundary rejects surviving internal connections before
 any downstream cast reconciliation. Native tests cover malformed connections

@@ -1405,7 +1405,10 @@ body with typed operations. They borrow the common argument types from the
 shared energy potential at materialization, then append coordinate arguments
 in their existing order. Owned expression metadata and parameter/lambda values
 preserve constant emission and binding precedence; no hook-local state escapes.
-Pull output calls remain a separate conversion. The
+Pull output also constructs its time conversion, coordinate/term buffers,
+derivative requests, ordered force arithmetic, column stores, casts, and runtime
+call with typed operations. Captures own only counts, indices, and names used by
+their recipes. `TermPull.cpp` no longer writes operation text. The
 existing `control-file term: <name>` diagnostic location is preserved; it
 does not provide SSA-name hints.
 

@@ -69,6 +69,27 @@ int main() {
     reject(plan.materialize(*module),
            "a term IR recipe has no assembly connection");
   }
+  {
+    TermIRPlan plan;
+    std::string source;
+    llvm::raw_string_ostream stream(source);
+    plan.emit(stream, "", {}, {}, {"%input"}, {"f64"},
+              [](OpBuilder &builder, ValueRange values) -> TermIRValues {
+                require(values.size() == 1 &&
+                            values[0].getType() == builder.getF64Type(),
+                        "zero-result connection lost its operand");
+                return {};
+              });
+    stream.flush();
+    auto module =
+        parse("module { %input = arith.constant 1.0 : f64 " + source + " }");
+    require(!plan.materialize(*module),
+            "zero-result operand connection was rejected");
+    require(module->getBody()->getOperations().size() == 1,
+            "zero-result operand connection survived");
+    require(succeeded(verify(*module)),
+            "zero-result operand module did not verify");
+  }
   for (llvm::StringRef attribute : {"0 : i64", "-1 : i64", "\"bad\""}) {
     TermIRPlan plan;
     auto module = parse("module { %x = builtin.unrealized_conversion_cast "

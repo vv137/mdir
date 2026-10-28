@@ -362,6 +362,20 @@ phase = 0.4
 '''
         write(f"pull-potential-{precision}", text)
 
+    for precision in ("DOUBLE", "MIXED"):
+        source = next(path for path in ordinary if path.name == f"pull-potential-{precision}.toml")
+        text = source.read_text().replace('ensemble = "NVE"', 'ensemble = "NPT"\npressure = 1.0')
+        text = text.replace('steps = 1\n', 'steps = 10\n').replace('energy_interval = 1\n', 'energy_interval = 10\n')
+        text = text.replace('checkpoint_interval = 1\n', 'checkpoint_interval = 10\n')
+        text += ('\n[thermostat]\nmethod = "V-RESCALE"\ntime_constant = 0.1\ninterval = 10\n'
+                 '\n[barostat]\nmethod = "C-RESCALE"\ntime_constant = 1.0\ninterval = 10\n')
+        text = re.sub(r"(?m)^steps\s*=.*$", "steps = 10", text)
+        write(f"pull-output-npt-{precision}", text)
+        text = re.sub(r'(?m)^(expression\s*=.*)$',
+                      lambda match: re.sub(r'\bt\b', '0.0', match[1]), source.read_text())
+        text = re.sub(r"(?m)^steps\s*=.*$", "steps = 10", text)
+        write(f"pull-output-static-{precision}", text)
+
     model_ir = '''md.potential @order_model(%positions: !md.field<@atoms, 3 x f64>, %box: !md.cell, %numbers: !md.field<@atoms, i32>) -> f64 {
   %total = md.sum_particles gather(%positions : !md.field<@atoms, 3 x f64>) {
   ^bb0(%position: vector<3xf64>):
